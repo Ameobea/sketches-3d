@@ -3,22 +3,22 @@
  * https://github.com/mrdoob/three.js/blob/master/examples/games_fps.html
  */
 
-import * as THREE from "three";
-import * as Stats from "three/examples/jsm/libs/stats.module";
-import { Octree } from "three/examples/jsm/math/Octree.js";
-import { Capsule } from "three/examples/jsm/math/Capsule.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as THREE from 'three';
+import * as Stats from 'three/examples/jsm/libs/stats.module';
+import { Octree } from 'three/examples/jsm/math/Octree.js';
+import { Capsule } from 'three/examples/jsm/math/Capsule.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-import { getSentry } from "../sentry";
-import { processLoadedScene } from "./initWorld";
-import * as Conf from "./conf";
+import { getSentry } from '../sentry';
+import { processLoadedScene } from './initWorld';
+import * as Conf from './conf';
 
 export const buildViz = () => {
   try {
-    screen.orientation.lock("landscape");
+    screen.orientation.lock('landscape');
   } catch (err) {
     getSentry()?.captureException(err, {
-      extra: { msg: "Failed to lock screen orientation to landscape" },
+      extra: { msg: 'Failed to lock screen orientation to landscape' },
     });
   }
 
@@ -33,18 +33,12 @@ export const buildViz = () => {
   const spawnPos = Conf.Locations.spawn;
   // const spawnPos = Conf.Locations.bigCube;
 
-  const camera = new THREE.PerspectiveCamera(
-    75,
-    window.innerWidth / window.innerHeight,
-    0.1,
-    1000
-  );
-  camera.rotation.order = "YXZ";
-  camera.rotation.setFromVector3(spawnPos.rot, "YXZ");
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  getSentry()?.captureMessage(`DevicePixelRatio: ${window.devicePixelRatio}`);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = enableShadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -52,8 +46,8 @@ export const buildViz = () => {
   renderer.shadowMap.needsUpdate = true;
 
   const stats = Stats.default();
-  stats.domElement.style.position = "absolute";
-  stats.domElement.style.top = "0px";
+  stats.domElement.style.position = 'absolute';
+  stats.domElement.style.top = '0px';
 
   const GRAVITY = 40;
   const STEPS_PER_FRAME = 5;
@@ -62,9 +56,7 @@ export const buildViz = () => {
 
   const playerCollider = new Capsule(
     spawnPos.pos.clone(),
-    spawnPos.pos
-      .clone()
-      .add(new THREE.Vector3(0, Conf.PlayerColliderHeight, 0)),
+    spawnPos.pos.clone().add(new THREE.Vector3(0, Conf.PlayerColliderHeight, 0)),
     Conf.PlayerColliderRadius
   );
 
@@ -75,30 +67,30 @@ export const buildViz = () => {
 
   const keyStates = {};
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "e") {
+  document.addEventListener('keydown', event => {
+    if (event.key === 'e') {
       document.exitPointerLock();
     }
 
     keyStates[event.code] = true;
   });
 
-  document.addEventListener("keyup", (event) => {
+  document.addEventListener('keyup', event => {
     keyStates[event.code] = false;
   });
 
-  document.addEventListener("mousedown", () => {
+  document.addEventListener('mousedown', () => {
     document.body.requestPointerLock();
   });
 
-  document.body.addEventListener("mousemove", (event) => {
+  document.body.addEventListener('mousemove', event => {
     if (document.pointerLockElement === document.body) {
       camera.rotation.y -= event.movementX / 500;
       camera.rotation.x -= event.movementY / 500;
     }
   });
 
-  window.addEventListener("resize", onWindowResize);
+  window.addEventListener('resize', onWindowResize);
 
   function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -116,10 +108,7 @@ export const buildViz = () => {
       playerOnFloor = result.normal.y > 0;
 
       if (!playerOnFloor) {
-        playerVelocity.addScaledVector(
-          result.normal,
-          -result.normal.dot(playerVelocity)
-        );
+        playerVelocity.addScaledVector(result.normal, -result.normal.dot(playerVelocity));
       }
 
       playerCollider.translate(result.normal.multiplyScalar(result.depth));
@@ -167,24 +156,24 @@ export const buildViz = () => {
     // gives a bit of air control
     const speedDelta = deltaTime * (playerOnFloor ? 40 : 9);
 
-    if (keyStates["KeyW"]) {
+    if (keyStates['KeyW']) {
       playerVelocity.add(getForwardVector().multiplyScalar(speedDelta));
     }
 
-    if (keyStates["KeyS"]) {
+    if (keyStates['KeyS']) {
       playerVelocity.add(getForwardVector().multiplyScalar(-speedDelta));
     }
 
-    if (keyStates["KeyA"]) {
+    if (keyStates['KeyA']) {
       playerVelocity.add(getSideVector().multiplyScalar(-speedDelta));
     }
 
-    if (keyStates["KeyD"]) {
+    if (keyStates['KeyD']) {
       playerVelocity.add(getSideVector().multiplyScalar(speedDelta));
     }
 
     if (playerOnFloor) {
-      if (keyStates["Space"]) {
+      if (keyStates['Space']) {
         playerVelocity.y = 30;
       }
     }
@@ -193,44 +182,28 @@ export const buildViz = () => {
   function teleportPlayerIfOob() {
     if (camera.position.y <= -55) {
       playerCollider.start.set(spawnPos.pos.x, spawnPos.pos.y, spawnPos.pos.z);
-      playerCollider.end.set(
-        spawnPos.pos.x,
-        spawnPos.pos.y + Conf.PlayerColliderHeight,
-        spawnPos.pos.z
-      );
+      playerCollider.end.set(spawnPos.pos.x, spawnPos.pos.y + Conf.PlayerColliderHeight, spawnPos.pos.z);
       playerCollider.radius = Conf.PlayerColliderRadius;
       camera.position.copy(playerCollider.end);
       camera.rotation.set(0, 0, 0);
     }
   }
 
-  const beforeRenderCbs: ((
-    curTimeSeconds: number,
-    tDiffSeconds: number
-  ) => void)[] = [];
-  const afterRenderCbs: ((
-    curTimeSeconds: number,
-    tDiffSeconds: number
-  ) => void)[] = [];
+  const beforeRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
+  const afterRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
 
-  const registerBeforeRenderCb = (
-    cb: (curTimeSeconds: number, tDiffSeconds: number) => void
-  ) => beforeRenderCbs.push(cb);
-  const unregisterBeforeRenderCb = (
-    cb: (curTimeSeconds: number, tDiffSeconds: number) => void
-  ) => {
+  const registerBeforeRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) =>
+    beforeRenderCbs.push(cb);
+  const unregisterBeforeRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) => {
     const idx = beforeRenderCbs.indexOf(cb);
     if (idx !== -1) {
       beforeRenderCbs.splice(idx, 1);
     }
   };
 
-  const registerAfterRenderCb = (
-    cb: (curTimeSeconds: number, tDiffSeconds: number) => void
-  ) => afterRenderCbs.push(cb);
-  const unregisterAfterRenderCb = (
-    cb: (curTimeSeconds: number, tDiffSeconds: number) => void
-  ) => {
+  const registerAfterRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) =>
+    afterRenderCbs.push(cb);
+  const unregisterAfterRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) => {
     const idx = afterRenderCbs.indexOf(cb);
     if (idx !== -1) {
       afterRenderCbs.splice(idx, 1);
@@ -252,11 +225,11 @@ export const buildViz = () => {
       teleportPlayerIfOob();
     }
 
-    beforeRenderCbs.forEach((cb) => cb(curTimeSeconds, deltaTime));
+    beforeRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
 
     renderer.render(scene, camera);
 
-    afterRenderCbs.forEach((cb) => cb(curTimeSeconds, deltaTime));
+    afterRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
 
     stats.update();
 
@@ -293,12 +266,12 @@ export const initViz = (container: HTMLElement) => {
   container.appendChild(viz.renderer.domElement);
   // container.appendChild(viz.stats.domElement);
 
-  const loader = new GLTFLoader().setPath("/");
+  const loader = new GLTFLoader().setPath('/');
 
-  loader.load("dream.gltf", async (gltf) => {
+  loader.load('dream.gltf', async gltf => {
     processLoadedScene(viz, gltf.scene);
 
-    console.log("Models loaded.  Starting animation loop...", gltf);
+    console.log('Models loaded.  Starting animation loop...', gltf);
     viz.scene.add(gltf.scene);
 
     (window as any).ctx = viz.renderer.getContext();
@@ -307,7 +280,7 @@ export const initViz = (container: HTMLElement) => {
     viz.scene.add(gltf.scene);
 
     console.log(viz.scene);
-    viz.scene.getObjectByName("instance")?.removeFromParent();
+    viz.scene.getObjectByName('instance')?.removeFromParent();
 
     const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
       const children = obj.children;
@@ -320,7 +293,7 @@ export const initViz = (container: HTMLElement) => {
     gltf.scene.traverse(traverseCb);
 
     // TODO: Combine with above
-    gltf.scene.traverse((child) => {
+    gltf.scene.traverse(child => {
       if (child instanceof THREE.Mesh) {
         child.castShadow = true;
         child.receiveShadow = true;

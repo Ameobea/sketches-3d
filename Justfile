@@ -8,3 +8,6 @@ build:
 
 preview:
   bun run preview --host 0.0.0.0
+
+deploy:
+  phost update 3d patch build
