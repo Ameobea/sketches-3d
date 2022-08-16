@@ -4,7 +4,7 @@ A place to keep sketches and demos of various things I'm trying out in 3D game-e
 
 Example of the kind of thing I'm making here:
 
-Demo video: https://ameo.link/u/a8d.mp4
+https://user-images.githubusercontent.com/4335849/184982322-0b85cda2-0c76-441e-995e-4f69163c4303.mp4
 
 In-browser demo: https://cube.ameo.design/
 
