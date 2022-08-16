@@ -1,40 +1,15 @@
-# create-svelte
+# 3d sketches + experiements
 
-Everything you need to build a Svelte project, powered by [`create-svelte`](https://github.com/sveltejs/kit/tree/master/packages/create-svelte).
+A place to keep sketches and demos of various things I'm trying out in 3D game-esque formats.
 
-## Creating a project
+Example of the kind of thing I'm making here:
 
-If you're seeing this, you've probably already done this step. Congrats!
+Demo video: https://ameo.link/u/a8d.mp4
 
-```bash
-# create a new project in the current directory
-npm init svelte@next
+In-browser demo: https://cube.ameo.design/
 
-# create a new project in my-app
-npm init svelte@next my-app
-```
+## tech
 
-> Note: the `@next` is temporary
+Most of the stuff here is built using Blender, Three.JS, and some custom shaders.  It will all run in the browser, targeting desktop devices with mouse + keyboard.  SvelteKit is used as a lightweight framework for wrapping everything up and bundling releases.
 
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```bash
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```bash
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://kit.svelte.dev/docs#adapters) for your target environment.
+In the future, may include audio integration that is generated in realtime also in the browser using my [web-synth](https://github.com/ameobea/web-synth) project.
