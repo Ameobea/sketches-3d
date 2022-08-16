@@ -5,8 +5,12 @@ export const PlayerColliderRadius = 0.35;
 
 export const Locations = {
   spawn: {
-    pos: new THREE.Vector3(-5, 25, 7),
-    rot: new THREE.Vector3(-0.1, 1.322, 0),
+    pos: new THREE.Vector3(
+      48.17740050559579,
+      23.920086905508146,
+      8.603910511800485
+    ),
+    rot: new THREE.Vector3(-0.022, 1.488, 0),
   },
   bigCube: {
     pos: new THREE.Vector3(
