@@ -1,5 +1,5 @@
-import preprocess from "svelte-preprocess";
-import adapter from "@sveltejs/adapter-static";
+import preprocess from 'svelte-preprocess';
+import adapter from '@sveltejs/adapter-static';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -11,32 +11,23 @@ const config = {
     inlineStyleThreshold: 2048,
     prerender: {
       concurrency: 6,
+      default: true,
     },
-    floc: true,
     adapter: adapter({
       // default options are shown
-      pages: "build",
-      assets: "build",
+      pages: 'build',
+      assets: 'build',
       fallback: null,
       precompress: false,
     }),
-
-    // hydrate the <div id="svelte"> element in src/app.html
-    target: "#svelte",
-    vite: {
-      server: {
-        port: 4800,
-      },
-      build: {
-        sourcemap: true,
-      },
-    },
   },
-  experimental: {
-    inspector: {
-      holdMode: true,
+  viteOptions: {
+    experimental: {
+      inspector: {
+        holdMode: true,
+      },
+      prebundleSvelteLibraries: true,
     },
-    prebundleSvelteLibraries: true,
   },
 };
 

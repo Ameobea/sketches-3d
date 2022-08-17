@@ -1,3 +1,28 @@
+import * as THREE from 'three';
+
+import type { VizState } from '.';
+
+export const initBaseScene = (viz: VizState) => {
+  // Add close fog
+  viz.scene.fog = new THREE.Fog(0x030303, 50, 215);
+
+  // Add lights
+  const light = new THREE.DirectionalLight(0xffffff, 1.5);
+  light.position.set(80, 60, 80);
+  viz.scene.add(light);
+
+  // Add a cube at the position of the light
+  // const lightCube = new THREE.Mesh(
+  //   new THREE.BoxGeometry(10.1, 10.1, 10.1),
+  //   new THREE.MeshBasicMaterial({ color: 0xffffff })
+  // );
+  // lightCube.position.copy(light.position);
+  // viz.scene.add(lightCube);
+
+  const ambientlight = new THREE.AmbientLight(0xe3d2d2, 0.05);
+  viz.scene.add(ambientlight);
+};
+
 // Corresponds to GLSL function in `noise.frag`
 const hash = (num: number) => {
   let p = num * 0.011;

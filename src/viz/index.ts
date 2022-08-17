@@ -10,7 +10,7 @@ import { Capsule } from 'three/examples/jsm/math/Capsule.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { getSentry } from '../sentry';
-import { processLoadedScene } from './initWorld';
+import { SceneLoadersBySceneName } from './scenes';
 import * as Conf from './conf';
 
 export const buildViz = () => {
@@ -154,7 +154,7 @@ export const buildViz = () => {
 
   function controls(deltaTime) {
     // gives a bit of air control
-    const speedDelta = deltaTime * (playerOnFloor ? 40 : 9);
+    const speedDelta = deltaTime * (playerOnFloor ? 40 : 99);
 
     if (keyStates['KeyW']) {
       playerVelocity.add(getForwardVector().multiplyScalar(speedDelta));
@@ -260,26 +260,38 @@ export const buildViz = () => {
 
 export type VizState = ReturnType<typeof buildViz>;
 
-export const initViz = (container: HTMLElement) => {
+export const initViz = (container: HTMLElement, sceneName: string = Conf.DefaultSceneName) => {
   const viz = buildViz();
 
   container.appendChild(viz.renderer.domElement);
-  // container.appendChild(viz.stats.domElement);
+  // if (window.location.href.includes('localhost')) {
+  container.appendChild(viz.stats.domElement);
+  // }
 
   const loader = new GLTFLoader().setPath('/');
 
   loader.load('dream.gltf', async gltf => {
-    processLoadedScene(viz, gltf.scene);
+    sceneName = sceneName.toLowerCase();
+    const scene = gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase());
+    if (!scene) {
+      alert(`scene ${sceneName} not found in loaded gltf`);
+      throw new Error(`Scene ${sceneName} not found in loaded gltf`);
+    }
+    const getSceneLoader = SceneLoadersBySceneName[sceneName];
+    if (!getSceneLoader) {
+      alert(`scene loader for scene ${sceneName} not found`);
+      throw new Error(`Scene loader for scene ${sceneName} not found`);
+    }
+    const sceneLoader = await getSceneLoader();
+    sceneLoader(viz, scene);
 
-    console.log('Models loaded.  Starting animation loop...', gltf);
-    viz.scene.add(gltf.scene);
+    viz.scene.add(scene);
 
     (window as any).ctx = viz.renderer.getContext();
     (window as any).renderer = viz.renderer;
 
-    viz.scene.add(gltf.scene);
+    viz.scene.add(scene);
 
-    console.log(viz.scene);
     viz.scene.getObjectByName('instance')?.removeFromParent();
 
     const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
@@ -290,10 +302,10 @@ export const initViz = (container: HTMLElement) => {
       }
       obj.children = children;
     };
-    gltf.scene.traverse(traverseCb);
+    scene.traverse(traverseCb);
 
     // TODO: Combine with above
-    gltf.scene.traverse(child => {
+    scene.traverse(child => {
       if (child instanceof THREE.Mesh) {
         child.castShadow = true;
         child.receiveShadow = true;
