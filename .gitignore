@@ -7,3 +7,5 @@ node_modules
 .env.*
 !.env.example
 *.blend1
+src/viz/wasmComp/*
+!src/viz/wasmComp/.gitkeep

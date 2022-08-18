@@ -1,9 +1,14 @@
 set dotenv-load := true
 
+build-wasm:
+  cd src/viz/wasm && just build
+
 run:
+  just build-wasm
   bun run dev
 
 build:
+  just build-wasm
   bun run build
 
 preview:

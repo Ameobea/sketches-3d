@@ -21,6 +21,7 @@ export const initBaseScene = (viz: VizState) => {
 
   const ambientlight = new THREE.AmbientLight(0xe3d2d2, 0.05);
   viz.scene.add(ambientlight);
+  return { ambientlight, light };
 };
 
 // Corresponds to GLSL function in `noise.frag`

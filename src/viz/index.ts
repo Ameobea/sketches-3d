@@ -154,7 +154,7 @@ export const buildViz = () => {
 
   function controls(deltaTime) {
     // gives a bit of air control
-    const speedDelta = deltaTime * (playerOnFloor ? 40 : 99);
+    const speedDelta = deltaTime * (playerOnFloor ? 40 : 9);
 
     if (keyStates['KeyW']) {
       playerVelocity.add(getForwardVector().multiplyScalar(speedDelta));
@@ -174,7 +174,7 @@ export const buildViz = () => {
 
     if (playerOnFloor) {
       if (keyStates['Space']) {
-        playerVelocity.y = 30;
+        playerVelocity.y = 20;
       }
     }
   }
@@ -211,16 +211,16 @@ export const buildViz = () => {
   };
 
   function animate() {
-    const deltaTime = Math.min(0.05, clock.getDelta()) / STEPS_PER_FRAME;
+    const deltaTime = clock.getDelta();
     const curTimeSeconds = clock.getElapsedTime();
 
     // we look for collisions in substeps to mitigate the risk of
     // an object traversing another too quickly for detection.
 
     for (let i = 0; i < STEPS_PER_FRAME; i++) {
-      controls(deltaTime);
+      controls(Math.min(0.05, deltaTime / STEPS_PER_FRAME));
 
-      updatePlayer(deltaTime);
+      updatePlayer(Math.min(0.05, deltaTime / STEPS_PER_FRAME));
 
       teleportPlayerIfOob();
     }
@@ -283,7 +283,7 @@ export const initViz = (container: HTMLElement, sceneName: string = Conf.Default
       throw new Error(`Scene loader for scene ${sceneName} not found`);
     }
     const sceneLoader = await getSceneLoader();
-    sceneLoader(viz, scene);
+    await sceneLoader(viz, scene);
 
     viz.scene.add(scene);
 
