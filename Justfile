@@ -12,7 +12,7 @@ build:
   bun run build
 
 preview:
-  bun run preview --host 0.0.0.0
+  bun run preview --host 0.0.0.0 --port 4800
 
 deploy:
   phost update 3d patch build

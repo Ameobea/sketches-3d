@@ -1,10 +1,9 @@
 <script lang="ts">
   import { page } from '$app/stores';
 
-  import { initViz } from '../../viz';
-  import '../index.css';
+  import Viz from '../../viz/Viz.svelte';
 
-  $: sceneName = $page.params.scene;
+  $: sceneName = $page.params.scene.replace('.html', '');
 </script>
 
-<div use:initViz={sceneName} />
+<Viz {sceneName} />

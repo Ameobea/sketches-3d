@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { initViz } from '../viz';
-  import './index.css';
+  import Viz from '../viz/Viz.svelte';
 </script>
 
-<div use:initViz />
+<Viz sceneName="bridge" />

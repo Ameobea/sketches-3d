@@ -29,6 +29,17 @@ const buildBridge = (viz: VizState, bridge: THREE.Mesh) => {
   });
 };
 
+const locations = {
+  spawn: {
+    pos: new THREE.Vector3(48.17740050559579, 23.920086905508146, 8.603910511800485),
+    rot: new THREE.Vector3(-0.022, 1.488, 0),
+  },
+  bigCube: {
+    pos: new THREE.Vector3(-281.43973660347024, 22.754156253511294, -8.752855510181472),
+    rot: new THREE.Vector3(-0.504, 1.772, 0),
+  },
+};
+
 export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
   initBaseScene(viz);
 
@@ -144,4 +155,6 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
     // Rotate the top glow cube
     topGlowCube.rotation.y += rotSpeed * tDiffSeconds;
   });
+
+  return { locations, spawnLocation: 'spawn' };
 };

@@ -10,45 +10,17 @@ import { Capsule } from 'three/examples/jsm/math/Capsule.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { getSentry } from '../sentry';
-import { SceneLoadersBySceneName } from './scenes';
+import { buildDefaultSceneConfig, ScenesByName } from './scenes';
 import * as Conf from './conf';
 
-export const buildViz = () => {
-  try {
-    screen.orientation.lock('landscape');
-  } catch (err) {
-    getSentry()?.captureException(err, {
-      extra: { msg: 'Failed to lock screen orientation to landscape' },
-    });
-  }
-
-  // TODO: Make dynamic based off screen size and stuff
-  const enableShadows = true;
-
-  const clock = new THREE.Clock();
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x020202);
-
-  const spawnPos = Conf.Locations.spawn;
-  // const spawnPos = Conf.Locations.bigCube;
-
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.rotation.order = 'YXZ';
-  camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = enableShadows;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.shadowMap.autoUpdate = false;
-  renderer.shadowMap.needsUpdate = true;
-
-  const stats = Stats.default();
-  stats.domElement.style.position = 'absolute';
-  stats.domElement.style.top = '0px';
-
+const setupFirstPerson = (
+  camera: THREE.Camera,
+  spawnPos: {
+    pos: THREE.Vector3;
+    rot: THREE.Vector3;
+  },
+  registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void
+) => {
   const GRAVITY = 40;
   const STEPS_PER_FRAME = 5;
 
@@ -89,15 +61,6 @@ export const buildViz = () => {
       camera.rotation.x -= event.movementY / 500;
     }
   });
-
-  window.addEventListener('resize', onWindowResize);
-
-  function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }
 
   function playerCollisions() {
     const result = worldOctree.capsuleIntersect(playerCollider);
@@ -189,6 +152,88 @@ export const buildViz = () => {
     }
   }
 
+  registerBeforeRenderCb((_curTimeSecs, tDiffSecs) => {
+    // we look for collisions in substeps to mitigate the risk of
+    // an object traversing another too quickly for detection.
+
+    for (let i = 0; i < STEPS_PER_FRAME; i++) {
+      controls(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
+
+      updatePlayer(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
+
+      teleportPlayerIfOob();
+    }
+  });
+
+  (window as any).getPos = () => playerCollider.start.toArray();
+  (window as any).getRot = () => camera.rotation.toArray();
+  (window as any).recordPos = () =>
+    JSON.stringify({
+      pos: playerCollider.start.toArray(),
+      rot: camera.rotation.toArray().slice(0, 3),
+    });
+
+  return worldOctree;
+};
+
+const setupOrbitControls = async (
+  canvas: HTMLCanvasElement,
+  camera: THREE.Camera,
+  pos: THREE.Vector3,
+  target: THREE.Vector3
+) => {
+  const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.1;
+  camera.position.set(pos.x, pos.y, pos.z);
+  controls.target.set(target.x, target.y, target.z);
+  controls.update();
+
+  (window as any).getView = () =>
+    console.log({ pos: camera.position.toArray(), target: controls.target.toArray() });
+};
+
+export const buildViz = () => {
+  try {
+    screen.orientation.lock('landscape');
+  } catch (err) {
+    getSentry()?.captureException(err, {
+      extra: { msg: 'Failed to lock screen orientation to landscape' },
+    });
+  }
+
+  const enableShadows = true;
+
+  const clock = new THREE.Clock();
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x020202);
+
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.rotation.order = 'YXZ';
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = enableShadows;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
+
+  const stats = Stats.default();
+  stats.domElement.style.position = 'absolute';
+  stats.domElement.style.top = '0px';
+
+  window.addEventListener('resize', onWindowResize);
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
   const beforeRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
   const afterRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
 
@@ -210,20 +255,28 @@ export const buildViz = () => {
     }
   };
 
+  let isBlurred = false;
+  let clockStopTime = 0;
+  window.addEventListener('blur', () => {
+    isBlurred = true;
+    clockStopTime = clock.getElapsedTime();
+    clock.stop();
+  });
+  window.addEventListener('focus', () => {
+    console.log('focus');
+    isBlurred = false;
+    clock.start();
+    clock.elapsedTime = clockStopTime;
+  });
+
   function animate() {
+    if (isBlurred) {
+      requestAnimationFrame(animate);
+      return;
+    }
+
     const deltaTime = clock.getDelta();
     const curTimeSeconds = clock.getElapsedTime();
-
-    // we look for collisions in substeps to mitigate the risk of
-    // an object traversing another too quickly for detection.
-
-    for (let i = 0; i < STEPS_PER_FRAME; i++) {
-      controls(Math.min(0.05, deltaTime / STEPS_PER_FRAME));
-
-      updatePlayer(Math.min(0.05, deltaTime / STEPS_PER_FRAME));
-
-      teleportPlayerIfOob();
-    }
 
     beforeRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
 
@@ -234,27 +287,25 @@ export const buildViz = () => {
     stats.update();
 
     requestAnimationFrame(animate);
-
-    (window as any).getPos = () => playerCollider.start.toArray();
-    (window as any).getRot = () => camera.rotation.toArray();
-    (window as any).recordPos = () =>
-      JSON.stringify({
-        pos: playerCollider.start.toArray(),
-        rot: camera.rotation.toArray().slice(0, 3),
-      });
   }
+
+  const onDestroy = () => {
+    renderer.dispose();
+    beforeRenderCbs.length = 0;
+    afterRenderCbs.length = 0;
+  };
 
   return {
     camera,
     renderer,
     stats,
     scene,
-    worldOctree,
     animate,
     registerBeforeRenderCb,
     unregisterBeforeRenderCb,
     registerAfterRenderCb,
     unregisterAfterRenderCb,
+    onDestroy,
   };
 };
 
@@ -277,13 +328,30 @@ export const initViz = (container: HTMLElement, sceneName: string = Conf.Default
       alert(`scene ${sceneName} not found in loaded gltf`);
       throw new Error(`Scene ${sceneName} not found in loaded gltf`);
     }
-    const getSceneLoader = SceneLoadersBySceneName[sceneName];
+    const { sceneLoader: getSceneLoader } = ScenesByName[sceneName];
     if (!getSceneLoader) {
       alert(`scene loader for scene ${sceneName} not found`);
       throw new Error(`Scene loader for scene ${sceneName} not found`);
     }
     const sceneLoader = await getSceneLoader();
-    await sceneLoader(viz, scene);
+    const sceneConf = {
+      ...buildDefaultSceneConfig(),
+      ...((await sceneLoader(viz, scene)) ?? {}),
+    };
+
+    let worldOctree: Octree | null = null;
+    if (sceneConf.viewMode.type === 'firstPerson') {
+      const spawnPos = sceneConf.locations[sceneConf.spawnLocation];
+      viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
+      worldOctree = setupFirstPerson(viz.camera, spawnPos, viz.registerBeforeRenderCb);
+    } else if (sceneConf.viewMode.type === 'orbit') {
+      await setupOrbitControls(
+        viz.renderer.domElement,
+        viz.camera,
+        sceneConf.viewMode.pos,
+        sceneConf.viewMode.target
+      );
+    }
 
     viz.scene.add(scene);
 
@@ -298,7 +366,7 @@ export const initViz = (container: HTMLElement, sceneName: string = Conf.Default
       const children = obj.children;
       obj.children = [];
       if (!(obj instanceof THREE.Group)) {
-        viz.worldOctree.fromGraphNode(obj);
+        worldOctree?.fromGraphNode(obj);
       }
       obj.children = children;
     };
@@ -317,7 +385,7 @@ export const initViz = (container: HTMLElement, sceneName: string = Conf.Default
 
   return {
     destroy() {
-      viz.renderer.dispose();
+      viz.onDestroy();
     },
   };
 };

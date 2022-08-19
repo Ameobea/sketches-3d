@@ -1,3 +1,5 @@
+use nanoserde::{DeJson, SerJson};
+use noise::{Fbm, MultiFractal, NoiseModule};
 use rand::{Rng, SeedableRng};
 use wasm_bindgen::prelude::*;
 
@@ -8,25 +10,60 @@ extern "C" {
 }
 
 const MAX_PARTICLE_COUNT: usize = 80_000;
-const PARTICLE_SPAWN_RATE_PER_SECOND: f32 = 300.;
 
 const TARGET_DISTANCE_FROM_CONDUIT_WALL: f32 = 1.;
 
-const DRAG_COEFFICIENT: f32 = 0.975;
-const CONDUIT_ACCELERATION_PER_SECOND: f32 = 70.1;
-
 type Vec3 = nalgebra::Vector3<f32>;
 
+#[derive(Clone, SerJson, DeJson)]
+pub struct ConduitParticlesConf {
+  pub conduit_radius: f32,
+  pub noise_frequency: f32,
+  pub noise_amplitude: f32,
+  pub drag_coefficient: f32,
+  pub conduit_acceleration_per_second: f32,
+  pub tidal_force_amplitude: f32,
+  pub tidal_force_frequency: f32,
+  pub particle_spawn_rate_per_second: f32,
+  pub conduit_twist_frequency: f32,
+  pub conduit_twist_amplitude: f32,
+  pub conduit_attraction_magnitude: f32,
+  pub noise_amplitude_modulation_frequency: f32,
+  pub noise_amplitude_modulation_amplitude: f32,
+}
+
+impl Default for ConduitParticlesConf {
+  fn default() -> Self {
+    ConduitParticlesConf {
+      conduit_radius: 3.,
+      noise_frequency: 2.8,
+      noise_amplitude: 220.,
+      drag_coefficient: 0.982,
+      conduit_acceleration_per_second: 100.1,
+      tidal_force_amplitude: 40.,
+      tidal_force_frequency: 2.,
+      particle_spawn_rate_per_second: 600.,
+      conduit_twist_frequency: 0.025,
+      conduit_twist_amplitude: 7.,
+      conduit_attraction_magnitude: 1.4,
+      noise_amplitude_modulation_frequency: 0.6,
+      noise_amplitude_modulation_amplitude: 1.,
+    }
+  }
+}
+
 pub struct ConduitParticlesState {
+  pub conf: ConduitParticlesConf,
+  pub conduit_ix: usize,
   pub rng: rand_pcg::Pcg64,
   pub time_since_last_particle_spawn: f32,
   pub conduit_start_pos: Vec3,
   pub conduit_end_pos: Vec3,
   pub conduit_vector_normalized: Vec3,
-  pub conduit_radius: f32,
   pub live_particle_count: usize,
   pub positions: Box<[Vec3; MAX_PARTICLE_COUNT]>,
   pub velocities: Box<[Vec3; MAX_PARTICLE_COUNT]>,
+  pub noise: noise::Fbm<f32>,
 }
 
 fn distance(a: &Vec3, b: &Vec3) -> f32 {
@@ -46,7 +83,7 @@ fn project_point_onto_line(conduit_vector_normalized: &Vec3, l1: &Vec3, point: &
 }
 
 impl ConduitParticlesState {
-  pub fn new(conduit_start_pos: Vec3, conduit_end_pos: Vec3, conduit_radius: f32) -> Self {
+  pub fn new(conduit_start_pos: Vec3, conduit_end_pos: Vec3, conduit_ix: usize) -> Self {
     let mut rng = rand_pcg::Pcg64::from_seed(unsafe {
       std::mem::transmute([8938u64, 7827385782u64, 101010101u64, 82392839u64])
     });
@@ -56,16 +93,26 @@ impl ConduitParticlesState {
       let _ = rng.gen::<f32>();
     }
 
+    let conf = ConduitParticlesConf::default();
+
+    let mut noise: Fbm<f32> = noise::Fbm::new();
+    noise = noise
+      .set_octaves(1)
+      .set_persistence(0.8)
+      .set_frequency(conf.noise_frequency);
+
     ConduitParticlesState {
+      conf,
+      conduit_ix,
       rng,
       time_since_last_particle_spawn: 0.,
       conduit_start_pos,
       conduit_end_pos,
       conduit_vector_normalized: (conduit_end_pos - conduit_start_pos).normalize(),
-      conduit_radius,
       live_particle_count: 0,
       positions: box [Vec3::zeros(); MAX_PARTICLE_COUNT],
       velocities: box [Vec3::zeros(); MAX_PARTICLE_COUNT],
+      noise,
     }
   }
 
@@ -87,7 +134,7 @@ impl ConduitParticlesState {
 
     let mut new_velocity = [0.0f32; 3];
     for coord in &mut new_velocity {
-      *coord += self.rng.gen_range(-10.01..10.01) + cur_time_secs.sin() * self.conduit_radius;
+      *coord += self.rng.gen_range(-10.01..10.01) + cur_time_secs.sin() * self.conf.conduit_radius;
     }
     self.velocities[particle_ix] = Vec3::new(new_velocity[0], new_velocity[1], new_velocity[2]);
   }
@@ -97,32 +144,52 @@ impl ConduitParticlesState {
 
     self.time_since_last_particle_spawn += time_diff_secs;
     let particles_to_spawn = (self.time_since_last_particle_spawn
-      * PARTICLE_SPAWN_RATE_PER_SECOND
+      * self.conf.particle_spawn_rate_per_second
       * spawn_rate_multiplier) as usize;
     self.time_since_last_particle_spawn -=
-      particles_to_spawn as f32 / PARTICLE_SPAWN_RATE_PER_SECOND;
+      particles_to_spawn as f32 / self.conf.particle_spawn_rate_per_second;
     for _ in 0..particles_to_spawn {
       self.spawn_particle(cur_time_secs);
     }
   }
 
+  #[inline(never)]
+  fn get_noise(&self, pos: &Vec3, cur_time_secs: f32) -> f32 {
+    self.noise.get([
+      pos.x * 0.012,
+      pos.y * 0.012,
+      pos.z * 0.012,
+      cur_time_secs * 0.06,
+    ]) as f32
+  }
+
+  #[inline(never)]
   fn update_velocities(&mut self, cur_time_secs: f32, time_diff_secs: f32) {
-    let extra_y_force = (cur_time_secs * 4.).sin();
-    let extra_x_force = (cur_time_secs * 4.).cos();
+    let tidal_force_y = (cur_time_secs * self.conf.tidal_force_frequency).sin();
+    let tidal_force_x = (cur_time_secs * self.conf.tidal_force_frequency).cos();
 
     for particle_ix in 0..self.live_particle_count {
-      let velocity = &mut self.velocities[particle_ix];
-      *velocity *= DRAG_COEFFICIENT;
-
       let pos = self.positions[particle_ix];
+      let noise = self.get_noise(&pos, cur_time_secs);
+
+      let velocity = &mut self.velocities[particle_ix];
+      *velocity *= self.conf.drag_coefficient;
+
       // Conduit center is represented as a line between the start and end points.
-      let projected_pos = project_point_onto_line(
+      let mut projected_pos = project_point_onto_line(
         &self.conduit_vector_normalized,
         &self.conduit_start_pos,
         &pos,
       );
+
+      // Offset projected pos based on distance from start point
+      let distance_from_start = distance(&self.conduit_start_pos, &pos);
+      projected_pos.y +=
+        (distance_from_start * self.conf.conduit_twist_frequency + cur_time_secs * 0.4).sin()
+          * self.conf.conduit_twist_amplitude;
+
       let distance_from_conduit_center = distance(&pos, &projected_pos);
-      let distance_from_conduit_wall = distance_from_conduit_center - self.conduit_radius;
+      let distance_from_conduit_wall = distance_from_conduit_center - self.conf.conduit_radius;
       // Negative if too close, positive if too far.
       let conduit_distance_error = distance_from_conduit_wall - TARGET_DISTANCE_FROM_CONDUIT_WALL;
 
@@ -130,7 +197,8 @@ impl ConduitParticlesState {
       // distance from the conduit wall. It will attract the particle
       // towards the conduit if it's too far away, and repel it if it's too
       // close.
-      let conduit_normal_force_magnitude = (distance_from_conduit_wall).powi(2) * 1.4;
+      let conduit_normal_force_magnitude =
+        (distance_from_conduit_wall).powi(2) * self.conf.conduit_attraction_magnitude;
       let conduit_normal_force_direction = (pos - projected_pos).normalize();
       let conduit_normal_force =
         conduit_normal_force_direction * conduit_normal_force_magnitude * -conduit_distance_error;
@@ -139,12 +207,20 @@ impl ConduitParticlesState {
       *velocity += conduit_normal_force * time_diff_secs;
 
       // Also apply force to move the particle along the conduit
-      let conduit_travel_force = self.conduit_vector_normalized * CONDUIT_ACCELERATION_PER_SECOND;
+      let conduit_travel_force =
+        self.conduit_vector_normalized * self.conf.conduit_acceleration_per_second;
       *velocity += conduit_travel_force * time_diff_secs;
 
-      velocity.y += extra_y_force * time_diff_secs * 40.;
-      velocity.y += -extra_y_force * time_diff_secs * 40.;
-      velocity.z += extra_x_force * time_diff_secs * 40.;
+      velocity.y += noise
+        * time_diff_secs
+        * self.conf.noise_amplitude
+        * (0.5
+          + ((cur_time_secs * self.conf.noise_amplitude_modulation_frequency).cos() * 0.5 + 0.5)
+            * self.conf.noise_amplitude_modulation_amplitude);
+
+      // velocity.y += extra_y_force * time_diff_secs * 40.;
+      velocity.x += -tidal_force_y * time_diff_secs * self.conf.tidal_force_amplitude;
+      velocity.z += tidal_force_x * time_diff_secs * self.conf.tidal_force_amplitude;
     }
   }
 
@@ -160,7 +236,12 @@ impl ConduitParticlesState {
     let mut particle_ix = 0;
     while particle_ix < self.live_particle_count {
       let pos = &self.positions[particle_ix];
-      let should_despawn: bool = false; // TODO
+      let should_despawn: bool = pos.x > 400.
+        || pos.z > 400.
+        || pos.x < -10_000.
+        || pos.y < -10_000.
+        || pos.z < -10_000.
+        || pos.y > 10_000.;
       if !should_despawn {
         particle_ix += 1;
         continue;
@@ -187,6 +268,11 @@ impl ConduitParticlesState {
       )
     }
   }
+
+  fn set_conf(&mut self, new_conf: ConduitParticlesConf) {
+    self.conf = new_conf.clone();
+    self.noise.frequency = new_conf.noise_frequency;
+  }
 }
 
 #[wasm_bindgen]
@@ -197,14 +283,14 @@ pub fn create_conduit_particles_state(
   conduit_end_x: f32,
   conduit_end_y: f32,
   conduit_end_z: f32,
-  conduit_radius: f32,
+  conduit_ix: usize,
 ) -> *mut ConduitParticlesState {
   std::panic::set_hook(Box::new(console_error_panic_hook::hook));
 
   Box::into_raw(box ConduitParticlesState::new(
     Vec3::new(conduit_start_x, conduit_start_y, conduit_start_z),
     Vec3::new(conduit_end_x, conduit_end_y, conduit_end_z),
-    conduit_radius,
+    conduit_ix,
   ))
 }
 
@@ -223,7 +309,18 @@ pub fn tick_conduit_particles(
   cur_time_secs: f32,
   time_diff_secs: f32,
 ) -> Vec<f32> {
-  let state: &'static mut _ = unsafe { &mut *state };
+  let state = unsafe { &mut *state };
   state.tick(cur_time_secs, time_diff_secs);
   state.get_positions().to_owned()
+}
+
+#[wasm_bindgen]
+pub fn set_conduit_conf(state: *mut ConduitParticlesState, conf_json: &str) {
+  let state = unsafe { &mut *state };
+  state.set_conf(DeJson::deserialize_json(conf_json).unwrap());
+}
+
+#[wasm_bindgen]
+pub fn get_default_conduit_conf_json() -> String {
+  ConduitParticlesConf::default().serialize_json()
 }
