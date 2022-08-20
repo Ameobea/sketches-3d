@@ -10,11 +10,13 @@ import { initBaseScene } from '../util';
 const buildControls = (
   defaultConfJson: string,
   onChange: (newConfJson: Record<string, number>) => void,
-  onColorChange: (newColor: number, colorIx: number) => void
+  onColorChange: (newColor: number, colorIx: number) => void,
+  engine: typeof import('../wasmComp/engine'),
+  ctxPtrs: number[]
 ) => {
   const defaultConf = JSON.parse(defaultConfJson);
 
-  const pane = new Pane();
+  const pane = new Pane({});
   pane.addInput({ color_0: 0x8a0606, theme: 'dark' }, 'color_0', { view: 'color' });
   pane.addInput({ color_1: 0xff2424, theme: 'dark' }, 'color_1', { view: 'color' });
   pane.addInput({ drag_coefficient: defaultConf['drag_coefficient'], theme: 'dark' }, 'drag_coefficient', {
@@ -27,8 +29,16 @@ const buildControls = (
   });
   pane.addInput({ noise_amplitude: defaultConf['noise_amplitude'], theme: 'dark' }, 'noise_amplitude', {
     min: 0,
-    max: 3000,
+    max: 10000,
   });
+  pane.addInput(
+    { noise_time_warp_speed: defaultConf['noise_time_warp_speed'], theme: 'dark' },
+    'noise_time_warp_speed',
+    {
+      min: 0,
+      max: 1,
+    }
+  );
   pane.addInput(
     { conduit_acceleration_per_second: defaultConf['conduit_acceleration_per_second'], theme: 'dark' },
     'conduit_acceleration_per_second',
@@ -57,7 +67,7 @@ const buildControls = (
     { particle_spawn_rate_per_second: defaultConf['particle_spawn_rate_per_second'], theme: 'dark' },
     'particle_spawn_rate_per_second',
     {
-      min: 0,
+      min: 1,
       max: 8000,
     }
   );
@@ -108,11 +118,22 @@ const buildControls = (
     'noise_amplitude_modulation_amplitude',
     {
       min: 0,
-      max: 5,
+      max: 8000,
     }
   );
 
   pane.element.parentElement!.style.width = '430px';
+
+  const binds = { 'particle count': 1 };
+  setInterval(() => {
+    let renderedParticleCount = 0;
+    for (const ctxPtr of ctxPtrs) {
+      renderedParticleCount += engine.get_current_conduit_rendered_particle_count(ctxPtr);
+    }
+    binds['particle count'] = renderedParticleCount;
+    pane.refresh();
+  }, 500);
+  pane.addMonitor(binds, 'particle count', {});
 
   const curConf = { ...defaultConf };
   const saveButton = pane.addButton({
@@ -318,7 +339,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       } else {
         conduitParticles2.material.color.set(newColor);
       }
-    }
+    },
+    engine,
+    [conduitStatePtr, conduitStatePtr2]
   );
 
   return {

@@ -20,6 +20,7 @@ pub struct ConduitParticlesConf {
   pub conduit_radius: f32,
   pub noise_frequency: f32,
   pub noise_amplitude: f32,
+  pub noise_time_warp_speed: f32,
   pub drag_coefficient: f32,
   pub conduit_acceleration_per_second: f32,
   pub tidal_force_amplitude: f32,
@@ -35,19 +36,20 @@ pub struct ConduitParticlesConf {
 impl Default for ConduitParticlesConf {
   fn default() -> Self {
     ConduitParticlesConf {
-      conduit_radius: 3.,
-      noise_frequency: 2.8,
-      noise_amplitude: 220.,
-      drag_coefficient: 0.982,
-      conduit_acceleration_per_second: 100.1,
-      tidal_force_amplitude: 40.,
-      tidal_force_frequency: 2.,
-      particle_spawn_rate_per_second: 600.,
-      conduit_twist_frequency: 0.025,
-      conduit_twist_amplitude: 7.,
-      conduit_attraction_magnitude: 1.4,
-      noise_amplitude_modulation_frequency: 0.6,
-      noise_amplitude_modulation_amplitude: 1.,
+      conduit_radius: 6.96,
+      noise_frequency: 2.,
+      noise_amplitude: 1760.,
+      noise_time_warp_speed: 0.1,
+      drag_coefficient: 0.968,
+      conduit_acceleration_per_second: 154.,
+      tidal_force_amplitude: 80.,
+      tidal_force_frequency: 1.83,
+      particle_spawn_rate_per_second: 3000.,
+      conduit_twist_frequency: 0.022,
+      conduit_twist_amplitude: 12.,
+      conduit_attraction_magnitude: 0.66,
+      noise_amplitude_modulation_frequency: 1.5,
+      noise_amplitude_modulation_amplitude: 400.,
     }
   }
 }
@@ -63,11 +65,12 @@ pub struct ConduitParticlesState {
   pub live_particle_count: usize,
   pub positions: Box<[Vec3; MAX_PARTICLE_COUNT]>,
   pub velocities: Box<[Vec3; MAX_PARTICLE_COUNT]>,
-  pub noise: noise::Fbm<f32>,
+  pub noise: noise::Perlin,
+  pub perm_table: noise::PermutationTable,
 }
 
 fn distance(a: &Vec3, b: &Vec3) -> f32 {
-  (a.x - b.x).hypot(a.y - b.y)
+  ((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z)).sqrt()
 }
 
 /// Adapted from https://math.stackexchange.com/a/1905794/428311
@@ -95,11 +98,7 @@ impl ConduitParticlesState {
 
     let conf = ConduitParticlesConf::default();
 
-    let mut noise: Fbm<f32> = noise::Fbm::new();
-    noise = noise
-      .set_octaves(1)
-      .set_persistence(0.8)
-      .set_frequency(conf.noise_frequency);
+    let mut noise = noise::Perlin::new();
 
     ConduitParticlesState {
       conf,
@@ -113,6 +112,7 @@ impl ConduitParticlesState {
       positions: box [Vec3::zeros(); MAX_PARTICLE_COUNT],
       velocities: box [Vec3::zeros(); MAX_PARTICLE_COUNT],
       noise,
+      perm_table: noise::PermutationTable::new(256),
     }
   }
 
@@ -155,12 +155,20 @@ impl ConduitParticlesState {
 
   #[inline(never)]
   fn get_noise(&self, pos: &Vec3, cur_time_secs: f32) -> f32 {
-    self.noise.get([
-      pos.x * 0.012,
-      pos.y * 0.012,
-      pos.z * 0.012,
-      cur_time_secs * 0.06,
-    ]) as f32
+    // self.noise.get([
+    //   pos.x * 0.012 * self.conf.noise_frequency + cur_time_secs *
+    // self.conf.noise_time_warp_speed,   pos.y * 0.012 *
+    // self.conf.noise_frequency + cur_time_secs * self.conf.noise_time_warp_speed,
+    //   pos.z * 0.012 * self.conf.noise_frequency + cur_time_secs *
+    // self.conf.noise_time_warp_speed, ]) as f32
+    noise::open_simplex3(
+      &self.perm_table,
+      &[
+        pos.x * 0.012 * self.conf.noise_frequency + cur_time_secs * self.conf.noise_time_warp_speed,
+        pos.y * 0.012 * self.conf.noise_frequency + cur_time_secs * self.conf.noise_time_warp_speed,
+        pos.z * 0.012 * self.conf.noise_frequency + cur_time_secs * self.conf.noise_time_warp_speed,
+      ],
+    )
   }
 
   #[inline(never)]
@@ -197,8 +205,9 @@ impl ConduitParticlesState {
       // distance from the conduit wall. It will attract the particle
       // towards the conduit if it's too far away, and repel it if it's too
       // close.
-      let conduit_normal_force_magnitude =
-        (distance_from_conduit_wall).powi(2) * self.conf.conduit_attraction_magnitude;
+      let conduit_normal_force_magnitude = distance_from_conduit_wall
+        * distance_from_conduit_wall
+        * self.conf.conduit_attraction_magnitude;
       let conduit_normal_force_direction = (pos - projected_pos).normalize();
       let conduit_normal_force =
         conduit_normal_force_direction * conduit_normal_force_magnitude * -conduit_distance_error;
@@ -211,12 +220,12 @@ impl ConduitParticlesState {
         self.conduit_vector_normalized * self.conf.conduit_acceleration_per_second;
       *velocity += conduit_travel_force * time_diff_secs;
 
-      velocity.y += noise
-        * time_diff_secs
-        * self.conf.noise_amplitude
-        * (0.5
-          + ((cur_time_secs * self.conf.noise_amplitude_modulation_frequency).cos() * 0.5 + 0.5)
-            * self.conf.noise_amplitude_modulation_amplitude);
+      let mut noise_amplitude = self.conf.noise_amplitude;
+      noise_amplitude += (cur_time_secs * self.conf.noise_amplitude_modulation_frequency).sin()
+        * self.conf.noise_amplitude_modulation_amplitude;
+
+      let noise = noise * time_diff_secs * noise_amplitude;
+      velocity.y += noise;
 
       // velocity.y += extra_y_force * time_diff_secs * 40.;
       velocity.x += -tidal_force_y * time_diff_secs * self.conf.tidal_force_amplitude;
@@ -271,7 +280,6 @@ impl ConduitParticlesState {
 
   fn set_conf(&mut self, new_conf: ConduitParticlesConf) {
     self.conf = new_conf.clone();
-    self.noise.frequency = new_conf.noise_frequency;
   }
 }
 
@@ -323,4 +331,10 @@ pub fn set_conduit_conf(state: *mut ConduitParticlesState, conf_json: &str) {
 #[wasm_bindgen]
 pub fn get_default_conduit_conf_json() -> String {
   ConduitParticlesConf::default().serialize_json()
+}
+
+#[wasm_bindgen]
+pub fn get_current_conduit_rendered_particle_count(state: *mut ConduitParticlesState) -> usize {
+  let state = unsafe { &mut *state };
+  state.live_particle_count
 }

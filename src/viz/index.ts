@@ -198,9 +198,7 @@ export const buildViz = () => {
   try {
     screen.orientation.lock('landscape');
   } catch (err) {
-    getSentry()?.captureException(err, {
-      extra: { msg: 'Failed to lock screen orientation to landscape' },
-    });
+    // pass
   }
 
   const enableShadows = true;
@@ -311,7 +309,7 @@ export const buildViz = () => {
 
 export type VizState = ReturnType<typeof buildViz>;
 
-export const initViz = (container: HTMLElement, sceneName: string = Conf.DefaultSceneName) => {
+export const initViz = (container: HTMLElement, providedSceneName: string = Conf.DefaultSceneName) => {
   const viz = buildViz();
 
   container.appendChild(viz.renderer.domElement);
@@ -322,17 +320,16 @@ export const initViz = (container: HTMLElement, sceneName: string = Conf.Default
   const loader = new GLTFLoader().setPath('/');
 
   loader.load('dream.gltf', async gltf => {
-    sceneName = sceneName.toLowerCase();
+    providedSceneName = providedSceneName.toLowerCase();
+
+    const { sceneName, sceneLoader: getSceneLoader } = ScenesByName[providedSceneName];
     const scene = gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase());
+
     if (!scene) {
       alert(`scene ${sceneName} not found in loaded gltf`);
       throw new Error(`Scene ${sceneName} not found in loaded gltf`);
     }
-    const { sceneLoader: getSceneLoader } = ScenesByName[sceneName];
-    if (!getSceneLoader) {
-      alert(`scene loader for scene ${sceneName} not found`);
-      throw new Error(`Scene loader for scene ${sceneName} not found`);
-    }
+
     const sceneLoader = await getSceneLoader();
     const sceneConf = {
       ...buildDefaultSceneConfig(),

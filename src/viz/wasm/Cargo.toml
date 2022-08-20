@@ -16,6 +16,7 @@ console_error_panic_hook = "0.1"
 # using an older version because new versions don't allow f32 noise anymore
 noise = "0.4"
 nanoserde = "0.1"
+fastapprox = "0.3"
 
 [profile.release]
 lto = true
