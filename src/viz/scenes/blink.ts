@@ -123,6 +123,12 @@ const buildControls = (
   );
 
   pane.element.parentElement!.style.width = '430px';
+  window.addEventListener('keydown', evt => {
+    if (evt.key === 'h') {
+      pane.element.parentElement!.style.display =
+        pane.element.parentElement!.style.display === 'none' ? '' : 'none';
+    }
+  });
 
   const binds = { 'particle count': 1 };
   setInterval(() => {
@@ -212,7 +218,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const conduitStartPos = new THREE.Vector3(-50, 40, -50);
   const conduitEndPos = new THREE.Vector3(100, 40, -100);
-  const conduitRaduis = 3.5;
 
   // const conduitMesh = new THREE.Mesh(
   //   new THREE.TubeBufferGeometry(
@@ -240,22 +245,33 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   // conduitEndCube.position.copy(conduitEndPos);
   // viz.scene.add(conduitEndCube);
 
+  const MAX_PARTICLE_COUNT = 80_000;
   const conduitParticles = new THREE.InstancedMesh(
     new THREE.BoxBufferGeometry(1.3, 1.3, 1.3),
-    new THREE.MeshStandardMaterial({ color: 0x8a0606, metalness: 0.8, roughness: 1 }),
-    80_000
+    // new THREE.MeshStandardMaterial({ color: 0x8a0606, metalness: 0.8, roughness: 1 }),
+    new THREE.MeshBasicMaterial({}),
+    MAX_PARTICLE_COUNT
   );
-  conduitParticles.count;
+  const instanceColorBuffer = new Uint8ClampedArray(MAX_PARTICLE_COUNT * 3);
+  const instanceColor = new THREE.InstancedBufferAttribute(instanceColorBuffer, 3, true);
+  conduitParticles.instanceColor = instanceColor;
+  instanceColor.count = 0;
   conduitParticles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  conduitParticles.instanceColor.setUsage(THREE.DynamicDrawUsage);
   viz.scene.add(conduitParticles);
 
   const conduitParticles2 = new THREE.InstancedMesh(
     new THREE.BoxBufferGeometry(1.3, 1.3, 1.3),
-    new THREE.MeshStandardMaterial({ color: 0xff2424, metalness: 0.8, roughness: 1 }),
-    80_000
+    // new THREE.MeshStandardMaterial({ color: 0xff2424, metalness: 0.8, roughness: 1 }),
+    new THREE.MeshBasicMaterial({}),
+    MAX_PARTICLE_COUNT
   );
-  conduitParticles2.count;
+  const instanceColorBuffer2 = new Uint8ClampedArray(MAX_PARTICLE_COUNT * 3);
+  const instanceColor2 = new THREE.InstancedBufferAttribute(instanceColorBuffer2, 3, true);
+  instanceColor2.count = 0;
+  conduitParticles2.instanceColor = instanceColor2;
   conduitParticles2.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  conduitParticles2.instanceColor.setUsage(THREE.DynamicDrawUsage);
   viz.scene.add(conduitParticles2);
 
   const conduitStatePtr = engine.create_conduit_particles_state(
@@ -281,9 +297,15 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
     const newPositions = engine.tick_conduit_particles(conduitStatePtr, curTimeSecs, tDiffSecs);
     conduitParticles.count = newPositions.length / 3;
+    const newColors = engine.get_conduit_particle_colors(conduitStatePtr);
+    (conduitParticles.instanceColor!.array as Uint8Array).set(newColors);
+    conduitParticles.instanceColor!.needsUpdate = true;
 
     const newPositions2 = engine.tick_conduit_particles(conduitStatePtr2, curTimeSecs, tDiffSecs);
     conduitParticles2.count = newPositions2.length / 3;
+    const newColors2 = engine.get_conduit_particle_colors(conduitStatePtr2);
+    (conduitParticles2.instanceColor!.array as Uint8Array).set(newColors2);
+    conduitParticles2.instanceColor!.needsUpdate = true;
 
     const jitter = Math.pow((Math.sin(curTimeSecs) + 1) / 2, 1.5);
 

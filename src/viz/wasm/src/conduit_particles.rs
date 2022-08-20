@@ -15,6 +15,72 @@ const TARGET_DISTANCE_FROM_CONDUIT_WALL: f32 = 1.;
 
 type Vec3 = nalgebra::Vector3<f32>;
 
+const RADAR_COLORS: &[[u8; 3]] = &[
+  [0, 100, 100],
+  // [0, 155, 155],
+  [0, 255, 255],
+  [0x00, 0x9e, 0xff],
+  [0x00, 0x00, 0xff],
+  [0x02, 0x83, 0xb1],
+  [0x00, 0xff, 0x00],
+  [0x01, 0xb1, 0x0c],
+  [0xff, 0xd7, 0x00],
+  [0xff, 0x99, 0x00],
+  [0xff, 0x00, 0x00],
+  [0xde, 0x00, 0x14],
+  [0xbe, 0x00, 0x33],
+  [0x79, 0x00, 0x6d],
+  [0x79, 0x30, 0xa1],
+  [0xc4, 0xa4, 0xd5],
+];
+
+// vec3 colors[5] = vec3[5](
+//   vec3(0, 0, 4),
+//   vec3(46, 8, 1),
+//   vec3(105, 7, 2),
+//   // vec3(31, 17, 87),
+//   vec3(73, 2, 2),
+//   vec3(43, 2, 2)
+//   // vec3(65, 32, 129),
+//   // vec3(18, 57, 73),
+//   // vec3(33, 49, 136)
+// );
+
+const RED_COLORS: &[[u8; 3]] = &[
+  [0, 0, 8],
+  [46 * 2, 8 * 2, 1 * 2],
+  [105 * 2, 7 * 2, 2 * 2],
+  [73 * 2, 2 * 2, 2 * 2],
+  [43 * 2, 2 * 2, 2 * 2],
+];
+
+const HEAT_COLORS: &[[u8; 3]] = &[
+  [69, 38, 12],
+  [135, 50, 7],
+  [145, 123, 22],
+  [145, 22, 22],
+  [230, 21, 21],
+  [204, 98, 98],
+];
+
+fn clamp(min: f32, max: f32, value: f32) -> f32 {
+  if value < min {
+    min
+  } else if value > max {
+    max
+  } else {
+    value
+  }
+}
+
+fn mix_colors(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+  [
+    (a[0] as f32 * (1. - t) + b[0] as f32 * t) as u8,
+    (a[1] as f32 * (1. - t) + b[1] as f32 * t) as u8,
+    (a[2] as f32 * (1. - t) + b[2] as f32 * t) as u8,
+  ]
+}
+
 #[derive(Clone, SerJson, DeJson)]
 pub struct ConduitParticlesConf {
   pub conduit_radius: f32,
@@ -281,6 +347,37 @@ impl ConduitParticlesState {
   fn set_conf(&mut self, new_conf: ConduitParticlesConf) {
     self.conf = new_conf.clone();
   }
+
+  fn get_particle_color(velocity: &Vec3) -> [u8; 3] {
+    let velocity_range = [0., 650.];
+    let velocity_magnitude = velocity.magnitude();
+    // Clamp velocity magnitude to range.
+    let velocity_magnitude = clamp(velocity_range[0], velocity_range[1], velocity_magnitude);
+
+    let colors = RADAR_COLORS;
+    // Map from `velocity_range` to [0, colors.len() - 1]
+    let color_ix = (velocity_magnitude - velocity_range[0])
+      / (velocity_range[1] - velocity_range[0])
+      * (colors.len() as f32 - 1.);
+    let color_ix_floor = color_ix.floor();
+    let color_ix_fract = color_ix - color_ix_floor;
+    let color_0_ix = color_ix_floor as usize;
+    let color_1_ix = color_0_ix + 1;
+    let color_0 = colors[color_0_ix];
+    let color_1 = colors.get(color_1_ix).copied().unwrap_or([0, 0, 0]);
+    let color = mix_colors(color_0, color_1, color_ix_fract);
+    color
+  }
+
+  pub fn get_particle_colors(&self) -> Vec<u8> {
+    let mut colors: Vec<u8> = Vec::with_capacity(self.live_particle_count * 4);
+    for particle_ix in 0..self.live_particle_count {
+      let velocity = &self.velocities[particle_ix];
+      let particle_color = Self::get_particle_color(velocity);
+      colors.extend_from_slice(&particle_color);
+    }
+    colors
+  }
 }
 
 #[wasm_bindgen]
@@ -337,4 +434,10 @@ pub fn get_default_conduit_conf_json() -> String {
 pub fn get_current_conduit_rendered_particle_count(state: *mut ConduitParticlesState) -> usize {
   let state = unsafe { &mut *state };
   state.live_particle_count
+}
+
+#[wasm_bindgen]
+pub fn get_conduit_particle_colors(state: *mut ConduitParticlesState) -> Vec<u8> {
+  let state = unsafe { &mut *state };
+  state.get_particle_colors().to_owned()
 }
