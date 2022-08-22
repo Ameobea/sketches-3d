@@ -3,9 +3,6 @@ import * as THREE from 'three';
 import type { VizState } from '.';
 
 export const initBaseScene = (viz: VizState) => {
-  // Add close fog
-  viz.scene.fog = new THREE.Fog(0x030303, 50, 215);
-
   // Add lights
   const light = new THREE.DirectionalLight(0xffffff, 1.5);
   light.position.set(80, 60, 80);

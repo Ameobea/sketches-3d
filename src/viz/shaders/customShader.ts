@@ -1,8 +1,8 @@
-import * as THREE from "three";
-import { UniformsLib } from "three";
+import * as THREE from 'three';
+import { UniformsLib } from 'three';
 
-import noiseShaders from "./noise.frag?raw";
-import commonShaderCode from "./common.frag?raw";
+import noiseShaders from './noise.frag?raw';
+import commonShaderCode from './common.frag?raw';
 
 const buildNoiseTexture = (): THREE.DataTexture => {
   const noise = new Float32Array(256 * 256 * 4);
@@ -26,15 +26,50 @@ const buildNoiseTexture = (): THREE.DataTexture => {
   return texture;
 };
 
+const AntialiasedRoughnessShaderFragment = `
+  float acc = 0.;
+  // 2x oversampling
+  for (int i = 0; i < 2; i++) {
+    for (int j = 0; j < 2; j++) {
+      for (int k = 0; k < 2; k++) {
+        vec3 offsetPos = fragPos;
+        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
+        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
+        acc += getCustomRoughness(offsetPos, vNormalAbsolute, curTimeSeconds);
+      }
+    }
+  }
+  acc /= 8.;
+  roughnessFactor = acc;
+`;
+
+const NonAntialiasedRoughnessShaderFragment = `roughnessFactor = roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, curTimeSeconds);`;
+
+const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
+  if (antialiasRoughnessShader) {
+    return AntialiasedRoughnessShaderFragment;
+  }
+
+  return NonAntialiasedRoughnessShaderFragment;
+};
+
 interface CustomShaderProps {
   roughness: number;
   metalness: number;
   color: THREE.Color;
+  normalScale?: number;
 }
 
 export const buildCustomShader = (
-  { roughness, metalness, color }: CustomShaderProps,
-  customShaderCode: string
+  { roughness, metalness, color, normalScale = 1 }: CustomShaderProps,
+  colorShader: string,
+  { normalShader, roughnessShader }: { normalShader?: string; roughnessShader?: string } = {},
+  {
+    antialiasColorShader,
+    antialiasRoughnessShader,
+  }: { antialiasColorShader?: boolean; antialiasRoughnessShader?: boolean } = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
@@ -56,19 +91,19 @@ export const buildCustomShader = (
       envMapIntensity: { value: 1 }, // temporary
     },
   ]);
-  uniforms.normalScale = { type: "v2", value: new THREE.Vector2(7.0, 7.0) };
+  uniforms.normalScale = { type: 'v2', value: new THREE.Vector2(normalScale, normalScale) };
 
   // uniforms.noiseSampler = { type: "t", value: buildNoiseTexture() };
-  uniforms.roughness = { type: "f", value: roughness };
-  uniforms.metalness = { type: "f", value: metalness };
-  uniforms.ior = { type: "f", value: 1.5 };
-  uniforms.clearcoat = { type: "f", value: 0.0 };
-  uniforms.clearcoatRoughness = { type: "f", value: 0.0 };
-  uniforms.clearcoatNormal = { type: "f", value: 0.0 };
-  uniforms.transmission = { type: "f", value: 0.0 };
+  uniforms.roughness = { type: 'f', value: roughness };
+  uniforms.metalness = { type: 'f', value: metalness };
+  uniforms.ior = { type: 'f', value: 1.5 };
+  uniforms.clearcoat = { type: 'f', value: 0.0 };
+  uniforms.clearcoatRoughness = { type: 'f', value: 0.0 };
+  uniforms.clearcoatNormal = { type: 'f', value: 0.0 };
+  uniforms.transmission = { type: 'f', value: 0.0 };
 
-  uniforms.curTimeSeconds = { type: "f", value: 0.0 };
-  uniforms.diffuse = { type: "c", value: color };
+  uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
+  uniforms.diffuse = { type: 'c', value: color };
 
   return {
     fog: true,
@@ -77,9 +112,9 @@ export const buildCustomShader = (
     uniforms,
     vertexShader: `#define STANDARD
     varying vec3 vViewPosition;
-    #ifdef USE_TRANSMISSION
+    // #ifdef USE_TRANSMISSION
       varying vec3 vWorldPosition;
-    #endif
+    // #endif
     #include <common>
     #include <uv_pars_vertex>
     #include <uv2_pars_vertex>
@@ -97,7 +132,7 @@ export const buildCustomShader = (
     varying vec3 vNormalAbsolute;
 
     void main() {
-      pos = position;
+      // pos = position;
       vNormalAbsolute = normal;
 
       #include <uv_vertex>
@@ -121,9 +156,12 @@ export const buildCustomShader = (
       #include <worldpos_vertex>
       #include <shadowmap_vertex>
       #include <fog_vertex>
-    #ifdef USE_TRANSMISSION
+    // #ifdef USE_TRANSMISSION
+      vec4 worldPosition = vec4( transformed, 1.0 );
+      worldPosition = modelMatrix * worldPosition;
       vWorldPosition = worldPosition.xyz;
-    #endif
+      pos = vWorldPosition;
+    // #endif
     }`,
     fragmentShader: `
 #define STANDARD
@@ -204,17 +242,53 @@ varying vec3 vViewPosition;
 
 uniform float curTimeSeconds;
 varying vec3 pos;
+varying vec3 vWorldPosition;
 varying vec3 vNormalAbsolute;
+${normalShader ? 'uniform mat3 normalMatrix;' : ''}
+
+struct SceneCtx {
+  vec3 cameraPosition;
+};
 
 ${commonShaderCode}
 ${noiseShaders}
-${customShaderCode}
+${colorShader}
+${normalShader ?? ''}
+${roughnessShader ?? ''}
 
 void main() {
 	#include <clipping_planes_fragment>
 
-	vec4 diffuseColor = vec4( diffuse, opacity );
-  diffuseColor.xyz = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds);
+  vec3 fragPos = vWorldPosition;
+  vec3 cameraPos = cameraPosition;
+  float distanceToCamera = distance(cameraPos, fragPos);
+  float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
+
+  vec4 diffuseColor = vec4(diffuse, opacity);
+
+  SceneCtx ctx = SceneCtx(cameraPosition);
+  ${
+    antialiasColorShader
+      ? `
+  vec3 acc = vec3(0.);
+  // 2x oversampling
+  for (int i = 0; i < 2; i++) {
+    for (int j = 0; j < 2; j++) {
+      for (int k = 0; k < 2; k++) {
+        vec3 offsetPos = fragPos;
+        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
+        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
+        acc += getFragColor(diffuseColor.xyz, offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
+      }
+    }
+  }
+  acc /= 8.;
+  diffuseColor.xyz = acc;`
+      : `
+  diffuseColor.xyz = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`
+  }
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
@@ -229,6 +303,18 @@ void main() {
 	#include <normal_fragment_maps>
 	#include <clearcoat_normal_fragment_begin>
 	#include <clearcoat_normal_fragment_maps>
+
+  ${
+    normalShader
+      ? `
+  normal = getCustomNormal(pos, vNormalAbsolute, curTimeSeconds);
+  normal = normalize(normalMatrix * normal);
+  `
+      : ''
+  }
+
+  ${roughnessShader ? buildRoughnessShaderFragment() : ''}
+
 	#include <emissivemap_fragment>
 	// accumulation
 	#include <lights_physical_fragment>

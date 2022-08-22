@@ -1,4 +1,4 @@
-vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds) {
+vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   // rotating color using sine based on position.x
   // float r = sin(pos.x * 0.1) * 0.5 + 0.5;
   // float g = sin(pos.x * 0.1 + 1.0) * 0.5 + 0.5;

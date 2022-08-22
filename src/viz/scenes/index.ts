@@ -11,6 +11,7 @@ export interface SceneConfig {
     };
   };
   spawnLocation: string;
+  debugPos?: boolean;
 }
 
 export const buildDefaultSceneConfig = () => ({
@@ -56,4 +57,9 @@ export const ScenesByName: {
   },
   blink: ParticleConduit,
   particle_conduit: ParticleConduit,
+  walkways: {
+    sceneName: 'walkways',
+    sceneLoader: () => import('./walkways').then(mod => mod.processLoadedScene),
+    metadata: { title: 'walkways' },
+  },
 };

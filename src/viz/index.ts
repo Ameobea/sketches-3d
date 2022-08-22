@@ -37,7 +37,7 @@ const setupFirstPerson = (
 
   let playerOnFloor = false;
 
-  const keyStates = {};
+  const keyStates: Record<string, boolean> = {};
 
   document.addEventListener('keydown', event => {
     if (event.key === 'e') {
@@ -78,7 +78,7 @@ const setupFirstPerson = (
     }
   }
 
-  function updatePlayer(deltaTime) {
+  function updatePlayer(deltaTime: number) {
     let damping = Math.exp(-4 * deltaTime) - 1;
 
     if (!playerOnFloor) {
@@ -90,8 +90,10 @@ const setupFirstPerson = (
 
     playerVelocity.addScaledVector(playerVelocity, damping);
 
+    // if (playerVelocity.lengthSq() > 0.1) {
     const deltaPosition = playerVelocity.clone().multiplyScalar(deltaTime);
     playerCollider.translate(deltaPosition);
+    // }
 
     playerCollisions();
 
@@ -115,7 +117,7 @@ const setupFirstPerson = (
     return playerDirection;
   }
 
-  function controls(deltaTime) {
+  function controls(deltaTime: number) {
     // gives a bit of air control
     const speedDelta = deltaTime * (playerOnFloor ? 40 : 9);
 
@@ -209,6 +211,7 @@ export const buildViz = () => {
   scene.background = new THREE.Color(0x020202);
 
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.matrixAutoUpdate = true;
   camera.rotation.order = 'YXZ';
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -261,7 +264,6 @@ export const buildViz = () => {
     clock.stop();
   });
   window.addEventListener('focus', () => {
-    console.log('focus');
     isBlurred = false;
     clock.start();
     clock.elapsedTime = clockStopTime;
@@ -323,12 +325,8 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     providedSceneName = providedSceneName.toLowerCase();
 
     const { sceneName, sceneLoader: getSceneLoader } = ScenesByName[providedSceneName];
-    const scene = gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase());
-
-    if (!scene) {
-      alert(`scene ${sceneName} not found in loaded gltf`);
-      throw new Error(`Scene ${sceneName} not found in loaded gltf`);
-    }
+    const scene =
+      gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group();
 
     const sceneLoader = await getSceneLoader();
     const sceneConf = {
@@ -352,12 +350,25 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
     viz.scene.add(scene);
 
-    (window as any).ctx = viz.renderer.getContext();
-    (window as any).renderer = viz.renderer;
+    if (sceneConf.debugPos) {
+      const posDisplayElem = document.createElement('div');
+      posDisplayElem.style.position = 'absolute';
+      posDisplayElem.style.top = '0px';
+      posDisplayElem.style.right = '0px';
+      posDisplayElem.style.color = 'white';
+      posDisplayElem.style.fontSize = '12px';
+      posDisplayElem.style.fontFamily = 'monospace';
+      posDisplayElem.style.padding = '4px';
+      posDisplayElem.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+      posDisplayElem.style.zIndex = '1';
+      container.appendChild(posDisplayElem);
 
-    viz.scene.add(scene);
-
-    viz.scene.getObjectByName('instance')?.removeFromParent();
+      viz.registerBeforeRenderCb(() => {
+        posDisplayElem.innerText = `${viz.camera.position.x.toFixed(2)}, ${viz.camera.position.y.toFixed(
+          2
+        )}, ${viz.camera.position.z.toFixed(2)}`;
+      });
+    }
 
     const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
       const children = obj.children;

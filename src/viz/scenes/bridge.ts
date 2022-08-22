@@ -43,6 +43,9 @@ const locations = {
 export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
   initBaseScene(viz);
 
+  // Add close fog
+  viz.scene.fog = new THREE.Fog(0x030303, 50, 215);
+
   const bridge = loadedWorld.getObjectByName('bridge') as THREE.Mesh;
   buildBridge(viz, bridge);
 
