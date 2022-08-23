@@ -193,7 +193,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   //       metalness: 0.6,
   //       color: new THREE.Color(0x020202),
   //     },
-  //     redNoiseShader
+  //     { colorShader: redNoiseShader }
   //   )
   // );
   // ground.material = groundMat;

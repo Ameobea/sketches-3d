@@ -62,4 +62,9 @@ export const ScenesByName: {
     sceneLoader: () => import('./walkways').then(mod => mod.processLoadedScene),
     metadata: { title: 'walkways' },
   },
+  subdivided: {
+    sceneName: 'subdivided',
+    sceneLoader: () => import('./subdivided').then(mod => mod.processLoadedScene),
+    metadata: { title: 'subdivided' },
+  },
 };

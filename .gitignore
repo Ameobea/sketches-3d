@@ -9,3 +9,6 @@ node_modules
 *.blend1
 src/viz/wasmComp/*
 !src/viz/wasmComp/.gitkeep
+static/*.bin
+static/*.gltf
+static/*.glb

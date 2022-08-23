@@ -19,7 +19,7 @@ const buildBridge = (viz: VizState, bridge: THREE.Mesh) => {
         metalness: 0.0,
         color: new THREE.Color(0x333333),
       },
-      bridgeShader
+      { colorShader: bridgeShader }
     )
   );
   bridge.material.needsUpdate = true;
@@ -62,7 +62,7 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
         metalness: 0.1,
         color: new THREE.Color(0x020202),
       },
-      bigCubeShader
+      { colorShader: bigCubeShader }
     )
   );
   bigCubeMat.needsUpdate = true;
@@ -75,7 +75,7 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
         metalness: 0.1,
         color: new THREE.Color(0x020202),
       },
-      redNoiseShader
+      { colorShader: redNoiseShader }
     )
   );
   treeMat.needsUpdate = true;

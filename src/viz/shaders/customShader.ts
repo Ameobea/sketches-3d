@@ -56,16 +56,25 @@ const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
 };
 
 interface CustomShaderProps {
-  roughness: number;
-  metalness: number;
-  color: THREE.Color;
+  roughness?: number;
+  metalness?: number;
+  color?: THREE.Color;
   normalScale?: number;
 }
 
 export const buildCustomShader = (
-  { roughness, metalness, color, normalScale = 1 }: CustomShaderProps,
-  colorShader: string,
-  { normalShader, roughnessShader }: { normalShader?: string; roughnessShader?: string } = {},
+  { roughness = 0.9, metalness = 0, color = new THREE.Color(0xcbcbcb), normalScale = 1 }: CustomShaderProps,
+  {
+    customVertexFragment,
+    colorShader,
+    normalShader,
+    roughnessShader,
+  }: {
+    customVertexFragment?: string;
+    colorShader?: string;
+    normalShader?: string;
+    roughnessShader?: string;
+  } = {},
   {
     antialiasColorShader,
     antialiasRoughnessShader,
@@ -76,24 +85,23 @@ export const buildCustomShader = (
     UniformsLib.envmap,
     UniformsLib.aomap,
     UniformsLib.lightmap,
-    UniformsLib.emissivemap,
-    UniformsLib.bumpmap,
-    UniformsLib.normalmap,
+    // UniformsLib.emissivemap,
+    // UniformsLib.bumpmap,
+    // UniformsLib.normalmap,
     UniformsLib.displacementmap,
-    UniformsLib.roughnessmap,
-    UniformsLib.metalnessmap,
+    // UniformsLib.roughnessmap,
+    // UniformsLib.metalnessmap,
     UniformsLib.fog,
     UniformsLib.lights,
     {
-      emissive: { value: /*@__PURE__*/ new THREE.Color(0x000000) },
+      emissive: { value: new THREE.Color(0x000000) },
       roughness: { value: 1.0 },
       metalness: { value: 0.0 },
-      envMapIntensity: { value: 1 }, // temporary
+      envMapIntensity: { value: 1 },
     },
   ]);
   uniforms.normalScale = { type: 'v2', value: new THREE.Vector2(normalScale, normalScale) };
 
-  // uniforms.noiseSampler = { type: "t", value: buildNoiseTexture() };
   uniforms.roughness = { type: 'f', value: roughness };
   uniforms.metalness = { type: 'f', value: metalness };
   uniforms.ior = { type: 'f', value: 1.5 };
@@ -104,6 +112,35 @@ export const buildCustomShader = (
 
   uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
   uniforms.diffuse = { type: 'c', value: color };
+
+  const buildRunColorShaderFragment = () => {
+    if (!colorShader) {
+      return '';
+    }
+
+    if (antialiasColorShader) {
+      return `
+  vec3 acc = vec3(0.);
+  // 2x oversampling
+  for (int i = 0; i < 2; i++) {
+    for (int j = 0; j < 2; j++) {
+      for (int k = 0; k < 2; k++) {
+        vec3 offsetPos = fragPos;
+        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
+        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
+        acc += getFragColor(diffuseColor.xyz, offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
+      }
+    }
+  }
+  acc /= 8.;
+  diffuseColor.xyz = acc;`;
+    } else {
+      return `
+  diffuseColor.xyz = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`;
+    }
+  };
 
   return {
     fog: true,
@@ -128,6 +165,9 @@ export const buildCustomShader = (
     #include <logdepthbuf_pars_vertex>
     #include <clipping_planes_pars_vertex>
 
+    ${customVertexFragment ? noiseShaders : ''}
+
+    uniform float curTimeSeconds;
     varying vec3 pos;
     varying vec3 vNormalAbsolute;
 
@@ -162,6 +202,8 @@ export const buildCustomShader = (
       vWorldPosition = worldPosition.xyz;
       pos = vWorldPosition;
     // #endif
+
+      ${customVertexFragment ?? ''}
     }`,
     fragmentShader: `
 #define STANDARD
@@ -252,7 +294,7 @@ struct SceneCtx {
 
 ${commonShaderCode}
 ${noiseShaders}
-${colorShader}
+${colorShader ?? ''}
 ${normalShader ?? ''}
 ${roughnessShader ?? ''}
 
@@ -267,28 +309,7 @@ void main() {
   vec4 diffuseColor = vec4(diffuse, opacity);
 
   SceneCtx ctx = SceneCtx(cameraPosition);
-  ${
-    antialiasColorShader
-      ? `
-  vec3 acc = vec3(0.);
-  // 2x oversampling
-  for (int i = 0; i < 2; i++) {
-    for (int j = 0; j < 2; j++) {
-      for (int k = 0; k < 2; k++) {
-        vec3 offsetPos = fragPos;
-        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
-        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getFragColor(diffuseColor.xyz, offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
-      }
-    }
-  }
-  acc /= 8.;
-  diffuseColor.xyz = acc;`
-      : `
-  diffuseColor.xyz = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`
-  }
+  ${buildRunColorShaderFragment()}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
