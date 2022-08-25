@@ -1,5 +1,5 @@
 vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-  vec3 outColor = baseColor;
+  vec3 outColor = quantize(baseColor, 0.11);
 
   float pulse = sin(curTimeSeconds * 2.5) * 0.5 + 0.5;
   vec3 pulseColor = vec3(0.538, 0.538, 0.538) * 0.1;

@@ -38,8 +38,7 @@ const buildPlatforms = () => {
         color: new THREE.Color(0xffffff),
         normalScale: 0.5,
       },
-      walkwayColorShader,
-      { roughnessShader: walkwayRoughnessShader },
+      { roughnessShader: walkwayRoughnessShader, colorShader: walkwayColorShader },
       { antialiasColorShader: true }
     )
   );

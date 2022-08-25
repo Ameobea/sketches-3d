@@ -45,7 +45,7 @@ const AntialiasedRoughnessShaderFragment = `
   roughnessFactor = acc;
 `;
 
-const NonAntialiasedRoughnessShaderFragment = `roughnessFactor = roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, curTimeSeconds);`;
+const NonAntialiasedRoughnessShaderFragment = `roughnessFactor = roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, curTimeSeconds, ctx);`;
 
 const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   if (antialiasRoughnessShader) {
@@ -87,7 +87,7 @@ export const buildCustomShader = (
     UniformsLib.lightmap,
     // UniformsLib.emissivemap,
     // UniformsLib.bumpmap,
-    // UniformsLib.normalmap,
+    UniformsLib.normalmap,
     UniformsLib.displacementmap,
     // UniformsLib.roughnessmap,
     // UniformsLib.metalnessmap,
@@ -290,6 +290,7 @@ ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 
 struct SceneCtx {
   vec3 cameraPosition;
+  vec2 vUv;
 };
 
 ${commonShaderCode}
@@ -308,8 +309,11 @@ void main() {
 
   vec4 diffuseColor = vec4(diffuse, opacity);
 
-  SceneCtx ctx = SceneCtx(cameraPosition);
-  ${buildRunColorShaderFragment()}
+  #if !defined(USE_UV)
+    vec2 vUv = vec2(0.);
+  #endif
+
+  SceneCtx ctx = SceneCtx(cameraPosition, vUv);
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
@@ -324,6 +328,8 @@ void main() {
 	#include <normal_fragment_maps>
 	#include <clearcoat_normal_fragment_begin>
 	#include <clearcoat_normal_fragment_maps>
+
+  ${buildRunColorShaderFragment()}
 
   ${
     normalShader
