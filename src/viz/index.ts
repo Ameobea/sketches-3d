@@ -215,6 +215,8 @@ export const buildViz = () => {
   camera.rotation.order = 'YXZ';
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const ext = renderer.getContext().getExtension('WEBGL_compressed_texture_s3tc');
+  console.log({ ext });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = enableShadows;

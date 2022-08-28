@@ -10,6 +10,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx c
   noise0 = pow(noise0, 3.);
   noise0 = quantize(noise0, 0.1);
   noise0 = noise0 * 2.;
+  noise0 = noise0 + 0.2;
   noise0 = clamp(noise0, 0., 1.);
 
   return noise0;
