@@ -3,6 +3,7 @@ import { UniformsLib } from 'three';
 
 import noiseShaders from './noise.frag?raw';
 import commonShaderCode from './common.frag?raw';
+import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 
 const buildNoiseTexture = (): THREE.DataTexture => {
   const noise = new Float32Array(256 * 256 * 4);
@@ -60,25 +61,36 @@ interface CustomShaderProps {
   metalness?: number;
   color?: THREE.Color;
   normalScale?: number;
+  map?: THREE.Texture;
+  normalMap?: THREE.Texture;
+  normalMapType?: THREE.NormalMapTypes;
+  uvTransform?: THREE.Matrix3;
 }
 
-export const buildCustomShader = (
-  { roughness = 0.9, metalness = 0, color = new THREE.Color(0xcbcbcb), normalScale = 1 }: CustomShaderProps,
+interface CustomShaderShaders {
+  customVertexFragment?: string;
+  colorShader?: string;
+  normalShader?: string;
+  roughnessShader?: string;
+}
+
+interface CustomShaderOptions {
+  antialiasColorShader?: boolean;
+  antialiasRoughnessShader?: boolean;
+  useTileBreaking?: boolean;
+}
+
+export const buildCustomShaderArgs = (
   {
-    customVertexFragment,
-    colorShader,
-    normalShader,
-    roughnessShader,
-  }: {
-    customVertexFragment?: string;
-    colorShader?: string;
-    normalShader?: string;
-    roughnessShader?: string;
-  } = {},
-  {
-    antialiasColorShader,
-    antialiasRoughnessShader,
-  }: { antialiasColorShader?: boolean; antialiasRoughnessShader?: boolean } = {}
+    roughness = 0.9,
+    metalness = 0,
+    color = new THREE.Color(0xffffff),
+    normalScale = 1,
+    map,
+    uvTransform,
+  }: CustomShaderProps = {},
+  { customVertexFragment, colorShader, normalShader, roughnessShader }: CustomShaderShaders = {},
+  { antialiasColorShader, antialiasRoughnessShader, useTileBreaking = false }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
@@ -102,6 +114,10 @@ export const buildCustomShader = (
   ]);
   uniforms.normalScale = { type: 'v2', value: new THREE.Vector2(normalScale, normalScale) };
 
+  if (useTileBreaking) {
+    uniforms.noiseSampler = { type: 't', value: buildNoiseTexture() };
+  }
+
   uniforms.roughness = { type: 'f', value: roughness };
   uniforms.metalness = { type: 'f', value: metalness };
   uniforms.ior = { type: 'f', value: 1.5 };
@@ -112,6 +128,13 @@ export const buildCustomShader = (
 
   uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
   uniforms.diffuse = { type: 'c', value: color };
+  if (uvTransform) {
+    uniforms.uvTransform = { type: 'm3', value: uvTransform };
+  }
+
+  if (useTileBreaking && !map) {
+    throw new Error('Tile breaking requires a map');
+  }
 
   const buildRunColorShaderFragment = () => {
     if (!colorShader) {
@@ -287,6 +310,7 @@ varying vec3 pos;
 varying vec3 vWorldPosition;
 varying vec3 vNormalAbsolute;
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
+${useTileBreaking ? 'uniform sampler2D noiseSampler;' : ''}
 
 struct SceneCtx {
   vec3 cameraPosition;
@@ -298,6 +322,7 @@ ${noiseShaders}
 ${colorShader ?? ''}
 ${normalShader ?? ''}
 ${roughnessShader ?? ''}
+${useTileBreaking ? tileBreakingFragment : ''}
 
 void main() {
 	#include <clipping_planes_fragment>
@@ -318,7 +343,16 @@ void main() {
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
 	#include <logdepthbuf_fragment>
-	#include <map_fragment>
+	${
+    useTileBreaking
+      ? `
+    vec3 texelColor_ = textureNoTile(map, noiseSampler, vUv, 0., 1.);
+    vec4 texelColor = vec4(texelColor_, 1.);
+    // texelColor = mapTexelToLinear( texelColor );
+    diffuseColor *= texelColor;
+  `
+      : '#include <map_fragment>'
+  }
 	#include <color_fragment>
 	#include <alphamap_fragment>
 	#include <alphatest_fragment>
@@ -373,4 +407,25 @@ void main() {
 	#include <dithering_fragment>
 }`,
   };
+};
+
+export const buildCustomShader = (
+  props: CustomShaderProps = {},
+  shaders?: CustomShaderShaders,
+  opts?: CustomShaderOptions
+) => {
+  const mat = new THREE.ShaderMaterial(buildCustomShaderArgs(props, shaders, opts));
+  if (props.map) {
+    (mat as any).map = props.map;
+    (mat as any).uniforms.map.value = props.map;
+  }
+  if (props.normalMap) {
+    (mat as any).normalMap = props.normalMap;
+    (mat as any).normalMapType = props.normalMapType ?? THREE.TangentSpaceNormalMap;
+    (mat as any).uniforms.normalMap.value = props.normalMap;
+  }
+  mat.needsUpdate = true;
+  mat.uniformsNeedUpdate = true;
+
+  return mat;
 };

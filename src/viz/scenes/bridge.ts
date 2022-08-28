@@ -5,7 +5,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 
 import type { VizState } from '..';
 
-import { buildCustomShader } from '../shaders/customShader';
+import { buildCustomShaderArgs } from '../shaders/customShader';
 import bridgeShader from '../shaders/bridge.frag?raw';
 import bigCubeShader from '../shaders/bigCube.frag?raw';
 import redNoiseShader from '../shaders/redNoise.frag?raw';
@@ -13,7 +13,7 @@ import { getFlickerActivation, initBaseScene } from '../util';
 
 const buildBridge = (viz: VizState, bridge: THREE.Mesh) => {
   bridge.material = new THREE.ShaderMaterial(
-    buildCustomShader(
+    buildCustomShaderArgs(
       {
         roughness: 0.996,
         metalness: 0.0,
@@ -56,7 +56,7 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
   bigCube.material = new THREE.MeshBasicMaterial({ color: 0x080808 });
 
   const bigCubeMat = new THREE.ShaderMaterial(
-    buildCustomShader(
+    buildCustomShaderArgs(
       {
         roughness: 0.96,
         metalness: 0.1,
@@ -69,7 +69,7 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
   bigCube.material = bigCubeMat;
 
   const treeMat = new THREE.ShaderMaterial(
-    buildCustomShader(
+    buildCustomShaderArgs(
       {
         roughness: 0.96,
         metalness: 0.1,

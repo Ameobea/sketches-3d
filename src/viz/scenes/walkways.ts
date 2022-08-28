@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { SceneConfig } from '.';
 import type { VizState } from '..';
 import { initBaseScene } from '../util';
-import { buildCustomShader } from '../shaders/customShader';
+import { buildCustomShaderArgs } from '../shaders/customShader';
 import walkwayColorShader from '../shaders/walkway/color.frag?raw';
 import walkwayRoughnessShader from '../shaders/walkway/roughness.frag?raw';
 
@@ -31,7 +31,7 @@ const buildPlatforms = () => {
   const platformStart = -platformRange / 2;
 
   const platformMaterial = new THREE.ShaderMaterial(
-    buildCustomShader(
+    buildCustomShaderArgs(
       {
         roughness: 0,
         metalness: 0.95,

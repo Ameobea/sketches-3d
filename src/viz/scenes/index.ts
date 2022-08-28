@@ -67,4 +67,9 @@ export const ScenesByName: {
     sceneLoader: () => import('./subdivided').then(mod => mod.processLoadedScene),
     metadata: { title: 'subdivided' },
   },
+  fractal_cube: {
+    sceneName: 'fractal_cube',
+    sceneLoader: () => import('./fractal_cube').then(mod => mod.processLoadedScene),
+    metadata: { title: 'fractal cube' },
+  },
 };
