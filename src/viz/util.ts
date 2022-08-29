@@ -4,7 +4,7 @@ import type { VizState } from '.';
 
 export const initBaseScene = (viz: VizState) => {
   // Add lights
-  const light = new THREE.DirectionalLight(0xffffff, 1.5);
+  const light = new THREE.DirectionalLight(0xcfcfcf, 1.5);
   light.position.set(80, 60, 80);
   viz.scene.add(light);
 

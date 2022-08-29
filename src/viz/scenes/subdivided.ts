@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import type { SceneConfig } from '.';
 import type { VizState } from '..';
-import { buildCustomShader, buildCustomShaderArgs } from '../shaders/customShader';
+import { buildCustomShader } from '../shaders/customShader';
 import { initBaseScene } from '../util';
 import pillarColorShader from '../shaders/subdivided/pillar/color.frag?raw';
 import pillarRoghnessShader from '../shaders/subdivided/pillar/roughness.frag?raw';

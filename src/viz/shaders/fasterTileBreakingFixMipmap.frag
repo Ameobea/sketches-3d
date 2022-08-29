@@ -27,6 +27,8 @@ vec3 hash33( vec3 p ) {
 vec4 GetTextureSample(sampler2D samp, vec2 pos, float freq, float seed) {
     vec3 hash = hash33(vec3(seed, 0.0, 0.0));
     float ang = hash.x * 2.0 * PI;
+    // ang = quantize(ang, 1.);
+    // float ang = 0.;
     mat2 rotation = mat2(cos(ang), sin(ang), -sin(ang), cos(ang));
     vec2 uv = rotation * pos * freq + hash.yz;
     return texture(samp, uv);

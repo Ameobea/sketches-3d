@@ -4,6 +4,7 @@ import { UniformsLib } from 'three';
 import noiseShaders from './noise.frag?raw';
 import commonShaderCode from './common.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
+import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 
 const buildNoiseTexture = (): THREE.DataTexture => {
   const noise = new Float32Array(256 * 256 * 4);
@@ -38,7 +39,7 @@ const AntialiasedRoughnessShaderFragment = `
         offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
         offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
         offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getCustomRoughness(offsetPos, vNormalAbsolute, curTimeSeconds);
+        acc += getCustomRoughness(offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
       }
     }
   }
@@ -65,6 +66,7 @@ interface CustomShaderProps {
   normalMap?: THREE.Texture;
   normalMapType?: THREE.NormalMapTypes;
   uvTransform?: THREE.Matrix3;
+  emissiveIntensity?: number;
 }
 
 interface CustomShaderShaders {
@@ -72,12 +74,13 @@ interface CustomShaderShaders {
   colorShader?: string;
   normalShader?: string;
   roughnessShader?: string;
+  emissiveShader?: string;
 }
 
 interface CustomShaderOptions {
   antialiasColorShader?: boolean;
   antialiasRoughnessShader?: boolean;
-  useTileBreaking?: boolean;
+  tileBreaking?: { type: 'neyret'; patchScale?: number } | { type: 'fastFixMipmap' };
 }
 
 export const buildCustomShaderArgs = (
@@ -88,16 +91,25 @@ export const buildCustomShaderArgs = (
     normalScale = 1,
     map,
     uvTransform,
+    normalMap,
+    normalMapType,
+    emissiveIntensity,
   }: CustomShaderProps = {},
-  { customVertexFragment, colorShader, normalShader, roughnessShader }: CustomShaderShaders = {},
-  { antialiasColorShader, antialiasRoughnessShader, useTileBreaking = false }: CustomShaderOptions = {}
+  {
+    customVertexFragment,
+    colorShader,
+    normalShader,
+    roughnessShader,
+    emissiveShader,
+  }: CustomShaderShaders = {},
+  { antialiasColorShader, antialiasRoughnessShader, tileBreaking }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
     UniformsLib.envmap,
     UniformsLib.aomap,
     UniformsLib.lightmap,
-    // UniformsLib.emissivemap,
+    UniformsLib.emissivemap,
     // UniformsLib.bumpmap,
     UniformsLib.normalmap,
     UniformsLib.displacementmap,
@@ -114,7 +126,7 @@ export const buildCustomShaderArgs = (
   ]);
   uniforms.normalScale = { type: 'v2', value: new THREE.Vector2(normalScale, normalScale) };
 
-  if (useTileBreaking) {
+  if (tileBreaking?.type === 'fastFixMipmap') {
     uniforms.noiseSampler = { type: 't', value: buildNoiseTexture() };
   }
 
@@ -131,9 +143,21 @@ export const buildCustomShaderArgs = (
   if (uvTransform) {
     uniforms.uvTransform = { type: 'm3', value: uvTransform };
   }
+  if (emissiveIntensity !== undefined) {
+    uniforms.emissiveIntensity = { type: 'f', value: emissiveIntensity };
+  }
 
-  if (useTileBreaking && !map) {
+  if (tileBreaking && !map) {
     throw new Error('Tile breaking requires a map');
+  }
+
+  if (
+    normalMap &&
+    tileBreaking &&
+    normalMapType !== undefined &&
+    normalMapType !== THREE.TangentSpaceNormalMap
+  ) {
+    throw new Error('Tile breaking requires a normal map with tangent space');
   }
 
   const buildRunColorShaderFragment = () => {
@@ -310,11 +334,12 @@ varying vec3 pos;
 varying vec3 vWorldPosition;
 varying vec3 vNormalAbsolute;
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
-${useTileBreaking ? 'uniform sampler2D noiseSampler;' : ''}
+${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
 
 struct SceneCtx {
   vec3 cameraPosition;
   vec2 vUv;
+  vec4 diffuseColor;
 };
 
 ${commonShaderCode}
@@ -322,7 +347,16 @@ ${noiseShaders}
 ${colorShader ?? ''}
 ${normalShader ?? ''}
 ${roughnessShader ?? ''}
-${useTileBreaking ? tileBreakingFragment : ''}
+${emissiveShader ?? ''}
+${tileBreaking?.type === 'fastFixMipmap' ? tileBreakingFragment : ''}
+${
+  tileBreaking?.type === 'neyret'
+    ? tileBreakingNeyretFragment.replace(
+        '#define Z 8.',
+        `#define Z ${(tileBreaking.patchScale ?? 8).toFixed(4)}`
+      )
+    : ''
+}
 
 void main() {
 	#include <clipping_planes_fragment>
@@ -338,15 +372,18 @@ void main() {
     vec2 vUv = vec2(0.);
   #endif
 
-  SceneCtx ctx = SceneCtx(cameraPosition, vUv);
+  SceneCtx ctx = SceneCtx(cameraPosition, vUv, diffuseColor);
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
 	#include <logdepthbuf_fragment>
 	${
-    useTileBreaking
-      ? `
-    vec3 texelColor_ = textureNoTile(map, noiseSampler, vUv, 0., 1.);
+    tileBreaking
+      ? `${
+          tileBreaking.type === 'neyret'
+            ? 'vec3 texelColor_ = textureNoTileNeyret(map, vUv);'
+            : 'vec3 texelColor_ = textureNoTile(map, noiseSampler, vUv, 0., 1.);'
+        }
     vec4 texelColor = vec4(texelColor_, 1.);
     // texelColor = mapTexelToLinear( texelColor );
     diffuseColor *= texelColor;
@@ -354,12 +391,28 @@ void main() {
       : '#include <map_fragment>'
   }
 	#include <color_fragment>
+  ctx.diffuseColor = diffuseColor;
 	#include <alphamap_fragment>
 	#include <alphatest_fragment>
 	#include <roughnessmap_fragment>
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
-	#include <normal_fragment_maps>
+  ${
+    tileBreaking && normalMap
+      ? `
+    // vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., 1.).xyz;
+    vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;
+    mapN = mapN * 2.0 - 1.0;
+    mapN.xy *= normalScale;
+
+    #ifdef USE_TANGENT
+      normal = normalize( vTBN * mapN );
+    #else
+      normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+    #endif
+  `
+      : '#include <normal_fragment_maps>'
+  }
 	#include <clearcoat_normal_fragment_begin>
 	#include <clearcoat_normal_fragment_maps>
 
@@ -374,9 +427,17 @@ void main() {
       : ''
   }
 
-  ${roughnessShader ? buildRoughnessShaderFragment() : ''}
+  ${roughnessShader ? buildRoughnessShaderFragment(antialiasRoughnessShader) : ''}
 
 	#include <emissivemap_fragment>
+  ${
+    emissiveShader
+      ? `
+    totalEmissiveRadiance = getCustomEmissive(pos, totalEmissiveRadiance, curTimeSeconds, ctx);
+  `
+      : ''
+  }
+
 	// accumulation
 	#include <lights_physical_fragment>
 	#include <lights_fragment_begin>
@@ -409,12 +470,18 @@ void main() {
   };
 };
 
+class CustomShaderMaterial extends THREE.ShaderMaterial {
+  public setCurTimeSeconds(curTimeSeconds: number) {
+    this.uniforms.curTimeSeconds.value = curTimeSeconds;
+  }
+}
+
 export const buildCustomShader = (
   props: CustomShaderProps = {},
   shaders?: CustomShaderShaders,
   opts?: CustomShaderOptions
 ) => {
-  const mat = new THREE.ShaderMaterial(buildCustomShaderArgs(props, shaders, opts));
+  const mat = new CustomShaderMaterial(buildCustomShaderArgs(props, shaders, opts));
   if (props.map) {
     (mat as any).map = props.map;
     (mat as any).uniforms.map.value = props.map;
@@ -423,6 +490,10 @@ export const buildCustomShader = (
     (mat as any).normalMap = props.normalMap;
     (mat as any).normalMapType = props.normalMapType ?? THREE.TangentSpaceNormalMap;
     (mat as any).uniforms.normalMap.value = props.normalMap;
+  }
+  if (props.emissiveIntensity !== undefined) {
+    (mat as any).emissiveIntensity = props.emissiveIntensity;
+    (mat as any).uniforms.emissiveIntensity.value = props.emissiveIntensity;
   }
   mat.needsUpdate = true;
   mat.uniformsNeedUpdate = true;

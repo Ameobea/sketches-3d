@@ -1,6 +1,4 @@
 float getCustomRoughness(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-  vec3 outNormal = vec3(0., 0., 1.);
-
   vec2 oPos = pos.xz * 0.5;
 
   // [-1, 1]

@@ -1,6 +1,8 @@
 /**
- * THIS IS ALL TAKEN DIRECTLY (with small changes) FROM:
+ * Originally adapted from:
  * https://github.com/mrdoob/three.js/blob/master/examples/games_fps.html
+ *
+ * With many changes and additions.
  */
 
 import * as THREE from 'three';
@@ -210,7 +212,7 @@ export const buildViz = () => {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x020202);
 
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.18, 10_000);
   camera.matrixAutoUpdate = true;
   camera.rotation.order = 'YXZ';
 
@@ -366,9 +368,10 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       container.appendChild(posDisplayElem);
 
       viz.registerBeforeRenderCb(() => {
-        posDisplayElem.innerText = `${viz.camera.position.x.toFixed(2)}, ${viz.camera.position.y.toFixed(
-          2
-        )}, ${viz.camera.position.z.toFixed(2)}`;
+        const x = viz.camera.position.x.toFixed(2);
+        const y = viz.camera.position.y.toFixed(2);
+        const z = viz.camera.position.z.toFixed(2);
+        posDisplayElem.innerText = `${x}, ${y}, ${z}`;
       });
     }
 

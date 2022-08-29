@@ -6,6 +6,9 @@ vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   newColor = hsv2rgb(hsv);
 
   newColor = quantize(newColor, 0.2);
+  if (newColor.x < 0.01) {
+    newColor.x = 0.21;
+  }
 
   return newColor;
 }
