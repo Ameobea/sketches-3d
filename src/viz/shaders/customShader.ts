@@ -67,6 +67,8 @@ interface CustomShaderProps {
   normalMapType?: THREE.NormalMapTypes;
   uvTransform?: THREE.Matrix3;
   emissiveIntensity?: number;
+  lightMap?: THREE.Texture;
+  lightMapIntensity?: number;
 }
 
 interface CustomShaderShaders {
@@ -94,6 +96,7 @@ export const buildCustomShaderArgs = (
     normalMap,
     normalMapType,
     emissiveIntensity,
+    lightMapIntensity,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -145,6 +148,9 @@ export const buildCustomShaderArgs = (
   }
   if (emissiveIntensity !== undefined) {
     uniforms.emissiveIntensity = { type: 'f', value: emissiveIntensity };
+  }
+  if (lightMapIntensity !== undefined) {
+    uniforms.lightMapIntensity = { type: 'f', value: lightMapIntensity };
   }
 
   if (tileBreaking && !map) {
@@ -494,6 +500,11 @@ export const buildCustomShader = (
   if (props.emissiveIntensity !== undefined) {
     (mat as any).emissiveIntensity = props.emissiveIntensity;
     (mat as any).uniforms.emissiveIntensity.value = props.emissiveIntensity;
+  }
+  if (props.lightMap) {
+    (mat as any).lightMap = props.lightMap;
+    (mat as any).uniforms.lightMap.value = props.lightMap;
+    (mat as any).uniforms.lightMapIntensity.value = props.lightMapIntensity ?? 1;
   }
   mat.needsUpdate = true;
   mat.uniformsNeedUpdate = true;

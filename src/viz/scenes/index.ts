@@ -12,6 +12,12 @@ export interface SceneConfig {
   };
   spawnLocation: string;
   debugPos?: boolean;
+  gravity?: number;
+  player?: {
+    jumpVelocity?: number;
+    colliderCapsuleSize?: { height: number; radius: number };
+    movementAccelPerSecond?: { onGround: number; inAir: number };
+  };
 }
 
 export const buildDefaultSceneConfig = () => ({
@@ -48,6 +54,7 @@ export const ScenesByName: {
       (viz: VizState, loadedWorld: THREE.Group) => SceneConfig | Promise<SceneConfig>
     >;
     metadata: SvelteSeoProps;
+    gltfName?: string;
   };
 } = {
   bridge: {
@@ -71,5 +78,11 @@ export const ScenesByName: {
     sceneName: 'fractal_cube',
     sceneLoader: () => import('./fractal_cube').then(mod => mod.processLoadedScene),
     metadata: { title: 'fractal cube' },
+  },
+  bridge2: {
+    sceneName: 'bridge2',
+    sceneLoader: () => import('./bridge2').then(mod => mod.processLoadedScene),
+    metadata: { title: 'bridge2' },
+    gltfName: 'checkpoint4',
   },
 };

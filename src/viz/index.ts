@@ -23,16 +23,34 @@ const setupFirstPerson = (
   },
   registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void
 ) => {
-  const GRAVITY = 40;
-  const STEPS_PER_FRAME = 5;
+  let GRAVITY = 40;
+  let JUMP_VELOCITY = 20;
+  let ON_FLOOR_ACCELERATION_PER_SECOND = 40;
+  let IN_AIR_ACCELERATION_PER_SECOND = 20;
+  const STEPS_PER_FRAME = 20;
+
+  const setGravity = (gravity: number) => {
+    GRAVITY = gravity;
+  };
+  const setJumpVelocity = (jumpVelocity: number) => {
+    JUMP_VELOCITY = jumpVelocity;
+  };
+  const setPlayerAcceleration = (onGroundAccPerSec: number, inAirAccPerSec: number) => {
+    ON_FLOOR_ACCELERATION_PER_SECOND = onGroundAccPerSec;
+    IN_AIR_ACCELERATION_PER_SECOND = inAirAccPerSec;
+  };
 
   const worldOctree = new Octree();
 
-  const playerCollider = new Capsule(
+  let playerCollider = new Capsule(
     spawnPos.pos.clone(),
-    spawnPos.pos.clone().add(new THREE.Vector3(0, Conf.PlayerColliderHeight, 0)),
-    Conf.PlayerColliderRadius
+    spawnPos.pos.clone().add(new THREE.Vector3(0, Conf.DefaultPlayerColliderHeight, 0)),
+    Conf.DefaultPlayerColliderRadius
   );
+
+  const setPlayerColliderSize = (height: number, radius: number, curPlayerPos: THREE.Vector3) => {
+    playerCollider = new Capsule(curPlayerPos, curPlayerPos.add(new THREE.Vector3(0, height, 0)), radius);
+  };
 
   const playerVelocity = new THREE.Vector3();
   const playerDirection = new THREE.Vector3();
@@ -121,7 +139,8 @@ const setupFirstPerson = (
 
   function controls(deltaTime: number) {
     // gives a bit of air control
-    const speedDelta = deltaTime * (playerOnFloor ? 40 : 9);
+    const speedDelta =
+      deltaTime * (playerOnFloor ? ON_FLOOR_ACCELERATION_PER_SECOND : IN_AIR_ACCELERATION_PER_SECOND);
 
     if (keyStates['KeyW']) {
       playerVelocity.add(getForwardVector().multiplyScalar(speedDelta));
@@ -141,7 +160,7 @@ const setupFirstPerson = (
 
     if (playerOnFloor) {
       if (keyStates['Space']) {
-        playerVelocity.y = 20;
+        playerVelocity.y = JUMP_VELOCITY;
       }
     }
   }
@@ -149,8 +168,12 @@ const setupFirstPerson = (
   function teleportPlayerIfOob() {
     if (camera.position.y <= -55) {
       playerCollider.start.set(spawnPos.pos.x, spawnPos.pos.y, spawnPos.pos.z);
-      playerCollider.end.set(spawnPos.pos.x, spawnPos.pos.y + Conf.PlayerColliderHeight, spawnPos.pos.z);
-      playerCollider.radius = Conf.PlayerColliderRadius;
+      playerCollider.end.set(
+        spawnPos.pos.x,
+        spawnPos.pos.y + Conf.DefaultPlayerColliderHeight,
+        spawnPos.pos.z
+      );
+      playerCollider.radius = Conf.DefaultPlayerColliderRadius;
       camera.position.copy(playerCollider.end);
       camera.rotation.set(0, 0, 0);
     }
@@ -177,7 +200,7 @@ const setupFirstPerson = (
       rot: camera.rotation.toArray().slice(0, 3),
     });
 
-  return worldOctree;
+  return { setGravity, setJumpVelocity, worldOctree, setPlayerColliderSize, setPlayerAcceleration };
 };
 
 const setupOrbitControls = async (
@@ -325,10 +348,11 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
   const loader = new GLTFLoader().setPath('/');
 
-  loader.load('dream.gltf', async gltf => {
+  const { sceneName, sceneLoader: getSceneLoader, gltfName = 'dream' } = ScenesByName[providedSceneName];
+
+  loader.load(`${gltfName}.gltf`, async gltf => {
     providedSceneName = providedSceneName.toLowerCase();
 
-    const { sceneName, sceneLoader: getSceneLoader } = ScenesByName[providedSceneName];
     const scene =
       gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group();
 
@@ -339,16 +363,46 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     };
 
     let worldOctree: Octree | null = null;
+    let setGravity = (_g: number) => {};
+    let setJumpVelocity = (_v: number) => {};
+    let setPlayerColliderSize = (_height: number, _radius: number, _curPlayerPosition: THREE.Vector3) => {};
+    let setPlayerAcceleration = (_onGroundAccPerSec: number, _inAirAccPerSec: number) => {};
     if (sceneConf.viewMode.type === 'firstPerson') {
       const spawnPos = sceneConf.locations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
-      worldOctree = setupFirstPerson(viz.camera, spawnPos, viz.registerBeforeRenderCb);
+      const fpCtx = setupFirstPerson(viz.camera, spawnPos, viz.registerBeforeRenderCb);
+      worldOctree = fpCtx.worldOctree;
+      setGravity = fpCtx.setGravity;
+      setJumpVelocity = fpCtx.setJumpVelocity;
+      setPlayerColliderSize = fpCtx.setPlayerColliderSize;
+      setPlayerAcceleration = fpCtx.setPlayerAcceleration;
+
+      if (sceneConf.player?.colliderCapsuleSize) {
+        setPlayerColliderSize(
+          sceneConf.player.colliderCapsuleSize.height,
+          sceneConf.player.colliderCapsuleSize.radius,
+          spawnPos.pos
+        );
+      }
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
         viz.renderer.domElement,
         viz.camera,
         sceneConf.viewMode.pos,
         sceneConf.viewMode.target
+      );
+    }
+
+    if (typeof sceneConf.gravity === 'number') {
+      setGravity(sceneConf.gravity);
+    }
+    if (typeof sceneConf.player?.jumpVelocity === 'number') {
+      setJumpVelocity(sceneConf.player.jumpVelocity);
+    }
+    if (sceneConf.player?.movementAccelPerSecond) {
+      setPlayerAcceleration(
+        sceneConf.player.movementAccelPerSecond.onGround,
+        sceneConf.player.movementAccelPerSecond.inAir
       );
     }
 

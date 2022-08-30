@@ -12,3 +12,5 @@ src/viz/wasmComp/*
 static/*.bin
 static/*.gltf
 static/*.glb
+blender
+static/*.png
