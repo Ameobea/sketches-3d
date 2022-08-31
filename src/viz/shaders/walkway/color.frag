@@ -1,4 +1,4 @@
-vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   vec3 outColor = baseColor;
 
   vec3 newColor = vec3(1., 0., 0.);
@@ -33,5 +33,5 @@ vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   vec3 zNoiseApplied = outColor * 0.1;
   outColor = mix(outColor, zNoiseApplied, smoothstep(0.6, 1., zNoise));
 
-  return outColor;
+  return vec4(outColor, 1.);
 }

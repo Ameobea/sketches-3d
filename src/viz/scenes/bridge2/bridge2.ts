@@ -1,15 +1,16 @@
 import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky';
 
 import type { VizState } from '../../../viz';
 import { initBaseScene } from '../../../viz/util';
 import type { SceneConfig } from '..';
 import { buildCustomShader } from '../../../viz/shaders/customShader';
 import groundRoughnessShader from '../../shaders/subdivided/ground/roughness.frag?raw';
+import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
+import { CustomSky as Sky } from '../../CustomSky';
 
 const locations = {
   spawn: {
-    pos: new THREE.Vector3(-1.7557428208542067, 2, -0.57513478883080035),
+    pos: new THREE.Vector3(-1.7557428208542067, 3, -0.57513478883080035),
     rot: new THREE.Vector3(-0.05999999999999997, -1.514, 0),
   },
 };
@@ -29,19 +30,21 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   //
   // Three.JS expects the UV map for light map to be in `uv2` but the GLTF
   // exporter puts it in `uv1`.
+  //
+  // TODO: Should handle in the custom shader
   const geometry = bridgeTop.geometry;
   geometry.attributes.uv2 = geometry.attributes.uv;
 
   bridgeTop.material = buildCustomShader(
-    { color: new THREE.Color(0x121212), lightMap: texture, lightMapIntensity: 2 },
+    { color: new THREE.Color(0x121212), lightMap: texture, lightMapIntensity: 8 },
     { roughnessShader: groundRoughnessShader },
     {}
   );
 
-  const ex = new THREE.CapsuleGeometry(0.35, 1.8, 24, 24);
-  const exMesh = new THREE.Mesh(ex, new THREE.MeshStandardMaterial({ color: 0xff0000 }));
-  exMesh.position.set(-1.7, 2, -0.6);
-  loadedWorld.add(exMesh);
+  // const ex = new THREE.CapsuleGeometry(0.35, 1.3, 24, 24);
+  // const exMesh = new THREE.Mesh(ex, new THREE.MeshStandardMaterial({ color: 0xff0000 }));
+  // exMesh.position.set(-1.7, 5, -0.6);
+  // loadedWorld.add(exMesh);
 
   const arches = loadedWorld.getObjectByName('arch')! as THREE.Mesh;
   arches.material = buildCustomShader(
@@ -56,6 +59,15 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {},
     {}
   );
+
+  const bridgeTopMist = loadedWorld.getObjectByName('bridge_top_mistnocollide')! as THREE.Mesh;
+  const bridgeTopMistMat = buildCustomShader(
+    { roughness: 0.8, metalness: 0, alphaTest: 0.5, transparent: true },
+    { colorShader: BridgeMistColorShader },
+    {}
+  );
+  bridgeTopMist.material = bridgeTopMistMat;
+  viz.registerBeforeRenderCb(curTimeSeconds => bridgeTopMistMat.setCurTimeSeconds(curTimeSeconds));
 
   const sky = new Sky();
   sky.scale.setScalar(450000);
@@ -94,12 +106,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     player: {
       jumpVelocity: 2.8,
       colliderCapsuleSize: {
-        height: 1.8,
+        height: 0.7,
         radius: 0.35,
       },
       movementAccelPerSecond: {
-        onGround: 2,
-        inAir: 1,
+        onGround: 6,
+        inAir: 3,
       },
     },
   };

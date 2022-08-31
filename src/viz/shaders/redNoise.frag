@@ -1,4 +1,4 @@
-vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   vec3 outColor = quantize(baseColor, 0.11);
 
   float pulse = sin(curTimeSeconds * 2.5) * 0.5 + 0.5;
@@ -8,7 +8,7 @@ vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   float flickerVal = noise(curTimeSeconds * 1.5);
   float flickerActivation = smoothstep(0.4, 1.0, flickerVal * 2. + 0.2);
   if (flickerActivation < 0.1) {
-    return outColor;
+    return vec4(outColor, 1.);
   }
 
   vec3 noisePos = pos.xyz * 0.06;
@@ -63,5 +63,5 @@ vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   outColor.z = clamp(outColor.z, 0., 1.);
 
   // outColor = quantize(outColor, 0.02);
-  return outColor;
+  return vec4(outColor, 1.);
 }

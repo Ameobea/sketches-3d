@@ -1,4 +1,4 @@
-vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   vec3 newColor = baseColor;
   vec3 hsv = rgb2hsv(newColor);
   hsv.x = sin(curTimeSeconds * 0.5) * 0.5 + 0.5;
@@ -7,5 +7,5 @@ vec3 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
 
   newColor = quantize(newColor, 0.2);
 
-  return newColor;
+  return vec4(newColor, 1.0);
 }

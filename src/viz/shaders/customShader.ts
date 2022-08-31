@@ -69,6 +69,8 @@ interface CustomShaderProps {
   emissiveIntensity?: number;
   lightMap?: THREE.Texture;
   lightMapIntensity?: number;
+  transparent?: boolean;
+  alphaTest?: number;
 }
 
 interface CustomShaderShaders {
@@ -149,9 +151,12 @@ export const buildCustomShaderArgs = (
   if (emissiveIntensity !== undefined) {
     uniforms.emissiveIntensity = { type: 'f', value: emissiveIntensity };
   }
+  // TODO: Need to handle swapping uvs to `uv2` if light map is provided
   if (lightMapIntensity !== undefined) {
     uniforms.lightMapIntensity = { type: 'f', value: lightMapIntensity };
   }
+
+  // TODO: enable physically correct lights, look into it at least
 
   if (tileBreaking && !map) {
     throw new Error('Tile breaking requires a map');
@@ -173,7 +178,7 @@ export const buildCustomShaderArgs = (
 
     if (antialiasColorShader) {
       return `
-  vec3 acc = vec3(0.);
+  vec4 acc = vec4(0.);
   // 2x oversampling
   for (int i = 0; i < 2; i++) {
     for (int j = 0; j < 2; j++) {
@@ -188,10 +193,10 @@ export const buildCustomShaderArgs = (
     }
   }
   acc /= 8.;
-  diffuseColor.xyz = acc;`;
+  diffuseColor = acc;`;
     } else {
       return `
-  diffuseColor.xyz = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`;
+  diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`;
     }
   };
 
@@ -505,6 +510,13 @@ export const buildCustomShader = (
     (mat as any).lightMap = props.lightMap;
     (mat as any).uniforms.lightMap.value = props.lightMap;
     (mat as any).uniforms.lightMapIntensity.value = props.lightMapIntensity ?? 1;
+  }
+  if (props.transparent) {
+    (mat as any).transparent = props.transparent;
+  }
+  if (typeof props.alphaTest === 'number') {
+    (mat as any).alphaTest = props.alphaTest;
+    (mat as any).uniforms.alphaTest.value = props.alphaTest;
   }
   mat.needsUpdate = true;
   mat.uniformsNeedUpdate = true;

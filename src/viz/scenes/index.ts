@@ -47,16 +47,14 @@ const ParticleConduit = {
   },
 };
 
-export const ScenesByName: {
-  [key: string]: {
-    sceneName: string;
-    sceneLoader: () => Promise<
-      (viz: VizState, loadedWorld: THREE.Group) => SceneConfig | Promise<SceneConfig>
-    >;
-    metadata: SvelteSeoProps;
-    gltfName?: string;
-  };
-} = {
+interface SceneDef {
+  sceneName: string;
+  sceneLoader: () => Promise<(viz: VizState, loadedWorld: THREE.Group) => SceneConfig | Promise<SceneConfig>>;
+  metadata: SvelteSeoProps;
+  gltfName?: string;
+}
+
+export const ScenesByName: { [key: string]: SceneDef } = {
   bridge: {
     sceneName: 'bridge',
     sceneLoader: () => import('./bridge').then(mod => mod.processLoadedScene),
@@ -83,6 +81,6 @@ export const ScenesByName: {
     sceneName: 'bridge2',
     sceneLoader: () => import('./bridge2').then(mod => mod.processLoadedScene),
     metadata: { title: 'bridge2' },
-    gltfName: 'checkpoint4',
+    gltfName: 'checkpoint5',
   },
 };

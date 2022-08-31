@@ -12,7 +12,7 @@ import { Capsule } from 'three/examples/jsm/math/Capsule.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { getSentry } from '../sentry';
-import { buildDefaultSceneConfig, ScenesByName } from './scenes';
+import { buildDefaultSceneConfig, ScenesByName, type SceneConfig } from './scenes';
 import * as Conf from './conf';
 
 const setupFirstPerson = (
@@ -21,12 +21,14 @@ const setupFirstPerson = (
     pos: THREE.Vector3;
     rot: THREE.Vector3;
   },
-  registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void
+  registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void,
+  playerConf: SceneConfig['player'],
+  gravity: number | undefined
 ) => {
-  let GRAVITY = 40;
-  let JUMP_VELOCITY = 20;
-  let ON_FLOOR_ACCELERATION_PER_SECOND = 40;
-  let IN_AIR_ACCELERATION_PER_SECOND = 20;
+  let GRAVITY = gravity ?? 40;
+  let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
+  let ON_FLOOR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.onGround ?? 40;
+  let IN_AIR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.inAir ?? 20;
   const STEPS_PER_FRAME = 20;
 
   const setGravity = (gravity: number) => {
@@ -42,15 +44,12 @@ const setupFirstPerson = (
 
   const worldOctree = new Octree();
 
+  const playerColliderHeight = playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight;
   let playerCollider = new Capsule(
-    spawnPos.pos.clone(),
-    spawnPos.pos.clone().add(new THREE.Vector3(0, Conf.DefaultPlayerColliderHeight, 0)),
-    Conf.DefaultPlayerColliderRadius
+    spawnPos.pos.clone().add(new THREE.Vector3(0, playerColliderHeight, 0)),
+    spawnPos.pos.clone().add(new THREE.Vector3(0, playerColliderHeight * 2, 0)),
+    playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius
   );
-
-  const setPlayerColliderSize = (height: number, radius: number, curPlayerPos: THREE.Vector3) => {
-    playerCollider = new Capsule(curPlayerPos, curPlayerPos.add(new THREE.Vector3(0, height, 0)), radius);
-  };
 
   const playerVelocity = new THREE.Vector3();
   const playerDirection = new THREE.Vector3();
@@ -167,15 +166,15 @@ const setupFirstPerson = (
 
   function teleportPlayerIfOob() {
     if (camera.position.y <= -55) {
+      const playerColliderHeight = playerCollider.end.clone().sub(playerCollider.start).length();
+      const playerColliderRadius = playerCollider.radius;
       playerCollider.start.set(spawnPos.pos.x, spawnPos.pos.y, spawnPos.pos.z);
-      playerCollider.end.set(
-        spawnPos.pos.x,
-        spawnPos.pos.y + Conf.DefaultPlayerColliderHeight,
-        spawnPos.pos.z
-      );
-      playerCollider.radius = Conf.DefaultPlayerColliderRadius;
+      playerCollider.end.set(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z);
+      console.log(spawnPos.pos.toArray());
+      playerCollider.radius = playerColliderRadius;
+      playerVelocity.set(0, 0, 0);
       camera.position.copy(playerCollider.end);
-      camera.rotation.set(0, 0, 0);
+      camera.rotation.setFromVector3(spawnPos.rot);
     }
   }
 
@@ -200,7 +199,7 @@ const setupFirstPerson = (
       rot: camera.rotation.toArray().slice(0, 3),
     });
 
-  return { setGravity, setJumpVelocity, worldOctree, setPlayerColliderSize, setPlayerAcceleration };
+  return { setGravity, setJumpVelocity, worldOctree, setPlayerAcceleration };
 };
 
 const setupOrbitControls = async (
@@ -348,7 +347,11 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
   const loader = new GLTFLoader().setPath('/');
 
-  const { sceneName, sceneLoader: getSceneLoader, gltfName = 'dream' } = ScenesByName[providedSceneName];
+  const sceneDef = ScenesByName[providedSceneName];
+  if (!sceneDef) {
+    throw new Error(`No scene found for name ${providedSceneName}`);
+  }
+  const { sceneName, sceneLoader: getSceneLoader, gltfName = 'dream' } = sceneDef;
 
   loader.load(`${gltfName}.gltf`, async gltf => {
     providedSceneName = providedSceneName.toLowerCase();
@@ -365,44 +368,27 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     let worldOctree: Octree | null = null;
     let setGravity = (_g: number) => {};
     let setJumpVelocity = (_v: number) => {};
-    let setPlayerColliderSize = (_height: number, _radius: number, _curPlayerPosition: THREE.Vector3) => {};
     let setPlayerAcceleration = (_onGroundAccPerSec: number, _inAirAccPerSec: number) => {};
     if (sceneConf.viewMode.type === 'firstPerson') {
       const spawnPos = sceneConf.locations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
-      const fpCtx = setupFirstPerson(viz.camera, spawnPos, viz.registerBeforeRenderCb);
+      const fpCtx = setupFirstPerson(
+        viz.camera,
+        spawnPos,
+        viz.registerBeforeRenderCb,
+        sceneConf.player,
+        sceneConf.gravity
+      );
       worldOctree = fpCtx.worldOctree;
       setGravity = fpCtx.setGravity;
       setJumpVelocity = fpCtx.setJumpVelocity;
-      setPlayerColliderSize = fpCtx.setPlayerColliderSize;
       setPlayerAcceleration = fpCtx.setPlayerAcceleration;
-
-      if (sceneConf.player?.colliderCapsuleSize) {
-        setPlayerColliderSize(
-          sceneConf.player.colliderCapsuleSize.height,
-          sceneConf.player.colliderCapsuleSize.radius,
-          spawnPos.pos
-        );
-      }
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
         viz.renderer.domElement,
         viz.camera,
         sceneConf.viewMode.pos,
         sceneConf.viewMode.target
-      );
-    }
-
-    if (typeof sceneConf.gravity === 'number') {
-      setGravity(sceneConf.gravity);
-    }
-    if (typeof sceneConf.player?.jumpVelocity === 'number') {
-      setJumpVelocity(sceneConf.player.jumpVelocity);
-    }
-    if (sceneConf.player?.movementAccelPerSecond) {
-      setPlayerAcceleration(
-        sceneConf.player.movementAccelPerSecond.onGround,
-        sceneConf.player.movementAccelPerSecond.inAir
       );
     }
 
@@ -432,7 +418,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
       const children = obj.children;
       obj.children = [];
-      if (!(obj instanceof THREE.Group)) {
+      if (!(obj instanceof THREE.Group) && !obj.name.includes('nocollide')) {
         worldOctree?.fromGraphNode(obj);
       }
       obj.children = children;
