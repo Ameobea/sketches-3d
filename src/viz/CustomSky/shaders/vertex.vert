@@ -30,9 +30,9 @@ const vec3 MieConst = vec3( 1.8399918514433978E14, 2.7798023919660528E14, 4.0790
 
 // earth shadow hack
 // cutoffAngle = pi / 1.95;
-const float cutoffAngle = 1.6110731556870734;
+const float cutoffAngle = 1.6510731556870734;
 const float steepness = 1.5;
-const float EE = 1000.0;
+const float EE = 900.0;
 
 float sunIntensity( float zenithAngleCos ) {
   zenithAngleCos = clamp( zenithAngleCos, -1.0, 1.0 );

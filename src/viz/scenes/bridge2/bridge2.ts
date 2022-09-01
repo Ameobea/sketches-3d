@@ -7,11 +7,16 @@ import { buildCustomShader } from '../../../viz/shaders/customShader';
 import groundRoughnessShader from '../../shaders/subdivided/ground/roughness.frag?raw';
 import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
 import { CustomSky as Sky } from '../../CustomSky';
+import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
 
 const locations = {
   spawn: {
     pos: new THREE.Vector3(-1.7557428208542067, 3, -0.57513478883080035),
-    rot: new THREE.Vector3(-0.05999999999999997, -1.514, 0),
+    rot: new THREE.Vector3(-0.06, -1.514, 0),
+  },
+  gouge: {
+    pos: new THREE.Vector3(45.97780066444547, 3.851205414533615, 0.1445978383268002),
+    rot: new THREE.Vector3(-0.638, 1.556, 0),
   },
 };
 
@@ -19,6 +24,10 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const base = initBaseScene(viz);
   base.light.castShadow = false;
   base.light.intensity += 0.5;
+  base.light.position.set(40, 10, -80);
+  base.light.color = new THREE.Color(0xffcd73);
+
+  viz.scene.fog = new THREE.FogExp2(0x442222, 0.1);
 
   const bridgeTop = loadedWorld.getObjectByName('bridge_top')! as THREE.Mesh;
   const mat = bridgeTop.material as THREE.MeshStandardMaterial;
@@ -46,16 +55,52 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   // exMesh.position.set(-1.7, 5, -0.6);
   // loadedWorld.add(exMesh);
 
+  const archesMaterial = buildCustomShader(
+    { color: new THREE.Color(0x444444), roughness: 0.4, metalness: 0.9 },
+    {},
+    {}
+  );
   const arches = loadedWorld.getObjectByName('arch')! as THREE.Mesh;
-  arches.material = buildCustomShader(
+  arches.material = archesMaterial;
+  const brokenArches = loadedWorld.getObjectByName('broken_arch')! as THREE.Mesh;
+  brokenArches.material = archesMaterial;
+
+  const fins = loadedWorld.getObjectByName('fins')! as THREE.Mesh;
+  fins.material = buildCustomShader(
     { color: new THREE.Color(0x444444), roughness: 0.4, metalness: 0.9 },
     {},
     {}
   );
 
-  const fins = loadedWorld.getObjectByName('fins')! as THREE.Mesh;
-  fins.material = buildCustomShader(
-    { color: new THREE.Color(0x444444), roughness: 0.4, metalness: 0.9 },
+  const loader = new THREE.ImageBitmapLoader();
+  const bridgeTexture = await loadTexture(loader, 'https://ameo.link/u/abu.jpg');
+  const bridgeTextureNormal = await generateNormalMapFromTexture(bridgeTexture);
+  const bridge = loadedWorld.getObjectByName('bridge')! as THREE.Mesh;
+  bridge.material = buildCustomShader(
+    {
+      color: new THREE.Color(0x999999),
+      roughness: 0.9,
+      metalness: 0.9,
+      map: bridgeTexture,
+      normalMap: bridgeTextureNormal,
+      normalScale: 3,
+      uvTransform: new THREE.Matrix3().scale(6, 6),
+    },
+    { roughnessShader: groundRoughnessShader },
+    { tileBreaking: { type: 'neyret' } }
+  );
+
+  const bridgeBars = loadedWorld.getObjectByName('bridge_bars')! as THREE.Mesh;
+  bridgeBars.material = buildCustomShader(
+    {
+      color: new THREE.Color(0xcccccc),
+      roughness: 0.4,
+      metalness: 0.98,
+      map: bridgeTexture,
+      normalMap: bridgeTextureNormal,
+      normalScale: 2,
+      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+    },
     {},
     {}
   );
@@ -101,7 +146,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   return {
     locations,
     debugPos: true,
-    spawnLocation: 'spawn',
+    // spawnLocation: 'spawn',
+    spawnLocation: 'gouge',
     gravity: 6,
     player: {
       jumpVelocity: 2.8,

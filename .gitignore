@@ -14,3 +14,4 @@ static/*.gltf
 static/*.glb
 blender
 static/*.png
+static/*.br
