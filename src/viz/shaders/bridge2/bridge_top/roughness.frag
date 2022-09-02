@@ -1,5 +1,6 @@
 float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
   vec2 oPos = pos.xz * 0.5;
+  oPos = quantize(oPos, 0.01);
 
   // [-1, 1]
   float noise0 = fbm(oPos * 2.);

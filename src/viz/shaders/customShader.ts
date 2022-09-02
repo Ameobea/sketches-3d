@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { UniformsLib } from 'three';
 
 import noiseShaders from './noise.frag?raw';
+import noise2Shaders from './noise2.frag?raw';
 import commonShaderCode from './common.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
@@ -39,7 +40,7 @@ const AntialiasedRoughnessShaderFragment = `
         offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
         offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
         offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getCustomRoughness(offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
+        acc += getCustomRoughness(offsetPos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);
       }
     }
   }
@@ -47,7 +48,7 @@ const AntialiasedRoughnessShaderFragment = `
   roughnessFactor = acc;
 `;
 
-const NonAntialiasedRoughnessShaderFragment = `roughnessFactor = roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, curTimeSeconds, ctx);`;
+const NonAntialiasedRoughnessShaderFragment = `roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);`;
 
 const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   if (antialiasRoughnessShader) {
@@ -64,6 +65,7 @@ interface CustomShaderProps {
   normalScale?: number;
   map?: THREE.Texture;
   normalMap?: THREE.Texture;
+  roughnessMap?: THREE.Texture;
   normalMapType?: THREE.NormalMapTypes;
   uvTransform?: THREE.Matrix3;
   emissiveIntensity?: number;
@@ -71,6 +73,7 @@ interface CustomShaderProps {
   lightMapIntensity?: number;
   transparent?: boolean;
   alphaTest?: number;
+  fogMultiplier?: number;
 }
 
 interface CustomShaderShaders {
@@ -85,6 +88,11 @@ interface CustomShaderOptions {
   antialiasColorShader?: boolean;
   antialiasRoughnessShader?: boolean;
   tileBreaking?: { type: 'neyret'; patchScale?: number } | { type: 'fastFixMipmap' };
+  /**
+   * If provided, the alternative noise functions in `noise2.frag` will be included
+   */
+  useNoise2?: boolean;
+  enableFog?: boolean;
 }
 
 export const buildCustomShaderArgs = (
@@ -97,8 +105,10 @@ export const buildCustomShaderArgs = (
     uvTransform,
     normalMap,
     normalMapType,
+    roughnessMap,
     emissiveIntensity,
     lightMapIntensity,
+    fogMultiplier,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -107,7 +117,13 @@ export const buildCustomShaderArgs = (
     roughnessShader,
     emissiveShader,
   }: CustomShaderShaders = {},
-  { antialiasColorShader, antialiasRoughnessShader, tileBreaking }: CustomShaderOptions = {}
+  {
+    antialiasColorShader,
+    antialiasRoughnessShader,
+    tileBreaking,
+    useNoise2,
+    enableFog = true,
+  }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
@@ -118,8 +134,8 @@ export const buildCustomShaderArgs = (
     // UniformsLib.bumpmap,
     UniformsLib.normalmap,
     UniformsLib.displacementmap,
-    // UniformsLib.roughnessmap,
-    // UniformsLib.metalnessmap,
+    UniformsLib.roughnessmap,
+    UniformsLib.metalnessmap,
     UniformsLib.fog,
     UniformsLib.lights,
     {
@@ -215,7 +231,7 @@ export const buildCustomShaderArgs = (
     #include <uv2_pars_vertex>
     #include <displacementmap_pars_vertex>
     #include <color_pars_vertex>
-    #include <fog_pars_vertex>
+    ${enableFog ? '#include <fog_pars_vertex>' : ''}
     #include <normal_pars_vertex>
     #include <morphtarget_pars_vertex>
     #include <skinning_pars_vertex>
@@ -253,7 +269,7 @@ export const buildCustomShaderArgs = (
       vViewPosition = - mvPosition.xyz;
       #include <worldpos_vertex>
       #include <shadowmap_vertex>
-      #include <fog_vertex>
+      ${enableFog ? '#include <fog_vertex>' : ''}
     // #ifdef USE_TRANSMISSION
       vec4 worldPosition = vec4( transformed, 1.0 );
       worldPosition = modelMatrix * worldPosition;
@@ -325,7 +341,7 @@ varying vec3 vViewPosition;
 #include <cube_uv_reflection_fragment>
 #include <envmap_common_pars_fragment>
 #include <envmap_physical_pars_fragment>
-#include <fog_pars_fragment>
+${enableFog ? '#include <fog_pars_fragment>' : ''}
 #include <lights_pars_begin>
 #include <normal_pars_fragment>
 #include <lights_physical_pars_fragment>
@@ -355,6 +371,7 @@ struct SceneCtx {
 
 ${commonShaderCode}
 ${noiseShaders}
+${useNoise2 ? noise2Shaders : ''}
 ${colorShader ?? ''}
 ${normalShader ?? ''}
 ${roughnessShader ?? ''}
@@ -405,14 +422,28 @@ void main() {
   ctx.diffuseColor = diffuseColor;
 	#include <alphamap_fragment>
 	#include <alphatest_fragment>
-	#include <roughnessmap_fragment>
+  ${
+    tileBreaking && roughnessMap
+      ? `
+    float roughnessFactor = roughness;
+    ${
+      tileBreaking.type === 'neyret'
+        ? 'vec3 texelRoughness = textureNoTileNeyret(roughnessMap, vUv).xyz;'
+        : 'vec3 texelRoughness = textureNoTile(roughnessMap, noiseSampler, vUv, 0., 1.).xyz;'
+    }
+    roughnessFactor *= texelRoughness.g;`
+      : '#include <roughnessmap_fragment>'
+  }
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
   ${
     tileBreaking && normalMap
-      ? `
-    // vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., 1.).xyz;
-    vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;
+      ? `${
+          tileBreaking.type === 'neyret'
+            ? 'vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;'
+            : 'vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., 1.).xyz;'
+        }
+
     mapN = mapN * 2.0 - 1.0;
     mapN.xy *= normalScale;
 
@@ -474,7 +505,21 @@ void main() {
 	#include <output_fragment>
 	#include <tonemapping_fragment>
 	#include <encodings_fragment>
-	#include <fog_fragment>
+	${
+    enableFog
+      ? `
+  #ifdef USE_FOG
+    #ifdef FOG_EXP2
+      float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+    #else
+      float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+    #endif
+    ${typeof fogMultiplier === 'number' ? `fogFactor *= ${fogMultiplier.toFixed(4)};` : ''}
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+  #endif
+  `
+      : ''
+  }
 	#include <premultiplied_alpha_fragment>
 	#include <dithering_fragment>
 }`,
@@ -501,6 +546,10 @@ export const buildCustomShader = (
     (mat as any).normalMap = props.normalMap;
     (mat as any).normalMapType = props.normalMapType ?? THREE.TangentSpaceNormalMap;
     (mat as any).uniforms.normalMap.value = props.normalMap;
+  }
+  if (props.roughnessMap) {
+    (mat as any).roughnessMap = props.roughnessMap;
+    (mat as any).uniforms.roughnessMap.value = props.roughnessMap;
   }
   if (props.emissiveIntensity !== undefined) {
     (mat as any).emissiveIntensity = props.emissiveIntensity;

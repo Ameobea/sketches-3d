@@ -418,7 +418,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
       const children = obj.children;
       obj.children = [];
-      if (!(obj instanceof THREE.Group) && !obj.name.includes('nocollide')) {
+      if (!(obj instanceof THREE.Group) && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {
         worldOctree?.fromGraphNode(obj);
       }
       obj.children = children;
