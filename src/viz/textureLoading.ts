@@ -21,11 +21,12 @@ export const loadTexture = (
     wrapS = THREE.RepeatWrapping,
     wrapT = THREE.RepeatWrapping,
     magFilter = THREE.NearestFilter,
-    minFilter = THREE.NearestMipmapLinearFilter,
+    minFilter = THREE.NearestMipMapLinearFilter,
     // minFilter = THREE.LinearFilter,
     format,
     type,
-    anisotropy = 8,
+    // anisotropy = 8,
+    anisotropy = 1,
   }: TextureArgs = {}
 ) =>
   new Promise<THREE.Texture>((resolve, reject) =>
@@ -59,11 +60,12 @@ export const generateNormalMapFromTexture = async (
     wrapS = THREE.RepeatWrapping,
     wrapT = THREE.RepeatWrapping,
     magFilter = THREE.NearestFilter,
-    minFilter = THREE.NearestMipmapLinearFilter,
-    format,
-    type,
-    anisotropy = 8,
-  }: TextureArgs = {}
+    minFilter = THREE.NearestMipMapLinearFilter,
+    format = THREE.RGBAFormat,
+    type = THREE.UnsignedByteType,
+    anisotropy = 1,
+  }: TextureArgs = {},
+  packNormalGBA = false
 ): Promise<THREE.Texture> => {
   const engine = await getEngine();
 
@@ -79,10 +81,12 @@ export const generateNormalMapFromTexture = async (
   ctx.drawImage(source, 0, 0);
   const imageData = ctx.getImageData(0, 0, source.width, source.height);
 
+  const packMode = packNormalGBA ? 1 : 0;
   const normalMapBytes: Uint8Array = engine.gen_normal_map_from_texture(
     new Uint8Array(imageData.data.buffer),
     source.height,
-    source.width
+    source.width,
+    packMode
   );
   const normalMapImageData = new ImageData(
     new Uint8ClampedArray(normalMapBytes.buffer),

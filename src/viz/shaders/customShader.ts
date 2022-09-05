@@ -7,6 +7,9 @@ import commonShaderCode from './common.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 
+const DEFAULT_MAP_DISABLE_DISTANCE = 100;
+const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
+
 const buildNoiseTexture = (): THREE.DataTexture => {
   const noise = new Float32Array(256 * 256 * 4);
   for (let i = 0; i < noise.length; i++) {
@@ -74,6 +77,14 @@ interface CustomShaderProps {
   transparent?: boolean;
   alphaTest?: number;
   fogMultiplier?: number;
+  /**
+   * If provided, maps will no longer be read once the fragment is this distance from the camera.  Set to `null` to disable.
+   */
+  mapDisableDistance?: number | null;
+  /**
+   * If provided, the shader will interpolate between read map value and diffuse color within this distance.
+   */
+  mapDisableTransitionThreshold?: number;
 }
 
 interface CustomShaderShaders {
@@ -89,10 +100,23 @@ interface CustomShaderOptions {
   antialiasRoughnessShader?: boolean;
   tileBreaking?: { type: 'neyret'; patchScale?: number } | { type: 'fastFixMipmap' };
   /**
-   * If provided, the alternative noise functions in `noise2.frag` will be included
+   * If set, the alternative noise functions in `noise2.frag` will be included
    */
   useNoise2?: boolean;
   enableFog?: boolean;
+  /**
+   * If set, a normal map will be generated based on derivatives in magnitude of generated diffuse colors.
+   *
+   * Note that this is a pretty broken implementation right now.  There are huge aliasing issues and it looks very bad on
+   * surfaces that have a high angle.
+   */
+  useComputedNormalMap?: boolean;
+  /**
+   * If set, the provided `map` will be treated as a combined grayscale diffuse + normal map.  The diffuse component will
+   * be read from the R channel and the normal map will be read from the GBA channels.
+   */
+  usePackedDiffuseNormalGBA?: boolean;
+  readRoughnessMapFromRChannel?: boolean;
 }
 
 export const buildCustomShaderArgs = (
@@ -109,6 +133,8 @@ export const buildCustomShaderArgs = (
     emissiveIntensity,
     lightMapIntensity,
     fogMultiplier,
+    mapDisableDistance: rawMapDisableDistance,
+    mapDisableTransitionThreshold = 20,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -123,12 +149,15 @@ export const buildCustomShaderArgs = (
     tileBreaking,
     useNoise2,
     enableFog = true,
+    useComputedNormalMap,
+    usePackedDiffuseNormalGBA,
+    readRoughnessMapFromRChannel,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
-    UniformsLib.envmap,
-    UniformsLib.aomap,
+    // UniformsLib.envmap,
+    // UniformsLib.aomap,
     UniformsLib.lightmap,
     UniformsLib.emissivemap,
     // UniformsLib.bumpmap,
@@ -187,6 +216,20 @@ export const buildCustomShaderArgs = (
     throw new Error('Tile breaking requires a normal map with tangent space');
   }
 
+  if (useComputedNormalMap && normalMap) {
+    throw new Error('Cannot use computed normal map with a normal map');
+  }
+
+  if (usePackedDiffuseNormalGBA && !map) {
+    throw new Error('Cannot use packed diffuse/normal map without a map');
+  }
+  if (usePackedDiffuseNormalGBA && normalMap) {
+    throw new Error('Cannot use packed diffuse/normal map with a normal map');
+  }
+  if (usePackedDiffuseNormalGBA && useComputedNormalMap) {
+    throw new Error('Cannot use packed diffuse/normal map with computed normal map');
+  }
+
   const buildRunColorShaderFragment = () => {
     if (!colorShader) {
       return '';
@@ -216,69 +259,271 @@ export const buildCustomShaderArgs = (
     }
   };
 
+  const mapDisableDistance =
+    rawMapDisableDistance === undefined ? DEFAULT_MAP_DISABLE_DISTANCE : rawMapDisableDistance;
+  const buildTextureDisableFragment = () => {
+    if (typeof mapDisableDistance !== 'number') {
+      return '';
+    }
+
+    const startEdge = (mapDisableDistance - mapDisableTransitionThreshold).toFixed(3);
+    const endEdge = mapDisableDistance.toFixed(3);
+
+    return `
+      float textureActivation = 1. - smoothstep(${startEdge}, ${endEdge}, distanceToCamera);
+    `;
+  };
+
+  const buildUnpackDiffuseNormalGBAFragment = () => `
+    mapN = sampledDiffuseColor_.gba;
+    sampledDiffuseColor_ = vec4(sampledDiffuseColor_.rrr, 1.);
+  `;
+
+  const buildMapFragment = () => {
+    const inner = (() => {
+      if (!tileBreaking) {
+        return `
+        #ifdef USE_MAP
+          vec4 sampledDiffuseColor = texture2D( map, vUv );
+          #ifdef DECODE_VIDEO_TEXTURE
+            // inline sRGB decode (TODO: Remove this code when https://crbug.com/1256340 is solved)
+            sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
+          #endif
+          sampledDiffuseColor_ = sampledDiffuseColor;
+        #endif`;
+      }
+
+      return tileBreaking.type === 'neyret'
+        ? 'sampledDiffuseColor_ = textureNoTileNeyret(map, vUv);'
+        : `sampledDiffuseColor_ = textureNoTile(map, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale});`;
+    })();
+
+    if (typeof mapDisableDistance !== 'number') {
+      return `
+      #ifdef USE_MAP
+        vec4 sampledDiffuseColor_ = vec4(0.);
+        ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
+        ${inner}
+        ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment() : ''}
+        diffuseColor *= sampledDiffuseColor_;
+      #endif`;
+    }
+
+    return `
+    #ifdef USE_MAP
+      vec4 sampledDiffuseColor_ = vec4(0.);
+      ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
+
+      if (textureActivation < 0.01) {
+        // avoid any texture lookups, relieve pressure on the texture unit
+      } else {
+        ${inner}
+        ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment() : ''}
+        diffuseColor = mix(diffuseColor, diffuseColor * sampledDiffuseColor_, textureActivation);
+      }
+    #endif`;
+  };
+
+  const buildRoughnessMapFragment = () => {
+    const inner = (() => {
+      if (tileBreaking && roughnessMap)
+        return tileBreaking.type === 'neyret'
+          ? 'vec3 texelRoughness = textureNoTileNeyret(roughnessMap, vUv).xyz;'
+          : `vec3 texelRoughness = textureNoTile(roughnessMap, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`;
+      else
+        return `
+      vec4 texelRoughness = texture2D( roughnessMap, vUv );
+      `;
+    })();
+
+    if (typeof mapDisableDistance !== 'number') {
+      return `
+      float roughnessFactor = roughness;
+      #ifdef USE_ROUGHNESSMAP
+        ${inner}
+        ${
+          readRoughnessMapFromRChannel
+            ? 'float channelRoughness = texelRoughness.r;'
+            : 'float channelRoughness = texelRoughness.g;'
+        }
+        roughnessFactor *= channelRoughness;
+      #endif`;
+    }
+
+    return `
+      float roughnessFactor = roughness;
+      #ifdef USE_ROUGHNESSMAP
+        if (textureActivation < 0.01) {
+          // avoid any texture lookups, relieve pressure on the texture unit
+        } else {
+          ${inner}
+          ${
+            readRoughnessMapFromRChannel
+              ? 'float channelRoughness = texelRoughness.r;'
+              : 'float channelRoughness = texelRoughness.g;'
+          }
+          roughnessFactor = mix(roughnessFactor, roughnessFactor * channelRoughness, textureActivation);
+        }
+      #endif`;
+  };
+
+  const buildNormalMapFragment = () => {
+    if (useComputedNormalMap) {
+      return `
+      float diffuseMagnitude = diffuseColor.r;
+      float dDiffuseX = dFdx(diffuseMagnitude);
+      float dDiffuseY = dFdy(diffuseMagnitude);
+
+      float computeNormalBias = 0.1;
+      vec3 mapN = normalize(vec3(
+        dDiffuseX,
+        dDiffuseY,
+        1.0 - ((computeNormalBias - 0.1) / 100.0)
+      ));
+
+      mapN.xy *= normalScale;
+
+      #ifdef USE_TANGENT
+        normal = normalize( vTBN * mapN );
+      #else
+        normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+      #endif
+    `;
+    }
+
+    if (usePackedDiffuseNormalGBA) {
+      if (typeof mapDisableDistance === 'number') {
+        return `
+        if (textureActivation < 0.01) {
+          // we didn't read anything from the normal map, so we can't use it
+        } else {
+          mapN = mapN * 2.0 - 1.0;
+          mapN.xy *= normalScale;
+
+          #ifdef USE_TANGENT
+            normal = normalize( vTBN * mapN );
+          #else
+            normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+          #endif
+        }
+        `;
+      }
+
+      return `
+        mapN = mapN * 2.0 - 1.0;
+        mapN.xy *= normalScale;
+
+        #ifdef USE_TANGENT
+          normal = normalize( vTBN * mapN );
+        #else
+          normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+        #endif
+      `;
+    }
+
+    if (!normalMap) {
+      return '';
+    }
+
+    const inner = (() => {
+      if (tileBreaking && normalMap)
+        return `
+    ${
+      tileBreaking.type === 'neyret'
+        ? 'vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;'
+        : `vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`
+    }
+
+    mapN = mapN * 2.0 - 1.0;
+    mapN = normalize(mapN);
+    mapN.xy *= normalScale;
+
+    #ifdef USE_TANGENT
+      normal = normalize( vTBN * mapN );
+    #else
+      normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+    #endif
+  `;
+      else return '#include <normal_fragment_maps>';
+    })();
+
+    if (typeof mapDisableDistance !== 'number') {
+      return inner;
+    }
+
+    return `
+      vec3 baseNormal = normal;
+      if (textureActivation < 0.01) {
+        // avoid any texture lookups, relieve pressure on the texture unit
+      } else {
+        ${inner}
+        normal = mix(baseNormal, normal, textureActivation);
+      }`;
+  };
+
   return {
     fog: true,
     lights: true,
     // dithering: true,
     uniforms,
-    vertexShader: `#define STANDARD
-    varying vec3 vViewPosition;
-    // #ifdef USE_TRANSMISSION
-      varying vec3 vWorldPosition;
-    // #endif
-    #include <common>
-    #include <uv_pars_vertex>
-    #include <uv2_pars_vertex>
-    #include <displacementmap_pars_vertex>
-    #include <color_pars_vertex>
-    ${enableFog ? '#include <fog_pars_vertex>' : ''}
-    #include <normal_pars_vertex>
-    #include <morphtarget_pars_vertex>
-    #include <skinning_pars_vertex>
-    #include <shadowmap_pars_vertex>
-    #include <logdepthbuf_pars_vertex>
-    #include <clipping_planes_pars_vertex>
+    vertexShader: `
+#define STANDARD
+varying vec3 vViewPosition;
+// #ifdef USE_TRANSMISSION
+  varying vec3 vWorldPosition;
+// #endif
+#include <common>
+#include <uv_pars_vertex>
+#include <uv2_pars_vertex>
+#include <displacementmap_pars_vertex>
+#include <color_pars_vertex>
+${enableFog ? '#include <fog_pars_vertex>' : ''}
+#include <normal_pars_vertex>
+#include <morphtarget_pars_vertex>
+#include <skinning_pars_vertex>
+#include <shadowmap_pars_vertex>
+#include <logdepthbuf_pars_vertex>
+#include <clipping_planes_pars_vertex>
 
-    ${customVertexFragment ? noiseShaders : ''}
+${customVertexFragment ? noiseShaders : ''}
 
-    uniform float curTimeSeconds;
-    varying vec3 pos;
-    varying vec3 vNormalAbsolute;
+uniform float curTimeSeconds;
+varying vec3 pos;
+varying vec3 vNormalAbsolute;
 
-    void main() {
-      // pos = position;
-      vNormalAbsolute = normal;
+void main() {
+  vNormalAbsolute = normal;
 
-      #include <uv_vertex>
-      #include <uv2_vertex>
-      #include <color_vertex>
-      #include <morphcolor_vertex>
-      #include <beginnormal_vertex>
-      #include <morphnormal_vertex>
-      #include <skinbase_vertex>
-      #include <skinnormal_vertex>
-      #include <defaultnormal_vertex>
-      #include <normal_vertex>
-      #include <begin_vertex>
-      #include <morphtarget_vertex>
-      #include <skinning_vertex>
-      #include <displacementmap_vertex>
-      #include <project_vertex>
-      #include <logdepthbuf_vertex>
-      #include <clipping_planes_vertex>
-      vViewPosition = - mvPosition.xyz;
-      #include <worldpos_vertex>
-      #include <shadowmap_vertex>
-      ${enableFog ? '#include <fog_vertex>' : ''}
-    // #ifdef USE_TRANSMISSION
-      vec4 worldPosition = vec4( transformed, 1.0 );
-      worldPosition = modelMatrix * worldPosition;
-      vWorldPosition = worldPosition.xyz;
-      pos = vWorldPosition;
-    // #endif
+  #include <uv_vertex>
+  #include <uv2_vertex>
+  #include <color_vertex>
+  #include <morphcolor_vertex>
+  #include <beginnormal_vertex>
+  #include <morphnormal_vertex>
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <defaultnormal_vertex>
+  #include <normal_vertex>
+  #include <begin_vertex>
+  #include <morphtarget_vertex>
+  #include <skinning_vertex>
+  #include <displacementmap_vertex>
+  #include <project_vertex>
+  #include <logdepthbuf_vertex>
+  #include <clipping_planes_vertex>
+  vViewPosition = - mvPosition.xyz;
+  #include <worldpos_vertex>
+  #include <shadowmap_vertex>
+  ${enableFog ? '#include <fog_vertex>' : ''}
+// #ifdef USE_TRANSMISSION
+  vec4 worldPosition = vec4( transformed, 1.0 );
+  worldPosition = modelMatrix * worldPosition;
+  vWorldPosition = worldPosition.xyz;
+  pos = vWorldPosition;
+// #endif
 
-      ${customVertexFragment ?? ''}
-    }`,
+  ${customVertexFragment ?? ''}
+}`,
     fragmentShader: `
 #define STANDARD
 #ifdef PHYSICAL
@@ -347,7 +592,7 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 #include <lights_physical_pars_fragment>
 #include <transmission_pars_fragment>
 #include <shadowmap_pars_fragment>
-#include <bumpmap_pars_fragment>
+// #include <bumpmap_pars_fragment>
 #include <normalmap_pars_fragment>
 #include <clearcoat_pars_fragment>
 #include <iridescence_pars_fragment>
@@ -362,6 +607,7 @@ varying vec3 vWorldPosition;
 varying vec3 vNormalAbsolute;
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
+${useComputedNormalMap || usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
 
 struct SceneCtx {
   vec3 cameraPosition;
@@ -394,6 +640,8 @@ void main() {
   float distanceToCamera = distance(cameraPos, fragPos);
   float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
 
+  ${buildTextureDisableFragment()}
+
   vec4 diffuseColor = vec4(diffuse, opacity);
 
   #if !defined(USE_UV)
@@ -405,56 +653,16 @@ void main() {
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
 	#include <logdepthbuf_fragment>
-	${
-    tileBreaking
-      ? `${
-          tileBreaking.type === 'neyret'
-            ? 'vec3 texelColor_ = textureNoTileNeyret(map, vUv);'
-            : 'vec3 texelColor_ = textureNoTile(map, noiseSampler, vUv, 0., 1.);'
-        }
-    vec4 texelColor = vec4(texelColor_, 1.);
-    // texelColor = mapTexelToLinear( texelColor );
-    diffuseColor *= texelColor;
-  `
-      : '#include <map_fragment>'
-  }
+	${buildMapFragment()}
+
 	#include <color_fragment>
   ctx.diffuseColor = diffuseColor;
 	#include <alphamap_fragment>
 	#include <alphatest_fragment>
-  ${
-    tileBreaking && roughnessMap
-      ? `
-    float roughnessFactor = roughness;
-    ${
-      tileBreaking.type === 'neyret'
-        ? 'vec3 texelRoughness = textureNoTileNeyret(roughnessMap, vUv).xyz;'
-        : 'vec3 texelRoughness = textureNoTile(roughnessMap, noiseSampler, vUv, 0., 1.).xyz;'
-    }
-    roughnessFactor *= texelRoughness.g;`
-      : '#include <roughnessmap_fragment>'
-  }
+  ${buildRoughnessMapFragment()}
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
-  ${
-    tileBreaking && normalMap
-      ? `${
-          tileBreaking.type === 'neyret'
-            ? 'vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;'
-            : 'vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., 1.).xyz;'
-        }
-
-    mapN = mapN * 2.0 - 1.0;
-    mapN.xy *= normalScale;
-
-    #ifdef USE_TANGENT
-      normal = normalize( vTBN * mapN );
-    #else
-      normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
-    #endif
-  `
-      : '#include <normal_fragment_maps>'
-  }
+  ${buildNormalMapFragment()}
 	#include <clearcoat_normal_fragment_begin>
 	#include <clearcoat_normal_fragment_maps>
 
@@ -516,6 +724,7 @@ void main() {
     #endif
     ${typeof fogMultiplier === 'number' ? `fogFactor *= ${fogMultiplier.toFixed(4)};` : ''}
     gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+    // gl_FragColor.w = mix( gl_FragColor.a, 0., fogFactor );
   #endif
   `
       : ''
@@ -538,6 +747,12 @@ export const buildCustomShader = (
   opts?: CustomShaderOptions
 ) => {
   const mat = new CustomShaderMaterial(buildCustomShaderArgs(props, shaders, opts));
+
+  if (opts?.useComputedNormalMap || opts?.usePackedDiffuseNormalGBA) {
+    mat.defines.TANGENTSPACE_NORMALMAP = '1';
+    mat.uniforms.normalScale = { value: new THREE.Vector2(props.normalScale ?? 1, props.normalScale ?? 1) };
+  }
+
   if (props.map) {
     (mat as any).map = props.map;
     (mat as any).uniforms.map.value = props.map;

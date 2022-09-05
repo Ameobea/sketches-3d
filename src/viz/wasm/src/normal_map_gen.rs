@@ -54,7 +54,28 @@ fn magnitude(v: [f32; 3]) -> f32 {
 ///
 /// Adapted from code by Jan Frischmuth <http://www.smart-page.net/blog>
 #[wasm_bindgen]
-pub fn gen_normal_map_from_texture(texture: &[u8], height: usize, width: usize) -> Vec<u8> {
+pub fn gen_normal_map_from_texture(
+  texture: &[u8],
+  height: usize,
+  width: usize,
+  pack_mode: u8,
+) -> Vec<u8> {
+  enum PackMode {
+    /// No packing is done; the returned texture contains all 3 components of
+    /// the normal vector with 1 set for the alpha channel.
+    None,
+    /// The texture data is assumed to be in grayscale.  The returned RGBA
+    /// texture will have the normal vector packed into the GBA channels with
+    /// the provided texture data into the R channel.
+    GrayScaleGBA,
+  }
+
+  let pack_mode = match pack_mode {
+    0 => PackMode::None,
+    1 => PackMode::GrayScaleGBA,
+    _ => panic!("Invalid pack mode"),
+  };
+
   let pixel_count = texture.len() / 4;
   let mut normal_map = Vec::with_capacity(pixel_count * 4);
 
@@ -80,10 +101,21 @@ pub fn gen_normal_map_from_texture(texture: &[u8], height: usize, width: usize) 
       let normal = normal.normalize();
       let normal = normal * 0.5;
       let normal = normal + nalgebra::Vector3::new(0.5, 0.5, 0.5);
-      normal_map.push((normal[0] * 255.0) as u8);
-      normal_map.push((normal[1] * 255.0) as u8);
-      normal_map.push((normal[2] * 255.0) as u8);
-      normal_map.push(255);
+
+      match pack_mode {
+        PackMode::None => {
+          normal_map.push((normal[0] * 255.0) as u8);
+          normal_map.push((normal[1] * 255.0) as u8);
+          normal_map.push((normal[2] * 255.0) as u8);
+          normal_map.push(255);
+        }
+        PackMode::GrayScaleGBA => {
+          normal_map.push(texture[(y * width + x) * 4]);
+          normal_map.push((normal[0] * 255.0) as u8);
+          normal_map.push((normal[1] * 255.0) as u8);
+          normal_map.push((normal[2] * 255.0) as u8);
+        }
+      }
     }
   }
 

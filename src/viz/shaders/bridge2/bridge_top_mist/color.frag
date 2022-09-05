@@ -9,7 +9,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   noisePos.y += curTimeSeconds * 1.;
   noisePos.x *= 6.;
   noisePos *= 3.;
-  float noise = fbm(noisePos.xz * 0.1);
+  float noise = fbm_2_octaves(noisePos.xz * 0.1);
   noise = pow(max(noise - 0.2, 0.), 0.62);
   // noise -= 0.3;
   noise = quantize(noise, 0.1);

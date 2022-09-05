@@ -2,7 +2,7 @@
  * Adapted from: https://www.shadertoy.com/view/WdVGWG
  */
 
-const float layersCount = 5.0;
+const float layersCount = 25.0;
 
 struct InterpNodes2 {
     vec2 seeds;
@@ -40,6 +40,7 @@ vec4 GetTextureSample(sampler2D samp, vec2 pos, float freq, float seed) {
 vec4 PreserveVariance(vec4 linearColor, vec4 meanColor, float moment2) {
     return (linearColor - meanColor) / sqrt(moment2) + meanColor;
 }
+
 vec4 mainImage(sampler2D samp, sampler2D noiseSampler, in vec2 uv, float texFreq) {
     float smoothNoise = texture(noiseSampler, uv * 0.35 + 10.).r;
     // return vec4(smoothNoise, smoothNoise, smoothNoise, 1.0);
@@ -52,7 +53,7 @@ vec4 mainImage(sampler2D samp, sampler2D noiseSampler, in vec2 uv, float texFreq
         fragColor += GetTextureSample(samp, uv, texFreq, interpNodes.seeds[i]) * weight;
     }
     // uncomment for variance preservation; costs one extra texture lookup
-    // fragColor = PreserveVariance(fragColor, textureLod(samp, vec2(0.0), 10.0), moment2);
+    fragColor = PreserveVariance(fragColor, textureLod(samp, vec2(0.0), 10.0), moment2);
     return fragColor;
 }
 
@@ -63,6 +64,6 @@ vec4 mainImage(sampler2D samp, sampler2D noiseSampler, in vec2 uv, float texFreq
  * v - unused, included for compatibility with other shaders.
  * scale - The tiling factor of the texture; higher numbers make the texture smaller and tiled more.
  */
-vec3 textureNoTile(sampler2D samp, sampler2D noiseSampler, vec2 uv, float v, float scale ) {
-  return mainImage(samp, noiseSampler, uv, scale).rgb;
+vec4 textureNoTile(sampler2D samp, sampler2D noiseSampler, vec2 uv, float v, float scale ) {
+  return mainImage(samp, noiseSampler, uv, scale);
 }

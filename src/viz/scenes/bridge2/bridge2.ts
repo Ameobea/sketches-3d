@@ -8,8 +8,10 @@ import BridgeTopRoughnessShader from '../../shaders/bridge2/bridge_top/roughness
 import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
 import PlatformRoughnessShader from '../../shaders/bridge2/platform/roughness.frag?raw';
 import PlatformColorShader from '../../shaders/bridge2/platform/color.frag?raw';
+import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
 import { CustomSky as Sky } from '../../CustomSky';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
+import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
 
 const locations = {
   spawn: {
@@ -24,6 +26,14 @@ const locations = {
     pos: new THREE.Vector3(79.57039064060402, 3.851205414533615, -0.7764391342190088),
     rot: new THREE.Vector3(-0.06, -1.514, 0),
   },
+  platform: {
+    pos: new THREE.Vector3(209.57039064060402, -0.851205414533615, -0.7764391342190088),
+    rot: new THREE.Vector3(-0.06, -1.514, 0),
+  },
+  repro: {
+    pos: new THREE.Vector3(167.87898623908666, 0.9848349975478469, -2.1751690172419376),
+    rot: new THREE.Vector3(-0.10800000000000023, 0.09400000000000608, 0),
+  },
 };
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
@@ -32,7 +42,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const baseDirectionalLightIntensity = 1;
   base.light.intensity = baseDirectionalLightIntensity;
   base.ambientlight.intensity = 0.1;
-  base.light.position.set(40, 20, -80);
+  base.light.position.set(20, 20, -80);
   const baseDirectionalLightColor = 0xfcbd63;
   base.light.color = new THREE.Color(baseDirectionalLightColor);
 
@@ -42,7 +52,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const bridgeTop = loadedWorld.getObjectByName('bridge_top')! as THREE.Mesh;
   const mat = bridgeTop.material as THREE.MeshStandardMaterial;
-  const texture = mat.emissiveMap!;
   mat.emissiveMap = null;
   mat.emissive = new THREE.Color(0x0);
 
@@ -56,20 +65,25 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   geometry.attributes.uv2 = geometry.attributes.uv;
 
   bridgeTop.material = buildCustomShader(
-    { color: new THREE.Color(0x121212), lightMap: texture, lightMapIntensity: 8 },
+    {
+      color: new THREE.Color(0x121212),
+      //  lightMap: texture,
+      lightMapIntensity: 8,
+    },
     { roughnessShader: BridgeTopRoughnessShader },
     {}
   );
 
   const loader = new THREE.ImageBitmapLoader();
   const bridgeTexture = await loadTexture(loader, 'https://ameo.link/u/abu.jpg', {
-    // format: THREE.RedFormat,
+    format: THREE.RedFormat,
   });
-  const bridgeTextureNormal = await generateNormalMapFromTexture(bridgeTexture, {});
+  const bridgeTextureNormal = await generateNormalMapFromTexture(bridgeTexture);
+  const bridgeCombinedDiffuseNormalTexture = await generateNormalMapFromTexture(bridgeTexture, {}, true);
 
   const archesMaterial = buildCustomShader(
     {
-      color: new THREE.Color(0x444444),
+      color: new THREE.Color(0xcccccc),
       roughness: 0.8,
       metalness: 0.9,
       roughnessMap: bridgeTexture,
@@ -78,7 +92,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(3.2, 3.6),
     },
     {},
-    {}
+    { readRoughnessMapFromRChannel: true }
   );
   const arches = loadedWorld.getObjectByName('arch')! as THREE.Mesh;
   arches.material = archesMaterial;
@@ -95,7 +109,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(5, 5),
     },
     {},
-    {}
+    { readRoughnessMapFromRChannel: true }
   );
 
   const bridge = loadedWorld.getObjectByName('bridge')! as THREE.Mesh;
@@ -104,14 +118,15 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       color: new THREE.Color(0xcccccc),
       roughness: 0.9,
       metalness: 0.9,
-      map: bridgeTexture,
-      normalMap: bridgeTextureNormal,
+      map: bridgeCombinedDiffuseNormalTexture,
+      // normalMap: bridgeTextureNormal,
       normalScale: 3,
       uvTransform: new THREE.Matrix3().scale(10, 10),
     },
     { roughnessShader: BridgeTopRoughnessShader },
-    { tileBreaking: { type: 'neyret' } }
+    { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true }
   );
+  viz.registerDistanceMaterialSwap(bridge, new THREE.MeshBasicMaterial({ color: 0xcccccc }), 200);
 
   const bridgeBars = loadedWorld.getObjectByName('bridge_bars')! as THREE.Mesh;
   bridgeBars.material = buildCustomShader(
@@ -134,6 +149,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {}
   );
   const bridgeSupports = loadedWorld.getObjectByName('bridge_supports')! as THREE.Mesh;
+  bridgeSupports.material = bridgeSupportsMaterial;
 
   const bridgeTopMist = loadedWorld.getObjectByName('bridge_top_mistnocollide')! as THREE.Mesh;
   const bridgeTopMistMat = buildCustomShader(
@@ -143,91 +159,122 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   bridgeTopMist.material = bridgeTopMistMat;
   viz.registerBeforeRenderCb(curTimeSeconds => bridgeTopMistMat.setCurTimeSeconds(curTimeSeconds));
+  viz.registerDistanceMaterialSwap(
+    bridgeTopMist,
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(0x0), transparent: true, opacity: 0 }),
+    150
+  );
 
   const monolithTexture = await loadTexture(loader, 'https://ameo.link/u/ac1.jpg', {
     format: THREE.RedFormat,
   });
-  const monolithTextureNormal = await generateNormalMapFromTexture(monolithTexture, {});
+  const monolithTextureCombinedDiffuseNormal = await generateNormalMapFromTexture(monolithTexture, {}, true);
   const monolithMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x424242),
-      map: monolithTexture,
-      normalMap: monolithTextureNormal,
+      map: monolithTextureCombinedDiffuseNormal,
+      // normalMap: monolithTextureNormal,
       normalScale: 4,
       uvTransform: new THREE.Matrix3().scale(30, 30),
       roughness: 0.95,
       metalness: 0.2,
+      fogMultiplier: 0.8,
+      mapDisableDistance: 80,
     },
     {},
-    { tileBreaking: { type: 'neyret' } }
+    { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true }
   );
+  // const monolithFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x424242) });
+  const monolithFarMat = buildCustomShader({ fogMultiplier: 0.8, color: new THREE.Color(0x424242) });
 
   const monolithRingTexture = await loadTexture(loader, 'https://ameo.link/u/ac0.jpg', {
-    // format: THREE.RedFormat,
+    format: THREE.RedFormat,
   });
-  const monolithRingTextureNormal = await generateNormalMapFromTexture(monolithRingTexture, {});
+  const monolithRingCombinedDiffuseNormalTexture = await generateNormalMapFromTexture(
+    monolithRingTexture,
+    {},
+    true
+  );
   const monolithRingMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x353535),
-      map: monolithRingTexture,
-      normalMap: monolithRingTextureNormal,
-      normalScale: 0.2,
+      map: monolithRingCombinedDiffuseNormalTexture,
+      // normalMap: monolithRingTextureNormal,
+      normalScale: 1.2,
       uvTransform: new THREE.Matrix3().scale(64, 64),
       roughness: 0.99,
       metalness: 0.5,
+      fogMultiplier: 0.8,
+      mapDisableDistance: 80,
     },
     {},
-    { tileBreaking: { type: 'neyret', patchScale: 1 } }
+    { tileBreaking: { type: 'neyret', patchScale: 1 }, usePackedDiffuseNormalGBA: true }
   );
+  // const monolithRingFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x353535) });
+  const monolithRingFarMat = buildCustomShader({ fogMultiplier: 0.8, color: new THREE.Color(0x353535) });
 
-  // const toRemove = [];
   for (const child of loadedWorld.children) {
     if (!child.name.startsWith('monolith')) {
       continue;
     }
 
-    if (child.name.endsWith('_far')) {
-      // toRemove.push(child);
-      // continue;
-      (child as THREE.Mesh).material = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x0) });
-    }
-
     if (child.name.includes('_ring')) {
       (child as THREE.Mesh).material = monolithRingMaterial;
+      viz.registerDistanceMaterialSwap(child as THREE.Mesh, monolithRingFarMat, 200);
       continue;
     }
 
     (child as THREE.Mesh).material = monolithMaterial;
+    viz.registerDistanceMaterialSwap(child as THREE.Mesh, monolithFarMat, 200);
   }
 
-  // for (const mesh of toRemove) {
-  //   loadedWorld.remove(mesh);
-  // }
-
   const background = loadedWorld.getObjectByName('backgroundnocollide')! as THREE.Mesh;
-  background.material = new THREE.MeshBasicMaterial({ color: 0x0 });
+  const backgroundMat = buildCustomShader(
+    { color: new THREE.Color(0x090909), alphaTest: 0.05, transparent: true, fogMultiplier: 0.6 },
+    { colorShader: BackgroundColorShader },
+    {}
+  );
+  const backgroundFarMat = buildCustomBasicShader(
+    { color: new THREE.Color(0x090909), alphaTest: 0.05, transparent: true, fogMultiplier: 0.6 },
+    { colorShader: BackgroundColorShader }
+  );
+  background.material = backgroundFarMat;
+  viz.registerDistanceMaterialSwap(background, backgroundFarMat, 200);
 
-  const platformTexture = await loadTexture(loader, 'https://ameo.link/u/ac6.png', {
-    // format: THREE.RedFormat,
+  // const platformTexURL = 'https://ameo.link/u/ac9.jpg'; // orig
+  // const platformTexURL = 'https://ameo.link/u/acn.jpg'; // tiled
+  const platformTexURL = 'https://ameo.link/u/aco.jpg'; // grayscale
+  const platformTexture = await loadTexture(loader, platformTexURL, {
+    format: THREE.RedFormat,
+    type: THREE.UnsignedByteType,
+    // magFilter: THREE.NearestFilter,
   });
-  const platformTextureNormal = await generateNormalMapFromTexture(platformTexture, {});
+
+  const platformCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
+    platformTexture,
+    {
+      // magFilter: THREE.NearestFilter,
+    },
+    true
+  );
   const platformMaterial = buildCustomShader(
     {
       color: new THREE.Color(0xffffff),
-      map: platformTexture,
-      normalMap: platformTextureNormal,
-      // roughnessMap: platformTexture,
-      roughnessMap: await loadTexture(loader, 'https://ameo.link/u/ac6.png', {
-        magFilter: THREE.NearestMipMapLinearFilter,
-      }),
-      normalScale: 5.5,
+      map: platformCombinedDiffuseAndNormalTexture,
+      normalScale: 1.8,
       uvTransform: new THREE.Matrix3().scale(400, 400),
       roughness: 1,
       metalness: 0.1,
+      fogMultiplier: 0.5,
+      mapDisableDistance: null,
     },
     { roughnessShader: PlatformRoughnessShader, colorShader: PlatformColorShader },
-    { tileBreaking: { type: 'neyret', patchScale: 2 } }
+    {
+      tileBreaking: { type: 'neyret', patchScale: 2 },
+      usePackedDiffuseNormalGBA: true,
+    }
   );
+  viz.registerBeforeRenderCb(curTimeSeconds => platformMaterial.setCurTimeSeconds(curTimeSeconds));
   const platform = loadedWorld.getObjectByName('platform')! as THREE.Mesh;
   platform.material = platformMaterial;
 
@@ -236,7 +283,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   tower.material = towerMaterial;
 
   const pillars = loadedWorld.getObjectByName('pillars')! as THREE.Mesh;
-  pillars.material = buildCustomShader({ color: new THREE.Color(0x444444), fogMultiplier: 0.5 }, {}, {});
+  pillars.material = buildCustomShader({ color: new THREE.Color(0x444444), fogMultiplier: 0.3 }, {}, {});
 
   const sky = buildSky();
   loadedWorld.add(sky);
@@ -280,7 +327,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     locations,
     debugPos: true,
     spawnLocation: 'spawn',
-    // spawnLocation: 'bridgeEnd',
+    // spawnLocation: 'repro',
     gravity: 6,
     player: {
       jumpVelocity: 2.8,
@@ -289,8 +336,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         radius: 0.35,
       },
       movementAccelPerSecond: {
-        onGround: 13,
-        inAir: 3,
+        onGround: 10,
+        inAir: 2.2,
       },
     },
   };

@@ -110,6 +110,18 @@ float fbm_1_octave(vec3 x) {
 	return v;
 }
 
+float fbm_2_octaves(vec2 x) {
+	float v = 0.0;
+	float a = 0.5;
+	vec2 shift = vec2(100);
+	for (int i = 0; i < 2; ++i) {
+		v += a * noise(x);
+		x = x * 2.0 + shift;
+		a *= 0.5;
+	}
+	return v;
+}
+
 float fbm_2_octaves(vec3 x) {
 	float v = 0.0;
 	float a = 0.5;

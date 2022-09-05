@@ -1,7 +1,7 @@
 float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
-  baseRoughness = 1. - baseRoughness;
+  baseRoughness = 1. - max(ctx.diffuseColor.x, max(ctx.diffuseColor.y, ctx.diffuseColor.z));
   float roughnessActivation = smoothstep(0.5, 1., baseRoughness);
-  float roughness = mix(baseRoughness, 1., roughnessActivation) * 1.9;
+  float roughness = mix(baseRoughness, 1., roughnessActivation) * 1.4;
   roughness = clamp(roughness, 0., 1.);
 
   // Fade to black as y goes from 0 to -20

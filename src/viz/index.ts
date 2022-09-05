@@ -16,6 +16,7 @@ import { buildDefaultSceneConfig, ScenesByName, type SceneConfig } from './scene
 import * as Conf from './conf';
 
 const setupFirstPerson = (
+  locations: SceneConfig['locations'],
   camera: THREE.Camera,
   spawnPos: {
     pos: THREE.Vector3;
@@ -164,17 +165,30 @@ const setupFirstPerson = (
     }
   }
 
+  const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
+    const playerColliderHeight = playerCollider.end.clone().sub(playerCollider.start).length();
+    const playerColliderRadius = playerCollider.radius;
+    playerCollider.start.set(pos.x, pos.y, pos.z);
+    playerCollider.end.set(pos.x, pos.y + playerColliderHeight, pos.z);
+    playerCollider.radius = playerColliderRadius;
+    playerVelocity.set(0, 0, 0);
+    camera.position.copy(playerCollider.end);
+    if (rot) {
+      camera.rotation.setFromVector3(rot);
+    }
+  };
+  (window as any).tp = (posName: string) => {
+    const location = locations[posName];
+    if (location) {
+      teleportPlayer(location.pos, location.rot);
+    } else {
+      console.log('No location found');
+    }
+  };
+
   function teleportPlayerIfOob() {
     if (camera.position.y <= -55) {
-      const playerColliderHeight = playerCollider.end.clone().sub(playerCollider.start).length();
-      const playerColliderRadius = playerCollider.radius;
-      playerCollider.start.set(spawnPos.pos.x, spawnPos.pos.y, spawnPos.pos.z);
-      playerCollider.end.set(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z);
-      console.log(spawnPos.pos.toArray());
-      playerCollider.radius = playerColliderRadius;
-      playerVelocity.set(0, 0, 0);
-      camera.position.copy(playerCollider.end);
-      camera.rotation.setFromVector3(spawnPos.rot);
+      teleportPlayer(spawnPos.pos, spawnPos.rot);
     }
   }
 
@@ -240,7 +254,11 @@ export const buildViz = () => {
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   // const ext = renderer.getContext().getExtension('WEBGL_compressed_texture_s3tc');
-  // console.log({ ext });
+  const gl = renderer.getContext();
+  const fragDerivExt = gl.getExtension('OES_standard_derivatives');
+  if (fragDerivExt) {
+    renderer.getContext().hint(fragDerivExt.FRAGMENT_SHADER_DERIVATIVE_HINT_OES, gl.NICEST);
+  }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = enableShadows;
@@ -280,6 +298,37 @@ export const buildViz = () => {
     if (idx !== -1) {
       afterRenderCbs.splice(idx, 1);
     }
+  };
+
+  const distanceSwapEntries: {
+    mesh: THREE.Mesh;
+    baseMat: THREE.Material;
+    replacementMat: THREE.Material;
+    distance: number;
+  }[] = [];
+  registerBeforeRenderCb(() => {
+    for (const { mesh, baseMat, replacementMat, distance } of distanceSwapEntries) {
+      const distanceToCamera = camera.position.distanceTo(mesh.position);
+      if (distanceToCamera < distance) {
+        if (mesh.material !== baseMat) {
+          console.log('swapping back to close mat', mesh.name);
+        }
+        mesh.material = baseMat;
+      } else {
+        if (mesh.material !== replacementMat) {
+          console.log('swapping to far mat', mesh.name);
+        }
+        mesh.material = replacementMat;
+      }
+    }
+  });
+
+  const registerDistanceMaterialSwap = (mesh: THREE.Mesh, replacementMat: THREE.Material, distance = 150) => {
+    const baseMat = mesh.material;
+    if (!baseMat || Array.isArray(baseMat)) {
+      throw new Error('Mesh must have a single material');
+    }
+    distanceSwapEntries.push({ mesh, baseMat, replacementMat, distance });
   };
 
   let isBlurred = false;
@@ -329,6 +378,7 @@ export const buildViz = () => {
     animate,
     registerBeforeRenderCb,
     unregisterBeforeRenderCb,
+    registerDistanceMaterialSwap,
     registerAfterRenderCb,
     unregisterAfterRenderCb,
     onDestroy,
@@ -365,6 +415,8 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       ...((await sceneLoader(viz, scene)) ?? {}),
     };
 
+    (window as any).locations = () => Object.keys(sceneConf.locations);
+
     let worldOctree: Octree | null = null;
     let setGravity = (_g: number) => {};
     let setJumpVelocity = (_v: number) => {};
@@ -373,6 +425,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       const spawnPos = sceneConf.locations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
       const fpCtx = setupFirstPerson(
+        sceneConf.locations,
         viz.camera,
         spawnPos,
         viz.registerBeforeRenderCb,
