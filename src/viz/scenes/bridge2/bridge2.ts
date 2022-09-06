@@ -12,6 +12,7 @@ import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?r
 import { CustomSky as Sky } from '../../CustomSky';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
 import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
+import { getEngine } from '../../../viz/engine';
 
 const locations = {
   spawn: {
@@ -282,11 +283,58 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const tower = loadedWorld.getObjectByName('tower')! as THREE.Mesh;
   tower.material = towerMaterial;
 
-  const pillars = loadedWorld.getObjectByName('pillars')! as THREE.Mesh;
-  pillars.material = buildCustomShader({ color: new THREE.Color(0x444444), fogMultiplier: 0.3 }, {}, {});
-
   const sky = buildSky();
   loadedWorld.add(sky);
+
+  const pillars = new Array(6).fill(null).map((_, i) => {
+    const name = `pillar${i + 1}`;
+    const obj = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    return obj;
+  });
+
+  let combinedPillarTexture: THREE.Texture | null = null;
+  for (const obj of pillars) {
+    if (!combinedPillarTexture) {
+      const pillarTexture = (obj.material as THREE.MeshStandardMaterial).map!;
+      combinedPillarTexture = await generateNormalMapFromTexture(pillarTexture, {}, true);
+    }
+
+    const mat = buildCustomShader(
+      {
+        map: combinedPillarTexture,
+        color: new THREE.Color(0xffffff),
+        fogMultiplier: 0.5,
+      },
+      {},
+      { usePackedDiffuseNormalGBA: true }
+    );
+    // obj.material = mat;
+  }
+
+  const engine = await getEngine();
+  const pillarCtxPtr = engine.create_pillar_ctx();
+  // TODO: update every frame
+  engine.compute_pillar_positions(pillarCtxPtr);
+
+  const pillarInstancedMeshes: THREE.InstancedMesh[] = [];
+  for (let pillarIx = 0; pillarIx < pillars.length; pillarIx++) {
+    const pillarMesh = pillars[pillarIx];
+    const transforms = engine.get_pillar_transformations(pillarCtxPtr, pillarIx);
+    (pillarMesh.material as THREE.MeshStandardMaterial).roughness = 0.95;
+    const map = (pillarMesh.material as THREE.MeshStandardMaterial).map!;
+    map.magFilter = THREE.NearestFilter;
+    map.minFilter = THREE.NearestMipMapLinearFilter;
+    const normalMap = await generateNormalMapFromTexture(map);
+    (pillarMesh.material as THREE.MeshStandardMaterial).normalMap = normalMap;
+    const instancedMesh = new THREE.InstancedMesh(
+      pillarMesh.geometry,
+      pillarMesh.material,
+      transforms.length / 16
+    );
+    const instanceMatrix = instancedMesh.instanceMatrix;
+    instanceMatrix.set(transforms);
+    loadedWorld.add(instancedMesh);
+  }
 
   const skyMaterial = sky.material as THREE.ShaderMaterial;
   const sun = new THREE.Vector3();
