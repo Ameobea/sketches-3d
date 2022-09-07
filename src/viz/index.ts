@@ -14,8 +14,209 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { getSentry } from '../sentry';
 import { buildDefaultSceneConfig, ScenesByName, type SceneConfig } from './scenes';
 import * as Conf from './conf';
+import { getAmmoJS } from './collision';
 
-const setupFirstPerson = (
+const initBulletPhysics = (
+  camera: THREE.Camera,
+  keyStates: Record<string, boolean>,
+  Ammo: any,
+  spawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 },
+  gravity: number,
+  jumpSpeed: number,
+  playerColliderRadius: number,
+  playerColliderHeight: number,
+  playerMoveSpeed: number
+) => {
+  const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+  const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+  const broadphase = new Ammo.btDbvtBroadphase();
+  const solver = new Ammo.btSequentialImpulseConstraintSolver();
+  const collisionWorld = new Ammo.btDiscreteDynamicsWorld(
+    dispatcher,
+    broadphase,
+    solver,
+    collisionConfiguration
+  );
+  collisionWorld.setGravity(new Ammo.btVector3(0, -gravity, 0));
+
+  // const playerCapsule = new Ammo.btCapsuleShape(0.5, 1.8);
+  // const playerTransform = new Ammo.btTransform();
+  // playerTransform.setIdentity();
+  // playerTransform.setOrigin(new Ammo.btVector3(spawnPos.pos.x, spawnPos.pos.y, spawnPos.pos.z));
+  // playerTransform.setRotation(new Ammo.btQuaternion(spawnPos.rot.x, spawnPos.rot.y, spawnPos.rot.z, 0));
+  // const playerMotionState = new Ammo.btDefaultMotionState(playerTransform);
+  // const playerMass = 1;
+  // const playerLocalInertia = new Ammo.btVector3(0, 0, 0);
+  // playerCapsule.calculateLocalInertia(playerMass, playerLocalInertia);
+  // const playerRigidBodyCI = new Ammo.btRigidBodyConstructionInfo(
+  //   playerMass,
+  //   playerMotionState,
+  //   playerCapsule,
+  //   playerLocalInertia
+  // );
+  // const playerRigidBody = new Ammo.btRigidBody(playerRigidBodyCI);
+  // playerRigidBody.setActivationState(4);
+  // collisionWorld.addRigidBody(playerRigidBody);
+
+  // const stepHeight = 0.35;
+  // const playerGhostObject = new Ammo.btPairCachingGhostObject();
+  // const playerController = new Ammo.btKinematicCharacterController(
+  //   playerGhostObject,
+  //   playerCapsule,
+  //   stepHeight
+  // );
+  // playerController.setGravity(new Ammo.btVector3(0, -gravity, 0));
+  // playerController.setUseGhostSweepTest(true);
+  // playerController.setJumpSpeed(jumpSpeed);
+
+  const playerInitialTransform = new Ammo.btTransform();
+  playerInitialTransform.setIdentity();
+  playerInitialTransform.setOrigin(
+    new Ammo.btVector3(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z)
+  );
+  // playerInitialTransform.setRotation(
+  //   new Ammo.btQuaternion(spawnPos.rot.x, spawnPos.rot.y, spawnPos.rot.z, 0)
+  // );
+  const playerGhostObject = new Ammo.btPairCachingGhostObject();
+  playerGhostObject.setWorldTransform(playerInitialTransform);
+  collisionWorld
+    .getBroadphase()
+    .getOverlappingPairCache()
+    .setInternalGhostPairCallback(new Ammo.btGhostPairCallback());
+  const playerCapsule = new Ammo.btCapsuleShape(playerColliderRadius, playerColliderHeight);
+  playerGhostObject.setCollisionShape(playerCapsule);
+  playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
+
+  const playerController = new Ammo.btKinematicCharacterController(
+    playerGhostObject,
+    playerCapsule,
+    0.35 // step height; TODO: make this configurable
+  );
+  playerController.setJumpSpeed(jumpSpeed);
+
+  collisionWorld.addCollisionObject(
+    playerGhostObject,
+    32, // btBroadphaseProxy::CharacterFilter
+    1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
+  );
+  collisionWorld.addAction(playerController);
+
+  const jump = () => {
+    playerController.jump();
+  };
+
+  /**
+   * Returns the new position of the player.
+   */
+  const updateCollisionWorld = (tDiffSeconds: number): THREE.Vector3 => {
+    const forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const upDir = new THREE.Vector3(0, 1, 0);
+    const leftDir = new THREE.Vector3().crossVectors(upDir, forwardDir).normalize();
+
+    const walkDirection = new THREE.Vector3();
+    if (keyStates['KeyW']) walkDirection.add(forwardDir);
+    if (keyStates['KeyS']) walkDirection.sub(forwardDir);
+    if (keyStates['KeyA']) walkDirection.add(leftDir);
+    if (keyStates['KeyD']) walkDirection.sub(leftDir);
+
+    const walkSpeed = playerMoveSpeed * tDiffSeconds;
+    const walkDirBulletVector = new Ammo.btVector3(
+      walkDirection.x * walkSpeed,
+      walkDirection.y * walkSpeed,
+      walkDirection.z * walkSpeed
+    );
+    console.log(
+      'walkDirBulletVector',
+      walkDirBulletVector.x(),
+      walkDirBulletVector.y(),
+      walkDirBulletVector.z()
+    );
+    playerController.setWalkDirection(walkDirBulletVector);
+
+    collisionWorld.stepSimulation(tDiffSeconds, 10);
+
+    const newPlayerTransform = playerGhostObject.getWorldTransform();
+    const newPlayerPos = newPlayerTransform.getOrigin();
+    console.log('newPlayerPos', newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
+
+    return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
+  };
+
+  const addTriMesh = (mesh: THREE.Mesh) => {
+    // debug only
+    const boxShape = new Ammo.btBoxShape(new Ammo.btVector3(100, 10, 100));
+    const boxTransform = new Ammo.btTransform();
+    boxTransform.setIdentity();
+    boxTransform.setOrigin(new Ammo.btVector3(0, 0, 0));
+    const boxMotionState = new Ammo.btDefaultMotionState(boxTransform);
+    const boxRBInfo = new Ammo.btRigidBodyConstructionInfo(
+      0,
+      boxMotionState,
+      boxShape,
+      new Ammo.btVector3(0, 0, 0)
+    );
+    const boxRB = new Ammo.btRigidBody(boxRBInfo);
+    boxRB.setCollisionFlags(1);
+    // collisionWorld.addRigidBody(boxRB);
+    // return;
+
+    const geometry = mesh.geometry as THREE.BufferGeometry;
+    const vertices = geometry.attributes.position.array as Float32Array;
+    const indices = geometry.index!.array as Uint16Array;
+    console.log('vertices', vertices);
+    console.log('indices', indices);
+    const scale = mesh.scale;
+    const pos = mesh.position;
+    const quat = mesh.quaternion;
+
+    const transform = new Ammo.btTransform();
+    transform.setIdentity();
+    transform.setOrigin(new Ammo.btVector3(pos.x, pos.y, pos.z));
+    transform.setRotation(new Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w));
+
+    // TODO: update IDL and use native indexed triangle mesh
+    const trimesh = new Ammo.btTriangleMesh();
+    for (let i = 0; i < indices.length; i += 3) {
+      const i0 = indices[i] * 3;
+      const i1 = indices[i + 1] * 3;
+      const i2 = indices[i + 2] * 3;
+      const v0 = new Ammo.btVector3(
+        vertices[i0] * scale.x,
+        vertices[i0 + 1] * scale.y,
+        vertices[i0 + 2] * scale.z
+      );
+      const v1 = new Ammo.btVector3(
+        vertices[i1] * scale.x,
+        vertices[i1 + 1] * scale.y,
+        vertices[i1 + 2] * scale.z
+      );
+      const v2 = new Ammo.btVector3(
+        vertices[i2] * scale.x,
+        vertices[i2 + 1] * scale.y,
+        vertices[i2 + 2] * scale.z
+      );
+      trimesh.addTriangle(v0, v1, v2);
+    }
+
+    const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
+    // Add the object as static, so it doesn't move but still collides
+    const motionState = new Ammo.btDefaultMotionState(transform);
+    const localInertia = new Ammo.btVector3(0, 0, 0);
+    const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
+    const body = new Ammo.btRigidBody(rbInfo);
+    body.setFriction(0.5);
+    body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
+    if (!body.isStaticObject()) {
+      throw new Error('body is not static');
+    }
+    collisionWorld.addRigidBody(body);
+    // console.log('Added trimesh', body);
+  };
+
+  return { updateCollisionWorld, addTriMesh, jump };
+};
+
+const setupFirstPerson = async (
   locations: SceneConfig['locations'],
   camera: THREE.Camera,
   spawnPos: {
@@ -31,6 +232,21 @@ const setupFirstPerson = (
   let ON_FLOOR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.onGround ?? 40;
   let IN_AIR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.inAir ?? 20;
   const STEPS_PER_FRAME = 20;
+
+  const keyStates: Record<string, boolean> = {};
+
+  const Ammo = await getAmmoJS();
+  const { updateCollisionWorld, addTriMesh, jump } = await initBulletPhysics(
+    camera,
+    keyStates,
+    Ammo,
+    spawnPos,
+    GRAVITY,
+    JUMP_VELOCITY,
+    playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius,
+    playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight,
+    4 // TODO
+  );
 
   const setGravity = (gravity: number) => {
     GRAVITY = gravity;
@@ -57,8 +273,6 @@ const setupFirstPerson = (
 
   let playerOnFloor = false;
 
-  const keyStates: Record<string, boolean> = {};
-
   document.addEventListener('keydown', event => {
     if (event.key === 'e') {
       document.exitPointerLock();
@@ -82,7 +296,7 @@ const setupFirstPerson = (
     }
   });
 
-  function playerCollisions() {
+  function playerCollisions(timeDiffSeconds: number) {
     const result = worldOctree.capsuleIntersect(playerCollider);
 
     playerOnFloor = false;
@@ -115,7 +329,7 @@ const setupFirstPerson = (
     playerCollider.translate(deltaPosition);
     // }
 
-    playerCollisions();
+    playerCollisions(deltaTime);
 
     camera.position.copy(playerCollider.end);
   }
@@ -161,6 +375,7 @@ const setupFirstPerson = (
     if (playerOnFloor) {
       if (keyStates['Space']) {
         playerVelocity.y = JUMP_VELOCITY;
+        jump();
       }
     }
   }
@@ -196,13 +411,17 @@ const setupFirstPerson = (
     // we look for collisions in substeps to mitigate the risk of
     // an object traversing another too quickly for detection.
 
-    for (let i = 0; i < STEPS_PER_FRAME; i++) {
-      controls(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
+    // for (let i = 0; i < STEPS_PER_FRAME; i++) {
+    //   controls(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
 
-      updatePlayer(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
+    //   updatePlayer(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
 
-      teleportPlayerIfOob();
-    }
+    //   teleportPlayerIfOob();
+    // }
+
+    const newPlayerPos = updateCollisionWorld(tDiffSecs);
+    newPlayerPos.y += playerColliderHeight;
+    camera.position.copy(newPlayerPos);
   });
 
   (window as any).getPos = () => playerCollider.start.toArray();
@@ -213,7 +432,7 @@ const setupFirstPerson = (
       rot: camera.rotation.toArray().slice(0, 3),
     });
 
-  return { setGravity, setJumpVelocity, worldOctree, setPlayerAcceleration };
+  return { setGravity, setJumpVelocity, worldOctree, setPlayerAcceleration, addTriMesh };
 };
 
 const setupOrbitControls = async (
@@ -418,13 +637,14 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     (window as any).locations = () => Object.keys(sceneConf.locations);
 
     let worldOctree: Octree | null = null;
+    let addTriMesh: ((mesh: THREE.Mesh) => void) | null = null;
     let setGravity = (_g: number) => {};
     let setJumpVelocity = (_v: number) => {};
     let setPlayerAcceleration = (_onGroundAccPerSec: number, _inAirAccPerSec: number) => {};
     if (sceneConf.viewMode.type === 'firstPerson') {
       const spawnPos = sceneConf.locations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
-      const fpCtx = setupFirstPerson(
+      const fpCtx = await setupFirstPerson(
         sceneConf.locations,
         viz.camera,
         spawnPos,
@@ -433,6 +653,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         sceneConf.gravity
       );
       worldOctree = fpCtx.worldOctree;
+      addTriMesh = fpCtx.addTriMesh;
       setGravity = fpCtx.setGravity;
       setJumpVelocity = fpCtx.setJumpVelocity;
       setPlayerAcceleration = fpCtx.setPlayerAcceleration;
@@ -468,15 +689,20 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       });
     }
 
-    const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
-      const children = obj.children;
-      obj.children = [];
-      if (!(obj instanceof THREE.Group) && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {
-        worldOctree?.fromGraphNode(obj);
-      }
-      obj.children = children;
-    };
-    scene.traverse(traverseCb);
+    if (worldOctree && addTriMesh) {
+      const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
+        const children = obj.children;
+        obj.children = [];
+        if (!(obj instanceof THREE.Group) && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {
+          worldOctree!.fromGraphNode(obj);
+        }
+        if (obj instanceof THREE.Mesh) {
+          addTriMesh!(obj);
+        }
+        obj.children = children;
+      };
+      scene.traverse(traverseCb);
+    }
 
     // TODO: Combine with above
     scene.traverse(child => {

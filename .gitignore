@@ -15,3 +15,6 @@ static/*.glb
 blender
 static/*.png
 static/*.br
+src/ammojs/*
+!src/ammojs/.gitkeep
+static/ammo.wasm.wasm

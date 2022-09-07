@@ -83,4 +83,9 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'bridge2' },
     gltfName: 'checkpoint5',
   },
+  collisiondemo: {
+    sceneName: 'collisionDemo',
+    sceneLoader: () => import('./collisionDemo').then(mod => mod.processLoadedScene),
+    metadata: { title: 'collisionDemo' },
+  },
 };

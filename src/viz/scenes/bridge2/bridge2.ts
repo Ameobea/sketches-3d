@@ -297,6 +297,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     if (!combinedPillarTexture) {
       const pillarTexture = (obj.material as THREE.MeshStandardMaterial).map!;
       combinedPillarTexture = await generateNormalMapFromTexture(pillarTexture, {}, true);
+      // TODO USE THIS once the custom shader is fixed for instancing
     }
 
     const mat = buildCustomShader(
@@ -326,6 +327,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     map.minFilter = THREE.NearestMipMapLinearFilter;
     const normalMap = await generateNormalMapFromTexture(map);
     (pillarMesh.material as THREE.MeshStandardMaterial).normalMap = normalMap;
+    map.repeat.set(4, 4);
     const instancedMesh = new THREE.InstancedMesh(
       pillarMesh.geometry,
       pillarMesh.material,
