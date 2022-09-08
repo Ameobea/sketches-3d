@@ -59,7 +59,7 @@ const initBulletPhysics = (
     0.35, // step height; TODO: make this configurable
     new Ammo.btVector3(0, 1, 0)
   );
-  playerController.setMaxPenetrationDepth(0.05);
+  playerController.setMaxPenetrationDepth(0.055);
   playerController.setJumpSpeed(jumpSpeed);
 
   collisionWorld.addCollisionObject(
@@ -78,6 +78,7 @@ const initBulletPhysics = (
    */
   const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
     let forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const origForwardDir = forwardDir.clone();
     const upDir = new THREE.Vector3(0, 1, 0);
     const leftDir = new THREE.Vector3().crossVectors(upDir, forwardDir).normalize();
     // Adjust `forwardDir` to be horizontal.
@@ -90,12 +91,15 @@ const initBulletPhysics = (
     if (keyStates['KeyD']) walkDirection.sub(leftDir);
     if (keyStates['Space'] && playerController.onGround()) {
       if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
-        playerController.jump();
+        playerController
+          .jump
+          // new Ammo.btVector3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16)
+          ();
         lastJumpTimeSeconds = curTimeSeconds;
       }
     }
 
-    const walkSpeed = playerMoveSpeed * tDiffSeconds;
+    const walkSpeed = playerMoveSpeed * (1 / 160);
     const walkDirBulletVector = new Ammo.btVector3(
       walkDirection.x * walkSpeed,
       walkDirection.y * walkSpeed,
@@ -110,7 +114,7 @@ const initBulletPhysics = (
     // TODO: Check out `setVelocityForTimeInterval` compared to this
     playerController.setWalkDirection(walkDirBulletVector);
 
-    collisionWorld.stepSimulation(tDiffSeconds, 0, 0);
+    collisionWorld.stepSimulation(tDiffSeconds, 20, 1 / 300);
 
     const newPlayerTransform = playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
@@ -119,7 +123,12 @@ const initBulletPhysics = (
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
 
-  const addTriMesh = (mesh: THREE.Mesh) => {
+  const addTriMesh = (mesh: THREE.Mesh | 'DONE') => {
+    if (mesh === 'DONE') {
+      broadphase.optimize();
+      return;
+    }
+
     // debug only
     // const boxShape = new Ammo.btBoxShape(new Ammo.btVector3(100, 10, 100));
     // const boxTransform = new Ammo.btTransform();
@@ -613,7 +622,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
     (window as any).locations = () => Object.keys(sceneConf.locations);
 
-    let addTriMesh: ((mesh: THREE.Mesh) => void) | null = null;
+    let addTriMesh: ((mesh: THREE.Mesh | 'DONE') => void) | null = null;
     let setGravity = (_g: number) => {};
     let setJumpVelocity = (_v: number) => {};
     let setPlayerAcceleration = (_onGroundAccPerSec: number, _inAirAccPerSec: number) => {};
@@ -677,6 +686,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         obj.children = children;
       };
       scene.traverse(traverseCb);
+      addTriMesh('DONE');
     }
 
     // TODO: Combine with above
