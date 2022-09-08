@@ -378,15 +378,15 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     debugPos: true,
     spawnLocation: 'spawn',
     // spawnLocation: 'repro',
-    gravity: 6,
+    gravity: 2,
     player: {
-      jumpVelocity: 2.8,
+      jumpVelocity: 10.8,
       colliderCapsuleSize: {
         height: 0.7,
         radius: 0.35,
       },
       movementAccelPerSecond: {
-        onGround: 10,
+        onGround: 3,
         inAir: 2.2,
       },
     },

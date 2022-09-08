@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
-import { Octree } from 'three/examples/jsm/math/Octree.js';
+// import { Octree } from 'three/examples/jsm/math/Octree.js';
 import { Capsule } from 'three/examples/jsm/math/Capsule.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
@@ -37,46 +37,12 @@ const initBulletPhysics = (
     solver,
     collisionConfiguration
   );
-  collisionWorld.setGravity(new Ammo.btVector3(0, -gravity, 0));
-
-  // const playerCapsule = new Ammo.btCapsuleShape(0.5, 1.8);
-  // const playerTransform = new Ammo.btTransform();
-  // playerTransform.setIdentity();
-  // playerTransform.setOrigin(new Ammo.btVector3(spawnPos.pos.x, spawnPos.pos.y, spawnPos.pos.z));
-  // playerTransform.setRotation(new Ammo.btQuaternion(spawnPos.rot.x, spawnPos.rot.y, spawnPos.rot.z, 0));
-  // const playerMotionState = new Ammo.btDefaultMotionState(playerTransform);
-  // const playerMass = 1;
-  // const playerLocalInertia = new Ammo.btVector3(0, 0, 0);
-  // playerCapsule.calculateLocalInertia(playerMass, playerLocalInertia);
-  // const playerRigidBodyCI = new Ammo.btRigidBodyConstructionInfo(
-  //   playerMass,
-  //   playerMotionState,
-  //   playerCapsule,
-  //   playerLocalInertia
-  // );
-  // const playerRigidBody = new Ammo.btRigidBody(playerRigidBodyCI);
-  // playerRigidBody.setActivationState(4);
-  // collisionWorld.addRigidBody(playerRigidBody);
-
-  // const stepHeight = 0.35;
-  // const playerGhostObject = new Ammo.btPairCachingGhostObject();
-  // const playerController = new Ammo.btKinematicCharacterController(
-  //   playerGhostObject,
-  //   playerCapsule,
-  //   stepHeight
-  // );
-  // playerController.setGravity(new Ammo.btVector3(0, -gravity, 0));
-  // playerController.setUseGhostSweepTest(true);
-  // playerController.setJumpSpeed(jumpSpeed);
 
   const playerInitialTransform = new Ammo.btTransform();
   playerInitialTransform.setIdentity();
   playerInitialTransform.setOrigin(
     new Ammo.btVector3(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z)
   );
-  // playerInitialTransform.setRotation(
-  //   new Ammo.btQuaternion(spawnPos.rot.x, spawnPos.rot.y, spawnPos.rot.z, 0)
-  // );
   const playerGhostObject = new Ammo.btPairCachingGhostObject();
   playerGhostObject.setWorldTransform(playerInitialTransform);
   collisionWorld
@@ -90,8 +56,10 @@ const initBulletPhysics = (
   const playerController = new Ammo.btKinematicCharacterController(
     playerGhostObject,
     playerCapsule,
-    0.35 // step height; TODO: make this configurable
+    0.35, // step height; TODO: make this configurable
+    new Ammo.btVector3(0, 1, 0)
   );
+  playerController.setMaxPenetrationDepth(0.05);
   playerController.setJumpSpeed(jumpSpeed);
 
   collisionWorld.addCollisionObject(
@@ -100,24 +68,32 @@ const initBulletPhysics = (
     1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
   );
   collisionWorld.addAction(playerController);
+  collisionWorld.setGravity(new Ammo.btVector3(0, -gravity, 0));
 
-  const jump = () => {
-    playerController.jump();
-  };
+  let lastJumpTimeSeconds = 0;
+  const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
 
   /**
    * Returns the new position of the player.
    */
-  const updateCollisionWorld = (tDiffSeconds: number): THREE.Vector3 => {
-    const forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
+  const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
+    let forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
     const upDir = new THREE.Vector3(0, 1, 0);
     const leftDir = new THREE.Vector3().crossVectors(upDir, forwardDir).normalize();
+    // Adjust `forwardDir` to be horizontal.
+    forwardDir = new THREE.Vector3().crossVectors(leftDir, upDir).normalize();
 
     const walkDirection = new THREE.Vector3();
     if (keyStates['KeyW']) walkDirection.add(forwardDir);
     if (keyStates['KeyS']) walkDirection.sub(forwardDir);
     if (keyStates['KeyA']) walkDirection.add(leftDir);
     if (keyStates['KeyD']) walkDirection.sub(leftDir);
+    if (keyStates['Space'] && playerController.onGround()) {
+      if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
+        playerController.jump();
+        lastJumpTimeSeconds = curTimeSeconds;
+      }
+    }
 
     const walkSpeed = playerMoveSpeed * tDiffSeconds;
     const walkDirBulletVector = new Ammo.btVector3(
@@ -125,46 +101,45 @@ const initBulletPhysics = (
       walkDirection.y * walkSpeed,
       walkDirection.z * walkSpeed
     );
-    console.log(
-      'walkDirBulletVector',
-      walkDirBulletVector.x(),
-      walkDirBulletVector.y(),
-      walkDirBulletVector.z()
-    );
+    // console.log(
+    //   'walkDirBulletVector',
+    //   walkDirBulletVector.x(),
+    //   walkDirBulletVector.y(),
+    //   walkDirBulletVector.z()
+    // );
+    // TODO: Check out `setVelocityForTimeInterval` compared to this
     playerController.setWalkDirection(walkDirBulletVector);
 
-    collisionWorld.stepSimulation(tDiffSeconds, 10);
+    collisionWorld.stepSimulation(tDiffSeconds, 0, 0);
 
     const newPlayerTransform = playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
-    console.log('newPlayerPos', newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
+    // console.log('newPlayerPos', newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
 
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
 
   const addTriMesh = (mesh: THREE.Mesh) => {
     // debug only
-    const boxShape = new Ammo.btBoxShape(new Ammo.btVector3(100, 10, 100));
-    const boxTransform = new Ammo.btTransform();
-    boxTransform.setIdentity();
-    boxTransform.setOrigin(new Ammo.btVector3(0, 0, 0));
-    const boxMotionState = new Ammo.btDefaultMotionState(boxTransform);
-    const boxRBInfo = new Ammo.btRigidBodyConstructionInfo(
-      0,
-      boxMotionState,
-      boxShape,
-      new Ammo.btVector3(0, 0, 0)
-    );
-    const boxRB = new Ammo.btRigidBody(boxRBInfo);
-    boxRB.setCollisionFlags(1);
+    // const boxShape = new Ammo.btBoxShape(new Ammo.btVector3(100, 10, 100));
+    // const boxTransform = new Ammo.btTransform();
+    // boxTransform.setIdentity();
+    // boxTransform.setOrigin(new Ammo.btVector3(0, 0, 0));
+    // const boxMotionState = new Ammo.btDefaultMotionState(boxTransform);
+    // const boxRBInfo = new Ammo.btRigidBodyConstructionInfo(
+    //   0,
+    //   boxMotionState,
+    //   boxShape,
+    //   new Ammo.btVector3(0, 0, 0)
+    // );
+    // const boxRB = new Ammo.btRigidBody(boxRBInfo);
+    // boxRB.setCollisionFlags(1);
     // collisionWorld.addRigidBody(boxRB);
     // return;
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
     const vertices = geometry.attributes.position.array as Float32Array;
     const indices = geometry.index!.array as Uint16Array;
-    console.log('vertices', vertices);
-    console.log('indices', indices);
     const scale = mesh.scale;
     const pos = mesh.position;
     const quat = mesh.quaternion;
@@ -176,6 +151,8 @@ const initBulletPhysics = (
 
     // TODO: update IDL and use native indexed triangle mesh
     const trimesh = new Ammo.btTriangleMesh();
+    trimesh.preallocateIndices(indices.length);
+    trimesh.preallocateVertices(vertices.length);
     for (let i = 0; i < indices.length; i += 3) {
       const i0 = indices[i] * 3;
       const i1 = indices[i + 1] * 3;
@@ -195,6 +172,9 @@ const initBulletPhysics = (
         vertices[i2 + 1] * scale.y,
         vertices[i2 + 2] * scale.z
       );
+      // TODO: compute triangle area and log about ones that are too big or too small
+      // Area of triangles should be <10 units, as suggested by user guide
+      // Should be greater than 0.05 or something like that too probably
       trimesh.addTriangle(v0, v1, v2);
     }
 
@@ -204,7 +184,7 @@ const initBulletPhysics = (
     const localInertia = new Ammo.btVector3(0, 0, 0);
     const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
     const body = new Ammo.btRigidBody(rbInfo);
-    body.setFriction(0.5);
+    // body.setFriction(1);
     body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
     if (!body.isStaticObject()) {
       throw new Error('body is not static');
@@ -213,7 +193,7 @@ const initBulletPhysics = (
     // console.log('Added trimesh', body);
   };
 
-  return { updateCollisionWorld, addTriMesh, jump };
+  return { updateCollisionWorld, addTriMesh };
 };
 
 const setupFirstPerson = async (
@@ -236,7 +216,7 @@ const setupFirstPerson = async (
   const keyStates: Record<string, boolean> = {};
 
   const Ammo = await getAmmoJS();
-  const { updateCollisionWorld, addTriMesh, jump } = await initBulletPhysics(
+  const { updateCollisionWorld, addTriMesh } = await initBulletPhysics(
     camera,
     keyStates,
     Ammo,
@@ -245,7 +225,7 @@ const setupFirstPerson = async (
     JUMP_VELOCITY,
     playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius,
     playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight,
-    4 // TODO
+    ON_FLOOR_ACCELERATION_PER_SECOND
   );
 
   const setGravity = (gravity: number) => {
@@ -258,8 +238,6 @@ const setupFirstPerson = async (
     ON_FLOOR_ACCELERATION_PER_SECOND = onGroundAccPerSec;
     IN_AIR_ACCELERATION_PER_SECOND = inAirAccPerSec;
   };
-
-  const worldOctree = new Octree();
 
   const playerColliderHeight = playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight;
   let playerCollider = new Capsule(
@@ -296,21 +274,21 @@ const setupFirstPerson = async (
     }
   });
 
-  function playerCollisions(timeDiffSeconds: number) {
-    const result = worldOctree.capsuleIntersect(playerCollider);
+  // function playerCollisions(timeDiffSeconds: number) {
+  //   const result = worldOctree.capsuleIntersect(playerCollider);
 
-    playerOnFloor = false;
+  //   playerOnFloor = false;
 
-    if (result) {
-      playerOnFloor = result.normal.y > 0;
+  //   if (result) {
+  //     playerOnFloor = result.normal.y > 0;
 
-      if (!playerOnFloor) {
-        playerVelocity.addScaledVector(result.normal, -result.normal.dot(playerVelocity));
-      }
+  //     if (!playerOnFloor) {
+  //       playerVelocity.addScaledVector(result.normal, -result.normal.dot(playerVelocity));
+  //     }
 
-      playerCollider.translate(result.normal.multiplyScalar(result.depth));
-    }
-  }
+  //     playerCollider.translate(result.normal.multiplyScalar(result.depth));
+  //   }
+  // }
 
   function updatePlayer(deltaTime: number) {
     let damping = Math.exp(-4 * deltaTime) - 1;
@@ -329,7 +307,7 @@ const setupFirstPerson = async (
     playerCollider.translate(deltaPosition);
     // }
 
-    playerCollisions(deltaTime);
+    // playerCollisions(deltaTime);
 
     camera.position.copy(playerCollider.end);
   }
@@ -375,7 +353,6 @@ const setupFirstPerson = async (
     if (playerOnFloor) {
       if (keyStates['Space']) {
         playerVelocity.y = JUMP_VELOCITY;
-        jump();
       }
     }
   }
@@ -407,7 +384,7 @@ const setupFirstPerson = async (
     }
   }
 
-  registerBeforeRenderCb((_curTimeSecs, tDiffSecs) => {
+  registerBeforeRenderCb((curTimeSecs, tDiffSecs) => {
     // we look for collisions in substeps to mitigate the risk of
     // an object traversing another too quickly for detection.
 
@@ -419,7 +396,7 @@ const setupFirstPerson = async (
     //   teleportPlayerIfOob();
     // }
 
-    const newPlayerPos = updateCollisionWorld(tDiffSecs);
+    const newPlayerPos = updateCollisionWorld(curTimeSecs, tDiffSecs);
     newPlayerPos.y += playerColliderHeight;
     camera.position.copy(newPlayerPos);
   });
@@ -432,7 +409,7 @@ const setupFirstPerson = async (
       rot: camera.rotation.toArray().slice(0, 3),
     });
 
-  return { setGravity, setJumpVelocity, worldOctree, setPlayerAcceleration, addTriMesh };
+  return { setGravity, setJumpVelocity, setPlayerAcceleration, addTriMesh };
 };
 
 const setupOrbitControls = async (
@@ -455,7 +432,7 @@ const setupOrbitControls = async (
 
 export const buildViz = () => {
   try {
-    screen.orientation.lock('landscape');
+    screen.orientation.lock('landscape').catch(() => 0);
   } catch (err) {
     // pass
   }
@@ -636,7 +613,6 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
     (window as any).locations = () => Object.keys(sceneConf.locations);
 
-    let worldOctree: Octree | null = null;
     let addTriMesh: ((mesh: THREE.Mesh) => void) | null = null;
     let setGravity = (_g: number) => {};
     let setJumpVelocity = (_v: number) => {};
@@ -652,7 +628,6 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         sceneConf.player,
         sceneConf.gravity
       );
-      worldOctree = fpCtx.worldOctree;
       addTriMesh = fpCtx.addTriMesh;
       setGravity = fpCtx.setGravity;
       setJumpVelocity = fpCtx.setJumpVelocity;
@@ -689,15 +664,15 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       });
     }
 
-    if (worldOctree && addTriMesh) {
+    if (addTriMesh) {
       const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
         const children = obj.children;
         obj.children = [];
         if (!(obj instanceof THREE.Group) && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {
-          worldOctree!.fromGraphNode(obj);
-        }
-        if (obj instanceof THREE.Mesh) {
-          addTriMesh!(obj);
+          // worldOctree!.fromGraphNode(obj);
+          if (obj instanceof THREE.Mesh) {
+            addTriMesh!(obj);
+          }
         }
         obj.children = children;
       };
