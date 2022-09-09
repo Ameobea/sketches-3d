@@ -7,11 +7,8 @@
 
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
-// import { Octree } from 'three/examples/jsm/math/Octree.js';
-import { Capsule } from 'three/examples/jsm/math/Capsule.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-import { getSentry } from '../sentry';
 import { buildDefaultSceneConfig, ScenesByName, type SceneConfig } from './scenes';
 import * as Conf from './conf';
 import { getAmmoJS } from './collision';
@@ -38,13 +35,20 @@ const initBulletPhysics = (
     collisionConfiguration
   );
 
+  const scratchVec = new Ammo.btVector3();
+  const btvec3 = (x: number, y: number, z: number) => {
+    scratchVec.setValue(x, y, z);
+    return scratchVec;
+  };
+
   const playerInitialTransform = new Ammo.btTransform();
   playerInitialTransform.setIdentity();
   playerInitialTransform.setOrigin(
-    new Ammo.btVector3(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z)
+    btvec3(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z)
   );
   const playerGhostObject = new Ammo.btPairCachingGhostObject();
   playerGhostObject.setWorldTransform(playerInitialTransform);
+  Ammo.destroy(playerInitialTransform);
   collisionWorld
     .getBroadphase()
     .getOverlappingPairCache()
@@ -53,13 +57,26 @@ const initBulletPhysics = (
   playerGhostObject.setCollisionShape(playerCapsule);
   playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
 
+  // \/ This is vital for making the physics work without bad bugs like falling through floors randomly.
+  //
+  // After deconstructing what the kinematic character controller does internally, I've worked out that it
+  // tries to push the player both up and down by this amount every tick of the simulation.
+  //
+  // If it's too big, the player tends to clip through geometry or stuff like that.
+  const STEP_HEIGHT = 0.05;
+  // \/ This is a very important config item for the physics engine.  Setting it too high will result in
+  // the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
+  // weird issues where the player slides around on the floor or clips through geometry.
+  const MAX_PENETRATION_DEPTH = 0.075;
   const playerController = new Ammo.btKinematicCharacterController(
     playerGhostObject,
     playerCapsule,
-    0.35, // step height; TODO: make this configurable
-    new Ammo.btVector3(0, 1, 0)
+    STEP_HEIGHT,
+    btvec3(0, 1, 0)
   );
-  playerController.setMaxPenetrationDepth(0.055);
+  playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
+  playerController.setMaxSlope(0.8); // ~45 degrees
+  playerController.setStepHeight(STEP_HEIGHT);
   playerController.setJumpSpeed(jumpSpeed);
 
   collisionWorld.addCollisionObject(
@@ -68,7 +85,7 @@ const initBulletPhysics = (
     1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
   );
   collisionWorld.addAction(playerController);
-  collisionWorld.setGravity(new Ammo.btVector3(0, -gravity, 0));
+  collisionWorld.setGravity(btvec3(0, -gravity, 0));
 
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
@@ -91,36 +108,38 @@ const initBulletPhysics = (
     if (keyStates['KeyD']) walkDirection.sub(leftDir);
     if (keyStates['Space'] && playerController.onGround()) {
       if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
-        playerController
-          .jump
-          // new Ammo.btVector3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16)
-          ();
+        playerController.jump(
+          btvec3(walkDirection.x * (jumpSpeed * 0.18), jumpSpeed, walkDirection.z * (jumpSpeed * 0.18))
+        );
         lastJumpTimeSeconds = curTimeSeconds;
       }
     }
+    if (keyStates['ShiftLeft']) {
+      playerController.jump(btvec3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16));
+    }
 
     const walkSpeed = playerMoveSpeed * (1 / 160);
-    const walkDirBulletVector = new Ammo.btVector3(
+    const walkDirBulletVector = btvec3(
       walkDirection.x * walkSpeed,
       walkDirection.y * walkSpeed,
       walkDirection.z * walkSpeed
     );
-    // console.log(
-    //   'walkDirBulletVector',
-    //   walkDirBulletVector.x(),
-    //   walkDirBulletVector.y(),
-    //   walkDirBulletVector.z()
-    // );
-    // TODO: Check out `setVelocityForTimeInterval` compared to this
     playerController.setWalkDirection(walkDirBulletVector);
 
-    collisionWorld.stepSimulation(tDiffSeconds, 20, 1 / 300);
+    collisionWorld.stepSimulation(tDiffSeconds, 20, 1 / 160);
 
     const newPlayerTransform = playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
-    // console.log('newPlayerPos', newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
 
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
+  };
+
+  const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
+    playerController.warp(btvec3(pos.x, pos.y, pos.z));
+    camera.position.copy(pos.clone().add(new THREE.Vector3(0, playerColliderHeight / 2, 0)));
+    if (rot) {
+      camera.rotation.setFromVector3(rot);
+    }
   };
 
   const addTriMesh = (mesh: THREE.Mesh | 'DONE') => {
@@ -128,23 +147,6 @@ const initBulletPhysics = (
       broadphase.optimize();
       return;
     }
-
-    // debug only
-    // const boxShape = new Ammo.btBoxShape(new Ammo.btVector3(100, 10, 100));
-    // const boxTransform = new Ammo.btTransform();
-    // boxTransform.setIdentity();
-    // boxTransform.setOrigin(new Ammo.btVector3(0, 0, 0));
-    // const boxMotionState = new Ammo.btDefaultMotionState(boxTransform);
-    // const boxRBInfo = new Ammo.btRigidBodyConstructionInfo(
-    //   0,
-    //   boxMotionState,
-    //   boxShape,
-    //   new Ammo.btVector3(0, 0, 0)
-    // );
-    // const boxRB = new Ammo.btRigidBody(boxRBInfo);
-    // boxRB.setCollisionFlags(1);
-    // collisionWorld.addRigidBody(boxRB);
-    // return;
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
     const vertices = geometry.attributes.position.array as Float32Array;
@@ -162,47 +164,43 @@ const initBulletPhysics = (
     const trimesh = new Ammo.btTriangleMesh();
     trimesh.preallocateIndices(indices.length);
     trimesh.preallocateVertices(vertices.length);
+
+    const v0 = new Ammo.btVector3();
+    const v1 = new Ammo.btVector3();
+    const v2 = new Ammo.btVector3();
+
     for (let i = 0; i < indices.length; i += 3) {
       const i0 = indices[i] * 3;
       const i1 = indices[i + 1] * 3;
       const i2 = indices[i + 2] * 3;
-      const v0 = new Ammo.btVector3(
-        vertices[i0] * scale.x,
-        vertices[i0 + 1] * scale.y,
-        vertices[i0 + 2] * scale.z
-      );
-      const v1 = new Ammo.btVector3(
-        vertices[i1] * scale.x,
-        vertices[i1 + 1] * scale.y,
-        vertices[i1 + 2] * scale.z
-      );
-      const v2 = new Ammo.btVector3(
-        vertices[i2] * scale.x,
-        vertices[i2 + 1] * scale.y,
-        vertices[i2 + 2] * scale.z
-      );
+      v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
+      v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
+      v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);
+
       // TODO: compute triangle area and log about ones that are too big or too small
       // Area of triangles should be <10 units, as suggested by user guide
       // Should be greater than 0.05 or something like that too probably
       trimesh.addTriangle(v0, v1, v2);
     }
+    Ammo.destroy(v0);
+    Ammo.destroy(v1);
+    Ammo.destroy(v2);
 
     const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
     // Add the object as static, so it doesn't move but still collides
     const motionState = new Ammo.btDefaultMotionState(transform);
     const localInertia = new Ammo.btVector3(0, 0, 0);
     const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
+    Ammo.destroy(localInertia);
     const body = new Ammo.btRigidBody(rbInfo);
-    // body.setFriction(1);
     body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
     if (!body.isStaticObject()) {
       throw new Error('body is not static');
     }
     collisionWorld.addRigidBody(body);
-    // console.log('Added trimesh', body);
   };
 
-  return { updateCollisionWorld, addTriMesh };
+  return { updateCollisionWorld, addTriMesh, teleportPlayer };
 };
 
 const setupFirstPerson = async (
@@ -220,45 +218,24 @@ const setupFirstPerson = async (
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
   let ON_FLOOR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.onGround ?? 40;
   let IN_AIR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.inAir ?? 20;
-  const STEPS_PER_FRAME = 20;
 
   const keyStates: Record<string, boolean> = {};
 
+  const playerColliderHeight = playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight;
+  const playerColliderRadius = playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius;
+
   const Ammo = await getAmmoJS();
-  const { updateCollisionWorld, addTriMesh } = await initBulletPhysics(
+  const { updateCollisionWorld, addTriMesh, teleportPlayer } = await initBulletPhysics(
     camera,
     keyStates,
     Ammo,
     spawnPos,
     GRAVITY,
     JUMP_VELOCITY,
-    playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius,
-    playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight,
+    playerColliderRadius,
+    playerColliderHeight,
     ON_FLOOR_ACCELERATION_PER_SECOND
   );
-
-  const setGravity = (gravity: number) => {
-    GRAVITY = gravity;
-  };
-  const setJumpVelocity = (jumpVelocity: number) => {
-    JUMP_VELOCITY = jumpVelocity;
-  };
-  const setPlayerAcceleration = (onGroundAccPerSec: number, inAirAccPerSec: number) => {
-    ON_FLOOR_ACCELERATION_PER_SECOND = onGroundAccPerSec;
-    IN_AIR_ACCELERATION_PER_SECOND = inAirAccPerSec;
-  };
-
-  const playerColliderHeight = playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight;
-  let playerCollider = new Capsule(
-    spawnPos.pos.clone().add(new THREE.Vector3(0, playerColliderHeight, 0)),
-    spawnPos.pos.clone().add(new THREE.Vector3(0, playerColliderHeight * 2, 0)),
-    playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius
-  );
-
-  const playerVelocity = new THREE.Vector3();
-  const playerDirection = new THREE.Vector3();
-
-  let playerOnFloor = false;
 
   document.addEventListener('keydown', event => {
     if (event.key === 'e') {
@@ -283,101 +260,6 @@ const setupFirstPerson = async (
     }
   });
 
-  // function playerCollisions(timeDiffSeconds: number) {
-  //   const result = worldOctree.capsuleIntersect(playerCollider);
-
-  //   playerOnFloor = false;
-
-  //   if (result) {
-  //     playerOnFloor = result.normal.y > 0;
-
-  //     if (!playerOnFloor) {
-  //       playerVelocity.addScaledVector(result.normal, -result.normal.dot(playerVelocity));
-  //     }
-
-  //     playerCollider.translate(result.normal.multiplyScalar(result.depth));
-  //   }
-  // }
-
-  function updatePlayer(deltaTime: number) {
-    let damping = Math.exp(-4 * deltaTime) - 1;
-
-    if (!playerOnFloor) {
-      playerVelocity.y -= GRAVITY * deltaTime;
-
-      // small air resistance
-      damping *= 0.1;
-    }
-
-    playerVelocity.addScaledVector(playerVelocity, damping);
-
-    // if (playerVelocity.lengthSq() > 0.1) {
-    const deltaPosition = playerVelocity.clone().multiplyScalar(deltaTime);
-    playerCollider.translate(deltaPosition);
-    // }
-
-    // playerCollisions(deltaTime);
-
-    camera.position.copy(playerCollider.end);
-  }
-
-  function getForwardVector() {
-    camera.getWorldDirection(playerDirection);
-    playerDirection.y = 0;
-    playerDirection.normalize();
-
-    return playerDirection;
-  }
-
-  function getSideVector() {
-    camera.getWorldDirection(playerDirection);
-    playerDirection.y = 0;
-    playerDirection.normalize();
-    playerDirection.cross(camera.up);
-
-    return playerDirection;
-  }
-
-  function controls(deltaTime: number) {
-    // gives a bit of air control
-    const speedDelta =
-      deltaTime * (playerOnFloor ? ON_FLOOR_ACCELERATION_PER_SECOND : IN_AIR_ACCELERATION_PER_SECOND);
-
-    if (keyStates['KeyW']) {
-      playerVelocity.add(getForwardVector().multiplyScalar(speedDelta));
-    }
-
-    if (keyStates['KeyS']) {
-      playerVelocity.add(getForwardVector().multiplyScalar(-speedDelta));
-    }
-
-    if (keyStates['KeyA']) {
-      playerVelocity.add(getSideVector().multiplyScalar(-speedDelta));
-    }
-
-    if (keyStates['KeyD']) {
-      playerVelocity.add(getSideVector().multiplyScalar(speedDelta));
-    }
-
-    if (playerOnFloor) {
-      if (keyStates['Space']) {
-        playerVelocity.y = JUMP_VELOCITY;
-      }
-    }
-  }
-
-  const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
-    const playerColliderHeight = playerCollider.end.clone().sub(playerCollider.start).length();
-    const playerColliderRadius = playerCollider.radius;
-    playerCollider.start.set(pos.x, pos.y, pos.z);
-    playerCollider.end.set(pos.x, pos.y + playerColliderHeight, pos.z);
-    playerCollider.radius = playerColliderRadius;
-    playerVelocity.set(0, 0, 0);
-    camera.position.copy(playerCollider.end);
-    if (rot) {
-      camera.rotation.setFromVector3(rot);
-    }
-  };
   (window as any).tp = (posName: string) => {
     const location = locations[posName];
     if (location) {
@@ -387,38 +269,33 @@ const setupFirstPerson = async (
     }
   };
 
-  function teleportPlayerIfOob() {
+  function teleportPlayerIfOOB() {
     if (camera.position.y <= -55) {
       teleportPlayer(spawnPos.pos, spawnPos.rot);
     }
   }
 
   registerBeforeRenderCb((curTimeSecs, tDiffSecs) => {
-    // we look for collisions in substeps to mitigate the risk of
-    // an object traversing another too quickly for detection.
-
-    // for (let i = 0; i < STEPS_PER_FRAME; i++) {
-    //   controls(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
-
-    //   updatePlayer(Math.min(0.05, tDiffSecs / STEPS_PER_FRAME));
-
-    //   teleportPlayerIfOob();
-    // }
-
     const newPlayerPos = updateCollisionWorld(curTimeSecs, tDiffSecs);
-    newPlayerPos.y += playerColliderHeight;
+    newPlayerPos.y += 0.5 * playerColliderHeight;
     camera.position.copy(newPlayerPos);
+
+    teleportPlayerIfOOB();
   });
 
-  (window as any).getPos = () => playerCollider.start.toArray();
+  (window as any).getPos = () =>
+    camera.position
+      .clone()
+      .sub(new THREE.Vector3(0, playerColliderHeight / 2, 0))
+      .toArray();
   (window as any).getRot = () => camera.rotation.toArray();
   (window as any).recordPos = () =>
     JSON.stringify({
-      pos: playerCollider.start.toArray(),
+      pos: (window as any).getPos(),
       rot: camera.rotation.toArray().slice(0, 3),
     });
 
-  return { setGravity, setJumpVelocity, setPlayerAcceleration, addTriMesh };
+  return { addTriMesh, teleportPlayer };
 };
 
 const setupOrbitControls = async (
@@ -453,7 +330,7 @@ export const buildViz = () => {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x020202);
 
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.18, 10_000);
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5_000);
   camera.matrixAutoUpdate = true;
   camera.rotation.order = 'YXZ';
 
@@ -475,18 +352,21 @@ export const buildViz = () => {
   stats.domElement.style.position = 'absolute';
   stats.domElement.style.top = '0px';
 
-  window.addEventListener('resize', onWindowResize);
+  const resizeCbs: (() => void)[] = [];
+  const beforeRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
+  const afterRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
 
   function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
 
     renderer.setSize(window.innerWidth, window.innerHeight);
+
+    resizeCbs.forEach(cb => cb());
   }
+  window.addEventListener('resize', onWindowResize);
 
-  const beforeRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
-  const afterRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
-
+  const registerResizeCb = (cb: () => void) => resizeCbs.push(cb);
   const registerBeforeRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) =>
     beforeRenderCbs.push(cb);
   const unregisterBeforeRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) => {
@@ -549,6 +429,11 @@ export const buildViz = () => {
     clock.elapsedTime = clockStopTime;
   });
 
+  let renderOverride: ((timeDiffSeconds: number) => void) | null = null;
+  const setRenderOverride = (cb: ((timeDiffSeconds: number) => void) | null) => {
+    renderOverride = cb;
+  };
+
   function animate() {
     if (isBlurred) {
       requestAnimationFrame(animate);
@@ -560,7 +445,11 @@ export const buildViz = () => {
 
     beforeRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
 
-    renderer.render(scene, camera);
+    if (renderOverride) {
+      renderOverride(deltaTime);
+    } else {
+      renderer.render(scene, camera);
+    }
 
     afterRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
 
@@ -581,12 +470,14 @@ export const buildViz = () => {
     stats,
     scene,
     animate,
+    registerResizeCb,
     registerBeforeRenderCb,
     unregisterBeforeRenderCb,
     registerDistanceMaterialSwap,
     registerAfterRenderCb,
     unregisterAfterRenderCb,
     onDestroy,
+    setRenderOverride,
   };
 };
 
@@ -620,12 +511,13 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       ...((await sceneLoader(viz, scene)) ?? {}),
     };
 
+    if (sceneConf.renderOverride) {
+      viz.setRenderOverride(sceneConf.renderOverride);
+    }
+
     (window as any).locations = () => Object.keys(sceneConf.locations);
 
     let addTriMesh: ((mesh: THREE.Mesh | 'DONE') => void) | null = null;
-    let setGravity = (_g: number) => {};
-    let setJumpVelocity = (_v: number) => {};
-    let setPlayerAcceleration = (_onGroundAccPerSec: number, _inAirAccPerSec: number) => {};
     if (sceneConf.viewMode.type === 'firstPerson') {
       const spawnPos = sceneConf.locations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
@@ -638,9 +530,6 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         sceneConf.gravity
       );
       addTriMesh = fpCtx.addTriMesh;
-      setGravity = fpCtx.setGravity;
-      setJumpVelocity = fpCtx.setJumpVelocity;
-      setPlayerAcceleration = fpCtx.setPlayerAcceleration;
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
         viz.renderer.domElement,

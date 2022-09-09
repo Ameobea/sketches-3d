@@ -9,6 +9,8 @@ import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.f
 import PlatformRoughnessShader from '../../shaders/bridge2/platform/roughness.frag?raw';
 import PlatformColorShader from '../../shaders/bridge2/platform/color.frag?raw';
 import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
+import TowerGlowVertexShader from '../../shaders/bridge2/tower_glow/vertex.vert?raw';
+import TowerGlowColorShader from '../../shaders/bridge2/tower_glow/color.frag?raw';
 import { CustomSky as Sky } from '../../CustomSky';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
 import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
@@ -32,8 +34,12 @@ const locations = {
     rot: new THREE.Vector3(-0.06, -1.514, 0),
   },
   repro: {
-    pos: new THREE.Vector3(167.87898623908666, 0.9848349975478469, -2.1751690172419376),
+    pos: new THREE.Vector3(167.87898623908666, 1.9848349975478469, -2.1751690172419376),
     rot: new THREE.Vector3(-0.10800000000000023, 0.09400000000000608, 0),
+  },
+  monolith: {
+    pos: new THREE.Vector3(390.19000244140625, -2.6853251457214355, -22.77198028564453),
+    rot: new THREE.Vector3(0.06800000000000045, -1.9240000000000457, 0),
   },
 };
 
@@ -154,7 +160,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const bridgeTopMist = loadedWorld.getObjectByName('bridge_top_mistnocollide')! as THREE.Mesh;
   const bridgeTopMistMat = buildCustomShader(
-    { metalness: 0, alphaTest: 0.5, transparent: true },
+    { metalness: 0, alphaTest: 0.05, transparent: true },
     { colorShader: BridgeMistColorShader },
     {}
   );
@@ -230,17 +236,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   }
 
   const background = loadedWorld.getObjectByName('backgroundnocollide')! as THREE.Mesh;
-  const backgroundMat = buildCustomShader(
-    { color: new THREE.Color(0x090909), alphaTest: 0.05, transparent: true, fogMultiplier: 0.6 },
-    { colorShader: BackgroundColorShader },
-    {}
-  );
-  const backgroundFarMat = buildCustomBasicShader(
-    { color: new THREE.Color(0x090909), alphaTest: 0.05, transparent: true, fogMultiplier: 0.6 },
+  const backgroundMat = buildCustomBasicShader(
+    { color: new THREE.Color(0x090909), alphaTest: 0.001, transparent: true, fogMultiplier: 0.6 },
     { colorShader: BackgroundColorShader }
   );
-  background.material = backgroundFarMat;
-  viz.registerDistanceMaterialSwap(background, backgroundFarMat, 200);
+  background.material = backgroundMat;
 
   // const platformTexURL = 'https://ameo.link/u/ac9.jpg'; // orig
   // const platformTexURL = 'https://ameo.link/u/acn.jpg'; // tiled
@@ -248,14 +248,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const platformTexture = await loadTexture(loader, platformTexURL, {
     format: THREE.RedFormat,
     type: THREE.UnsignedByteType,
-    // magFilter: THREE.NearestFilter,
   });
 
   const platformCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
     platformTexture,
-    {
-      // magFilter: THREE.NearestFilter,
-    },
+    {},
     true
   );
   const platformMaterial = buildCustomShader(
@@ -283,8 +280,20 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const tower = loadedWorld.getObjectByName('tower')! as THREE.Mesh;
   tower.material = towerMaterial;
 
+  const towerGlowMaterial = buildCustomBasicShader(
+    { transparent: true, name: 'towerGlow', alphaTest: 0.001 },
+    { colorShader: TowerGlowColorShader, vertexShader: TowerGlowVertexShader },
+    { enableFog: false }
+  );
+  towerGlowMaterial.side = THREE.DoubleSide;
+  const towerGlow = new THREE.Mesh(tower.geometry, towerGlowMaterial);
+  towerGlow.position.copy(tower.position);
+  towerGlow.name = 'towerGlow';
+  viz.registerBeforeRenderCb(curTimeSeconds => towerGlowMaterial.setCurTimeSeconds(curTimeSeconds));
+  viz.scene.add(towerGlow);
+
   const sky = buildSky();
-  loadedWorld.add(sky);
+  viz.scene.add(sky);
 
   const pillars = new Array(6).fill(null).map((_, i) => {
     const name = `pillar${i + 1}`;
@@ -317,7 +326,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   // TODO: update every frame
   engine.compute_pillar_positions(pillarCtxPtr);
 
-  const pillarInstancedMeshes: THREE.InstancedMesh[] = [];
   for (let pillarIx = 0; pillarIx < pillars.length; pillarIx++) {
     const pillarMesh = pillars[pillarIx];
     const transforms = engine.get_pillar_transformations(pillarCtxPtr, pillarIx);
@@ -333,6 +341,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       pillarMesh.material,
       transforms.length / 16
     );
+    instancedMesh.name = `pillar${pillarIx + 1}_nocollide`;
     const instanceMatrix = instancedMesh.instanceMatrix;
     instanceMatrix.set(transforms);
     loadedWorld.add(instancedMesh);
@@ -377,16 +386,16 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     locations,
     debugPos: true,
     spawnLocation: 'spawn',
-    // spawnLocation: 'repro',
+    // spawnLocation: 'monolith',
     gravity: 2,
     player: {
       jumpVelocity: 10.8,
       colliderCapsuleSize: {
-        height: 0.7,
+        height: 1.8,
         radius: 0.35,
       },
       movementAccelPerSecond: {
-        onGround: 3,
+        onGround: 5,
         inAir: 2.2,
       },
     },

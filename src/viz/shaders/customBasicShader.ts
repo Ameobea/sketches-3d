@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { UniformsLib } from 'three';
 
 interface CustomBasicShaderProps {
+  name?: string;
   color?: THREE.Color;
   transparent?: boolean;
   alphaTest?: number;
@@ -10,6 +11,7 @@ interface CustomBasicShaderProps {
 
 interface CustomBasicShaderShaders {
   colorShader?: string;
+  vertexShader?: string;
 }
 
 interface CustomBasicShaderOptions {
@@ -18,7 +20,7 @@ interface CustomBasicShaderOptions {
 
 const buildCustomBasicShaderArgs = (
   { color = new THREE.Color(0xffffff), transparent, alphaTest, fogMultiplier }: CustomBasicShaderProps = {},
-  { colorShader }: CustomBasicShaderShaders = {},
+  { colorShader, vertexShader }: CustomBasicShaderShaders = {},
   { enableFog = true }: CustomBasicShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -102,6 +104,8 @@ void main() {
   worldPosition = modelMatrix * worldPosition;
   vWorldPosition = worldPosition.xyz;
   pos = vWorldPosition;
+
+  ${vertexShader ?? ''}
 }`,
     fragmentShader: `
 uniform vec3 diffuse;
@@ -206,6 +210,9 @@ export const buildCustomBasicShader = (
   opts?: CustomBasicShaderOptions
 ) => {
   const mat = new CustomShaderMaterial(buildCustomBasicShaderArgs(props, shaders, opts));
+  if (props.name) {
+    mat.name = props.name;
+  }
   if (props.transparent) {
     (mat as any).transparent = props.transparent;
   }

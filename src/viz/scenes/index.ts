@@ -18,6 +18,7 @@ export interface SceneConfig {
     colliderCapsuleSize?: { height: number; radius: number };
     movementAccelPerSecond?: { onGround: number; inAir: number };
   };
+  renderOverride?: (timeDiffSeconds: number) => void;
 }
 
 export const buildDefaultSceneConfig = () => ({

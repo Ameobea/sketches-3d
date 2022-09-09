@@ -18,3 +18,4 @@ static/*.br
 src/ammojs/*
 !src/ammojs/.gitkeep
 static/ammo.wasm.wasm
+static/pillar.jpg
