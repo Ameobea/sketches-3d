@@ -135,8 +135,8 @@ const initBulletPhysics = (
   };
 
   const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
-    playerController.warp(btvec3(pos.x, pos.y, pos.z));
-    camera.position.copy(pos.clone().add(new THREE.Vector3(0, playerColliderHeight / 2, 0)));
+    playerController.warp(btvec3(pos.x, pos.y + playerColliderHeight, pos.z));
+    camera.position.copy(pos.clone().add(new THREE.Vector3(0, playerColliderHeight, 0)));
     if (rot) {
       camera.rotation.setFromVector3(rot);
     }
@@ -145,6 +145,10 @@ const initBulletPhysics = (
   const addTriMesh = (mesh: THREE.Mesh | 'DONE') => {
     if (mesh === 'DONE') {
       broadphase.optimize();
+      return;
+    }
+
+    if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
       return;
     }
 
@@ -157,47 +161,67 @@ const initBulletPhysics = (
 
     const transform = new Ammo.btTransform();
     transform.setIdentity();
-    transform.setOrigin(new Ammo.btVector3(pos.x, pos.y, pos.z));
-    transform.setRotation(new Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w));
+    transform.setOrigin(btvec3(pos.x, pos.y, pos.z));
+    const rot = new Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w);
+    transform.setRotation(rot);
+    Ammo.destroy(rot);
 
-    // TODO: update IDL and use native indexed triangle mesh
-    const trimesh = new Ammo.btTriangleMesh();
-    trimesh.preallocateIndices(indices.length);
-    trimesh.preallocateVertices(vertices.length);
+    const buildTrimeshShape = () => {
+      // TODO: update IDL and use native indexed triangle mesh
+      const trimesh = new Ammo.btTriangleMesh();
+      trimesh.preallocateIndices(indices.length);
+      trimesh.preallocateVertices(vertices.length);
 
-    const v0 = new Ammo.btVector3();
-    const v1 = new Ammo.btVector3();
-    const v2 = new Ammo.btVector3();
+      const v0 = new Ammo.btVector3();
+      const v1 = new Ammo.btVector3();
+      const v2 = new Ammo.btVector3();
 
-    for (let i = 0; i < indices.length; i += 3) {
-      const i0 = indices[i] * 3;
-      const i1 = indices[i + 1] * 3;
-      const i2 = indices[i + 2] * 3;
-      v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
-      v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
-      v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);
+      for (let i = 0; i < indices.length; i += 3) {
+        const i0 = indices[i] * 3;
+        const i1 = indices[i + 1] * 3;
+        const i2 = indices[i + 2] * 3;
+        v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
+        v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
+        v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);
 
-      // TODO: compute triangle area and log about ones that are too big or too small
-      // Area of triangles should be <10 units, as suggested by user guide
-      // Should be greater than 0.05 or something like that too probably
-      trimesh.addTriangle(v0, v1, v2);
-    }
-    Ammo.destroy(v0);
-    Ammo.destroy(v1);
-    Ammo.destroy(v2);
+        // TODO: compute triangle area and log about ones that are too big or too small
+        // Area of triangles should be <10 units, as suggested by user guide
+        // Should be greater than 0.05 or something like that too probably
+        trimesh.addTriangle(v0, v1, v2);
+      }
+      Ammo.destroy(v0);
+      Ammo.destroy(v1);
+      Ammo.destroy(v2);
 
-    const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
+      const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
+      return shape;
+    };
+
+    const buildConvexHullShape = () => {
+      const hull = new Ammo.btConvexHullShape();
+      for (let i = 0; i < vertices.length; i += 3) {
+        hull.addPoint(btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z));
+      }
+      return hull;
+    };
+
+    const shape = mesh.userData.convexhull ? buildConvexHullShape() : buildTrimeshShape();
+
     // Add the object as static, so it doesn't move but still collides
     const motionState = new Ammo.btDefaultMotionState(transform);
-    const localInertia = new Ammo.btVector3(0, 0, 0);
+    const localInertia = btvec3(0, 0, 0);
     const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
-    Ammo.destroy(localInertia);
     const body = new Ammo.btRigidBody(rbInfo);
     body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
     if (!body.isStaticObject()) {
       throw new Error('body is not static');
     }
     collisionWorld.addRigidBody(body);
+
+    Ammo.destroy(rbInfo);
+    // Ammo.destroy(motionState);
+    // Ammo.destroy(trimesh);
+    Ammo.destroy(transform);
   };
 
   return { updateCollisionWorld, addTriMesh, teleportPlayer };
@@ -212,7 +236,8 @@ const setupFirstPerson = async (
   },
   registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void,
   playerConf: SceneConfig['player'],
-  gravity: number | undefined
+  gravity: number | undefined,
+  inlineConsole: InlineConsole | null | undefined
 ) => {
   let GRAVITY = gravity ?? 40;
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
@@ -238,6 +263,10 @@ const setupFirstPerson = async (
   );
 
   document.addEventListener('keydown', event => {
+    if (inlineConsole?.isOpen) {
+      return;
+    }
+
     if (event.key === 'e') {
       document.exitPointerLock();
     }
@@ -246,6 +275,10 @@ const setupFirstPerson = async (
   });
 
   document.addEventListener('keyup', event => {
+    if (inlineConsole?.isOpen) {
+      return;
+    }
+
     keyStates[event.code] = false;
   });
 
@@ -297,6 +330,90 @@ const setupFirstPerson = async (
 
   return { addTriMesh, teleportPlayer };
 };
+
+const disposeScene = (scene: THREE.Scene) =>
+  scene.traverse(o => {
+    if (o instanceof THREE.Mesh) {
+      o.geometry?.dispose();
+      if (Array.isArray(o.material)) {
+        o.material.forEach(m => m.dispose());
+      } else {
+        o.material?.dispose();
+      }
+    }
+  });
+
+class InlineConsole {
+  private elem: HTMLDivElement;
+  public isOpen = false;
+  private keydownCB: (e: KeyboardEvent) => void;
+
+  constructor() {
+    this.keydownCB = event => {
+      if (!this.isOpen) {
+        if (event.key === '/') {
+          this.open();
+        }
+        return;
+      }
+
+      if (event.key === '/' || event.key === 'Escape') {
+        this.close();
+        return;
+      } else if (event.key === 'Enter') {
+        this.eval();
+        this.close();
+        return;
+      } else if (event.key.length === 1) {
+        this.elem.innerText =
+          this.elem.innerText + (event.shiftKey ? event.key.toUpperCase() : event.key.toLowerCase());
+      } else if (event.key === 'Backspace') {
+        this.elem.innerText = this.elem.innerText.slice(0, -1);
+      }
+    };
+    document.addEventListener('keydown', this.keydownCB);
+
+    const elem = document.createElement('div');
+    elem.id = 'inline-console';
+    elem.style.position = 'absolute';
+    elem.style.bottom = '8px';
+    elem.style.left = '8px';
+    elem.style.width = '100%';
+    elem.style.height = '20px';
+    elem.style.fontFamily = '"Oxygen Mono", "Input", "Hack", monospace';
+    elem.style.display = 'none';
+    elem.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    elem.style.color = '#eee';
+    elem.style.zIndex = '100';
+    document.body.appendChild(elem);
+    this.elem = elem;
+  }
+
+  open = () => {
+    this.isOpen = true;
+    this.elem.style.display = 'block';
+  };
+
+  close = () => {
+    this.isOpen = false;
+    this.elem.style.display = 'none';
+  };
+
+  eval = () => {
+    const content = this.elem.innerText;
+    this.elem.innerText = '';
+    try {
+      console.log(eval(content));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  public destroy() {
+    this.elem.remove();
+    document.removeEventListener('keydown', this.keydownCB);
+  }
+}
 
 const setupOrbitControls = async (
   canvas: HTMLCanvasElement,
@@ -434,9 +551,10 @@ export const buildViz = () => {
     renderOverride = cb;
   };
 
+  let animateHandle: number = 0;
   function animate() {
     if (isBlurred) {
-      requestAnimationFrame(animate);
+      animateHandle = requestAnimationFrame(animate);
       return;
     }
 
@@ -455,13 +573,19 @@ export const buildViz = () => {
 
     stats.update();
 
-    requestAnimationFrame(animate);
+    animateHandle = requestAnimationFrame(animate);
   }
 
   const onDestroy = () => {
+    (window as any).lastPos = (window as any).recordPos();
     renderer.dispose();
     beforeRenderCbs.length = 0;
     afterRenderCbs.length = 0;
+    if (animateHandle) {
+      cancelAnimationFrame(animateHandle);
+    }
+    disposeScene(scene);
+    console.clear();
   };
 
   return {
@@ -491,6 +615,8 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   container.appendChild(viz.stats.domElement);
   // }
 
+  const inlineConsole = window.location.href.includes('localhost') ? new InlineConsole() : null;
+
   const loader = new GLTFLoader().setPath('/');
 
   const sceneDef = ScenesByName[providedSceneName];
@@ -519,7 +645,15 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
     let addTriMesh: ((mesh: THREE.Mesh | 'DONE') => void) | null = null;
     if (sceneConf.viewMode.type === 'firstPerson') {
-      const spawnPos = sceneConf.locations[sceneConf.spawnLocation];
+      const spawnPos = (window as any).lastPos
+        ? (() => {
+            const lastPos = JSON.parse((window as any).lastPos);
+            return {
+              pos: new THREE.Vector3(lastPos.pos[0], lastPos.pos[1], lastPos.pos[2]),
+              rot: new THREE.Vector3(lastPos.rot[0], lastPos.rot[1], lastPos.rot[2]),
+            };
+          })()
+        : sceneConf.locations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
       const fpCtx = await setupFirstPerson(
         sceneConf.locations,
@@ -527,7 +661,8 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         spawnPos,
         viz.registerBeforeRenderCb,
         sceneConf.player,
-        sceneConf.gravity
+        sceneConf.gravity,
+        inlineConsole
       );
       addTriMesh = fpCtx.addTriMesh;
     } else if (sceneConf.viewMode.type === 'orbit') {
@@ -592,6 +727,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   return {
     destroy() {
       viz.onDestroy();
+      inlineConsole?.destroy();
     },
   };
 };

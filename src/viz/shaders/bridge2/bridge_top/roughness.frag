@@ -3,7 +3,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   oPos = quantize(oPos, 0.01);
 
   // [-1, 1]
-  float noise0 = fbm_2_octaves(oPos * 2.);
+  float noise0 = fbm_2_octaves(oPos * 20.);
   // [0, 1]
   noise0 = noise0 * 0.5 + 0.5;
   noise0 = pow(noise0, 3.);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import type { VizState } from '../../../viz';
-import { initBaseScene, smoothstep } from '../../../viz/util';
+import { delay, initBaseScene, smoothstep } from '../../../viz/util';
 import type { SceneConfig } from '..';
 import { buildCustomShader } from '../../../viz/shaders/customShader';
 import BridgeTopRoughnessShader from '../../shaders/bridge2/bridge_top/roughness.frag?raw';
@@ -11,10 +11,12 @@ import PlatformColorShader from '../../shaders/bridge2/platform/color.frag?raw';
 import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
 import TowerGlowVertexShader from '../../shaders/bridge2/tower_glow/vertex.vert?raw';
 import TowerGlowColorShader from '../../shaders/bridge2/tower_glow/color.frag?raw';
+import Rock1RoughnessShader from '../../shaders/bridge2/rock1/roughness.frag?raw';
 import { CustomSky as Sky } from '../../CustomSky';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
 import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
 import { getEngine } from '../../../viz/engine';
+import { initWebSynth } from '../../../viz/webSynth';
 
 const locations = {
   spawn: {
@@ -26,7 +28,7 @@ const locations = {
     rot: new THREE.Vector3(-0.638, 1.556, 0),
   },
   bridgeEnd: {
-    pos: new THREE.Vector3(79.57039064060402, 3.851205414533615, -0.7764391342190088),
+    pos: new THREE.Vector3(79.57039064060402, 5.851205414533615, -0.7764391342190088),
     rot: new THREE.Vector3(-0.06, -1.514, 0),
   },
   platform: {
@@ -260,7 +262,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       color: new THREE.Color(0xffffff),
       map: platformCombinedDiffuseAndNormalTexture,
       normalScale: 1.8,
-      uvTransform: new THREE.Matrix3().scale(400, 400),
+      uvTransform: new THREE.Matrix3().scale(420, 420),
       roughness: 1,
       metalness: 0.1,
       fogMultiplier: 0.5,
@@ -275,6 +277,36 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.registerBeforeRenderCb(curTimeSeconds => platformMaterial.setCurTimeSeconds(curTimeSeconds));
   const platform = loadedWorld.getObjectByName('platform')! as THREE.Mesh;
   platform.material = platformMaterial;
+
+  const rock1 = loadedWorld.getObjectByName('rock1')! as THREE.Mesh;
+  const rock1Mat = buildCustomShader(
+    {
+      color: new THREE.Color(0x0a0a0a),
+      roughness: 0.82,
+      metalness: 0,
+      normalMap: bridgeTextureNormal,
+      normalScale: 1.5,
+      uvTransform: new THREE.Matrix3().scale(1.2, 1.2),
+      roughnessMap: bridgeTexture,
+    },
+    { roughnessShader: Rock1RoughnessShader },
+    { readRoughnessMapFromRChannel: true }
+  );
+  rock1.material = rock1Mat;
+  rock1.userData.convexhull = true;
+  const rock1GoldTrim = loadedWorld.getObjectByName('rock1_gold_trim')! as THREE.Mesh;
+  rock1GoldTrim.userData.nocollide = true;
+  rock1GoldTrim.material = buildCustomShader(
+    {
+      color: new THREE.Color(0x3e3f3e),
+      roughness: 0.5,
+      metalness: 0.82,
+      uvTransform: new THREE.Matrix3().scale(1.2, 1.2),
+      roughnessMap: bridgeTexture,
+    },
+    { roughnessShader: Rock1RoughnessShader },
+    { readRoughnessMapFromRChannel: true }
+  );
 
   const towerMaterial = buildCustomShader({ color: new THREE.Color(0x0) }, {}, { enableFog: false });
   const tower = loadedWorld.getObjectByName('tower')! as THREE.Mesh;
@@ -298,6 +330,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const pillars = new Array(6).fill(null).map((_, i) => {
     const name = `pillar${i + 1}`;
     const obj = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    obj.removeFromParent();
     return obj;
   });
 
@@ -382,6 +415,66 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     );
   });
 
+  initWebSynth({ compositionIDToLoad: 64 }).then(async ctx => {
+    await delay(1000);
+    // console.log('web synth ctx:', ctx);
+    const connectables: {
+      [key: string]: {
+        inputs: { [key: string]: { node: any; type: string } };
+        outputs: { [key: string]: { node: any; type: string } };
+      };
+    } = ctx.getState().viewContextManager.patchNetwork.connectables.toJS();
+    const synthDesigner = connectables['5be967b3-409b-e297-2d21-20111e4d3f2c']!;
+    const midiInputs = synthDesigner.inputs.midi.node.inputCbs;
+    midiInputs.onAttack(35, 255);
+    // console.log('midi inputs: ', synthDesigner.inputs.midi.node.inputCbs);
+
+    // TODO: fix volume persistence
+    (window as any).setGlobalVolume(50);
+
+    const computeScaleAndShift = (inputRange: [number, number], outputRange: [number, number]) => {
+      const inputRangeSize = inputRange[1] - inputRange[0];
+      const firstMultiplier = inputRangeSize === 0 ? 0 : 1 / inputRangeSize;
+      const firstOffset = -inputRange[0];
+      const secondMultiplier = outputRange[1] - outputRange[0];
+      const secondOffset = outputRange[0];
+
+      return { firstOffset, multiplier: firstMultiplier * secondMultiplier, secondOffset };
+    };
+
+    const scaleAndShiftNode = connectables[3];
+    scaleAndShiftNode.inputs.scale.node.setIsOverridden(true);
+    scaleAndShiftNode.inputs.pre_scale_shift.node.setIsOverridden(true);
+    scaleAndShiftNode.inputs.scale.node.setIsOverridden(true);
+    scaleAndShiftNode.inputs.post_scale_shift.node.setIsOverridden(true);
+
+    let lastMaxCutoff = 0;
+    const setCutoff = (maxCutoff: number) => {
+      if (maxCutoff === lastMaxCutoff) {
+        return;
+      }
+      lastMaxCutoff = maxCutoff;
+
+      const minCutoff = 10;
+      const { firstOffset, multiplier, secondOffset } = computeScaleAndShift([-1, 1], [minCutoff, maxCutoff]);
+      scaleAndShiftNode.inputs.pre_scale_shift.node.manualControl.offset.value = firstOffset;
+      scaleAndShiftNode.inputs.scale.node.manualControl.offset.value = multiplier;
+      scaleAndShiftNode.inputs.post_scale_shift.node.manualControl.offset.value = secondOffset;
+    };
+
+    setCutoff(10);
+
+    const monolithTowerPos = tower.position.clone();
+    viz.registerAfterRenderCb(() => {
+      const distanceToMonolithTower = viz.camera.position.distanceTo(monolithTowerPos);
+
+      let activation = smoothstep(100, 394, distanceToMonolithTower);
+      activation = (Math.pow(activation, 1.4) + activation) / 2;
+      const maxCutoff = 8 + (1 - activation) * 3200;
+      setCutoff(maxCutoff);
+    });
+  });
+
   return {
     locations,
     debugPos: true,
@@ -395,7 +488,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         radius: 0.35,
       },
       movementAccelPerSecond: {
-        onGround: 5,
+        onGround: 6,
         inAir: 2.2,
       },
     },

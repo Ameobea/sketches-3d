@@ -52,3 +52,5 @@ export const getFlickerActivation = (curTimeSeconds: number) => {
   const flickerActivation = smoothstep(0.4, 1.0, flickerVal * 2 + 0.2);
   return flickerActivation;
 };
+
+export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
