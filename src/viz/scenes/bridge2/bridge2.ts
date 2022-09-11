@@ -278,6 +278,46 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const platform = loadedWorld.getObjectByName('platform')! as THREE.Mesh;
   platform.material = platformMaterial;
 
+  const platformRidgesTexture = await loadTexture(
+    loader,
+    'https://ameo.link/u/b7dcc1c85adb2f53bb9567c712c30e36f236392b.jpg',
+    {
+      // format: THREE.RedFormat, // TODO: Support grayscale
+      type: THREE.UnsignedByteType,
+    }
+  );
+  const platformRidgesCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
+    platformRidgesTexture,
+    {},
+    true
+  );
+  const platformRidgeMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0x444444),
+      fogMultiplier: 0.6,
+      roughness: 1,
+      metalness: 0.1,
+      map: platformRidgesCombinedDiffuseAndNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(80, 80),
+      normalScale: 2.8,
+    },
+    {},
+    { usePackedDiffuseNormalGBA: true }
+  );
+  ['platform_ridges_2'].forEach(name => {
+    const mesh = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    mesh.material = platformRidgeMaterial;
+  });
+
+  const platformBuildingMaterial = buildCustomShader({
+    color: new THREE.Color(0x444444),
+    fogMultiplier: 0.4,
+  });
+  ['platform_ridges', 'platform_ridges_3', 'platform_building'].forEach(name => {
+    const mesh = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    mesh.material = platformBuildingMaterial;
+  });
+
   const rock1 = loadedWorld.getObjectByName('rock1')! as THREE.Mesh;
   const rock1Mat = buildCustomShader(
     {
@@ -417,7 +457,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   initWebSynth({ compositionIDToLoad: 64 }).then(async ctx => {
     await delay(1000);
-    // console.log('web synth ctx:', ctx);
     const connectables: {
       [key: string]: {
         inputs: { [key: string]: { node: any; type: string } };
@@ -427,7 +466,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     const synthDesigner = connectables['5be967b3-409b-e297-2d21-20111e4d3f2c']!;
     const midiInputs = synthDesigner.inputs.midi.node.inputCbs;
     midiInputs.onAttack(35, 255);
-    // console.log('midi inputs: ', synthDesigner.inputs.midi.node.inputCbs);
 
     // TODO: fix volume persistence
     (window as any).setGlobalVolume(50);

@@ -447,7 +447,7 @@ export const buildViz = () => {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x020202);
 
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5_000);
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3_000);
   camera.matrixAutoUpdate = true;
   camera.rotation.order = 'YXZ';
 
