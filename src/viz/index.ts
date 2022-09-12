@@ -89,6 +89,9 @@ const initBulletPhysics = (
 
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
+  let lastBoostTimeSeconds = 0;
+  const MIN_BOOST_DELAY_SECONDS = 0.85; // TODO: make configurable
+  let boostNeedsGroundTouch = false;
 
   /**
    * Returns the new position of the player.
@@ -101,12 +104,14 @@ const initBulletPhysics = (
     // Adjust `forwardDir` to be horizontal.
     forwardDir = new THREE.Vector3().crossVectors(leftDir, upDir).normalize();
 
+    const playerOnGround = playerController.onGround();
+
     const walkDirection = new THREE.Vector3();
     if (keyStates['KeyW']) walkDirection.add(forwardDir);
     if (keyStates['KeyS']) walkDirection.sub(forwardDir);
     if (keyStates['KeyA']) walkDirection.add(leftDir);
     if (keyStates['KeyD']) walkDirection.sub(leftDir);
-    if (keyStates['Space'] && playerController.onGround()) {
+    if (keyStates['Space'] && playerOnGround) {
       if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
         playerController.jump(
           btvec3(walkDirection.x * (jumpSpeed * 0.18), jumpSpeed, walkDirection.z * (jumpSpeed * 0.18))
@@ -114,8 +119,21 @@ const initBulletPhysics = (
         lastJumpTimeSeconds = curTimeSeconds;
       }
     }
-    if (keyStates['ShiftLeft']) {
-      playerController.jump(btvec3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16));
+
+    if (keyStates['ShiftLeft'] || keyStates['ShiftRight']) {
+      if (curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS && !boostNeedsGroundTouch) {
+        playerController.jump(btvec3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16));
+        lastBoostTimeSeconds = curTimeSeconds;
+        boostNeedsGroundTouch = true;
+      }
+    }
+
+    if (
+      curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS &&
+      boostNeedsGroundTouch &&
+      playerOnGround
+    ) {
+      boostNeedsGroundTouch = false;
     }
 
     const walkSpeed = playerMoveSpeed * (1 / 160);
@@ -242,7 +260,6 @@ const setupFirstPerson = async (
   let GRAVITY = gravity ?? 40;
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
   let ON_FLOOR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.onGround ?? 40;
-  let IN_AIR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.inAir ?? 20;
 
   const keyStates: Record<string, boolean> = {};
 
@@ -290,6 +307,10 @@ const setupFirstPerson = async (
     if (document.pointerLockElement === document.body) {
       camera.rotation.y -= event.movementX / 500;
       camera.rotation.x -= event.movementY / 500;
+
+      // Clamp the camera's rotation to the range of -PI/2 to PI/2
+      // This is so the camera doesn't flip upside down
+      camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
     }
   });
 
@@ -300,6 +321,21 @@ const setupFirstPerson = async (
     } else {
       console.log('No location found');
     }
+  };
+
+  window.onbeforeunload = function () {
+    localStorage.backPos = (window as any).recordPos();
+  };
+
+  (window as any).back = () => {
+    const backPos = localStorage.backPos;
+    if (!backPos) {
+      console.log('No back position found');
+      return;
+    }
+
+    const { pos, rot } = JSON.parse(backPos);
+    teleportPlayer(new THREE.Vector3(pos[0], pos[1], pos[2]), new THREE.Vector3(rot[0], rot[1], rot[2]));
   };
 
   function teleportPlayerIfOOB() {
@@ -615,7 +651,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   container.appendChild(viz.stats.domElement);
   // }
 
-  const inlineConsole = window.location.href.includes('localhost') ? new InlineConsole() : null;
+  const inlineConsole = window.location.href.includes('localhost') || true ? new InlineConsole() : null;
 
   const loader = new GLTFLoader().setPath('/');
 

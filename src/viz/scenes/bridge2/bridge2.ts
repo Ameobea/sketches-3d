@@ -12,6 +12,7 @@ import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?r
 import TowerGlowVertexShader from '../../shaders/bridge2/tower_glow/vertex.vert?raw';
 import TowerGlowColorShader from '../../shaders/bridge2/tower_glow/color.frag?raw';
 import Rock1RoughnessShader from '../../shaders/bridge2/rock1/roughness.frag?raw';
+import UpperRidgesColorShader from '../../shaders/bridge2/upper_ridges/color.frag?raw';
 import { CustomSky as Sky } from '../../CustomSky';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
 import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
@@ -37,11 +38,19 @@ const locations = {
   },
   repro: {
     pos: new THREE.Vector3(167.87898623908666, 1.9848349975478469, -2.1751690172419376),
-    rot: new THREE.Vector3(-0.10800000000000023, 0.09400000000000608, 0),
+    rot: new THREE.Vector3(0.11799999999999987, -1.5439999999999945, 0),
   },
   monolith: {
     pos: new THREE.Vector3(390.19000244140625, -2.6853251457214355, -22.77198028564453),
     rot: new THREE.Vector3(0.06800000000000045, -1.9240000000000457, 0),
+  },
+  perch: {
+    pos: new THREE.Vector3(251.73886108398438, 76.28307342529297, -25.859113693237305),
+    rot: new THREE.Vector3(-0.4240000000000003, -2.1679999999999904, 0),
+  },
+  puz: {
+    pos: new THREE.Vector3(144.1893768310547, 3.646326065063477, -181.00643920898438),
+    rot: new THREE.Vector3(-0.08400000000000019, -1.455999999999995, 0),
   },
 };
 
@@ -50,7 +59,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   base.light.castShadow = false;
   const baseDirectionalLightIntensity = 1;
   base.light.intensity = baseDirectionalLightIntensity;
-  base.ambientlight.intensity = 0.1;
+  base.ambientlight.intensity = 0.13;
   base.light.position.set(20, 20, -80);
   const baseDirectionalLightColor = 0xfcbd63;
   base.light.color = new THREE.Color(baseDirectionalLightColor);
@@ -143,13 +152,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       color: new THREE.Color(0xcccccc),
       roughness: 0.4,
       metalness: 0.98,
-      map: bridgeTexture,
-      normalMap: bridgeTextureNormal,
+      map: bridgeCombinedDiffuseNormalTexture,
       normalScale: 2,
       uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
     },
     {},
-    {}
+    { usePackedDiffuseNormalGBA: true }
   );
 
   const bridgeSupportsMaterial = buildCustomShader(
@@ -167,6 +175,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {}
   );
   bridgeTopMist.material = bridgeTopMistMat;
+  bridgeTopMist.material.blending = THREE.AdditiveBlending;
   viz.registerBeforeRenderCb(curTimeSeconds => bridgeTopMistMat.setCurTimeSeconds(curTimeSeconds));
   viz.registerDistanceMaterialSwap(
     bridgeTopMist,
@@ -237,7 +246,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     viz.registerDistanceMaterialSwap(child as THREE.Mesh, monolithFarMat, 200);
   }
 
-  const background = loadedWorld.getObjectByName('backgroundnocollide')! as THREE.Mesh;
+  const background = loadedWorld.getObjectByName('background')! as THREE.Mesh;
   const backgroundMat = buildCustomBasicShader(
     { color: new THREE.Color(0x090909), alphaTest: 0.001, transparent: true, fogMultiplier: 0.6 },
     { colorShader: BackgroundColorShader }
@@ -250,6 +259,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const platformTexture = await loadTexture(loader, platformTexURL, {
     format: THREE.RedFormat,
     type: THREE.UnsignedByteType,
+    magFilter: THREE.NearestMipMapNearestFilter,
   });
 
   const platformCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
@@ -300,6 +310,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       map: platformRidgesCombinedDiffuseAndNormalTexture,
       uvTransform: new THREE.Matrix3().scale(80, 80),
       normalScale: 2.8,
+      mapDisableDistance: null,
     },
     {},
     { usePackedDiffuseNormalGBA: true }
@@ -313,9 +324,151 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     color: new THREE.Color(0x444444),
     fogMultiplier: 0.4,
   });
-  ['platform_ridges', 'platform_ridges_3', 'platform_building'].forEach(name => {
+  ['platform_building'].forEach(name => {
     const mesh = loadedWorld.getObjectByName(name)! as THREE.Mesh;
     mesh.material = platformBuildingMaterial;
+  });
+
+  const upperRidgesTexture = await loadTexture(
+    loader,
+    'https://ameo.link/u/6221e21a2c76e901332ebdace5069f2a9c972f1d.jpg',
+    {
+      // format: THREE.RedFormat, // TODO: Support grayscale
+      type: THREE.UnsignedByteType,
+    }
+  );
+  const upperRidgesCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
+    upperRidgesTexture,
+    {},
+    true
+  );
+  const upperRidgesMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0x444444),
+      fogMultiplier: 0.6,
+      roughness: 0.99,
+      metalness: 0,
+      map: upperRidgesCombinedDiffuseAndNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(120, 4),
+      normalScale: 2.8,
+      mapDisableDistance: null,
+    },
+    { colorShader: UpperRidgesColorShader },
+    { usePackedDiffuseNormalGBA: true }
+  );
+  ['platform_ridges', 'platform_ridges_3', 'platform_ridges_4'].forEach(name => {
+    const mesh = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    mesh.material = upperRidgesMaterial;
+  });
+  viz.registerBeforeRenderCb(curTimeSeconds => upperRidgesMaterial.setCurTimeSeconds(curTimeSeconds));
+
+  const spotLight = new THREE.SpotLight(0x750d16, 2, 0, Math.PI / 4, 0.8);
+  spotLight.position.set(223, 56, 0);
+  spotLight.target.position.set(426, -8, 0);
+  spotLight.matrixWorldNeedsUpdate = true;
+  viz.scene.add(spotLight.target);
+  spotLight.castShadow = false;
+  viz.scene.add(spotLight);
+
+  viz.registerAfterRenderCb(() => {
+    const distanceToSpotLight = viz.camera.position.x - spotLight.position.x;
+    if (distanceToSpotLight < -70) {
+      spotLight.visible = false;
+    } else {
+      spotLight.visible = true;
+      const spotlightActivation = smoothstep(-70, -10, distanceToSpotLight);
+      spotLight.intensity = 2 * spotlightActivation;
+    }
+  });
+
+  const platformLeftWallTexture = await loadTexture(loader, 'https://ameo.link/u/ae4.jpg');
+  const platformLeftWallCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
+    platformLeftWallTexture,
+    {},
+    true
+  );
+  const platformLeftWall = loadedWorld.getObjectByName('platform_left_wall')! as THREE.Mesh;
+  const platformLeftWallMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0x444444),
+      fogMultiplier: 0.4,
+      map: platformLeftWallCombinedDiffuseAndNormalTexture,
+      normalScale: 2.8,
+      uvTransform: new THREE.Matrix3().scale(40, 4),
+    },
+    {},
+    { usePackedDiffuseNormalGBA: true }
+  );
+  platformLeftWall.material = platformLeftWallMaterial;
+
+  const secretSpotLight = new THREE.SpotLight(0x2a7ef5, 2, 8, Math.PI / 4, 0.8, 0);
+  secretSpotLight.position.set(255.1, 12, -165);
+  secretSpotLight.target.position.set(255.1, 0, -165);
+  secretSpotLight.matrixWorldNeedsUpdate = true;
+  viz.scene.add(secretSpotLight.target);
+  secretSpotLight.castShadow = false;
+  viz.scene.add(secretSpotLight);
+
+  const secretRewardGeometry = new THREE.TorusKnotGeometry(1, 0.3, 100, 16);
+  const secretRewardMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2a7ef5,
+    roughness: 0.5,
+    metalness: 0.5,
+    emissive: 0x2a7ef5,
+    emissiveIntensity: 0.5,
+  });
+  const secretReward = new THREE.Mesh(secretRewardGeometry, secretRewardMaterial);
+  secretReward.position.set(255.1, 6, -167.6);
+  viz.scene.add(secretReward);
+
+  // What a lovely place to store state
+  let gotReward = false;
+
+  viz.registerAfterRenderCb((_curTimeSeconds, tDiffSeconds) => {
+    if (gotReward) {
+      return;
+    }
+
+    const distanceToSecretSpotLight = viz.camera.position.distanceTo(secretSpotLight.position);
+    if (distanceToSecretSpotLight < 20) {
+      secretSpotLight.visible = true;
+      secretReward.visible = true;
+
+      // spin the reward
+      secretReward.rotateY(tDiffSeconds * 1.5);
+    } else {
+      secretSpotLight.visible = false;
+      secretReward.visible = false;
+    }
+
+    const distanceToSecret = viz.camera.position.distanceTo(secretReward.position);
+    let dubSound: Promise<THREE.PositionalAudio> | null = null;
+
+    if (distanceToSecret < 5 && !dubSound) {
+      const dubSoundURL = 'https://ameo.link/u/ae6.ogg';
+      const dubSoundLoader = new THREE.AudioLoader();
+
+      dubSound = new Promise<THREE.PositionalAudio>(resolve => {
+        dubSoundLoader.load(dubSoundURL, buffer => {
+          const dubSound = new THREE.PositionalAudio(new THREE.AudioListener());
+          dubSound.setBuffer(buffer);
+          dubSound.setRefDistance(10);
+          dubSound.setLoop(false);
+          dubSound.setVolume(0.5);
+          resolve(dubSound);
+        });
+      });
+    }
+
+    if (distanceToSecret < 2) {
+      gotReward = true;
+      secretReward.visible = false;
+      secretSpotLight.visible = false;
+
+      dubSound!.then(dubSound => {
+        dubSound.play();
+      });
+    }
   });
 
   const rock1 = loadedWorld.getObjectByName('rock1')! as THREE.Mesh;
@@ -328,6 +481,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       normalScale: 1.5,
       uvTransform: new THREE.Matrix3().scale(1.2, 1.2),
       roughnessMap: bridgeTexture,
+      fogMultiplier: 0.5,
     },
     { roughnessShader: Rock1RoughnessShader },
     { readRoughnessMapFromRChannel: true }
@@ -343,6 +497,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.82,
       uvTransform: new THREE.Matrix3().scale(1.2, 1.2),
       roughnessMap: bridgeTexture,
+      fogMultiplier: 0.5,
     },
     { roughnessShader: Rock1RoughnessShader },
     { readRoughnessMapFromRChannel: true }
@@ -417,7 +572,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     instancedMesh.name = `pillar${pillarIx + 1}_nocollide`;
     const instanceMatrix = instancedMesh.instanceMatrix;
     instanceMatrix.set(transforms);
-    loadedWorld.add(instancedMesh);
+    // loadedWorld.add(instancedMesh);
   }
 
   const skyMaterial = sky.material as THREE.ShaderMaterial;
@@ -467,8 +622,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     const midiInputs = synthDesigner.inputs.midi.node.inputCbs;
     midiInputs.onAttack(35, 255);
 
-    // TODO: fix volume persistence
-    (window as any).setGlobalVolume(50);
+    if (!localStorage.getItem('globalVolume')) {
+      (window as any).setGlobalVolume(50);
+    }
 
     const computeScaleAndShift = (inputRange: [number, number], outputRange: [number, number]) => {
       const inputRangeSize = inputRange[1] - inputRange[0];
@@ -506,8 +662,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     viz.registerAfterRenderCb(() => {
       const distanceToMonolithTower = viz.camera.position.distanceTo(monolithTowerPos);
 
-      let activation = smoothstep(100, 394, distanceToMonolithTower);
-      activation = (Math.pow(activation, 1.4) + activation) / 2;
+      let activation = smoothstep(80, 384, distanceToMonolithTower);
+      activation = Math.pow(activation, 2.3);
       const maxCutoff = 8 + (1 - activation) * 3200;
       setCutoff(maxCutoff);
     });
@@ -526,7 +682,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         radius: 0.35,
       },
       movementAccelPerSecond: {
-        onGround: 6,
+        onGround: 7.2,
         inAir: 2.2,
       },
     },

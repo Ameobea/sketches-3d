@@ -1,18 +1,4 @@
 export const initWebSynth = (args: { compositionIDToLoad?: number }) => {
-  // const toPersist = ['globalVolume'];
-  // const persisted = toPersist.reduce((acc, key) => {
-  //   const val = localStorage.getItem(key);
-  //   if (val !== null && val !== undefined) {
-  //     acc[key] = val;
-  //   }
-  //   return acc;
-  // }, {} as Record<string, any>);
-
-  // localStorage.clear(); // Local storage belongs to web synth exclusively
-  // Object.entries(persisted).forEach(([key, val]) => {
-  //   localStorage.setItem(key, val);
-  // });
-
   const content = document.createElement('div');
   content.id = 'content';
   content.style.display = 'none';

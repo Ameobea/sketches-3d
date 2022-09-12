@@ -15,7 +15,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   noise = quantize(noise, 0.07);
 
   // Start de-activating the noise as we approach the platform
-  float noiseFade = smoothstep(92., 108., pos.x);
+  float noiseFade = smoothstep(92., 112., pos.x);
   noise *= (1. - noiseFade);
 
   outColor.a = clamp(noise, 0.0, 1.0);

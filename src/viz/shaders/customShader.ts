@@ -7,7 +7,7 @@ import commonShaderCode from './common.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 
-const DEFAULT_MAP_DISABLE_DISTANCE = 100;
+const DEFAULT_MAP_DISABLE_DISTANCE = 200;
 const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
 
 const buildNoiseTexture = (): THREE.DataTexture => {
