@@ -54,6 +54,158 @@ const locations = {
   },
 };
 
+const loadTextures = async (pillarMap: THREE.Texture) => {
+  const loader = new THREE.ImageBitmapLoader();
+
+  const bridgeTextureP = loadTexture(loader, 'https://ameo.link/u/abu.jpg', {
+    format: THREE.RedFormat,
+  });
+
+  const bridgeTextureNormalP = bridgeTextureP.then(bridgeTexture =>
+    generateNormalMapFromTexture(bridgeTexture)
+  );
+  const bridgeCombinedDiffuseNormalTextureP = bridgeTextureP.then(bridgeTexture =>
+    generateNormalMapFromTexture(bridgeTexture, {}, true)
+  );
+
+  const monolithTextureP = loadTexture(loader, 'https://ameo.link/u/ac1.jpg', {
+    format: THREE.RedFormat,
+  });
+  const monolithTextureCombinedDiffuseNormalP = monolithTextureP.then(monolithTexture =>
+    generateNormalMapFromTexture(monolithTexture, {}, true)
+  );
+
+  const monolithRingTextureP = loadTexture(loader, 'https://ameo.link/u/ac0.jpg', {
+    format: THREE.RedFormat,
+  });
+  const monolithRingCombinedDiffuseNormalTextureP = monolithRingTextureP.then(monolithRingTexture =>
+    generateNormalMapFromTexture(monolithRingTexture, {}, true)
+  );
+
+  // const platformTexURL = 'https://ameo.link/u/ac9.jpg'; // orig
+  // const platformTexURL = 'https://ameo.link/u/acn.jpg'; // tiled
+  const platformTexURL = 'https://ameo.link/u/aco.jpg'; // grayscale
+  const platformTextureP = loadTexture(loader, platformTexURL, {
+    format: THREE.RedFormat,
+    type: THREE.UnsignedByteType,
+    magFilter: THREE.NearestMipMapNearestFilter,
+  });
+  const platformCombinedDiffuseAndNormalTextureP = platformTextureP.then(platformTexture =>
+    generateNormalMapFromTexture(platformTexture, {}, true)
+  );
+
+  const platformRidgesTextureP = loadTexture(
+    loader,
+    'https://ameo.link/u/b7dcc1c85adb2f53bb9567c712c30e36f236392b.jpg',
+    {
+      // format: THREE.RedFormat, // TODO: Support grayscale
+      type: THREE.UnsignedByteType,
+    }
+  );
+  const platformRidgesCombinedDiffuseAndNormalTextureP = platformRidgesTextureP.then(platformRidgesTexture =>
+    generateNormalMapFromTexture(platformRidgesTexture, {}, true)
+  );
+
+  const upperRidgesTextureP = loadTexture(
+    loader,
+    'https://ameo.link/u/6221e21a2c76e901332ebdace5069f2a9c972f1d.jpg',
+    {
+      // format: THREE.RedFormat, // TODO: Support grayscale
+      type: THREE.UnsignedByteType,
+    }
+  );
+  const upperRidgesCombinedDiffuseAndNormalTextureP = upperRidgesTextureP.then(upperRidgesTexture =>
+    generateNormalMapFromTexture(upperRidgesTexture, {}, true)
+  );
+
+  const platformLeftWallTextureP = loadTexture(loader, 'https://ameo.link/u/ae4.jpg');
+  const platformLeftWallCombinedDiffuseAndNormalTextureP = platformLeftWallTextureP.then(
+    platformLeftWallTexture => generateNormalMapFromTexture(platformLeftWallTexture, {}, true)
+  );
+
+  const pillarNormalMapP = generateNormalMapFromTexture(pillarMap);
+
+  const [
+    bridgeTexture,
+    bridgeTextureNormal,
+    bridgeCombinedDiffuseNormalTexture,
+    monolithTexture,
+    monolithTextureCombinedDiffuseNormal,
+    monolithRingTexture,
+    monolithRingCombinedDiffuseNormalTexture,
+    platformTexture,
+    platformCombinedDiffuseAndNormalTexture,
+    platformRidgesTexture,
+    platformRidgesCombinedDiffuseAndNormalTexture,
+    upperRidgesTexture,
+    upperRidgesCombinedDiffuseAndNormalTexture,
+    platformLeftWallTexture,
+    platformLeftWallCombinedDiffuseAndNormalTexture,
+    pillarNormalMap,
+  ] = await Promise.all([
+    bridgeTextureP,
+    bridgeTextureNormalP,
+    bridgeCombinedDiffuseNormalTextureP,
+    monolithTextureP,
+    monolithTextureCombinedDiffuseNormalP,
+    monolithRingTextureP,
+    monolithRingCombinedDiffuseNormalTextureP,
+    platformTextureP,
+    platformCombinedDiffuseAndNormalTextureP,
+    platformRidgesTextureP,
+    platformRidgesCombinedDiffuseAndNormalTextureP,
+    upperRidgesTextureP,
+    upperRidgesCombinedDiffuseAndNormalTextureP,
+    platformLeftWallTextureP,
+    platformLeftWallCombinedDiffuseAndNormalTextureP,
+    pillarNormalMapP,
+  ]);
+
+  return {
+    bridgeTexture,
+    bridgeTextureNormal,
+    bridgeCombinedDiffuseNormalTexture,
+    monolithTexture,
+    monolithTextureCombinedDiffuseNormal,
+    monolithRingTexture,
+    monolithRingCombinedDiffuseNormalTexture,
+    platformTexture,
+    platformCombinedDiffuseAndNormalTexture,
+    platformRidgesTexture,
+    platformRidgesCombinedDiffuseAndNormalTexture,
+    upperRidgesTexture,
+    upperRidgesCombinedDiffuseAndNormalTexture,
+    platformLeftWallTexture,
+    platformLeftWallCombinedDiffuseAndNormalTexture,
+    pillarNormalMap,
+  };
+};
+
+const getMesh = (group: THREE.Group, name: string): THREE.Mesh => {
+  const maybeMesh = group.getObjectByName(name);
+  if (!maybeMesh) {
+    throw new Error(`Could not find mesh with name ${name}`);
+  }
+
+  if (maybeMesh instanceof THREE.Mesh) {
+    return maybeMesh;
+  } else if (maybeMesh.children.length > 0) {
+    if (maybeMesh.children.length !== 1) {
+      throw new Error(`Expected group ${name} to have 1 child`);
+    }
+
+    const child = maybeMesh.children[0];
+    if (!(child instanceof THREE.Mesh)) {
+      throw new Error(`Expected group ${name} to have a mesh child`);
+    }
+
+    return child;
+  } else {
+    console.error(maybeMesh);
+    throw new Error(`Expected mesh or group with name ${name}`);
+  }
+};
+
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   const base = initBaseScene(viz);
   base.light.castShadow = false;
@@ -68,36 +220,41 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const fog = new THREE.FogExp2(baseFogColor, 0.025);
   viz.scene.fog = fog;
 
-  const bridgeTop = loadedWorld.getObjectByName('bridge_top')! as THREE.Mesh;
+  const bridgeTop = getMesh(loadedWorld, 'bridge_top');
   const mat = bridgeTop.material as THREE.MeshStandardMaterial;
   mat.emissiveMap = null;
   mat.emissive = new THREE.Color(0x0);
 
-  // This is necessary to deal with issue with GLTF exports and Three.js.
-  //
-  // Three.JS expects the UV map for light map to be in `uv2` but the GLTF
-  // exporter puts it in `uv1`.
-  //
-  // TODO: Should handle in the custom shader
-  const geometry = bridgeTop.geometry;
-  geometry.attributes.uv2 = geometry.attributes.uv;
-
   bridgeTop.material = buildCustomShader(
-    {
-      color: new THREE.Color(0x121212),
-      //  lightMap: texture,
-      lightMapIntensity: 8,
-    },
+    { color: new THREE.Color(0x121212) },
     { roughnessShader: BridgeTopRoughnessShader },
     {}
   );
 
-  const loader = new THREE.ImageBitmapLoader();
-  const bridgeTexture = await loadTexture(loader, 'https://ameo.link/u/abu.jpg', {
-    format: THREE.RedFormat,
-  });
-  const bridgeTextureNormal = await generateNormalMapFromTexture(bridgeTexture);
-  const bridgeCombinedDiffuseNormalTexture = await generateNormalMapFromTexture(bridgeTexture, {}, true);
+  const pillar1 = getMesh(loadedWorld, 'pillar1');
+  const pillarMap = (pillar1.material as THREE.MeshStandardMaterial).map!;
+  pillarMap.magFilter = THREE.NearestFilter;
+  pillarMap.minFilter = THREE.NearestMipMapLinearFilter;
+  pillarMap.repeat.set(4, 4);
+
+  const {
+    bridgeTexture,
+    bridgeTextureNormal,
+    bridgeCombinedDiffuseNormalTexture,
+    monolithTexture,
+    monolithTextureCombinedDiffuseNormal,
+    monolithRingTexture,
+    monolithRingCombinedDiffuseNormalTexture,
+    platformTexture,
+    platformCombinedDiffuseAndNormalTexture,
+    platformRidgesTexture,
+    platformRidgesCombinedDiffuseAndNormalTexture,
+    upperRidgesTexture,
+    upperRidgesCombinedDiffuseAndNormalTexture,
+    platformLeftWallTexture,
+    platformLeftWallCombinedDiffuseAndNormalTexture,
+    pillarNormalMap,
+  } = await loadTextures(pillarMap);
 
   const archesMaterial = buildCustomShader(
     {
@@ -112,12 +269,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {},
     { readRoughnessMapFromRChannel: true }
   );
-  const arches = loadedWorld.getObjectByName('arch')! as THREE.Mesh;
+  const arches = getMesh(loadedWorld, 'arch');
   arches.material = archesMaterial;
-  const brokenArches = loadedWorld.getObjectByName('broken_arch')! as THREE.Mesh;
+  const brokenArches = getMesh(loadedWorld, 'broken_arch');
   brokenArches.material = archesMaterial;
 
-  const fins = loadedWorld.getObjectByName('fins')! as THREE.Mesh;
+  const fins = getMesh(loadedWorld, 'fins');
   fins.material = buildCustomShader(
     {
       color: new THREE.Color(0x333333),
@@ -130,7 +287,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     { readRoughnessMapFromRChannel: true }
   );
 
-  const bridge = loadedWorld.getObjectByName('bridge')! as THREE.Mesh;
+  const bridge = getMesh(loadedWorld, 'bridge');
   bridge.material = buildCustomShader(
     {
       color: new THREE.Color(0xcccccc),
@@ -146,7 +303,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   viz.registerDistanceMaterialSwap(bridge, new THREE.MeshBasicMaterial({ color: 0xcccccc }), 200);
 
-  const bridgeBars = loadedWorld.getObjectByName('bridge_bars')! as THREE.Mesh;
+  const bridgeBars = getMesh(loadedWorld, 'bridge_bars')!;
   bridgeBars.material = buildCustomShader(
     {
       color: new THREE.Color(0xcccccc),
@@ -165,10 +322,10 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {},
     {}
   );
-  const bridgeSupports = loadedWorld.getObjectByName('bridge_supports')! as THREE.Mesh;
+  const bridgeSupports = getMesh(loadedWorld, 'bridge_supports');
   bridgeSupports.material = bridgeSupportsMaterial;
 
-  const bridgeTopMist = loadedWorld.getObjectByName('bridge_top_mistnocollide')! as THREE.Mesh;
+  const bridgeTopMist = getMesh(loadedWorld, 'bridge_top_mistnocollide');
   const bridgeTopMistMat = buildCustomShader(
     { metalness: 0, alphaTest: 0.05, transparent: true },
     { colorShader: BridgeMistColorShader },
@@ -183,10 +340,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     150
   );
 
-  const monolithTexture = await loadTexture(loader, 'https://ameo.link/u/ac1.jpg', {
-    format: THREE.RedFormat,
-  });
-  const monolithTextureCombinedDiffuseNormal = await generateNormalMapFromTexture(monolithTexture, {}, true);
   const monolithMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x424242),
@@ -205,14 +358,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   // const monolithFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x424242) });
   const monolithFarMat = buildCustomShader({ fogMultiplier: 0.8, color: new THREE.Color(0x424242) });
 
-  const monolithRingTexture = await loadTexture(loader, 'https://ameo.link/u/ac0.jpg', {
-    format: THREE.RedFormat,
-  });
-  const monolithRingCombinedDiffuseNormalTexture = await generateNormalMapFromTexture(
-    monolithRingTexture,
-    {},
-    true
-  );
   const monolithRingMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x353535),
@@ -246,27 +391,13 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     viz.registerDistanceMaterialSwap(child as THREE.Mesh, monolithFarMat, 200);
   }
 
-  const background = loadedWorld.getObjectByName('background')! as THREE.Mesh;
+  const background = getMesh(loadedWorld, 'background');
   const backgroundMat = buildCustomBasicShader(
     { color: new THREE.Color(0x090909), alphaTest: 0.001, transparent: true, fogMultiplier: 0.6 },
     { colorShader: BackgroundColorShader }
   );
   background.material = backgroundMat;
 
-  // const platformTexURL = 'https://ameo.link/u/ac9.jpg'; // orig
-  // const platformTexURL = 'https://ameo.link/u/acn.jpg'; // tiled
-  const platformTexURL = 'https://ameo.link/u/aco.jpg'; // grayscale
-  const platformTexture = await loadTexture(loader, platformTexURL, {
-    format: THREE.RedFormat,
-    type: THREE.UnsignedByteType,
-    magFilter: THREE.NearestMipMapNearestFilter,
-  });
-
-  const platformCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
-    platformTexture,
-    {},
-    true
-  );
   const platformMaterial = buildCustomShader(
     {
       color: new THREE.Color(0xffffff),
@@ -285,22 +416,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   );
   viz.registerBeforeRenderCb(curTimeSeconds => platformMaterial.setCurTimeSeconds(curTimeSeconds));
-  const platform = loadedWorld.getObjectByName('platform')! as THREE.Mesh;
+  const platform = getMesh(loadedWorld, 'platform');
   platform.material = platformMaterial;
 
-  const platformRidgesTexture = await loadTexture(
-    loader,
-    'https://ameo.link/u/b7dcc1c85adb2f53bb9567c712c30e36f236392b.jpg',
-    {
-      // format: THREE.RedFormat, // TODO: Support grayscale
-      type: THREE.UnsignedByteType,
-    }
-  );
-  const platformRidgesCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
-    platformRidgesTexture,
-    {},
-    true
-  );
   const platformRidgeMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x444444),
@@ -316,7 +434,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     { usePackedDiffuseNormalGBA: true }
   );
   ['platform_ridges_2'].forEach(name => {
-    const mesh = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    const mesh = getMesh(loadedWorld, name);
     mesh.material = platformRidgeMaterial;
   });
 
@@ -325,23 +443,10 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     fogMultiplier: 0.4,
   });
   ['platform_building'].forEach(name => {
-    const mesh = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    const mesh = getMesh(loadedWorld, name)!;
     mesh.material = platformBuildingMaterial;
   });
 
-  const upperRidgesTexture = await loadTexture(
-    loader,
-    'https://ameo.link/u/6221e21a2c76e901332ebdace5069f2a9c972f1d.jpg',
-    {
-      // format: THREE.RedFormat, // TODO: Support grayscale
-      type: THREE.UnsignedByteType,
-    }
-  );
-  const upperRidgesCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
-    upperRidgesTexture,
-    {},
-    true
-  );
   const upperRidgesMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x444444),
@@ -357,7 +462,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     { usePackedDiffuseNormalGBA: true }
   );
   ['platform_ridges', 'platform_ridges_3', 'platform_ridges_4'].forEach(name => {
-    const mesh = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    const mesh = getMesh(loadedWorld, name);
     mesh.material = upperRidgesMaterial;
   });
   viz.registerBeforeRenderCb(curTimeSeconds => upperRidgesMaterial.setCurTimeSeconds(curTimeSeconds));
@@ -381,13 +486,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   });
 
-  const platformLeftWallTexture = await loadTexture(loader, 'https://ameo.link/u/ae4.jpg');
-  const platformLeftWallCombinedDiffuseAndNormalTexture = await generateNormalMapFromTexture(
-    platformLeftWallTexture,
-    {},
-    true
-  );
-  const platformLeftWall = loadedWorld.getObjectByName('platform_left_wall')! as THREE.Mesh;
+  const platformLeftWall = getMesh(loadedWorld, 'platform_left_wall');
   const platformLeftWallMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x444444),
@@ -471,7 +570,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   });
 
-  const rock1 = loadedWorld.getObjectByName('rock1')! as THREE.Mesh;
+  const rock1 = getMesh(loadedWorld, 'rock1');
   const rock1Mat = buildCustomShader(
     {
       color: new THREE.Color(0x0a0a0a),
@@ -488,7 +587,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   rock1.material = rock1Mat;
   rock1.userData.convexhull = true;
-  const rock1GoldTrim = loadedWorld.getObjectByName('rock1_gold_trim')! as THREE.Mesh;
+  const rock1GoldTrim = getMesh(loadedWorld, 'rock1_gold_trim');
   rock1GoldTrim.userData.nocollide = true;
   rock1GoldTrim.material = buildCustomShader(
     {
@@ -504,7 +603,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
 
   const towerMaterial = buildCustomShader({ color: new THREE.Color(0x0) }, {}, { enableFog: false });
-  const tower = loadedWorld.getObjectByName('tower')! as THREE.Mesh;
+  const tower = getMesh(loadedWorld, 'tower');
   tower.material = towerMaterial;
 
   const towerGlowMaterial = buildCustomBasicShader(
@@ -524,7 +623,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const pillars = new Array(6).fill(null).map((_, i) => {
     const name = `pillar${i + 1}`;
-    const obj = loadedWorld.getObjectByName(name)! as THREE.Mesh;
+    const obj = getMesh(loadedWorld, name);
     obj.removeFromParent();
     return obj;
   });
@@ -533,19 +632,19 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   for (const obj of pillars) {
     if (!combinedPillarTexture) {
       const pillarTexture = (obj.material as THREE.MeshStandardMaterial).map!;
-      combinedPillarTexture = await generateNormalMapFromTexture(pillarTexture, {}, true);
+      // combinedPillarTexture = await generateNormalMapFromTexture(pillarTexture, {}, true);
       // TODO USE THIS once the custom shader is fixed for instancing
     }
 
-    const mat = buildCustomShader(
-      {
-        map: combinedPillarTexture,
-        color: new THREE.Color(0xffffff),
-        fogMultiplier: 0.5,
-      },
-      {},
-      { usePackedDiffuseNormalGBA: true }
-    );
+    // const mat = buildCustomShader(
+    //   {
+    //     map: combinedPillarTexture,
+    //     color: new THREE.Color(0xffffff),
+    //     fogMultiplier: 0.5,
+    //   },
+    //   {},
+    //   { usePackedDiffuseNormalGBA: true }
+    // );
     // obj.material = mat;
   }
 
@@ -558,12 +657,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     const pillarMesh = pillars[pillarIx];
     const transforms = engine.get_pillar_transformations(pillarCtxPtr, pillarIx);
     (pillarMesh.material as THREE.MeshStandardMaterial).roughness = 0.95;
-    const map = (pillarMesh.material as THREE.MeshStandardMaterial).map!;
-    map.magFilter = THREE.NearestFilter;
-    map.minFilter = THREE.NearestMipMapLinearFilter;
-    const normalMap = await generateNormalMapFromTexture(map);
-    (pillarMesh.material as THREE.MeshStandardMaterial).normalMap = normalMap;
-    map.repeat.set(4, 4);
+    (pillarMesh.material as THREE.MeshStandardMaterial).map = pillarMap;
+    (pillarMesh.material as THREE.MeshStandardMaterial).normalMap = pillarNormalMap;
+
     const instancedMesh = new THREE.InstancedMesh(
       pillarMesh.geometry,
       pillarMesh.material,
@@ -610,64 +706,70 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     );
   });
 
-  initWebSynth({ compositionIDToLoad: 64 }).then(async ctx => {
-    await delay(1000);
-    const connectables: {
-      [key: string]: {
-        inputs: { [key: string]: { node: any; type: string } };
-        outputs: { [key: string]: { node: any; type: string } };
-      };
-    } = ctx.getState().viewContextManager.patchNetwork.connectables.toJS();
-    const synthDesigner = connectables['5be967b3-409b-e297-2d21-20111e4d3f2c']!;
-    const midiInputs = synthDesigner.inputs.midi.node.inputCbs;
-    midiInputs.onAttack(35, 255);
+  delay(1000)
+    .then(() => initWebSynth({ compositionIDToLoad: 64 }))
+    .then(async ctx => {
+      await delay(1000);
 
-    if (!localStorage.getItem('globalVolume')) {
-      (window as any).setGlobalVolume(50);
-    }
+      const connectables: {
+        [key: string]: {
+          inputs: { [key: string]: { node: any; type: string } };
+          outputs: { [key: string]: { node: any; type: string } };
+        };
+      } = ctx.getState().viewContextManager.patchNetwork.connectables.toJS();
+      const synthDesigner = connectables['5be967b3-409b-e297-2d21-20111e4d3f2c']!;
+      const midiInputs = synthDesigner.inputs.midi.node.inputCbs;
+      midiInputs.onAttack(35, 255);
 
-    const computeScaleAndShift = (inputRange: [number, number], outputRange: [number, number]) => {
-      const inputRangeSize = inputRange[1] - inputRange[0];
-      const firstMultiplier = inputRangeSize === 0 ? 0 : 1 / inputRangeSize;
-      const firstOffset = -inputRange[0];
-      const secondMultiplier = outputRange[1] - outputRange[0];
-      const secondOffset = outputRange[0];
-
-      return { firstOffset, multiplier: firstMultiplier * secondMultiplier, secondOffset };
-    };
-
-    const scaleAndShiftNode = connectables[3];
-    scaleAndShiftNode.inputs.scale.node.setIsOverridden(true);
-    scaleAndShiftNode.inputs.pre_scale_shift.node.setIsOverridden(true);
-    scaleAndShiftNode.inputs.scale.node.setIsOverridden(true);
-    scaleAndShiftNode.inputs.post_scale_shift.node.setIsOverridden(true);
-
-    let lastMaxCutoff = 0;
-    const setCutoff = (maxCutoff: number) => {
-      if (maxCutoff === lastMaxCutoff) {
-        return;
+      if (!localStorage.getItem('globalVolume')) {
+        (window as any).setGlobalVolume(50);
       }
-      lastMaxCutoff = maxCutoff;
 
-      const minCutoff = 10;
-      const { firstOffset, multiplier, secondOffset } = computeScaleAndShift([-1, 1], [minCutoff, maxCutoff]);
-      scaleAndShiftNode.inputs.pre_scale_shift.node.manualControl.offset.value = firstOffset;
-      scaleAndShiftNode.inputs.scale.node.manualControl.offset.value = multiplier;
-      scaleAndShiftNode.inputs.post_scale_shift.node.manualControl.offset.value = secondOffset;
-    };
+      const computeScaleAndShift = (inputRange: [number, number], outputRange: [number, number]) => {
+        const inputRangeSize = inputRange[1] - inputRange[0];
+        const firstMultiplier = inputRangeSize === 0 ? 0 : 1 / inputRangeSize;
+        const firstOffset = -inputRange[0];
+        const secondMultiplier = outputRange[1] - outputRange[0];
+        const secondOffset = outputRange[0];
 
-    setCutoff(10);
+        return { firstOffset, multiplier: firstMultiplier * secondMultiplier, secondOffset };
+      };
 
-    const monolithTowerPos = tower.position.clone();
-    viz.registerAfterRenderCb(() => {
-      const distanceToMonolithTower = viz.camera.position.distanceTo(monolithTowerPos);
+      const scaleAndShiftNode = connectables[3];
+      scaleAndShiftNode.inputs.scale.node.setIsOverridden(true);
+      scaleAndShiftNode.inputs.pre_scale_shift.node.setIsOverridden(true);
+      scaleAndShiftNode.inputs.scale.node.setIsOverridden(true);
+      scaleAndShiftNode.inputs.post_scale_shift.node.setIsOverridden(true);
 
-      let activation = smoothstep(80, 384, distanceToMonolithTower);
-      activation = Math.pow(activation, 2.3);
-      const maxCutoff = 8 + (1 - activation) * 3200;
-      setCutoff(maxCutoff);
+      let lastMaxCutoff = 0;
+      const setCutoff = (maxCutoff: number) => {
+        if (maxCutoff === lastMaxCutoff) {
+          return;
+        }
+        lastMaxCutoff = maxCutoff;
+
+        const minCutoff = 10;
+        const { firstOffset, multiplier, secondOffset } = computeScaleAndShift(
+          [-1, 1],
+          [minCutoff, maxCutoff]
+        );
+        scaleAndShiftNode.inputs.pre_scale_shift.node.manualControl.offset.value = firstOffset;
+        scaleAndShiftNode.inputs.scale.node.manualControl.offset.value = multiplier;
+        scaleAndShiftNode.inputs.post_scale_shift.node.manualControl.offset.value = secondOffset;
+      };
+
+      setCutoff(10);
+
+      const monolithTowerPos = tower.position.clone();
+      viz.registerAfterRenderCb(() => {
+        const distanceToMonolithTower = viz.camera.position.distanceTo(monolithTowerPos);
+
+        let activation = smoothstep(80, 384, distanceToMonolithTower);
+        activation = Math.pow(activation, 2.3);
+        const maxCutoff = 8 + (1 - activation) * 3200;
+        setCutoff(maxCutoff);
+      });
     });
-  });
 
   return {
     locations,

@@ -19,3 +19,4 @@ src/ammojs/*
 !src/ammojs/.gitkeep
 static/ammo.wasm.wasm
 static/pillar.jpg
+static/normal_map_gen.wasm

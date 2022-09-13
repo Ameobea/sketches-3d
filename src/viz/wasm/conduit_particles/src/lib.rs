@@ -1,3 +1,5 @@
+#![feature(box_syntax)]
+
 use nanoserde::{DeJson, SerJson};
 use noise::{Fbm, MultiFractal, NoiseModule};
 use rand::{Rng, SeedableRng};

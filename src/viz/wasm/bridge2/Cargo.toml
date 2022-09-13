@@ -1,0 +1,15 @@
+[package]
+name = "bridge2"
+version = "0.1.0"
+authors = ["Casey Primozic <casey@cprimozic.net>"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "=0.2.82"
+nalgebra = "0.31"
+getrandom = { version = "0.2", features = ["js"] }
+rand = { version = "0.8" }
+rand_pcg = "0.3"

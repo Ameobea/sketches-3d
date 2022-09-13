@@ -1,4 +1,4 @@
-use wasm_bindgen::prelude::*;
+#!feature(box_syntax)
 
 fn read_interpolated_bilinear(
   texture: &[u8],
@@ -50,16 +50,33 @@ fn magnitude(v: [f32; 3]) -> f32 {
   (v[0] + v[1] + v[2]) / 3.0
 }
 
+#[no_mangle]
+pub extern "C" fn malloc(size: usize) -> *mut u8 {
+  let mut v = Vec::with_capacity(size);
+  let ptr = v.as_mut_ptr();
+  std::mem::forget(v);
+  ptr
+}
+
+#[no_mangle]
+pub extern "C" fn free(ptr: *mut u8) {
+  unsafe {
+    let _ = Vec::from_raw_parts(ptr, 0, 0);
+  }
+}
+
 /// Expect texture in RGBA format.  Returns normal map in RGBA format.
 ///
 /// Adapted from code by Jan Frischmuth <http://www.smart-page.net/blog>
-#[wasm_bindgen]
-pub fn gen_normal_map_from_texture(
-  texture: &[u8],
+#[no_mangle]
+pub extern "C" fn gen_normal_map_from_texture(
+  texture: *const u8,
   height: usize,
   width: usize,
   pack_mode: u8,
-) -> Vec<u8> {
+) -> *mut u8 {
+  let texture = unsafe { std::slice::from_raw_parts(texture, height * width * 4) };
+
   enum PackMode {
     /// No packing is done; the returned texture contains all 3 components of
     /// the normal vector with 1 set for the alpha channel.
@@ -119,5 +136,7 @@ pub fn gen_normal_map_from_texture(
     }
   }
 
-  normal_map
+  let ptr = normal_map.as_mut_ptr();
+  std::mem::forget(normal_map);
+  ptr
 }

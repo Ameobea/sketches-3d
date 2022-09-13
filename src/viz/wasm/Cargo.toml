@@ -1,24 +1,16 @@
-[package]
-name = "engine"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-wasm-bindgen = { version = "=0.2.82" }
-getrandom = { version = "0.2", features = ["js"] }
-rand = { version = "0.8" }
-rand_pcg = "0.3"
-nalgebra = "0.31"
-console_error_panic_hook = "0.1"
-# using an older version because new versions don't allow f32 noise anymore
-noise = "0.4"
-nanoserde = "0.1"
-fastapprox = "0.3"
+[workspace]
+members = [
+  "normal_map_gen",
+  "bridge2",
+  "conduit_particles"
+]
 
 [profile.release]
-lto = true
-opt-level = 3
+#debug-assertions = true
+panic = "abort"
+debug = 1
 codegen-units = 1
+lto = "fat"
+
+[profile.dev]
+debug-assertions = true

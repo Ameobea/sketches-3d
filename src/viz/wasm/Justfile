@@ -2,16 +2,30 @@ set dotenv-load := true
 
 copy-files:
   cp -r ./build/* ../wasmComp
+  cp -r ./build2/* ../../../static
+
+bindgen:
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/bridge2.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/conduit_particles.wasm --target web --remove-producers-section --out-dir ./build
+
+  cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
+
+opt:
+  wasm-opt ./build/bridge2_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/bridge2_bg.wasm
+  wasm-opt ./build/conduit_particles_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/conduit_particles_bg.wasm
+  wasm-opt ./build2/normal_map_gen.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/normal_map_gen.wasm
 
 build:
-  cargo build --release --target wasm32-unknown-unknown
-  wasm-bindgen ./target/wasm32-unknown-unknown/release/engine.wasm --target web --remove-producers-section --out-dir ./build
-  wasm-opt ./build/engine_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/engine_bg.wasm
+  rm -rf ./build/*
+  cargo build --release --target wasm32-unknown-unknown --workspace
 
+  just bindgen
+  just opt
   just copy-files
 
 debug:
-  cargo build
-  wasm-bindgen ./target/wasm32-unknown-unknown/debug/engine.wasm --target web --remove-producers-section --out-dir ./build
+  cargo build --target wasm32-unknown-unknown --workspace
 
+  just bindgen
+  just opt
   just copy-files

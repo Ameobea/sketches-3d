@@ -171,8 +171,13 @@ const initBulletPhysics = (
     }
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
-    const vertices = geometry.attributes.position.array as Float32Array;
+    let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
     const indices = geometry.index!.array as Uint16Array;
+    if (vertices instanceof Uint16Array) {
+      throw new Error('GLTF Quantization not yet supported');
+      // console.log(geometry.attributes.position);
+      // TODO
+    }
     const scale = mesh.scale;
     const pos = mesh.position;
     const quat = mesh.quaternion;
@@ -641,6 +646,26 @@ export const buildViz = () => {
   };
 };
 
+// const flattenScene = (scene: THREE.Group) => {
+//   const objects: THREE.Object3D[] = [];
+//   console.log('scene:', scene);
+//   scene.traverse(obj => {
+//     if (obj.name === 'bridge_top') {
+//       console.log('bridge top', obj);
+//     }
+//     objects.push(obj);
+//   });
+
+//   const newScene = new THREE.Group();
+//   for (const obj of objects) {
+//     if (obj instanceof THREE.Mesh) {
+//       newScene.add(obj);
+//     }
+//   }
+//   console.log(newScene);
+//   return newScene;
+// };
+
 export type VizState = ReturnType<typeof buildViz>;
 
 export const initViz = (container: HTMLElement, providedSceneName: string = Conf.DefaultSceneName) => {
@@ -664,8 +689,16 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   loader.load(`${gltfName}.gltf`, async gltf => {
     providedSceneName = providedSceneName.toLowerCase();
 
-    const scene =
+    let scene =
       gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group();
+
+    // Currently gltfpack seems to re-construct group hierarchies that don't exist in the original Blender export.
+    //
+    // We flatten it down to make it compatible with the default variety.
+    // if (true) {
+    //   scene = flattenScene(scene);
+    // }
+    console.log(scene);
 
     const sceneLoader = await getSceneLoader();
     const sceneConf = {
