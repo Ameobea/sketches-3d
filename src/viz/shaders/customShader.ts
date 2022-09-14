@@ -6,6 +6,7 @@ import noise2Shaders from './noise2.frag?raw';
 import commonShaderCode from './common.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
+import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
 
 const DEFAULT_MAP_DISABLE_DISTANCE = 200;
 const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
@@ -85,6 +86,11 @@ interface CustomShaderProps {
    * If provided, the shader will interpolate between read map value and diffuse color within this distance.
    */
   mapDisableTransitionThreshold?: number;
+  /**
+   * If greater than 0, fog will be darkened by shadows by this amount.  A value of 1 means that the fog color of a fully shadowed fragment will be darkened
+   * to the shadow color completely.
+   */
+  fogShadowFactor?: number;
 }
 
 interface CustomShaderShaders {
@@ -135,6 +141,7 @@ export const buildCustomShaderArgs = (
     fogMultiplier,
     mapDisableDistance: rawMapDisableDistance,
     mapDisableTransitionThreshold = 20,
+    fogShadowFactor = 0.1,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -515,12 +522,11 @@ void main() {
   #include <worldpos_vertex>
   #include <shadowmap_vertex>
   ${enableFog ? '#include <fog_vertex>' : ''}
-// #ifdef USE_TRANSMISSION
-  vec4 worldPosition = vec4( transformed, 1.0 );
-  worldPosition = modelMatrix * worldPosition;
-  vWorldPosition = worldPosition.xyz;
-  pos = vWorldPosition;
-// #endif
+
+  vec4 worldPositionMine = vec4( transformed, 1.0 );
+  worldPositionMine = modelMatrix * worldPositionMine;
+  vec3 vWorldPositionMine = worldPositionMine.xyz;
+  pos = vWorldPositionMine;
 
   ${customVertexFragment ?? ''}
 }`,
@@ -635,7 +641,7 @@ ${
 void main() {
 	#include <clipping_planes_fragment>
 
-  vec3 fragPos = vWorldPosition;
+  vec3 fragPos = pos;
   vec3 cameraPos = cameraPosition;
   float distanceToCamera = distance(cameraPos, fragPos);
   float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
@@ -690,7 +696,8 @@ void main() {
 
 	// accumulation
 	#include <lights_physical_fragment>
-	#include <lights_fragment_begin>
+	// #include <lights_fragment_begin>
+  ${CustomLightsFragmentBegin}
 	#include <lights_fragment_maps>
 	#include <lights_fragment_end>
 	// modulation
@@ -723,7 +730,11 @@ void main() {
       float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
     #endif
     ${typeof fogMultiplier === 'number' ? `fogFactor *= ${fogMultiplier.toFixed(4)};` : ''}
-    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+    // \`totalShadow\` is 0 if the fragment is fully shadowed and 1 if it is fully lit
+    vec3 shadowColor = vec3( 0.0 );
+    float fogShadowFactor = ${fogShadowFactor.toFixed(4)};
+    vec3 shadowedFogColor = mix(fogColor, shadowColor, fogShadowFactor * (1. - totalShadow) * clamp(0., 1., fogFactor * 1.5));
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, shadowedFogColor, fogFactor );
     // gl_FragColor.w = mix( gl_FragColor.a, 0., fogFactor );
   #endif
   `

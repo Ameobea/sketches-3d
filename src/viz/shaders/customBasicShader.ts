@@ -100,10 +100,10 @@ void main() {
 	#include <envmap_vertex>
 	#include <fog_vertex>
 
-  vec4 worldPosition = vec4( transformed, 1.0 );
-  worldPosition = modelMatrix * worldPosition;
-  vWorldPosition = worldPosition.xyz;
-  pos = vWorldPosition;
+  vec4 worldPositionMine = vec4( transformed, 1.0 );
+  worldPositionMine = modelMatrix * worldPositionMine;
+  vec3 vWorldPositionMine = worldPositionMine.xyz;
+  pos = vWorldPositionMine;
 
   ${vertexShader ?? ''}
 }`,

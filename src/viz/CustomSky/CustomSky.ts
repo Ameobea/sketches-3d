@@ -37,7 +37,9 @@ const SkyShader = {
       value: new THREE.Vector3(),
     },
     up: {
-      value: new THREE.Vector3(0, 1, 0),
+      // We tilt the sky a bit to allow us to position the sun higher to line up with the directional light without
+      // causing the whole sky to brigten a huge amount due to the way the sky simulation shader is implemented.
+      value: new THREE.Vector3(0, 1, 0.12).normalize(),
     },
   },
   vertexShader: SkyVertexShader,

@@ -21,7 +21,7 @@ import { initWebSynth } from '../../../viz/webSynth';
 
 const locations = {
   spawn: {
-    pos: new THREE.Vector3(-1.7557428208542067, 3, -0.57513478883080035),
+    pos: new THREE.Vector3(-35.7557428208542067, 3, -0.57513478883080035),
     rot: new THREE.Vector3(-0.06, -1.514, 0),
   },
   gouge: {
@@ -53,6 +53,8 @@ const locations = {
     rot: new THREE.Vector3(-0.08400000000000019, -1.455999999999995, 0),
   },
 };
+
+const SUN_AZIMUTH = 167;
 
 const loadTextures = async (pillarMap: THREE.Texture) => {
   const loader = new THREE.ImageBitmapLoader();
@@ -207,14 +209,49 @@ const getMesh = (group: THREE.Group, name: string): THREE.Mesh => {
 };
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
-  const base = initBaseScene(viz);
-  base.light.castShadow = false;
+  const dLight = new THREE.DirectionalLight(0xcfcfcf, 1.5);
+
+  const ambientlight = new THREE.AmbientLight(0xe3d2d2, 0.43);
+  viz.scene.add(ambientlight);
+
+  dLight.castShadow = true;
   const baseDirectionalLightIntensity = 1;
-  base.light.intensity = baseDirectionalLightIntensity;
-  base.ambientlight.intensity = 0.13;
-  base.light.position.set(20, 20, -80);
+  dLight.intensity = baseDirectionalLightIntensity;
+
+  dLight.position.set(210, 80, -400);
+  dLight.target.position.set(117, 0, 0);
+  viz.scene.add(dLight.target);
+  dLight.matrixWorldNeedsUpdate = true;
+  dLight.updateMatrixWorld();
+  dLight.target.updateMatrixWorld();
+
+  dLight.shadow.mapSize.width = 2048 * 2;
+  dLight.shadow.mapSize.height = 2048 * 2;
+
+  dLight.shadow.camera.near = 200;
+  dLight.shadow.camera.far = 800;
+  dLight.shadow.camera.left = -300;
+  dLight.shadow.camera.right = 300;
+  dLight.shadow.camera.top = 200;
+  dLight.shadow.camera.bottom = -100;
+
+  // base.light.shadow.autoUpdate = false;
+  // base.light.shadow.needsUpdate = true;
+
+  // ??
+  dLight.shadow.bias = 0.0019;
+
   const baseDirectionalLightColor = 0xfcbd63;
-  base.light.color = new THREE.Color(baseDirectionalLightColor);
+  dLight.color = new THREE.Color(baseDirectionalLightColor);
+
+  viz.scene.add(dLight);
+
+  // directional light helper
+  // const helper = new THREE.DirectionalLightHelper(dLight, 5);
+  // viz.scene.add(helper);
+
+  // const helper2 = new THREE.CameraHelper(dLight.shadow.camera);
+  // viz.scene.add(helper2);
 
   const baseFogColor = 0x442222;
   const fog = new THREE.FogExp2(baseFogColor, 0.025);
@@ -332,7 +369,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {}
   );
   bridgeTopMist.material = bridgeTopMistMat;
-  bridgeTopMist.material.blending = THREE.AdditiveBlending;
+  // bridgeTopMist.material.blending = THREE.AdditiveBlending;
   viz.registerBeforeRenderCb(curTimeSeconds => bridgeTopMistMat.setCurTimeSeconds(curTimeSeconds));
   viz.registerDistanceMaterialSwap(
     bridgeTopMist,
@@ -350,7 +387,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       roughness: 0.95,
       metalness: 0.2,
       fogMultiplier: 0.8,
-      mapDisableDistance: 80,
+      mapDisableDistance: 110,
     },
     {},
     { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true }
@@ -368,7 +405,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       roughness: 0.99,
       metalness: 0.5,
       fogMultiplier: 0.8,
-      mapDisableDistance: 80,
+      mapDisableDistance: 110,
     },
     {},
     { tileBreaking: { type: 'neyret', patchScale: 1 }, usePackedDiffuseNormalGBA: true }
@@ -408,6 +445,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.1,
       fogMultiplier: 0.5,
       mapDisableDistance: null,
+      fogShadowFactor: 0.8,
     },
     { roughnessShader: PlatformRoughnessShader, colorShader: PlatformColorShader },
     {
@@ -421,7 +459,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const platformRidgeMaterial = buildCustomShader(
     {
-      color: new THREE.Color(0x444444),
+      color: new THREE.Color(0x626262),
       fogMultiplier: 0.6,
       roughness: 1,
       metalness: 0.1,
@@ -429,6 +467,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(80, 80),
       normalScale: 2.8,
       mapDisableDistance: null,
+      fogShadowFactor: 0.8,
     },
     {},
     { usePackedDiffuseNormalGBA: true }
@@ -439,8 +478,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   });
 
   const platformBuildingMaterial = buildCustomShader({
-    color: new THREE.Color(0x444444),
+    color: new THREE.Color(0x4f4f4f),
     fogMultiplier: 0.4,
+    fogShadowFactor: 0.8,
   });
   ['platform_building'].forEach(name => {
     const mesh = getMesh(loadedWorld, name)!;
@@ -449,7 +489,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const upperRidgesMaterial = buildCustomShader(
     {
-      color: new THREE.Color(0x444444),
+      color: new THREE.Color(0x626262),
       fogMultiplier: 0.6,
       roughness: 0.99,
       metalness: 0,
@@ -457,6 +497,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(120, 4),
       normalScale: 2.8,
       mapDisableDistance: null,
+      fogShadowFactor: 0.8,
     },
     { colorShader: UpperRidgesColorShader },
     { usePackedDiffuseNormalGBA: true }
@@ -680,17 +721,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     const skyDarkenFactor = smoothstep(100, 300, playerX);
 
     // sky
-    const sunElevation = 1.2 - skyDarkenFactor * 5;
+    const sunElevation = 9.2 - skyDarkenFactor * 5;
     const phi = THREE.MathUtils.degToRad(90 - sunElevation);
-    const theta = THREE.MathUtils.degToRad(180);
+    const theta = THREE.MathUtils.degToRad(SUN_AZIMUTH);
 
     sun.setFromSphericalCoords(1, phi, theta);
 
     skyMaterial.uniforms['sunPosition'].value.copy(sun);
 
     // light
-    base.light.intensity = baseDirectionalLightIntensity - skyDarkenFactor * 0.2;
-    base.light.color.setHex(
+    dLight.intensity = baseDirectionalLightIntensity - skyDarkenFactor * 0.2;
+    dLight.color.setHex(
       darkLightColor
         .clone()
         .lerp(new THREE.Color(baseDirectionalLightColor), 1 - skyDarkenFactor)
@@ -771,6 +812,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       });
     });
 
+  // viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // viz.renderer.toneMappingExposure = 1.2;
+
   return {
     locations,
     debugPos: true,
@@ -799,10 +843,10 @@ const buildSky = () => {
   const effectController = {
     turbidity: 0.8,
     rayleigh: 2.378,
-    mieCoefficient: 0.005,
+    mieCoefficient: 0.01,
     mieDirectionalG: 0.7,
     elevation: 1.2,
-    azimuth: 180,
+    azimuth: SUN_AZIMUTH,
   };
 
   const skyMaterial = sky.material as THREE.ShaderMaterial;

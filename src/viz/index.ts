@@ -154,7 +154,7 @@ const initBulletPhysics = (
 
   const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
     playerController.warp(btvec3(pos.x, pos.y + playerColliderHeight, pos.z));
-    camera.position.copy(pos.clone().add(new THREE.Vector3(0, playerColliderHeight, 0)));
+    // camera.position.copy(pos.clone().add(new THREE.Vector3(0, playerColliderHeight, 0)));
     if (rot) {
       camera.rotation.setFromVector3(rot);
     }
@@ -784,7 +784,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
     // TODO: Combine with above
     scene.traverse(child => {
-      if (child instanceof THREE.Mesh) {
+      if (child instanceof THREE.Mesh && !child.name.includes('background')) {
         child.castShadow = true;
         child.receiveShadow = true;
       }
