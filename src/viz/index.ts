@@ -785,8 +785,19 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     // TODO: Combine with above
     scene.traverse(child => {
       if (child instanceof THREE.Mesh && !child.name.includes('background')) {
-        child.castShadow = true;
-        child.receiveShadow = true;
+        if (child.userData.noLight) {
+          child.castShadow = false;
+          child.receiveShadow = false;
+        } else {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+        if (child.userData.noCastShadow) {
+          child.castShadow = false;
+        }
+        if (child.userData.noReceiveShadow) {
+          child.receiveShadow = false;
+        }
       }
     });
 

@@ -89,4 +89,10 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./collisionDemo').then(mod => mod.processLoadedScene),
     metadata: { title: 'collisionDemo' },
   },
+  chasms: {
+    sceneName: 'chasms',
+    sceneLoader: () => import('./chasms/chasms').then(mod => mod.processLoadedScene),
+    metadata: { title: 'chasms' },
+    gltfName: 'chasms',
+  },
 };

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import type { VizState } from '../../../viz';
-import { delay, initBaseScene, smoothstep } from '../../../viz/util';
+import { delay, getMesh, initBaseScene, smoothstep } from '../../../viz/util';
 import type { SceneConfig } from '..';
 import { buildCustomShader } from '../../../viz/shaders/customShader';
 import BridgeTopRoughnessShader from '../../shaders/bridge2/bridge_top/roughness.frag?raw';
@@ -108,17 +108,18 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     generateNormalMapFromTexture(platformRidgesTexture, {}, true)
   );
 
-  const upperRidgesTextureP = loadTexture(
-    loader,
-    'https://ameo.link/u/6221e21a2c76e901332ebdace5069f2a9c972f1d.jpg',
-    {
-      // format: THREE.RedFormat, // TODO: Support grayscale
-      type: THREE.UnsignedByteType,
-    }
-  );
-  const upperRidgesCombinedDiffuseAndNormalTextureP = upperRidgesTextureP.then(upperRidgesTexture =>
-    generateNormalMapFromTexture(upperRidgesTexture, {}, true)
-  );
+  // const upperRidgesTextureP = loadTexture(
+  //   loader,
+  //   'https://ameo.link/u/6221e21a2c76e901332ebdace5069f2a9c972f1d.jpg',
+  //   // 'https://ameo.link/u/aff.jpg',
+  //   {
+  //     // format: THREE.RedFormat, // TODO: Support grayscale
+  //     type: THREE.UnsignedByteType,
+  //   }
+  // );
+  // const upperRidgesCombinedDiffuseAndNormalTextureP = upperRidgesTextureP.then(upperRidgesTexture =>
+  //   generateNormalMapFromTexture(upperRidgesTexture, {}, true)
+  // );
 
   const platformLeftWallTextureP = loadTexture(loader, 'https://ameo.link/u/ae4.jpg');
   const platformLeftWallCombinedDiffuseAndNormalTextureP = platformLeftWallTextureP.then(
@@ -126,6 +127,11 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
   );
 
   const pillarNormalMapP = generateNormalMapFromTexture(pillarMap);
+
+  const platformBuildingCombinedDiffuseAndNormalTextureP = loadTexture(
+    loader,
+    'https://ameo.link/u/afh.png'
+  ).then(platformBuildingTexture => generateNormalMapFromTexture(platformBuildingTexture, {}, true));
 
   const [
     bridgeTexture,
@@ -139,11 +145,12 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     platformCombinedDiffuseAndNormalTexture,
     platformRidgesTexture,
     platformRidgesCombinedDiffuseAndNormalTexture,
-    upperRidgesTexture,
-    upperRidgesCombinedDiffuseAndNormalTexture,
+    // upperRidgesTexture,
+    // upperRidgesCombinedDiffuseAndNormalTexture,
     platformLeftWallTexture,
     platformLeftWallCombinedDiffuseAndNormalTexture,
     pillarNormalMap,
+    platformBuildingCombinedDiffuseAndNormalTexture,
   ] = await Promise.all([
     bridgeTextureP,
     bridgeTextureNormalP,
@@ -156,11 +163,12 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     platformCombinedDiffuseAndNormalTextureP,
     platformRidgesTextureP,
     platformRidgesCombinedDiffuseAndNormalTextureP,
-    upperRidgesTextureP,
-    upperRidgesCombinedDiffuseAndNormalTextureP,
+    // upperRidgesTextureP,
+    // upperRidgesCombinedDiffuseAndNormalTextureP,
     platformLeftWallTextureP,
     platformLeftWallCombinedDiffuseAndNormalTextureP,
     pillarNormalMapP,
+    platformBuildingCombinedDiffuseAndNormalTextureP,
   ]);
 
   return {
@@ -175,43 +183,19 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     platformCombinedDiffuseAndNormalTexture,
     platformRidgesTexture,
     platformRidgesCombinedDiffuseAndNormalTexture,
-    upperRidgesTexture,
-    upperRidgesCombinedDiffuseAndNormalTexture,
+    // upperRidgesTexture,
+    // upperRidgesCombinedDiffuseAndNormalTexture,
     platformLeftWallTexture,
     platformLeftWallCombinedDiffuseAndNormalTexture,
     pillarNormalMap,
+    platformBuildingCombinedDiffuseAndNormalTexture,
   };
-};
-
-const getMesh = (group: THREE.Group, name: string): THREE.Mesh => {
-  const maybeMesh = group.getObjectByName(name);
-  if (!maybeMesh) {
-    throw new Error(`Could not find mesh with name ${name}`);
-  }
-
-  if (maybeMesh instanceof THREE.Mesh) {
-    return maybeMesh;
-  } else if (maybeMesh.children.length > 0) {
-    if (maybeMesh.children.length !== 1) {
-      throw new Error(`Expected group ${name} to have 1 child`);
-    }
-
-    const child = maybeMesh.children[0];
-    if (!(child instanceof THREE.Mesh)) {
-      throw new Error(`Expected group ${name} to have a mesh child`);
-    }
-
-    return child;
-  } else {
-    console.error(maybeMesh);
-    throw new Error(`Expected mesh or group with name ${name}`);
-  }
 };
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   const dLight = new THREE.DirectionalLight(0xcfcfcf, 1.5);
 
-  const ambientlight = new THREE.AmbientLight(0xe3d2d2, 0.43);
+  const ambientlight = new THREE.AmbientLight(0xfac969, 0.33);
   viz.scene.add(ambientlight);
 
   dLight.castShadow = true;
@@ -241,7 +225,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   // ??
   dLight.shadow.bias = 0.0019;
 
-  const baseDirectionalLightColor = 0xfcbd63;
+  const baseDirectionalLightColor = 0xe66332;
   dLight.color = new THREE.Color(baseDirectionalLightColor);
 
   viz.scene.add(dLight);
@@ -254,7 +238,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   // viz.scene.add(helper2);
 
   const baseFogColor = 0x442222;
-  const fog = new THREE.FogExp2(baseFogColor, 0.025);
+  const fog = new THREE.FogExp2(baseFogColor, 0.02);
   viz.scene.fog = fog;
 
   const bridgeTop = getMesh(loadedWorld, 'bridge_top');
@@ -286,11 +270,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     platformCombinedDiffuseAndNormalTexture,
     platformRidgesTexture,
     platformRidgesCombinedDiffuseAndNormalTexture,
-    upperRidgesTexture,
-    upperRidgesCombinedDiffuseAndNormalTexture,
+    // upperRidgesTexture,
+    // upperRidgesCombinedDiffuseAndNormalTexture,
     platformLeftWallTexture,
     platformLeftWallCombinedDiffuseAndNormalTexture,
     pillarNormalMap,
+    platformBuildingCombinedDiffuseAndNormalTexture,
   } = await loadTextures(pillarMap);
 
   const archesMaterial = buildCustomShader(
@@ -314,7 +299,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const fins = getMesh(loadedWorld, 'fins');
   fins.material = buildCustomShader(
     {
-      color: new THREE.Color(0x333333),
+      color: new THREE.Color(0x888888),
       roughness: 1.2,
       metalness: 0.9,
       roughnessMap: bridgeTexture,
@@ -366,7 +351,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const bridgeTopMistMat = buildCustomShader(
     { metalness: 0, alphaTest: 0.05, transparent: true },
     { colorShader: BridgeMistColorShader },
-    {}
+    { disableToneMapping: true }
   );
   bridgeTopMist.material = bridgeTopMistMat;
   // bridgeTopMist.material.blending = THREE.AdditiveBlending;
@@ -379,7 +364,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const monolithMaterial = buildCustomShader(
     {
-      color: new THREE.Color(0x424242),
+      color: new THREE.Color(0x666666),
       map: monolithTextureCombinedDiffuseNormal,
       // normalMap: monolithTextureNormal,
       normalScale: 4,
@@ -392,12 +377,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {},
     { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true }
   );
-  // const monolithFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x424242) });
-  const monolithFarMat = buildCustomShader({ fogMultiplier: 0.8, color: new THREE.Color(0x424242) });
+  // const monolithFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x666666) });
+  const monolithFarMat = buildCustomShader({
+    roughness: 0.95,
+    metalness: 0.2,
+    fogMultiplier: 0.8,
+    color: new THREE.Color(0x333333),
+  });
 
   const monolithRingMaterial = buildCustomShader(
     {
-      color: new THREE.Color(0x353535),
+      color: new THREE.Color(0x666666),
       map: monolithRingCombinedDiffuseNormalTexture,
       // normalMap: monolithRingTextureNormal,
       normalScale: 1.2,
@@ -411,7 +401,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     { tileBreaking: { type: 'neyret', patchScale: 1 }, usePackedDiffuseNormalGBA: true }
   );
   // const monolithRingFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x353535) });
-  const monolithRingFarMat = buildCustomShader({ fogMultiplier: 0.8, color: new THREE.Color(0x353535) });
+  const monolithRingFarMat = buildCustomShader({
+    fogMultiplier: 0.8,
+    metalness: 0.5,
+    roughness: 0.99,
+    color: new THREE.Color(0x222222),
+  });
 
   for (const child of loadedWorld.children) {
     if (!child.name.startsWith('monolith')) {
@@ -451,6 +446,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {
       tileBreaking: { type: 'neyret', patchScale: 2 },
       usePackedDiffuseNormalGBA: true,
+      disableToneMapping: true,
     }
   );
   viz.registerBeforeRenderCb(curTimeSeconds => platformMaterial.setCurTimeSeconds(curTimeSeconds));
@@ -459,15 +455,15 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const platformRidgeMaterial = buildCustomShader(
     {
-      color: new THREE.Color(0x626262),
-      fogMultiplier: 0.6,
+      color: new THREE.Color(0x777777),
+      fogMultiplier: 0.8,
       roughness: 1,
       metalness: 0.1,
       map: platformRidgesCombinedDiffuseAndNormalTexture,
       uvTransform: new THREE.Matrix3().scale(80, 80),
       normalScale: 2.8,
       mapDisableDistance: null,
-      fogShadowFactor: 0.8,
+      fogShadowFactor: 0.6,
     },
     {},
     { usePackedDiffuseNormalGBA: true }
@@ -477,35 +473,50 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     mesh.material = platformRidgeMaterial;
   });
 
-  const platformBuildingMaterial = buildCustomShader({
-    color: new THREE.Color(0x4f4f4f),
-    fogMultiplier: 0.4,
-    fogShadowFactor: 0.8,
-  });
+  const platformBuildingMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0x888888),
+      fogMultiplier: 0.7,
+      fogShadowFactor: 0.5,
+      roughness: 1,
+      map: platformBuildingCombinedDiffuseAndNormalTexture,
+      mapDisableDistance: null,
+      uvTransform: new THREE.Matrix3().scale(18, 3),
+    },
+    {},
+    { usePackedDiffuseNormalGBA: true }
+  );
   ['platform_building'].forEach(name => {
     const mesh = getMesh(loadedWorld, name)!;
     mesh.material = platformBuildingMaterial;
   });
 
-  const upperRidgesMaterial = buildCustomShader(
+  const RidgesMaterialArgs = [
     {
-      color: new THREE.Color(0x626262),
-      fogMultiplier: 0.6,
+      color: new THREE.Color(0xb6b6b6),
+      fogMultiplier: 0.8,
       roughness: 0.99,
       metalness: 0,
-      map: upperRidgesCombinedDiffuseAndNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(120, 4),
+      // map: upperRidgesCombinedDiffuseAndNormalTexture,
+      map: platformBuildingCombinedDiffuseAndNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(40, 2),
       normalScale: 2.8,
       mapDisableDistance: null,
-      fogShadowFactor: 0.8,
+      fogShadowFactor: 0.5,
     },
     { colorShader: UpperRidgesColorShader },
-    { usePackedDiffuseNormalGBA: true }
-  );
-  ['platform_ridges', 'platform_ridges_3', 'platform_ridges_4'].forEach(name => {
+    { usePackedDiffuseNormalGBA: true },
+  ] as const;
+  const upperRidgesMaterial = buildCustomShader(...RidgesMaterialArgs);
+  ['platform_ridges_3', 'platform_ridges_4'].forEach(name => {
     const mesh = getMesh(loadedWorld, name);
     mesh.material = upperRidgesMaterial;
   });
+  getMesh(loadedWorld, 'platform_ridges')!.material = buildCustomShader(
+    { ...RidgesMaterialArgs[0], uvTransform: new THREE.Matrix3().scale(400, 20) },
+    RidgesMaterialArgs[1],
+    RidgesMaterialArgs[2]
+  );
   viz.registerBeforeRenderCb(curTimeSeconds => upperRidgesMaterial.setCurTimeSeconds(curTimeSeconds));
 
   const spotLight = new THREE.SpotLight(0x750d16, 2, 0, Math.PI / 4, 0.8);
@@ -812,8 +823,14 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       });
     });
 
-  // viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  // viz.renderer.toneMappingExposure = 1.2;
+  // THREE.ColorManagement.legacyMode = false;
+  // viz.renderer.outputEncoding = THREE.sRGBEncoding;
+  // viz.renderer.physicallyCorrectLights = true;
+  ambientlight.intensity = 0.6;
+  dLight.intensity = 2.8;
+
+  viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  viz.renderer.toneMappingExposure = 1.4;
 
   return {
     locations,

@@ -56,3 +56,30 @@ export const getFlickerActivation = (curTimeSeconds: number) => {
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const clamp = (val: number, min: number, max: number) => Math.min(Math.max(val, min), max);
+
+export const getMesh = (group: THREE.Group, name: string): THREE.Mesh => {
+  const maybeMesh = group.getObjectByName(name);
+  if (!maybeMesh) {
+    throw new Error(`Could not find mesh with name ${name}`);
+  }
+
+  if (maybeMesh instanceof THREE.Mesh) {
+    return maybeMesh;
+  } else if (maybeMesh.children.length > 0) {
+    if (maybeMesh.children.length !== 1) {
+      throw new Error(`Expected group ${name} to have 1 child`);
+    }
+
+    const child = maybeMesh.children[0];
+    if (!(child instanceof THREE.Mesh)) {
+      throw new Error(`Expected group ${name} to have a mesh child`);
+    }
+
+    return child;
+  } else {
+    console.error(maybeMesh);
+    throw new Error(`Expected mesh or group with name ${name}`);
+  }
+};
+
+export const DEVICE_PIXEL_RATIO = Math.min(window.devicePixelRatio || 1, 2);

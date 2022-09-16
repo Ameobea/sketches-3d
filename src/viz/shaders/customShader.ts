@@ -123,6 +123,7 @@ interface CustomShaderOptions {
    */
   usePackedDiffuseNormalGBA?: boolean;
   readRoughnessMapFromRChannel?: boolean;
+  disableToneMapping?: boolean;
 }
 
 export const buildCustomShaderArgs = (
@@ -159,6 +160,7 @@ export const buildCustomShaderArgs = (
     useComputedNormalMap,
     usePackedDiffuseNormalGBA,
     readRoughnessMapFromRChannel,
+    disableToneMapping,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -321,12 +323,14 @@ export const buildCustomShaderArgs = (
       vec4 sampledDiffuseColor_ = vec4(0.);
       ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
 
+      vec4 averageTextureColor = texture(map, vec2(0.5, 0.5), 99.);
       if (textureActivation < 0.01) {
+        diffuseColor *= averageTextureColor;
         // avoid any texture lookups, relieve pressure on the texture unit
       } else {
         ${inner}
         ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment() : ''}
-        diffuseColor = mix(diffuseColor, diffuseColor * sampledDiffuseColor_, textureActivation);
+        diffuseColor = mix(diffuseColor * averageTextureColor, diffuseColor * sampledDiffuseColor_, textureActivation);
       }
     #endif`;
   };
@@ -718,7 +722,7 @@ void main() {
 		outgoingLight = outgoingLight * ( 1.0 - material.clearcoat * Fcc ) + clearcoatSpecular * material.clearcoat;
 	#endif
 	#include <output_fragment>
-	#include <tonemapping_fragment>
+	${!disableToneMapping ? '#include <tonemapping_fragment>' : ''}
 	#include <encodings_fragment>
 	${
     enableFog

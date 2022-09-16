@@ -114,8 +114,7 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
   pointLight.position.y -= 2;
   // viz.scene.add(pointLight);
 
-  // Apply glitch effect to only the top glow cube
-  const glitchPass = new UnrealBloomPass(
+  const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(viz.renderer.domElement.width, viz.renderer.domElement.height),
     1.45,
     0.1,
@@ -124,7 +123,7 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
   const composer = new EffectComposer(viz.renderer);
 
   composer.addPass(new RenderPass(viz.scene, viz.camera));
-  composer.addPass(glitchPass);
+  composer.addPass(bloomPass);
 
   viz.registerAfterRenderCb(() => {
     composer.render();
