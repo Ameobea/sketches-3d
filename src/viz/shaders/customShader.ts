@@ -124,6 +124,8 @@ interface CustomShaderOptions {
   usePackedDiffuseNormalGBA?: boolean;
   readRoughnessMapFromRChannel?: boolean;
   disableToneMapping?: boolean;
+  disabledDirectionalLightIndices?: number[];
+  disabledSpotLightIndices?: number[];
 }
 
 export const buildCustomShaderArgs = (
@@ -161,6 +163,8 @@ export const buildCustomShaderArgs = (
     usePackedDiffuseNormalGBA,
     readRoughnessMapFromRChannel,
     disableToneMapping,
+    disabledDirectionalLightIndices,
+    disabledSpotLightIndices,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -701,7 +705,25 @@ void main() {
 	// accumulation
 	#include <lights_physical_fragment>
 	// #include <lights_fragment_begin>
-  ${CustomLightsFragmentBegin}
+  ${CustomLightsFragmentBegin.replace(
+    '__DIR_LIGHTS_DISABLE__',
+    (() => {
+      if (!disabledDirectionalLightIndices) {
+        return '0';
+      }
+
+      return disabledDirectionalLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
+    })()
+  ).replace(
+    '__SPOT_LIGHTS_DISABLE__',
+    (() => {
+      if (!disabledSpotLightIndices) {
+        return '0';
+      }
+
+      return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
+    })()
+  )}
 	#include <lights_fragment_maps>
 	#include <lights_fragment_end>
 	// modulation

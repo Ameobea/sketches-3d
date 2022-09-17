@@ -67,6 +67,9 @@ IncidentLight directLight;
 
 	#pragma unroll_loop_start
 	for ( int i = 0; i < NUM_SPOT_LIGHTS; i ++ ) {
+		#if __SPOT_LIGHTS_DISABLE__
+		// pass
+		#else
 
 		spotLight = spotLights[ i ];
 
@@ -80,7 +83,7 @@ IncidentLight directLight;
 		#endif
 
 		RE_Direct( directLight, geometry, material, reflectedLight );
-
+		#endif
 	}
 	#pragma unroll_loop_end
 
@@ -95,6 +98,9 @@ IncidentLight directLight;
 
 	#pragma unroll_loop_start
 	for ( int i = 0; i < NUM_DIR_LIGHTS; i ++ ) {
+		#if __DIR_LIGHTS_DISABLE__
+		// pass
+		#else
 
 		directionalLight = directionalLights[ i ];
 
@@ -108,7 +114,7 @@ IncidentLight directLight;
 		#endif
 
 		RE_Direct( directLight, geometry, material, reflectedLight );
-
+		#endif
 	}
 	#pragma unroll_loop_end
 

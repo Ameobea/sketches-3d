@@ -140,3 +140,14 @@ pub extern "C" fn gen_normal_map_from_texture(
   std::mem::forget(normal_map);
   ptr
 }
+
+// pub fn triangle_area(
+//   p1: &nalgebra::Vector3<f32>,
+//   p2: &nalgebra::Vector3<f32>,
+//   p3: &nalgebra::Vector3<f32>,
+// ) -> f32 {
+//   let v1 = p2 - p1;
+//   let v2 = p3 - p1;
+//   let cross = v1.cross(&v2);
+//   cross.norm() * 0.5
+// }

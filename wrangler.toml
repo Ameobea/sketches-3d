@@ -1,0 +1,6 @@
+name = "dream"
+main = "src/index.ts"
+compatibility_date = "2022-09-17"
+
+[site]
+bucket = "./build"
