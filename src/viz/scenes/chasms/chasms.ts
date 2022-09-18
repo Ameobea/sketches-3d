@@ -40,7 +40,11 @@ const loadTextures = async () => {
     generateNormalMapFromTexture(chasmGroundTexture, {}, true)
   );
 
-  const bridgeTextureP = loadTexture(loader, 'https://ameo.link/u/afm.jpg');
+  const bridgeTextureP = loadTexture(
+    loader,
+    'https://ameo.link/u/afm.jpg'
+    // 'https://ameo.link/u/aha.png'
+  );
   const bridgeTextureCombinedDiffuseNormalTextureP = bridgeTextureP.then(bridgeTexture =>
     generateNormalMapFromTexture(bridgeTexture, {}, true)
   );
@@ -53,11 +57,34 @@ const loadTextures = async () => {
 
   const tower2TextureP = loadTexture(
     loader,
-    // 'https://ameo.link/u/ah6.jpg'
-    'https://ameo.link/u/ah7.png'
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1930010254.png'
   );
   const tower2TextureCombinedDiffuseNormalTextureP = tower2TextureP.then(tower2Texture =>
     generateNormalMapFromTexture(tower2Texture, {}, true)
+  );
+
+  const pillarTextureP = loadTexture(loader, 'https://ameo.link/u/ahh.png');
+  const pillarTextureCombinedDiffuseNormalTextureP = pillarTextureP.then(pillarTexture =>
+    generateNormalMapFromTexture(pillarTexture, {}, true)
+  );
+
+  const towerStoneTextureP = loadTexture(
+    loader,
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000005.722669912.png'
+  );
+  // const towerStoneTextureCombinedDiffuseNormalTextureP = towerStoneTextureP.then(towerStoneTexture =>
+  //   generateNormalMapFromTexture(towerStoneTexture, {}, true)
+  // );
+  const towerStoneTextureNormalP = towerStoneTextureP.then(towerStoneTexture =>
+    generateNormalMapFromTexture(towerStoneTexture, {}, false)
+  );
+
+  const towerDoorArchTextureP = loadTexture(
+    loader,
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3319456407.png'
+  );
+  const towerDoorArchTextureCombinedDiffuseNormalTextureP = towerDoorArchTextureP.then(towerDoorArchTexture =>
+    generateNormalMapFromTexture(towerDoorArchTexture, {}, true)
   );
 
   const [
@@ -65,11 +92,17 @@ const loadTextures = async () => {
     bridgeTextureCombinedDiffuseNormalTexture,
     skyPanoramaImg,
     tower2TextureCombinedDiffuseNormalTexture,
+    pillarTextureCombinedDiffuseNormalTexture,
+    towerStoneTextureNormal,
+    towerDoorArchTextureCombinedDiffuseNormalTexture,
   ] = await Promise.all([
     chasmGroundTextureCombinedDiffuseNormalTextureP,
     bridgeTextureCombinedDiffuseNormalTextureP,
     skyPanoramaImgP,
     tower2TextureCombinedDiffuseNormalTextureP,
+    pillarTextureCombinedDiffuseNormalTextureP,
+    towerStoneTextureNormalP,
+    towerDoorArchTextureCombinedDiffuseNormalTextureP,
   ]);
 
   return {
@@ -77,6 +110,9 @@ const loadTextures = async () => {
     bridgeTextureCombinedDiffuseNormalTexture,
     skyPanoramaImg,
     tower2TextureCombinedDiffuseNormalTexture,
+    pillarTextureCombinedDiffuseNormalTexture,
+    towerStoneTextureNormal,
+    towerDoorArchTextureCombinedDiffuseNormalTexture,
   };
 };
 
@@ -86,6 +122,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     bridgeTextureCombinedDiffuseNormalTexture,
     skyPanoramaImg,
     tower2TextureCombinedDiffuseNormalTexture,
+    pillarTextureCombinedDiffuseNormalTexture,
+    towerStoneTextureNormal,
+    towerDoorArchTextureCombinedDiffuseNormalTexture,
   } = await loadTextures();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -121,7 +160,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   dLight.shadow.camera.near = 1;
   dLight.shadow.camera.far = 900;
   dLight.shadow.camera.left = -550;
-  dLight.shadow.camera.right = 950;
+  dLight.shadow.camera.right = 880;
   dLight.shadow.camera.top = 100;
   dLight.shadow.camera.bottom = -100;
 
@@ -134,7 +173,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.camera.updateProjectionMatrix();
 
   ambientLight.intensity = 0.25;
-  dLight.intensity = 2.8;
+  dLight.intensity = 2.4;
 
   viz.renderer.shadowMap.autoUpdate = true;
   viz.renderer.shadowMap.needsUpdate = true;
@@ -153,11 +192,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const chasm = getMesh(loadedWorld, 'chasm');
   chasm.material = buildCustomShader(
     {
-      color: new THREE.Color(0x808080),
+      color: new THREE.Color(0x737373),
       map: chasmGroundTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(100, 100),
+      uvTransform: new THREE.Matrix3().scale(100 * 1.6, 100 * 1.6),
       roughness: 0.99,
-      metalness: 0.21,
+      metalness: 0.01,
       normalScale: 2,
       mapDisableDistance: null,
     },
@@ -167,6 +206,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       tileBreaking: { type: 'neyret', patchScale: 2 },
       disabledSpotLightIndices: [0],
     }
+  );
+
+  const chasmBottoms = getMesh(loadedWorld, 'chasm_bottoms');
+  chasmBottoms.material = buildCustomShader(
+    {
+      color: new THREE.Color(0x151515),
+      roughness: 0.99,
+      metalness: 0.01,
+    },
+    {},
+    {}
   );
 
   const bridge = getMesh(loadedWorld, 'bridge');
@@ -191,32 +241,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {}
   );
 
-  const tower = getMesh(loadedWorld, 'tower');
-  tower.material = buildCustomShader(
-    {
-      color: new THREE.Color(0x7b7b7b),
-      metalness: 0.001,
-      roughness: 0.87,
-      map: tower2TextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(400 / 2, 100 / 2),
-      mapDisableDistance: null,
-      normalScale: 4,
-    },
-    {},
-    {
-      usePackedDiffuseNormalGBA: true,
-      disabledDirectionalLightIndices: [0],
-    }
-  );
-  tower.userData.noReceiveShadow = true;
-
-  const towerSpotLight = new THREE.SpotLight(0xff6677, 0.5, 500, 1.5, 0.5, 1);
-  towerSpotLight.position.set(-960, 300, 368);
-  towerSpotLight.target.position.set(-960, 0, 368);
-  towerSpotLight.castShadow = false;
-  viz.scene.add(towerSpotLight.target);
-  viz.scene.add(towerSpotLight);
-
   const lightSlats = getMesh(loadedWorld, 'light_slats');
   lightSlats.material = buildCustomBasicShader({ color: new THREE.Color(0x0) }, {}, {});
   lightSlats.userData.noReceiveShadow = true;
@@ -224,6 +248,94 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const backlightPanel = getMesh(loadedWorld, 'backlight_panel');
   backlightPanel.userData.noLight = true;
   backlightPanel.material = buildCustomBasicShader({ color: new THREE.Color(DIRLIGHT_COLOR) }, {}, {});
+
+  const tower = getMesh(loadedWorld, 'tower');
+  tower.material = buildCustomShader(
+    {
+      color: new THREE.Color(0x7b7b7b),
+      metalness: 0.001,
+      roughness: 0.77,
+      map: tower2TextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      mapDisableDistance: null,
+      normalScale: 4,
+      ambientLightScale: 1.6,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      tileBreaking: { type: 'neyret', patchScale: 1 },
+      useGeneratedUVs: true,
+    }
+  );
+  tower.userData.noReceiveShadow = true;
+
+  const towerSpotLight = new THREE.SpotLight(0xff6677, 0.5, 500, 1.5, 0.5, 1);
+  towerSpotLight.position.set(-960, 100, 368);
+  towerSpotLight.target.position.set(-960, 0, 368);
+  towerSpotLight.castShadow = false;
+  viz.scene.add(towerSpotLight.target);
+  viz.scene.add(towerSpotLight);
+
+  const towerStairs = getMesh(loadedWorld, 'tower_stairs');
+  towerStairs.material = buildCustomShader(
+    {
+      color: new THREE.Color(0x777777),
+      metalness: 0.001,
+      roughness: 0.77,
+      map: towerDoorArchTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.04, 0.04),
+      mapDisableDistance: null,
+      normalScale: 4,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      useGeneratedUVs: true,
+    }
+  );
+  towerStairs.userData.convexhull = true;
+
+  const towerDoorArch = getMesh(loadedWorld, 'tower_door_arch');
+  towerDoorArch.material = buildCustomShader(
+    {
+      color: new THREE.Color(0x989898),
+      metalness: 0.001,
+      roughness: 0.77,
+      map: towerDoorArchTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.04, 0.04),
+      mapDisableDistance: null,
+      normalScale: 4,
+    },
+    {},
+    { usePackedDiffuseNormalGBA: true, disabledDirectionalLightIndices: [0], useGeneratedUVs: true }
+  );
+
+  const pillarMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x444444),
+      metalness: 0.74,
+      roughness: 0.92,
+      map: pillarTextureCombinedDiffuseNormalTexture,
+      normalScale: 4,
+      uvTransform: new THREE.Matrix3().scale(10 / 2.4, 6 / 3).translate(0.5, 0.5),
+      ambientLightScale: 2,
+    },
+    {},
+    { usePackedDiffuseNormalGBA: true, randomizeUVOffset: true }
+  );
+  loadedWorld.traverse(node => {
+    if (!node.name.startsWith('pillar')) {
+      return;
+    }
+
+    const pillar = node as THREE.Mesh;
+    pillar.material = pillarMat;
+  });
+
+  // LIGHTING
 
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(viz.renderer.domElement.width, viz.renderer.domElement.height),
@@ -270,8 +382,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     player: {
       jumpVelocity: 10.8,
       colliderCapsuleSize: {
-        height: 1.8,
-        radius: 0.35,
+        height: 1.99,
+        radius: 0.45,
       },
       movementAccelPerSecond: {
         onGround: 7.2,

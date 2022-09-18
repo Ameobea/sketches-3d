@@ -7,6 +7,7 @@ import commonShaderCode from './common.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
+import GeneratedUVsFragment from './generatedUVs.vert?raw';
 
 const DEFAULT_MAP_DISABLE_DISTANCE = 200;
 const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
@@ -91,6 +92,7 @@ interface CustomShaderProps {
    * to the shadow color completely.
    */
   fogShadowFactor?: number;
+  ambientLightScale?: number;
 }
 
 interface CustomShaderShaders {
@@ -126,6 +128,8 @@ interface CustomShaderOptions {
   disableToneMapping?: boolean;
   disabledDirectionalLightIndices?: number[];
   disabledSpotLightIndices?: number[];
+  randomizeUVOffset?: boolean;
+  useGeneratedUVs?: boolean;
 }
 
 export const buildCustomShaderArgs = (
@@ -145,6 +149,7 @@ export const buildCustomShaderArgs = (
     mapDisableDistance: rawMapDisableDistance,
     mapDisableTransitionThreshold = 20,
     fogShadowFactor = 0.1,
+    ambientLightScale = 1,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -165,6 +170,8 @@ export const buildCustomShaderArgs = (
     disableToneMapping,
     disabledDirectionalLightIndices,
     disabledSpotLightIndices,
+    randomizeUVOffset,
+    useGeneratedUVs,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -242,6 +249,51 @@ export const buildCustomShaderArgs = (
   if (usePackedDiffuseNormalGBA && useComputedNormalMap) {
     throw new Error('Cannot use packed diffuse/normal map with computed normal map');
   }
+
+  if (useGeneratedUVs && !map) {
+    throw new Error('Cannot use generated UVs without a map');
+  }
+  if (useGeneratedUVs && randomizeUVOffset) {
+    throw new Error('Cannot use generated UVs with randomize UV offset');
+  }
+
+  const buildUVVertexFragment = () => {
+    if (useGeneratedUVs) {
+      return ''; // handled later
+    }
+
+    if (randomizeUVOffset) {
+      return `
+      #ifdef USE_UV
+        vUv = ( uvTransform * vec3( uv, 1 ) ).xy;
+
+        float modelWorldX = modelMatrix[3][0];
+        float modelWorldY = modelMatrix[3][1];
+        float modelWorldZ = modelMatrix[3][2];
+
+        // hash x, y, z
+        float hash = fract(sin(dot(vec3(modelWorldX, modelWorldY, modelWorldZ), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+
+        vec2 uvOffset = vec2(
+          fract(hash * 300.),
+          fract(hash * 3300.)
+        );
+
+        // Add \`uvUffset\` to \`vUv\` to randomize the UVs.
+        float uvScaleX = uvTransform[0][0];
+        float uvScaleY = uvTransform[1][1];
+        mat3 uvTransformOffset = mat3(
+          uvScaleX, 0., 0.,
+          0., uvScaleY, 0.,
+          uvOffset.x, uvOffset.y, uvOffset.x
+        );
+        vUv = ( uvTransformOffset * vec3( uv, 1 ) ).xy;
+      #endif
+      `;
+    }
+
+    return '#include <uv_vertex>';
+  };
 
   const buildRunColorShaderFragment = () => {
     if (!colorShader) {
@@ -502,6 +554,8 @@ ${enableFog ? '#include <fog_pars_vertex>' : ''}
 
 ${customVertexFragment ? noiseShaders : ''}
 
+${useGeneratedUVs ? GeneratedUVsFragment : ''}
+
 uniform float curTimeSeconds;
 varying vec3 pos;
 varying vec3 vNormalAbsolute;
@@ -509,7 +563,8 @@ varying vec3 vNormalAbsolute;
 void main() {
   vNormalAbsolute = normal;
 
-  #include <uv_vertex>
+  ${buildUVVertexFragment()}
+
   #include <uv2_vertex>
   #include <color_vertex>
   #include <morphcolor_vertex>
@@ -535,6 +590,15 @@ void main() {
   worldPositionMine = modelMatrix * worldPositionMine;
   vec3 vWorldPositionMine = worldPositionMine.xyz;
   pos = vWorldPositionMine;
+
+  ${
+    useGeneratedUVs
+      ? `
+  vec2 generatedUV = generateUV(pos, vNormalAbsolute);
+  vUv = (uvTransform * vec3(generatedUV, 1)).xy;
+`
+      : ''
+  }
 
   ${customVertexFragment ?? ''}
 }`,
@@ -714,16 +778,18 @@ void main() {
 
       return disabledDirectionalLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
     })()
-  ).replace(
-    '__SPOT_LIGHTS_DISABLE__',
-    (() => {
-      if (!disabledSpotLightIndices) {
-        return '0';
-      }
+  )
+    .replace(
+      '__SPOT_LIGHTS_DISABLE__',
+      (() => {
+        if (!disabledSpotLightIndices) {
+          return '0';
+        }
 
-      return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
-    })()
-  )}
+        return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
+      })()
+    )
+    .replace('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))}
 	#include <lights_fragment_maps>
 	#include <lights_fragment_end>
 	// modulation

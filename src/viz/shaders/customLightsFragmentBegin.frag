@@ -139,7 +139,7 @@ IncidentLight directLight;
 
 	vec3 iblIrradiance = vec3( 0.0 );
 
-	vec3 irradiance = getAmbientLightIrradiance( ambientLightColor );
+	vec3 irradiance = getAmbientLightIrradiance( ambientLightColor ) * __AMBIENT_LIGHT_SCALE__;
 
 	irradiance += getLightProbeIrradiance( lightProbe, geometry.normal );
 
