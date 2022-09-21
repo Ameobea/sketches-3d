@@ -160,6 +160,8 @@ const initBulletPhysics = (
     }
   };
 
+  teleportPlayer(spawnPos.pos, spawnPos.rot);
+
   const addTriMesh = (mesh: THREE.Mesh | 'DONE') => {
     if (mesh === 'DONE') {
       broadphase.optimize();
@@ -492,7 +494,11 @@ export const buildViz = () => {
   camera.matrixAutoUpdate = true;
   camera.rotation.order = 'YXZ';
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({
+    antialias: false,
+    powerPreference: 'high-performance',
+    stencil: false,
+  });
   // const ext = renderer.getContext().getExtension('WEBGL_compressed_texture_s3tc');
   const gl = renderer.getContext();
   const fragDerivExt = gl.getExtension('OES_standard_derivatives');

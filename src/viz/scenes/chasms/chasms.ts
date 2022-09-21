@@ -7,11 +7,12 @@ import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 
 import type { VizState } from '../..';
 import type { SceneConfig } from '..';
-import { DEVICE_PIXEL_RATIO, getMesh } from '../../util';
+import { delay, DEVICE_PIXEL_RATIO, getMesh } from '../../util';
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
 import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
+import { initWebSynth } from 'src/viz/webSynth';
 
 const locations = {
   spawn: {
@@ -637,6 +638,16 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
   viz.renderer.toneMappingExposure = 1;
+
+  delay(1000)
+    .then(() => initWebSynth({ compositionIDToLoad: 72 }))
+    .then(async ctx => {
+      await delay(1000);
+
+      console.log(ctx);
+      ctx.setGlobalBpm(55);
+      ctx.startAll();
+    });
 
   return {
     locations,
