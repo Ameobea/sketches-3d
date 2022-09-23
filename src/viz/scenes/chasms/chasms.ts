@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { EffectComposer, Pass } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 
 import type { VizState } from '../..';
 import type { SceneConfig } from '..';
@@ -13,6 +14,7 @@ import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
 import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
 import { initWebSynth } from 'src/viz/webSynth';
+import { InventoryItem } from 'src/viz/inventory/Inventory';
 
 const locations = {
   spawn: {
@@ -474,19 +476,15 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   towerEntryPlinth.material = towerEntryPlinthMat;
 
-  const plinthSpotLight = new THREE.PointLight(0xff8866, 1.1, 30);
-  plinthSpotLight.position.set(-917.95, 2, 366.388);
-  // plinthSpotLight.target.position.set(-923.915, 0, 366.388);
-  plinthSpotLight.castShadow = false;
-  // plinthSpotLight.updateMatrixWorld();
-  // plinthSpotLight.target.updateMatrixWorld();
-  // viz.scene.add(plinthSpotLight.target);
-  viz.scene.add(plinthSpotLight);
-
-  // spotlight helper
-  // const spotlightHelper = new THREE.SpotLightHelper(plinthSpotLight);
-  // spotlightHelper.updateMatrixWorld();
-  // viz.scene.add(spotlightHelper);
+  const plinthPointLight = new THREE.PointLight(
+    0xff8866,
+    // 0xf328da,
+    1.1,
+    30
+  );
+  plinthPointLight.position.set(-917.95, 2, 366.388);
+  plinthPointLight.castShadow = false;
+  viz.scene.add(plinthPointLight);
 
   const plinthArchMat = buildCustomShader(
     {
@@ -562,6 +560,216 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const towerStatue = getMesh(loadedWorld, 'tower_plinth_statue');
   towerStatue.material = towerStatueMat;
 
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(viz.renderer.domElement.width, viz.renderer.domElement.height),
+    0.75,
+    0.9,
+    0.1689
+  );
+  const composer = new EffectComposer(viz.renderer);
+
+  composer.addPass(new RenderPass(viz.scene, viz.camera));
+  composer.addPass(bloomPass);
+
+  const torch = new THREE.Group();
+  const torchRod = getMesh(loadedWorld, 'torch_rod');
+  torchRod.removeFromParent();
+  torch.position.copy(torchRod.position);
+  const torchTop = getMesh(loadedWorld, 'torch_top');
+  torchTop.removeFromParent();
+  torchTop.material = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(0xb7128d),
+    transparent: false,
+    transmission: 0.8,
+    reflectivity: 0.9,
+    roughness: 0.1,
+    metalness: 0,
+    ior: 1.9,
+    specularIntensity: 0.9,
+  });
+  torchRod.position.set(0, 0, 0);
+  torchRod.material = buildCustomShader(
+    {
+      color: new THREE.Color(0x323232),
+      metalness: 0.81,
+      roughness: 0.77,
+      map: towerPlinthArchTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.05, 0.1),
+      mapDisableDistance: null,
+      normalScale: 4,
+      ambientLightScale: 2,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      // disabledDirectionalLightIndices: [0],
+      useGeneratedUVs: true,
+      // tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+  torch.add(torchRod);
+  torch.add(torchTop);
+  const origTorchTopPos = torchTop.position.clone();
+  torchTop.position.copy(torch.position.clone().sub(origTorchTopPos));
+  viz.scene.add(torch);
+
+  const torchOutline = new OutlinePass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    viz.scene,
+    viz.camera
+  );
+  torchOutline.edgeStrength = 1.8;
+  torchOutline.edgeGlow = 0.5;
+  torchOutline.edgeThickness = 0.6;
+  torchOutline.visibleEdgeColor.set(0xffffff);
+  torchOutline.selectedObjects = [torch];
+
+  composer.addPass(torchOutline);
+  viz.registerResizeCb(() => {
+    torchOutline.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  let torchPickedUp = false;
+
+  const useIcon = document.createElement('div');
+  useIcon.style.position = 'absolute';
+  // center
+  useIcon.style.left = '50%';
+  useIcon.style.top = '50%';
+  useIcon.style.transform = 'translate(-50%, -50%)';
+  useIcon.innerHTML = 'PRESS E TO USE';
+  useIcon.style.fontSize = '30px';
+  useIcon.style.fontFamily = 'sans-serif';
+  useIcon.style.color = '#4DE3E2cf';
+  // animate opacity
+  useIcon.style.transition = 'opacity 0.1s';
+  useIcon.style.opacity = '0';
+  useIcon.style.zIndex = '200';
+  document.body.appendChild(useIcon);
+  let useIconVisible = false;
+
+  viz.registerAfterRenderCb(() => {
+    if (torchPickedUp) {
+      return;
+    }
+
+    const distanceToTorch = viz.camera.position.distanceTo(torch.position);
+    torchOutline.enabled = distanceToTorch < 12;
+
+    // compute angle between camera and torch
+    const cameraToTorch = torch.position.clone().sub(viz.camera.position);
+    const cameraToTorchAngle = viz.camera.getWorldDirection(new THREE.Vector3()).angleTo(cameraToTorch);
+
+    const shouldShowUseIcon = distanceToTorch < 3 && cameraToTorchAngle < Math.PI / 4;
+    if (shouldShowUseIcon && !useIconVisible) {
+      useIcon.style.opacity = '1';
+      useIconVisible = true;
+    } else if (!shouldShowUseIcon && useIconVisible) {
+      useIcon.style.opacity = '0';
+      useIconVisible = false;
+    }
+  });
+
+  const equipmentScene = new THREE.Scene();
+  equipmentScene.add(new THREE.AmbientLight(0xffffff, 2.5));
+  const equipmentCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
+  equipmentCamera.position.set(0, 0, 0);
+  equipmentCamera.lookAt(0, 0, -1);
+  viz.registerResizeCb(() => {
+    equipmentCamera.aspect = window.innerWidth / window.innerHeight;
+    equipmentCamera.updateProjectionMatrix();
+  });
+  const equipmentPass = new RenderPass(
+    equipmentScene,
+    equipmentCamera,
+    undefined,
+    new THREE.Color(0x000000),
+    0
+  );
+  equipmentPass.clear = false;
+  composer.addPass(equipmentPass);
+
+  class TorchItem extends InventoryItem {
+    private obj: THREE.Group;
+
+    private beforeRenderCb: (() => void) | null = null;
+
+    constructor(obj: THREE.Group) {
+      super();
+      this.obj = obj;
+      this.obj.scale.set(0.15, 0.15, 0.15);
+      this.obj.position.set(0.2, -0.22, -0.5);
+      this.obj.traverse(obj => {
+        if (obj instanceof THREE.Mesh) {
+          obj.material.depthTest = false;
+        }
+      });
+
+      // Rotate it a bit towards -z
+      this.obj.rotateY(Math.PI / 4);
+      // Rotate a bit towards -y
+      this.obj.rotateX(-Math.PI / 8);
+    }
+
+    public onSelected(): void {
+      equipmentScene.add(this.obj);
+
+      viz.scene.add(plinthPointLight);
+
+      // const debugCube = new THREE.Mesh(
+      //   new THREE.BoxGeometry(0.1, 0.1, 0.1),
+      //   new THREE.MeshBasicMaterial({ color: 0xff0000 })
+      // );
+      // viz.scene.add(debugCube);
+      this.beforeRenderCb = () => {
+        const lightOffset = viz.camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(0.2);
+        plinthPointLight.position.copy(viz.camera.position.clone().add(lightOffset));
+        // debugCube.position.copy(plinthPointLight.position);
+      };
+      viz.registerBeforeRenderCb(this.beforeRenderCb);
+    }
+
+    public onDeselected(): void {
+      this.obj.removeFromParent();
+
+      if (this.beforeRenderCb) {
+        viz.unregisterBeforeRenderCb(this.beforeRenderCb);
+        this.beforeRenderCb = null;
+        viz.scene.remove(plinthPointLight);
+      }
+    }
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'e') {
+      if (!useIconVisible) {
+        return;
+      }
+
+      if (torchPickedUp) {
+        return;
+      }
+
+      torchPickedUp = true;
+      viz.scene.remove(torch);
+      useIcon.remove();
+      plinthPointLight.removeFromParent();
+
+      viz.inventory.addItem(new TorchItem(torch));
+      console.log(equipmentScene.children);
+    }
+
+    // check for number keys
+    if (e.key >= '0' && e.key <= '9') {
+      let index = parseInt(e.key, 10) - 1;
+      if (index === -1) {
+        index = 9;
+      }
+
+      viz.inventory.setActiveItem(index);
+    }
+  });
+
   // dungeon
 
   const dungeonFloorMat = muddyGoldenLoopsMat;
@@ -606,16 +814,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   // LIGHTING
 
-  const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(viz.renderer.domElement.width, viz.renderer.domElement.height),
-    0.75,
-    0.9,
-    0.1689
-  );
-  const composer = new EffectComposer(viz.renderer);
-
-  composer.addPass(new RenderPass(viz.scene, viz.camera));
-  composer.addPass(bloomPass);
   // ADD AA PASS
   const fxaaPass = new ShaderPass(FXAAShader);
   fxaaPass.material.uniforms['resolution'].value.set(

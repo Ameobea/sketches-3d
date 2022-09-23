@@ -12,6 +12,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { buildDefaultSceneConfig, ScenesByName, type SceneConfig } from './scenes';
 import * as Conf from './conf';
 import { getAmmoJS } from './collision';
+import { Inventory } from './inventory/Inventory';
 
 const initBulletPhysics = (
   camera: THREE.Camera,
@@ -289,10 +290,6 @@ const setupFirstPerson = async (
   document.addEventListener('keydown', event => {
     if (inlineConsole?.isOpen) {
       return;
-    }
-
-    if (event.key === 'e') {
-      document.exitPointerLock();
     }
 
     keyStates[event.code] = true;
@@ -635,6 +632,8 @@ export const buildViz = () => {
     console.clear();
   };
 
+  const inventory = new Inventory();
+
   return {
     camera,
     renderer,
@@ -649,28 +648,9 @@ export const buildViz = () => {
     unregisterAfterRenderCb,
     onDestroy,
     setRenderOverride,
+    inventory,
   };
 };
-
-// const flattenScene = (scene: THREE.Group) => {
-//   const objects: THREE.Object3D[] = [];
-//   console.log('scene:', scene);
-//   scene.traverse(obj => {
-//     if (obj.name === 'bridge_top') {
-//       console.log('bridge top', obj);
-//     }
-//     objects.push(obj);
-//   });
-
-//   const newScene = new THREE.Group();
-//   for (const obj of objects) {
-//     if (obj instanceof THREE.Mesh) {
-//       newScene.add(obj);
-//     }
-//   }
-//   console.log(newScene);
-//   return newScene;
-// };
 
 export type VizState = ReturnType<typeof buildViz>;
 
@@ -698,14 +678,6 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     let scene =
       gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group();
 
-    // Currently gltfpack seems to re-construct group hierarchies that don't exist in the original Blender export.
-    //
-    // We flatten it down to make it compatible with the default variety.
-    // if (true) {
-    //   scene = flattenScene(scene);
-    // }
-    console.log(scene);
-
     const sceneLoader = await getSceneLoader();
     const sceneConf = {
       ...buildDefaultSceneConfig(),
@@ -717,6 +689,10 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     }
 
     (window as any).locations = () => Object.keys(sceneConf.locations);
+
+    if (sceneConf.enableInventory) {
+      // TODO: set up inventory CBs
+    }
 
     let addTriMesh: ((mesh: THREE.Mesh | 'DONE') => void) | null = null;
     if (sceneConf.viewMode.type === 'firstPerson') {

@@ -19,6 +19,7 @@ export interface SceneConfig {
     movementAccelPerSecond?: { onGround: number; inAir: number };
   };
   renderOverride?: (timeDiffSeconds: number) => void;
+  enableInventory?: boolean;
 }
 
 export const buildDefaultSceneConfig = () => ({
