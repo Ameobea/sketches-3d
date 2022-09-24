@@ -5,6 +5,7 @@ import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading'
 
 import TowerEntryPlinthColorShader from './shaders/color.frag?raw';
 import TowerEntryPlinthRoughnessShader from './shaders/roughness.frag?raw';
+import TowerEntryPlinthMetalnessShader from './shaders/metalness.frag?raw';
 
 export const buildMuddyGoldenLoopsMat = async (loader: THREE.ImageBitmapLoader) => {
   const texture = await loadTexture(
@@ -16,14 +17,18 @@ export const buildMuddyGoldenLoopsMat = async (loader: THREE.ImageBitmapLoader) 
   return buildCustomShader(
     {
       color: new THREE.Color(0x989898),
-      metalness: 0.001,
+      metalness: 0.8,
       roughness: 0.97,
       map: combinedDiffuseNormalTexture,
       uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
       mapDisableDistance: null,
       normalScale: 4,
     },
-    { colorShader: TowerEntryPlinthColorShader, roughnessShader: TowerEntryPlinthRoughnessShader },
+    {
+      colorShader: TowerEntryPlinthColorShader,
+      roughnessShader: TowerEntryPlinthRoughnessShader,
+      metalnessShader: TowerEntryPlinthMetalnessShader,
+    },
     {
       usePackedDiffuseNormalGBA: true,
       disabledDirectionalLightIndices: [0],

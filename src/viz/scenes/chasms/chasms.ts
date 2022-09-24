@@ -1,10 +1,24 @@
 import * as THREE from 'three';
-import { EffectComposer, Pass } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
-import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
+// import { EffectComposer, Pass } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+// import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+// import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+// import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+// import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+// import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
+import {
+  PixelationEffect,
+  EffectComposer,
+  RenderPass,
+  BloomEffect,
+  OutlineEffect,
+  EffectPass,
+  Pass,
+  FXAAEffect,
+  SMAAEffect,
+  BlendFunction,
+  KernelSize,
+  GaussianBlurPass,
+} from 'postprocessing';
 
 import type { VizState } from '../..';
 import type { SceneConfig } from '..';
@@ -196,7 +210,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     muddyGoldenLoopsMat,
   } = await loadTextures();
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0);
   viz.scene.add(ambientLight);
 
   const texture = new THREE.Texture(
@@ -241,7 +255,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.camera.far = 2500;
   viz.camera.updateProjectionMatrix();
 
-  ambientLight.intensity = 0.25;
+  ambientLight.intensity = 0.32;
   dLight.intensity = 2.4;
 
   viz.renderer.shadowMap.autoUpdate = true;
@@ -385,6 +399,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(0.04, 0.04),
       mapDisableDistance: null,
       normalScale: 4,
+      ambientLightScale: 1.4,
     },
     {},
     {
@@ -560,15 +575,30 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const towerStatue = getMesh(loadedWorld, 'tower_plinth_statue');
   towerStatue.material = towerStatueMat;
 
-  const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(viz.renderer.domElement.width, viz.renderer.domElement.height),
-    0.75,
-    0.9,
-    0.1689
-  );
   const composer = new EffectComposer(viz.renderer);
-
   composer.addPass(new RenderPass(viz.scene, viz.camera));
+
+  // const bloomPass = new UnrealBloomPass(
+  //   new THREE.Vector2(viz.renderer.domElement.width, viz.renderer.domElement.height),
+  //   0.75,
+  //   0.9,
+  //   0.1689
+  // );
+  const bloomEffect = new BloomEffect({
+    intensity: 2,
+    // kernelSize: KernelSize.LARGE,
+    mipmapBlur: true,
+    luminanceThreshold: 0.33,
+    blendFunction: BlendFunction.ADD,
+    // blendFunction: BlendFunction.SCREEN,
+    luminanceSmoothing: 0.05,
+    // resolutionScale: 0.5,
+    radius: 0.86,
+  });
+  // bloomEffect.blurPass = new GaussianBlurPass({ kernelSize: KernelSize.LARGE });
+  const bloomPass = new EffectPass(viz.camera, bloomEffect);
+  bloomPass.dithering = false;
+
   composer.addPass(bloomPass);
 
   const torch = new THREE.Group();
@@ -577,15 +607,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   torch.position.copy(torchRod.position);
   const torchTop = getMesh(loadedWorld, 'torch_top');
   torchTop.removeFromParent();
-  torchTop.material = new THREE.MeshPhysicalMaterial({
+  torchTop.material = buildCustomShader({
     color: new THREE.Color(0xb7128d),
     transparent: false,
-    transmission: 0.8,
-    reflectivity: 0.9,
     roughness: 0.1,
     metalness: 0,
-    ior: 1.9,
-    specularIntensity: 0.9,
   });
   torchRod.position.set(0, 0, 0);
   torchRod.material = buildCustomShader(
@@ -613,16 +639,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   torchTop.position.copy(torch.position.clone().sub(origTorchTopPos));
   viz.scene.add(torch);
 
-  const torchOutline = new OutlinePass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight),
-    viz.scene,
-    viz.camera
-  );
-  torchOutline.edgeStrength = 1.8;
-  torchOutline.edgeGlow = 0.5;
-  torchOutline.edgeThickness = 0.6;
-  torchOutline.visibleEdgeColor.set(0xffffff);
-  torchOutline.selectedObjects = [torch];
+  // const torchOutline = new OutlinePass(
+  //   new THREE.Vector2(window.innerWidth, window.innerHeight),
+  //   viz.scene,
+  //   viz.camera
+  // );
+  // torchOutline.edgeStrength = 1.8;
+  // torchOutline.edgeGlow = 0.5;
+  // torchOutline.edgeThickness = 0.6;
+  // torchOutline.visibleEdgeColor.set(0xffffff);
+  // torchOutline.selectedObjects = [torch];
+  const torchOutline = new EffectPass(viz.camera, new OutlineEffect(viz.scene, viz.camera, {}));
 
   composer.addPass(torchOutline);
   viz.registerResizeCb(() => {
@@ -670,6 +697,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   });
 
+  class ClearDepthPass extends Pass {
+    constructor() {
+      super();
+      this.needsSwap = false;
+    }
+
+    render(renderer: THREE.WebGLRenderer) {
+      renderer.clearDepth();
+    }
+  }
+
   const equipmentScene = new THREE.Scene();
   equipmentScene.add(new THREE.AmbientLight(0xffffff, 2.5));
   const equipmentCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
@@ -679,14 +717,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     equipmentCamera.aspect = window.innerWidth / window.innerHeight;
     equipmentCamera.updateProjectionMatrix();
   });
-  const equipmentPass = new RenderPass(
-    equipmentScene,
-    equipmentCamera,
-    undefined,
-    new THREE.Color(0x000000),
-    0
-  );
+  const equipmentPass = new RenderPass(equipmentScene, equipmentCamera, undefined);
   equipmentPass.clear = false;
+  composer.addPass(new ClearDepthPass());
   composer.addPass(equipmentPass);
 
   class TorchItem extends InventoryItem {
@@ -699,11 +732,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       this.obj = obj;
       this.obj.scale.set(0.15, 0.15, 0.15);
       this.obj.position.set(0.2, -0.22, -0.5);
-      this.obj.traverse(obj => {
-        if (obj instanceof THREE.Mesh) {
-          obj.material.depthTest = false;
-        }
-      });
+      // this.obj.traverse(obj => {
+      //   if (obj instanceof THREE.Mesh) {
+      //     obj.material.depthTest = false;
+      //   }
+      // });
 
       // Rotate it a bit towards -z
       this.obj.rotateY(Math.PI / 4);
@@ -716,15 +749,13 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
       viz.scene.add(plinthPointLight);
 
-      // const debugCube = new THREE.Mesh(
-      //   new THREE.BoxGeometry(0.1, 0.1, 0.1),
-      //   new THREE.MeshBasicMaterial({ color: 0xff0000 })
-      // );
-      // viz.scene.add(debugCube);
+      const downOffset = new THREE.Vector3(0, 0.1, 0);
       this.beforeRenderCb = () => {
-        const lightOffset = viz.camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(0.2);
+        const lightOffset = viz.camera
+          .getWorldDirection(new THREE.Vector3())
+          .multiplyScalar(0.2)
+          .add(downOffset);
         plinthPointLight.position.copy(viz.camera.position.clone().add(lightOffset));
-        // debugCube.position.copy(plinthPointLight.position);
       };
       viz.registerBeforeRenderCb(this.beforeRenderCb);
     }
@@ -812,26 +843,27 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   dungeonWall.material = dungeonWallMat;
 
-  // LIGHTING
+  // composer.addPass(new EffectPass(viz.camera, new PixelationEffect(3)));
 
-  // ADD AA PASS
-  const fxaaPass = new ShaderPass(FXAAShader);
-  fxaaPass.material.uniforms['resolution'].value.set(
-    1 / (viz.renderer.domElement.width * DEVICE_PIXEL_RATIO),
-    1 / (viz.renderer.domElement.height * DEVICE_PIXEL_RATIO)
-  );
-  fxaaPass.renderToScreen = true;
-  composer.addPass(fxaaPass);
+  // const aaPass = new ShaderPass(FXAAShader);
+  // aaPass.material.uniforms['resolution'].value.set(
+  //   1 / (viz.renderer.domElement.width * DEVICE_PIXEL_RATIO),
+  //   1 / (viz.renderer.domElement.height * DEVICE_PIXEL_RATIO)
+  // );
+  // aaPass.renderToScreen = true;
+  // const aaPass = new EffectPass(viz.camera, new FXAAEffect());
+  const aaPass = new EffectPass(viz.camera, new SMAAEffect());
+  composer.addPass(aaPass);
 
   viz.setRenderOverride(tDiffSeconds => composer.render(tDiffSeconds));
 
   viz.registerResizeCb(() => {
     composer.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
     bloomPass.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
-    fxaaPass.material.uniforms['resolution'].value.set(
-      1 / (viz.renderer.domElement.width * DEVICE_PIXEL_RATIO),
-      1 / (viz.renderer.domElement.height * DEVICE_PIXEL_RATIO)
-    );
+    // fxaaPass.material.uniforms['resolution'].value.set(
+    //   1 / (viz.renderer.domElement.width * DEVICE_PIXEL_RATIO),
+    //   1 / (viz.renderer.domElement.height * DEVICE_PIXEL_RATIO)
+    // );
   });
 
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -858,7 +890,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         radius: 0.45,
       },
       movementAccelPerSecond: {
-        onGround: 7.2,
+        onGround: 15.2,
         inAir: 2.2,
       },
     },

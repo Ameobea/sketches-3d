@@ -100,6 +100,7 @@ interface CustomShaderShaders {
   colorShader?: string;
   normalShader?: string;
   roughnessShader?: string;
+  metalnessShader?: string;
   emissiveShader?: string;
 }
 
@@ -156,6 +157,7 @@ export const buildCustomShaderArgs = (
     colorShader,
     normalShader,
     roughnessShader,
+    metalnessShader,
     emissiveShader,
   }: CustomShaderShaders = {},
   {
@@ -699,6 +701,7 @@ ${useNoise2 ? noise2Shaders : ''}
 ${colorShader ?? ''}
 ${normalShader ?? ''}
 ${roughnessShader ?? ''}
+${metalnessShader ?? ''}
 ${emissiveShader ?? ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? tileBreakingFragment : ''}
 ${
@@ -756,6 +759,12 @@ void main() {
   }
 
   ${roughnessShader ? buildRoughnessShaderFragment(antialiasRoughnessShader) : ''}
+
+  ${
+    metalnessShader
+      ? `metalnessFactor = getCustomMetalness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);`
+      : ''
+  }
 
 	#include <emissivemap_fragment>
   ${
