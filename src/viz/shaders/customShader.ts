@@ -77,6 +77,7 @@ interface CustomShaderProps {
   lightMap?: THREE.Texture;
   lightMapIntensity?: number;
   transparent?: boolean;
+  opacity?: number;
   alphaTest?: number;
   fogMultiplier?: number;
   /**
@@ -889,6 +890,10 @@ export const buildCustomShader = (
   }
   if (props.transparent) {
     (mat as any).transparent = props.transparent;
+  }
+  if (typeof props.opacity === 'number') {
+    (mat as any).opacity = props.opacity;
+    (mat as any).uniforms.opacity.value = props.opacity;
   }
   if (typeof props.alphaTest === 'number') {
     (mat as any).alphaTest = props.alphaTest;

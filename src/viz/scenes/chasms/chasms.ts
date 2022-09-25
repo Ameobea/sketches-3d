@@ -22,7 +22,7 @@ import {
 
 import type { VizState } from '../..';
 import type { SceneConfig } from '..';
-import { delay, DEVICE_PIXEL_RATIO, getMesh } from '../../util';
+import { delay, DEVICE_PIXEL_RATIO, getMesh, mix, smoothstep } from '../../util';
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
@@ -144,6 +144,31 @@ const loadTextures = async () => {
     towerPlinthStatueTexture => generateNormalMapFromTexture(towerPlinthStatueTexture, {}, true)
   );
 
+  const towerCeilingTextureP = loadTexture(
+    loader,
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1761839491.png'
+  );
+  const towerCeilingTextureCombinedDiffuseNormalTextureP = towerCeilingTextureP.then(towerCeilingTexture =>
+    generateNormalMapFromTexture(towerCeilingTexture, {}, true)
+  );
+
+  const towerComputerPillarP = loadTexture(
+    loader,
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1759340770.png'
+  );
+  const towerComputerPillarCombinedDiffuseNormalTextureP = towerComputerPillarP.then(towerComputerPillar =>
+    generateNormalMapFromTexture(towerComputerPillar, {}, true)
+  );
+
+  const dungeonWallTextureP = loadTexture(
+    loader,
+    // 'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3723778949.png'
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3580112432.png'
+  );
+  const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>
+    generateNormalMapFromTexture(dungeonWallTexture, {}, true)
+  );
+
   const muddyGoldenLoopsMatP = buildMuddyGoldenLoopsMat(loader);
 
   const [
@@ -159,7 +184,10 @@ const loadTextures = async () => {
     towerPlinthArchTextureCombinedDiffuseNormalTexture,
     towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
     towerPlinthStatueTextureCombinedDiffuseNormalTexture,
+    towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
+    towerComputerPillarCombinedDiffuseNormalTexture,
+    dungeonWallTextureCombinedDiffuseNormalTexture,
   ] = await Promise.all([
     chasmGroundTextureCombinedDiffuseNormalTextureP,
     bridgeTextureCombinedDiffuseNormalTextureP,
@@ -173,7 +201,10 @@ const loadTextures = async () => {
     towerPlinthArchTextureCombinedDiffuseNormalTextureP,
     towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
     towerPlinthStatueTextureCombinedDiffuseNormalTextureP,
+    towerCeilingTextureCombinedDiffuseNormalTextureP,
     muddyGoldenLoopsMatP,
+    towerComputerPillarCombinedDiffuseNormalTextureP,
+    dungeonWallTextureCombinedDiffuseNormalTextureP,
   ]);
 
   return {
@@ -189,7 +220,10 @@ const loadTextures = async () => {
     towerPlinthArchTextureCombinedDiffuseNormalTexture,
     towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
     towerPlinthStatueTextureCombinedDiffuseNormalTexture,
+    towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
+    towerComputerPillarCombinedDiffuseNormalTexture,
+    dungeonWallTextureCombinedDiffuseNormalTexture,
   };
 };
 
@@ -207,7 +241,10 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     towerPlinthArchTextureCombinedDiffuseNormalTexture,
     towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
     towerPlinthStatueTextureCombinedDiffuseNormalTexture,
+    towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
+    towerComputerPillarCombinedDiffuseNormalTexture,
+    dungeonWallTextureCombinedDiffuseNormalTexture,
   } = await loadTextures();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0);
@@ -413,6 +450,77 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   towerStairs.material = stairsMat;
   towerStairs.userData.convexhull = true;
 
+  let outsideVisible = true;
+  viz.registerAfterRenderCb(() => {
+    const outsideShouldBeVisible = viz.camera.position.x >= -935;
+    if (outsideShouldBeVisible === outsideVisible) {
+      return;
+    }
+    outsideVisible = outsideShouldBeVisible;
+
+    if (outsideShouldBeVisible) {
+      console.log('showing outside');
+      chasm.visible = true;
+      chasmBottoms.visible = true;
+      dLight.visible = true;
+      bridge.visible = true;
+      building.visible = true;
+      lightSlats.visible = true;
+      backlightPanel.visible = true;
+      towerStairs.visible = true;
+    } else {
+      console.log('hiding outside');
+      chasm.visible = false;
+      chasmBottoms.visible = false;
+      dLight.visible = false;
+      bridge.visible = false;
+      building.visible = false;
+      lightSlats.visible = false;
+      backlightPanel.visible = false;
+      towerStairs.visible = false;
+    }
+  });
+
+  const towerFloorMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x646464),
+      metalness: 0.001,
+      roughness: 0.97,
+      map: towerFloorTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
+      mapDisableDistance: null,
+      normalScale: 4,
+      ambientLightScale: 1.6,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      useGeneratedUVs: true,
+      tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+
+  const towerCeilingMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x646464),
+      metalness: 0.001,
+      roughness: 0.97,
+      map: towerCeilingTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
+      mapDisableDistance: null,
+      normalScale: 4,
+      ambientLightScale: 1.6,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      useGeneratedUVs: true,
+      tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+
   loadedWorld.traverse(obj => {
     if (obj.name.startsWith('tower_stairs_upper')) {
       const mesh = obj as THREE.Mesh;
@@ -423,6 +531,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     if (obj.name.startsWith('tower_wall')) {
       const mesh = obj as THREE.Mesh;
       mesh.material = towerMat;
+    }
+
+    if (obj.name.startsWith('tower_ceiling')) {
+      const mesh = obj as THREE.Mesh;
+      mesh.material = towerCeilingMat;
     }
   });
 
@@ -443,26 +556,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       disabledDirectionalLightIndices: [0],
       disabledSpotLightIndices: [1],
       useGeneratedUVs: true,
-    }
-  );
-
-  const towerFloorMat = buildCustomShader(
-    {
-      color: new THREE.Color(0x646464),
-      metalness: 0.001,
-      roughness: 0.97,
-      map: towerFloorTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
-      mapDisableDistance: null,
-      normalScale: 4,
-      ambientLightScale: 1.6,
-    },
-    {},
-    {
-      usePackedDiffuseNormalGBA: true,
-      disabledDirectionalLightIndices: [0],
-      useGeneratedUVs: true,
-      tileBreaking: { type: 'neyret', patchScale: 2 },
     }
   );
 
@@ -491,12 +584,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   towerEntryPlinth.material = towerEntryPlinthMat;
 
-  const plinthPointLight = new THREE.PointLight(
-    0xff8866,
-    // 0xf328da,
-    1.1,
-    30
-  );
+  const plinthPointLight = new THREE.PointLight(0xffaa88, 1.4, 40, 0.77);
   plinthPointLight.position.set(-917.95, 2, 366.388);
   plinthPointLight.castShadow = false;
   viz.scene.add(plinthPointLight);
@@ -607,12 +695,21 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   torch.position.copy(torchRod.position);
   const torchTop = getMesh(loadedWorld, 'torch_top');
   torchTop.removeFromParent();
-  torchTop.material = buildCustomShader({
-    color: new THREE.Color(0xb7128d),
+  // const torchTopMat = buildCustomShader({
+  //   color: new THREE.Color(0xf66f1c),
+  //   transparent: true,
+  //   opacity: 0.5,
+  //   roughness: 0.1,
+  //   metalness: 0,
+  // });
+  const torchTopMat = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(0xf66f1c),
     transparent: false,
+    transmission: 0.5,
     roughness: 0.1,
     metalness: 0,
   });
+  torchTop.material = torchTopMat;
   torchRod.position.set(0, 0, 0);
   torchRod.material = buildCustomShader(
     {
@@ -709,7 +806,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   }
 
   const equipmentScene = new THREE.Scene();
-  equipmentScene.add(new THREE.AmbientLight(0xffffff, 2.5));
+  equipmentScene.add(new THREE.AmbientLight(0xffffff, 1));
+  equipmentScene.add(new THREE.DirectionalLight(0xffffff, 1));
   const equipmentCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
   equipmentCamera.position.set(0, 0, 0);
   equipmentCamera.lookAt(0, 0, -1);
@@ -732,11 +830,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       this.obj = obj;
       this.obj.scale.set(0.15, 0.15, 0.15);
       this.obj.position.set(0.2, -0.22, -0.5);
-      // this.obj.traverse(obj => {
-      //   if (obj instanceof THREE.Mesh) {
-      //     obj.material.depthTest = false;
-      //   }
-      // });
 
       // Rotate it a bit towards -z
       this.obj.rotateY(Math.PI / 4);
@@ -771,6 +864,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   }
 
+  const pickUpTorch = () => {
+    torchPickedUp = true;
+    viz.scene.remove(torch);
+    useIcon.remove();
+    plinthPointLight.removeFromParent();
+
+    viz.inventory.addItem(new TorchItem(torch));
+  };
+
+  (window as any).torchMe = () => pickUpTorch();
+
   document.addEventListener('keydown', e => {
     if (e.key === 'e') {
       if (!useIconVisible) {
@@ -781,13 +885,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         return;
       }
 
-      torchPickedUp = true;
-      viz.scene.remove(torch);
-      useIcon.remove();
-      plinthPointLight.removeFromParent();
-
-      viz.inventory.addItem(new TorchItem(torch));
-      console.log(equipmentScene.children);
+      pickUpTorch();
     }
 
     // check for number keys
@@ -799,6 +897,47 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
       viz.inventory.setActiveItem(index);
     }
+  });
+
+  // computer pillars room
+
+  const computerPillarsMat = buildCustomShader(
+    {
+      color: new THREE.Color(0xaaaaaa),
+      metalness: 0.81,
+      roughness: 0.77,
+      map: towerComputerPillarCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(2, 2),
+      mapDisableDistance: null,
+      normalScale: 8,
+      ambientLightScale: 2,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      // useGeneratedUVs: true,
+      // tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+  loadedWorld.traverse(obj => {
+    if (obj.name.startsWith('tower_computer_pillar')) {
+      (obj as THREE.Mesh).material = computerPillarsMat;
+    }
+  });
+
+  viz.registerBeforeRenderCb(() => {
+    const ambientDimFactor = 1 - smoothstep(-950, -875, viz.camera.position.x);
+    const dimmedAmbientLightIntensity = 0.08;
+    const baseAmbientLightIntensity = 0.32;
+    const ambientLightIntensity = mix(
+      baseAmbientLightIntensity,
+      dimmedAmbientLightIntensity,
+      ambientDimFactor
+    );
+    ambientLight.intensity = ambientLightIntensity;
+
+    // const baseTorchRange =
   });
 
   // dungeon
@@ -824,10 +963,10 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const dungeonWall = getMesh(loadedWorld, 'dungeon_wall');
   const dungeonWallMat = buildCustomShader(
     {
-      color: new THREE.Color(0x383838),
+      color: new THREE.Color(0x666666),
       metalness: 0.18,
       roughness: 0.92,
-      map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
+      map: dungeonWallTextureCombinedDiffuseNormalTexture,
       uvTransform: new THREE.Matrix3().scale(0.2, 0.2),
       mapDisableDistance: null,
       normalScale: 2.2,
@@ -838,7 +977,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       usePackedDiffuseNormalGBA: true,
       disabledDirectionalLightIndices: [0],
       useGeneratedUVs: true,
-      // tileBreaking: { type: 'neyret', patchScale: 2 },
+      tileBreaking: { type: 'neyret', patchScale: 2 },
     }
   );
   dungeonWall.material = dungeonWallMat;

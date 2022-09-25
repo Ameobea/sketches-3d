@@ -43,6 +43,8 @@ export const smoothstep = (start: number, stop: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
+export const mix = (x: number, y: number, a: number) => x * (1 - a) + y * a;
+
 // float flickerVal = noise(curTimeSeconds * 1.5);
 // float flickerActivation = smoothstep(0.4, 1.0, flickerVal * 2. + 0.2);
 // return flickerActivation;
