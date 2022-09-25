@@ -160,13 +160,29 @@ const loadTextures = async () => {
     generateNormalMapFromTexture(towerComputerPillar, {}, true)
   );
 
+  const towerComputerBorderP = loadTexture(
+    loader,
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3862004810.png'
+  );
+  const towerComputerBorderCombinedDiffuseNormalTextureP = towerComputerBorderP.then(towerComputerBorder =>
+    generateNormalMapFromTexture(towerComputerBorder, {}, true)
+  );
+
   const dungeonWallTextureP = loadTexture(
     loader,
     // 'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3723778949.png'
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3580112432.png'
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1999177113.png'
   );
   const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>
     generateNormalMapFromTexture(dungeonWallTexture, {}, true)
+  );
+
+  const dungeonCeilingTextureP = loadTexture(
+    loader,
+    'https://ameo-imgen.ameo.workers.dev/img-samples/000005.2204019256.png'
+  );
+  const dungeonCeilingTextureCombinedDiffuseNormalTextureP = dungeonCeilingTextureP.then(
+    dungeonCeilingTexture => generateNormalMapFromTexture(dungeonCeilingTexture, {}, true)
   );
 
   const muddyGoldenLoopsMatP = buildMuddyGoldenLoopsMat(loader);
@@ -187,7 +203,9 @@ const loadTextures = async () => {
     towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
     towerComputerPillarCombinedDiffuseNormalTexture,
+    towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
+    dungeonCeilingTextureCombinedDiffuseNormalTexture,
   ] = await Promise.all([
     chasmGroundTextureCombinedDiffuseNormalTextureP,
     bridgeTextureCombinedDiffuseNormalTextureP,
@@ -204,7 +222,9 @@ const loadTextures = async () => {
     towerCeilingTextureCombinedDiffuseNormalTextureP,
     muddyGoldenLoopsMatP,
     towerComputerPillarCombinedDiffuseNormalTextureP,
+    towerComputerBorderCombinedDiffuseNormalTextureP,
     dungeonWallTextureCombinedDiffuseNormalTextureP,
+    dungeonCeilingTextureCombinedDiffuseNormalTextureP,
   ]);
 
   return {
@@ -223,7 +243,9 @@ const loadTextures = async () => {
     towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
     towerComputerPillarCombinedDiffuseNormalTexture,
+    towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
+    dungeonCeilingTextureCombinedDiffuseNormalTexture,
   };
 };
 
@@ -244,7 +266,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
     towerComputerPillarCombinedDiffuseNormalTexture,
+    towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
+    dungeonCeilingTextureCombinedDiffuseNormalTexture,
   } = await loadTextures();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0);
@@ -449,37 +473,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const towerStairs = getMesh(loadedWorld, 'tower_stairs');
   towerStairs.material = stairsMat;
   towerStairs.userData.convexhull = true;
-
-  let outsideVisible = true;
-  viz.registerAfterRenderCb(() => {
-    const outsideShouldBeVisible = viz.camera.position.x >= -935;
-    if (outsideShouldBeVisible === outsideVisible) {
-      return;
-    }
-    outsideVisible = outsideShouldBeVisible;
-
-    if (outsideShouldBeVisible) {
-      console.log('showing outside');
-      chasm.visible = true;
-      chasmBottoms.visible = true;
-      dLight.visible = true;
-      bridge.visible = true;
-      building.visible = true;
-      lightSlats.visible = true;
-      backlightPanel.visible = true;
-      towerStairs.visible = true;
-    } else {
-      console.log('hiding outside');
-      chasm.visible = false;
-      chasmBottoms.visible = false;
-      dLight.visible = false;
-      bridge.visible = false;
-      building.visible = false;
-      lightSlats.visible = false;
-      backlightPanel.visible = false;
-      towerStairs.visible = false;
-    }
-  });
 
   const towerFloorMat = buildCustomShader(
     {
@@ -901,6 +894,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   // computer pillars room
 
+  const towerComputerRoomPillars: THREE.Mesh[] = [];
   const computerPillarsMat = buildCustomShader(
     {
       color: new THREE.Color(0xaaaaaa),
@@ -923,8 +917,31 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   loadedWorld.traverse(obj => {
     if (obj.name.startsWith('tower_computer_pillar')) {
       (obj as THREE.Mesh).material = computerPillarsMat;
+      towerComputerRoomPillars.push(obj as THREE.Mesh);
     }
   });
+
+  const towerComputerBorderMat = buildCustomShader(
+    {
+      color: new THREE.Color(0xaaaaaa),
+      metalness: 0.81,
+      roughness: 0.77,
+      map: towerComputerPillarCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.08, 0.08),
+      mapDisableDistance: null,
+      normalScale: 8,
+      ambientLightScale: 2,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      useGeneratedUVs: true,
+      // tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+  const towerComputerRoomBorder = loadedWorld.getObjectByName('tower_computer_room_border') as THREE.Mesh;
+  towerComputerRoomBorder.material = towerComputerBorderMat;
 
   viz.registerBeforeRenderCb(() => {
     const ambientDimFactor = 1 - smoothstep(-950, -875, viz.camera.position.x);
@@ -967,7 +984,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.18,
       roughness: 0.92,
       map: dungeonWallTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.2, 0.2),
+      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
       mapDisableDistance: null,
       normalScale: 2.2,
       ambientLightScale: 1,
@@ -981,6 +998,72 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   );
   dungeonWall.material = dungeonWallMat;
+
+  const dungeonCeilingMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x777777),
+      metalness: 0.88,
+      roughness: 0.52,
+      map: dungeonCeilingTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      mapDisableDistance: null,
+      normalScale: 2.2,
+      ambientLightScale: 1,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      disabledSpotLightIndices: [0, 1],
+      useGeneratedUVs: true,
+      // tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+  const dungeonCeiling = getMesh(loadedWorld, 'dungeon_ceiling');
+  dungeonCeiling.material = dungeonCeilingMat;
+
+  let outsideVisible: boolean | null = null;
+  viz.registerAfterRenderCb(() => {
+    const outsideShouldBeVisible = viz.camera.position.x >= -925;
+    if (outsideShouldBeVisible === outsideVisible) {
+      return;
+    }
+    outsideVisible = outsideShouldBeVisible;
+
+    if (outsideShouldBeVisible) {
+      console.log('showing outside');
+      chasm.visible = true;
+      chasmBottoms.visible = true;
+      dLight.visible = true;
+      bridge.visible = true;
+      building.visible = true;
+      lightSlats.visible = true;
+      backlightPanel.visible = true;
+      towerStairs.visible = true;
+
+      towerComputerRoomBorder.visible = false;
+      dungeonCeiling.visible = false;
+      dungeonWall.visible = false;
+      towerComputerRoomPillars.forEach(pillar => (pillar.visible = false));
+    } else {
+      console.log('hiding outside');
+      chasm.visible = false;
+      chasmBottoms.visible = false;
+      dLight.visible = false;
+      bridge.visible = false;
+      building.visible = false;
+      lightSlats.visible = false;
+      backlightPanel.visible = false;
+      towerStairs.visible = false;
+
+      towerComputerRoomBorder.visible = true;
+      dungeonCeiling.visible = true;
+      dungeonWall.visible = true;
+      towerComputerRoomPillars.forEach(pillar => (pillar.visible = true));
+    }
+  });
+
+  // POST-PROCESSING
 
   // composer.addPass(new EffectPass(viz.camera, new PixelationEffect(3)));
 
