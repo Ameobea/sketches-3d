@@ -63,6 +63,21 @@ const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   return NonAntialiasedRoughnessShaderFragment;
 };
 
+const buildEarlyDepthTestFragment = () => `
+  // This comes from the depth pre-pass; we know the depth of the closest fragment that will be rendered here.
+  float sceneDepth = readDepth();
+  float fragDepth = gl_FragCoord.z;
+
+  // It is expected that fragDepth will be less than or equal to sceneDepth. If it is not, then we are rendering a fragment
+  // that is behind the closest fragment that will be rendered here.
+  float tolerance = 0.0001;
+  float depthDiff = (sceneDepth + tolerance) - fragDepth;
+
+  if (depthDiff < 0.) {
+    discard;
+  }
+`;
+
 interface CustomShaderProps {
   roughness?: number;
   metalness?: number;
@@ -132,6 +147,7 @@ interface CustomShaderOptions {
   disabledSpotLightIndices?: number[];
   randomizeUVOffset?: boolean;
   useGeneratedUVs?: boolean;
+  useEarlyDepthTest?: boolean;
 }
 
 export const buildCustomShaderArgs = (
@@ -175,6 +191,7 @@ export const buildCustomShaderArgs = (
     disabledSpotLightIndices,
     randomizeUVOffset,
     useGeneratedUVs,
+    useEarlyDepthTest = true,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -690,6 +707,20 @@ ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
 ${useComputedNormalMap || usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
 
+${
+  useEarlyDepthTest
+    ? `
+uniform sampler2D tDepth;
+uniform vec2 iResolution;
+float readDepth() {
+  vec2 depthUV = vec2(gl_FragCoord.x / iResolution.x, gl_FragCoord.y / iResolution.y);
+  vec4 sampledDepth = texture2D( tDepth, depthUV );
+  return unpackRGBAToDepth(sampledDepth);
+}
+`
+    : ''
+}
+
 struct SceneCtx {
   vec3 cameraPosition;
   vec2 vUv;
@@ -716,6 +747,8 @@ ${
 
 void main() {
 	#include <clipping_planes_fragment>
+
+  ${useEarlyDepthTest ? buildEarlyDepthTestFragment() : ''}
 
   vec3 fragPos = pos;
   vec3 cameraPos = cameraPosition;
@@ -899,6 +932,16 @@ export const buildCustomShader = (
     (mat as any).alphaTest = props.alphaTest;
     (mat as any).uniforms.alphaTest.value = props.alphaTest;
   }
+
+  if (opts?.useEarlyDepthTest !== false) {
+    const depthTexture: THREE.Texture = (window as any).depthTexture;
+    mat.uniforms.tDepth = { value: depthTexture };
+    const renderer: THREE.WebGLRenderer = (window as any).renderer;
+    mat.uniforms.iResolution = {
+      value: new THREE.Vector2(renderer.domElement.width, renderer.domElement.height),
+    };
+  }
+
   mat.needsUpdate = true;
   mat.uniformsNeedUpdate = true;
 

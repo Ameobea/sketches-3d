@@ -496,6 +496,7 @@ export const buildViz = () => {
     powerPreference: 'high-performance',
     stencil: false,
   });
+  (window as any).renderer = renderer;
   // const ext = renderer.getContext().getExtension('WEBGL_compressed_texture_s3tc');
   const gl = renderer.getContext();
   const fragDerivExt = gl.getExtension('OES_standard_derivatives');
