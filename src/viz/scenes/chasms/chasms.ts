@@ -330,13 +330,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     dLight.position.y = BaseDLightY + Math.sin(curTimeSeconds * 0.05) * 50;
   });
 
-  // directional light helper
-  // const helper = new THREE.DirectionalLightHelper(dLight, 5);
-  // viz.scene.add(helper);
-
-  // const helper2 = new THREE.CameraHelper(dLight.shadow.camera);
-  // viz.scene.add(helper2);
-
   const chasm = getMesh(loadedWorld, 'chasm');
   chasm.material = buildCustomShader(
     {
@@ -360,7 +353,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const chasmBottoms = getMesh(loadedWorld, 'chasm_bottoms');
   chasmBottoms.material = buildCustomShader(
     {
-      color: new THREE.Color(0x151515),
+      color: new THREE.Color(0x000000),
       roughness: 0.99,
       metalness: 0.01,
     },

@@ -249,7 +249,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   bridgeTop.material = buildCustomShader(
     { color: new THREE.Color(0x121212) },
     { roughnessShader: BridgeTopRoughnessShader },
-    {}
+    { useEarlyDepthTest: false }
   );
 
   const pillar1 = getMesh(loadedWorld, 'pillar1');
@@ -289,7 +289,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(3.2, 3.6),
     },
     {},
-    { readRoughnessMapFromRChannel: true }
+    { readRoughnessMapFromRChannel: true, useEarlyDepthTest: false }
   );
   const arches = getMesh(loadedWorld, 'arch');
   arches.material = archesMaterial;
@@ -306,7 +306,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(5, 5),
     },
     {},
-    { readRoughnessMapFromRChannel: true }
+    { readRoughnessMapFromRChannel: true, useEarlyDepthTest: false }
   );
 
   const bridge = getMesh(loadedWorld, 'bridge');
@@ -321,7 +321,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(10, 10),
     },
     { roughnessShader: BridgeTopRoughnessShader },
-    { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true }
+    { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true, useEarlyDepthTest: false }
   );
   viz.registerDistanceMaterialSwap(bridge, new THREE.MeshBasicMaterial({ color: 0xcccccc }), 200);
 
@@ -336,13 +336,13 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
     },
     {},
-    { usePackedDiffuseNormalGBA: true }
+    { usePackedDiffuseNormalGBA: true, useEarlyDepthTest: false }
   );
 
   const bridgeSupportsMaterial = buildCustomShader(
     { color: new THREE.Color(0x111111), roughness: 0.9, metalness: 0.9 },
     {},
-    {}
+    { useEarlyDepthTest: false }
   );
   const bridgeSupports = getMesh(loadedWorld, 'bridge_supports');
   bridgeSupports.material = bridgeSupportsMaterial;
@@ -351,7 +351,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const bridgeTopMistMat = buildCustomShader(
     { metalness: 0, alphaTest: 0.05, transparent: true },
     { colorShader: BridgeMistColorShader },
-    { disableToneMapping: true }
+    { disableToneMapping: true, useEarlyDepthTest: false }
   );
   bridgeTopMist.material = bridgeTopMistMat;
   // bridgeTopMist.material.blending = THREE.AdditiveBlending;
@@ -375,15 +375,19 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       mapDisableDistance: 110,
     },
     {},
-    { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true }
+    { tileBreaking: { type: 'neyret' }, usePackedDiffuseNormalGBA: true, useEarlyDepthTest: false }
   );
   // const monolithFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x666666) });
-  const monolithFarMat = buildCustomShader({
-    roughness: 0.95,
-    metalness: 0.2,
-    fogMultiplier: 0.8,
-    color: new THREE.Color(0x333333),
-  });
+  const monolithFarMat = buildCustomShader(
+    {
+      roughness: 0.95,
+      metalness: 0.2,
+      fogMultiplier: 0.8,
+      color: new THREE.Color(0x333333),
+    },
+    {},
+    { useEarlyDepthTest: false }
+  );
 
   const monolithRingMaterial = buildCustomShader(
     {
@@ -398,15 +402,23 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       mapDisableDistance: 110,
     },
     {},
-    { tileBreaking: { type: 'neyret', patchScale: 1 }, usePackedDiffuseNormalGBA: true }
+    {
+      tileBreaking: { type: 'neyret', patchScale: 1 },
+      usePackedDiffuseNormalGBA: true,
+      useEarlyDepthTest: false,
+    }
   );
   // const monolithRingFarMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x353535) });
-  const monolithRingFarMat = buildCustomShader({
-    fogMultiplier: 0.8,
-    metalness: 0.5,
-    roughness: 0.99,
-    color: new THREE.Color(0x222222),
-  });
+  const monolithRingFarMat = buildCustomShader(
+    {
+      fogMultiplier: 0.8,
+      metalness: 0.5,
+      roughness: 0.99,
+      color: new THREE.Color(0x222222),
+    },
+    {},
+    { useEarlyDepthTest: false }
+  );
 
   for (const child of loadedWorld.children) {
     if (!child.name.startsWith('monolith')) {
@@ -447,6 +459,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       tileBreaking: { type: 'neyret', patchScale: 2 },
       usePackedDiffuseNormalGBA: true,
       disableToneMapping: true,
+      useEarlyDepthTest: false,
     }
   );
   viz.registerBeforeRenderCb(curTimeSeconds => platformMaterial.setCurTimeSeconds(curTimeSeconds));
@@ -466,7 +479,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       fogShadowFactor: 0.6,
     },
     {},
-    { usePackedDiffuseNormalGBA: true }
+    { usePackedDiffuseNormalGBA: true, useEarlyDepthTest: false }
   );
   ['platform_ridges_2'].forEach(name => {
     const mesh = getMesh(loadedWorld, name);
@@ -484,7 +497,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(18, 3),
     },
     {},
-    { usePackedDiffuseNormalGBA: true }
+    { usePackedDiffuseNormalGBA: true, useEarlyDepthTest: false }
   );
   ['platform_building'].forEach(name => {
     const mesh = getMesh(loadedWorld, name)!;
@@ -505,7 +518,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       fogShadowFactor: 0.5,
     },
     { colorShader: UpperRidgesColorShader },
-    { usePackedDiffuseNormalGBA: true },
+    { usePackedDiffuseNormalGBA: true, useEarlyDepthTest: false },
   ] as const;
   const upperRidgesMaterial = buildCustomShader(...RidgesMaterialArgs);
   ['platform_ridges_3', 'platform_ridges_4'].forEach(name => {
@@ -548,7 +561,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(40, 4),
     },
     {},
-    { usePackedDiffuseNormalGBA: true }
+    { usePackedDiffuseNormalGBA: true, useEarlyDepthTest: false }
   );
   platformLeftWall.material = platformLeftWallMaterial;
 
@@ -635,7 +648,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       fogMultiplier: 0.5,
     },
     { roughnessShader: Rock1RoughnessShader },
-    { readRoughnessMapFromRChannel: true }
+    { readRoughnessMapFromRChannel: true, useEarlyDepthTest: false }
   );
   rock1.material = rock1Mat;
   rock1.userData.convexhull = true;
@@ -651,10 +664,14 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       fogMultiplier: 0.5,
     },
     { roughnessShader: Rock1RoughnessShader },
-    { readRoughnessMapFromRChannel: true }
+    { readRoughnessMapFromRChannel: true, useEarlyDepthTest: false }
   );
 
-  const towerMaterial = buildCustomShader({ color: new THREE.Color(0x0) }, {}, { enableFog: false });
+  const towerMaterial = buildCustomShader(
+    { color: new THREE.Color(0x0) },
+    {},
+    { enableFog: false, useEarlyDepthTest: false }
+  );
   const tower = getMesh(loadedWorld, 'tower');
   tower.material = towerMaterial;
 
@@ -695,7 +712,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     //     fogMultiplier: 0.5,
     //   },
     //   {},
-    //   { usePackedDiffuseNormalGBA: true }
+    //   { usePackedDiffuseNormalGBA: true, useEarlyDepthTest:false }
     // );
     // obj.material = mat;
   }
