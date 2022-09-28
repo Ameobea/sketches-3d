@@ -8,8 +8,6 @@ import {
   Pass,
   SMAAEffect,
   BlendFunction,
-  DepthCopyPass,
-  DepthPass,
 } from 'postprocessing';
 
 import type { VizState } from '../..';
@@ -21,6 +19,7 @@ import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading'
 import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
 import { initWebSynth } from 'src/viz/webSynth';
 import { InventoryItem } from 'src/viz/inventory/Inventory';
+import type { WebGLRenderer } from 'three';
 
 const locations = {
   spawn: {
@@ -243,16 +242,8 @@ const loadTextures = async () => {
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   // render a pass with no fragment shader just to populate the depth buffer
-  const depthPass = new DepthPass(viz.scene, viz.camera);
+  const depthPass = new RenderPass(viz.scene, viz.camera, new THREE.MeshBasicMaterial());
   depthPass.renderToScreen = false;
-
-  const depthTexture = depthPass.texture;
-  (window as any).depthTexture = depthTexture;
-  depthTexture.wrapS = THREE.RepeatWrapping;
-  depthTexture.wrapT = THREE.RepeatWrapping;
-  depthTexture.generateMipmaps = false;
-  depthTexture.magFilter = THREE.NearestFilter;
-  depthTexture.minFilter = THREE.NearestFilter;
 
   const {
     chasmGroundTextureCombinedDiffuseNormalTexture,
@@ -657,7 +648,27 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   composer.addPass(depthPass);
 
-  const mainRenderPass = new RenderPass(viz.scene, viz.camera);
+  class MainRenderPass extends RenderPass {
+    constructor(scene: THREE.Scene, camera: THREE.Camera) {
+      super(scene, camera);
+      this.clear = false;
+    }
+
+    render(
+      renderer: THREE.WebGLRenderer,
+      inputBuffer: THREE.WebGLRenderTarget,
+      outputBuffer: THREE.WebGLRenderTarget,
+      deltaTime?: number | undefined,
+      stencilTest?: boolean | undefined
+    ) {
+      const ctx = renderer.getContext();
+      ctx.depthFunc(ctx.EQUAL);
+      super.render.apply(this, [renderer, inputBuffer, outputBuffer, deltaTime, stencilTest]);
+      ctx.depthFunc(ctx.LEQUAL);
+    }
+  }
+
+  const mainRenderPass = new MainRenderPass(viz.scene, viz.camera);
   composer.addPass(mainRenderPass);
 
   // const bloomPass = new UnrealBloomPass(
@@ -696,8 +707,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       roughness: 0.1,
       metalness: 0,
     },
-    {},
-    { useEarlyDepthTest: false }
+    {}
   );
   torchTop.material = torchTopMat;
   torchRod.position.set(0, 0, 0);
@@ -718,7 +728,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       // disabledDirectionalLightIndices: [0],
       useGeneratedUVs: true,
       // tileBreaking: { type: 'neyret', patchScale: 2 },
-      useEarlyDepthTest: false,
     }
   );
   torch.add(torchRod);
