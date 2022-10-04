@@ -125,7 +125,7 @@ interface CustomShaderOptions {
    * If set, the provided `map` will be treated as a combined grayscale diffuse + normal map.  The diffuse component will
    * be read from the R channel and the normal map will be read from the GBA channels.
    */
-  usePackedDiffuseNormalGBA?: boolean;
+  usePackedDiffuseNormalGBA?: boolean | { lut: Uint8Array };
   readRoughnessMapFromRChannel?: boolean;
   disableToneMapping?: boolean;
   disabledDirectionalLightIndices?: number[];
@@ -342,10 +342,22 @@ export const buildCustomShaderArgs = (
     `;
   };
 
-  const buildUnpackDiffuseNormalGBAFragment = () => `
+  const buildUnpackDiffuseNormalGBAFragment = (params: true | { lut: Uint8Array }) => {
+    if (params === true) {
+      return `
     mapN = sampledDiffuseColor_.gba;
     sampledDiffuseColor_ = vec4(sampledDiffuseColor_.rrr, 1.);
   `;
+    } else {
+      return `
+    mapN = sampledDiffuseColor_.gba;
+    float index = sampledDiffuseColor_.r;
+    // vec4 lutEntry = texture2D(diffuseLUT, vec2(index, 0.5));
+    vec4 lutEntry = texelFetch(diffuseLUT, ivec2(index * 255., 0), 0);
+    sampledDiffuseColor_ = lutEntry;
+      `;
+    }
+  };
 
   const buildMapFragment = () => {
     const inner = (() => {
@@ -372,7 +384,7 @@ export const buildCustomShaderArgs = (
         vec4 sampledDiffuseColor_ = vec4(0.);
         ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
         ${inner}
-        ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment() : ''}
+        ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment(usePackedDiffuseNormalGBA) : ''}
         diffuseColor *= sampledDiffuseColor_;
       #endif`;
     }
@@ -388,7 +400,7 @@ export const buildCustomShaderArgs = (
         // avoid any texture lookups, relieve pressure on the texture unit
       } else {
         ${inner}
-        ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment() : ''}
+        ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment(usePackedDiffuseNormalGBA) : ''}
         diffuseColor = mix(diffuseColor * averageTextureColor, diffuseColor * sampledDiffuseColor_, textureActivation);
       }
     #endif`;
@@ -689,6 +701,7 @@ varying vec3 vNormalAbsolute;
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
 ${useComputedNormalMap || usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
+${typeof usePackedDiffuseNormalGBA === 'object' ? 'uniform sampler2D diffuseLUT;' : ''}
 
 struct SceneCtx {
   vec3 cameraPosition;
@@ -898,6 +911,22 @@ export const buildCustomShader = (
   if (typeof props.alphaTest === 'number') {
     (mat as any).alphaTest = props.alphaTest;
     (mat as any).uniforms.alphaTest.value = props.alphaTest;
+  }
+  if (typeof opts?.usePackedDiffuseNormalGBA === 'object') {
+    const dataTexture = new THREE.DataTexture(
+      opts.usePackedDiffuseNormalGBA.lut,
+      256,
+      1,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+      THREE.UVMapping,
+      THREE.ClampToEdgeWrapping,
+      THREE.ClampToEdgeWrapping,
+      THREE.NearestFilter,
+      THREE.NearestFilter
+    );
+    dataTexture.needsUpdate = true;
+    (mat as any).uniforms.diffuseLUT = { value: dataTexture };
   }
 
   mat.needsUpdate = true;

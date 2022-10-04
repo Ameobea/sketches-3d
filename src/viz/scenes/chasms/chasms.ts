@@ -178,6 +178,21 @@ const loadTextures = async () => {
 
   const muddyGoldenLoopsMatP = buildMuddyGoldenLoopsMat(loader);
 
+  const furnaceTextureP = loadTexture(
+    loader,
+    // 'https://ameo-imgen.ameo.workers.dev/img-samples/000008.2657780184.png'
+    // 'https://ameo.link/u/ajp.png'
+    'https://ameo.link/u/ajq.jpg'
+    // 'https://ameo-imgen.ameo.workers.dev/img-samples/000008.2061435413.png'
+  );
+  const furnaceTextureCombinedDiffuseNormalTextureP = furnaceTextureP.then(furnaceTexture =>
+    generateNormalMapFromTexture(
+      furnaceTexture,
+      { magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter },
+      true
+    )
+  );
+
   const [
     chasmGroundTextureCombinedDiffuseNormalTexture,
     bridgeTextureCombinedDiffuseNormalTexture,
@@ -197,6 +212,7 @@ const loadTextures = async () => {
     towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
     dungeonCeilingTextureCombinedDiffuseNormalTexture,
+    furnaceTextureCombinedDiffuseNormalTexture,
   ] = await Promise.all([
     chasmGroundTextureCombinedDiffuseNormalTextureP,
     bridgeTextureCombinedDiffuseNormalTextureP,
@@ -216,6 +232,7 @@ const loadTextures = async () => {
     towerComputerBorderCombinedDiffuseNormalTextureP,
     dungeonWallTextureCombinedDiffuseNormalTextureP,
     dungeonCeilingTextureCombinedDiffuseNormalTextureP,
+    furnaceTextureCombinedDiffuseNormalTextureP,
   ]);
 
   return {
@@ -237,6 +254,7 @@ const loadTextures = async () => {
     towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
     dungeonCeilingTextureCombinedDiffuseNormalTexture,
+    furnaceTextureCombinedDiffuseNormalTexture,
   };
 };
 
@@ -264,6 +282,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
     dungeonCeilingTextureCombinedDiffuseNormalTexture,
+    furnaceTextureCombinedDiffuseNormalTexture,
   } = await loadTextures();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0);
@@ -1021,6 +1040,75 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const dungeonCeiling = getMesh(loadedWorld, 'dungeon_ceiling');
   dungeonCeiling.material = dungeonCeilingMat;
 
+  const furnaceMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x999999),
+      metalness: 0.98,
+      roughness: 0.98,
+      map: furnaceTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      mapDisableDistance: null,
+      normalScale: 0.5,
+      ambientLightScale: 1,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: {
+        lut: new Uint8Array(
+          // prettier-ignore
+          [15,6,9,255,30,13,13,255,30,23,18,255,42,20,28,255,31,28,33,255,48,22,19,255,35,25,46,255,44,28,26,255,33,33,16,255,46,30,18,255,44,35,30,255,53,36,40,255,66,33,19,255,56,40,33,255,40,48,14,255,56,43,10,255,63,39,31,255,56,47,38,255,50,49,48,255,66,45,27,255,59,48,46,255,55,49,59,255,68,45,45,255,35,59,12,255,66,50,38,255,54,57,9,255,70,53,47,255,61,56,44,255,64,57,35,255,71,54,61,255,67,58,51,255,79,55,45,255,72,59,48,255,66,58,80,255,73,61,21,255,78,59,42,255,73,61,60,255,88,57,41,255,83,62,58,255,70,66,61,255,80,64,56,255,75,67,55,255,71,68,71,255,51,76,10,255,82,69,10,255,84,66,54,255,76,71,40,255,79,68,62,255,65,75,36,255,87,68,40,255,70,74,55,255,63,76,68,255,84,69,76,255,82,72,54,255,85,70,69,255,93,69,52,255,76,77,20,255,102,66,41,255,85,72,62,255,80,75,66,255,60,82,55,255,89,73,66,255,84,75,72,255,94,73,62,255,92,75,60,255,89,78,71,255,88,80,67,255,93,78,68,255,105,76,55,255,82,80,101,255,91,80,81,255,75,88,5,255,95,80,77,255,86,82,90,255,90,83,75,255,85,84,81,255,92,84,45,255,102,81,64,255,96,83,68,255,99,82,75,255,84,88,58,255,97,84,59,255,91,86,67,255,102,82,71,255,94,84,81,255,97,84,73,255,89,87,76,255,96,85,78,255,97,88,78,255,100,86,92,255,96,89,83,255,104,87,74,255,95,89,89,255,102,89,81,255,103,89,84,255,103,89,78,255,114,87,68,255,105,90,72,255,102,91,77,255,105,90,90,255,102,92,85,255,99,94,85,255,121,87,63,255,102,93,90,255,103,93,83,255,87,100,47,255,100,95,82,255,110,91,83,255,112,91,76,255,91,99,85,255,107,94,84,255,110,94,81,255,98,97,93,255,103,96,91,255,107,96,89,255,110,95,88,255,109,96,92,255,110,97,80,255,105,97,100,255,108,98,85,255,103,100,72,255,117,96,75,255,106,99,88,255,103,100,91,255,106,99,96,255,110,99,89,255,108,100,92,255,107,101,84,255,114,99,88,255,110,100,94,255,112,100,100,255,118,100,85,255,108,102,97,255,116,101,94,255,110,103,91,255,125,99,84,255,114,103,89,255,113,103,92,255,113,103,95,255,110,104,95,255,107,106,96,255,110,104,115,255,116,103,99,255,113,104,101,255,113,105,99,255,118,104,85,255,110,106,102,255,116,103,107,255,120,104,93,255,117,105,96,255,111,108,100,255,116,107,99,255,114,108,98,255,117,107,93,255,113,107,107,255,117,108,97,255,133,104,79,255,122,107,92,255,119,108,102,255,116,109,105,255,121,108,106,255,117,110,103,255,116,111,98,255,123,108,100,255,121,109,97,255,113,112,107,255,119,111,101,255,116,112,103,255,121,111,103,255,120,111,109,255,121,112,115,255,118,113,108,255,122,113,99,255,121,113,108,255,115,115,107,255,125,112,107,255,121,114,106,255,129,113,99,255,121,115,104,255,124,114,103,255,121,115,112,255,133,113,93,255,121,116,108,255,126,116,97,255,128,115,106,255,121,117,106,255,125,116,108,255,121,117,117,255,121,118,113,255,124,118,103,255,126,117,112,255,127,117,115,255,125,118,112,255,126,119,110,255,130,118,104,255,126,119,107,255,127,117,128,255,124,120,111,255,130,120,109,255,127,120,116,255,130,120,113,255,124,122,118,255,129,120,123,255,123,124,116,255,129,119,146,255,126,123,116,255,137,120,112,255,129,122,114,255,127,123,113,255,133,122,118,255,131,124,113,255,127,125,111,255,130,123,122,255,131,124,118,255,133,125,110,255,128,125,127,255,135,124,114,255,131,126,121,255,132,126,117,255,130,128,120,255,136,126,119,255,129,128,124,255,132,129,118,255,135,128,123,255,139,127,127,255,135,130,122,255,143,128,110,255,133,132,112,255,138,130,119,255,135,129,137,255,136,130,130,255,135,132,128,255,133,133,125,255,137,133,118,255,141,133,124,255,138,134,124,255,141,133,129,255,138,134,127,255,138,136,135,255,139,138,132,255,141,136,156,255,138,140,128,255,152,136,129,255,145,138,131,255,147,139,125,255,144,140,130,255,146,140,137,255,147,140,145,255,147,145,138,255,146,148,147,255,150,149,129,255,154,148,143,255,152,150,138,255,160,159,152,255,163,159,163,255,162,169,154,255]
+        ),
+      },
+      disabledDirectionalLightIndices: [0],
+      disabledSpotLightIndices: [0, 1],
+      useGeneratedUVs: true,
+      // tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+
+  const furnacePositions: THREE.Vector3[] = [];
+  loadedWorld.traverse(obj => {
+    if (obj.name.startsWith('furnace') && obj instanceof THREE.Mesh) {
+      (obj as THREE.Mesh).material = furnaceMat;
+      furnacePositions.push(obj.position.clone());
+      // obj.visible = false;
+    }
+  });
+  console.log(furnacePositions);
+
+  const furnaceInteriorColor = 0xe3670e;
+  const furnaceInteriorGeometry = new THREE.BoxGeometry(7.5, 7.5, 7.5);
+  const furnaceInteriorMaterial = new THREE.MeshBasicMaterial({ color: furnaceInteriorColor });
+  const furnaceInteriorsInstancedMesh = new THREE.InstancedMesh(
+    furnaceInteriorGeometry,
+    furnaceInteriorMaterial,
+    furnacePositions.length
+  );
+  furnacePositions.forEach((furnacePosition, i) => {
+    const furnaceSide = furnacePosition.z > 400 ? 'left' : 'right';
+    let [x, y, z] = furnacePosition.toArray();
+    y -= 2;
+    z += furnaceSide === 'left' ? 0.1 : -0.1;
+    furnaceInteriorsInstancedMesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, y - 6, z));
+
+    const spotlight = new THREE.SpotLight(furnaceInteriorColor, 5, 60, Math.PI / 4, 1, 1.8);
+    spotlight.position.set(x, y, z + (furnaceSide === 'left' ? 0 : -0));
+    // spotlight.position.copy(furnacePosition);
+    spotlight.target.position.set(x, y - 1, z + (furnaceSide === 'left' ? -1.2 : 1.2));
+
+    spotlight.target.updateMatrixWorld();
+    spotlight.castShadow = false;
+    viz.scene.add(spotlight);
+    viz.scene.add(spotlight.target);
+
+    // helper
+    // const spotlightHelper = new THREE.SpotLightHelper(spotlight);
+    // viz.scene.add(spotlightHelper);
+  });
+
+  viz.scene.add(furnaceInteriorsInstancedMesh);
+  // furnaceInteriorsInstancedMesh.visible = false;
+
   let outsideVisible: boolean | null = null;
   viz.registerAfterRenderCb(() => {
     const outsideShouldBeVisible = viz.camera.position.x >= -932;
@@ -1076,14 +1164,14 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
   viz.renderer.toneMappingExposure = 1;
 
-  delay(1000)
-    .then(() => initWebSynth({ compositionIDToLoad: 72 }))
-    .then(async ctx => {
-      await delay(1000);
+  // delay(1000)
+  //   .then(() => initWebSynth({ compositionIDToLoad: 72 }))
+  //   .then(async ctx => {
+  //     await delay(1000);
 
-      ctx.setGlobalBpm(55);
-      ctx.startAll();
-    });
+  //     ctx.setGlobalBpm(55);
+  //     ctx.startAll();
+  //   });
 
   return {
     locations,
