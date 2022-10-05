@@ -175,6 +175,10 @@ const initBulletPhysics = (
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
     let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
+    if (!geometry.index?.array) {
+      console.error('Mesh has no index array; not adding to collision world', mesh);
+      return;
+    }
     const indices = geometry.index!.array as Uint16Array;
     if (vertices instanceof Uint16Array) {
       throw new Error('GLTF Quantization not yet supported');

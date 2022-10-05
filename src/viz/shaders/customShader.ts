@@ -256,9 +256,9 @@ export const buildCustomShaderArgs = (
   if (useGeneratedUVs && !map) {
     throw new Error('Cannot use generated UVs without a map');
   }
-  if (useGeneratedUVs && randomizeUVOffset) {
-    throw new Error('Cannot use generated UVs with randomize UV offset');
-  }
+  // if (useGeneratedUVs && randomizeUVOffset) {
+  //   throw new Error('Cannot use generated UVs with randomize UV offset');
+  // }
 
   const buildUVVertexFragment = () => {
     if (useGeneratedUVs) {

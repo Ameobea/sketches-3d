@@ -11,7 +11,6 @@ const config = {
     inlineStyleThreshold: 2048,
     prerender: {
       concurrency: 6,
-      default: true,
     },
     adapter: adapter({
       // default options are shown

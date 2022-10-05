@@ -9,17 +9,17 @@ import {
   SMAAEffect,
   BlendFunction,
 } from 'postprocessing';
+import { LoopSubdivision } from 'three-subdivide';
 
 import type { VizState } from '../..';
 import type { SceneConfig } from '..';
-import { delay, DEVICE_PIXEL_RATIO, getMesh, mix, smoothstep } from '../../util';
+import { getMesh, mix, smoothstep } from '../../util';
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
 import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
 import { initWebSynth } from 'src/viz/webSynth';
 import { InventoryItem } from 'src/viz/inventory/Inventory';
-import type { WebGLRenderer } from 'three';
 
 const locations = {
   spawn: {
@@ -984,6 +984,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const dungeonFloorMat = muddyGoldenLoopsMat;
   const dungeonFloor = getMesh(loadedWorld, 'dungeon_floor');
+  console.log(dungeonFloor);
   dungeonFloor.material = dungeonFloorMat;
 
   const dungeonEntrySpotLight = new THREE.SpotLight(0xff8866, 1.3, 19, Math.PI / 10.4, 0.9);
@@ -1042,7 +1043,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const furnaceMat = buildCustomShader(
     {
-      color: new THREE.Color(0x999999),
+      color: new THREE.Color(0x7b7b7b),
       metalness: 0.98,
       roughness: 0.98,
       map: furnaceTextureCombinedDiffuseNormalTexture,
@@ -1062,19 +1063,43 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       disabledDirectionalLightIndices: [0],
       disabledSpotLightIndices: [0, 1],
       useGeneratedUVs: true,
+      randomizeUVOffset: true,
+      // tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+  const furnaceBarsMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x494949),
+      metalness: 0.98,
+      roughness: 0.98,
+      map: towerPlinthArchTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      mapDisableDistance: null,
+      normalScale: 0.6,
+      ambientLightScale: 1,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      disabledDirectionalLightIndices: [0],
+      disabledSpotLightIndices: [0, 1],
+      useGeneratedUVs: true,
+      randomizeUVOffset: true,
       // tileBreaking: { type: 'neyret', patchScale: 2 },
     }
   );
 
   const furnacePositions: THREE.Vector3[] = [];
   loadedWorld.traverse(obj => {
-    if (obj.name.startsWith('furnace') && obj instanceof THREE.Mesh) {
-      (obj as THREE.Mesh).material = furnaceMat;
+    if (obj.name.startsWith('furnace_bars') && obj instanceof THREE.Mesh) {
+      obj.material = furnaceBarsMat;
+      obj.userData.convexhull = true;
+    } else if (obj.name.startsWith('furnace') && obj instanceof THREE.Mesh) {
+      obj.material = furnaceMat;
       furnacePositions.push(obj.position.clone());
       // obj.visible = false;
     }
   });
-  console.log(furnacePositions);
 
   const furnaceInteriorColor = 0xe3670e;
   const furnaceInteriorGeometry = new THREE.BoxGeometry(7.5, 7.5, 7.5);
@@ -1091,13 +1116,14 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     z += furnaceSide === 'left' ? 0.1 : -0.1;
     furnaceInteriorsInstancedMesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, y - 6, z));
 
-    const spotlight = new THREE.SpotLight(furnaceInteriorColor, 5, 60, Math.PI / 4, 1, 1.8);
-    spotlight.position.set(x, y, z + (furnaceSide === 'left' ? 0 : -0));
+    const spotlight = new THREE.SpotLight(furnaceInteriorColor, 7, 20, Math.PI / 2.5, 1, 0.8);
+    spotlight.position.set(x, y - 4.7, z + (furnaceSide === 'left' ? -2.7 : 2.7));
     // spotlight.position.copy(furnacePosition);
-    spotlight.target.position.set(x, y - 1, z + (furnaceSide === 'left' ? -1.2 : 1.2));
+    spotlight.target.position.set(x, y - 4.9, z + (furnaceSide === 'left' ? -5.4 : 5.4));
 
     spotlight.target.updateMatrixWorld();
     spotlight.castShadow = false;
+    // spotlight.visible = false;
     viz.scene.add(spotlight);
     viz.scene.add(spotlight.target);
 
