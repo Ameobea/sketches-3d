@@ -10,6 +10,7 @@ import bridgeShader from '../shaders/bridge.frag?raw';
 import bigCubeShader from '../shaders/bigCube.frag?raw';
 import redNoiseShader from '../shaders/redNoise.frag?raw';
 import { getFlickerActivation, initBaseScene } from '../util';
+import type { SceneConfig } from '.';
 
 const buildBridge = (viz: VizState, bridge: THREE.Mesh) => {
   bridge.material = new THREE.ShaderMaterial(
@@ -40,7 +41,7 @@ const locations = {
   },
 };
 
-export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
+export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group): SceneConfig => {
   initBaseScene(viz);
 
   // Add close fog
@@ -158,5 +159,13 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group) => {
     topGlowCube.rotation.y += rotSpeed * tDiffSeconds;
   });
 
-  return { locations, spawnLocation: 'spawn' };
+  return {
+    locations,
+    spawnLocation: 'spawn',
+    player: {
+      movementAccelPerSecond: { onGround: 9, inAir: 9 },
+      colliderCapsuleSize: { height: 2.2, radius: 0.3 },
+      jumpVelocity: 16,
+    },
+  };
 };

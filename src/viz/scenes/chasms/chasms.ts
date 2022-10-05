@@ -1101,7 +1101,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   });
 
-  const furnaceInteriorColor = 0xe3670e;
+  const furnaceInteriorColor = 0xf4630a;
   const furnaceInteriorGeometry = new THREE.BoxGeometry(7.5, 7.5, 7.5);
   const furnaceInteriorMaterial = new THREE.MeshBasicMaterial({ color: furnaceInteriorColor });
   const furnaceInteriorsInstancedMesh = new THREE.InstancedMesh(
