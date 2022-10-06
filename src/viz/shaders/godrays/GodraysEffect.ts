@@ -1,5 +1,6 @@
 /*
- * Code adapted from N8 Programs: https://n8python.github.io/goodGodRays/
+ * Code taken + adapted from this demo: https://n8python.github.io/goodGodRays/
+ * By: https://github.com/n8python
  *
  * With cleanup and minor changes
  */

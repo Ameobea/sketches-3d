@@ -1,8 +1,10 @@
 /*
- * Code from N8 Programs: https://n8python.github.io/goodGodRays/EffectCompositer.js
+ * Code taken from this demo: https://n8python.github.io/goodGodRays/
+ * By: https://github.com/n8python
  *
  * With cleanup and minor changes
  */
+
 
 #include <common>
 
