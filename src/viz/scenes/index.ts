@@ -53,7 +53,7 @@ interface SceneDef {
   sceneName: string;
   sceneLoader: () => Promise<(viz: VizState, loadedWorld: THREE.Group) => SceneConfig | Promise<SceneConfig>>;
   metadata: SvelteSeoProps;
-  gltfName?: string;
+  gltfName?: string | null;
 }
 
 export const ScenesByName: { [key: string]: SceneDef } = {
@@ -95,5 +95,11 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./chasms/chasms').then(mod => mod.processLoadedScene),
     metadata: { title: 'chasms' },
     gltfName: 'chasms',
+  },
+  godrays_test: {
+    sceneName: 'godrays_test',
+    sceneLoader: () => import('./godrays-test/godraysTest').then(mod => mod.processLoadedScene),
+    metadata: { title: 'godrays_test' },
+    gltfName: null,
   },
 };

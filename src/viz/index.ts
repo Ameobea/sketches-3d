@@ -675,9 +675,10 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   if (!sceneDef) {
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
-  const { sceneName, sceneLoader: getSceneLoader, gltfName = 'dream' } = sceneDef;
+  const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName } = sceneDef;
+  const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 
-  loader.load(`${gltfName}.gltf`, async gltf => {
+  const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
     providedSceneName = providedSceneName.toLowerCase();
 
     let scene =
@@ -789,7 +790,13 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     });
 
     viz.animate();
-  });
+  };
+
+  if (gltfName) {
+    loader.load(`${gltfName}.gltf`, gltfLoadedCB);
+  } else {
+    gltfLoadedCB({ scenes: [] });
+  }
 
   return {
     destroy() {
