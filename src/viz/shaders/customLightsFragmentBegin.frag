@@ -48,7 +48,7 @@ IncidentLight directLight;
 		pointLightShadow = pointLightShadows[ i ];
     computedShadow = all( bvec2( directLight.visible, receiveShadow ) ) ? getPointShadow( pointShadowMap[ i ], pointLightShadow.shadowMapSize, pointLightShadow.shadowBias, pointLightShadow.shadowRadius, vPointShadowCoord[ i ], pointLightShadow.shadowCameraNear, pointLightShadow.shadowCameraFar ) : 1.;
     totalShadow *= computedShadow;
-		directLight.color *= ? computedShadow;
+		directLight.color *= computedShadow;
 		#endif
 
 		RE_Direct( directLight, geometry, material, reflectedLight );

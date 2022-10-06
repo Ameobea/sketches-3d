@@ -6,16 +6,37 @@
  */
 
 import * as THREE from 'three';
-import { Effect, EffectAttribute, Pass, Resizable } from 'postprocessing';
+import { Disposable, Pass, Resizable } from 'postprocessing';
 
 import GodraysVertexShader from './godrays.vert?raw';
 import GodraysFragmentShader from './godrays.frag?raw';
 import GodraysCompositorShader from './compositor.frag?raw';
 import GodraysCompositorVertexShader from './compositor.vert?raw';
 
+const GODRAYS_RESOLUTION_SCALE = 0.5;
+
 class GodraysMaterial extends THREE.ShaderMaterial {
-  constructor() {
-    const uniforms = {};
+  constructor(blueNoiseTexture: THREE.Texture) {
+    const uniforms = {
+      density: { value: 1 / 128 },
+      maxDensity: { value: 0.5 },
+      distanceAttenuation: { value: 0.005 },
+      sceneDepth: { value: null },
+      lightPos: { value: new THREE.Vector3(0, 0, 0) },
+      cameraPos: { value: new THREE.Vector3(0, 0, 0) },
+      resolution: { value: new THREE.Vector2(1, 1) },
+      projectionMatrixInv: { value: new THREE.Matrix4() },
+      viewMatrixInv: { value: new THREE.Matrix4() },
+      depthCube: { value: null },
+      mapSize: { value: 1 },
+      pointLightCameraNear: { value: 0.1 },
+      pointLightCameraFar: { value: 1000 },
+      blueNoise: { value: blueNoiseTexture },
+      noiseResolution: {
+        value: new THREE.Vector2(blueNoiseTexture.image.width, blueNoiseTexture.image.height),
+      },
+    };
+
     super({
       name: 'GodraysMaterial',
       uniforms,
@@ -31,65 +52,61 @@ class GodraysPass extends Pass implements Resizable {
   constructor(props: GodraysEffectProps, params: GodraysEffectParams) {
     super('GodraysPass');
 
-    this.material = new GodraysMaterial();
-    this.material.uniforms.sceneDepth = { value: null };
-    this.material.uniforms.lightPos = { value: props.lightPos };
-    this.material.uniforms.cameraPos = { value: props.cameraPos };
-    this.material.uniforms.resolution = { value: new THREE.Vector2(1, 1) };
-    this.material.uniforms.projectionMatrixInv = { value: props.projectionMatrixInv };
-    this.material.uniforms.viewMatrixInv = { value: props.viewMatrixInv };
-    this.material.uniforms.depthCube = { value: props.depthCube };
-    this.material.uniforms.mapSize = { value: props.mapSize };
-    this.material.uniforms.cameraNear = { value: props.cameraNear };
-    this.material.uniforms.cameraFar = { value: props.cameraFar };
-    this.material.uniforms.density = { value: params.density };
-    this.material.uniforms.maxDensity = { value: params.maxDensity };
-    this.material.uniforms.distanceAttenuation = { value: params.distanceAttenuation };
+    this.material = new GodraysMaterial(props.blueNoiseTexture);
 
-    this.setParams(params);
+    this.updateUniforms(props, params);
 
     this.fullscreenMaterial = this.material;
   }
 
   setSize(width: number, height: number): void {
-    this.material.uniforms.resolution.value.set(width, height);
+    this.material.uniforms.resolution.value.set(
+      Math.ceil(width * GODRAYS_RESOLUTION_SCALE),
+      Math.ceil(height * GODRAYS_RESOLUTION_SCALE)
+    );
   }
 
   render(
     renderer: THREE.WebGLRenderer,
-    inputBuffer: THREE.WebGLRenderTarget,
+    _inputBuffer: THREE.WebGLRenderTarget,
     outputBuffer: THREE.WebGLRenderTarget,
-    deltaTime?: number | undefined,
-    stencilTest?: boolean | undefined
+    _deltaTime?: number | undefined,
+    _stencilTest?: boolean | undefined
   ): void {
     renderer.setRenderTarget(outputBuffer);
     renderer.render(this.scene, this.camera);
-    // this.scene.overrideMaterial = null;
   }
 
   setDepthTexture(
     depthTexture: THREE.Texture,
     depthPacking?: THREE.DepthPackingStrategies | undefined
   ): void {
-    console.log('setting godrays pass depth texture', depthTexture);
     this.material.uniforms.sceneDepth.value = depthTexture;
     if (depthPacking && depthPacking !== THREE.BasicDepthPacking) {
-      throw new Error('Depth packing not supported');
+      throw new Error('Only BasicDepthPacking is supported');
     }
   }
 
-  private createOrUpdateUniform = (name: string, value: any) => {
-    if (this.material.uniforms[name]) {
-      this.material.uniforms[name]!.value = value;
-    } else {
-      this.material.uniforms[name] = value;
-    }
-  };
+  public updateUniforms(props: GodraysEffectProps, params: GodraysEffectParams): void {
+    const { pointLight } = props;
+    const pointLightShadow = pointLight.shadow;
+    const depthCube = pointLightShadow?.map?.texture ?? null;
+    const mapSize = pointLightShadow?.map?.height ?? 1;
 
-  public setParams({ density, maxDensity, distanceAttenuation }: GodraysEffectParams): void {
-    this.createOrUpdateUniform('density', density);
-    this.createOrUpdateUniform('maxDensity', maxDensity);
-    this.createOrUpdateUniform('distanceAttenuation', distanceAttenuation);
+    const uniforms = this.material.uniforms;
+    uniforms.density.value = params.density;
+    uniforms.maxDensity.value = params.maxDensity;
+    uniforms.lightPos.value = pointLight.position;
+    uniforms.cameraPos.value = props.camera.position;
+    uniforms.projectionMatrixInv.value = props.camera.projectionMatrixInverse;
+    uniforms.viewMatrixInv.value = props.camera.matrixWorld;
+    uniforms.depthCube.value = depthCube;
+    uniforms.mapSize.value = mapSize;
+    uniforms.pointLightCameraNear.value = pointLightShadow?.camera.near ?? 0.1;
+    uniforms.pointLightCameraFar.value = pointLightShadow?.camera.far ?? 1000;
+    uniforms.density.value = params.density;
+    uniforms.maxDensity.value = params.maxDensity;
+    uniforms.distanceAttenuation.value = params.distanceAttenuation;
   }
 }
 
@@ -121,14 +138,10 @@ class GodraysCompositorMaterial extends THREE.ShaderMaterial implements Resizabl
       vertexShader: GodraysCompositorVertexShader,
     });
 
-    this.setParams({ edgeStrength, edgeRadius, color });
+    this.updateUniforms(edgeStrength, edgeRadius, color);
   }
 
-  public setParams({
-    edgeStrength,
-    edgeRadius,
-    color,
-  }: Pick<GodraysEffectParams, 'edgeStrength' | 'edgeRadius' | 'color'>): void {
+  public updateUniforms(edgeStrength: number, edgeRadius: number, color: THREE.Color): void {
     this.uniforms.edgeStrength.value = edgeStrength;
     this.uniforms.edgeRadius.value = edgeRadius;
     this.uniforms.color.value = color;
@@ -145,19 +158,21 @@ class GodraysCompositorPass extends Pass implements Resizable {
     this.fullscreenMaterial = new GodraysCompositorMaterial(props);
   }
 
-  public setParams(params: GodraysEffectParams): void {
-    (this.fullscreenMaterial as GodraysCompositorMaterial).setParams(params);
+  public updateUniforms(params: GodraysEffectParams): void {
+    (this.fullscreenMaterial as GodraysCompositorMaterial).updateUniforms(
+      params.edgeStrength,
+      params.edgeRadius,
+      params.color
+    );
   }
 
   render(
     renderer: THREE.WebGLRenderer,
     inputBuffer: THREE.WebGLRenderTarget,
     outputBuffer: THREE.WebGLRenderTarget | null,
-    deltaTime?: number | undefined,
-    stencilTest?: boolean | undefined
+    _deltaTime?: number | undefined,
+    _stencilTest?: boolean | undefined
   ): void {
-    // (this.fullscreenMaterial as GodraysCompositorMaterial).uniforms.sceneDepth.value =
-    //   inputBuffer.depthTexture;
     (this.fullscreenMaterial as GodraysCompositorMaterial).uniforms.sceneDiffuse.value = inputBuffer.texture;
     renderer.setRenderTarget(outputBuffer);
     renderer.render(this.scene, this.camera);
@@ -167,7 +182,9 @@ class GodraysCompositorPass extends Pass implements Resizable {
     depthTexture: THREE.Texture,
     depthPacking?: THREE.DepthPackingStrategies | undefined
   ): void {
-    console.log('Setting compositor depth texture');
+    if (depthPacking && depthPacking !== THREE.BasicDepthPacking) {
+      throw new Error('Only BasicDepthPacking is supported');
+    }
     (this.fullscreenMaterial as GodraysCompositorMaterial).uniforms.sceneDepth.value = depthTexture;
   }
 
@@ -177,26 +194,58 @@ class GodraysCompositorPass extends Pass implements Resizable {
 }
 
 interface GodraysEffectProps {
-  lightPos: THREE.Vector3;
-  mapSize: number;
-  depthCube: THREE.CubeTexture;
-  viewMatrixInv: THREE.Matrix4;
-  projectionMatrixInv: THREE.Matrix4;
-  cameraPos: THREE.Vector3;
-  cameraNear: number;
-  cameraFar: number;
+  pointLight: THREE.PointLight;
+  camera: THREE.Camera;
+  blueNoiseTexture: THREE.Texture;
 }
 
-interface GodraysEffectParams {
+export interface GodraysEffectParams {
+  /**
+   * The rate of accumulation for the godrays.  Higher values roughly equate to more humid air/denser fog.
+   */
   density: number;
+  /**
+   * The maximum density of the godrays.  Limits the maximum brightness of the godrays.
+   */
   maxDensity: number;
+  /**
+   * TODO: Document this
+   */
   edgeStrength: number;
+  /**
+   * TODO: Document this
+   */
   edgeRadius: number;
+  /**
+   * Higher values decrease the accumulation of godrays the further away they are from the light source.
+   */
   distanceAttenuation: number;
+  /**
+   * The color of the godrays.
+   */
   color: THREE.Color;
 }
 
-export class GodraysEffect extends Pass {
+const defaultParams: GodraysEffectParams = {
+  density: 1 / 128,
+  maxDensity: 0.5,
+  edgeStrength: 2,
+  edgeRadius: 1,
+  distanceAttenuation: 0.005,
+  color: new THREE.Color(0xffffff),
+};
+
+const populateParams = (partialParams: Partial<GodraysEffectParams>): GodraysEffectParams => {
+  return {
+    ...defaultParams,
+    ...partialParams,
+    color: new THREE.Color(partialParams.color ?? defaultParams.color),
+  };
+};
+
+export class GodraysEffect extends Pass implements Disposable {
+  private props: GodraysEffectProps;
+
   private godraysRenderTarget = new THREE.WebGLRenderTarget(1, 1, {
     minFilter: THREE.LinearFilter,
     magFilter: THREE.LinearFilter,
@@ -206,10 +255,47 @@ export class GodraysEffect extends Pass {
 
   private compositorPass: GodraysCompositorPass;
 
-  constructor(props: GodraysEffectProps, params: GodraysEffectParams) {
+  /**
+   * Constructs a new GodraysEffect.  Casts godrays from a point light source.  Add to your scene's composer like this:
+   *
+   * ```ts
+   * import { EffectComposer, RenderPass } from 'postprocessing';
+   *
+   * const composer = new EffectComposer(renderer);
+   * const renderPass = new RenderPass(scene, camera);
+   * renderPass.renderToScreen = false;
+   * composer.addPass(renderPass);
+   *
+   * const godraysEffect = new GodraysEffect(pointLight, camera, blueNoiseTexture);
+   * godraysEffect.renderToScreen = true;
+   * composer.addPass(godraysEffect);
+   *
+   * function animate() {
+   *   composer.render(scene, camera);
+   * }
+   * ```
+   *
+   * @param light The light source to use for the godrays.
+   * @param camera The camera used to render the scene.
+   * @param blueNoiseTexture A texture containing blue noise.  This is used to dither the godrays to reduce banding.
+   * @param partialParams The parameters to use for the godrays effect.  Will use default values for any parameters not specified.
+   */
+  constructor(
+    light: THREE.PointLight,
+    camera: THREE.Camera,
+    blueNoiseTexture: THREE.Texture,
+    partialParams: Partial<GodraysEffectParams> = {}
+  ) {
     super('GodraysEffect');
 
-    this.godraysPass = new GodraysPass(props, params);
+    this.props = {
+      camera,
+      pointLight: light,
+      blueNoiseTexture,
+    };
+    const params = populateParams(partialParams);
+
+    this.godraysPass = new GodraysPass(this.props, params);
     this.godraysPass.needsDepthTexture = true;
 
     this.compositorPass = new GodraysCompositorPass({
@@ -220,20 +306,25 @@ export class GodraysEffect extends Pass {
     });
     this.compositorPass.needsDepthTexture = true;
 
-    this.godraysPass.setParams(params);
+    // Indicate to the composer that this pass needs depth information from the previous pass
+    this.needsDepthTexture = true;
   }
 
-  public setParams(params: GodraysEffectParams): void {
-    this.godraysPass.setParams(params);
-    this.compositorPass.setParams(params);
+  /**
+   * Updates the parameters used for the godrays effect.  Will use default values for any parameters not specified.
+   */
+  public setParams(partialParams: Partial<GodraysEffectParams>): void {
+    const params = populateParams(partialParams);
+    this.godraysPass.updateUniforms(this.props, params);
+    this.compositorPass.updateUniforms(params);
   }
 
   render(
     renderer: THREE.WebGLRenderer,
     inputBuffer: THREE.WebGLRenderTarget,
     outputBuffer: THREE.WebGLRenderTarget,
-    deltaTime?: number | undefined,
-    stencilTest?: boolean | undefined
+    _deltaTime?: number | undefined,
+    _stencilTest?: boolean | undefined
   ): void {
     this.godraysPass.render(renderer, inputBuffer, this.godraysRenderTarget);
 
@@ -244,14 +335,23 @@ export class GodraysEffect extends Pass {
     depthTexture: THREE.Texture,
     depthPacking?: THREE.DepthPackingStrategies | undefined
   ): void {
-    console.log('Setting godrays depth texture');
     this.godraysPass.setDepthTexture(depthTexture, depthPacking);
     this.compositorPass.setDepthTexture(depthTexture, depthPacking);
   }
 
   setSize(width: number, height: number): void {
-    this.godraysRenderTarget.setSize(width, height);
+    this.godraysRenderTarget.setSize(
+      Math.ceil(width * GODRAYS_RESOLUTION_SCALE),
+      Math.ceil(height * GODRAYS_RESOLUTION_SCALE)
+    );
     this.godraysPass.setSize(width, height);
     this.compositorPass.setSize(width, height);
+  }
+
+  dispose(): void {
+    this.godraysRenderTarget.dispose();
+    this.godraysPass.dispose();
+    this.compositorPass.dispose();
+    super.dispose();
   }
 }

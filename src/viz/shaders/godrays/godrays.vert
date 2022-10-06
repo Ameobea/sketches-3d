@@ -5,7 +5,6 @@
  * With cleanup and minor changes
  */
 
-
 varying vec2 vUv;
 
 void main() {

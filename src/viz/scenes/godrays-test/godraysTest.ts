@@ -1,11 +1,21 @@
 import { EffectComposer, EffectPass, RenderPass } from 'postprocessing';
-import { GodraysEffect } from 'src/viz/shaders/godrays/GodraysEffect';
+import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { GodraysEffect, type GodraysEffectParams } from 'src/viz/shaders/godrays/GodraysEffect';
+import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import * as THREE from 'three';
 
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+  const loader = new THREE.ImageBitmapLoader();
+  const dungeonWallTextureP = loadTexture(loader, 'https://ameo.link/u/akz.jpg');
+  const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>
+    generateNormalMapFromTexture(dungeonWallTexture, {}, true)
+  );
+  const dungeonWallTextureCombinedDiffuseNormalTexture =
+    await dungeonWallTextureCombinedDiffuseNormalTextureP;
+
   viz.renderer.shadowMap.enabled = true;
   viz.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   viz.renderer.shadowMap.autoUpdate = true;
@@ -20,7 +30,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   pointLight.shadow.autoUpdate = true;
   pointLight.shadow.camera.near = 0.1;
   pointLight.shadow.camera.far = 1000;
-  // pointLight.shadow.camera.fov = 90;
   pointLight.shadow.camera.updateProjectionMatrix();
   pointLight.position.copy(lightPos);
   viz.scene.add(pointLight);
@@ -80,14 +89,32 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     new THREE.BoxGeometry(10, 1000, 1000),
     new THREE.MeshStandardMaterial({ color: 0x0000ff })
   );
-  backdrop.position.set(200, 0, 0);
+  backdrop.position.set(400, 0, 0);
   backdrop.castShadow = true;
   backdrop.receiveShadow = true;
   viz.scene.add(backdrop);
 
   const backdrop2 = new THREE.Mesh(
     new THREE.BoxGeometry(10, 1000, 1000),
-    new THREE.MeshStandardMaterial({ color: 0x50506f })
+    buildCustomShader(
+      {
+        color: new THREE.Color(0x666666),
+        metalness: 0.18,
+        roughness: 0.92,
+        map: dungeonWallTextureCombinedDiffuseNormalTexture,
+        uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+        mapDisableDistance: null,
+        normalScale: 2.2,
+        ambientLightScale: 1,
+      },
+      {},
+      {
+        usePackedDiffuseNormalGBA: true,
+        disabledDirectionalLightIndices: [0],
+        useGeneratedUVs: true,
+        tileBreaking: { type: 'neyret', patchScale: 2 },
+      }
+    )
   );
   backdrop2.position.set(-200, 0, 0);
   backdrop2.castShadow = true;
@@ -96,60 +123,55 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const effectComposer = new EffectComposer(viz.renderer);
   const renderPass = new RenderPass(viz.scene, viz.camera);
-  const depthTexture = new THREE.DepthTexture(
-    viz.renderer.domElement.width,
-    viz.renderer.domElement.height,
-    THREE.FloatType
-  );
-  renderPass.setDepthTexture(depthTexture);
   renderPass.renderToScreen = false;
   effectComposer.addPass(renderPass);
 
-  const color = new THREE.Color(0xffffff);
-  const edgeRadius = 2;
-  const edgeStrength = 2;
-  const distanceAttenuation = 0.005;
-  const density = 1 / 128;
-  // const density = 1 / 64;
-  const maxDensity = 0.8;
+  const godraysParams: GodraysEffectParams = {
+    color: new THREE.Color(0xffffff),
+    edgeRadius: 2,
+    edgeStrength: 2,
+    distanceAttenuation: 0.006,
+    density: 1 / 126,
+    maxDensity: 1,
+  };
 
-  console.log(pointLight.shadow.map.texture);
-  const godraysEffect = new GodraysEffect(
-    {
-      // scene: viz.scene,
-      // camera: viz.camera,
-      lightPos,
-      cameraPos: viz.camera.position,
-      // cameraNear: viz.camera.near,
-      // cameraFar: viz.camera.far,
-      cameraNear: pointLight.shadow.camera.near,
-      cameraFar: pointLight.shadow.camera.far,
-      depthCube: pointLight.shadow.map.texture as THREE.CubeTexture,
-      mapSize: pointLight.shadow.mapSize.height,
-      projectionMatrixInv: viz.camera.projectionMatrixInverse,
-      // resolution: new THREE.Vector2(1, 1),
-      viewMatrixInv: viz.camera.matrixWorld,
-    },
-    { color, edgeRadius, edgeStrength, distanceAttenuation, density, maxDensity }
-  );
-  // const godraysEffectPass = new EffectPass(viz.camera, godraysEffect);
-  // godraysEffectPass.renderToScreen = true;
+  const blueNoiseTexture = await new THREE.TextureLoader().loadAsync('/bluenoise.png');
+  blueNoiseTexture.wrapS = THREE.RepeatWrapping;
+  blueNoiseTexture.wrapT = THREE.RepeatWrapping;
+  blueNoiseTexture.magFilter = THREE.NearestFilter;
+  blueNoiseTexture.minFilter = THREE.NearestFilter;
+
+  const godraysEffect = new GodraysEffect(pointLight, viz.camera, blueNoiseTexture, godraysParams);
   godraysEffect.renderToScreen = true;
-  godraysEffect.needsDepthTexture = true;
-  // godraysEffect.setDepthTexture(depthTexture);
   effectComposer.addPass(godraysEffect);
+
+  setInterval(() => {
+    godraysParams.color.setHex(Math.random() * 0xffffff);
+    pointLight.color.copy(godraysParams.color);
+    godraysEffect.setParams(godraysParams);
+  }, 3000);
+
+  viz.registerBeforeRenderCb(curTimeSeconds => {
+    pointLight.position.y = Math.sin(curTimeSeconds * 0.5) * 20;
+    lightSphere.position.copy(pointLight.position);
+  });
 
   viz.setRenderOverride(timeDiffSeconds => {
     effectComposer.render(timeDiffSeconds);
   });
 
-  viz.registerBeforeRenderCb(() => {
-    // godraysEffect.setParams({});
-  });
-
   return {
-    viewMode: { type: 'orbit', pos: new THREE.Vector3(10, 10, 10), target: new THREE.Vector3(0, 0, 0) },
-    locations: { spawn: { pos: new THREE.Vector3(0, 0, 0), rot: new THREE.Vector3() } },
+    viewMode: {
+      type: 'orbit',
+      pos: new THREE.Vector3(295.7257487200072, -29.58650677773067, 230.2576364577206),
+      target: new THREE.Vector3(0, 0, 0),
+    },
+    locations: {
+      spawn: {
+        pos: new THREE.Vector3(295.7257487200072, -29.58650677773067, 230.2576364577206),
+        rot: new THREE.Vector3(),
+      },
+    },
     spawnLocation: 'spawn',
   };
 };
