@@ -20,3 +20,4 @@ src/ammojs/*
 static/ammo.wasm.wasm
 static/pillar.jpg
 static/normal_map_gen.wasm
+yarn-error.log

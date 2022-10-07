@@ -1,8 +1,8 @@
 import { EffectComposer, EffectPass, RenderPass } from 'postprocessing';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { GodraysEffect, type GodraysEffectParams } from 'src/viz/shaders/godrays/GodraysEffect';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import * as THREE from 'three';
+import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
@@ -57,7 +57,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const shadowReceiver = new THREE.Mesh(
     new THREE.BoxGeometry(6, 6, 6),
-    new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+    new THREE.MeshBasicMaterial({ color: 0x00ff00 })
   );
   shadowReceiver.position.set(30, 0, 0);
   shadowReceiver.castShadow = true;
@@ -126,7 +126,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   renderPass.renderToScreen = false;
   effectComposer.addPass(renderPass);
 
-  const godraysParams: GodraysEffectParams = {
+  const godraysParams: GodraysPassParams = {
     color: new THREE.Color(0xffffff),
     edgeRadius: 2,
     edgeStrength: 2,
@@ -135,13 +135,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     maxDensity: 1,
   };
 
-  const blueNoiseTexture = await new THREE.TextureLoader().loadAsync('/bluenoise.png');
-  blueNoiseTexture.wrapS = THREE.RepeatWrapping;
-  blueNoiseTexture.wrapT = THREE.RepeatWrapping;
-  blueNoiseTexture.magFilter = THREE.NearestFilter;
-  blueNoiseTexture.minFilter = THREE.NearestFilter;
-
-  const godraysEffect = new GodraysEffect(pointLight, viz.camera, blueNoiseTexture, godraysParams);
+  const godraysEffect = new GodraysPass(pointLight, viz.camera, godraysParams);
   godraysEffect.renderToScreen = true;
   effectComposer.addPass(godraysEffect);
 

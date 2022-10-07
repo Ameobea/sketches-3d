@@ -2374,6 +2374,11 @@ text-table@^0.2.0:
   resolved "https://registry.yarnpkg.com/text-table/-/text-table-0.2.0.tgz#7f5ee823ae805207c00af2df4a84ec3fcfa570b4"
   integrity sha512-N+8UisAXDGk8PFXP4HAzVR9nbfmVJ3zYLAWiTIoqC5v5isinhr+r5uaO8+7r3BMfuNIufIsA7RdpVgacC2cSpw==
 
+three-good-godrays@^0.1.0:
+  version "0.1.0"
+  resolved "https://registry.yarnpkg.com/three-good-godrays/-/three-good-godrays-0.1.0.tgz#04c2c80f7c7141e8d271142defdb17ed256e0bdf"
+  integrity sha512-IImL6f0IFijd9bIj1ctibes1hgB68ZvXDJFpAkBAz0qHFBqEB1uz9vysXRnnYJL/evGjzUKQTdeDjmkDbDJ4zQ==
+
 three-subdivide@^1.1.0:
   version "1.1.0"
   resolved "https://registry.yarnpkg.com/three-subdivide/-/three-subdivide-1.1.0.tgz#8a5ebdde825a1cb2d8ef0f3cd8be1686a9d2d6c6"
