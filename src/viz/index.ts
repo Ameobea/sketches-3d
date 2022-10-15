@@ -176,11 +176,11 @@ const initBulletPhysics = (
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
     let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
-    if (!geometry.index?.array) {
-      console.error('Mesh has no index array; not adding to collision world', mesh);
-      return;
-    }
-    const indices = geometry.index!.array as Uint16Array;
+    // if (!geometry.index?.array) {
+    //   console.error('Mesh has no index array; not adding to collision world', mesh);
+    //   return;
+    // }
+    const indices = geometry.index?.array as Uint16Array | undefined;
     if (vertices instanceof Uint16Array) {
       throw new Error('GLTF Quantization not yet supported');
       // console.log(geometry.attributes.position);
@@ -200,17 +200,17 @@ const initBulletPhysics = (
     const buildTrimeshShape = () => {
       // TODO: update IDL and use native indexed triangle mesh
       const trimesh = new Ammo.btTriangleMesh();
-      trimesh.preallocateIndices(indices.length);
+      trimesh.preallocateIndices((indices ?? vertices).length);
       trimesh.preallocateVertices(vertices.length);
 
       const v0 = new Ammo.btVector3();
       const v1 = new Ammo.btVector3();
       const v2 = new Ammo.btVector3();
 
-      for (let i = 0; i < indices.length; i += 3) {
-        const i0 = indices[i] * 3;
-        const i1 = indices[i + 1] * 3;
-        const i2 = indices[i + 2] * 3;
+      for (let i = 0; i < (indices ?? vertices).length; i += 3) {
+        const i0 = indices ? indices[i] * 3 : i * 3;
+        const i1 = indices ? indices[i + 1] * 3 : i * 3 + 3;
+        const i2 = indices ? indices[i + 2] * 3 : i * 3 + 6;
         v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
         v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
         v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);

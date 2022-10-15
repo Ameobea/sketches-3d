@@ -256,20 +256,11 @@ export const buildCustomShaderArgs = (
   if (useGeneratedUVs && !map) {
     throw new Error('Cannot use generated UVs without a map');
   }
-  // if (useGeneratedUVs && randomizeUVOffset) {
-  //   throw new Error('Cannot use generated UVs with randomize UV offset');
-  // }
 
   const buildUVVertexFragment = () => {
-    if (useGeneratedUVs) {
-      return ''; // handled later
-    }
-
     if (randomizeUVOffset) {
       return `
       #ifdef USE_UV
-        vUv = ( uvTransform * vec3( uv, 1 ) ).xy;
-
         float modelWorldX = modelMatrix[3][0];
         float modelWorldY = modelMatrix[3][1];
         float modelWorldZ = modelMatrix[3][2];
@@ -285,17 +276,17 @@ export const buildCustomShaderArgs = (
         // Add \`uvUffset\` to \`vUv\` to randomize the UVs.
         float uvScaleX = uvTransform[0][0];
         float uvScaleY = uvTransform[1][1];
-        mat3 uvTransformOffset = mat3(
+        mat3 newUVTransform = mat3(
           uvScaleX, 0., 0.,
           0., uvScaleY, 0.,
           uvOffset.x, uvOffset.y, uvOffset.x
         );
-        vUv = ( uvTransformOffset * vec3( uv, 1 ) ).xy;
+        vUv = ( newUVTransform * vec3( vUv, 1 ) ).xy;
       #endif
       `;
     }
 
-    return '#include <uv_vertex>';
+    return '';
   };
 
   const buildRunColorShaderFragment = () => {
@@ -578,6 +569,35 @@ varying vec3 vNormalAbsolute;
 void main() {
   vNormalAbsolute = normal;
 
+  #include <begin_vertex>
+  #include <morphtarget_vertex>
+  #include <skinning_vertex>
+  #include <displacementmap_vertex>
+  #include <project_vertex>
+  #include <logdepthbuf_vertex>
+  #include <clipping_planes_vertex>
+  #include <worldpos_vertex>
+  vec4 worldPositionMine = vec4( transformed, 1.0 );
+  worldPositionMine = modelMatrix * worldPositionMine;
+  vec3 vWorldPositionMine = worldPositionMine.xyz;
+  pos = vWorldPositionMine;
+
+  ${(() => {
+    if (useGeneratedUVs) {
+      return `
+      vUv = generateUV(pos, vNormalAbsolute);
+      ${randomizeUVOffset ? '' : 'vUv = ( uvTransform * vec3( vUv, 1 ) ).xy;'}`;
+    }
+
+    if (randomizeUVOffset) {
+      // `randomizeUVOffset` performs UV transformation internally
+      return 'vUv = uv;';
+    }
+
+    // default uv transform
+    return 'vUv = ( uvTransform * vec3( uv, 1 ) ).xy;';
+  })()}
+
   ${buildUVVertexFragment()}
 
   #include <uv2_vertex>
@@ -589,31 +609,11 @@ void main() {
   #include <skinnormal_vertex>
   #include <defaultnormal_vertex>
   #include <normal_vertex>
-  #include <begin_vertex>
-  #include <morphtarget_vertex>
-  #include <skinning_vertex>
-  #include <displacementmap_vertex>
-  #include <project_vertex>
-  #include <logdepthbuf_vertex>
-  #include <clipping_planes_vertex>
+
   vViewPosition = - mvPosition.xyz;
-  #include <worldpos_vertex>
+
   #include <shadowmap_vertex>
   ${enableFog ? '#include <fog_vertex>' : ''}
-
-  vec4 worldPositionMine = vec4( transformed, 1.0 );
-  worldPositionMine = modelMatrix * worldPositionMine;
-  vec3 vWorldPositionMine = worldPositionMine.xyz;
-  pos = vWorldPositionMine;
-
-  ${
-    useGeneratedUVs
-      ? `
-  vec2 generatedUV = generateUV(pos, vNormalAbsolute);
-  vUv = (uvTransform * vec3(generatedUV, 1)).xy;
-`
-      : ''
-  }
 
   ${customVertexFragment ?? ''}
 }`,
