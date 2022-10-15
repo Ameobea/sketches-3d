@@ -23,7 +23,8 @@ const initBulletPhysics = (
   jumpSpeed: number,
   playerColliderRadius: number,
   playerColliderHeight: number,
-  playerMoveSpeed: number
+  playerMoveSpeed: number,
+  enableDash: boolean
 ) => {
   const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
   const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
@@ -121,7 +122,7 @@ const initBulletPhysics = (
       }
     }
 
-    if (keyStates['ShiftLeft'] || keyStates['ShiftRight']) {
+    if ((keyStates['ShiftLeft'] || keyStates['ShiftRight']) && enableDash) {
       if (curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS && !boostNeedsGroundTouch) {
         playerController.jump(btvec3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16));
         lastBoostTimeSeconds = curTimeSeconds;
@@ -267,7 +268,8 @@ const setupFirstPerson = async (
   registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void,
   playerConf: SceneConfig['player'],
   gravity: number | undefined,
-  inlineConsole: InlineConsole | null | undefined
+  inlineConsole: InlineConsole | null | undefined,
+  enableDash: boolean
 ) => {
   let GRAVITY = gravity ?? 40;
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
@@ -288,7 +290,8 @@ const setupFirstPerson = async (
     JUMP_VELOCITY,
     playerColliderRadius,
     playerColliderHeight,
-    ON_FLOOR_ACCELERATION_PER_SECOND
+    ON_FLOOR_ACCELERATION_PER_SECOND,
+    enableDash
   );
 
   document.addEventListener('keydown', event => {
@@ -511,8 +514,8 @@ export const buildViz = () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = enableShadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.shadowMap.autoUpdate = false;
-  renderer.shadowMap.needsUpdate = true;
+  // renderer.shadowMap.autoUpdate = false;
+  // renderer.shadowMap.needsUpdate = true;
 
   const stats = Stats.default();
   stats.domElement.style.position = 'absolute';
@@ -719,7 +722,8 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         viz.registerBeforeRenderCb,
         sceneConf.player,
         sceneConf.gravity,
-        inlineConsole
+        inlineConsole,
+        sceneConf.player?.enableDash ?? true
       );
       addTriMesh = fpCtx.addTriMesh;
     } else if (sceneConf.viewMode.type === 'orbit') {

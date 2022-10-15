@@ -5,21 +5,22 @@ import {
   BloomEffect,
   OutlineEffect,
   EffectPass,
-  Pass,
   SMAAEffect,
   BlendFunction,
+  KernelSize,
 } from 'postprocessing';
-import { LoopSubdivision } from 'three-subdivide';
 
 import type { VizState } from '../..';
 import type { SceneConfig } from '..';
-import { getMesh, mix, smoothstep } from '../../util';
+import { delay, getMesh, mix, smoothstep } from '../../util';
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
 import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
 import { initWebSynth } from 'src/viz/webSynth';
 import { InventoryItem } from 'src/viz/inventory/Inventory';
+import { GodraysPass } from 'three-good-godrays';
+import { MainRenderPass, ClearDepthPass, DepthPass } from 'src/viz/passes/depthPrepass';
 
 const locations = {
   spawn: {
@@ -260,7 +261,8 @@ const loadTextures = async () => {
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   // render a pass with no fragment shader just to populate the depth buffer
-  const depthPass = new RenderPass(viz.scene, viz.camera, new THREE.MeshBasicMaterial());
+  const depthPassMaterial = new THREE.MeshBasicMaterial();
+  const depthPass = new DepthPass(viz.scene, viz.camera, depthPassMaterial);
   depthPass.renderToScreen = false;
 
   const {
@@ -302,10 +304,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const DIRLIGHT_COLOR = 0xf73173;
   const dLight = new THREE.DirectionalLight(DIRLIGHT_COLOR, 0.5);
+  dLight.name = 'pink_dlight';
   dLight.castShadow = true;
 
   const BaseDLightY = 50;
-  dLight.position.set(0, BaseDLightY, -200);
+  dLight.position.set(0, BaseDLightY, -250);
   dLight.target.position.set(0, 0, 0);
   viz.scene.add(dLight.target);
   dLight.matrixWorldNeedsUpdate = true;
@@ -318,13 +321,20 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   dLight.shadow.camera.near = 1;
   dLight.shadow.camera.far = 900;
   dLight.shadow.camera.left = -550;
-  dLight.shadow.camera.right = 880;
-  dLight.shadow.camera.top = 100;
-  dLight.shadow.camera.bottom = -100;
+  dLight.shadow.camera.right = 885;
+  dLight.shadow.camera.top = 200;
+  dLight.shadow.camera.bottom = -100.0;
 
-  dLight.shadow.bias = 0.0049;
+  // dLight.shadow.bias = 0.00019;
 
   viz.scene.add(dLight);
+
+  // helper
+  // const dLightHelper = new THREE.DirectionalLightHelper(dLight, 5);
+  // viz.scene.add(dLightHelper);
+
+  // const dLightCameraHelper = new THREE.CameraHelper(dLight.shadow.camera);
+  // viz.scene.add(dLightCameraHelper);
 
   viz.camera.near = 0.22;
   viz.camera.far = 2500;
@@ -337,7 +347,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.renderer.shadowMap.needsUpdate = true;
 
   viz.registerBeforeRenderCb((curTimeSeconds: number) => {
-    dLight.position.y = BaseDLightY + Math.sin(curTimeSeconds * 0.05) * 50;
+    dLight.position.y = BaseDLightY + Math.sin(curTimeSeconds * 0.05) * 50 - 10;
   });
 
   const chasm = getMesh(loadedWorld, 'chasm');
@@ -667,50 +677,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   composer.addPass(depthPass);
 
-  class MainRenderPass extends RenderPass {
-    constructor(scene: THREE.Scene, camera: THREE.Camera) {
-      super(scene, camera);
-      this.clear = false;
-    }
-
-    render(
-      renderer: THREE.WebGLRenderer,
-      inputBuffer: THREE.WebGLRenderTarget,
-      outputBuffer: THREE.WebGLRenderTarget,
-      deltaTime?: number | undefined,
-      stencilTest?: boolean | undefined
-    ) {
-      const ctx = renderer.getContext();
-      ctx.depthFunc(ctx.EQUAL);
-      super.render.apply(this, [renderer, inputBuffer, outputBuffer, deltaTime, stencilTest]);
-      ctx.depthFunc(ctx.LEQUAL);
-    }
-  }
-
   const mainRenderPass = new MainRenderPass(viz.scene, viz.camera);
   composer.addPass(mainRenderPass);
-
-  // const bloomPass = new UnrealBloomPass(
-  //   new THREE.Vector2(viz.renderer.domElement.width, viz.renderer.domElement.height),
-  //   0.75,
-  //   0.9,
-  //   0.1689
-  // );
-  const bloomEffect = new BloomEffect({
-    intensity: 2,
-    // kernelSize: KernelSize.LARGE,
-    mipmapBlur: true,
-    luminanceThreshold: 0.33,
-    blendFunction: BlendFunction.ADD,
-    // blendFunction: BlendFunction.SCREEN,
-    luminanceSmoothing: 0.05,
-    // resolutionScale: 0.5,
-    radius: 0.86,
-  });
-  const bloomPass = new EffectPass(viz.camera, bloomEffect);
-  bloomPass.dithering = false;
-
-  composer.addPass(bloomPass);
 
   const torch = new THREE.Group();
   const torchRod = getMesh(loadedWorld, 'torch_rod');
@@ -809,32 +777,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       useIconVisible = false;
     }
   });
-
-  class ClearDepthPass extends Pass {
-    constructor() {
-      super();
-      this.needsSwap = false;
-    }
-
-    render(renderer: THREE.WebGLRenderer) {
-      renderer.clearDepth();
-    }
-  }
-
-  const equipmentScene = new THREE.Scene();
-  equipmentScene.add(new THREE.AmbientLight(0xffffff, 1));
-  equipmentScene.add(new THREE.DirectionalLight(0xffffff, 1));
-  const equipmentCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
-  equipmentCamera.position.set(0, 0, 0);
-  equipmentCamera.lookAt(0, 0, -1);
-  viz.registerResizeCb(() => {
-    equipmentCamera.aspect = window.innerWidth / window.innerHeight;
-    equipmentCamera.updateProjectionMatrix();
-  });
-  const equipmentPass = new RenderPass(equipmentScene, equipmentCamera, undefined);
-  equipmentPass.clear = false;
-  composer.addPass(new ClearDepthPass());
-  composer.addPass(equipmentPass);
 
   class TorchItem extends InventoryItem {
     private obj: THREE.Group;
@@ -1178,6 +1120,46 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   // POST-PROCESSING
 
+  const godraysPass = new GodraysPass(dLight, viz.camera, {
+    color: dLight.color,
+    density: 1 / 80,
+    maxDensity: 0.8,
+    distanceAttenuation: 0.4,
+    raymarchSteps: 86,
+    blur: { kernelSize: KernelSize.SMALL, variance: 0.25 },
+  });
+  godraysPass.renderToScreen = false;
+  composer.addPass(godraysPass);
+
+  const bloomEffect = new BloomEffect({
+    intensity: 2,
+    mipmapBlur: true,
+    luminanceThreshold: 0.33,
+    blendFunction: BlendFunction.ADD,
+    luminanceSmoothing: 0.05,
+    radius: 0.86,
+  });
+  const bloomPass = new EffectPass(viz.camera, bloomEffect);
+  bloomPass.dithering = false;
+
+  composer.addPass(bloomPass);
+
+  const equipmentScene = new THREE.Scene();
+  equipmentScene.add(new THREE.AmbientLight(0xffffff, 1));
+  equipmentScene.add(new THREE.DirectionalLight(0xffffff, 1));
+  const equipmentCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
+  equipmentCamera.position.set(0, 0, 0);
+  equipmentCamera.lookAt(0, 0, -1);
+  viz.registerResizeCb(() => {
+    equipmentCamera.aspect = window.innerWidth / window.innerHeight;
+    equipmentCamera.updateProjectionMatrix();
+  });
+  const equipmentPass = new RenderPass(equipmentScene, equipmentCamera, undefined);
+  equipmentPass.clear = false;
+
+  composer.addPass(new ClearDepthPass());
+  composer.addPass(equipmentPass);
+
   const aaPass = new EffectPass(viz.camera, new SMAAEffect());
   composer.addPass(aaPass);
 
@@ -1190,14 +1172,30 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
   viz.renderer.toneMappingExposure = 1;
 
-  // delay(1000)
-  //   .then(() => initWebSynth({ compositionIDToLoad: 72 }))
-  //   .then(async ctx => {
-  //     await delay(1000);
+  const customDepthMaterial = new THREE.MeshDepthMaterial({
+    depthPacking: THREE.RGBADepthPacking,
+  });
+  customDepthMaterial.depthWrite = false;
+  customDepthMaterial.depthTest = false;
+  viz.scene.traverse(obj => {
+    if (obj instanceof THREE.Mesh) {
+      obj.customDepthMaterial = customDepthMaterial;
+    }
+  });
+  loadedWorld.traverse(obj => {
+    if (obj instanceof THREE.Mesh) {
+      obj.customDepthMaterial = customDepthMaterial;
+    }
+  });
 
-  //     ctx.setGlobalBpm(55);
-  //     ctx.startAll();
-  //   });
+  delay(1000)
+    .then(() => initWebSynth({ compositionIDToLoad: 72 }))
+    .then(async ctx => {
+      await delay(1000);
+
+      ctx.setGlobalBpm(55);
+      ctx.startAll();
+    });
 
   return {
     locations,

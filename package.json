@@ -43,7 +43,7 @@
     "postprocessing": "^6.28.7",
     "svelte-seo": "^1.4.1",
     "three": "^0.145.0",
-    "three-good-godrays": "^0.1.0",
+    "three-good-godrays": "^0.4.0",
     "three-subdivide": "^1.1.0",
     "tweakpane": "^3.1.0"
   }

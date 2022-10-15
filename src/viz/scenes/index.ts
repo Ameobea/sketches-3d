@@ -14,6 +14,10 @@ export interface SceneConfig {
   debugPos?: boolean;
   gravity?: number;
   player?: {
+    /**
+     * Default is true
+     */
+    enableDash?: boolean;
     jumpVelocity?: number;
     colliderCapsuleSize?: { height: number; radius: number };
     movementAccelPerSecond?: { onGround: number; inAir: number };
@@ -101,5 +105,11 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./godrays-test/godraysTest').then(mod => mod.processLoadedScene),
     metadata: { title: 'godrays_test' },
     gltfName: null,
+  },
+  rainy: {
+    sceneName: 'Scene',
+    sceneLoader: () => import('./rainy/rainy').then(mod => mod.processLoadedScene),
+    metadata: { title: 'rainy' },
+    gltfName: 'rainy',
   },
 };
