@@ -567,8 +567,6 @@ varying vec3 pos;
 varying vec3 vNormalAbsolute;
 
 void main() {
-  vNormalAbsolute = normal;
-
   #include <begin_vertex>
   #include <morphtarget_vertex>
   #include <skinning_vertex>
@@ -582,10 +580,21 @@ void main() {
   vec3 vWorldPositionMine = worldPositionMine.xyz;
   pos = vWorldPositionMine;
 
+  #include <beginnormal_vertex>
+  #include <morphnormal_vertex>
+  #include <skinbase_vertex>
+  #include <skinnormal_vertex>
+  #include <defaultnormal_vertex>
+  #include <normal_vertex>
+
+  vNormalAbsolute = normal;
+
   ${(() => {
     if (useGeneratedUVs) {
       return `
-      vUv = generateUV(pos, vNormalAbsolute);
+      // convert normal into the world space
+      vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
+      vUv = generateUV(pos, worldNormal);
       ${randomizeUVOffset ? '' : 'vUv = ( uvTransform * vec3( vUv, 1 ) ).xy;'}`;
     }
 
@@ -603,12 +612,6 @@ void main() {
   #include <uv2_vertex>
   #include <color_vertex>
   #include <morphcolor_vertex>
-  #include <beginnormal_vertex>
-  #include <morphnormal_vertex>
-  #include <skinbase_vertex>
-  #include <skinnormal_vertex>
-  #include <defaultnormal_vertex>
-  #include <normal_vertex>
 
   vViewPosition = - mvPosition.xyz;
 
@@ -762,6 +765,28 @@ void main() {
 	#include <clearcoat_normal_fragment_maps>
 
   ${buildRunColorShaderFragment()}
+
+  // float x = abs(vNormalAbsolute.x);
+  // float y = abs(vNormalAbsolute.y);
+  // float z = abs(vNormalAbsolute.z);
+
+  // if (x > y && x > z) {
+  //   gl_FragColor = vec4(1., 0., 0., 1.);
+  //   return;
+  // } else if (y > x && y > z) {
+  //   gl_FragColor = vec4(0., 1., 0., 1.);
+  //   return;
+  // } else {
+  //   gl_FragColor = vec4(0., 0., 1., 1.);
+  //   return;
+  // }
+  // gl_FragColor = vec4(
+  //   vNormalAbsolute.x < 0. ? -vNormalAbsolute.x : 0.,
+  //   vNormalAbsolute.y < 0. ? -vNormalAbsolute.y : 0.,
+  //   vNormalAbsolute.z < 0. ? -vNormalAbsolute.z : 0.,
+  //   1.
+  // );
+  // return;
 
   ${
     normalShader
