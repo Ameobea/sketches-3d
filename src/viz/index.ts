@@ -9,10 +9,10 @@ import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-import { buildDefaultSceneConfig, ScenesByName, type SceneConfig } from './scenes';
-import * as Conf from './conf';
 import { getAmmoJS } from './collision';
+import * as Conf from './conf';
 import { Inventory } from './inventory/Inventory';
+import { buildDefaultSceneConfig, type SceneConfig, ScenesByName } from './scenes';
 
 const initBulletPhysics = (
   camera: THREE.Camera,

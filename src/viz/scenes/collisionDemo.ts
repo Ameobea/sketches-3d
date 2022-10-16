@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import type { SceneConfig } from '.';
 
+import type { SceneConfig } from '.';
 import type { VizState } from '..';
 import { initBaseScene } from '../util';
 

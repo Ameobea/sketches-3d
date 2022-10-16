@@ -2,10 +2,9 @@ import * as THREE from 'three';
 
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
-
 import TowerEntryPlinthColorShader from './shaders/color.frag?raw';
-import TowerEntryPlinthRoughnessShader from './shaders/roughness.frag?raw';
 import TowerEntryPlinthMetalnessShader from './shaders/metalness.frag?raw';
+import TowerEntryPlinthRoughnessShader from './shaders/roughness.frag?raw';
 
 export const buildMuddyGoldenLoopsMat = async (loader: THREE.ImageBitmapLoader) => {
   const texture = await loadTexture(

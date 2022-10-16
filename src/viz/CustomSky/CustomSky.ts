@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
-import SkyVertexShader from './shaders/vertex.vert?raw';
 import SkyFragmentShader from './shaders/fragment.frag?raw';
+import SkyVertexShader from './shaders/vertex.vert?raw';
 
 /**
  * Based on "A Practical Analytic Model for Daylight"

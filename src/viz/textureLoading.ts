@@ -1,6 +1,6 @@
 import * as Comlink from 'comlink';
 import * as THREE from 'three';
-import { getEngine } from './engine';
+
 import { clamp } from './util';
 
 interface TextureArgs {

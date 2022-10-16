@@ -5,13 +5,13 @@
  * With cleanup and minor changes
  */
 
-import * as THREE from 'three';
 import { Disposable, Pass, Resizable } from 'postprocessing';
+import * as THREE from 'three';
 
-import GodraysVertexShader from './godrays.vert?raw';
-import GodraysFragmentShader from './godrays.frag?raw';
 import GodraysCompositorShader from './compositor.frag?raw';
 import GodraysCompositorVertexShader from './compositor.vert?raw';
+import GodraysFragmentShader from './godrays.frag?raw';
+import GodraysVertexShader from './godrays.vert?raw';
 
 const GODRAYS_RESOLUTION_SCALE = 0.5;
 

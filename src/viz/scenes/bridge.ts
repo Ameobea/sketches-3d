@@ -3,14 +3,13 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
+import type { SceneConfig } from '.';
 import type { VizState } from '..';
-
-import { buildCustomShaderArgs } from '../shaders/customShader';
-import bridgeShader from '../shaders/bridge.frag?raw';
 import bigCubeShader from '../shaders/bigCube.frag?raw';
+import bridgeShader from '../shaders/bridge.frag?raw';
+import { buildCustomShaderArgs } from '../shaders/customShader';
 import redNoiseShader from '../shaders/redNoise.frag?raw';
 import { getFlickerActivation, initBaseScene } from '../util';
-import type { SceneConfig } from '.';
 
 const buildBridge = (viz: VizState, bridge: THREE.Mesh) => {
   bridge.material = new THREE.ShaderMaterial(

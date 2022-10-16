@@ -2,14 +2,14 @@ import * as THREE from 'three';
 
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
-import { buildCustomShader } from '../../shaders/customShader';
 import bigCubeColorShader from '../../shaders/bigCube.frag?raw';
-import groundRoughnessShader from '../../shaders/fractal_cube/ground/roughness.frag?raw';
+import { buildCustomShader } from '../../shaders/customShader';
 import groundColorShader from '../../shaders/fractal_cube/ground/color.frag?raw';
+import groundRoughnessShader from '../../shaders/fractal_cube/ground/roughness.frag?raw';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
 import { initBaseScene } from '../../util';
-import { buildCube } from './genCube';
 import { initWebSynth } from '../../webSynth';
+import { buildCube } from './genCube';
 
 const locations = {
   spawn: {
@@ -25,8 +25,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const base = initBaseScene(viz);
   base.light.intensity = 1.5;
   base.ambientlight.intensity = 0.5;
-
-  const enginePromise = import('../../wasmComp/engine');
 
   const loader = new THREE.ImageBitmapLoader();
   const groundTexture = await loadTexture(
@@ -51,8 +49,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   ctx.drawImage(srcData, 0, 0);
   document.body.appendChild(canvas);
 
-  const engine = await enginePromise;
-  await engine.default();
   const groundNormalTexture = await generateNormalMapFromTexture(groundTexture);
 
   const uvTransform = new THREE.Matrix3().scale(64, 64);

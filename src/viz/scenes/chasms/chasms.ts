@@ -1,26 +1,26 @@
-import * as THREE from 'three';
 import {
-  EffectComposer,
-  RenderPass,
-  BloomEffect,
-  OutlineEffect,
-  EffectPass,
-  SMAAEffect,
   BlendFunction,
+  BloomEffect,
+  EffectComposer,
+  EffectPass,
   KernelSize,
+  OutlineEffect,
+  RenderPass,
+  SMAAEffect,
 } from 'postprocessing';
+import * as THREE from 'three';
+import { GodraysPass } from 'three-good-godrays';
 
-import type { VizState } from '../..';
+import { InventoryItem } from 'src/viz/inventory/Inventory';
+import { ClearDepthPass, DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
+import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
-import { delay, getMesh, mix, smoothstep } from '../../util';
+import type { VizState } from '../..';
+import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
-import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
-import { initWebSynth } from 'src/viz/webSynth';
-import { InventoryItem } from 'src/viz/inventory/Inventory';
-import { GodraysPass } from 'three-good-godrays';
-import { MainRenderPass, ClearDepthPass, DepthPass } from 'src/viz/passes/depthPrepass';
+import { delay, getMesh, mix, smoothstep } from '../../util';
 
 const locations = {
   spawn: {

@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { UniformsLib } from 'three';
 
-import noiseShaders from './noise.frag?raw';
-import noise2Shaders from './noise2.frag?raw';
 import commonShaderCode from './common.frag?raw';
-import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
-import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
+import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import GeneratedUVsFragment from './generatedUVs.vert?raw';
+import noise2Shaders from './noise2.frag?raw';
+import noiseShaders from './noise.frag?raw';
+import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 
 const DEFAULT_MAP_DISABLE_DISTANCE = 200;
 const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
@@ -81,7 +81,8 @@ interface CustomShaderProps {
   alphaTest?: number;
   fogMultiplier?: number;
   /**
-   * If provided, maps will no longer be read once the fragment is this distance from the camera.  Set to `null` to disable.
+   * If provided, maps will no longer be read once the fragment is this distance from the camera. Set to
+   * `null` to disable.
    */
   mapDisableDistance?: number | null;
   /**
@@ -89,8 +90,8 @@ interface CustomShaderProps {
    */
   mapDisableTransitionThreshold?: number;
   /**
-   * If greater than 0, fog will be darkened by shadows by this amount.  A value of 1 means that the fog color of a fully shadowed fragment will be darkened
-   * to the shadow color completely.
+   * If greater than 0, fog will be darkened by shadows by this amount. A value of 1 means that the fog color
+   * of a fully shadowed fragment will be darkened to the shadow color completely.
    */
   fogShadowFactor?: number;
   ambientLightScale?: number;
@@ -117,13 +118,13 @@ interface CustomShaderOptions {
   /**
    * If set, a normal map will be generated based on derivatives in magnitude of generated diffuse colors.
    *
-   * Note that this is a pretty broken implementation right now.  There are huge aliasing issues and it looks very bad on
-   * surfaces that have a high angle.
+   * Note that this is a pretty broken implementation right now. There are huge aliasing issues and it looks
+   * very bad on surfaces that have a high angle.
    */
   useComputedNormalMap?: boolean;
   /**
-   * If set, the provided `map` will be treated as a combined grayscale diffuse + normal map.  The diffuse component will
-   * be read from the R channel and the normal map will be read from the GBA channels.
+   * If set, the provided `map` will be treated as a combined grayscale diffuse + normal map. The diffuse
+   * component will be read from the R channel and the normal map will be read from the GBA channels.
    */
   usePackedDiffuseNormalGBA?: boolean | { lut: Uint8Array };
   readRoughnessMapFromRChannel?: boolean;
@@ -185,7 +186,7 @@ export const buildCustomShaderArgs = (
     UniformsLib.emissivemap,
     // UniformsLib.bumpmap,
     UniformsLib.normalmap,
-    UniformsLib.displacementmap,
+    // UniformsLib.displacementmap,
     UniformsLib.roughnessmap,
     UniformsLib.metalnessmap,
     UniformsLib.fog,
@@ -194,7 +195,7 @@ export const buildCustomShaderArgs = (
       emissive: { value: new THREE.Color(0x000000) },
       roughness: { value: 1.0 },
       metalness: { value: 0.0 },
-      envMapIntensity: { value: 1 },
+      // envMapIntensity: { value: 1 },
     },
   ]);
   uniforms.normalScale = { type: 'v2', value: new THREE.Vector2(normalScale, normalScale) };
@@ -252,9 +253,11 @@ export const buildCustomShaderArgs = (
   if (usePackedDiffuseNormalGBA && useComputedNormalMap) {
     throw new Error('Cannot use packed diffuse/normal map with computed normal map');
   }
-
   if (useGeneratedUVs && !map) {
     throw new Error('Cannot use generated UVs without a map');
+  }
+  if (typeof usePackedDiffuseNormalGBA === 'object' && usePackedDiffuseNormalGBA.lut && tileBreaking) {
+    throw new Error('LUT and tile breaking are currently broken together');
   }
 
   const buildUVVertexFragment = () => {

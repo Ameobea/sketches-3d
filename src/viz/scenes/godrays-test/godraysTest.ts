@@ -1,9 +1,9 @@
 import { EffectComposer, EffectPass, RenderPass } from 'postprocessing';
-import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import * as THREE from 'three';
 import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 
+import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
 

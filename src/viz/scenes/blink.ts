@@ -11,7 +11,7 @@ const buildControls = (
   defaultConfJson: string,
   onChange: (newConfJson: Record<string, number>) => void,
   onColorChange: (newColor: number, colorIx: number) => void,
-  engine: typeof import('../wasmComp/engine'),
+  engine: typeof import('../wasmComp/conduit_particles'),
   ctxPtrs: number[]
 ) => {
   const defaultConf = JSON.parse(defaultConfJson);
@@ -201,7 +201,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     obj.removeFromParent();
   });
 
-  const engine = await import('../wasmComp/engine');
+  const engine = await import('../wasmComp/conduit_particles');
   await engine.default();
 
   const { ambientlight, light } = initBaseScene(viz);
@@ -247,7 +247,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const MAX_PARTICLE_COUNT = 80_000;
   const conduitParticles = new THREE.InstancedMesh(
-    new THREE.BoxBufferGeometry(1.3, 1.3, 1.3),
+    new THREE.BoxGeometry(1.3, 1.3, 1.3),
     // new THREE.MeshStandardMaterial({ color: 0x8a0606, metalness: 0.8, roughness: 1 }),
     new THREE.MeshBasicMaterial({}),
     MAX_PARTICLE_COUNT
@@ -261,8 +261,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.scene.add(conduitParticles);
 
   const conduitParticles2 = new THREE.InstancedMesh(
-    new THREE.BoxBufferGeometry(1.3, 1.3, 1.3),
-    // new THREE.MeshStandardMaterial({ color: 0xff2424, metalness: 0.8, roughness: 1 }),
+    new THREE.BoxGeometry(1.3, 1.3, 1.3),
     new THREE.MeshBasicMaterial({}),
     MAX_PARTICLE_COUNT
   );

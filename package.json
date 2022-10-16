@@ -14,6 +14,7 @@
   "devDependencies": {
     "@cloudflare/kv-asset-handler": "^0.2.0",
     "@cloudflare/workers-types": "^3.16.0",
+    "@ianvs/prettier-plugin-sort-imports": "^3.4.2",
     "@sveltejs/adapter-auto": "next",
     "@sveltejs/adapter-static": "^1.0.0-next.44",
     "@sveltejs/kit": "=1.0.0-next.509",

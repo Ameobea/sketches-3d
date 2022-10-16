@@ -1,23 +1,22 @@
 import * as THREE from 'three';
 
-import type { VizState } from '../../../viz';
-import { delay, getMesh, initBaseScene, smoothstep } from '../../../viz/util';
 import type { SceneConfig } from '..';
+import type { VizState } from '../../../viz';
+import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
 import { buildCustomShader } from '../../../viz/shaders/customShader';
+import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
+import { delay, getMesh, initBaseScene, smoothstep } from '../../../viz/util';
+import { initWebSynth } from '../../../viz/webSynth';
+import { CustomSky as Sky } from '../../CustomSky';
+import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
 import BridgeTopRoughnessShader from '../../shaders/bridge2/bridge_top/roughness.frag?raw';
 import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
-import PlatformRoughnessShader from '../../shaders/bridge2/platform/roughness.frag?raw';
 import PlatformColorShader from '../../shaders/bridge2/platform/color.frag?raw';
-import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
-import TowerGlowVertexShader from '../../shaders/bridge2/tower_glow/vertex.vert?raw';
-import TowerGlowColorShader from '../../shaders/bridge2/tower_glow/color.frag?raw';
+import PlatformRoughnessShader from '../../shaders/bridge2/platform/roughness.frag?raw';
 import Rock1RoughnessShader from '../../shaders/bridge2/rock1/roughness.frag?raw';
+import TowerGlowColorShader from '../../shaders/bridge2/tower_glow/color.frag?raw';
+import TowerGlowVertexShader from '../../shaders/bridge2/tower_glow/vertex.vert?raw';
 import UpperRidgesColorShader from '../../shaders/bridge2/upper_ridges/color.frag?raw';
-import { CustomSky as Sky } from '../../CustomSky';
-import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
-import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
-import { getEngine } from '../../../viz/engine';
-import { initWebSynth } from '../../../viz/webSynth';
 
 const locations = {
   spawn: {
@@ -683,55 +682,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const sky = buildSky();
   viz.scene.add(sky);
 
-  const pillars = new Array(6).fill(null).map((_, i) => {
+  const _pillars = new Array(6).fill(null).map((_, i) => {
     const name = `pillar${i + 1}`;
     const obj = getMesh(loadedWorld, name);
     obj.removeFromParent();
     return obj;
   });
-
-  let combinedPillarTexture: THREE.Texture | null = null;
-  for (const obj of pillars) {
-    if (!combinedPillarTexture) {
-      const pillarTexture = (obj.material as THREE.MeshStandardMaterial).map!;
-      // combinedPillarTexture = await generateNormalMapFromTexture(pillarTexture, {}, true);
-      // TODO USE THIS once the custom shader is fixed for instancing
-    }
-
-    // const mat = buildCustomShader(
-    //   {
-    //     map: combinedPillarTexture,
-    //     color: new THREE.Color(0xffffff),
-    //     fogMultiplier: 0.5,
-    //   },
-    //   {},
-    //   { usePackedDiffuseNormalGBA: true, useEarlyDepthTest:false }
-    // );
-    // obj.material = mat;
-  }
-
-  const engine = await getEngine();
-  const pillarCtxPtr = engine.create_pillar_ctx();
-  // TODO: update every frame
-  engine.compute_pillar_positions(pillarCtxPtr);
-
-  for (let pillarIx = 0; pillarIx < pillars.length; pillarIx++) {
-    const pillarMesh = pillars[pillarIx];
-    const transforms = engine.get_pillar_transformations(pillarCtxPtr, pillarIx);
-    (pillarMesh.material as THREE.MeshStandardMaterial).roughness = 0.95;
-    (pillarMesh.material as THREE.MeshStandardMaterial).map = pillarMap;
-    (pillarMesh.material as THREE.MeshStandardMaterial).normalMap = pillarNormalMap;
-
-    const instancedMesh = new THREE.InstancedMesh(
-      pillarMesh.geometry,
-      pillarMesh.material,
-      transforms.length / 16
-    );
-    instancedMesh.name = `pillar${pillarIx + 1}_nocollide`;
-    const instanceMatrix = instancedMesh.instanceMatrix;
-    instanceMatrix.set(transforms);
-    // loadedWorld.add(instancedMesh);
-  }
 
   const skyMaterial = sky.material as THREE.ShaderMaterial;
   const sun = new THREE.Vector3();

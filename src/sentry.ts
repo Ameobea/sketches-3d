@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/browser';
-import { Integrations } from '@sentry/tracing';
 import { CaptureConsole } from '@sentry/integrations';
+import { Integrations } from '@sentry/tracing';
 
 let sentryInitialized = false;
 let sentryDisabled = false;

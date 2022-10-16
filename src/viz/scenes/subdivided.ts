@@ -3,12 +3,12 @@ import * as THREE from 'three';
 import type { SceneConfig } from '.';
 import type { VizState } from '..';
 import { buildCustomShader } from '../shaders/customShader';
-import { initBaseScene } from '../util';
-import pillarColorShader from '../shaders/subdivided/pillar/color.frag?raw';
-import pillarRoghnessShader from '../shaders/subdivided/pillar/roughness.frag?raw';
-import PillarVertexShaderFragment from '../shaders/subdivided/pillar/displacement.vert?raw';
 import groundRoughnessShader from '../shaders/subdivided/ground/roughness.frag?raw';
+import pillarColorShader from '../shaders/subdivided/pillar/color.frag?raw';
+import PillarVertexShaderFragment from '../shaders/subdivided/pillar/displacement.vert?raw';
+import pillarRoghnessShader from '../shaders/subdivided/pillar/roughness.frag?raw';
 import { generateNormalMapFromTexture, loadTexture } from '../textureLoading';
+import { initBaseScene } from '../util';
 
 const locations = {
   spawn: { pos: new THREE.Vector3(52.7, 1.35, -5.515), rot: new THREE.Vector3(0.51, 1.65, 0) },

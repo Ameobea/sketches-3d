@@ -1,9 +1,3 @@
-import * as THREE from 'three';
-
-import type { VizState } from 'src/viz';
-import type { SceneConfig } from '..';
-import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
-import { buildCustomShader } from 'src/viz/shaders/customShader';
 import {
   BlendFunction,
   DepthOfFieldEffect,
@@ -14,7 +8,13 @@ import {
   VignetteEffect,
   VignetteTechnique,
 } from 'postprocessing';
+import * as THREE from 'three';
+
+import type { VizState } from 'src/viz';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
+import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
+import type { SceneConfig } from '..';
 import { FogEffect } from './fogShader';
 
 const locations = {
@@ -81,7 +81,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
     {
       usePackedDiffuseNormalGBA: { lut: cementLUT },
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      // randomizeUVOffset: true,
     }
   );
   const walkwayMat = buildCustomShader(
@@ -90,7 +90,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
     {
       usePackedDiffuseNormalGBA: { lut: cementLUT },
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      // randomizeUVOffset: true,
     }
   );
 
