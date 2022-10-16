@@ -9,7 +9,7 @@ vec2 generateUV(vec3 pos, vec3 normal) {
 
   if (absNormal.x > absNormal.y) {
     if (absNormal.x > absNormal.z) {
-      uv = vec2(pos.z, pos.y);
+      uv = vec2(pos.y, pos.z);
     } else {
       uv = vec2(pos.x, pos.y);
     }

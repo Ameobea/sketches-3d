@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { LoopSubdivision } from 'three-subdivide';
 
 import type { VizState } from 'src/viz';
 import type { SceneConfig } from '..';
@@ -98,37 +97,48 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
       return;
     }
 
+    const lowerName = obj.name.toLowerCase();
+
     if (
-      obj.name.startsWith('building') ||
+      lowerName.startsWith('building') ||
       obj.parent?.name.startsWith('building') ||
       obj.parent?.parent?.name.startsWith('building')
     ) {
       obj.userData.nocollide = true;
-    } else {
-      console.log(obj.name);
     }
 
     if (obj.material.name === 'cement') {
       obj.material = cementMat;
     }
 
-    if (obj.name.startsWith('walkway')) {
+    if (lowerName.startsWith('walkway')) {
       // TODO: new mat
       obj.material = cementMat;
       // obj.userData.convexhull = true;
     }
 
-    // if (obj.name === 'walkway_base') {
+    // if (lowerName === 'walkway_base') {
     //   const newGeom = LoopSubdivision.modify(obj.geometry, 4, { flatOnly: true });
     //   obj.geometry.dispose();
     //   obj.geometry = newGeom;
     //   // wireframe: true,
     //   obj.material = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true });
     // }
+
+    if (lowerName.startsWith('ivy')) {
+      obj.userData.nocollide = true;
+    }
+
+    if (lowerName.startsWith('railing')) {
+      obj.userData.convexhull = true;
+    }
   });
 };
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+  viz.camera.far = 500;
+  viz.camera.updateProjectionMatrix();
+
   await initScene(viz, loadedWorld);
 
   const composer = new EffectComposer(viz.renderer);
@@ -143,13 +153,13 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   composer.addPass(mainRenderPass);
 
   const depthOfFieldEffect = new DepthOfFieldEffect(viz.camera, {
-    worldFocusDistance: 3,
+    worldFocusDistance: 10,
     worldFocusRange: 50,
-    bokehScale: 5,
-    blendFunction: BlendFunction.AVERAGE,
+    bokehScale: 6,
+    // blendFunction: BlendFunction.AVERAGE,
   });
   depthOfFieldEffect.blurPass.kernelSize = KernelSize.VERY_SMALL;
-  const fogEffect = new FogEffect(BlendFunction.ALPHA);
+  const fogEffect = new FogEffect(BlendFunction.SRC);
   const smaaEffect = new SMAAEffect({});
 
   composer.addPass(new EffectPass(viz.camera, fogEffect));
@@ -200,7 +210,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       enableDash: false,
       colliderCapsuleSize: {
         height: 1.25,
-        radius: 0.1,
+        radius: 0.3,
       },
       movementAccelPerSecond: {
         onGround: 3,
