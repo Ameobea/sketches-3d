@@ -272,8 +272,8 @@ export const buildCustomShaderArgs = (
         float hash = fract(sin(dot(vec3(modelWorldX, modelWorldY, modelWorldZ), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
 
         vec2 uvOffset = vec2(
-          fract(hash * 300.),
-          fract(hash * 3300.)
+          fract(hash * 3502.2),
+          fract(hash * 3200.)
         );
 
         // Add \`uvUffset\` to \`vUv\` to randomize the UVs.
@@ -768,28 +768,6 @@ void main() {
 	#include <clearcoat_normal_fragment_maps>
 
   ${buildRunColorShaderFragment()}
-
-  // float x = abs(vNormalAbsolute.x);
-  // float y = abs(vNormalAbsolute.y);
-  // float z = abs(vNormalAbsolute.z);
-
-  // if (x > y && x > z) {
-  //   gl_FragColor = vec4(1., 0., 0., 1.);
-  //   return;
-  // } else if (y > x && y > z) {
-  //   gl_FragColor = vec4(0., 1., 0., 1.);
-  //   return;
-  // } else {
-  //   gl_FragColor = vec4(0., 0., 1., 1.);
-  //   return;
-  // }
-  // gl_FragColor = vec4(
-  //   vNormalAbsolute.x < 0. ? -vNormalAbsolute.x : 0.,
-  //   vNormalAbsolute.y < 0. ? -vNormalAbsolute.y : 0.,
-  //   vNormalAbsolute.z < 0. ? -vNormalAbsolute.z : 0.,
-  //   1.
-  // );
-  // return;
 
   ${
     normalShader

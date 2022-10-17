@@ -4,7 +4,7 @@
 
 #define CON 1      // contrast preserving interpolation. cf https://www.shadertoy.com/view/4dcSDr
 #define Z 8.     // patch scale inside example texture
-#define SKIP_LOW_MAGNITUDE_LOOKUPS 1 // Skips texture lookups from tiles that have low mix magnitude
+#define SKIP_LOW_MAGNITUDE_LOOKUPS 0 // Skips texture lookups from tiles that have low mix magnitude
 #define LOOKUP_SKIP_THRESHOLD 0.28 // The mix magnitude under which texture lookups will be skipped if `SKIP_LOW_MAGNITUDE_LOOKUPS` is enabled
 #define LOW_MAG_SKIP_FADE 0.02
 

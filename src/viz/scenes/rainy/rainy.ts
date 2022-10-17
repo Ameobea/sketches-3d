@@ -13,7 +13,13 @@ import * as THREE from 'three';
 import type { VizState } from 'src/viz';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
+import {
+  genCrossfadedTexture,
+  generateNormalMapFromTexture,
+  loadRawTexture,
+  loadTexture,
+} from 'src/viz/textureLoading';
+import { getTextureCrossfadeWorkers } from 'src/viz/workerPool';
 import type { SceneConfig } from '..';
 import { FogEffect } from './fogShader';
 
@@ -42,14 +48,41 @@ const loadTextures = async () => {
     magFilter: THREE.NearestFilter,
   });
 
-  const [cementTextureCombinedDiffuseNormal, cloudsBgTexture] = await Promise.all([
+  const crossfadedCementTextureP = Promise.all([
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000133.3770516998.png'),
+    // // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000009.2318848913.png'),
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000138.4245304878.png'),
+    // // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000009.1077012653.png'),
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000223.312073069.png'),
+    // // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000010.1450242858.png'),
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000194.680783928.png'),
+    // // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000011.130201229.png'),
+
+    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000219.2405862953.png'),
+    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000222.892303155.png'),
+    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000206.3766963451.png'),
+    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000212.2646278093.png'),
+
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000008.1421342892.png'),
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000008.1421342892.png'),
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000008.1421342892.png'),
+    // loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000008.1421342892.png'),
+  ]).then(async textures => genCrossfadedTexture(textures, 0.2, {}));
+  // const crossfadedCementTextureP = loadTexture(
+  //   loader,
+  //   'https://ameo-imgen.ameo.workers.dev/img-samples/000223.312073069.png'
+  // );
+
+  const [cementTextureCombinedDiffuseNormal, cloudsBgTexture, crossfadedCementTexture] = await Promise.all([
     cementTextureCombinedDiffuseNormalP,
     cloudsBgTextureP,
+    crossfadedCementTextureP,
   ]);
 
   return {
     cementTextureCombinedDiffuseNormal,
     cloudsBgTexture,
+    crossfadedCementTexture,
   };
 };
 
@@ -60,7 +93,8 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
   // const fog = new THREE.Fog(0x282828, 0.1, 40);
   // viz.scene.fog = fog;
 
-  const { cementTextureCombinedDiffuseNormal, cloudsBgTexture } = await loadTextures();
+  const { cementTextureCombinedDiffuseNormal, cloudsBgTexture, crossfadedCementTexture } =
+    await loadTextures();
 
   viz.scene.background = cloudsBgTexture;
 
@@ -85,12 +119,13 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
     }
   );
   const walkwayMat = buildCustomShader(
-    { map: cementTextureCombinedDiffuseNormal, uvTransform: new THREE.Matrix3().scale(0.1, 0.1) },
+    { map: crossfadedCementTexture, uvTransform: new THREE.Matrix3().scale(0.03, 0.03) },
     {},
     {
-      usePackedDiffuseNormalGBA: { lut: cementLUT },
+      // usePackedDiffuseNormalGBA: { lut: cementLUT },
       useGeneratedUVs: true,
-      // randomizeUVOffset: true,
+      randomizeUVOffset: true,
+      // tileBreaking: { type: 'neyret', patchScale: 2 },
     }
   );
 

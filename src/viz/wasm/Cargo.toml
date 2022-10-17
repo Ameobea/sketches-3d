@@ -2,7 +2,8 @@
 members = [
   "normal_map_gen",
   "bridge2",
-  "conduit_particles"
+  "conduit_particles",
+  "texture_crossfade",
 ]
 
 [profile.release]
