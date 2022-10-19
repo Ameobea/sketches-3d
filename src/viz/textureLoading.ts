@@ -150,17 +150,8 @@ export const genCrossfadedTexture = async (
   });
 
   const workerPool = await workersP;
-  console.log(canvas.width);
   const crossfadedTextureBytes: Uint8Array = await workerPool.submitWork(worker =>
-    worker.genCrossfadedTexture(
-      // Comlink.transfer(
-      //   textureData,
-      //   textureData.map(data => data.buffer)
-      // ),
-      textureData,
-      canvas.width,
-      threshold
-    )
+    worker.genCrossfadedTexture(textureData, canvas.width, threshold)
   );
   if (
     crossfadedTextureBytes.length !==

@@ -64,6 +64,8 @@ const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
 };
 
 interface CustomShaderProps {
+  name?: string;
+  side?: THREE.Side;
   roughness?: number;
   metalness?: number;
   color?: THREE.Color;
@@ -879,6 +881,13 @@ export const buildCustomShader = (
   opts?: CustomShaderOptions
 ) => {
   const mat = new CustomShaderMaterial(buildCustomShaderArgs(props, shaders, opts));
+
+  if (props.name) {
+    mat.name = props.name;
+  }
+  if (props.side !== null && props.side !== undefined) {
+    mat.side = props.side;
+  }
 
   if (opts?.useComputedNormalMap || opts?.usePackedDiffuseNormalGBA) {
     mat.defines.TANGENTSPACE_NORMALMAP = '1';

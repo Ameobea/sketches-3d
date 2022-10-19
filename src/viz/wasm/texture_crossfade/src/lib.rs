@@ -145,24 +145,24 @@ pub extern "C" fn generate(size: usize, threshold: f32) -> *mut u8 {
     panic!("Textures count must be a power of 2");
   }
 
-  /*
-  DEBUG
-  for y in 0..size {
-    for x in 0..size {
-      for (i, color) in [
-        (0usize, [255, 0, 0]),
-        (1, [0, 255, 0]),
-        (2, [0, 0, 255]),
-        (3, [255, 255, 0]),
-      ] {
-        let texture = &mut textures[i];
-        let magnitude = ((x as f32 / size as f32) * (y as f32 / size as f32)) / 2.;
-        texture[y * size * 4 + x * 4 + 0] = (magnitude * color[0] as f32) as u8;
-        texture[y * size * 4 + x * 4 + 1] = (magnitude * color[1] as f32) as u8;
-        texture[y * size * 4 + x * 4 + 2] = (magnitude * color[2] as f32) as u8;
-      }
-    }
-  }
+  // DEBUG
+  // for y in 0..size {
+  //   for x in 0..size {
+  //     for (i, color) in [
+  //       (0usize, [255, 0, 0]),
+  //       (1, [0, 255, 0]),
+  //       (2, [0, 0, 255]),
+  //       (3, [255, 255, 0]),
+  //     ] {
+  //       let texture = &mut textures[i];
+  //       let magnitude = ((x as f32 / size as f32) * (y as f32 / size as f32)) /
+  // 2.;       texture[y * size * 4 + x * 4 + 0] = (magnitude * color[0] as f32)
+  // as u8;       texture[y * size * 4 + x * 4 + 1] = (magnitude * color[1] as
+  // f32) as u8;       texture[y * size * 4 + x * 4 + 2] = (magnitude * color[2]
+  // as f32) as u8;     }
+  //   }
+  // }
+
   // for chunk in textures[0].chunks_mut(4) {
   //   chunk[0] = 255;
   //   chunk[1] = 0;
@@ -188,7 +188,6 @@ pub extern "C" fn generate(size: usize, threshold: f32) -> *mut u8 {
   //   chunk[3] = 255;
   // }
   // END DEBUG
-  */
 
   let out_size = size * textures.len();
   let mut out: Vec<u8> = Vec::with_capacity(out_size * out_size * 4);

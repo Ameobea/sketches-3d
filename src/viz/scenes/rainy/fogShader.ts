@@ -1,5 +1,4 @@
 import { BlendFunction, Effect, EffectAttribute } from 'postprocessing';
-import type { WebGLRenderer, WebGLRenderTarget } from 'three';
 
 import FogFragmentShader from './fogShader.frag?raw';
 
