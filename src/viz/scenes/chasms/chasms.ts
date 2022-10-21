@@ -59,14 +59,14 @@ const loadTextures = async () => {
   );
 
   const skyPanoramaImgP = loader.loadAsync(
-    // 'https://ameo-imgen.ameo.workers.dev/skys/sky2__equirectangular_projection.png'
-    // 'https://ameo-imgen.ameo.workers.dev/skys/4221853866_dark_black_horizon_with_dark_red_clouds_floating_above_it___the_bottom_half_is_completely_is_black_and_indistinct__there_are_no_stars_in_the_pitch_black_night_sky__ethereal_surreal_style__equirectangular_projection.png'
-    'https://ameo-imgen.ameo.workers.dev/skys/upscaled2.jpg'
+    // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/skys/sky2__equirectangular_projection.png'
+    // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/skys/4221853866_dark_black_horizon_with_dark_red_clouds_floating_above_it___the_bottom_half_is_completely_is_black_and_indistinct__there_are_no_stars_in_the_pitch_black_night_sky__ethereal_surreal_style__equirectangular_projection.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/skys/upscaled2.jpg'
   );
 
   const tower2TextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1930010254.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1930010254.png'
   );
   const tower2TextureCombinedDiffuseNormalTextureP = tower2TextureP.then(tower2Texture =>
     generateNormalMapFromTexture(tower2Texture, {}, true)
@@ -79,7 +79,7 @@ const loadTextures = async () => {
 
   const towerStoneTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000005.722669912.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.722669912.png'
   );
   // const towerStoneTextureCombinedDiffuseNormalTextureP = towerStoneTextureP.then(towerStoneTexture =>
   //   generateNormalMapFromTexture(towerStoneTexture, {}, true)
@@ -90,7 +90,7 @@ const loadTextures = async () => {
 
   const towerDoorArchTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3319456407.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.3319456407.png'
   );
   const towerDoorArchTextureCombinedDiffuseNormalTextureP = towerDoorArchTextureP.then(towerDoorArchTexture =>
     generateNormalMapFromTexture(towerDoorArchTexture, {}, true)
@@ -98,7 +98,7 @@ const loadTextures = async () => {
 
   const towerPlinthTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.923005600.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.923005600.png'
   );
   const towerPlinthTextureCombinedDiffuseNormalTextureP = towerPlinthTextureP.then(towerPlinthTexture =>
     generateNormalMapFromTexture(towerPlinthTexture, {}, true)
@@ -106,7 +106,7 @@ const loadTextures = async () => {
 
   const towerFloorTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.2978949975.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.2978949975.png'
   );
   const towerFloorTextureCombinedDiffuseNormalTextureP = towerFloorTextureP.then(towerFloorTexture =>
     generateNormalMapFromTexture(towerFloorTexture, {}, true)
@@ -114,7 +114,7 @@ const loadTextures = async () => {
 
   const towerPlinthArchTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000005.4239735677.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.4239735677.png'
   );
   const towerPlinthArchTextureCombinedDiffuseNormalTextureP = towerPlinthArchTextureP.then(
     towerPlinthArchTexture => generateNormalMapFromTexture(towerPlinthArchTexture, {}, true)
@@ -122,7 +122,7 @@ const loadTextures = async () => {
 
   const towerPlinthPedestalTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000005.1476533049.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.1476533049.png'
   );
   const towerPlinthPedestalTextureCombinedDiffuseNormalTextureP = towerPlinthPedestalTextureP.then(
     towerPlinthPedestalTexture => generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
@@ -130,7 +130,7 @@ const loadTextures = async () => {
 
   const towerPlinthStatueTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.2614578713.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.2614578713.png'
   );
   const towerPlinthStatueTextureCombinedDiffuseNormalTextureP = towerPlinthStatueTextureP.then(
     towerPlinthStatueTexture => generateNormalMapFromTexture(towerPlinthStatueTexture, {}, true)
@@ -138,7 +138,7 @@ const loadTextures = async () => {
 
   const towerCeilingTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1761839491.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1761839491.png'
   );
   const towerCeilingTextureCombinedDiffuseNormalTextureP = towerCeilingTextureP.then(towerCeilingTexture =>
     generateNormalMapFromTexture(towerCeilingTexture, {}, true)
@@ -146,7 +146,7 @@ const loadTextures = async () => {
 
   const towerComputerPillarP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1759340770.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1759340770.png'
   );
   const towerComputerPillarCombinedDiffuseNormalTextureP = towerComputerPillarP.then(towerComputerPillar =>
     generateNormalMapFromTexture(towerComputerPillar, {}, true)
@@ -154,7 +154,7 @@ const loadTextures = async () => {
 
   const towerComputerBorderP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3862004810.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.3862004810.png'
   );
   const towerComputerBorderCombinedDiffuseNormalTextureP = towerComputerBorderP.then(towerComputerBorder =>
     generateNormalMapFromTexture(towerComputerBorder, {}, true)
@@ -162,8 +162,8 @@ const loadTextures = async () => {
 
   const dungeonWallTextureP = loadTexture(
     loader,
-    // 'https://ameo-imgen.ameo.workers.dev/img-samples/000008.3723778949.png'
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1999177113.png'
+    // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.3723778949.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1999177113.png'
   );
   const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>
     generateNormalMapFromTexture(dungeonWallTexture, {}, true)
@@ -171,7 +171,7 @@ const loadTextures = async () => {
 
   const dungeonCeilingTextureP = loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000005.2204019256.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.2204019256.png'
   );
   const dungeonCeilingTextureCombinedDiffuseNormalTextureP = dungeonCeilingTextureP.then(
     dungeonCeilingTexture => generateNormalMapFromTexture(dungeonCeilingTexture, {}, true)
@@ -181,10 +181,10 @@ const loadTextures = async () => {
 
   const furnaceTextureP = loadTexture(
     loader,
-    // 'https://ameo-imgen.ameo.workers.dev/img-samples/000008.2657780184.png'
+    // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.2657780184.png'
     // 'https://ameo.link/u/ajp.png'
     'https://ameo.link/u/ajq.jpg'
-    // 'https://ameo-imgen.ameo.workers.dev/img-samples/000008.2061435413.png'
+    // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.2061435413.png'
   );
   const furnaceTextureCombinedDiffuseNormalTextureP = furnaceTextureP.then(furnaceTexture =>
     generateNormalMapFromTexture(

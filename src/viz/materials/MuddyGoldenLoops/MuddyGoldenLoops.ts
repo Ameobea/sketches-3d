@@ -9,7 +9,7 @@ import TowerEntryPlinthRoughnessShader from './shaders/roughness.frag?raw';
 export const buildMuddyGoldenLoopsMat = async (loader: THREE.ImageBitmapLoader) => {
   const texture = await loadTexture(
     loader,
-    'https://ameo-imgen.ameo.workers.dev/img-samples/000008.1932710312.png'
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1932710312.png'
   );
   const combinedDiffuseNormalTexture = await generateNormalMapFromTexture(texture, {}, true);
 

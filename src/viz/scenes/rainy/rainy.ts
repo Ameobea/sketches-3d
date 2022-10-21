@@ -19,13 +19,19 @@ import {
   loadRawTexture,
   loadTexture,
 } from 'src/viz/textureLoading';
+import { delay } from 'src/viz/util';
+import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
 import { FogEffect } from './fogShader';
 
 const locations = {
   spawn: {
-    pos: new THREE.Vector3(0, 0.2, 0),
+    pos: new THREE.Vector3(-98, 2, 0),
     rot: new THREE.Vector3(-0.06, -1.514, 0),
+  },
+  corner: {
+    pos: new THREE.Vector3(-2.173236131668091, 1.4349226951599119, 1.9542120695114136),
+    rot: new THREE.Vector3(-0.6860000000000006, 4.486000000000112, 0),
   },
 };
 
@@ -44,10 +50,10 @@ const loadTextures = async () => {
   });
 
   const crossfadedCementTextureP = Promise.all([
-    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000219.2405862953.png'),
-    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000222.892303155.png'),
-    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000206.3766963451.png'),
-    loadRawTexture('https://ameo-imgen.ameo.workers.dev/img-samples/000212.2646278093.png'),
+    loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000219.2405862953.png'),
+    loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000222.892303155.png'),
+    loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000206.3766963451.png'),
+    loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000212.2646278093.png'),
   ]).then(async textures => genCrossfadedTexture(textures, 0.2, {}));
 
   const [cementTextureCombinedDiffuseNormal, cloudsBgTexture, crossfadedCementTexture] = await Promise.all([
@@ -71,14 +77,9 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
   backgroundScene.background = cloudsBgTexture;
 
   const bgAmbientLight = new THREE.AmbientLight(0xffffff, 0.5);
-  const fgAmbientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  const fgAmbientLight = new THREE.AmbientLight(0xffffff, 0.25);
   viz.scene.add(fgAmbientLight);
   backgroundScene.add(bgAmbientLight);
-
-  // const fog = new THREE.Fog(0x282828, 0.1, 40);
-  // viz.scene.fog = fog;
-
-  // viz.scene.background = cloudsBgTexture;
 
   const cube = new THREE.Mesh(
     new THREE.BoxGeometry(1, 1, 1),
@@ -237,6 +238,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     }
   });
 
+  delay(0).then(() => initWebSynth({ compositionIDToLoad: 76 }));
+
   return {
     locations,
     spawnLocation: 'spawn',
@@ -244,11 +247,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       jumpVelocity: 0,
       enableDash: false,
       colliderCapsuleSize: {
-        height: 1.25,
+        height: 1.35,
         radius: 0.3,
       },
       movementAccelPerSecond: {
-        onGround: 3,
+        onGround: 3.6,
         inAir: 1,
       },
     },
