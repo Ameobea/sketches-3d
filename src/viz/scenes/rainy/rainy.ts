@@ -34,8 +34,8 @@ const locations = {
     rot: new THREE.Vector3(-0.6860000000000006, 4.486000000000112, 0),
   },
   stairs: {
-    pos: new THREE.Vector3(-1.2598665952682495, 1.4349511861801145, -99.68949890136719),
-    rot: new THREE.Vector3(0.04400000000000023, 14.081999999999622, 0),
+    pos: new THREE.Vector3(-1.041370153427124, 1.4349434375762937, -100.00312805175781),
+    rot: new THREE.Vector3(-0.2799999999999999, 7.764000000000212, 0),
   },
 };
 
@@ -166,9 +166,8 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
 
     if (
       (lowerName.startsWith('railing') && !lowerName.includes('corner')) ||
-      lowerName === 'staircase_stairs'
+      lowerName.startsWith('staircase_stairs')
     ) {
-      console.log(obj);
       obj.userData.convexhull = true;
     }
   });
