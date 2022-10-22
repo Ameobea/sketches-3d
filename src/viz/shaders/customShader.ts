@@ -594,6 +594,7 @@ void main() {
 
   vNormalAbsolute = normal;
 
+  #ifdef USE_UV
   ${(() => {
     if (useGeneratedUVs) {
       return `
@@ -611,6 +612,7 @@ void main() {
     // default uv transform
     return 'vUv = ( uvTransform * vec3( uv, 1 ) ).xy;';
   })()}
+  #endif
 
   ${buildUVVertexFragment()}
 

@@ -177,9 +177,6 @@ dependencies = [
 [[package]]
 name = "normal_map_gen"
 version = "0.1.0"
-dependencies = [
- "nalgebra",
-]
 
 [[package]]
 name = "num-complex"

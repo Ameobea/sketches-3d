@@ -1,6 +1,6 @@
 import * as Comlink from 'comlink';
 
-import { clamp } from './util';
+import { clamp, hasWasmSIMDSupport } from './util';
 
 class WorkerPoolManager<T> {
   private allWorkers: Comlink.Remote<T>[] = [];
@@ -71,22 +71,30 @@ const buildThreadPoolWorkers = (onInit?: (wrapped: Comlink.Remote<any>) => void)
     resolve(new WorkerPoolManager(workers));
   });
 
+const loadNormalGenWasm = async () => {
+  const simdSupported = await hasWasmSIMDSupport();
+  const url = simdSupported ? '/normal_map_gen_simd.wasm' : '/normal_map_gen.wasm';
+  const wasmBytesAB = await fetch(url).then(r => r.arrayBuffer());
+  return new Uint8Array(wasmBytesAB);
+};
+
 export const getNormalGenWorkers = async () => {
   if (threadPoolWorkers) {
     if (!didInitNormalGenWasm) {
-      const wasmBytesAB = await fetch('/normal_map_gen.wasm').then(r => r.arrayBuffer());
-      const wasmBytes = new Uint8Array(wasmBytesAB);
-      threadPoolWorkers.then(pool => pool.submitWorkToAll(worker => worker.setNormalGenWasmBytes(wasmBytes)));
+      const wasmBytes = await loadNormalGenWasm();
+      didInitNormalGenWasm = true;
+      return threadPoolWorkers.then(async pool => {
+        pool.submitWorkToAll(worker => worker.setNormalGenWasmBytes(wasmBytes));
+        return pool;
+      });
     }
-    didInitNormalGenWasm = true;
 
     return threadPoolWorkers;
   }
 
   let onInit: ((wrapped: Comlink.Remote<any>) => void) | undefined;
   if (!didInitNormalGenWasm) {
-    const wasmBytesAB = await fetch('/normal_map_gen.wasm').then(r => r.arrayBuffer());
-    const wasmBytes = new Uint8Array(wasmBytesAB);
+    const wasmBytes = await loadNormalGenWasm();
     onInit = wrapped => wrapped.setNormalGenWasmBytes(wasmBytes);
     didInitNormalGenWasm = true;
   }
@@ -100,11 +108,12 @@ export const getTextureCrossfadeWorkers = async () => {
     if (!didInitTextureCrossfadeWasm) {
       const wasmBytesAB = await fetch('/texture_crossfade.wasm').then(r => r.arrayBuffer());
       const wasmBytes = new Uint8Array(wasmBytesAB);
-      threadPoolWorkers.then(pool =>
-        pool.submitWorkToAll(worker => worker.setTextureCrossfadeWasmBytes(wasmBytes))
-      );
+      didInitTextureCrossfadeWasm = true;
+      return threadPoolWorkers.then(async pool => {
+        await pool.submitWorkToAll(worker => worker.setTextureCrossfadeWasmBytes(wasmBytes));
+        return pool;
+      });
     }
-    didInitTextureCrossfadeWasm = true;
 
     return threadPoolWorkers;
   }

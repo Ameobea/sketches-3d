@@ -79,10 +79,16 @@ export const generateNormalMapFromTexture = async (
   }: TextureArgs = {},
   packNormalGBA = false
 ): Promise<THREE.Texture> => {
-  const source = texture.image;
-  if (!(source instanceof ImageBitmap)) {
-    throw new Error('Expected texture to be an ImageBitmap');
-  }
+  const source = await (() => {
+    if (texture.image instanceof ImageBitmap) {
+      return texture.image;
+    } else if (texture.image instanceof HTMLCanvasElement) {
+      // convert to ImageBitmap
+      return createImageBitmap(texture.image);
+    } else {
+      throw new Error('Expected texture to be an ImageBitmap');
+    }
+  })();
 
   const canvas = document.createElement('canvas');
   canvas.width = source.width;

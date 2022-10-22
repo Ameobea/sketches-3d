@@ -8,4 +8,6 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-nalgebra = "0.31"
+
+[features]
+simd = []
