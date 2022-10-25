@@ -23,3 +23,4 @@ static/normal_map_gen.wasm
 yarn-error.log
 static/texture_crossfade.wasm
 static/normal_map_gen_simd.wasm
+static/ammo.wasm.js

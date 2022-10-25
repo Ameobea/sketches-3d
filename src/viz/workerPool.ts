@@ -55,19 +55,21 @@ class WorkerPoolManager<T> {
 
 let didInitNormalGenWasm = false;
 let didInitTextureCrossfadeWasm = false;
-let threadPoolWorkers: Promise<WorkerPoolManager<any>> | null = null;
+let threadPoolWorkers: Promise<WorkerPoolManager<any>> | WorkerPoolManager<any> | null = null;
 
-const buildThreadPoolWorkers = (onInit?: (wrapped: Comlink.Remote<any>) => void) =>
+const buildThreadPoolWorkers = (onInit?: (wrapped: Comlink.Remote<any>) => void | Promise<void>) =>
   new Promise<WorkerPoolManager<any>>(async resolve => {
     const workerMod = await import('./threadpoolWorker.worker?worker');
 
     const numWorkers = clamp((navigator.hardwareConcurrency || 4) - 2, 1, 8);
-    const workers = Array.from({ length: numWorkers }, () => {
-      const worker = new workerMod.default();
-      const wrapped = Comlink.wrap<any>(worker);
-      onInit?.(wrapped);
-      return wrapped;
-    });
+    const workers = await Promise.all(
+      Array.from({ length: numWorkers }, async () => {
+        const worker = new workerMod.default();
+        const wrapped = Comlink.wrap<any>(worker);
+        await onInit?.(wrapped);
+        return wrapped;
+      })
+    );
     resolve(new WorkerPoolManager(workers));
   });
 
@@ -80,39 +82,47 @@ const loadNormalGenWasm = async () => {
 
 export const getNormalGenWorkers = async () => {
   if (threadPoolWorkers) {
+    if (threadPoolWorkers instanceof Promise) {
+      threadPoolWorkers = await threadPoolWorkers;
+    }
+
     if (!didInitNormalGenWasm) {
       const wasmBytes = await loadNormalGenWasm();
       didInitNormalGenWasm = true;
-      return threadPoolWorkers.then(async pool => {
-        pool.submitWorkToAll(worker => worker.setNormalGenWasmBytes(wasmBytes));
-        return pool;
-      });
+      console.log('Initializing normal map gen workers');
+
+      await threadPoolWorkers.submitWorkToAll(worker => worker.setNormalGenWasmBytes(wasmBytes));
+      return threadPoolWorkers;
     }
 
     return threadPoolWorkers;
   }
 
-  let onInit: ((wrapped: Comlink.Remote<any>) => void) | undefined;
   if (!didInitNormalGenWasm) {
-    const wasmBytes = await loadNormalGenWasm();
-    onInit = wrapped => wrapped.setNormalGenWasmBytes(wasmBytes);
+    threadPoolWorkers = loadNormalGenWasm().then(wasmBytes => {
+      const onInit = (wrapped: Comlink.Remote<any>) => wrapped.setNormalGenWasmBytes(wasmBytes);
+      return buildThreadPoolWorkers(onInit);
+    });
     didInitNormalGenWasm = true;
+    return threadPoolWorkers;
   }
 
-  threadPoolWorkers = buildThreadPoolWorkers(onInit);
-  return threadPoolWorkers;
+  throw new Error('Normal map gen workers not initialized, but didInitNormalGenWasm is true');
 };
 
 export const getTextureCrossfadeWorkers = async () => {
   if (threadPoolWorkers) {
+    if (threadPoolWorkers instanceof Promise) {
+      threadPoolWorkers = await threadPoolWorkers;
+    }
+
     if (!didInitTextureCrossfadeWasm) {
       const wasmBytesAB = await fetch('/texture_crossfade.wasm').then(r => r.arrayBuffer());
       const wasmBytes = new Uint8Array(wasmBytesAB);
       didInitTextureCrossfadeWasm = true;
-      return threadPoolWorkers.then(async pool => {
-        await pool.submitWorkToAll(worker => worker.setTextureCrossfadeWasmBytes(wasmBytes));
-        return pool;
-      });
+
+      await threadPoolWorkers.submitWorkToAll(worker => worker.setTextureCrossfadeWasmBytes(wasmBytes));
+      return threadPoolWorkers;
     }
 
     return threadPoolWorkers;

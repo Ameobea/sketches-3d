@@ -19,10 +19,10 @@ import {
   loadRawTexture,
   loadTexture,
 } from 'src/viz/textureLoading';
-import { delay } from 'src/viz/util';
+import { delay, DEVICE_PIXEL_RATIO } from 'src/viz/util';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
-import { FogEffect } from './fogShader';
+import { FogPass } from './fogShader';
 
 const locations = {
   spawn: {
@@ -100,7 +100,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
   backgroundScene.background = cloudsBgTexture;
 
   const bgAmbientLight = new THREE.AmbientLight(0xffffff, 0.5);
-  const fgAmbientLight = new THREE.AmbientLight(0xffffff, 0.25);
+  const fgAmbientLight = new THREE.AmbientLight(0xffffff, 0.2);
   viz.scene.add(fgAmbientLight);
   backgroundScene.add(bgAmbientLight);
 
@@ -156,7 +156,11 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
       obj.material = cementMat;
     }
 
-    if (lowerName.startsWith('walkway') || lowerName.startsWith('railing_barrier')) {
+    if (
+      lowerName.startsWith('walkway') ||
+      lowerName.startsWith('railing_barrier') ||
+      lowerName.startsWith('staircase')
+    ) {
       obj.material = walkwayMat;
     }
 
@@ -190,52 +194,66 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const backgroundScene = await initScene(viz, loadedWorld);
 
-  const composer = new EffectComposer(viz.renderer);
+  const backgroundComposer = new EffectComposer(viz.renderer);
+  // backgroundComposer.autoRenderToScreen = false;
 
-  const depthPassMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xff0000) });
-  const backgroundDepthPass = new DepthPass(backgroundScene, viz.camera, depthPassMaterial);
-  backgroundDepthPass.renderToScreen = false;
-  composer.addPass(backgroundDepthPass);
+  const depthPassMaterial = new THREE.MeshDistanceMaterial({
+    referencePosition: viz.camera.position,
+    nearDistance: viz.camera.near,
+    farDistance: viz.camera.far,
+  });
+  const backgroundDepthPass = new DepthPass(backgroundScene, viz.camera, depthPassMaterial, true);
+  backgroundDepthPass.clearPass.enabled = true;
+  const getDistanceBuffer = () => backgroundDepthPass.renderTarget!;
+  backgroundComposer.addPass(backgroundDepthPass);
 
   const backgroundRenderPass = new MainRenderPass(backgroundScene, viz.camera);
-  backgroundRenderPass.renderToScreen = false;
-  composer.addPass(backgroundRenderPass);
+  backgroundComposer.addPass(backgroundRenderPass);
 
-  const fogEffect = new FogEffect(BlendFunction.SRC);
-  const fogEffectPass = new EffectPass(viz.camera, fogEffect);
-  fogEffectPass.renderToScreen = false;
-  composer.addPass(fogEffectPass);
+  backgroundComposer.addPass(new FogPass(getDistanceBuffer, viz.camera));
 
   const depthOfFieldEffect = new DepthOfFieldEffect(viz.camera, {
     worldFocusDistance: 10,
     worldFocusRange: 50,
-    bokehScale: 6,
+    bokehScale: 8,
   });
   depthOfFieldEffect.blurPass.kernelSize = KernelSize.VERY_SMALL;
-  const effectsPass = new EffectPass(viz.camera, depthOfFieldEffect);
-  effectsPass.renderToScreen = false;
-  composer.addPass(effectsPass);
+  const bgEffectPass = new EffectPass(viz.camera, depthOfFieldEffect);
+  bgEffectPass.needsSwap = false;
+  bgEffectPass.renderToScreen = false;
+  backgroundComposer.addPass(bgEffectPass);
+
+  const foregroundComposer = new EffectComposer(viz.renderer);
+  foregroundComposer.inputBuffer = backgroundComposer.outputBuffer;
 
   const foregroundRenderPass = new RenderPass(viz.scene, viz.camera);
-  foregroundRenderPass.renderToScreen = false;
   foregroundRenderPass.clear = false;
   foregroundRenderPass.clearPass.enabled = false;
-  composer.addPass(foregroundRenderPass);
+  foregroundComposer.addPass(foregroundRenderPass);
 
-  const smaaEffect = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
-  const smaaPass = new EffectPass(viz.camera, smaaEffect);
-  smaaPass.renderToScreen = true;
-  composer.addPass(smaaPass);
+  // \/ Broken lol
+  // const smaaEffect = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
+  // const smaaPass = new EffectPass(viz.camera, smaaEffect);
+  // foregroundComposer.addPass(smaaPass);
 
   viz.renderer.autoClear = false;
   viz.renderer.autoClearColor = false;
 
   viz.registerResizeCb(() => {
-    composer.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
+    backgroundComposer.setSize(
+      viz.renderer.domElement.width / DEVICE_PIXEL_RATIO,
+      viz.renderer.domElement.height / DEVICE_PIXEL_RATIO
+    );
+    foregroundComposer.setSize(
+      viz.renderer.domElement.width / DEVICE_PIXEL_RATIO,
+      viz.renderer.domElement.height / DEVICE_PIXEL_RATIO
+    );
   });
 
   viz.setRenderOverride((timeDiffSeconds: number) => {
-    composer.render(timeDiffSeconds);
+    depthPassMaterial.referencePosition?.copy(viz.camera.position);
+    backgroundComposer.render(timeDiffSeconds);
+    foregroundComposer.render(timeDiffSeconds);
   });
 
   const customDepthMaterial = new THREE.MeshDepthMaterial({

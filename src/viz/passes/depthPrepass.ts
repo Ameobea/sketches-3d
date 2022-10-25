@@ -1,4 +1,5 @@
-import { Pass, RenderPass } from 'postprocessing';
+import { Pass, RenderPass, Resizable } from 'postprocessing';
+import * as THREE from 'three';
 
 export class ClearDepthPass extends Pass {
   constructor() {
@@ -11,9 +12,24 @@ export class ClearDepthPass extends Pass {
   }
 }
 
-export class DepthPass extends RenderPass {
-  constructor(scene: THREE.Scene, camera: THREE.Camera, overrideMaterial: THREE.Material) {
+export class DepthPass extends RenderPass implements Resizable {
+  public renderTarget: THREE.WebGLRenderTarget | null = null;
+
+  constructor(
+    scene: THREE.Scene,
+    camera: THREE.Camera,
+    overrideMaterial: THREE.Material,
+    useExternalRenderTarget?: boolean
+  ) {
     super(scene, camera, overrideMaterial);
+    // this.needsSwap = false;
+    if (useExternalRenderTarget) {
+      this.renderTarget = new THREE.WebGLRenderTarget(1, 1, {
+        format: THREE.RGBAFormat,
+        type: THREE.UnsignedByteType,
+        depthBuffer: true,
+      });
+    }
   }
 
   render(
@@ -27,9 +43,20 @@ export class DepthPass extends RenderPass {
     // const dLight = this.scene.getObjectByName('pink_dlight') as THREE.DirectionalLight;
     // dLight.removeFromParent();
     renderer.getContext().depthFunc(renderer.getContext().LEQUAL);
-    super.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
-    // this.scene.add(dLight);
+    if (this.renderTarget) {
+      // I have no idea why, but `RenderPass` seems to render to `inputBuffer` instead of `outputBuffer`
+      this.renderTarget.depthTexture = inputBuffer.depthTexture;
+      super.render(renderer, this.renderTarget, outputBuffer, deltaTime, stencilTest);
+    } else {
+      super.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
+    }
+
     renderer.shadowMap.enabled = true;
+  }
+
+  setSize(width: number, height: number): void {
+    this.renderTarget?.setSize(width, height);
+    super.setSize(width, height);
   }
 }
 
