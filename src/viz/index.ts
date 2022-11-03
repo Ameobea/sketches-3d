@@ -684,8 +684,9 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
     providedSceneName = providedSceneName.toLowerCase();
 
-    let scene =
-      gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group();
+    let scene = sceneName
+      ? gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group()
+      : new THREE.Group();
 
     const sceneLoader = await getSceneLoader();
     const sceneConf = {

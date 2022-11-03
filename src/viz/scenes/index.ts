@@ -54,7 +54,7 @@ const ParticleConduit = {
 };
 
 interface SceneDef {
-  sceneName: string;
+  sceneName: string | null;
   sceneLoader: () => Promise<(viz: VizState, loadedWorld: THREE.Group) => SceneConfig | Promise<SceneConfig>>;
   metadata: SvelteSeoProps;
   gltfName?: string | null;
@@ -111,5 +111,11 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./rainy/rainy').then(mod => mod.processLoadedScene),
     metadata: { title: 'rainy' },
     gltfName: 'rainy',
+  },
+  depthPrepassDemo: {
+    sceneName: null,
+    sceneLoader: () => import('./depthPrepassDemo').then(mod => mod.processLoadedScene),
+    metadata: { title: 'depthPrepassDemo' },
+    gltfName: null,
   },
 };
