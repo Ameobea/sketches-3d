@@ -55,7 +55,7 @@ const locations = {
 
 const SUN_AZIMUTH = 167;
 
-const loadTextures = async (pillarMap: THREE.Texture) => {
+const loadTextures = async (/* pillarMap: THREE.Texture */) => {
   const loader = new THREE.ImageBitmapLoader();
 
   const bridgeTextureP = loadTexture(loader, 'https://ameo.link/u/abu.jpg', {
@@ -125,7 +125,7 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     platformLeftWallTexture => generateNormalMapFromTexture(platformLeftWallTexture, {}, true)
   );
 
-  const pillarNormalMapP = generateNormalMapFromTexture(pillarMap);
+  // const pillarNormalMapP = generateNormalMapFromTexture(pillarMap);
 
   const platformBuildingCombinedDiffuseAndNormalTextureP = loadTexture(
     loader,
@@ -148,7 +148,7 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     // upperRidgesCombinedDiffuseAndNormalTexture,
     platformLeftWallTexture,
     platformLeftWallCombinedDiffuseAndNormalTexture,
-    pillarNormalMap,
+    // pillarNormalMap,
     platformBuildingCombinedDiffuseAndNormalTexture,
   ] = await Promise.all([
     bridgeTextureP,
@@ -166,7 +166,7 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     // upperRidgesCombinedDiffuseAndNormalTextureP,
     platformLeftWallTextureP,
     platformLeftWallCombinedDiffuseAndNormalTextureP,
-    pillarNormalMapP,
+    // pillarNormalMapP,
     platformBuildingCombinedDiffuseAndNormalTextureP,
   ]);
 
@@ -186,7 +186,7 @@ const loadTextures = async (pillarMap: THREE.Texture) => {
     // upperRidgesCombinedDiffuseAndNormalTexture,
     platformLeftWallTexture,
     platformLeftWallCombinedDiffuseAndNormalTexture,
-    pillarNormalMap,
+    // pillarNormalMap,
     platformBuildingCombinedDiffuseAndNormalTexture,
   };
 };
@@ -251,11 +251,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {}
   );
 
-  const pillar1 = getMesh(loadedWorld, 'pillar1');
-  const pillarMap = (pillar1.material as THREE.MeshStandardMaterial).map!;
-  pillarMap.magFilter = THREE.NearestFilter;
-  pillarMap.minFilter = THREE.NearestMipMapLinearFilter;
-  pillarMap.repeat.set(4, 4);
+  // const pillar1 = getMesh(loadedWorld, 'pillar1');
+  // const pillarMap = (pillar1.material as THREE.MeshStandardMaterial).map!;
+  // pillarMap.magFilter = THREE.NearestFilter;
+  // pillarMap.minFilter = THREE.NearestMipMapLinearFilter;
+  // pillarMap.repeat.set(4, 4);
+  const pillarMap = null;
 
   const {
     bridgeTexture,
@@ -273,9 +274,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     // upperRidgesCombinedDiffuseAndNormalTexture,
     platformLeftWallTexture,
     platformLeftWallCombinedDiffuseAndNormalTexture,
-    pillarNormalMap,
+    // pillarNormalMap,
     platformBuildingCombinedDiffuseAndNormalTexture,
-  } = await loadTextures(pillarMap);
+  } = await loadTextures();
 
   const archesMaterial = buildCustomShader(
     {

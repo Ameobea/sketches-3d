@@ -53,7 +53,10 @@ const buildPlatforms = () => {
     const walkwayGeometry = new THREE.BoxGeometry(
       conf.platformWidth,
       conf.platformHeight,
-      conf.platformLength
+      conf.platformLength,
+      100,
+      1,
+      100
     );
     const walkwayMesh = new THREE.Mesh(walkwayGeometry, platformMaterial);
     walkwayMesh.position.set(x, conf.platformHeight / 2 + Math.abs(x) * -0.0, 0);
@@ -72,7 +75,14 @@ const buildPlatforms = () => {
 
   for (let zIx = 0; zIx < conf.platformCount; zIx++) {
     const z = platformStart + zIx * (conf.platformSpacing + conf.platformWidth);
-    const geometry = new THREE.BoxGeometry(conf.platformLength, conf.platformHeight, conf.platformWidth);
+    const geometry = new THREE.BoxGeometry(
+      conf.platformLength,
+      conf.platformHeight,
+      conf.platformWidth,
+      100,
+      1,
+      100
+    );
     const mesh = new THREE.Mesh(
       geometry,
       // platformMaterial
