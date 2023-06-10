@@ -76,7 +76,7 @@ impl Default for PillarCtx {
 
 #[wasm_bindgen]
 pub fn create_pillar_ctx() -> *const PillarCtx {
-  Box::into_raw(box PillarCtx::default())
+  Box::into_raw(Box::new(PillarCtx::default()))
 }
 
 #[wasm_bindgen]

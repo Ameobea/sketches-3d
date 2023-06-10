@@ -1,5 +1,3 @@
-#!feature(box_syntax)
-
 #[cfg(all(feature = "simd", target_arch = "wasm32"))]
 use std::arch::wasm32::*;
 

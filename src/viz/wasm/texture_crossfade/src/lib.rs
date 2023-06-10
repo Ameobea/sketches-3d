@@ -134,7 +134,7 @@ pub extern "C" fn generate(size: usize, threshold: f32) -> *mut u8 {
     panic!("Threshold must be between 0 and 1");
   }
 
-  let mut textures = unsafe { &TEXTURE_PTRS }
+  let textures = unsafe { &TEXTURE_PTRS }
     .iter()
     .take_while(|&ptr| !ptr.is_null())
     .map(|&data| unsafe { std::slice::from_raw_parts_mut(data, size * size * 4) })

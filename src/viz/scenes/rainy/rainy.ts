@@ -1,3 +1,4 @@
+import { N8AOPostPass } from 'n8ao';
 import {
   BlendFunction,
   DepthOfFieldEffect,
@@ -194,8 +195,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const backgroundScene = await initScene(viz, loadedWorld);
 
-  const backgroundComposer = new EffectComposer(viz.renderer);
-  // backgroundComposer.autoRenderToScreen = false;
+  const effectComposer = new EffectComposer(viz.renderer);
+  effectComposer.autoRenderToScreen = false;
 
   const depthPassMaterial = new THREE.MeshDistanceMaterial({
     referencePosition: viz.camera.position,
@@ -205,12 +206,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const backgroundDepthPass = new DepthPass(backgroundScene, viz.camera, depthPassMaterial, true);
   backgroundDepthPass.clearPass.enabled = true;
   const getDistanceBuffer = () => backgroundDepthPass.renderTarget!;
-  backgroundComposer.addPass(backgroundDepthPass);
+  effectComposer.addPass(backgroundDepthPass);
 
   const backgroundRenderPass = new MainRenderPass(backgroundScene, viz.camera);
-  backgroundComposer.addPass(backgroundRenderPass);
+  effectComposer.addPass(backgroundRenderPass);
 
-  backgroundComposer.addPass(new FogPass(getDistanceBuffer, viz.camera));
+  effectComposer.addPass(new FogPass(getDistanceBuffer, viz.camera));
 
   const depthOfFieldEffect = new DepthOfFieldEffect(viz.camera, {
     worldFocusDistance: 10,
@@ -219,32 +220,33 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   });
   depthOfFieldEffect.blurPass.kernelSize = KernelSize.VERY_SMALL;
   const bgEffectPass = new EffectPass(viz.camera, depthOfFieldEffect);
-  bgEffectPass.needsSwap = false;
   bgEffectPass.renderToScreen = false;
-  backgroundComposer.addPass(bgEffectPass);
-
-  const foregroundComposer = new EffectComposer(viz.renderer);
-  foregroundComposer.inputBuffer = backgroundComposer.outputBuffer;
+  effectComposer.addPass(bgEffectPass);
 
   const foregroundRenderPass = new RenderPass(viz.scene, viz.camera);
   foregroundRenderPass.clear = false;
   foregroundRenderPass.clearPass.enabled = false;
-  foregroundComposer.addPass(foregroundRenderPass);
+  effectComposer.addPass(foregroundRenderPass);
 
-  // \/ Broken lol
-  // const smaaEffect = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
-  // const smaaPass = new EffectPass(viz.camera, smaaEffect);
-  // foregroundComposer.addPass(smaaPass);
+  const n8aoPass = new N8AOPostPass(
+    viz.scene,
+    viz.camera,
+    viz.renderer.domElement.width,
+    viz.renderer.domElement.height
+  );
+  effectComposer.addPass(n8aoPass);
+  n8aoPass.gammaCorrection = false;
+
+  const smaaEffect2 = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
+  const smaaPass2 = new EffectPass(viz.camera, smaaEffect2);
+  smaaPass2.renderToScreen = true;
+  effectComposer.addPass(smaaPass2);
 
   viz.renderer.autoClear = false;
   viz.renderer.autoClearColor = false;
 
   viz.registerResizeCb(() => {
-    backgroundComposer.setSize(
-      viz.renderer.domElement.width / DEVICE_PIXEL_RATIO,
-      viz.renderer.domElement.height / DEVICE_PIXEL_RATIO
-    );
-    foregroundComposer.setSize(
+    effectComposer.setSize(
       viz.renderer.domElement.width / DEVICE_PIXEL_RATIO,
       viz.renderer.domElement.height / DEVICE_PIXEL_RATIO
     );
@@ -252,8 +254,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   viz.setRenderOverride((timeDiffSeconds: number) => {
     depthPassMaterial.referencePosition?.copy(viz.camera.position);
-    backgroundComposer.render(timeDiffSeconds);
-    foregroundComposer.render(timeDiffSeconds);
+    effectComposer.render(timeDiffSeconds);
   });
 
   const customDepthMaterial = new THREE.MeshDepthMaterial({

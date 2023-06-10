@@ -1,5 +1,3 @@
-#![feature(box_syntax)]
-
 use nanoserde::{DeJson, SerJson};
 use noise::{Fbm, MultiFractal, NoiseModule};
 use rand::{Rng, SeedableRng};
@@ -177,8 +175,8 @@ impl ConduitParticlesState {
       conduit_end_pos,
       conduit_vector_normalized: (conduit_end_pos - conduit_start_pos).normalize(),
       live_particle_count: 0,
-      positions: box [Vec3::zeros(); MAX_PARTICLE_COUNT],
-      velocities: box [Vec3::zeros(); MAX_PARTICLE_COUNT],
+      positions: Box::new([Vec3::zeros(); MAX_PARTICLE_COUNT]),
+      velocities: Box::new([Vec3::zeros(); MAX_PARTICLE_COUNT]),
       noise,
       perm_table: noise::PermutationTable::new(256),
     }
@@ -394,11 +392,11 @@ pub fn create_conduit_particles_state(
 ) -> *mut ConduitParticlesState {
   std::panic::set_hook(Box::new(console_error_panic_hook::hook));
 
-  Box::into_raw(box ConduitParticlesState::new(
+  Box::into_raw(Box::new(ConduitParticlesState::new(
     Vec3::new(conduit_start_x, conduit_start_y, conduit_start_z),
     Vec3::new(conduit_end_x, conduit_end_y, conduit_end_z),
     conduit_ix,
-  ))
+  )))
 }
 
 #[wasm_bindgen]
