@@ -1,6 +1,5 @@
 import { N8AOPostPass } from 'n8ao';
 import {
-  BlendFunction,
   DepthOfFieldEffect,
   EffectComposer,
   EffectPass,
@@ -236,6 +235,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   effectComposer.addPass(n8aoPass);
   n8aoPass.gammaCorrection = false;
+  n8aoPass.configuration.intensity = 5;
+  n8aoPass.configuration.aoRadius = 5;
+  n8aoPass.configuration.halfRes = true;
 
   const smaaEffect2 = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
   const smaaPass2 = new EffectPass(viz.camera, smaaEffect2);

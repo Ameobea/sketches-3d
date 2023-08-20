@@ -118,4 +118,10 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'depthPrepassDemo' },
     gltfName: null,
   },
+  smoke: {
+    sceneName: 'Scene',
+    sceneLoader: () => import('./smoke/smoke').then(mod => mod.processLoadedScene),
+    metadata: { title: 'smoke' },
+    gltfName: 'smoke',
+  },
 };
