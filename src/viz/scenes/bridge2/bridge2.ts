@@ -5,7 +5,7 @@ import type { VizState } from '../../../viz';
 import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
 import { buildCustomShader } from '../../../viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
-import { delay, getMesh, initBaseScene, smoothstep } from '../../../viz/util';
+import { delay, getMesh, smoothstep } from '../../../viz/util';
 import { initWebSynth } from '../../../viz/webSynth';
 import { CustomSky as Sky } from '../../CustomSky';
 import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
