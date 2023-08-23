@@ -9,254 +9,23 @@ import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-import { getAmmoJS } from './collision';
+import { getAmmoJS, initBulletPhysics } from './collision';
 import * as Conf from './conf';
+import { InlineConsole } from './helpers/inlineConsole';
+import { initPosDebugger } from './helpers/posDebugger';
 import { Inventory } from './inventory/Inventory';
 import { buildDefaultSceneConfig, type SceneConfig, ScenesByName } from './scenes';
 
-const initBulletPhysics = (
-  camera: THREE.Camera,
-  keyStates: Record<string, boolean>,
-  Ammo: any,
-  spawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 },
-  gravity: number,
-  jumpSpeed: number,
-  playerColliderRadius: number,
-  playerColliderHeight: number,
-  playerMoveSpeed: number,
-  enableDash: boolean
-) => {
-  const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
-  const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
-  const broadphase = new Ammo.btDbvtBroadphase();
-  const solver = new Ammo.btSequentialImpulseConstraintSolver();
-  const collisionWorld = new Ammo.btDiscreteDynamicsWorld(
-    dispatcher,
-    broadphase,
-    solver,
-    collisionConfiguration
-  );
-
-  const scratchVec = new Ammo.btVector3();
-  const btvec3 = (x: number, y: number, z: number) => {
-    scratchVec.setValue(x, y, z);
-    return scratchVec;
-  };
-
-  const playerInitialTransform = new Ammo.btTransform();
-  playerInitialTransform.setIdentity();
-  playerInitialTransform.setOrigin(
-    btvec3(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z)
-  );
-  const playerGhostObject = new Ammo.btPairCachingGhostObject();
-  playerGhostObject.setWorldTransform(playerInitialTransform);
-  Ammo.destroy(playerInitialTransform);
-  collisionWorld
-    .getBroadphase()
-    .getOverlappingPairCache()
-    .setInternalGhostPairCallback(new Ammo.btGhostPairCallback());
-  const playerCapsule = new Ammo.btCapsuleShape(playerColliderRadius, playerColliderHeight);
-  playerGhostObject.setCollisionShape(playerCapsule);
-  playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
-
-  // \/ This is vital for making the physics work without bad bugs like falling through floors randomly.
-  //
-  // After deconstructing what the kinematic character controller does internally, I've worked out that it
-  // tries to push the player both up and down by this amount every tick of the simulation.
-  //
-  // If it's too big, the player tends to clip through geometry or stuff like that.
-  const STEP_HEIGHT = 0.05;
-  // \/ This is a very important config item for the physics engine.  Setting it too high will result in
-  // the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
-  // weird issues where the player slides around on the floor or clips through geometry.
-  const MAX_PENETRATION_DEPTH = 0.075;
-  const playerController = new Ammo.btKinematicCharacterController(
-    playerGhostObject,
-    playerCapsule,
-    STEP_HEIGHT,
-    btvec3(0, 1, 0)
-  );
-  playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
-  playerController.setMaxSlope(0.8); // ~45 degrees
-  playerController.setStepHeight(STEP_HEIGHT);
-  playerController.setJumpSpeed(jumpSpeed);
-
-  collisionWorld.addCollisionObject(
-    playerGhostObject,
-    32, // btBroadphaseProxy::CharacterFilter
-    1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
-  );
-  collisionWorld.addAction(playerController);
-  collisionWorld.setGravity(btvec3(0, -gravity, 0));
-
-  let lastJumpTimeSeconds = 0;
-  const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
-  let lastBoostTimeSeconds = 0;
-  const MIN_BOOST_DELAY_SECONDS = 0.85; // TODO: make configurable
-  let boostNeedsGroundTouch = false;
-
-  /**
-   * Returns the new position of the player.
-   */
-  const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
-    let forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
-    const origForwardDir = forwardDir.clone();
-    const upDir = new THREE.Vector3(0, 1, 0);
-    const leftDir = new THREE.Vector3().crossVectors(upDir, forwardDir).normalize();
-    // Adjust `forwardDir` to be horizontal.
-    forwardDir = new THREE.Vector3().crossVectors(leftDir, upDir).normalize();
-
-    const playerOnGround = playerController.onGround();
-
-    const walkDirection = new THREE.Vector3();
-    if (keyStates['KeyW']) walkDirection.add(forwardDir);
-    if (keyStates['KeyS']) walkDirection.sub(forwardDir);
-    if (keyStates['KeyA']) walkDirection.add(leftDir);
-    if (keyStates['KeyD']) walkDirection.sub(leftDir);
-    if (keyStates['Space'] && playerOnGround) {
-      if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
-        playerController.jump(
-          btvec3(walkDirection.x * (jumpSpeed * 0.18), jumpSpeed, walkDirection.z * (jumpSpeed * 0.18))
-        );
-        lastJumpTimeSeconds = curTimeSeconds;
-      }
-    }
-
-    if ((keyStates['ShiftLeft'] || keyStates['ShiftRight']) && enableDash) {
-      if (curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS && !boostNeedsGroundTouch) {
-        playerController.jump(btvec3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16));
-        lastBoostTimeSeconds = curTimeSeconds;
-        boostNeedsGroundTouch = true;
-      }
-    }
-
-    if (
-      curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS &&
-      boostNeedsGroundTouch &&
-      playerOnGround
-    ) {
-      boostNeedsGroundTouch = false;
-    }
-
-    const walkSpeed = playerMoveSpeed * (1 / 160);
-    const walkDirBulletVector = btvec3(
-      walkDirection.x * walkSpeed,
-      walkDirection.y * walkSpeed,
-      walkDirection.z * walkSpeed
-    );
-    playerController.setWalkDirection(walkDirBulletVector);
-
-    collisionWorld.stepSimulation(tDiffSeconds, 20, 1 / 160);
-
-    const newPlayerTransform = playerGhostObject.getWorldTransform();
-    const newPlayerPos = newPlayerTransform.getOrigin();
-
-    return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
-  };
-
-  const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
-    playerController.warp(btvec3(pos.x, pos.y + playerColliderHeight, pos.z));
-    // camera.position.copy(pos.clone().add(new THREE.Vector3(0, playerColliderHeight, 0)));
-    if (rot) {
-      camera.rotation.setFromVector3(rot);
-    }
-  };
-
-  teleportPlayer(spawnPos.pos, spawnPos.rot);
-
-  const addTriMesh = (mesh: THREE.Mesh | 'DONE') => {
-    if (mesh === 'DONE') {
-      broadphase.optimize();
-      return;
-    }
-
-    if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
-      return;
-    }
-
-    const geometry = mesh.geometry as THREE.BufferGeometry;
-    let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
-    // if (!geometry.index?.array) {
-    //   console.error('Mesh has no index array; not adding to collision world', mesh);
-    //   return;
-    // }
-    const indices = geometry.index?.array as Uint16Array | undefined;
-    if (vertices instanceof Uint16Array) {
-      throw new Error('GLTF Quantization not yet supported');
-      // console.log(geometry.attributes.position);
-      // TODO
-    }
-    const scale = mesh.scale;
-    const pos = mesh.position;
-    const quat = mesh.quaternion;
-
-    const transform = new Ammo.btTransform();
-    transform.setIdentity();
-    transform.setOrigin(btvec3(pos.x, pos.y, pos.z));
-    const rot = new Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w);
-    transform.setRotation(rot);
-    Ammo.destroy(rot);
-
-    const buildTrimeshShape = () => {
-      // TODO: update IDL and use native indexed triangle mesh
-      const trimesh = new Ammo.btTriangleMesh();
-      trimesh.preallocateIndices((indices ?? vertices).length);
-      trimesh.preallocateVertices(vertices.length);
-
-      const v0 = new Ammo.btVector3();
-      const v1 = new Ammo.btVector3();
-      const v2 = new Ammo.btVector3();
-
-      for (let i = 0; i < (indices ?? vertices).length; i += 3) {
-        const i0 = indices ? indices[i] * 3 : i * 3;
-        const i1 = indices ? indices[i + 1] * 3 : i * 3 + 3;
-        const i2 = indices ? indices[i + 2] * 3 : i * 3 + 6;
-        v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
-        v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
-        v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);
-
-        // TODO: compute triangle area and log about ones that are too big or too small
-        // Area of triangles should be <10 units, as suggested by user guide
-        // Should be greater than 0.05 or something like that too probably
-        trimesh.addTriangle(v0, v1, v2);
-      }
-      Ammo.destroy(v0);
-      Ammo.destroy(v1);
-      Ammo.destroy(v2);
-
-      const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
-      return shape;
-    };
-
-    const buildConvexHullShape = () => {
-      const hull = new Ammo.btConvexHullShape();
-      for (let i = 0; i < vertices.length; i += 3) {
-        hull.addPoint(btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z));
-      }
-      return hull;
-    };
-
-    const shape = mesh.userData.convexhull ? buildConvexHullShape() : buildTrimeshShape();
-
-    // Add the object as static, so it doesn't move but still collides
-    const motionState = new Ammo.btDefaultMotionState(transform);
-    const localInertia = btvec3(0, 0, 0);
-    const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
-    const body = new Ammo.btRigidBody(rbInfo);
-    body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
-    if (!body.isStaticObject()) {
-      throw new Error('body is not static');
-    }
-    collisionWorld.addRigidBody(body);
-
-    Ammo.destroy(rbInfo);
-    // Ammo.destroy(motionState);
-    // Ammo.destroy(trimesh);
-    Ammo.destroy(transform);
-  };
-
-  return { updateCollisionWorld, addTriMesh, teleportPlayer };
-};
+interface FirstPersonCtx {
+  addTriMesh: (mesh: THREE.Mesh) => void;
+  teleportPlayer: (pos: THREE.Vector3, rot?: THREE.Vector3) => void;
+  addBox: (
+    pos: [number, number, number],
+    halfExtents: [number, number, number],
+    quat?: THREE.Quaternion
+  ) => void;
+  optimize: () => void;
+}
 
 const setupFirstPerson = async (
   locations: SceneConfig['locations'],
@@ -270,7 +39,7 @@ const setupFirstPerson = async (
   gravity: number | undefined,
   inlineConsole: InlineConsole | null | undefined,
   enableDash: boolean
-) => {
+): Promise<FirstPersonCtx> => {
   let GRAVITY = gravity ?? 40;
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
   let ON_FLOOR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.onGround ?? 40;
@@ -281,7 +50,7 @@ const setupFirstPerson = async (
   const playerColliderRadius = playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius;
 
   const Ammo = await getAmmoJS();
-  const { updateCollisionWorld, addTriMesh, teleportPlayer } = await initBulletPhysics(
+  const { updateCollisionWorld, addTriMesh, teleportPlayer, addBox, optimize } = await initBulletPhysics(
     camera,
     keyStates,
     Ammo,
@@ -375,7 +144,7 @@ const setupFirstPerson = async (
       rot: camera.rotation.toArray().slice(0, 3),
     });
 
-  return { addTriMesh, teleportPlayer };
+  return { addTriMesh, teleportPlayer, addBox, optimize };
 };
 
 const disposeScene = (scene: THREE.Scene) =>
@@ -389,78 +158,6 @@ const disposeScene = (scene: THREE.Scene) =>
       }
     }
   });
-
-class InlineConsole {
-  private elem: HTMLDivElement;
-  public isOpen = false;
-  private keydownCB: (e: KeyboardEvent) => void;
-
-  constructor() {
-    this.keydownCB = event => {
-      if (!this.isOpen) {
-        if (event.key === '/') {
-          this.open();
-        }
-        return;
-      }
-
-      if (event.key === '/' || event.key === 'Escape') {
-        this.close();
-        return;
-      } else if (event.key === 'Enter') {
-        this.eval();
-        this.close();
-        return;
-      } else if (event.key.length === 1) {
-        this.elem.innerText =
-          this.elem.innerText + (event.shiftKey ? event.key.toUpperCase() : event.key.toLowerCase());
-      } else if (event.key === 'Backspace') {
-        this.elem.innerText = this.elem.innerText.slice(0, -1);
-      }
-    };
-    document.addEventListener('keydown', this.keydownCB);
-
-    const elem = document.createElement('div');
-    elem.id = 'inline-console';
-    elem.style.position = 'absolute';
-    elem.style.bottom = '8px';
-    elem.style.left = '8px';
-    elem.style.width = '100%';
-    elem.style.height = '20px';
-    elem.style.fontFamily = '"Oxygen Mono", "Input", "Hack", monospace';
-    elem.style.display = 'none';
-    elem.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-    elem.style.color = '#eee';
-    elem.style.zIndex = '100';
-    document.body.appendChild(elem);
-    this.elem = elem;
-  }
-
-  open = () => {
-    this.isOpen = true;
-    this.elem.style.display = 'block';
-  };
-
-  close = () => {
-    this.isOpen = false;
-    this.elem.style.display = 'none';
-  };
-
-  eval = () => {
-    const content = this.elem.innerText;
-    this.elem.innerText = '';
-    try {
-      console.log(eval(content));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  public destroy() {
-    this.elem.remove();
-    document.removeEventListener('keydown', this.keydownCB);
-  }
-}
 
 const setupOrbitControls = async (
   canvas: HTMLCanvasElement,
@@ -487,8 +184,6 @@ export const buildViz = () => {
     // pass
   }
 
-  const enableShadows = true;
-
   const clock = new THREE.Clock();
 
   const scene = new THREE.Scene();
@@ -512,7 +207,7 @@ export const buildViz = () => {
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = enableShadows;
+  renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   // renderer.shadowMap.autoUpdate = false;
   // renderer.shadowMap.needsUpdate = true;
@@ -642,6 +337,8 @@ export const buildViz = () => {
 
   const inventory = new Inventory();
 
+  const collisionWorldLoadedCbs: ((fpCtx: FirstPersonCtx) => void)[] = [];
+
   return {
     camera,
     renderer,
@@ -657,6 +354,7 @@ export const buildViz = () => {
     onDestroy,
     setRenderOverride,
     inventory,
+    collisionWorldLoadedCbs,
   };
 };
 
@@ -666,9 +364,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   const viz = buildViz();
 
   container.appendChild(viz.renderer.domElement);
-  // if (window.location.href.includes('localhost')) {
   container.appendChild(viz.stats.domElement);
-  // }
 
   const inlineConsole = window.location.href.includes('localhost') || true ? new InlineConsole() : null;
 
@@ -704,7 +400,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       // TODO: set up inventory CBs
     }
 
-    let addTriMesh: ((mesh: THREE.Mesh | 'DONE') => void) | null = null;
+    let fpCtx: FirstPersonCtx | undefined;
     if (sceneConf.viewMode.type === 'firstPerson') {
       const spawnPos = (window as any).lastPos
         ? (() => {
@@ -716,7 +412,7 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
           })()
         : sceneConf.locations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
-      const fpCtx = await setupFirstPerson(
+      fpCtx = await setupFirstPerson(
         sceneConf.locations,
         viz.camera,
         spawnPos,
@@ -726,7 +422,6 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         inlineConsole,
         sceneConf.player?.enableDash ?? true
       );
-      addTriMesh = fpCtx.addTriMesh;
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
         viz.renderer.domElement,
@@ -739,40 +434,25 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     viz.scene.add(scene);
 
     if (sceneConf.debugPos) {
-      const posDisplayElem = document.createElement('div');
-      posDisplayElem.style.position = 'absolute';
-      posDisplayElem.style.top = '0px';
-      posDisplayElem.style.right = '0px';
-      posDisplayElem.style.color = 'white';
-      posDisplayElem.style.fontSize = '12px';
-      posDisplayElem.style.fontFamily = 'monospace';
-      posDisplayElem.style.padding = '4px';
-      posDisplayElem.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-      posDisplayElem.style.zIndex = '1';
-      container.appendChild(posDisplayElem);
-
-      viz.registerBeforeRenderCb(() => {
-        const x = viz.camera.position.x.toFixed(2);
-        const y = viz.camera.position.y.toFixed(2);
-        const z = viz.camera.position.z.toFixed(2);
-        posDisplayElem.innerText = `${x}, ${y}, ${z}`;
-      });
+      initPosDebugger(viz, container);
     }
 
-    if (addTriMesh) {
+    if (fpCtx) {
       const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
         const children = obj.children;
         obj.children = [];
-        if (!(obj instanceof THREE.Group) && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {
-          // worldOctree!.fromGraphNode(obj);
-          if (obj instanceof THREE.Mesh) {
-            addTriMesh!(obj);
-          }
+        if (obj instanceof THREE.Mesh && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {
+          fpCtx!.addTriMesh(obj);
         }
         obj.children = children;
       };
       scene.traverse(traverseCb);
-      addTriMesh('DONE');
+
+      for (const cb of viz.collisionWorldLoadedCbs) {
+        cb(fpCtx);
+      }
+
+      fpCtx.optimize();
     }
 
     // TODO: Combine with above

@@ -1,12 +1,11 @@
-import { N8AOPostPass } from 'n8ao';
-import { EffectComposer, EffectPass, KernelSize, RenderPass, SMAAEffect, SMAAPreset } from 'postprocessing';
 import * as THREE from 'three';
-import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { loadTexture } from 'src/viz/textureLoading';
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
+import { buildAndAdd3DVicsekFractal } from './3DvicsekFractal';
+import { configurePostprocessing } from './postprocessing';
 import BgMonolithColorShader from './shaders/bgMonolith/color.frag?raw';
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
@@ -44,24 +43,28 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const dirLight = new THREE.DirectionalLight(LIGHT_COLOR, 1);
   dirLight.target.position.set(22, -2, 10);
   dirLight.castShadow = true;
-  dirLight.shadow.bias = 0.005;
+  dirLight.shadow.bias = 0.0001;
   // dirLight.shadow.blurSamples = 24;
   // dirLight.shadow.radius = 200;
   dirLight.shadow.mapSize.width = 1024 * 2;
   dirLight.shadow.mapSize.height = 1024 * 2;
   dirLight.shadow.autoUpdate = true;
-  dirLight.shadow.camera.near = 0.1;
-  dirLight.shadow.camera.far = 200;
-  dirLight.shadow.camera.left = -80;
-  dirLight.shadow.camera.right = 150;
+  dirLight.shadow.camera.near = 2;
+  dirLight.shadow.camera.far = 400;
+  dirLight.shadow.camera.left = -180;
+  dirLight.shadow.camera.right = 250;
   dirLight.shadow.camera.top = 100;
-  dirLight.shadow.camera.bottom = -50.0;
+  dirLight.shadow.camera.bottom = -150.0;
   dirLight.shadow.camera.updateProjectionMatrix();
   dirLight.matrixWorldNeedsUpdate = true;
   dirLight.updateMatrixWorld();
   dirLight.target.updateMatrixWorld();
   dirLight.position.copy(lightPos);
   viz.scene.add(dirLight);
+
+  // helper for dirlight camera
+  // const helper = new THREE.CameraHelper(dirLight.shadow.camera);
+  // viz.scene.add(helper);
 
   viz.scene.fog = new THREE.Fog(LIGHT_COLOR, 0.02, 200);
   viz.scene.background = new THREE.Color(0x8f4509);
@@ -80,7 +83,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const bgMonoliths = loadedWorld.children.filter(c => c.name.startsWith('bg_monolith')) as THREE.Mesh[];
   const bgMonolithMaterial = buildCustomShader(
-    { color: new THREE.Color(0xffffff), transparent: true, fogMultiplier: 0.2 },
+    { color: new THREE.Color(0x444444), transparent: true, fogMultiplier: 0.2 },
     { colorShader: BgMonolithColorShader },
     { enableFog: true }
   );
@@ -105,7 +108,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {},
     {
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      randomizeUVOffset: false,
       tileBreaking: { type: 'neyret', patchScale: 3.5 },
     }
   );
@@ -144,6 +147,18 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {}
   );
 
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(150, -20, 150), 160, 4, goldMaterial, positions =>
+    positions.filter(pos => {
+      if (pos[1] < -50) {
+        return false;
+      }
+      if (pos[0] > 164) {
+        return false;
+      }
+      return true;
+    })
+  );
+
   configurePostprocessing(viz, dirLight);
 
   return {
@@ -160,66 +175,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         rot: new THREE.Vector3(-0.01, 1.412, 0),
       },
     },
-    // viewMode: {
-    //   type: 'orbit',
-    //   pos: new THREE.Vector3(50, 50, 50),
-    //   target: new THREE.Vector3(0, 0, 0),
-    // },
     debugPos: true,
   };
 };
-
-function configurePostprocessing(viz: VizState, dirLight: THREE.DirectionalLight) {
-  const effectComposer = new EffectComposer(viz.renderer, { multisampling: 2 });
-  const renderPass = new RenderPass(viz.scene, viz.camera);
-  effectComposer.addPass(renderPass);
-
-  const godraysParams: GodraysPassParams = {
-    color: new THREE.Color().copy(dirLight.color),
-    edgeRadius: 4,
-    edgeStrength: 1,
-    distanceAttenuation: 1,
-    density: 1 / 8,
-    maxDensity: 1,
-    raymarchSteps: 60,
-    blur: { kernelSize: KernelSize.LARGE, variance: 0.25 },
-  };
-
-  const n8aoPass = new N8AOPostPass(
-    viz.scene,
-    viz.camera,
-    viz.renderer.domElement.width,
-    viz.renderer.domElement.height
-  );
-  n8aoPass.gammaCorrection = false;
-  n8aoPass.configuration.intensity = 7;
-  n8aoPass.configuration.aoRadius = 9;
-  n8aoPass.configuration.halfRes = false;
-  effectComposer.addPass(n8aoPass);
-
-  const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
-  effectComposer.addPass(godraysEffect);
-
-  // const bloomEffect = new BloomEffect({
-  //   intensity: 0.8,
-  //   mipmapBlur: true,
-  //   luminanceThreshold: 0.03,
-  //   blendFunction: BlendFunction.ADD,
-  //   luminanceSmoothing: 0.05,
-  // });
-  // const bloomPass = new EffectPass(viz.camera, bloomEffect);
-  // bloomPass.dithering = false;
-  // effectComposer.addPass(bloomPass);
-
-  const smaaEffect2 = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
-  const smaaPass2 = new EffectPass(viz.camera, smaaEffect2);
-  effectComposer.addPass(smaaPass2);
-
-  viz.setRenderOverride(timeDiffSeconds => {
-    effectComposer.render(timeDiffSeconds);
-    viz.renderer.shadowMap.autoUpdate = false;
-  });
-
-  viz.renderer.toneMapping = THREE.CineonToneMapping;
-  viz.renderer.toneMappingExposure = 1.8;
-}
