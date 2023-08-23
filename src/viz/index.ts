@@ -25,6 +25,8 @@ interface FirstPersonCtx {
     quat?: THREE.Quaternion
   ) => void;
   optimize: () => void;
+  setFlyMode: (isFlyMode: boolean) => void;
+  setGravity: (gravity: number) => void;
 }
 
 const setupFirstPerson = async (
@@ -50,18 +52,19 @@ const setupFirstPerson = async (
   const playerColliderRadius = playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius;
 
   const Ammo = await getAmmoJS();
-  const { updateCollisionWorld, addTriMesh, teleportPlayer, addBox, optimize } = await initBulletPhysics(
-    camera,
-    keyStates,
-    Ammo,
-    spawnPos,
-    GRAVITY,
-    JUMP_VELOCITY,
-    playerColliderRadius,
-    playerColliderHeight,
-    ON_FLOOR_ACCELERATION_PER_SECOND,
-    enableDash
-  );
+  const { updateCollisionWorld, addTriMesh, teleportPlayer, addBox, optimize, setGravity, setFlyMode } =
+    await initBulletPhysics(
+      camera,
+      keyStates,
+      Ammo,
+      spawnPos,
+      GRAVITY,
+      JUMP_VELOCITY,
+      playerColliderRadius,
+      playerColliderHeight,
+      ON_FLOOR_ACCELERATION_PER_SECOND,
+      enableDash
+    );
 
   document.addEventListener('keydown', event => {
     if (inlineConsole?.isOpen) {
@@ -143,8 +146,9 @@ const setupFirstPerson = async (
       pos: (window as any).getPos(),
       rot: camera.rotation.toArray().slice(0, 3),
     });
+  (window as any).fly = () => setFlyMode();
 
-  return { addTriMesh, teleportPlayer, addBox, optimize };
+  return { addTriMesh, teleportPlayer, addBox, optimize, setFlyMode, setGravity };
 };
 
 const disposeScene = (scene: THREE.Scene) =>

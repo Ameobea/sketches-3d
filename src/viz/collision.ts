@@ -81,13 +81,30 @@ export const initBulletPhysics = (
     1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
   );
   collisionWorld.addAction(playerController);
-  collisionWorld.setGravity(btvec3(0, -gravity, 0));
+
+  const setGravity = (gravity: number) => {
+    collisionWorld.setGravity(btvec3(0, -gravity, 0));
+    playerController.setGravity(btvec3(0, -gravity, 0));
+  };
+  setGravity(gravity);
 
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
   let lastBoostTimeSeconds = 0;
-  const MIN_BOOST_DELAY_SECONDS = 0.85; // TODO: make configurable
+  let MIN_BOOST_DELAY_SECONDS = 0.85; // TODO: make configurable
+  let BOOST_MAGNITUDE = 16; // TODO: make configurable
   let boostNeedsGroundTouch = false;
+
+  let isFlyMode = false;
+  const setFlyMode = (newIsFlyMode?: boolean) => {
+    if (newIsFlyMode === isFlyMode) {
+      return;
+    }
+
+    isFlyMode = newIsFlyMode ?? !isFlyMode;
+    MIN_BOOST_DELAY_SECONDS = isFlyMode ? -1 : 0.85;
+    setGravity(isFlyMode ? 0 : gravity);
+  };
 
   /**
    * Returns the new position of the player.
@@ -117,8 +134,17 @@ export const initBulletPhysics = (
     }
 
     if ((keyStates['ShiftLeft'] || keyStates['ShiftRight']) && enableDash) {
-      if (curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS && !boostNeedsGroundTouch) {
-        playerController.jump(btvec3(origForwardDir.x * 16, origForwardDir.y * 16, origForwardDir.z * 16));
+      if (
+        curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS &&
+        (isFlyMode || !boostNeedsGroundTouch)
+      ) {
+        playerController.jump(
+          btvec3(
+            origForwardDir.x * BOOST_MAGNITUDE,
+            origForwardDir.y * BOOST_MAGNITUDE,
+            origForwardDir.z * BOOST_MAGNITUDE
+          )
+        );
         lastBoostTimeSeconds = curTimeSeconds;
         boostNeedsGroundTouch = true;
       }
@@ -257,5 +283,5 @@ export const initBulletPhysics = (
 
   const optimize = () => broadphase.optimize();
 
-  return { updateCollisionWorld, addTriMesh, addBox, teleportPlayer, optimize };
+  return { updateCollisionWorld, addTriMesh, addBox, teleportPlayer, optimize, setGravity, setFlyMode };
 };

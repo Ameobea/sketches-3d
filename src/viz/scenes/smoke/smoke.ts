@@ -43,16 +43,16 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const dirLight = new THREE.DirectionalLight(LIGHT_COLOR, 1);
   dirLight.target.position.set(22, -2, 10);
   dirLight.castShadow = true;
-  dirLight.shadow.bias = 0.0001;
+  dirLight.shadow.bias = 0.01;
   // dirLight.shadow.blurSamples = 24;
   // dirLight.shadow.radius = 200;
-  dirLight.shadow.mapSize.width = 1024 * 2;
-  dirLight.shadow.mapSize.height = 1024 * 2;
+  dirLight.shadow.mapSize.width = 1024 * 4;
+  dirLight.shadow.mapSize.height = 1024 * 4;
   dirLight.shadow.autoUpdate = true;
-  dirLight.shadow.camera.near = 2;
-  dirLight.shadow.camera.far = 400;
-  dirLight.shadow.camera.left = -180;
-  dirLight.shadow.camera.right = 250;
+  dirLight.shadow.camera.near = 0.1;
+  dirLight.shadow.camera.far = 300;
+  dirLight.shadow.camera.left = -120;
+  dirLight.shadow.camera.right = 150;
   dirLight.shadow.camera.top = 100;
   dirLight.shadow.camera.bottom = -150.0;
   dirLight.shadow.camera.updateProjectionMatrix();
@@ -105,7 +105,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       roughness: 0.7,
       metalness: 0.7,
     },
-    {},
+    { colorShader: BgMonolithColorShader },
     {
       useGeneratedUVs: true,
       randomizeUVOffset: false,
@@ -147,12 +147,16 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {}
   );
 
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(150, -20, 150), 160, 4, goldMaterial, positions =>
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(177, -17, 180), 160, 4, goldMaterial, positions =>
     positions.filter(pos => {
       if (pos[1] < -50) {
         return false;
       }
-      if (pos[0] > 164) {
+      if (pos[0] > 184) {
+        return false;
+      }
+
+      if (pos[0] < 0 && pos[2] > 140) {
         return false;
       }
       return true;
@@ -163,7 +167,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   return {
     spawnLocation: 'spawn',
-    gravity: 60,
+    gravity: 30,
     player: {
       movementAccelPerSecond: { onGround: 9, inAir: 9 },
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
@@ -173,6 +177,10 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       spawn: {
         pos: new THREE.Vector3(0, 0, 0),
         rot: new THREE.Vector3(-0.01, 1.412, 0),
+      },
+      end: {
+        pos: new THREE.Vector3(-1.1315797567367554, -6.251111030578613, 125.19293212890625),
+        rot: new THREE.Vector3(-0.37520367320509945, 6.1739999999999196, 0),
       },
     },
     debugPos: true,

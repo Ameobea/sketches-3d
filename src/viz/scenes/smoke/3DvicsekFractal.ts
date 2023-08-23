@@ -58,7 +58,8 @@ export const buildAndAdd3DVicsekFractal = (
   scale: number,
   iterations: number,
   material: THREE.Material,
-  mutatePositionsCb?: (positions: Point3D[]) => Point3D[]
+  mutatePositionsCb?: (positions: Point3D[]) => Point3D[],
+  collide = true
 ) => {
   const stage = viz.scene;
   let positions = generate3DVicsekFractal([[pos.x, pos.y, pos.z]], scale, iterations);
@@ -78,9 +79,14 @@ export const buildAndAdd3DVicsekFractal = (
     const pos = positions[i];
     matrix.setPosition(pos[0], pos[1], pos[2]);
     mesh.setMatrixAt(i, matrix);
-    viz.collisionWorldLoadedCbs.push(fpCtx =>
-      fpCtx.addBox(pos, [finalScale / 2, finalScale / 2, finalScale / 2])
-    );
+  }
+
+  if (collide) {
+    viz.collisionWorldLoadedCbs.push(fpCtx => {
+      for (const pos of positions) {
+        fpCtx.addBox(pos, [finalScale / 2, finalScale / 2, finalScale / 2]);
+      }
+    });
   }
 
   stage.add(mesh);
