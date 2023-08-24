@@ -13,11 +13,14 @@ const computeN8AOIntensity = (playerPos: THREE.Vector3): number => {
   if (playerPos.z < 12 && playerPos.x < 5) {
     return 7;
   }
+  if (playerPos.z > 50) {
+    return 0;
+  }
 
   const shutoffStartX = -25;
   const shutoffEndX = -5;
   const factor = 1 - smoothstep(shutoffStartX, shutoffEndX, playerPos.x);
-  return 2 + 5 * factor;
+  return 0 + 7 * factor;
 };
 
 export const configurePostprocessing = (viz: VizState, dirLight: THREE.DirectionalLight) => {
@@ -27,13 +30,13 @@ export const configurePostprocessing = (viz: VizState, dirLight: THREE.Direction
 
   const godraysParams: GodraysPassParams = {
     color: new THREE.Color().copy(dirLight.color),
-    edgeRadius: 4,
+    edgeRadius: 1,
     edgeStrength: 1,
     distanceAttenuation: 1,
     density: 1 / 8,
     maxDensity: 1,
-    raymarchSteps: 60,
-    blur: { kernelSize: KernelSize.LARGE, variance: 0.25 },
+    raymarchSteps: 80,
+    blur: { kernelSize: KernelSize.VERY_LARGE, variance: 0.45 },
   };
 
   const n8aoPass = new N8AOPostPass(
@@ -45,8 +48,10 @@ export const configurePostprocessing = (viz: VizState, dirLight: THREE.Direction
   n8aoPass.gammaCorrection = false;
   n8aoPass.configuration.intensity = 7;
   n8aoPass.configuration.aoRadius = 9;
-  n8aoPass.configuration.halfRes = false;
-  effectComposer.addPass(n8aoPass);
+  // n8aoPass.configuration.distanceFalloff = 0.5;
+  // n8aoPass.configuration.halfRes = true;
+  n8aoPass.setQualityMode('Medium');
+  // effectComposer.addPass(n8aoPass);
 
   const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
   effectComposer.addPass(godraysEffect);
@@ -55,12 +60,21 @@ export const configurePostprocessing = (viz: VizState, dirLight: THREE.Direction
   const smaaPass2 = new EffectPass(viz.camera, smaaEffect2);
   effectComposer.addPass(smaaPass2);
 
-  let lastN8AOIntensity = n8aoPass.configuration.intensity;
+  let lastN8AOIntensity = Infinity;
+  let n8aoPassEnabled = false;
   viz.setRenderOverride(timeDiffSeconds => {
     const newN8AOIntensity = computeN8AOIntensity(viz.camera.position);
     if (newN8AOIntensity !== lastN8AOIntensity) {
       n8aoPass.configuration.intensity = newN8AOIntensity;
       lastN8AOIntensity = newN8AOIntensity;
+
+      if (newN8AOIntensity > 0 && !n8aoPassEnabled) {
+        effectComposer.addPass(n8aoPass, 1);
+        n8aoPassEnabled = true;
+      } else if (newN8AOIntensity === 0 && n8aoPassEnabled) {
+        effectComposer.removePass(n8aoPass);
+        n8aoPassEnabled = false;
+      }
     }
 
     effectComposer.render(timeDiffSeconds);

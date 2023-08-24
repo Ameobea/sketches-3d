@@ -65,6 +65,33 @@ export const loadTexture = (
     )
   );
 
+export const loadNamedTextures = async <
+  T extends { [key: string]: string | [string] | [string, Partial<TextureArgs> | undefined] }
+>(
+  loader: THREE.ImageBitmapLoader,
+  textureMap: T
+): Promise<Record<keyof typeof textureMap, THREE.Texture>> => {
+  const textureKeys = Object.keys(textureMap) as Array<keyof typeof textureMap>;
+
+  const loadedTextures = await Promise.all(
+    textureKeys.map(key => {
+      const args = textureMap[key];
+      if (typeof args === 'string') {
+        return loadTexture(loader, args);
+      }
+
+      return loadTexture(loader, args[0], args[1]);
+    })
+  );
+
+  const result: Partial<Record<keyof typeof textureMap, THREE.Texture>> = {};
+  textureKeys.forEach((key, index) => {
+    result[key] = loadedTextures[index];
+  });
+
+  return result as Record<keyof typeof textureMap, THREE.Texture>;
+};
+
 export const generateNormalMapFromTexture = async (
   texture: THREE.Texture,
   {
