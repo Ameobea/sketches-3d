@@ -59,7 +59,8 @@ export const buildAndAdd3DVicsekFractal = (
   iterations: number,
   material: THREE.Material,
   mutatePositionsCb?: (positions: Point3D[]) => Point3D[],
-  collide = true
+  collide = true,
+  name?: string
 ) => {
   const stage = viz.scene;
   let positions = generate3DVicsekFractal([[pos.x, pos.y, pos.z]], scale, iterations);
@@ -88,6 +89,8 @@ export const buildAndAdd3DVicsekFractal = (
       }
     });
   }
+
+  mesh.name = name ?? `3DVicsekFractal_${pos.x},${pos.y},${pos.z}_${scale}_${iterations}`;
 
   stage.add(mesh);
 };

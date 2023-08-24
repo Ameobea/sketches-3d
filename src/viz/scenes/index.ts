@@ -11,7 +11,14 @@ export interface SceneConfig {
     };
   };
   spawnLocation: string;
+  /**
+   * If true, the current position in the world of the player will be displayed
+   */
   debugPos?: boolean;
+  /**
+   * If true, the name of the object at the center of the screen will be displayed
+   */
+  debugTarget?: boolean;
   gravity?: number;
   player?: {
     /**
@@ -21,6 +28,7 @@ export interface SceneConfig {
     jumpVelocity?: number;
     colliderCapsuleSize?: { height: number; radius: number };
     movementAccelPerSecond?: { onGround: number; inAir: number };
+    oobYThreshold?: number;
   };
   renderOverride?: (timeDiffSeconds: number) => void;
   enableInventory?: boolean;

@@ -13,6 +13,7 @@ import { getAmmoJS, initBulletPhysics } from './collision';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPosDebugger } from './helpers/posDebugger';
+import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
 import { buildDefaultSceneConfig, type SceneConfig, ScenesByName } from './scenes';
 
@@ -27,6 +28,7 @@ interface FirstPersonCtx {
   optimize: () => void;
   setFlyMode: (isFlyMode: boolean) => void;
   setGravity: (gravity: number) => void;
+  clearCollisionWorld: () => void;
 }
 
 const setupFirstPerson = async (
@@ -40,7 +42,8 @@ const setupFirstPerson = async (
   playerConf: SceneConfig['player'],
   gravity: number | undefined,
   inlineConsole: InlineConsole | null | undefined,
-  enableDash: boolean
+  enableDash: boolean,
+  oobYThreshold = -55
 ): Promise<FirstPersonCtx> => {
   let GRAVITY = gravity ?? 40;
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
@@ -52,19 +55,27 @@ const setupFirstPerson = async (
   const playerColliderRadius = playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius;
 
   const Ammo = await getAmmoJS();
-  const { updateCollisionWorld, addTriMesh, teleportPlayer, addBox, optimize, setGravity, setFlyMode } =
-    await initBulletPhysics(
-      camera,
-      keyStates,
-      Ammo,
-      spawnPos,
-      GRAVITY,
-      JUMP_VELOCITY,
-      playerColliderRadius,
-      playerColliderHeight,
-      ON_FLOOR_ACCELERATION_PER_SECOND,
-      enableDash
-    );
+  const {
+    updateCollisionWorld,
+    addTriMesh,
+    teleportPlayer,
+    addBox,
+    optimize,
+    setGravity,
+    setFlyMode,
+    clearCollisionWorld,
+  } = await initBulletPhysics(
+    camera,
+    keyStates,
+    Ammo,
+    spawnPos,
+    GRAVITY,
+    JUMP_VELOCITY,
+    playerColliderRadius,
+    playerColliderHeight,
+    ON_FLOOR_ACCELERATION_PER_SECOND,
+    enableDash
+  );
 
   document.addEventListener('keydown', event => {
     if (inlineConsole?.isOpen) {
@@ -102,7 +113,7 @@ const setupFirstPerson = async (
     if (location) {
       teleportPlayer(location.pos, location.rot);
     } else {
-      console.log('No location found');
+      console.warn(`No location found for ${posName}`);
     }
   };
 
@@ -113,7 +124,7 @@ const setupFirstPerson = async (
   (window as any).back = () => {
     const backPos = localStorage.backPos;
     if (!backPos) {
-      console.log('No back position found');
+      console.warn('No back position found');
       return;
     }
 
@@ -122,7 +133,7 @@ const setupFirstPerson = async (
   };
 
   function teleportPlayerIfOOB() {
-    if (camera.position.y <= -55) {
+    if (camera.position.y <= oobYThreshold) {
       teleportPlayer(spawnPos.pos, spawnPos.rot);
     }
   }
@@ -148,7 +159,7 @@ const setupFirstPerson = async (
     });
   (window as any).fly = () => setFlyMode();
 
-  return { addTriMesh, teleportPlayer, addBox, optimize, setFlyMode, setGravity };
+  return { addTriMesh, teleportPlayer, addBox, optimize, setFlyMode, setGravity, clearCollisionWorld };
 };
 
 const disposeScene = (scene: THREE.Scene) =>
@@ -213,8 +224,6 @@ export const buildViz = () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  // renderer.shadowMap.autoUpdate = false;
-  // renderer.shadowMap.needsUpdate = true;
 
   const stats = Stats.default();
   stats.domElement.style.position = 'absolute';
@@ -381,7 +390,12 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
   const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName } = sceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 
+  let fpCtx: FirstPersonCtx | undefined;
+  let destroyed = false;
   const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
+    if (destroyed) {
+      return;
+    }
     providedSceneName = providedSceneName.toLowerCase();
 
     let scene = sceneName
@@ -404,7 +418,6 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
       // TODO: set up inventory CBs
     }
 
-    let fpCtx: FirstPersonCtx | undefined;
     if (sceneConf.viewMode.type === 'firstPerson') {
       const spawnPos = (window as any).lastPos
         ? (() => {
@@ -424,7 +437,8 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
         sceneConf.player,
         sceneConf.gravity,
         inlineConsole,
-        sceneConf.player?.enableDash ?? true
+        sceneConf.player?.enableDash ?? true,
+        sceneConf.player?.oobYThreshold
       );
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
@@ -438,7 +452,10 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
     viz.scene.add(scene);
 
     if (sceneConf.debugPos) {
-      initPosDebugger(viz, container);
+      initPosDebugger(viz, container, 0);
+    }
+    if (sceneConf.debugTarget) {
+      initTargetDebugger(viz, container, +!!sceneConf.debugPos * 24);
     }
 
     if (fpCtx) {
@@ -489,8 +506,10 @@ export const initViz = (container: HTMLElement, providedSceneName: string = Conf
 
   return {
     destroy() {
+      destroyed = true;
       viz.onDestroy();
       inlineConsole?.destroy();
+      fpCtx?.clearCollisionWorld();
     },
   };
 };

@@ -1,16 +1,8 @@
 import type { VizState } from '..';
+import { createStatsContainer } from './statsContainer';
 
-export const initPosDebugger = (viz: VizState, container: HTMLElement) => {
-  const posDisplayElem = document.createElement('div');
-  posDisplayElem.style.position = 'absolute';
-  posDisplayElem.style.top = '0px';
-  posDisplayElem.style.right = '0px';
-  posDisplayElem.style.color = 'white';
-  posDisplayElem.style.fontSize = '12px';
-  posDisplayElem.style.fontFamily = 'monospace';
-  posDisplayElem.style.padding = '4px';
-  posDisplayElem.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-  posDisplayElem.style.zIndex = '1';
+export const initPosDebugger = (viz: VizState, container: HTMLElement, topPx: number) => {
+  const posDisplayElem = createStatsContainer(topPx);
   container.appendChild(posDisplayElem);
 
   viz.registerBeforeRenderCb(() => {

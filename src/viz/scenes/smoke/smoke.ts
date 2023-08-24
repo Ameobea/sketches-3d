@@ -74,7 +74,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   dirLight.shadow.autoUpdate = true;
   dirLight.shadow.camera.near = 0.1;
   dirLight.shadow.camera.far = 300;
-  dirLight.shadow.camera.left = -120;
+  dirLight.shadow.camera.left = -180;
   dirLight.shadow.camera.right = 180;
   dirLight.shadow.camera.top = 100;
   dirLight.shadow.camera.bottom = -150.0;
@@ -174,6 +174,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       roughnessMap: pipeTextureRoughness,
       metalness: 0.9,
       uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
+      color: new THREE.Color(0xffffff),
+      ambientLightScale: 2,
     },
     {},
     {}
@@ -195,11 +197,49 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   const pipeInterior = loadedWorld.getObjectByName('pipe_interior') as THREE.Mesh;
   pipeInterior.material = pipeInteriorMaterial;
+  const pipeBottomMaterial = buildCustomShader(
+    {
+      map: pipeTexture,
+      normalMap: pipeTextureNormal,
+      roughnessMap: pipeTextureRoughness,
+      metalness: 0.9,
+      uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
+      color: new THREE.Color(0xffffff),
+      ambientLightScale: 2,
+    },
+    {
+      colorShader: BgMonolithColorShader,
+    },
+    {}
+  );
+  const pipeBottom = loadedWorld.getObjectByName('pipe_bottom') as THREE.Mesh;
+  pipeBottom.material = pipeBottomMaterial;
+
+  const pipeLightPosts = loadedWorld.children.filter(c =>
+    c.name.startsWith('pipe_light_post')
+  ) as THREE.Mesh[];
+  const pipeLights = loadedWorld.children.filter(
+    c => c.name.startsWith('pipe_light') && !c.name.includes('post')
+  ) as THREE.Mesh[];
+
+  const pipeLightPostMaterial = buildCustomShader({ color: new THREE.Color(0x121212) }, {}, {});
+  for (const pipeLightPost of pipeLightPosts) {
+    pipeLightPost.material = pipeLightPostMaterial;
+  }
+
+  const pipeLightMaterial = buildCustomShader(
+    { color: new THREE.Color(0xff4444), metalness: 0.4, roughness: 0.2 },
+    {},
+    {}
+  );
+  for (const pipeLight of pipeLights) {
+    pipeLight.material = pipeLightMaterial;
+  }
 
   // const cubesMaterial = buildCustomShader({ color: new THREE.Color(0x0) }, {}, {});
   const cubesMaterial = goldMaterial;
 
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(177, -17, 180), 160, 4, cubesMaterial, positions =>
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(182, -7, 180.5), 160, 4, cubesMaterial, positions =>
     positions.filter(pos => {
       if (pos[1] < -50) {
         return false;
@@ -315,6 +355,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       movementAccelPerSecond: { onGround: 9, inAir: 9 },
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
+      oobYThreshold: -110,
     },
     locations: {
       spawn: {
@@ -322,8 +363,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         rot: new THREE.Vector3(-0.01, 1.412, 0),
       },
       end: {
-        pos: new THREE.Vector3(-1.1315797567367554, -6.251111030578613, 125.19293212890625),
-        rot: new THREE.Vector3(-0.37520367320509945, 6.1739999999999196, 0),
+        pos: new THREE.Vector3(-2.0920538902282715, -2.177037000656128, 127.51612854003906),
+        rot: new THREE.Vector3(-0.5647963267948956, 2.4699999999998963, 0),
       },
       outside: {
         pos: new THREE.Vector3(24.726898193359375, 2.064194917678833, 27.218582153320312),
@@ -337,7 +378,12 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         pos: new THREE.Vector3(6.6383843421936035, -0.5795621871948242, 108.12307739257812),
         rot: new THREE.Vector3(-0.6372036732050987, 6.95199999999985, 0),
       },
+      jump: {
+        pos: new THREE.Vector3(87.85043334960938, -21.2853946685791, 157.130859375),
+        rot: new THREE.Vector3(-0.2939999999999999, 2.953999999999946, 0),
+      },
     },
     debugPos: true,
+    // debugTarget: true,
   };
 };

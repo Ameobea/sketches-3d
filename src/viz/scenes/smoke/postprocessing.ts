@@ -1,10 +1,19 @@
 import { N8AOPostPass } from 'n8ao';
-import { EffectComposer, EffectPass, KernelSize, RenderPass, SMAAEffect, SMAAPreset } from 'postprocessing';
+import {
+  BlendFunction,
+  EffectComposer,
+  EffectPass,
+  KernelSize,
+  RenderPass,
+  SelectiveBloomEffect,
+  SMAAEffect,
+  SMAAPreset,
+} from 'postprocessing';
 import * as THREE from 'three';
 import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 
 import type { VizState } from 'src/viz';
-import { smoothstep } from 'src/viz/util';
+import { smoothstep, smoothstepScale } from 'src/viz/util';
 
 /**
  * We want to back off the AO when outside of the building
@@ -14,6 +23,9 @@ const computeN8AOIntensity = (playerPos: THREE.Vector3): number => {
     return 7;
   }
   if (playerPos.z > 50) {
+    return 0;
+  }
+  if (playerPos.y < -10) {
     return 0;
   }
 
@@ -56,9 +68,70 @@ export const configurePostprocessing = (viz: VizState, dirLight: THREE.Direction
   const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
   effectComposer.addPass(godraysEffect);
 
+  // Selective bloom on the pipe lights
+  const pipeLightBloomEffect = new SelectiveBloomEffect(viz.scene, viz.camera, {
+    intensity: 33,
+    blendFunction: BlendFunction.LINEAR_DODGE,
+    luminanceThreshold: 0,
+    kernelSize: KernelSize.LARGE,
+    // mipmapBlur: true,
+    radius: 0.9,
+    // resolutionScale: 2,
+  } as any);
+  pipeLightBloomEffect.inverted = false;
+  pipeLightBloomEffect.ignoreBackground = true;
+  const pipeLights = viz.scene
+    .getObjectByName('Scene')!
+    .children.filter(c => c.name === 'pipe_light' || c.name.startsWith('pipe_light0'));
+  pipeLightBloomEffect.selection.set(pipeLights);
+
   const smaaEffect2 = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
-  const smaaPass2 = new EffectPass(viz.camera, smaaEffect2);
+  const smaaPass2 = new EffectPass(viz.camera, pipeLightBloomEffect, smaaEffect2);
   effectComposer.addPass(smaaPass2);
+
+  viz.renderer.toneMapping = THREE.CineonToneMapping;
+  viz.renderer.toneMappingExposure = 1.8;
+
+  const averagePipeLightPos = pipeLights
+    .reduce((acc, light) => acc.add(light.position), new THREE.Vector3())
+    .divideScalar(pipeLights.length);
+  const black = new THREE.Color(0x0);
+  const baseBGColor = new THREE.Color(0x8f4509);
+  let lastDownFactor = Infinity;
+  viz.registerBeforeRenderCb(curTimeSecs => {
+    const distanceToPlayer = viz.camera.position.distanceTo(averagePipeLightPos);
+    // when player is < 60 meters away:
+    //  * intensity = 23
+    //  * scale multiplier = 1
+    // when player is 130 meters away:
+    //  * intensity = 1
+    //  * scale multiplier = 12
+
+    const scaleMultiplier = smoothstep(60, 130, distanceToPlayer) * 11 + 1;
+    const intensity = (1 - smoothstep(60, 130, distanceToPlayer)) * 22 + 1;
+    pipeLightBloomEffect.intensity = intensity;
+
+    const scale = (Math.sin(curTimeSecs * 2) * 0.2 + 0.4) * scaleMultiplier;
+    for (const pipeLight of pipeLights) {
+      pipeLight.scale.set(scale, scale, scale);
+    }
+
+    // fade eveerything to black as player descends
+    const [fadeoutStartY, fadeoutEndY] = [-120, -20];
+    const playerY = viz.camera.position.y;
+    const downFactor = smoothstep(fadeoutStartY, fadeoutEndY, playerY);
+    if (downFactor !== lastDownFactor) {
+      lastDownFactor = downFactor;
+      viz.renderer.toneMappingExposure = smoothstepScale(fadeoutStartY, fadeoutEndY, playerY, 0.0, 1.8);
+
+      (viz.scene.background as THREE.Color).copy(black).lerp(baseBGColor, downFactor);
+      godraysEffect.setParams({
+        ...godraysParams,
+        color: godraysParams.color.copy(dirLight.color).multiplyScalar(downFactor),
+      });
+      viz.scene.fog!.color.copy(black).lerp(baseBGColor, downFactor);
+    }
+  });
 
   let lastN8AOIntensity = Infinity;
   let n8aoPassEnabled = false;
@@ -80,7 +153,4 @@ export const configurePostprocessing = (viz: VizState, dirLight: THREE.Direction
     effectComposer.render(timeDiffSeconds);
     viz.renderer.shadowMap.autoUpdate = false;
   });
-
-  viz.renderer.toneMapping = THREE.CineonToneMapping;
-  viz.renderer.toneMappingExposure = 1.8;
 };

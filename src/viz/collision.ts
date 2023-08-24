@@ -24,7 +24,7 @@ export const initBulletPhysics = (
   const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
   const broadphase = new Ammo.btDbvtBroadphase();
   const solver = new Ammo.btSequentialImpulseConstraintSolver();
-  const collisionWorld = new Ammo.btDiscreteDynamicsWorld(
+  let collisionWorld = new Ammo.btDiscreteDynamicsWorld(
     dispatcher,
     broadphase,
     solver,
@@ -283,5 +283,25 @@ export const initBulletPhysics = (
 
   const optimize = () => broadphase.optimize();
 
-  return { updateCollisionWorld, addTriMesh, addBox, teleportPlayer, optimize, setGravity, setFlyMode };
+  const clearCollisionWorld = () => {
+    const newCollisionWorld = new Ammo.btDiscreteDynamicsWorld(
+      dispatcher,
+      broadphase,
+      solver,
+      collisionConfiguration
+    );
+    Ammo.destroy(collisionWorld);
+    collisionWorld = newCollisionWorld;
+  };
+
+  return {
+    updateCollisionWorld,
+    addTriMesh,
+    addBox,
+    teleportPlayer,
+    optimize,
+    setGravity,
+    setFlyMode,
+    clearCollisionWorld,
+  };
 };
