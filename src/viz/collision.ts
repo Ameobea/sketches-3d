@@ -106,6 +106,7 @@ export const initBulletPhysics = (
     setGravity(isFlyMode ? 0 : gravity);
   };
 
+  const tickCallbacks: ((tDiffSeconds: number) => void)[] = [];
   /**
    * Returns the new position of the player.
    */
@@ -170,6 +171,10 @@ export const initBulletPhysics = (
 
     const newPlayerTransform = playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
+
+    for (const cb of tickCallbacks) {
+      cb(tDiffSeconds);
+    }
 
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
@@ -272,6 +277,62 @@ export const initBulletPhysics = (
     addStaticShape(shape, mesh.position, mesh.quaternion);
   };
 
+  const addPlayerRegionContactCb = (
+    region: { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion },
+    onEnter?: () => void,
+    onLeave?: () => void
+  ) => {
+    if (!onEnter && !onLeave) {
+      throw new Error('Must provide at least one callback');
+    }
+
+    const collisionObj = (() => {
+      if (region.type !== 'box') {
+        throw new Error('Unimplemented');
+      }
+
+      const shape = new Ammo.btBoxShape(
+        btvec3(region.halfExtents.x, region.halfExtents.y, region.halfExtents.z)
+      );
+      const transform = new Ammo.btTransform();
+      transform.setIdentity();
+      transform.setOrigin(btvec3(region.pos.x, region.pos.y, region.pos.z));
+      if (region.quat) {
+        const rot = new Ammo.btQuaternion(region.quat.x, region.quat.y, region.quat.z, region.quat.w);
+        transform.setRotation(rot);
+        Ammo.destroy(rot);
+      }
+
+      const obj = new Ammo.btPairCachingGhostObject();
+      obj.setWorldTransform(transform);
+      obj.setCollisionShape(shape);
+      obj.setCollisionFlags(4); // btCollisionObject::CF_NO_CONTACT_RESPONSE
+      Ammo.destroy(transform);
+      return obj;
+    })();
+
+    // player interacts with static and default filters, so we set the region's ghost object
+    // to be of type static and only collide with the player
+    collisionWorld.addCollisionObject(
+      collisionObj,
+      1, // btBroadphaseProxy::StaticFilter,
+      32 // btBroadphaseProxy::CharacterFilter
+    );
+
+    //  ghostObject->getOverlappingPairCache()->getOverlappingPairArray();
+    let isOverlapping = false;
+    tickCallbacks.push(() => {
+      const numOverlappingObjects = collisionObj.getNumOverlappingObjects();
+      if (numOverlappingObjects > 0 && !isOverlapping) {
+        isOverlapping = true;
+        onEnter?.();
+      } else if (numOverlappingObjects === 0 && isOverlapping) {
+        isOverlapping = false;
+        onLeave?.();
+      }
+    });
+  };
+
   const addBox = (
     pos: [number, number, number],
     halfExtents: [number, number, number],
@@ -284,6 +345,7 @@ export const initBulletPhysics = (
   const optimize = () => broadphase.optimize();
 
   const clearCollisionWorld = () => {
+    tickCallbacks.length = 0;
     const newCollisionWorld = new Ammo.btDiscreteDynamicsWorld(
       dispatcher,
       broadphase,
@@ -303,5 +365,6 @@ export const initBulletPhysics = (
     setGravity,
     setFlyMode,
     clearCollisionWorld,
+    addPlayerRegionContactCb,
   };
 };

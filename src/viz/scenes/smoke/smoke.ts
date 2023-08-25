@@ -4,7 +4,7 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
-import { buildAndAdd3DVicsekFractal } from './3DvicsekFractal';
+import { buildAndAddFractals } from './3DvicsekFractal';
 import { configurePostprocessing } from './postprocessing';
 import BgMonolithColorShader from './shaders/bgMonolith/color.frag?raw';
 
@@ -24,6 +24,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     pipeTexture,
     pipeTextureNormal,
     pipeTextureRoughness,
+    cubesTexture,
+    cubesTextureNormal,
+    cubesTextureRoughness,
   } = await loadNamedTextures(loader, {
     buildingTexture: 'https://i.ameo.link/bdu.jpg',
     goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
@@ -32,6 +35,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     pipeTexture: 'https://i.ameo.link/bet.jpg',
     pipeTextureNormal: 'https://i.ameo.link/beu.jpg',
     pipeTextureRoughness: 'https://i.ameo.link/bev.jpg',
+    cubesTextureRoughness: 'https://i.ameo.link/bew.jpg',
+    cubesTextureNormal: 'https://i.ameo.link/bex.jpg',
+    cubesTexture: 'https://i.ameo.link/bey.jpg',
   });
 
   const building = loadedWorld.getObjectByName('Cube') as THREE.Mesh;
@@ -56,7 +62,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.renderer.shadowMap.needsUpdate = true;
 
   let lightPos = new THREE.Vector3(-32, 27, -32);
-  let lightTarget = new THREE.Vector3(22, -2, 10);
+  let lightTarget = new THREE.Vector3(22, 4, 10);
 
   // Move light pos away in a line from target by 0.2x its initial distance
   const lightPosToTarget = lightPos.clone().sub(lightTarget);
@@ -67,15 +73,13 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   dirLight.target.position.copy(lightTarget);
   dirLight.castShadow = true;
   dirLight.shadow.bias = 0.01;
-  // dirLight.shadow.blurSamples = 24;
-  // dirLight.shadow.radius = 200;
   dirLight.shadow.mapSize.width = 1024 * 4;
   dirLight.shadow.mapSize.height = 1024 * 4;
   dirLight.shadow.autoUpdate = true;
   dirLight.shadow.camera.near = 0.1;
-  dirLight.shadow.camera.far = 300;
+  dirLight.shadow.camera.far = 370;
   dirLight.shadow.camera.left = -180;
-  dirLight.shadow.camera.right = 180;
+  dirLight.shadow.camera.right = 230;
   dirLight.shadow.camera.top = 100;
   dirLight.shadow.camera.bottom = -150.0;
   dirLight.shadow.camera.updateProjectionMatrix();
@@ -95,15 +99,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   // Render the scene once to populate the shadow map
   viz.renderer.render(viz.scene, viz.camera);
 
-  // const lightSphere = new THREE.Mesh(
-  //   new THREE.SphereGeometry(0.5, 16, 16),
-  //   new THREE.MeshBasicMaterial({ color: 0xffff00 })
-  // );
-  // lightSphere.position.copy(lightPos);
-  // lightSphere.castShadow = false;
-  // lightSphere.receiveShadow = false;
-  // viz.scene.add(lightSphere);
-
   const bgMonoliths = loadedWorld.children.filter(c => c.name.startsWith('bg_monolith')) as THREE.Mesh[];
   const bgMonolithMaterial = buildCustomShader(
     { color: new THREE.Color(0x444444), transparent: true, fogMultiplier: 0.2, side: THREE.DoubleSide },
@@ -112,6 +107,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   bgMonoliths.forEach(m => {
     m.material = bgMonolithMaterial;
+    if (m.name.includes('007')) {
+      m.scale.z *= 1.12;
+    }
   });
 
   const border = loadedWorld.getObjectByName('border') as THREE.Mesh;
@@ -190,9 +188,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.9,
       uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
     },
-    {
-      // TODO: Fade color to black as it gets further down the interior
-    },
+    {},
     { enableFog: false }
   );
   const pipeInterior = loadedWorld.getObjectByName('pipe_interior') as THREE.Mesh;
@@ -236,114 +232,21 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     pipeLight.material = pipeLightMaterial;
   }
 
-  // const cubesMaterial = buildCustomShader({ color: new THREE.Color(0x0) }, {}, {});
-  const cubesMaterial = goldMaterial;
+  buildAndAddFractals(viz, cubesTexture, cubesTextureNormal, cubesTextureRoughness);
 
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(182, -7, 180.5), 160, 4, cubesMaterial, positions =>
-    positions.filter(pos => {
-      if (pos[1] < -50) {
-        return false;
+  // Add callback for when player falls down the pipe
+  viz.collisionWorldLoadedCbs.push(fpCtx =>
+    fpCtx.addPlayerRegionContactCb(
+      {
+        type: 'box',
+        pos: new THREE.Vector3().copy(pipeInterior.position),
+        halfExtents: new THREE.Vector3(5, 5, 5),
+      },
+      () => {
+        console.log('entered!!');
+        // TODO: Init next level
       }
-      if (pos[0] > 184) {
-        return false;
-      }
-
-      if (pos[0] < 0 && pos[2] > 140) {
-        return false;
-      }
-      if (pos[0] < 30 && pos[2] > 200) {
-        return false;
-      }
-      return true;
-    })
-  );
-
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(28, 110, 70), 80, 3, cubesMaterial, undefined, false);
-
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(-110, 80, 118), 80, 3, cubesMaterial, undefined, true);
-
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(50, 50, -30), 80 / 3, 2, cubesMaterial, undefined, false);
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(50, -10, -20), 80 / 3, 2, cubesMaterial, undefined, true);
-
-  buildAndAdd3DVicsekFractal(
-    viz,
-    new THREE.Vector3(-45, 9, -34),
-    80 / 3 / 2,
-    2,
-    cubesMaterial,
-    undefined,
-    true
-  );
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(-15, 74, 44), 80 / 3, 2, cubesMaterial, undefined, true);
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(100, 44, 114), 80 / 3, 2, cubesMaterial, undefined, true);
-
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(300, 100, 30), 180, 4, cubesMaterial, undefined, true);
-  buildAndAdd3DVicsekFractal(
-    viz,
-    new THREE.Vector3(210, 60, 110),
-    180 / 3,
-    3,
-    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
-    cubesMaterial,
-    undefined,
-    true
-  );
-  buildAndAdd3DVicsekFractal(
-    viz,
-    new THREE.Vector3(250, 60, 170),
-    180 / 3,
-    3,
-    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
-    cubesMaterial,
-    undefined,
-    true
-  );
-
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(140, -280, 250), 180, 4, cubesMaterial, undefined, true);
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(40, 280, 250), 180, 4, cubesMaterial, undefined, true);
-
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(120, 40, -250), 180, 4, cubesMaterial, undefined, true);
-
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(100, 40, 450), 180, 4, cubesMaterial, undefined, true);
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(-150, 40, 250), 180, 4, cubesMaterial, undefined, true);
-  buildAndAdd3DVicsekFractal(
-    viz,
-    new THREE.Vector3(-90, 10, -2),
-    140 / 3 / 3,
-    2,
-    cubesMaterial,
-    undefined,
-    true
-  );
-  buildAndAdd3DVicsekFractal(
-    viz,
-    new THREE.Vector3(-90, -220, 90),
-    180,
-    4,
-    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
-    cubesMaterial,
-    undefined,
-    true
-  );
-  buildAndAdd3DVicsekFractal(
-    viz,
-    new THREE.Vector3(300, 120, 400),
-    280,
-    4,
-    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
-    cubesMaterial,
-    undefined,
-    true
-  );
-  buildAndAdd3DVicsekFractal(
-    viz,
-    new THREE.Vector3(30, -60, -90),
-    180,
-    4,
-    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
-    cubesMaterial,
-    undefined,
-    true
+    )
   );
 
   configurePostprocessing(viz, dirLight);
@@ -375,12 +278,16 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         rot: new THREE.Vector3(-0.0019999999999998647, 4.71799999999993, 0),
       },
       pipe: {
-        pos: new THREE.Vector3(6.6383843421936035, -0.5795621871948242, 108.12307739257812),
-        rot: new THREE.Vector3(-0.6372036732050987, 6.95199999999985, 0),
+        pos: new THREE.Vector3(-20.713298797607422, -12.508797645568848, 127.8397216796875),
+        rot: new THREE.Vector3(-0.6007963267948956, 2.6579999999998973, 0),
       },
       jump: {
         pos: new THREE.Vector3(87.85043334960938, -21.2853946685791, 157.130859375),
         rot: new THREE.Vector3(-0.2939999999999999, 2.953999999999946, 0),
+      },
+      room: {
+        pos: new THREE.Vector3(-31.08810806274414, 2.132516860961914, 29.65850830078125),
+        rot: new THREE.Vector3(0.04000000000000012, 10.95200000000005, 0),
       },
     },
     debugPos: true,

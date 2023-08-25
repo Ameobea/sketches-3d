@@ -111,7 +111,10 @@ export const configurePostprocessing = (viz: VizState, dirLight: THREE.Direction
     const intensity = (1 - smoothstep(60, 130, distanceToPlayer)) * 22 + 1;
     pipeLightBloomEffect.intensity = intensity;
 
-    const scale = (Math.sin(curTimeSecs * 2) * 0.2 + 0.4) * scaleMultiplier;
+    let pulse = Math.sin(curTimeSecs * 2);
+    // sharpen the pulse a bit
+    pulse = Math.sign(pulse) * Math.pow(Math.abs(pulse), 0.7);
+    const scale = (pulse * 0.2 + 0.4) * scaleMultiplier;
     for (const pipeLight of pipeLights) {
       pipeLight.scale.set(scale, scale, scale);
     }

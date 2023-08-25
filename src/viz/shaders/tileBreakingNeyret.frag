@@ -16,6 +16,9 @@
 #define C(I)  ( srgb2rgb( textureGrad(samp, U/Z-rnd22(I) ,Gx,Gy)) - m*float(CON) )
 
 vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
+    // uv = mod(uv, 1.);
+    // return vec4(uv, 0., 1.);
+
     mat2 M0 = mat2( 1,0, .5,sqrt(3.)/2. ),
           M = inverse( M0 );                           // transform matrix <-> tilted space
     vec2 z = vec2(0.2),

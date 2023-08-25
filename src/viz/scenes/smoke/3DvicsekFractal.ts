@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
+import { buildCustomShader } from 'src/viz/shaders/customShader';
 
 type Point3D = [number, number, number];
 type Cube = { position: Point3D; scale: number };
@@ -52,7 +53,7 @@ const computeFinalScale = (scale: number, iterations: number): number => {
   return finalScale;
 };
 
-export const buildAndAdd3DVicsekFractal = (
+const buildAndAdd3DVicsekFractal = (
   viz: VizState,
   pos: THREE.Vector3,
   scale: number,
@@ -93,4 +94,161 @@ export const buildAndAdd3DVicsekFractal = (
   mesh.name = name ?? `3DVicsekFractal_${pos.x},${pos.y},${pos.z}_${scale}_${iterations}`;
 
   stage.add(mesh);
+};
+
+export const buildAndAddFractals = (
+  viz: VizState,
+  cubesTexture: THREE.Texture,
+  cubesTextureNormal: THREE.Texture,
+  cubesTextureRoughness: THREE.Texture
+) => {
+  const cubesMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0xffffff),
+      map: cubesTexture,
+      normalMap: cubesTextureNormal,
+      roughnessMap: cubesTextureRoughness,
+      metalness: 0.7,
+      roughness: 0.4,
+      uvTransform: new THREE.Matrix3().scale(0.036, 0.036),
+      mapDisableDistance: 300,
+      normalScale: 1.2,
+    },
+    {},
+    {
+      useGeneratedUVs: true,
+      randomizeUVOffset: true,
+    }
+  );
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(182, -7, 180.5), 160, 4, cubesMaterial, positions =>
+    positions.filter(pos => {
+      if (pos[1] > 50) {
+        return true;
+      }
+      if (pos[1] < -50) {
+        return true;
+      }
+      if (pos[0] > 194) {
+        return false;
+      }
+
+      if (pos[0] < 0 && pos[2] > 140) {
+        return false;
+      }
+      if (pos[0] < 30 && pos[2] > 200) {
+        return false;
+      }
+      if (pos[0] > 175 && pos[2] > 260) {
+        return false;
+      }
+      return true;
+    })
+  );
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(28, 120, 42), 80, 3, cubesMaterial, undefined, true);
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(-110, 80, 118), 80, 3, cubesMaterial, undefined, true);
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(50, 50, -30), 80 / 3, 2, cubesMaterial, undefined, false);
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(50, -10, -20), 80 / 3, 2, cubesMaterial, undefined, true);
+
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(-45, 9, -34),
+    80 / 3 / 2,
+    2,
+    cubesMaterial,
+    undefined,
+    true
+  );
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(-15, 74, 44), 80 / 3, 2, cubesMaterial, undefined, true);
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(100, 64, 114), 80 / 3, 2, cubesMaterial, undefined, true);
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(300, 100, 30), 180, 4, cubesMaterial, undefined, true);
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(225, 58.5, 110),
+    180 / 3,
+    3,
+    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
+    cubesMaterial,
+    undefined,
+    true
+  );
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(250, 60, 170),
+    180 / 3,
+    3,
+    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
+    cubesMaterial,
+    undefined,
+    true
+  );
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(140, -280, 250), 180, 4, cubesMaterial, undefined, true);
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(40, 280, 250), 180, 4, cubesMaterial, undefined, true);
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(140, 40, -250), 180, 4, cubesMaterial, undefined, true);
+
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(100, 40, 450), 180, 4, cubesMaterial, undefined, true);
+  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(-150, 37, 250), 180, 4, cubesMaterial, undefined, true);
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(-70, -40, 180),
+    180 / 3,
+    3,
+    cubesMaterial,
+    positions => positions.filter(pos => pos[2] < 200 && !(pos[0] < -90 && pos[2] > 170)),
+    true
+  );
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(-40, -40, 350),
+    180 / 3,
+    3,
+    cubesMaterial,
+    undefined,
+    false
+  );
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(-90, 10, -2),
+    140 / 3 / 3,
+    2,
+    cubesMaterial,
+    undefined,
+    true
+  );
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(-90, -200, 90),
+    180,
+    4,
+    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
+    cubesMaterial,
+    undefined,
+    true
+  );
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(300, 120, 400),
+    280,
+    4,
+    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
+    cubesMaterial,
+    undefined,
+    true
+  );
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(30, -50, -90),
+    180,
+    4,
+    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
+    cubesMaterial,
+    undefined,
+    true
+  );
 };

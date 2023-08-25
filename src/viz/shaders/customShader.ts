@@ -582,8 +582,11 @@ void main() {
   #include <worldpos_vertex>
   vec4 worldPositionMine = vec4( transformed, 1.0 );
   worldPositionMine = modelMatrix * worldPositionMine;
-  vec3 vWorldPositionMine = worldPositionMine.xyz;
-  pos = vWorldPositionMine;
+  pos = worldPositionMine.xyz;
+
+  #ifdef USE_INSTANCING
+    pos = (instanceMatrix * vec4(pos, 1.)).xyz;
+  #endif
 
   #include <beginnormal_vertex>
   #include <morphnormal_vertex>

@@ -29,6 +29,11 @@ interface FirstPersonCtx {
   setFlyMode: (isFlyMode: boolean) => void;
   setGravity: (gravity: number) => void;
   clearCollisionWorld: () => void;
+  addPlayerRegionContactCb: (
+    region: { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion },
+    onEnter?: () => void,
+    onLeave?: () => void
+  ) => void;
 }
 
 const setupFirstPerson = async (
@@ -64,6 +69,7 @@ const setupFirstPerson = async (
     setGravity,
     setFlyMode,
     clearCollisionWorld,
+    addPlayerRegionContactCb,
   } = await initBulletPhysics(
     camera,
     keyStates,
@@ -159,7 +165,16 @@ const setupFirstPerson = async (
     });
   (window as any).fly = () => setFlyMode();
 
-  return { addTriMesh, teleportPlayer, addBox, optimize, setFlyMode, setGravity, clearCollisionWorld };
+  return {
+    addTriMesh,
+    teleportPlayer,
+    addBox,
+    optimize,
+    setFlyMode,
+    setGravity,
+    clearCollisionWorld,
+    addPlayerRegionContactCb,
+  };
 };
 
 const disposeScene = (scene: THREE.Scene) =>
