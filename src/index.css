@@ -5,3 +5,7 @@ html {
   overflow: hidden;
   background-color: #060606;
 }
+
+* {
+  box-sizing: border-box;
+}

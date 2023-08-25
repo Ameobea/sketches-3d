@@ -5,6 +5,7 @@
  * With many changes and additions.
  */
 
+import { get, type Writable } from 'svelte/store';
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -99,10 +100,6 @@ const setupFirstPerson = async (
     keyStates[event.code] = false;
   });
 
-  document.addEventListener('mousedown', () => {
-    document.body.requestPointerLock();
-  });
-
   document.body.addEventListener('mousemove', event => {
     if (document.pointerLockElement === document.body) {
       camera.rotation.y -= event.movementX / 500;
@@ -177,18 +174,6 @@ const setupFirstPerson = async (
   };
 };
 
-const disposeScene = (scene: THREE.Scene) =>
-  scene.traverse(o => {
-    if (o instanceof THREE.Mesh) {
-      o.geometry?.dispose();
-      if (Array.isArray(o.material)) {
-        o.material.forEach(m => m.dispose());
-      } else {
-        o.material?.dispose();
-      }
-    }
-  });
-
 const setupOrbitControls = async (
   canvas: HTMLCanvasElement,
   camera: THREE.Camera,
@@ -207,7 +192,7 @@ const setupOrbitControls = async (
     console.log({ pos: camera.position.toArray(), target: controls.target.toArray() });
 };
 
-export const buildViz = () => {
+export const buildViz = (paused: Writable<boolean>) => {
   try {
     screen.orientation.lock('landscape').catch(() => 0);
   } catch (err) {
@@ -288,12 +273,12 @@ export const buildViz = () => {
       const distanceToCamera = camera.position.distanceTo(mesh.position);
       if (distanceToCamera < distance) {
         if (mesh.material !== baseMat) {
-          console.log('swapping back to close mat', mesh.name);
+          // console.log('swapping back to close mat', mesh.name);
         }
         mesh.material = baseMat;
       } else {
         if (mesh.material !== replacementMat) {
-          console.log('swapping to far mat', mesh.name);
+          // console.log('swapping to far mat', mesh.name);
         }
         mesh.material = replacementMat;
       }
@@ -308,17 +293,71 @@ export const buildViz = () => {
     distanceSwapEntries.push({ mesh, baseMat, replacementMat, distance });
   };
 
+  let didManuallyLockPointer = false;
   let isBlurred = false;
   let clockStopTime = 0;
-  window.addEventListener('blur', () => {
-    isBlurred = true;
+
+  const maybePauseViz = () => {
+    if (!get(paused) && !isBlurred) {
+      return;
+    }
+
     clockStopTime = clock.getElapsedTime();
     clock.stop();
+  };
+
+  const maybeResumeViz = () => {
+    if (get(paused) || isBlurred) {
+      return;
+    }
+
+    clock.start();
+    clock.elapsedTime = clockStopTime;
+
+    if (!document.pointerLockElement && didManuallyLockPointer) {
+      document.body.requestPointerLock();
+    }
+  };
+
+  window.addEventListener('blur', () => {
+    isBlurred = true;
+    maybePauseViz();
   });
   window.addEventListener('focus', () => {
     isBlurred = false;
-    clock.start();
-    clock.elapsedTime = clockStopTime;
+    maybeResumeViz();
+  });
+
+  window.addEventListener('keydown', event => {
+    if (event.code === 'Escape') {
+      paused.update(p => !p);
+      if (get(paused)) {
+        maybePauseViz();
+      } else {
+        maybeResumeViz();
+      }
+    }
+  });
+  document.addEventListener('pointerlockchange', evt => {
+    if (isBlurred) {
+      return;
+    }
+    paused.set(!document.pointerLockElement);
+  });
+
+  document.addEventListener('mousedown', () => {
+    if (!get(paused)) {
+      didManuallyLockPointer = true;
+      document.body.requestPointerLock();
+    }
+  });
+
+  paused.subscribe(paused => {
+    if (paused) {
+      maybePauseViz();
+    } else {
+      maybeResumeViz();
+    }
   });
 
   let renderOverride: ((timeDiffSeconds: number) => void) | null = null;
@@ -328,7 +367,7 @@ export const buildViz = () => {
 
   let animateHandle: number = 0;
   function animate() {
-    if (isBlurred) {
+    if (isBlurred || get(paused)) {
       animateHandle = requestAnimationFrame(animate);
       return;
     }
@@ -356,10 +395,22 @@ export const buildViz = () => {
     renderer.dispose();
     beforeRenderCbs.length = 0;
     afterRenderCbs.length = 0;
+
     if (animateHandle) {
       cancelAnimationFrame(animateHandle);
     }
-    disposeScene(scene);
+
+    scene.traverse(o => {
+      if (o instanceof THREE.Mesh) {
+        o.geometry?.dispose();
+        if (Array.isArray(o.material)) {
+          o.material.forEach(m => m.dispose());
+        } else {
+          o.material?.dispose();
+        }
+      }
+    });
+
     console.clear();
   };
 
@@ -388,8 +439,14 @@ export const buildViz = () => {
 
 export type VizState = ReturnType<typeof buildViz>;
 
-export const initViz = (container: HTMLElement, providedSceneName: string = Conf.DefaultSceneName) => {
-  const viz = buildViz();
+export const initViz = (
+  container: HTMLElement,
+  {
+    paused,
+    sceneName: providedSceneName = Conf.DefaultSceneName,
+  }: { paused: Writable<boolean>; sceneName?: string }
+) => {
+  const viz = buildViz(paused);
 
   container.appendChild(viz.renderer.domElement);
   container.appendChild(viz.stats.domElement);

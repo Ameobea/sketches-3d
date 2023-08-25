@@ -3,6 +3,7 @@ export const initWebSynth = (args: { compositionIDToLoad?: number }) => {
   content.id = 'content';
   content.style.display = 'none';
   document.body.appendChild(content);
+  // This is the `web-synth-headless-test` phost deployment
   return import('https://ameo.dev/web-synth-headless/headless.js').then(async mod => {
     const webSynthHandle = await mod.initHeadlessWebSynth(args);
     return webSynthHandle;

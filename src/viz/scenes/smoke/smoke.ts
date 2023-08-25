@@ -2,8 +2,10 @@ import * as THREE from 'three';
 
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
+import { delay } from 'src/viz/util';
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
+import { initWebSynth } from '../../../viz/webSynth';
 import { buildAndAddFractals } from './3DvicsekFractal';
 import { configurePostprocessing } from './postprocessing';
 import BgMonolithColorShader from './shaders/bgMonolith/color.frag?raw';
@@ -40,6 +42,13 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     cubesTexture: 'https://i.ameo.link/bey.jpg',
   });
 
+  initWebSynth({ compositionIDToLoad: 104 }).then(async ctx => {
+    await delay(700);
+
+    ctx.setGlobalBpm(70);
+    ctx.startAll();
+  });
+
   const building = loadedWorld.getObjectByName('Cube') as THREE.Mesh;
   building.material = buildCustomShader(
     {
@@ -62,7 +71,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.renderer.shadowMap.needsUpdate = true;
 
   let lightPos = new THREE.Vector3(-32, 27, -32);
-  let lightTarget = new THREE.Vector3(22, 4, 10);
+  let lightTarget = new THREE.Vector3(22, 2, 10);
 
   // Move light pos away in a line from target by 0.2x its initial distance
   const lightPosToTarget = lightPos.clone().sub(lightTarget);
