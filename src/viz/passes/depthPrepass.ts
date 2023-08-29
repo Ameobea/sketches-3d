@@ -1,4 +1,4 @@
-import { Pass, RenderPass, Resizable } from 'postprocessing';
+import { Pass, RenderPass, type Resizable } from 'postprocessing';
 import * as THREE from 'three';
 
 export class ClearDepthPass extends Pass {
@@ -39,9 +39,8 @@ export class DepthPass extends RenderPass implements Resizable {
     deltaTime?: number | undefined,
     stencilTest?: boolean | undefined
   ): void {
+    const shadowMapWasEnabled = renderer.shadowMap.enabled;
     renderer.shadowMap.enabled = false;
-    // const dLight = this.scene.getObjectByName('pink_dlight') as THREE.DirectionalLight;
-    // dLight.removeFromParent();
     renderer.getContext().depthFunc(renderer.getContext().LEQUAL);
     if (this.renderTarget) {
       // I have no idea why, but `RenderPass` seems to render to `inputBuffer` instead of `outputBuffer`
@@ -51,7 +50,7 @@ export class DepthPass extends RenderPass implements Resizable {
       super.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
     }
 
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = shadowMapWasEnabled;
   }
 
   setSize(width: number, height: number): void {

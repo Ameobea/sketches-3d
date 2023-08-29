@@ -181,7 +181,6 @@ export const initBulletPhysics = (
 
   const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
     playerController.warp(btvec3(pos.x, pos.y + playerColliderHeight, pos.z));
-    // camera.position.copy(pos.clone().add(new THREE.Vector3(0, playerColliderHeight, 0)));
     if (rot) {
       camera.rotation.setFromVector3(rot);
     }
@@ -319,7 +318,6 @@ export const initBulletPhysics = (
       32 // btBroadphaseProxy::CharacterFilter
     );
 
-    //  ghostObject->getOverlappingPairCache()->getOverlappingPairArray();
     let isOverlapping = false;
     tickCallbacks.push(() => {
       const numOverlappingObjects = collisionObj.getNumOverlappingObjects();
@@ -342,6 +340,43 @@ export const initBulletPhysics = (
     addStaticShape(shape, new THREE.Vector3(...pos), quat);
   };
 
+  const addCompound = (
+    pos: [number, number, number],
+    children: {
+      type: 'box';
+      pos: [number, number, number];
+      halfExtents: [number, number, number];
+      quat?: THREE.Quaternion;
+    }[],
+    quat?: THREE.Quaternion
+  ) => {
+    const parentShape = new Ammo.btCompoundShape(true);
+
+    const childTransform = new Ammo.btTransform();
+    for (const child of children) {
+      const childShape = (() => {
+        if (child.type === 'box') {
+          return new Ammo.btBoxShape(btvec3(...child.halfExtents));
+        }
+
+        throw new Error('Unimplemented');
+      })();
+
+      childTransform.setIdentity();
+      childTransform.setOrigin(btvec3(...child.pos));
+      if (child.quat) {
+        const rot = new Ammo.btQuaternion(child.quat.x, child.quat.y, child.quat.z, child.quat.w);
+        childTransform.setRotation(rot);
+        Ammo.destroy(rot);
+      }
+      parentShape.addChildShape(childTransform, childShape);
+    }
+
+    addStaticShape(parentShape, new THREE.Vector3(...pos), quat);
+
+    Ammo.destroy(childTransform);
+  };
+
   const optimize = () => broadphase.optimize();
 
   const clearCollisionWorld = () => {
@@ -360,6 +395,7 @@ export const initBulletPhysics = (
     updateCollisionWorld,
     addTriMesh,
     addBox,
+    addCompound,
     teleportPlayer,
     optimize,
     setGravity,

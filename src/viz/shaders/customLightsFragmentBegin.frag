@@ -141,6 +141,19 @@ IncidentLight directLight;
 
 	vec3 irradiance = getAmbientLightIrradiance( ambientLightColor ) * __AMBIENT_LIGHT_SCALE__;
 
+	#if (__USE_AMBIENT_LIGHT_DISTANCE_AMP__)
+		float falloffStartDistance = __AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_START_DISTANCE__;
+		float falloffEndDistance = __AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_END_DISTANCE__;
+		float exponent = __AMBIENT_LIGHT_DISTANCE_AMP_EXPONENT__;
+		float ampFactor = __AMBIENT_LIGHT_DISTANCE_AMP_FACTOR__;
+		float ampFalloffFactor = smoothstep(falloffStartDistance, falloffEndDistance, distanceToCamera);
+		float amp = 1.0 + pow(1.0 - ampFalloffFactor, exponent) * ampFactor;
+		irradiance *= amp;
+
+		// gl_FragColor = vec4(vec3(pow(1.0 - ampFalloffFactor, exponent)), 1.0);
+		// return;
+	#endif
+
 	irradiance += getLightProbeIrradiance( lightProbe, geometry.normal );
 
 	#if ( NUM_HEMI_LIGHTS > 0 )

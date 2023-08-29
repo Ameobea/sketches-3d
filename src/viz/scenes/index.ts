@@ -1,6 +1,7 @@
 import type { SvelteSeoProps } from 'svelte-seo/types/SvelteSeo';
 
 import type { VizState } from '..';
+import type { VizConfig } from '../conf';
 
 export interface SceneConfig {
   viewMode?: { type: 'firstPerson' } | { type: 'orbit'; pos: THREE.Vector3; target: THREE.Vector3 };
@@ -63,9 +64,12 @@ const ParticleConduit = {
 
 interface SceneDef {
   sceneName: string | null;
-  sceneLoader: () => Promise<(viz: VizState, loadedWorld: THREE.Group) => SceneConfig | Promise<SceneConfig>>;
+  sceneLoader: () => Promise<
+    (viz: VizState, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
+  >;
   metadata: SvelteSeoProps;
   gltfName?: string | null;
+  extension?: 'gltf' | 'glb';
 }
 
 export const ScenesByName: { [key: string]: SceneDef } = {
@@ -131,5 +135,6 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./smoke/smoke').then(mod => mod.processLoadedScene),
     metadata: { title: 'smoke' },
     gltfName: 'smoke',
+    extension: 'glb',
   },
 };

@@ -86,8 +86,40 @@ const buildAndAdd3DVicsekFractal = (
   if (collide) {
     viz.collisionWorldLoadedCbs.push(fpCtx => {
       for (const pos of positions) {
+        // if it's below the kill floor or too high to reach, no need to worry about colliding with it
+        if (pos[1] < -120 || pos[1] > 50) {
+          continue;
+        }
+
         fpCtx.addBox(pos, [finalScale / 2, finalScale / 2, finalScale / 2]);
       }
+      return;
+
+      // \/ This turns out to be massively slower for some reason
+
+      // compute average position of all cubes to serve as the origin of the compound shape
+      const avgPos = positions
+        .reduce(
+          (acc, pos) => {
+            acc[0] += pos[0];
+            acc[1] += pos[1];
+            acc[2] += pos[2];
+            return acc;
+          },
+          [0, 0, 0]
+        )
+        .map(v => v / positions.length) as Point3D;
+
+      const halfExtents = [finalScale / 2, finalScale / 2, finalScale / 2] as Point3D;
+      fpCtx.addCompound(
+        avgPos,
+        positions.map(pos => {
+          // Transform pos to be relative to the origin
+          const relativePos = pos.map((v, i) => v - avgPos[i]) as Point3D;
+
+          return { type: 'box', pos: relativePos, halfExtents };
+        })
+      );
     });
   }
 
@@ -113,6 +145,7 @@ export const buildAndAddFractals = (
       uvTransform: new THREE.Matrix3().scale(0.036, 0.036),
       mapDisableDistance: 300,
       normalScale: 1.2,
+      ambientLightScale: 1.3,
     },
     {},
     {
@@ -193,7 +226,16 @@ export const buildAndAddFractals = (
   buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(140, 40, -250), 180, 4, cubesMaterial, undefined, true);
 
   buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(100, 40, 450), 180, 4, cubesMaterial, undefined, true);
-  buildAndAdd3DVicsekFractal(viz, new THREE.Vector3(-150, 37, 250), 180, 4, cubesMaterial, undefined, true);
+  buildAndAdd3DVicsekFractal(
+    viz,
+    new THREE.Vector3(-150, 37, 250),
+    180,
+    4,
+    cubesMaterial,
+    // new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff) }),
+    undefined,
+    true
+  );
   buildAndAdd3DVicsekFractal(
     viz,
     new THREE.Vector3(-70, -40, 180),

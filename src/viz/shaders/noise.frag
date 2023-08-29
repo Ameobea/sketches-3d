@@ -134,111 +134,50 @@ float fbm_2_octaves(vec3 x) {
 	return v;
 }
 
-float fbm_3_octaves(vec3 x) {
-	float v = 0.0;
-	float a = 0.5;
-	vec3 shift = vec3(100);
-	for (int i = 0; i < 3; ++i) {
-		v += a * noise(x);
-		x = x * 2.0 + shift;
-		a *= 0.5;
-	}
-	return v;
-}
-
-// fn ridged_multifractal_noise(&self, point: [f64; 2]) -> f64 {
-//     let mut point = Vector2::from(point);
-
-//     let mut result = 0.0;
-//     let mut weight = 1.0;
-
-//     point *= self.frequency;
-
-//     for x in 0..self.octaves {
-//         // Get the value.
-//         let mut signal = self.sources[x].get(point.into_array());
-
-//         // Make the ridges.
-//         signal = signal.abs();
-//         signal = 1.0 - signal;
-
-//         // Square the signal to increase the sharpness of the ridges.
-//         signal *= signal;
-
-//         // Apply the weighting from the previous octave to the signal.
-//         // Larger values have higher weights, producing sharp points along
-//         // the ridges.
-//         signal *= weight;
-
-//         // Weight successive contributions by the previous signal.
-//         weight = signal / self.attenuation;
-
-//         // Clamp the weight to [0,1] to prevent the result from diverging.
-//         weight = weight.clamp(0.0, 1.0);
-
-//         // Scale the amplitude appropriately for this frequency.
-//         signal *= self.persistence.powi(x as i32);
-
-//         // Add the signal to the result.
-//         result += signal;
-
-//         // Increase the frequency.
-//         point *= self.lacunarity;
-//     }
-
-//     // Scale and shift the result into the [-1,1] range
-//     let scale = 2.0 - 0.5_f64.powi(self.octaves as i32 - 1);
-//     scale_shift(result, 2.0 / scale)
-// }
-
-// pub(crate) fn scale_shift(value: f64, n: f64) -> f64 {
-//     value.abs().mul_add(n, -1.0_f64)
-// }
-
 float scale_shift(float value, float n) {
-    return abs(value) * n - 1.0;
+	return abs(value) * n - 1.0;
 }
 
 float ridged_multifractal_noise(vec3 point, float frequency, float lacunarity, float persistence, float attenuation) {
-    float result = 0.;
-    float weight = 1.0;
+	float result = 0.;
+	float weight = 1.0;
 
-    point *= frequency;
+	point *= frequency;
 
-    int octaves = 2;
-    for (int octave = 0; octave < octaves; ++octave) {
-        // Get the value.
-        float signal = fbm(point + vec3(float(octave)) * 8.);
+	int octaves = 2;
+	for (int octave = 0; octave < octaves; ++octave) {
+		// Get the value.
+		float signal = fbm(point + vec3(float(octave)) * 8.);
 
-        // Make the ridges.
-        signal = abs(signal);
-        signal = 1.0 - signal;
+		// Make the ridges.
+		signal = abs(signal);
+		signal = 1.0 - signal;
 
-        // Square the signal to increase the sharpness of the ridges.
-        signal *= signal;
+		// Square the signal to increase the sharpness of the ridges.
+		signal *= signal;
 
-        // Apply the weighting from the previous octave to the signal.
-        // Larger values have higher weights, producing sharp points along
-        // the ridges.
-        signal *= weight;
+		// Apply the weighting from the previous octave to the signal.
+		// Larger values have higher weights, producing sharp points along
+		// the ridges.
+		signal *= weight;
 
-        // Weight successive contributions by the previous signal.
-        weight = signal / attenuation;
+		// Weight successive contributions by the previous signal.
+		weight = signal / attenuation;
 
-        // Clamp the weight to [0,1] to prevent the result from diverging.
-        weight = clamp(weight, 0.0, 1.0);
+		// Clamp the weight to [0,1] to prevent the result from diverging.
+		weight = clamp(weight, 0.0, 1.0);
 
-        // Scale the amplitude appropriately for this frequency.
-        signal *= pow(persistence, float(octave));
+		// Scale the amplitude appropriately for this frequency.
+		signal *= pow(persistence, float(octave));
 
-        // Add the signal to the result.
-        result += signal;
+		// Add the signal to the result.
+		result += signal;
 
-        // Increase the frequency.
-        point *= lacunarity;
-    }
+		// Increase the frequency.
+		point *= lacunarity;
+	}
 
-    // Scale and shift the result into the [-1,1] range
-    float scale = 2.0 - pow(0.5, float(octaves));
-    return scale_shift(result, 2.0 / scale);
+	// Scale and shift the result into the [-1,1] range
+	float scale = 2.0 - pow(0.5, float(octaves));
+	return scale_shift(result, 2.0 / scale);
 }

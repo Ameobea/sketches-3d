@@ -14,10 +14,20 @@
 <script lang="ts">
   import type { Writable } from 'svelte/store';
 
+  import { getVizConfigSync, type VizConfig } from '../conf';
+  import ControlsMenu from './ControlsMenu.svelte';
+  import GraphicsMenu from './GraphicsMenu.svelte';
+
   let activeMenu = Menu.Main;
 
   export let ctx: PauseMenuCtx;
   $: globalVolume = ctx.globalVolume;
+
+  const startVizConfig = getVizConfigSync();
+
+  const saveNewConfig = (newVizConfig: VizConfig) => {
+    localStorage.setItem('vizConfig', JSON.stringify(newVizConfig));
+  };
 </script>
 
 <div
@@ -61,14 +71,15 @@
           Controls
         </button>
       {:else if activeMenu === Menu.Graphics}
-        <button
-          on:click={() => {
+        <GraphicsMenu
+          onBack={() => {
             activeMenu = Menu.Main;
           }}
-        >
-          Back
-        </button>
+          onChange={saveNewConfig}
+          {startVizConfig}
+        />
       {:else if activeMenu === Menu.Controls}
+        <ControlsMenu />
         <button
           on:click={() => {
             activeMenu = Menu.Main;
@@ -137,7 +148,7 @@
     margin-bottom: 6px;
   }
 
-  .menu-items-stack {
+  :global(.menu-items-stack) {
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -146,7 +157,7 @@
     margin-bottom: auto;
   }
 
-  .menu-items-stack > * {
+  :global(.menu-items-stack > *) {
     height: 60px;
     font-size: 24px;
     padding: 10px;
@@ -155,10 +166,13 @@
     color: #eee;
     text-transform: uppercase;
     outline: none;
-    cursor: pointer;
   }
 
-  .menu-items-stack > button:hover {
+  :global(.menu-items-stack > button:hover) {
     background-color: rgba(18, 18, 18, 0.4);
+  }
+
+  :global(.menu-items-stack > button:disabled) {
+    background-color: rgba(0, 0, 0, 0.3) !important;
   }
 </style>

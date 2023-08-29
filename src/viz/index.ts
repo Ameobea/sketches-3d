@@ -17,6 +17,7 @@ import { initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
 import { buildDefaultSceneConfig, type SceneConfig, ScenesByName } from './scenes';
+import { setDefaultDistanceAmpParams } from './shaders/customShader';
 
 interface FirstPersonCtx {
   addTriMesh: (mesh: THREE.Mesh) => void;
@@ -24,6 +25,16 @@ interface FirstPersonCtx {
   addBox: (
     pos: [number, number, number],
     halfExtents: [number, number, number],
+    quat?: THREE.Quaternion
+  ) => void;
+  addCompound: (
+    pos: [number, number, number],
+    children: {
+      type: 'box';
+      pos: [number, number, number];
+      halfExtents: [number, number, number];
+      quat?: THREE.Quaternion;
+    }[],
     quat?: THREE.Quaternion
   ) => void;
   optimize: () => void;
@@ -66,6 +77,7 @@ const setupFirstPerson = async (
     addTriMesh,
     teleportPlayer,
     addBox,
+    addCompound,
     optimize,
     setGravity,
     setFlyMode,
@@ -135,6 +147,11 @@ const setupFirstPerson = async (
     teleportPlayer(new THREE.Vector3(pos[0], pos[1], pos[2]), new THREE.Vector3(rot[0], rot[1], rot[2]));
   };
 
+  if (localStorage.goBackOnLoad) {
+    (window as any).back();
+    delete localStorage.goBackOnLoad;
+  }
+
   function teleportPlayerIfOOB() {
     if (camera.position.y <= oobYThreshold) {
       teleportPlayer(spawnPos.pos, spawnPos.rot);
@@ -166,6 +183,7 @@ const setupFirstPerson = async (
     addTriMesh,
     teleportPlayer,
     addBox,
+    addCompound,
     optimize,
     setFlyMode,
     setGravity,
@@ -459,7 +477,7 @@ export const initViz = (
   if (!sceneDef) {
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
-  const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName } = sceneDef;
+  const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName, extension = 'gltf' } = sceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 
   let fpCtx: FirstPersonCtx | undefined;
@@ -474,10 +492,11 @@ export const initViz = (
       ? gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group()
       : new THREE.Group();
 
-    const sceneLoader = await getSceneLoader();
+    const [sceneLoader, vizConfig] = await Promise.all([getSceneLoader(), Conf.getVizConfig()]);
+    setDefaultDistanceAmpParams(null);
     const sceneConf = {
       ...buildDefaultSceneConfig(),
-      ...((await sceneLoader(viz, scene)) ?? {}),
+      ...((await sceneLoader(viz, scene, vizConfig)) ?? {}),
     };
 
     if (sceneConf.renderOverride) {
@@ -571,7 +590,7 @@ export const initViz = (
   };
 
   if (gltfName) {
-    loader.load(`${gltfName}.gltf`, gltfLoadedCB);
+    loader.load(`${gltfName}.${extension}`, gltfLoadedCB);
   } else {
     gltfLoadedCB({ scenes: [] });
   }

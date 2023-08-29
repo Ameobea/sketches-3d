@@ -5,9 +5,11 @@ import commonShaderCode from './common.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import GeneratedUVsFragment from './generatedUVs.vert?raw';
-import noise2Shaders from './noise2.frag?raw';
 import noiseShaders from './noise.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
+
+// import noise2Shaders from './noise2.frag?raw';
+const noise2Shaders = 'DISABLED TO SAVE SPACE';
 
 const DEFAULT_MAP_DISABLE_DISTANCE = 200;
 const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
@@ -63,6 +65,19 @@ const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   return NonAntialiasedRoughnessShaderFragment;
 };
 
+interface AmbientDistanceAmpParams {
+  falloffStartDistance: number;
+  falloffEndDistance: number;
+  exponent?: number;
+  ampFactor: number;
+}
+
+let DefaultDistanceAmpParams: AmbientDistanceAmpParams | undefined;
+
+export const setDefaultDistanceAmpParams = (params: AmbientDistanceAmpParams | null | undefined) => {
+  DefaultDistanceAmpParams = params ?? undefined;
+};
+
 interface CustomShaderProps {
   name?: string;
   side?: THREE.Side;
@@ -97,6 +112,13 @@ interface CustomShaderProps {
    */
   fogShadowFactor?: number;
   ambientLightScale?: number;
+  /**
+   * Controls an effect whereby the amount of ambient light is increased if the fragment is within some distance
+   * to the camera.
+   *
+   * Works in a similar way to exp2 fog but in reverse and with a configurable exponent.
+   */
+  ambientDistanceAmp?: AmbientDistanceAmpParams;
 }
 
 interface CustomShaderShaders {
@@ -155,6 +177,7 @@ export const buildCustomShaderArgs = (
     mapDisableTransitionThreshold = 20,
     fogShadowFactor = 0.1,
     ambientLightScale = 1,
+    ambientDistanceAmp = DefaultDistanceAmpParams,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -321,6 +344,49 @@ export const buildCustomShaderArgs = (
       return `
   diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`;
     }
+  };
+
+  const buildLightsFragmentBegin = () => {
+    let frag = CustomLightsFragmentBegin.replace(
+      '__DIR_LIGHTS_DISABLE__',
+      (() => {
+        if (!disabledDirectionalLightIndices) {
+          return '0';
+        }
+
+        return disabledDirectionalLightIndices
+          .map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`)
+          .join(' || ');
+      })()
+    )
+      .replace(
+        '__SPOT_LIGHTS_DISABLE__',
+        (() => {
+          if (!disabledSpotLightIndices) {
+            return '0';
+          }
+
+          return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
+        })()
+      )
+      .replace('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))
+      .replace('__USE_AMBIENT_LIGHT_DISTANCE_AMP__', ambientDistanceAmp ? '1' : '0');
+
+    if (ambientDistanceAmp) {
+      frag = frag
+        .replace(
+          '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_START_DISTANCE__',
+          ambientDistanceAmp.falloffStartDistance.toFixed(4)
+        )
+        .replace(
+          '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_END_DISTANCE__',
+          ambientDistanceAmp.falloffEndDistance.toFixed(4)
+        )
+        .replace('__AMBIENT_LIGHT_DISTANCE_AMP_EXPONENT__', (ambientDistanceAmp.exponent ?? 1).toFixed(4))
+        .replace('__AMBIENT_LIGHT_DISTANCE_AMP_FACTOR__', ambientDistanceAmp.ampFactor.toFixed(4));
+    }
+
+    return frag;
   };
 
   const mapDisableDistance =
@@ -542,7 +608,7 @@ export const buildCustomShaderArgs = (
   return {
     fog: true,
     lights: true,
-    // dithering: true,
+    dithering: true,
     uniforms,
     vertexShader: `
 #define STANDARD
@@ -805,27 +871,7 @@ void main() {
 	// accumulation
 	#include <lights_physical_fragment>
 	// #include <lights_fragment_begin>
-  ${CustomLightsFragmentBegin.replace(
-    '__DIR_LIGHTS_DISABLE__',
-    (() => {
-      if (!disabledDirectionalLightIndices) {
-        return '0';
-      }
-
-      return disabledDirectionalLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
-    })()
-  )
-    .replace(
-      '__SPOT_LIGHTS_DISABLE__',
-      (() => {
-        if (!disabledSpotLightIndices) {
-          return '0';
-        }
-
-        return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
-      })()
-    )
-    .replace('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))}
+  ${buildLightsFragmentBegin()}
 	#include <lights_fragment_maps>
 	#include <lights_fragment_end>
 	// modulation
@@ -877,6 +923,14 @@ void main() {
 class CustomShaderMaterial extends THREE.ShaderMaterial {
   public setCurTimeSeconds(curTimeSeconds: number) {
     this.uniforms.curTimeSeconds.value = curTimeSeconds;
+  }
+
+  public get color(): THREE.Color {
+    return (this.uniforms.diffuse as any).value;
+  }
+
+  public set color(color: THREE.Color) {
+    (this.uniforms.diffuse as any).value = color;
   }
 }
 

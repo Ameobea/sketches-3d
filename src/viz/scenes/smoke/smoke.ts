@@ -1,16 +1,24 @@
 import * as THREE from 'three';
 
-import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
+import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
+import { buildCustomShader, setDefaultDistanceAmpParams } from 'src/viz/shaders/customShader';
+import { loadNamedTextures } from 'src/viz/textureLoading';
 import { delay } from 'src/viz/util';
 import type { SceneConfig } from '..';
 import type { VizState } from '../..';
 import { initWebSynth } from '../../../viz/webSynth';
 import { buildAndAddFractals } from './3DvicsekFractal';
+import { Locations } from './locations';
 import { configurePostprocessing } from './postprocessing';
 import BgMonolithColorShader from './shaders/bgMonolith/color.frag?raw';
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (
+  viz: VizState,
+  loadedWorld: THREE.Group,
+  vizConf: VizConfig
+): Promise<SceneConfig> => {
+  viz.camera.position.copy(Locations.spawn.pos.add(new THREE.Vector3(0, 1.5, 0)));
+
   viz.scene.add(loadedWorld);
 
   const LIGHT_COLOR = 0xa14e0b;
@@ -42,10 +50,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     cubesTexture: 'https://i.ameo.link/bey.jpg',
   });
 
-  initWebSynth({ compositionIDToLoad: 104 }).then(async ctx => {
+  setDefaultDistanceAmpParams({
+    ampFactor: 1.6,
+    falloffStartDistance: 0,
+    falloffEndDistance: 30,
+    exponent: 1.34,
+  });
+
+  initWebSynth({ compositionIDToLoad: 107 }).then(async ctx => {
     await delay(700);
 
-    ctx.setGlobalBpm(70);
+    ctx.setGlobalBpm(66);
     ctx.startAll();
   });
 
@@ -57,12 +72,17 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       roughness: 0.4,
       metalness: 0.4,
       uvTransform: new THREE.Matrix3().scale(0.0482, 0.0482),
+      ambientDistanceAmp: {
+        ampFactor: 0.5,
+        falloffStartDistance: 0,
+        falloffEndDistance: 30,
+        exponent: 1.34,
+      },
     },
     {},
     {
       useGeneratedUVs: true,
       randomizeUVOffset: true,
-      // tileBreaking: { type: 'neyret', patchScale: 1 },
     }
   );
 
@@ -78,13 +98,19 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   lightPosToTarget.multiplyScalar(0.2);
   lightPos.add(lightPosToTarget);
 
+  const shadowMapSize = {
+    [GraphicsQuality.Low]: 1024,
+    [GraphicsQuality.Medium]: 2048,
+    [GraphicsQuality.High]: 4096,
+  }[vizConf.graphics.quality];
+
   const dirLight = new THREE.DirectionalLight(LIGHT_COLOR, 1);
+  dirLight.name = 'godraysLight';
   dirLight.target.position.copy(lightTarget);
   dirLight.castShadow = true;
   dirLight.shadow.bias = 0.01;
-  dirLight.shadow.mapSize.width = 1024 * 4;
-  dirLight.shadow.mapSize.height = 1024 * 4;
-  dirLight.shadow.autoUpdate = true;
+  dirLight.shadow.mapSize.width = shadowMapSize;
+  dirLight.shadow.mapSize.height = shadowMapSize;
   dirLight.shadow.camera.near = 0.1;
   dirLight.shadow.camera.far = 370;
   dirLight.shadow.camera.left = -180;
@@ -105,8 +131,19 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.scene.fog = new THREE.Fog(LIGHT_COLOR, 0.02, 200);
   viz.scene.background = new THREE.Color(0x8f4509);
 
-  // Render the scene once to populate the shadow map
-  viz.renderer.render(viz.scene, viz.camera);
+  viz.renderer.domElement.style.visibility = 'hidden';
+  const populateShadowMap = () => {
+    // Render the scene once to populate the shadow map
+    dirLight.shadow.needsUpdate = true;
+    viz.renderer.shadowMap.needsUpdate = true;
+    viz.renderer.render(viz.scene, viz.camera);
+    dirLight.shadow.needsUpdate = false;
+    dirLight.shadow.autoUpdate = false;
+    viz.renderer.shadowMap.needsUpdate = false;
+    viz.renderer.shadowMap.autoUpdate = false;
+    viz.renderer.shadowMap.enabled = true;
+    viz.renderer.domElement.style.visibility = 'visible';
+  };
 
   const bgMonoliths = loadedWorld.children.filter(c => c.name.startsWith('bg_monolith')) as THREE.Mesh[];
   const bgMonolithMaterial = buildCustomShader(
@@ -136,7 +173,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {
       useGeneratedUVs: true,
       randomizeUVOffset: false,
-      tileBreaking: { type: 'neyret', patchScale: 3.5 },
+      tileBreaking:
+        vizConf.graphics.quality >= GraphicsQuality.Low ? { type: 'neyret', patchScale: 3.5 } : undefined,
     }
   );
   border.material = goldMaterial;
@@ -151,10 +189,18 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       uvTransform: new THREE.Matrix3().scale(40.8982, 40.8982),
       roughness: 0.7,
       metalness: 0.7,
+      ambientLightScale: 1.5,
+      ambientDistanceAmp: {
+        ampFactor: 0.4,
+        falloffStartDistance: 0,
+        falloffEndDistance: 10,
+        exponent: 1.34,
+      },
     },
     {},
     {
-      tileBreaking: { type: 'neyret', patchScale: 3.5 },
+      tileBreaking:
+        vizConf.graphics.quality >= GraphicsQuality.Low ? { type: 'neyret', patchScale: 3.5 } : undefined,
     }
   );
 
@@ -182,7 +228,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.9,
       uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
       color: new THREE.Color(0xffffff),
-      ambientLightScale: 2,
+      ambientLightScale: 4,
     },
     {},
     {}
@@ -220,11 +266,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const pipeBottom = loadedWorld.getObjectByName('pipe_bottom') as THREE.Mesh;
   pipeBottom.material = pipeBottomMaterial;
 
-  const pipeLightPosts = loadedWorld.children.filter(c =>
-    c.name.startsWith('pipe_light_post')
+  const pipeLightPosts = loadedWorld.children.filter(
+    c => c.name.startsWith('pipe_light_post') || c.name.startsWith('torch_light_post')
   ) as THREE.Mesh[];
   const pipeLights = loadedWorld.children.filter(
-    c => c.name.startsWith('pipe_light') && !c.name.includes('post')
+    c => !c.name.includes('post') && (c.name.startsWith('pipe_light') || c.name.startsWith('torch_light'))
   ) as THREE.Mesh[];
 
   const pipeLightPostMaterial = buildCustomShader({ color: new THREE.Color(0x121212) }, {}, {});
@@ -258,7 +304,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     )
   );
 
-  configurePostprocessing(viz, dirLight);
+  configurePostprocessing(viz, dirLight, vizConf.graphics.quality, populateShadowMap);
+
+  populateShadowMap();
 
   return {
     spawnLocation: 'spawn',
@@ -269,36 +317,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       jumpVelocity: 12,
       oobYThreshold: -110,
     },
-    locations: {
-      spawn: {
-        pos: new THREE.Vector3(0, 0, 0),
-        rot: new THREE.Vector3(-0.01, 1.412, 0),
-      },
-      end: {
-        pos: new THREE.Vector3(-2.0920538902282715, -2.177037000656128, 127.51612854003906),
-        rot: new THREE.Vector3(-0.5647963267948956, 2.4699999999998963, 0),
-      },
-      outside: {
-        pos: new THREE.Vector3(24.726898193359375, 2.064194917678833, 27.218582153320312),
-        rot: new THREE.Vector3(-0.0019999999999998647, 4.71799999999993, 0),
-      },
-      out: {
-        pos: new THREE.Vector3(24.726898193359375, 2.064194917678833, 27.218582153320312),
-        rot: new THREE.Vector3(-0.0019999999999998647, 4.71799999999993, 0),
-      },
-      pipe: {
-        pos: new THREE.Vector3(-20.713298797607422, -12.508797645568848, 127.8397216796875),
-        rot: new THREE.Vector3(-0.6007963267948956, 2.6579999999998973, 0),
-      },
-      jump: {
-        pos: new THREE.Vector3(87.85043334960938, -21.2853946685791, 157.130859375),
-        rot: new THREE.Vector3(-0.2939999999999999, 2.953999999999946, 0),
-      },
-      room: {
-        pos: new THREE.Vector3(-31.08810806274414, 2.132516860961914, 29.65850830078125),
-        rot: new THREE.Vector3(0.04000000000000012, 10.95200000000005, 0),
-      },
-    },
+    locations: Locations,
     debugPos: true,
     // debugTarget: true,
   };
