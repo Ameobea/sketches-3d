@@ -133,7 +133,19 @@ export const ScenesByName: { [key: string]: SceneDef } = {
   smoke: {
     sceneName: 'Scene',
     sceneLoader: () => import('./smoke/smoke').then(mod => mod.processLoadedScene),
-    metadata: { title: 'smoke' },
+    metadata: {
+      title: 'smoke',
+      openGraph: {
+        images: [
+          {
+            url: 'https://i.ameo.link/bf1.png',
+            width: 1829,
+            height: 1304,
+            alt: 'A screenshot of the "smoke" level.  Shows intense orange fog, floating fractal structures composed out of large dark cubes with stone-like texturing and patterns, and four orange/yellow lights glowing in the distance supported by long poles.',
+          },
+        ],
+      },
+    },
     gltfName: 'smoke',
     extension: 'glb',
   },

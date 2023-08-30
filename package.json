@@ -6,8 +6,6 @@
     "build": "vite build",
     "package": "svelte-kit package",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
-    "check:watch": "svelte-check --tsconfig ./tsconfig.json --watch",
     "lint": "prettier --check --plugin-search-dir=. . && eslint .",
     "format": "prettier --write --plugin-search-dir=. ."
   },
@@ -16,7 +14,6 @@
     "@sveltejs/adapter-auto": "next",
     "@sveltejs/adapter-static": "^1.0.0-next.44",
     "@sveltejs/kit": "=1.0.0-next.509",
-    "@tweakpane/core": "^1.1.0",
     "@types/three": "^0.144.0",
     "@typescript-eslint/eslint-plugin": "^5.39.0",
     "@typescript-eslint/parser": "^5.39.0",
@@ -26,12 +23,9 @@
     "prettier": "^2.7.1",
     "prettier-plugin-svelte": "^2.7.1",
     "svelte": "^3.50.1",
-    "svelte-check": "^2.9.1",
     "svelte-preprocess": "^4.10.7",
-    "tslib": "^2.4.0",
     "typescript": "^4.8.4",
-    "vite": "^3.1.4",
-    "wrangler": "2.1.10"
+    "vite": "^3.1.4"
   },
   "type": "module",
   "dependencies": {
@@ -45,7 +39,6 @@
     "svelte-seo": "^1.4.1",
     "three": "^0.145.0",
     "three-good-godrays": "^0.4.2",
-    "three-subdivide": "^1.1.0",
     "tweakpane": "^3.1.0"
   }
 }

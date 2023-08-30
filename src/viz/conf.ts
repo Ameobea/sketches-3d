@@ -4,6 +4,7 @@ export const DefaultSceneName = 'bridge';
 
 export const DefaultPlayerColliderHeight = 4.55;
 export const DefaultPlayerColliderRadius = 0.35;
+export const DEFAULT_FOV = 75;
 
 export enum GraphicsQuality {
   Low = 1,
@@ -18,13 +19,16 @@ export const formatGraphicsQuality = (quality: GraphicsQuality): string =>
     [GraphicsQuality.High]: 'high',
   }[quality]);
 
+export interface GraphicsSettings {
+  quality: GraphicsQuality;
+  fov: number;
+}
+
 /**
  * Config that is persisted between runs and shared between scenes
  */
 export interface VizConfig {
-  graphics: {
-    quality: GraphicsQuality;
-  };
+  graphics: GraphicsSettings;
 }
 
 const getGraphicsQuality = async (tierRes: TierResult) => {
@@ -78,7 +82,8 @@ export const getVizConfig = async (): Promise<VizConfig> => {
       graphicsQuality
     )}" for detected GPU ${gpuName}`
   );
-  const config = { graphics: { quality: graphicsQuality } };
+
+  const config = { graphics: { quality: graphicsQuality, fov: DEFAULT_FOV } };
   localStorage.setItem('vizConfig', JSON.stringify(config));
   return config;
 };

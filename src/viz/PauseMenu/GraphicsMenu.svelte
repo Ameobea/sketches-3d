@@ -1,20 +1,47 @@
 <script lang="ts">
-  import { formatGraphicsQuality, GraphicsQuality, type VizConfig } from '../conf';
+  import { applyGraphicsSettings, type VizState } from '..';
+  import { GraphicsQuality, type GraphicsSettings, type VizConfig } from '../conf';
+  import RangeInput from './RangeInput.svelte';
   import SelectButton from './SelectButton.svelte';
 
+  export let viz: VizState;
   export let onBack: () => void;
   export let onChange: (vizConf: VizConfig) => void;
   export let startVizConfig: VizConfig;
 
   let graphicsQuality: GraphicsQuality = startVizConfig.graphics.quality;
+  let fov = startVizConfig.graphics.fov;
 
   const AllQualities = [GraphicsQuality.Low, GraphicsQuality.Medium, GraphicsQuality.High];
-  const AllQualityNames = AllQualities.map(formatGraphicsQuality);
   const handleQualityChange = (newQualityIx: number) => {
     graphicsQuality = AllQualities[newQualityIx];
   };
 
-  $: graphicsSettingsChanged = graphicsQuality !== startVizConfig.graphics.quality;
+  const handleFOVChange = (newFov: number) => {
+    fov = newFov;
+  };
+
+  $: graphicsSettingsChanged =
+    graphicsQuality !== startVizConfig.graphics.quality || fov !== startVizConfig.graphics.fov;
+
+  const handleSave = () => {
+    const newGraphicsSettings: GraphicsSettings = {
+      quality: graphicsQuality,
+      fov,
+    };
+    onChange({
+      ...startVizConfig,
+      graphics: newGraphicsSettings,
+    });
+    localStorage['goBackOnLoad'] = 'true';
+
+    const needsReload = graphicsQuality !== startVizConfig.graphics.quality;
+    if (needsReload) {
+      window.location.reload();
+    }
+
+    applyGraphicsSettings(viz, newGraphicsSettings);
+  };
 </script>
 
 <SelectButton
@@ -22,22 +49,8 @@
   curIx={AllQualities.indexOf(graphicsQuality)}
   options={['low', 'medium', 'high']}
 />
-<button
-  disabled={!graphicsSettingsChanged}
-  on:click={() => {
-    onChange({
-      ...startVizConfig,
-      graphics: {
-        ...startVizConfig.graphics,
-        quality: graphicsQuality,
-      },
-    });
-    localStorage['goBackOnLoad'] = 'true';
-    window.location.reload();
-  }}
->
-  Save
-</button>
+<RangeInput label="FOV" min={60} max={120} step={1} value={fov} onChange={handleFOVChange} />
+<button disabled={!graphicsSettingsChanged} on:click={handleSave}>Save</button>
 <button on:click={onBack}>Back</button>
 
 <style lang="css">

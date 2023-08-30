@@ -222,7 +222,12 @@ export const buildViz = (paused: Writable<boolean>) => {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x020202);
 
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3_000);
+  const camera = new THREE.PerspectiveCamera(
+    Conf.DEFAULT_FOV,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    3_000
+  );
   camera.matrixAutoUpdate = true;
   camera.rotation.order = 'YXZ';
 
@@ -455,6 +460,11 @@ export const buildViz = (paused: Writable<boolean>) => {
   };
 };
 
+export const applyGraphicsSettings = (viz: VizState, graphics: Conf.GraphicsSettings) => {
+  viz.camera.fov = graphics.fov;
+  viz.camera.updateProjectionMatrix();
+};
+
 export type VizState = ReturnType<typeof buildViz>;
 
 export const initViz = (
@@ -462,9 +472,11 @@ export const initViz = (
   {
     paused,
     sceneName: providedSceneName = Conf.DefaultSceneName,
-  }: { paused: Writable<boolean>; sceneName?: string }
+    vizCb,
+  }: { paused: Writable<boolean>; sceneName?: string; vizCb: (viz: VizState) => void }
 ) => {
   const viz = buildViz(paused);
+  vizCb(viz);
 
   container.appendChild(viz.renderer.domElement);
   container.appendChild(viz.stats.domElement);
@@ -493,6 +505,7 @@ export const initViz = (
       : new THREE.Group();
 
     const [sceneLoader, vizConfig] = await Promise.all([getSceneLoader(), Conf.getVizConfig()]);
+    applyGraphicsSettings(viz, vizConfig.graphics);
     setDefaultDistanceAmpParams(null);
     const sceneConf = {
       ...buildDefaultSceneConfig(),

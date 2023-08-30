@@ -14,6 +14,7 @@
 <script lang="ts">
   import type { Writable } from 'svelte/store';
 
+  import type { VizState } from '..';
   import { getVizConfigSync, type VizConfig } from '../conf';
   import ControlsMenu from './ControlsMenu.svelte';
   import GraphicsMenu from './GraphicsMenu.svelte';
@@ -21,12 +22,14 @@
   let activeMenu = Menu.Main;
 
   export let ctx: PauseMenuCtx;
+  export let viz: VizState;
   $: globalVolume = ctx.globalVolume;
 
   const startVizConfig = getVizConfigSync();
 
   const saveNewConfig = (newVizConfig: VizConfig) => {
     localStorage.setItem('vizConfig', JSON.stringify(newVizConfig));
+    activeMenu = Menu.Main;
   };
 </script>
 
@@ -45,6 +48,7 @@
       {#if activeMenu === Menu.Main}
         <button on:click={ctx.onResume}>Resume</button>
         <div class="global-volume">
+          <label for="global-volume-slider">Global Volume</label>
           <input
             type="range"
             id="global-volume-slider"
@@ -54,7 +58,6 @@
             step="0.01"
             bind:value={$globalVolume}
           />
-          <label for="global-volume-slider">Global Volume</label>
         </div>
         <button
           on:click={() => {
@@ -77,6 +80,7 @@
           }}
           onChange={saveNewConfig}
           {startVizConfig}
+          {viz}
         />
       {:else if activeMenu === Menu.Controls}
         <ControlsMenu />
@@ -135,7 +139,8 @@
   .global-volume label {
     font-size: 14px;
     font-weight: 500;
-    margin-bottom: 2px;
+    margin-top: 2px;
+    margin-bottom: 5px;
     text-align: center;
     display: block;
     width: 100%;

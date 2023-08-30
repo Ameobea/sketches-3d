@@ -1,7 +1,7 @@
 <script lang="ts">
   import SvelteSeo from 'svelte-seo';
 
-  import { initViz } from '.';
+  import { initViz, type VizState } from '.';
   import '../index.css';
   import { writable } from 'svelte/store';
 
@@ -15,13 +15,18 @@
   const globalVolume = writable(0.8);
 
   const onResume = () => void paused.set(false);
+
+  let viz: VizState | null = null;
+  const vizCb = (newViz: VizState) => {
+    viz = newViz;
+  };
 </script>
 
 {#if metadata}
   <SvelteSeo {...metadata} />
 {/if}
 
-<div use:initViz={{ paused, sceneName }} />
-{#if $paused}
-  <PauseMenu ctx={{ onResume, globalVolume }} />
+<div use:initViz={{ paused, sceneName, vizCb }} />
+{#if $paused && viz}
+  <PauseMenu ctx={{ onResume, globalVolume }} {viz} />
 {/if}
