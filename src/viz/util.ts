@@ -87,7 +87,12 @@ export const getMesh = (group: THREE.Group, name: string): THREE.Mesh => {
   }
 };
 
-export const DEVICE_PIXEL_RATIO = Math.min(window.devicePixelRatio || 1, 2);
+export const DEVICE_PIXEL_RATIO = (() => {
+  if (typeof window === 'undefined') {
+    return 1;
+  }
+  return Math.min(window.devicePixelRatio || 1, 2);
+})();
 
 export const hasWasmSIMDSupport = async () =>
   WebAssembly.validate(
@@ -96,3 +101,26 @@ export const hasWasmSIMDSupport = async () =>
       98, 11,
     ])
   );
+
+export const mergeDeep = <T extends Record<string, any>>(target: T, source: any): T => {
+  const isObject = (obj: any) => obj && typeof obj === 'object';
+
+  if (!isObject(target) || !isObject(source)) {
+    return source;
+  }
+
+  Object.keys(source).forEach(key => {
+    const targetValue = target[key];
+    const sourceValue = source[key];
+
+    if (Array.isArray(targetValue) && Array.isArray(sourceValue)) {
+      (target as any)[key] = targetValue.concat(sourceValue);
+    } else if (isObject(targetValue) && isObject(sourceValue)) {
+      (target as any)[key] = mergeDeep(Object.assign({}, targetValue), sourceValue);
+    } else {
+      (target as any)[key] = sourceValue;
+    }
+  });
+
+  return target;
+};

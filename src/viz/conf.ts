@@ -1,5 +1,7 @@
 import { getGPUTier, type TierResult } from 'detect-gpu';
 
+import { mergeDeep } from './util';
+
 export const DefaultSceneName = 'bridge';
 
 export const DefaultPlayerColliderHeight = 4.55;
@@ -70,12 +72,14 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
   return { graphicsQuality, gpuName };
 };
 
-export const getVizConfig = async (): Promise<VizConfig> => {
-  if (localStorage.getItem('vizConfig')) {
-    const vizConfig = JSON.parse(localStorage.getItem('vizConfig') ?? '{}') as VizConfig;
-    return vizConfig;
-  }
+const buildDefaultVizConfig = (): VizConfig => ({
+  graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV },
+});
 
+/**
+ * Creates an appropriate initial viz config for a user based on estimated system performance
+ */
+const buildInitialVizConfig = async (): Promise<VizConfig> => {
   const { graphicsQuality, gpuName } = await getGPUPerformanceInfo();
   console.log(
     `Determined initial graphics quality of "${formatGraphicsQuality(
@@ -83,16 +87,25 @@ export const getVizConfig = async (): Promise<VizConfig> => {
     )}" for detected GPU ${gpuName}`
   );
 
-  const config = { graphics: { quality: graphicsQuality, fov: DEFAULT_FOV } };
-  localStorage.setItem('vizConfig', JSON.stringify(config));
-  return config;
+  return { graphics: { quality: graphicsQuality, fov: DEFAULT_FOV } };
 };
 
-export const getVizConfigSync = (): VizConfig => {
+/**
+ * Loads the viz config from local storage, merging it with the default viz config
+ * if it's not found or if any fields are missing.
+ */
+export const loadVizConfig = (): VizConfig => {
+  const vizConfig = JSON.parse(localStorage.getItem('vizConfig') ?? '{}') as VizConfig;
+  return mergeDeep(buildDefaultVizConfig(), vizConfig);
+};
+
+export const getVizConfig = async (): Promise<VizConfig> => {
   if (localStorage.getItem('vizConfig')) {
-    const vizConfig = JSON.parse(localStorage.getItem('vizConfig') ?? '{}') as VizConfig;
+    const vizConfig = loadVizConfig();
     return vizConfig;
   }
 
-  throw new Error('Viz config not yet initialized');
+  const config = await buildInitialVizConfig();
+  localStorage.setItem('vizConfig', JSON.stringify(config));
+  return config;
 };

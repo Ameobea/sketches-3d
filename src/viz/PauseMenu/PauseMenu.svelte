@@ -15,7 +15,7 @@
   import type { Writable } from 'svelte/store';
 
   import type { VizState } from '..';
-  import { getVizConfigSync, type VizConfig } from '../conf';
+  import { loadVizConfig, type VizConfig } from '../conf';
   import ControlsMenu from './ControlsMenu.svelte';
   import GraphicsMenu from './GraphicsMenu.svelte';
 
@@ -25,7 +25,7 @@
   export let viz: VizState;
   $: globalVolume = ctx.globalVolume;
 
-  const startVizConfig = getVizConfigSync();
+  const startVizConfig = loadVizConfig();
 
   const saveNewConfig = (newVizConfig: VizConfig) => {
     localStorage.setItem('vizConfig', JSON.stringify(newVizConfig));
