@@ -173,6 +173,10 @@
     outline: none;
   }
 
+  :global(.menu-items-stack > button, .menu-items-stack input) {
+    cursor: pointer;
+  }
+
   :global(.menu-items-stack > button:hover) {
     background-color: rgba(18, 18, 18, 0.4);
   }

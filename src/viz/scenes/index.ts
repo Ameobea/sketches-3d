@@ -149,4 +149,11 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     gltfName: 'smoke',
     extension: 'glb',
   },
+  cave: {
+    sceneName: 'Scene',
+    sceneLoader: () => import('./cave/cave').then(mod => mod.processLoadedScene),
+    metadata: { title: 'cave' },
+    gltfName: 'cave',
+    extension: 'glb',
+  },
 };

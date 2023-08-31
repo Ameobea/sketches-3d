@@ -157,6 +157,7 @@ interface CustomShaderOptions {
   disabledSpotLightIndices?: number[];
   randomizeUVOffset?: boolean;
   useGeneratedUVs?: boolean;
+  useTriplanarMapping?: boolean;
 }
 
 export const buildCustomShaderArgs = (
@@ -201,6 +202,7 @@ export const buildCustomShaderArgs = (
     disabledSpotLightIndices,
     randomizeUVOffset,
     useGeneratedUVs,
+    useTriplanarMapping,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -280,6 +282,12 @@ export const buildCustomShaderArgs = (
   }
   if (useGeneratedUVs && !map) {
     throw new Error('Cannot use generated UVs without a map');
+  }
+  if (useTriplanarMapping && (useGeneratedUVs || !!tileBreaking)) {
+    // We could technically use it with tile breaking, but at that point we'd be doing up to like
+    // 3 * 3 * 3 = 27 texture lookups per fragment which is a bit ridiculous and there's no way
+    // it would look good either.
+    throw new Error('Triplanar mapping cannot be used with generated UVs or tile breaking');
   }
   if (typeof usePackedDiffuseNormalGBA === 'object' && usePackedDiffuseNormalGBA.lut && tileBreaking) {
     throw new Error('LUT and tile breaking are currently broken together');
@@ -414,23 +422,71 @@ export const buildCustomShaderArgs = (
       return `
     mapN = sampledDiffuseColor_.gba;
     float index = sampledDiffuseColor_.r;
-    // vec4 lutEntry = texture2D(diffuseLUT, vec2(index, 0.5));
     vec4 lutEntry = texelFetch(diffuseLUT, ivec2(index * 255., 0), 0);
     sampledDiffuseColor_ = lutEntry;
       `;
     }
   };
 
+  // TODO: Pull out to separate file
+  const buildTriplanarDefsFragment = () => `
+  // sharpenFactor < 1 smooths, > 1 sharpens
+  vec3 generateTriplanarWeights(vec3 normal, float sharpenFactor) {
+    vec3 weights = abs(normal);
+    weights = pow(weights, vec3(sharpenFactor)); // sharpen to get more weight on the dominant axis
+    weights = weights / dot(weights, vec3(1.0)); // normalize
+    return weights;
+  }
+
+  vec4 triplanarTexture(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
+    // TODO: make configurable
+    float sharpenFactor = 12.8;
+    vec3 weights = generateTriplanarWeights(normal, sharpenFactor);
+
+    // TODO: Avoid sampling tiny-magnitude weights
+    vec4 xSample = texture2D(map, pos.yz * uvScale);
+    vec4 ySample = texture2D(map, pos.zx * uvScale);
+    vec4 zSample = texture2D(map, pos.xy * uvScale);
+
+    return xSample * weights.x + ySample * weights.y + zSample * weights.z;
+  }
+
+  vec4 triplanarTextureFixContrast(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
+    // TODO: make configurable
+    float sharpenFactor = 12.8;
+    vec3 weights = generateTriplanarWeights(normal, sharpenFactor);
+
+    // TODO: Avoid sampling tiny-magnitude weights
+    vec4 xSample = texture2D(map, pos.yz * uvScale);
+    vec4 ySample = texture2D(map, pos.zx * uvScale);
+    vec4 zSample = texture2D(map, pos.xy * uvScale);
+
+    vec4 sampled = xSample * weights.x + ySample * weights.y + zSample * weights.z;
+
+    // TODO: Don't run if con factor is 0
+    vec4 meanTextureColor = srgb2rgb(texture(map, vec2(0.5, 0.5), 99.));
+    // contrast preserving interp. cf https://www.shadertoy.com/view/4dcSDr
+    float divisor = sqrt(weights.x * weights.x + weights.y * weights.y + weights.z * weights.z);
+    vec4 contrastCorrected = meanTextureColor + (sampled - meanTextureColor) * divisor;
+    // TODO: Make mix factor configurable
+    sampled = mix(sampled, contrastCorrected, 0.5);
+
+    return sampled;
+  }`;
+
   const buildMapFragment = () => {
     const inner = (() => {
+      if (useTriplanarMapping) {
+        return `
+        #ifdef USE_MAP
+          sampledDiffuseColor_ = triplanarTextureFixContrast(map, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vNormalAbsolute);
+        #endif`;
+      }
+
       if (!tileBreaking) {
         return `
         #ifdef USE_MAP
           vec4 sampledDiffuseColor = texture2D( map, vUv );
-          #ifdef DECODE_VIDEO_TEXTURE
-            // inline sRGB decode (TODO: Remove this code when https://crbug.com/1256340 is solved)
-            sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
-          #endif
           sampledDiffuseColor_ = sampledDiffuseColor;
         #endif`;
       }
@@ -470,6 +526,12 @@ export const buildCustomShaderArgs = (
 
   const buildRoughnessMapFragment = () => {
     const inner = (() => {
+      if (useTriplanarMapping && roughnessMap) {
+        return `
+          vec3 texelRoughness = triplanarTexture(roughnessMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vNormalAbsolute).xyz;
+        `;
+      }
+
       if (tileBreaking && roughnessMap)
         return tileBreaking.type === 'neyret'
           ? 'vec3 texelRoughness = textureNoTileNeyret(roughnessMap, vUv).xyz;'
@@ -512,6 +574,7 @@ export const buildCustomShaderArgs = (
   };
 
   const buildNormalMapFragment = () => {
+    // \/ this works very poorly due to aliasing issues
     if (useComputedNormalMap) {
       return `
       float diffuseMagnitude = diffuseColor.r;
@@ -569,16 +632,7 @@ export const buildCustomShaderArgs = (
       return '';
     }
 
-    const inner = (() => {
-      if (tileBreaking && normalMap)
-        return `
-    ${
-      tileBreaking.type === 'neyret'
-        ? 'vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;'
-        : `vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`
-    }
-
-    mapN = mapN * 2.0 - 1.0;
+    const normalMapSuffix = `mapN = mapN * 2.0 - 1.0;
     mapN = normalize(mapN);
     mapN.xy *= normalScale;
 
@@ -586,7 +640,25 @@ export const buildCustomShaderArgs = (
       normal = normalize( vTBN * mapN );
     #else
       normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
-    #endif
+    #endif`;
+
+    const inner = (() => {
+      if (useTriplanarMapping) {
+        return `
+          vec3 mapN = triplanarTexture(normalMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vNormalAbsolute).xyz;
+
+          ${normalMapSuffix}`;
+      }
+
+      if (tileBreaking)
+        return `
+    ${
+      tileBreaking.type === 'neyret'
+        ? 'vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;'
+        : `vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`
+    }
+
+    ${normalMapSuffix}
   `;
       else return '#include <normal_fragment_maps>';
     })();
@@ -773,10 +845,13 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 #include <logdepthbuf_pars_fragment>
 #include <clipping_planes_pars_fragment>
 
+#define srgb2rgb(V) pow( max(V,0.), vec4( 2.2 )  )
+
 uniform float curTimeSeconds;
 varying vec3 pos;
 varying vec3 vWorldPosition;
 varying vec3 vNormalAbsolute;
+uniform mat3 uvTransform;
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
 ${useComputedNormalMap || usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
@@ -805,6 +880,7 @@ ${
       )
     : ''
 }
+${useTriplanarMapping ? buildTriplanarDefsFragment() : ''}
 
 void main() {
 	#include <clipping_planes_fragment>
