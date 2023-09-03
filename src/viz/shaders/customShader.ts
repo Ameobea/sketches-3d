@@ -11,7 +11,7 @@ import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 // import noise2Shaders from './noise2.frag?raw';
 const noise2Shaders = 'DISABLED TO SAVE SPACE';
 
-const DEFAULT_MAP_DISABLE_DISTANCE = 200;
+const DEFAULT_MAP_DISABLE_DISTANCE = 2000;
 const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
 
 const buildNoiseTexture = (): THREE.DataTexture => {
@@ -83,6 +83,9 @@ interface CustomShaderProps {
   side?: THREE.Side;
   roughness?: number;
   metalness?: number;
+  clearcoat?: number;
+  clearcoatRoughness?: number;
+  iridescence?: number;
   color?: THREE.Color;
   normalScale?: number;
   map?: THREE.Texture;
@@ -164,6 +167,9 @@ export const buildCustomShaderArgs = (
   {
     roughness = 0.9,
     metalness = 0,
+    clearcoat = 0,
+    clearcoatRoughness = 0,
+    iridescence = 0,
     color = new THREE.Color(0xffffff),
     normalScale = 1,
     map,
@@ -234,9 +240,14 @@ export const buildCustomShaderArgs = (
   uniforms.roughness = { type: 'f', value: roughness };
   uniforms.metalness = { type: 'f', value: metalness };
   uniforms.ior = { type: 'f', value: 1.5 };
-  uniforms.clearcoat = { type: 'f', value: 0.0 };
-  uniforms.clearcoatRoughness = { type: 'f', value: 0.0 };
+  uniforms.clearcoat = { type: 'f', value: clearcoat };
+  uniforms.clearcoatRoughness = { type: 'f', value: clearcoatRoughness };
   uniforms.clearcoatNormal = { type: 'f', value: 0.0 };
+  uniforms.iridescence = { type: 'f', value: iridescence };
+  uniforms.iridescenceIOR = { type: 'f', value: 1.3 };
+  uniforms.iridescenceThicknessMinimum = { type: 'f', value: 100 };
+  uniforms.iridescenceThicknessMaximum = { type: 'f', value: 400 };
+  uniforms.iridescenceThicknessMapTransform = { type: 'mat3', value: new THREE.Matrix3() };
   uniforms.transmission = { type: 'f', value: 0.0 };
 
   uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
@@ -288,6 +299,9 @@ export const buildCustomShaderArgs = (
     // 3 * 3 * 3 = 27 texture lookups per fragment which is a bit ridiculous and there's no way
     // it would look good either.
     throw new Error('Triplanar mapping cannot be used with generated UVs or tile breaking');
+  }
+  if (useTriplanarMapping && !map) {
+    throw new Error('Triplanar mapping requires a map');
   }
   if (typeof usePackedDiffuseNormalGBA === 'object' && usePackedDiffuseNormalGBA.lut && tileBreaking) {
     throw new Error('LUT and tile breaking are currently broken together');
@@ -1027,6 +1041,14 @@ export const buildCustomShader = (
   if (opts?.useComputedNormalMap || opts?.usePackedDiffuseNormalGBA) {
     mat.defines.TANGENTSPACE_NORMALMAP = '1';
     mat.uniforms.normalScale = { value: new THREE.Vector2(props.normalScale ?? 1, props.normalScale ?? 1) };
+  }
+
+  if (props.clearcoat || props.clearcoatRoughness) {
+    mat.defines.USE_CLEARCOAT = '1';
+  }
+
+  if (props.iridescence) {
+    mat.defines.USE_IRIDESCENCE = '1';
   }
 
   if (props.map) {

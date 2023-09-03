@@ -41,6 +41,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f5715e491b5a1598fc2bef5a606847b5dc1d48ea625bd3c02c00de8285591da"
 
 [[package]]
+name = "cave"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "getrandom",
+ "nalgebra",
+ "noise",
+ "point_distribute",
+ "rand 0.8.5",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -237,6 +250,16 @@ name = "paste"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1de2e551fb905ac83f73f7aedf2f0cb4a0da7e35efa24a202a936269f1f18e1"
+
+[[package]]
+name = "point_distribute"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "nalgebra",
+ "rand 0.8.5",
+ "rand_pcg",
+]
 
 [[package]]
 name = "ppv-lite86"

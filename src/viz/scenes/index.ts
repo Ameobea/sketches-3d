@@ -150,7 +150,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     extension: 'glb',
   },
   cave: {
-    sceneName: 'Scene',
+    sceneName: 'proc',
     sceneLoader: () => import('./cave/cave').then(mod => mod.processLoadedScene),
     metadata: { title: 'cave' },
     gltfName: 'cave',

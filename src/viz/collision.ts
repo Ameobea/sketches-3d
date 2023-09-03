@@ -340,6 +340,11 @@ export const initBulletPhysics = (
     addStaticShape(shape, new THREE.Vector3(...pos), quat);
   };
 
+  const addCone = (pos: THREE.Vector3, radius: number, height: number, quat?: THREE.Quaternion) => {
+    const shape = new Ammo.btConeShape(radius, height);
+    addStaticShape(shape, pos, quat);
+  };
+
   const addCompound = (
     pos: [number, number, number],
     children: {
@@ -395,6 +400,7 @@ export const initBulletPhysics = (
     updateCollisionWorld,
     addTriMesh,
     addBox,
+    addCone,
     addCompound,
     teleportPlayer,
     optimize,

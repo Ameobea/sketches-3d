@@ -124,3 +124,5 @@ export const mergeDeep = <T extends Record<string, any>>(target: T, source: any)
 
   return target;
 };
+
+export const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;

@@ -1,0 +1,7 @@
+{
+  "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+  "rust-analyzer.server.extraEnv": {
+    "CARGO_TARGET_DIR": "target/analyzer"
+  },
+  "rust-analyzer.check.extraArgs": ["--target-dir=target/analyzer"]
+}

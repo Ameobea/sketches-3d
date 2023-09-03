@@ -7,27 +7,25 @@ copy-files:
 bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/bridge2.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/conduit_particles.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/cave.wasm --target web --remove-producers-section --out-dir ./build
 
   cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
-  cp ./target/wasm32-unknown-unknown/release/normal_map_gen_simd.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
+  cp ./target/wasm32-unknown-unknown/release/point_distribute.wasm ./build2
 
 opt:
   wasm-opt ./build/bridge2_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/bridge2_bg.wasm
   wasm-opt ./build/conduit_particles_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/conduit_particles_bg.wasm
   wasm-opt ./build2/normal_map_gen.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/normal_map_gen.wasm
-  wasm-opt ./build2/normal_map_gen_simd.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/normal_map_gen_simd.wasm
   wasm-opt ./build2/texture_crossfade.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/texture_crossfade.wasm
+  wasm-opt ./build2/point_distribute.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/point_distribute.wasm
+  wasm-opt ./build/cave_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/cave_bg.wasm
 
 build:
   #!/bin/bash
 
   rm -rf ./build/*
-  cargo build --release --target wasm32-unknown-unknown --workspace
-  mv target/wasm32-unknown-unknown/release/normal_map_gen.wasm target/wasm32-unknown-unknown/release/normal_map_gen_no_simd.wasm
-  cd normal_map_gen && RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --workspace && cd -
-  mv target/wasm32-unknown-unknown/release/normal_map_gen.wasm target/wasm32-unknown-unknown/release/normal_map_gen_simd.wasm
-  mv target/wasm32-unknown-unknown/release/normal_map_gen_no_simd.wasm target/wasm32-unknown-unknown/release/normal_map_gen.wasm
+  RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --workspace
 
   just bindgen
   just opt

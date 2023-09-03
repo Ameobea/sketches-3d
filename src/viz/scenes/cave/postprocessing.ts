@@ -11,7 +11,8 @@ export const configurePostprocessing = (viz: VizState, quality: GraphicsQuality)
   viz.renderer.autoClear = false;
   viz.renderer.autoClearColor = true;
   viz.renderer.autoClearDepth = false;
-  const depthPass = new DepthPass(viz.scene, viz.camera, new THREE.MeshBasicMaterial(), true);
+  const depthPrePassMaterial = new THREE.MeshBasicMaterial();
+  const depthPass = new DepthPass(viz.scene, viz.camera, depthPrePassMaterial, true);
   depthPass.skipShadowMapUpdate = true;
   effectComposer.addPass(depthPass);
 
@@ -30,8 +31,8 @@ export const configurePostprocessing = (viz: VizState, quality: GraphicsQuality)
   const fxPass = new EffectPass(viz.camera, smaaEffect);
   effectComposer.addPass(fxPass);
 
-  viz.renderer.toneMapping = THREE.CineonToneMapping;
-  viz.renderer.toneMappingExposure = 1.8;
+  viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // viz.renderer.toneMappingExposure = 1.8;
 
   viz.setRenderOverride(timeDiffSeconds => {
     effectComposer.render(timeDiffSeconds);

@@ -75,7 +75,10 @@ const buildThreadPoolWorkers = (onInit?: (wrapped: Comlink.Remote<any>) => void 
 
 const loadNormalGenWasm = async () => {
   const simdSupported = await hasWasmSIMDSupport();
-  const url = simdSupported ? '/normal_map_gen_simd.wasm' : '/normal_map_gen.wasm';
+  if (!simdSupported) {
+    throw new Error('WASM SIMD not supported');
+  }
+  const url = '/normal_map_gen.wasm';
   const wasmBytesAB = await fetch(url).then(r => r.arrayBuffer());
   return new Uint8Array(wasmBytesAB);
 };

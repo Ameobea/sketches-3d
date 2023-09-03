@@ -27,6 +27,7 @@ interface FirstPersonCtx {
     halfExtents: [number, number, number],
     quat?: THREE.Quaternion
   ) => void;
+  addCone: (pos: THREE.Vector3, radius: number, height: number, quat?: THREE.Quaternion) => void;
   addCompound: (
     pos: [number, number, number],
     children: {
@@ -77,6 +78,7 @@ const setupFirstPerson = async (
     addTriMesh,
     teleportPlayer,
     addBox,
+    addCone,
     addCompound,
     optimize,
     setGravity,
@@ -183,6 +185,7 @@ const setupFirstPerson = async (
     addTriMesh,
     teleportPlayer,
     addBox,
+    addCone,
     addCompound,
     optimize,
     setFlyMode,

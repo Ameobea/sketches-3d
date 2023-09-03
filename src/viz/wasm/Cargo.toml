@@ -4,7 +4,10 @@ members = [
   "bridge2",
   "conduit_particles",
   "texture_crossfade",
+  "point_distribute",
+  "cave",
 ]
+resolver = "2"
 
 [profile.release]
 #debug-assertions = true

@@ -197,7 +197,7 @@ void main() {
   };
 };
 
-class CustomShaderMaterial extends THREE.ShaderMaterial {
+export class CustomShaderMaterial extends THREE.ShaderMaterial {
   public setCurTimeSeconds(curTimeSeconds: number) {
     this.uniforms.curTimeSeconds.value = curTimeSeconds;
   }

@@ -299,7 +299,9 @@ export const processLoadedScene = async (
       },
       () => {
         console.log('entered!!');
-        // TODO: Init next level
+        // TODO: Init next level properly
+        // navigate to /cave
+        window.location.assign(window.location.origin.includes('localhost') ? '/cave' : '/cave.html');
       }
     )
   );

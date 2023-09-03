@@ -69,7 +69,6 @@ const buildAndAdd3DVicsekFractal = (
     positions = mutatePositionsCb(positions);
   }
 
-  // Render with instanced mesh
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
   mesh.receiveShadow = true;
