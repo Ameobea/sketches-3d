@@ -11,6 +11,7 @@ import {
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
+import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import {
@@ -88,7 +89,7 @@ const loadTextures = async () => {
   };
 };
 
-const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
+const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: VizConfig) => {
   const {
     cementTextureCombinedDiffuseNormal,
     cloudsBgTexture,
@@ -188,11 +189,15 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group) => {
   return backgroundScene;
 };
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (
+  viz: VizState,
+  loadedWorld: THREE.Group,
+  vizConfig: VizConfig
+): Promise<SceneConfig> => {
   viz.camera.far = 500;
   viz.camera.updateProjectionMatrix();
 
-  const backgroundScene = await initScene(viz, loadedWorld);
+  const backgroundScene = await initScene(viz, loadedWorld, vizConfig);
 
   const effectComposer = new EffectComposer(viz.renderer);
   effectComposer.autoRenderToScreen = false;
@@ -235,11 +240,24 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   );
   effectComposer.addPass(n8aoPass);
   n8aoPass.gammaCorrection = false;
-  n8aoPass.configuration.intensity = 5;
+  n8aoPass.configuration.intensity = 3;
   n8aoPass.configuration.aoRadius = 5;
-  n8aoPass.configuration.halfRes = true;
+  n8aoPass.configuration.halfRes = vizConfig.graphics.quality <= GraphicsQuality.Low;
+  n8aoPass.setQualityMode(
+    {
+      [GraphicsQuality.Low]: 'Low',
+      [GraphicsQuality.Medium]: 'Low',
+      [GraphicsQuality.High]: 'Medium',
+    }[vizConfig.graphics.quality]
+  );
 
-  const smaaEffect2 = new SMAAEffect({ preset: SMAAPreset.MEDIUM });
+  const smaaEffect2 = new SMAAEffect({
+    preset: {
+      [GraphicsQuality.Low]: SMAAPreset.LOW,
+      [GraphicsQuality.Medium]: SMAAPreset.MEDIUM,
+      [GraphicsQuality.High]: SMAAPreset.HIGH,
+    }[vizConfig.graphics.quality],
+  });
   const smaaPass2 = new EffectPass(viz.camera, smaaEffect2);
   smaaPass2.renderToScreen = true;
   effectComposer.addPass(smaaPass2);
@@ -280,6 +298,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   return {
     locations,
     spawnLocation: 'spawn',
+    gravity: 22,
     player: {
       jumpVelocity: 0,
       enableDash: false,
@@ -288,7 +307,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         radius: 0.3,
       },
       movementAccelPerSecond: {
-        onGround: 3.6,
+        onGround: 3.9,
         inAir: 1,
       },
     },

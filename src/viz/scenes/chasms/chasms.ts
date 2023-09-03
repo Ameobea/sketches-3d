@@ -605,7 +605,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.001,
       roughness: 0.77,
       map: towerPlinthArchTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.05, 0.1),
+      uvTransform: new THREE.Matrix3().scale(0.05 * 2, 0.1 * 2),
       mapDisableDistance: null,
       normalScale: 4,
       ambientLightScale: 2,
@@ -614,7 +614,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {
       usePackedDiffuseNormalGBA: true,
       disabledDirectionalLightIndices: [0],
-      useGeneratedUVs: true,
+      // useGeneratedUVs: true,
+      useTriplanarMapping: true,
       // tileBreaking: { type: 'neyret', patchScale: 2 },
     }
   );
@@ -1077,9 +1078,20 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.scene.add(furnaceInteriorsInstancedMesh);
   // furnaceInteriorsInstancedMesh.visible = false;
 
+  const godraysPass = new GodraysPass(dLight, viz.camera, {
+    color: dLight.color,
+    density: 1 / 80,
+    maxDensity: 0.8,
+    distanceAttenuation: 0.4,
+    raymarchSteps: 86,
+    blur: { kernelSize: KernelSize.SMALL, variance: 0.25 },
+  });
+  composer.addPass(godraysPass);
+  let godraysPassAdded = true;
+
   let outsideVisible: boolean | null = null;
   viz.registerAfterRenderCb(() => {
-    const outsideShouldBeVisible = viz.camera.position.x >= -932;
+    const outsideShouldBeVisible = viz.camera.position.x >= -926;
     if (outsideShouldBeVisible === outsideVisible) {
       return;
     }
@@ -1100,6 +1112,11 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       dungeonWall.visible = false;
       dungeonFloor.visible = false;
       towerComputerRoomPillars.forEach(pillar => (pillar.visible = false));
+
+      if (!godraysPassAdded) {
+        composer.addPass(godraysPass, 3);
+        godraysPassAdded = true;
+      }
     } else {
       chasm.visible = false;
       chasmBottoms.visible = false;
@@ -1115,21 +1132,15 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       dungeonWall.visible = true;
       dungeonFloor.visible = true;
       towerComputerRoomPillars.forEach(pillar => (pillar.visible = true));
+
+      if (godraysPassAdded) {
+        composer.removePass(godraysPass);
+        godraysPassAdded = false;
+      }
     }
   });
 
   // POST-PROCESSING
-
-  const godraysPass = new GodraysPass(dLight, viz.camera, {
-    color: dLight.color,
-    density: 1 / 80,
-    maxDensity: 0.8,
-    distanceAttenuation: 0.4,
-    raymarchSteps: 86,
-    blur: { kernelSize: KernelSize.SMALL, variance: 0.25 },
-  });
-  godraysPass.renderToScreen = false;
-  composer.addPass(godraysPass);
 
   const bloomEffect = new BloomEffect({
     intensity: 2,
@@ -1200,16 +1211,16 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   return {
     locations,
     spawnLocation: 'spawn',
-    gravity: 2,
+    gravity: 28,
     player: {
-      jumpVelocity: 10.8,
+      jumpVelocity: 14.8,
       colliderCapsuleSize: {
-        height: 1.99,
-        radius: 0.45,
+        height: 2.49,
+        radius: 0.85,
       },
       movementAccelPerSecond: {
-        onGround: 15.2,
-        inAir: 2.2,
+        onGround: 8.2,
+        inAir: 5.2,
       },
     },
     debugPos: true,

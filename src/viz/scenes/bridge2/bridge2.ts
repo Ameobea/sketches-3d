@@ -738,7 +738,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       } = ctx.getState().viewContextManager.patchNetwork.connectables.toJS();
       const synthDesigner = connectables['5be967b3-409b-e297-2d21-20111e4d3f2c']!;
       const midiInputs = synthDesigner.inputs.midi.node.inputCbs;
-      midiInputs.onAttack(35, 255);
+      // midiInputs.onAttack(35, 255);
 
       if (!localStorage.getItem('globalVolume')) {
         (window as any).setGlobalVolume(50);
@@ -804,7 +804,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     debugPos: true,
     spawnLocation: 'spawn',
     // spawnLocation: 'monolith',
-    gravity: 2,
+    gravity: 29,
     player: {
       jumpVelocity: 10.8,
       colliderCapsuleSize: {
@@ -812,7 +812,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         radius: 0.35,
       },
       movementAccelPerSecond: {
-        onGround: 7.2,
+        onGround: 5.2,
         inAir: 2.2,
       },
     },
