@@ -10,14 +10,23 @@ import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
+import { SfxManager } from './audio/SfxManager';
 import { getAmmoJS, initBulletPhysics } from './collision';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
+import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger';
 import { initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
 import { buildDefaultSceneConfig, type SceneConfig, ScenesByName } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
+
+export interface FpPlayerStateGetters {
+  getVerticalVelocity: () => number;
+  getIsJumping: () => boolean;
+  getIsBoosting: () => boolean;
+  getIsOnGround: () => boolean;
+}
 
 interface FirstPersonCtx {
   addTriMesh: (mesh: THREE.Mesh) => void;
@@ -47,6 +56,7 @@ interface FirstPersonCtx {
     onEnter?: () => void,
     onLeave?: () => void
   ) => void;
+  playerStateGetters: FpPlayerStateGetters;
 }
 
 const setupFirstPerson = async (
@@ -61,7 +71,8 @@ const setupFirstPerson = async (
   gravity: number | undefined,
   inlineConsole: InlineConsole | null | undefined,
   enableDash: boolean,
-  oobYThreshold = -55
+  oobYThreshold = -55,
+  sfxManager: SfxManager
 ): Promise<FirstPersonCtx> => {
   let GRAVITY = gravity ?? 40;
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
@@ -85,18 +96,20 @@ const setupFirstPerson = async (
     setFlyMode,
     clearCollisionWorld,
     addPlayerRegionContactCb,
-  } = await initBulletPhysics(
+    playerStateGetters,
+  } = await initBulletPhysics({
     camera,
     keyStates,
     Ammo,
     spawnPos,
-    GRAVITY,
-    JUMP_VELOCITY,
+    gravity: GRAVITY,
+    jumpSpeed: JUMP_VELOCITY,
     playerColliderRadius,
     playerColliderHeight,
-    ON_FLOOR_ACCELERATION_PER_SECOND,
-    enableDash
-  );
+    playerMoveSpeed: ON_FLOOR_ACCELERATION_PER_SECOND,
+    enableDash,
+    sfxManager,
+  });
 
   document.addEventListener('keydown', event => {
     if (inlineConsole?.isOpen) {
@@ -192,6 +205,7 @@ const setupFirstPerson = async (
     setGravity,
     clearCollisionWorld,
     addPlayerRegionContactCb,
+    playerStateGetters,
   };
 };
 
@@ -525,7 +539,9 @@ export const initViz = (
       // TODO: set up inventory CBs
     }
 
+    let sfxManager: SfxManager | undefined;
     if (sceneConf.viewMode.type === 'firstPerson') {
+      sfxManager = new SfxManager();
       const spawnPos = (window as any).lastPos
         ? (() => {
             const lastPos = JSON.parse((window as any).lastPos);
@@ -545,7 +561,8 @@ export const initViz = (
         sceneConf.gravity,
         inlineConsole,
         sceneConf.player?.enableDash ?? true,
-        sceneConf.player?.oobYThreshold
+        sceneConf.player?.oobYThreshold,
+        sfxManager
       );
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
@@ -558,11 +575,18 @@ export const initViz = (
 
     viz.scene.add(scene);
 
+    let vOffset = 0;
     if (sceneConf.debugPos) {
+      vOffset += 24;
       initPosDebugger(viz, container, 0);
     }
     if (sceneConf.debugTarget) {
-      initTargetDebugger(viz, container, +!!sceneConf.debugPos * 24);
+      vOffset += 24;
+      initTargetDebugger(viz, container, vOffset);
+    }
+    if (sceneConf.debugPlayerKinematics) {
+      vOffset += 24;
+      initPlayerKinematicsDebugger(viz, container, vOffset);
     }
 
     if (fpCtx) {

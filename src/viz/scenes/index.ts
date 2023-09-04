@@ -20,6 +20,10 @@ export interface SceneConfig {
    * If true, the name of the object at the center of the screen will be displayed
    */
   debugTarget?: boolean;
+  /**
+   * If true, the player's movement and collision world state will be displayed
+   */
+  debugPlayerKinematics?: boolean;
   gravity?: number;
   player?: {
     /**
@@ -154,6 +158,13 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./cave/cave').then(mod => mod.processLoadedScene),
     metadata: { title: 'cave' },
     gltfName: 'cave',
+    extension: 'glb',
+  },
+  gn_inst_test: {
+    sceneName: 'Scene',
+    sceneLoader: () => import('./gn_inst_test/gnInstTest').then(mod => mod.processLoadedScene),
+    metadata: { title: 'gn_inst_test' },
+    gltfName: 'gn_inst_test',
     extension: 'glb',
   },
 };

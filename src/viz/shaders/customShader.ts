@@ -78,6 +78,14 @@ export const setDefaultDistanceAmpParams = (params: AmbientDistanceAmpParams | n
   DefaultDistanceAmpParams = params ?? undefined;
 };
 
+/**
+ * Used for determining default behavior like sound effects for when the player lands on a surface
+ */
+export enum MaterialClass {
+  Default,
+  Rock,
+}
+
 interface CustomShaderProps {
   name?: string;
   side?: THREE.Side;
@@ -161,6 +169,7 @@ interface CustomShaderOptions {
   randomizeUVOffset?: boolean;
   useGeneratedUVs?: boolean;
   useTriplanarMapping?: boolean;
+  materialClass?: MaterialClass;
 }
 
 export const buildCustomShaderArgs = (
@@ -1010,7 +1019,14 @@ void main() {
   };
 };
 
-class CustomShaderMaterial extends THREE.ShaderMaterial {
+export class CustomShaderMaterial extends THREE.ShaderMaterial {
+  public materialClass: MaterialClass = MaterialClass.Default;
+
+  constructor(args: THREE.ShaderMaterialParameters, materialClass: MaterialClass) {
+    super(args);
+    this.materialClass = materialClass;
+  }
+
   public setCurTimeSeconds(curTimeSeconds: number) {
     this.uniforms.curTimeSeconds.value = curTimeSeconds;
   }
@@ -1029,7 +1045,10 @@ export const buildCustomShader = (
   shaders?: CustomShaderShaders,
   opts?: CustomShaderOptions
 ) => {
-  const mat = new CustomShaderMaterial(buildCustomShaderArgs(props, shaders, opts));
+  const mat = new CustomShaderMaterial(
+    buildCustomShaderArgs(props, shaders, opts),
+    opts?.materialClass ?? MaterialClass.Default
+  );
 
   if (props.name) {
     mat.name = props.name;

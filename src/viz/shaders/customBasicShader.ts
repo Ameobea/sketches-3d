@@ -197,7 +197,7 @@ void main() {
   };
 };
 
-export class CustomShaderMaterial extends THREE.ShaderMaterial {
+export class CustomBasicShaderMaterial extends THREE.ShaderMaterial {
   public setCurTimeSeconds(curTimeSeconds: number) {
     this.uniforms.curTimeSeconds.value = curTimeSeconds;
   }
@@ -208,7 +208,7 @@ export const buildCustomBasicShader = (
   shaders?: CustomBasicShaderShaders,
   opts?: CustomBasicShaderOptions
 ) => {
-  const mat = new CustomShaderMaterial(buildCustomBasicShaderArgs(props, shaders, opts));
+  const mat = new CustomBasicShaderMaterial(buildCustomBasicShaderArgs(props, shaders, opts));
   if (props.name) {
     mat.name = props.name;
   }

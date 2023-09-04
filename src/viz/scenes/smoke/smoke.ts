@@ -321,6 +321,6 @@ export const processLoadedScene = async (
     },
     locations: Locations,
     debugPos: true,
-    // debugTarget: true,
+    debugPlayerKinematics: true,
   };
 };

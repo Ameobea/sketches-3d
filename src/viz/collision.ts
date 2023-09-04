@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 
+import type { SfxManager } from './audio/SfxManager.js';
+import type { FpPlayerStateGetters } from './index.js';
+import { CustomShaderMaterial } from './shaders/customShader';
+import { MaterialClass } from './shaders/customShader.js';
+
 let ammojs: Promise<any> | null = null;
 
 export const getAmmoJS = async () => {
@@ -8,18 +13,33 @@ export const getAmmoJS = async () => {
   return ammojs;
 };
 
-export const initBulletPhysics = (
-  camera: THREE.Camera,
-  keyStates: Record<string, boolean>,
-  Ammo: any,
-  spawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 },
-  gravity: number,
-  jumpSpeed: number,
-  playerColliderRadius: number,
-  playerColliderHeight: number,
-  playerMoveSpeed: number,
-  enableDash: boolean
-) => {
+interface BulletPhysicsArgs {
+  camera: THREE.Camera;
+  keyStates: Record<string, boolean>;
+  Ammo: any;
+  spawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
+  gravity: number;
+  jumpSpeed: number;
+  playerColliderRadius: number;
+  playerColliderHeight: number;
+  playerMoveSpeed: number;
+  enableDash: boolean;
+  sfxManager: SfxManager;
+}
+
+export const initBulletPhysics = ({
+  camera,
+  keyStates,
+  Ammo,
+  spawnPos,
+  gravity,
+  jumpSpeed,
+  playerColliderRadius,
+  playerColliderHeight,
+  playerMoveSpeed,
+  enableDash,
+  sfxManager,
+}: BulletPhysicsArgs) => {
   const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
   const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
   const broadphase = new Ammo.btDbvtBroadphase();
@@ -118,14 +138,14 @@ export const initBulletPhysics = (
     // Adjust `forwardDir` to be horizontal.
     forwardDir = new THREE.Vector3().crossVectors(leftDir, upDir).normalize();
 
-    const playerOnGround = playerController.onGround();
+    const wasOnGround = playerController.onGround();
 
     const walkDirection = new THREE.Vector3();
     if (keyStates['KeyW']) walkDirection.add(forwardDir);
     if (keyStates['KeyS']) walkDirection.sub(forwardDir);
     if (keyStates['KeyA']) walkDirection.add(leftDir);
     if (keyStates['KeyD']) walkDirection.sub(leftDir);
-    if (keyStates['Space'] && playerOnGround) {
+    if (keyStates['Space'] && wasOnGround) {
       if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
         playerController.jump(
           btvec3(walkDirection.x * (jumpSpeed * 0.18), jumpSpeed, walkDirection.z * (jumpSpeed * 0.18))
@@ -154,7 +174,7 @@ export const initBulletPhysics = (
     if (
       curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS &&
       boostNeedsGroundTouch &&
-      playerOnGround
+      wasOnGround
     ) {
       boostNeedsGroundTouch = false;
     }
@@ -172,6 +192,14 @@ export const initBulletPhysics = (
     const newPlayerTransform = playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
 
+    const nowOnGround = playerController.onGround();
+    if (!wasOnGround && nowOnGround) {
+      const landedOnObjectIx: number = playerController.getFloorUserIndex();
+      const landedOnObject = CollisionObjectRefs.get(landedOnObjectIx);
+      const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
+      sfxManager.onPlayerLand(materialClass);
+    }
+
     for (const cb of tickCallbacks) {
       cb(tDiffSeconds);
     }
@@ -188,10 +216,17 @@ export const initBulletPhysics = (
 
   teleportPlayer(spawnPos.pos, spawnPos.rot);
 
+  interface CollisionObjectRef {
+    materialClass?: MaterialClass;
+  }
+  let nextCollisionObjectRefId = 0;
+  const CollisionObjectRefs: Map<number, CollisionObjectRef> = new Map();
+
   const addStaticShape = (
     shape: any,
     pos: THREE.Vector3,
-    quat: THREE.Quaternion = new THREE.Quaternion()
+    quat: THREE.Quaternion = new THREE.Quaternion(),
+    objRef?: CollisionObjectRef
   ) => {
     const transform = new Ammo.btTransform();
     transform.setIdentity();
@@ -208,6 +243,11 @@ export const initBulletPhysics = (
     body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
     if (!body.isStaticObject()) {
       throw new Error('body is not static');
+    }
+    if (objRef) {
+      const refIx = nextCollisionObjectRefId++;
+      body.setUserIndex(refIx);
+      CollisionObjectRefs.set(refIx, objRef);
     }
     collisionWorld.addRigidBody(body);
 
@@ -273,7 +313,10 @@ export const initBulletPhysics = (
     };
 
     const shape = mesh.userData.convexhull ? buildConvexHullShape() : buildTrimeshShape();
-    addStaticShape(shape, mesh.position, mesh.quaternion);
+    const objRef: CollisionObjectRef = {
+      materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
+    };
+    addStaticShape(shape, mesh.position, mesh.quaternion, objRef);
   };
 
   const addPlayerRegionContactCb = (
@@ -396,6 +439,13 @@ export const initBulletPhysics = (
     collisionWorld = newCollisionWorld;
   };
 
+  const playerStateGetters: FpPlayerStateGetters = {
+    getVerticalVelocity: () => playerController.getVerticalVelocity(),
+    getIsOnGround: () => playerController.onGround(),
+    getIsJumping: () => playerController.isJumping() && lastJumpTimeSeconds > lastBoostTimeSeconds,
+    getIsBoosting: () => playerController.isJumping() && lastBoostTimeSeconds > lastJumpTimeSeconds,
+  };
+
   return {
     updateCollisionWorld,
     addTriMesh,
@@ -408,5 +458,6 @@ export const initBulletPhysics = (
     setFlyMode,
     clearCollisionWorld,
     addPlayerRegionContactCb,
+    playerStateGetters,
   };
 };

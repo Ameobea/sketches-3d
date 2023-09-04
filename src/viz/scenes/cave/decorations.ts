@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
-import type { CustomShaderMaterial } from 'src/viz/shaders/customBasicShader';
+import type { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { randomInRange } from 'src/viz/util';
 
 export const addDecorations = async (
   viz: VizState,
   loadedWorld: THREE.Group,
-  stalagMaterial: CustomShaderMaterial
+  stalagMaterial: CustomBasicShaderMaterial
 ) => {
   const engine = await import('../../wasmComp/cave');
   const { memory } = await engine.default();
