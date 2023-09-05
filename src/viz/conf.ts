@@ -26,11 +26,17 @@ export interface GraphicsSettings {
   fov: number;
 }
 
+export interface AudioSettings {
+  globalVolume: number;
+  musicVolume: number;
+}
+
 /**
  * Config that is persisted between runs and shared between scenes
  */
 export interface VizConfig {
   graphics: GraphicsSettings;
+  audio: AudioSettings;
 }
 
 const getGraphicsQuality = async (tierRes: TierResult) => {
@@ -74,6 +80,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
 
 const buildDefaultVizConfig = (): VizConfig => ({
   graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV },
+  audio: { globalVolume: 0.4, musicVolume: 0.4 },
 });
 
 /**
@@ -87,7 +94,7 @@ const buildInitialVizConfig = async (): Promise<VizConfig> => {
     )}" for detected GPU ${gpuName}`
   );
 
-  return { graphics: { quality: graphicsQuality, fov: DEFAULT_FOV } };
+  return { ...buildDefaultVizConfig(), graphics: { quality: graphicsQuality, fov: DEFAULT_FOV } };
 };
 
 /**

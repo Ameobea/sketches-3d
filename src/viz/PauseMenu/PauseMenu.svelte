@@ -1,21 +1,22 @@
 <script lang="ts" context="module">
   interface PauseMenuCtx {
     onResume: () => void;
-    globalVolume: Writable<number>;
   }
 
   enum Menu {
     Main,
     Graphics,
     Controls,
+    Audio,
   }
 </script>
 
 <script lang="ts">
-  import type { Writable } from 'svelte/store';
+  import { derived, writable } from 'svelte/store';
 
-  import type { VizState } from '..';
-  import { loadVizConfig, type VizConfig } from '../conf';
+  import { applyAudioSettings, type VizState } from '..';
+  import { type AudioSettings, loadVizConfig, type VizConfig } from '../conf';
+  import AudioMenu from './AudioMenu.svelte';
   import ControlsMenu from './ControlsMenu.svelte';
   import GraphicsMenu from './GraphicsMenu.svelte';
 
@@ -23,20 +24,29 @@
 
   export let ctx: PauseMenuCtx;
   export let viz: VizState;
-  $: globalVolume = ctx.globalVolume;
 
   const startVizConfig = loadVizConfig();
+  const newConfig = writable(startVizConfig);
 
   const saveNewConfig = (newVizConfig: VizConfig) => {
     localStorage.setItem('vizConfig', JSON.stringify(newVizConfig));
     activeMenu = Menu.Main;
   };
+
+  const audioConf = derived(newConfig, $newConfig => $newConfig.audio);
+  const onAudioConfChanged = (newAudioConf: AudioSettings) => {
+    applyAudioSettings(newAudioConf);
+    newConfig.update(conf => ({ ...conf, audio: newAudioConf }));
+  };
+
+  const commit = () => saveNewConfig($newConfig);
 </script>
 
 <div
   class="backdrop"
   on:click={evt => {
     if (evt.target === evt.currentTarget) {
+      commit();
       ctx.onResume();
     }
   }}
@@ -46,8 +56,22 @@
 
     <div class="menu-items-stack">
       {#if activeMenu === Menu.Main}
-        <button on:click={ctx.onResume}>Resume</button>
-        <div class="global-volume">
+        <button
+          on:click={() => {
+            commit();
+            ctx.onResume();
+          }}
+        >
+          Resume
+        </button>
+        <button
+          on:click={() => {
+            activeMenu = Menu.Graphics;
+          }}
+        >
+          Graphics
+        </button>
+        <div class="slider-input">
           <label for="global-volume-slider">Global Volume</label>
           <input
             type="range"
@@ -56,15 +80,21 @@
             min="0"
             max="1"
             step="0.01"
-            bind:value={$globalVolume}
+            value={$audioConf.globalVolume}
+            on:input={evt => {
+              onAudioConfChanged({
+                ...$audioConf,
+                globalVolume: +evt.currentTarget.value,
+              });
+            }}
           />
         </div>
         <button
           on:click={() => {
-            activeMenu = Menu.Graphics;
+            activeMenu = Menu.Audio;
           }}
         >
-          Graphics
+          Audio
         </button>
         <button
           on:click={() => {
@@ -81,6 +111,14 @@
           onChange={saveNewConfig}
           {startVizConfig}
           {viz}
+        />
+      {:else if activeMenu === Menu.Audio}
+        <AudioMenu
+          onBack={() => {
+            activeMenu = Menu.Main;
+          }}
+          conf={audioConf}
+          onChange={onAudioConfChanged}
         />
       {:else if activeMenu === Menu.Controls}
         <ControlsMenu />
@@ -136,7 +174,7 @@
     letter-spacing: 1.8px;
   }
 
-  .global-volume label {
+  :global(.slider-input label) {
     font-size: 14px;
     font-weight: 500;
     margin-top: 2px;
@@ -146,7 +184,7 @@
     width: 100%;
   }
 
-  .global-volume input[type='range'] {
+  :global(.slider-input input[type='range']) {
     display: block;
     width: 100%;
     margin-top: 0px;

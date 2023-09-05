@@ -38,15 +38,8 @@
         latencyHint: latencyHint,
       });
       globalContext.globalVolume = new GainNode(globalContext);
-      globalContext.globalVolume.gain.value = 1;
+      globalContext.globalVolume.gain.value = 0;
       globalContext.globalVolume.connect(globalContext.destination);
-
-      let globalVolume = localStorage.getItem('globalVolume');
-      if (globalVolume === null || globalVolume === undefined) {
-        globalVolume = 20;
-      }
-
-      globalContext.globalVolume.gain.value = +globalVolume / 100;
 
       globalThis.AudioContext = function SingletonAudioContext() {
         return globalContext;

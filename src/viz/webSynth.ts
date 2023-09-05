@@ -1,11 +1,16 @@
+import { applyAudioSettings } from '.';
+import { loadVizConfig } from './conf';
+
 export const initWebSynth = (args: { compositionIDToLoad?: number }) => {
   const content = document.createElement('div');
   content.id = 'content';
   content.style.display = 'none';
   document.body.appendChild(content);
   // This is the `web-synth-headless-test` phost deployment
+  applyAudioSettings(loadVizConfig().audio);
   return import('https://ameo.dev/web-synth-headless/headless.js').then(async mod => {
     const webSynthHandle = await mod.initHeadlessWebSynth(args);
+    applyAudioSettings(loadVizConfig().audio);
     return webSynthHandle;
   });
 };

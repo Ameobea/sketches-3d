@@ -482,6 +482,15 @@ export const applyGraphicsSettings = (viz: VizState, graphics: Conf.GraphicsSett
   viz.camera.updateProjectionMatrix();
 };
 
+export const applyAudioSettings = (audio: Conf.AudioSettings) => {
+  delete localStorage.globalVolume;
+  const ctx = new AudioContext();
+  const GlobalVolumeNode = (ctx as any).globalVolume as GainNode;
+  GlobalVolumeNode.gain.value = 0;
+  GlobalVolumeNode.gain.linearRampToValueAtTime(audio.globalVolume, ctx.currentTime + 0.1);
+  // TODO: Music volume
+};
+
 export type VizState = ReturnType<typeof buildViz>;
 
 export const initViz = (
@@ -523,6 +532,7 @@ export const initViz = (
 
     const [sceneLoader, vizConfig] = await Promise.all([getSceneLoader(), Conf.getVizConfig()]);
     applyGraphicsSettings(viz, vizConfig.graphics);
+    applyAudioSettings(vizConfig.audio);
     setDefaultDistanceAmpParams(null);
     const sceneConf = {
       ...buildDefaultSceneConfig(),

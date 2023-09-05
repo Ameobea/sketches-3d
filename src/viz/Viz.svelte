@@ -12,8 +12,6 @@
   $: metadata = ScenesByName[sceneName]?.metadata;
 
   const paused = writable(false);
-  const globalVolume = writable(0.8);
-
   const onResume = () => void paused.set(false);
 
   let viz: VizState | null = null;
@@ -28,5 +26,5 @@
 
 <div use:initViz={{ paused, sceneName, vizCb }} />
 {#if $paused && viz}
-  <PauseMenu ctx={{ onResume, globalVolume }} {viz} />
+  <PauseMenu ctx={{ onResume }} {viz} />
 {/if}

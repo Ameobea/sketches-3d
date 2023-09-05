@@ -58,7 +58,7 @@ export const processLoadedScene = async (
   });
 
   initWebSynth({ compositionIDToLoad: 107 }).then(async ctx => {
-    await delay(700);
+    await delay(1200);
 
     ctx.setGlobalBpm(66);
     ctx.startAll();
