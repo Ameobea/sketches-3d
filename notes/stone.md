@@ -22,6 +22,8 @@
       - alternative to raymarched self-shadowing where the light/shadow is estimated based on the gradient of the fog wrt. the light source
     - aggressive bounding box clipping of rays
     - blue noise dithering of ray start positions to reduce artifacts/banding
+    - early exits from all the marching when density is saturated
+    - lighting and density accumulation is skipped if density is below a threshold
 
 So I think I have a pretty good idea of how to implement the basic raymarching. It's pretty basic after all.
 

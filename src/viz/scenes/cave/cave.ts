@@ -4,6 +4,8 @@ import type { VizState } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { buildCustomShader, setDefaultDistanceAmpParams } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
+import { delay } from 'src/viz/util';
+import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
 import { addDecorations } from './decorations';
 import { configurePostprocessing } from './postprocessing';
@@ -13,6 +15,13 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
+  initWebSynth({ compositionIDToLoad: 110 }).then(async wsCtx => {
+    console.log(wsCtx);
+    await delay(1300);
+    wsCtx.setGlobalBpm(20);
+    wsCtx.startAll();
+  });
+
   viz.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
   viz.renderer.shadowMap.enabled = false;

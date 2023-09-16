@@ -118,7 +118,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
   },
   godrays_test: {
     sceneName: 'godrays_test',
-    sceneLoader: () => import('./godrays-test/godraysTest').then(mod => mod.processLoadedScene),
+    sceneLoader: () => import('./experiments/godrays-test/godraysTest').then(mod => mod.processLoadedScene),
     metadata: { title: 'godrays_test' },
     gltfName: null,
   },
@@ -162,9 +162,16 @@ export const ScenesByName: { [key: string]: SceneDef } = {
   },
   gn_inst_test: {
     sceneName: 'Scene',
-    sceneLoader: () => import('./gn_inst_test/gnInstTest').then(mod => mod.processLoadedScene),
+    sceneLoader: () => import('./experiments/gn_inst_test/gnInstTest').then(mod => mod.processLoadedScene),
     metadata: { title: 'gn_inst_test' },
     gltfName: 'gn_inst_test',
+    extension: 'glb',
+  },
+  fogTest: {
+    sceneName: 'Scene',
+    sceneLoader: () => import('./experiments/fog/fog').then(mod => mod.processLoadedScene),
+    metadata: { title: 'volumetric fog test' },
+    gltfName: 'fogTest',
     extension: 'glb',
   },
 };

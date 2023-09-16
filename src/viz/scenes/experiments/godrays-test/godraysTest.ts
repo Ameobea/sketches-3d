@@ -4,8 +4,8 @@ import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
-import type { SceneConfig } from '..';
-import type { VizState } from '../..';
+import type { SceneConfig } from '../..';
+import type { VizState } from '../../..';
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   const loader = new THREE.ImageBitmapLoader();
@@ -133,6 +133,8 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     distanceAttenuation: 0.006,
     density: 1 / 126,
     maxDensity: 1,
+    blur: false,
+    raymarchSteps: 100,
   };
 
   const godraysEffect = new GodraysPass(pointLight, viz.camera, godraysParams);
