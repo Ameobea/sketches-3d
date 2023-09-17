@@ -23,6 +23,7 @@ export const configurePostprocessing = (viz: VizState, quality: GraphicsQuality)
   effectComposer.addPass(renderPass);
 
   const volumetricPass = new VolumetricPass(viz.camera);
+  viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
   effectComposer.addPass(volumetricPass);
 
   const smaaEffect = new SMAAEffect({

@@ -15,6 +15,7 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       cameraPos: { value: new THREE.Vector3(0, 0, 0) },
       cameraProjectionMatrixInv: { value: new THREE.Matrix4() },
       cameraMatrixWorld: { value: new THREE.Matrix4() },
+      curTimeSeconds: { value: 0 },
     };
 
     super({
@@ -36,6 +37,7 @@ export class VolumetricPass extends Pass implements Disposable {
    */
   private playerCamera: THREE.PerspectiveCamera = new THREE.PerspectiveCamera();
   private material: VolumetricMaterial = new VolumetricMaterial();
+  private curTimeSeconds = 0;
 
   constructor(camera: THREE.PerspectiveCamera) {
     super('VolumetricPass');
@@ -50,6 +52,10 @@ export class VolumetricPass extends Pass implements Disposable {
     this.updateUniforms();
   }
 
+  public setCurTimeSeconds(newCurTimeSeconds: number) {
+    this.curTimeSeconds = newCurTimeSeconds;
+  }
+
   override render(
     renderer: THREE.WebGLRenderer,
     inputBuffer: THREE.WebGLRenderTarget,
@@ -59,6 +65,7 @@ export class VolumetricPass extends Pass implements Disposable {
   ): void {
     this.updateUniforms();
     this.material.uniforms.sceneDiffuse.value = inputBuffer.texture;
+    this.material.uniforms.curTimeSeconds.value = this.curTimeSeconds;
     renderer.setRenderTarget(outputBuffer);
     renderer.render(this.scene, this.camera);
   }
