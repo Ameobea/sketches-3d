@@ -16,17 +16,32 @@ uniform mat4 cameraProjectionMatrixInv;
 uniform mat4 cameraMatrixWorld;
 uniform float curTimeSeconds;
 
-#define USE_GRADIENT_BASED_DYNAMIC_STEP_SIZE 1
+#define USE_GRADIENT_BASED_DYNAMIC_STEP_SIZE 0
+#define DO_LIGHTING 1
+#define USE_LIGHT_FALLOFF 1
+#define USE_LOD 0
+#define OCTAVE_COUNT 3
 
-const float fogMinY = -2.0;
-const float fogMaxY = 3.0;
-const int baseRaymarchStepCount = 40;
-const int maxRaymarchStepCount = 300;
-const float maxRayLength = 200.0;
+const float fogMinY = -4.0;
+const float fogMaxY = 4.4;
+const int baseRaymarchStepCount = 120;
+const int maxRaymarchStepCount = 200;
+const float maxRayLength = 300.0;
 const float minStepLength = 0.4;
-const float maxDensity = 0.8;
-const vec3 fogColor = vec3(1.0);
+const float maxDensity = 1.;
+const vec3 fogColorHighDensity = vec3(0.5);
+const vec3 fogColorLowDensity = vec3(0.8);
+const vec3 lightColor = vec3(1.0, 0.0, 0.97);
+const float lightIntensity = 0.5;
 const int blueNoiseResolution = 470;
+const vec3 ambientLightColor = vec3(0.62);
+const float ambientLightIntensity = 0.9;
+const float lightFalloffDistance = 110.;
+const float fogFadeOutPow = 2.;
+const float fogFadeOutRangeY = 1.5;
+const float fogDensityMultiplier = 0.086;
+const float heightFogFactor = 0.0852;
+const float noiseBias = 0.885;
 
 vec3 computeWorldPosFromDepth(float depth, vec2 coord) {
   float z = depth * 2.0 - 1.0;
@@ -123,17 +138,22 @@ float psrdnoise(vec2 x, vec2 period, float alpha, out vec2 gradient) {
   return 10.9 * n;
 }
 
-const float LODWeights[3] = float[](1., 0.6, 0.9);
-const float LODScales[3] = float[](0.15, 0.35, 0.7);
-const vec2 LODShutoffZoneRanges[3] = vec2[](vec2(999999999., 999999999.), vec2(50., 80.), vec2(10., 40.));
+#define TOTAL_LOD_COUNT 4
+const float LODWeights[TOTAL_LOD_COUNT] = float[](1., 0.4, 0.2, 0.1);
+const float LODScales[TOTAL_LOD_COUNT] = float[](0.1, 0.3, 0.6, 1.2);
+const vec2 LODShutoffZoneRanges[TOTAL_LOD_COUNT] = vec2[](vec2(999999999., 999999999.), vec2(50., 80.), vec2(10., 40.), vec2(10., 40.));
 
 float sampleFogDensityLOD(vec3 worldPos, out vec3 gradient, float distanceToCamera, inout float totalSampledMagnitude, const int lod) {
+  #if USE_LOD
   vec2 shutoffZone = LODShutoffZoneRanges[lod];
   float shutoff = smoothstep(shutoffZone.x, shutoffZone.y, distanceToCamera);
   float activation = 1. - shutoff;
   if (activation == 0.) {
     return 0.;
   }
+  #else
+  float activation = 1.;
+  #endif
 
   float weight = LODWeights[lod];
   float scale = LODScales[lod];
@@ -145,16 +165,47 @@ float sampleFogDensityLOD(vec3 worldPos, out vec3 gradient, float distanceToCame
   return noise * weight * activation;
 }
 
-float sampleFogDensity(vec3 worldPos, out vec3 gradient, float distanceToCamera) {
-  float noise = 0.;
+float computeFadeOutYFactor(float y) {
+  return pow(1. - smoothstep(fogMaxY - fogFadeOutRangeY, fogMaxY, y), fogFadeOutPow);
+}
 
-  worldPos += vec3(curTimeSeconds * 2.1, 0., 0.);
+float computeFadeOutYDerivative(float y) {
+  if (y <= fogMaxY - fogFadeOutRangeY || y >= fogMaxY) {
+    return 0.;
+  }
+
+  float t = (y - (fogMaxY - fogFadeOutRangeY)) / fogFadeOutRangeY;
+
+  // Derivative of smoothstep function
+  float dSmoothStep = 6. * t * (1. - t) / fogFadeOutRangeY;
+
+  // Chain rule to compute the derivative considering the power term
+  float fadeOutTerm = 1. - smoothstep(fogMaxY - fogFadeOutRangeY, fogMaxY, y);
+  float fadeOutDerivative = -fogFadeOutPow * pow(fadeOutTerm, fogFadeOutPow - 1.) * dSmoothStep;
+
+  return fadeOutDerivative;
+}
+
+float sampleFogDensity(vec3 worldPos, out vec3 gradient, float distanceToCamera) {
+  gradient = vec3(0.);
+  float noise = noiseBias;
+
+  worldPos += vec3(curTimeSeconds * 0.8, 0., 0.);
 
   // keep track of total magnitude of sampled weights so noise can be properly normalized
   float totalSampledMagnitude = 0.;
-  noise += sampleFogDensityLOD(worldPos, gradient, distanceToCamera, totalSampledMagnitude, 0);
-  noise += sampleFogDensityLOD(worldPos, gradient, distanceToCamera, totalSampledMagnitude, 1);
-  noise += sampleFogDensityLOD(worldPos, gradient, distanceToCamera, totalSampledMagnitude, 2);
+  for (int octave = 0; octave < OCTAVE_COUNT; octave++) {
+    noise += sampleFogDensityLOD(worldPos, gradient, distanceToCamera, totalSampledMagnitude, octave);
+  }
+
+  // fade fog out up to the max fog height
+  float fadeOut = computeFadeOutYFactor(worldPos.y);
+  float fadeOutYDerivative = computeFadeOutYDerivative(worldPos.y);
+  gradient.y = noise * fadeOutYDerivative;
+  // Scale the x and z components of the gradient by the fade-out factor
+  gradient.x *= fadeOut;
+  gradient.z *= fadeOut;
+  noise *= fadeOut;
 
   // scale the noise from [-totalSampledMagnitude, totalSampledMagnitude] to [-1, 1]
   float normalizationScale = 1. / totalSampledMagnitude;
@@ -164,11 +215,26 @@ float sampleFogDensity(vec3 worldPos, out vec3 gradient, float distanceToCamera)
   // scale the gradient as well to match the noise
   gradient *= normalizationScale * 0.5;
 
-  // scale the noise to match the desired density range
-  noise = noise * 0.02;
-  gradient *= 0.02;
+  noise = pow(noise, 3.);
+  gradient *= 3. * pow(noise, 2.);
 
-  return noise;
+  // scale the noise to match the desired density range
+  noise = noise * fogDensityMultiplier;
+  gradient *= fogDensityMultiplier;
+
+  // linear height fog, getting denser as the y coordinate decreases
+  if (worldPos.y <= 3.) {
+    const float heightFogStartY = 0.;
+    const float heightFogEndY = 3.;
+    const float heightFogRange = heightFogEndY - heightFogStartY;
+    float noiseFactor = 1. - smoothstep(heightFogStartY, heightFogEndY, worldPos.y);
+    noise += noiseFactor * heightFogFactor;
+    if (worldPos.y >= 0.) {
+      gradient.y += heightFogFactor; //  / heightFogRange;
+    }
+  }
+
+  return min(noise, 1.);
 }
 
 /**
@@ -235,19 +301,50 @@ float computeStepLengthMultiplier(in vec3 gradient) {
   return 3. - 2. * smoothstep(0., 0.03, length(gradient));
 }
 
-float sampleOneStep(
+vec3 computeColor(in vec3 curPos, in float density, in vec3 gradient) {
+  vec3 baseFogColor = mix(fogColorLowDensity, fogColorHighDensity, clamp(density * 10., 0., 1.));
+  #if !DO_LIGHTING
+  return baseFogColor;
+  #endif
+
+  vec3 normal = normalize(gradient);
+  if (curPos.y > fogMaxY - fogFadeOutRangeY) {
+    normal = vec3(0., 1., 0.);
+  }
+
+  vec3 realLightPos = vec3(sin(curTimeSeconds * 0.5) * 50., 7., 0.);
+  float diffuseFactor = clamp(dot(normal, normalize(realLightPos - curPos)), 0., 1.);
+  #if USE_LIGHT_FALLOFF
+  diffuseFactor *= 1. - smoothstep(0., lightFalloffDistance, length(realLightPos - curPos));
+  #endif
+
+  vec3 ambientColor = ambientLightColor * ambientLightIntensity;
+  vec3 diffuseColor = lightColor * lightIntensity * diffuseFactor;
+  return baseFogColor * (ambientColor + diffuseColor);
+}
+
+void sampleOneStep(
   inout float totalDistance,
+  in float stepSize,
   in vec3 startPos,
   in vec3 rayDir,
-  in vec3 gradient
+  inout vec3 gradient,
+  inout vec3 accumulatedColor,
+  inout float accumulatedDensity
 ) {
   vec3 curPos = startPos + rayDir * totalDistance;
   float distanceToCamera = length(curPos - cameraPos);
-  float density = sampleFogDensity(curPos, gradient, distanceToCamera);
+  float rawDensity = sampleFogDensity(curPos, gradient, distanceToCamera);
+  float density = rawDensity * stepSize;
 
-  // TODO: lighting
-
-  return density;
+  if (density > 0.01) {
+    vec3 color = computeColor(curPos, density, gradient);
+    color *= density;
+    // We only accumulate within the remaining "space" of the transparency so far
+    float remainingOpacity = 1. - accumulatedDensity;
+    accumulatedColor += color * remainingOpacity;
+    accumulatedDensity += density * remainingOpacity;
+  }
 }
 
 vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
@@ -265,8 +362,8 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
 
   // Assume that if the ray is that long, it will saturate to the fog color
   if (rayLength > maxRayLength) {
-    return clamp(vec4(fogColor, maxDensity), 0., 1.);
-    // rayLength = maxRayLength;
+    // return vec4(computeColor(endPos, maxDensity, vec3(0., 1., 0.)) * maxDensity, maxDensity);
+    rayLength = maxRayLength;
   }
 
   // debug ray length
@@ -290,6 +387,7 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
   float totalDistance = 0.;
   int totalIters = 0;
   vec3 gradient;
+  vec3 accumulatedColor = vec3(0.);
   float stepLengthMultiplier = 1.;
   while (totalDistance < rayLength) {
     // safety check to avoid infinite march bugs and similar
@@ -304,11 +402,9 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
     // short rays, and allows the min step length to be set higher, which improves performance.
     stepLength += jitter * 0.2;
     totalDistance += stepLength;
-    float stepDensity = sampleOneStep(totalDistance, startPos, rayDir, gradient);
-    density += stepDensity * stepLength;
+    sampleOneStep(totalDistance, stepLength, startPos, rayDir, gradient, accumulatedColor, density);
 
-    if (density >= maxDensity) {
-      density = min(density, maxDensity);
+    if (density >= (maxDensity - 0.01)) {
       break;
     }
 
@@ -318,44 +414,21 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
     #endif
   }
 
-  // debug gradient-based dynamic step size loss
-  // totalIters = 0;
-  // float approxDensity = density;
-  // density = 0.;
-  // totalDistance = 0.;
-  // stepLengthMultiplier = 1.;
-  // while (totalDistance < rayLength) {
-  //   // safety check to avoid infinite march bugs and similar
-  //   if (totalIters > maxRaymarchStepCount) {
-  //     return vec4(1., 0., 1., 1.);
-  //     // break;
-  //   }
-  //   totalIters += 1;
-
-  //   float stepLength = max(baseStepLength * stepLengthMultiplier, minStepLength);
-  //   totalDistance += stepLength;
-  //   float stepDensity = sampleOneStep(totalDistance, startPos, rayDir, gradient);
-  //   density += stepDensity * stepLength;
-
-  //   if (density > maxDensity) {
-  //     density = min(density, maxDensity);
-  //     break;
-  //   }
-  // }
-  // float densityLoss = (approxDensity - density) * 5.;
-  // if (approxDensity < density) {
-  //   return vec4(abs(densityLoss), 0., 0., 1.);
+  // debug density
+  // return vec4(vec3(density), 1.0);
+  // if (density > 0.5) {
+  //   return vec4((density - 0.5) * 2., 0., 0., 1.);
   // } else {
-  //   return vec4(0., 0., densityLoss, 1.);
+  //   return vec4(0., 0., density * 2., 1.);
   // }
+
+  // debug fog color
+  // return vec4(accumulatedColor, 1.);
 
   // debug step count
   // return vec4(vec3(float(totalIters) / float(baseRaymarchStepCount)), 1.0);
 
-  // debug average gradient
-  // return vec4(vec3(totalGradientMagnitude * 10. / float(totalIters)), 1.0);
-
-  return clamp(vec4(fogColor, density), 0., 1.);
+  return clamp(vec4(accumulatedColor, density), 0., 1.);
 }
 
 void main() {

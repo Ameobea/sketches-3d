@@ -12,22 +12,21 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConfig: VizConfig
 ): Promise<SceneConfig> => {
-  viz.scene.background = new THREE.Color(0x000000);
+  viz.scene.background = new THREE.Color(0x030303);
   viz.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
   viz.camera.near = 0.1;
-  viz.camera.far = 1000;
+  viz.camera.far = 500;
   viz.camera.updateProjectionMatrix();
 
   const loader = new THREE.ImageBitmapLoader();
   const { groundDiffuse, groundTextureNormal, groundTextureRoughness } = await loadNamedTextures(loader, {
-    // groundDiffuse: 'https://i.ameo.link/bet.jpg',
-    // groundTextureNormal: 'https://i.ameo.link/beu.jpg',
-    // groundTextureRoughness: 'https://i.ameo.link/bev.jpg',
-    groundDiffuse: '/bet.jpg',
-    groundTextureNormal: '/beu.jpg',
-    groundTextureRoughness: '/bev.jpg',
+    groundDiffuse: 'https://i.ameo.link/bet.jpg',
+    groundTextureNormal: 'https://i.ameo.link/beu.jpg',
+    groundTextureRoughness: 'https://i.ameo.link/bev.jpg',
   });
   const ground = loadedWorld.getObjectByName('Cube') as THREE.Mesh;
+  ground.scale.y = 0.1;
+  ground.position.y -= 1;
   ground.material = buildCustomShader(
     {
       map: groundDiffuse,
@@ -35,7 +34,7 @@ export const processLoadedScene = async (
       roughnessMap: groundTextureRoughness,
       // metalness: 0.9,
       uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
-      color: new THREE.Color(0x222222),
+      // color: new THREE.Color(0x222222),
     },
     {},
     {}
@@ -54,7 +53,13 @@ export const processLoadedScene = async (
       },
     },
     spawnLocation: 'spawn',
+    gravity: 30,
+    player: {
+      movementAccelPerSecond: { onGround: 19, inAir: 19 },
+      colliderCapsuleSize: { height: 6.2, radius: 0.8 },
+      jumpVelocity: 12,
+      oobYThreshold: -50,
+    },
     debugPos: true,
-    // player: { colliderCapsuleSize: { height: 10, radius: 1 } },
   };
 };
