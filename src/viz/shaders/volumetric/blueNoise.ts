@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export const getBlueNoiseTexture = async (loader: THREE.TextureLoader): Promise<THREE.Texture> => {
-  const url = 'https://i.ameo.link/al6.png';
+  const url = 'https://i.ameo.link/bhb.png';
   const blueNoiseTexture = await loader.loadAsync(url);
 
   blueNoiseTexture.wrapS = THREE.RepeatWrapping;

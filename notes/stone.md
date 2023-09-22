@@ -14,7 +14,7 @@
   - unreal engine 4-focused, but still a ton of good resources
 - "ray marched heightmaps" https://shaderbits.com/blog/ray-marched-heightmaps
   - a shortcut/fastpath thing to self-shadowing for volumetric rendering
-  - Against UE4-focused, but looks promising
+  - Again UE4-focused, but looks promising
 - another fancy raymarched clouds shadertoy: https://www.shadertoy.com/view/XslGRr
   - _extremely_ performant; best by far. Uses several tricks to achieve this:
     - Cheap approximated lighting/shadowing

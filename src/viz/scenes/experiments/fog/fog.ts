@@ -44,7 +44,10 @@ export const processLoadedScene = async (
 
   return {
     viewMode: {
-      type: 'firstPerson',
+      // type: 'firstPerson',
+      type: 'orbit',
+      pos: new THREE.Vector3(40, 40, 40),
+      target: new THREE.Vector3(),
     },
     locations: {
       spawn: {
@@ -57,7 +60,7 @@ export const processLoadedScene = async (
     player: {
       movementAccelPerSecond: { onGround: 19, inAir: 19 },
       colliderCapsuleSize: { height: 6.2, radius: 0.8 },
-      jumpVelocity: 12,
+      jumpVelocity: 16,
       oobYThreshold: -50,
     },
     debugPos: true,

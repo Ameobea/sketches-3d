@@ -1,6 +1,7 @@
 /*
  * References:
  *
+ * - https://www.shadertoy.com/view/XslGRr
  * - https://github.com/Ameobea/three-good-godrays/blob/main/src/godrays.frag
  * - https://n8python.github.io/goodGodRays/
  */
@@ -20,28 +21,35 @@ uniform float curTimeSeconds;
 #define DO_LIGHTING 1
 #define USE_LIGHT_FALLOFF 1
 #define USE_LOD 0
-#define OCTAVE_COUNT 3
+#define OCTAVE_COUNT 2
+#define USE_ANALYTIC_GRADIENT 1
 
 const float fogMinY = -4.0;
 const float fogMaxY = 4.4;
-const int baseRaymarchStepCount = 120;
-const int maxRaymarchStepCount = 200;
+const int baseRaymarchStepCount = 80;
+const int maxRaymarchStepCount = 400;
 const float maxRayLength = 300.0;
 const float minStepLength = 0.4;
 const float maxDensity = 1.;
 const vec3 fogColorHighDensity = vec3(0.5);
 const vec3 fogColorLowDensity = vec3(0.8);
-const vec3 lightColor = vec3(1.0, 0.0, 0.97);
+const vec3 lightColor = vec3(0.02, 1.0, 0.0);
 const float lightIntensity = 0.5;
-const int blueNoiseResolution = 470;
+const int blueNoiseResolution = 256;
 const vec3 ambientLightColor = vec3(0.62);
 const float ambientLightIntensity = 0.9;
 const float lightFalloffDistance = 110.;
 const float fogFadeOutPow = 2.;
 const float fogFadeOutRangeY = 1.5;
 const float fogDensityMultiplier = 0.086;
+const float heightFogStartY = 0.;
+const float heightFogEndY = 3.;
 const float heightFogFactor = 0.0852;
-const float noiseBias = 0.885;
+const float noiseBias = 0.485;
+const float noiseRotationPerSecond = 0.3;
+const vec2 noiseMovementPerSecond = vec2(1.2, 0.8);
+const float postDensityMultiplier = 1.2;
+const float postDensityPow = 1.;
 
 vec3 computeWorldPosFromDepth(float depth, vec2 coord) {
   float z = depth * 2.0 - 1.0;
@@ -159,7 +167,8 @@ float sampleFogDensityLOD(vec3 worldPos, out vec3 gradient, float distanceToCame
   float scale = LODScales[lod];
 
   vec2 xzGradient;
-  float noise = psrdnoise(worldPos.xz * scale, vec2(0.), 0., xzGradient);
+  float alpha = noiseRotationPerSecond * curTimeSeconds;
+  float noise = psrdnoise(worldPos.xz * scale, vec2(0.), alpha, xzGradient);
   gradient += vec3(xzGradient.x, 0., xzGradient.y) * weight * activation;
   totalSampledMagnitude += weight * activation;
   return noise * weight * activation;
@@ -190,7 +199,7 @@ float sampleFogDensity(vec3 worldPos, out vec3 gradient, float distanceToCamera)
   gradient = vec3(0.);
   float noise = noiseBias;
 
-  worldPos += vec3(curTimeSeconds * 0.8, 0., 0.);
+  worldPos += vec3(noiseMovementPerSecond.x, 0., noiseMovementPerSecond.y) * curTimeSeconds;
 
   // keep track of total magnitude of sampled weights so noise can be properly normalized
   float totalSampledMagnitude = 0.;
@@ -223,14 +232,11 @@ float sampleFogDensity(vec3 worldPos, out vec3 gradient, float distanceToCamera)
   gradient *= fogDensityMultiplier;
 
   // linear height fog, getting denser as the y coordinate decreases
-  if (worldPos.y <= 3.) {
-    const float heightFogStartY = 0.;
-    const float heightFogEndY = 3.;
-    const float heightFogRange = heightFogEndY - heightFogStartY;
+  if (worldPos.y <= heightFogEndY) {
     float noiseFactor = 1. - smoothstep(heightFogStartY, heightFogEndY, worldPos.y);
     noise += noiseFactor * heightFogFactor;
     if (worldPos.y >= 0.) {
-      gradient.y += heightFogFactor; //  / heightFogRange;
+      gradient.y += heightFogFactor; // / (heightFogEndY - heightFogStartY);
     }
   }
 
@@ -307,10 +313,17 @@ vec3 computeColor(in vec3 curPos, in float density, in vec3 gradient) {
   return baseFogColor;
   #endif
 
+  #if USE_ANALYTIC_GRADIENT
   vec3 normal = normalize(gradient);
-  if (curPos.y > fogMaxY - fogFadeOutRangeY) {
+  // our gradient computation is fancy, but doesn't work very well.
+  //
+  // this tries to simulate the way the top of the fog is flat along the xz plane
+  if (curPos.y > fogMaxY - fogFadeOutRangeY - 2.) {
     normal = vec3(0., 1., 0.);
   }
+  #else
+  vec3 normal = vec3(0., 1., 0.);
+  #endif
 
   vec3 realLightPos = vec3(sin(curTimeSeconds * 0.5) * 50., 7., 0.);
   float diffuseFactor = clamp(dot(normal, normalize(realLightPos - curPos)), 0., 1.);
@@ -348,8 +361,13 @@ void sampleOneStep(
 }
 
 vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
+  // float beforeLength = length(endPos - startPos);
+
   // clip the march segment endpoints to minimize the length of the ray
   clipRayEndpoints(startPos, endPos);
+
+  // debug clipped ray length ratio
+  // return vec4(vec3(length(endPos - startPos) / beforeLength), 1.0);
 
   // This indicates that the entire ray is outside of the fog zone, so we can
   // skip marching alltogether.
@@ -375,7 +393,6 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
   // debug ray end y
   // return vec4(vec3(smoothstep(fogMinY, fogMaxY, endPos.y)), 1.0);
 
-  // TODO: investigate dynamic step length
   float baseStepLength = rayLength / float(baseRaymarchStepCount);
 
   // use blue noise to jitter the ray
@@ -392,7 +409,7 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
   while (totalDistance < rayLength) {
     // safety check to avoid infinite march bugs and similar
     if (totalIters > maxRaymarchStepCount) {
-      return vec4(1., 0., 0., 1.);
+      return vec4(1., 1., 0., 1.);
       // break;
     }
     totalIters += 1;
@@ -427,6 +444,8 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
 
   // debug step count
   // return vec4(vec3(float(totalIters) / float(baseRaymarchStepCount)), 1.0);
+
+  density = pow(density * postDensityMultiplier, postDensityPow);
 
   return clamp(vec4(accumulatedColor, density), 0., 1.);
 }

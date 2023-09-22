@@ -227,6 +227,80 @@ const setupOrbitControls = async (
     console.log({ pos: camera.position.toArray(), target: controls.target.toArray() });
 };
 
+let isBlurred = false;
+
+const initPauseHandlers = (
+  paused: Writable<boolean>,
+  clock: THREE.Clock,
+  viewMode: NonNullable<SceneConfig['viewMode']>['type']
+) => {
+  let didManuallyLockPointer = false;
+  let clockStopTime = 0;
+
+  const maybePauseViz = () => {
+    if (!get(paused) && !isBlurred) {
+      return;
+    }
+
+    clockStopTime = clock.getElapsedTime();
+    clock.stop();
+  };
+
+  const maybeResumeViz = () => {
+    if (get(paused) || isBlurred) {
+      return;
+    }
+
+    clock.start();
+    clock.elapsedTime = clockStopTime;
+
+    if (viewMode === 'firstPerson' && !document.pointerLockElement && didManuallyLockPointer) {
+      document.body.requestPointerLock();
+    }
+  };
+
+  window.addEventListener('blur', () => {
+    isBlurred = true;
+    maybePauseViz();
+  });
+  window.addEventListener('focus', () => {
+    isBlurred = false;
+    maybeResumeViz();
+  });
+
+  window.addEventListener('keydown', event => {
+    if (event.code === 'Escape') {
+      paused.update(p => !p);
+      if (get(paused)) {
+        maybePauseViz();
+      } else {
+        maybeResumeViz();
+      }
+    }
+  });
+  document.addEventListener('pointerlockchange', evt => {
+    if (isBlurred) {
+      return;
+    }
+    paused.set(!document.pointerLockElement);
+  });
+
+  document.addEventListener('mousedown', () => {
+    if (viewMode === 'firstPerson' && !get(paused)) {
+      didManuallyLockPointer = true;
+      document.body.requestPointerLock();
+    }
+  });
+
+  paused.subscribe(paused => {
+    if (paused) {
+      maybePauseViz();
+    } else {
+      maybeResumeViz();
+    }
+  });
+};
+
 export const buildViz = (paused: Writable<boolean>) => {
   try {
     screen.orientation.lock('landscape').catch(() => 0);
@@ -333,73 +407,6 @@ export const buildViz = (paused: Writable<boolean>) => {
     distanceSwapEntries.push({ mesh, baseMat, replacementMat, distance });
   };
 
-  let didManuallyLockPointer = false;
-  let isBlurred = false;
-  let clockStopTime = 0;
-
-  const maybePauseViz = () => {
-    if (!get(paused) && !isBlurred) {
-      return;
-    }
-
-    clockStopTime = clock.getElapsedTime();
-    clock.stop();
-  };
-
-  const maybeResumeViz = () => {
-    if (get(paused) || isBlurred) {
-      return;
-    }
-
-    clock.start();
-    clock.elapsedTime = clockStopTime;
-
-    if (!document.pointerLockElement && didManuallyLockPointer) {
-      document.body.requestPointerLock();
-    }
-  };
-
-  window.addEventListener('blur', () => {
-    isBlurred = true;
-    maybePauseViz();
-  });
-  window.addEventListener('focus', () => {
-    isBlurred = false;
-    maybeResumeViz();
-  });
-
-  window.addEventListener('keydown', event => {
-    if (event.code === 'Escape') {
-      paused.update(p => !p);
-      if (get(paused)) {
-        maybePauseViz();
-      } else {
-        maybeResumeViz();
-      }
-    }
-  });
-  document.addEventListener('pointerlockchange', evt => {
-    if (isBlurred) {
-      return;
-    }
-    paused.set(!document.pointerLockElement);
-  });
-
-  document.addEventListener('mousedown', () => {
-    if (!get(paused)) {
-      didManuallyLockPointer = true;
-      document.body.requestPointerLock();
-    }
-  });
-
-  paused.subscribe(paused => {
-    if (paused) {
-      maybePauseViz();
-    } else {
-      maybeResumeViz();
-    }
-  });
-
   let renderOverride: ((timeDiffSeconds: number) => void) | null = null;
   const setRenderOverride = (cb: ((timeDiffSeconds: number) => void) | null) => {
     renderOverride = cb;
@@ -474,6 +481,7 @@ export const buildViz = (paused: Writable<boolean>) => {
     setRenderOverride,
     inventory,
     collisionWorldLoadedCbs,
+    clock,
   };
 };
 
@@ -548,6 +556,8 @@ export const initViz = (
     if (sceneConf.enableInventory) {
       // TODO: set up inventory CBs
     }
+
+    initPauseHandlers(paused, viz.clock, sceneConf.viewMode.type);
 
     let sfxManager: SfxManager | undefined;
     if (sceneConf.viewMode.type === 'firstPerson') {
