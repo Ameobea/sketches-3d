@@ -33,7 +33,7 @@ const float minStepLength = 0.4;
 const float maxDensity = 1.;
 const vec3 fogColorHighDensity = vec3(0.5);
 const vec3 fogColorLowDensity = vec3(0.8);
-const vec3 lightColor = vec3(0.02, 1.0, 0.0);
+const vec3 lightColor = vec3(1.0, 0.0, 0.76);
 const float lightIntensity = 0.5;
 const int blueNoiseResolution = 256;
 const vec3 ambientLightColor = vec3(0.62);
@@ -151,7 +151,7 @@ const float LODWeights[TOTAL_LOD_COUNT] = float[](1., 0.4, 0.2, 0.1);
 const float LODScales[TOTAL_LOD_COUNT] = float[](0.1, 0.3, 0.6, 1.2);
 const vec2 LODShutoffZoneRanges[TOTAL_LOD_COUNT] = vec2[](vec2(999999999., 999999999.), vec2(50., 80.), vec2(10., 40.), vec2(10., 40.));
 
-float sampleFogDensityLOD(vec3 worldPos, out vec3 gradient, float distanceToCamera, inout float totalSampledMagnitude, const int lod) {
+float sampleFogDensityLOD(vec3 worldPos, inout vec3 gradient, float distanceToCamera, inout float totalSampledMagnitude, const int lod) {
   #if USE_LOD
   vec2 shutoffZone = LODShutoffZoneRanges[lod];
   float shutoff = smoothstep(shutoffZone.x, shutoffZone.y, distanceToCamera);
@@ -422,6 +422,7 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
     sampleOneStep(totalDistance, stepLength, startPos, rayDir, gradient, accumulatedColor, density);
 
     if (density >= (maxDensity - 0.01)) {
+      density = min(density, maxDensity);
       break;
     }
 

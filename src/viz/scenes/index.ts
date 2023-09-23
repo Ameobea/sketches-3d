@@ -174,4 +174,11 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     gltfName: 'fogTest',
     extension: 'glb',
   },
+  terrainTest: {
+    sceneName: 'Scene',
+    sceneLoader: () => import('./experiments/terrain/terrain').then(mod => mod.processLoadedScene),
+    metadata: { title: 'LOD terrain test' },
+    gltfName: 'fogTest',
+    extension: 'glb',
+  },
 };
