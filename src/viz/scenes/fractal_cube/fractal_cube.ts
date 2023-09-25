@@ -29,16 +29,16 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   const loader = new THREE.ImageBitmapLoader();
   const groundTexture = await loadTexture(
     loader,
-    // 'https://ameo.link/u/aau.jpg'
-    // 'https://ameo.link/u/aap.jpg'
-    // 'https://ameo.link/u/ab3.png'
-    // 'https://ameo.link/u/ab4.png'
-    // 'https://ameo.link/u/ab5.png'
-    // 'https://ameo.link/u/ab6.png'
-    // 'https://ameo.link/u/ab7.png'
-    // 'https://ameo.link/u/ab8.png' // GOOD
-    // 'https://ameo.link/u/ab9.png'
-    'https://ameo.link/u/aba.png'
+    // 'https://i.ameo.link/aau.jpg'
+    // 'https://i.ameo.link/aap.jpg'
+    // 'https://i.ameo.link/ab3.png'
+    // 'https://i.ameo.link/ab4.png'
+    // 'https://i.ameo.link/ab5.png'
+    // 'https://i.ameo.link/ab6.png'
+    // 'https://i.ameo.link/ab7.png'
+    // 'https://i.ameo.link/ab8.png' // GOOD
+    // 'https://i.ameo.link/ab9.png'
+    'https://i.ameo.link/aba.png'
   );
 
   const srcData: ImageBitmap = groundTexture.source.data;

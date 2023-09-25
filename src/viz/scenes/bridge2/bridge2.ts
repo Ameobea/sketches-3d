@@ -58,7 +58,7 @@ const SUN_AZIMUTH = 167;
 const loadTextures = async (/* pillarMap: THREE.Texture */) => {
   const loader = new THREE.ImageBitmapLoader();
 
-  const bridgeTextureP = loadTexture(loader, 'https://ameo.link/u/abu.jpg', {
+  const bridgeTextureP = loadTexture(loader, 'https://i.ameo.link/abu.jpg', {
     format: THREE.RedFormat,
   });
 
@@ -69,23 +69,23 @@ const loadTextures = async (/* pillarMap: THREE.Texture */) => {
     generateNormalMapFromTexture(bridgeTexture, {}, true)
   );
 
-  const monolithTextureP = loadTexture(loader, 'https://ameo.link/u/ac1.jpg', {
+  const monolithTextureP = loadTexture(loader, 'https://i.ameo.link/ac1.jpg', {
     format: THREE.RedFormat,
   });
   const monolithTextureCombinedDiffuseNormalP = monolithTextureP.then(monolithTexture =>
     generateNormalMapFromTexture(monolithTexture, {}, true)
   );
 
-  const monolithRingTextureP = loadTexture(loader, 'https://ameo.link/u/ac0.jpg', {
+  const monolithRingTextureP = loadTexture(loader, 'https://i.ameo.link/ac0.jpg', {
     format: THREE.RedFormat,
   });
   const monolithRingCombinedDiffuseNormalTextureP = monolithRingTextureP.then(monolithRingTexture =>
     generateNormalMapFromTexture(monolithRingTexture, {}, true)
   );
 
-  // const platformTexURL = 'https://ameo.link/u/ac9.jpg'; // orig
-  // const platformTexURL = 'https://ameo.link/u/acn.jpg'; // tiled
-  const platformTexURL = 'https://ameo.link/u/aco.jpg'; // grayscale
+  // const platformTexURL = 'https://i.ameo.link/ac9.jpg'; // orig
+  // const platformTexURL = 'https://i.ameo.link/acn.jpg'; // tiled
+  const platformTexURL = 'https://i.ameo.link/aco.jpg'; // grayscale
   const platformTextureP = loadTexture(loader, platformTexURL, {
     format: THREE.RedFormat,
     type: THREE.UnsignedByteType,
@@ -97,7 +97,7 @@ const loadTextures = async (/* pillarMap: THREE.Texture */) => {
 
   const platformRidgesTextureP = loadTexture(
     loader,
-    'https://ameo.link/u/b7dcc1c85adb2f53bb9567c712c30e36f236392b.jpg',
+    'https://i.ameo.link/b7dcc1c85adb2f53bb9567c712c30e36f236392b.jpg',
     {
       // format: THREE.RedFormat, // TODO: Support grayscale
       type: THREE.UnsignedByteType,
@@ -109,8 +109,8 @@ const loadTextures = async (/* pillarMap: THREE.Texture */) => {
 
   // const upperRidgesTextureP = loadTexture(
   //   loader,
-  //   'https://ameo.link/u/6221e21a2c76e901332ebdace5069f2a9c972f1d.jpg',
-  //   // 'https://ameo.link/u/aff.jpg',
+  //   'https://i.ameo.link/6221e21a2c76e901332ebdace5069f2a9c972f1d.jpg',
+  //   // 'https://i.ameo.link/aff.jpg',
   //   {
   //     // format: THREE.RedFormat, // TODO: Support grayscale
   //     type: THREE.UnsignedByteType,
@@ -120,7 +120,7 @@ const loadTextures = async (/* pillarMap: THREE.Texture */) => {
   //   generateNormalMapFromTexture(upperRidgesTexture, {}, true)
   // );
 
-  const platformLeftWallTextureP = loadTexture(loader, 'https://ameo.link/u/ae4.jpg');
+  const platformLeftWallTextureP = loadTexture(loader, 'https://i.ameo.link/ae4.jpg');
   const platformLeftWallCombinedDiffuseAndNormalTextureP = platformLeftWallTextureP.then(
     platformLeftWallTexture => generateNormalMapFromTexture(platformLeftWallTexture, {}, true)
   );
@@ -129,7 +129,7 @@ const loadTextures = async (/* pillarMap: THREE.Texture */) => {
 
   const platformBuildingCombinedDiffuseAndNormalTextureP = loadTexture(
     loader,
-    'https://ameo.link/u/afh.png'
+    'https://i.ameo.link/afh.png'
   ).then(platformBuildingTexture => generateNormalMapFromTexture(platformBuildingTexture, {}, true));
 
   const [
@@ -606,7 +606,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     let dubSound: Promise<THREE.PositionalAudio> | null = null;
 
     if (distanceToSecret < 5 && !dubSound) {
-      const dubSoundURL = 'https://ameo.link/u/ae6.ogg';
+      const dubSoundURL = 'https://i.ameo.link/ae6.ogg';
       const dubSoundLoader = new THREE.AudioLoader();
 
       dubSound = new Promise<THREE.PositionalAudio>(resolve => {

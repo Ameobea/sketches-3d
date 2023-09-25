@@ -44,15 +44,15 @@ const locations = {
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
 
-  const chasmGroundTextureP = loadTexture(loader, 'https://ameo.link/u/afl.jpg');
+  const chasmGroundTextureP = loadTexture(loader, 'https://i.ameo.link/afl.jpg');
   const chasmGroundTextureCombinedDiffuseNormalTextureP = chasmGroundTextureP.then(chasmGroundTexture =>
     generateNormalMapFromTexture(chasmGroundTexture, {}, true)
   );
 
   const bridgeTextureP = loadTexture(
     loader,
-    'https://ameo.link/u/afm.jpg'
-    // 'https://ameo.link/u/aha.png'
+    'https://i.ameo.link/afm.jpg'
+    // 'https://i.ameo.link/aha.png'
   );
   const bridgeTextureCombinedDiffuseNormalTextureP = bridgeTextureP.then(bridgeTexture =>
     generateNormalMapFromTexture(bridgeTexture, {}, true)
@@ -72,7 +72,7 @@ const loadTextures = async () => {
     generateNormalMapFromTexture(tower2Texture, {}, true)
   );
 
-  const pillarTextureP = loadTexture(loader, 'https://ameo.link/u/ahh.png');
+  const pillarTextureP = loadTexture(loader, 'https://i.ameo.link/ahh.png');
   const pillarTextureCombinedDiffuseNormalTextureP = pillarTextureP.then(pillarTexture =>
     generateNormalMapFromTexture(pillarTexture, {}, true)
   );
@@ -182,8 +182,8 @@ const loadTextures = async () => {
   const furnaceTextureP = loadTexture(
     loader,
     // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.2657780184.png'
-    // 'https://ameo.link/u/ajp.png'
-    'https://ameo.link/u/ajq.jpg'
+    // 'https://i.ameo.link/ajp.png'
+    'https://i.ameo.link/ajq.jpg'
     // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.2061435413.png'
   );
   const furnaceTextureCombinedDiffuseNormalTextureP = furnaceTextureP.then(furnaceTexture =>

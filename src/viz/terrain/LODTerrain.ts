@@ -1,3 +1,4 @@
+import type { Resizable } from 'postprocessing';
 import * as THREE from 'three';
 
 interface TerrainParams {
@@ -6,6 +7,9 @@ interface TerrainParams {
   maxPolygonWidth: number;
   sampleHeight: (point: THREE.Vector2) => number;
   tileResolution: number;
+  maxPixelsPerPolygon: number;
+  material: THREE.Material;
+  debugLOD?: boolean;
 }
 
 interface TileParams {
@@ -16,10 +20,35 @@ type TileState =
   | { type: 'subdivision'; tiles: Tile[] }
   | { type: 'geometry'; geometry: THREE.BufferGeometry };
 
+/**
+ * Computes the shortest distance between a point and a `Box2`.
+ */
+const pointBoxDistance = (
+  pointX: number,
+  pointY: number,
+  pointZ: number,
+  boxMinX: number,
+  boxMinZ: number,
+  boxMaxX: number,
+  boxMaxZ: number
+) => {
+  // Calculate the closest point in 2D space for X and Z
+  const closestPointX = Math.max(boxMinX, Math.min(pointX, boxMaxX));
+  const closestPointZ = Math.max(boxMinZ, Math.min(pointZ, boxMaxZ));
+
+  // Calculate the 3D distance
+  const dx = closestPointX - pointX;
+  const dy = pointY; // Since the box is always on the ground, the difference in the y-axis is just the point's y value.
+  const dz = closestPointZ - pointZ;
+
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+};
+
 class Tile extends THREE.Object3D {
   public bounds: THREE.Box2;
   private parentTerrain: LODTerrain;
   private depth: number;
+  private tileSize: number;
 
   public state!: TileState;
 
@@ -29,31 +58,55 @@ class Tile extends THREE.Object3D {
     this.parentTerrain = parentTerrain;
     this.bounds = params.bounds;
     this.depth = depth;
+    this.tileSize = this.bounds.getSize(new THREE.Vector2()).length();
 
     this.update();
   }
 
-  private shouldSubdivide(): boolean {
-    const tileCenter = new THREE.Vector2();
-    this.bounds.getCenter(tileCenter);
+  /**
+   * @returns the width of a pixel in world-space units at the given distance.
+   */
+  private getApparentSizeAtDistance(distance: number): number {
+    const viewportHeight = this.parentTerrain.viewportSize.y;
+    // TODO: pre-compute
+    const camera = this.parentTerrain.camera;
+    const s = (2 * distance * Math.tan((camera.fov / 2) * (Math.PI / 180))) / viewportHeight;
+    return s;
+  }
 
-    const distance = this.parentTerrain.camera.position.distanceTo(
-      new THREE.Vector3(tileCenter.x, 0, tileCenter.y)
+  private shouldSubdivide(): boolean {
+    const polygonSize = this.tileSize / this.parentTerrain.params.tileResolution;
+    if (polygonSize < this.parentTerrain.params.minPolygonWidth) {
+      return false;
+    }
+
+    const distance = Math.max(
+      pointBoxDistance(
+        this.parentTerrain.camera.position.x,
+        this.parentTerrain.camera.position.y,
+        this.parentTerrain.camera.position.z,
+        this.bounds.min.x,
+        this.bounds.min.y,
+        this.bounds.max.x,
+        this.bounds.max.y
+      ),
+      0.0001
     );
 
-    const tileSize = this.bounds.getSize(new THREE.Vector2()).length();
-    const polygonSize = tileSize / this.parentTerrain.params.tileResolution;
+    const apparentSize = this.getApparentSizeAtDistance(distance);
+    if (apparentSize === 0 || apparentSize === Infinity) {
+      throw new Error('apparentSize is 0 or Infinity');
+    }
 
-    return distance < 5000 && polygonSize > this.parentTerrain.params.minPolygonWidth;
+    const screenSpaceSizeOfPolygon = polygonSize / apparentSize;
+    return screenSpaceSizeOfPolygon > this.parentTerrain.params.maxPixelsPerPolygon;
   }
 
   public update() {
     const shouldSubdivide = this.shouldSubdivide();
     if (this.state?.type !== 'geometry' && !shouldSubdivide) {
-      console.log('generate geometry');
       this.generateGeometry();
     } else if (this.state?.type !== 'subdivision' && shouldSubdivide) {
-      console.log('subdivide');
       this.subdivide();
     }
 
@@ -123,8 +176,10 @@ class Tile extends THREE.Object3D {
     const stepX = (this.bounds.max.x - this.bounds.min.x) / segments;
     const stepZ = (this.bounds.max.y - this.bounds.min.y) / segments;
 
-    const vertices: Float32Array = new Float32Array((segments + 1) * (segments + 1) * 3);
-    const indices: Float32Array = new Float32Array(segments * segments * 6);
+    const vertices = new Float32Array((segments + 1) * (segments + 1) * 3);
+    const indexCount = segments * segments * 6;
+    const u16Max = 65_535;
+    const indices = indexCount > u16Max ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
 
     // Generate vertices
     for (let i = 0; i <= segments; i++) {
@@ -149,28 +204,33 @@ class Tile extends THREE.Object3D {
 
         // Two triangles for the quad
         indices[i * segments * 6 + j * 6] = topLeft;
-        indices[i * segments * 6 + j * 6 + 1] = bottomLeft;
-        indices[i * segments * 6 + j * 6 + 2] = topRight;
+        indices[i * segments * 6 + j * 6 + 1] = topRight;
+        indices[i * segments * 6 + j * 6 + 2] = bottomLeft;
         indices[i * segments * 6 + j * 6 + 3] = topRight;
-        indices[i * segments * 6 + j * 6 + 4] = bottomLeft;
-        indices[i * segments * 6 + j * 6 + 5] = bottomRight;
+        indices[i * segments * 6 + j * 6 + 4] = bottomRight;
+        indices[i * segments * 6 + j * 6 + 5] = bottomLeft;
       }
     }
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    geometry.computeVertexNormals();
 
     // We create a simple mesh with the generated geometry and some basic material.
-    const material = new THREE.MeshBasicMaterial({
-      color: (() => {
-        // color based on depth to debug
-        const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
-        return colors[this.depth % colors.length];
-      })(),
-      wireframe: true,
-    }); // For visualization.
+    const material = this.parentTerrain.params.debugLOD
+      ? new THREE.MeshBasicMaterial({
+          color: (() => {
+            // color based on depth to debug
+            const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
+            return colors[this.depth % colors.length];
+          })(),
+          // wireframe: true,
+        })
+      : this.parentTerrain.params.material;
     const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
 
     this.add(mesh);
 
@@ -178,22 +238,28 @@ class Tile extends THREE.Object3D {
   }
 }
 
-export class LODTerrain extends THREE.Group {
-  public camera: THREE.Camera;
+export class LODTerrain extends THREE.Group implements Resizable {
+  public camera: THREE.PerspectiveCamera;
+  public viewportSize: THREE.Vector2;
   public params: TerrainParams;
   // TODO: swap this out for a LRU cache
   // TODO: only cache leaf tiles
   private tileCache: Map<string, Tile> = new Map();
   private rootTile: Tile;
 
-  constructor(camera: THREE.Camera, params: TerrainParams) {
+  constructor(camera: THREE.PerspectiveCamera, params: TerrainParams, viewportSize: THREE.Vector2) {
     super();
 
     this.camera = camera;
     this.params = params;
+    this.viewportSize = viewportSize;
 
     this.rootTile = new Tile({ bounds: this.params.boundingBox }, this, 0);
     this.add(this.rootTile);
+  }
+
+  setSize(width: number, height: number) {
+    this.viewportSize.set(width, height);
   }
 
   /**

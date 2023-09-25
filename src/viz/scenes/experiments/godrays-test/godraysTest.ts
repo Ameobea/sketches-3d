@@ -9,7 +9,7 @@ import type { VizState } from '../../..';
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   const loader = new THREE.ImageBitmapLoader();
-  const dungeonWallTextureP = loadTexture(loader, 'https://ameo.link/u/akz.jpg');
+  const dungeonWallTextureP = loadTexture(loader, 'https://i.ameo.link/akz.jpg');
   const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>
     generateNormalMapFromTexture(dungeonWallTexture, {}, true)
   );

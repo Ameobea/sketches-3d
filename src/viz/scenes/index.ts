@@ -56,7 +56,7 @@ const ParticleConduit = {
         'Physics-based particle system where particles move along a conduit.  Various forces interact along with noise-based fields to send the particles on chaotic paths.',
       images: [
         {
-          url: 'https://ameo.link/u/a9c.png',
+          url: 'https://i.ameo.link/a9c.png',
           alt: 'A screenshot of the particle conduit visualization.  Shows red and orange particles moving in stream-like patterns across the screen.  Includes a control panel on the right with many controls for configuring the simulation.',
           width: 1508,
           height: 1194,
@@ -179,6 +179,13 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./experiments/terrain/terrain').then(mod => mod.processLoadedScene),
     metadata: { title: 'LOD terrain test' },
     gltfName: 'fogTest',
+    extension: 'glb',
+  },
+  stone: {
+    sceneName: 'Scene',
+    sceneLoader: () => import('./stone/stone').then(mod => mod.processLoadedScene),
+    metadata: { title: 'stone' },
+    gltfName: 'stone',
     extension: 'glb',
   },
 };

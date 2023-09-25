@@ -43,12 +43,12 @@ const locations = {
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
 
-  const cementTextureP = loadTexture(loader, 'https://ameo.link/u/amf.png');
+  const cementTextureP = loadTexture(loader, 'https://i.ameo.link/amf.png');
   const cementTextureCombinedDiffuseNormalP = cementTextureP.then(cementTexture =>
     generateNormalMapFromTexture(cementTexture, {}, true)
   );
 
-  const cloudsBgTextureP = loadTexture(loader, 'https://ameo.link/u/ame.jpg', {
+  const cloudsBgTextureP = loadTexture(loader, 'https://i.ameo.link/ame.jpg', {
     mapping: THREE.EquirectangularReflectionMapping,
     minFilter: THREE.NearestFilter,
     magFilter: THREE.NearestFilter,

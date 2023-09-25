@@ -33,7 +33,6 @@ export const processLoadedScene = async (
   });
   viz.scene.add(terrain);
   viz.registerBeforeRenderCb(() => terrain.update());
-  console.log(terrain);
 
   return {
     viewMode: {

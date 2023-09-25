@@ -2,13 +2,13 @@ import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
+import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomShader, setDefaultDistanceAmpParams } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
 import { delay } from 'src/viz/util';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
 import { addDecorations } from './decorations';
-import { configurePostprocessing } from './postprocessing';
 
 export const processLoadedScene = async (
   viz: VizState,
@@ -113,7 +113,7 @@ export const processLoadedScene = async (
   };
   viz.registerBeforeRenderCb(beforeRenderCb);
 
-  configurePostprocessing(viz, vizConf.graphics.quality);
+  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
 
   return {
     spawnLocation: 'spawn',

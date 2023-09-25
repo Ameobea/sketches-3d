@@ -17,6 +17,10 @@ uniform mat4 cameraProjectionMatrixInv;
 uniform mat4 cameraMatrixWorld;
 uniform float curTimeSeconds;
 
+// params
+uniform float ambientLightIntensity; // = 0.1;
+uniform vec3 ambientLightColor; // = vec3(0.62);
+
 #define USE_GRADIENT_BASED_DYNAMIC_STEP_SIZE 0
 #define DO_LIGHTING 1
 #define USE_LIGHT_FALLOFF 1
@@ -36,8 +40,7 @@ const vec3 fogColorLowDensity = vec3(0.8);
 const vec3 lightColor = vec3(1.0, 0.0, 0.76);
 const float lightIntensity = 0.5;
 const int blueNoiseResolution = 256;
-const vec3 ambientLightColor = vec3(0.62);
-const float ambientLightIntensity = 0.9;
+
 const float lightFalloffDistance = 110.;
 const float fogFadeOutPow = 2.;
 const float fogFadeOutRangeY = 1.5;

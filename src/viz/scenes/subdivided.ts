@@ -31,7 +31,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.scene.add(pointLightCube);
 
   const loader = new THREE.ImageBitmapLoader();
-  const groundTexture = await loadTexture(loader, 'https://ameo.link/u/aau.jpg');
+  const groundTexture = await loadTexture(loader, 'https://i.ameo.link/aau.jpg');
 
   const groundNormalTexture = await generateNormalMapFromTexture(groundTexture);
   console.log({ groundNormalTexture });
@@ -56,25 +56,25 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const texture = await loadTexture(
     loader,
-    // 'https://ameo.link/u/aaj.jpg',
-    // 'https://ameo.link/u/aai.jpg',
-    // 'https://ameo.link/u/aal.jpg',
-    // 'https://ameo.link/u/aam.jpg',
-    'https://ameo.link/u/aap.jpg'
-    // 'https://ameo.link/u/aaq.jpg', // GOOD
-    // 'https://ameo.link/u/aar.jpg',
-    // 'https://ameo.link/u/aas.jpg',
-    // 'https://ameo.link/u/aat.jpg',
-    // 'https://ameo.link/u/aau.jpg',
-    // 'https://ameo.link/u/aaw.jpg',
-    // 'https://ameo.link/u/aax.png',
+    // 'https://i.ameo.link/aaj.jpg',
+    // 'https://i.ameo.link/aai.jpg',
+    // 'https://i.ameo.link/aal.jpg',
+    // 'https://i.ameo.link/aam.jpg',
+    'https://i.ameo.link/aap.jpg'
+    // 'https://i.ameo.link/aaq.jpg', // GOOD
+    // 'https://i.ameo.link/aar.jpg',
+    // 'https://i.ameo.link/aas.jpg',
+    // 'https://i.ameo.link/aat.jpg',
+    // 'https://i.ameo.link/aau.jpg',
+    // 'https://i.ameo.link/aaw.jpg',
+    // 'https://i.ameo.link/aax.png',
   );
   // loader.manager = new THREE.LoadingManager();
   const normalTexture = await loadTexture(
     loader,
-    // 'https://ameo.link/u/aaa.png',
-    'https://ameo.link/u/aak.jpg'
-    // 'https://ameo.link/u/aay.png',
+    // 'https://i.ameo.link/aaa.png',
+    'https://i.ameo.link/aak.jpg'
+    // 'https://i.ameo.link/aay.png',
   );
 
   const pillar = loadedWorld.getObjectByName('pillar')! as THREE.Mesh;

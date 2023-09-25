@@ -5,6 +5,11 @@ import { getBlueNoiseTexture } from './blueNoise';
 import VolumetricFragmentShader from './volumetric.frag?raw';
 import VolumetricVertexShader from './volumetric.vert?raw';
 
+export interface VolumetricPassParams {
+  ambientLightColor?: THREE.Color;
+  ambientLightIntensity?: number;
+}
+
 class VolumetricMaterial extends THREE.ShaderMaterial {
   constructor() {
     const uniforms = {
@@ -16,6 +21,9 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       cameraProjectionMatrixInv: { value: new THREE.Matrix4() },
       cameraMatrixWorld: { value: new THREE.Matrix4() },
       curTimeSeconds: { value: 0 },
+
+      ambientLightColor: { value: new THREE.Color(0xffffff) },
+      ambientLightIntensity: { value: 0 },
     };
 
     super({
@@ -38,9 +46,12 @@ export class VolumetricPass extends Pass implements Disposable {
   private playerCamera: THREE.PerspectiveCamera = new THREE.PerspectiveCamera();
   private material: VolumetricMaterial = new VolumetricMaterial();
   private curTimeSeconds = 0;
+  private ambientLight?: THREE.AmbientLight;
+  private params: VolumetricPassParams;
 
-  constructor(camera: THREE.PerspectiveCamera) {
+  constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, params: VolumetricPassParams) {
     super('VolumetricPass');
+    this.params = params;
 
     // Indicate to the composer that this pass needs depth information from the previous pass
     this.needsDepthTexture = true;
@@ -48,6 +59,11 @@ export class VolumetricPass extends Pass implements Disposable {
     this.playerCamera = camera;
     this.material = new VolumetricMaterial();
     this.fullscreenMaterial = this.material;
+
+    this.ambientLight = scene.children.find(child => child instanceof THREE.AmbientLight) as
+      | THREE.AmbientLight
+      | undefined;
+    console.log(this.ambientLight, scene.children);
 
     this.updateUniforms();
   }
@@ -85,5 +101,10 @@ export class VolumetricPass extends Pass implements Disposable {
     this.material.uniforms.cameraPos.value = this.playerCamera.position;
     this.material.uniforms.cameraProjectionMatrixInv.value = this.playerCamera.projectionMatrixInverse;
     this.material.uniforms.cameraMatrixWorld.value = this.playerCamera.matrixWorld;
+
+    this.material.uniforms.ambientLightColor.value =
+      this.ambientLight?.color ?? this.params.ambientLightColor ?? new THREE.Color(0xffffff);
+    this.material.uniforms.ambientLightIntensity.value =
+      this.ambientLight?.intensity ?? this.params.ambientLightIntensity ?? 0;
   }
 }

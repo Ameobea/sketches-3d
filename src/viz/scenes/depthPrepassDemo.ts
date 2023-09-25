@@ -14,7 +14,7 @@ const locations = {
 
 const initScene = async (loadedWorld: THREE.Group) => {
   const loader = new THREE.ImageBitmapLoader();
-  const cementTexture = await loadTexture(loader, 'https://ameo.link/u/amf.png');
+  const cementTexture = await loadTexture(loader, 'https://i.ameo.link/amf.png');
 
   const ground = new THREE.Mesh(
     new THREE.BoxGeometry(100, 1, 100),
