@@ -17,8 +17,8 @@ export const processLoadedScene = async (
   viz.renderer.shadowMap.enabled = true;
   viz.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.2));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const sun = new THREE.DirectionalLight(0x4488bb, 0.6);
   sun.castShadow = true;
   sun.shadow.mapSize.width = 2048;
   sun.shadow.mapSize.height = 2048;
@@ -60,10 +60,18 @@ export const processLoadedScene = async (
       stoneBricksAlbedo: '/textures/stone_wall/color_map.jpg',
       stoneBricksNormal: '/textures/stone_wall/normal_map_opengl.jpg',
       stoneBricksRoughness: '/textures/stone_wall/roughness_map.jpg',
-      // cloudsBackground: 'https://i.ameo.link/ame.jpg',
+      cloudsBackground: 'https://i.ameo.link/ame.jpg',
       // cloudsBackground: '/textures/sky_test.png',
-      cloudsBackground: '/textures/00005.jpg',
+      // cloudsBackground: '/textures/00005.jpg',
     });
+  const { gemTexture, gemRoughness, gemNormal } = await loadNamedTextures(loader, {
+    caveTexture: 'https://i.ameo.link/bfj.jpg',
+    caveNormal: 'https://i.ameo.link/bfk.jpg',
+    caveRoughness: 'https://i.ameo.link/bfl.jpg',
+    gemTexture: 'https://i.ameo.link/bfy.jpg',
+    gemRoughness: 'https://i.ameo.link/bfz.jpg',
+    gemNormal: 'https://i.ameo.link/bg0.jpg',
+  });
 
   cloudsBackground.mapping = THREE.EquirectangularReflectionMapping;
   cloudsBackground.magFilter = THREE.LinearFilter;
@@ -74,17 +82,22 @@ export const processLoadedScene = async (
   const stoneBricks = loadedWorld.getObjectByName('minecraft_block-stone_bricks') as THREE.Mesh;
   const stoneBricksMaterial = buildCustomShader(
     {
-      map: stoneBricksAlbedo,
-      normalMap: stoneBricksNormal,
-      roughnessMap: stoneBricksRoughness,
+      // map: stoneBricksAlbedo,
+      // normalMap: stoneBricksNormal,
+      // roughnessMap: stoneBricksRoughness,
+      map: gemTexture,
+      normalMap: gemNormal,
+      roughnessMap: gemRoughness,
       metalness: 0.7,
-      roughness: 1.5,
+      roughness: 0.5,
       uvTransform: new THREE.Matrix3().scale(0.2, 0.2),
+      iridescence: 0.6,
     },
     {},
     {
       useGeneratedUVs: true,
-      tileBreaking: { type: 'neyret', patchScale: 3 },
+      randomizeUVOffset: true,
+      tileBreaking: { type: 'neyret', patchScale: 0.3 },
     }
   );
   stoneBricks.material = stoneBricksMaterial;
@@ -96,7 +109,12 @@ export const processLoadedScene = async (
   const sampleHeight = (pos: THREE.Vector2) => {
     const x = pos.x;
     const z = pos.y;
-    return Math.sin(x / 20) * Math.cos(z / 20) * 10;
+    const octave0 = Math.sin(x / 10) * Math.cos(z / 10) * 10;
+    return octave0 * 0.4;
+    // const octave1 = Math.sin(x / 20) * Math.cos(z / 20) * 10;
+    // const octave2 = Math.sin(x / 40) * Math.cos(z / 40) * 5;
+
+    return (octave0 + octave1 + octave2) * 0.7;
   };
 
   const viewportSize = viz.renderer.getSize(new THREE.Vector2());
@@ -115,6 +133,7 @@ export const processLoadedScene = async (
   );
   viz.scene.add(terrain);
   viz.registerBeforeRenderCb(() => terrain.update());
+  viz.collisionWorldLoadedCbs.push(fpCtx => terrain.initializeCollision(fpCtx));
 
   // render one frame to populate shadow map
   viz.renderer.shadowMap.needsUpdate = true;

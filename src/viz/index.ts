@@ -28,7 +28,7 @@ export interface FpPlayerStateGetters {
   getIsOnGround: () => boolean;
 }
 
-interface FirstPersonCtx {
+export interface FirstPersonCtx {
   addTriMesh: (mesh: THREE.Mesh) => void;
   teleportPlayer: (pos: THREE.Vector3, rot?: THREE.Vector3) => void;
   addBox: (
@@ -46,6 +46,15 @@ interface FirstPersonCtx {
       quat?: THREE.Quaternion;
     }[],
     quat?: THREE.Quaternion
+  ) => void;
+  addHeightmapTerrain: (
+    heightmapData: Float32Array,
+    minHeight: number,
+    maxHeight: number,
+    gridResolutionX: number,
+    gridResolutionY: number,
+    worldSpaceWidth: number,
+    worldSpaceLength: number
   ) => void;
   optimize: () => void;
   setFlyMode: (isFlyMode: boolean) => void;
@@ -91,6 +100,7 @@ const setupFirstPerson = async (
     addBox,
     addCone,
     addCompound,
+    addHeightmapTerrain,
     optimize,
     setGravity,
     setFlyMode,
@@ -200,6 +210,7 @@ const setupFirstPerson = async (
     addBox,
     addCone,
     addCompound,
+    addHeightmapTerrain,
     optimize,
     setFlyMode,
     setGravity,

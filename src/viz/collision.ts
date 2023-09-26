@@ -319,6 +319,51 @@ export const initBulletPhysics = ({
     addStaticShape(shape, mesh.position, mesh.quaternion, objRef);
   };
 
+  const addHeightmapTerrain = (
+    heightmapData: Float32Array,
+    minHeight: number,
+    maxHeight: number,
+    gridResolutionX: number,
+    gridResolutionY: number,
+    worldSpaceWidth: number,
+    worldSpaceLength: number
+  ) => {
+    // heightScale: only matters if using non-float heightmap data; multiplied by values in `heightmapData`
+    //              to get the actual height
+    // heightStickWidth: x dimension of `heightmapData` array
+    // heightStickLength: y dimension of `heightmapData` array
+    // heightfieldData: 2D array of heights
+    //
+    // I'm pretty sure that scaling the heightmap in XZ space is done via `localScaling` ...
+    // I can't imagine how else it would be.
+    //
+    // btHeightfieldTerrainShape::btHeightfieldTerrainShape(
+    //   int heightStickWidth, int heightStickLength, const void* heightfieldData,
+    //   btScalar heightScale, btScalar minHeight, btScalar maxHeight, int upAxis,
+    //   PHY_ScalarType hdt, bool flipQuadEdges){}
+    const terrainDataPtr = Ammo._malloc(4 * heightmapData.length);
+    const terrainData = new Float32Array(Ammo.HEAPF32.buffer, terrainDataPtr, heightmapData.length);
+    terrainData.set(heightmapData);
+
+    const heightfieldShape = new Ammo.btHeightfieldTerrainShape(
+      gridResolutionX,
+      gridResolutionY,
+      terrainDataPtr,
+      1, // heightScale
+      minHeight,
+      maxHeight,
+      1, // upAxis
+      false // flipQuadEdges
+    );
+    console.log(heightfieldShape);
+
+    heightfieldShape.setLocalScaling(
+      btvec3(worldSpaceWidth / (gridResolutionX - 1), 1, worldSpaceLength / (gridResolutionY - 1))
+    );
+
+    addStaticShape(heightfieldShape, new THREE.Vector3(0, 0, 0));
+  };
+
   const addPlayerRegionContactCb = (
     region: { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion },
     onEnter?: () => void,
@@ -452,6 +497,7 @@ export const initBulletPhysics = ({
     addBox,
     addCone,
     addCompound,
+    addHeightmapTerrain,
     teleportPlayer,
     optimize,
     setGravity,

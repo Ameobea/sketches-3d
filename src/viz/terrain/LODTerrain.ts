@@ -1,6 +1,8 @@
 import type { Resizable } from 'postprocessing';
 import * as THREE from 'three';
 
+import type { FirstPersonCtx } from '..';
+
 interface TerrainParams {
   boundingBox: THREE.Box2;
   minPolygonWidth: number;
@@ -256,6 +258,48 @@ export class LODTerrain extends THREE.Group implements Resizable {
 
     this.rootTile = new Tile({ bounds: this.params.boundingBox }, this, 0);
     this.add(this.rootTile);
+  }
+
+  public initializeCollision(fpCtx: FirstPersonCtx) {
+    // TODO: make this configurable
+    const heightmapResolution = 1024 * 1;
+    const heightmapData = new Float32Array(heightmapResolution * heightmapResolution);
+
+    let minHeight = Infinity;
+    let maxHeight = -Infinity;
+    for (let yIx = 0; yIx < heightmapResolution; yIx++) {
+      for (let xIx = 0; xIx < heightmapResolution; xIx++) {
+        const x = THREE.MathUtils.lerp(
+          this.params.boundingBox.min.x,
+          this.params.boundingBox.max.x,
+          xIx / (heightmapResolution - 1)
+        );
+        const y = THREE.MathUtils.lerp(
+          this.params.boundingBox.min.y,
+          this.params.boundingBox.max.y,
+          yIx / (heightmapResolution - 1)
+        );
+        const z = this.params.sampleHeight(new THREE.Vector2(x, y));
+
+        minHeight = Math.min(minHeight, z);
+        maxHeight = Math.max(maxHeight, z);
+
+        heightmapData[yIx * heightmapResolution + xIx] = z;
+      }
+    }
+
+    const bboxSize = this.params.boundingBox.getSize(new THREE.Vector2());
+    const worldSpaceWidth = bboxSize.x;
+    const worldSpaceLength = bboxSize.y;
+    fpCtx.addHeightmapTerrain(
+      heightmapData,
+      minHeight,
+      maxHeight,
+      heightmapResolution,
+      heightmapResolution,
+      worldSpaceWidth,
+      worldSpaceLength
+    );
   }
 
   setSize(width: number, height: number) {
