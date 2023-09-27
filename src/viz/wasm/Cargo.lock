@@ -230,6 +230,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "074864da206b4973b84eb91683020dbefd6a8c3f0f38e054d93954e891935e4e"
 
 [[package]]
+name = "opensimplex_noise_rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba77c545f2291bb66897afe90c8583c4fdc427fae9cb552db032e74d7526e8b5"
+
+[[package]]
 name = "paste"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -377,6 +383,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "nanoserde",
+ "opensimplex_noise_rs",
  "rand 0.8.5",
  "rand_pcg",
 ]

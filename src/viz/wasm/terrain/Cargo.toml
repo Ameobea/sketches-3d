@@ -12,5 +12,6 @@ rand_pcg = "0.3"
 rand = { version = "0.8", default-features = false, features = ["nightly"] }
 common = { path = "../common" }
 nanoserde = "0.1"
+opensimplex_noise_rs = "0.3.0"
 
 [features]

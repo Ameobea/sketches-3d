@@ -47,9 +47,6 @@ impl<const N: usize> HillNoise2D<N> {
 
   #[inline(never)]
   pub fn gen(&self, x: f32, y: f32) -> f32 {
-    // debug coord gen
-    return f32::sin(x / 100.) * 50. + f32::sin(y / 100.) * 50.;
-
     let mut noise = 0.0f32;
 
     for (i, &size) in self.wavelengths.iter().enumerate() {
@@ -70,10 +67,15 @@ impl<const N: usize> HillNoise2D<N> {
   }
 
   #[inline]
-  pub fn gen_batch(&self, vals: impl Iterator<Item = (f32, f32)>, out: &mut [f32]) {
+  pub fn gen_batch(
+    &self,
+    vals: impl Iterator<Item = (f32, f32)>,
+    out: &mut [f32],
+    multiplier: f32,
+  ) {
     for (i, (x, y)) in vals.enumerate() {
       unsafe {
-        *out.get_unchecked_mut(i) = self.gen(x, y);
+        *out.get_unchecked_mut(i) = self.gen(x, y) * multiplier;
       }
     }
   }
@@ -346,24 +348,29 @@ impl GenHillNoise2D {
   }
 
   #[inline]
-  pub fn gen_batch(&self, coords: impl Iterator<Item = (f32, f32)>, out: &mut [f32]) {
+  pub fn gen_batch(
+    &self,
+    coords: impl Iterator<Item = (f32, f32)>,
+    out: &mut [f32],
+    multiplier: f32,
+  ) {
     match self {
-      Self::Oct1(hill) => hill.gen_batch(coords, out),
-      Self::Oct2(hill) => hill.gen_batch(coords, out),
-      Self::Oct3(hill) => hill.gen_batch(coords, out),
-      Self::Oct4(hill) => hill.gen_batch(coords, out),
-      Self::Oct5(hill) => hill.gen_batch(coords, out),
-      Self::Oct6(hill) => hill.gen_batch(coords, out),
-      Self::Oct7(hill) => hill.gen_batch(coords, out),
-      Self::Oct8(hill) => hill.gen_batch(coords, out),
-      Self::Oct9(hill) => hill.gen_batch(coords, out),
-      Self::Oct10(hill) => hill.gen_batch(coords, out),
-      Self::Oct11(hill) => hill.gen_batch(coords, out),
-      Self::Oct12(hill) => hill.gen_batch(coords, out),
-      Self::Oct13(hill) => hill.gen_batch(coords, out),
-      Self::Oct14(hill) => hill.gen_batch(coords, out),
-      Self::Oct15(hill) => hill.gen_batch(coords, out),
-      Self::Oct16(hill) => hill.gen_batch(coords, out),
+      Self::Oct1(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct2(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct3(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct4(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct5(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct6(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct7(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct8(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct9(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct10(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct11(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct12(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct13(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct14(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct15(hill) => hill.gen_batch(coords, out, multiplier),
+      Self::Oct16(hill) => hill.gen_batch(coords, out, multiplier),
     }
   }
 }

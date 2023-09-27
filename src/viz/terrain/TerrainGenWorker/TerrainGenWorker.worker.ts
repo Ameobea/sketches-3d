@@ -2,9 +2,14 @@ import * as Comlink from 'comlink';
 
 let terrainGenEngineP: Promise<WebAssembly.Instance> | null = null;
 
-export type TerrainGenParams = {
-  Hill: { octaves: number; wavelengths: number[]; seed: number };
-};
+export type TerrainGenVariantParams =
+  | { Hill: { octaves: number; wavelengths: number[]; seed: number } }
+  | { OpenSimplex: { coordinate_scales: number[]; weights: number[]; seed: number } };
+
+export interface TerrainGenParams {
+  variant: TerrainGenVariantParams;
+  magnitude: number;
+}
 
 const getEngine = async () => {
   const engine = await terrainGenEngineP;

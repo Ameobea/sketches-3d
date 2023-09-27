@@ -123,7 +123,7 @@ class Tile extends THREE.Object3D {
     if (this.state?.type !== 'geometry' && !shouldSubdivide) {
       await this.generateGeometry();
     } else if (this.state?.type !== 'subdivision' && shouldSubdivide) {
-      this.subdivide();
+      await this.subdivide();
     }
 
     if (this.state.type === 'subdivision') {
@@ -140,7 +140,7 @@ class Tile extends THREE.Object3D {
     }
   }
 
-  public subdivide() {
+  public async subdivide() {
     const centerX = (this.bounds.min.x + this.bounds.max.x) / 2;
     const centerZ = (this.bounds.min.y + this.bounds.max.y) / 2;
 
@@ -173,6 +173,8 @@ class Tile extends THREE.Object3D {
       ),
     ];
 
+    await Promise.all(tiles.map(tile => tile.update()));
+
     this.clearChildren();
     this.add(...tiles);
 
@@ -180,8 +182,6 @@ class Tile extends THREE.Object3D {
   }
 
   public async generateGeometry() {
-    this.clearChildren();
-
     const segments = this.parentTerrain.params.tileResolution;
 
     // Calculate the step for X and Z based on the tile's size and desired segments.
@@ -238,11 +238,11 @@ class Tile extends THREE.Object3D {
 
         // Two triangles for the quad
         indices[i * segments * 6 + j * 6] = topLeft;
-        indices[i * segments * 6 + j * 6 + 1] = topRight;
-        indices[i * segments * 6 + j * 6 + 2] = bottomLeft;
+        indices[i * segments * 6 + j * 6 + 1] = bottomLeft;
+        indices[i * segments * 6 + j * 6 + 2] = topRight;
         indices[i * segments * 6 + j * 6 + 3] = topRight;
-        indices[i * segments * 6 + j * 6 + 4] = bottomRight;
-        indices[i * segments * 6 + j * 6 + 5] = bottomLeft;
+        indices[i * segments * 6 + j * 6 + 4] = bottomLeft;
+        indices[i * segments * 6 + j * 6 + 5] = bottomRight;
       }
     }
 
