@@ -188,4 +188,10 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     gltfName: 'stone',
     extension: 'glb',
   },
+  terrainSandbox: {
+    gltfName: null,
+    sceneLoader: () => import('./terrainSandbox/terrainSandbox').then(mod => mod.processLoadedScene),
+    sceneName: null,
+    metadata: { title: 'terrain sandbox' },
+  },
 };

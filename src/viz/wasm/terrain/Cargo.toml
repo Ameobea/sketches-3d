@@ -1,5 +1,5 @@
 [package]
-name = "point_distribute"
+name = "terrain"
 version = "0.1.0"
 authors = ["Casey Primozic <casey@cprimozic.net>"]
 edition = "2021"
@@ -8,7 +8,9 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-nalgebra = "0.31"
+rand_pcg = "0.3"
+rand = { version = "0.8", default-features = false, features = ["nightly"] }
 common = { path = "../common" }
+nanoserde = "0.1"
 
 [features]

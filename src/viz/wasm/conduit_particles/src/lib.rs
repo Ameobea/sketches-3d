@@ -1,5 +1,6 @@
+#![allow(deprecated)]
+
 use nanoserde::{DeJson, SerJson};
-use noise::{Fbm, MultiFractal, NoiseModule};
 use rand::{Rng, SeedableRng};
 use wasm_bindgen::prelude::*;
 
@@ -46,22 +47,22 @@ const RADAR_COLORS: &[[u8; 3]] = &[
 //   // vec3(33, 49, 136)
 // );
 
-const RED_COLORS: &[[u8; 3]] = &[
-  [0, 0, 8],
-  [46 * 2, 8 * 2, 1 * 2],
-  [105 * 2, 7 * 2, 2 * 2],
-  [73 * 2, 2 * 2, 2 * 2],
-  [43 * 2, 2 * 2, 2 * 2],
-];
+// const RED_COLORS: &[[u8; 3]] = &[
+//   [0, 0, 8],
+//   [46 * 2, 8 * 2, 1 * 2],
+//   [105 * 2, 7 * 2, 2 * 2],
+//   [73 * 2, 2 * 2, 2 * 2],
+//   [43 * 2, 2 * 2, 2 * 2],
+// ];
 
-const HEAT_COLORS: &[[u8; 3]] = &[
-  [69, 38, 12],
-  [135, 50, 7],
-  [145, 123, 22],
-  [145, 22, 22],
-  [230, 21, 21],
-  [204, 98, 98],
-];
+// const HEAT_COLORS: &[[u8; 3]] = &[
+//   [69, 38, 12],
+//   [135, 50, 7],
+//   [145, 123, 22],
+//   [145, 22, 22],
+//   [230, 21, 21],
+//   [204, 98, 98],
+// ];
 
 fn clamp(min: f32, max: f32, value: f32) -> f32 {
   if value < min {
@@ -123,7 +124,7 @@ impl Default for ConduitParticlesConf {
 pub struct ConduitParticlesState {
   pub conf: ConduitParticlesConf,
   pub conduit_ix: usize,
-  pub rng: rand_pcg::Pcg64,
+  pub rng: rand_pcg::Pcg32,
   pub time_since_last_particle_spawn: f32,
   pub conduit_start_pos: Vec3,
   pub conduit_end_pos: Vec3,
@@ -153,9 +154,8 @@ fn project_point_onto_line(conduit_vector_normalized: &Vec3, l1: &Vec3, point: &
 
 impl ConduitParticlesState {
   pub fn new(conduit_start_pos: Vec3, conduit_end_pos: Vec3, conduit_ix: usize) -> Self {
-    let mut rng = rand_pcg::Pcg64::from_seed(unsafe {
-      std::mem::transmute([8938u64, 7827385782u64, 101010101u64, 82392839u64])
-    });
+    let mut rng =
+      rand_pcg::Pcg32::from_seed(unsafe { std::mem::transmute([8938u64, 7827385782u64]) });
 
     // pump the rng a few times to avoid possible issues with seeding
     for _ in 0..8 {
@@ -164,7 +164,7 @@ impl ConduitParticlesState {
 
     let conf = ConduitParticlesConf::default();
 
-    let mut noise = noise::Perlin::new();
+    let noise = noise::Perlin::new();
 
     ConduitParticlesState {
       conf,

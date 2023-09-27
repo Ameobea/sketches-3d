@@ -26,3 +26,4 @@ static/normal_map_gen_simd.wasm
 static/ammo.wasm.js
 static/point_distribute.wasm
 static/cave_bg.wasm
+static/terrain.wasm

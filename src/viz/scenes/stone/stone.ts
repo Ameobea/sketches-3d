@@ -106,15 +106,13 @@ export const processLoadedScene = async (
   cobble.material = stoneBricksMaterial;
 
   // sine wave test pattern
-  const sampleHeight = (pos: THREE.Vector2) => {
-    const x = pos.x;
-    const z = pos.y;
+  const sampleHeight = (x: number, z: number) => {
     const octave0 = Math.sin(x / 10) * Math.cos(z / 10) * 10;
     return octave0 * 0.4;
     // const octave1 = Math.sin(x / 20) * Math.cos(z / 20) * 10;
     // const octave2 = Math.sin(x / 40) * Math.cos(z / 40) * 5;
 
-    return (octave0 + octave1 + octave2) * 0.7;
+    // return (octave0 + octave1 + octave2) * 0.7;
   };
 
   const viewportSize = viz.renderer.getSize(new THREE.Vector2());
@@ -124,7 +122,7 @@ export const processLoadedScene = async (
       boundingBox: new THREE.Box2(new THREE.Vector2(-2000, -2000), new THREE.Vector2(2000, 2000)),
       maxPolygonWidth: 2000,
       minPolygonWidth: 1,
-      sampleHeight,
+      sampleHeight: { type: 'simple', fn: sampleHeight },
       tileResolution: 64,
       maxPixelsPerPolygon: 10,
       material: stoneBricksMaterial,

@@ -3,5 +3,8 @@
   "rust-analyzer.server.extraEnv": {
     "CARGO_TARGET_DIR": "target/analyzer"
   },
-  "rust-analyzer.check.extraArgs": ["--target-dir=target/analyzer"]
+  "rust-analyzer.check.extraArgs": ["--target-dir=target/analyzer"],
+  "[rust]": {
+    "editor.tabSize": 2
+  }
 }

@@ -1,6 +1,7 @@
+use common::rng;
 use nalgebra::{Matrix4, Point2, Point3, Vector3};
 use noise::{NoiseModule, Perlin, Seedable};
-use point_distribute::{rng, Mesh, MeshSurfaceSampler};
+use point_distribute::{Mesh, MeshSurfaceSampler};
 use rand::Rng;
 use wasm_bindgen::prelude::*;
 

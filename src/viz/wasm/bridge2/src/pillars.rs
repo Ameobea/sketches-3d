@@ -1,6 +1,6 @@
 use nalgebra::{Rotation3, Transform3, Translation3};
 use rand::{Rng, SeedableRng};
-use rand_pcg::Pcg64;
+use rand_pcg::Pcg32;
 use wasm_bindgen::prelude::*;
 
 const START_POS: [f32; 3] = [167.53, 2.22, -36.28];
@@ -16,7 +16,7 @@ pub struct PillarTypeState {
 }
 
 pub struct PillarCtx {
-  pub rng: Pcg64,
+  pub rng: Pcg32,
   pub states: [PillarTypeState; PILLAR_TYPE_COUNT],
 }
 
@@ -29,9 +29,8 @@ impl Default for PillarCtx {
       unsafe { std::ptr::write(states.get_unchecked_mut(i), PillarTypeState::default()) }
     }
 
-    let mut rng = rand_pcg::Pcg64::from_seed(unsafe {
-      std::mem::transmute([8938u64, 7827385782u64, 101020301u64, 82392839u64])
-    });
+    let mut rng =
+      rand_pcg::Pcg32::from_seed(unsafe { std::mem::transmute([8938u64, 7827385782u64]) });
 
     let mut last_pillar_type: usize = 0;
     for x_row_ix in 0..PILLAR_ROWS_X {
@@ -80,7 +79,7 @@ pub fn create_pillar_ctx() -> *const PillarCtx {
 }
 
 #[wasm_bindgen]
-pub fn compute_pillar_positions(ctx: *mut PillarCtx) {
+pub fn compute_pillar_positions(_ctx: *mut PillarCtx) {
   // TODO
 }
 

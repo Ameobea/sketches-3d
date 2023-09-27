@@ -1,28 +1,5 @@
+use common::{maybe_init_rng, random};
 use nalgebra::{Point3, Vector3};
-use rand::{Rng, SeedableRng};
-use rand_pcg::Pcg64;
-
-static mut RNG: Pcg64 = unsafe { std::mem::transmute([(0u128, 0u128)]) };
-
-fn maybe_init_rng() {
-  unsafe {
-    if RNG != std::mem::transmute([(0u128, 0u128)]) {
-      return;
-    }
-
-    RNG = rand_pcg::Pcg64::from_seed(std::mem::transmute([
-      8938u64,
-      7827385782u64,
-      101010101u64,
-      82392839u64,
-    ]));
-
-    // pump the rng a few times to avoid possible issues with seeding
-    for _ in 0..8 {
-      let _ = RNG.gen::<f32>();
-    }
-  }
-}
 
 struct Triangle {
   a: Vector3<f32>,
@@ -45,14 +22,6 @@ impl Triangle {
   pub fn area(&self) -> f32 {
     0.5 * self.normal().magnitude()
   }
-}
-
-pub fn rng() -> &'static mut Pcg64 {
-  unsafe { &mut RNG }
-}
-
-pub fn random() -> f32 {
-  rng().gen::<f32>()
 }
 
 pub struct Mesh<'a> {

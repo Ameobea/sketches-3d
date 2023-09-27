@@ -10,6 +10,5 @@ crate-type = ["cdylib"]
 [dependencies]
 wasm-bindgen = "=0.2.82"
 nalgebra = "0.31"
-getrandom = { version = "0.2", features = ["js"] }
-rand = { version = "0.8" }
+rand = { version = "0.8", default-features = false, features = ["nightly"] }
 rand_pcg = "0.3"

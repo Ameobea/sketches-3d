@@ -12,6 +12,7 @@ bindgen:
   cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/point_distribute.wasm ./build2
+  cp ./target/wasm32-unknown-unknown/release/terrain.wasm ./build2
 
 opt:
   wasm-opt ./build/bridge2_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/bridge2_bg.wasm
@@ -20,6 +21,7 @@ opt:
   wasm-opt ./build2/texture_crossfade.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/texture_crossfade.wasm
   wasm-opt ./build2/point_distribute.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/point_distribute.wasm
   wasm-opt ./build/cave_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/cave_bg.wasm
+  wasm-opt ./build2/terrain.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/terrain.wasm
 
 build:
   #!/bin/bash

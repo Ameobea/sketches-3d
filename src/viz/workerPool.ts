@@ -1,5 +1,6 @@
 import * as Comlink from 'comlink';
 
+import type { TerrainGenWorker } from './terrain/TerrainGenWorker/TerrainGenWorker.worker';
 import { clamp, hasWasmSIMDSupport } from './util';
 
 class WorkerPoolManager<T> {
@@ -56,6 +57,8 @@ class WorkerPoolManager<T> {
 let didInitNormalGenWasm = false;
 let didInitTextureCrossfadeWasm = false;
 let threadPoolWorkers: Promise<WorkerPoolManager<any>> | WorkerPoolManager<any> | null = null;
+let didInitTerrainGenWasm = false;
+let terrainGenWorker: Comlink.Remote<TerrainGenWorker> | null = null;
 
 const buildThreadPoolWorkers = (onInit?: (wrapped: Comlink.Remote<any>) => void | Promise<void>) =>
   new Promise<WorkerPoolManager<any>>(async resolve => {
@@ -141,4 +144,25 @@ export const getTextureCrossfadeWorkers = async () => {
 
   threadPoolWorkers = buildThreadPoolWorkers(onInit);
   return threadPoolWorkers;
+};
+
+export const getTerrainGenWorker = async () => {
+  if (terrainGenWorker) {
+    return terrainGenWorker;
+  }
+
+  if (!didInitTerrainGenWasm) {
+    const wasmBytesAB = await fetch('/terrain.wasm').then(r => r.arrayBuffer());
+    const wasmBytes = new Uint8Array(wasmBytesAB);
+    didInitTerrainGenWasm = true;
+
+    const workerMod = await import('./terrain/TerrainGenWorker/TerrainGenWorker.worker?worker');
+    const worker = new workerMod.default();
+    const wrapped = Comlink.wrap<TerrainGenWorker>(worker);
+    await wrapped.setTerrainGenWasmBytes(wasmBytes);
+    terrainGenWorker = wrapped;
+    return wrapped;
+  }
+
+  throw new Error('Terrain gen worker not initialized, but didInitTerrainGenWasm is true');
 };

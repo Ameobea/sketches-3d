@@ -3,11 +3,21 @@ import * as THREE from 'three';
 
 import type { FirstPersonCtx } from '..';
 
+export type TerrainSampler =
+  | { type: 'simple'; fn: (x: number, z: number) => number }
+  | {
+      type: 'batch';
+      fn: (
+        resolution: [number, number],
+        worldSpaceBounds: { mins: [number, number]; maxs: [number, number] }
+      ) => Promise<Float32Array>;
+    };
+
 interface TerrainParams {
   boundingBox: THREE.Box2;
   minPolygonWidth: number;
   maxPolygonWidth: number;
-  sampleHeight: (point: THREE.Vector2) => number;
+  sampleHeight: TerrainSampler;
   tileResolution: number;
   maxPixelsPerPolygon: number;
   material: THREE.Material;
@@ -51,6 +61,7 @@ class Tile extends THREE.Object3D {
   private parentTerrain: LODTerrain;
   private depth: number;
   private tileSize: number;
+  private isUpdating = false;
 
   public state!: TileState;
 
@@ -61,8 +72,6 @@ class Tile extends THREE.Object3D {
     this.bounds = params.bounds;
     this.depth = depth;
     this.tileSize = this.bounds.getSize(new THREE.Vector2()).length();
-
-    this.update();
   }
 
   /**
@@ -104,34 +113,34 @@ class Tile extends THREE.Object3D {
     return screenSpaceSizeOfPolygon > this.parentTerrain.params.maxPixelsPerPolygon;
   }
 
-  public update() {
+  public async update() {
+    if (this.isUpdating) {
+      return;
+    }
+    this.isUpdating = true;
+
     const shouldSubdivide = this.shouldSubdivide();
     if (this.state?.type !== 'geometry' && !shouldSubdivide) {
-      this.generateGeometry();
+      await this.generateGeometry();
     } else if (this.state?.type !== 'subdivision' && shouldSubdivide) {
       this.subdivide();
     }
 
     if (this.state.type === 'subdivision') {
-      // TODO: only update tiles that might need to change
-      for (const tile of this.state.tiles) {
-        tile.update();
-      }
+      const proms = this.state.tiles.map(tile => tile.update());
+      await Promise.all(proms);
     }
+
+    this.isUpdating = false;
   }
 
   private clearChildren() {
-    // for (const child of this.children) {
-    //   this.remove(child);
-    // }
     for (let i = this.children.length - 1; i >= 0; i--) {
       this.remove(this.children[i]);
     }
   }
 
   public subdivide() {
-    this.clearChildren();
-
     const centerX = (this.bounds.min.x + this.bounds.max.x) / 2;
     const centerZ = (this.bounds.min.y + this.bounds.max.y) / 2;
 
@@ -164,12 +173,13 @@ class Tile extends THREE.Object3D {
       ),
     ];
 
+    this.clearChildren();
     this.add(...tiles);
 
     this.state = { type: 'subdivision', tiles };
   }
 
-  public generateGeometry() {
+  public async generateGeometry() {
     this.clearChildren();
 
     const segments = this.parentTerrain.params.tileResolution;
@@ -184,16 +194,38 @@ class Tile extends THREE.Object3D {
     const indices = indexCount > u16Max ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
 
     // Generate vertices
-    for (let i = 0; i <= segments; i++) {
-      for (let j = 0; j <= segments; j++) {
-        const x = this.bounds.min.x + i * stepX;
-        const z = this.bounds.min.y + j * stepZ;
-        const y = this.parentTerrain.params.sampleHeight(new THREE.Vector2(x, z));
+    if (this.parentTerrain.params.sampleHeight.type === 'simple') {
+      const sampleHeight = this.parentTerrain.params.sampleHeight.fn;
+      for (let i = 0; i <= segments; i += 1) {
+        for (let j = 0; j <= segments; j += 1) {
+          const x = this.bounds.min.x + i * stepX;
+          const z = this.bounds.min.y + j * stepZ;
+          const y = sampleHeight(x, z);
 
-        vertices[i * (segments + 1) * 3 + j * 3] = x;
-        vertices[i * (segments + 1) * 3 + j * 3 + 1] = y;
-        vertices[i * (segments + 1) * 3 + j * 3 + 2] = z;
+          vertices[i * (segments + 1) * 3 + j * 3] = x;
+          vertices[i * (segments + 1) * 3 + j * 3 + 1] = y;
+          vertices[i * (segments + 1) * 3 + j * 3 + 2] = z;
+        }
       }
+    } else if (this.parentTerrain.params.sampleHeight.type === 'batch') {
+      const heightmap = await this.parentTerrain.params.sampleHeight.fn([segments + 1, segments + 1], {
+        mins: [this.bounds.min.x, this.bounds.min.y],
+        maxs: [this.bounds.max.x, this.bounds.max.y],
+      });
+
+      for (let zIx = 0; zIx <= segments; zIx += 1) {
+        for (let xIx = 0; xIx <= segments; xIx += 1) {
+          const x = this.bounds.min.x + xIx * stepX;
+          const z = this.bounds.min.y + zIx * stepZ;
+          const y = heightmap[zIx * (segments + 1) + xIx];
+
+          vertices[zIx * (segments + 1) * 3 + xIx * 3] = x;
+          vertices[zIx * (segments + 1) * 3 + xIx * 3 + 1] = y;
+          vertices[zIx * (segments + 1) * 3 + xIx * 3 + 2] = z;
+        }
+      }
+    } else {
+      throw new Error('Invalid sampleHeight type');
     }
 
     // Generate indices
@@ -227,13 +259,14 @@ class Tile extends THREE.Object3D {
             const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
             return colors[this.depth % colors.length];
           })(),
-          // wireframe: true,
+          wireframe: true,
         })
       : this.parentTerrain.params.material;
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
 
+    this.clearChildren();
     this.add(mesh);
 
     this.state = { type: 'geometry', geometry };
@@ -244,8 +277,6 @@ export class LODTerrain extends THREE.Group implements Resizable {
   public camera: THREE.PerspectiveCamera;
   public viewportSize: THREE.Vector2;
   public params: TerrainParams;
-  // TODO: swap this out for a LRU cache
-  // TODO: only cache leaf tiles
   private tileCache: Map<string, Tile> = new Map();
   private rootTile: Tile;
 
@@ -260,10 +291,39 @@ export class LODTerrain extends THREE.Group implements Resizable {
     this.add(this.rootTile);
   }
 
-  public initializeCollision(fpCtx: FirstPersonCtx) {
+  public async initializeCollision(fpCtx: FirstPersonCtx) {
     // TODO: make this configurable
     const heightmapResolution = 1024 * 1;
     const heightmapData = new Float32Array(heightmapResolution * heightmapResolution);
+
+    let heightmap: Float32Array;
+    if (this.params.sampleHeight.type === 'simple') {
+      heightmap = new Float32Array(heightmapResolution * heightmapResolution);
+      for (let yIx = 0; yIx < heightmapResolution; yIx++) {
+        for (let xIx = 0; xIx < heightmapResolution; xIx++) {
+          const x = THREE.MathUtils.lerp(
+            this.params.boundingBox.min.x,
+            this.params.boundingBox.max.x,
+            xIx / (heightmapResolution - 1)
+          );
+          const y = THREE.MathUtils.lerp(
+            this.params.boundingBox.min.y,
+            this.params.boundingBox.max.y,
+            yIx / (heightmapResolution - 1)
+          );
+          const z = this.params.sampleHeight.fn(x, y);
+
+          heightmap[yIx * heightmapResolution + xIx] = z;
+        }
+      }
+    } else if (this.params.sampleHeight.type === 'batch') {
+      heightmap = await this.params.sampleHeight.fn([heightmapResolution, heightmapResolution], {
+        mins: [this.params.boundingBox.min.x, this.params.boundingBox.min.y],
+        maxs: [this.params.boundingBox.max.x, this.params.boundingBox.max.y],
+      });
+    } else {
+      throw new Error('Invalid sampleHeight type');
+    }
 
     let minHeight = Infinity;
     let maxHeight = -Infinity;
@@ -279,7 +339,7 @@ export class LODTerrain extends THREE.Group implements Resizable {
           this.params.boundingBox.max.y,
           yIx / (heightmapResolution - 1)
         );
-        const z = this.params.sampleHeight(new THREE.Vector2(x, y));
+        const z = heightmap[yIx * heightmapResolution + xIx];
 
         minHeight = Math.min(minHeight, z);
         maxHeight = Math.max(maxHeight, z);
@@ -309,13 +369,14 @@ export class LODTerrain extends THREE.Group implements Resizable {
   /**
    * Update the tiles based on camera position or other factors that determine the LOD.
    */
-  public update() {
-    this.rootTile.update();
+  public async update() {
+    await this.rootTile.update();
   }
 
   public getTile(bounds: THREE.Box2, depth: number): Tile {
     // TODO: cache integration
 
-    return new Tile({ bounds }, this, depth);
+    const tile = new Tile({ bounds }, this, depth);
+    return tile;
   }
 }
