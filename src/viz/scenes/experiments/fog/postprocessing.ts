@@ -22,7 +22,7 @@ export const configurePostprocessing = (viz: VizState, quality: GraphicsQuality)
   renderPass.needsDepthTexture = true;
   effectComposer.addPass(renderPass);
 
-  const volumetricPass = new VolumetricPass(viz.camera);
+  const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {});
   viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
   effectComposer.addPass(volumetricPass);
 

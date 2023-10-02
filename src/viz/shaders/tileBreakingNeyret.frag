@@ -4,8 +4,8 @@
 
 #define CON 1      // contrast preserving interpolation. cf https://www.shadertoy.com/view/4dcSDr
 #define Z 8.     // patch scale inside example texture
-#define SKIP_LOW_MAGNITUDE_LOOKUPS 0 // Skips texture lookups from tiles that have low mix magnitude
-#define LOOKUP_SKIP_THRESHOLD 0.28 // The mix magnitude under which texture lookups will be skipped if `SKIP_LOW_MAGNITUDE_LOOKUPS` is enabled
+#define LOOKUP_SKIP_THRESHOLD 0.01 // The mix magnitude under which texture lookups will be skipped if `SKIP_LOW_MAGNITUDE_LOOKUPS` is enabled
+#define LOOKUP_SKIP_POW 8. // The exponent to raise the mix magnitude to before comparing to `LOOKUP_SKIP_THRESHOLD`
 #define LOW_MAG_SKIP_FADE 0.02
 
 #define rnd22(p)    fract(sin((p) * mat2(127.1,311.7,269.5,183.3) )*43758.5453)
@@ -16,9 +16,6 @@
 #define C(I)  ( srgb2rgb( textureGrad(samp, U/Z-rnd22(I) ,Gx,Gy)) - m*float(CON) )
 
 vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
-    // uv = mod(uv, 1.);
-    // return vec4(uv, 0., 1.);
-
     mat2 M0 = mat2( 1,0, .5,sqrt(3.)/2. ),
           M = inverse( M0 );                           // transform matrix <-> tilted space
     vec2 z = vec2(0.2),
@@ -27,84 +24,44 @@ vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
          I = floor(V);
     float p = .7*dFdy(U.y);                            // pixel size (for antialiasing)
     vec2 Gx = dFdx(U/Z), Gy = dFdy(U/Z);               // (for cross-borders MIPmap)
+    #if CON
     vec4 m = srgb2rgb( texture(samp,U,99.) );     // mean texture color
+    #else
+    vec4 m = vec4(0.);
+    #endif
 
     vec3 F = vec3(fract(V),0), A, W; F.z = 1.-F.x-F.y; // local hexa coordinates
     vec4 fragColor = vec4(0.);
 
-    #if !(SKIP_LOW_MAGNITUDE_LOOKUPS)
-        if ( F.z > 0. )
-            fragColor = ( W.x=   F.z ) * C(I)                      // smart interpolation
-            + ( W.y=   F.y ) * C(I+vec2(0,1))            // of hexagonal texture patch
-            + ( W.z=   F.x ) * C(I+vec2(1,0));           // centered at vertex
-        else                                               // ( = random offset in texture )
-            fragColor = ( W.x=  -F.z ) * C(I+1.)
-            + ( W.y=1.-F.y ) * C(I+vec2(1,0))
-            + ( W.z=1.-F.x ) * C(I+vec2(0,1));
-    #else
-        if ( F.z > 0. ) {
-            W.x = F.z;
-            W.y = F.y;
-            W.z = F.x;
+    if (F.z > 0.) {
+        W = vec3(F.z, F.y, F.x);
+        W = pow(W, vec3(LOOKUP_SKIP_POW));
+        W = W / dot(W, vec3(1.));
 
-            float lostMag = 0.;
-            float wXActivation = smoothstep(LOOKUP_SKIP_THRESHOLD - LOW_MAG_SKIP_FADE, LOOKUP_SKIP_THRESHOLD, W.x);
-            if (wXActivation > 0.) {
-                fragColor += W.x * C(I) * wXActivation;
-                lostMag += LOOKUP_SKIP_THRESHOLD * wXActivation;
-            }
-            float wYActivation = smoothstep(LOOKUP_SKIP_THRESHOLD - LOW_MAG_SKIP_FADE, LOOKUP_SKIP_THRESHOLD, W.y);
-            if (wYActivation > 0.) {
-                fragColor += W.y * C(I + vec2(0, 1)) * wYActivation;
-                lostMag += LOOKUP_SKIP_THRESHOLD * wYActivation;
-            }
-            float wZActivation = smoothstep(LOOKUP_SKIP_THRESHOLD - LOW_MAG_SKIP_FADE, LOOKUP_SKIP_THRESHOLD, W.z);
-            if (wZActivation > 0.) {
-                fragColor += W.z * C(I + vec2(1, 0)) * wZActivation;
-                lostMag += LOOKUP_SKIP_THRESHOLD * wZActivation;
-            }
-            fragColor *= (1. + lostMag);
-            // fragColor += lostMag * m;
-
-            // if (wXActivation == 0. || wXActivation == 1.) {
-            //     fragColor = vec4(1., 0., 0., 1.);
-            // }
-
-            // fragColor = clamp(fragColor, 0., 1.);
-            // fragColor.xyz = vec3(lostMag);
+        if (W.x > LOOKUP_SKIP_THRESHOLD) {
+            fragColor += C(I) * W.x;
         }
-        else {
-            W.x = -F.z;
-            W.y = 1. - F.y;
-            W.z = 1. - F.x;
-
-            float lostMag = 0.;
-            float wXActivation = smoothstep(LOOKUP_SKIP_THRESHOLD - LOW_MAG_SKIP_FADE, LOOKUP_SKIP_THRESHOLD, W.x);
-            if (wXActivation > 0.) {
-                fragColor += W.x * C(I + 1.) * wXActivation;
-                lostMag += LOOKUP_SKIP_THRESHOLD * wXActivation;
-            }
-            float wYActivation = smoothstep(LOOKUP_SKIP_THRESHOLD - LOW_MAG_SKIP_FADE, LOOKUP_SKIP_THRESHOLD, W.y);
-            if (wYActivation > 0.) {
-                fragColor += W.y * C(I + vec2(1, 0)) * wYActivation;
-                lostMag += LOOKUP_SKIP_THRESHOLD * wYActivation;
-            }
-            float wZActivation = smoothstep(LOOKUP_SKIP_THRESHOLD - LOW_MAG_SKIP_FADE, LOOKUP_SKIP_THRESHOLD, W.z);
-            if (wZActivation > 0.) {
-                fragColor += W.z * C(I + vec2(0, 1)) * wZActivation;
-                lostMag += LOOKUP_SKIP_THRESHOLD * wZActivation;
-            }
-            fragColor *= (1. + lostMag);
-            // fragColor += lostMag * m;
-
-            // if (wXActivation == 0. || wXActivation == 1.) {
-            //     fragColor = vec4(1., 0., 0., 1.);
-            // }
-
-            // fragColor = clamp(fragColor, 0., 1.);
-            // fragColor.xyz = vec3(lostMag);
+        if (W.y > LOOKUP_SKIP_THRESHOLD) {
+            fragColor += C(I + vec2(0, 1)) * W.y;
         }
-    #endif
+        if (W.z > LOOKUP_SKIP_THRESHOLD) {
+            fragColor += C(I + vec2(1, 0)) * W.z;
+        }
+    } else {            
+        W = vec3(-F.z, 1. - F.y, 1. - F.x);
+        W = pow(W, vec3(LOOKUP_SKIP_POW));
+        W = W / dot(W, vec3(1.));
+
+        if (W.x > 0.01) {
+            fragColor += C(I + 1.) * W.x;
+        }
+        if (W.y > 0.01) {
+            fragColor += C(I + vec2(1, 0)) * W.y;
+        }
+        if (W.z > 0.01) {
+            fragColor += C(I + vec2(0, 1)) * W.z;
+        }
+    }
 #if CON
     fragColor = m + fragColor/length(W);  // contrast preserving interp. cf https://www.shadertoy.com/view/4dcSDr
 #endif
@@ -113,9 +70,3 @@ vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
 
     return fragColor;
 }
-
-// void mainImage(out vec4 fragColor, vec2 fragCoord) {
-//   vec2 uv = ( 2.*fragCoord - iResolution.xy ) / iResolution.y;
-//   vec3 sampled = textureNoTileNeyret( iChannel0, uv );
-//   fragColor = vec4( sampled, 1. );
-// }

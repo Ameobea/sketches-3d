@@ -63,7 +63,6 @@ export class VolumetricPass extends Pass implements Disposable {
     this.ambientLight = scene.children.find(child => child instanceof THREE.AmbientLight) as
       | THREE.AmbientLight
       | undefined;
-    console.log(this.ambientLight, scene.children);
 
     this.updateUniforms();
   }

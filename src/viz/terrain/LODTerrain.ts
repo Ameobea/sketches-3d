@@ -33,7 +33,7 @@ type TileState =
   | { type: 'geometry'; geometry: THREE.BufferGeometry };
 
 /**
- * Computes the shortest distance between a point and a `Box2`.
+ * Computes the shortest distance between a point and a `Box2` which is assumed to be at y=0
  */
 const pointBoxDistance = (
   pointX: number,
@@ -184,40 +184,62 @@ class Tile extends THREE.Object3D {
   public async generateGeometry() {
     const segments = this.parentTerrain.params.tileResolution;
 
+    const worldSpaceBounds = {
+      mins: [this.bounds.min.x, this.bounds.min.y] as [number, number],
+      maxs: [this.bounds.max.x, this.bounds.max.y] as [number, number],
+    };
+    // slightly oversized to avoid cracks
+    const xRange = this.bounds.max.x - this.bounds.min.x;
+    const zRange = this.bounds.max.y - this.bounds.min.y;
+    worldSpaceBounds.mins[0] -= xRange / segments;
+    worldSpaceBounds.mins[1] -= zRange / segments;
+    worldSpaceBounds.maxs[0] += xRange / segments;
+    worldSpaceBounds.maxs[1] += zRange / segments;
+
     // Calculate the step for X and Z based on the tile's size and desired segments.
-    const stepX = (this.bounds.max.x - this.bounds.min.x) / segments;
-    const stepZ = (this.bounds.max.y - this.bounds.min.y) / segments;
+    const stepX = (worldSpaceBounds.maxs[0] - worldSpaceBounds.mins[0]) / segments;
+    const stepZ = (worldSpaceBounds.maxs[1] - worldSpaceBounds.mins[1]) / segments;
 
     const vertices = new Float32Array((segments + 1) * (segments + 1) * 3);
     const indexCount = segments * segments * 6;
     const u16Max = 65_535;
     const indices = indexCount > u16Max ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
 
-    // Generate vertices
+    const center = [
+      (worldSpaceBounds.mins[0] + worldSpaceBounds.maxs[0]) / 2,
+      (worldSpaceBounds.mins[1] + worldSpaceBounds.maxs[1]) / 2,
+    ] as [number, number];
+    const originX = center[0];
+    let originY: number;
+    const originZ = center[1];
+
     if (this.parentTerrain.params.sampleHeight.type === 'simple') {
       const sampleHeight = this.parentTerrain.params.sampleHeight.fn;
-      for (let i = 0; i <= segments; i += 1) {
-        for (let j = 0; j <= segments; j += 1) {
-          const x = this.bounds.min.x + i * stepX;
-          const z = this.bounds.min.y + j * stepZ;
-          const y = sampleHeight(x, z);
-
-          vertices[i * (segments + 1) * 3 + j * 3] = x;
-          vertices[i * (segments + 1) * 3 + j * 3 + 1] = y;
-          vertices[i * (segments + 1) * 3 + j * 3 + 2] = z;
-        }
-      }
-    } else if (this.parentTerrain.params.sampleHeight.type === 'batch') {
-      const heightmap = await this.parentTerrain.params.sampleHeight.fn([segments + 1, segments + 1], {
-        mins: [this.bounds.min.x, this.bounds.min.y],
-        maxs: [this.bounds.max.x, this.bounds.max.y],
-      });
+      originY = sampleHeight(center[0], center[1]);
 
       for (let zIx = 0; zIx <= segments; zIx += 1) {
         for (let xIx = 0; xIx <= segments; xIx += 1) {
-          const x = this.bounds.min.x + xIx * stepX;
-          const z = this.bounds.min.y + zIx * stepZ;
-          const y = heightmap[zIx * (segments + 1) + xIx];
+          const x = worldSpaceBounds.mins[0] + xIx * stepX - originX;
+          const z = worldSpaceBounds.mins[1] + zIx * stepZ - originZ;
+          const y = sampleHeight(x, z) - originY;
+
+          vertices[zIx * (segments + 1) * 3 + xIx * 3] = x;
+          vertices[zIx * (segments + 1) * 3 + xIx * 3 + 1] = y;
+          vertices[zIx * (segments + 1) * 3 + xIx * 3 + 2] = z;
+        }
+      }
+    } else if (this.parentTerrain.params.sampleHeight.type === 'batch') {
+      const heightmap = await this.parentTerrain.params.sampleHeight.fn(
+        [segments + 1, segments + 1],
+        worldSpaceBounds
+      );
+      originY = heightmap[Math.floor(segments / 2) * (segments + 1) + Math.floor(segments / 2)];
+
+      for (let zIx = 0; zIx <= segments; zIx += 1) {
+        for (let xIx = 0; xIx <= segments; xIx += 1) {
+          const x = worldSpaceBounds.mins[0] + xIx * stepX - originX;
+          const z = worldSpaceBounds.mins[1] + zIx * stepZ - originZ;
+          const y = heightmap[zIx * (segments + 1) + xIx] - originY;
 
           vertices[zIx * (segments + 1) * 3 + xIx * 3] = x;
           vertices[zIx * (segments + 1) * 3 + xIx * 3 + 1] = y;
@@ -265,6 +287,7 @@ class Tile extends THREE.Object3D {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.position.set(originX, originY, originZ);
 
     this.clearChildren();
     this.add(mesh);
@@ -299,21 +322,21 @@ export class LODTerrain extends THREE.Group implements Resizable {
     let heightmap: Float32Array;
     if (this.params.sampleHeight.type === 'simple') {
       heightmap = new Float32Array(heightmapResolution * heightmapResolution);
-      for (let yIx = 0; yIx < heightmapResolution; yIx++) {
+      for (let zIx = 0; zIx < heightmapResolution; zIx++) {
         for (let xIx = 0; xIx < heightmapResolution; xIx++) {
           const x = THREE.MathUtils.lerp(
             this.params.boundingBox.min.x,
             this.params.boundingBox.max.x,
             xIx / (heightmapResolution - 1)
           );
-          const y = THREE.MathUtils.lerp(
+          const z = THREE.MathUtils.lerp(
             this.params.boundingBox.min.y,
             this.params.boundingBox.max.y,
-            yIx / (heightmapResolution - 1)
+            zIx / (heightmapResolution - 1)
           );
-          const z = this.params.sampleHeight.fn(x, y);
+          const y = this.params.sampleHeight.fn(x, z);
 
-          heightmap[yIx * heightmapResolution + xIx] = z;
+          heightmap[zIx * heightmapResolution + xIx] = y;
         }
       }
     } else if (this.params.sampleHeight.type === 'batch') {
@@ -327,24 +350,14 @@ export class LODTerrain extends THREE.Group implements Resizable {
 
     let minHeight = Infinity;
     let maxHeight = -Infinity;
-    for (let yIx = 0; yIx < heightmapResolution; yIx++) {
+    for (let zIx = 0; zIx < heightmapResolution; zIx++) {
       for (let xIx = 0; xIx < heightmapResolution; xIx++) {
-        const x = THREE.MathUtils.lerp(
-          this.params.boundingBox.min.x,
-          this.params.boundingBox.max.x,
-          xIx / (heightmapResolution - 1)
-        );
-        const y = THREE.MathUtils.lerp(
-          this.params.boundingBox.min.y,
-          this.params.boundingBox.max.y,
-          yIx / (heightmapResolution - 1)
-        );
-        const z = heightmap[yIx * heightmapResolution + xIx];
+        const y = heightmap[zIx * heightmapResolution + xIx];
 
-        minHeight = Math.min(minHeight, z);
-        maxHeight = Math.max(maxHeight, z);
+        minHeight = Math.min(minHeight, y);
+        maxHeight = Math.max(maxHeight, y);
 
-        heightmapData[yIx * heightmapResolution + xIx] = z;
+        heightmapData[zIx * heightmapResolution + xIx] = y;
       }
     }
 

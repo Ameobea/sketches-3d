@@ -28,7 +28,7 @@ uniform vec3 ambientLightColor; // = vec3(0.62);
 #define OCTAVE_COUNT 4
 #define USE_ANALYTIC_GRADIENT 1
 
-const float fogMinY = -4.0;
+const float fogMinY = -40.0;
 const float fogMaxY = 4.4;
 const int baseRaymarchStepCount = 80;
 const int maxRaymarchStepCount = 400;
@@ -38,7 +38,7 @@ const float maxDensity = 1.;
 const vec3 fogColorHighDensity = vec3(0.06, 0.87, 0.53);
 const vec3 fogColorLowDensity = vec3(0.11, 0.31, 0.7);
 const vec3 lightColor = vec3(1.0, 0.0, 0.76);
-const float lightIntensity = 0.5;
+const float lightIntensity = 7.5;
 const int blueNoiseResolution = 256;
 
 const float lightFalloffDistance = 110.;

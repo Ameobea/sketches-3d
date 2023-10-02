@@ -96,7 +96,7 @@ pub fn compute_stalags(cave_mesh_vertices: &[f32], cave_mesh_normals: &[f32], tr
 
     // fine-tuning to unblock some passages
     if pos.x < 0.
-      || nalgebra::distance(&Point2::new(175., -30.), &Point2::new(pos.x, pos.z)) < 2.
+      || nalgebra::distance(&Point2::new(175., -30.), &Point2::new(pos.x, pos.z)) < 4.
       || nalgebra::distance(&Point2::new(20., 2.), &Point2::new(pos.x, pos.z)) < 2.
     {
       continue;

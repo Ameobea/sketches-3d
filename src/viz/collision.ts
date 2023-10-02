@@ -345,6 +345,19 @@ export const initBulletPhysics = ({
     const terrainData = new Float32Array(Ammo.HEAPF32.buffer, terrainDataPtr, heightmapData.length);
     terrainData.set(heightmapData);
 
+    // The center between minHeight and maxHeight must be zero, otherwise the terrain will be
+    // offset due to the way the heightfield collision is implemented in bullet.
+    const oldCenter = (minHeight + maxHeight) / 2;
+    // we can only expand the range; the new minHeight must be <= the old minHeight and
+    // the new maxHeight must be >= the old maxHeight
+    const newCenter = 0;
+    const deltaCenter = newCenter - oldCenter;
+    if (deltaCenter < 0) {
+      minHeight += deltaCenter;
+    } else {
+      maxHeight += deltaCenter;
+    }
+
     const heightfieldShape = new Ammo.btHeightfieldTerrainShape(
       gridResolutionX,
       gridResolutionY,
@@ -355,7 +368,6 @@ export const initBulletPhysics = ({
       1, // upAxis
       false // flipQuadEdges
     );
-    console.log(heightfieldShape);
 
     heightfieldShape.setLocalScaling(
       btvec3(worldSpaceWidth / (gridResolutionX - 1), 1, worldSpaceLength / (gridResolutionY - 1))

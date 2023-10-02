@@ -457,7 +457,7 @@ export const buildCustomShaderArgs = (
   vec3 generateTriplanarWeights(vec3 normal, float sharpenFactor) {
     vec3 weights = abs(normal);
     weights = pow(weights, vec3(sharpenFactor)); // sharpen to get more weight on the dominant axis
-    weights = weights / dot(weights, vec3(1.0)); // normalize
+    weights = weights / dot(weights, vec3(1.)); // normalize
     return weights;
   }
 
@@ -466,12 +466,17 @@ export const buildCustomShaderArgs = (
     float sharpenFactor = 12.8;
     vec3 weights = generateTriplanarWeights(normal, sharpenFactor);
 
-    // TODO: Avoid sampling tiny-magnitude weights
-    vec4 xSample = texture2D(map, pos.yz * uvScale);
-    vec4 ySample = texture2D(map, pos.zx * uvScale);
-    vec4 zSample = texture2D(map, pos.xy * uvScale);
-
-    return xSample * weights.x + ySample * weights.y + zSample * weights.z;
+    vec4 outColor = vec4(0.);
+    if (weights.x > 0.01) {
+      outColor += texture2D(map, pos.yz * uvScale) * weights.x;
+    }
+    if (weights.y > 0.01) {
+      outColor += texture2D(map, pos.zx * uvScale) * weights.y;
+    }
+    if (weights.z > 0.01) {
+      outColor += texture2D(map, pos.xy * uvScale) * weights.z;
+    }
+    return outColor;
   }
 
   vec4 triplanarTextureFixContrast(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
@@ -479,12 +484,16 @@ export const buildCustomShaderArgs = (
     float sharpenFactor = 12.8;
     vec3 weights = generateTriplanarWeights(normal, sharpenFactor);
 
-    // TODO: Avoid sampling tiny-magnitude weights
-    vec4 xSample = texture2D(map, pos.yz * uvScale);
-    vec4 ySample = texture2D(map, pos.zx * uvScale);
-    vec4 zSample = texture2D(map, pos.xy * uvScale);
-
-    vec4 sampled = xSample * weights.x + ySample * weights.y + zSample * weights.z;
+    vec4 sampled = vec4(0.);
+    if (weights.x > 0.01) {
+      sampled += texture2D(map, pos.yz * uvScale) * weights.x;
+    }
+    if (weights.y > 0.01) {
+      sampled += texture2D(map, pos.zx * uvScale) * weights.y;
+    }
+    if (weights.z > 0.01) {
+      sampled += texture2D(map, pos.xy * uvScale) * weights.z;
+    }
 
     // TODO: Don't run if con factor is 0
     vec4 meanTextureColor = srgb2rgb(texture(map, vec2(0.5, 0.5), 99.));
