@@ -18,7 +18,7 @@ import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger
 import { initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
-import { buildDefaultSceneConfig, type SceneConfig, ScenesByName } from './scenes';
+import { buildDefaultSceneConfig, type SceneConfig, type SceneConfigLocation, ScenesByName } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
 
 export interface FpPlayerStateGetters {
@@ -69,7 +69,7 @@ export interface FirstPersonCtx {
 }
 
 const setupFirstPerson = async (
-  locations: SceneConfig['locations'],
+  locations: Record<string, SceneConfigLocation>,
   camera: THREE.Camera,
   spawnPos: {
     pos: THREE.Vector3;
@@ -562,6 +562,14 @@ export const initViz = (
       viz.setRenderOverride(sceneConf.renderOverride);
     }
 
+    const normalizedLocations: Record<string, SceneConfigLocation> = {};
+    for (const [locName, { pos, rot }] of Object.entries(sceneConf.locations)) {
+      normalizedLocations[locName] = {
+        pos: pos instanceof THREE.Vector3 ? pos : new THREE.Vector3(pos[0], pos[1], pos[2]),
+        rot: rot instanceof THREE.Vector3 ? rot : new THREE.Vector3(rot[0], rot[1], rot[2]),
+      };
+    }
+
     (window as any).locations = () => Object.keys(sceneConf.locations);
 
     if (sceneConf.enableInventory) {
@@ -581,10 +589,10 @@ export const initViz = (
               rot: new THREE.Vector3(lastPos.rot[0], lastPos.rot[1], lastPos.rot[2]),
             };
           })()
-        : sceneConf.locations[sceneConf.spawnLocation];
+        : normalizedLocations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
       fpCtx = await setupFirstPerson(
-        sceneConf.locations,
+        normalizedLocations,
         viz.camera,
         spawnPos,
         viz.registerBeforeRenderCb,

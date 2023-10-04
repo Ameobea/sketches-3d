@@ -3,12 +3,17 @@ import type { SvelteSeoProps } from 'svelte-seo/types/SvelteSeo';
 import type { VizState } from '..';
 import type { VizConfig } from '../conf';
 
+export interface SceneConfigLocation {
+  pos: THREE.Vector3;
+  rot: THREE.Vector3;
+}
+
 export interface SceneConfig {
   viewMode?: { type: 'firstPerson' } | { type: 'orbit'; pos: THREE.Vector3; target: THREE.Vector3 };
   locations: {
     [key: string]: {
-      pos: THREE.Vector3;
-      rot: THREE.Vector3;
+      pos: THREE.Vector3 | [number, number, number];
+      rot: THREE.Vector3 | [number, number, number];
     };
   };
   spawnLocation: string;

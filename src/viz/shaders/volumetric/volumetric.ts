@@ -8,6 +8,30 @@ import VolumetricVertexShader from './volumetric.vert?raw';
 export interface VolumetricPassParams {
   ambientLightColor?: THREE.Color;
   ambientLightIntensity?: number;
+  fogMinY?: number;
+  fogMaxY?: number;
+  baseRaymarchStepCount?: number;
+  maxRaymarchStepCount?: number;
+  maxRayLength?: number;
+  minStepLength?: number;
+  maxDensity?: number;
+  fogColorHighDensity?: THREE.Vector3;
+  fogColorLowDensity?: THREE.Vector3;
+  lightColor?: THREE.Vector3;
+  lightIntensity?: number;
+  blueNoiseResolution?: number;
+  lightFalloffDistance?: number;
+  fogFadeOutPow?: number;
+  fogFadeOutRangeY?: number;
+  fogDensityMultiplier?: number;
+  heightFogStartY?: number;
+  heightFogEndY?: number;
+  heightFogFactor?: number;
+  noiseBias?: number;
+  noiseRotationPerSecond?: number;
+  noiseMovementPerSecond?: THREE.Vector2;
+  postDensityMultiplier?: number;
+  postDensityPow?: number;
 }
 
 class VolumetricMaterial extends THREE.ShaderMaterial {
@@ -21,9 +45,34 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       cameraProjectionMatrixInv: { value: new THREE.Matrix4() },
       cameraMatrixWorld: { value: new THREE.Matrix4() },
       curTimeSeconds: { value: 0 },
-
+      // lighting
       ambientLightColor: { value: new THREE.Color(0xffffff) },
       ambientLightIntensity: { value: 0 },
+      // params
+      fogMinY: { value: -40.0 },
+      fogMaxY: { value: 4.4 },
+      baseRaymarchStepCount: { value: 80 },
+      maxRaymarchStepCount: { value: 400 },
+      maxRayLength: { value: 300.0 },
+      minStepLength: { value: 0.2 },
+      maxDensity: { value: 1 },
+      fogColorHighDensity: { value: new THREE.Vector3(0.06, 0.87, 0.53) },
+      fogColorLowDensity: { value: new THREE.Vector3(0.11, 0.31, 0.7) },
+      lightColor: { value: new THREE.Vector3(1.0, 0.0, 0.76) },
+      lightIntensity: { value: 7.5 },
+      blueNoiseResolution: { value: 256 },
+      lightFalloffDistance: { value: 110 },
+      fogFadeOutPow: { value: 2 },
+      fogFadeOutRangeY: { value: 1.5 },
+      fogDensityMultiplier: { value: 0.086 },
+      heightFogStartY: { value: -10 },
+      heightFogEndY: { value: 8 },
+      heightFogFactor: { value: 0.1852 },
+      noiseBias: { value: 0.485 },
+      noiseRotationPerSecond: { value: 0.3 },
+      noiseMovementPerSecond: { value: new THREE.Vector2(1.2, 0.8) },
+      postDensityMultiplier: { value: 1.2 },
+      postDensityPow: { value: 1 },
     };
 
     super({

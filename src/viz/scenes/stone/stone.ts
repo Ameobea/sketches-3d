@@ -19,19 +19,19 @@ export const processLoadedScene = async (
   viz.renderer.shadowMap.enabled = true;
   viz.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const sun = new THREE.DirectionalLight(0x4488bb, 1.6);
   sun.castShadow = true;
-  sun.shadow.mapSize.width = 2048 * 2;
-  sun.shadow.mapSize.height = 2048 * 2;
+  sun.shadow.mapSize.width = 2048 * 4;
+  sun.shadow.mapSize.height = 2048 * 4;
   sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = 800;
+  sun.shadow.camera.far = 1000;
   sun.shadow.camera.left = -500;
   sun.shadow.camera.right = 500;
   sun.shadow.camera.top = 200;
   sun.shadow.camera.bottom = -100;
-  sun.shadow.bias = 0.0008;
-  sun.position.set(-330, 60, 330);
+  sun.shadow.bias = 0.0002;
+  sun.position.set(-330, 90, 330);
   sun.shadow.camera.position.copy(sun.position);
   sun.target.position.set(100, 0, 0);
   sun.shadow.camera.lookAt(sun.target.position);
@@ -58,9 +58,9 @@ export const processLoadedScene = async (
     stoneBricksNormal,
     stoneBricksRoughness,
     cloudsBackground,
-    // gemTexture,
-    // gemRoughness,
-    // gemNormal,
+    gemTexture,
+    gemRoughness,
+    gemNormal,
     glossyBlackBricksColor,
     glossyBlackBricksNormal,
     glossyBlackBricksRoughness,
@@ -73,9 +73,9 @@ export const processLoadedScene = async (
     stoneBricksRoughness: '/textures/stone_wall/roughness_map.jpg',
     cloudsBackground: 'https://i.ameo.link/ame.jpg',
     // cloudsBackground: '/textures/00005.jpg',
-    // gemTexture: 'https://i.ameo.link/bfy.jpg',
-    // gemRoughness: 'https://i.ameo.link/bfz.jpg',
-    // gemNormal: 'https://i.ameo.link/bg0.jpg',
+    gemTexture: 'https://i.ameo.link/bfy.jpg',
+    gemRoughness: 'https://i.ameo.link/bfz.jpg',
+    gemNormal: 'https://i.ameo.link/bg0.jpg',
     glossyBlackBricksColor: 'https://i.ameo.link/bip.jpg',
     glossyBlackBricksNormal: 'https://i.ameo.link/biq.jpg',
     glossyBlackBricksRoughness: 'https://i.ameo.link/bir.jpg',
@@ -97,9 +97,9 @@ export const processLoadedScene = async (
       normalMap: glossyBlackBricksNormal,
       roughnessMap: glossyBlackBricksRoughness,
       metalness: 0.7,
-      roughness: 0.5,
+      roughness: 0.7,
       uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
-      iridescence: 0.6,
+      iridescence: 0.4,
     },
     {},
     {
@@ -138,6 +138,35 @@ export const processLoadedScene = async (
   const smoothStone = loadedWorld.getObjectByName('minecraft_block-smooth_stone') as THREE.Mesh;
   smoothStone.material = slabsMaterial;
 
+  const stairsPointLight = new THREE.PointLight(0x6ef5f3, 1.5, 50, 0);
+  stairsPointLight.castShadow = true;
+  stairsPointLight.shadow.mapSize.width = 512;
+  stairsPointLight.shadow.mapSize.height = 512;
+  stairsPointLight.shadow.camera.near = 0.5;
+  stairsPointLight.shadow.camera.far = 50;
+  stairsPointLight.position.set(-296.092529296875, 44.4, 271.1970947265625);
+  viz.scene.add(stairsPointLight);
+
+  const stairsLightFixture = loadedWorld.getObjectByName('stairs_light_fixture') as THREE.Mesh;
+  stairsLightFixture.castShadow = false;
+  stairsLightFixture.receiveShadow = false;
+  stairsLightFixture.userData.noLight = true;
+  stairsLightFixture.material = buildCustomShader(
+    {
+      map: gemTexture,
+      normalMap: gemNormal,
+      roughnessMap: gemRoughness,
+      metalness: 0.9,
+      roughness: 1.5,
+      uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
+      iridescence: 0.6,
+      color: new THREE.Color(stairsPointLight.color),
+      ambientLightScale: 80,
+    },
+    {},
+    { useGeneratedUVs: true }
+  );
+
   const terrainGenWorker = await getTerrainGenWorker();
   const ctxPtr = await terrainGenWorker.createTerrainGenCtx();
 
@@ -168,7 +197,7 @@ export const processLoadedScene = async (
     {},
     {
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      randomizeUVOffset: false,
       tileBreaking: { type: 'neyret', patchScale: 1.3 },
     }
   );
@@ -230,8 +259,12 @@ export const processLoadedScene = async (
     debugPos: true,
     locations: {
       spawn: {
-        pos: new THREE.Vector3(-196.76904296875, 51.176124572753906, 244.1184539794922),
-        rot: new THREE.Vector3(-0.10679632679489452, -12.479999999999633, 0),
+        pos: [-196.76904296875, 51.176124572753906, 244.1184539794922],
+        rot: [-0.10679632679489452, -12.479999999999633, 0],
+      },
+      stairs: {
+        pos: [-302.592529296875, 46, 272.8970947265625],
+        rot: [-0.660796326794895, -14.597999999999562, 0],
       },
     },
   };

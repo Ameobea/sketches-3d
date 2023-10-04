@@ -7,6 +7,7 @@ import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import GeneratedUVsFragment from './generatedUVs.vert?raw';
 import noiseShaders from './noise.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
+import { buildTriplanarDefsFragment, type TriplanarMappingParams } from './triplanarMapping';
 
 // import noise2Shaders from './noise2.frag?raw';
 const noise2Shaders = 'DISABLED TO SAVE SPACE';
@@ -141,6 +142,11 @@ interface CustomShaderShaders {
   emissiveShader?: string;
 }
 
+const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
+  contrastPreservationFactor: 0.5,
+  sharpenFactor: 12.8,
+});
+
 interface CustomShaderOptions {
   antialiasColorShader?: boolean;
   antialiasRoughnessShader?: boolean;
@@ -168,7 +174,7 @@ interface CustomShaderOptions {
   disabledSpotLightIndices?: number[];
   randomizeUVOffset?: boolean;
   useGeneratedUVs?: boolean;
-  useTriplanarMapping?: boolean;
+  useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
   materialClass?: MaterialClass;
 }
 
@@ -450,61 +456,6 @@ export const buildCustomShaderArgs = (
       `;
     }
   };
-
-  // TODO: Pull out to separate file
-  const buildTriplanarDefsFragment = () => `
-  // sharpenFactor < 1 smooths, > 1 sharpens
-  vec3 generateTriplanarWeights(vec3 normal, float sharpenFactor) {
-    vec3 weights = abs(normal);
-    weights = pow(weights, vec3(sharpenFactor)); // sharpen to get more weight on the dominant axis
-    weights = weights / dot(weights, vec3(1.)); // normalize
-    return weights;
-  }
-
-  vec4 triplanarTexture(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
-    // TODO: make configurable
-    float sharpenFactor = 12.8;
-    vec3 weights = generateTriplanarWeights(normal, sharpenFactor);
-
-    vec4 outColor = vec4(0.);
-    if (weights.x > 0.01) {
-      outColor += texture2D(map, pos.yz * uvScale) * weights.x;
-    }
-    if (weights.y > 0.01) {
-      outColor += texture2D(map, pos.zx * uvScale) * weights.y;
-    }
-    if (weights.z > 0.01) {
-      outColor += texture2D(map, pos.xy * uvScale) * weights.z;
-    }
-    return outColor;
-  }
-
-  vec4 triplanarTextureFixContrast(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
-    // TODO: make configurable
-    float sharpenFactor = 12.8;
-    vec3 weights = generateTriplanarWeights(normal, sharpenFactor);
-
-    vec4 sampled = vec4(0.);
-    if (weights.x > 0.01) {
-      sampled += texture2D(map, pos.yz * uvScale) * weights.x;
-    }
-    if (weights.y > 0.01) {
-      sampled += texture2D(map, pos.zx * uvScale) * weights.y;
-    }
-    if (weights.z > 0.01) {
-      sampled += texture2D(map, pos.xy * uvScale) * weights.z;
-    }
-
-    // TODO: Don't run if con factor is 0
-    vec4 meanTextureColor = srgb2rgb(texture(map, vec2(0.5, 0.5), 99.));
-    // contrast preserving interp. cf https://www.shadertoy.com/view/4dcSDr
-    float divisor = sqrt(weights.x * weights.x + weights.y * weights.y + weights.z * weights.z);
-    vec4 contrastCorrected = meanTextureColor + (sampled - meanTextureColor) * divisor;
-    // TODO: Make mix factor configurable
-    sampled = mix(sampled, contrastCorrected, 0.5);
-
-    return sampled;
-  }`;
 
   const buildMapFragment = () => {
     const inner = (() => {
@@ -912,7 +863,15 @@ ${
       )
     : ''
 }
-${useTriplanarMapping ? buildTriplanarDefsFragment() : ''}
+${
+  useTriplanarMapping
+    ? buildTriplanarDefsFragment(
+        typeof useTriplanarMapping === 'boolean'
+          ? buildDefaultTriplanarParams()
+          : { ...buildDefaultTriplanarParams(), ...useTriplanarMapping }
+      )
+    : ''
+}
 
 void main() {
 	#include <clipping_planes_fragment>

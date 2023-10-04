@@ -17,42 +17,40 @@ uniform mat4 cameraProjectionMatrixInv;
 uniform mat4 cameraMatrixWorld;
 uniform float curTimeSeconds;
 
-// params
-uniform float ambientLightIntensity; // = 0.1;
-uniform vec3 ambientLightColor; // = vec3(0.62);
-
 #define USE_GRADIENT_BASED_DYNAMIC_STEP_SIZE 0
 #define DO_LIGHTING 1
 #define USE_LIGHT_FALLOFF 1
 #define USE_LOD 0
-#define OCTAVE_COUNT 4
+#define OCTAVE_COUNT 3
 #define USE_ANALYTIC_GRADIENT 1
 
-const float fogMinY = -40.0;
-const float fogMaxY = 4.4;
-const int baseRaymarchStepCount = 80;
-const int maxRaymarchStepCount = 400;
-const float maxRayLength = 300.0;
-const float minStepLength = 0.2;
-const float maxDensity = 1.;
-const vec3 fogColorHighDensity = vec3(0.06, 0.87, 0.53);
-const vec3 fogColorLowDensity = vec3(0.11, 0.31, 0.7);
-const vec3 lightColor = vec3(1.0, 0.0, 0.76);
-const float lightIntensity = 7.5;
-const int blueNoiseResolution = 256;
-
-const float lightFalloffDistance = 110.;
-const float fogFadeOutPow = 2.;
-const float fogFadeOutRangeY = 1.5;
-const float fogDensityMultiplier = 0.086;
-const float heightFogStartY = 0.;
-const float heightFogEndY = 3.;
-const float heightFogFactor = 0.0852;
-const float noiseBias = 0.485;
-const float noiseRotationPerSecond = 0.3;
-const vec2 noiseMovementPerSecond = vec2(1.2, 0.8);
-const float postDensityMultiplier = 1.2;
-const float postDensityPow = 1.;
+// params
+uniform float ambientLightIntensity;
+uniform vec3 ambientLightColor;
+uniform float fogMinY;
+uniform float fogMaxY;
+uniform int baseRaymarchStepCount;
+uniform int maxRaymarchStepCount;
+uniform float maxRayLength;
+uniform float minStepLength;
+uniform float maxDensity;
+uniform vec3 fogColorHighDensity;
+uniform vec3 fogColorLowDensity;
+uniform vec3 lightColor;
+uniform float lightIntensity;
+uniform int blueNoiseResolution;
+uniform float lightFalloffDistance;
+uniform float fogFadeOutPow;
+uniform float fogFadeOutRangeY;
+uniform float fogDensityMultiplier;
+uniform float heightFogStartY;
+uniform float heightFogEndY;
+uniform float heightFogFactor;
+uniform float noiseBias;
+uniform float noiseRotationPerSecond;
+uniform vec2 noiseMovementPerSecond;
+uniform float postDensityMultiplier;
+uniform float postDensityPow;
 
 vec3 computeWorldPosFromDepth(float depth, vec2 coord) {
   float z = depth * 2.0 - 1.0;
