@@ -19,7 +19,6 @@ export interface VolumetricPassParams {
   fogColorLowDensity?: THREE.Vector3;
   lightColor?: THREE.Vector3;
   lightIntensity?: number;
-  blueNoiseResolution?: number;
   lightFalloffDistance?: number;
   fogFadeOutPow?: number;
   fogFadeOutRangeY?: number;
@@ -154,5 +153,18 @@ export class VolumetricPass extends Pass implements Disposable {
       this.ambientLight?.color ?? this.params.ambientLightColor ?? new THREE.Color(0xffffff);
     this.material.uniforms.ambientLightIntensity.value =
       this.ambientLight?.intensity ?? this.params.ambientLightIntensity ?? 0;
+
+    for (const [key, value] of Object.entries(this.params)) {
+      if (
+        value === null ||
+        value === undefined ||
+        !(key in this.material.uniforms) ||
+        key === 'ambientLightColor' ||
+        key === 'ambientLightIntensity'
+      ) {
+        continue;
+      }
+      (this.material.uniforms as any)[key].value = value;
+    }
   }
 }

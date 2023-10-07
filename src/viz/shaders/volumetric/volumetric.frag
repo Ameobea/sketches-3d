@@ -20,7 +20,6 @@ uniform float curTimeSeconds;
 #define USE_GRADIENT_BASED_DYNAMIC_STEP_SIZE 0
 #define DO_LIGHTING 1
 #define USE_LIGHT_FALLOFF 1
-#define USE_LOD 0
 #define OCTAVE_COUNT 3
 #define USE_ANALYTIC_GRADIENT 1
 
@@ -150,29 +149,17 @@ float psrdnoise(vec2 x, vec2 period, float alpha, out vec2 gradient) {
 #define TOTAL_LOD_COUNT 4
 const float LODWeights[TOTAL_LOD_COUNT] = float[](1., 0.4, 0.2, 0.1);
 const float LODScales[TOTAL_LOD_COUNT] = float[](0.1, 0.3, 0.6, 1.2);
-const vec2 LODShutoffZoneRanges[TOTAL_LOD_COUNT] = vec2[](vec2(999999999., 999999999.), vec2(50., 80.), vec2(10., 40.), vec2(10., 40.));
 
 float sampleFogDensityLOD(vec3 worldPos, inout vec3 gradient, float distanceToCamera, inout float totalSampledMagnitude, const int lod) {
-  #if USE_LOD
-  vec2 shutoffZone = LODShutoffZoneRanges[lod];
-  float shutoff = smoothstep(shutoffZone.x, shutoffZone.y, distanceToCamera);
-  float activation = 1. - shutoff;
-  if (activation == 0.) {
-    return 0.;
-  }
-  #else
-  float activation = 1.;
-  #endif
-
   float weight = LODWeights[lod];
   float scale = LODScales[lod];
 
   vec2 xzGradient;
   float alpha = noiseRotationPerSecond * curTimeSeconds;
   float noise = psrdnoise(worldPos.xz * scale, vec2(0.), alpha, xzGradient);
-  gradient += vec3(xzGradient.x, 0., xzGradient.y) * weight * activation;
-  totalSampledMagnitude += weight * activation;
-  return noise * weight * activation;
+  gradient += vec3(xzGradient.x, 0., xzGradient.y) * weight;
+  totalSampledMagnitude += weight;
+  return noise * weight;
 }
 
 float computeFadeOutYFactor(float y) {
