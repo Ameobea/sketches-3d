@@ -4,11 +4,13 @@ use nanoserde::DeJson;
 
 mod imports {
   extern "C" {
+    #[allow(dead_code)]
     pub fn log_msg(msg: *const u8, len: usize);
     pub fn log_error(msg: *const u8, len: usize);
   }
 }
 
+#[allow(dead_code)]
 pub(crate) fn log(s: &str) {
   unsafe {
     imports::log_msg(s.as_ptr(), s.len());

@@ -199,4 +199,10 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneName: null,
     metadata: { title: 'terrain sandbox' },
   },
+  runeGenTest: {
+    gltfName: null,
+    sceneLoader: () => import('./experiments/runeGen/runeGen').then(mod => mod.processLoadedScene),
+    sceneName: null,
+    metadata: { title: 'runeGen test' },
+  },
 };

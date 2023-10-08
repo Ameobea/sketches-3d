@@ -1,3 +1,6 @@
+pub extern crate rand;
+pub extern crate rand_pcg;
+
 use rand::prelude::*;
 use rand_pcg::Pcg32;
 
@@ -22,6 +25,10 @@ pub fn maybe_init_rng() {
 #[inline(always)]
 pub fn rng() -> &'static mut Pcg32 {
   unsafe { &mut RNG }
+}
+
+pub fn build_rng(seed: (u64, u64)) -> Pcg32 {
+  rand_pcg::Pcg32::from_seed(unsafe { std::mem::transmute(seed) })
 }
 
 /// Returns a random f32 in the range [0, 1).

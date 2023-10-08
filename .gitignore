@@ -27,3 +27,8 @@ static/ammo.wasm.js
 static/point_distribute.wasm
 static/cave_bg.wasm
 static/terrain.wasm
+static/textures
+static/stone.d.ts
+static/stone.js
+static/stone_bg.wasm
+static/stone_bg.wasm.d.ts

@@ -8,6 +8,7 @@ members = [
   "cave",
   "terrain",
   "common",
+  "stone",
 ]
 resolver = "2"
 
