@@ -12,3 +12,5 @@ wasm-bindgen = "=0.2.82"
 lyon = "1.0"
 common = { path = "../common" }
 console_error_panic_hook = "0.1"
+const-chunks = "0.3"
+fnv = "1.0"

@@ -236,6 +236,7 @@ const setupOrbitControls = async (
 
   (window as any).getView = () =>
     console.log({ pos: camera.position.toArray(), target: controls.target.toArray() });
+  (window as any).recordPos = (window as any).getView;
 };
 
 let isBlurred = false;

@@ -24,6 +24,14 @@ export class RuneGenCtx {
     this.engine.free_generated_runes(ctxPtr);
     return { indices, vertices };
   };
+
+  /**
+   *
+   * @returns Buffer in format [depth, minx, miny, maxx, maxy]
+   */
+  public debugAABB = () => {
+    return this.engine.debug_aabb_tree();
+  };
 }
 
 Comlink.expose(new RuneGenCtx());
