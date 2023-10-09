@@ -28,7 +28,6 @@ pub(crate) struct RuneGenParams {
 struct RuneSegment {
   pub seg: LineSegment<f32>,
   pub delta_angle: f32,
-  pub delta_delta_angle: f32,
 }
 
 struct RuneGenCtx {
@@ -165,7 +164,6 @@ impl RuneGenCtx {
       SegGenOutcome::Some(RuneSegment {
         seg: candidate_segment,
         delta_angle,
-        delta_delta_angle,
       })
     }
   }
@@ -183,7 +181,7 @@ impl RuneGenCtx {
       } else {
         let starting_seg_ix = self.rng.gen_range(0..self.segments.len());
         let starting_seg = &self.segments[starting_seg_ix];
-        let start_pos = starting_seg.seg.from;
+        let start_pos = starting_seg.seg.to;
         // if we were turning left, turn right the same amount, and vice versa
         let start_delta_angle = Some(-starting_seg.delta_angle);
         let start_dir = dir_to_angle(starting_seg.seg.to - starting_seg.seg.from);
@@ -289,10 +287,15 @@ fn extrude_to_3d(
   let mut indices_3d = Vec::new();
 
   let vertex_count_2d = buffers.vertices.len() as u32;
-  let mut add_face = |i: u32, j: u32, k: u32| {
+  let mut add_face = |i: u32, j: u32, k: u32, flip: bool| {
     indices_3d.push(i);
-    indices_3d.push(k);
-    indices_3d.push(j);
+    if flip {
+      indices_3d.push(k);
+      indices_3d.push(j);
+    } else {
+      indices_3d.push(j);
+      indices_3d.push(k);
+    }
   };
 
   // Extrude vertices
@@ -304,15 +307,16 @@ fn extrude_to_3d(
   }
 
   // Extrude faces and count edges
-  let mut edge_counts: FnvHashMap<(u32, u32), usize> = FnvHashMap::default();
+  let mut edge_counts: FnvHashMap<(u32, u32), (usize, bool)> = FnvHashMap::default();
   for [i, j, k] in buffers.indices.iter().copied().const_chunks::<3>() {
     // Original face
-    add_face(i, j, k);
+    add_face(i, j, k, false);
     // Extruded face
     add_face(
       vertex_count_2d + i,
       vertex_count_2d + j,
       vertex_count_2d + k,
+      true,
     );
 
     let edges = [(i, j), (j, k), (k, i)];
@@ -320,18 +324,22 @@ fn extrude_to_3d(
       let min_val = std::cmp::min(edge.0, edge.1);
       let max_val = std::cmp::max(edge.0, edge.1);
       let ordered_edge = (min_val, max_val);
-      *edge_counts.entry(ordered_edge).or_insert(0) += 1;
+      let flipped = ordered_edge.0 != edge.0;
+      let entry = edge_counts.entry(ordered_edge).or_insert((0, flipped));
+      entry.0 += 1;
     }
   }
 
   // Create side faces for boundary edges only
-  for (edge, &count) in edge_counts.iter() {
+  for (edge, &(count, flipped)) in edge_counts.iter() {
     if count == 1 {
-      // add_face(edge.0, edge.1, vertex_count_2d + edge.1);
-      // add_face(edge.0, vertex_count_2d + edge.1, vertex_count_2d + edge.0);
-
-      add_face(edge.0, vertex_count_2d + edge.1, edge.1);
-      add_face(edge.0, vertex_count_2d + edge.0, vertex_count_2d + edge.1);
+      add_face(edge.0, edge.1, vertex_count_2d + edge.1, !flipped);
+      add_face(
+        edge.0,
+        vertex_count_2d + edge.1,
+        vertex_count_2d + edge.0,
+        !flipped,
+      );
     }
   }
 

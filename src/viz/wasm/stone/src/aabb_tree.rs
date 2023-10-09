@@ -20,13 +20,6 @@ impl AABB {
       max: [a.max[0].max(b.max[0]), a.max[1].max(b.max[1])],
     }
   }
-
-  pub fn center(&self) -> [f32; 2] {
-    [
-      (self.min[0] + self.max[0]) * 0.5,
-      (self.min[1] + self.max[1]) * 0.5,
-    ]
-  }
 }
 
 #[derive(Clone)]
@@ -47,27 +40,6 @@ impl Node {
     match self {
       Node::Leaf { aabb, .. } => aabb,
       Node::Internal { aabb, .. } => aabb,
-    }
-  }
-
-  fn left(&self) -> Option<NodeIx> {
-    match self {
-      Node::Internal { left, .. } => Some(*left),
-      _ => None,
-    }
-  }
-
-  fn right(&self) -> Option<NodeIx> {
-    match self {
-      Node::Internal { right, .. } => Some(*right),
-      _ => None,
-    }
-  }
-
-  fn set_aabb(&mut self, aabb: AABB) {
-    match self {
-      Node::Leaf { aabb: aabb_ref, .. } => *aabb_ref = aabb,
-      Node::Internal { aabb: aabb_ref, .. } => *aabb_ref = aabb,
     }
   }
 }
@@ -192,77 +164,6 @@ impl<T> AABBTree<T> {
         }
       }
     }
-  }
-
-  fn insert_recursive(&mut self, node_ix: NodeIx, aabb: AABB, data_ix: NonZeroUsize) {
-    let node = self.nodes[node_ix.0].clone();
-    let new_node = match node {
-      Node::Leaf {
-        data_index,
-        aabb: leaf_aabb,
-      } => {
-        if data_index.is_none() {
-          // If the leaf node is empty, just set the data index and adjust the AABB.
-          Node::Leaf {
-            data_index: Some(data_ix),
-            aabb,
-          }
-        } else {
-          // Convert the leaf to an internal node.
-          let left_ix = self.nodes.len();
-          self.nodes.push(Node::Leaf {
-            data_index,
-            aabb: leaf_aabb,
-          });
-
-          let right_ix = self.nodes.len();
-          self.nodes.push(Node::Leaf {
-            data_index: Some(data_ix),
-            aabb,
-          });
-
-          Node::Internal {
-            left: NodeIx(left_ix),
-            right: NodeIx(right_ix),
-            aabb: AABB::merge(&leaf_aabb, &aabb),
-          }
-        }
-      }
-      Node::Internal {
-        left,
-        right,
-        aabb: node_aabb,
-      } => {
-        let left_aabb = self.nodes[left.0].aabb();
-        let right_aabb = self.nodes[right.0].aabb();
-
-        let merged_left = AABB::merge(left_aabb, &aabb);
-        let merged_right = AABB::merge(right_aabb, &aabb);
-
-        let left_increase = (merged_left.max[0] - merged_left.min[0])
-          * (merged_left.max[1] - merged_left.min[1])
-          - (left_aabb.max[0] - left_aabb.min[0]) * (left_aabb.max[1] - left_aabb.min[1]);
-
-        let right_increase = (merged_right.max[0] - merged_right.min[0])
-          * (merged_right.max[1] - merged_right.min[1])
-          - (right_aabb.max[0] - right_aabb.min[0]) * (right_aabb.max[1] - right_aabb.min[1]);
-
-        if left_increase <= right_increase {
-          self.insert_recursive(left, aabb, data_ix);
-        } else {
-          self.insert_recursive(right, aabb, data_ix);
-        }
-
-        // Adjust the bounding box of the current node.
-        Node::Internal {
-          left,
-          right,
-          aabb: AABB::merge(&node_aabb, &aabb),
-        }
-      }
-    };
-
-    self.nodes[node_ix.0] = new_node;
   }
 
   pub fn query(&mut self, aabb: &AABB, mut visitor: impl FnMut(&AABB, &T) -> ControlFlow<(), ()>) {

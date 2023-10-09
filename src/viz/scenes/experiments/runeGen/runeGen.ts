@@ -5,6 +5,7 @@ import type { VizState } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { loadNamedTextures } from 'src/viz/textureLoading';
 import type { SceneConfig } from '../..';
 import { getRuneGenWorker } from '../../stone/runeGen/runeGen';
 import type { RuneGenCtx } from '../../stone/runeGen/runeGenWorker.worker';
@@ -57,7 +58,29 @@ const initAsync = async (viz: VizState) => {
   geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
   geometry.computeVertexNormals();
 
-  const material = buildCustomShader({ side: THREE.DoubleSide, color: new THREE.Color(0xffffff) }, {}, {});
+  // const loader = new THREE.ImageBitmapLoader();
+  // const { gemTexture, gemRoughness, gemNormal } = await loadNamedTextures(loader, {
+  //   gemTexture: 'https://i.ameo.link/bfy.jpg',
+  //   gemRoughness: 'https://i.ameo.link/bfz.jpg',
+  //   gemNormal: 'https://i.ameo.link/bg0.jpg',
+  // });
+
+  const material = buildCustomShader(
+    {
+      // map: gemTexture,
+      // roughnessMap: gemRoughness,
+      // normalMap: gemNormal,
+      side: THREE.FrontSide,
+      color: new THREE.Color(0xffffff),
+      uvTransform: new THREE.Matrix3().scale(0.002, 0.002),
+      mapDisableDistance: null,
+      roughness: 0.3,
+    },
+    {},
+    {
+      // useTriplanarMapping: true,
+    }
+  );
   const mesh = new THREE.Mesh(geometry, material);
   viz.scene.add(mesh);
 
@@ -69,7 +92,7 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConfig: VizConfig
 ): Promise<SceneConfig> => {
-  const dirLight = new THREE.DirectionalLight(0xffffff, 10);
+  const dirLight = new THREE.DirectionalLight(0xbb4242, 1);
   dirLight.position.set(1000, 1000, 1000);
   dirLight.updateMatrixWorld();
   dirLight.target.position.set(0, 0, 0);
@@ -82,7 +105,7 @@ export const processLoadedScene = async (
   viz.camera.near = 1;
   initAsync(viz);
 
-  // configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
+  configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
 
   return {
     viewMode: {
