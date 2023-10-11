@@ -278,7 +278,6 @@ impl<T> AABBTree<T> {
     let left = self.build_balanced(left_items);
     let right = self.build_balanced(right_items);
 
-    // Return an internal node
     let ix = self.nodes.len();
     self.nodes.push(Node::Internal {
       left,

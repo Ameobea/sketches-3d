@@ -34,3 +34,5 @@ static/stone_bg.wasm
 static/stone_bg.wasm.d.ts
 src/geodesics/geodesics.wasm
 src/geodesics/geodesics.js
+static/geodesics.wasm
+static/geodesics.js

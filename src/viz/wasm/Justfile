@@ -4,6 +4,7 @@ copy-files:
   cp -r ./build/* ../wasmComp
   cp -r ./build2/* ../../../static
   cp -r ./geodesics/build/bin/* ../../../src/geodesics/
+  cp -r ./geodesics/build/bin/* ../../../static/
 
 bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/bridge2.wasm --target web --remove-producers-section --out-dir ./build
