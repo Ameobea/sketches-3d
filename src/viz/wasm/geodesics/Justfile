@@ -15,7 +15,11 @@ build:
 
   cd build
   make -j24
-  echo "export { Geodesics }" >> ./bin/embind.js
+
+  echo "Add the export to make it a proper ESM if it doesn't exist already in the last 5 lines of the file." > /dev/null
+  if ! tail -n 5 ./bin/geodesics.js | grep -q "export { Geodesics }"; then
+    echo "export { Geodesics }" >> ./bin/geodesics.js
+  fi
 
 clean:
   rm -rf build

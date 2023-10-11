@@ -3,6 +3,7 @@ set dotenv-load := true
 copy-files:
   cp -r ./build/* ../wasmComp
   cp -r ./build2/* ../../../static
+  cp -r ./geodesics/build/bin/* ../../../src/geodesics/
 
 bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/bridge2.wasm --target web --remove-producers-section --out-dir ./build
@@ -24,6 +25,7 @@ opt:
   wasm-opt ./build/cave_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/cave_bg.wasm
   wasm-opt ./build2/terrain.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/terrain.wasm
   wasm-opt ./build/stone_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/stone_bg.wasm
+  wasm-opt ./geodesics/build/bin/geodesics.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./geodesics/build/bin/geodesics.wasm
 
 build:
   #!/bin/bash
@@ -32,8 +34,29 @@ build:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --workspace
 
   just bindgen
+  just build-geodesics
   just opt
   just copy-files
+
+build-geodesics:
+  #!/bin/bash
+
+  set -e
+
+  cd ./geodesics
+  echo "fetch submodules if ./deps/geometry-central/README.md doesn't exist" > /dev/null
+  if [ ! -f ./deps/geometry-central/README.md ]; then
+    echo "fetching submodules"
+    git submodule update --init --recursive
+  fi
+
+  echo "need to do full build with CMake if ./build/CMakeCache.txt doesn't exist" > /dev/null
+  if [ ! -f ./build/CMakeCache.txt ]; then
+    echo "doing full build with CMake"
+    just build-all
+  else
+    just build
+  fi
 
 debug:
   cargo build --target wasm32-unknown-unknown --workspace
