@@ -6,5 +6,16 @@
   "rust-analyzer.check.extraArgs": ["--target-dir=target/analyzer"],
   "[rust]": {
     "editor.tabSize": 2
+  },
+  "C_Cpp.clang_format_fallbackStyle": "{ BasedOnStyle: Mozilla, ColumnLimit: 120, AlignAfterOpenBracket: BlockIndent, BinPackArguments: true, UseTab: Never, IndentWidth: 2, TabWidth: 1, BreakBeforeBraces: Attach, AllowShortIfStatementsOnASingleLine: true }",
+  "files.associations": {
+    "*.jsx": "javascript",
+    "*.hbs": "html",
+    "*.ipp": "cpp",
+    "tuple": "cpp",
+    "core": "cpp",
+    "*.evaluator": "cpp",
+    "alignedvector3": "cpp",
+    "stdexcept": "cpp"
   }
 }

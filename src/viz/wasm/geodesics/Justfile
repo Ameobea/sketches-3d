@@ -1,0 +1,21 @@
+build-all:
+  #!/bin/bash
+
+  mkdir -p build
+  cd build
+  emcmake cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=emcc -DCMAKE_CXX_COMPILER=em++ -DEMSCRIPTEN=True ..
+  echo "There's some compiler issue with Emscripten or otherwise that causes some code in this file to not compile."
+  echo "This patched version works around it by just removing it, and it doesn't seem to cause any issues with the geodesics code."
+  cp ../src/AmbiVector_PATCH.h ./deps/geometry-central/deps/eigen-src/Eigen/src/SparseCore/AmbiVector.h
+  cd -
+  just build
+
+build:
+  #!/bin/bash
+
+  cd build
+  make -j24
+  echo "export { Geodesics }" >> ./bin/embind.js
+
+clean:
+  rm -rf build

@@ -1,0 +1,3 @@
+[submodule "src/viz/wasm/geodesics/deps/geometry-central"]
+	path = src/viz/wasm/geodesics/deps/geometry-central
+	url = https://github.com/nmwsharp/geometry-central.git
