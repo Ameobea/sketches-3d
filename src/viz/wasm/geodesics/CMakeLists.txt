@@ -12,8 +12,6 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-set(GC_EIGEN_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/deps/eigen")
-
 # Print the build type
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug Release" FORCE)
@@ -55,5 +53,5 @@ set(SRCS
 add_executable(geodesics "${SRCS}")
 target_include_directories(geodesics PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/" "${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/glm" "${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/args")
 target_link_libraries(geodesics geometry-central)
-# -fexceptions -sASSERTIONS -profiling
+# -fexceptions -sASSERTIONS
 set_target_properties(geodesics PROPERTIES LINK_FLAGS "-s ALLOW_MEMORY_GROWTH=1 -profiling --bind --memory-init-file 0 -s EXPORT_NAME=\"Geodesics\" -s MODULARIZE=1 --cpu-baseline=avx -s NO_EXIT_RUNTIME=1 -s NO_FILESYSTEM=1")

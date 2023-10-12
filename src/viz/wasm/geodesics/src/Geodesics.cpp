@@ -91,13 +91,11 @@ walkCoord(
   if (traceRes.hitBoundary) {
     throw std::invalid_argument("hit boundary");
   }
-  printf("distance: %f; walk length: %f\n", distance, traceRes.length);
 
   auto vertexCount = targetGeometry.inputVertexPositions.size();
   for (size_t i = 0; i < vertexCount; i += 1) {
     auto vertex = targetGeometry.mesh.vertex(i);
     auto vertexCoords = targetGeometry.inputVertexPositions[vertex];
-    printf("vertex %zu: %f, %f, %f\n", i, vertexCoords[0], vertexCoords[1], vertexCoords[2]);
   }
 
   surface::SurfacePoint pathEndpoint = traceRes.endPoint;
@@ -109,7 +107,6 @@ walkCoord(
     // about the face)
     auto coords = pathEndpoint.faceCoords;
     size_t faceIx = pathEndpoint.face.getIndex();
-    printf("face ix: %zu\n", faceIx);
     auto face = pathEndpoint.face;
     normal = targetGeometry.faceNormal(face);
 
@@ -192,6 +189,32 @@ computeGeodesics(
   return output;
 }
 
+template<typename T>
+uint32_t
+getVecDataPtr(std::vector<T>& vec) {
+  return reinterpret_cast<uint32_t>(vec.data());
+}
+
+template<typename T>
+class_<std::vector<T>>
+register_vector_custom(const char* name) {
+  typedef std::vector<T> VecType;
+
+  // void (VecType::*push_back)(const T&) = &VecType::push_back;
+  void (VecType::*resize)(const size_t, const T&) = &VecType::resize;
+  void (VecType::*reserve)(const size_t) = &VecType::reserve;
+  size_t (VecType::*size)() const = &VecType::size;
+  return class_<std::vector<T>>(name)
+    .template constructor<>()
+    // .function("push_back", push_back)
+    .function("resize", resize)
+    .function("size", size)
+    // .function("reserve", reserve)
+    // .function("get", &internal::VectorAccess<VecType>::get)
+    // .function("set", &internal::VectorAccess<VecType>::set)
+    .function("data", &getVecDataPtr<T>, allow_raw_pointers());
+}
+
 EMSCRIPTEN_BINDINGS(my_module) {
   function("computeGeodesics", &computeGeodesics);
 
@@ -199,6 +222,6 @@ EMSCRIPTEN_BINDINGS(my_module) {
     .property("projectedPositions", &ComputeGeodesicsOutput::projectedPositions)
     .property("projectedNormals", &ComputeGeodesicsOutput::projectedNormals);
 
-  register_vector<float>("vector<float>");
-  register_vector<uint32_t>("vector<uint32_t>");
+  register_vector_custom<float>("vector<float>");
+  register_vector_custom<uint32_t>("vector<uint32_t>");
 }

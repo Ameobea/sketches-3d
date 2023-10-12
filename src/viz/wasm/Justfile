@@ -39,6 +39,11 @@ build:
   just opt
   just copy-files
 
+clean:
+  rm -rf build/*
+  rm -rf build2/*
+  cd ./geodesics && just clean
+
 build-geodesics:
   #!/bin/bash
 

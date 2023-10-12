@@ -5,29 +5,30 @@
     (window as any).Geodesics = mod;
     console.log(mod);
 
-    const vec_f32 = (vals: number[] | Float32Array) => {
-      const vec = new mod.vector$float$();
-      for (let i = 0; i < vals.length; i++) {
-        vec.push_back(vals[i]);
-      }
+    const HEAPF32 = mod.HEAPF32 as Float32Array;
+    const HEAPU32 = mod.HEAPU32 as Uint32Array;
+
+    const vec_generic = (
+      vecCtor: new () => any,
+      mem: Float32Array | Uint32Array,
+      vals: number[] | Float32Array | Uint32Array
+    ) => {
+      const vec = new vecCtor();
+      vec.resize(vals.length, 0);
+      const ptr = vec.data();
+      const buf = mem.subarray(ptr / 4, ptr / 4 + vals.length);
+      buf.set(vals);
       return vec;
     };
 
-    const vec_uint32 = (vals: number[] | Uint32Array) => {
-      const vec = new mod.vector$uint32_t$();
-      for (let i = 0; i < vals.length; i++) {
-        vec.push_back(vals[i]);
-      }
-      return vec;
-    };
+    const vec_f32 = (vals: number[] | Float32Array) => vec_generic(mod.vector$float$, HEAPF32, vals);
 
-    const from_vec_f32 = (vec: any) => {
-      const arr = [];
+    const vec_uint32 = (vals: number[] | Uint32Array) => vec_generic(mod.vector$uint32_t$, HEAPU32, vals);
+
+    const from_vec_f32 = (vec: any): Float32Array => {
       const length = vec.size();
-      for (let i = 0; i < length; i++) {
-        arr.push(vec.get(i));
-      }
-      return arr;
+      const ptr = vec.data();
+      return HEAPF32.subarray(ptr / 4, ptr / 4 + length);
     };
 
     // build a simple pyramid mesh as a manifold surface.

@@ -16,6 +16,18 @@
     "core": "cpp",
     "*.evaluator": "cpp",
     "alignedvector3": "cpp",
-    "stdexcept": "cpp"
+    "stdexcept": "cpp",
+    "vector": "cpp",
+    "__split_buffer": "cpp",
+    "deque": "cpp",
+    "list": "cpp",
+    "string": "cpp",
+    "hash_map": "cpp"
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/bower_components": true,
+    "**/*.code-search": true,
+    "geodesics/deps/**": true
   }
 }
