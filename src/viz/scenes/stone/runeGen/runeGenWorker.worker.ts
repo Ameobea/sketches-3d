@@ -79,16 +79,10 @@ export class RuneGenCtx {
   };
 
   public generate = () => {
-    // const ctxPtr = this.engine.generate_rune_decoration_mesh();
-    // const indices = this.engine.get_generated_indices(ctxPtr);
-    // const vertices = this.engine.get_generated_vertices(ctxPtr);
-    // this.engine.free_generated_runes(ctxPtr);
-    // return { indices, vertices };
-
     const ctxPtr = this.engine.generate_rune_decoration_mesh_2d();
     const indices = this.engine.get_generated_indices_2d(ctxPtr);
     const vertices = this.engine.get_generated_vertices_2d(ctxPtr);
-    // this.engine.free_generated_runes_2d(ctxPtr);
+    this.engine.free_generated_runes_2d(ctxPtr);
 
     const scale = 10_000;
     const targetMeshVertices = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1].map(x => x * scale));
@@ -101,7 +95,14 @@ export class RuneGenCtx {
       [0, 0]
     );
 
-    return { indices, vertices: positions };
+    // return { indices, vertices: positions };
+
+    const ctxPtr3D = this.engine.extrude_3d_mesh_along_normals(indices, positions);
+    const extrudedIndices = this.engine.get_generated_indices_3d(ctxPtr3D);
+    const extrudedVertices = this.engine.get_generated_vertices_3d(ctxPtr3D);
+    this.engine.free_generated_runes_3d(ctxPtr3D);
+
+    return { indices: extrudedIndices, vertices: extrudedVertices };
   };
 
   /**
@@ -109,7 +110,7 @@ export class RuneGenCtx {
    * @returns Buffer in format [depth, minx, miny, maxx, maxy]
    */
   public debugAABB = () => {
-    return this.engine.debug_aabb_tree();
+    // return this.engine.debug_aabb_tree();
   };
 }
 

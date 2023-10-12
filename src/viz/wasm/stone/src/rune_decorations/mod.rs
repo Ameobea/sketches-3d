@@ -1,11 +1,11 @@
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, MulAssign};
 
 use common::{rand::Rng, rand_pcg::Pcg32};
 use const_chunks::IteratorConstChunks;
 use fnv::FnvHashMap;
 use lyon::{
   geom::{
-    euclid::{Point3D, UnknownUnit},
+    euclid::{Point3D, UnknownUnit, Vector3D},
     LineSegment,
   },
   lyon_tessellation::{
@@ -23,6 +23,7 @@ pub(crate) struct RuneGenParams {
   pub segment_length: f32,
   pub subpath_count: usize,
   pub extrude_height: f32,
+  pub scale: f32,
 }
 
 struct RuneSegment {
@@ -253,7 +254,7 @@ impl RuneGenCtx {
 
 fn build_path(params: &RuneGenParams) -> Path {
   let ctx = RuneGenCtx {
-    rng: common::build_rng((8195444438u64, 382173857842u64)),
+    rng: common::build_rng((81954444138u64, 382173857842u64)),
     segments: Vec::new(),
     aabb_tree: AABBTree::new(),
     builder: Path::builder(),
@@ -275,9 +276,14 @@ fn build_and_tessellate_path(params: &RuneGenParams) -> VertexBuffers<Point, u32
   tessellator
     .tessellate_path(&path, &stroke_opts, &mut vertex_builder)
     .unwrap();
+  for vertex in &mut buffers.vertices {
+    *vertex *= params.scale;
+  }
   buffers
 }
 
+/// Extrudes points generated for the 2D path into 3D by extruding on the Z
+/// axis.
 fn extrude_to_3d(
   buffers: VertexBuffers<Point, u32>,
   height: f32,
@@ -349,7 +355,107 @@ fn extrude_to_3d(
   }
 }
 
-fn build_rune_mesh_3d(params: &RuneGenParams) -> VertexBuffers<Point3D<f32, UnknownUnit>, u32> {
-  let buffers = build_and_tessellate_path(params);
-  extrude_to_3d(buffers, params.extrude_height)
+fn compute_face_normal(
+  v0: &Point3D<f32, UnknownUnit>,
+  v1: &Point3D<f32, UnknownUnit>,
+  v2: &Point3D<f32, UnknownUnit>,
+) -> Vector3D<f32, UnknownUnit> {
+  let edge1 = *v1 - *v0;
+  let edge2 = *v2 - *v0;
+  edge1.cross(edge2).normalize()
+}
+
+pub fn extrude_along_normals(
+  buffers: VertexBuffers<Point3D<f32, UnknownUnit>, u32>,
+  height: f32,
+) -> VertexBuffers<Point3D<f32, UnknownUnit>, u32> {
+  let mut vertices_3d = Vec::with_capacity(buffers.vertices.len() * 2);
+  let mut indices_3d = Vec::new();
+
+  let vertex_count_2d = buffers.vertices.len() as u32;
+
+  let mut add_face = |i: u32, j: u32, k: u32, flip: bool| {
+    indices_3d.push(i);
+    if flip {
+      indices_3d.push(k);
+      indices_3d.push(j);
+    } else {
+      indices_3d.push(j);
+      indices_3d.push(k);
+    }
+  };
+
+  let mut normals = vec![Vector3D::new(0.0, 0.0, 0.0); buffers.vertices.len()];
+
+  for [i, j, k] in buffers.indices.iter().copied().const_chunks::<3>() {
+    let v0 = buffers.vertices[i as usize];
+    let v1 = buffers.vertices[j as usize];
+    let v2 = buffers.vertices[k as usize];
+
+    let normal = compute_face_normal(&v0, &v1, &v2);
+
+    normals[i as usize] += normal;
+    normals[j as usize] += normal;
+    normals[k as usize] += normal;
+  }
+
+  for normal in &mut normals {
+    *normal = normal.normalize();
+  }
+
+  for point in buffers.vertices.iter() {
+    vertices_3d.push(Point3D::new(point.x, point.y, point.z));
+  }
+
+  // Extrude vertices
+  for (point, normal) in buffers.vertices.iter().zip(&normals) {
+    let displacement = *normal * height;
+    vertices_3d.push(Point3D::new(
+      point.x + displacement.x,
+      point.y + displacement.y,
+      point.z + displacement.z,
+    ));
+  }
+
+  // Extrude faces and count edges
+  let mut edge_counts: FnvHashMap<(u32, u32), (usize, bool)> = FnvHashMap::default();
+  for [i, j, k] in buffers.indices.iter().copied().const_chunks::<3>() {
+    // Original face
+    add_face(i, j, k, false);
+    // Extruded face
+    add_face(
+      vertex_count_2d + i,
+      vertex_count_2d + j,
+      vertex_count_2d + k,
+      true,
+    );
+
+    let edges = [(i, j), (j, k), (k, i)];
+    for edge in edges {
+      let min_val = std::cmp::min(edge.0, edge.1);
+      let max_val = std::cmp::max(edge.0, edge.1);
+      let ordered_edge = (min_val, max_val);
+      let flipped = ordered_edge.0 != edge.0;
+      let entry = edge_counts.entry(ordered_edge).or_insert((0, flipped));
+      entry.0 += 1;
+    }
+  }
+
+  // Create side faces for boundary edges only
+  for (edge, &(count, flipped)) in edge_counts.iter() {
+    if count == 1 {
+      add_face(edge.0, edge.1, vertex_count_2d + edge.1, !flipped);
+      add_face(
+        edge.0,
+        vertex_count_2d + edge.1,
+        vertex_count_2d + edge.0,
+        !flipped,
+      );
+    }
+  }
+
+  VertexBuffers {
+    vertices: vertices_3d,
+    indices: indices_3d,
+  }
 }

@@ -101,8 +101,8 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight.target);
   viz.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
-  viz.camera.far = 20_000;
-  viz.camera.near = 1;
+  viz.camera.far = 40_000;
+  viz.camera.near = 10;
   initAsync(viz);
 
   configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
