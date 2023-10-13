@@ -38,7 +38,7 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STR
   endif()
 
   SET(CMAKE_CXX_FLAGS "${BASE_CXX_FLAGS} ${DISABLED_WARNINGS}")
-  SET(CMAKE_CXX_FLAGS_RELEASE        "-O3 -DNDEBUG -msimd128")
+  SET(CMAKE_CXX_FLAGS_RELEASE        "-O3 -flto -DNDEBUG -msimd128")
 else()
   message( FATAL_ERROR "Unrecognized compiler [${CMAKE_CXX_COMPILER_ID}]" )
 endif()
@@ -54,4 +54,4 @@ add_executable(geodesics "${SRCS}")
 target_include_directories(geodesics PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/" "${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/glm" "${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/args")
 target_link_libraries(geodesics geometry-central)
 # -fexceptions -sASSERTIONS
-set_target_properties(geodesics PROPERTIES LINK_FLAGS "-s ALLOW_MEMORY_GROWTH=1 -profiling --bind --memory-init-file 0 -s EXPORT_NAME=\"Geodesics\" -s MODULARIZE=1 --cpu-baseline=avx -s NO_EXIT_RUNTIME=1 -s NO_FILESYSTEM=1")
+set_target_properties(geodesics PROPERTIES LINK_FLAGS "-s ALLOW_MEMORY_GROWTH=1 -profiling -flto --bind --memory-init-file 0 -s EXPORT_NAME=\"Geodesics\" -s MODULARIZE=1 --cpu-baseline=avx -s NO_EXIT_RUNTIME=1 -s NO_FILESYSTEM=1")

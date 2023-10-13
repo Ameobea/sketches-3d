@@ -5,14 +5,13 @@
       "includePath": [
         "${workspaceFolder}/**",
         "~/emscripten/system/include",
-        "/home/casey/geometry-central/include",
-        "/home/casey/eigen/**"
+        "/home/casey/geometry-central/include"
       ],
       "defines": [],
       "compilerPath": "/usr/local/bin/clang++",
       "cStandard": "c17",
       "cppStandard": "c++14",
-      "intelliSenseMode": "linux-clang-x64"
+      "intelliSenseMode": "linux-gcc-x64"
     }
   ],
   "version": 4

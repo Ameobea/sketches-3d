@@ -17,7 +17,6 @@ export class RuneGenCtx {
       }),
       import('../../../../geodesics/geodesics.js')
         .then(mod => {
-          console.log('mod', mod);
           (mod.Geodesics as any).locateFile = (path: string) => `/${path}`;
           return mod.Geodesics;
         })
@@ -33,18 +32,19 @@ export class RuneGenCtx {
   }
 
   private project2DCoordsWithGeodesics = (
-    targetMeshIndices: Uint32Array,
+    targetMeshIndices: Uint32Array | Uint16Array,
     targetMeshVertices: Float32Array,
     pointsToProject: Float32Array,
+    indices: Uint32Array | Uint16Array,
     midpoint: [number, number]
-  ): { normals: Float32Array; positions: Float32Array } => {
-    const HEAPF32 = this.geodesics.HEAPF32 as Float32Array;
-    const HEAPU32 = this.geodesics.HEAPU32 as Uint32Array;
+  ): Float32Array => {
+    const HEAPF32 = () => this.geodesics.HEAPF32 as Float32Array;
+    const HEAPU32 = () => this.geodesics.HEAPU32 as Uint32Array;
 
     const vec_generic = (
       vecCtor: new () => any,
       mem: Float32Array | Uint32Array,
-      vals: number[] | Float32Array | Uint32Array
+      vals: number[] | Float32Array | Uint32Array | Uint16Array
     ) => {
       const vec = new vecCtor();
       vec.resize(vals.length, 0);
@@ -55,54 +55,75 @@ export class RuneGenCtx {
     };
 
     const vec_f32 = (vals: number[] | Float32Array) =>
-      vec_generic(this.geodesics.vector$float$, HEAPF32, vals);
+      vec_generic(this.geodesics.vector$float$, HEAPF32(), vals);
 
-    const vec_uint32 = (vals: number[] | Uint32Array) =>
-      vec_generic(this.geodesics.vector$uint32_t$, HEAPU32, vals);
+    const vec_uint32 = (vals: number[] | Uint32Array | Uint16Array) =>
+      vec_generic(this.geodesics.vector$uint32_t$, HEAPU32(), vals);
 
     const from_vec_f32 = (vec: any): Float32Array => {
       const length = vec.size();
       const ptr = vec.data();
-      return HEAPF32.subarray(ptr / 4, ptr / 4 + length);
+      return HEAPF32().subarray(ptr / 4, ptr / 4 + length);
     };
 
     const computed = this.geodesics.computeGeodesics(
       vec_uint32(targetMeshIndices),
       vec_f32(targetMeshVertices),
       vec_f32(pointsToProject),
+      vec_uint32(indices),
       midpoint[0],
       midpoint[1]
     );
-    const normals = from_vec_f32(computed.projectedNormals);
-    const positions = from_vec_f32(computed.projectedPositions);
-    return { normals, positions };
+    return from_vec_f32(computed.projectedPositions).slice();
   };
 
-  public generate = () => {
+  public generate = ({
+    indices: rawTargetMeshIndices,
+    vertices: rawTargetMeshVertices,
+  }: {
+    indices: Uint32Array | Uint16Array;
+    vertices: Float32Array;
+  }) => {
+    let targetMeshIndices: Uint32Array | Uint16Array;
+    let targetMeshVertices: Float32Array;
+    if (rawTargetMeshIndices instanceof Uint32Array) {
+      const dedupCtxPtr = this.engine.dedup_vertices_u32(rawTargetMeshIndices, rawTargetMeshVertices);
+      targetMeshIndices = this.engine.get_deduped_indices_u32(dedupCtxPtr);
+      targetMeshVertices = this.engine.get_deduped_vertices_u32(dedupCtxPtr);
+      this.engine.free_dedup_vertices_output_u32(dedupCtxPtr);
+    } else if (rawTargetMeshIndices instanceof Uint16Array) {
+      const dedupCtxPtr = this.engine.dedup_vertices_u16(rawTargetMeshIndices, rawTargetMeshVertices);
+      targetMeshIndices = this.engine.get_deduped_indices_u16(dedupCtxPtr);
+      targetMeshVertices = this.engine.get_deduped_vertices_u16(dedupCtxPtr);
+      this.engine.free_dedup_vertices_output_u16(dedupCtxPtr);
+    } else {
+      throw new Error('Indices must be Uint32Array or Uint16Array');
+    }
+
     const ctxPtr = this.engine.generate_rune_decoration_mesh_2d();
     const indices = this.engine.get_generated_indices_2d(ctxPtr);
     const vertices = this.engine.get_generated_vertices_2d(ctxPtr);
     this.engine.free_generated_runes_2d(ctxPtr);
 
-    const scale = 10_000;
-    const targetMeshVertices = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1].map(x => x * scale));
-    const targetMeshIndices = new Uint32Array([0, 1, 2, 1, 0, 3, 0, 2, 3, 1, 3, 2]);
-
-    const { normals, positions } = this.project2DCoordsWithGeodesics(
+    const projectedVertices = this.project2DCoordsWithGeodesics(
       targetMeshIndices,
       targetMeshVertices,
       vertices,
+      indices,
       [0, 0]
     );
 
-    // return { indices, vertices: positions };
-
-    const ctxPtr3D = this.engine.extrude_3d_mesh_along_normals(indices, positions);
+    const ctxPtr3D = this.engine.extrude_3d_mesh_along_normals(indices, projectedVertices);
     const extrudedIndices = this.engine.get_generated_indices_3d(ctxPtr3D);
     const extrudedVertices = this.engine.get_generated_vertices_3d(ctxPtr3D);
+    const vertexNormals = this.engine.get_vertex_normals_3d(ctxPtr3D);
     this.engine.free_generated_runes_3d(ctxPtr3D);
 
-    return { indices: extrudedIndices, vertices: extrudedVertices };
+    return Comlink.transfer({ indices: extrudedIndices, vertices: extrudedVertices, vertexNormals }, [
+      extrudedIndices.buffer,
+      extrudedVertices.buffer,
+      vertexNormals.buffer,
+    ]);
   };
 
   /**

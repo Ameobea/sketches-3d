@@ -44,7 +44,7 @@ impl Node {
   }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct NodeIx(usize);
 
 pub struct AABBTree<T> {

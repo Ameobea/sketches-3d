@@ -1,4 +1,4 @@
-use std::ops::{ControlFlow, MulAssign};
+use std::ops::ControlFlow;
 
 use common::{rand::Rng, rand_pcg::Pcg32};
 use const_chunks::IteratorConstChunks;
@@ -21,6 +21,8 @@ pub mod exports;
 
 pub(crate) struct RuneGenParams {
   pub segment_length: f32,
+  pub segment_width: f32,
+  pub miter_limit: f32,
   pub subpath_count: usize,
   pub extrude_height: f32,
   pub scale: f32,
@@ -239,7 +241,7 @@ impl RuneGenCtx {
 
     for i in 0..params.subpath_count {
       self.add_subpath(params);
-      if (i + 1) == 100 {
+      if (i % 100 == 0 && i < 600) || (i % 1000 == 0 && i < 5000) {
         self.aabb_tree.balance();
       }
     }
@@ -266,8 +268,8 @@ fn build_and_tessellate_path(params: &RuneGenParams) -> VertexBuffers<Point, u32
   let path = build_path(params);
 
   let stroke_opts = StrokeOptions::default()
-    .with_miter_limit(1.)
-    .with_line_width(1.);
+    .with_miter_limit(params.miter_limit)
+    .with_line_width(params.segment_width);
   let mut tessellator = StrokeTessellator::new();
   let mut buffers: VertexBuffers<Point, u32> = VertexBuffers::new();
   let mut vertex_builder: BuffersBuilder<Point, u32, _> =
@@ -282,39 +284,25 @@ fn build_and_tessellate_path(params: &RuneGenParams) -> VertexBuffers<Point, u32
   buffers
 }
 
-/// Extrudes points generated for the 2D path into 3D by extruding on the Z
-/// axis.
-fn extrude_to_3d(
-  buffers: VertexBuffers<Point, u32>,
-  height: f32,
-) -> VertexBuffers<Point3D<f32, UnknownUnit>, u32> {
-  let mut vertices_3d = Vec::with_capacity(buffers.vertices.len() * 2);
-  // TODO: pre-compute size
-  let mut indices_3d = Vec::new();
-
-  let vertex_count_2d = buffers.vertices.len() as u32;
+fn add_extruded_faces_from_indices(
+  vertex_count_2d: u32,
+  source_indices: &[u32],
+  new_indices: &mut Vec<u32>,
+) {
   let mut add_face = |i: u32, j: u32, k: u32, flip: bool| {
-    indices_3d.push(i);
+    new_indices.push(i);
     if flip {
-      indices_3d.push(k);
-      indices_3d.push(j);
+      new_indices.push(k);
+      new_indices.push(j);
     } else {
-      indices_3d.push(j);
-      indices_3d.push(k);
+      new_indices.push(j);
+      new_indices.push(k);
     }
   };
 
-  // Extrude vertices
-  for point in &buffers.vertices {
-    vertices_3d.push(Point3D::new(point.x, point.y, 0.0));
-  }
-  for point in buffers.vertices {
-    vertices_3d.push(Point3D::new(point.x, point.y, height));
-  }
-
   // Extrude faces and count edges
   let mut edge_counts: FnvHashMap<(u32, u32), (usize, bool)> = FnvHashMap::default();
-  for [i, j, k] in buffers.indices.iter().copied().const_chunks::<3>() {
+  for [i, j, k] in source_indices.iter().copied().const_chunks::<3>() {
     // Original face
     add_face(i, j, k, false);
     // Extruded face
@@ -348,6 +336,28 @@ fn extrude_to_3d(
       );
     }
   }
+}
+
+/// Extrudes points generated for the 2D path into 3D by extruding on the Z
+/// axis.
+fn extrude_to_3d(
+  buffers: VertexBuffers<Point, u32>,
+  height: f32,
+) -> VertexBuffers<Point3D<f32, UnknownUnit>, u32> {
+  let mut vertices_3d = Vec::with_capacity(buffers.vertices.len() * 2);
+  let mut indices_3d = Vec::with_capacity(buffers.indices.len() * 3 * 4);
+
+  let vertex_count_2d = buffers.vertices.len() as u32;
+
+  // Extrude vertices
+  for point in &buffers.vertices {
+    vertices_3d.push(Point3D::new(point.x, point.y, 0.0));
+  }
+  for point in buffers.vertices {
+    vertices_3d.push(Point3D::new(point.x, point.y, height));
+  }
+
+  add_extruded_faces_from_indices(vertex_count_2d, &buffers.indices, &mut indices_3d);
 
   VertexBuffers {
     vertices: vertices_3d,
@@ -365,27 +375,22 @@ fn compute_face_normal(
   edge1.cross(edge2).normalize()
 }
 
+/// Extrudes a surface composed of 3D points along vertex normals.
+///
+/// Returns vertex buffers and a vector of normals for each vertex.
 pub fn extrude_along_normals(
   buffers: VertexBuffers<Point3D<f32, UnknownUnit>, u32>,
   height: f32,
-) -> VertexBuffers<Point3D<f32, UnknownUnit>, u32> {
+) -> (
+  VertexBuffers<Point3D<f32, UnknownUnit>, u32>,
+  Vec<Vector3D<f32, UnknownUnit>>,
+) {
   let mut vertices_3d = Vec::with_capacity(buffers.vertices.len() * 2);
-  let mut indices_3d = Vec::new();
+  let mut indices_3d = Vec::with_capacity(buffers.indices.len() * 3 * 4);
 
   let vertex_count_2d = buffers.vertices.len() as u32;
 
-  let mut add_face = |i: u32, j: u32, k: u32, flip: bool| {
-    indices_3d.push(i);
-    if flip {
-      indices_3d.push(k);
-      indices_3d.push(j);
-    } else {
-      indices_3d.push(j);
-      indices_3d.push(k);
-    }
-  };
-
-  let mut normals = vec![Vector3D::new(0.0, 0.0, 0.0); buffers.vertices.len()];
+  let mut normals = vec![Vector3D::new(0.0, 0.0, 0.0); buffers.vertices.len() * 2];
 
   for [i, j, k] in buffers.indices.iter().copied().const_chunks::<3>() {
     let v0 = buffers.vertices[i as usize];
@@ -393,6 +398,7 @@ pub fn extrude_along_normals(
     let v2 = buffers.vertices[k as usize];
 
     let normal = compute_face_normal(&v0, &v1, &v2);
+    let normal = -normal;
 
     normals[i as usize] += normal;
     normals[j as usize] += normal;
@@ -403,9 +409,7 @@ pub fn extrude_along_normals(
     *normal = normal.normalize();
   }
 
-  for point in buffers.vertices.iter() {
-    vertices_3d.push(Point3D::new(point.x, point.y, point.z));
-  }
+  vertices_3d.extend_from_slice(&buffers.vertices);
 
   // Extrude vertices
   for (point, normal) in buffers.vertices.iter().zip(&normals) {
@@ -417,45 +421,30 @@ pub fn extrude_along_normals(
     ));
   }
 
-  // Extrude faces and count edges
-  let mut edge_counts: FnvHashMap<(u32, u32), (usize, bool)> = FnvHashMap::default();
-  for [i, j, k] in buffers.indices.iter().copied().const_chunks::<3>() {
-    // Original face
-    add_face(i, j, k, false);
-    // Extruded face
-    add_face(
-      vertex_count_2d + i,
-      vertex_count_2d + j,
-      vertex_count_2d + k,
-      true,
-    );
+  add_extruded_faces_from_indices(vertex_count_2d, &buffers.indices, &mut indices_3d);
 
-    let edges = [(i, j), (j, k), (k, i)];
-    for edge in edges {
-      let min_val = std::cmp::min(edge.0, edge.1);
-      let max_val = std::cmp::max(edge.0, edge.1);
-      let ordered_edge = (min_val, max_val);
-      let flipped = ordered_edge.0 != edge.0;
-      let entry = edge_counts.entry(ordered_edge).or_insert((0, flipped));
-      entry.0 += 1;
-    }
+  // Compute normals for extruded vertices
+  normals.clear();
+  normals.resize(vertices_3d.len(), Vector3D::new(0.0, 0.0, 0.0));
+  for [i, j, k] in indices_3d.iter().copied().const_chunks::<3>() {
+    let v0 = vertices_3d[i as usize];
+    let v1 = vertices_3d[j as usize];
+    let v2 = vertices_3d[k as usize];
+
+    let normal = compute_face_normal(&v0, &v1, &v2);
+    // normal is flipped
+    let normal = -normal;
+
+    normals[i as usize] += normal;
+    normals[j as usize] += normal;
+    normals[k as usize] += normal;
   }
 
-  // Create side faces for boundary edges only
-  for (edge, &(count, flipped)) in edge_counts.iter() {
-    if count == 1 {
-      add_face(edge.0, edge.1, vertex_count_2d + edge.1, !flipped);
-      add_face(
-        edge.0,
-        vertex_count_2d + edge.1,
-        vertex_count_2d + edge.0,
-        !flipped,
-      );
-    }
-  }
-
-  VertexBuffers {
-    vertices: vertices_3d,
-    indices: indices_3d,
-  }
+  (
+    VertexBuffers {
+      vertices: vertices_3d,
+      indices: indices_3d,
+    },
+    normals,
+  )
 }

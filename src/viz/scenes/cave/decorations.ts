@@ -2,8 +2,6 @@ import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
 import type { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
-import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { randomInRange } from 'src/viz/util';
 
 export const addDecorations = async (
   viz: VizState,

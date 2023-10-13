@@ -989,6 +989,7 @@ void main() {
 
 export class CustomShaderMaterial extends THREE.ShaderMaterial {
   public materialClass: MaterialClass = MaterialClass.Default;
+  public flatShading: boolean = false;
 
   constructor(args: THREE.ShaderMaterialParameters, materialClass: MaterialClass) {
     super(args);
