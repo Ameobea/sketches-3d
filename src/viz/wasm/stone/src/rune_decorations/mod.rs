@@ -26,6 +26,7 @@ pub(crate) struct RuneGenParams {
   pub subpath_count: usize,
   pub extrude_height: f32,
   pub scale: f32,
+  pub max_path_length: usize,
 }
 
 struct RuneSegment {
@@ -125,7 +126,7 @@ impl RuneGenCtx {
     let mut count = 0;
     move |generated_so_far: &[RuneSegment], ctx: &mut RuneGenCtx| {
       count += 1;
-      if count > 2500 {
+      if count > params.max_path_length {
         return SegGenOutcome::End;
       }
 

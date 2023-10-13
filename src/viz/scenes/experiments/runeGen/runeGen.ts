@@ -51,7 +51,7 @@ const initAsync = async (viz: VizState, loadedWorld: THREE.Group) => {
   const targetMesh = loadedWorld.getObjectByName('Torus') as THREE.Mesh;
   const targetMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
   targetMesh.material = targetMat;
-  // targetMesh.visible = false;
+  targetMesh.visible = false;
 
   const material = buildCustomShader(
     {

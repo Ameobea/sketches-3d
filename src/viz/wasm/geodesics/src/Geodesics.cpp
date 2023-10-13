@@ -57,50 +57,60 @@ public:
   }
 };
 
-// This function normalizes the angle to lie in [-π, π)
-float
-normalizeAngle(float angle) {
-  while (angle < -PI)
-    angle += 2 * PI;
-  while (angle >= PI)
-    angle -= 2 * PI;
+/**
+ * Normalizes the angle to lie in [-π, π), wrapping around the range as necessary.
+ */
+double
+normalizeAngle(double angle) {
+  while (angle < -PI) {
+    angle += 2.0 * PI;
+  }
+  while (angle >= PI) {
+    angle -= 2.0 * PI;
+  }
   return angle;
 }
 
-// Compute the difference between two angles, taking the shortest path
-float
-angleDifference(float angle1, float angle2) {
-  float difference = normalizeAngle(angle1 - angle2);
+/**
+ * Compute the difference between two angles, returning a value in [-π, π).
+ */
+double
+angleDifference(double angle1, double angle2) {
+  double difference = normalizeAngle(angle1 - angle2);
   return difference;
 }
 
-float
-computeDesiredTangentSpaceAngle(float incomingTangentSpaceAngle, float incoming2DAngle, float next2DAngle) {
-  float angleDiff2D = angleDifference(next2DAngle, incoming2DAngle);
-  float desiredAngleTangent = incomingTangentSpaceAngle + angleDiff2D;
+double
+computeDesiredTangentSpaceAngle(double incomingTangentSpaceAngle, double incoming2DAngle, double next2DAngle) {
+  double angleDiff2D = angleDifference(next2DAngle, incoming2DAngle);
+  double desiredAngleTangent = incomingTangentSpaceAngle + angleDiff2D;
   return normalizeAngle(desiredAngleTangent);
 }
 
 /**
- * Given a cartesian coordinate and a cartesian midpoint, compute the angle and distance
- * from the midpoint to the coordinate.
+ * Computes the angle and distance to travel from the start point in the tangent space of that point.
+ *
+ * We know that `incoming2DAngle` - the angle in the 2D space of the coordinates we're mapping - matches
+ * `incomingTangentSpaceAngle` in the tangent space of the start point.
+ *
+ * Using this, we can compute the difference that needs to be added to the incoming tangent space angle to get the
+ * desired tangent space angle to travel in.
  */
-std::tuple<float, float>
+std::tuple<double, double>
 computeAngleAndDistance(
-  float x,
-  float y,
-  float startX,
-  float startY,
-  float incomingTangentSpaceAngle,
-  float incoming2DAngle
+  double x,
+  double y,
+  double startX,
+  double startY,
+  double incomingTangentSpaceAngle,
+  double incoming2DAngle
 ) {
-  float dx = x - startX;
-  float dy = y - startY;
-  float angle2D = atan2f(dy, dx);
-  float distance = sqrtf(dx * dx + dy * dy);
+  double dx = x - startX;
+  double dy = y - startY;
+  double angle2D = atan2(dy, dx);
+  double distance = sqrt(dx * dx + dy * dy);
 
-  // transform the angle from 2D space to the tangent space
-  float angle = computeDesiredTangentSpaceAngle(incomingTangentSpaceAngle, incoming2DAngle, angle2D);
+  double angle = computeDesiredTangentSpaceAngle(incomingTangentSpaceAngle, incoming2DAngle, angle2D);
 
   return std::make_tuple(angle, distance);
 }
@@ -111,16 +121,16 @@ public:
   float cartX;
   float cartY;
   float cartZ;
-  float incomingTangentSpaceAngle;
-  float incoming2DAngle;
+  double incomingTangentSpaceAngle;
+  double incoming2DAngle;
 
   WalkCoordOutput(
     float cartX,
     float cartY,
     float cartZ,
     surface::SurfacePoint pathEndpoint,
-    float incomingTangentSpaceAngle,
-    float incoming2DAngle
+    double incomingTangentSpaceAngle,
+    double incoming2DAngle
   ) {
     this->cartX = cartX;
     this->cartY = cartY;
@@ -197,11 +207,11 @@ walkCoord(
   surface::SurfacePoint startSurfacePoint,
   float startX,
   float startY,
-  float incomingTangentSpaceAngle,
-  float incoming2DAngle,
+  double incomingTangentSpaceAngle,
+  double incoming2DAngle,
   surface::TraceOptions& traceOptions
 ) {
-  float angle, distance;
+  double angle, distance;
   std::tie(angle, distance) = computeAngleAndDistance(x, y, startX, startY, incomingTangentSpaceAngle, incoming2DAngle);
 
   if (distance == 0.) {
@@ -210,8 +220,7 @@ walkCoord(
     return WalkCoordOutput(cartX, cartY, cartZ, startSurfacePoint, incomingTangentSpaceAngle, incoming2DAngle);
   }
 
-  // Vector2 traceVec = distance * Vector2::fromAngle(angle);
-  Vector2 traceVec = Vector2{ distance * cosf(angle), distance * sinf(angle) };
+  Vector2 traceVec = distance * Vector2::fromAngle(angle);
   auto traceRes = traceGeodesic(targetGeometry, startSurfacePoint, traceVec);
 
   surface::SurfacePoint pathEndpoint = traceRes.endPoint;
@@ -223,8 +232,9 @@ walkCoord(
   // }
 
   Vector2 endDir = traceRes.endingDir;
-  float newIncomingTangentSpaceAngle = atan2f((float)endDir.y, (float)endDir.x);
-  return WalkCoordOutput(cartX, cartY, cartZ, pathEndpoint, newIncomingTangentSpaceAngle, angle);
+  double newIncomingTangentSpaceAngle = atan2(endDir.y, endDir.x);
+  double newIncoming2DAngle = atan2(y - startY, x - startX);
+  return WalkCoordOutput(cartX, cartY, cartZ, pathEndpoint, newIncomingTangentSpaceAngle, newIncoming2DAngle);
 }
 
 using Graph = std::vector<std::vector<uint32_t>>;
@@ -265,16 +275,16 @@ public:
   surface::SurfacePoint surfacePoint;
   float x;
   float y;
-  float incomingTangentSpaceAngle;
-  float incoming2DAngle;
+  double incomingTangentSpaceAngle;
+  double incoming2DAngle;
 
   BFSQueueEntry(
     uint32_t vertexIdx,
     surface::SurfacePoint surfacePoint,
     float x,
     float y,
-    float incomingTangentSpaceAngle,
-    float incoming2DAngle
+    double incomingTangentSpaceAngle,
+    double incoming2DAngle
   ) {
     this->vertexIdx = vertexIdx;
     this->surfacePoint = surfacePoint;
@@ -381,8 +391,8 @@ computeGeodesics(
   std::unique_ptr<geometrycentral::surface::VertexPositionGeometry> targetGeometry;
   std::tie(targetMesh, targetGeometry) = loadMesh(targetMeshIndices, targetMeshPositions);
 
-  auto startVertex = targetMesh->vertex(0);
-  auto origSurfacePoint = geometrycentral::surface::SurfacePoint(startVertex);
+  auto startFace = targetMesh->face(0);
+  auto origSurfacePoint = geometrycentral::surface::SurfacePoint(startFace, Vector3{ 0.3, 0.3, 0.4 });
 
   surface::TraceOptions traceOptions;
   traceOptions.errorOnProblem = true;
@@ -400,8 +410,8 @@ computeGeodesics(
   std::queue<BFSQueueEntry> bfsQueue;
   std::vector<BFSQueueEntry> visited;
   visited.resize(coordCount);
-  float startX = coordsToWalk[0];
-  float startY = coordsToWalk[1];
+  float startX = 0.001;
+  float startY = 0.001;
   bfsQueue.push({ 0, origSurfacePoint, startX, startY, 0., 0. });
 
   while (true) {
@@ -420,12 +430,10 @@ computeGeodesics(
       float startY = entry.y;
       float x = coordsToWalk[curVertexIdx * 2 + 0];
       float y = coordsToWalk[curVertexIdx * 2 + 1];
-      float incomingTangentSpaceAngle = entry.incomingTangentSpaceAngle;
-      float incoming2DAngle = entry.incoming2DAngle;
 
       WalkCoordOutput walkOutput = walkCoord(
-        x, y, *targetGeometry, startSurfacePoint, startX, startY, incomingTangentSpaceAngle, incoming2DAngle,
-        traceOptions
+        x, y, *targetGeometry, startSurfacePoint, startX, startY, entry.incomingTangentSpaceAngle,
+        entry.incoming2DAngle, traceOptions
       );
       output.projectedPositions[curVertexIdx * 3 + 0] = walkOutput.cartX;
       output.projectedPositions[curVertexIdx * 3 + 1] = walkOutput.cartY;
@@ -469,6 +477,10 @@ computeGeodesics(
 
     // walk from the closest visited vertex to the unvisited vertex
     BFSQueueEntry& closestEntry = visited[closestVertexIx];
+    if (closestEntry.vertexIdx != closestVertexIx) {
+      throw std::invalid_argument("closest entry vertex index does not match");
+    }
+
     auto newEntry = BFSQueueEntry(
       unvisitedVertexIx, closestEntry.surfacePoint, closestEntry.x, closestEntry.y,
       closestEntry.incomingTangentSpaceAngle, closestEntry.incoming2DAngle

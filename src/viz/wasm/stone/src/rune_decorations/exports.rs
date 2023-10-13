@@ -24,9 +24,10 @@ fn params() -> RuneGenParams {
     segment_length: 10.1,
     segment_width: 1.,
     miter_limit: 1.0,
-    subpath_count: 300,
+    subpath_count: 100,
     extrude_height: 14.1,
     scale: 0.1,
+    max_path_length: 500,
   }
 }
 
