@@ -12,8 +12,6 @@ using namespace geometrycentral;
 #include <cmath>
 #include <iostream>
 #include <queue>
-#include <set>
-#include <unordered_map>
 
 std::tuple<
   std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>,
@@ -229,23 +227,31 @@ walkCoord(
   return WalkCoordOutput(cartX, cartY, cartZ, pathEndpoint, newIncomingTangentSpaceAngle, angle2D);
 }
 
-using Graph = std::unordered_map<uint32_t, std::set<uint32_t>>;
+using Graph = std::vector<std::vector<uint32_t>>;
 
 Graph
 buildGraph(const std::vector<uint32_t>& indicesToWalk) {
   Graph graph;
+  auto maxVertexIdx = *std::max_element(indicesToWalk.begin(), indicesToWalk.end());
+  graph.resize(maxVertexIdx + 1);
 
   for (size_t i = 0; i < indicesToWalk.size(); i += 3) {
     uint32_t a = indicesToWalk[i];
     uint32_t b = indicesToWalk[i + 1];
     uint32_t c = indicesToWalk[i + 2];
 
-    graph[a].insert(b);
-    graph[a].insert(c);
-    graph[b].insert(a);
-    graph[b].insert(c);
-    graph[c].insert(a);
-    graph[c].insert(b);
+    graph[a].push_back(b);
+    graph[a].push_back(c);
+    graph[b].push_back(a);
+    graph[b].push_back(c);
+    graph[c].push_back(a);
+    graph[c].push_back(b);
+  }
+
+  // remove duplicates
+  for (auto& neighbors : graph) {
+    std::sort(neighbors.begin(), neighbors.end());
+    neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
   }
 
   return graph;
@@ -310,8 +316,8 @@ computeGeodesics(
 
   // Start BFS from the first vertex
   std::queue<BFSQueueEntry> bfsQueue;
-  std::unordered_map<uint32_t, BFSQueueEntry> visited;
-  visited.reserve(coordCount);
+  std::vector<BFSQueueEntry> visited;
+  visited.resize(coordCount);
   float startX = coordsToWalk[0];
   float startY = coordsToWalk[1];
   bfsQueue.push({ 0, startSurfacePoint, startX, startY, 0., 0. });
@@ -319,7 +325,7 @@ computeGeodesics(
   while (true) {
     while (!bfsQueue.empty()) {
       uint32_t curVertexIdx = bfsQueue.front().vertexIdx;
-      if (visited.find(curVertexIdx) != visited.end()) {
+      if (visited[curVertexIdx].vertexIdx != INVALID_VERTEX_IX) {
         bfsQueue.pop();
         continue;
       }
@@ -343,13 +349,11 @@ computeGeodesics(
       output.projectedPositions[curVertexIdx * 3 + 1] = walkOutput.cartY;
       output.projectedPositions[curVertexIdx * 3 + 2] = walkOutput.cartZ;
       auto endpoint = walkOutput.pathEndpoint;
-      visited.insert({ curVertexIdx,
-                       BFSQueueEntry(
-                         curVertexIdx, endpoint, x, y, walkOutput.incomingTangentSpaceAngle, walkOutput.incoming2DAngle
-                       ) });
+      visited[curVertexIdx] =
+        BFSQueueEntry(curVertexIdx, endpoint, x, y, walkOutput.incomingTangentSpaceAngle, walkOutput.incoming2DAngle);
 
       for (auto neighbor : graph[curVertexIdx]) {
-        if (visited.find(neighbor) != visited.end()) {
+        if (visited[neighbor].vertexIdx != INVALID_VERTEX_IX) {
           continue;
         }
         bfsQueue.push(
@@ -361,7 +365,7 @@ computeGeodesics(
     // TODO: use a better method to find closest unvisited vertex
     uint32_t unvisitedVertexIx = INVALID_VERTEX_IX;
     for (uint32_t i = 0; i < coordCount; i += 1) {
-      if (visited.find(i) == visited.end()) {
+      if (visited[i].vertexIdx == INVALID_VERTEX_IX) {
         unvisitedVertexIx = i;
         break;
       }
@@ -378,13 +382,14 @@ computeGeodesics(
     uint32_t closestVertexIx = INVALID_VERTEX_IX;
     float closestDistance = INFINITY;
     for (auto& entry : visited) {
-      uint32_t vertexIdx = entry.first;
-      float distance = sqrt(
-        (entry.second.x - unvisitedX) * (entry.second.x - unvisitedX) +
-        (entry.second.y - unvisitedY) * (entry.second.y - unvisitedY)
-      );
+      if (entry.vertexIdx == INVALID_VERTEX_IX) {
+        continue;
+      }
+
+      float distance =
+        sqrt((entry.x - unvisitedX) * (entry.x - unvisitedX) + (entry.y - unvisitedY) * (entry.y - unvisitedY));
       if (distance < closestDistance) {
-        closestVertexIx = vertexIdx;
+        closestVertexIx = entry.vertexIdx;
         closestDistance = distance;
       }
       if (distance == 0.) {

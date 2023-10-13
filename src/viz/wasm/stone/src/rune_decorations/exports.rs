@@ -21,7 +21,7 @@ pub struct GeneratedRunes3D {
 
 fn params() -> RuneGenParams {
   RuneGenParams {
-    segment_length: 14.1,
+    segment_length: 10.1,
     segment_width: 1.,
     miter_limit: 1.0,
     subpath_count: 3000,
