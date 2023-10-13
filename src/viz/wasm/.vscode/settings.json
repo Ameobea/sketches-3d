@@ -64,7 +64,9 @@
     "ranges": "cpp",
     "streambuf": "cpp",
     "typeinfo": "cpp",
-    "chrono": "cpp"
+    "chrono": "cpp",
+    "matrixfunctions": "cpp",
+    "polynomials": "cpp"
   },
   "search.exclude": {
     "**/node_modules": true,

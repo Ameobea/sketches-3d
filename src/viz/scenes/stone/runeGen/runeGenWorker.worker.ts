@@ -43,22 +43,22 @@ export class RuneGenCtx {
 
     const vec_generic = (
       vecCtor: new () => any,
-      mem: Float32Array | Uint32Array,
+      mem: () => Float32Array | Uint32Array,
       vals: number[] | Float32Array | Uint32Array | Uint16Array
     ) => {
       const vec = new vecCtor();
       vec.resize(vals.length, 0);
       const ptr = vec.data();
-      const buf = mem.subarray(ptr / 4, ptr / 4 + vals.length);
+      const buf = mem().subarray(ptr / 4, ptr / 4 + vals.length);
       buf.set(vals);
       return vec;
     };
 
     const vec_f32 = (vals: number[] | Float32Array) =>
-      vec_generic(this.geodesics.vector$float$, HEAPF32(), vals);
+      vec_generic(this.geodesics.vector$float$, HEAPF32, vals);
 
     const vec_uint32 = (vals: number[] | Uint32Array | Uint16Array) =>
-      vec_generic(this.geodesics.vector$uint32_t$, HEAPU32(), vals);
+      vec_generic(this.geodesics.vector$uint32_t$, HEAPU32, vals);
 
     const from_vec_f32 = (vec: any): Float32Array => {
       const length = vec.size();

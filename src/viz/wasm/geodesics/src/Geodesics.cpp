@@ -58,8 +58,8 @@ public:
 };
 
 // This function normalizes the angle to lie in [-π, π)
-double
-normalizeAngle(double angle) {
+float
+normalizeAngle(float angle) {
   while (angle < -PI)
     angle += 2 * PI;
   while (angle >= PI)
@@ -68,16 +68,16 @@ normalizeAngle(double angle) {
 }
 
 // Compute the difference between two angles, taking the shortest path
-double
-angleDifference(double angle1, double angle2) {
-  double difference = normalizeAngle(angle1 - angle2);
+float
+angleDifference(float angle1, float angle2) {
+  float difference = normalizeAngle(angle1 - angle2);
   return difference;
 }
 
-double
-computeDesiredTangentSpaceAngle(double incomingTangentSpaceAngle, double incoming2DAngle, double next2DAngle) {
-  double angleDiff2D = angleDifference(next2DAngle, incoming2DAngle);
-  double desiredAngleTangent = incomingTangentSpaceAngle + angleDiff2D;
+float
+computeDesiredTangentSpaceAngle(float incomingTangentSpaceAngle, float incoming2DAngle, float next2DAngle) {
+  float angleDiff2D = angleDifference(next2DAngle, incoming2DAngle);
+  float desiredAngleTangent = incomingTangentSpaceAngle + angleDiff2D;
   return normalizeAngle(desiredAngleTangent);
 }
 
@@ -91,13 +91,13 @@ computeAngleAndDistance(
   float y,
   float startX,
   float startY,
-  double incomingTangentSpaceAngle,
-  double incoming2DAngle
+  float incomingTangentSpaceAngle,
+  float incoming2DAngle
 ) {
   float dx = x - startX;
   float dy = y - startY;
-  double angle2D = atan2(dy, dx);
-  float distance = sqrt(dx * dx + dy * dy);
+  float angle2D = atan2f(dy, dx);
+  float distance = sqrtf(dx * dx + dy * dy);
 
   // transform the angle from 2D space to the tangent space
   float angle = computeDesiredTangentSpaceAngle(incomingTangentSpaceAngle, incoming2DAngle, angle2D);
@@ -111,16 +111,16 @@ public:
   float cartX;
   float cartY;
   float cartZ;
-  double incomingTangentSpaceAngle;
-  double incoming2DAngle;
+  float incomingTangentSpaceAngle;
+  float incoming2DAngle;
 
   WalkCoordOutput(
     float cartX,
     float cartY,
     float cartZ,
     surface::SurfacePoint pathEndpoint,
-    double incomingTangentSpaceAngle,
-    double incoming2DAngle
+    float incomingTangentSpaceAngle,
+    float incoming2DAngle
   ) {
     this->cartX = cartX;
     this->cartY = cartY;
@@ -155,19 +155,19 @@ getSurfacePointCoords(surface::VertexPositionGeometry& targetGeometry, surface::
       i += 1;
     }
 
-    auto v0Pos = targetGeometry.inputVertexPositions[v0];
-    auto v1Pos = targetGeometry.inputVertexPositions[v1];
-    auto v2Pos = targetGeometry.inputVertexPositions[v2];
+    Vector3& v0Pos = targetGeometry.inputVertexPositions[v0];
+    Vector3& v1Pos = targetGeometry.inputVertexPositions[v1];
+    Vector3& v2Pos = targetGeometry.inputVertexPositions[v2];
 
     // cartesian coordinates of the point in the triangle
-    float cartX = coords.x * v0Pos[0] + coords.y * v1Pos[0] + coords.z * v2Pos[0];
-    float cartY = coords.x * v0Pos[1] + coords.y * v1Pos[1] + coords.z * v2Pos[1];
-    float cartZ = coords.x * v0Pos[2] + coords.y * v1Pos[2] + coords.z * v2Pos[2];
+    float cartX = coords.x * v0Pos.x + coords.y * v1Pos.x + coords.z * v2Pos.x;
+    float cartY = coords.x * v0Pos.y + coords.y * v1Pos.y + coords.z * v2Pos.y;
+    float cartZ = coords.x * v0Pos.z + coords.y * v1Pos.z + coords.z * v2Pos.z;
 
     return std::make_tuple(cartX, cartY, cartZ);
   } else if (surfacePoint.type == surface::SurfacePointType::Vertex) {
-    auto vertex = surfacePoint.vertex;
-    auto coords = targetGeometry.inputVertexPositions[vertex];
+    surface::Vertex& vertex = surfacePoint.vertex;
+    Vector3& coords = targetGeometry.inputVertexPositions[vertex];
     return std::make_tuple(coords.x, coords.y, coords.z);
   } else if (surfacePoint.type == surface::SurfacePointType::Edge) {
     // throw std::invalid_argument("path endpoint is an edge at index " + std::to_string(surfacePoint.edge.getIndex()));
@@ -197,8 +197,8 @@ walkCoord(
   surface::SurfacePoint startSurfacePoint,
   float startX,
   float startY,
-  double incomingTangentSpaceAngle,
-  double incoming2DAngle,
+  float incomingTangentSpaceAngle,
+  float incoming2DAngle,
   surface::TraceOptions& traceOptions
 ) {
   float angle, distance;
@@ -210,7 +210,8 @@ walkCoord(
     return WalkCoordOutput(cartX, cartY, cartZ, startSurfacePoint, incomingTangentSpaceAngle, incoming2DAngle);
   }
 
-  Vector2 traceVec = distance * Vector2::fromAngle(angle);
+  // Vector2 traceVec = distance * Vector2::fromAngle(angle);
+  Vector2 traceVec = Vector2{ distance * cosf(angle), distance * sinf(angle) };
   auto traceRes = traceGeodesic(targetGeometry, startSurfacePoint, traceVec);
 
   surface::SurfacePoint pathEndpoint = traceRes.endPoint;
@@ -222,9 +223,8 @@ walkCoord(
   // }
 
   Vector2 endDir = traceRes.endingDir;
-  double newIncomingTangentSpaceAngle = atan2(endDir.y, endDir.x);
-  double angle2D = atan2(y - startY, x - startX);
-  return WalkCoordOutput(cartX, cartY, cartZ, pathEndpoint, newIncomingTangentSpaceAngle, angle2D);
+  float newIncomingTangentSpaceAngle = atan2f((float)endDir.y, (float)endDir.x);
+  return WalkCoordOutput(cartX, cartY, cartZ, pathEndpoint, newIncomingTangentSpaceAngle, angle);
 }
 
 using Graph = std::vector<std::vector<uint32_t>>;
@@ -265,16 +265,16 @@ public:
   surface::SurfacePoint surfacePoint;
   float x;
   float y;
-  double incomingTangentSpaceAngle;
-  double incoming2DAngle;
+  float incomingTangentSpaceAngle;
+  float incoming2DAngle;
 
   BFSQueueEntry(
     uint32_t vertexIdx,
     surface::SurfacePoint surfacePoint,
     float x,
     float y,
-    double incomingTangentSpaceAngle,
-    double incoming2DAngle
+    float incomingTangentSpaceAngle,
+    float incoming2DAngle
   ) {
     this->vertexIdx = vertexIdx;
     this->surfacePoint = surfacePoint;
@@ -286,6 +286,86 @@ public:
 
   // default constructor
   BFSQueueEntry() { this->vertexIdx = INVALID_VERTEX_IX; }
+};
+
+#include <cmath>
+#include <limits>
+#include <unordered_map>
+#include <vector>
+
+class GridPoint {
+public:
+  float x, y;
+  uint32_t data;
+
+  GridPoint(float x, float y, uint32_t data)
+    : x(x)
+    , y(y)
+    , data(data) {}
+
+  float distance(const GridPoint& other) const {
+    float dx = x - other.x;
+    float dy = y - other.y;
+    return std::sqrt(dx * dx + dy * dy);
+  }
+};
+
+class Grid {
+private:
+  std::unordered_map<int, std::unordered_map<int, std::vector<GridPoint>>> grid;
+  float bucketSize;
+
+  int getBucketIndex(float coordinate) const { return static_cast<int>(std::floor(coordinate / bucketSize)); }
+
+public:
+  Grid(float bucketSize)
+    : bucketSize(bucketSize) {}
+
+  void addPoint(float x, float y, uint32_t data) {
+    int bx = getBucketIndex(x);
+    int by = getBucketIndex(y);
+    grid[bx][by].emplace_back(x, y, data);
+  }
+
+  uint32_t findClosestPoint(float x, float y) {
+    int bx = getBucketIndex(x);
+    int by = getBucketIndex(y);
+
+    float minDistance = std::numeric_limits<float>::max();
+    uint32_t closestData;
+    bool pointFound = false;
+
+    for (int radius = 1; radius <= 16 && !pointFound; ++radius) {
+      int startX = bx - radius;
+      int endX = bx + radius;
+      int startY = by - radius;
+      int endY = by + radius;
+
+      for (int i = startX; i <= endX; ++i) {
+        for (int j = startY; j <= endY; ++j) {
+          if (i < startX + radius && i > endX - radius && j < startY + radius && j > endY - radius) {
+            // Skip the inner buckets which have already been checked
+            continue;
+          }
+
+          for (const GridPoint& point : grid[i][j]) {
+            float dist = point.distance(GridPoint(x, y, 0));
+            if (dist < minDistance) {
+              minDistance = dist;
+              closestData = point.data;
+              pointFound = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (!pointFound) {
+      throw std::runtime_error("No point found within the search radius");
+    }
+
+    return closestData;
+  }
 };
 
 ComputeGeodesicsOutput
@@ -302,7 +382,7 @@ computeGeodesics(
   std::tie(targetMesh, targetGeometry) = loadMesh(targetMeshIndices, targetMeshPositions);
 
   auto startVertex = targetMesh->vertex(0);
-  auto startSurfacePoint = geometrycentral::surface::SurfacePoint(startVertex);
+  auto origSurfacePoint = geometrycentral::surface::SurfacePoint(startVertex);
 
   surface::TraceOptions traceOptions;
   traceOptions.errorOnProblem = true;
@@ -314,13 +394,15 @@ computeGeodesics(
 
   Graph graph = buildGraph(indicesToWalk);
 
+  Grid processedCoordsGrid(5.);
+
   // Start BFS from the first vertex
   std::queue<BFSQueueEntry> bfsQueue;
   std::vector<BFSQueueEntry> visited;
   visited.resize(coordCount);
   float startX = coordsToWalk[0];
   float startY = coordsToWalk[1];
-  bfsQueue.push({ 0, startSurfacePoint, startX, startY, 0., 0. });
+  bfsQueue.push({ 0, origSurfacePoint, startX, startY, 0., 0. });
 
   while (true) {
     while (!bfsQueue.empty()) {
@@ -338,8 +420,8 @@ computeGeodesics(
       float startY = entry.y;
       float x = coordsToWalk[curVertexIdx * 2 + 0];
       float y = coordsToWalk[curVertexIdx * 2 + 1];
-      double incomingTangentSpaceAngle = entry.incomingTangentSpaceAngle;
-      double incoming2DAngle = entry.incoming2DAngle;
+      float incomingTangentSpaceAngle = entry.incomingTangentSpaceAngle;
+      float incoming2DAngle = entry.incoming2DAngle;
 
       WalkCoordOutput walkOutput = walkCoord(
         x, y, *targetGeometry, startSurfacePoint, startX, startY, incomingTangentSpaceAngle, incoming2DAngle,
@@ -351,6 +433,7 @@ computeGeodesics(
       auto endpoint = walkOutput.pathEndpoint;
       visited[curVertexIdx] =
         BFSQueueEntry(curVertexIdx, endpoint, x, y, walkOutput.incomingTangentSpaceAngle, walkOutput.incoming2DAngle);
+      processedCoordsGrid.addPoint(x, y, curVertexIdx);
 
       for (auto neighbor : graph[curVertexIdx]) {
         if (visited[neighbor].vertexIdx != INVALID_VERTEX_IX) {
@@ -378,31 +461,14 @@ computeGeodesics(
     auto unvisitedX = coordsToWalk[unvisitedVertexIx * 2 + 0];
     auto unvisitedY = coordsToWalk[unvisitedVertexIx * 2 + 1];
 
-    // find closest visited vertex
-    uint32_t closestVertexIx = INVALID_VERTEX_IX;
-    float closestDistance = INFINITY;
-    for (auto& entry : visited) {
-      if (entry.vertexIdx == INVALID_VERTEX_IX) {
-        continue;
-      }
-
-      float distance =
-        sqrt((entry.x - unvisitedX) * (entry.x - unvisitedX) + (entry.y - unvisitedY) * (entry.y - unvisitedY));
-      if (distance < closestDistance) {
-        closestVertexIx = entry.vertexIdx;
-        closestDistance = distance;
-      }
-      if (distance == 0.) {
-        break;
-      }
-    }
+    uint32_t closestVertexIx = processedCoordsGrid.findClosestPoint(unvisitedX, unvisitedY);
 
     if (closestVertexIx == INVALID_VERTEX_IX) {
       throw std::invalid_argument("no closest vertex found");
     }
 
     // walk from the closest visited vertex to the unvisited vertex
-    BFSQueueEntry& closestEntry = visited.at(closestVertexIx);
+    BFSQueueEntry& closestEntry = visited[closestVertexIx];
     auto newEntry = BFSQueueEntry(
       unvisitedVertexIx, closestEntry.surfacePoint, closestEntry.x, closestEntry.y,
       closestEntry.incomingTangentSpaceAngle, closestEntry.incoming2DAngle
