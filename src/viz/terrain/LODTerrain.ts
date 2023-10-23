@@ -20,7 +20,7 @@ interface TerrainParams {
   sampleHeight: TerrainSampler;
   tileResolution: number;
   maxPixelsPerPolygon: number;
-  material: THREE.Material;
+  material: THREE.Material | Promise<THREE.Material>;
   debugLOD?: boolean;
 }
 
@@ -274,17 +274,30 @@ class Tile extends THREE.Object3D {
     geometry.computeVertexNormals();
 
     // We create a simple mesh with the generated geometry and some basic material.
-    const material = this.parentTerrain.params.debugLOD
-      ? new THREE.MeshBasicMaterial({
+    const material = (() => {
+      if (this.parentTerrain.params.debugLOD) {
+        return new THREE.MeshBasicMaterial({
           color: (() => {
             // color based on depth to debug
             const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff];
             return colors[this.depth % colors.length];
           })(),
           wireframe: true,
-        })
-      : this.parentTerrain.params.material;
+        });
+      }
+
+      if (this.parentTerrain.params.material instanceof Promise) {
+        return new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+      }
+
+      return this.parentTerrain.params.material;
+    })();
     const mesh = new THREE.Mesh(geometry, material);
+    if (this.parentTerrain.params.material instanceof Promise) {
+      this.parentTerrain.params.material.then(material => {
+        mesh.material = material;
+      });
+    }
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.position.set(originX, originY, originZ);

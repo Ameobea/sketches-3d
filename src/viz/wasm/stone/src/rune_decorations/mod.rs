@@ -414,7 +414,11 @@ pub fn extrude_along_normals(
 
   // Extrude vertices
   for (point, normal) in buffers.vertices.iter().zip(&normals) {
-    let displacement = *normal * height;
+    let mut displacement = *normal * height;
+    // slightly randomize displacement to try to help with z-fighting and other
+    // issues
+    displacement += *normal * (common::rng().gen_range(-0.1..0.1) * height);
+
     vertices_3d.push(Point3D::new(
       point.x + displacement.x,
       point.y + displacement.y,

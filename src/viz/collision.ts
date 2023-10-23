@@ -4,6 +4,7 @@ import type { SfxManager } from './audio/SfxManager.js';
 import type { FpPlayerStateGetters } from './index.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
+import { assertUnreachable } from './util.js';
 
 let ammojs: Promise<any> | null = null;
 
@@ -254,6 +255,42 @@ export const initBulletPhysics = ({
     Ammo.destroy(rbInfo);
     // Ammo.destroy(motionState);
     Ammo.destroy(transform);
+    return body;
+  };
+
+  const buildTrimeshShape = (
+    indices: Uint16Array | undefined,
+    vertices: Float32Array,
+    scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
+  ) => {
+    // TODO: update IDL and use native indexed triangle mesh
+    const trimesh = new Ammo.btTriangleMesh();
+    trimesh.preallocateIndices((indices ?? vertices).length);
+    trimesh.preallocateVertices(vertices.length);
+
+    const v0 = new Ammo.btVector3();
+    const v1 = new Ammo.btVector3();
+    const v2 = new Ammo.btVector3();
+
+    for (let i = 0; i < (indices ?? vertices).length; i += 3) {
+      const i0 = indices ? indices[i] * 3 : i * 3;
+      const i1 = indices ? indices[i + 1] * 3 : i * 3 + 3;
+      const i2 = indices ? indices[i + 2] * 3 : i * 3 + 6;
+      v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
+      v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
+      v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);
+
+      // TODO: compute triangle area and log about ones that are too big or too small
+      // Area of triangles should be <10 units, as suggested by user guide
+      // Should be greater than 0.05 or something like that too probably
+      trimesh.addTriangle(v0, v1, v2);
+    }
+    Ammo.destroy(v0);
+    Ammo.destroy(v1);
+    Ammo.destroy(v2);
+
+    const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
+    return shape;
   };
 
   const addTriMesh = (mesh: THREE.Mesh) => {
@@ -273,37 +310,6 @@ export const initBulletPhysics = ({
     }
     const scale = mesh.scale;
 
-    const buildTrimeshShape = () => {
-      // TODO: update IDL and use native indexed triangle mesh
-      const trimesh = new Ammo.btTriangleMesh();
-      trimesh.preallocateIndices((indices ?? vertices).length);
-      trimesh.preallocateVertices(vertices.length);
-
-      const v0 = new Ammo.btVector3();
-      const v1 = new Ammo.btVector3();
-      const v2 = new Ammo.btVector3();
-
-      for (let i = 0; i < (indices ?? vertices).length; i += 3) {
-        const i0 = indices ? indices[i] * 3 : i * 3;
-        const i1 = indices ? indices[i + 1] * 3 : i * 3 + 3;
-        const i2 = indices ? indices[i + 2] * 3 : i * 3 + 6;
-        v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
-        v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
-        v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);
-
-        // TODO: compute triangle area and log about ones that are too big or too small
-        // Area of triangles should be <10 units, as suggested by user guide
-        // Should be greater than 0.05 or something like that too probably
-        trimesh.addTriangle(v0, v1, v2);
-      }
-      Ammo.destroy(v0);
-      Ammo.destroy(v1);
-      Ammo.destroy(v2);
-
-      const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
-      return shape;
-    };
-
     const buildConvexHullShape = () => {
       const hull = new Ammo.btConvexHullShape();
       for (let i = 0; i < vertices.length; i += 3) {
@@ -312,11 +318,19 @@ export const initBulletPhysics = ({
       return hull;
     };
 
-    const shape = mesh.userData.convexhull ? buildConvexHullShape() : buildTrimeshShape();
+    const shape = mesh.userData.convexhull
+      ? buildConvexHullShape()
+      : buildTrimeshShape(indices, vertices, scale);
     const objRef: CollisionObjectRef = {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
     };
-    addStaticShape(shape, mesh.position, mesh.quaternion, objRef);
+    const rigidBody = addStaticShape(shape, mesh.position, mesh.quaternion, objRef);
+    mesh.userData.rigidBody = rigidBody;
+  };
+
+  const removeRigidBody = (rigidBody: any) => {
+    collisionWorld.removeRigidBody(rigidBody);
+    Ammo.destroy(rigidBody);
   };
 
   const addHeightmapTerrain = (
@@ -377,7 +391,9 @@ export const initBulletPhysics = ({
   };
 
   const addPlayerRegionContactCb = (
-    region: { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion },
+    region:
+      | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
+      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number },
     onEnter?: () => void,
     onLeave?: () => void
   ) => {
@@ -386,21 +402,44 @@ export const initBulletPhysics = ({
     }
 
     const collisionObj = (() => {
-      if (region.type !== 'box') {
-        throw new Error('Unimplemented');
-      }
+      const { shape, transform } = (() => {
+        switch (region.type) {
+          case 'box': {
+            const shape = new Ammo.btBoxShape(
+              btvec3(region.halfExtents.x, region.halfExtents.y, region.halfExtents.z)
+            );
+            const transform = new Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(btvec3(region.pos.x, region.pos.y, region.pos.z));
+            if (region.quat) {
+              const rot = new Ammo.btQuaternion(region.quat.x, region.quat.y, region.quat.z, region.quat.w);
+              transform.setRotation(rot);
+              Ammo.destroy(rot);
+            }
+            return { shape, transform };
+          }
+          case 'mesh': {
+            const mesh = region.mesh;
+            const geometry = mesh.geometry as THREE.BufferGeometry;
+            let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
+            const indices = geometry.index?.array as Uint16Array | undefined;
+            if (vertices instanceof Uint16Array) {
+              throw new Error('GLTF Quantization not yet supported');
+            }
+            const scale = mesh.scale;
+            scale.multiplyScalar(1 + (region.margin ?? 0));
 
-      const shape = new Ammo.btBoxShape(
-        btvec3(region.halfExtents.x, region.halfExtents.y, region.halfExtents.z)
-      );
-      const transform = new Ammo.btTransform();
-      transform.setIdentity();
-      transform.setOrigin(btvec3(region.pos.x, region.pos.y, region.pos.z));
-      if (region.quat) {
-        const rot = new Ammo.btQuaternion(region.quat.x, region.quat.y, region.quat.z, region.quat.w);
-        transform.setRotation(rot);
-        Ammo.destroy(rot);
-      }
+            const shape = buildTrimeshShape(indices, vertices, scale);
+            const transform = new Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+            transform.setRotation(btvec3(mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z));
+            return { shape, transform };
+          }
+          default:
+            return assertUnreachable(region);
+        }
+      })();
 
       const obj = new Ammo.btPairCachingGhostObject();
       obj.setWorldTransform(transform);
@@ -503,6 +542,10 @@ export const initBulletPhysics = ({
     getIsBoosting: () => playerController.isJumping() && lastBoostTimeSeconds > lastJumpTimeSeconds,
   };
 
+  const setMoveSpeed = (newMoveSpeed: number) => {
+    playerMoveSpeed = newMoveSpeed;
+  };
+
   return {
     updateCollisionWorld,
     addTriMesh,
@@ -517,5 +560,7 @@ export const initBulletPhysics = ({
     clearCollisionWorld,
     addPlayerRegionContactCb,
     playerStateGetters,
+    removeRigidBody,
+    setMoveSpeed,
   };
 };

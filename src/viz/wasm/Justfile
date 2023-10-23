@@ -2,6 +2,7 @@ set dotenv-load := true
 
 copy-files:
   cp -r ./build/* ../wasmComp
+  cp ./build/stone_bg.wasm ../../../static
   cp -r ./build2/* ../../../static
   cp -r ./geodesics/build/bin/* ../../../src/geodesics/
   cp -r ./geodesics/build/bin/* ../../../static/

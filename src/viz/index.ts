@@ -47,6 +47,7 @@ export interface FirstPersonCtx {
     }[],
     quat?: THREE.Quaternion
   ) => void;
+  removeRigidBody: (rigidBody: any) => void;
   addHeightmapTerrain: (
     heightmapData: Float32Array,
     minHeight: number,
@@ -61,11 +62,14 @@ export interface FirstPersonCtx {
   setGravity: (gravity: number) => void;
   clearCollisionWorld: () => void;
   addPlayerRegionContactCb: (
-    region: { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion },
+    region:
+      | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
+      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number },
     onEnter?: () => void,
     onLeave?: () => void
   ) => void;
   playerStateGetters: FpPlayerStateGetters;
+  setMoveSpeed: (moveSpeed: number) => void;
 }
 
 const setupFirstPerson = async (
@@ -85,7 +89,7 @@ const setupFirstPerson = async (
 ): Promise<FirstPersonCtx> => {
   let GRAVITY = gravity ?? 40;
   let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
-  let ON_FLOOR_ACCELERATION_PER_SECOND = playerConf?.movementAccelPerSecond?.onGround ?? 40;
+  let onFloorAccelerationPerSecond = playerConf?.movementAccelPerSecond?.onGround ?? 40;
 
   const keyStates: Record<string, boolean> = {};
 
@@ -107,6 +111,8 @@ const setupFirstPerson = async (
     clearCollisionWorld,
     addPlayerRegionContactCb,
     playerStateGetters,
+    removeRigidBody,
+    setMoveSpeed,
   } = await initBulletPhysics({
     camera,
     keyStates,
@@ -116,7 +122,7 @@ const setupFirstPerson = async (
     jumpSpeed: JUMP_VELOCITY,
     playerColliderRadius,
     playerColliderHeight,
-    playerMoveSpeed: ON_FLOOR_ACCELERATION_PER_SECOND,
+    playerMoveSpeed: onFloorAccelerationPerSecond,
     enableDash,
     sfxManager,
   });
@@ -217,6 +223,8 @@ const setupFirstPerson = async (
     clearCollisionWorld,
     addPlayerRegionContactCb,
     playerStateGetters,
+    removeRigidBody,
+    setMoveSpeed,
   };
 };
 
@@ -511,7 +519,11 @@ export const applyAudioSettings = (audio: Conf.AudioSettings) => {
   // TODO: Music volume
 };
 
-export type VizState = ReturnType<typeof buildViz>;
+type VizStateBase = ReturnType<typeof buildViz>;
+
+export interface VizState extends VizStateBase {
+  fpCtx?: FirstPersonCtx;
+}
 
 export const initViz = (
   container: HTMLElement,
@@ -521,7 +533,7 @@ export const initViz = (
     vizCb,
   }: { paused: Writable<boolean>; sceneName?: string; vizCb: (viz: VizState) => void }
 ) => {
-  const viz = buildViz(paused);
+  const viz: VizState = buildViz(paused);
   vizCb(viz);
 
   container.appendChild(viz.renderer.domElement);
@@ -604,6 +616,7 @@ export const initViz = (
         sceneConf.player?.oobYThreshold,
         sfxManager
       );
+      viz.fpCtx = fpCtx;
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
         viz.renderer.domElement,

@@ -8,7 +8,8 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
 import type { SceneConfig } from '../..';
 import { getRuneGenerator } from '../../stone/runeGen/runeGen';
-import type { RuneGenCtx } from '../../stone/runeGen/runeGenWorker.worker';
+
+// import type { RuneGenCtx } from '../../stone/runeGen/RuneGenCtx';
 
 // async function renderAABBDebug(runeGenWorker: Comlink.Remote<RuneGenCtx>, scale: number, viz: VizState) {
 //   const debugAABB = await runeGenWorker.debugAABB();
@@ -48,29 +49,56 @@ import type { RuneGenCtx } from '../../stone/runeGen/runeGenWorker.worker';
 const initAsync = async (viz: VizState, loadedWorld: THREE.Group) => {
   const runeGenWorker = await getRuneGenerator();
 
-  const targetMesh = loadedWorld.getObjectByName('Torus') as THREE.Mesh;
-  const targetMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
-  targetMesh.material = targetMat;
-  targetMesh.visible = false;
+  const loader = new THREE.ImageBitmapLoader();
+  const {
+    goldTextureAlbedo,
+    goldTextureNormal,
+    goldTextureRoughness,
+    cubesTexture,
+    cubesTextureNormal,
+    cubesTextureRoughness,
+  } = await loadNamedTextures(loader, {
+    goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
+    goldTextureNormal: 'https://i.ameo.link/be2.jpg',
+    goldTextureRoughness: 'https://i.ameo.link/bdz.jpg',
+    cubesTextureRoughness: 'https://i.ameo.link/bew.jpg',
+    cubesTextureNormal: 'https://i.ameo.link/bex.jpg',
+    cubesTexture: 'https://i.ameo.link/bey.jpg',
+  });
 
-  const material = buildCustomShader(
+  const targetMesh = loadedWorld.getObjectByName('Torus') as THREE.Mesh;
+  const targetMat = buildCustomShader(
     {
-      // map: gemTexture,
-      // roughnessMap: gemRoughness,
-      // normalMap: gemNormal,
-      side: THREE.FrontSide,
-      color: new THREE.Color(0xffffff),
-      uvTransform: new THREE.Matrix3().scale(0.002, 0.002),
+      map: cubesTexture,
+      roughnessMap: cubesTextureRoughness,
+      normalMap: cubesTextureNormal,
+      color: new THREE.Color(0xaaaaaa),
+      uvTransform: new THREE.Matrix3().scale(0.01, 0.01),
       mapDisableDistance: null,
-      roughness: 0.3,
+      roughness: 0.9,
     },
     {},
     {
-      // useTriplanarMapping: true,
+      useTriplanarMapping: true,
     }
   );
-  // const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-  // material.flatShading = true;
+  targetMesh.material = targetMat;
+
+  const material = buildCustomShader(
+    {
+      map: goldTextureAlbedo,
+      roughnessMap: goldTextureRoughness,
+      normalMap: goldTextureNormal,
+      color: new THREE.Color(0xaaaaaa),
+      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      mapDisableDistance: null,
+      roughness: 0.2,
+    },
+    {},
+    {
+      useTriplanarMapping: true,
+    }
+  );
 
   const mesh = await runeGenWorker.generateMesh(targetMesh, material);
   viz.scene.add(mesh);
@@ -96,13 +124,13 @@ export const processLoadedScene = async (
   viz.camera.near = 10;
   initAsync(viz, loadedWorld);
 
-  // configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
+  configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
 
   return {
     viewMode: {
       type: 'orbit',
-      pos: new THREE.Vector3(181.22753849171932, 138.02448586567655, 27.040261164079567),
-      target: new THREE.Vector3(150.4576135164917, -2.576488624641985, -69.31625231265262),
+      pos: new THREE.Vector3(-225.00004023163095, -19.019048829180356, -4.530343792719375),
+      target: new THREE.Vector3(-52.442950421087716, -11.402210347047328, 8.355094797146046),
     },
     locations: {
       spawn: {

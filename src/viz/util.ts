@@ -126,3 +126,7 @@ export const mergeDeep = <T extends Record<string, any>>(target: T, source: any)
 };
 
 export const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+
+export const assertUnreachable = (x: never): never => {
+  throw new Error('Unreachable code');
+};

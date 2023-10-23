@@ -204,6 +204,13 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     extension: 'glb',
     sceneLoader: () => import('./experiments/runeGen/runeGen').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
-    metadata: { title: 'runeGen test' },
+    metadata: { title: 'Geodesic Mesh Mapping Demo' },
+  },
+  construction: {
+    gltfName: 'construction',
+    extension: 'glb',
+    sceneLoader: () => import('./construction/construction').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'Under Construction' },
   },
 };

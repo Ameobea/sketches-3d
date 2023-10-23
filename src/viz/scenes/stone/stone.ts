@@ -1,8 +1,10 @@
+import { BlendFunction, EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+import { buildCustomBasicShader } from 'src/viz/shaders/customBasicShader';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { LODTerrain } from 'src/viz/terrain/LODTerrain';
@@ -10,6 +12,79 @@ import type { TerrainGenParams } from 'src/viz/terrain/TerrainGenWorker/TerrainG
 import { loadNamedTextures } from 'src/viz/textureLoading';
 import { getTerrainGenWorker } from 'src/viz/workerPool';
 import type { SceneConfig } from '..';
+import { getRuneGenerator } from './runeGen/runeGen';
+import BgMonolithColorShader from './shaders/monolithLightBeam/color.frag?raw';
+
+const initTerrain = async (
+  viz: VizState,
+  texturesPromise: Promise<{
+    goldFleckedObsidianColor: THREE.Texture;
+    goldFleckedObsidianNormal: THREE.Texture;
+    goldFleckedObsidianRoughness: THREE.Texture;
+  }>
+) => {
+  const terrainGenWorker = await getTerrainGenWorker();
+  const ctxPtr = await terrainGenWorker.createTerrainGenCtx();
+
+  const params: TerrainGenParams = {
+    variant: {
+      OpenSimplex: {
+        coordinate_scales: [0.002, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32],
+        weights: [15, 7, 2, 2, 0.5, 0.25, 0.125, 0.0625],
+        seed: 122152121282581211,
+        magnitude: 0.9,
+        offset_x: -49,
+        offset_z: -15,
+      },
+    },
+    magnitude: 4,
+  };
+  await terrainGenWorker.setTerrainGenParams(ctxPtr, params);
+
+  const terrainMaterialPromise = texturesPromise.then(t =>
+    buildCustomShader(
+      {
+        map: t.goldFleckedObsidianColor,
+        normalMap: t.goldFleckedObsidianNormal,
+        roughnessMap: t.goldFleckedObsidianRoughness,
+        metalness: 0.3,
+        roughness: 0.97,
+        uvTransform: new THREE.Matrix3().scale(0.35, 0.35),
+        iridescence: 0.2,
+        mapDisableDistance: null,
+        color: new THREE.Color(0xaaaaaa),
+      },
+      {},
+      {
+        useGeneratedUVs: true,
+        randomizeUVOffset: false,
+        tileBreaking: { type: 'neyret', patchScale: 1.3 },
+      }
+    )
+  );
+
+  const viewportSize = viz.renderer.getSize(new THREE.Vector2());
+  const terrain = new LODTerrain(
+    viz.camera,
+    {
+      boundingBox: new THREE.Box2(new THREE.Vector2(-2000, -2000), new THREE.Vector2(2000, 2000)),
+      maxPolygonWidth: 2000,
+      minPolygonWidth: 1,
+      sampleHeight: {
+        type: 'batch',
+        fn: (resolution, worldSpaceBounds) =>
+          terrainGenWorker.genHeightmap(ctxPtr, resolution, worldSpaceBounds),
+      },
+      tileResolution: 64,
+      maxPixelsPerPolygon: 10,
+      material: terrainMaterialPromise,
+    },
+    viewportSize
+  );
+  viz.scene.add(terrain);
+  viz.registerBeforeRenderCb(() => terrain.update());
+  viz.collisionWorldLoadedCbs.push(fpCtx => terrain.initializeCollision(fpCtx));
+};
 
 export const processLoadedScene = async (
   viz: VizState,
@@ -34,7 +109,7 @@ export const processLoadedScene = async (
   // sun.shadow.normalBias = 0.2;
   sun.shadow.radius = 4;
   sun.shadow.blurSamples = 64;
-  sun.position.set(-330, 90, 330);
+  sun.position.set(-330, 110, 330);
   sun.shadow.camera.position.copy(sun.position);
   sun.target.position.set(100, 0, 0);
   sun.shadow.camera.lookAt(sun.target.position);
@@ -56,10 +131,59 @@ export const processLoadedScene = async (
   // viz.scene.add(helper2);
 
   const loader = new THREE.ImageBitmapLoader();
+  const texturesPromise = loadNamedTextures(loader, {
+    cloudsBackground: 'https://i.ameo.link/ame.jpg',
+    gemTexture: 'https://i.ameo.link/bfy.jpg',
+    gemRoughness: 'https://i.ameo.link/bfz.jpg',
+    gemNormal: 'https://i.ameo.link/bg0.jpg',
+    glossyBlackBricksColor: 'https://i.ameo.link/bip.jpg',
+    glossyBlackBricksNormal: 'https://i.ameo.link/biq.jpg',
+    glossyBlackBricksRoughness: 'https://i.ameo.link/bir.jpg',
+    goldFleckedObsidianColor: 'https://i.ameo.link/biv.jpg',
+    goldFleckedObsidianNormal: 'https://i.ameo.link/biw.jpg',
+    goldFleckedObsidianRoughness: 'https://i.ameo.link/bix.jpg',
+    goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
+    goldTextureNormal: 'https://i.ameo.link/be2.jpg',
+    goldTextureRoughness: 'https://i.ameo.link/bdz.jpg',
+    totemAlbedo: 'https://i.ameo.link/bl9.jpg',
+    totemNormal: 'https://i.ameo.link/bla.jpg',
+    totemRoughness: 'https://i.ameo.link/blb.jpg',
+  });
+
+  initTerrain(
+    viz,
+    texturesPromise.then(
+      ({ goldFleckedObsidianColor, goldFleckedObsidianNormal, goldFleckedObsidianRoughness }) => ({
+        goldFleckedObsidianColor,
+        goldFleckedObsidianNormal,
+        goldFleckedObsidianRoughness,
+      })
+    )
+  );
+
+  const monolithBase = loadedWorld.getObjectByName('monolith_base') as THREE.Mesh;
+  const runeMatPromise = texturesPromise.then(t =>
+    buildCustomShader(
+      {
+        map: t.goldTextureAlbedo,
+        normalMap: t.goldTextureNormal,
+        roughnessMap: t.goldTextureRoughness,
+        metalness: 0.99,
+        roughness: 0.87,
+        uvTransform: new THREE.Matrix3().scale(0.35, 0.35),
+      },
+      {},
+      { useTriplanarMapping: true }
+    )
+  );
+  getRuneGenerator().then(async runeGen => {
+    const mesh = await runeGen.generateMesh(monolithBase, runeMatPromise);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    viz.scene.add(mesh);
+  });
+
   const {
-    // stoneBricksAlbedo,
-    // stoneBricksNormal,
-    // stoneBricksRoughness,
     cloudsBackground,
     gemTexture,
     gemRoughness,
@@ -70,22 +194,13 @@ export const processLoadedScene = async (
     goldFleckedObsidianColor,
     goldFleckedObsidianNormal,
     goldFleckedObsidianRoughness,
-  } = await loadNamedTextures(loader, {
-    // stoneBricksAlbedo: '/textures/stone_wall/color_map.jpg',
-    // stoneBricksNormal: '/textures/stone_wall/normal_map_opengl.jpg',
-    // stoneBricksRoughness: '/textures/stone_wall/roughness_map.jpg',
-    cloudsBackground: 'https://i.ameo.link/ame.jpg',
-    // cloudsBackground: '/textures/00005.jpg',
-    gemTexture: 'https://i.ameo.link/bfy.jpg',
-    gemRoughness: 'https://i.ameo.link/bfz.jpg',
-    gemNormal: 'https://i.ameo.link/bg0.jpg',
-    glossyBlackBricksColor: 'https://i.ameo.link/bip.jpg',
-    glossyBlackBricksNormal: 'https://i.ameo.link/biq.jpg',
-    glossyBlackBricksRoughness: 'https://i.ameo.link/bir.jpg',
-    goldFleckedObsidianColor: 'https://i.ameo.link/biv.jpg',
-    goldFleckedObsidianNormal: 'https://i.ameo.link/biw.jpg',
-    goldFleckedObsidianRoughness: 'https://i.ameo.link/bix.jpg',
-  });
+    goldTextureAlbedo,
+    goldTextureNormal,
+    goldTextureRoughness,
+    totemAlbedo,
+    totemNormal,
+    totemRoughness,
+  } = await texturesPromise;
 
   cloudsBackground.mapping = THREE.EquirectangularReflectionMapping;
   cloudsBackground.magFilter = THREE.LinearFilter;
@@ -124,7 +239,24 @@ export const processLoadedScene = async (
   const smoothStone = loadedWorld.getObjectByName('minecraft_block-smooth_stone') as THREE.Mesh;
   smoothStone.material = stoneBricksMaterial;
 
-  const stairsPointLight = new THREE.PointLight(0x6ef5f3, 1.5, 50, 0);
+  const monolithMaterial = buildCustomShader(
+    {
+      map: goldFleckedObsidianColor,
+      normalMap: goldFleckedObsidianNormal,
+      roughnessMap: goldFleckedObsidianRoughness,
+      metalness: 0.99,
+      roughness: 0.87,
+      uvTransform: new THREE.Matrix3().scale(10.35, 10.35),
+      iridescence: 0.2,
+      mapDisableDistance: null,
+      color: new THREE.Color(0xaaaaaa),
+      ambientLightScale: 30,
+    },
+    {},
+    { randomizeUVOffset: false }
+  );
+
+  const stairsPointLight = new THREE.PointLight(0x6ef5f3, 1.1, 50, 0);
   stairsPointLight.castShadow = true;
   stairsPointLight.shadow.mapSize.width = 512;
   stairsPointLight.shadow.mapSize.height = 512;
@@ -132,6 +264,22 @@ export const processLoadedScene = async (
   stairsPointLight.shadow.camera.far = 50;
   stairsPointLight.position.set(-296.092529296875, 44.4, 271.1970947265625);
   viz.scene.add(stairsPointLight);
+
+  const stairsBottomPointLight = new THREE.PointLight(0x30dba5, 1.0, 120, 0.5);
+  stairsBottomPointLight.castShadow = true;
+  stairsBottomPointLight.shadow.mapSize.width = 512;
+  stairsBottomPointLight.shadow.mapSize.height = 512;
+  stairsBottomPointLight.shadow.camera.near = 0.5;
+  stairsBottomPointLight.shadow.camera.far = 180;
+  stairsBottomPointLight.position.set(-239, 1.5, 259);
+  viz.scene.add(stairsBottomPointLight);
+
+  const stairsBottomOutsidePointLight = new THREE.PointLight(0x30dba5, 0.7, 40, 0.5);
+  stairsBottomOutsidePointLight.position.set(-238, 5, 235);
+  viz.scene.add(stairsBottomOutsidePointLight);
+
+  const stairsBottomPlatform = loadedWorld.getObjectByName('stairs_bottom_platform') as THREE.Mesh;
+  stairsBottomPlatform.material = monolithMaterial;
 
   const stairsLightFixture = loadedWorld.getObjectByName('stairs_light_fixture') as THREE.Mesh;
   stairsLightFixture.castShadow = false;
@@ -153,7 +301,32 @@ export const processLoadedScene = async (
     { useGeneratedUVs: true }
   );
 
-  const monolithMaterial = buildCustomShader(
+  const monolithDoor = loadedWorld.getObjectByName('monolith_door') as THREE.Mesh;
+  monolithDoor.material = monolithMaterial;
+
+  // monolith door lights
+  const doorLightOffMat = buildCustomShader({ color: new THREE.Color(0xee1111) });
+  const doorLightOnMat = buildCustomShader({ color: new THREE.Color(0x11ee11) });
+  const doorLights = ([1, 2, 3, 4] as const).map(i => {
+    const light = loadedWorld.getObjectByName(`monolith_door_light_${i}`) as THREE.Mesh;
+    light.material = doorLightOffMat;
+    return light;
+  });
+
+  // monolith light beams
+  const monolithLightBeamMat = buildCustomBasicShader(
+    { color: new THREE.Color(0x11ee11) },
+    { colorShader: BgMonolithColorShader }
+  );
+  monolithLightBeamMat.transparent = true;
+  const monolithLightBeams = [1, 2, 3, 4, 5].map(i => {
+    const beam = loadedWorld.getObjectByName(`monolith_light_beam_${i}`) as THREE.Mesh;
+    beam.material = monolithLightBeamMat;
+    beam.visible = false;
+    return beam;
+  });
+
+  const monolithShardMaterial = buildCustomShader(
     {
       map: goldFleckedObsidianColor,
       normalMap: goldFleckedObsidianNormal,
@@ -164,22 +337,43 @@ export const processLoadedScene = async (
       iridescence: 0.2,
       mapDisableDistance: null,
       color: new THREE.Color(0xaaaaaa),
-      ambientLightScale: 3,
+      ambientLightScale: 30,
+      ambientDistanceAmp: { ampFactor: 1.8, exponent: 2, falloffStartDistance: 10, falloffEndDistance: 150 },
     },
     {},
-    {
-      // useGeneratedUVs: true,
-      randomizeUVOffset: false,
-      // tileBreaking: { type: 'neyret', patchScale: 1.3 },
-      // useTriplanarMapping: true,
-    }
+    { randomizeUVOffset: false }
   );
 
-  const monolith = loadedWorld.getObjectByName('monolith') as THREE.Mesh;
-  monolith.material = monolithMaterial;
+  // totems
+  const totemLocations: [number, number, number][] = [
+    [-227, 2, 259.7],
+    [375.3, 66, 276.3],
+    [0.6, 36.9, -240],
+    [-114.4, 76, 110],
+  ];
+  const totemMaterial = buildCustomShader(
+    {
+      map: totemAlbedo,
+      normalMap: totemNormal,
+      roughnessMap: totemRoughness,
+      metalness: 0.9,
+      roughness: 1,
+      uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
+      ambientLightScale: 8,
+      ambientDistanceAmp: { ampFactor: -0.8, exponent: 1, falloffStartDistance: 50, falloffEndDistance: 150 },
+    },
+    {},
+    { useTriplanarMapping: true }
+  );
 
-  const monolithProngs = loadedWorld.getObjectByName('monolith_prongs') as THREE.Mesh;
-  monolithProngs.material = monolithMaterial;
+  const addTotemLight = (pos: [number, number, number]) => {
+    const light = new THREE.PointLight(0x6ef5f3, 1.5, 80, 2);
+    light.castShadow = false;
+    light.position.set(pos[0], pos[1], pos[2]);
+    viz.scene.add(light);
+  };
+  [1, 2, 3].forEach(i => addTotemLight(totemLocations[i]));
+  const totems: THREE.Mesh[] = [];
 
   loadedWorld.traverse(c => {
     if (
@@ -187,70 +381,89 @@ export const processLoadedScene = async (
       (c.name.startsWith('monolith_strut') ||
         c.name.startsWith('monolith_bridge') ||
         c.name.startsWith('monolith_base') ||
-        c.name.startsWith('monolith_shard'))
+        c.name.startsWith('monolith_prongs') ||
+        c.name === 'monolith' ||
+        c.name.startsWith('wall_filler'))
     ) {
       c.material = monolithMaterial;
+    } else if (c instanceof THREE.Mesh && c.name.startsWith('monolith_shard')) {
+      c.material = monolithShardMaterial;
+    } else if (c instanceof THREE.Mesh && c.name.startsWith('totem')) {
+      c.material = totemMaterial;
+      c.castShadow = false;
+      c.userData.nocollide = true;
+      c.userData.noLight = true;
+      totems.push(c);
+    } else if (c.name.startsWith('stairs_invisible')) {
+      c.visible = false;
     }
   });
 
-  viz.scene.fog = new THREE.FogExp2(0x000000, 0.0005);
+  const doorLight = new THREE.PointLight(0xee1111, 0, 22, 2.2);
+  doorLight.position.set(-9, 40, 16);
+  viz.scene.add(doorLight);
 
-  const terrainGenWorker = await getTerrainGenWorker();
-  const ctxPtr = await terrainGenWorker.createTerrainGenCtx();
+  const handleAllTotemsCollected = () => {
+    const door = loadedWorld.getObjectByName('monolith_door') as THREE.Mesh;
+    door.visible = false;
+    viz.fpCtx!.removeRigidBody(door.userData.rigidBody);
 
-  const params: TerrainGenParams = {
-    variant: {
-      OpenSimplex: {
-        coordinate_scales: [0.002, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32],
-        weights: [15, 7, 2, 2, 0.5, 0.25, 0.125, 0.0625],
-        seed: 3534,
-      },
-    },
-    magnitude: 4,
+    doorLight.intensity = 3;
+
+    monolithLightBeams[4].visible = true;
   };
-  await terrainGenWorker.setTerrainGenParams(ctxPtr, params);
 
-  const terrainMaterial = buildCustomShader(
-    {
-      map: goldFleckedObsidianColor,
-      normalMap: goldFleckedObsidianNormal,
-      roughnessMap: goldFleckedObsidianRoughness,
-      metalness: 0.3,
-      roughness: 0.97,
-      uvTransform: new THREE.Matrix3().scale(0.35, 0.35),
-      iridescence: 0.2,
-      mapDisableDistance: null,
-      color: new THREE.Color(0xaaaaaa),
-    },
-    {},
-    {
-      useGeneratedUVs: true,
-      randomizeUVOffset: false,
-      tileBreaking: { type: 'neyret', patchScale: 1.3 },
+  const baseMoveSpeed = 12.8;
+  const totemCollected = new Array(totems.length).fill(false);
+  const handleTotemCollision = (i: number) => {
+    if (totemCollected[i]) {
+      return;
     }
-  );
+    totemCollected[i] = true;
 
-  const viewportSize = viz.renderer.getSize(new THREE.Vector2());
-  const terrain = new LODTerrain(
-    viz.camera,
-    {
-      boundingBox: new THREE.Box2(new THREE.Vector2(-2000, -2000), new THREE.Vector2(2000, 2000)),
-      maxPolygonWidth: 2000,
-      minPolygonWidth: 1,
-      sampleHeight: {
-        type: 'batch',
-        fn: (resolution, worldSpaceBounds) =>
-          terrainGenWorker.genHeightmap(ctxPtr, resolution, worldSpaceBounds),
-      },
-      tileResolution: 64,
-      maxPixelsPerPolygon: 10,
-      material: terrainMaterial,
-    },
-    viewportSize
-  );
-  viz.scene.add(terrain);
-  viz.registerBeforeRenderCb(() => terrain.update());
-  viz.collisionWorldLoadedCbs.push(fpCtx => terrain.initializeCollision(fpCtx));
+    monolithLightBeams[i].visible = true;
+    doorLights[i].material = doorLightOnMat;
+
+    if (i === 2) {
+      viz.fpCtx!.setMoveSpeed(baseMoveSpeed * 1.3);
+      // animate FOV increase
+      const fovChangeDurationSeconds = 0.3;
+      const initialFOV = vizConf.graphics.fov;
+      const targetFOV = vizConf.graphics.fov + 10;
+
+      let now: number | undefined;
+      const cb = (curTimeSeconds: number) => {
+        if (now === undefined) {
+          now = curTimeSeconds;
+          return;
+        }
+
+        const t = (curTimeSeconds - now) / fovChangeDurationSeconds;
+        if (t >= 1) {
+          viz.camera.fov = targetFOV;
+          viz.unregisterBeforeRenderCb(cb);
+        } else {
+          viz.camera.fov = initialFOV + t * (targetFOV - initialFOV);
+        }
+
+        viz.camera.updateProjectionMatrix();
+      };
+      viz.registerBeforeRenderCb(cb);
+    }
+
+    if (totemCollected.every(x => x)) {
+      handleAllTotemsCollected();
+    }
+  };
+
+  viz.collisionWorldLoadedCbs.push(fpCtx => {
+    totems.forEach((totem, i) => {
+      fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: totem }, () => {
+        totem.visible = false;
+        handleTotemCollision(i);
+      });
+    });
+  });
 
   // render one frame to populate shadow map
   viz.renderer.shadowMap.needsUpdate = true;
@@ -262,42 +475,62 @@ export const processLoadedScene = async (
   viz.renderer.shadowMap.needsUpdate = false;
   sun.shadow.needsUpdate = false;
 
-  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
-    const volumetricPass = new VolumetricPass(
-      viz.scene,
-      viz.camera,
-      {
-        [GraphicsQuality.Low]: {
-          maxRayLength: 200,
-          minStepLength: 0.4,
-          baseRaymarchStepCount: 35,
-          noiseBias: 0.7,
-          heightFogFactor: 0.24,
-        },
-        [GraphicsQuality.Medium]: {
-          maxRayLength: 200,
-          minStepLength: 0.3,
-          baseRaymarchStepCount: 60,
-          heightFogFactor: 0.2,
-        },
-        [GraphicsQuality.High]: {
-          maxRayLength: 300,
-          minStepLength: 0.2,
-          baseRaymarchStepCount: 80,
-          heightFogFactor: 0.13,
-        },
-      }[quality]
-    );
-    composer.addPass(volumetricPass);
-    viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
-  });
+  configureDefaultPostprocessingPipeline(
+    viz,
+    vizConf.graphics.quality,
+    (composer, viz, quality) => {
+      const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+        fogMinY: -50,
+        fogMaxY: -4,
+        ...{
+          [GraphicsQuality.Low]: {
+            maxRayLength: 200,
+            minStepLength: 0.4,
+            baseRaymarchStepCount: 35,
+            noiseBias: 0.7,
+            heightFogFactor: 0.24,
+          },
+          [GraphicsQuality.Medium]: {
+            maxRayLength: 200,
+            minStepLength: 0.3,
+            baseRaymarchStepCount: 60,
+            heightFogFactor: 0.2,
+          },
+          [GraphicsQuality.High]: {
+            maxRayLength: 300,
+            minStepLength: 0.2,
+            baseRaymarchStepCount: 80,
+            heightFogFactor: 0.13,
+          },
+        }[quality],
+      });
+      composer.addPass(volumetricPass);
+      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
+
+      const selectiveBloomEffect = new SelectiveBloomEffect(viz.scene, viz.camera, {
+        intensity: 2,
+        // blendFunction: BlendFunction.LINEAR_DODGE,
+        luminanceThreshold: 0,
+        kernelSize: KernelSize.LARGE,
+        radius: 0.4,
+        luminanceSmoothing: 0,
+        mipmapBlur: true,
+      } as any);
+      selectiveBloomEffect.inverted = false;
+      selectiveBloomEffect.ignoreBackground = true;
+      selectiveBloomEffect.selection.set([...monolithLightBeams, ...totems, ...doorLights]);
+      composer.addPass(new EffectPass(viz.camera, selectiveBloomEffect));
+    },
+    undefined,
+    { toneMappingExposure: 1.3 }
+  );
 
   return {
     viewMode: { type: 'firstPerson' },
     spawnLocation: 'spawn',
     gravity: 30,
     player: {
-      movementAccelPerSecond: { onGround: 12.8, inAir: 12.8 },
+      movementAccelPerSecond: { onGround: baseMoveSpeed, inAir: baseMoveSpeed },
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
       oobYThreshold: -210,
@@ -306,15 +539,27 @@ export const processLoadedScene = async (
     locations: {
       spawn: {
         pos: [-196.76904296875, 51.176124572753906, 244.1184539794922],
-        rot: [-0.10679632679489452, -12.479999999999633, 0],
+        rot: [-0.10679632679489452, -12.48, 0],
       },
       stairs: {
         pos: [-302.592529296875, 46, 272.8970947265625],
-        rot: [-0.660796326794895, -14.597999999999562, 0],
+        rot: [-0.660796326794895, -14.598, 0],
       },
       base: {
         pos: [-63.28660583496094, 37.54802322387695, 47.51081085205078],
-        rot: [-0.04679632679489448, -13.469999999999843, 0],
+        rot: [-0.04679632679489448, -13.47, 0],
+      },
+      outside: {
+        pos: [177.2210235595703, 31.88624382019043, 821.6585693359375],
+        rot: [-0.10279632679489453, 0.252, 0],
+      },
+      top: {
+        pos: [-119.53250122070312, 72.60051727294922, 110.9544677734375],
+        rot: [-0.659203673205105, -26.41199999999997, 0],
+      },
+      two: {
+        pos: [-0.22930306196212769, 35.730072021484375, -232.2135772705078],
+        rot: [-0.23879632679489463, -12.58000000000007, 0],
       },
     },
   };

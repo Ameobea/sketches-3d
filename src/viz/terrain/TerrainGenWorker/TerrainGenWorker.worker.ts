@@ -4,7 +4,16 @@ let terrainGenEngineP: Promise<WebAssembly.Instance> | null = null;
 
 export type TerrainGenVariantParams =
   | { Hill: { octaves: number; wavelengths: number[]; seed: number } }
-  | { OpenSimplex: { coordinate_scales: number[]; weights: number[]; seed: number } };
+  | {
+      OpenSimplex: {
+        coordinate_scales: number[];
+        weights: number[];
+        seed: number;
+        magnitude: number;
+        offset_x: number;
+        offset_z: number;
+      };
+    };
 
 export interface TerrainGenParams {
   variant: TerrainGenVariantParams;

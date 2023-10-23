@@ -28,11 +28,16 @@ const populateShadowMap = (viz: VizState) => {
   viz.renderer.shadowMap.enabled = true;
 };
 
+interface ExtraPostprocessingParams {
+  toneMappingExposure?: number;
+}
+
 export const configureDefaultPostprocessingPipeline = (
   viz: VizState,
   quality: GraphicsQuality,
   addMiddlePasses?: (composer: EffectComposer, viz: VizState, quality: GraphicsQuality) => void,
-  onFirstRender?: () => void
+  onFirstRender?: () => void,
+  extraParams: Partial<ExtraPostprocessingParams> = {}
 ) => {
   const effectComposer = new EffectComposer(viz.renderer, { multisampling: 0 });
 
@@ -62,6 +67,9 @@ export const configureDefaultPostprocessingPipeline = (
   effectComposer.addPass(fxPass);
 
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  if (extraParams.toneMappingExposure) {
+    viz.renderer.toneMappingExposure = extraParams.toneMappingExposure;
+  }
   // viz.renderer.toneMappingExposure = 1.8;
 
   let didRender = false;
