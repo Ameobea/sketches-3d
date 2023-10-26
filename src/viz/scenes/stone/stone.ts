@@ -1,3 +1,4 @@
+import { goto } from '$app/navigation';
 import { BlendFunction, EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
 import * as THREE from 'three';
 
@@ -10,10 +11,12 @@ import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { LODTerrain } from 'src/viz/terrain/LODTerrain';
 import type { TerrainGenParams } from 'src/viz/terrain/TerrainGenWorker/TerrainGenWorker.worker';
 import { loadNamedTextures } from 'src/viz/textureLoading';
+import { smoothstepScale } from 'src/viz/util';
 import { getTerrainGenWorker } from 'src/viz/workerPool';
 import type { SceneConfig } from '..';
 import { getRuneGenerator } from './runeGen/runeGen';
-import BgMonolithColorShader from './shaders/monolithLightBeam/color.frag?raw';
+import MonolithLightBeamColorShader from './shaders/monolithLightBeam/color.frag?raw';
+import TotemBeamColorShader from './shaders/totemBeam/color.frag?raw';
 
 const initTerrain = async (
   viz: VizState,
@@ -316,7 +319,7 @@ export const processLoadedScene = async (
   // monolith light beams
   const monolithLightBeamMat = buildCustomBasicShader(
     { color: new THREE.Color(0x11ee11) },
-    { colorShader: BgMonolithColorShader }
+    { colorShader: MonolithLightBeamColorShader }
   );
   monolithLightBeamMat.transparent = true;
   const monolithLightBeams = [1, 2, 3, 4, 5].map(i => {
@@ -399,9 +402,86 @@ export const processLoadedScene = async (
     }
   });
 
+  let lastTotemPickupTimeSeconds = -Infinity;
+  const TotemBeamVisibilityWindowSeconds = 30;
+  const TotemBeamHeight = 500;
+  const totemBeamMat = buildCustomBasicShader(
+    { color: new THREE.Color(0x61041b) },
+    { colorShader: TotemBeamColorShader }
+  );
+  totemBeamMat.transparent = true;
+  const totemBeams = totems.map(totem => {
+    const totemBeam = (monolithLightBeams[0] as THREE.Mesh).clone();
+    totemBeam.material = totemBeamMat;
+    totemBeam.scale.set(0.2, TotemBeamHeight, 0.2);
+    viz.scene.add(totemBeam);
+    totemBeam.visible = false;
+    totemBeam.position.copy(totem.position.clone().add(new THREE.Vector3(0, TotemBeamHeight, 0)));
+    return totemBeam;
+  });
+  viz.registerBeforeRenderCb(curTimeSeconds => {
+    totemBeamMat.setCurTimeSeconds(curTimeSeconds);
+    totemBeams.forEach((totemBeam, i) => {
+      const shouldShowBeam =
+        !totemCollected[i] && curTimeSeconds - lastTotemPickupTimeSeconds < TotemBeamVisibilityWindowSeconds;
+      totemBeam.visible = shouldShowBeam;
+      if (!shouldShowBeam) {
+        return;
+      }
+
+      const distanceToPlayer = totems[i].position.distanceTo(viz.camera.position);
+      const widthFactor = smoothstepScale(20, TotemBeamHeight, distanceToPlayer, 0.2, 0.8);
+      totemBeam.scale.set(widthFactor, TotemBeamHeight, widthFactor);
+    });
+  });
+
   const doorLight = new THREE.PointLight(0xee1111, 0, 22, 2.2);
   doorLight.position.set(-9, 40, 16);
   viz.scene.add(doorLight);
+
+  const exitPortalGeom = new THREE.BoxGeometry(6, 6, 6);
+  const exitPortalMat = buildCustomShader(
+    {
+      map: gemTexture,
+      normalMap: gemNormal,
+      roughnessMap: gemRoughness,
+      metalness: 0.9,
+      roughness: 1.5,
+      uvTransform: new THREE.Matrix3().scale(0.9, 0.9),
+      iridescence: 0.6,
+      color: new THREE.Color(0xee1111),
+      ambientLightScale: 30,
+    },
+    {},
+    {}
+  );
+  const exitPortal = new THREE.Mesh(exitPortalGeom, exitPortalMat);
+  exitPortal.visible = false;
+  exitPortal.position.set(-10, 37, 16);
+  exitPortal.userData.noLight = true;
+  exitPortal.userData.noCollide = true;
+  viz.scene.add(exitPortal);
+  viz.registerBeforeRenderCb(curTimeSeconds => {
+    const addedRotation = 0.015 * (Math.sin(curTimeSeconds) * 0.5 + 0.5) + 0.02;
+    exitPortal.rotation.y += addedRotation;
+    while (exitPortal.rotation.y > Math.PI * 2) {
+      exitPortal.rotation.y -= Math.PI * 2;
+    }
+  });
+  viz.collisionWorldLoadedCbs.push(fpCtx => {
+    fpCtx.addPlayerRegionContactCb(
+      {
+        type: 'box',
+        pos: exitPortal.position,
+        halfExtents: new THREE.Vector3(
+          exitPortalGeom.parameters.width / 2,
+          exitPortalGeom.parameters.height / 2,
+          exitPortalGeom.parameters.depth / 2
+        ),
+      },
+      () => goto(`/construction${window.location.origin.includes('localhost') ? '' : '.html'}`)
+    );
+  });
 
   const handleAllTotemsCollected = () => {
     const door = loadedWorld.getObjectByName('monolith_door') as THREE.Mesh;
@@ -410,8 +490,12 @@ export const processLoadedScene = async (
 
     doorLight.intensity = 3;
 
+    exitPortal.visible = true;
+
     monolithLightBeams[4].visible = true;
   };
+
+  setTimeout(() => handleAllTotemsCollected(), 1000);
 
   const baseMoveSpeed = 12.8;
   const totemCollected = new Array(totems.length).fill(false);
@@ -420,6 +504,11 @@ export const processLoadedScene = async (
       return;
     }
     totemCollected[i] = true;
+    lastTotemPickupTimeSeconds = viz.clock.getElapsedTime();
+
+    const totem = totems[i];
+    totem.visible = false;
+    totemBeams[i].visible = false;
 
     monolithLightBeams[i].visible = true;
     doorLights[i].material = doorLightOnMat;
@@ -459,7 +548,6 @@ export const processLoadedScene = async (
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     totems.forEach((totem, i) => {
       fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: totem }, () => {
-        totem.visible = false;
         handleTotemCollision(i);
       });
     });
@@ -518,7 +606,7 @@ export const processLoadedScene = async (
       } as any);
       selectiveBloomEffect.inverted = false;
       selectiveBloomEffect.ignoreBackground = true;
-      selectiveBloomEffect.selection.set([...monolithLightBeams, ...totems, ...doorLights]);
+      selectiveBloomEffect.selection.set([...monolithLightBeams, ...totems, ...doorLights, exitPortal]);
       composer.addPass(new EffectPass(viz.camera, selectiveBloomEffect));
     },
     undefined,
