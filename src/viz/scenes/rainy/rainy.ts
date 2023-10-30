@@ -130,7 +130,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     {},
     {
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      randomizeUVOffset: false,
     }
   );
 

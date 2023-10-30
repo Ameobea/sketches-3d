@@ -2,6 +2,7 @@ import { goto } from '$app/navigation';
 import { BlendFunction, EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
 import * as THREE from 'three';
 
+import { getSentry } from 'src/sentry';
 import type { VizState } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
@@ -461,6 +462,7 @@ export const processLoadedScene = async (
   exitPortal.userData.noLight = true;
   exitPortal.userData.noCollide = true;
   viz.scene.add(exitPortal);
+  const nextLevelURL = `/construction${window.location.origin.includes('localhost') ? '' : '.html'}`;
   viz.registerBeforeRenderCb(curTimeSeconds => {
     const addedRotation = 0.015 * (Math.sin(curTimeSeconds) * 0.5 + 0.5) + 0.02;
     exitPortal.rotation.y += addedRotation;
@@ -479,7 +481,11 @@ export const processLoadedScene = async (
           exitPortalGeom.parameters.depth / 2
         ),
       },
-      () => goto(`/construction${window.location.origin.includes('localhost') ? '' : '.html'}`)
+      () => {
+        const curTimeSeconds = viz.clock.getElapsedTime();
+        getSentry()?.captureMessage('Stone level completed', { extra: { levelPlayTime: curTimeSeconds } });
+        goto(nextLevelURL);
+      }
     );
   });
 
@@ -493,9 +499,9 @@ export const processLoadedScene = async (
     exitPortal.visible = true;
 
     monolithLightBeams[4].visible = true;
-  };
 
-  setTimeout(() => handleAllTotemsCollected(), 1000);
+    getSentry()?.captureMessage('Stone level all totems collected');
+  };
 
   const baseMoveSpeed = 12.8;
   const totemCollected = new Array(totems.length).fill(false);
@@ -514,6 +520,7 @@ export const processLoadedScene = async (
     doorLights[i].material = doorLightOnMat;
 
     if (i === 2) {
+      getSentry()?.captureMessage('Stone level jump puzzle totem collected');
       viz.fpCtx!.setMoveSpeed(baseMoveSpeed * 1.3);
       // animate FOV increase
       const fovChangeDurationSeconds = 0.3;

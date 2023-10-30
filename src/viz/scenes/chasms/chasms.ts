@@ -1149,7 +1149,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     blendFunction: BlendFunction.ADD,
     luminanceSmoothing: 0.05,
     radius: 0.86,
-  });
+  } as any);
   const bloomPass = new EffectPass(viz.camera, bloomEffect);
   bloomPass.dithering = false;
 
@@ -1211,7 +1211,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   return {
     locations,
     spawnLocation: 'spawn',
-    gravity: 28,
+    gravity: 32,
     player: {
       jumpVelocity: 14.8,
       colliderCapsuleSize: {
@@ -1219,7 +1219,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         radius: 0.85,
       },
       movementAccelPerSecond: {
-        onGround: 8.2,
+        onGround: 12.2,
         inAir: 5.2,
       },
     },

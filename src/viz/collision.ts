@@ -81,6 +81,7 @@ export const initBulletPhysics = ({
   //
   // If it's too big, the player tends to clip through geometry or stuff like that.
   const STEP_HEIGHT = 0.05;
+  const MAX_SLOPE_RADS = 0.8;
   // \/ This is a very important config item for the physics engine.  Setting it too high will result in
   // the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
   // weird issues where the player slides around on the floor or clips through geometry.
@@ -92,7 +93,7 @@ export const initBulletPhysics = ({
     btvec3(0, 1, 0)
   );
   playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
-  playerController.setMaxSlope(0.8); // ~45 degrees
+  playerController.setMaxSlope(MAX_SLOPE_RADS);
   playerController.setStepHeight(STEP_HEIGHT);
   playerController.setJumpSpeed(jumpSpeed);
 
