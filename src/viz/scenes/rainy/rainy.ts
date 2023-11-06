@@ -17,10 +17,11 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import {
   genCrossfadedTexture,
   generateNormalMapFromTexture,
+  loadNamedTextures,
   loadRawTexture,
   loadTexture,
 } from 'src/viz/textureLoading';
-import { delay, DEVICE_PIXEL_RATIO } from 'src/viz/util';
+import { delay, DEVICE_PIXEL_RATIO, smoothstep } from 'src/viz/util';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
 import { FogPass } from './fogShader';
@@ -37,6 +38,10 @@ const locations = {
   stairs: {
     pos: new THREE.Vector3(-1.041370153427124, 1.4349434375762937, -100.00312805175781),
     rot: new THREE.Vector3(-0.2799999999999999, 7.764000000000212, 0),
+  },
+  greenhouse: {
+    pos: new THREE.Vector3(-7.394167900085449, 12.457334518432617, -78.03573608398438),
+    rot: new THREE.Vector3(-0.02799999999999983, 8.54600000000022, 0),
   },
 };
 
@@ -74,11 +79,19 @@ const loadTextures = async () => {
     cloudsBgTexture,
     crossfadedCementTexture,
     crossfadedCementTextureNormal,
+    rest,
   ] = await Promise.all([
     cementTextureCombinedDiffuseNormalP,
     cloudsBgTextureP,
     crossfadedCementTextureP,
     crossfadedCementTextureNormalP,
+    loadNamedTextures(loader, {
+      goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
+      window: 'https://i.ameo.link/bms.png',
+      planterSoil1Albedo: '/textures/Poly - greenhouse_soil/color_map.jpg',
+      planterSoil1Normal: '/textures/Poly - greenhouse_soil/normal_map_opengl.jpg',
+      planterSoil1Roughness: '/textures/Poly - greenhouse_soil/roughness_map.jpg',
+    }),
   ]);
 
   return {
@@ -86,6 +99,7 @@ const loadTextures = async () => {
     cloudsBgTexture,
     crossfadedCementTexture,
     crossfadedCementTextureNormal,
+    ...rest,
   };
 };
 
@@ -95,6 +109,11 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     cloudsBgTexture,
     crossfadedCementTexture,
     crossfadedCementTextureNormal,
+    goldTextureAlbedo,
+    window,
+    planterSoil1Albedo,
+    planterSoil1Normal,
+    planterSoil1Roughness,
   } = await loadTextures();
 
   const backgroundScene = new THREE.Scene();
@@ -134,6 +153,43 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     }
   );
 
+  goldTextureAlbedo.repeat.set(24, 24);
+  window.repeat.set(24, 24);
+
+  const greenhouseWindowsMaterial = new THREE.MeshPhysicalMaterial({
+    map: window,
+    transmission: 0.93,
+    transmissionMap: goldTextureAlbedo,
+    metalness: 0,
+    roughness: 0.9,
+    ior: 1.112,
+    transparent: true,
+    clearcoat: 0.2,
+    clearcoatRoughness: 0.0,
+    color: new THREE.Color(0xe5cfe3),
+    side: THREE.DoubleSide,
+  });
+
+  const greenhouseWindowsMetalMaterial = buildCustomShader({
+    color: new THREE.Color(0x181412),
+    metalness: 1,
+    roughness: 0.8,
+  });
+
+  const soil1Material = buildCustomShader(
+    {
+      map: planterSoil1Albedo,
+      metalness: 0.1,
+      roughness: 1,
+      roughnessMap: planterSoil1Roughness,
+      normalMap: planterSoil1Normal,
+      normalScale: 3.5,
+      uvTransform: new THREE.Matrix3().scale(2.5, 2.5),
+    },
+    {},
+    { useGeneratedUVs: true, randomizeUVOffset: true, tileBreaking: { type: 'neyret', patchScale: 1.5 } }
+  );
+
   loadedWorld.traverse(obj => {
     const lowerName = obj.name.toLowerCase();
 
@@ -165,20 +221,34 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       obj.material = walkwayMat;
     }
 
-    if (lowerName.startsWith('ivy')) {
-      obj.userData.nocollide = true;
-    }
-
     if (
       (lowerName.startsWith('railing') && !lowerName.includes('corner')) ||
       lowerName.startsWith('staircase_stairs')
     ) {
       obj.userData.convexhull = true;
     }
+
+    if (lowerName === 'greenhouse_windows') {
+      obj.material = greenhouseWindowsMaterial;
+      viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(obj));
+    }
+
+    if (lowerName === 'greenhouse_window_metal') {
+      obj.material = greenhouseWindowsMetalMaterial;
+    }
+
+    if (lowerName === 'planters') {
+      obj.material = walkwayMat;
+    }
+
+    if (lowerName === 'soil_1') {
+      obj.material = soil1Material;
+    }
   });
 
   const buildings = loadedWorld.children.filter(
-    obj => obj.name.startsWith('building') || obj.name.startsWith('ground') || obj.name.startsWith('window')
+    obj =>
+      obj.name.startsWith('building') || obj.name.startsWith('ground') || obj.name === 'greenhouse_windows'
   );
 
   buildings.forEach(building => {
@@ -293,7 +363,30 @@ export const processLoadedScene = async (
     }
   });
 
-  delay(0).then(() => initWebSynth({ compositionIDToLoad: 76 }));
+  delay(0).then(() =>
+    initWebSynth({ compositionIDToLoad: 113 }).then(ctx => {
+      const connectables = ctx.getState().viewContextManager.patchNetwork.connectables;
+      const outside = connectables.get('9');
+      const inside = connectables.get('10');
+      const rainGainHandles = {
+        outside: outside.node.node.offset as AudioParam,
+        inside: inside.node.node.offset as AudioParam,
+      };
+      viz.registerBeforeRenderCb(() => {
+        const y = viz.camera.position.y;
+        const z = viz.camera.position.z;
+
+        const outsideFactor = 1 - smoothstep(3, 13.5, y);
+        const insideFactorY = smoothstep(9, 15, y);
+        const insideFactorZ = smoothstep(-90, -75, z);
+        const insideFactor = insideFactorY * 0.4 + insideFactorZ * 0.6;
+
+        // -1 = muted, 0 = full
+        rainGainHandles.inside.setValueAtTime(insideFactor - 1, 0);
+        rainGainHandles.outside.setValueAtTime(outsideFactor - 1, 0);
+      });
+    })
+  );
 
   return {
     locations,

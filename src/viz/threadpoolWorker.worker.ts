@@ -10,6 +10,7 @@ const methods = {
     );
   },
   setTextureCrossfadeWasmBytes: async (bytes: Uint8Array) => {
+    console.log('setTextureCrossfadeWasmBytes');
     textureCrossfadeEngineP = WebAssembly.compile(bytes).then(module =>
       WebAssembly.instantiate(module, { env: {} })
     );

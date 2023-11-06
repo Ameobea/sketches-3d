@@ -132,6 +132,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./rainy/rainy').then(mod => mod.processLoadedScene),
     metadata: { title: 'rainy' },
     gltfName: 'rainy',
+    extension: 'glb',
   },
   depthPrepassDemo: {
     sceneName: null,

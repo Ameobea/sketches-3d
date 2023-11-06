@@ -1,4 +1,4 @@
-import { Pass, RenderPass, type Resizable } from 'postprocessing';
+import { Pass, RenderPass, type Resizable, Selection } from 'postprocessing';
 import * as THREE from 'three';
 
 export class ClearDepthPass extends Pass {
@@ -39,6 +39,17 @@ export class DepthPass extends RenderPass implements Resizable {
     deltaTime?: number | undefined,
     stencilTest?: boolean | undefined
   ): void {
+    // Avoid rendering transparent objects
+    const selection: THREE.Object3D<THREE.Event>[] = [];
+    this.scene.traverse(c => {
+      if (c instanceof THREE.Mesh && c.material.transparent) {
+        return;
+      }
+
+      selection.push(c);
+    });
+    this.selection = new Selection(selection);
+
     const shadowMapWasEnabled = renderer.shadowMap.enabled;
     renderer.shadowMap.enabled = false;
     renderer.getContext().depthFunc(renderer.getContext().LEQUAL);
@@ -73,8 +84,8 @@ export class MainRenderPass extends RenderPass {
     stencilTest?: boolean | undefined
   ) {
     const ctx = renderer.getContext();
-    ctx.depthFunc(ctx.EQUAL);
+    // ctx.depthFunc(ctx.EQUAL);
     super.render.apply(this, [renderer, inputBuffer, outputBuffer, deltaTime, stencilTest]);
-    ctx.depthFunc(ctx.LEQUAL);
+    // ctx.depthFunc(ctx.LEQUAL);
   }
 }
