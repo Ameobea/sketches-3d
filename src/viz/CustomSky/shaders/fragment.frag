@@ -80,6 +80,6 @@ void main() {
   gl_FragColor = vec4(retColor, 1.0);
 
   // #include <tonemapping_fragment>
-  #include <encodings_fragment>
+  #include <colorspace_fragment>
 
 }

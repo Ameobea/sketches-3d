@@ -1009,14 +1009,14 @@ void main() {
 	#endif
 
 	#ifdef USE_CLEARCOAT
-		float dotNVcc = saturate( dot( geometry.clearcoatNormal, geometry.viewDir ) );
+    float dotNVcc = saturate( dot( geometryClearcoatNormal, geometryViewDir ) );
 		vec3 Fcc = F_Schlick( material.clearcoatF0, material.clearcoatF90, dotNVcc );
-		outgoingLight = outgoingLight * ( 1.0 - material.clearcoat * Fcc ) + clearcoatSpecular * material.clearcoat;
+		outgoingLight = outgoingLight * ( 1.0 - material.clearcoat * Fcc ) + ( clearcoatSpecularDirect + clearcoatSpecularIndirect ) * material.clearcoat;
 	#endif
 
-	#include <output_fragment>
+	#include <opaque_fragment>
 	${!disableToneMapping ? '#include <tonemapping_fragment>' : ''}
-	#include <encodings_fragment>
+	#include <colorspace_fragment>
 	${
     enableFog
       ? `

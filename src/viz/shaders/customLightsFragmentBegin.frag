@@ -13,24 +13,21 @@
  * - Add diffuse light probe (irradiance cubemap) support.
  */
 
-GeometricContext geometry;
-
-geometry.position = - vViewPosition;
-geometry.normal = normal;
-geometry.viewDir = ( isOrthographic ) ? vec3( 0, 0, 1 ) : normalize( vViewPosition );
+vec3 geometryPosition = - vViewPosition;
+vec3 geometryNormal = normal;
+vec3 geometryViewDir = ( isOrthographic ) ? vec3( 0, 0, 1 ) : normalize( vViewPosition );
+vec3 geometryClearcoatNormal;
 
 float computedShadow = 1.;
 float totalShadow = 1.;
 
 #ifdef USE_CLEARCOAT
-
-	geometry.clearcoatNormal = clearcoatNormal;
-
+	geometryClearcoatNormal = clearcoatNormal;
 #endif
 
 #ifdef USE_IRIDESCENCE
 
-	float dotNVi = saturate( dot( normal, geometry.viewDir ) );
+	float dotNVi = saturate( dot( normal, geometryViewDir ) );
 
 	if ( material.iridescenceThickness == 0.0 ) {
 
@@ -67,7 +64,7 @@ IncidentLight directLight;
 
 		pointLight = pointLights[ i ];
 
-		getPointLightInfo( pointLight, geometry, directLight );
+		getPointLightInfo( pointLight, geometryPosition, directLight );
 
 		#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_POINT_LIGHT_SHADOWS )
 		pointLightShadow = pointLightShadows[ i ];
@@ -76,7 +73,7 @@ IncidentLight directLight;
 		directLight.color *= computedShadow;
 		#endif
 
-		RE_Direct( directLight, geometry, material, reflectedLight );
+		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 
 	}
 	#pragma unroll_loop_end
@@ -98,7 +95,7 @@ IncidentLight directLight;
 
 		spotLight = spotLights[ i ];
 
-		getSpotLightInfo( spotLight, geometry, directLight );
+		getSpotLightInfo( spotLight, geometryPosition, directLight );
 
 		#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_SPOT_LIGHT_SHADOWS )
 		spotLightShadow = spotLightShadows[ i ];
@@ -107,7 +104,7 @@ IncidentLight directLight;
 		directLight.color *= computedShadow;
 		#endif
 
-		RE_Direct( directLight, geometry, material, reflectedLight );
+		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 		#endif
 	}
 	#pragma unroll_loop_end
@@ -129,7 +126,7 @@ IncidentLight directLight;
 
 		directionalLight = directionalLights[ i ];
 
-		getDirectionalLightInfo( directionalLight, geometry, directLight );
+		getDirectionalLightInfo( directionalLight, directLight );
 
 		#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS )
 		directionalLightShadow = directionalLightShadows[ i ];
@@ -138,7 +135,7 @@ IncidentLight directLight;
 		directLight.color *= computedShadow;
 		#endif
 
-		RE_Direct( directLight, geometry, material, reflectedLight );
+		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 		#endif
 	}
 	#pragma unroll_loop_end
@@ -153,7 +150,7 @@ IncidentLight directLight;
 	for ( int i = 0; i < NUM_RECT_AREA_LIGHTS; i ++ ) {
 
 		rectAreaLight = rectAreaLights[ i ];
-		RE_Direct_RectArea( rectAreaLight, geometry, material, reflectedLight );
+		RE_Direct_RectArea( rectAreaLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 
 	}
 	#pragma unroll_loop_end
@@ -174,19 +171,20 @@ IncidentLight directLight;
 		float ampFalloffFactor = smoothstep(falloffStartDistance, falloffEndDistance, distanceToCamera);
 		float amp = 1.0 + pow(1.0 - ampFalloffFactor, exponent) * ampFactor;
 		irradiance *= amp;
-
-		// gl_FragColor = vec4(vec3(pow(1.0 - ampFalloffFactor, exponent)), 1.0);
-		// return;
 	#endif
 
-	irradiance += getLightProbeIrradiance( lightProbe, geometry.normal );
+	#if defined( USE_LIGHT_PROBES )
+
+		irradiance += getLightProbeIrradiance( lightProbe, geometryNormal );
+
+	#endif
 
 	#if ( NUM_HEMI_LIGHTS > 0 )
 
 		#pragma unroll_loop_start
 		for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) {
 
-			irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometry.normal );
+			irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );
 
 		}
 		#pragma unroll_loop_end

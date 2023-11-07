@@ -350,6 +350,7 @@ export const buildViz = (paused: Writable<boolean>) => {
   });
   // backwards compat
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.useLegacyLights = true;
   THREE.ColorManagement.enabled = false;
   (window as any).renderer = renderer;
   // const ext = renderer.getContext().getExtension('WEBGL_compressed_texture_s3tc');

@@ -89,7 +89,9 @@ const loadTextures = async () => {
     loadNamedTextures(loader, {
       goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
       windowMap: '/textures/be0.jpg',
-      window: 'https://i.ameo.link/bms.png',
+      // window: 'https://i.ameo.link/bms.png',
+      window: '/textures/window2.png',
+      window3: '/textures/window3.png',
       planterSoil1Albedo: 'https://i.ameo.link/bmz.jpg',
       planterSoil1Normal: 'https://i.ameo.link/bn0.jpg',
       planterSoil1Roughness: 'https://i.ameo.link/bn1.jpg',
@@ -114,6 +116,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     goldTextureAlbedo,
     windowMap,
     window,
+    window3,
     planterSoil1Albedo,
     planterSoil1Normal,
     planterSoil1Roughness,
@@ -122,7 +125,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
   const backgroundScene = new THREE.Scene();
   backgroundScene.background = cloudsBgTexture;
 
-  const bgAmbientLight = new THREE.AmbientLight(0xffffff, 0.5);
+  const bgAmbientLight = new THREE.AmbientLight(0xffffff, 0.45);
   const fgAmbientLight = new THREE.AmbientLight(0xffffff, 0.2);
   viz.scene.add(fgAmbientLight);
   backgroundScene.add(bgAmbientLight);
@@ -157,13 +160,15 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
   );
 
   goldTextureAlbedo.repeat.set(34, 34);
-  window.repeat.set(4, 4);
-  windowMap.repeat.set(14, 14);
+  window.repeat.set(14, 14);
+  window3.repeat.set(14, 14);
+  windowMap.repeat.set(64, 64);
 
   const greenhouseWindowsMaterial = new THREE.MeshPhysicalMaterial(
     // buildCustomShader(
     {
-      // map: window,
+      map: window3,
+      // alphaMap: window,
       transmission: 1,
       // transmissionMap: windowMap,
       opacity: 1,
@@ -171,16 +176,15 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       metalness: 0,
       roughness: 0.7,
       roughnessMap: goldTextureAlbedo,
-      ior: 1.6,
+      ior: 1.5,
       // alphaMap: window,
-      thickness: 0.5,
       transparent: true,
       clearcoat: 0.8,
-      // thickness:
+      thickness: 1.8,
       thicknessMap: goldTextureAlbedo,
-      clearcoatRoughness: 0.0,
-      color: new THREE.Color(0xe5dfe3),
-      side: THREE.DoubleSide,
+      clearcoatRoughness: 0.8,
+      color: new THREE.Color(0xc5bfc3),
+      // side: THREE.DoubleSide,
       // uvTransform: new THREE.Matrix3().scale(5, 5),
     }
     // {}
@@ -344,7 +348,6 @@ export const processLoadedScene = async (
   );
 
   const glassScene = new THREE.Scene();
-  const glass = backgroundScene.getObjectByName('greenhouse_windows') as THREE.Mesh;
 
   class GlassRenderPass extends RenderPass {
     constructor(scene: THREE.Scene, camera: THREE.Camera) {
@@ -385,12 +388,23 @@ export const processLoadedScene = async (
 
   const glassAmbientLight = new THREE.AmbientLight(0xffffff, 0.5);
   glassScene.add(glassAmbientLight);
+  const glass = backgroundScene.getObjectByName('greenhouse_windows') as THREE.Mesh;
+  const glassMetal = loadedWorld.getObjectByName('greenhouse_window_metal') as THREE.Mesh;
   glassScene.add(glass);
   backgroundScene.remove(glass);
   const glassPass = new GlassRenderPass(glassScene, viz.camera);
   glassPass.clear = false;
   glassPass.clearPass.enabled = false;
   effectComposer.addPass(glassPass);
+
+  const glassMetalScene = new THREE.Scene();
+  console.log({ glassMetal, glassMetalScene });
+  glassMetalScene.add(glassMetal);
+  backgroundScene.remove(glassMetal);
+  const glassMetalPass = new RenderPass(glassMetalScene, viz.camera);
+  glassMetalPass.clear = false;
+  glassMetalPass.clearPass.enabled = false;
+  effectComposer.addPass(glassMetalPass);
 
   const smaaEffect2 = new SMAAEffect({
     preset: {

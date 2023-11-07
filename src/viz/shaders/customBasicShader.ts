@@ -170,9 +170,9 @@ void main() {
   reflectedLight.indirectDiffuse *= diffuseColor.rgb;
   vec3 outgoingLight = reflectedLight.indirectDiffuse;
   #include <envmap_fragment>
-  #include <output_fragment>
+  #include <opaque_fragment>
   #include <tonemapping_fragment>
-  #include <encodings_fragment>
+  #include <colorspace_fragment>
   ${
     enableFog
       ? `
