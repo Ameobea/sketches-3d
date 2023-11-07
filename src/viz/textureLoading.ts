@@ -7,12 +7,12 @@ interface TextureArgs {
   mapping?: THREE.Mapping | undefined;
   wrapS?: THREE.Wrapping | undefined;
   wrapT?: THREE.Wrapping | undefined;
-  magFilter?: THREE.TextureFilter | undefined;
+  magFilter?: THREE.MagnificationTextureFilter | undefined;
   minFilter?: THREE.TextureFilter | undefined;
   format?: THREE.PixelFormat | undefined;
   type?: THREE.TextureDataType | undefined;
   anisotropy?: number | undefined;
-  encoding?: THREE.TextureEncoding | undefined;
+  colorSpace?: THREE.ColorSpace | undefined;
 }
 
 /**
@@ -34,11 +34,10 @@ export const loadTexture = (
     wrapT = THREE.RepeatWrapping,
     magFilter = THREE.NearestFilter,
     minFilter = THREE.NearestMipMapLinearFilter,
-    // minFilter = THREE.LinearFilter,
     format,
     type,
-    // anisotropy = 8,
     anisotropy = 1,
+    colorSpace = THREE.NoColorSpace,
   }: TextureArgs = {}
 ) =>
   new Promise<THREE.Texture>((resolve, reject) =>
@@ -54,7 +53,8 @@ export const loadTexture = (
           minFilter,
           format,
           type,
-          anisotropy
+          anisotropy,
+          colorSpace
         );
         texture.generateMipmaps = true;
         texture.needsUpdate = true;

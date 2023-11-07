@@ -791,7 +791,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     });
 
   // THREE.ColorManagement.legacyMode = false;
-  // viz.renderer.outputEncoding = THREE.sRGBEncoding;
+  viz.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   // viz.renderer.physicallyCorrectLights = true;
   ambientlight.intensity = 0.6;
   dLight.intensity = 2.8;

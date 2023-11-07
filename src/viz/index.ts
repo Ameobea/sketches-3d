@@ -348,6 +348,9 @@ export const buildViz = (paused: Writable<boolean>) => {
     powerPreference: 'high-performance',
     stencil: false,
   });
+  // backwards compat
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  THREE.ColorManagement.enabled = false;
   (window as any).renderer = renderer;
   // const ext = renderer.getContext().getExtension('WEBGL_compressed_texture_s3tc');
   const gl = renderer.getContext();
