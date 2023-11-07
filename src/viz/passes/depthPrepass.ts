@@ -48,7 +48,13 @@ export class DepthPass extends RenderPass implements Resizable {
 
       selection.push(c);
     });
-    this.selection = new Selection(selection);
+    if (!this.selection) {
+      this.selection = new Selection(selection);
+    }
+    this.selection.clear();
+    for (const child of selection) {
+      this.selection.add(child);
+    }
 
     const shadowMapWasEnabled = renderer.shadowMap.enabled;
     renderer.shadowMap.enabled = false;

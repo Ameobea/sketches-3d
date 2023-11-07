@@ -4,23 +4,6 @@ import { ShaderMaterial, type WebGLRenderTarget } from 'three';
 import FogPassFragmentShader from './fogPassShader.frag?raw';
 import FogPassVertexShader from './fogPassShader.vert?raw';
 
-// import FogFragmentShader from './fogShader.frag?raw';
-
-// export class FogEffect extends Effect {
-//   private getDistanceBuffer: () => WebGLRenderTarget;
-
-//   constructor(getDistanceBuffer: () => WebGLRenderTarget, blendFunction?: BlendFunction) {
-//     const uniforms = new Map();
-//     uniforms.set('sceneDistance', new Uniform(null));
-//     super('FogShader', FogFragmentShader, { uniforms, blendFunction });
-//     this.getDistanceBuffer = getDistanceBuffer;
-//   }
-
-//   update(renderer: WebGLRenderer, inputBuffer: WebGLRenderTarget, deltaTime?: number | undefined): void {
-//     this.uniforms.get('sceneDistance')!.value = this.getDistanceBuffer().texture;
-//   }
-// }
-
 class FogPassMaterial extends ShaderMaterial {
   constructor(cameraNear: number, cameraFar: number) {
     super({

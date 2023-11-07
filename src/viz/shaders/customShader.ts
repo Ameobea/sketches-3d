@@ -108,6 +108,9 @@ interface CustomShaderProps {
   transparent?: boolean;
   opacity?: number;
   alphaTest?: number;
+  transmission?: number;
+  ior?: number;
+  transmissionMap?: THREE.Texture;
   fogMultiplier?: number;
   /**
    * If provided, maps will no longer be read once the fragment is this distance from the camera. Set to
@@ -186,6 +189,9 @@ export const buildCustomShaderArgs = (
     clearcoatRoughness = 0,
     iridescence = 0,
     color = new THREE.Color(0xffffff),
+    transmission = 0,
+    ior = 1.5,
+    transmissionMap,
     normalScale = 1,
     map,
     uvTransform,
@@ -254,7 +260,7 @@ export const buildCustomShaderArgs = (
 
   uniforms.roughness = { type: 'f', value: roughness };
   uniforms.metalness = { type: 'f', value: metalness };
-  uniforms.ior = { type: 'f', value: 1.5 };
+  uniforms.ior = { type: 'f', value: ior };
   uniforms.clearcoat = { type: 'f', value: clearcoat };
   uniforms.clearcoatRoughness = { type: 'f', value: clearcoatRoughness };
   uniforms.clearcoatNormal = { type: 'f', value: 0.0 };
@@ -263,7 +269,10 @@ export const buildCustomShaderArgs = (
   uniforms.iridescenceThicknessMinimum = { type: 'f', value: 100 };
   uniforms.iridescenceThicknessMaximum = { type: 'f', value: 400 };
   uniforms.iridescenceThicknessMapTransform = { type: 'mat3', value: new THREE.Matrix3() };
-  uniforms.transmission = { type: 'f', value: 0.0 };
+  uniforms.transmission = { type: 'f', value: transmission };
+  uniforms.transmissionMap = { type: 't', value: transmissionMap };
+  uniforms.transmissionSamplerSize = { type: 'v2', value: new THREE.Vector2() };
+  uniforms.transmissionSamplerMap = { type: 't', value: null };
 
   uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
   uniforms.diffuse = { type: 'c', value: color };
@@ -832,7 +841,9 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 
 uniform float curTimeSeconds;
 varying vec3 pos;
+#ifndef USE_TRANSMISSION
 varying vec3 vWorldPosition;
+#endif
 varying vec3 vNormalAbsolute;
 uniform mat3 uvTransform;
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
@@ -1039,38 +1050,48 @@ export const buildCustomShader = (
     mat.defines.USE_IRIDESCENCE = '1';
   }
 
+  mat.defines.PHYSICAL = '1';
   if (props.map) {
     (mat as any).map = props.map;
-    (mat as any).uniforms.map.value = props.map;
+    mat.uniforms.map.value = props.map;
   }
   if (props.normalMap) {
     (mat as any).normalMap = props.normalMap;
     (mat as any).normalMapType = props.normalMapType ?? THREE.TangentSpaceNormalMap;
-    (mat as any).uniforms.normalMap.value = props.normalMap;
+    mat.uniforms.normalMap.value = props.normalMap;
   }
   if (props.roughnessMap) {
     (mat as any).roughnessMap = props.roughnessMap;
-    (mat as any).uniforms.roughnessMap.value = props.roughnessMap;
+    mat.uniforms.roughnessMap.value = props.roughnessMap;
   }
   if (props.emissiveIntensity !== undefined) {
     (mat as any).emissiveIntensity = props.emissiveIntensity;
-    (mat as any).uniforms.emissiveIntensity.value = props.emissiveIntensity;
+    mat.uniforms.emissiveIntensity.value = props.emissiveIntensity;
   }
   if (props.lightMap) {
     (mat as any).lightMap = props.lightMap;
-    (mat as any).uniforms.lightMap.value = props.lightMap;
-    (mat as any).uniforms.lightMapIntensity.value = props.lightMapIntensity ?? 1;
+    mat.uniforms.lightMap.value = props.lightMap;
+    mat.uniforms.lightMapIntensity.value = props.lightMapIntensity ?? 1;
   }
   if (props.transparent) {
     (mat as any).transparent = props.transparent;
   }
   if (typeof props.opacity === 'number') {
     (mat as any).opacity = props.opacity;
-    (mat as any).uniforms.opacity.value = props.opacity;
+    mat.uniforms.opacity.value = props.opacity;
   }
   if (typeof props.alphaTest === 'number') {
     (mat as any).alphaTest = props.alphaTest;
-    (mat as any).uniforms.alphaTest.value = props.alphaTest;
+    mat.uniforms.alphaTest.value = props.alphaTest;
+  }
+  if (props.transmission) {
+    mat.defines.USE_TRANSMISSION = '1';
+    mat.uniforms.transmission.value = props.transmission;
+  }
+  if (props.transmissionMap) {
+    mat.defines.USE_TRANSMISSION = '1';
+    mat.defines.USE_TRANSMISSIONMAP = '1';
+    mat.uniforms.transmissionMap.value = props.transmissionMap;
   }
   if (typeof opts?.usePackedDiffuseNormalGBA === 'object') {
     const dataTexture = new THREE.DataTexture(
@@ -1086,7 +1107,7 @@ export const buildCustomShader = (
       THREE.NearestFilter
     );
     dataTexture.needsUpdate = true;
-    (mat as any).uniforms.diffuseLUT = { value: dataTexture };
+    mat.uniforms.diffuseLUT = { value: dataTexture };
   }
 
   mat.needsUpdate = true;
