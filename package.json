@@ -37,7 +37,7 @@
     "n8ao": "^1.5.1",
     "postprocessing": "^6.31.0",
     "svelte-seo": "^1.4.1",
-    "three": "^0.145.0",
+    "three": "^0.151.0",
     "three-good-godrays": "^0.4.2",
     "tweakpane": "^3.1.0"
   }

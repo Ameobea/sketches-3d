@@ -2125,10 +2125,10 @@ three-good-godrays@^0.4.2:
   resolved "https://registry.yarnpkg.com/three-good-godrays/-/three-good-godrays-0.4.2.tgz#a884c7cc5d335b8e9eabf823a892516eb31133e8"
   integrity sha512-JC2mP/O3kIs9hg9XCcupDar3i1z4uvWpfd4fyXyEV007LZ6qXhrKhdWbgb2ARXtfvwASLeUPB17M8Gg8EytHpA==
 
-three@^0.145.0:
-  version "0.145.0"
-  resolved "https://registry.yarnpkg.com/three/-/three-0.145.0.tgz#a613d71e75effc2aed88be630027ca01e2b6502e"
-  integrity sha512-EKoHQEtEJ4CB6b2BGMBgLZrfwLjXcSUfoI/MiIXUuRpeYsfK5aPWbYhdtIVWOH+x6X0TouldHKHBuc/LAiFzAw==
+three@^0.151.0:
+  version "0.151.3"
+  resolved "https://registry.yarnpkg.com/three/-/three-0.151.3.tgz#0b3c7de4b070d5b66b15217f42465d67cbfa6004"
+  integrity sha512-+vbuqxFy8kzLeO5MgpBHUvP/EAiecaDwDuOPPDe6SbrZr96kccF0ktLngXc7xA7bzyd3N0t2f6mw3Z9y6JCojQ==
 
 tiny-glob@^0.2.9:
   version "0.2.9"

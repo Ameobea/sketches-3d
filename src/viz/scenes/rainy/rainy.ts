@@ -298,6 +298,8 @@ export const processLoadedScene = async (
     nearDistance: viz.camera.near,
     farDistance: viz.camera.far,
   });
+  // hack to work around Three.JS bug.  Should probably be fixed in v159
+  depthPassMaterial.isMeshDistanceMaterial = false;
   const backgroundDepthPass = new DepthPass(backgroundScene, viz.camera, depthPassMaterial, true);
   backgroundDepthPass.clearPass.enabled = true;
   const getDistanceBuffer = () => backgroundDepthPass.renderTarget!;

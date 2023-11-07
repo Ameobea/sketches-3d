@@ -276,6 +276,7 @@ export const buildCustomShaderArgs = (
 
   uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
   uniforms.diffuse = { type: 'c', value: color };
+  uniforms.mapTransform = { type: 'mat3', value: new THREE.Matrix3().identity() };
   if (uvTransform) {
     uniforms.uvTransform = { type: 'm3', value: uvTransform };
   }
@@ -338,9 +339,10 @@ export const buildCustomShaderArgs = (
         float modelWorldX = modelMatrix[3][0];
         float modelWorldY = modelMatrix[3][1];
         float modelWorldZ = modelMatrix[3][2];
+        vec3 modelWorld = vec3(modelWorldX, modelWorldY, modelWorldZ);
 
         // hash x, y, z
-        float hash = fract(sin(dot(vec3(modelWorldX, modelWorldY, modelWorldZ), vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+        float hash = fract(sin(dot(modelWorld, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
 
         vec2 uvOffset = vec2(
           fract(hash * 3502.2),
@@ -478,14 +480,14 @@ export const buildCustomShaderArgs = (
       if (!tileBreaking) {
         return `
         #ifdef USE_MAP
-          vec4 sampledDiffuseColor = texture2D( map, vUv );
+          vec4 sampledDiffuseColor = texture2D( map, vMapUv );
           sampledDiffuseColor_ = sampledDiffuseColor;
         #endif`;
       }
 
       return tileBreaking.type === 'neyret'
-        ? 'sampledDiffuseColor_ = textureNoTileNeyret(map, vUv);'
-        : `sampledDiffuseColor_ = textureNoTile(map, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale});`;
+        ? 'sampledDiffuseColor_ = textureNoTileNeyret(map, vMapUv);'
+        : `sampledDiffuseColor_ = textureNoTile(map, noiseSampler, vMapUv, 0., ${fastFixMipMapTileBreakingScale});`;
     })();
 
     if (typeof mapDisableDistance !== 'number') {
@@ -526,11 +528,11 @@ export const buildCustomShaderArgs = (
 
       if (tileBreaking && roughnessMap)
         return tileBreaking.type === 'neyret'
-          ? 'vec3 texelRoughness = textureNoTileNeyret(roughnessMap, vUv).xyz;'
-          : `vec3 texelRoughness = textureNoTile(roughnessMap, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`;
+          ? 'vec3 texelRoughness = textureNoTileNeyret(roughnessMap, vMapUv).xyz;'
+          : `vec3 texelRoughness = textureNoTile(roughnessMap, noiseSampler, vMapUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`;
       else
         return `
-      vec4 texelRoughness = texture2D( roughnessMap, vUv );
+      vec4 texelRoughness = texture2D( roughnessMap, vMapUv );
       `;
     })();
 
@@ -582,10 +584,10 @@ export const buildCustomShaderArgs = (
 
       mapN.xy *= normalScale;
 
-      #ifdef USE_TANGENT
-        normal = normalize( vTBN * mapN );
+      #ifdef USE_NORMALMAP_TANGENTSPACE
+        normal = normalize( tbn * mapN );
       #else
-        normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+        UNIMPLEMENTED_1
       #endif
     `;
     }
@@ -599,10 +601,10 @@ export const buildCustomShaderArgs = (
           mapN = mapN * 2.0 - 1.0;
           mapN.xy *= normalScale;
 
-          #ifdef USE_TANGENT
-            normal = normalize( vTBN * mapN );
+          #ifdef USE_NORMALMAP_TANGENTSPACE
+            normal = normalize( tbn * mapN );
           #else
-            normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+            UNIMPLEMENTED_2
           #endif
         }
         `;
@@ -612,10 +614,10 @@ export const buildCustomShaderArgs = (
         mapN = mapN * 2.0 - 1.0;
         mapN.xy *= normalScale;
 
-        #ifdef USE_TANGENT
-          normal = normalize( vTBN * mapN );
+        #ifdef USE_NORMALMAP_TANGENTSPACE
+          normal = normalize( tbn * mapN );
         #else
-          normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+          UNIMPLEMENTED_3
         #endif
       `;
     }
@@ -628,10 +630,10 @@ export const buildCustomShaderArgs = (
     mapN = normalize(mapN);
     mapN.xy *= normalScale;
 
-    #ifdef USE_TANGENT
-      normal = normalize( vTBN * mapN );
+    #ifdef USE_NORMALMAP_TANGENTSPACE
+      normal = normalize( tbn * mapN );
     #else
-      normal = perturbNormal2Arb( - vViewPosition, normal, mapN, faceDirection );
+      UNIMPLEMENTED_4
     #endif`;
 
     const inner = (() => {
@@ -646,8 +648,8 @@ export const buildCustomShaderArgs = (
         return `
     ${
       tileBreaking.type === 'neyret'
-        ? 'vec3 mapN = textureNoTileNeyret(normalMap, vUv).xyz;'
-        : `vec3 mapN = textureNoTile(normalMap, noiseSampler, vUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`
+        ? 'vec3 mapN = textureNoTileNeyret(normalMap, vMapUv).xyz;'
+        : `vec3 mapN = textureNoTile(normalMap, noiseSampler, vMapUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`
     }
 
     ${normalMapSuffix}
@@ -680,9 +682,9 @@ varying vec3 vViewPosition;
 // #ifdef USE_TRANSMISSION
   varying vec3 vWorldPosition;
 // #endif
+
 #include <common>
 #include <uv_pars_vertex>
-#include <uv2_pars_vertex>
 #include <displacementmap_pars_vertex>
 #include <color_pars_vertex>
 ${enableFog ? '#include <fog_pars_vertex>' : ''}
@@ -700,23 +702,13 @@ ${useGeneratedUVs ? GeneratedUVsFragment : ''}
 uniform float curTimeSeconds;
 varying vec3 pos;
 varying vec3 vNormalAbsolute;
+uniform mat3 uvTransform;
 
 void main() {
-  #include <begin_vertex>
-  #include <morphtarget_vertex>
-  #include <skinning_vertex>
-  #include <displacementmap_vertex>
-  #include <project_vertex>
-  #include <logdepthbuf_vertex>
-  #include <clipping_planes_vertex>
-  #include <worldpos_vertex>
-  vec4 worldPositionMine = vec4( transformed, 1.0 );
-  worldPositionMine = modelMatrix * worldPositionMine;
-  pos = worldPositionMine.xyz;
+  ${buildUVVertexFragment()}
 
-  #ifdef USE_INSTANCING
-    pos = (instanceMatrix * vec4(pos, 1.)).xyz;
-  #endif
+  #include <color_vertex>
+  #include <morphcolor_vertex>
 
   #include <beginnormal_vertex>
   #include <morphnormal_vertex>
@@ -724,6 +716,26 @@ void main() {
   #include <skinnormal_vertex>
   #include <defaultnormal_vertex>
   #include <normal_vertex>
+
+  #include <begin_vertex>
+  #include <morphtarget_vertex>
+  #include <skinning_vertex>
+  #include <displacementmap_vertex>
+  #include <project_vertex>
+  #include <logdepthbuf_vertex>
+  #include <clipping_planes_vertex>
+
+  vViewPosition = - mvPosition.xyz;
+
+  #include <worldpos_vertex>
+
+  vec4 worldPositionMine = vec4( transformed, 1.0 );
+  worldPositionMine = modelMatrix * worldPositionMine;
+  pos = worldPositionMine.xyz;
+
+  #ifdef USE_INSTANCING
+    pos = (instanceMatrix * vec4(pos, 1.)).xyz;
+  #endif
 
   vNormalAbsolute = normal;
 
@@ -734,12 +746,13 @@ void main() {
       // convert normal into the world space
       vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
       vUv = generateUV(pos, worldNormal);
-      ${randomizeUVOffset ? '' : 'vUv = ( uvTransform * vec3( vUv, 1 ) ).xy;'}`;
+      vUv = ( uvTransform * vec3( vUv, 1 ) ).xy;
+      `;
     }
 
     if (randomizeUVOffset) {
       // `randomizeUVOffset` performs UV transformation internally
-      return 'vUv = uv;';
+      return '';
     }
 
     // default uv transform
@@ -747,13 +760,18 @@ void main() {
   })()}
   #endif
 
-  ${buildUVVertexFragment()}
-
-  #include <uv2_vertex>
-  #include <color_vertex>
-  #include <morphcolor_vertex>
-
-  vViewPosition = - mvPosition.xyz;
+  #if defined(USE_MAP) && defined(USE_UV)
+    vMapUv = ( mapTransform * vec3( vUv, 1 ) ).xy;
+  #endif
+  #if defined(USE_NORMALMAP) && defined(USE_UV)
+    vNormalMapUv = ( normalMapTransform * vec3( vUv, 1 ) ).xy;
+  #endif
+  #if defined(USE_ROUGHNESSMAP) && defined(USE_UV)
+    vRoughnessMapUv = ( roughnessMapTransform * vec3( vUv, 1 ) ).xy;
+  #endif
+  #if defined(USE_METALNESSMAP) && defined(USE_UV)
+    vMetalnessMapUv = ( metalnessMapTransform * vec3( vUv, 1 ) ).xy;
+  #endif
 
   #include <shadowmap_vertex>
   ${enableFog ? '#include <fog_vertex>' : ''}
@@ -762,62 +780,73 @@ void main() {
 }`,
     fragmentShader: `
 #define STANDARD
+
 #ifdef PHYSICAL
 	#define IOR
 	#define SPECULAR
 #endif
+
 uniform vec3 diffuse;
 uniform vec3 emissive;
 uniform float roughness;
 uniform float metalness;
 uniform float opacity;
+
 #ifdef IOR
 	uniform float ior;
 #endif
-#ifdef SPECULAR
+
+#ifdef USE_SPECULAR
 	uniform float specularIntensity;
 	uniform vec3 specularColor;
-	#ifdef USE_SPECULARINTENSITYMAP
-		uniform sampler2D specularIntensityMap;
-	#endif
-	#ifdef USE_SPECULARCOLORMAP
+
+	#ifdef USE_SPECULAR_COLORMAP
 		uniform sampler2D specularColorMap;
 	#endif
+
+	#ifdef USE_SPECULAR_INTENSITYMAP
+		uniform sampler2D specularIntensityMap;
+	#endif
 #endif
+
 #ifdef USE_CLEARCOAT
 	uniform float clearcoat;
 	uniform float clearcoatRoughness;
 #endif
+
 #ifdef USE_IRIDESCENCE
 	uniform float iridescence;
 	uniform float iridescenceIOR;
 	uniform float iridescenceThicknessMinimum;
 	uniform float iridescenceThicknessMaximum;
 #endif
+
 #ifdef USE_SHEEN
 	uniform vec3 sheenColor;
 	uniform float sheenRoughness;
-	#ifdef USE_SHEENCOLORMAP
+
+	#ifdef USE_SHEEN_COLORMAP
 		uniform sampler2D sheenColorMap;
 	#endif
-	#ifdef USE_SHEENROUGHNESSMAP
+
+	#ifdef USE_SHEEN_ROUGHNESSMAP
 		uniform sampler2D sheenRoughnessMap;
 	#endif
 #endif
+
 varying vec3 vViewPosition;
+
 #include <common>
 #include <packing>
 #include <dithering_pars_fragment>
 #include <color_pars_fragment>
 #include <uv_pars_fragment>
-#include <uv2_pars_fragment>
 #include <map_pars_fragment>
 #include <alphamap_pars_fragment>
 #include <alphatest_pars_fragment>
 #include <aomap_pars_fragment>
 #include <lightmap_pars_fragment>
 #include <emissivemap_pars_fragment>
-#include <bsdfs>
 #include <iridescence_fragment>
 #include <cube_uv_reflection_fragment>
 #include <envmap_common_pars_fragment>
@@ -841,14 +870,17 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 
 uniform float curTimeSeconds;
 varying vec3 pos;
+
 #ifndef USE_TRANSMISSION
-varying vec3 vWorldPosition;
+  varying vec3 vWorldPosition;
 #endif
+
 varying vec3 vNormalAbsolute;
 uniform mat3 uvTransform;
+
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
-${useComputedNormalMap || usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
+// ${useComputedNormalMap || usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
 ${typeof usePackedDiffuseNormalGBA === 'object' ? 'uniform sampler2D diffuseLUT;' : ''}
 
 struct SceneCtx {
@@ -899,8 +931,11 @@ void main() {
   #if !defined(USE_UV)
     vec2 vUv = vec2(0.);
   #endif
+  #if !defined(USE_UV) || !defined(USE_MAP)
+    vec2 vMapUv = vec2(0.);
+  #endif
 
-  SceneCtx ctx = SceneCtx(cameraPosition, vUv, diffuseColor);
+  SceneCtx ctx = SceneCtx(cameraPosition, vMapUv, diffuseColor);
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
@@ -915,6 +950,7 @@ void main() {
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
   ${buildNormalMapFragment()}
+
 	#include <clearcoat_normal_fragment_begin>
 	#include <clearcoat_normal_fragment_maps>
 
@@ -952,23 +988,32 @@ void main() {
   ${buildLightsFragmentBegin()}
 	#include <lights_fragment_maps>
 	#include <lights_fragment_end>
+
 	// modulation
 	#include <aomap_fragment>
+
 	vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
 	vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;
+
 	#include <transmission_fragment>
+
 	vec3 outgoingLight = totalDiffuse + totalSpecular + totalEmissiveRadiance;
+
 	#ifdef USE_SHEEN
+
 		// Sheen energy compensation approximation calculation can be found at the end of
 		// https://drive.google.com/file/d/1T0D1VSyR4AllqIJTQAraEIzjlb5h4FKH/view?usp=sharing
 		float sheenEnergyComp = 1.0 - 0.157 * max3( material.sheenColor );
+
 		outgoingLight = outgoingLight * sheenEnergyComp + sheenSpecular;
 	#endif
+
 	#ifdef USE_CLEARCOAT
 		float dotNVcc = saturate( dot( geometry.clearcoatNormal, geometry.viewDir ) );
 		vec3 Fcc = F_Schlick( material.clearcoatF0, material.clearcoatF90, dotNVcc );
 		outgoingLight = outgoingLight * ( 1.0 - material.clearcoat * Fcc ) + clearcoatSpecular * material.clearcoat;
 	#endif
+
 	#include <output_fragment>
 	${!disableToneMapping ? '#include <tonemapping_fragment>' : ''}
 	#include <encodings_fragment>
@@ -1038,7 +1083,8 @@ export const buildCustomShader = (
   }
 
   if (opts?.useComputedNormalMap || opts?.usePackedDiffuseNormalGBA) {
-    mat.defines.TANGENTSPACE_NORMALMAP = '1';
+    mat.defines.USE_NORMALMAP_TANGENTSPACE = '1';
+    mat.defines.USE_NORMALMAP = '1';
     mat.uniforms.normalScale = { value: new THREE.Vector2(props.normalScale ?? 1, props.normalScale ?? 1) };
   }
 
@@ -1051,6 +1097,7 @@ export const buildCustomShader = (
   }
 
   mat.defines.PHYSICAL = '1';
+  mat.defines.USE_UV = '1';
   if (props.map) {
     (mat as any).map = props.map;
     mat.uniforms.map.value = props.map;
