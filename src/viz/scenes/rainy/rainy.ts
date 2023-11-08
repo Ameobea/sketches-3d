@@ -89,6 +89,7 @@ const loadTextures = async () => {
     crossfadedCementTextureNormalP,
     loadNamedTextures(loader, {
       goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
+      goldTextureNormal: 'https://i.ameo.link/be2.jpg',
       windowSeamless: 'https://i.ameo.link/bn8.jpg',
       planterSoil1Albedo: 'https://i.ameo.link/bmz.jpg',
       planterSoil1Normal: 'https://i.ameo.link/bn0.jpg',
@@ -112,6 +113,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     crossfadedCementTexture,
     crossfadedCementTextureNormal,
     goldTextureAlbedo,
+    goldTextureNormal,
     windowSeamless,
     planterSoil1Albedo,
     planterSoil1Normal,
@@ -155,6 +157,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     }
   );
 
+  goldTextureNormal.repeat.set(34, 34);
   goldTextureAlbedo.repeat.set(34, 34);
   windowSeamless.repeat.set(40, 40);
 
@@ -165,10 +168,12 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     metalness: 0,
     roughness: 0.64,
     roughnessMap: goldTextureAlbedo,
+    normalMap: goldTextureNormal,
+    normalScale: new THREE.Vector2(1, 1),
     ior: 1.6,
     transparent: true,
     clearcoat: 0.8,
-    thickness: 1.2,
+    thickness: 0.8,
     thicknessMap: goldTextureAlbedo,
     clearcoatRoughness: 0.8,
     color: new THREE.Color(0xc5bfc3),
