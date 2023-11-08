@@ -89,10 +89,7 @@ const loadTextures = async () => {
     crossfadedCementTextureNormalP,
     loadNamedTextures(loader, {
       goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
-      windowMap: 'https://i.ameo.link/bn6.jpg',
-      // window: 'https://i.ameo.link/bms.png',
-      window: 'https://i.ameo.link/bn6.jpg',
-      window3: 'https://i.ameo.link/bn7.png',
+      windowSeamless: 'https://i.ameo.link/bn8.jpg',
       planterSoil1Albedo: 'https://i.ameo.link/bmz.jpg',
       planterSoil1Normal: 'https://i.ameo.link/bn0.jpg',
       planterSoil1Roughness: 'https://i.ameo.link/bn1.jpg',
@@ -115,9 +112,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     crossfadedCementTexture,
     crossfadedCementTextureNormal,
     goldTextureAlbedo,
-    windowMap,
-    window,
-    window3,
+    windowSeamless,
     planterSoil1Albedo,
     planterSoil1Normal,
     planterSoil1Roughness,
@@ -161,36 +156,23 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
   );
 
   goldTextureAlbedo.repeat.set(34, 34);
-  window.repeat.set(14, 14);
-  window3.repeat.set(14, 14);
-  windowMap.repeat.set(64, 64);
+  windowSeamless.repeat.set(40, 40);
 
-  const greenhouseWindowsMaterial = new THREE.MeshPhysicalMaterial(
-    // buildCustomShader(
-    {
-      map: window3,
-      // alphaMap: window,
-      transmission: 1,
-      // transmissionMap: windowMap,
-      opacity: 1,
-      // alphaMap: goldTextureAlbedo,
-      metalness: 0,
-      roughness: 0.7,
-      roughnessMap: goldTextureAlbedo,
-      ior: 1.5,
-      // alphaMap: window,
-      transparent: true,
-      clearcoat: 0.8,
-      thickness: 1.8,
-      thicknessMap: goldTextureAlbedo,
-      clearcoatRoughness: 0.8,
-      color: new THREE.Color(0xc5bfc3),
-      // side: THREE.DoubleSide,
-      // uvTransform: new THREE.Matrix3().scale(5, 5),
-    }
-    // {}
-    // { useGeneratedUVs: true }
-  );
+  const greenhouseWindowsMaterial = new THREE.MeshPhysicalMaterial({
+    map: windowSeamless,
+    transmission: 1,
+    opacity: 1,
+    metalness: 0,
+    roughness: 0.64,
+    roughnessMap: goldTextureAlbedo,
+    ior: 1.6,
+    transparent: true,
+    clearcoat: 0.8,
+    thickness: 1.2,
+    thicknessMap: goldTextureAlbedo,
+    clearcoatRoughness: 0.8,
+    color: new THREE.Color(0xc5bfc3),
+  });
 
   const greenhouseWindowsMetalMaterial = buildCustomShader({
     color: new THREE.Color(0x181412),
