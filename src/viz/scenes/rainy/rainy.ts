@@ -1,11 +1,11 @@
 import { N8AOPostPass } from 'n8ao';
 import {
+  CopyPass,
   DepthOfFieldEffect,
   EffectComposer,
   EffectPass,
   KernelSize,
   RenderPass,
-  Selection,
   SMAAEffect,
   SMAAPreset,
 } from 'postprocessing';
@@ -25,6 +25,7 @@ import {
 import { delay, DEVICE_PIXEL_RATIO, smoothstep } from 'src/viz/util';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
+// import { CustomEffectComposer } from './CustomEffectComposer';
 import { FogPass } from './fogShader';
 
 const locations = {
@@ -88,10 +89,10 @@ const loadTextures = async () => {
     crossfadedCementTextureNormalP,
     loadNamedTextures(loader, {
       goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
-      windowMap: '/textures/be0.jpg',
+      windowMap: 'https://i.ameo.link/bn6.jpg',
       // window: 'https://i.ameo.link/bms.png',
-      window: '/textures/window2.png',
-      window3: '/textures/window3.png',
+      window: 'https://i.ameo.link/bn6.jpg',
+      window3: 'https://i.ameo.link/bn7.png',
       planterSoil1Albedo: 'https://i.ameo.link/bmz.jpg',
       planterSoil1Normal: 'https://i.ameo.link/bn0.jpg',
       planterSoil1Roughness: 'https://i.ameo.link/bn1.jpg',
@@ -295,7 +296,7 @@ export const processLoadedScene = async (
   const backgroundScene = await initScene(viz, loadedWorld, vizConfig);
 
   const effectComposer = new EffectComposer(viz.renderer);
-  // effectComposer.autoRenderToScreen = false;
+  effectComposer.autoRenderToScreen = false;
 
   const depthPassMaterial = new THREE.MeshDistanceMaterial({
     referencePosition: viz.camera.position,
@@ -312,7 +313,32 @@ export const processLoadedScene = async (
   const backgroundRenderPass = new MainRenderPass(backgroundScene, viz.camera);
   effectComposer.addPass(backgroundRenderPass);
 
-  effectComposer.addPass(new FogPass(getDistanceBuffer, viz.camera));
+  class MyCopyPass extends CopyPass {
+    constructor() {
+      super();
+      this.needsSwap = true;
+    }
+
+    override render(
+      renderer: THREE.WebGLRenderer,
+      inputBuffer: THREE.WebGLRenderTarget,
+      outputBuffer: THREE.WebGLRenderTarget | null,
+      _deltaTime?: number | undefined,
+      _stencilTest?: boolean | undefined
+    ) {
+      (this.fullscreenMaterial as any).inputBuffer = inputBuffer.texture;
+      renderer.setRenderTarget(this.renderToScreen ? null : outputBuffer);
+      renderer.render(this.scene, this.camera);
+    }
+  }
+
+  // fog pass reads from input buffer and writes to output buffer, then swaps buffers
+  const fogPass = new FogPass(getDistanceBuffer, viz.camera);
+  effectComposer.addPass(fogPass);
+
+  // fog pass swaps buffers and DoF needs depth buffer on the input side, so we copy it back
+  const copyPass = new MyCopyPass();
+  effectComposer.addPass(copyPass);
 
   const depthOfFieldEffect = new DepthOfFieldEffect(viz.camera, {
     worldFocusDistance: 10,
@@ -322,6 +348,11 @@ export const processLoadedScene = async (
   depthOfFieldEffect.blurPass.kernelSize = KernelSize.VERY_SMALL;
   const bgEffectPass = new EffectPass(viz.camera, depthOfFieldEffect);
   effectComposer.addPass(bgEffectPass);
+
+  // DoF also swaps buffers and render pass needs depth buffer on the side that it reads/writes to
+  // (input) so we need to copy it back again
+  const copyPass2 = new MyCopyPass();
+  effectComposer.addPass(copyPass2);
 
   const foregroundRenderPass = new RenderPass(viz.scene, viz.camera);
   foregroundRenderPass.clear = false;
@@ -363,6 +394,8 @@ export const processLoadedScene = async (
       _deltaTime?: number | undefined,
       _stencilTest?: boolean | undefined
     ) {
+      // amazing hack to facilitate transmission for the glass.  It allows the output of all previous passes to
+      // be used for transmission.  Then, we render to the output buffer.
       glassScene.background = inputBuffer.texture;
       const oldminFilter = inputBuffer.texture.minFilter;
       inputBuffer.texture.minFilter = THREE.LinearMipMapLinearFilter;
@@ -392,13 +425,17 @@ export const processLoadedScene = async (
   const glassMetal = loadedWorld.getObjectByName('greenhouse_window_metal') as THREE.Mesh;
   glassScene.add(glass);
   backgroundScene.remove(glass);
+
+  // n8ao swaps buffers, so the depth buffer is on the output side now.  Luckily, the glass pass actually
+  // renders to the output buffer, so we don't need a copy here.
   const glassPass = new GlassRenderPass(glassScene, viz.camera);
   glassPass.clear = false;
   glassPass.clearPass.enabled = false;
   effectComposer.addPass(glassPass);
 
+  // Glass pass swaps buffers, and the depth buffer is on the input side now, and normal Render pass
+  // renders to the input buffer, so we're all good again.
   const glassMetalScene = new THREE.Scene();
-  console.log({ glassMetal, glassMetalScene });
   glassMetalScene.add(glassMetal);
   backgroundScene.remove(glassMetal);
   const glassMetalPass = new RenderPass(glassMetalScene, viz.camera);
@@ -428,7 +465,7 @@ export const processLoadedScene = async (
   });
 
   viz.setRenderOverride((timeDiffSeconds: number) => {
-    depthPassMaterial.referencePosition?.copy(viz.camera.position);
+    // depthPassMaterial.referencePosition?.copy(viz.camera.position);
     effectComposer.render(timeDiffSeconds);
   });
 

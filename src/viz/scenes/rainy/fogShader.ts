@@ -1,10 +1,10 @@
 import { Pass } from 'postprocessing';
-import { ShaderMaterial, type WebGLRenderTarget } from 'three';
+import * as THREE from 'three';
 
 import FogPassFragmentShader from './fogPassShader.frag?raw';
 import FogPassVertexShader from './fogPassShader.vert?raw';
 
-class FogPassMaterial extends ShaderMaterial {
+class FogPassMaterial extends THREE.ShaderMaterial {
   constructor(cameraNear: number, cameraFar: number) {
     super({
       name: 'FogPassMaterial',
@@ -23,9 +23,9 @@ class FogPassMaterial extends ShaderMaterial {
 }
 
 export class FogPass extends Pass {
-  getDistanceBuffer: () => WebGLRenderTarget;
+  getDistanceBuffer: () => THREE.WebGLRenderTarget;
 
-  constructor(getDistanceBuffer: () => WebGLRenderTarget, camera: THREE.PerspectiveCamera) {
+  constructor(getDistanceBuffer: () => THREE.WebGLRenderTarget, camera: THREE.PerspectiveCamera) {
     super('FogPass');
     this.needsDepthTexture = false;
     this.fullscreenMaterial = new FogPassMaterial(camera.near, camera.far);
@@ -42,7 +42,14 @@ export class FogPass extends Pass {
     (this.fullscreenMaterial as FogPassMaterial).uniforms.sceneDistance.value =
       this.getDistanceBuffer().texture;
     (this.fullscreenMaterial as FogPassMaterial).uniforms.sceneDiffuse.value = inputBuffer.texture;
-    renderer.setRenderTarget(outputBuffer);
+    const oldDepthWrite = outputBuffer?.depthBuffer;
+    if (outputBuffer) {
+      outputBuffer.depthBuffer = false;
+    }
+    renderer.setRenderTarget(this.renderToScreen ? null : outputBuffer);
     renderer.render(this.scene, this.camera);
+    if (outputBuffer) {
+      outputBuffer.depthBuffer = oldDepthWrite!;
+    }
   }
 }
