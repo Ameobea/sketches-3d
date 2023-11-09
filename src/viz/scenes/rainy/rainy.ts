@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import type { VizState } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
-import { buildCustomShader, CustomShaderMaterial } from 'src/viz/shaders/customShader';
+import { buildCustomShader, CustomShaderMaterial, type MaterialClass } from 'src/viz/shaders/customShader';
 import {
   genCrossfadedTexture,
   generateNormalMapFromTexture,
@@ -176,7 +176,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     thickness: 0.8,
     thicknessMap: goldTextureAlbedo,
     clearcoatRoughness: 0.8,
-    color: new THREE.Color(0xc5bfc3),
+    color: new THREE.Color(0xd5cfd3),
   });
 
   const greenhouseWindowsMetalMaterial = buildCustomShader({
@@ -291,7 +291,7 @@ export const processLoadedScene = async (
     farDistance: viz.camera.far,
   });
   // hack to work around Three.JS bug.  Should probably be fixed in v159
-  depthPassMaterial.isMeshDistanceMaterial = false;
+  (depthPassMaterial as any).isMeshDistanceMaterial = false;
   const backgroundDepthPass = new DepthPass(backgroundScene, viz.camera, depthPassMaterial, true);
   backgroundDepthPass.clearPass.enabled = true;
   const getDistanceBuffer = () => backgroundDepthPass.renderTarget!;
@@ -472,11 +472,33 @@ export const processLoadedScene = async (
     }
   });
 
+  let playWalkSound: (materialClass: MaterialClass) => void = () => {};
+
   delay(0).then(() =>
-    initWebSynth({ compositionIDToLoad: 113 }).then(ctx => {
-      const connectables = ctx.getState().viewContextManager.patchNetwork.connectables;
-      const outside = connectables.get('9');
-      const inside = connectables.get('10');
+    initWebSynth({ compositionIDToLoad: 114 }).then(ctx => {
+      const getConnectables = () => ctx.getState().viewContextManager.patchNetwork.connectables;
+
+      ctx.startAll();
+
+      const synthDesignerID = '0c1f6c0c-91d6-8b13-c9c7-09bd35863453';
+      const synthDesigner = getConnectables().get(synthDesignerID);
+      const synthDesignerMailboxID = synthDesigner.inputs.get('midi').node.getInputCbs()
+        .enableRxAudioThreadScheduling.mailboxIDs[0];
+      playWalkSound = () => {
+        ctx.postMIDIEventToAudioThread(synthDesignerMailboxID, 0, 60, 255);
+        ctx.scheduleEventTimeRelativeToCurTime(
+          0.2,
+          () => void ctx.postMIDIEventToAudioThread(synthDesignerMailboxID, 1, 60, 255)
+        );
+      };
+
+      const reverbID = '59b1de3a-df82-039c-3269-efcf6a42f7c8';
+
+      let wetLevel: ConstantSourceNode | null = null;
+      // TODO
+
+      const outside = getConnectables().get('9');
+      const inside = getConnectables().get('10');
       const rainGainHandles = {
         outside: outside.node.node.offset as AudioParam,
         inside: inside.node.node.offset as AudioParam,
@@ -493,6 +515,27 @@ export const processLoadedScene = async (
         // -1 = muted, 0 = full
         rainGainHandles.inside.setValueAtTime(insideFactor - 1, 0);
         rainGainHandles.outside.setValueAtTime(outsideFactor - 1, 0);
+
+        if (!wetLevel) {
+          wetLevel =
+            getConnectables().get(reverbID).inputs.get('wetLevel').node.manualControl ??
+            (null as ConstantSourceNode | null);
+        }
+
+        if (wetLevel) {
+          const MinReverbWetness = 8;
+          const MaxReverbWetness = 70;
+
+          // ramp up from y=2 to 8 and then down from y=9 to 10 to 14
+          const upFactor = smoothstep(2, 8, y);
+          const downFactor = smoothstep(9, 14, y);
+          const wetLevelVal =
+            MinReverbWetness +
+            upFactor * (MaxReverbWetness - MinReverbWetness) +
+            downFactor * (MinReverbWetness - MaxReverbWetness);
+
+          wetLevel.offset.setValueAtTime(wetLevelVal, 0);
+        }
       });
     })
   );
@@ -514,5 +557,12 @@ export const processLoadedScene = async (
       },
     },
     debugPos: true,
+    sfx: {
+      walk: {
+        playWalkSound: (materialClass: MaterialClass) => playWalkSound(materialClass),
+        timeBetweenStepsSeconds: 0.41,
+        timeBetweenStepsJitterSeconds: 0.01,
+      },
+    },
   };
 };

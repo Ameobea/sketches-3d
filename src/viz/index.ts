@@ -11,7 +11,7 @@ import * as Stats from 'three/examples/jsm/libs/stats.module';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { initSentry } from 'src/sentry';
-import { SfxManager } from './audio/SfxManager';
+import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
 import { getAmmoJS, initBulletPhysics } from './collision';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
@@ -21,6 +21,7 @@ import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
 import { buildDefaultSceneConfig, type SceneConfig, type SceneConfigLocation, ScenesByName } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
+import { mergeDeep } from './util';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -600,7 +601,11 @@ export const initViz = (
 
     let sfxManager: SfxManager | undefined;
     if (sceneConf.viewMode.type === 'firstPerson') {
-      sfxManager = new SfxManager();
+      const sfxConfig = mergeDeep(buildDefaultSfxConfig(), sceneConf.sfx ?? {});
+      sfxManager = new SfxManager(sfxConfig);
+      viz.registerAfterRenderCb((curTimeSeconds, tDiffSeconds) =>
+        sfxManager!.tick(tDiffSeconds, curTimeSeconds)
+      );
       const spawnPos = (window as any).lastPos
         ? (() => {
             const lastPos = JSON.parse((window as any).lastPos);
@@ -650,7 +655,7 @@ export const initViz = (
     }
 
     if (fpCtx) {
-      const traverseCb = (obj: THREE.Object3D<THREE.Event>) => {
+      const traverseCb = (obj: THREE.Object3D) => {
         const children = obj.children;
         obj.children = [];
         if (obj instanceof THREE.Mesh && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {

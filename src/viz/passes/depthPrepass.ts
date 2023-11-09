@@ -39,7 +39,7 @@ export class DepthPass extends RenderPass implements Resizable {
     stencilTest?: boolean | undefined
   ): void {
     // Avoid rendering transparent objects
-    const selection: THREE.Object3D<THREE.Event>[] = [];
+    const selection: THREE.Object3D[] = [];
     this.scene.traverse(c => {
       if (c instanceof THREE.Mesh && c.material.transparent) {
         return;

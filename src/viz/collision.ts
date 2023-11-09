@@ -132,6 +132,8 @@ export const initBulletPhysics = ({
   /**
    * Returns the new position of the player.
    */
+  const walkDirection = new THREE.Vector3();
+  let isWalking = false;
   const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
     let forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
     const origForwardDir = forwardDir.clone();
@@ -142,7 +144,7 @@ export const initBulletPhysics = ({
 
     const wasOnGround = playerController.onGround();
 
-    const walkDirection = new THREE.Vector3();
+    walkDirection.set(0, 0, 0);
     if (keyStates['KeyW']) walkDirection.add(forwardDir);
     if (keyStates['KeyS']) walkDirection.sub(forwardDir);
     if (keyStates['KeyA']) walkDirection.add(leftDir);
@@ -154,6 +156,14 @@ export const initBulletPhysics = ({
         );
         lastJumpTimeSeconds = curTimeSeconds;
       }
+    }
+
+    const wasWalking = isWalking;
+    isWalking = walkDirection.x !== 0 || walkDirection.y !== 0 || walkDirection.z !== 0;
+    if (wasWalking && !isWalking) {
+      sfxManager.onWalkStop();
+    } else if (!wasWalking && isWalking) {
+      sfxManager.onWalkStart(MaterialClass.Default);
     }
 
     if ((keyStates['ShiftLeft'] || keyStates['ShiftRight']) && enableDash) {

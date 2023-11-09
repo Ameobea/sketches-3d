@@ -102,27 +102,27 @@ export const hasWasmSIMDSupport = async () =>
     ])
   );
 
-export const mergeDeep = <T extends Record<string, any>>(target: T, source: any): T => {
+export const mergeDeep = <T extends Record<string, any>>(base: T, rhs: any): T => {
   const isObject = (obj: any) => obj && typeof obj === 'object';
 
-  if (!isObject(target) || !isObject(source)) {
-    return source;
+  if (!isObject(base) || !isObject(rhs)) {
+    return rhs;
   }
 
-  Object.keys(source).forEach(key => {
-    const targetValue = target[key];
-    const sourceValue = source[key];
+  Object.keys(rhs).forEach(key => {
+    const targetValue = base[key];
+    const sourceValue = rhs[key];
 
     if (Array.isArray(targetValue) && Array.isArray(sourceValue)) {
-      (target as any)[key] = targetValue.concat(sourceValue);
+      (base as any)[key] = targetValue.concat(sourceValue);
     } else if (isObject(targetValue) && isObject(sourceValue)) {
-      (target as any)[key] = mergeDeep(Object.assign({}, targetValue), sourceValue);
+      (base as any)[key] = mergeDeep(Object.assign({}, targetValue), sourceValue);
     } else {
-      (target as any)[key] = sourceValue;
+      (base as any)[key] = sourceValue;
     }
   });
 
-  return target;
+  return base;
 };
 
 export const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
@@ -130,3 +130,9 @@ export const randomInRange = (min: number, max: number) => Math.random() * (max 
 export const assertUnreachable = (x: never): never => {
   throw new Error('Unreachable code');
 };
+
+export type DeepPartial<T> = T extends object
+  ? {
+      [P in keyof T]?: DeepPartial<T[P]>;
+    }
+  : T;

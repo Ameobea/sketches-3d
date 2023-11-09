@@ -436,7 +436,7 @@ export const processLoadedScene = async (
     });
   });
 
-  const doorLight = new THREE.PointLight(0xee1111, 0, 22, 2.2);
+  const doorLight = new THREE.PointLight(0xee1111, 0.0001, 22, 2.2);
   doorLight.position.set(-9, 40, 16);
   viz.scene.add(doorLight);
 

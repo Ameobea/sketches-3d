@@ -1,7 +1,9 @@
 import type { SvelteSeoProps } from 'svelte-seo/types/SvelteSeo';
 
 import type { VizState } from '..';
+import type { SfxConfig } from '../audio/SfxManager';
 import type { VizConfig } from '../conf';
+import type { DeepPartial } from '../util';
 
 export interface SceneConfigLocation {
   pos: THREE.Vector3;
@@ -42,6 +44,7 @@ export interface SceneConfig {
   };
   renderOverride?: (timeDiffSeconds: number) => void;
   enableInventory?: boolean;
+  sfx?: DeepPartial<SfxConfig>;
 }
 
 export const buildDefaultSceneConfig = () => ({
