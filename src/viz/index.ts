@@ -145,6 +145,14 @@ const setupFirstPerson = async (
     keyStates[event.code] = false;
   });
 
+  if (window.location?.href.includes('localhost')) {
+    document.body.addEventListener('mousedown', evt => {
+      if (evt.button === 3) {
+        (window as any).back();
+      }
+    });
+  }
+
   document.body.addEventListener('mousemove', event => {
     if (document.pointerLockElement === document.body) {
       camera.rotation.y -= event.movementX / 500;

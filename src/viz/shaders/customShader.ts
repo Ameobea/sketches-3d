@@ -705,8 +705,6 @@ varying vec3 vNormalAbsolute;
 uniform mat3 uvTransform;
 
 void main() {
-  ${buildUVVertexFragment()}
-
   #include <color_vertex>
   #include <morphcolor_vertex>
 
@@ -759,6 +757,8 @@ void main() {
     return 'vUv = ( uvTransform * vec3( uv, 1 ) ).xy;';
   })()}
   #endif
+
+  ${buildUVVertexFragment()}
 
   #if defined(USE_MAP) && defined(USE_UV)
     vMapUv = ( mapTransform * vec3( vUv, 1 ) ).xy;

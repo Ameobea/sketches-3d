@@ -1,5 +1,6 @@
 import { N8AOPostPass } from 'n8ao';
 import {
+  BlendFunction,
   CopyPass,
   DepthOfFieldEffect,
   EffectComposer,
@@ -8,6 +9,8 @@ import {
   RenderPass,
   SMAAEffect,
   SMAAPreset,
+  ToneMappingEffect,
+  ToneMappingMode,
 } from 'postprocessing';
 import * as THREE from 'three';
 
@@ -34,16 +37,16 @@ const locations = {
     rot: new THREE.Vector3(-0.06, -1.514, 0),
   },
   corner: {
-    pos: new THREE.Vector3(-2.173236131668091, 1.4349226951599119, 1.9542120695114136),
-    rot: new THREE.Vector3(-0.6860000000000006, 4.486000000000112, 0),
+    pos: new THREE.Vector3(-2.173, 1.435, 1.95),
+    rot: new THREE.Vector3(-0.686, 4.486, 0),
   },
   stairs: {
-    pos: new THREE.Vector3(-1.041370153427124, 1.4349434375762937, -100.00312805175781),
-    rot: new THREE.Vector3(-0.2799999999999999, 7.764000000000212, 0),
+    pos: new THREE.Vector3(-1.0414, 1.435, -100),
+    rot: new THREE.Vector3(-0.28, 7.764, 0),
   },
   greenhouse: {
-    pos: new THREE.Vector3(-7.394167900085449, 12.457334518432617, -78.03573608398438),
-    rot: new THREE.Vector3(-0.02799999999999983, 8.54600000000022, 0),
+    pos: new THREE.Vector3(-7.394167900085449, 12.457, -78.0357),
+    rot: new THREE.Vector3(-0.028, 8.546, 0),
   },
 };
 
@@ -62,10 +65,6 @@ const loadTextures = async () => {
   });
 
   const crossfadedCementTextureP = Promise.all([
-    // loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000219.2405862953.png'),
-    // loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000222.892303155.png'),
-    // loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000206.3766963451.png'),
-    // loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000212.2646278093.png'),
     loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000364.1012055443.png'),
     loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000370.314757479.png'),
     loadRawTexture('https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000365.1330968334.png'),
@@ -94,6 +93,9 @@ const loadTextures = async () => {
       planterSoil1Albedo: 'https://i.ameo.link/bmz.jpg',
       planterSoil1Normal: 'https://i.ameo.link/bn0.jpg',
       planterSoil1Roughness: 'https://i.ameo.link/bn1.jpg',
+      particleBoardAlbedo: '/textures/particle_board/color_map.jpg',
+      particleBoardNormal: '/textures/particle_board/normal_map_opengl.jpg',
+      particleBoardRoughness: '/textures/particle_board/roughness_map.jpg',
     }),
   ]);
 
@@ -118,6 +120,9 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     planterSoil1Albedo,
     planterSoil1Normal,
     planterSoil1Roughness,
+    particleBoardAlbedo,
+    particleBoardNormal,
+    particleBoardRoughness,
   } = await loadTextures();
 
   const backgroundScene = new THREE.Scene();
@@ -199,6 +204,42 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     { useGeneratedUVs: true, randomizeUVOffset: true, tileBreaking: { type: 'neyret', patchScale: 1.5 } }
   );
 
+  const planterMaterial = buildCustomShader(
+    {
+      name: 'planter',
+      map: crossfadedCementTexture,
+      normalMap: crossfadedCementTextureNormal,
+      normalScale: 3,
+      uvTransform: new THREE.Matrix3().scale(0.28, 0.28),
+    },
+    {},
+    {
+      useGeneratedUVs: true,
+      randomizeUVOffset: true,
+    }
+  );
+
+  const particleBoardMaterial = buildCustomShader(
+    {
+      map: particleBoardAlbedo,
+      metalness: 0.1,
+      roughness: 1,
+      roughnessMap: particleBoardRoughness,
+      normalMap: particleBoardNormal,
+      normalScale: 3.5,
+      uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
+      ambientLightScale: 0.6,
+      color: new THREE.Color(0xbfc3cf),
+    },
+    {},
+    {
+      useGeneratedUVs: true,
+      randomizeUVOffset: true,
+      tileBreaking: { type: 'neyret', patchScale: 1.5 },
+    }
+  );
+
+  const greenhouseShelves: THREE.Mesh[] = [];
   loadedWorld.traverse(obj => {
     const lowerName = obj.name.toLowerCase();
 
@@ -246,16 +287,31 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       obj.material = greenhouseWindowsMetalMaterial;
     }
 
-    if (lowerName === 'planters') {
-      obj.material = walkwayMat;
+    if (lowerName.startsWith('planters') || lowerName === 'greenhouse_table') {
+      obj.material = planterMaterial;
     }
 
     if (lowerName === 'soil_1') {
       obj.material = soil1Material;
+    } else if (lowerName === 'soil_2') {
+      obj.material = soil1Material;
+    }
+
+    if (lowerName.startsWith('greenhouse_platform')) {
+      obj.material = planterMaterial;
+    }
+
+    if (lowerName.startsWith('greenhouse_shelves')) {
+      obj.material = particleBoardMaterial;
+      greenhouseShelves.push(obj);
+    }
+
+    if (lowerName.startsWith('greenhouse_shelf_poles')) {
+      greenhouseShelves.push(obj);
     }
 
     if (lowerName === 'greenhouse_exterior_cement') {
-      obj.material = cementMat;
+      obj.material = planterMaterial;
     }
   });
 
@@ -269,7 +325,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     backgroundScene.add(obj);
   });
 
-  return backgroundScene;
+  return { backgroundScene, greenhouseShelves };
 };
 
 export const processLoadedScene = async (
@@ -280,7 +336,7 @@ export const processLoadedScene = async (
   viz.camera.far = 500;
   viz.camera.updateProjectionMatrix();
 
-  const backgroundScene = await initScene(viz, loadedWorld, vizConfig);
+  const { backgroundScene, greenhouseShelves } = await initScene(viz, loadedWorld, vizConfig);
 
   const effectComposer = new EffectComposer(viz.renderer);
   effectComposer.autoRenderToScreen = false;
@@ -354,7 +410,7 @@ export const processLoadedScene = async (
   );
   effectComposer.addPass(n8aoPass);
   n8aoPass.gammaCorrection = false;
-  n8aoPass.configuration.intensity = 3;
+  n8aoPass.configuration.intensity = 2;
   n8aoPass.configuration.aoRadius = 5;
   n8aoPass.configuration.halfRes = vizConfig.graphics.quality <= GraphicsQuality.Low;
   n8aoPass.setQualityMode(
@@ -422,10 +478,21 @@ export const processLoadedScene = async (
 
   // Glass pass swaps buffers, and the depth buffer is on the input side now, and normal Render pass
   // renders to the input buffer, so we're all good again.
-  const glassMetalScene = new THREE.Scene();
-  glassMetalScene.add(glassMetal);
+  const greenhouseFgScene = new THREE.Scene();
+  const greenhouseFgAmbientLight = new THREE.AmbientLight(0xffffff, 0.2);
+  greenhouseFgScene.add(greenhouseFgAmbientLight);
+  greenhouseFgScene.add(glassMetal);
   backgroundScene.remove(glassMetal);
-  const glassMetalPass = new RenderPass(glassMetalScene, viz.camera);
+
+  viz.collisionWorldLoadedCbs.push(fpCtx =>
+    greenhouseShelves.forEach(mesh => {
+      mesh.removeFromParent();
+      greenhouseFgScene.add(mesh);
+      fpCtx.addTriMesh(mesh);
+    })
+  );
+
+  const glassMetalPass = new RenderPass(greenhouseFgScene, viz.camera);
   glassMetalPass.clear = false;
   glassMetalPass.clearPass.enabled = false;
   effectComposer.addPass(glassMetalPass);
@@ -437,7 +504,15 @@ export const processLoadedScene = async (
       [GraphicsQuality.High]: SMAAPreset.HIGH,
     }[vizConfig.graphics.quality],
   });
-  const smaaPass2 = new EffectPass(viz.camera, smaaEffect2);
+  const toneMappingEffect = new ToneMappingEffect({
+    whitePoint: 1.1,
+    middleGrey: 0.82,
+    mode: ToneMappingMode.UNCHARTED2,
+  });
+  toneMappingEffect.blendMode.opacity.value = 0.5;
+  viz.renderer.toneMappingExposure = 1.3;
+
+  const smaaPass2 = new EffectPass(viz.camera, toneMappingEffect, smaaEffect2);
   smaaPass2.renderToScreen = true;
   effectComposer.addPass(smaaPass2);
 
@@ -475,7 +550,7 @@ export const processLoadedScene = async (
   let playWalkSound: (materialClass: MaterialClass) => void = () => {};
 
   delay(0).then(() =>
-    initWebSynth({ compositionIDToLoad: 114 }).then(ctx => {
+    initWebSynth({ compositionIDToLoad: 115 }).then(ctx => {
       const getConnectables = () => ctx.getState().viewContextManager.patchNetwork.connectables;
 
       ctx.startAll();
@@ -523,12 +598,11 @@ export const processLoadedScene = async (
         }
 
         if (wetLevel) {
-          const MinReverbWetness = 8;
+          const MinReverbWetness = 0;
           const MaxReverbWetness = 70;
 
-          // ramp up from y=2 to 8 and then down from y=9 to 10 to 14
           const upFactor = smoothstep(2, 8, y);
-          const downFactor = smoothstep(9, 14, y);
+          const downFactor = smoothstep(9, 15, y);
           const wetLevelVal =
             MinReverbWetness +
             upFactor * (MaxReverbWetness - MinReverbWetness) +
@@ -561,7 +635,7 @@ export const processLoadedScene = async (
       walk: {
         playWalkSound: (materialClass: MaterialClass) => playWalkSound(materialClass),
         timeBetweenStepsSeconds: 0.41,
-        timeBetweenStepsJitterSeconds: 0.01,
+        timeBetweenStepsJitterSeconds: 0.04,
       },
     },
   };

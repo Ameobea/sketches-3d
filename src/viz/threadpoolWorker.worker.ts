@@ -5,20 +5,26 @@ let textureCrossfadeEngineP: Promise<WebAssembly.Instance> | null = null;
 
 const methods = {
   setNormalGenWasmBytes: async (bytes: Uint8Array) => {
+    console.log('setting normal gen wasm in worker');
     normalGenEngineP = WebAssembly.compile(bytes).then(module =>
       WebAssembly.instantiate(module, { env: {} })
     );
   },
   setTextureCrossfadeWasmBytes: async (bytes: Uint8Array) => {
-    console.log('setTextureCrossfadeWasmBytes');
+    console.log('setTextureCrossfadeWasmBytes in worker');
     textureCrossfadeEngineP = WebAssembly.compile(bytes).then(module =>
       WebAssembly.instantiate(module, { env: {} })
     );
   },
   genNormalMap: async (packNormalGBA: boolean, imageData: Uint8Array, height: number, width: number) => {
-    const engine = await normalGenEngineP;
-    if (!engine) {
-      throw new Error('Wasm not loaded');
+    console.log('genNormalMap');
+    let engine = null;
+
+    while (!engine) {
+      engine = await normalGenEngineP;
+      if (!engine) {
+        await new Promise(r => setTimeout(r, 10));
+      }
     }
 
     const packMode = packNormalGBA ? 1 : 0;
