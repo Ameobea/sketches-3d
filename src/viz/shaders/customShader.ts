@@ -750,7 +750,7 @@ void main() {
 
     if (randomizeUVOffset) {
       // `randomizeUVOffset` performs UV transformation internally
-      return '';
+      return 'vUv = uv.xy;';
     }
 
     // default uv transform

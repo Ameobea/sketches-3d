@@ -226,7 +226,7 @@ export const processLoadedScene = async (
     {},
     {
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      randomizeUVOffset: false,
       tileBreaking: { type: 'neyret', patchScale: 0.3 },
     }
   );

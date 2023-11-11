@@ -13,7 +13,6 @@ class WorkerPoolManager<T> {
   private workQueue: [work: (worker: Comlink.Remote<T>) => any | Promise<any>, cb: (ret: any) => void][] = [];
 
   constructor(workers: Comlink.Remote<T>[]) {
-    console.log(workers);
     this.allWorkers = [...workers];
     this.idleWorkers = [...workers];
   }
@@ -51,7 +50,6 @@ class WorkerPoolManager<T> {
   };
 
   public submitWorkToAll = async <R>(work: (worker: Comlink.Remote<T>) => R | Promise<R>): Promise<R[]> => {
-    console.log(this.allWorkers);
     return Promise.all(this.allWorkers.map(work));
   };
 }
@@ -100,7 +98,6 @@ export const getNormalGenWorkers = async () => {
     const wasmBytes = await loadNormalGenWasm();
     didInitNormalGenWasm = true;
 
-    console.log('setting normal gen wasm');
     await threadPoolWorkers.submitWorkToAll(worker => worker.setNormalGenWasmBytes(wasmBytes));
     return threadPoolWorkers;
   }

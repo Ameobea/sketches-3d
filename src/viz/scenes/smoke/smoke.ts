@@ -71,7 +71,7 @@ export const processLoadedScene = async (
       map: buildingTexture,
       roughness: 0.4,
       metalness: 0.4,
-      uvTransform: new THREE.Matrix3().scale(0.0482, 0.0482),
+      uvTransform: new THREE.Matrix3().scale(0.1682, 0.1682),
       ambientDistanceAmp: {
         ampFactor: 0.5,
         falloffStartDistance: 0,

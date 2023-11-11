@@ -424,7 +424,10 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       ambientLightScale: 2,
     },
     {},
-    { usePackedDiffuseNormalGBA: true, randomizeUVOffset: true }
+    {
+      usePackedDiffuseNormalGBA: true,
+      randomizeUVOffset: true,
+    }
   );
   loadedWorld.traverse(node => {
     if (!node.name.startsWith('pillar')) {
@@ -927,7 +930,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const dungeonFloorMat = muddyGoldenLoopsMat;
   const dungeonFloor = getMesh(loadedWorld, 'dungeon_floor');
-  console.log(dungeonFloor);
   dungeonFloor.material = dungeonFloorMat;
 
   const dungeonEntrySpotLight = new THREE.SpotLight(0xff8866, 1.3, 19, Math.PI / 10.4, 0.9);
@@ -990,7 +992,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.98,
       roughness: 0.98,
       map: furnaceTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      uvTransform: new THREE.Matrix3().scale(0.3, 0.3),
       mapDisableDistance: null,
       normalScale: 0.5,
       ambientLightScale: 1,
@@ -1007,7 +1009,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       disabledSpotLightIndices: [0, 1],
       useGeneratedUVs: true,
       randomizeUVOffset: true,
-      // tileBreaking: { type: 'neyret', patchScale: 2 },
     }
   );
   const furnaceBarsMat = buildCustomShader(
@@ -1016,10 +1017,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       metalness: 0.98,
       roughness: 0.98,
       map: towerPlinthArchTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
       mapDisableDistance: null,
       normalScale: 0.6,
-      ambientLightScale: 1,
     },
     {},
     {
@@ -1028,7 +1028,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       disabledSpotLightIndices: [0, 1],
       useGeneratedUVs: true,
       randomizeUVOffset: true,
-      // tileBreaking: { type: 'neyret', patchScale: 2 },
     }
   );
 

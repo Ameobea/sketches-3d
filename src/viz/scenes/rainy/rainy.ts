@@ -1,6 +1,5 @@
 import { N8AOPostPass } from 'n8ao';
 import {
-  BlendFunction,
   CopyPass,
   DepthOfFieldEffect,
   EffectComposer,
@@ -93,9 +92,16 @@ const loadTextures = async () => {
       planterSoil1Albedo: 'https://i.ameo.link/bmz.jpg',
       planterSoil1Normal: 'https://i.ameo.link/bn0.jpg',
       planterSoil1Roughness: 'https://i.ameo.link/bn1.jpg',
-      particleBoardAlbedo: '/textures/particle_board/color_map.jpg',
-      particleBoardNormal: '/textures/particle_board/normal_map_opengl.jpg',
-      particleBoardRoughness: '/textures/particle_board/roughness_map.jpg',
+      planterSoil2Albedo: 'https://i.ameo.link/bny.jpg',
+      planterSoil2Normal: 'https://i.ameo.link/bnz.jpg',
+      planterSoil2Roughness: 'https://i.ameo.link/bo0.jpg',
+      particleBoardAlbedo: 'https://i.ameo.link/bnp.jpg',
+      particleBoardNormal: 'https://i.ameo.link/bnq.jpg',
+      particleBoardRoughness: 'https://i.ameo.link/bnr.jpg',
+      trunkAlbedo: 'https://i.ameo.link/bo1.jpg',
+      trunkNormal: 'https://i.ameo.link/bo2.jpg',
+      trunkRoughness: 'https://i.ameo.link/bo3.jpg',
+      leaves2: 'https://i.ameo.link/bnx.jpg',
     }),
   ]);
 
@@ -120,9 +126,16 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     planterSoil1Albedo,
     planterSoil1Normal,
     planterSoil1Roughness,
+    planterSoil2Albedo,
+    planterSoil2Normal,
+    planterSoil2Roughness,
     particleBoardAlbedo,
     particleBoardNormal,
     particleBoardRoughness,
+    trunkAlbedo,
+    trunkNormal,
+    trunkRoughness,
+    leaves2,
   } = await loadTextures();
 
   const backgroundScene = new THREE.Scene();
@@ -198,10 +211,24 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       roughnessMap: planterSoil1Roughness,
       normalMap: planterSoil1Normal,
       normalScale: 3.5,
-      uvTransform: new THREE.Matrix3().scale(2.5, 2.5),
+      uvTransform: new THREE.Matrix3().scale(2, 2),
     },
     {},
     { useGeneratedUVs: true, randomizeUVOffset: true, tileBreaking: { type: 'neyret', patchScale: 1.5 } }
+  );
+
+  const soil2Material = buildCustomShader(
+    {
+      map: planterSoil2Albedo,
+      metalness: 0.1,
+      roughness: 1,
+      roughnessMap: planterSoil2Roughness,
+      normalMap: planterSoil2Normal,
+      normalScale: 3.5,
+      uvTransform: new THREE.Matrix3().scale(2, 2),
+    },
+    {},
+    { useGeneratedUVs: true, randomizeUVOffset: true, tileBreaking: { type: 'neyret', patchScale: 3.5 } }
   );
 
   const planterMaterial = buildCustomShader(
@@ -210,7 +237,23 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       map: crossfadedCementTexture,
       normalMap: crossfadedCementTextureNormal,
       normalScale: 3,
-      uvTransform: new THREE.Matrix3().scale(0.28, 0.28),
+      uvTransform: new THREE.Matrix3().scale(0.18, 0.18),
+    },
+    {},
+    {
+      useGeneratedUVs: true,
+      randomizeUVOffset: true,
+    }
+  );
+
+  const plantPotMaterial = buildCustomShader(
+    {
+      name: 'planter',
+      map: crossfadedCementTexture,
+      normalMap: crossfadedCementTextureNormal,
+      normalScale: 3,
+      uvTransform: new THREE.Matrix3().scale(0.24, 0.24),
+      ambientLightScale: 0.5,
     },
     {},
     {
@@ -237,6 +280,34 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       randomizeUVOffset: true,
       tileBreaking: { type: 'neyret', patchScale: 1.5 },
     }
+  );
+
+  const bonsaiLeavesMat = buildCustomShader(
+    {
+      map: leaves2,
+      metalness: 0.4,
+      roughness: 1,
+      // normalMap: leavesNormal,
+      normalScale: 3.5,
+      uvTransform: new THREE.Matrix3().scale(32, 32),
+      ambientLightScale: 0.7,
+    },
+    {},
+    { tileBreaking: { type: 'neyret', patchScale: 6 } }
+  );
+
+  const bonsaiTrunkMat = buildCustomShader(
+    {
+      map: trunkAlbedo,
+      metalness: 0.4,
+      roughness: 1,
+      roughnessMap: trunkRoughness,
+      normalMap: trunkNormal,
+      normalScale: 3.5,
+      uvTransform: new THREE.Matrix3().scale(5, 5),
+    },
+    {},
+    { useTriplanarMapping: false }
   );
 
   const greenhouseShelves: THREE.Mesh[] = [];
@@ -293,8 +364,8 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
 
     if (lowerName === 'soil_1') {
       obj.material = soil1Material;
-    } else if (lowerName === 'soil_2') {
-      obj.material = soil1Material;
+    } else if (lowerName.startsWith('soil_2')) {
+      obj.material = soil2Material;
     }
 
     if (lowerName.startsWith('greenhouse_platform')) {
@@ -313,11 +384,38 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
     if (lowerName === 'greenhouse_exterior_cement') {
       obj.material = planterMaterial;
     }
+
+    if (lowerName.startsWith('greenhouse_plant_pot')) {
+      obj.material = plantPotMaterial;
+      greenhouseShelves.push(obj);
+    }
+
+    if (lowerName === 'greenhouse_plant_table') {
+      obj.material = particleBoardMaterial;
+      greenhouseShelves.push(obj);
+    }
+
+    if (lowerName.startsWith('greenhouse_plant_table_leg')) {
+      greenhouseShelves.push(obj);
+    }
+
+    if (lowerName === 'bonsai_leaves') {
+      obj.material = bonsaiLeavesMat;
+      greenhouseShelves.push(obj);
+    }
+
+    if (lowerName === 'bonsai_trunk') {
+      obj.material = bonsaiTrunkMat;
+      greenhouseShelves.push(obj);
+    }
   });
 
   const buildings = loadedWorld.children.filter(
     obj =>
-      obj.name.startsWith('building') || obj.name.startsWith('ground') || obj.name === 'greenhouse_windows'
+      obj.name.startsWith('building') ||
+      obj.name.startsWith('ground') ||
+      obj.name === 'greenhouse_windows' ||
+      obj.name === 'sines'
   );
 
   buildings.forEach(obj => {
@@ -570,7 +668,6 @@ export const processLoadedScene = async (
       const reverbID = '59b1de3a-df82-039c-3269-efcf6a42f7c8';
 
       let wetLevel: ConstantSourceNode | null = null;
-      // TODO
 
       const outside = getConnectables().get('9');
       const inside = getConnectables().get('10');
@@ -584,7 +681,7 @@ export const processLoadedScene = async (
 
         const outsideFactor = 1 - smoothstep(3, 13.5, y);
         const insideFactorY = smoothstep(9, 15, y);
-        const insideFactorZ = smoothstep(-90, -75, z);
+        const insideFactorZ = y > 5 ? smoothstep(-90, -75, z) : 0;
         const insideFactor = insideFactorY * 0.4 + insideFactorZ * 0.6;
 
         // -1 = muted, 0 = full
