@@ -61,9 +61,6 @@ export const processLoadedScene = async (
         boundingBox: new THREE.Box2(new THREE.Vector2(-2000, -2000), new THREE.Vector2(2000, 2000)),
         material: buildCustomShader(
           {
-            // map: stoneBricksAlbedo,
-            // normalMap: stoneBricksNormal,
-            // roughnessMap: stoneBricksRoughness,
             map: gemTexture,
             normalMap: gemNormal,
             roughnessMap: gemRoughness,
@@ -77,7 +74,6 @@ export const processLoadedScene = async (
           {
             useTriplanarMapping: true,
             randomizeUVOffset: true,
-            // tileBreaking: { type: 'neyret', patchScale: 1.3 },
           }
         ),
         // debugLOD: true,

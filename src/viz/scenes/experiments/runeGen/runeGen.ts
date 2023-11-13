@@ -129,8 +129,8 @@ export const processLoadedScene = async (
   return {
     viewMode: {
       type: 'orbit',
-      pos: new THREE.Vector3(-225.00004023163095, -19.019048829180356, -4.530343792719375),
-      target: new THREE.Vector3(-52.442950421087716, -11.402210347047328, 8.355094797146046),
+      pos: new THREE.Vector3(-225, -19.02, -4.53),
+      target: new THREE.Vector3(-52.44, -11.4, 8.3551),
     },
     locations: {
       spawn: {

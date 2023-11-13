@@ -82,6 +82,7 @@ interface SceneDef {
   metadata: SvelteSeoProps;
   gltfName?: string | null;
   extension?: 'gltf' | 'glb';
+  needsDraco?: boolean;
 }
 
 export const ScenesByName: { [key: string]: SceneDef } = {
@@ -136,6 +137,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'rainy' },
     gltfName: 'rainy',
     extension: 'glb',
+    needsDraco: true,
   },
   depthPrepassDemo: {
     sceneName: null,

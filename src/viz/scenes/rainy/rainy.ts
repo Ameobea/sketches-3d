@@ -44,8 +44,12 @@ const locations = {
     rot: new THREE.Vector3(-0.28, 7.764, 0),
   },
   greenhouse: {
-    pos: new THREE.Vector3(-7.394167900085449, 12.457, -78.0357),
+    pos: new THREE.Vector3(-7.394, 12.457, -78.0357),
     rot: new THREE.Vector3(-0.028, 8.546, 0),
+  },
+  tree: {
+    pos: new THREE.Vector3(-32.2194, 12.457, -53.979),
+    rot: new THREE.Vector3(-0.134, -10.988, 0),
   },
 };
 
@@ -141,8 +145,8 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
   const backgroundScene = new THREE.Scene();
   backgroundScene.background = cloudsBgTexture;
 
-  const bgAmbientLight = new THREE.AmbientLight(0xffffff, 0.45);
-  const fgAmbientLight = new THREE.AmbientLight(0xffffff, 0.2);
+  const bgAmbientLight = new THREE.AmbientLight(0xffffff, 0.35);
+  const fgAmbientLight = new THREE.AmbientLight(0xffffff, 0.25);
   viz.scene.add(fgAmbientLight);
   backgroundScene.add(bgAmbientLight);
 
@@ -182,18 +186,12 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
   const greenhouseWindowsMaterial = new THREE.MeshPhysicalMaterial({
     map: windowSeamless,
     transmission: 1,
-    opacity: 1,
-    metalness: 0,
     roughness: 0.64,
     roughnessMap: goldTextureAlbedo,
     normalMap: goldTextureNormal,
-    normalScale: new THREE.Vector2(1, 1),
     ior: 1.6,
-    transparent: true,
-    clearcoat: 0.8,
     thickness: 0.8,
     thicknessMap: goldTextureAlbedo,
-    clearcoatRoughness: 0.8,
     color: new THREE.Color(0xd5cfd3),
   });
 
@@ -290,7 +288,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       // normalMap: leavesNormal,
       normalScale: 3.5,
       uvTransform: new THREE.Matrix3().scale(32, 32),
-      ambientLightScale: 0.7,
+      ambientLightScale: 0.6,
     },
     {},
     { tileBreaking: { type: 'neyret', patchScale: 6 } }
@@ -577,7 +575,7 @@ export const processLoadedScene = async (
   // Glass pass swaps buffers, and the depth buffer is on the input side now, and normal Render pass
   // renders to the input buffer, so we're all good again.
   const greenhouseFgScene = new THREE.Scene();
-  const greenhouseFgAmbientLight = new THREE.AmbientLight(0xffffff, 0.2);
+  const greenhouseFgAmbientLight = new THREE.AmbientLight(0xffffff, 0.3);
   greenhouseFgScene.add(greenhouseFgAmbientLight);
   greenhouseFgScene.add(glassMetal);
   backgroundScene.remove(glassMetal);
@@ -608,7 +606,7 @@ export const processLoadedScene = async (
     mode: ToneMappingMode.UNCHARTED2,
   });
   toneMappingEffect.blendMode.opacity.value = 0.5;
-  viz.renderer.toneMappingExposure = 1.3;
+  viz.renderer.toneMappingExposure = 1.4;
 
   const smaaPass2 = new EffectPass(viz.camera, toneMappingEffect, smaaEffect2);
   smaaPass2.renderToScreen = true;

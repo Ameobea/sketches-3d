@@ -8,6 +8,7 @@
 import { get, type Writable } from 'svelte/store';
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { initSentry } from 'src/sentry';
@@ -557,14 +558,20 @@ export const initViz = (
 
   const inlineConsole = window.location.href.includes('localhost') || true ? new InlineConsole() : null;
 
-  const loader = new GLTFLoader().setPath('/');
-
   const sceneDef = ScenesByName[providedSceneName];
   if (!sceneDef) {
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
   const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName, extension = 'gltf' } = sceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
+
+  let loader = new GLTFLoader().setPath('/');
+  if (sceneDef.needsDraco) {
+    const dracoLoader = new DRACOLoader().setDecoderPath(
+      'https://www.gstatic.com/draco/versioned/decoders/1.5.6/'
+    );
+    loader = loader.setDRACOLoader(dracoLoader);
+  }
 
   let fpCtx: FirstPersonCtx | undefined;
   let destroyed = false;
