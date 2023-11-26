@@ -58,7 +58,7 @@ export const processLoadedScene = async (
     spawnLocation: 'spawn',
     gravity: 30,
     player: {
-      movementAccelPerSecond: { onGround: 19, inAir: 19 },
+      moveSpeed: { onGround: 19, inAir: 19 },
       colliderCapsuleSize: { height: 6.2, radius: 0.8 },
       jumpVelocity: 16,
       oobYThreshold: -50,

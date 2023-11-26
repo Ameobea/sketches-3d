@@ -152,7 +152,7 @@ export class VolumetricPass extends Pass implements Disposable {
     this.material.uniforms.ambientLightColor.value =
       this.ambientLight?.color ?? this.params.ambientLightColor ?? new THREE.Color(0xffffff);
     this.material.uniforms.ambientLightIntensity.value =
-      this.ambientLight?.intensity ?? this.params.ambientLightIntensity ?? 0;
+      this.params.ambientLightIntensity ?? this.ambientLight?.intensity ?? 0;
 
     for (const [key, value] of Object.entries(this.params)) {
       if (

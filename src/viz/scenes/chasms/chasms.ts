@@ -77,16 +77,16 @@ const loadTextures = async () => {
     generateNormalMapFromTexture(pillarTexture, {}, true)
   );
 
-  const towerStoneTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.722669912.png'
-  );
+  // const towerStoneTextureP = loadTexture(
+  //   loader,
+  //   'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.722669912.png'
+  // );
   // const towerStoneTextureCombinedDiffuseNormalTextureP = towerStoneTextureP.then(towerStoneTexture =>
   //   generateNormalMapFromTexture(towerStoneTexture, {}, true)
   // );
-  const towerStoneTextureNormalP = towerStoneTextureP.then(towerStoneTexture =>
-    generateNormalMapFromTexture(towerStoneTexture, {}, false)
-  );
+  // const towerStoneTextureNormalP = towerStoneTextureP.then(towerStoneTexture =>
+  //   generateNormalMapFromTexture(towerStoneTexture, {}, false)
+  // );
 
   const towerDoorArchTextureP = loadTexture(
     loader,
@@ -152,13 +152,13 @@ const loadTextures = async () => {
     generateNormalMapFromTexture(towerComputerPillar, {}, true)
   );
 
-  const towerComputerBorderP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.3862004810.png'
-  );
-  const towerComputerBorderCombinedDiffuseNormalTextureP = towerComputerBorderP.then(towerComputerBorder =>
-    generateNormalMapFromTexture(towerComputerBorder, {}, true)
-  );
+  // const towerComputerBorderP = loadTexture(
+  //   loader,
+  //   'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.3862004810.png'
+  // );
+  // const towerComputerBorderCombinedDiffuseNormalTextureP = towerComputerBorderP.then(towerComputerBorder =>
+  //   generateNormalMapFromTexture(towerComputerBorder, {}, true)
+  // );
 
   const dungeonWallTextureP = loadTexture(
     loader,
@@ -200,7 +200,6 @@ const loadTextures = async () => {
     skyPanoramaImg,
     tower2TextureCombinedDiffuseNormalTexture,
     pillarTextureCombinedDiffuseNormalTexture,
-    towerStoneTextureNormal,
     towerDoorArchTextureCombinedDiffuseNormalTexture,
     towerPlinthTextureCombinedDiffuseNormalTexture,
     towerFloorTextureCombinedDiffuseNormalTexture,
@@ -210,7 +209,6 @@ const loadTextures = async () => {
     towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
     towerComputerPillarCombinedDiffuseNormalTexture,
-    towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
     dungeonCeilingTextureCombinedDiffuseNormalTexture,
     furnaceTextureCombinedDiffuseNormalTexture,
@@ -220,7 +218,6 @@ const loadTextures = async () => {
     skyPanoramaImgP,
     tower2TextureCombinedDiffuseNormalTextureP,
     pillarTextureCombinedDiffuseNormalTextureP,
-    towerStoneTextureNormalP,
     towerDoorArchTextureCombinedDiffuseNormalTextureP,
     towerPlinthTextureCombinedDiffuseNormalTextureP,
     towerFloorTextureCombinedDiffuseNormalTextureP,
@@ -230,7 +227,6 @@ const loadTextures = async () => {
     towerCeilingTextureCombinedDiffuseNormalTextureP,
     muddyGoldenLoopsMatP,
     towerComputerPillarCombinedDiffuseNormalTextureP,
-    towerComputerBorderCombinedDiffuseNormalTextureP,
     dungeonWallTextureCombinedDiffuseNormalTextureP,
     dungeonCeilingTextureCombinedDiffuseNormalTextureP,
     furnaceTextureCombinedDiffuseNormalTextureP,
@@ -242,7 +238,6 @@ const loadTextures = async () => {
     skyPanoramaImg,
     tower2TextureCombinedDiffuseNormalTexture,
     pillarTextureCombinedDiffuseNormalTexture,
-    towerStoneTextureNormal,
     towerDoorArchTextureCombinedDiffuseNormalTexture,
     towerPlinthTextureCombinedDiffuseNormalTexture,
     towerFloorTextureCombinedDiffuseNormalTexture,
@@ -252,7 +247,6 @@ const loadTextures = async () => {
     towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
     towerComputerPillarCombinedDiffuseNormalTexture,
-    towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
     dungeonCeilingTextureCombinedDiffuseNormalTexture,
     furnaceTextureCombinedDiffuseNormalTexture,
@@ -271,7 +265,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     skyPanoramaImg,
     tower2TextureCombinedDiffuseNormalTexture,
     pillarTextureCombinedDiffuseNormalTexture,
-    towerStoneTextureNormal,
     towerDoorArchTextureCombinedDiffuseNormalTexture,
     towerPlinthTextureCombinedDiffuseNormalTexture,
     towerFloorTextureCombinedDiffuseNormalTexture,
@@ -281,7 +274,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     towerCeilingTextureCombinedDiffuseNormalTexture,
     muddyGoldenLoopsMat,
     towerComputerPillarCombinedDiffuseNormalTexture,
-    towerComputerBorderCombinedDiffuseNormalTexture,
     dungeonWallTextureCombinedDiffuseNormalTexture,
     dungeonCeilingTextureCombinedDiffuseNormalTexture,
     furnaceTextureCombinedDiffuseNormalTexture,
@@ -1217,9 +1209,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         height: 2.49,
         radius: 0.85,
       },
-      movementAccelPerSecond: {
+      moveSpeed: {
         onGround: 12.2,
-        inAir: 5.2,
+        inAir: 12.2,
       },
     },
     debugPos: true,

@@ -809,9 +809,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         height: 1.5,
         radius: 0.35,
       },
-      movementAccelPerSecond: {
+      moveSpeed: {
         onGround: 8.2,
-        inAir: 2.2,
+        inAir: 8.2,
       },
     },
   };

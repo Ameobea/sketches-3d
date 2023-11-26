@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import type { SfxManager } from './audio/SfxManager.js';
+import { DefaultMoveSpeed, type PlayerMoveSpeed } from './conf.js';
 import type { FpPlayerStateGetters } from './index.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
@@ -23,7 +24,7 @@ interface BulletPhysicsArgs {
   jumpSpeed: number;
   playerColliderRadius: number;
   playerColliderHeight: number;
-  playerMoveSpeed: number;
+  playerMoveSpeed: PlayerMoveSpeed | undefined;
   enableDash: boolean;
   sfxManager: SfxManager;
 }
@@ -37,7 +38,7 @@ export const initBulletPhysics = ({
   jumpSpeed,
   playerColliderRadius,
   playerColliderHeight,
-  playerMoveSpeed,
+  playerMoveSpeed = DefaultMoveSpeed,
   enableDash,
   sfxManager,
 }: BulletPhysicsArgs) => {
@@ -132,7 +133,7 @@ export const initBulletPhysics = ({
   /**
    * Returns the new position of the player.
    */
-  const walkDirection = new THREE.Vector3();
+  const moveDirection = new THREE.Vector3();
   let isWalking = false;
   const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
     let forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
@@ -144,22 +145,22 @@ export const initBulletPhysics = ({
 
     const wasOnGround = playerController.onGround();
 
-    walkDirection.set(0, 0, 0);
-    if (keyStates['KeyW']) walkDirection.add(forwardDir);
-    if (keyStates['KeyS']) walkDirection.sub(forwardDir);
-    if (keyStates['KeyA']) walkDirection.add(leftDir);
-    if (keyStates['KeyD']) walkDirection.sub(leftDir);
+    moveDirection.set(0, 0, 0);
+    if (keyStates['KeyW']) moveDirection.add(forwardDir);
+    if (keyStates['KeyS']) moveDirection.sub(forwardDir);
+    if (keyStates['KeyA']) moveDirection.add(leftDir);
+    if (keyStates['KeyD']) moveDirection.sub(leftDir);
     if (keyStates['Space'] && wasOnGround) {
       if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
         playerController.jump(
-          btvec3(walkDirection.x * (jumpSpeed * 0.18), jumpSpeed, walkDirection.z * (jumpSpeed * 0.18))
+          btvec3(moveDirection.x * (jumpSpeed * 0.18), jumpSpeed, moveDirection.z * (jumpSpeed * 0.18))
         );
         lastJumpTimeSeconds = curTimeSeconds;
       }
     }
 
     const wasWalking = isWalking;
-    isWalking = walkDirection.x !== 0 || walkDirection.y !== 0 || walkDirection.z !== 0;
+    isWalking = moveDirection.x !== 0 || moveDirection.y !== 0 || moveDirection.z !== 0;
     if (wasWalking && !isWalking) {
       sfxManager.onWalkStop();
     } else if (!wasWalking && isWalking) {
@@ -191,11 +192,12 @@ export const initBulletPhysics = ({
       boostNeedsGroundTouch = false;
     }
 
-    const walkSpeed = playerMoveSpeed * (1 / 160);
+    const moveSpeedPerSecond = wasOnGround ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
+    const moveSpeedPerTick = moveSpeedPerSecond * (1 / 160);
     const walkDirBulletVector = btvec3(
-      walkDirection.x * walkSpeed,
-      walkDirection.y * walkSpeed,
-      walkDirection.z * walkSpeed
+      moveDirection.x * moveSpeedPerTick,
+      moveDirection.y * moveSpeedPerTick,
+      moveDirection.z * moveSpeedPerTick
     );
     playerController.setWalkDirection(walkDirBulletVector);
 
@@ -404,7 +406,7 @@ export const initBulletPhysics = ({
   const addPlayerRegionContactCb = (
     region:
       | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
-      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number },
+      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 },
     onEnter?: () => void,
     onLeave?: () => void
   ) => {
@@ -437,14 +439,25 @@ export const initBulletPhysics = ({
             if (vertices instanceof Uint16Array) {
               throw new Error('GLTF Quantization not yet supported');
             }
-            const scale = mesh.scale;
-            scale.multiplyScalar(1 + (region.margin ?? 0));
+            let scale = mesh.scale.clone().multiplyScalar(1 + (region.margin ?? 0));
+            if (region.scale) {
+              scale = scale.multiply(region.scale);
+            }
 
             const shape = buildTrimeshShape(indices, vertices, scale);
             const transform = new Ammo.btTransform();
             transform.setIdentity();
             transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-            transform.setRotation(btvec3(mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z));
+            if (mesh.quaternion) {
+              const rot = new Ammo.btQuaternion(
+                mesh.quaternion.x,
+                mesh.quaternion.y,
+                mesh.quaternion.z,
+                mesh.quaternion.w
+              );
+              transform.setRotation(rot);
+              Ammo.destroy(rot);
+            }
             return { shape, transform };
           }
           default:
@@ -553,7 +566,7 @@ export const initBulletPhysics = ({
     getIsBoosting: () => playerController.isJumping() && lastBoostTimeSeconds > lastJumpTimeSeconds,
   };
 
-  const setMoveSpeed = (newMoveSpeed: number) => {
+  const setMoveSpeed = (newMoveSpeed: PlayerMoveSpeed) => {
     playerMoveSpeed = newMoveSpeed;
   };
 

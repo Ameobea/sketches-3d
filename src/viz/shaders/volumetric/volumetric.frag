@@ -318,6 +318,7 @@ vec3 computeColor(in vec3 curPos, in float density, in vec3 gradient) {
   #if USE_LIGHT_FALLOFF
   diffuseFactor *= 1. - smoothstep(0., lightFalloffDistance, length(realLightPos - curPos));
   #endif
+  diffuseFactor = 0.;
 
   vec3 ambientColor = ambientLightColor * ambientLightIntensity;
   vec3 diffuseColor = lightColor * lightIntensity * diffuseFactor;

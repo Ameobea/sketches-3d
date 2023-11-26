@@ -169,7 +169,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: Viz
       name: 'walkway_custom',
       map: crossfadedCementTexture,
       normalMap: crossfadedCementTextureNormal,
-      normalScale: 300,
+      normalScale: 3,
       uvTransform: new THREE.Matrix3().scale(0.03, 0.03),
     },
     {},
@@ -720,9 +720,9 @@ export const processLoadedScene = async (
         height: 1.35,
         radius: 0.3,
       },
-      movementAccelPerSecond: {
+      moveSpeed: {
         onGround: 3.9,
-        inAir: 1,
+        inAir: 0,
       },
     },
     debugPos: true,

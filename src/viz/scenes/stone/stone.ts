@@ -14,10 +14,37 @@ import type { TerrainGenParams } from 'src/viz/terrain/TerrainGenWorker/TerrainG
 import { loadNamedTextures } from 'src/viz/textureLoading';
 import { smoothstepScale } from 'src/viz/util';
 import { getTerrainGenWorker } from 'src/viz/workerPool';
-import type { SceneConfig } from '..';
+import type { SceneConfig, SceneLocations } from '..';
 import { getRuneGenerator } from './runeGen/runeGen';
 import MonolithLightBeamColorShader from './shaders/monolithLightBeam/color.frag?raw';
 import TotemBeamColorShader from './shaders/totemBeam/color.frag?raw';
+
+const locations: SceneLocations = {
+  spawn: {
+    pos: [-196.769, 51.176, 244.118],
+    rot: [-0.1068, -12.48, 0],
+  },
+  stairs: {
+    pos: [-302.59253, 46, 272.8971],
+    rot: [-0.6608, -14.598, 0],
+  },
+  base: {
+    pos: [-63.2866, 37.548, 47.511],
+    rot: [-0.0468, -13.47, 0],
+  },
+  outside: {
+    pos: [177.221, 31.886, 821.6586],
+    rot: [-0.1028, 0.252, 0],
+  },
+  top: {
+    pos: [-119.5325, 72.6, 110.954],
+    rot: [-0.659, -26.412, 0],
+  },
+  two: {
+    pos: [-0.2293, 35.73, -232.21358],
+    rot: [-0.2388, -12.58, 0],
+  },
+};
 
 const initTerrain = async (
   viz: VizState,
@@ -198,9 +225,6 @@ export const processLoadedScene = async (
     goldFleckedObsidianColor,
     goldFleckedObsidianNormal,
     goldFleckedObsidianRoughness,
-    goldTextureAlbedo,
-    goldTextureNormal,
-    goldTextureRoughness,
     totemAlbedo,
     totemNormal,
     totemRoughness,
@@ -521,7 +545,7 @@ export const processLoadedScene = async (
 
     if (i === 2) {
       getSentry()?.captureMessage('Stone level jump puzzle totem collected');
-      viz.fpCtx!.setMoveSpeed(baseMoveSpeed * 1.3);
+      viz.fpCtx!.setMoveSpeed({ inAir: baseMoveSpeed * 1.3, onGround: baseMoveSpeed * 1.3 });
       // animate FOV increase
       const fovChangeDurationSeconds = 0.3;
       const initialFOV = vizConf.graphics.fov;
@@ -553,11 +577,10 @@ export const processLoadedScene = async (
   };
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
-    totems.forEach((totem, i) => {
-      fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: totem }, () => {
-        handleTotemCollision(i);
-      });
-    });
+    totems.forEach(
+      (totem, i) =>
+        void fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: totem }, () => void handleTotemCollision(i))
+    );
   });
 
   // render one frame to populate shadow map
@@ -625,37 +648,12 @@ export const processLoadedScene = async (
     spawnLocation: 'spawn',
     gravity: 30,
     player: {
-      movementAccelPerSecond: { onGround: baseMoveSpeed, inAir: baseMoveSpeed },
+      moveSpeed: { onGround: baseMoveSpeed, inAir: baseMoveSpeed },
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
       oobYThreshold: -210,
     },
     debugPos: true,
-    locations: {
-      spawn: {
-        pos: [-196.76904296875, 51.176124572753906, 244.1184539794922],
-        rot: [-0.10679632679489452, -12.48, 0],
-      },
-      stairs: {
-        pos: [-302.592529296875, 46, 272.8970947265625],
-        rot: [-0.660796326794895, -14.598, 0],
-      },
-      base: {
-        pos: [-63.28660583496094, 37.54802322387695, 47.51081085205078],
-        rot: [-0.04679632679489448, -13.47, 0],
-      },
-      outside: {
-        pos: [177.2210235595703, 31.88624382019043, 821.6585693359375],
-        rot: [-0.10279632679489453, 0.252, 0],
-      },
-      top: {
-        pos: [-119.53250122070312, 72.60051727294922, 110.9544677734375],
-        rot: [-0.659203673205105, -26.41199999999997, 0],
-      },
-      two: {
-        pos: [-0.22930306196212769, 35.730072021484375, -232.2135772705078],
-        rot: [-0.23879632679489463, -12.58000000000007, 0],
-      },
-    },
+    locations,
   };
 };

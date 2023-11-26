@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
+import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { LODTerrain } from 'src/viz/terrain/LODTerrain';
 import type { SceneConfig } from '../..';
 
@@ -18,25 +19,28 @@ export const processLoadedScene = async (
   loadedWorld.children[0].removeFromParent();
 
   // sine wave test pattern
-  const sampleHeight = (pos: THREE.Vector2) => {
-    const x = pos.x;
-    const z = pos.y;
-    return Math.sin(x / 20) * Math.cos(z / 20) * 10;
-  };
+  const sampleHeight = (x: number, z: number) => Math.sin(x / 20) * Math.cos(z / 20) * 10;
 
-  const terrain = new LODTerrain(viz.camera, {
-    boundingBox: new THREE.Box2(new THREE.Vector2(-5000, -5000), new THREE.Vector2(5000, 5000)),
-    maxPolygonWidth: 200,
-    minPolygonWidth: 5,
-    sampleHeight,
-    tileResolution: 256,
-  });
+  const terrain = new LODTerrain(
+    viz.camera,
+    {
+      boundingBox: new THREE.Box2(new THREE.Vector2(-5000, -5000), new THREE.Vector2(5000, 5000)),
+      maxPolygonWidth: 200,
+      minPolygonWidth: 5,
+      sampleHeight: { type: 'simple', fn: sampleHeight },
+      tileResolution: 256,
+      material: new THREE.MeshStandardMaterial({ color: 0xaaaaaa, wireframe: true }),
+      maxPixelsPerPolygon: 100,
+    },
+    viz.renderer.getSize(new THREE.Vector2())
+  );
   viz.scene.add(terrain);
   viz.registerBeforeRenderCb(() => terrain.update());
 
+  configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
+
   return {
     viewMode: {
-      // type: 'firstPerson',
       type: 'orbit',
       pos: new THREE.Vector3(40, 40, 40),
       target: new THREE.Vector3(),
@@ -50,7 +54,7 @@ export const processLoadedScene = async (
     spawnLocation: 'spawn',
     gravity: 30,
     player: {
-      movementAccelPerSecond: { onGround: 19, inAir: 19 },
+      moveSpeed: { onGround: 19, inAir: 19 },
       colliderCapsuleSize: { height: 6.2, radius: 0.8 },
       jumpVelocity: 16,
       oobYThreshold: -50,

@@ -20,7 +20,13 @@ import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger
 import { initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
-import { buildDefaultSceneConfig, type SceneConfig, type SceneConfigLocation, ScenesByName } from './scenes';
+import {
+  buildDefaultSceneConfig,
+  type SceneConfig,
+  type SceneConfigLocation,
+  type SceneDef,
+  ScenesByName,
+} from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
 import { mergeDeep } from './util';
 
@@ -67,12 +73,13 @@ export interface FirstPersonCtx {
   addPlayerRegionContactCb: (
     region:
       | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
-      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number },
+      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 },
     onEnter?: () => void,
     onLeave?: () => void
   ) => void;
   playerStateGetters: FpPlayerStateGetters;
-  setMoveSpeed: (moveSpeed: number) => void;
+  setMoveSpeed: (moveSpeed: Conf.PlayerMoveSpeed) => void;
+  setSpawnPos: (pos: THREE.Vector3, rot: THREE.Vector3) => void;
 }
 
 const setupFirstPerson = async (
@@ -91,8 +98,6 @@ const setupFirstPerson = async (
   sfxManager: SfxManager
 ): Promise<FirstPersonCtx> => {
   let GRAVITY = gravity ?? 40;
-  let JUMP_VELOCITY = playerConf?.jumpVelocity ?? 20;
-  let onFloorAccelerationPerSecond = playerConf?.movementAccelPerSecond?.onGround ?? 40;
 
   const keyStates: Record<string, boolean> = {};
 
@@ -122,10 +127,10 @@ const setupFirstPerson = async (
     Ammo,
     spawnPos,
     gravity: GRAVITY,
-    jumpSpeed: JUMP_VELOCITY,
+    jumpSpeed: playerConf?.jumpVelocity ?? 20,
     playerColliderRadius,
     playerColliderHeight,
-    playerMoveSpeed: onFloorAccelerationPerSecond,
+    playerMoveSpeed: playerConf?.moveSpeed,
     enableDash,
     sfxManager,
   });
@@ -200,6 +205,10 @@ const setupFirstPerson = async (
     }
   }
 
+  const setSpawnPos = (pos: THREE.Vector3, rot: THREE.Vector3) => {
+    spawnPos = { pos, rot };
+  };
+
   registerBeforeRenderCb((curTimeSecs, tDiffSecs) => {
     const newPlayerPos = updateCollisionWorld(curTimeSecs, tDiffSecs);
     newPlayerPos.y += 0.5 * playerColliderHeight;
@@ -236,6 +245,7 @@ const setupFirstPerson = async (
     playerStateGetters,
     removeRigidBody,
     setMoveSpeed,
+    setSpawnPos,
   };
 };
 
@@ -332,7 +342,7 @@ const initPauseHandlers = (
   });
 };
 
-export const buildViz = (paused: Writable<boolean>) => {
+export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
   try {
     screen.orientation.lock('landscape').catch(() => 0);
   } catch (err) {
@@ -358,10 +368,17 @@ export const buildViz = (paused: Writable<boolean>) => {
     powerPreference: 'high-performance',
     stencil: false,
   });
+
   // backwards compat
-  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.useLegacyLights = true;
-  THREE.ColorManagement.enabled = false;
+  if (sceneDef.legacyLights) {
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.useLegacyLights = true;
+    THREE.ColorManagement.enabled = false;
+  } else {
+    THREE.ColorManagement.enabled = true;
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  }
+
   (window as any).renderer = renderer;
   // const ext = renderer.getContext().getExtension('WEBGL_compressed_texture_s3tc');
   const gl = renderer.getContext();
@@ -374,9 +391,9 @@ export const buildViz = (paused: Writable<boolean>) => {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  const stats = Stats.default();
-  stats.domElement.style.position = 'absolute';
-  stats.domElement.style.top = '0px';
+  const stats = new Stats.default();
+  stats.dom.style.position = 'absolute';
+  stats.dom.style.top = '0px';
 
   const resizeCbs: (() => void)[] = [];
   const beforeRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
@@ -550,18 +567,19 @@ export const initViz = (
 ) => {
   initSentry();
 
-  const viz: VizState = buildViz(paused);
-  vizCb(viz);
-
-  container.appendChild(viz.renderer.domElement);
-  container.appendChild(viz.stats.domElement);
-
-  const inlineConsole = window.location.href.includes('localhost') || true ? new InlineConsole() : null;
-
   const sceneDef = ScenesByName[providedSceneName];
   if (!sceneDef) {
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
+
+  const viz: VizState = buildViz(paused, sceneDef);
+  vizCb(viz);
+
+  container.appendChild(viz.renderer.domElement);
+  container.appendChild(viz.stats.dom);
+
+  const inlineConsole = window.location.href.includes('localhost') || true ? new InlineConsole() : null;
+
   const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName, extension = 'gltf' } = sceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 

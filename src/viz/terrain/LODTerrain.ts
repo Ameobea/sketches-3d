@@ -313,7 +313,6 @@ export class LODTerrain extends THREE.Group implements Resizable {
   public camera: THREE.PerspectiveCamera;
   public viewportSize: THREE.Vector2;
   public params: TerrainParams;
-  private tileCache: Map<string, Tile> = new Map();
   private rootTile: Tile;
 
   constructor(camera: THREE.PerspectiveCamera, params: TerrainParams, viewportSize: THREE.Vector2) {

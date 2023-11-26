@@ -10,14 +10,16 @@ export interface SceneConfigLocation {
   rot: THREE.Vector3;
 }
 
+export type SceneLocations = {
+  [key: string]: {
+    pos: THREE.Vector3 | [number, number, number];
+    rot: THREE.Vector3 | [number, number, number];
+  };
+};
+
 export interface SceneConfig {
   viewMode?: { type: 'firstPerson' } | { type: 'orbit'; pos: THREE.Vector3; target: THREE.Vector3 };
-  locations: {
-    [key: string]: {
-      pos: THREE.Vector3 | [number, number, number];
-      rot: THREE.Vector3 | [number, number, number];
-    };
-  };
+  locations: SceneLocations;
   spawnLocation: string;
   /**
    * If true, the current position in the world of the player will be displayed
@@ -39,21 +41,35 @@ export interface SceneConfig {
     enableDash?: boolean;
     jumpVelocity?: number;
     colliderCapsuleSize?: { height: number; radius: number };
-    movementAccelPerSecond?: { onGround: number; inAir: number };
+    moveSpeed?: { onGround: number; inAir: number };
     oobYThreshold?: number;
   };
   renderOverride?: (timeDiffSeconds: number) => void;
   enableInventory?: boolean;
   sfx?: DeepPartial<SfxConfig>;
+  legacyLights?: boolean;
 }
 
 export const buildDefaultSceneConfig = () => ({
   viewMode: { type: 'firstPerson' as const },
 });
 
-const ParticleConduit = {
+export interface SceneDef {
+  sceneName: string | null;
+  sceneLoader: () => Promise<
+    (viz: VizState, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
+  >;
+  metadata: SvelteSeoProps;
+  gltfName?: string | null;
+  extension?: 'gltf' | 'glb';
+  needsDraco?: boolean;
+  legacyLights?: boolean;
+}
+
+const ParticleConduit: SceneDef = {
   sceneName: 'blink',
   sceneLoader: () => import('./blink').then(mod => mod.processLoadedScene),
+  legacyLights: true,
   metadata: {
     title: 'Particle Conduit',
     description:
@@ -74,22 +90,12 @@ const ParticleConduit = {
   },
 };
 
-interface SceneDef {
-  sceneName: string | null;
-  sceneLoader: () => Promise<
-    (viz: VizState, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
-  >;
-  metadata: SvelteSeoProps;
-  gltfName?: string | null;
-  extension?: 'gltf' | 'glb';
-  needsDraco?: boolean;
-}
-
 export const ScenesByName: { [key: string]: SceneDef } = {
   bridge: {
     sceneName: 'bridge',
     sceneLoader: () => import('./bridge').then(mod => mod.processLoadedScene),
     metadata: { title: 'bridge' },
+    legacyLights: true,
   },
   blink: ParticleConduit,
   particle_conduit: ParticleConduit,
@@ -97,39 +103,46 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneName: 'walkways',
     sceneLoader: () => import('./walkways').then(mod => mod.processLoadedScene),
     metadata: { title: 'walkways' },
+    legacyLights: true,
   },
   subdivided: {
     sceneName: 'subdivided',
     sceneLoader: () => import('./subdivided').then(mod => mod.processLoadedScene),
     metadata: { title: 'subdivided' },
+    legacyLights: true,
   },
   fractal_cube: {
     sceneName: 'fractal_cube',
     sceneLoader: () => import('./fractal_cube').then(mod => mod.processLoadedScene),
     metadata: { title: 'fractal cube' },
+    legacyLights: true,
   },
   bridge2: {
     sceneName: 'bridge2',
     sceneLoader: () => import('./bridge2').then(mod => mod.processLoadedScene),
     metadata: { title: 'bridge2' },
     gltfName: 'checkpoint5',
+    legacyLights: true,
   },
   collisiondemo: {
     sceneName: 'collisionDemo',
     sceneLoader: () => import('./collisionDemo').then(mod => mod.processLoadedScene),
     metadata: { title: 'collisionDemo' },
+    legacyLights: true,
   },
   chasms: {
     sceneName: 'chasms',
     sceneLoader: () => import('./chasms/chasms').then(mod => mod.processLoadedScene),
     metadata: { title: 'chasms' },
     gltfName: 'chasms',
+    legacyLights: true,
   },
   godrays_test: {
     sceneName: 'godrays_test',
     sceneLoader: () => import('./experiments/godrays-test/godraysTest').then(mod => mod.processLoadedScene),
     metadata: { title: 'godrays_test' },
     gltfName: null,
+    legacyLights: true,
   },
   rainy: {
     sceneName: 'Scene',
@@ -138,12 +151,14 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     gltfName: 'rainy',
     extension: 'glb',
     needsDraco: true,
+    legacyLights: true,
   },
   depthPrepassDemo: {
     sceneName: null,
     sceneLoader: () => import('./depthPrepassDemo').then(mod => mod.processLoadedScene),
     metadata: { title: 'depthPrepassDemo' },
     gltfName: null,
+    legacyLights: true,
   },
   smoke: {
     sceneName: 'Scene',
@@ -163,6 +178,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     },
     gltfName: 'smoke',
     extension: 'glb',
+    legacyLights: true,
   },
   cave: {
     sceneName: 'proc',
@@ -170,6 +186,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'cave' },
     gltfName: 'cave',
     extension: 'glb',
+    legacyLights: true,
   },
   gn_inst_test: {
     sceneName: 'Scene',
@@ -177,6 +194,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'gn_inst_test' },
     gltfName: 'gn_inst_test',
     extension: 'glb',
+    legacyLights: true,
   },
   fogTest: {
     sceneName: 'Scene',
@@ -184,6 +202,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'volumetric fog test' },
     gltfName: 'fogTest',
     extension: 'glb',
+    legacyLights: true,
   },
   terrainTest: {
     sceneName: 'Scene',
@@ -191,6 +210,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'LOD terrain test' },
     gltfName: 'fogTest',
     extension: 'glb',
+    legacyLights: true,
   },
   stone: {
     sceneName: 'Scene',
@@ -198,12 +218,14 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'stone' },
     gltfName: 'stone',
     extension: 'glb',
+    legacyLights: true,
   },
   terrainSandbox: {
     gltfName: null,
     sceneLoader: () => import('./terrainSandbox/terrainSandbox').then(mod => mod.processLoadedScene),
     sceneName: null,
     metadata: { title: 'terrain sandbox' },
+    legacyLights: true,
   },
   runeGenTest: {
     gltfName: 'torus',
@@ -211,6 +233,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./experiments/runeGen/runeGen').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'Geodesic Mesh Mapping Demo' },
+    legacyLights: true,
   },
   construction: {
     gltfName: 'construction',
@@ -218,5 +241,13 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./construction/construction').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'Under Construction' },
+    legacyLights: true,
+  },
+  pk_pylons: {
+    gltfName: 'pk_pylons',
+    extension: 'glb',
+    sceneLoader: () => import('./pkPylons/pkPylons').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'pk_pylons' },
   },
 };
