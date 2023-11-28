@@ -38,16 +38,25 @@ const buildMaterials = async (viz: VizState) => {
     return bgTexture;
   })();
 
-  const [bgTexture, towerPlinthPedestalTextureCombinedDiffuseNormalTexture] = await Promise.all([
+  const [
+    bgTexture,
+    towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
+    { shinyPatchworkStoneAlbedo, shinyPatchworkStoneNormal, shinyPatchworkStoneRoughness },
+  ] = await Promise.all([
     bgTextureP,
     towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
+    loadNamedTextures(loader, {
+      shinyPatchworkStoneAlbedo: '/textures/shiny_patchwork_stone/color_map.jpg',
+      shinyPatchworkStoneNormal: '/textures/shiny_patchwork_stone/normal_map_opengl.jpg',
+      shinyPatchworkStoneRoughness: '/textures/shiny_patchwork_stone/roughness_map.jpg',
+    }),
   ]);
 
   const pylonMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x898989),
       metalness: 0.18,
-      roughness: 0.92,
+      roughness: 0.82,
       map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
       uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
       mapDisableDistance: null,
@@ -69,10 +78,32 @@ const buildMaterials = async (viz: VizState) => {
   );
   viz.registerBeforeRenderCb(curTimeSeconds => checkpointMat.setCurTimeSeconds(curTimeSeconds));
 
+  const shinyPatchworkStoneMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0xffffff),
+      metalness: 0.5,
+      roughness: 0.5,
+      map: shinyPatchworkStoneAlbedo,
+      normalMap: shinyPatchworkStoneNormal,
+      roughnessMap: shinyPatchworkStoneRoughness,
+      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+      mapDisableDistance: null,
+      normalScale: 1.2,
+      ambientLightScale: 2,
+    },
+    {},
+    {
+      useGeneratedUVs: true,
+      randomizeUVOffset: true,
+      tileBreaking: { type: 'neyret', patchScale: 0.9 },
+    }
+  );
+
   return {
     pylonMaterial,
     checkpointMat,
     bgTexture,
+    shinyPatchworkStoneMaterial,
   };
 };
 
@@ -84,7 +115,7 @@ const initCheckpoints = (
 ) => {
   const checkpoints: THREE.Mesh[] = [];
   loadedWorld.traverse(obj => {
-    if (obj instanceof THREE.Mesh && obj.name === 'checkpoint') {
+    if (obj instanceof THREE.Mesh && obj.name.includes('checkpoint')) {
       checkpoints.push(obj);
     }
   });
@@ -131,7 +162,7 @@ export const processLoadedScene = async (
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
-  const { pylonMaterial, checkpointMat, bgTexture } = await buildMaterials(viz);
+  const { pylonMaterial, checkpointMat, bgTexture, shinyPatchworkStoneMaterial } = await buildMaterials(viz);
 
   viz.scene.background = bgTexture;
 
@@ -141,7 +172,13 @@ export const processLoadedScene = async (
   viz.scene.add(sunLight);
 
   loadedWorld.traverse(obj => {
-    if (obj instanceof THREE.Mesh) {
+    if (!(obj instanceof THREE.Mesh)) {
+      return;
+    }
+
+    if (obj.name.includes('sparkle')) {
+      obj.material = shinyPatchworkStoneMaterial;
+    } else {
       obj.material = pylonMaterial;
     }
   });
@@ -183,6 +220,7 @@ export const processLoadedScene = async (
       oobYThreshold: -10,
     },
     debugPos: true,
+    debugPlayerKinematics: true,
     locations,
     legacyLights: false,
   };

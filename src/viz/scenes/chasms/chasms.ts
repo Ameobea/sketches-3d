@@ -1140,7 +1140,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     blendFunction: BlendFunction.ADD,
     luminanceSmoothing: 0.05,
     radius: 0.86,
-  } as any);
+  });
   const bloomPass = new EffectPass(viz.camera, bloomEffect);
   bloomPass.dithering = false;
 
