@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { get, writable, type Writable } from 'svelte/store';
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
@@ -9,6 +9,7 @@ import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
 import type { SceneConfig } from '..';
 import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
+import { CollectablesCtx, initCollectables } from './collectables';
 
 const locations = {
   spawn: {
@@ -124,9 +125,7 @@ const buildMaterials = async (viz: VizState) => {
       ambientLightScale: 2,
     },
     {},
-    {
-      useTriplanarMapping: true,
-    }
+    { useTriplanarMapping: true }
   );
 
   return {
@@ -138,64 +137,30 @@ const buildMaterials = async (viz: VizState) => {
   };
 };
 
-interface InitCollectablesArgs {
-  viz: VizState;
-  loadedWorld: THREE.Group;
-  collectableName: string;
-  onCollect: (obj: THREE.Mesh) => void;
-  material: THREE.Material;
-  collisionRegionScale?: THREE.Vector3;
-  type?: 'mesh' | 'convexHull' | 'aabb';
-}
-
-const initCollectables = ({
-  viz,
-  loadedWorld,
-  collectableName,
-  onCollect,
-  material,
-  collisionRegionScale,
-  type = 'mesh',
-}: InitCollectablesArgs) => {
-  const collectables: THREE.Mesh[] = [];
-  loadedWorld.traverse(obj => {
-    if (obj instanceof THREE.Mesh && obj.name.includes(collectableName)) {
-      obj.userData.nocollide = true;
-      collectables.push(obj);
-      obj.material = material;
-    }
-  });
-
-  const reachedCollectables: Set<THREE.Mesh> = new Set();
-  viz.collisionWorldLoadedCbs.push(fpCtx => {
-    for (const collectable of collectables) {
-      fpCtx.addPlayerRegionContactCb(
-        {
-          type,
-          mesh: collectable,
-          scale: collisionRegionScale,
-        },
-        () => {
-          if (!reachedCollectables.has(collectable)) {
-            reachedCollectables.add(collectable);
-            collectable.visible = false;
-            onCollect(collectable);
-          }
-        }
-      );
-    }
-  });
-
-  return reachedCollectables;
-};
-
 const initCheckpoints = (
   viz: VizState,
   loadedWorld: THREE.Group<THREE.Object3DEventMap>,
-  setSpawnPoint: (pos: THREE.Vector3, rot: THREE.Vector3) => void,
-  checkpointMat: THREE.Material
+  checkpointMat: THREE.Material,
+  dashTokensCtx: CollectablesCtx,
+  curDashCharges: Writable<number>
 ) => {
-  return initCollectables({
+  let latestReachedCheckpointIx: number | null = 0;
+  let dashChargesAtLastCheckpoint = 0;
+  const setSpawnPoint = (pos: THREE.Vector3, rot: THREE.Vector3) => viz.fpCtx!.setSpawnPos(pos, rot);
+
+  const parseCheckpointIx = (name: string) => {
+    // names are like "checkpoint", "checkpoint001", "checkpoint002", etc.
+    // "checkpoint" = 0
+    const match = name.match(/checkpoint(\d+)/);
+    console.log(name, match);
+    if (!match) {
+      return 0;
+    }
+
+    return parseInt(match[1], 10);
+  };
+
+  initCollectables({
     viz,
     loadedWorld,
     collectableName: 'checkpoint',
@@ -204,16 +169,39 @@ const initCheckpoints = (
         checkpoint.position,
         new THREE.Vector3(viz.camera.rotation.x, viz.camera.rotation.y, viz.camera.rotation.z)
       );
+
       // TODO: sfx
+
+      const checkpointIx = parseCheckpointIx(checkpoint.name);
+      latestReachedCheckpointIx = checkpointIx;
+      dashChargesAtLastCheckpoint = get(curDashCharges);
     },
     material: checkpointMat,
     collisionRegionScale: new THREE.Vector3(1, 30, 1),
   });
+
+  viz.collisionWorldLoadedCbs.push(fpCtx =>
+    fpCtx.registerOnRespawnCb(() => {
+      curDashCharges.set(dashChargesAtLastCheckpoint);
+
+      const needle = `ck${latestReachedCheckpointIx === null ? 0 : latestReachedCheckpointIx + 1}`;
+      console.log(needle);
+      const toRestore: THREE.Mesh[] = [];
+      for (const obj of dashTokensCtx.hiddenCollectables) {
+        console.log(obj.name);
+        if (obj.name.includes(needle)) {
+          toRestore.push(obj);
+        }
+      }
+
+      dashTokensCtx.restore(toRestore);
+    })
+  );
 };
 
 const initDashTokens = (viz: VizState, loadedWorld: THREE.Group, dashTokenMaterial: THREE.Material) => {
   const dashCharges = writable(0);
-  initCollectables({
+  const ctx = initCollectables({
     viz,
     loadedWorld,
     collectableName: 'dash',
@@ -224,7 +212,7 @@ const initDashTokens = (viz: VizState, loadedWorld: THREE.Group, dashTokenMateri
     material: dashTokenMaterial,
     type: 'aabb',
   });
-  return dashCharges;
+  return { dashCharges, ctx };
 };
 
 export const processLoadedScene = async (
@@ -257,10 +245,12 @@ export const processLoadedScene = async (
     }
   });
 
-  const setSpawnPoint = (pos: THREE.Vector3, rot: THREE.Vector3) => viz.fpCtx!.setSpawnPos(pos, rot);
-  initCheckpoints(viz, loadedWorld, setSpawnPoint, checkpointMat);
-
-  const curDashCharges = initDashTokens(viz, loadedWorld, greenMosaic2Material);
+  const { ctx: dashTokensCtx, dashCharges: curDashCharges } = initDashTokens(
+    viz,
+    loadedWorld,
+    greenMosaic2Material
+  );
+  initCheckpoints(viz, loadedWorld, checkpointMat, dashTokensCtx, curDashCharges);
 
   configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
     const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {

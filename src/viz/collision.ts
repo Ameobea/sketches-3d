@@ -127,7 +127,7 @@ interface BulletPhysicsArgs {
   playerColliderRadius: number;
   playerColliderHeight: number;
   playerMoveSpeed: PlayerMoveSpeed | undefined;
-  dashConfig: DashConfig | undefined;
+  dashConfig: Partial<DashConfig> | undefined;
   sfxManager: SfxManager;
 }
 

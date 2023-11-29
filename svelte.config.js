@@ -28,9 +28,6 @@ const config = {
       prebundleSvelteLibraries: true,
     },
   },
-  compilerOptions: {
-    format: 'esm',
-  },
   build: {
     rollupOptions: {
       output: {

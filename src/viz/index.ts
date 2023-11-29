@@ -76,6 +76,8 @@ export interface FirstPersonCtx {
   playerStateGetters: FpPlayerStateGetters;
   setMoveSpeed: (moveSpeed: PlayerMoveSpeed) => void;
   setSpawnPos: (pos: THREE.Vector3, rot: THREE.Vector3) => void;
+  registerOnRespawnCb: (cb: () => void) => void;
+  unregisterOnRespawnCb: (cb: () => void) => void;
 }
 
 const setupFirstPerson = async (
@@ -89,7 +91,7 @@ const setupFirstPerson = async (
   playerConf: SceneConfig['player'],
   gravity: number | undefined = 40,
   inlineConsole: InlineConsole | null | undefined,
-  dashConfig: DashConfig | undefined,
+  dashConfig: Partial<DashConfig> | undefined,
   oobYThreshold = -55,
   sfxManager: SfxManager
 ): Promise<FirstPersonCtx> => {
@@ -193,9 +195,19 @@ const setupFirstPerson = async (
     delete localStorage.goBackOnLoad;
   }
 
+  const onRespawnCBs: (() => void)[] = [];
+  const registerOnRespawnCb = (cb: () => void) => onRespawnCBs.push(cb);
+  const unregisterOnRespawnCb = (cb: () => void) => {
+    const idx = onRespawnCBs.indexOf(cb);
+    if (idx !== -1) {
+      onRespawnCBs.splice(idx, 1);
+    }
+  };
+
   function teleportPlayerIfOOB() {
     if (camera.position.y <= oobYThreshold) {
       teleportPlayer(spawnPos.pos, spawnPos.rot);
+      onRespawnCBs.forEach(cb => cb());
     }
   }
 
@@ -240,6 +252,8 @@ const setupFirstPerson = async (
     removeRigidBody,
     setMoveSpeed,
     setSpawnPos,
+    registerOnRespawnCb,
+    unregisterOnRespawnCb,
   };
 };
 
