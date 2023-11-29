@@ -6,18 +6,24 @@
   import { writable } from 'svelte/store';
 
   import PauseMenu from './PauseMenu/PauseMenu.svelte';
-  import { ScenesByName } from './scenes';
+  import { type SceneConfig, ScenesByName } from './scenes';
+  import DashChargeUI from './UI/DashChargeUI.svelte';
 
   export let sceneName: string;
-  $: metadata = ScenesByName[sceneName]?.metadata;
+  $: sceneDef = ScenesByName[sceneName];
+  $: metadata = sceneDef.metadata;
 
   const paused = writable(false);
   const onResume = () => void paused.set(false);
 
   let viz: VizState | null = null;
-  const vizCb = (newViz: VizState) => {
+  let sceneConfig: SceneConfig | null = null;
+  const vizCb = (newViz: VizState, newSceneConfig: SceneConfig) => {
     viz = newViz;
+    sceneConfig = newSceneConfig;
   };
+
+  $: curDashCharges = sceneConfig?.player?.dashConfig?.chargeConfig?.curCharges;
 </script>
 
 {#if metadata}
@@ -27,4 +33,8 @@
 <div use:initViz={{ paused, sceneName, vizCb }} />
 {#if $paused && viz}
   <PauseMenu ctx={{ onResume }} {viz} />
+{/if}
+
+{#if curDashCharges}
+  <DashChargeUI curCharges={$curDashCharges ?? 0} />
 {/if}

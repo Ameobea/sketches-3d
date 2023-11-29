@@ -6,7 +6,7 @@ export const initPlayerKinematicsDebugger = (viz: VizState, container: HTMLEleme
   const targetDisplayElem = createStatsContainer(topPx);
   container.appendChild(targetDisplayElem);
 
-  const props = { verticalVelocity: 0, isJumping: false, isOnGround: false, isBoosting: false };
+  const props = { verticalVelocity: 0, isJumping: false, isOnGround: false, isDashing: false };
   const comp = new PlayerKinematicsDebugger({ target: targetDisplayElem, props });
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
@@ -14,7 +14,7 @@ export const initPlayerKinematicsDebugger = (viz: VizState, container: HTMLEleme
       props.verticalVelocity = fpCtx.playerStateGetters.getVerticalVelocity();
       props.isJumping = fpCtx.playerStateGetters.getIsJumping();
       props.isOnGround = fpCtx.playerStateGetters.getIsOnGround();
-      props.isBoosting = fpCtx.playerStateGetters.getIsBoosting();
+      props.isDashing = fpCtx.playerStateGetters.getIsDashing();
 
       comp.$set(props);
     });

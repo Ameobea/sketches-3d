@@ -99,7 +99,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     spawnLocation: 'spawn',
     player: {
       jumpVelocity: 0,
-      enableDash: false,
+      dashConfig: { enable: false },
       colliderCapsuleSize: {
         height: 1.35,
         radius: 0.3,

@@ -13,7 +13,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { initSentry } from 'src/sentry';
 import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
-import { getAmmoJS, initBulletPhysics } from './collision';
+import { type AddPlayerRegionContactCB, getAmmoJS, initBulletPhysics } from './collision';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger';
@@ -22,6 +22,8 @@ import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
 import {
   buildDefaultSceneConfig,
+  type DashConfig,
+  type PlayerMoveSpeed,
   type SceneConfig,
   type SceneConfigLocation,
   type SceneDef,
@@ -33,7 +35,7 @@ import { mergeDeep } from './util';
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
   getIsJumping: () => boolean;
-  getIsBoosting: () => boolean;
+  getIsDashing: () => boolean;
   getIsOnGround: () => boolean;
 }
 
@@ -70,15 +72,9 @@ export interface FirstPersonCtx {
   setFlyMode: (isFlyMode: boolean) => void;
   setGravity: (gravity: number) => void;
   clearCollisionWorld: () => void;
-  addPlayerRegionContactCb: (
-    region:
-      | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
-      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 },
-    onEnter?: () => void,
-    onLeave?: () => void
-  ) => void;
+  addPlayerRegionContactCb: AddPlayerRegionContactCB;
   playerStateGetters: FpPlayerStateGetters;
-  setMoveSpeed: (moveSpeed: Conf.PlayerMoveSpeed) => void;
+  setMoveSpeed: (moveSpeed: PlayerMoveSpeed) => void;
   setSpawnPos: (pos: THREE.Vector3, rot: THREE.Vector3) => void;
 }
 
@@ -91,14 +87,12 @@ const setupFirstPerson = async (
   },
   registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void,
   playerConf: SceneConfig['player'],
-  gravity: number | undefined,
+  gravity: number | undefined = 40,
   inlineConsole: InlineConsole | null | undefined,
-  enableDash: boolean,
+  dashConfig: DashConfig | undefined,
   oobYThreshold = -55,
   sfxManager: SfxManager
 ): Promise<FirstPersonCtx> => {
-  let GRAVITY = gravity ?? 40;
-
   const keyStates: Record<string, boolean> = {};
 
   const playerColliderHeight = playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight;
@@ -126,12 +120,12 @@ const setupFirstPerson = async (
     keyStates,
     Ammo,
     spawnPos,
-    gravity: GRAVITY,
+    gravity,
     jumpSpeed: playerConf?.jumpVelocity ?? 20,
     playerColliderRadius,
     playerColliderHeight,
     playerMoveSpeed: playerConf?.moveSpeed,
-    enableDash,
+    dashConfig,
     sfxManager,
   });
 
@@ -563,7 +557,7 @@ export const initViz = (
     paused,
     sceneName: providedSceneName = Conf.DefaultSceneName,
     vizCb,
-  }: { paused: Writable<boolean>; sceneName?: string; vizCb: (viz: VizState) => void }
+  }: { paused: Writable<boolean>; sceneName?: string; vizCb: (viz: VizState, sceneConf: SceneConfig) => void }
 ) => {
   initSentry();
 
@@ -573,7 +567,6 @@ export const initViz = (
   }
 
   const viz: VizState = buildViz(paused, sceneDef);
-  vizCb(viz);
 
   container.appendChild(viz.renderer.domElement);
   container.appendChild(viz.stats.dom);
@@ -611,6 +604,7 @@ export const initViz = (
       ...buildDefaultSceneConfig(),
       ...((await sceneLoader(viz, scene, vizConfig)) ?? {}),
     };
+    vizCb(viz, sceneConf);
 
     if (sceneConf.renderOverride) {
       viz.setRenderOverride(sceneConf.renderOverride);
@@ -657,7 +651,7 @@ export const initViz = (
         sceneConf.player,
         sceneConf.gravity,
         inlineConsole,
-        sceneConf.player?.enableDash ?? true,
+        sceneConf.player?.dashConfig,
         sceneConf.player?.oobYThreshold,
         sfxManager
       );

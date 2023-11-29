@@ -1,4 +1,5 @@
 import type { SvelteSeoProps } from 'svelte-seo/types/SvelteSeo';
+import type { Writable } from 'svelte/store';
 
 import type { VizState } from '..';
 import type { SfxConfig } from '../audio/SfxManager';
@@ -16,6 +17,39 @@ export type SceneLocations = {
     rot: THREE.Vector3 | [number, number, number];
   };
 };
+
+export interface PlayerMoveSpeed {
+  onGround: number;
+  inAir: number;
+}
+
+export const DefaultMoveSpeed: PlayerMoveSpeed = Object.freeze({
+  onGround: 12,
+  inAir: 12,
+});
+
+export interface DashChargeConfig {
+  curCharges: Writable<number>;
+}
+
+export interface DashConfig {
+  /**
+   * Default: true
+   */
+  enable: boolean;
+  /**
+   * If not provided, dashes will be unmetered
+   */
+  chargeConfig?: DashChargeConfig;
+  dashMagnitude: number;
+  minDashDelaySeconds: number;
+}
+
+export const DefaultDashConfig: DashConfig = Object.freeze({
+  enable: true,
+  dashMagnitude: 16,
+  minDashDelaySeconds: 0.85,
+});
 
 export interface SceneConfig {
   viewMode?: { type: 'firstPerson' } | { type: 'orbit'; pos: THREE.Vector3; target: THREE.Vector3 };
@@ -35,10 +69,7 @@ export interface SceneConfig {
   debugPlayerKinematics?: boolean;
   gravity?: number;
   player?: {
-    /**
-     * Default is true
-     */
-    enableDash?: boolean;
+    dashConfig?: Partial<DashConfig>;
     jumpVelocity?: number;
     colliderCapsuleSize?: { height: number; radius: number };
     moveSpeed?: { onGround: number; inAir: number };

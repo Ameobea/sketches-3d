@@ -42,6 +42,8 @@
   const commit = () => saveNewConfig($newConfig);
 </script>
 
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
   class="backdrop"
   on:click={evt => {
@@ -161,7 +163,7 @@
     height: 100%;
     background-color: rgba(0, 0, 0, 0.8);
     border: 1px solid #111;
-    font-family: 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     max-width: 1200px;
     width: 100%;
   }

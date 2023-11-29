@@ -8,7 +8,7 @@ const config = {
   preprocess: preprocess(),
 
   kit: {
-    inlineStyleThreshold: 2048,
+    inlineStyleThreshold: 2048 * 2,
     prerender: {
       concurrency: 6,
     },

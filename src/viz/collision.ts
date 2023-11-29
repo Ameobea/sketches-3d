@@ -1,11 +1,17 @@
+import { get } from 'svelte/store';
 import * as THREE from 'three';
 
 import type { SfxManager } from './audio/SfxManager.js';
-import { DefaultMoveSpeed, type PlayerMoveSpeed } from './conf.js';
 import type { FpPlayerStateGetters } from './index.js';
+import {
+  type DashConfig,
+  DefaultDashConfig,
+  DefaultMoveSpeed,
+  type PlayerMoveSpeed,
+} from './scenes/index.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
-import { assertUnreachable } from './util.js';
+import { assertUnreachable, mergeDeep } from './util.js';
 
 let ammojs: Promise<any> | null = null;
 
@@ -14,6 +20,101 @@ export const getAmmoJS = async () => {
   ammojs = import('../ammojs/ammo.wasm.js').then(mod => mod.Ammo.apply({}));
   return ammojs;
 };
+
+let playerController: any = null;
+let btvec3: (x: number, y: number, z: number) => any = () => {
+  throw new Error('btvec3 not initialized');
+};
+
+const initBtvec3Scratch = (Ammo: any) => {
+  const scratchVec = new Ammo.btVector3();
+  btvec3 = (x: number, y: number, z: number) => {
+    scratchVec.setValue(x, y, z);
+    return scratchVec;
+  };
+};
+
+class DashManager {
+  private config: DashConfig;
+  private lastDashTimeSeconds = 0;
+  /**
+   * `true` if the player has not touched the ground since they last dashed
+   */
+  private dashNeedsGroundTouch = false;
+
+  static mergeConfig(config: Partial<DashConfig> | undefined): DashConfig {
+    if (!config) {
+      return DefaultDashConfig;
+    }
+    return mergeDeep({ ...DefaultDashConfig }, config);
+  }
+
+  constructor(config: Partial<DashConfig> | undefined) {
+    this.config = DashManager.mergeConfig(config);
+  }
+
+  private dashInner(origForwardDir: THREE.Vector3, curTimeSeconds: number) {
+    playerController.jump(
+      btvec3(
+        origForwardDir.x * this.config.dashMagnitude,
+        origForwardDir.y * this.config.dashMagnitude,
+        origForwardDir.z * this.config.dashMagnitude
+      )
+    );
+    this.lastDashTimeSeconds = curTimeSeconds;
+    this.dashNeedsGroundTouch = true;
+
+    if (this.config.chargeConfig) {
+      this.config.chargeConfig.curCharges.update(n => n - 1);
+    }
+  }
+
+  public tick(curTimeSeconds: number, onGround: boolean) {
+    if (
+      curTimeSeconds - this.lastDashTimeSeconds > this.config.minDashDelaySeconds &&
+      this.dashNeedsGroundTouch &&
+      onGround
+    ) {
+      this.dashNeedsGroundTouch = false;
+    }
+  }
+
+  /**
+   * Attempts to dash if the necessary conditions are met.  Returns `true` if the dash was actually performed.
+   */
+  public tryDash(curTimeSeconds: number, isFlyMode: boolean, origForwardDir: THREE.Vector3): boolean {
+    if (!this.config.enable) {
+      return false;
+    }
+
+    // check if not enough time since last dash
+    if (curTimeSeconds - this.lastDashTimeSeconds <= this.config.minDashDelaySeconds) {
+      return false;
+    }
+
+    if (this.config.chargeConfig) {
+      if (get(this.config.chargeConfig.curCharges) <= 0) {
+        return false;
+      }
+    }
+
+    if (this.dashNeedsGroundTouch && !isFlyMode) {
+      return false;
+    }
+
+    this.dashInner(origForwardDir, curTimeSeconds);
+    return true;
+  }
+}
+
+export type AddPlayerRegionContactCB = (
+  region:
+    | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
+    | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 }
+    | { type: 'convexHull'; mesh: THREE.Mesh; scale?: THREE.Vector3 },
+  onEnter?: () => void,
+  onLeave?: () => void
+) => void;
 
 interface BulletPhysicsArgs {
   camera: THREE.Camera;
@@ -25,7 +126,7 @@ interface BulletPhysicsArgs {
   playerColliderRadius: number;
   playerColliderHeight: number;
   playerMoveSpeed: PlayerMoveSpeed | undefined;
-  enableDash: boolean;
+  dashConfig: DashConfig | undefined;
   sfxManager: SfxManager;
 }
 
@@ -39,7 +140,7 @@ export const initBulletPhysics = ({
   playerColliderRadius,
   playerColliderHeight,
   playerMoveSpeed = DefaultMoveSpeed,
-  enableDash,
+  dashConfig = DefaultDashConfig,
   sfxManager,
 }: BulletPhysicsArgs) => {
   const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
@@ -53,11 +154,7 @@ export const initBulletPhysics = ({
     collisionConfiguration
   );
 
-  const scratchVec = new Ammo.btVector3();
-  const btvec3 = (x: number, y: number, z: number) => {
-    scratchVec.setValue(x, y, z);
-    return scratchVec;
-  };
+  initBtvec3Scratch(Ammo);
 
   const playerInitialTransform = new Ammo.btTransform();
   playerInitialTransform.setIdentity();
@@ -87,7 +184,7 @@ export const initBulletPhysics = ({
   // the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
   // weird issues where the player slides around on the floor or clips through geometry.
   const MAX_PENETRATION_DEPTH = 0.075;
-  const playerController = new Ammo.btKinematicCharacterController(
+  playerController = new Ammo.btKinematicCharacterController(
     playerGhostObject,
     playerCapsule,
     STEP_HEIGHT,
@@ -113,10 +210,9 @@ export const initBulletPhysics = ({
 
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
-  let lastBoostTimeSeconds = 0;
-  let MIN_BOOST_DELAY_SECONDS = 0.85; // TODO: make configurable
-  let BOOST_MAGNITUDE = 16; // TODO: make configurable
-  let boostNeedsGroundTouch = false;
+  let lastDashTimeSeconds = 0;
+
+  const dashManager = new DashManager(dashConfig);
 
   let isFlyMode = false;
   const setFlyMode = (newIsFlyMode?: boolean) => {
@@ -125,7 +221,6 @@ export const initBulletPhysics = ({
     }
 
     isFlyMode = newIsFlyMode ?? !isFlyMode;
-    MIN_BOOST_DELAY_SECONDS = isFlyMode ? -1 : 0.85;
     setGravity(isFlyMode ? 0 : gravity);
   };
 
@@ -135,13 +230,15 @@ export const initBulletPhysics = ({
    */
   const moveDirection = new THREE.Vector3();
   let isWalking = false;
+  const upDir = new THREE.Vector3(0, 1, 0);
+  let forwardDir = new THREE.Vector3();
+  let leftDir = new THREE.Vector3();
   const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
-    let forwardDir = camera.getWorldDirection(new THREE.Vector3()).normalize();
+    forwardDir = camera.getWorldDirection(forwardDir).normalize();
     const origForwardDir = forwardDir.clone();
-    const upDir = new THREE.Vector3(0, 1, 0);
-    const leftDir = new THREE.Vector3().crossVectors(upDir, forwardDir).normalize();
+    leftDir = leftDir.crossVectors(upDir, forwardDir).normalize();
     // Adjust `forwardDir` to be horizontal.
-    forwardDir = new THREE.Vector3().crossVectors(leftDir, upDir).normalize();
+    forwardDir = forwardDir.crossVectors(leftDir, upDir).normalize();
 
     const wasOnGround = playerController.onGround();
 
@@ -167,29 +264,10 @@ export const initBulletPhysics = ({
       sfxManager.onWalkStart(MaterialClass.Default);
     }
 
-    if ((keyStates['ShiftLeft'] || keyStates['ShiftRight']) && enableDash) {
-      if (
-        curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS &&
-        (isFlyMode || !boostNeedsGroundTouch)
-      ) {
-        playerController.jump(
-          btvec3(
-            origForwardDir.x * BOOST_MAGNITUDE,
-            origForwardDir.y * BOOST_MAGNITUDE,
-            origForwardDir.z * BOOST_MAGNITUDE
-          )
-        );
-        lastBoostTimeSeconds = curTimeSeconds;
-        boostNeedsGroundTouch = true;
-      }
-    }
+    dashManager.tick(curTimeSeconds, wasOnGround);
 
-    if (
-      curTimeSeconds - lastBoostTimeSeconds > MIN_BOOST_DELAY_SECONDS &&
-      boostNeedsGroundTouch &&
-      wasOnGround
-    ) {
-      boostNeedsGroundTouch = false;
+    if (keyStates['ShiftLeft'] || keyStates['ShiftRight']) {
+      dashManager.tryDash(curTimeSeconds, isFlyMode, origForwardDir);
     }
 
     const moveSpeedPerSecond = wasOnGround ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
@@ -306,6 +384,29 @@ export const initBulletPhysics = ({
     return shape;
   };
 
+  const buildConvexHullShape = (
+    indices: Uint16Array | undefined,
+    vertices: Float32Array,
+    scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
+  ) => {
+    const hull = new Ammo.btConvexHullShape();
+    for (let i = 0; i < (indices ?? vertices).length; i += 3) {
+      const point = (() => {
+        if (indices) {
+          return btvec3(
+            vertices[indices[i]] * scale.x,
+            vertices[indices[i + 1]] * scale.y,
+            vertices[indices[i + 2]] * scale.z
+          );
+        } else {
+          return btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z);
+        }
+      })();
+      hull.addPoint(point);
+    }
+    return hull;
+  };
+
   const addTriMesh = (mesh: THREE.Mesh) => {
     if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
       return;
@@ -323,16 +424,8 @@ export const initBulletPhysics = ({
     }
     const scale = mesh.scale;
 
-    const buildConvexHullShape = () => {
-      const hull = new Ammo.btConvexHullShape();
-      for (let i = 0; i < vertices.length; i += 3) {
-        hull.addPoint(btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z));
-      }
-      return hull;
-    };
-
     const shape = mesh.userData.convexhull
-      ? buildConvexHullShape()
+      ? buildConvexHullShape(indices, vertices, scale)
       : buildTrimeshShape(indices, vertices, scale);
     const objRef: CollisionObjectRef = {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
@@ -403,13 +496,7 @@ export const initBulletPhysics = ({
     addStaticShape(heightfieldShape, new THREE.Vector3(0, 0, 0));
   };
 
-  const addPlayerRegionContactCb = (
-    region:
-      | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
-      | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 },
-    onEnter?: () => void,
-    onLeave?: () => void
-  ) => {
+  const addPlayerRegionContactCb: AddPlayerRegionContactCB = (region, onEnter, onLeave) => {
     if (!onEnter && !onLeave) {
       throw new Error('Must provide at least one callback');
     }
@@ -445,6 +532,35 @@ export const initBulletPhysics = ({
             }
 
             const shape = buildTrimeshShape(indices, vertices, scale);
+            const transform = new Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+            if (mesh.quaternion) {
+              const rot = new Ammo.btQuaternion(
+                mesh.quaternion.x,
+                mesh.quaternion.y,
+                mesh.quaternion.z,
+                mesh.quaternion.w
+              );
+              transform.setRotation(rot);
+              Ammo.destroy(rot);
+            }
+            return { shape, transform };
+          }
+          case 'convexHull': {
+            const mesh = region.mesh;
+            const geometry = mesh.geometry as THREE.BufferGeometry;
+            const indices = geometry.index?.array as Uint16Array | undefined;
+            const vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
+            if (vertices instanceof Uint16Array) {
+              throw new Error('GLTF Quantization not yet supported');
+            }
+            const scale = mesh.scale.clone();
+            if (region.scale) {
+              scale.multiply(region.scale);
+            }
+
+            const shape = buildConvexHullShape(indices, vertices, scale);
             const transform = new Ammo.btTransform();
             transform.setIdentity();
             transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
@@ -562,8 +678,8 @@ export const initBulletPhysics = ({
   const playerStateGetters: FpPlayerStateGetters = {
     getVerticalVelocity: () => playerController.getVerticalVelocity(),
     getIsOnGround: () => playerController.onGround(),
-    getIsJumping: () => playerController.isJumping() && lastJumpTimeSeconds > lastBoostTimeSeconds,
-    getIsBoosting: () => playerController.isJumping() && lastBoostTimeSeconds > lastJumpTimeSeconds,
+    getIsJumping: () => playerController.isJumping() && lastJumpTimeSeconds > lastDashTimeSeconds,
+    getIsDashing: () => playerController.isJumping() && lastDashTimeSeconds > lastJumpTimeSeconds,
   };
 
   const setMoveSpeed = (newMoveSpeed: PlayerMoveSpeed) => {

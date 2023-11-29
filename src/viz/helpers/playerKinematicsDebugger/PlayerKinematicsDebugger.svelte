@@ -1,7 +1,7 @@
 <script lang="ts">
   export let verticalVelocity: number;
   export let isJumping: boolean;
-  export let isBoosting: boolean;
+  export let isDashing: boolean;
   export let isOnGround: boolean;
 
   $: formattedVerticalVelocity = (() => {
@@ -25,7 +25,7 @@
     isJumping: <pre style="color: {getBoolColor(isJumping)}"> {formatBool(isJumping)}</pre>
   </div>
   <div>
-    isBoosting: <pre style="color: {getBoolColor(isBoosting)}"> {formatBool(isBoosting)}</pre>
+    isDashing: <pre style="color: {getBoolColor(isDashing)}"> {formatBool(isDashing)}</pre>
   </div>
   <div>
     isOnGround: <pre style="color: {getBoolColor(isOnGround)}"> {formatBool(isOnGround)}</pre>

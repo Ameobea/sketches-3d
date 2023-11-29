@@ -8,16 +8,6 @@ export const DefaultPlayerColliderHeight = 4.55;
 export const DefaultPlayerColliderRadius = 0.35;
 export const DEFAULT_FOV = 75;
 
-export interface PlayerMoveSpeed {
-  onGround: number;
-  inAir: number;
-}
-
-export const DefaultMoveSpeed: PlayerMoveSpeed = Object.freeze({
-  onGround: 12,
-  inAir: 12,
-});
-
 export enum GraphicsQuality {
   Low = 1,
   Medium = 2,

@@ -1,3 +1,4 @@
+import { writable } from 'svelte/store';
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
@@ -31,7 +32,7 @@ const buildMaterials = async (viz: VizState) => {
   );
 
   const bgTextureP = (async () => {
-    const bgImage = await loader.loadAsync('/textures/hdri.jpg');
+    const bgImage = await loader.loadAsync('https://i.ameo.link/bqn.jpg');
     const bgTexture = new THREE.Texture(bgImage);
     bgTexture.mapping = THREE.EquirectangularRefractionMapping;
     bgTexture.needsUpdate = true;
@@ -41,14 +42,24 @@ const buildMaterials = async (viz: VizState) => {
   const [
     bgTexture,
     towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-    { shinyPatchworkStoneAlbedo, shinyPatchworkStoneNormal, shinyPatchworkStoneRoughness },
+    {
+      shinyPatchworkStoneAlbedo,
+      shinyPatchworkStoneNormal,
+      shinyPatchworkStoneRoughness,
+      greenMosaic2Albedo,
+      greenMosaic2Normal,
+      greenMosaic2Roughness,
+    },
   ] = await Promise.all([
     bgTextureP,
     towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
     loadNamedTextures(loader, {
-      shinyPatchworkStoneAlbedo: '/textures/shiny_patchwork_stone/color_map.jpg',
-      shinyPatchworkStoneNormal: '/textures/shiny_patchwork_stone/normal_map_opengl.jpg',
-      shinyPatchworkStoneRoughness: '/textures/shiny_patchwork_stone/roughness_map.jpg',
+      shinyPatchworkStoneAlbedo: 'https://i.ameo.link/bqk.jpg',
+      shinyPatchworkStoneNormal: 'https://i.ameo.link/bqm.jpg',
+      shinyPatchworkStoneRoughness: 'https://i.ameo.link/bql.jpg',
+      greenMosaic2Albedo: 'https://i.ameo.link/bqh.jpg',
+      greenMosaic2Normal: 'https://i.ameo.link/bqi.jpg',
+      greenMosaic2Roughness: 'https://i.ameo.link/bqj.jpg',
     }),
   ]);
 
@@ -99,12 +110,83 @@ const buildMaterials = async (viz: VizState) => {
     }
   );
 
+  const greenMosaic2Material = buildCustomShader(
+    {
+      color: new THREE.Color(0xffffff),
+      metalness: 0.5,
+      roughness: 0.5,
+      map: greenMosaic2Albedo,
+      normalMap: greenMosaic2Normal,
+      roughnessMap: greenMosaic2Roughness,
+      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+      mapDisableDistance: null,
+      normalScale: 2.2,
+      ambientLightScale: 2,
+    },
+    {},
+    {
+      useTriplanarMapping: true,
+    }
+  );
+
   return {
     pylonMaterial,
     checkpointMat,
     bgTexture,
     shinyPatchworkStoneMaterial,
+    greenMosaic2Material,
   };
+};
+
+interface InitCollectablesArgs {
+  viz: VizState;
+  loadedWorld: THREE.Group;
+  collectableName: string;
+  onCollect: (obj: THREE.Mesh) => void;
+  material: THREE.Material;
+  collisionRegionScale?: THREE.Vector3;
+  type?: 'mesh' | 'convexHull';
+}
+
+const initCollectables = ({
+  viz,
+  loadedWorld,
+  collectableName,
+  onCollect,
+  material,
+  collisionRegionScale,
+  type = 'mesh',
+}: InitCollectablesArgs) => {
+  const collectables: THREE.Mesh[] = [];
+  loadedWorld.traverse(obj => {
+    if (obj instanceof THREE.Mesh && obj.name.includes(collectableName)) {
+      obj.userData.nocollide = true;
+      collectables.push(obj);
+      obj.material = material;
+    }
+  });
+
+  const reachedCollectables: Set<THREE.Mesh> = new Set();
+  viz.collisionWorldLoadedCbs.push(fpCtx => {
+    for (const collectable of collectables) {
+      fpCtx.addPlayerRegionContactCb(
+        {
+          type,
+          mesh: collectable,
+          scale: collisionRegionScale,
+        },
+        () => {
+          if (!reachedCollectables.has(collectable)) {
+            reachedCollectables.add(collectable);
+            collectable.visible = false;
+            onCollect(collectable);
+          }
+        }
+      );
+    }
+  });
+
+  return reachedCollectables;
 };
 
 const initCheckpoints = (
@@ -113,45 +195,36 @@ const initCheckpoints = (
   setSpawnPoint: (pos: THREE.Vector3, rot: THREE.Vector3) => void,
   checkpointMat: THREE.Material
 ) => {
-  const checkpoints: THREE.Mesh[] = [];
-  loadedWorld.traverse(obj => {
-    if (obj instanceof THREE.Mesh && obj.name.includes('checkpoint')) {
-      checkpoints.push(obj);
-    }
-  });
-
-  const reachedCheckpoints: Set<THREE.Mesh> = new Set();
-
-  for (const checkpoint of checkpoints) {
-    checkpoint.userData.nocollide = true;
-    checkpoint.material = checkpointMat;
-  }
-
-  viz.collisionWorldLoadedCbs.push(fpCtx => {
-    for (const checkpoint of checkpoints) {
-      checkpoint.userData.nocollide = true;
-      fpCtx.addPlayerRegionContactCb(
-        {
-          type: 'mesh',
-          mesh: checkpoint,
-          scale: new THREE.Vector3(1, 30, 1),
-        },
-        () => {
-          if (!reachedCheckpoints.has(checkpoint)) {
-            reachedCheckpoints.add(checkpoint);
-            setSpawnPoint(
-              checkpoint.position,
-              new THREE.Vector3(viz.camera.rotation.x, viz.camera.rotation.y, viz.camera.rotation.z)
-            );
-
-            // TODO: sfx
-
-            checkpoint.visible = false;
-          }
-        }
+  return initCollectables({
+    viz,
+    loadedWorld,
+    collectableName: 'checkpoint',
+    onCollect: checkpoint => {
+      setSpawnPoint(
+        checkpoint.position,
+        new THREE.Vector3(viz.camera.rotation.x, viz.camera.rotation.y, viz.camera.rotation.z)
       );
-    }
+      // TODO: sfx
+    },
+    material: checkpointMat,
+    collisionRegionScale: new THREE.Vector3(1, 30, 1),
   });
+};
+
+const initDashTokens = (viz: VizState, loadedWorld: THREE.Group, dashTokenMaterial: THREE.Material) => {
+  const dashCharges = writable(0);
+  initCollectables({
+    viz,
+    loadedWorld,
+    collectableName: 'dash',
+    onCollect: () => {
+      dashCharges.update(n => n + 1);
+      // TODO: sfx
+    },
+    material: dashTokenMaterial,
+    type: 'convexHull',
+  });
+  return dashCharges;
 };
 
 export const processLoadedScene = async (
@@ -162,7 +235,8 @@ export const processLoadedScene = async (
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
-  const { pylonMaterial, checkpointMat, bgTexture, shinyPatchworkStoneMaterial } = await buildMaterials(viz);
+  const { pylonMaterial, checkpointMat, bgTexture, shinyPatchworkStoneMaterial, greenMosaic2Material } =
+    await buildMaterials(viz);
 
   viz.scene.background = bgTexture;
 
@@ -185,6 +259,8 @@ export const processLoadedScene = async (
 
   const setSpawnPoint = (pos: THREE.Vector3, rot: THREE.Vector3) => viz.fpCtx!.setSpawnPos(pos, rot);
   initCheckpoints(viz, loadedWorld, setSpawnPoint, checkpointMat);
+
+  const curDashCharges = initDashTokens(viz, loadedWorld, greenMosaic2Material);
 
   configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
     const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
@@ -218,6 +294,10 @@ export const processLoadedScene = async (
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
       oobYThreshold: -10,
+      dashConfig: {
+        enable: true,
+        chargeConfig: { curCharges: curDashCharges },
+      },
     },
     debugPos: true,
     debugPlayerKinematics: true,
