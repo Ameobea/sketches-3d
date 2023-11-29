@@ -145,7 +145,7 @@ interface InitCollectablesArgs {
   onCollect: (obj: THREE.Mesh) => void;
   material: THREE.Material;
   collisionRegionScale?: THREE.Vector3;
-  type?: 'mesh' | 'convexHull';
+  type?: 'mesh' | 'convexHull' | 'aabb';
 }
 
 const initCollectables = ({
@@ -222,7 +222,7 @@ const initDashTokens = (viz: VizState, loadedWorld: THREE.Group, dashTokenMateri
       // TODO: sfx
     },
     material: dashTokenMaterial,
-    type: 'convexHull',
+    type: 'aabb',
   });
   return dashCharges;
 };
@@ -276,6 +276,7 @@ export const processLoadedScene = async (
       minStepLength: 0.1,
       noiseBias: 1.2,
       heightFogFactor: 0.24,
+      halfRes: true,
       ...{
         [GraphicsQuality.Low]: { baseRaymarchStepCount: 38 },
         [GraphicsQuality.Medium]: { baseRaymarchStepCount: 60 },

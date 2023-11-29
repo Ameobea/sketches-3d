@@ -111,7 +111,8 @@ export type AddPlayerRegionContactCB = (
   region:
     | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
     | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 }
-    | { type: 'convexHull'; mesh: THREE.Mesh; scale?: THREE.Vector3 },
+    | { type: 'convexHull'; mesh: THREE.Mesh; scale?: THREE.Vector3 }
+    | { type: 'aabb'; mesh: THREE.Mesh; scale?: THREE.Vector3 },
   onEnter?: () => void,
   onLeave?: () => void
 ) => void;
@@ -574,6 +575,23 @@ export const initBulletPhysics = ({
               transform.setRotation(rot);
               Ammo.destroy(rot);
             }
+            return { shape, transform };
+          }
+          case 'aabb': {
+            const mesh = region.mesh;
+            if (region.scale) {
+              throw new Error('unimplemented');
+            }
+            const geometry = mesh.geometry as THREE.BufferGeometry;
+            geometry.computeBoundingBox();
+            const box = geometry.boundingBox!;
+            const transform = new Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+
+            const shape = new Ammo.btBoxShape(
+              btvec3((box.max.x - box.min.x) / 2, (box.max.y - box.min.y) / 2, (box.max.z - box.min.z) / 2)
+            );
             return { shape, transform };
           }
           default:

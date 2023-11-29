@@ -8,7 +8,10 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "sourceMap": true,
-    "strict": true
+    "strict": true,
+    "paths": {
+      "src/*": ["./src/*"]
+    }
   },
   "exclude": ["node_modules/*", "build/*", "src/ammojs/*", "src/engineComp/*"]
 }

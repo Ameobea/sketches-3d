@@ -449,10 +449,12 @@ void main() {
 
   ivec2 screenCoord = ivec2(vUv * vec2(resolution));
   vec4 fogColor = march(rayStartPos, rayEndPos, screenCoord);
-  // TODO: If lower resolution or any blur support is needed, this will have to be done in a separate pass
+
+  #ifdef DO_DIRECT_COMPOSITING
   vec3 diffuse = texture2D(sceneDiffuse, vUv).rgb;
   // composite the fog color over the diffuse color using the density stored in the alpha channel
-  vec3 color = mix(diffuse, fogColor.rgb, fogColor.a);
-
-  gl_FragColor = vec4(color, 1.0);
+  gl_FragColor = vec4(mix(diffuse, fogColor.rgb, fogColor.a), 1.0);
+  #else
+  gl_FragColor = fogColor.rgba;
+  #endif
 }

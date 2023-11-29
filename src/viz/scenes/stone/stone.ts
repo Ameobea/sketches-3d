@@ -621,6 +621,7 @@ export const processLoadedScene = async (
             heightFogFactor: 0.13,
           },
         }[quality],
+        halfRes: true,
       });
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
