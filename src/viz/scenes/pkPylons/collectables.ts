@@ -13,6 +13,13 @@ export class CollectablesCtx {
       obj.visible = true;
     }
   }
+
+  public reset() {
+    for (const obj of this.hiddenCollectables) {
+      obj.visible = true;
+    }
+    this.hiddenCollectables.clear();
+  }
 }
 
 interface InitCollectablesArgs {
@@ -22,7 +29,7 @@ interface InitCollectablesArgs {
   onCollect: (obj: THREE.Mesh) => void;
   material: THREE.Material;
   collisionRegionScale?: THREE.Vector3;
-  type?: 'mesh' | 'convexHull';
+  type?: 'mesh' | 'convexHull' | 'aabb';
 }
 
 export const initCollectables = ({

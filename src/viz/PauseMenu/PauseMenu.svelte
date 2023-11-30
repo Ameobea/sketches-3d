@@ -19,11 +19,14 @@
   import AudioMenu from './AudioMenu.svelte';
   import ControlsMenu from './ControlsMenu.svelte';
   import GraphicsMenu from './GraphicsMenu.svelte';
+  import type { SceneConfig } from '../scenes';
 
   let activeMenu = Menu.Main;
 
   export let ctx: PauseMenuCtx;
   export let viz: VizState;
+  export let sceneConfig: SceneConfig | null;
+  $: customControlsEntries = sceneConfig?.customControlsEntries ?? [];
 
   const startVizConfig = loadVizConfig();
   const newConfig = writable(startVizConfig);
@@ -123,7 +126,7 @@
           onChange={onAudioConfChanged}
         />
       {:else if activeMenu === Menu.Controls}
-        <ControlsMenu />
+        <ControlsMenu customEntries={customControlsEntries} />
         <button
           on:click={() => {
             activeMenu = Menu.Main;

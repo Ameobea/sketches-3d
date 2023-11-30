@@ -32,7 +32,7 @@
 
 <div use:initViz={{ paused, sceneName, vizCb }} />
 {#if $paused && viz}
-  <PauseMenu ctx={{ onResume }} {viz} />
+  <PauseMenu ctx={{ onResume }} {viz} {sceneConfig} />
 {/if}
 
 {#if curDashCharges}

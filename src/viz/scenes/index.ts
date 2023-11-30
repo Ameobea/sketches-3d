@@ -1,10 +1,13 @@
-import type { SvelteSeoProps } from 'svelte-seo/types/SvelteSeo';
+import type SvelteSEO from 'svelte-seo';
 import type { Writable } from 'svelte/store';
 
 import type { VizState } from '..';
 import type { SfxConfig } from '../audio/SfxManager';
 import type { VizConfig } from '../conf';
 import type { DeepPartial } from '../util';
+import type { ComponentProps } from 'svelte';
+
+type SvelteSEOProps = ComponentProps<SvelteSEO>;
 
 export interface SceneConfigLocation {
   pos: THREE.Vector3;
@@ -51,6 +54,12 @@ export const DefaultDashConfig: DashConfig = Object.freeze({
   minDashDelaySeconds: 0.85,
 });
 
+export interface CustomControlsEntry {
+  label: string;
+  key: string;
+  action: () => void;
+}
+
 export interface SceneConfig {
   viewMode?: { type: 'firstPerson' } | { type: 'orbit'; pos: THREE.Vector3; target: THREE.Vector3 };
   locations: SceneLocations;
@@ -79,6 +88,7 @@ export interface SceneConfig {
   enableInventory?: boolean;
   sfx?: DeepPartial<SfxConfig>;
   legacyLights?: boolean;
+  customControlsEntries?: CustomControlsEntry[];
 }
 
 export const buildDefaultSceneConfig = () => ({
@@ -90,7 +100,7 @@ export interface SceneDef {
   sceneLoader: () => Promise<
     (viz: VizState, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
   >;
-  metadata: SvelteSeoProps;
+  metadata: SvelteSEOProps;
   gltfName?: string | null;
   extension?: 'gltf' | 'glb';
   needsDraco?: boolean;

@@ -13,7 +13,7 @@ import { CollectablesCtx, initCollectables } from './collectables';
 
 const locations = {
   spawn: {
-    pos: new THREE.Vector3(2, 2, 6),
+    pos: new THREE.Vector3(4.5, 2, 6),
     rot: new THREE.Vector3(-0.1, 1.378, 0),
   },
   '3': {
@@ -160,7 +160,7 @@ const initCheckpoints = (
     return parseInt(match[1], 10);
   };
 
-  initCollectables({
+  const ctx = initCollectables({
     viz,
     loadedWorld,
     collectableName: 'checkpoint',
@@ -175,6 +175,16 @@ const initCheckpoints = (
       const checkpointIx = parseCheckpointIx(checkpoint.name);
       latestReachedCheckpointIx = checkpointIx;
       dashChargesAtLastCheckpoint = get(curDashCharges);
+      if (checkpointIx === 1) {
+        let didDisplay = false;
+        viz.registerBeforeRenderCb(curTimeSeconds => {
+          if (didDisplay) {
+            return;
+          }
+          alert(curTimeSeconds.toFixed(3));
+          didDisplay = true;
+        });
+      }
     },
     material: checkpointMat,
     collisionRegionScale: new THREE.Vector3(1, 30, 1),
@@ -197,6 +207,13 @@ const initCheckpoints = (
       dashTokensCtx.restore(toRestore);
     })
   );
+
+  const reset = () => {
+    ctx.reset();
+    latestReachedCheckpointIx = null;
+    dashChargesAtLastCheckpoint = 0;
+  };
+  return reset;
 };
 
 const initDashTokens = (viz: VizState, loadedWorld: THREE.Group, dashTokenMaterial: THREE.Material) => {
@@ -212,7 +229,7 @@ const initDashTokens = (viz: VizState, loadedWorld: THREE.Group, dashTokenMateri
     material: dashTokenMaterial,
     type: 'aabb',
   });
-  return { dashCharges, ctx };
+  return { dashCharges, ctx, reset: () => ctx.reset() };
 };
 
 export const processLoadedScene = async (
@@ -245,12 +262,18 @@ export const processLoadedScene = async (
     }
   });
 
-  const { ctx: dashTokensCtx, dashCharges: curDashCharges } = initDashTokens(
-    viz,
-    loadedWorld,
-    greenMosaic2Material
-  );
-  initCheckpoints(viz, loadedWorld, checkpointMat, dashTokensCtx, curDashCharges);
+  const {
+    ctx: dashTokensCtx,
+    dashCharges: curDashCharges,
+    reset: resetDashes,
+  } = initDashTokens(viz, loadedWorld, greenMosaic2Material);
+  const resetCheckpoints = initCheckpoints(viz, loadedWorld, checkpointMat, dashTokensCtx, curDashCharges);
+
+  const reset = () => {
+    resetDashes();
+    resetCheckpoints();
+    viz.fpCtx!.teleportPlayer(locations.spawn.pos, locations.spawn.rot);
+  };
 
   configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
     const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
@@ -294,5 +317,6 @@ export const processLoadedScene = async (
     debugPlayerKinematics: true,
     locations,
     legacyLights: false,
+    customControlsEntries: [{ label: 'Reset', key: 'r', action: reset }],
   };
 };

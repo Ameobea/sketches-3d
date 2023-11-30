@@ -1,3 +1,9 @@
+<script lang="ts">
+  import type { CustomControlsEntry, SceneConfig } from '../scenes';
+
+  export let customEntries: CustomControlsEntry[] = [];
+</script>
+
 <div>
   <div>Move</div>
   <div>WASD</div>
@@ -10,6 +16,12 @@
   <div>Dash</div>
   <div>Shift</div>
 </div>
+{#each customEntries as { action, key, label }}
+  <div>
+    <div>{label}</div>
+    <div>{key}</div>
+  </div>
+{/each}
 
 <style lang="css">
   div {
