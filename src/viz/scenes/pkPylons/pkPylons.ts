@@ -10,6 +10,7 @@ import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'sr
 import type { SceneConfig } from '..';
 import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
 import { CollectablesCtx, initCollectables } from './collectables';
+import { DashToken } from './DashToken';
 
 const locations = {
   spawn: {
@@ -50,6 +51,9 @@ const buildMaterials = async (viz: VizState) => {
       greenMosaic2Albedo,
       greenMosaic2Normal,
       greenMosaic2Roughness,
+      goldTextureAlbedo,
+      goldTextureNormal,
+      goldTextureRoughness,
     },
   ] = await Promise.all([
     bgTextureP,
@@ -61,6 +65,9 @@ const buildMaterials = async (viz: VizState) => {
       greenMosaic2Albedo: 'https://i.ameo.link/bqh.jpg',
       greenMosaic2Normal: 'https://i.ameo.link/bqi.jpg',
       greenMosaic2Roughness: 'https://i.ameo.link/bqj.jpg',
+      goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
+      goldTextureNormal: 'https://i.ameo.link/be2.jpg',
+      goldTextureRoughness: 'https://i.ameo.link/bdz.jpg',
     }),
   ]);
 
@@ -128,12 +135,29 @@ const buildMaterials = async (viz: VizState) => {
     { useTriplanarMapping: true }
   );
 
+  const goldMaterial = buildCustomShader(
+    {
+      map: goldTextureAlbedo,
+      roughnessMap: goldTextureRoughness,
+      normalMap: goldTextureNormal,
+      color: new THREE.Color(0xaaaaaa),
+      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      mapDisableDistance: null,
+      roughness: 0.2,
+    },
+    {},
+    {
+      useTriplanarMapping: true,
+    }
+  );
+
   return {
     pylonMaterial,
     checkpointMat,
     bgTexture,
     shinyPatchworkStoneMaterial,
     greenMosaic2Material,
+    goldMaterial,
   };
 };
 
@@ -152,7 +176,6 @@ const initCheckpoints = (
     // names are like "checkpoint", "checkpoint001", "checkpoint002", etc.
     // "checkpoint" = 0
     const match = name.match(/checkpoint(\d+)/);
-    console.log(name, match);
     if (!match) {
       return 0;
     }
@@ -195,10 +218,8 @@ const initCheckpoints = (
       curDashCharges.set(dashChargesAtLastCheckpoint);
 
       const needle = `ck${latestReachedCheckpointIx === null ? 0 : latestReachedCheckpointIx + 1}`;
-      console.log(needle);
-      const toRestore: THREE.Mesh[] = [];
+      const toRestore: THREE.Object3D[] = [];
       for (const obj of dashTokensCtx.hiddenCollectables) {
-        console.log(obj.name);
         if (obj.name.includes(needle)) {
           toRestore.push(obj);
         }
@@ -216,17 +237,35 @@ const initCheckpoints = (
   return reset;
 };
 
-const initDashTokens = (viz: VizState, loadedWorld: THREE.Group, dashTokenMaterial: THREE.Material) => {
+const initDashTokens = (
+  viz: VizState,
+  loadedWorld: THREE.Group,
+  coreMaterial: THREE.Material,
+  ringMaterial: THREE.Material
+) => {
   const dashCharges = writable(0);
+  const base = loadedWorld.getObjectByName('dash_token')!;
+  base.traverse(obj => {
+    if (!(obj instanceof THREE.Mesh)) {
+      return;
+    }
+
+    if (obj.name.includes('ring')) {
+      obj.material = ringMaterial;
+    } else if (obj.name.includes('core')) {
+      obj.material = coreMaterial;
+    }
+  });
+  const dashTokenBase = new DashToken(viz, base);
   const ctx = initCollectables({
     viz,
     loadedWorld,
-    collectableName: 'dash',
+    collectableName: 'dash_token_loc',
+    replacementObject: dashTokenBase,
     onCollect: () => {
       dashCharges.update(n => n + 1);
       // TODO: sfx
     },
-    material: dashTokenMaterial,
     type: 'aabb',
   });
   return { dashCharges, ctx, reset: () => ctx.reset() };
@@ -240,8 +279,14 @@ export const processLoadedScene = async (
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
-  const { pylonMaterial, checkpointMat, bgTexture, shinyPatchworkStoneMaterial, greenMosaic2Material } =
-    await buildMaterials(viz);
+  const {
+    pylonMaterial,
+    checkpointMat,
+    bgTexture,
+    shinyPatchworkStoneMaterial,
+    greenMosaic2Material,
+    goldMaterial,
+  } = await buildMaterials(viz);
 
   viz.scene.background = bgTexture;
 
@@ -266,7 +311,7 @@ export const processLoadedScene = async (
     ctx: dashTokensCtx,
     dashCharges: curDashCharges,
     reset: resetDashes,
-  } = initDashTokens(viz, loadedWorld, greenMosaic2Material);
+  } = initDashTokens(viz, loadedWorld, greenMosaic2Material, goldMaterial);
   const resetCheckpoints = initCheckpoints(viz, loadedWorld, checkpointMat, dashTokensCtx, curDashCharges);
 
   const reset = () => {

@@ -107,12 +107,14 @@ class DashManager {
   }
 }
 
+export type ContactRegion =
+  | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
+  | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 }
+  | { type: 'convexHull'; mesh: THREE.Mesh; scale?: THREE.Vector3 }
+  | { type: 'aabb'; mesh: THREE.Mesh; scale?: THREE.Vector3 };
+
 export type AddPlayerRegionContactCB = (
-  region:
-    | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
-    | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 }
-    | { type: 'convexHull'; mesh: THREE.Mesh; scale?: THREE.Vector3 }
-    | { type: 'aabb'; mesh: THREE.Mesh; scale?: THREE.Vector3 },
+  region: ContactRegion,
   onEnter?: () => void,
   onLeave?: () => void
 ) => void;
