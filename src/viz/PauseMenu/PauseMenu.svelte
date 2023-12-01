@@ -6,6 +6,7 @@
   enum Menu {
     Main,
     Graphics,
+    Gameplay,
     Controls,
     Audio,
   }
@@ -20,6 +21,7 @@
   import ControlsMenu from './ControlsMenu.svelte';
   import GraphicsMenu from './GraphicsMenu.svelte';
   import type { SceneConfig } from '../scenes';
+  import GameplayMenu from './GameplayMenu.svelte';
 
   let activeMenu = Menu.Main;
 
@@ -75,6 +77,13 @@
           }}
         >
           Graphics
+        </button>
+        <button
+          on:click={() => {
+            activeMenu = Menu.Gameplay;
+          }}
+        >
+          Gameplay
         </button>
         <div class="slider-input">
           <label for="global-volume-slider">Global Volume</label>
@@ -134,6 +143,15 @@
         >
           Back
         </button>
+      {:else if activeMenu === Menu.Gameplay}
+        <GameplayMenu
+          onBack={() => {
+            activeMenu = Menu.Main;
+          }}
+          onChange={saveNewConfig}
+          {startVizConfig}
+          {viz}
+        />
       {/if}
     </div>
   </div>
@@ -226,5 +244,59 @@
 
   :global(.menu-items-stack > button:disabled) {
     background-color: rgba(0, 0, 0, 0.3) !important;
+  }
+
+  :global(.large-checkbox) {
+    position: relative;
+    width: 100%;
+    height: 60px;
+    margin: 10px 0;
+    display: flex;
+    align-items: center;
+  }
+
+  :global(.large-checkbox input[type='checkbox']) {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    width: 44px;
+    height: 44px;
+    border: 3px solid #eee;
+    background-color: transparent;
+    cursor: pointer;
+    align-self: center;
+    position: absolute;
+    margin: 0;
+  }
+
+  :global(.large-checkbox label) {
+    margin-left: 10px;
+    font-size: 24px;
+    color: #eee;
+    cursor: pointer;
+    width: 100%;
+    text-align: center;
+  }
+
+  :global(.large-checkbox input[type='checkbox']:before) {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 7px;
+    right: 7px;
+    bottom: 7px;
+    background-color: transparent;
+  }
+
+  :global(.large-checkbox input[type='checkbox']:checked:before) {
+    background-color: #d8d8d8;
+  }
+
+  :global(.large-checkbox input[type='checkbox']:hover:not(:checked):before) {
+    background-color: #d8d8d844;
+  }
+
+  :global(.large-checkbox input[type='checkbox']:checked:hover:before) {
+    background-color: #d8d8d8cc;
   }
 </style>

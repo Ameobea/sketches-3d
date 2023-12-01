@@ -19,7 +19,7 @@ export const formatGraphicsQuality = (quality: GraphicsQuality): string =>
     [GraphicsQuality.Low]: 'low',
     [GraphicsQuality.Medium]: 'medium',
     [GraphicsQuality.High]: 'high',
-  }[quality]);
+  })[quality];
 
 export interface GraphicsSettings {
   quality: GraphicsQuality;
@@ -31,20 +31,28 @@ export interface AudioSettings {
   musicVolume: number;
 }
 
+export interface GameplaySettings {
+  /**
+   * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
+   * diagonally, allowing for easier movement.
+   */
+  easyModeMovement: boolean;
+}
+
 /**
  * Config that is persisted between runs and shared between scenes
  */
 export interface VizConfig {
   graphics: GraphicsSettings;
   audio: AudioSettings;
+  gameplay: GameplaySettings;
 }
 
 const getGraphicsQuality = async (tierRes: TierResult) => {
   try {
-    const tierRes = await getGPUTier();
     if (tierRes.tier === 0) {
       console.warn('Potentially unsupported GPU detected');
-      return GraphicsQuality.Low;
+      return GraphicsQuality.Medium;
     }
 
     if (tierRes.tier === 1) {
@@ -81,6 +89,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
 const buildDefaultVizConfig = (): VizConfig => ({
   graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV },
   audio: { globalVolume: 0.4, musicVolume: 0.4 },
+  gameplay: { easyModeMovement: true },
 });
 
 /**

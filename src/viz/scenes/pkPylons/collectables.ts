@@ -50,6 +50,7 @@ export const initCollectables = ({
     if (replacementObject) {
       if (obj.name.includes(collectableName)) {
         const clone = replacementObject.clone();
+        clone.name = `clone_${obj.name}`;
         clone.position.copy(obj.position);
 
         if (material) {
@@ -65,7 +66,6 @@ export const initCollectables = ({
 
         viz.scene.add(clone);
         collectables.push(clone);
-        console.log(obj.name, obj.position.toArray());
       }
     } else {
       if (obj instanceof THREE.Mesh && obj.name.includes(collectableName)) {

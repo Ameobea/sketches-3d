@@ -9,6 +9,8 @@
 
 <style lang="css">
   .root {
+    background-color: #00000066;
+    padding: 4px;
     position: absolute;
     bottom: 20px;
     left: 20px;
@@ -16,5 +18,6 @@
     color: #fcfcfc;
     font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     pointer-events: none;
+    user-select: none;
   }
 </style>

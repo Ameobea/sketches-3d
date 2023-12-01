@@ -28,6 +28,7 @@ import {
   type SceneConfigLocation,
   type SceneDef,
   ScenesByName,
+  type CustomControlsEntry,
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
 import { mergeDeep } from './util';
@@ -42,6 +43,7 @@ export interface FpPlayerStateGetters {
 export interface FirstPersonCtx {
   addTriMesh: (mesh: THREE.Mesh) => void;
   teleportPlayer: (pos: THREE.Vector3, rot?: THREE.Vector3) => void;
+  reset: () => void;
   addBox: (
     pos: [number, number, number],
     halfExtents: [number, number, number],
@@ -78,23 +80,43 @@ export interface FirstPersonCtx {
   setSpawnPos: (pos: THREE.Vector3, rot: THREE.Vector3) => void;
   registerOnRespawnCb: (cb: () => void) => void;
   unregisterOnRespawnCb: (cb: () => void) => void;
+  easyModeMovement: Writable<boolean>;
+  registerDashCb: (cb: (curTimeSecs: number) => void) => void;
+  deregisterDashCb: (cb: (curTimeSecs: number) => void) => void;
+  registerJumpCb: (cb: (curTimeSecs: number) => void) => void;
+  deregisterJumpCb: (cb: (curTimeSecs: number) => void) => void;
 }
 
-const setupFirstPerson = async (
-  locations: Record<string, SceneConfigLocation>,
-  camera: THREE.Camera,
+interface SetupFirstPersonArgs {
+  locations: Record<string, SceneConfigLocation>;
+  camera: THREE.Camera;
   spawnPos: {
     pos: THREE.Vector3;
     rot: THREE.Vector3;
-  },
-  registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void,
-  playerConf: SceneConfig['player'],
-  gravity: number | undefined = 40,
-  inlineConsole: InlineConsole | null | undefined,
-  dashConfig: Partial<DashConfig> | undefined,
+  };
+  registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void;
+  playerConf: SceneConfig['player'];
+  gravity: number | undefined;
+  inlineConsole: InlineConsole | null | undefined;
+  dashConfig: Partial<DashConfig> | undefined;
+  oobYThreshold: number | undefined;
+  sfxManager: SfxManager;
+  vizConfig: Conf.VizConfig;
+}
+
+const setupFirstPerson = async ({
+  locations,
+  camera,
+  spawnPos,
+  registerBeforeRenderCb,
+  playerConf,
+  gravity = 40,
+  inlineConsole,
+  dashConfig,
   oobYThreshold = -55,
-  sfxManager: SfxManager
-): Promise<FirstPersonCtx> => {
+  sfxManager,
+  vizConfig,
+}: SetupFirstPersonArgs): Promise<FirstPersonCtx> => {
   const keyStates: Record<string, boolean> = {};
 
   const playerColliderHeight = playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight;
@@ -105,6 +127,7 @@ const setupFirstPerson = async (
     updateCollisionWorld,
     addTriMesh,
     teleportPlayer,
+    reset,
     addBox,
     addCone,
     addCompound,
@@ -117,6 +140,11 @@ const setupFirstPerson = async (
     playerStateGetters,
     removeRigidBody,
     setMoveSpeed,
+    easyModeMovement,
+    registerDashCb,
+    registerJumpCb,
+    deregisterDashCb,
+    deregisterJumpCb,
   } = await initBulletPhysics({
     camera,
     keyStates,
@@ -129,6 +157,7 @@ const setupFirstPerson = async (
     playerMoveSpeed: playerConf?.moveSpeed,
     dashConfig,
     sfxManager,
+    vizConfig,
   });
 
   document.addEventListener('keydown', event => {
@@ -239,6 +268,7 @@ const setupFirstPerson = async (
   return {
     addTriMesh,
     teleportPlayer,
+    reset,
     addBox,
     addCone,
     addCompound,
@@ -254,6 +284,11 @@ const setupFirstPerson = async (
     setSpawnPos,
     registerOnRespawnCb,
     unregisterOnRespawnCb,
+    easyModeMovement,
+    registerDashCb,
+    registerJumpCb,
+    deregisterDashCb,
+    deregisterJumpCb,
   };
 };
 
@@ -350,9 +385,25 @@ const initPauseHandlers = (
   });
 };
 
+const initCustomKeyHandlers = (customControlsEntries: CustomControlsEntry[] | undefined) => {
+  if (!customControlsEntries) {
+    return;
+  }
+
+  const eventMap = new Map<string, () => void>();
+  for (const { key, action } of customControlsEntries) {
+    eventMap.set(key, action);
+  }
+
+  document.addEventListener('keydown', event => {
+    const action = eventMap.get(event.key.toLowerCase());
+    action?.();
+  });
+};
+
 export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
   try {
-    screen.orientation.lock('landscape').catch(() => 0);
+    (screen.orientation as any).lock('landscape').catch(() => 0);
   } catch (err) {
     // pass
   }
@@ -639,6 +690,7 @@ export const initViz = (
     }
 
     initPauseHandlers(paused, viz.clock, sceneConf.viewMode.type);
+    initCustomKeyHandlers(sceneConf.customControlsEntries);
 
     let sfxManager: SfxManager | undefined;
     if (sceneConf.viewMode.type === 'firstPerson') {
@@ -657,18 +709,19 @@ export const initViz = (
           })()
         : normalizedLocations[sceneConf.spawnLocation];
       viz.camera.rotation.setFromVector3(spawnPos.rot, 'YXZ');
-      fpCtx = await setupFirstPerson(
-        normalizedLocations,
-        viz.camera,
+      fpCtx = await setupFirstPerson({
+        locations: normalizedLocations,
+        camera: viz.camera,
         spawnPos,
-        viz.registerBeforeRenderCb,
-        sceneConf.player,
-        sceneConf.gravity,
+        registerBeforeRenderCb: viz.registerBeforeRenderCb,
+        playerConf: sceneConf.player,
+        gravity: sceneConf.gravity,
         inlineConsole,
-        sceneConf.player?.dashConfig,
-        sceneConf.player?.oobYThreshold,
-        sfxManager
-      );
+        dashConfig: sceneConf.player?.dashConfig,
+        oobYThreshold: sceneConf.player?.oobYThreshold,
+        sfxManager,
+        vizConfig,
+      });
       viz.fpCtx = fpCtx;
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(

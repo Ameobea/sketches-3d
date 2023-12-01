@@ -1,4 +1,4 @@
-import { get } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import * as THREE from 'three';
 
 import type { SfxManager } from './audio/SfxManager.js';
@@ -12,6 +12,7 @@ import {
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
 import { assertUnreachable, mergeDeep } from './util.js';
+import type { VizConfig } from './conf.js';
 
 let ammojs: Promise<any> | null = null;
 
@@ -41,6 +42,7 @@ class DashManager {
    * `true` if the player has not touched the ground since they last dashed
    */
   private dashNeedsGroundTouch = false;
+  private dashCbs: ((curTimeSeconds: number) => void)[] = [];
 
   static mergeConfig(config: Partial<DashConfig> | undefined): DashConfig {
     if (!config) {
@@ -66,6 +68,10 @@ class DashManager {
 
     if (this.config.chargeConfig) {
       this.config.chargeConfig.curCharges.update(n => n - 1);
+    }
+
+    for (const cb of this.dashCbs) {
+      cb(curTimeSeconds);
     }
   }
 
@@ -105,6 +111,18 @@ class DashManager {
     this.dashInner(origForwardDir, curTimeSeconds);
     return true;
   }
+
+  public registerDashCb(cb: (curTimeSeconds: number) => void) {
+    this.dashCbs.push(cb);
+  }
+
+  public deregisterDashCb(cb: (curTimeSeconds: number) => void) {
+    const ix = this.dashCbs.indexOf(cb);
+    if (ix === -1) {
+      throw new Error('cb not registered');
+    }
+    this.dashCbs.splice(ix, 1);
+  }
 }
 
 export type ContactRegion =
@@ -131,6 +149,7 @@ interface BulletPhysicsArgs {
   playerMoveSpeed: PlayerMoveSpeed | undefined;
   dashConfig: Partial<DashConfig> | undefined;
   sfxManager: SfxManager;
+  vizConfig: VizConfig;
 }
 
 export const initBulletPhysics = ({
@@ -145,6 +164,7 @@ export const initBulletPhysics = ({
   playerMoveSpeed = DefaultMoveSpeed,
   dashConfig = DefaultDashConfig,
   sfxManager,
+  vizConfig,
 }: BulletPhysicsArgs) => {
   const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
   const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
@@ -211,6 +231,24 @@ export const initBulletPhysics = ({
   };
   setGravity(gravity);
 
+  /**
+   * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
+   * diagonally, allowing for easier movement.
+   */
+  const easyModeMovement = writable(vizConfig.gameplay.easyModeMovement);
+
+  const jumpCbs: ((curTimeSeconds: number) => void)[] = [];
+  const registerJumpCb = (cb: (curTimeSeconds: number) => void) => {
+    jumpCbs.push(cb);
+  };
+  const deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
+    const ix = jumpCbs.indexOf(cb);
+    if (ix === -1) {
+      throw new Error('cb not registered');
+    }
+    jumpCbs.splice(ix, 1);
+  };
+
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
   let lastDashTimeSeconds = 0;
@@ -250,12 +288,24 @@ export const initBulletPhysics = ({
     if (keyStates['KeyS']) moveDirection.sub(forwardDir);
     if (keyStates['KeyA']) moveDirection.add(leftDir);
     if (keyStates['KeyD']) moveDirection.sub(leftDir);
+
+    if (get(easyModeMovement)) {
+      const targetMagnitude = new THREE.Vector3().add(forwardDir).add(leftDir).length();
+      const magnitude = moveDirection.length();
+      if (magnitude > 0) {
+        moveDirection.multiplyScalar(targetMagnitude / magnitude);
+      }
+    }
+
     if (keyStates['Space'] && wasOnGround) {
       if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
         playerController.jump(
           btvec3(moveDirection.x * (jumpSpeed * 0.18), jumpSpeed, moveDirection.z * (jumpSpeed * 0.18))
         );
         lastJumpTimeSeconds = curTimeSeconds;
+        for (const cb of jumpCbs) {
+          cb(curTimeSeconds);
+        }
       }
     }
 
@@ -306,6 +356,12 @@ export const initBulletPhysics = ({
     playerController.warp(btvec3(pos.x, pos.y + playerColliderHeight, pos.z));
     if (rot) {
       camera.rotation.setFromVector3(rot);
+    }
+  };
+
+  const reset = () => {
+    for (const key of Object.keys(keyStates)) {
+      keyStates[key] = false;
     }
   };
 
@@ -714,6 +770,7 @@ export const initBulletPhysics = ({
     addCompound,
     addHeightmapTerrain,
     teleportPlayer,
+    reset,
     optimize,
     setGravity,
     setFlyMode,
@@ -722,5 +779,10 @@ export const initBulletPhysics = ({
     playerStateGetters,
     removeRigidBody,
     setMoveSpeed,
+    easyModeMovement,
+    registerJumpCb,
+    deregisterJumpCb,
+    registerDashCb: (cb: (curTimeSeconds: number) => void) => dashManager.registerDashCb(cb),
+    deregisterDashCb: (cb: (curTimeSeconds: number) => void) => dashManager.deregisterDashCb(cb),
   };
 };

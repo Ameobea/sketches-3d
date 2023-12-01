@@ -11,6 +11,8 @@ import type { SceneConfig } from '..';
 import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
 import { CollectablesCtx, initCollectables } from './collectables';
 import { DashToken } from './DashToken';
+import TimerDisplay from './TimerDisplay.svelte';
+import TimeDisplay, { Score, type ScoreThresholds } from './TimeDisplay.svelte';
 
 const locations = {
   spawn: {
@@ -126,13 +128,16 @@ const buildMaterials = async (viz: VizState) => {
       map: greenMosaic2Albedo,
       normalMap: greenMosaic2Normal,
       roughnessMap: greenMosaic2Roughness,
-      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+      uvTransform: new THREE.Matrix3().scale(7.8, 7.8),
       mapDisableDistance: null,
       normalScale: 2.2,
       ambientLightScale: 2,
     },
     {},
-    { useTriplanarMapping: true }
+    {
+      // useTriplanarMapping: true
+      // useGeneratedUVs: true,
+    }
   );
 
   const goldMaterial = buildCustomShader(
@@ -141,8 +146,8 @@ const buildMaterials = async (viz: VizState) => {
       roughnessMap: goldTextureRoughness,
       normalMap: goldTextureNormal,
       color: new THREE.Color(0xaaaaaa),
-      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
-      mapDisableDistance: null,
+      uvTransform: new THREE.Matrix3().scale(0.6, 0.6),
+      normalScale: 4,
       roughness: 0.2,
     },
     {},
@@ -166,7 +171,8 @@ const initCheckpoints = (
   loadedWorld: THREE.Group<THREE.Object3DEventMap>,
   checkpointMat: THREE.Material,
   dashTokensCtx: CollectablesCtx,
-  curDashCharges: Writable<number>
+  curDashCharges: Writable<number>,
+  onComplete: () => void
 ) => {
   let latestReachedCheckpointIx: number | null = 0;
   let dashChargesAtLastCheckpoint = 0;
@@ -199,14 +205,7 @@ const initCheckpoints = (
       latestReachedCheckpointIx = checkpointIx;
       dashChargesAtLastCheckpoint = get(curDashCharges);
       if (checkpointIx === 1) {
-        let didDisplay = false;
-        viz.registerBeforeRenderCb(curTimeSeconds => {
-          if (didDisplay) {
-            return;
-          }
-          alert(curTimeSeconds.toFixed(3));
-          didDisplay = true;
-        });
+        onComplete();
       }
     },
     material: checkpointMat,
@@ -219,6 +218,7 @@ const initCheckpoints = (
 
       const needle = `ck${latestReachedCheckpointIx === null ? 0 : latestReachedCheckpointIx + 1}`;
       const toRestore: THREE.Object3D[] = [];
+      console.log(dashTokensCtx.hiddenCollectables);
       for (const obj of dashTokensCtx.hiddenCollectables) {
         if (obj.name.includes(needle)) {
           toRestore.push(obj);
@@ -268,7 +268,14 @@ const initDashTokens = (
     },
     type: 'aabb',
   });
-  return { dashCharges, ctx, reset: () => ctx.reset() };
+  return {
+    dashCharges,
+    ctx,
+    reset: () => {
+      ctx.reset();
+      dashCharges.set(0);
+    },
+  };
 };
 
 export const processLoadedScene = async (
@@ -307,17 +314,76 @@ export const processLoadedScene = async (
     }
   });
 
+  const scoreThresholds: ScoreThresholds = {
+    [Score.SPlus]: 32.1,
+    [Score.S]: 33.5,
+    [Score.A]: 40,
+    [Score.B]: 50,
+  };
+  let curRunStartTimeSeconds: number | null = null;
+  let winState: { winTimeSeconds: number; displayComp: TimeDisplay } | null = null;
+
+  viz.collisionWorldLoadedCbs.push(fpCtx =>
+    fpCtx.registerJumpCb(curTimeSeconds => {
+      if (curRunStartTimeSeconds === null) {
+        curRunStartTimeSeconds = curTimeSeconds;
+      }
+    })
+  );
+
+  const onWin = () => {
+    const curTimeSeconds = viz.clock.getElapsedTime();
+
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const time = curTimeSeconds - (curRunStartTimeSeconds ?? 0);
+    const displayComp = new TimeDisplay({ target, props: { scoreThresholds, time } });
+    winState = { winTimeSeconds: curTimeSeconds, displayComp };
+
+    viz.fpCtx!.setSpawnPos(locations.spawn.pos, locations.spawn.rot);
+  };
+
   const {
     ctx: dashTokensCtx,
     dashCharges: curDashCharges,
     reset: resetDashes,
   } = initDashTokens(viz, loadedWorld, greenMosaic2Material, goldMaterial);
-  const resetCheckpoints = initCheckpoints(viz, loadedWorld, checkpointMat, dashTokensCtx, curDashCharges);
+  const resetCheckpoints = initCheckpoints(
+    viz,
+    loadedWorld,
+    checkpointMat,
+    dashTokensCtx,
+    curDashCharges,
+    onWin
+  );
+
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const timerDisplay = new TimerDisplay({ target, props: { curTime: 0 } });
+  viz.registerAfterRenderCb(curTimeSeconds => {
+    const elapsedSeconds = (() => {
+      if (curRunStartTimeSeconds === null) {
+        return 0;
+      }
+
+      if (winState) {
+        return winState.winTimeSeconds - curRunStartTimeSeconds;
+      }
+
+      return curTimeSeconds - curRunStartTimeSeconds;
+    })();
+    timerDisplay.$$set({ curTime: elapsedSeconds });
+  });
 
   const reset = () => {
     resetDashes();
     resetCheckpoints();
     viz.fpCtx!.teleportPlayer(locations.spawn.pos, locations.spawn.rot);
+    viz.fpCtx!.reset();
+    curRunStartTimeSeconds = null;
+    winState?.displayComp.$destroy();
+    winState = null;
+    viz.fpCtx!.setSpawnPos(locations.spawn.pos, locations.spawn.rot);
   };
 
   configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
@@ -362,6 +428,6 @@ export const processLoadedScene = async (
     debugPlayerKinematics: true,
     locations,
     legacyLights: false,
-    customControlsEntries: [{ label: 'Reset', key: 'r', action: reset }],
+    customControlsEntries: [{ label: 'Reset', key: 'f', action: reset }],
   };
 };

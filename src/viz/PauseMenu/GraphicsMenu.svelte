@@ -52,6 +52,3 @@
 <RangeInput label="FOV" min={60} max={120} step={1} value={fov} onChange={handleFOVChange} />
 <button disabled={!graphicsSettingsChanged} on:click={handleSave}>Save</button>
 <button on:click={onBack}>Back</button>
-
-<style lang="css">
-</style>
