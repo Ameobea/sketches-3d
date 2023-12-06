@@ -449,20 +449,18 @@ export const initBulletPhysics = ({
     scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
   ) => {
     const hull = new Ammo.btConvexHullShape();
-    for (let i = 0; i < (indices ?? vertices).length; i += 3) {
-      const point = (() => {
-        if (indices) {
-          return btvec3(
-            vertices[indices[i]] * scale.x,
-            vertices[indices[i + 1]] * scale.y,
-            vertices[indices[i + 2]] * scale.z
-          );
-        } else {
-          return btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z);
-        }
-      })();
-      hull.addPoint(point);
+
+    if (indices) {
+      for (let i = 0; i < indices.length; i++) {
+        const ix = indices[i] * 3;
+        hull.addPoint(btvec3(vertices[ix] * scale.x, vertices[ix + 1] * scale.y, vertices[ix + 2] * scale.z));
+      }
+    } else {
+      for (let i = 0; i < vertices.length; i += 3) {
+        hull.addPoint(btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z));
+      }
     }
+
     return hull;
   };
 
@@ -473,10 +471,6 @@ export const initBulletPhysics = ({
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
     let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
-    // if (!geometry.index?.array) {
-    //   console.error('Mesh has no index array; not adding to collision world', mesh);
-    //   return;
-    // }
     const indices = geometry.index?.array as Uint16Array | undefined;
     if (vertices instanceof Uint16Array) {
       throw new Error('GLTF Quantization not yet supported');
