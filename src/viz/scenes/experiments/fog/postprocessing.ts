@@ -22,7 +22,31 @@ export const configurePostprocessing = (viz: VizState, quality: GraphicsQuality)
   renderPass.needsDepthTexture = true;
   effectComposer.addPass(renderPass);
 
-  const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {});
+  const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+    fogMinY: -50,
+    fogMaxY: 56,
+    fogColorLowDensity: new THREE.Vector3(0.23, 0.27, 0.27),
+    fogColorHighDensity: new THREE.Vector3(1, 1, 1),
+    ambientLightColor: new THREE.Color(0xffffff),
+    ambientLightIntensity: 1.2,
+    heightFogStartY: -8,
+    heightFogEndY: 14,
+    heightFogFactor: 0.34,
+    maxRayLength: 300,
+    minStepLength: 0.1,
+    noiseBias: 0.5,
+    noisePow: 3.6,
+    halfRes: true,
+    baseRaymarchStepCount: 110,
+    maxRaymarchStepCount: 2000,
+    fogFadeOutRangeY: 2.8,
+    fogFadeOutPow: 1,
+    postDensityPow: 1,
+    postDensityMultiplier: 0.97,
+    maxDensity: 1,
+    noiseMovementPerSecond: new THREE.Vector2(2.8, 0.8),
+    // fogDensityMultiplier: 0.146,
+  });
   viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
   effectComposer.addPass(volumetricPass);
 

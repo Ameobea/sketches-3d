@@ -27,14 +27,42 @@ export interface VolumetricPassParams {
   lightFalloffDistance?: number;
   fogFadeOutPow?: number;
   fogFadeOutRangeY?: number;
+  /**
+   * Main control over the density of the fog.
+   */
   fogDensityMultiplier?: number;
   heightFogStartY?: number;
   heightFogEndY?: number;
   heightFogFactor?: number;
+  /**
+   * This value is added to the summed raw noise octave samples before being normalized to [0, 1] and raised to `noisePow`.
+   *
+   * Default: 0.485
+   */
   noiseBias?: number;
-  noiseRotationPerSecond?: number;
+  /**
+   * Normalized noise is raised to this power after sampling.  Higher values can produce results with more contrast.
+   *
+   * Default: 3
+   */
+  noisePow?: number;
+  /**
+   * Controls the speed of the noise movement to simulate wind.
+   *
+   * Default: new THREE.Vector2(1.2, 0.8)
+   */
   noiseMovementPerSecond?: THREE.Vector2;
+  /**
+   * Accumulated density after full raymarching is completed is multiplied by this value before raising to `postDensityPow`.
+   *
+   * Default: 1.2
+   */
   postDensityMultiplier?: number;
+  /**
+   * Accumulated density after full raymarching is completed is raised to this power after multiplying by `postDensityMultiplier`.
+   *
+   * Default: 1
+   */
   postDensityPow?: number;
   /**
    * Controls the compositing pass that upscales + combines the volumetric pass with the main scene.
@@ -46,6 +74,8 @@ export interface VolumetricPassParams {
    * If set, the volumetric pass will render at half resolution and then upscale to full resolution.
    *
    * Cannot be changed after the pass is created.
+   *
+   * Default: false
    */
   halfRes?: boolean;
 }
@@ -78,17 +108,18 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       lightIntensity: { value: 7.5 },
       blueNoiseResolution: { value: 256 },
       lightFalloffDistance: { value: 110 },
-      fogFadeOutPow: { value: 2 },
+      fogFadeOutPow: { value: 1 },
       fogFadeOutRangeY: { value: 1.5 },
       fogDensityMultiplier: { value: 0.086 },
       heightFogStartY: { value: -10 },
       heightFogEndY: { value: 8 },
       heightFogFactor: { value: 0.1852 },
       noiseBias: { value: 0.485 },
-      noiseRotationPerSecond: { value: 0.3 },
+      noisePow: { value: 3 },
       noiseMovementPerSecond: { value: new THREE.Vector2(1.2, 0.8) },
       postDensityMultiplier: { value: 1.2 },
       postDensityPow: { value: 1 },
+      noiseTexture: { value: null },
     };
 
     super({
@@ -116,6 +147,7 @@ export class VolumetricPass extends Pass implements Disposable {
   private params: VolumetricPassParams;
   private compositorPass?: VolumetricCompositorPass;
   private fogRenderTarget: THREE.WebGLRenderTarget | null = null;
+  private noiseTexture3D: THREE.Data3DTexture;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, params: VolumetricPassParams) {
     super('VolumetricPass');
@@ -141,6 +173,21 @@ export class VolumetricPass extends Pass implements Disposable {
       | undefined;
 
     this.updateUniforms();
+
+    const noise = new Uint8Array(64 * 64 * 64);
+    for (let i = 0; i < noise.length; i++) {
+      noise[i] = Math.random() * 255;
+    }
+    this.noiseTexture3D = new THREE.Data3DTexture(noise, 64, 64, 64);
+    this.noiseTexture3D.format = THREE.RedFormat;
+    this.noiseTexture3D.type = THREE.UnsignedByteType;
+    this.noiseTexture3D.wrapR = THREE.RepeatWrapping;
+    this.noiseTexture3D.wrapS = THREE.RepeatWrapping;
+    this.noiseTexture3D.wrapT = THREE.RepeatWrapping;
+    this.noiseTexture3D.generateMipmaps = true;
+    this.noiseTexture3D.minFilter = THREE.LinearMipmapLinearFilter;
+    this.noiseTexture3D.magFilter = THREE.LinearFilter;
+    this.noiseTexture3D.needsUpdate = true;
   }
 
   public setCurTimeSeconds(newCurTimeSeconds: number) {
@@ -191,9 +238,10 @@ export class VolumetricPass extends Pass implements Disposable {
     this.material.uniforms.cameraMatrixWorld.value = this.playerCamera.matrixWorld;
 
     this.material.uniforms.ambientLightColor.value =
-      this.ambientLight?.color ?? this.params.ambientLightColor ?? new THREE.Color(0xffffff);
+      this.params.ambientLightColor ?? this.ambientLight?.color ?? new THREE.Color(0xffffff);
     this.material.uniforms.ambientLightIntensity.value =
       this.params.ambientLightIntensity ?? this.ambientLight?.intensity ?? 0;
+    this.material.uniforms.noiseTexture.value = this.noiseTexture3D;
 
     for (const [key, value] of Object.entries(this.params)) {
       if (

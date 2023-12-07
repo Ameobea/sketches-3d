@@ -388,23 +388,27 @@ export const processLoadedScene = async (
 
   configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
     const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
-      fogMinY: -20,
+      fogMinY: -60,
       fogMaxY: -4,
-      fogColorLowDensity: new THREE.Vector3(0.2, 0.2, 0.2),
+      fogColorLowDensity: new THREE.Vector3(0.42, 0.45, 0.48),
       fogColorHighDensity: new THREE.Vector3(0.8, 0.8, 0.8),
       ambientLightColor: new THREE.Color(0xffffff),
       ambientLightIntensity: 1.2,
-      heightFogStartY: -20,
-      heightFogEndY: -8,
-      maxRayLength: 200,
+      heightFogStartY: -30,
+      heightFogEndY: -24,
+      maxRayLength: 300,
       minStepLength: 0.1,
-      noiseBias: 1.2,
-      heightFogFactor: 0.24,
+      noiseBias: 0.4,
+      heightFogFactor: 0.14,
+      noisePow: 1.6,
+      fogFadeOutRangeY: 12,
+      fogDensityMultiplier: 0.126,
+      postDensityMultiplier: 1.2,
       halfRes: true,
       ...{
-        [GraphicsQuality.Low]: { baseRaymarchStepCount: 38 },
-        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 60 },
-        [GraphicsQuality.High]: { baseRaymarchStepCount: 75 },
+        [GraphicsQuality.Low]: { baseRaymarchStepCount: 58 },
+        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 80 },
+        [GraphicsQuality.High]: { baseRaymarchStepCount: 110 },
       }[quality],
     });
     composer.addPass(volumetricPass);
