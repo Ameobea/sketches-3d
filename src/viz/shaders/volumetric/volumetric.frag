@@ -20,7 +20,7 @@ uniform float curTimeSeconds;
 
 #define DO_LIGHTING 0
 #define USE_LIGHT_FALLOFF 1
-#define OCTAVE_COUNT 5
+#define OCTAVE_COUNT 6
 
 // params
 uniform float ambientLightIntensity;
@@ -49,6 +49,7 @@ uniform float noisePow;
 uniform vec2 noiseMovementPerSecond;
 uniform float postDensityMultiplier;
 uniform float postDensityPow;
+uniform float globalScale;
 
 vec3 computeWorldPosFromDepth(float depth, vec2 coord) {
   float z = depth * 2.0 - 1.0;
@@ -64,13 +65,13 @@ float sampleFogFromNoise(vec3 worldPos) {
   return texture(noiseTexture, worldPos * 0.006).r * 2. - 1.;
 }
 
-#define TOTAL_LOD_COUNT 5
-const float LODWeights[TOTAL_LOD_COUNT] = float[](1., 0.3, 0.2, 0.1, 0.06);
-const float LODScales[TOTAL_LOD_COUNT] = float[](0.1, 0.3, 0.6, 1.2, 2.2);
+#define TOTAL_LOD_COUNT 6
+const float LODWeights[TOTAL_LOD_COUNT] = float[](1., 0.3, 0.2, 0.1, 0.06, 0.035);
+const float LODScales[TOTAL_LOD_COUNT] = float[](0.1, 0.3, 0.6, 1.2, 2.2, 4.1);
 
 float sampleFogDensityLOD(vec3 worldPos, float distanceToCamera, inout float totalSampledMagnitude, const int lod) {
   float weight = LODWeights[lod];
-  float scale = LODScales[lod];
+  float scale = LODScales[lod] * globalScale;
 
   totalSampledMagnitude += weight;
   float noise = sampleFogFromNoise(worldPos * scale);
@@ -175,10 +176,6 @@ void clipRayEndpoints(inout vec3 startPos, inout vec3 endPos) {
     float t = intersectRayXZPlane(startPos, rayDir, fogMaxY);
     startPos = startPos + rayDir * t;
   }
-}
-
-float computeStepLengthMultiplier(in vec3 gradient) {
-  return 3. - 2. * smoothstep(0., 0.03, length(gradient));
 }
 
 vec3 computeColor(in vec3 curPos, in float density, in vec3 gradient) {

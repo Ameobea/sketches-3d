@@ -78,6 +78,7 @@ export interface VolumetricPassParams {
    * Default: false
    */
   halfRes?: boolean;
+  globalScale: number;
 }
 
 class VolumetricMaterial extends THREE.ShaderMaterial {
@@ -120,6 +121,7 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       postDensityMultiplier: { value: 1.2 },
       postDensityPow: { value: 1 },
       noiseTexture: { value: null },
+      globalScale: { value: 1 },
     };
 
     super({
