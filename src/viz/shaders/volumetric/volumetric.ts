@@ -162,7 +162,9 @@ export class VolumetricPass extends Pass implements Disposable {
     this.material = new VolumetricMaterial(params);
     this.fullscreenMaterial = this.material;
     if (params.halfRes) {
-      this.fogRenderTarget = new THREE.WebGLRenderTarget(1, 1);
+      this.fogRenderTarget = new THREE.WebGLRenderTarget(1, 1, {
+        type: THREE.HalfFloatType,
+      });
       this.compositorPass = new VolumetricCompositorPass({
         camera,
         params: params.compositor,
@@ -207,7 +209,19 @@ export class VolumetricPass extends Pass implements Disposable {
     this.material.uniforms.sceneDiffuse.value = inputBuffer.texture;
     this.material.uniforms.curTimeSeconds.value = this.curTimeSeconds;
 
-    renderer.setRenderTarget(this.compositorPass ? this.fogRenderTarget! : outputBuffer);
+    renderer.setRenderTarget(
+      (() => {
+        if (this.compositorPass) {
+          return this.fogRenderTarget!;
+        }
+
+        if (this.renderToScreen) {
+          return null;
+        }
+
+        return outputBuffer;
+      })()
+    );
     renderer.render(this.scene, this.camera);
 
     if (this.compositorPass) {

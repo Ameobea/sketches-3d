@@ -45,7 +45,10 @@ export const configurePostprocessing = (
   quality: GraphicsQuality,
   onFirstRender: () => void
 ) => {
-  const effectComposer = new EffectComposer(viz.renderer, { multisampling: 0 });
+  const effectComposer = new EffectComposer(viz.renderer, {
+    multisampling: 0,
+    frameBufferType: THREE.HalfFloatType,
+  });
 
   if (USE_DEPTH_PREPASS) {
     viz.renderer.autoClear = false;

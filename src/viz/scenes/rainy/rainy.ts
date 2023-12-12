@@ -434,7 +434,7 @@ export const processLoadedScene = async (
 
   const { backgroundScene, greenhouseShelves } = await initScene(viz, loadedWorld, vizConfig);
 
-  const effectComposer = new EffectComposer(viz.renderer);
+  const effectComposer = new EffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
   effectComposer.autoRenderToScreen = false;
 
   const depthPassMaterial = new THREE.MeshDistanceMaterial({

@@ -121,7 +121,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   backdrop2.receiveShadow = true;
   viz.scene.add(backdrop2);
 
-  const effectComposer = new EffectComposer(viz.renderer);
+  const effectComposer = new EffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
   const renderPass = new RenderPass(viz.scene, viz.camera);
   renderPass.renderToScreen = false;
   effectComposer.addPass(renderPass);

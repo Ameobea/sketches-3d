@@ -7,7 +7,10 @@ import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 export const configurePostprocessing = (viz: VizState, quality: GraphicsQuality) => {
-  const effectComposer = new EffectComposer(viz.renderer, { multisampling: 0 });
+  const effectComposer = new EffectComposer(viz.renderer, {
+    multisampling: 0,
+    frameBufferType: THREE.HalfFloatType,
+  });
 
   viz.renderer.autoClear = false;
   viz.renderer.autoClearColor = true;

@@ -39,7 +39,10 @@ export const configureDefaultPostprocessingPipeline = (
   onFirstRender?: () => void,
   extraParams: Partial<ExtraPostprocessingParams> = {}
 ) => {
-  const effectComposer = new EffectComposer(viz.renderer, { multisampling: 0 });
+  const effectComposer = new EffectComposer(viz.renderer, {
+    multisampling: 0,
+    frameBufferType: THREE.HalfFloatType,
+  });
 
   viz.renderer.autoClear = false;
   viz.renderer.autoClearColor = true;

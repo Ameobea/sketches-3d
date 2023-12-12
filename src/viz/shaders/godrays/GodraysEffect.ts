@@ -5,7 +5,7 @@
  * With cleanup and minor changes
  */
 
-import { Disposable, Pass, Resizable } from 'postprocessing';
+import { type Disposable, Pass, type Resizable } from 'postprocessing';
 import * as THREE from 'three';
 
 import GodraysCompositorShader from './compositor.frag?raw';
@@ -261,7 +261,7 @@ export class GodraysEffect extends Pass implements Disposable {
    * ```ts
    * import { EffectComposer, RenderPass } from 'postprocessing';
    *
-   * const composer = new EffectComposer(renderer);
+   * const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType });
    * const renderPass = new RenderPass(scene, camera);
    * renderPass.renderToScreen = false;
    * composer.addPass(renderPass);

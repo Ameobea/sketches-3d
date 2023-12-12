@@ -74,7 +74,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   viz.renderer.autoClear = false;
   viz.renderer.autoClearDepth = false;
 
-  const composer = new EffectComposer(viz.renderer);
+  const composer = new EffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
   const depthPass = new DepthPass(viz.scene, viz.camera, new THREE.MeshBasicMaterial());
   // The depth pre pass must render to the same framebuffer as the main render pass so that the depth buffer is shared
   depthPass.renderToScreen = true;

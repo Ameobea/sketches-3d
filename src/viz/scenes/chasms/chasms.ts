@@ -661,15 +661,13 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     {
       usePackedDiffuseNormalGBA: true,
       disabledDirectionalLightIndices: [0],
-      // useGeneratedUVs: true,
-      // tileBreaking: { type: 'neyret', patchScale: 2 },
       readRoughnessMapFromRChannel: true,
     }
   );
   const towerStatue = getMesh(loadedWorld, 'tower_plinth_statue');
   towerStatue.material = towerStatueMat;
 
-  const composer = new EffectComposer(viz.renderer);
+  const composer = new EffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
 
   composer.addPass(depthPass);
 
