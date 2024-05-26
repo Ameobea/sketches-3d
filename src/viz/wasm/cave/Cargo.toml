@@ -15,4 +15,4 @@ noise = "0.4"
 nalgebra = "0.31"
 rand = { version = "0.8", default-features = false, features = ["nightly"] }
 console_error_panic_hook = "0.1"
-common = { path = "../common" }
+common = { path = "../common", features = ["mesh"] }

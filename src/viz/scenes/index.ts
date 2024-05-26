@@ -291,4 +291,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneName: 'Scene',
     metadata: { title: 'pk_pylons' },
   },
+  tessellationSandbox: {
+    gltfName: 'tessellationSandbox',
+    extension: 'glb',
+    sceneLoader: () =>
+      import('./tessellationSandbox/tessellationSandbox').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'tessellation sandbox' },
+  },
 };

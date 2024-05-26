@@ -54,6 +54,7 @@ pub struct AABBTree<T> {
   stack_scratch: Vec<NodeIx>,
 }
 
+#[allow(dead_code)]
 pub struct AABBTreeDebug {
   /// (aabb, depth)
   pub internal_nodes: Vec<(AABB, usize)>,
@@ -287,6 +288,7 @@ impl<T> AABBTree<T> {
     NodeIx(ix)
   }
 
+  #[allow(dead_code)]
   pub fn debug(&self) -> AABBTreeDebug {
     let mut internal_nodes = Vec::new();
     let mut leaf_nodes = Vec::new();
@@ -297,6 +299,7 @@ impl<T> AABBTree<T> {
     }
   }
 
+  #[allow(dead_code)]
   fn debug_recursive(
     &self,
     node_ix: NodeIx,

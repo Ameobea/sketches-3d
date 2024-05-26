@@ -1,10 +1,3 @@
-/**
- * Originally adapted from:
- * https://github.com/mrdoob/three.js/blob/master/examples/games_fps.html
- *
- * With many changes and additions.
- */
-
 import { get, type Writable } from 'svelte/store';
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module';
@@ -205,7 +198,9 @@ const setupFirstPerson = async ({
   };
 
   window.onbeforeunload = function () {
-    localStorage.backPos = (window as any).recordPos();
+    if ((window as any).recordPos) {
+      localStorage.backPos = (window as any).recordPos();
+    }
   };
 
   (window as any).back = () => {

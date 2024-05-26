@@ -1,34 +1,9 @@
-use common::{maybe_init_rng, random};
+use common::{
+  maybe_init_rng,
+  mesh::{Mesh, Triangle},
+  random,
+};
 use nalgebra::{Point3, Vector3};
-
-struct Triangle {
-  a: Vector3<f32>,
-  b: Vector3<f32>,
-  c: Vector3<f32>,
-}
-
-impl Triangle {
-  pub fn new(a: Vector3<f32>, b: Vector3<f32>, c: Vector3<f32>) -> Self {
-    Triangle { a, b, c }
-  }
-
-  /// Returns the normal of the triangle.
-  ///
-  /// Assumes the triangle's vertices are counter-clockwise.
-  pub fn normal(&self) -> Vector3<f32> {
-    (self.b - self.a).cross(&(self.c - self.a)).normalize()
-  }
-
-  pub fn area(&self) -> f32 {
-    0.5 * self.normal().magnitude()
-  }
-}
-
-pub struct Mesh<'a> {
-  pub vertices: &'a [Vector3<f32>],
-  pub normals: Option<&'a [Vector3<f32>]>,
-  pub transform: Option<nalgebra::Matrix4<f32>>,
-}
 
 /// Largely based on https://github.com/mrdoob/three.js/blob/f8509646d78fcd4efaa4408119b55b2bead6e01b/examples/jsm/math/MeshSurfaceSampler.js
 pub struct MeshSurfaceSampler<'a> {
@@ -159,43 +134,3 @@ pub extern "C" fn free(ptr: *mut u8) {
     let _ = Vec::from_raw_parts(ptr, 0, 0);
   }
 }
-
-/*
-/// Returns a pointer to a buffer containing sampled positions followed by
-/// sampled normals.
-///
-/// It's up to you to free the input and output buffers.
-#[no_mangle]
-pub extern "C" fn sample_faces(
-  vertices: *const f32,
-  normals: *const f32,
-  count: usize,
-) -> *const f32 {
-  let mesh = Mesh {
-    vertices: unsafe { std::slice::from_raw_parts(vertices as *mut _, count * 3) },
-    normals: if normals.is_null() {
-      None
-    } else {
-      Some(unsafe { std::slice::from_raw_parts(normals as *mut _, count * 3) })
-    },
-    transform: None,
-  };
-  let sampler = MeshSurfaceSampler::new(mesh);
-
-  let mut buffer = Vec::with_capacity(count * 3 * 2);
-  unsafe { buffer.set_len(buffer.capacity()) };
-  for i in 0..count {
-    let (position, normal) = sampler.sample();
-    buffer[6 * i] = position.x;
-    buffer[6 * i + 1] = position.y;
-    buffer[6 * i + 2] = position.z;
-    buffer[6 * i + 3] = normal.x;
-    buffer[6 * i + 4] = normal.y;
-    buffer[6 * i + 5] = normal.z;
-  }
-
-  let buffer = buffer.into_boxed_slice();
-  let ptr = Box::into_raw(buffer) as *const f32;
-  ptr
-}
-*/

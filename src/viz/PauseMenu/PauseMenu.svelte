@@ -59,8 +59,6 @@
   }}
 >
   <div class="root">
-    <h2>PAUSED</h2>
-
     <div class="menu-items-stack">
       {#if activeMenu === Menu.Main}
         <button

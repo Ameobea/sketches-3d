@@ -1,6 +1,11 @@
 pub extern crate rand;
 pub extern crate rand_pcg;
 
+#[cfg(feature = "mesh")]
+pub mod mesh;
+
+use std::ptr::addr_of_mut;
+
 use rand::prelude::*;
 use rand_pcg::Pcg32;
 
@@ -24,7 +29,7 @@ pub fn maybe_init_rng() {
 
 #[inline(always)]
 pub fn rng() -> &'static mut Pcg32 {
-  unsafe { &mut RNG }
+  unsafe { &mut *addr_of_mut!(RNG) }
 }
 
 pub fn build_rng(seed: (u64, u64)) -> Pcg32 {

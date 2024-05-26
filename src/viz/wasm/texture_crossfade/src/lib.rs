@@ -1,4 +1,4 @@
-use std::ptr;
+use std::ptr::{self, addr_of};
 
 static mut TEXTURE_PTRS: [*mut u8; 8] = [ptr::null_mut(); 8];
 
@@ -134,7 +134,7 @@ pub extern "C" fn generate(size: usize, threshold: f32) -> *mut u8 {
     panic!("Threshold must be between 0 and 1");
   }
 
-  let textures = unsafe { &TEXTURE_PTRS }
+  let textures = unsafe { &*addr_of!(TEXTURE_PTRS) }
     .iter()
     .take_while(|&ptr| !ptr.is_null())
     .map(|&data| unsafe { std::slice::from_raw_parts_mut(data, size * size * 4) })

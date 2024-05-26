@@ -1,7 +1,7 @@
-use common::rng;
+use common::{mesh::Mesh, rng};
 use nalgebra::{Matrix4, Point2, Point3, Vector3};
 use noise::{NoiseModule, Perlin, Seedable};
-use point_distribute::{Mesh, MeshSurfaceSampler};
+use point_distribute::MeshSurfaceSampler;
 use rand::Rng;
 use wasm_bindgen::prelude::*;
 
@@ -46,10 +46,6 @@ pub fn compute_stalags(cave_mesh_vertices: &[f32], cave_mesh_normals: &[f32], tr
       None
     } else if transform.len() == 16 {
       let mat4 = Matrix4::from_column_slice(transform);
-      // panic!(
-      //   "translate: {:?}",
-      //   mat4.transform_point(&Point3::new(0., 0., 0.))
-      // );
       Some(mat4)
     } else {
       panic!(

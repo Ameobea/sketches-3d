@@ -339,33 +339,6 @@ fn add_extruded_faces_from_indices(
   }
 }
 
-/// Extrudes points generated for the 2D path into 3D by extruding on the Z
-/// axis.
-fn extrude_to_3d(
-  buffers: VertexBuffers<Point, u32>,
-  height: f32,
-) -> VertexBuffers<Point3D<f32, UnknownUnit>, u32> {
-  let mut vertices_3d = Vec::with_capacity(buffers.vertices.len() * 2);
-  let mut indices_3d = Vec::with_capacity(buffers.indices.len() * 3 * 4);
-
-  let vertex_count_2d = buffers.vertices.len() as u32;
-
-  // Extrude vertices
-  for point in &buffers.vertices {
-    vertices_3d.push(Point3D::new(point.x, point.y, 0.0));
-  }
-  for point in buffers.vertices {
-    vertices_3d.push(Point3D::new(point.x, point.y, height));
-  }
-
-  add_extruded_faces_from_indices(vertex_count_2d, &buffers.indices, &mut indices_3d);
-
-  VertexBuffers {
-    vertices: vertices_3d,
-    indices: indices_3d,
-  }
-}
-
 fn compute_face_normal(
   v0: &Point3D<f32, UnknownUnit>,
   v1: &Point3D<f32, UnknownUnit>,
