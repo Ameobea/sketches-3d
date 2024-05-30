@@ -8,6 +8,9 @@ edition = "2021"
 rand_pcg = "0.3"
 rand = { version = "0.8", default-features = false, features = ["nightly"] }
 nalgebra = { version = "0.31", optional = true }
+slotmap = { version = "1.0", optional = true }
+fxhash = { version = "0.2", optional = true }
+smallvec = { version = "1.13", optional = true }
 
 [features]
-mesh = ["nalgebra"]
+mesh = ["nalgebra", "slotmap", "fxhash", "smallvec"]

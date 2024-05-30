@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 common = { path = "../common", features = ["mesh"] }
 wasm-bindgen = "=0.2.82"
 console_error_panic_hook = "0.1"
+float-ord = "0.3"

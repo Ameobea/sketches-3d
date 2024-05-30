@@ -1,5 +1,9 @@
 use nalgebra::Vector3;
 
+mod linked_mesh;
+
+pub use linked_mesh::LinkedMesh;
+
 pub struct Triangle {
   a: Vector3<f32>,
   b: Vector3<f32>,
@@ -67,5 +71,12 @@ impl<'a> Mesh<'a> {
 pub struct OwnedMesh {
   pub vertices: Vec<Vector3<f32>>,
   pub normals: Option<Vec<Vector3<f32>>>,
+  pub transform: Option<nalgebra::Matrix4<f32>>,
+}
+
+pub struct OwnedIndexedMesh {
+  pub vertices: Vec<f32>,
+  pub normals: Option<Vec<f32>>,
+  pub indices: Vec<usize>,
   pub transform: Option<nalgebra::Matrix4<f32>>,
 }

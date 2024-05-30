@@ -1,21 +1,33 @@
-use common::mesh::{Mesh, OwnedMesh};
+use common::mesh::{LinkedMesh, OwnedIndexedMesh};
 use wasm_bindgen::prelude::*;
 
 pub struct TessellateMeshCtx {
-  new_mesh: OwnedMesh,
+  new_mesh: OwnedIndexedMesh,
 }
 
 #[wasm_bindgen]
 pub fn tessellate_mesh(
   vertices: &[f32],
   vertex_normals: &[f32],
+  indices: &[usize],
   target_triangle_area: f32,
 ) -> *mut TessellateMeshCtx {
   console_error_panic_hook::set_once();
 
-  let mesh = Mesh::from_raw(vertices, vertex_normals, None);
-  let new_mesh = crate::tessellate_mesh(mesh, target_triangle_area);
-  let ctx = Box::new(TessellateMeshCtx { new_mesh });
+  let mut mesh = LinkedMesh::from_raw_indexed(
+    vertices,
+    indices,
+    if vertex_normals.is_empty() {
+      None
+    } else {
+      Some(vertex_normals)
+    },
+    None,
+  );
+  crate::tessellate_mesh(&mut mesh, target_triangle_area);
+  let ctx = Box::new(TessellateMeshCtx {
+    new_mesh: mesh.to_raw_indexed(),
+  });
   Box::into_raw(ctx)
 }
 

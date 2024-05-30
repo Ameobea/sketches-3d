@@ -1,98 +1,87 @@
 #![feature(iter_array_chunks)]
 
-use common::mesh::{Mesh, OwnedMesh, Triangle};
+use common::mesh::LinkedMesh;
+use float_ord::FloatOrd;
 
 mod interface;
 
-fn tessellate_mesh(mesh: Mesh, target_triangle_area: f32) -> OwnedMesh {
-  let mut new_vertices = Vec::with_capacity(mesh.vertices.len());
-  let mut new_normals = Vec::with_capacity(mesh.normals.as_ref().map(|v| v.len()).unwrap_or(0));
-
-  for (tri_ix, [a, b, c]) in mesh.vertices.iter().array_chunks::<3>().enumerate() {
-    let tri = Triangle::new(*a, *b, *c);
-    let area = tri.area();
-    let subdivided_area = area / 6.;
-
-    // if current area is closer to target area than subdivided area, add the
-    // triangle as is
-    if (target_triangle_area - area).abs() < (target_triangle_area - subdivided_area).abs() {
-      new_vertices.push(*a);
-      new_vertices.push(*b);
-      new_vertices.push(*c);
-
-      if let Some(normals) = mesh.normals {
-        let normals = &normals[tri_ix * 3..tri_ix * 3 + 3];
-        new_normals.extend_from_slice(normals);
+/// Returns `true` if at least one face was split
+fn tessellate_one_iter(mesh: &mut LinkedMesh, target_triangle_area: f32) -> bool {
+  let face_keys_needing_tessellation: Vec<_> = mesh
+    .iter_faces()
+    .filter_map(|(face_key, face)| {
+      let area = face.area(&mesh.vertices);
+      if area > target_triangle_area {
+        Some(face_key)
+      } else {
+        None
       }
+    })
+    .collect();
 
+  if face_keys_needing_tessellation.is_empty() {
+    return false;
+  }
+
+  let mut edges_needing_split = Vec::new();
+  for face_key in face_keys_needing_tessellation {
+    let Some(face) = mesh.faces.get(face_key) else {
+      // This face might have already been split and removed from the mesh
+      continue;
+    };
+
+    // Check again to see if the face still needs tessellation
+    let area = face.area(&mesh.vertices);
+    if area <= target_triangle_area {
       continue;
     }
 
-    let center = tri.center();
-    // split each edge in half and draw new edges from the center to the midpoints
-    //
-    // this splits the triangle into 6 smaller triangles
+    let longest_edge_key = face
+      .edges
+      .iter()
+      .map(|&edge_key| edge_key)
+      .max_by_key(|&edge_key| {
+        let edge = &mesh.edges[edge_key];
+        let length = edge.length(&mesh.vertices);
+        FloatOrd(length)
+      })
+      .unwrap();
+    edges_needing_split.push(longest_edge_key);
+  }
 
-    let ab = (*a + *b) / 2.;
-    let bc = (*b + *c) / 2.;
-    let ca = (*c + *a) / 2.;
+  if edges_needing_split.is_empty() {
+    return false;
+  }
+  for edge_key in edges_needing_split {
+    if mesh.edges.get(edge_key).is_none() {
+      // This edge might have already been split and removed from the mesh
+      continue;
+    }
 
-    if let Some(normals) = mesh.normals {
-      let normals = &normals[tri_ix * 3..tri_ix * 3 + 3];
-      let a_norm = &normals[0];
-      let b_norm = &normals[1];
-      let c_norm = &normals[2];
-      let ab_normal = (a_norm + b_norm) / 2.;
-      let bc_normal = (b_norm + c_norm) / 2.;
-      let ca_normal = (c_norm + a_norm) / 2.;
-      // let center_normal = (a_norm + b_norm + c_norm) / 3.;
-      let center_normal = tri.normal();
+    mesh.split_edge(edge_key);
+  }
 
-      // we'll assume that smooth shading is used, so the normals of the new vertices
-      // will be interpolated from those of the original vertices
-      let new_triangles_and_normals = [
-        ([*a, ab, center], [a_norm, &ab_normal, &center_normal]),
-        ([ab, *b, center], [&ab_normal, &b_norm, &center_normal]),
-        ([*b, bc, center], [b_norm, &bc_normal, &center_normal]),
-        ([bc, *c, center], [&bc_normal, &c_norm, &center_normal]),
-        ([*c, ca, center], [c_norm, &ca_normal, &center_normal]),
-        ([ca, *a, center], [&ca_normal, a_norm, &center_normal]),
-      ];
+  true
+}
 
-      for ([a, b, c], [a_norm, b_norm, c_norm]) in new_triangles_and_normals {
-        new_vertices.push(a);
-        new_vertices.push(b);
-        new_vertices.push(c);
-
-        new_normals.push(*a_norm);
-        new_normals.push(*b_norm);
-        new_normals.push(*c_norm);
-      }
-    } else {
-      let new_triangles = [
-        [*a, ab, center],
-        [ab, *b, center],
-        [*b, bc, center],
-        [bc, *c, center],
-        [*c, ca, center],
-        [ca, *a, center],
-      ];
-
-      for [a, b, c] in new_triangles {
-        new_vertices.push(a);
-        new_vertices.push(b);
-        new_vertices.push(c);
-      }
+fn tessellate_mesh(mesh: &mut LinkedMesh, target_triangle_area: f32) {
+  loop {
+    let did_split = tessellate_one_iter(mesh, target_triangle_area);
+    if !did_split {
+      break;
     }
   }
+}
 
-  OwnedMesh {
-    vertices: new_vertices,
-    normals: if mesh.normals.is_some() {
-      Some(new_normals)
-    } else {
-      None
-    },
-    transform: mesh.transform,
-  }
+#[test]
+fn tessellate_sanity() {
+  let indices = [0, 1, 2];
+  let vertices = [0., 0., 0., 1., 0., 0., 0., 1., 0.];
+
+  let mut mesh = LinkedMesh::from_raw_indexed(&vertices, &indices, None, None);
+  tessellate_mesh(&mut mesh, 0.1);
+
+  let raw = mesh.to_raw_indexed();
+  dbg!(&raw.vertices);
+  dbg!(&raw.indices);
 }

@@ -1,3 +1,5 @@
+#![feature(iter_array_chunks)]
+
 pub extern crate rand;
 pub extern crate rand_pcg;
 
