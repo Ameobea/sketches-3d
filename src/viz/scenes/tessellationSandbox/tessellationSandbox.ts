@@ -44,13 +44,20 @@ export const processLoadedScene = async (
       mapDisableDistance: null,
       normalScale: 5.2,
     },
-    {},
+    {
+      displacementShader: `
+        float getDisplacement(vec3 pos, vec3 normal, float curTimeSeconds) {
+          return abs(sin(curTimeSeconds)) * 0.1;
+        }
+      `,
+    },
     {
       usePackedDiffuseNormalGBA: true,
       useTriplanarMapping: true,
       randomizeUVOffset: true,
     }
   );
+  viz.registerBeforeRenderCb(curTimeSeconds => pylonMaterial.setCurTimeSeconds(curTimeSeconds));
   const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
 
   const toAdd: THREE.Object3D[] = [];
@@ -62,25 +69,38 @@ export const processLoadedScene = async (
     }
 
     const mesh = obj as THREE.Mesh;
-    const nonIndexedGeometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+    if (mesh.name !== 'Plane') {
+      // return;
+    }
+    if (!mesh.geometry.index) {
+      throw new Error('Expected geometry to have index');
+    }
+    const geom = mesh.geometry;
+    geom.computeVertexNormals();
 
-    nonIndexedGeometry.computeVertexNormals();
-
-    const verts = nonIndexedGeometry.attributes.position.array;
+    const verts = geom.attributes.position.array;
     if (!(verts instanceof Float32Array)) {
       throw new Error('Expected vertices to be Float32Array');
     }
-    const normals = nonIndexedGeometry.attributes.normal.array;
+    const normals = geom.attributes.normal.array;
     if (!(normals instanceof Float32Array)) {
       throw new Error('Expected normals to be Float32Array');
     }
-    console.log(verts.length, normals.length);
-    mesh.updateMatrixWorld();
+    const indices = geom.index!.array;
+    if (!(indices instanceof Uint32Array) && !(indices instanceof Uint16Array)) {
+      throw new Error('Expected indices to be Uint32Array or Uint16Array');
+    }
 
-    const targetTriangleArea = 0.1;
-    const tessCtx = tessellationEngine.tessellate_mesh(verts, normals, targetTriangleArea);
+    const targetTriangleArea = 0.02;
+    const tessCtx = tessellationEngine.tessellate_mesh(
+      verts,
+      normals,
+      new Uint32Array(indices),
+      targetTriangleArea
+    );
     const newVerts = tessellationEngine.tessellate_mesh_ctx_get_vertices(tessCtx);
     const newNormals = tessellationEngine.tessellate_mesh_ctx_get_normals(tessCtx);
+    const newIndices = tessellationEngine.tessellate_mesh_ctx_get_indices(tessCtx);
     tessellationEngine.tessellate_mesh_ctx_free(tessCtx);
 
     console.log(`tessellated from ${verts.length / 3} to ${newVerts.length / 3} verts`);
@@ -88,9 +108,17 @@ export const processLoadedScene = async (
     const newGeometry = new THREE.BufferGeometry();
     newGeometry.setAttribute('position', new THREE.BufferAttribute(newVerts, 3));
     newGeometry.setAttribute('normal', new THREE.BufferAttribute(newNormals, 3));
+    newGeometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
     newGeometry.computeVertexNormals();
 
     const newMesh = new THREE.Mesh(newGeometry, pylonMaterial);
+    // setInterval(() => {
+    //   if (newMesh.material === pylonMaterial) {
+    //     (newMesh as any).material = debugMat;
+    //   } else {
+    //     newMesh.material = pylonMaterial;
+    //   }
+    // }, 5500);
     newMesh.position.copy(mesh.position);
     newMesh.rotation.copy(mesh.rotation);
     newMesh.scale.copy(mesh.scale);

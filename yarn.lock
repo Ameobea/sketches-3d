@@ -1680,6 +1680,11 @@ graphemer@^1.4.0:
   resolved "https://registry.yarnpkg.com/graphemer/-/graphemer-1.4.0.tgz#fb2f1d55e0e3a1849aeffc90c4fa0dd53a0e66c6"
   integrity sha512-EtKwoO6kxCL9WO5xipiHTZlSzBm7WLT627TqC/uVRd0HKmq8NXyebnNYxDoBi7wt8eTWrUrKXCOVaFq9x1kgag==
 
+graphviz-builder@^0.1.1:
+  version "0.1.1"
+  resolved "https://registry.yarnpkg.com/graphviz-builder/-/graphviz-builder-0.1.1.tgz#27aa48e51ef380702ceb197ad644e474d3e9fc43"
+  integrity sha512-4pzfUc6v6DiWk/e7arrzxAn6UTb03XgN30sd1YKiYgUUwR00ZH+fU9ZZy4yh+jkNh9iZjRwlaX/C6/U2wPTEUA==
+
 has-flag@^3.0.0:
   version "3.0.0"
   resolved "https://registry.yarnpkg.com/has-flag/-/has-flag-3.0.0.tgz#b5d454dc2199ae225699f3467e5a07f3b955bafd"

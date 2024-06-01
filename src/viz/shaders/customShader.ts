@@ -143,6 +143,7 @@ interface CustomShaderShaders {
   roughnessShader?: string;
   metalnessShader?: string;
   emissiveShader?: string;
+  displacementShader?: string;
 }
 
 const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
@@ -214,6 +215,7 @@ export const buildCustomShaderArgs = (
     roughnessShader,
     metalnessShader,
     emissiveShader,
+    displacementShader,
   }: CustomShaderShaders = {},
   {
     antialiasColorShader,
@@ -699,6 +701,8 @@ ${customVertexFragment ? noiseShaders : ''}
 
 ${useGeneratedUVs ? GeneratedUVsFragment : ''}
 
+${displacementShader || ''}
+
 uniform float curTimeSeconds;
 varying vec3 pos;
 varying vec3 vNormalAbsolute;
@@ -718,7 +722,14 @@ void main() {
   #include <begin_vertex>
   #include <morphtarget_vertex>
   #include <skinning_vertex>
-  #include <displacementmap_vertex>
+  ${
+    displacementShader
+      ? `
+    float computedDisplacement = getDisplacement(pos, vNormalAbsolute, curTimeSeconds);
+    transformed += normalize( objectNormal ) * computedDisplacement;
+  `
+      : '#include <displacementmap_vertex>'
+  }
   #include <project_vertex>
   #include <logdepthbuf_vertex>
   #include <clipping_planes_vertex>

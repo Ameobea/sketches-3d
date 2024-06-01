@@ -34,6 +34,7 @@
     "@sentry/tracing": "^7.86.0",
     "comlink": "^4.4.1",
     "detect-gpu": "^5.0.37",
+    "graphviz-builder": "^0.1.1",
     "n8ao": "^1.7.0",
     "postprocessing": "^6.33.4",
     "svelte-seo": "1.5.4",

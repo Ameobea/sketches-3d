@@ -1,6 +1,6 @@
 use nalgebra::Vector3;
 
-mod linked_mesh;
+pub mod linked_mesh;
 
 pub use linked_mesh::LinkedMesh;
 

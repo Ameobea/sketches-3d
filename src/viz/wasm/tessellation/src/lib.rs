@@ -1,5 +1,8 @@
 #![feature(iter_array_chunks)]
 
+#[macro_use]
+extern crate log;
+
 use common::mesh::LinkedMesh;
 use float_ord::FloatOrd;
 

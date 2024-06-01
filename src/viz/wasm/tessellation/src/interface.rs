@@ -1,8 +1,40 @@
-use common::mesh::{LinkedMesh, OwnedIndexedMesh};
+use common::mesh::{
+  linked_mesh::{set_debug_print, set_graphviz_print},
+  LinkedMesh, OwnedIndexedMesh,
+};
 use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen(module = "src/viz/scenes/tessellationSandbox/graphvizDebug")]
+extern "C" {
+  fn build_linked_mesh_graphviz(s: &str) -> String;
+}
 
 pub struct TessellateMeshCtx {
   new_mesh: OwnedIndexedMesh,
+}
+
+static mut DID_INIT: bool = false;
+
+fn maybe_init() {
+  unsafe {
+    if DID_INIT {
+      return;
+    }
+    DID_INIT = true;
+  }
+
+  set_graphviz_print(graphviz_print);
+  set_debug_print(debug_print);
+  console_error_panic_hook::set_once();
+  wasm_logger::init(wasm_logger::Config::new(log::Level::Debug));
+}
+
+fn graphviz_print(s: &str) {
+  build_linked_mesh_graphviz(s);
+}
+
+fn debug_print(s: &str) {
+  info!("{s}");
 }
 
 #[wasm_bindgen]
@@ -12,7 +44,7 @@ pub fn tessellate_mesh(
   indices: &[usize],
   target_triangle_area: f32,
 ) -> *mut TessellateMeshCtx {
-  console_error_panic_hook::set_once();
+  maybe_init();
 
   let mut mesh = LinkedMesh::from_raw_indexed(
     vertices,
@@ -24,10 +56,16 @@ pub fn tessellate_mesh(
     },
     None,
   );
+
+  let removed_vert_count = mesh.merge_vertices_by_distance(std::f32::EPSILON);
+  info!("Removed {removed_vert_count} vertices from merge by distance");
   crate::tessellate_mesh(&mut mesh, target_triangle_area);
+  let removed_vert_count = mesh.merge_vertices_by_distance(std::f32::EPSILON);
+  info!("Removed {removed_vert_count} vertices from merge by distance AFTER tess");
   let ctx = Box::new(TessellateMeshCtx {
     new_mesh: mesh.to_raw_indexed(),
   });
+
   Box::into_raw(ctx)
 }
 
@@ -39,13 +77,7 @@ pub fn tessellate_mesh_ctx_free(ctx: *mut TessellateMeshCtx) {
 #[wasm_bindgen]
 pub fn tessellate_mesh_ctx_get_vertices(ctx: *const TessellateMeshCtx) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  let vertices = unsafe {
-    std::slice::from_raw_parts(
-      ctx.new_mesh.vertices.as_ptr() as *const f32,
-      ctx.new_mesh.vertices.len() * 3,
-    )
-  };
-  vertices.to_owned()
+  ctx.new_mesh.vertices.clone()
 }
 
 #[wasm_bindgen]
@@ -58,10 +90,14 @@ pub fn tessellate_mesh_ctx_get_normals(ctx: *const TessellateMeshCtx) -> Vec<f32
   let ctx = unsafe { &*ctx };
   let normals = ctx.new_mesh.normals.as_ref();
   if let Some(normals) = normals {
-    let normals =
-      unsafe { std::slice::from_raw_parts(normals.as_ptr() as *const f32, normals.len() * 3) };
-    normals.to_owned()
+    normals.clone()
   } else {
     Vec::new()
   }
+}
+
+#[wasm_bindgen]
+pub fn tessellate_mesh_ctx_get_indices(ctx: *const TessellateMeshCtx) -> Vec<usize> {
+  let ctx = unsafe { &*ctx };
+  ctx.new_mesh.indices.clone()
 }
