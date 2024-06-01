@@ -725,7 +725,7 @@ void main() {
   ${
     displacementShader
       ? `
-    float computedDisplacement = getDisplacement(pos, vNormalAbsolute, curTimeSeconds);
+    float computedDisplacement = getDisplacement(position, objectNormal, curTimeSeconds);
     transformed += normalize( objectNormal ) * computedDisplacement;
   `
       : '#include <displacementmap_vertex>'

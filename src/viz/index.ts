@@ -743,16 +743,30 @@ export const initViz = (
       initPlayerKinematicsDebugger(viz, container, vOffset);
     }
 
+    const traverseCollidable = function (obj: THREE.Object3D, cb: (obj: THREE.Object3D) => void) {
+      if (obj.name.includes('nocollide') || obj.name.endsWith('far') || obj.userData.nocollide) {
+        return;
+      }
+
+      cb(obj);
+
+      const children = obj.children;
+
+      for (let i = 0, l = children.length; i < l; i++) {
+        traverseCollidable(children[i], cb);
+      }
+    };
+
     if (fpCtx) {
       const traverseCb = (obj: THREE.Object3D) => {
         const children = obj.children;
         obj.children = [];
-        if (obj instanceof THREE.Mesh && !obj.name.includes('nocollide') && !obj.name.endsWith('far')) {
+        if (obj instanceof THREE.Mesh) {
           fpCtx!.addTriMesh(obj);
         }
         obj.children = children;
       };
-      scene.traverse(traverseCb);
+      traverseCollidable(scene, traverseCb);
 
       for (const cb of viz.collisionWorldLoadedCbs) {
         cb(fpCtx);

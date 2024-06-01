@@ -60,8 +60,7 @@ pub fn tessellate_mesh(
   let removed_vert_count = mesh.merge_vertices_by_distance(std::f32::EPSILON);
   info!("Removed {removed_vert_count} vertices from merge by distance");
   crate::tessellate_mesh(&mut mesh, target_triangle_area);
-  let removed_vert_count = mesh.merge_vertices_by_distance(std::f32::EPSILON);
-  info!("Removed {removed_vert_count} vertices from merge by distance AFTER tess");
+  mesh.compute_vertex_normals(0.8);
   let ctx = Box::new(TessellateMeshCtx {
     new_mesh: mesh.to_raw_indexed(),
   });

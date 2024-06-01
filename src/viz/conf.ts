@@ -1,4 +1,4 @@
-import { getGPUTier, type TierResult } from 'detect-gpu';
+import * as DetectGPU from 'detect-gpu';
 
 import { mergeDeep } from './util';
 
@@ -48,7 +48,7 @@ export interface VizConfig {
   gameplay: GameplaySettings;
 }
 
-const getGraphicsQuality = async (tierRes: TierResult) => {
+const getGraphicsQuality = async (tierRes: DetectGPU.TierResult) => {
   try {
     if (tierRes.tier === 0) {
       console.warn('Potentially unsupported GPU detected');
@@ -77,7 +77,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
     return gpuInfo;
   }
 
-  const tierRes = await getGPUTier();
+  const tierRes = await DetectGPU.getGPUTier();
   const graphicsQuality = await getGraphicsQuality(tierRes);
   const gpuName = tierRes.gpu ?? 'unknown';
 

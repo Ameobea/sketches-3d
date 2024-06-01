@@ -423,6 +423,62 @@ impl LinkedMesh {
     Self::from_triangles(vertices, indices, normals, transform)
   }
 
+  /// Computes vertex normals by averaging the normals of all faces that share
+  /// the vertex.  However, if the angle between two face normals is greater
+  /// than `sharp_edge_threshold_rads`, the edge will be considered sharp.
+  /// Normals of vertices on that edge will be set to point out of that edge.
+  pub fn compute_vertex_normals(&mut self, sharp_edge_threshold_rads: f32) {
+    let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
+    for vert_key in all_vtx_keys {
+      let vert = &self.vertices[vert_key];
+      let sharp_edges_normal = vert
+        .edges
+        .iter()
+        .filter_map(|&edge_key| {
+          let edge = &self.edges[edge_key];
+          if edge.faces.len() != 2 {
+            return None;
+          }
+
+          let [edge0, edge1] = [edge.faces[0], edge.faces[1]];
+          let [normal0, normal1] = [
+            self.faces[edge0].normal(&self.vertices),
+            self.faces[edge1].normal(&self.vertices),
+          ];
+          let angle = normal0.angle(&normal1);
+          if angle > sharp_edge_threshold_rads {
+            let edge_normal = (normal0 + normal1).normalize();
+            Some(edge_normal)
+          } else {
+            None
+          }
+        })
+        .sum::<Vec3>();
+
+      if sharp_edges_normal.magnitude() > 0. {
+        let vert = &mut self.vertices[vert_key];
+        vert.normal = Some(sharp_edges_normal.normalize());
+        continue;
+      }
+
+      // Average face normals like usual
+      let mut normal = Vec3::zeros();
+      for &edge_key in &vert.edges {
+        let edge = &self.edges[edge_key];
+        let face_normals = edge
+          .faces
+          .iter()
+          .map(|&face_key| self.faces[face_key].normal(&self.vertices))
+          .collect::<Vec<_>>();
+        let edge_normal = face_normals.iter().fold(Vec3::zeros(), |acc, n| acc + n);
+        normal += edge_normal;
+      }
+
+      let vert = &mut self.vertices[vert_key];
+      vert.normal = Some(normal.normalize());
+    }
+  }
+
   pub fn to_raw_indexed(&self) -> OwnedIndexedMesh {
     let mut vertices = Vec::with_capacity(self.vertices.len() * 3);
     let mut normals = None;
@@ -545,6 +601,23 @@ impl LinkedMesh {
   }
 
   fn add_face(&mut self, vertices: [VertexKey; 3]) -> FaceKey {
+    let area = {
+      let [a, b, c] = [
+        self.vertices[vertices[0]].position,
+        self.vertices[vertices[1]].position,
+        self.vertices[vertices[2]].position,
+      ];
+      0.5 * (b - a).cross(&(c - a)).magnitude()
+    };
+    if area < 1e-6 {
+      panic!(
+        "Tried to add face with zero area; vertices={:?}",
+        vertices
+          .iter()
+          .map(|&v| self.vertices[v].position)
+          .collect::<Vec<_>>()
+      );
+    }
     let edges = [
       sort_edge(vertices[0], vertices[1]),
       sort_edge(vertices[1], vertices[2]),
