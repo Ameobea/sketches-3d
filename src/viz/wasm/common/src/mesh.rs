@@ -76,7 +76,8 @@ pub struct OwnedMesh {
 
 pub struct OwnedIndexedMesh {
   pub vertices: Vec<f32>,
-  pub normals: Option<Vec<f32>>,
+  pub shading_normals: Option<Vec<f32>>,
+  pub displacement_normals: Option<Vec<f32>>,
   pub indices: Vec<usize>,
   pub transform: Option<nalgebra::Matrix4<f32>>,
 }

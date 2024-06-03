@@ -43,6 +43,7 @@ pub fn tessellate_mesh(
   vertex_normals: &[f32],
   indices: &[usize],
   target_triangle_area: f32,
+  sharp_edge_threshold_rads: f32,
 ) -> *mut TessellateMeshCtx {
   maybe_init();
 
@@ -57,10 +58,12 @@ pub fn tessellate_mesh(
     None,
   );
 
-  let removed_vert_count = mesh.merge_vertices_by_distance(std::f32::EPSILON);
+  let removed_vert_count = mesh.merge_vertices_by_distance(0.0001);
   info!("Removed {removed_vert_count} vertices from merge by distance");
   crate::tessellate_mesh(&mut mesh, target_triangle_area);
-  mesh.compute_vertex_normals(0.8);
+  mesh.compute_vertex_normals(sharp_edge_threshold_rads, true, false);
+  mesh.make_edges_smooth(sharp_edge_threshold_rads);
+  mesh.compute_vertex_normals(sharp_edge_threshold_rads, false, true);
   let ctx = Box::new(TessellateMeshCtx {
     new_mesh: mesh.to_raw_indexed(),
   });
@@ -80,14 +83,30 @@ pub fn tessellate_mesh_ctx_get_vertices(ctx: *const TessellateMeshCtx) -> Vec<f3
 }
 
 #[wasm_bindgen]
-pub fn tessellate_mesh_ctx_has_normals(ctx: *const TessellateMeshCtx) -> bool {
-  unsafe { (*ctx).new_mesh.normals.is_some() }
+pub fn tessellate_mesh_ctx_has_shading_normals(ctx: *const TessellateMeshCtx) -> bool {
+  unsafe { (*ctx).new_mesh.shading_normals.is_some() }
 }
 
 #[wasm_bindgen]
-pub fn tessellate_mesh_ctx_get_normals(ctx: *const TessellateMeshCtx) -> Vec<f32> {
+pub fn tessellate_mesh_ctx_has_displacement_normals(ctx: *const TessellateMeshCtx) -> bool {
+  unsafe { (*ctx).new_mesh.displacement_normals.is_some() }
+}
+
+#[wasm_bindgen]
+pub fn tessellate_mesh_ctx_get_shading_normals(ctx: *const TessellateMeshCtx) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  let normals = ctx.new_mesh.normals.as_ref();
+  let normals = ctx.new_mesh.shading_normals.as_ref();
+  if let Some(normals) = normals {
+    normals.clone()
+  } else {
+    Vec::new()
+  }
+}
+
+#[wasm_bindgen]
+pub fn tessellate_mesh_ctx_get_displacement_normals(ctx: *const TessellateMeshCtx) -> Vec<f32> {
+  let ctx = unsafe { &*ctx };
+  let normals = ctx.new_mesh.displacement_normals.as_ref();
   if let Some(normals) = normals {
     normals.clone()
   } else {

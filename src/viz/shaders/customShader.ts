@@ -101,6 +101,15 @@ interface CustomShaderProps {
   normalMap?: THREE.Texture;
   roughnessMap?: THREE.Texture;
   normalMapType?: THREE.NormalMapTypes;
+  /**
+   * If set to `true`, an attribute called `displacementNormal` is expected to be set on the geometry.
+   *
+   * These normals will be used instead of the object normals for displacement mapping.  This is useful
+   * if you want to do flat/partially flat shading but still want to use displacement mapping.  If flat
+   * shading is used and the object normals are used for displacement mapping, faces tend to fly apart
+   * from each other.
+   */
+  useDisplacementNormals?: boolean;
   uvTransform?: THREE.Matrix3;
   emissiveIntensity?: number;
   lightMap?: THREE.Texture;
@@ -198,6 +207,7 @@ export const buildCustomShaderArgs = (
     uvTransform,
     normalMap,
     normalMapType,
+    useDisplacementNormals,
     roughnessMap,
     emissiveIntensity,
     lightMapIntensity,
@@ -703,6 +713,8 @@ ${useGeneratedUVs ? GeneratedUVsFragment : ''}
 
 ${displacementShader || ''}
 
+${useDisplacementNormals ? 'attribute vec3 displacementNormal;' : ''}
+
 uniform float curTimeSeconds;
 varying vec3 pos;
 varying vec3 vNormalAbsolute;
@@ -722,14 +734,19 @@ void main() {
   #include <begin_vertex>
   #include <morphtarget_vertex>
   #include <skinning_vertex>
-  ${
-    displacementShader
+  ${(() => {
+    const normalAttribute = useDisplacementNormals ? 'displacementNormal' : 'objectNormal';
+    return displacementShader
       ? `
-    float computedDisplacement = getDisplacement(position, objectNormal, curTimeSeconds);
-    transformed += normalize( objectNormal ) * computedDisplacement;
+    float computedDisplacement = getDisplacement(position, ${normalAttribute}, curTimeSeconds);
+    transformed += normalize( ${normalAttribute} ) * computedDisplacement;
   `
-      : '#include <displacementmap_vertex>'
-  }
+      : `
+#ifdef USE_DISPLACEMENTMAP
+	transformed += normalize( ${normalAttribute} ) * ( texture2D( displacementMap, vDisplacementMapUv ).x * displacementScale + displacementBias );
+#endif
+`;
+  })()}
   #include <project_vertex>
   #include <logdepthbuf_vertex>
   #include <clipping_planes_vertex>

@@ -17,7 +17,7 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   _vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 5.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
   const loader = new THREE.ImageBitmapLoader();
@@ -40,18 +40,19 @@ export const processLoadedScene = async (
       metalness: 0.18,
       roughness: 0.82,
       map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.08, 0.08),
+      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
       mapDisableDistance: null,
       normalScale: 5.2,
+      useDisplacementNormals: true,
     },
     {
       displacementShader: `
         float getDisplacement(vec3 pos, vec3 normal, float curTimeSeconds) {
-          // return 0.8;
-          float displacement = abs(sin(curTimeSeconds)) * 2.4;
+          // return 0.;
+          float displacement = sin(curTimeSeconds) * 0.4;
           // return displacement;
           displacement = 0.0;
-          return displacement + sin(pos.x * 5.5) * abs(sin(pos.z * 5.5)) * 0.5;
+          return displacement + sin(curTimeSeconds*2. + pos.x * 2.5) * sin((curTimeSeconds+1.)*2. + pos.y * 2.5) * sin((curTimeSeconds+5.)*2. + pos.z * 2.5) * 0.2;
         }
       `,
     },
@@ -74,7 +75,7 @@ export const processLoadedScene = async (
     }
 
     const mesh = obj as THREE.Mesh;
-    if (mesh.name !== 'Plane') {
+    if (mesh.name !== 'test') {
       // return;
     }
     if (!mesh.geometry.index) {
@@ -95,15 +96,17 @@ export const processLoadedScene = async (
       throw new Error('Expected indices to be Uint32Array or Uint16Array');
     }
 
-    const targetTriangleArea = 0.005;
+    const targetTriangleArea = 2.5;
     const tessCtx = tessellationEngine.tessellate_mesh(
       verts,
       normals ?? new Float32Array(0),
       new Uint32Array(indices),
-      targetTriangleArea
+      targetTriangleArea,
+      0.8
     );
     const newVerts = tessellationEngine.tessellate_mesh_ctx_get_vertices(tessCtx);
-    const newNormals = tessellationEngine.tessellate_mesh_ctx_get_normals(tessCtx);
+    const newDisplacementNormals = tessellationEngine.tessellate_mesh_ctx_get_displacement_normals(tessCtx);
+    const newShadingNormals = tessellationEngine.tessellate_mesh_ctx_get_shading_normals(tessCtx);
     const newIndices = tessellationEngine.tessellate_mesh_ctx_get_indices(tessCtx);
     tessellationEngine.tessellate_mesh_ctx_free(tessCtx);
 
@@ -111,34 +114,35 @@ export const processLoadedScene = async (
 
     const newGeometry = new THREE.BufferGeometry();
     newGeometry.setAttribute('position', new THREE.BufferAttribute(newVerts, 3));
-    newGeometry.setAttribute('normal', new THREE.BufferAttribute(newNormals, 3));
+    newGeometry.setAttribute('normal', new THREE.BufferAttribute(newShadingNormals, 3));
+    newGeometry.setAttribute('displacementNormal', new THREE.BufferAttribute(newDisplacementNormals, 3));
     newGeometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
 
-    // if (mesh.name === 'Plane') {
-    //   for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
-    //     const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
-    //     const normal = new THREE.Vector3(
-    //       newNormals[vtxIx * 3],
-    //       newNormals[vtxIx * 3 + 1],
-    //       newNormals[vtxIx * 3 + 2]
-    //     );
-    //     const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
-    //     arrow.userData.nocollide = true;
-    //     loadedWorld.add(arrow);
-    //   }
-    // }
+    if (mesh.name === 'test') {
+      for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
+        const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
+        const normal = new THREE.Vector3(
+          newShadingNormals[vtxIx * 3],
+          newShadingNormals[vtxIx * 3 + 1],
+          newShadingNormals[vtxIx * 3 + 2]
+        );
+        const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
+        arrow.userData.nocollide = true;
+        loadedWorld.add(arrow);
+      }
+    }
 
-    const newMesh = new THREE.Mesh(newGeometry, pylonMaterial);
+    const newMesh = new THREE.Mesh(newGeometry, normalMat);
     newMesh.userData.nocollide = true;
     // add the lower-poly mesh to the collision world
     viz.collisionWorldLoadedCbs.push(fpCtx => void fpCtx.addTriMesh(mesh));
-    setInterval(() => {
-      if (newMesh.material === pylonMaterial) {
-        (newMesh as any).material = debugMat;
-      } else {
-        newMesh.material = pylonMaterial;
-      }
-    }, 5500);
+    // setInterval(() => {
+    //   if (newMesh.material === pylonMaterial) {
+    //     (newMesh as any).material = debugMat;
+    //   } else {
+    //     newMesh.material = pylonMaterial;
+    //   }
+    // }, 5500);
     newMesh.position.copy(mesh.position);
     newMesh.rotation.copy(mesh.rotation);
     newMesh.scale.copy(mesh.scale);
@@ -155,8 +159,8 @@ export const processLoadedScene = async (
     loadedWorld.add(obj);
   }
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-  dirLight.position.set(0, 1, 0);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 3.5);
+  dirLight.position.set(22, 10, 0);
 
   viz.scene.add(dirLight);
 

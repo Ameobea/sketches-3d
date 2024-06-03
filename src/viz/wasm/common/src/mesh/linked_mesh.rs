@@ -1,7 +1,7 @@
 use fxhash::{FxHashMap, FxHashSet};
 use nalgebra::{Matrix4, Vector3};
 use slotmap::{new_key_type, Key, SlotMap};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use super::OwnedIndexedMesh;
 
@@ -17,7 +17,10 @@ new_key_type! {
 #[derive(Debug)]
 pub struct Vertex {
   pub position: Vec3,
-  pub normal: Option<Vec3>,
+  /// Normal of the vertex used for shading/lighting.
+  pub shading_normal: Option<Vec3>,
+  /// Normal of the vertex used for displacement mapping.
+  pub displacement_normal: Option<Vec3>,
   edges: SmallVec<[EdgeKey; 2]>,
 }
 
@@ -163,7 +166,8 @@ impl LinkedMesh {
       .map(|(i, &position)| {
         mesh.vertices.insert(Vertex {
           position,
-          normal: normals.map(|normals| normals[i]),
+          shading_normal: normals.map(|normals| normals[i]),
+          displacement_normal: None,
           edges: SmallVec::new(),
         })
       })
@@ -423,15 +427,55 @@ impl LinkedMesh {
     Self::from_triangles(vertices, indices, normals, transform)
   }
 
+  fn compute_shading_normal(&self, vert_key: VertexKey) -> Vec3 {
+    let vert = &self.vertices[vert_key];
+
+    let mut face_keys = SmallVec::<[_; 32]>::new();
+    for &edge_key in &vert.edges {
+      let edge = &self.edges[edge_key];
+      for &face_key in &edge.faces {
+        if !face_keys.contains(&face_key) {
+          face_keys.push(face_key);
+        }
+      }
+    }
+
+    let mut shading_normal = Vec3::zeros();
+    for &face_key in &face_keys {
+      let face = &self.faces[face_key];
+      shading_normal += face.normal(&self.vertices);
+    }
+
+    return shading_normal.normalize();
+  }
+
   /// Computes vertex normals by averaging the normals of all faces that share
   /// the vertex.  However, if the angle between two face normals is greater
   /// than `sharp_edge_threshold_rads`, the edge will be considered sharp.
   /// Normals of vertices on that edge will be set to point out of that edge.
-  pub fn compute_vertex_normals(&mut self, sharp_edge_threshold_rads: f32) {
+  pub fn compute_vertex_normals(
+    &mut self,
+    sharp_edge_threshold_rads: f32,
+    compute_displacement_normals: bool,
+    compute_shading_normals: bool,
+  ) {
+    if !compute_displacement_normals && !compute_shading_normals {
+      return;
+    }
+
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     for vert_key in all_vtx_keys {
-      let vert = &self.vertices[vert_key];
-      let sharp_edges_normal = vert
+      if compute_shading_normals {
+        let shading_normal = self.compute_shading_normal(vert_key);
+        let vert = &mut self.vertices[vert_key];
+        vert.shading_normal = Some(shading_normal);
+      }
+
+      if !compute_displacement_normals {
+        continue;
+      }
+
+      let sharp_edges_normal = self.vertices[vert_key]
         .edges
         .iter()
         .filter_map(|&edge_key| {
@@ -457,31 +501,185 @@ impl LinkedMesh {
 
       if sharp_edges_normal.magnitude() > 0. {
         let vert = &mut self.vertices[vert_key];
-        vert.normal = Some(sharp_edges_normal.normalize());
+        vert.displacement_normal = Some(sharp_edges_normal.normalize());
         continue;
+      } else {
+        // Average face normals like usual
+        let normal = if compute_shading_normals {
+          self.vertices[vert_key].shading_normal
+        } else {
+          Some(self.compute_shading_normal(vert_key))
+        };
+        self.vertices[vert_key].displacement_normal = normal;
+      }
+    }
+  }
+
+  fn make_edge_smooth(
+    &mut self,
+    deleted_edge_keys: &mut FxHashSet<EdgeKey>,
+    added_edge_keys: &mut Vec<EdgeKey>,
+    sharp_edge_threshold_rads: f32,
+    edge_key: EdgeKey,
+  ) {
+    let ([v0_key, v1_key], face_1_key) = {
+      let edge = &self.edges[edge_key];
+
+      // In addition to the case where this edge itself is sharp, we also need to
+      // check if any of the faces which include other edges with either of this
+      // edge's vertices that are sharp wrt. this edge as well.
+      let mut all_vertex_faces = SmallVec::<[_; 32]>::new();
+      for vtx_key in edge.vertices {
+        let vtx = &self.vertices[vtx_key];
+        for &edge_key in &vtx.edges {
+          let edge = &self.edges[edge_key];
+          for &face_key in &edge.faces {
+            if !all_vertex_faces.contains(&face_key) {
+              all_vertex_faces.push(face_key);
+            }
+          }
+        }
       }
 
-      // Average face normals like usual
-      let mut normal = Vec3::zeros();
-      for &edge_key in &vert.edges {
-        let edge = &self.edges[edge_key];
-        let face_normals = edge
-          .faces
-          .iter()
-          .map(|&face_key| self.faces[face_key].normal(&self.vertices))
-          .collect::<Vec<_>>();
-        let edge_normal = face_normals.iter().fold(Vec3::zeros(), |acc, n| acc + n);
-        normal += edge_normal;
+      let mut face_needing_separation = None;
+      for i in 0..all_vertex_faces.len() {
+        let face_0_key = all_vertex_faces[i];
+        let face_0 = &self.faces[face_0_key];
+        let face_0_contains_edge = face_0.edges.contains(&edge_key);
+        let face_0_normal = face_0.normal(&self.vertices);
+        for j in (i + 1)..all_vertex_faces.len() {
+          let face_1_key = all_vertex_faces[j];
+          let face_1 = &self.faces[face_1_key];
+          let face_1_contains_edge = face_1.edges.contains(&edge_key);
+
+          if !face_0_contains_edge && !face_1_contains_edge {
+            continue;
+          }
+
+          let face_1_normal = face_1.normal(&self.vertices);
+          let angle = face_0_normal.angle(&face_1_normal);
+          if angle > sharp_edge_threshold_rads {
+            let face_key_needing_separation = if face_0_contains_edge {
+              face_0_key
+            } else {
+              face_1_key
+            };
+            face_needing_separation = Some(face_key_needing_separation);
+            break;
+          }
+        }
       }
 
-      let vert = &mut self.vertices[vert_key];
-      vert.normal = Some(normal.normalize());
+      let Some(face_needing_separation) = face_needing_separation else {
+        return;
+      };
+
+      (edge.vertices, face_needing_separation)
+    };
+
+    let new_v0_key = self.vertices.insert(Vertex {
+      position: self.vertices[v0_key].position,
+      displacement_normal: self.vertices[v0_key].displacement_normal,
+      shading_normal: None,
+      edges: SmallVec::new(),
+    });
+    let new_v1_key = self.vertices.insert(Vertex {
+      position: self.vertices[v1_key].position,
+      displacement_normal: self.vertices[v1_key].displacement_normal,
+      shading_normal: None,
+      edges: SmallVec::new(),
+    });
+    let new_edge_key = self.add_edge([new_v0_key, new_v1_key], smallvec![face_1_key]);
+    added_edge_keys.push(new_edge_key);
+
+    // Remove the old edge from the second face and replace it with the new one
+    let face1 = &mut self.faces[face_1_key];
+    let edge_key_ix_to_alter = face1.edges.iter().position(|e| *e == edge_key).unwrap();
+    face1.edges[edge_key_ix_to_alter] = new_edge_key;
+    self.edges[edge_key].faces.retain(|&mut f| f != face_1_key);
+
+    for vtx_key in &mut face1.vertices {
+      if *vtx_key == v0_key {
+        *vtx_key = new_v0_key;
+      } else if *vtx_key == v1_key {
+        *vtx_key = new_v1_key;
+      }
+    }
+
+    // We've replaced that edge with a new one, but the other two edges of the face
+    // still reference the old vertices.  We have to update those edges as well.
+    let other_edge_key_indices_to_alter = match edge_key_ix_to_alter {
+      0 => [1, 2],
+      1 => [0, 2],
+      2 => [0, 1],
+      _ => unreachable!(),
+    };
+    for other_edge_key_ix_to_alter in other_edge_key_indices_to_alter {
+      let face1 = &self.faces[face_1_key];
+      let old_edge_key = face1.edges[other_edge_key_ix_to_alter];
+
+      let [new_edge_v0, new_edge_v1] = match other_edge_key_ix_to_alter {
+        0 => [face1.vertices[0], face1.vertices[1]],
+        1 => [face1.vertices[1], face1.vertices[2]],
+        2 => [face1.vertices[2], face1.vertices[0]],
+        _ => unreachable!(),
+      };
+      let new_edge_key = self.add_edge([new_edge_v0, new_edge_v1], smallvec![face_1_key]);
+      added_edge_keys.push(new_edge_key);
+      let face1 = &mut self.faces[face_1_key];
+      face1.edges[other_edge_key_ix_to_alter] = new_edge_key;
+
+      let old_edge = &mut self.edges[old_edge_key];
+      old_edge.faces.retain(|&mut f| f != face_1_key);
+      if old_edge.faces.is_empty() {
+        for vtx_key in old_edge.vertices {
+          let vtx = &mut self.vertices[vtx_key];
+          vtx.edges.retain(|&mut e| e != old_edge_key);
+        }
+        self.edges.remove(old_edge_key);
+        deleted_edge_keys.insert(old_edge_key);
+      }
+    }
+  }
+
+  /// Creates new edges and vertices as needed to ensure that all remaining in
+  /// the edges in the mesh are less sharp than the provided threshold.
+  ///
+  /// This has the effect of creating duplicate vertices at identical positions,
+  /// but this is required for flat/partially flat shading.
+  pub fn make_edges_smooth(&mut self, sharp_edge_threshold_rads: f32) {
+    let mut deleted_edge_keys = FxHashSet::default();
+    let mut added_edge_keys = Vec::new();
+    let mut all_edge_keys = self.edges.keys().collect::<Vec<_>>();
+
+    loop {
+      for &edge_key in &all_edge_keys {
+        if deleted_edge_keys.contains(&edge_key) {
+          continue;
+        }
+
+        self.make_edge_smooth(
+          &mut deleted_edge_keys,
+          &mut added_edge_keys,
+          sharp_edge_threshold_rads,
+          edge_key,
+        );
+      }
+
+      if added_edge_keys.is_empty() {
+        break;
+      }
+      all_edge_keys = self.edges.keys().collect::<Vec<_>>();
+
+      added_edge_keys.clear();
+      deleted_edge_keys.clear();
     }
   }
 
   pub fn to_raw_indexed(&self) -> OwnedIndexedMesh {
     let mut vertices = Vec::with_capacity(self.vertices.len() * 3);
-    let mut normals = None;
+    let mut shading_normals = None;
+    let mut displacement_normals = None;
     let mut indices = Vec::with_capacity(self.faces.len() * 3);
 
     let mut cur_vert_ix = 0;
@@ -494,10 +692,15 @@ impl LinkedMesh {
         let vert_ix = *seen_vertex_keys.entry(vert_key).or_insert_with(|| {
           let ix = cur_vert_ix;
           vertices.extend(vert.position.iter());
-          if let Some(normal) = vert.normal {
-            let normals =
-              normals.get_or_insert_with(|| Vec::with_capacity(self.vertices.len() * 3));
-            normals.extend(normal.iter());
+          if let Some(shading_normal) = vert.shading_normal {
+            let shading_normals =
+              shading_normals.get_or_insert_with(|| Vec::with_capacity(self.vertices.len() * 3));
+            shading_normals.extend(shading_normal.iter());
+          }
+          if let Some(displacement_normal) = vert.displacement_normal {
+            let displacement_normals = displacement_normals
+              .get_or_insert_with(|| Vec::with_capacity(self.vertices.len() * 3));
+            displacement_normals.extend(displacement_normal.iter());
           }
           cur_vert_ix += 1;
           ix
@@ -508,7 +711,8 @@ impl LinkedMesh {
 
     OwnedIndexedMesh {
       vertices,
-      normals,
+      shading_normals,
+      displacement_normals,
       indices,
       transform: self.transform.clone(),
     }
@@ -518,7 +722,7 @@ impl LinkedMesh {
   /// that include this edge are split into two faces with new edges being
   /// created for each.
   pub fn split_edge(&mut self, edge_key_to_split: EdgeKey) {
-    let (edge_id_to_split, vm_position, vm_normal, faces_to_split) = {
+    let (edge_id_to_split, vm_position, faces_to_split) = {
       let edge = self.edges.get(edge_key_to_split).unwrap_or_else(|| {
         panic!("Tried to split edge that doesn't exist; key={edge_key_to_split:?}")
       });
@@ -526,26 +730,22 @@ impl LinkedMesh {
       let [v0_key, v1_key] = edge_id_to_split;
       let [v0, v1] = [&self.vertices[v0_key], &self.vertices[v1_key]];
 
-      // Create new vertex at midpoint
       let vm_position = (v0.position + v1.position) * 0.5;
-      let vm_normal = match (v0.normal, v1.normal) {
-        (Some(n0), Some(n1)) => Some((n0 + n1).normalize()),
-        _ => None,
-      };
 
       let faces_to_split = edge.faces.clone();
 
-      (edge_id_to_split, vm_position, vm_normal, faces_to_split)
+      (edge_id_to_split, vm_position, faces_to_split)
     };
 
     let vm_key = self.vertices.insert(Vertex {
       position: vm_position,
-      normal: vm_normal,
+      displacement_normal: None,
+      shading_normal: None,
       edges: SmallVec::new(),
     });
 
     // Split each adjacent face
-    let mut new_faces = SmallVec::<[_; 8]>::new();
+    let mut new_faces = SmallVec::<[_; 32]>::new();
     for face_key in faces_to_split {
       let old_face = &self.faces[face_key];
       let [v0_ix, v1_ix, v2_ix] = old_face.vertices;
@@ -600,24 +800,7 @@ impl LinkedMesh {
     }
   }
 
-  fn add_face(&mut self, vertices: [VertexKey; 3]) -> FaceKey {
-    let area = {
-      let [a, b, c] = [
-        self.vertices[vertices[0]].position,
-        self.vertices[vertices[1]].position,
-        self.vertices[vertices[2]].position,
-      ];
-      0.5 * (b - a).cross(&(c - a)).magnitude()
-    };
-    if area < 1e-6 {
-      panic!(
-        "Tried to add face with zero area; vertices={:?}",
-        vertices
-          .iter()
-          .map(|&v| self.vertices[v].position)
-          .collect::<Vec<_>>()
-      );
-    }
+  fn add_face(&mut self, vertices: [VertexKey; 3]) -> Option<FaceKey> {
     let edges = [
       sort_edge(vertices[0], vertices[1]),
       sort_edge(vertices[1], vertices[2]),
@@ -646,7 +829,7 @@ impl LinkedMesh {
       }
     }
 
-    face_key
+    Some(face_key)
   }
 
   fn remove_face(&mut self, face_key: FaceKey, preserve_verts: bool) {

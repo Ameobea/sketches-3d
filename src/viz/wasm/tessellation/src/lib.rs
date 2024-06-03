@@ -64,6 +64,21 @@ fn tessellate_one_iter(mesh: &mut LinkedMesh, target_triangle_area: f32) -> bool
     mesh.split_edge(edge_key);
   }
 
+  // TODO DEBUG REMOVE
+  for edge_key in mesh.edges.keys() {
+    let edge = &mesh.edges[edge_key];
+    for &face_key in &edge.faces {
+      let face = &mesh.faces[face_key];
+      for vtx_key in edge.vertices {
+        if !face.vertices.contains(&vtx_key) {
+          panic!(
+          "Edge doesn't contain vertex in face; edge={edge:?}; face={face:?}; vtx_key={vtx_key:?}",
+        );
+        }
+      }
+    }
+  }
+
   true
 }
 
