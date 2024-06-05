@@ -640,7 +640,6 @@ impl LinkedMesh {
       let cur_edge_ix = vtx.edges.iter().position(|&e| e == *cur_edge_key).unwrap();
       visited_edges.set(cur_edge_ix, true);
 
-      dbg!(*cur_edge_key, *cur_face_key, &visited_faces);
       // Try to walk to the next face in the smooth fan that shares the current edge
       let next_edge_key = self.faces[*cur_face_key]
         .edges
@@ -685,13 +684,6 @@ impl LinkedMesh {
     };
 
     let start_edge_key = vtx.edges[start_edge_ix];
-    debug_print(&format!(
-      "Starting walk {start_edge_key:?} {:?} -> {:?}; visited_edges={:?}; visited_faces={:?}",
-      self.vertices[self.edges[start_edge_key].vertices[0]].position,
-      self.vertices[self.edges[start_edge_key].vertices[1]].position,
-      visited_edges,
-      visited_faces
-    ));
     let start_face_key = self.edges[start_edge_key]
       .faces
       .iter()
@@ -733,7 +725,6 @@ impl LinkedMesh {
     let mut cur_edge_key = start_edge_key;
     let mut cur_face_key = start_face_key;
 
-    debug_print("walking");
     walk(
       visited_edges,
       visited_faces,
@@ -758,7 +749,6 @@ impl LinkedMesh {
     smooth_fan_faces.push(cur_face_key);
     cur_edge_key = start_edge_key;
 
-    debug_print("walking backwards");
     walk(
       visited_edges,
       visited_faces,
@@ -800,11 +790,8 @@ impl LinkedMesh {
         break;
       }
 
-      debug_print(&format!(
-        "Found smooth fan with {} faces",
-        smooth_fan_faces.len()
-      ));
       // TODO: split vertices
+
       smooth_fan_faces.clear();
     }
   }
@@ -1034,6 +1021,14 @@ impl LinkedMesh {
 mod tests {
   use super::*;
 
+  fn vkey(ix: u32, version: u32) -> VertexKey {
+    unsafe { std::mem::transmute((version, ix)) }
+  }
+
+  fn fkey(ix: u32, version: u32) -> FaceKey {
+    unsafe { std::mem::transmute((version, ix)) }
+  }
+
   #[test]
   fn basic_edge_split() {
     let verts = [
@@ -1137,9 +1132,9 @@ mod tests {
     let indices = [0, 2, 1, 0, 3, 2];
 
     let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
-    let vtx_key: VertexKey = unsafe { std::mem::transmute((1u32, 1u32)) };
+    let vtx_key = vkey(1, 1);
     let mut visited_edges = bitarr![0; 1024];
-    let visited_edges = &mut visited_edges[..3];
+    let visited_edges = &mut visited_edges[..mesh.vertices[vtx_key].edges.len()];
     assert_eq!(visited_edges.len(), 3);
     let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
     let mut visited_faces = SmallVec::<[_; 16]>::new();
@@ -1156,6 +1151,37 @@ mod tests {
     assert_eq!(smooth_fan_faces.len(), 2);
   }
 
+  fn test_walk_smooth_fan(
+    mesh: &mut LinkedMesh,
+    center_vtx_key: VertexKey,
+  ) -> Vec<FxHashSet<FaceKey>> {
+    let center_vtx_edge_count = mesh.vertices[center_vtx_key].edges.len();
+    let mut visited_edges = bitarr![0; 1024];
+    let visited_edges = &mut visited_edges[..center_vtx_edge_count];
+    let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
+    let mut visited_faces = SmallVec::<[_; 16]>::new();
+
+    let mut smooth_fans = Vec::new();
+    loop {
+      mesh.walk_one_smooth_fan(
+        center_vtx_key,
+        visited_edges,
+        &mut visited_faces,
+        &mut smooth_fan_faces,
+      );
+
+      let uniq_smooth_fan_faces: FxHashSet<_> = smooth_fan_faces.iter().copied().collect();
+      smooth_fans.push(uniq_smooth_fan_faces);
+      smooth_fan_faces.clear();
+
+      if visited_edges.all() {
+        break;
+      }
+    }
+
+    smooth_fans
+  }
+
   #[test]
   fn two_triangles_joined_at_one_point() {
     let verts = [
@@ -1168,37 +1194,15 @@ mod tests {
     let indices = [0, 1, 2, 0, 4, 3];
 
     let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
-    let vtx_key: VertexKey = unsafe { std::mem::transmute((1u32, 1u32)) };
-    let mut visited_edges = bitarr![0; 1024];
-    let visited_edges = &mut visited_edges[..4];
-    let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
-    let mut visited_faces = SmallVec::<[_; 16]>::new();
+    let vtx_key = vkey(1, 1);
 
-    let mut smooth_fans = Vec::new();
-    loop {
-      mesh.walk_one_smooth_fan(
-        vtx_key,
-        visited_edges,
-        &mut visited_faces,
-        &mut smooth_fan_faces,
-      );
-
-      let uniq_smooth_fan_faces: Vec<_> = smooth_fan_faces.iter().copied().collect();
-      smooth_fans.push(uniq_smooth_fan_faces);
-      smooth_fan_faces.clear();
-
-      if visited_edges.all() {
-        break;
-      }
-    }
+    let smooth_fans = test_walk_smooth_fan(&mut mesh, vtx_key);
 
     assert_eq!(smooth_fans.len(), 2);
-    let expected_smooth_fans = [
-      vec![unsafe { std::mem::transmute((1u32, 1u32)) }],
-      vec![unsafe { std::mem::transmute((1u32, 2u32)) }],
-    ]
-    .into_iter()
-    .collect::<FxHashSet<_>>();
+    let expected_smooth_fans = [[fkey(1, 1)], [fkey(2, 1)]]
+      .into_iter()
+      .map(|fan| fan.into_iter().collect::<FxHashSet<_>>())
+      .collect::<Vec<_>>();
     for smooth_fan in &smooth_fans {
       assert!(expected_smooth_fans.contains(smooth_fan));
     }
@@ -1212,7 +1216,7 @@ mod tests {
       unsafe { std::mem::transmute((1u32, 5u32)) },
     ] {
       let mut visited_edges = bitarr![0; 1024];
-      let visited_edges = &mut visited_edges[..2];
+      let visited_edges = &mut visited_edges[..mesh.vertices[vtx_key].edges.len()];
       let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
       let mut visited_faces = SmallVec::<[_; 16]>::new();
 
@@ -1268,30 +1272,92 @@ mod tests {
       .unwrap();
     mesh.edges[sharp_edge_key].sharp = true;
 
-    let vtx_key: VertexKey = unsafe { std::mem::transmute((1u32, 1u32)) };
-    let mut visited_edges = bitarr![0; 1024];
-    let visited_edges = &mut visited_edges[..3];
-    let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
-    let mut visited_faces = SmallVec::<[_; 16]>::new();
-
-    let mut smooth_fans = Vec::new();
-    loop {
-      mesh.walk_one_smooth_fan(
-        vtx_key,
-        visited_edges,
-        &mut visited_faces,
-        &mut smooth_fan_faces,
-      );
-
-      let uniq_smooth_fan_faces: FxHashSet<_> = smooth_fan_faces.iter().copied().collect();
-      smooth_fans.push(uniq_smooth_fan_faces);
-      smooth_fan_faces.clear();
-
-      if visited_edges.all() {
-        break;
-      }
-    }
+    let vtx_key = vkey(1, 1);
+    let smooth_fans = test_walk_smooth_fan(&mut mesh, vtx_key);
 
     assert_eq!(smooth_fans.len(), 2);
+  }
+
+  fn build_full_fan_mesh_with_sharp_edges(sharp_edges_vtx_coords: &[[[i32; 2]; 2]]) -> LinkedMesh {
+    let verts = [[0, 0], [-1, 0], [0, 1], [1, 0], [0, -1]]
+      .into_iter()
+      .map(|[x, y]| Vec3::new(x as f32, y as f32, 0.))
+      .collect::<Vec<_>>();
+    let indices = [0, 2, 1, 0, 3, 2, 0, 1, 4, 0, 4, 3];
+
+    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let sharp_edge_keys = mesh
+      .edges
+      .iter()
+      .filter_map(|(edge_key, edge)| {
+        let [v0_key, v1_key] = edge.vertices;
+        let [v0_pos, v1_pos] = [
+          [
+            mesh.vertices[v0_key].position.x as i32,
+            mesh.vertices[v0_key].position.y as i32,
+          ],
+          [
+            mesh.vertices[v1_key].position.x as i32,
+            mesh.vertices[v1_key].position.y as i32,
+          ],
+        ];
+
+        for &[sharp_edge_v0_pos, sharp_edge_v1_pos] in sharp_edges_vtx_coords {
+          if (sharp_edge_v0_pos == v0_pos && sharp_edge_v1_pos == v1_pos)
+            || (sharp_edge_v0_pos == v1_pos && sharp_edge_v1_pos == v0_pos)
+          {
+            return Some(edge_key);
+          }
+        }
+
+        None
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(sharp_edge_keys.len(), sharp_edges_vtx_coords.len());
+
+    for sharp_edge_key in sharp_edge_keys {
+      mesh.edges.get_mut(sharp_edge_key).unwrap().sharp = true;
+    }
+
+    mesh
+  }
+
+  #[test]
+  fn full_fan_two_sharp_edges() {
+    let mut mesh = build_full_fan_mesh_with_sharp_edges(&[[[0, 0], [0, 1]], [[0, 0], [0, -1]]]);
+
+    let center_vtx_key = vkey(1, 1);
+    let smooth_fans = test_walk_smooth_fan(&mut mesh, center_vtx_key);
+
+    // faces 1 + 3 should be together, and 2 + 4 should be together
+    assert_eq!(smooth_fans.len(), 2);
+    let expected_smooth_fans = [[fkey(1, 1), fkey(3, 1)], [fkey(2, 1), fkey(4, 1)]]
+      .into_iter()
+      .map(|v| v.into_iter().collect::<FxHashSet<_>>())
+      .collect::<Vec<_>>();
+
+    for smooth_fan in &smooth_fans {
+      assert!(expected_smooth_fans
+        .iter()
+        .any(|expected| expected == smooth_fan));
+    }
+  }
+
+  /// A full fan with one sharp edges will actually result in only a single
+  /// smooth fan because there's no way to split the vertex without breaking
+  /// topology
+  #[test]
+  fn full_fan_one_sharp_edge() {
+    let mut mesh = build_full_fan_mesh_with_sharp_edges(&[[[0, 0], [0, 1]]]);
+
+    let center_vtx_key = vkey(1, 1);
+    let smooth_fans = test_walk_smooth_fan(&mut mesh, center_vtx_key);
+
+    assert_eq!(smooth_fans.len(), 1);
+    let expected_smooth_fan = [fkey(1, 1), fkey(2, 1), fkey(3, 1), fkey(4, 1)]
+      .into_iter()
+      .collect::<FxHashSet<_>>();
+
+    assert_eq!(smooth_fans[0], expected_smooth_fan);
   }
 }
