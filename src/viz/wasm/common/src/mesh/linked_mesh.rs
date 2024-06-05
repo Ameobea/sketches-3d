@@ -1,3 +1,4 @@
+use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxHashMap, FxHashSet};
 use nalgebra::{Matrix4, Vector3};
 use slotmap::{new_key_type, Key, SlotMap};
@@ -95,6 +96,7 @@ pub struct Edge {
   // Ordered such that the first vertex key is always less than the second
   pub vertices: [VertexKey; 2],
   pub faces: SmallVec<[FaceKey; 2]>,
+  pub sharp: bool,
 }
 
 impl Edge {
@@ -188,8 +190,8 @@ impl LinkedMesh {
   fn merge_vertices(&mut self, v0_key: VertexKey, v1_key: VertexKey) {
     let removed_vtx = self.vertices.remove(v1_key).unwrap_or_else(|| {
       panic!(
-        "Tried to merge vertex that doesn't exist; key={v1_key:?}. \
-        Was referenced by removed vertex with key={v0_key:?}",
+        "Tried to merge vertex that doesn't exist; key={v1_key:?}. Was referenced by removed \
+         vertex with key={v0_key:?}",
       )
     });
 
@@ -200,7 +202,11 @@ impl LinkedMesh {
           let face = &mut self.faces[face_key];
           if face.vertices.contains(&v0_key) && face.vertices.contains(&v1_key) {
             let v0 = &self.vertices[v0_key];
-            panic!("Triangle contains both vertices to merge: {v0_key:?}, {v1_key:?} with positions {} and {}", v0.position, removed_vtx.position);
+            panic!(
+              "Triangle contains both vertices to merge: {v0_key:?}, {v1_key:?} with positions {} \
+               and {}",
+              v0.position, removed_vtx.position
+            );
           }
           for vert_key in &mut face.vertices {
             if *vert_key == v1_key {
@@ -243,7 +249,8 @@ impl LinkedMesh {
         if pair_edge.vertices == new_edge_vertices {
           if edge_key_to_merge_into.is_some() {
             panic!(
-              "Multiple edges found to merge into; edge_key_to_merge_into={edge_key_to_merge_into:?}; pair_edge_key={pair_edge_key:?}",
+              "Multiple edges found to merge into; \
+               edge_key_to_merge_into={edge_key_to_merge_into:?}; pair_edge_key={pair_edge_key:?}",
             );
           }
           edge_key_to_merge_into = Some(pair_edge_key);
@@ -293,8 +300,11 @@ impl LinkedMesh {
             .map(|&k| &self.edges[k])
             .collect::<Vec<_>>();
           graphviz_print(&self.debug());
-          panic!("Duplicate edge found after merging vertices removed_edge={edge:?};\n dupe_edges={dupe_edges:?};\n\
-                  v0={v0_key:?};\n v1={v1_key:?};\n removed_vtx_edges_after={removed_vtx_edges_after:?}");
+          panic!(
+            "Duplicate edge found after merging vertices removed_edge={edge:?};\n \
+             dupe_edges={dupe_edges:?};\nv0={v0_key:?};\n v1={v1_key:?};\n \
+             removed_vtx_edges_after={removed_vtx_edges_after:?}"
+          );
         }
       }
     }
@@ -355,8 +365,8 @@ impl LinkedMesh {
       for &edge_key in &vtx.edges {
         let edge = &self.edges.get(edge_key).unwrap_or_else(|| {
           panic!(
-            "Tried to get edge that doesn't exist; key={edge_key:?}. \
-            Was referenced by vertex with key={vtx_key:?}",
+            "Tried to get edge that doesn't exist; key={edge_key:?}. Was referenced by vertex \
+             with key={vtx_key:?}",
           )
         });
         let edge = format_edge(edge_key, edge);
@@ -379,7 +389,10 @@ impl LinkedMesh {
           .get(vtx_key)
           .map(|vtx| format_vtx(vtx_key, vtx))
           .unwrap_or_else(|| {
-            panic!("Tried to get vertex that doesn't exist; key={vtx_key:?}. Was referenced by edge with key={edge_key:?}")
+            panic!(
+              "Tried to get vertex that doesn't exist; key={vtx_key:?}. Was referenced by edge \
+               with key={edge_key:?}"
+            )
           });
         connections.push((edge_name.clone(), vtx_name));
       }
@@ -515,68 +528,15 @@ impl LinkedMesh {
     }
   }
 
-  fn make_edge_smooth(
+  fn replace_edge_in_face(
     &mut self,
+    v0_key: VertexKey,
+    v1_key: VertexKey,
+    face_1_key: FaceKey,
+    edge_key: EdgeKey,
     deleted_edge_keys: &mut FxHashSet<EdgeKey>,
     added_edge_keys: &mut Vec<EdgeKey>,
-    sharp_edge_threshold_rads: f32,
-    edge_key: EdgeKey,
   ) {
-    let ([v0_key, v1_key], face_1_key) = {
-      let edge = &self.edges[edge_key];
-
-      // In addition to the case where this edge itself is sharp, we also need to
-      // check if any of the faces which include other edges with either of this
-      // edge's vertices that are sharp wrt. this edge as well.
-      let mut all_vertex_faces = SmallVec::<[_; 32]>::new();
-      for vtx_key in edge.vertices {
-        let vtx = &self.vertices[vtx_key];
-        for &edge_key in &vtx.edges {
-          let edge = &self.edges[edge_key];
-          for &face_key in &edge.faces {
-            if !all_vertex_faces.contains(&face_key) {
-              all_vertex_faces.push(face_key);
-            }
-          }
-        }
-      }
-
-      let mut face_needing_separation = None;
-      for i in 0..all_vertex_faces.len() {
-        let face_0_key = all_vertex_faces[i];
-        let face_0 = &self.faces[face_0_key];
-        let face_0_contains_edge = face_0.edges.contains(&edge_key);
-        let face_0_normal = face_0.normal(&self.vertices);
-        for j in (i + 1)..all_vertex_faces.len() {
-          let face_1_key = all_vertex_faces[j];
-          let face_1 = &self.faces[face_1_key];
-          let face_1_contains_edge = face_1.edges.contains(&edge_key);
-
-          if !face_0_contains_edge && !face_1_contains_edge {
-            continue;
-          }
-
-          let face_1_normal = face_1.normal(&self.vertices);
-          let angle = face_0_normal.angle(&face_1_normal);
-          if angle > sharp_edge_threshold_rads {
-            let face_key_needing_separation = if face_0_contains_edge {
-              face_0_key
-            } else {
-              face_1_key
-            };
-            face_needing_separation = Some(face_key_needing_separation);
-            break;
-          }
-        }
-      }
-
-      let Some(face_needing_separation) = face_needing_separation else {
-        return;
-      };
-
-      (edge.vertices, face_needing_separation)
-    };
-
     let new_v0_key = self.vertices.insert(Vertex {
       position: self.vertices[v0_key].position,
       displacement_normal: self.vertices[v0_key].displacement_normal,
@@ -592,7 +552,7 @@ impl LinkedMesh {
     let new_edge_key = self.add_edge([new_v0_key, new_v1_key], smallvec![face_1_key]);
     added_edge_keys.push(new_edge_key);
 
-    // Remove the old edge from the second face and replace it with the new one
+    // Remove the old edge from the face and replace it with the new one
     let face1 = &mut self.faces[face_1_key];
     let edge_key_ix_to_alter = face1.edges.iter().position(|e| *e == edge_key).unwrap();
     face1.edges[edge_key_ix_to_alter] = new_edge_key;
@@ -642,37 +602,239 @@ impl LinkedMesh {
     }
   }
 
-  /// Creates new edges and vertices as needed to ensure that all remaining in
-  /// the edges in the mesh are less sharp than the provided threshold.
-  ///
-  /// This has the effect of creating duplicate vertices at identical positions,
-  /// but this is required for flat/partially flat shading.
-  pub fn make_edges_smooth(&mut self, sharp_edge_threshold_rads: f32) {
-    let mut deleted_edge_keys = FxHashSet::default();
-    let mut added_edge_keys = Vec::new();
-    let mut all_edge_keys = self.edges.keys().collect::<Vec<_>>();
-
-    loop {
-      for &edge_key in &all_edge_keys {
-        if deleted_edge_keys.contains(&edge_key) {
-          continue;
-        }
-
-        self.make_edge_smooth(
-          &mut deleted_edge_keys,
-          &mut added_edge_keys,
-          sharp_edge_threshold_rads,
-          edge_key,
-        );
+  fn mark_edge_sharpness(&mut self, sharp_edge_threshold_rads: f32) {
+    for edge in self.edges.values_mut() {
+      // Border edges as well as edges belonging to more than 3 faces are
+      // automatically sharp
+      if edge.faces.len() != 2 {
+        edge.sharp = true;
+        continue;
       }
 
-      if added_edge_keys.is_empty() {
+      let [face0, face1] = [edge.faces[0], edge.faces[1]];
+      let [normal0, normal1] = [
+        self.faces[face0].normal(&self.vertices),
+        self.faces[face1].normal(&self.vertices),
+      ];
+      let angle = normal0.angle(&normal1);
+      edge.sharp = angle > sharp_edge_threshold_rads;
+    }
+  }
+
+  fn walk_one_smooth_fan(
+    &mut self,
+    vtx_key: VertexKey,
+    visited_edges: &mut BitSlice,
+    visited_faces: &mut SmallVec<[FaceKey; 16]>,
+    smooth_fan_faces: &mut SmallVec<[FaceKey; 16]>,
+  ) {
+    let vtx = &self.vertices[vtx_key];
+
+    let walk = |visited_edges: &mut BitSlice,
+                visited_faces: &mut SmallVec<[FaceKey; 16]>,
+                smooth_fan_faces: &mut SmallVec<[FaceKey; 16]>,
+                cur_edge_key: &mut EdgeKey,
+                cur_face_key: &mut FaceKey| loop {
+      smooth_fan_faces.push(*cur_face_key);
+      visited_faces.push(*cur_face_key);
+      let cur_edge_ix = vtx.edges.iter().position(|&e| e == *cur_edge_key).unwrap();
+      visited_edges.set(cur_edge_ix, true);
+
+      dbg!(*cur_edge_key, *cur_face_key, &visited_faces);
+      // Try to walk to the next face in the smooth fan that shares the current edge
+      let next_edge_key = self.faces[*cur_face_key]
+        .edges
+        .iter()
+        .find(|&&edge_key| edge_key != *cur_edge_key && vtx.edges.contains(&edge_key))
+        .copied();
+      let (next_edge_key, next_edge) = match next_edge_key {
+        Some(edge_key) => (edge_key, &self.edges[edge_key]),
+        None => {
+          // We've reached the end of the smooth fan
+          break;
+        }
+      };
+      let next_edge_ix = vtx.edges.iter().position(|&e| e == next_edge_key).unwrap();
+      if visited_edges[next_edge_ix] {
         break;
       }
-      all_edge_keys = self.edges.keys().collect::<Vec<_>>();
+      let Some(next_face_key) = next_edge
+        .faces
+        .iter()
+        .find(|&&face_key| face_key != *cur_face_key && !visited_faces.contains(&face_key))
+        .copied()
+      else {
+        // This edge is a border edge
+        visited_edges.set(next_edge_ix, true);
+        break;
+      };
 
-      added_edge_keys.clear();
-      deleted_edge_keys.clear();
+      if next_edge.sharp {
+        // We've hit a sharp edge and can stop walking
+        break;
+      }
+
+      *cur_edge_key = next_edge_key;
+      *cur_face_key = next_face_key;
+    };
+
+    let start_edge_ix = visited_edges.iter().position(|visited| !*visited);
+    let Some(start_edge_ix) = start_edge_ix else {
+      // We've visited all edges
+      return;
+    };
+
+    let start_edge_key = vtx.edges[start_edge_ix];
+    debug_print(&format!(
+      "Starting walk {start_edge_key:?} {:?} -> {:?}; visited_edges={:?}; visited_faces={:?}",
+      self.vertices[self.edges[start_edge_key].vertices[0]].position,
+      self.vertices[self.edges[start_edge_key].vertices[1]].position,
+      visited_edges,
+      visited_faces
+    ));
+    let start_face_key = self.edges[start_edge_key]
+      .faces
+      .iter()
+      .find(|&&face_key| {
+        if visited_faces.contains(&face_key) {
+          return false;
+        }
+
+        let face = &self.faces[face_key];
+        // Find the edges that include the vertex
+        let [mut edge_key_0, mut edge_key_1] = [EdgeKey::null(), EdgeKey::null()];
+        for &edge_key in &face.edges {
+          if !self.edges[edge_key].vertices.contains(&vtx_key) {
+            continue;
+          }
+          if edge_key_0.is_null() {
+            edge_key_0 = edge_key
+          } else {
+            edge_key_1 = edge_key;
+            break;
+          }
+        }
+
+        // One edge must be not visited in order for us to walk from it
+        [edge_key_0, edge_key_1].into_iter().any(|edge_key| {
+          let edge_key_ix = vtx.edges.iter().position(|&e| e == edge_key).unwrap();
+          !visited_edges[edge_key_ix]
+        })
+      })
+      .copied();
+    let Some(start_face_key) = start_face_key else {
+      return;
+    };
+
+    // If the starting edge is smooth, we have to walk the other way once we hit a
+    // sharp edge.
+    let needs_walk_the_other_way = !self.edges[start_edge_key].sharp;
+
+    let mut cur_edge_key = start_edge_key;
+    let mut cur_face_key = start_face_key;
+
+    debug_print("walking");
+    walk(
+      visited_edges,
+      visited_faces,
+      smooth_fan_faces,
+      &mut cur_edge_key,
+      &mut cur_face_key,
+    );
+
+    if !needs_walk_the_other_way {
+      return;
+    }
+
+    let first_other_way_face_key = self.edges[start_edge_key].faces.iter().find(|&&face_key| {
+      let face = &self.faces[face_key];
+      face_key != start_face_key && face.vertices.contains(&vtx_key)
+    });
+    let Some(first_other_way_face_key) = first_other_way_face_key else {
+      return;
+    };
+
+    cur_face_key = *first_other_way_face_key;
+    smooth_fan_faces.push(cur_face_key);
+    cur_edge_key = start_edge_key;
+
+    debug_print("walking backwards");
+    walk(
+      visited_edges,
+      visited_faces,
+      smooth_fan_faces,
+      &mut cur_edge_key,
+      &mut cur_face_key,
+    );
+  }
+
+  fn separate_and_compute_normals_for_vertex(&mut self, vtx_key: VertexKey) {
+    let vtx = &self.vertices[vtx_key];
+
+    if vtx.edges.len() < 2 {
+      return;
+    }
+
+    // keeps track of which edges have been visited.  Indices match the indices of
+    // `vtx.edges`
+    if vtx.edges.len() > 1024 {
+      panic!(
+        "Vertex has too many edges; vtx_key={vtx_key:?}; edge_count={}",
+        vtx.edges.len()
+      );
+    }
+    let mut visited_edges = bitarr![0; 1024];
+    let visited_edges = &mut visited_edges[..vtx.edges.len()];
+    let mut visited_faces = SmallVec::<[_; 16]>::new();
+
+    let mut smooth_fan_faces: SmallVec<[FaceKey; 16]> = SmallVec::new();
+
+    loop {
+      self.walk_one_smooth_fan(
+        vtx_key,
+        visited_edges,
+        &mut visited_faces,
+        &mut smooth_fan_faces,
+      );
+      if visited_edges.all() {
+        break;
+      }
+
+      debug_print(&format!(
+        "Found smooth fan with {} faces",
+        smooth_fan_faces.len()
+      ));
+      // TODO: split vertices
+      smooth_fan_faces.clear();
+    }
+  }
+
+  /// Does something akin to "shade auto-smooth" from Blender.  For each edge in
+  /// the mesh, it is determined to be sharp or smooth based on the angle
+  /// between it and the face that shares it.
+  ///
+  /// Then, each vertex is considered and potentially duplicated one or more
+  /// times so that the normals of each are shared only with faces that are
+  /// smooth wrt. each other.
+  ///
+  /// Heavily inspired by the Blender implementation:
+  /// https://github.com/blender/blender/blob/a4aa5faa2008472413403600382f419280ac8b20/source/blender/bmesh/intern/bmesh_mesh_normals.cc#L1081
+  pub fn separate_vertices_and_compute_normals(&mut self, sharp_edge_threshold_rads: f32) {
+    self.mark_edge_sharpness(sharp_edge_threshold_rads);
+
+    let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
+    // For each vertex in the mesh, we partition its edges into "smooth fans"
+    // (as Blender calls them).  These are group of edges that all share the
+    // vertex and are connected together by faces which each share one edge.
+    //
+    // They can either wrap all the way around the vertex or be bounded on
+    // either side by a sharp edge.
+    //
+    // For each smooth fan, a duplicate vertex is created which gets a normal
+    // computed by a weighted average of the face normals of all faces in the
+    // fan.
+    for vtx_key in all_vtx_keys {
+      self.separate_and_compute_normals_for_vertex(vtx_key);
     }
   }
 
@@ -788,6 +950,7 @@ impl LinkedMesh {
         let edge_key = self.edges.insert(Edge {
           vertices: sorted_vertex_keys,
           faces,
+          sharp: false,
         });
 
         for &vert_key in &vertices {
@@ -841,16 +1004,16 @@ impl LinkedMesh {
     for edge_key in face.edges {
       let edge = self.edges.get_mut(edge_key).unwrap_or_else(|| {
         panic!(
-          "Tried to get edge that doesn't exist; key={edge_key:?}. \
-          Was referenced by removed face with key={face_key:?}",
+          "Tried to get edge that doesn't exist; key={edge_key:?}. Was referenced by removed face \
+           with key={face_key:?}",
         )
       });
       edge.faces.retain(|&mut f| f != face_key);
       if edge.faces.is_empty() {
         let edge = self.edges.remove(edge_key).unwrap_or_else(|| {
           panic!(
-            "Tried to remove edge that doesn't exist; key={edge_key:?}. \
-            Was referenced by removed face with key={face_key:?}",
+            "Tried to remove edge that doesn't exist; key={edge_key:?}. Was referenced by removed \
+             face with key={face_key:?}",
           )
         });
 
@@ -959,5 +1122,176 @@ mod tests {
         actual_verts
       );
     }
+  }
+
+  #[test]
+  fn basic_smooth_fan() {
+    // Smooth fan that consists of 3 edges and 2 faces, smooth all the way around
+    let verts = [
+      // vertex that we'll fan around
+      Vec3::new(0., 0., 0.),
+      Vec3::new(-1., 1., 0.),
+      Vec3::new(0., 1., 0.),
+      Vec3::new(1., 1., 0.),
+    ];
+    let indices = [0, 2, 1, 0, 3, 2];
+
+    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let vtx_key: VertexKey = unsafe { std::mem::transmute((1u32, 1u32)) };
+    let mut visited_edges = bitarr![0; 1024];
+    let visited_edges = &mut visited_edges[..3];
+    assert_eq!(visited_edges.len(), 3);
+    let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
+    let mut visited_faces = SmallVec::<[_; 16]>::new();
+
+    mesh.walk_one_smooth_fan(
+      vtx_key,
+      visited_edges,
+      &mut visited_faces,
+      &mut smooth_fan_faces,
+    );
+
+    assert!(visited_edges.all());
+    let smooth_fan_faces: FxHashSet<_> = smooth_fan_faces.iter().copied().collect();
+    assert_eq!(smooth_fan_faces.len(), 2);
+  }
+
+  #[test]
+  fn two_triangles_joined_at_one_point() {
+    let verts = [
+      Vec3::new(0., 0., 0.),
+      Vec3::new(-1., 1., 0.),
+      Vec3::new(-1., 0., 0.),
+      Vec3::new(1., 1., 0.),
+      Vec3::new(1., 0., 0.),
+    ];
+    let indices = [0, 1, 2, 0, 4, 3];
+
+    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let vtx_key: VertexKey = unsafe { std::mem::transmute((1u32, 1u32)) };
+    let mut visited_edges = bitarr![0; 1024];
+    let visited_edges = &mut visited_edges[..4];
+    let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
+    let mut visited_faces = SmallVec::<[_; 16]>::new();
+
+    let mut smooth_fans = Vec::new();
+    loop {
+      mesh.walk_one_smooth_fan(
+        vtx_key,
+        visited_edges,
+        &mut visited_faces,
+        &mut smooth_fan_faces,
+      );
+
+      let uniq_smooth_fan_faces: Vec<_> = smooth_fan_faces.iter().copied().collect();
+      smooth_fans.push(uniq_smooth_fan_faces);
+      smooth_fan_faces.clear();
+
+      if visited_edges.all() {
+        break;
+      }
+    }
+
+    assert_eq!(smooth_fans.len(), 2);
+    let expected_smooth_fans = [
+      vec![unsafe { std::mem::transmute((1u32, 1u32)) }],
+      vec![unsafe { std::mem::transmute((1u32, 2u32)) }],
+    ]
+    .into_iter()
+    .collect::<FxHashSet<_>>();
+    for smooth_fan in &smooth_fans {
+      assert!(expected_smooth_fans.contains(smooth_fan));
+    }
+
+    // walking from any other vertex should only have a single smooth fan with a
+    // single face
+    for vtx_key in [
+      unsafe { std::mem::transmute((1u32, 2u32)) },
+      unsafe { std::mem::transmute((1u32, 3u32)) },
+      unsafe { std::mem::transmute((1u32, 4u32)) },
+      unsafe { std::mem::transmute((1u32, 5u32)) },
+    ] {
+      let mut visited_edges = bitarr![0; 1024];
+      let visited_edges = &mut visited_edges[..2];
+      let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
+      let mut visited_faces = SmallVec::<[_; 16]>::new();
+
+      let mut smooth_fans = Vec::new();
+      loop {
+        mesh.walk_one_smooth_fan(
+          vtx_key,
+          visited_edges,
+          &mut visited_faces,
+          &mut smooth_fan_faces,
+        );
+
+        let uniq_smooth_fan_faces: Vec<_> = smooth_fan_faces.iter().copied().collect();
+        smooth_fans.push(uniq_smooth_fan_faces);
+        smooth_fan_faces.clear();
+
+        if visited_edges.all() {
+          break;
+        }
+      }
+
+      assert_eq!(smooth_fans.len(), 1);
+      assert_eq!(smooth_fans[0].len(), 1);
+    }
+  }
+
+  #[test]
+  fn one_sharp_edge() {
+    // Same as `basic_smooth_fan` but with a sharp edge between the two
+    // triangles.  The result should be two separate smooth fans, each
+    // containing one face.
+    let verts = [
+      // vertex that we'll fan around
+      Vec3::new(0., 0., 0.),
+      Vec3::new(-1., 1., 0.),
+      Vec3::new(0., 1., 0.),
+      Vec3::new(1., 1., 0.),
+    ];
+    let indices = [0, 2, 1, 0, 3, 2];
+
+    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    // mark the edge between the two triangles as sharp
+    let sharp_edge_key = mesh
+      .edges
+      .iter_mut()
+      .find_map(|(edge_key, edge)| {
+        if edge.faces.len() == 2 {
+          Some(edge_key)
+        } else {
+          None
+        }
+      })
+      .unwrap();
+    mesh.edges[sharp_edge_key].sharp = true;
+
+    let vtx_key: VertexKey = unsafe { std::mem::transmute((1u32, 1u32)) };
+    let mut visited_edges = bitarr![0; 1024];
+    let visited_edges = &mut visited_edges[..3];
+    let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
+    let mut visited_faces = SmallVec::<[_; 16]>::new();
+
+    let mut smooth_fans = Vec::new();
+    loop {
+      mesh.walk_one_smooth_fan(
+        vtx_key,
+        visited_edges,
+        &mut visited_faces,
+        &mut smooth_fan_faces,
+      );
+
+      let uniq_smooth_fan_faces: FxHashSet<_> = smooth_fan_faces.iter().copied().collect();
+      smooth_fans.push(uniq_smooth_fan_faces);
+      smooth_fan_faces.clear();
+
+      if visited_edges.all() {
+        break;
+      }
+    }
+
+    assert_eq!(smooth_fans.len(), 2);
   }
 }

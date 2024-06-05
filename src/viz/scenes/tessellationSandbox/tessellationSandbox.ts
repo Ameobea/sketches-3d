@@ -96,7 +96,7 @@ export const processLoadedScene = async (
       throw new Error('Expected indices to be Uint32Array or Uint16Array');
     }
 
-    const targetTriangleArea = 2.5;
+    const targetTriangleArea = 0.5;
     const tessCtx = tessellationEngine.tessellate_mesh(
       verts,
       normals ?? new Float32Array(0),

@@ -62,7 +62,7 @@ pub fn tessellate_mesh(
   info!("Removed {removed_vert_count} vertices from merge by distance");
   crate::tessellate_mesh(&mut mesh, target_triangle_area);
   mesh.compute_vertex_normals(sharp_edge_threshold_rads, true, false);
-  mesh.make_edges_smooth(sharp_edge_threshold_rads);
+  mesh.separate_vertices_and_compute_normals(sharp_edge_threshold_rads);
   mesh.compute_vertex_normals(sharp_edge_threshold_rads, false, true);
   let ctx = Box::new(TessellateMeshCtx {
     new_mesh: mesh.to_raw_indexed(),
