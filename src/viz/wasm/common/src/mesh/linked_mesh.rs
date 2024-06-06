@@ -557,82 +557,6 @@ impl LinkedMesh {
     }
   }
 
-  fn replace_edge_in_face(
-    &mut self,
-    v0_key: VertexKey,
-    v1_key: VertexKey,
-    face_1_key: FaceKey,
-    edge_key: EdgeKey,
-    deleted_edge_keys: &mut FxHashSet<EdgeKey>,
-    added_edge_keys: &mut Vec<EdgeKey>,
-  ) {
-    let new_v0_key = self.vertices.insert(Vertex {
-      position: self.vertices[v0_key].position,
-      displacement_normal: self.vertices[v0_key].displacement_normal,
-      shading_normal: None,
-      edges: SmallVec::new(),
-    });
-    let new_v1_key = self.vertices.insert(Vertex {
-      position: self.vertices[v1_key].position,
-      displacement_normal: self.vertices[v1_key].displacement_normal,
-      shading_normal: None,
-      edges: SmallVec::new(),
-    });
-    let new_edge_key = self.get_or_create_edge([new_v0_key, new_v1_key]);
-    self.edges[new_edge_key].faces.push(face_1_key);
-    added_edge_keys.push(new_edge_key);
-
-    // Remove the old edge from the face and replace it with the new one
-    let face1 = &mut self.faces[face_1_key];
-    let edge_key_ix_to_alter = face1.edges.iter().position(|e| *e == edge_key).unwrap();
-    face1.edges[edge_key_ix_to_alter] = new_edge_key;
-    self.edges[edge_key].faces.retain(|&mut f| f != face_1_key);
-
-    for vtx_key in &mut face1.vertices {
-      if *vtx_key == v0_key {
-        *vtx_key = new_v0_key;
-      } else if *vtx_key == v1_key {
-        *vtx_key = new_v1_key;
-      }
-    }
-
-    // We've replaced that edge with a new one, but the other two edges of the face
-    // still reference the old vertices.  We have to update those edges as well.
-    let other_edge_key_indices_to_alter = match edge_key_ix_to_alter {
-      0 => [1, 2],
-      1 => [0, 2],
-      2 => [0, 1],
-      _ => unreachable!(),
-    };
-    for other_edge_key_ix_to_alter in other_edge_key_indices_to_alter {
-      let face1 = &self.faces[face_1_key];
-      let old_edge_key = face1.edges[other_edge_key_ix_to_alter];
-
-      let [new_edge_v0, new_edge_v1] = match other_edge_key_ix_to_alter {
-        0 => [face1.vertices[0], face1.vertices[1]],
-        1 => [face1.vertices[1], face1.vertices[2]],
-        2 => [face1.vertices[2], face1.vertices[0]],
-        _ => unreachable!(),
-      };
-      let new_edge_key = self.get_or_create_edge([new_edge_v0, new_edge_v1]);
-      self.edges[new_edge_key].faces.push(face_1_key);
-      added_edge_keys.push(new_edge_key);
-      let face1 = &mut self.faces[face_1_key];
-      face1.edges[other_edge_key_ix_to_alter] = new_edge_key;
-
-      let old_edge = &mut self.edges[old_edge_key];
-      old_edge.faces.retain(|&mut f| f != face_1_key);
-      if old_edge.faces.is_empty() {
-        for vtx_key in old_edge.vertices {
-          let vtx = &mut self.vertices[vtx_key];
-          vtx.edges.retain(|&mut e| e != old_edge_key);
-        }
-        self.edges.remove(old_edge_key);
-        deleted_edge_keys.insert(old_edge_key);
-      }
-    }
-  }
-
   fn replace_vertex_in_face(
     &mut self,
     face_key: FaceKey,
@@ -651,11 +575,19 @@ impl LinkedMesh {
           if edge_indices_to_alter[0] == usize::MAX {
             edge_indices_to_alter[0] = edge_ix;
             old_edge_keys[0] = edge_key;
-            pair_vtx_keys[0] = *edge.vertices.iter().find(|&&v| v != old_vtx_key).unwrap();
+            pair_vtx_keys[0] = if edge.vertices[0] == old_vtx_key {
+              edge.vertices[1]
+            } else {
+              edge.vertices[0]
+            };
           } else {
             edge_indices_to_alter[1] = edge_ix;
             old_edge_keys[1] = edge_key;
-            pair_vtx_keys[1] = *edge.vertices.iter().find(|&&v| v != old_vtx_key).unwrap();
+            pair_vtx_keys[1] = if edge.vertices[0] == old_vtx_key {
+              edge.vertices[1]
+            } else {
+              edge.vertices[0]
+            };
             break;
           }
         }
