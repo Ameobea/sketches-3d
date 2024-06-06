@@ -2,7 +2,7 @@ use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxHashMap, FxHashSet};
 use nalgebra::{Matrix4, Vector3};
 use slotmap::{new_key_type, Key, SlotMap};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use super::OwnedIndexedMesh;
 
@@ -159,6 +159,12 @@ fn sort_edge(v0: VertexKey, v1: VertexKey) -> [VertexKey; 2] {
   } else {
     [v1, v0]
   }
+}
+
+struct VertexToSplit {
+  pub old_key: VertexKey,
+  pub face_keys: SmallVec<[FaceKey; 8]>,
+  pub normal: Vec3,
 }
 
 impl LinkedMesh {
@@ -339,8 +345,8 @@ impl LinkedMesh {
     }
   }
 
-  /// Naive brute-force implementation.  Will probably be slow for meshes with
-  /// tons of verts.
+  /// Naive brute-force implementation.  Will be incredibly slow for meshes with
+  /// tons of verts to the point where it's impractical to run.
   ///
   /// Returns the number of removed vertices.
   pub fn merge_vertices_by_distance(&mut self, max_distance: f32) -> usize {
@@ -817,7 +823,6 @@ impl LinkedMesh {
     };
 
     cur_face_key = *first_other_way_face_key;
-    smooth_fan_faces.push(cur_face_key);
     cur_edge_key = start_edge_key;
 
     walk(
@@ -832,24 +837,29 @@ impl LinkedMesh {
     normal_acc.get()
   }
 
-  fn separate_and_compute_normals_for_vertex(&mut self, vtx_key: VertexKey) {
-    let edge_count = self.vertices[vtx_key].edges.len();
-
-    if edge_count < 3 {
-      return;
-    }
-
-    // keeps track of which edges have been visited.  Indices match the indices of
-    // `vtx.edges`
-    if edge_count > 1024 {
-      panic!("Vertex has too many edges; vtx_key={vtx_key:?}; edge_count={edge_count}",);
-    }
+  fn separate_and_compute_normals_for_vertex(
+    &mut self,
+    vertices_to_split: &mut Vec<VertexToSplit>,
+    vtx_key: VertexKey,
+  ) {
     let mut visited_edges = bitarr![0; 1024];
-    let visited_edges = &mut visited_edges[..edge_count];
     let mut visited_faces = SmallVec::<[_; 16]>::new();
     let mut smooth_fan_faces: SmallVec<[FaceKey; 16]> = SmallVec::new();
 
     loop {
+      let edge_count = self.vertices[vtx_key].edges.len();
+      // keeps track of which edges have been visited.  Indices match the indices of
+      // `vtx.edges`
+      if edge_count > 1024 {
+        panic!("Vertex has too many edges; vtx_key={vtx_key:?}; edge_count={edge_count}",);
+      }
+
+      if edge_count < 3 {
+        return;
+      }
+
+      let visited_edges = &mut visited_edges[..edge_count];
+
       let fan_normal = self.walk_one_smooth_fan(
         vtx_key,
         visited_edges,
@@ -867,22 +877,12 @@ impl LinkedMesh {
         break;
       }
 
-      // We have to create a new vertex for the faces that are part of the
-      // smooth fan so that it can have a distinct normal
-      let (position, displacement_normal) = {
-        let vtx = &self.vertices[vtx_key];
-        (vtx.position, vtx.displacement_normal)
-      };
-      let new_vtx_key = self.vertices.insert(Vertex {
-        position,
-        shading_normal: Some(fan_normal),
-        displacement_normal,
-        edges: SmallVec::new(),
+      // TODO DEBUG
+      vertices_to_split.push(VertexToSplit {
+        old_key: vtx_key,
+        face_keys: smooth_fan_faces.iter().copied().collect(),
+        normal: fan_normal,
       });
-
-      for &face_key in &smooth_fan_faces {
-        self.replace_vertex_in_face(face_key, vtx_key, new_vtx_key);
-      }
 
       smooth_fan_faces.clear();
     }
@@ -912,8 +912,36 @@ impl LinkedMesh {
     // For each smooth fan, a duplicate vertex is created which gets a normal
     // computed by a weighted average of the face normals of all faces in the
     // fan.
+    let mut vertices_to_split = Vec::new();
     for vtx_key in all_vtx_keys {
-      self.separate_and_compute_normals_for_vertex(vtx_key);
+      self.separate_and_compute_normals_for_vertex(&mut vertices_to_split, vtx_key);
+    }
+
+    // We have to wait until we've walked all the fans for the mesh before splitting
+    // vertices because if we do it dynamically while walking, the mesh topology
+    // will get torn up and make smooth fan walking incorrect.
+    for VertexToSplit {
+      old_key,
+      face_keys,
+      normal,
+    } in vertices_to_split
+    {
+      // We have to create a new vertex for the faces that are part of the
+      // smooth fan so that it can have a distinct normal
+      let (position, displacement_normal) = {
+        let vtx = &self.vertices[old_key];
+        (vtx.position, vtx.displacement_normal)
+      };
+      let new_vtx_key = self.vertices.insert(Vertex {
+        position,
+        shading_normal: Some(normal),
+        displacement_normal,
+        edges: SmallVec::new(),
+      });
+
+      for face_key in face_keys {
+        self.replace_vertex_in_face(face_key, old_key, new_vtx_key);
+      }
     }
   }
 

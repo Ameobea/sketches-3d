@@ -40,7 +40,7 @@ export const processLoadedScene = async (
       metalness: 0.18,
       roughness: 0.82,
       map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+      uvTransform: new THREE.Matrix3().scale(0.08, 0.08),
       mapDisableDistance: null,
       normalScale: 5.2,
       useDisplacementNormals: true,
@@ -52,7 +52,8 @@ export const processLoadedScene = async (
           float displacement = sin(curTimeSeconds) * 0.4;
           // return displacement;
           displacement = 0.0;
-          return displacement + sin(curTimeSeconds*2. + pos.x * 2.5) * sin((curTimeSeconds+1.)*2. + pos.y * 2.5) * sin((curTimeSeconds+5.)*2. + pos.z * 2.5) * 0.2;
+          displacement = displacement + sin(curTimeSeconds*2. + pos.x * 2.5) * sin((curTimeSeconds+1.)*2. + pos.y * 2.5) * sin((curTimeSeconds+5.)*2. + pos.z * 2.5) * 0.2;
+          return abs(displacement);
         }
       `,
     },
@@ -75,9 +76,10 @@ export const processLoadedScene = async (
     }
 
     const mesh = obj as THREE.Mesh;
-    if (mesh.name !== 'test') {
+    if (mesh.name !== 'repro') {
       // return;
     }
+    console.log(mesh.name);
     if (!mesh.geometry.index) {
       throw new Error('Expected geometry to have index');
     }
@@ -96,13 +98,14 @@ export const processLoadedScene = async (
       throw new Error('Expected indices to be Uint32Array or Uint16Array');
     }
 
-    const targetTriangleArea = 0.5;
+    const targetTriangleArea = 0.1;
+    const sharpEdgeThresholdRads = 0.8;
     const tessCtx = tessellationEngine.tessellate_mesh(
       verts,
       normals ?? new Float32Array(0),
       new Uint32Array(indices),
       targetTriangleArea,
-      0.8
+      sharpEdgeThresholdRads
     );
     const newVerts = tessellationEngine.tessellate_mesh_ctx_get_vertices(tessCtx);
     const newDisplacementNormals = tessellationEngine.tessellate_mesh_ctx_get_displacement_normals(tessCtx);
@@ -118,21 +121,21 @@ export const processLoadedScene = async (
     newGeometry.setAttribute('displacementNormal', new THREE.BufferAttribute(newDisplacementNormals, 3));
     newGeometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
 
-    if (mesh.name === 'test') {
-      for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
-        const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
-        const normal = new THREE.Vector3(
-          newShadingNormals[vtxIx * 3],
-          newShadingNormals[vtxIx * 3 + 1],
-          newShadingNormals[vtxIx * 3 + 2]
-        );
-        const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
-        arrow.userData.nocollide = true;
-        loadedWorld.add(arrow);
-      }
-    }
+    // if (mesh.name === 'test') {
+    //   for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
+    //     const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
+    //     const normal = new THREE.Vector3(
+    //       newShadingNormals[vtxIx * 3],
+    //       newShadingNormals[vtxIx * 3 + 1],
+    //       newShadingNormals[vtxIx * 3 + 2]
+    //     );
+    //     const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
+    //     arrow.userData.nocollide = true;
+    //     loadedWorld.add(arrow);
+    //   }
+    // }
 
-    const newMesh = new THREE.Mesh(newGeometry, normalMat);
+    const newMesh = new THREE.Mesh(newGeometry, pylonMaterial);
     newMesh.userData.nocollide = true;
     // add the lower-poly mesh to the collision world
     viz.collisionWorldLoadedCbs.push(fpCtx => void fpCtx.addTriMesh(mesh));
