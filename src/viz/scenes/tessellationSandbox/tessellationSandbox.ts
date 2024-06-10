@@ -48,7 +48,7 @@ export const processLoadedScene = async (
     {
       displacementShader: `
         float getDisplacement(vec3 pos, vec3 normal, float curTimeSeconds) {
-          // return 0.;
+          return 1.8;
           float displacement = sin(curTimeSeconds) * 0.4;
           // return displacement;
           displacement = 0.0;
@@ -76,6 +76,7 @@ export const processLoadedScene = async (
     }
 
     const mesh = obj as THREE.Mesh;
+    mesh.material = normalMat;
     if (mesh.name !== 'repro') {
       // return;
     }
@@ -99,7 +100,7 @@ export const processLoadedScene = async (
     }
 
     const targetTriangleArea = 0.1;
-    const sharpEdgeThresholdRads = 0.8;
+    const sharpEdgeThresholdRads = 1.3;
     const tessCtx = tessellationEngine.tessellate_mesh(
       verts,
       normals ?? new Float32Array(0),
@@ -121,21 +122,27 @@ export const processLoadedScene = async (
     newGeometry.setAttribute('displacementNormal', new THREE.BufferAttribute(newDisplacementNormals, 3));
     newGeometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
 
-    // if (mesh.name === 'test') {
-    //   for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
-    //     const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
-    //     const normal = new THREE.Vector3(
-    //       newShadingNormals[vtxIx * 3],
-    //       newShadingNormals[vtxIx * 3 + 1],
-    //       newShadingNormals[vtxIx * 3 + 2]
-    //     );
-    //     const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
-    //     arrow.userData.nocollide = true;
-    //     loadedWorld.add(arrow);
-    //   }
-    // }
+    if (/*mesh.name === 'Plane' ||*/ mesh.name === 'repro') {
+      for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
+        const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
+        // if (
+        //   Math.abs(newShadingNormals[vtxIx * 3] - -0.8833814859390259) < 0.001 ||
+        //   Math.abs(newShadingNormals[vtxIx * 3] - -0.3950924873352051) < 0.001
+        // ) {
+        //   continue;
+        // }
+        const normal = new THREE.Vector3(
+          newShadingNormals[vtxIx * 3],
+          newShadingNormals[vtxIx * 3 + 1],
+          newShadingNormals[vtxIx * 3 + 2]
+        );
+        const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
+        arrow.userData.nocollide = true;
+        loadedWorld.add(arrow);
+      }
+    }
 
-    const newMesh = new THREE.Mesh(newGeometry, pylonMaterial);
+    const newMesh = new THREE.Mesh(newGeometry, normalMat);
     newMesh.userData.nocollide = true;
     // add the lower-poly mesh to the collision world
     viz.collisionWorldLoadedCbs.push(fpCtx => void fpCtx.addTriMesh(mesh));
