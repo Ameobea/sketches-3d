@@ -1,5 +1,5 @@
 use common::mesh::{
-  linked_mesh::{set_debug_print, set_graphviz_print},
+  linked_mesh::{set_debug_print, set_graphviz_print, DisplacementNormalMethod},
   LinkedMesh, OwnedIndexedMesh,
 };
 use noise::{MultiFractal, NoiseModule};
@@ -77,7 +77,7 @@ fn displace_mesh(mesh: &mut LinkedMesh, method: DisplacementMethod) {
         let displacement_normal = vtx
           .displacement_normal
           .expect("Expected displacement normal to be set by now");
-        vtx.position += displacement_normal * 0.4;
+        vtx.position += displacement_normal * 0.9;
       }
     }
   }
@@ -90,17 +90,20 @@ pub fn tessellate_mesh(
   target_edge_length: f32,
   sharp_edge_threshold_rads: f32,
   displacement_method: u32,
+  displacement_normal_method: u32,
 ) -> *mut TessellateMeshCtx {
   maybe_init();
 
   let displacement_method = DisplacementMethod::try_from(displacement_method).unwrap();
+  let displacement_normal_method =
+    DisplacementNormalMethod::try_from(displacement_normal_method).unwrap();
 
   let mut mesh = LinkedMesh::from_raw_indexed(vertices, indices, None, None);
 
   let removed_vert_count = mesh.merge_vertices_by_distance(0.0001);
   info!("Removed {removed_vert_count} vertices from merge by distance");
-  mesh.separate_vertices_and_compute_normals(sharp_edge_threshold_rads);
-  crate::tessellate_mesh(&mut mesh, target_edge_length);
+  mesh.separate_vertices_and_compute_normals(sharp_edge_threshold_rads, displacement_normal_method);
+  crate::tessellate_mesh(&mut mesh, target_edge_length, displacement_normal_method);
 
   displace_mesh(&mut mesh, displacement_method);
 

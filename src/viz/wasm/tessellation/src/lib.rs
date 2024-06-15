@@ -3,7 +3,10 @@
 #[macro_use]
 extern crate log;
 
-use common::mesh::{linked_mesh::Face, LinkedMesh};
+use common::mesh::{
+  linked_mesh::{DisplacementNormalMethod, Face},
+  LinkedMesh,
+};
 use float_ord::FloatOrd;
 
 mod interface;
@@ -27,7 +30,11 @@ fn get_face_has_edge_needing_split(
 }
 
 /// Returns `true` if at least one face was split
-fn tessellate_one_iter(mesh: &mut LinkedMesh, target_edge_length: f32) -> bool {
+fn tessellate_one_iter(
+  mesh: &mut LinkedMesh,
+  target_edge_length: f32,
+  displacement_normal_method: DisplacementNormalMethod,
+) -> bool {
   let face_keys_needing_tessellation: Vec<_> = mesh
     .iter_faces()
     .filter_map(|(face_key, face)| {
@@ -79,7 +86,7 @@ fn tessellate_one_iter(mesh: &mut LinkedMesh, target_edge_length: f32) -> bool {
       continue;
     }
 
-    mesh.split_edge(edge_key);
+    mesh.split_edge(edge_key, displacement_normal_method);
   }
 
   if cfg!(debug_assertions) {
@@ -102,9 +109,13 @@ fn tessellate_one_iter(mesh: &mut LinkedMesh, target_edge_length: f32) -> bool {
   true
 }
 
-fn tessellate_mesh(mesh: &mut LinkedMesh, target_edge_length: f32) {
+fn tessellate_mesh(
+  mesh: &mut LinkedMesh,
+  target_edge_length: f32,
+  displacement_normal_method: DisplacementNormalMethod,
+) {
   loop {
-    let did_split = tessellate_one_iter(mesh, target_edge_length);
+    let did_split = tessellate_one_iter(mesh, target_edge_length, displacement_normal_method);
     if !did_split {
       break;
     }
@@ -117,7 +128,7 @@ fn tessellate_sanity() {
   let vertices = [0., 0., 0., 1., 0., 0., 0., 1., 0.];
 
   let mut mesh = LinkedMesh::from_raw_indexed(&vertices, &indices, None, None);
-  tessellate_mesh(&mut mesh, 0.1);
+  tessellate_mesh(&mut mesh, 0.1, DisplacementNormalMethod::EdgeNormal);
 
   let raw = mesh.to_raw_indexed();
   dbg!(&raw.vertices);

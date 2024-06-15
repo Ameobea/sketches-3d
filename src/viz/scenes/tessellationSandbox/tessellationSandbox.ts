@@ -68,7 +68,7 @@ export const processLoadedScene = async (
   viz.registerBeforeRenderCb(curTimeSeconds => pylonMaterial.setCurTimeSeconds(curTimeSeconds));
   const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
   const normalMat = new THREE.MeshNormalMaterial({
-    side: THREE.DoubleSide,
+    // side: THREE.DoubleSide,
   });
 
   const toAdd: THREE.Object3D[] = [];
@@ -100,14 +100,15 @@ export const processLoadedScene = async (
       throw new Error('Expected indices to be Uint32Array or Uint16Array');
     }
 
-    const targetEdgeLength = 1.5;
+    const targetEdgeLength = 1;
     const sharpEdgeThresholdRads = 1.3;
     const tessCtx = tessellationEngine.tessellate_mesh(
       verts,
       new Uint32Array(indices),
       targetEdgeLength,
       sharpEdgeThresholdRads,
-      2
+      2,
+      0
     );
     const newVerts = tessellationEngine.tessellate_mesh_ctx_get_vertices(tessCtx);
     const newDisplacementNormals = tessellationEngine.tessellate_mesh_ctx_get_displacement_normals(tessCtx);
@@ -122,14 +123,16 @@ export const processLoadedScene = async (
     newGeometry.setAttribute('normal', new THREE.BufferAttribute(newShadingNormals, 3));
     newGeometry.setAttribute('displacementNormal', new THREE.BufferAttribute(newDisplacementNormals, 3));
     newGeometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
-    console.log(newDisplacementNormals, newShadingNormals);
+    // if (mesh.name === 'woah') {
+    //   console.log(newDisplacementNormals);
+    // }
 
-    if (mesh.name === 'Cube008') {
+    if (mesh.name === 'woah') {
       for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
         const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
         // if (
-        //   Math.abs(newShadingNormals[vtxIx * 3] - -0.8833814859390259) < 0.001 ||
-        //   Math.abs(newShadingNormals[vtxIx * 3] - -0.3950924873352051) < 0.001
+        //   Math.abs(newDisplacementNormals[vtxIx * 3] - -0.18689574301242828) < 0.001 ||
+        //   Math.abs(newDisplacementNormals[vtxIx * 3] - -0.04491600766777992) < 0.001
         // ) {
         //   continue;
         // }
@@ -144,7 +147,7 @@ export const processLoadedScene = async (
       }
     }
 
-    const newMesh = new THREE.Mesh(newGeometry, mesh.name === 'repro' ? normalMat : pylonMaterial);
+    const newMesh = new THREE.Mesh(newGeometry, mesh.name === 'woah' ? normalMat : pylonMaterial);
     // newMesh.visible = mesh.name === 'repro2';
     newMesh.castShadow = true;
     newMesh.receiveShadow = true;
