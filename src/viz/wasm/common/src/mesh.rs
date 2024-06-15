@@ -3,6 +3,7 @@ use nalgebra::Vector3;
 pub mod linked_mesh;
 
 pub use linked_mesh::LinkedMesh;
+pub extern crate nalgebra;
 
 pub struct Triangle {
   a: Vector3<f32>,

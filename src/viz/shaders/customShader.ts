@@ -153,6 +153,7 @@ interface CustomShaderShaders {
   metalnessShader?: string;
   emissiveShader?: string;
   displacementShader?: string;
+  includeNoiseShadersVertex?: boolean;
 }
 
 const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
@@ -226,6 +227,7 @@ export const buildCustomShaderArgs = (
     metalnessShader,
     emissiveShader,
     displacementShader,
+    includeNoiseShadersVertex,
   }: CustomShaderShaders = {},
   {
     antialiasColorShader,
@@ -707,7 +709,7 @@ ${enableFog ? '#include <fog_pars_vertex>' : ''}
 #include <logdepthbuf_pars_vertex>
 #include <clipping_planes_pars_vertex>
 
-${customVertexFragment ? noiseShaders : ''}
+${includeNoiseShadersVertex ? noiseShaders : ''}
 
 ${useGeneratedUVs ? GeneratedUVsFragment : ''}
 

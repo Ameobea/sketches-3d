@@ -39,8 +39,6 @@ build:
 
   just bindgen
   just build-geodesics
-  just opt
-  just copy-files
 
 clean:
   rm -rf build/*

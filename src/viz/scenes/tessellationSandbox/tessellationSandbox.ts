@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { SceneConfig } from '..';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
+import './graphvizDebug';
 
 const locations = {
   spawn: {
@@ -17,7 +18,7 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   _vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
   viz.scene.add(ambientLight);
 
   const loader = new THREE.ImageBitmapLoader();
@@ -36,9 +37,9 @@ export const processLoadedScene = async (
   ]);
   const pylonMaterial = buildCustomShader(
     {
-      color: new THREE.Color(0x898989),
+      color: new THREE.Color(0xbbbbbb),
       metalness: 0.18,
-      roughness: 0.82,
+      roughness: 0.92,
       map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
       uvTransform: new THREE.Matrix3().scale(0.08, 0.08),
       mapDisableDistance: null,
@@ -46,16 +47,17 @@ export const processLoadedScene = async (
       useDisplacementNormals: true,
     },
     {
-      displacementShader: `
-        float getDisplacement(vec3 pos, vec3 normal, float curTimeSeconds) {
-          return 1.8;
-          float displacement = sin(curTimeSeconds) * 0.4;
-          // return displacement;
-          displacement = 0.0;
-          displacement = displacement + sin(curTimeSeconds*2. + pos.x * 2.5) * sin((curTimeSeconds+1.)*2. + pos.y * 2.5) * sin((curTimeSeconds+5.)*2. + pos.z * 2.5) * 0.2;
-          return abs(displacement);
-        }
-      `,
+      // displacementShader: `
+      //   float getDisplacement(vec3 pos, vec3 normal, float curTimeSeconds) {
+      //     // return 1.8;
+      //     float displacement = abs(0.2 * noise(pos.xz * 4.) + 0.5 * noise(pos.xz * 2.) + 1.5 * noise(pos.xz * 1.));
+      //     return displacement;
+      //     // displacement = 0.0;
+      //     displacement = displacement + sin(curTimeSeconds*2. + pos.x * 2.5) * sin((curTimeSeconds+1.)*2. + pos.y * 2.5) * sin((curTimeSeconds+5.)*2. + pos.z * 2.5) * 0.2;
+      //     return abs(displacement);
+      //   }
+      // `,
+      // includeNoiseShadersVertex: true,
     },
     {
       usePackedDiffuseNormalGBA: true,
@@ -65,7 +67,9 @@ export const processLoadedScene = async (
   );
   viz.registerBeforeRenderCb(curTimeSeconds => pylonMaterial.setCurTimeSeconds(curTimeSeconds));
   const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
-  const normalMat = new THREE.MeshNormalMaterial();
+  const normalMat = new THREE.MeshNormalMaterial({
+    side: THREE.DoubleSide,
+  });
 
   const toAdd: THREE.Object3D[] = [];
   const toRemove: THREE.Object3D[] = [];
@@ -77,7 +81,8 @@ export const processLoadedScene = async (
 
     const mesh = obj as THREE.Mesh;
     mesh.material = normalMat;
-    if (mesh.name !== 'repro') {
+    if (mesh.name !== 'repro2') {
+      // toRemove.push(mesh);
       // return;
     }
     console.log(mesh.name);
@@ -90,23 +95,19 @@ export const processLoadedScene = async (
     if (!(verts instanceof Float32Array)) {
       throw new Error('Expected vertices to be Float32Array');
     }
-    const normals = geom.attributes.normal?.array;
-    if (normals && !(normals instanceof Float32Array)) {
-      throw new Error('Expected normals to be Float32Array');
-    }
     const indices = geom.index!.array;
     if (!(indices instanceof Uint32Array) && !(indices instanceof Uint16Array)) {
       throw new Error('Expected indices to be Uint32Array or Uint16Array');
     }
 
-    const targetTriangleArea = 0.1;
+    const targetEdgeLength = 1.5;
     const sharpEdgeThresholdRads = 1.3;
     const tessCtx = tessellationEngine.tessellate_mesh(
       verts,
-      normals ?? new Float32Array(0),
       new Uint32Array(indices),
-      targetTriangleArea,
-      sharpEdgeThresholdRads
+      targetEdgeLength,
+      sharpEdgeThresholdRads,
+      2
     );
     const newVerts = tessellationEngine.tessellate_mesh_ctx_get_vertices(tessCtx);
     const newDisplacementNormals = tessellationEngine.tessellate_mesh_ctx_get_displacement_normals(tessCtx);
@@ -121,8 +122,9 @@ export const processLoadedScene = async (
     newGeometry.setAttribute('normal', new THREE.BufferAttribute(newShadingNormals, 3));
     newGeometry.setAttribute('displacementNormal', new THREE.BufferAttribute(newDisplacementNormals, 3));
     newGeometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
+    console.log(newDisplacementNormals, newShadingNormals);
 
-    if (/*mesh.name === 'Plane' ||*/ mesh.name === 'repro') {
+    if (mesh.name === 'Cube008') {
       for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
         const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
         // if (
@@ -132,9 +134,9 @@ export const processLoadedScene = async (
         //   continue;
         // }
         const normal = new THREE.Vector3(
-          newShadingNormals[vtxIx * 3],
-          newShadingNormals[vtxIx * 3 + 1],
-          newShadingNormals[vtxIx * 3 + 2]
+          newDisplacementNormals[vtxIx * 3],
+          newDisplacementNormals[vtxIx * 3 + 1],
+          newDisplacementNormals[vtxIx * 3 + 2]
         );
         const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
         arrow.userData.nocollide = true;
@@ -142,7 +144,10 @@ export const processLoadedScene = async (
       }
     }
 
-    const newMesh = new THREE.Mesh(newGeometry, normalMat);
+    const newMesh = new THREE.Mesh(newGeometry, mesh.name === 'repro' ? normalMat : pylonMaterial);
+    // newMesh.visible = mesh.name === 'repro2';
+    newMesh.castShadow = true;
+    newMesh.receiveShadow = true;
     newMesh.userData.nocollide = true;
     // add the lower-poly mesh to the collision world
     viz.collisionWorldLoadedCbs.push(fpCtx => void fpCtx.addTriMesh(mesh));
@@ -169,10 +174,32 @@ export const processLoadedScene = async (
     loadedWorld.add(obj);
   }
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 3.5);
-  dirLight.position.set(22, 10, 0);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 4.5);
+  dirLight.position.set(42, 9, 0);
+  dirLight.target.position.set(0, 0, 0);
+
+  dirLight.castShadow = true;
+  dirLight.shadow.needsUpdate = true;
+  dirLight.shadow.autoUpdate = true;
+  dirLight.shadow.mapSize.width = 2048 * 1;
+  dirLight.shadow.mapSize.height = 2048 * 1;
+  dirLight.shadow.bias = -0.000001;
+
+  dirLight.shadow.camera.near = 8;
+  dirLight.shadow.camera.far = 80;
+  dirLight.shadow.camera.left = -80;
+  dirLight.shadow.camera.right = 80;
+  dirLight.shadow.camera.top = 20;
+  dirLight.shadow.camera.bottom = -20;
+
+  dirLight.shadow.camera.updateProjectionMatrix();
+  dirLight.shadow.camera.updateMatrixWorld();
+
+  // const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
+  // viz.scene.add(shadowCameraHelper);
 
   viz.scene.add(dirLight);
+  viz.scene.add(dirLight.target);
 
   return {
     spawnLocation: 'spawn',

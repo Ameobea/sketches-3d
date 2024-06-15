@@ -3,18 +3,36 @@
 #[macro_use]
 extern crate log;
 
-use common::mesh::LinkedMesh;
+use common::mesh::{linked_mesh::Face, LinkedMesh};
 use float_ord::FloatOrd;
 
 mod interface;
 
+fn get_face_has_edge_needing_split(
+  face: &Face,
+  mesh: &LinkedMesh,
+  target_edge_length: f32,
+) -> bool {
+  face
+    .edges
+    .iter()
+    .map(|&edge_key| &mesh.edges[edge_key])
+    .any(|edge| {
+      let length = edge.length(&mesh.vertices);
+      let split_length = target_edge_length / 2.;
+      // if the post-split length would be closer to the target length than the
+      // current length, then we need to split this edge
+      (length - split_length).abs() > (length - target_edge_length).abs()
+    })
+}
+
 /// Returns `true` if at least one face was split
-fn tessellate_one_iter(mesh: &mut LinkedMesh, target_triangle_area: f32) -> bool {
+fn tessellate_one_iter(mesh: &mut LinkedMesh, target_edge_length: f32) -> bool {
   let face_keys_needing_tessellation: Vec<_> = mesh
     .iter_faces()
     .filter_map(|(face_key, face)| {
-      let area = face.area(&mesh.vertices);
-      if area > target_triangle_area {
+      let has_edge_needing_split = get_face_has_edge_needing_split(face, mesh, target_edge_length);
+      if has_edge_needing_split {
         Some(face_key)
       } else {
         None
@@ -34,8 +52,8 @@ fn tessellate_one_iter(mesh: &mut LinkedMesh, target_triangle_area: f32) -> bool
     };
 
     // Check again to see if the face still needs tessellation
-    let area = face.area(&mesh.vertices);
-    if area <= target_triangle_area {
+    let still_needs_split = get_face_has_edge_needing_split(face, mesh, target_edge_length);
+    if !still_needs_split {
       continue;
     }
 
@@ -64,16 +82,18 @@ fn tessellate_one_iter(mesh: &mut LinkedMesh, target_triangle_area: f32) -> bool
     mesh.split_edge(edge_key);
   }
 
-  // TODO DEBUG REMOVE
-  for edge_key in mesh.edges.keys() {
-    let edge = &mesh.edges[edge_key];
-    for &face_key in &edge.faces {
-      let face = &mesh.faces[face_key];
-      for vtx_key in edge.vertices {
-        if !face.vertices.contains(&vtx_key) {
-          panic!(
-          "Edge doesn't contain vertex in face; edge={edge:?}; face={face:?}; vtx_key={vtx_key:?}",
-        );
+  if cfg!(debug_assertions) {
+    for edge_key in mesh.edges.keys() {
+      let edge = &mesh.edges[edge_key];
+      for &face_key in &edge.faces {
+        let face = &mesh.faces[face_key];
+        for vtx_key in edge.vertices {
+          if !face.vertices.contains(&vtx_key) {
+            panic!(
+              "Edge doesn't contain vertex in face; edge={edge:?}; face={face:?}; \
+               vtx_key={vtx_key:?}",
+            );
+          }
         }
       }
     }
@@ -82,9 +102,9 @@ fn tessellate_one_iter(mesh: &mut LinkedMesh, target_triangle_area: f32) -> bool
   true
 }
 
-fn tessellate_mesh(mesh: &mut LinkedMesh, target_triangle_area: f32) {
+fn tessellate_mesh(mesh: &mut LinkedMesh, target_edge_length: f32) {
   loop {
-    let did_split = tessellate_one_iter(mesh, target_triangle_area);
+    let did_split = tessellate_one_iter(mesh, target_edge_length);
     if !did_split {
       break;
     }

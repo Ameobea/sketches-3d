@@ -187,14 +187,6 @@
     width: 100%;
   }
 
-  h2 {
-    font-size: 48px;
-    font-weight: 500;
-    position: absolute;
-    top: 50px;
-    letter-spacing: 1.8px;
-  }
-
   :global(.slider-input label) {
     font-size: 14px;
     font-weight: 500;

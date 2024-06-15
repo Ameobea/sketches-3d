@@ -124,6 +124,7 @@ pub struct Edge {
   pub vertices: [VertexKey; 2],
   pub faces: SmallVec<[FaceKey; 2]>,
   pub sharp: bool,
+  pub displacement_normal: Option<Vec3>,
 }
 
 impl Edge {
@@ -159,8 +160,14 @@ fn sort_edge(v0: VertexKey, v1: VertexKey) -> [VertexKey; 2] {
   }
 }
 
+struct ComputedSmoothFanNormal {
+  pub normal: Vec3,
+  pub total_angle: f32,
+}
+
 struct NormalAcc {
   pub accumulated_normal: Vec3,
+  pub total_angle: f32,
 }
 
 impl NormalAcc {
@@ -178,24 +185,30 @@ impl NormalAcc {
 
     let weighted_normal = face_normal * angle_at_vtx;
     self.accumulated_normal += weighted_normal;
+    self.total_angle += angle_at_vtx;
     weighted_normal
   }
 
-  pub fn get(&self) -> Vec3 {
-    self.accumulated_normal.normalize()
+  pub fn get(&self) -> ComputedSmoothFanNormal {
+    ComputedSmoothFanNormal {
+      normal: self.accumulated_normal.normalize(),
+      total_angle: self.total_angle,
+    }
   }
 
   fn new() -> Self {
     Self {
       accumulated_normal: Vec3::zeros(),
+      total_angle: 0.0,
     }
   }
 }
 
-struct VertexToSplit {
+struct SmoothFan {
   pub old_key: VertexKey,
   pub face_keys: SmallVec<[FaceKey; 8]>,
   pub normal: Vec3,
+  pub total_corner_angle: f32,
 }
 
 impl LinkedMesh {
@@ -246,7 +259,7 @@ impl LinkedMesh {
       let b = vertex_keys_by_ix[b_ix];
       let c = vertex_keys_by_ix[c_ix];
 
-      mesh.add_face([a, b, c]);
+      mesh.add_face([a, b, c], [None; 3]);
     }
 
     mesh
@@ -496,9 +509,13 @@ impl LinkedMesh {
     let vertices =
       unsafe { std::slice::from_raw_parts(vertices.as_ptr() as *const Vec3, vertices.len() / 3) };
     let normals = if let Some(normals) = normals {
-      Some(unsafe {
-        std::slice::from_raw_parts(normals.as_ptr() as *const Vec3, normals.len() / 3)
-      })
+      if normals.is_empty() {
+        None
+      } else {
+        Some(unsafe {
+          std::slice::from_raw_parts(normals.as_ptr() as *const Vec3, normals.len() / 3)
+        })
+      }
     } else {
       None
     };
@@ -512,10 +529,11 @@ impl LinkedMesh {
     old_vtx_key: VertexKey,
     new_vtx_key: VertexKey,
   ) {
-    let (edge_indices_to_alter, old_edge_keys, pair_vtx_keys) = {
+    let (edge_indices_to_alter, old_edge_keys, pair_vtx_keys, edge_displacement_normals) = {
       let face = &mut self.faces[face_key];
       let mut edge_indices_to_alter: [usize; 2] = [usize::MAX, usize::MAX];
       let mut pair_vtx_keys: [VertexKey; 2] = [VertexKey::null(), VertexKey::null()];
+      let mut edge_displacement_normals: [Option<Vec3>; 2] = [None, None];
       let mut old_edge_keys: [EdgeKey; 2] = [EdgeKey::null(), EdgeKey::null()];
 
       for (edge_ix, &edge_key) in face.edges.iter().enumerate() {
@@ -529,6 +547,7 @@ impl LinkedMesh {
             } else {
               edge.vertices[0]
             };
+            edge_displacement_normals[0] = edge.displacement_normal;
           } else {
             edge_indices_to_alter[1] = edge_ix;
             old_edge_keys[1] = edge_key;
@@ -537,12 +556,18 @@ impl LinkedMesh {
             } else {
               edge.vertices[0]
             };
+            edge_displacement_normals[1] = edge.displacement_normal;
             break;
           }
         }
       }
 
-      (edge_indices_to_alter, old_edge_keys, pair_vtx_keys)
+      (
+        edge_indices_to_alter,
+        old_edge_keys,
+        pair_vtx_keys,
+        edge_displacement_normals,
+      )
     };
 
     // remove this face from the old edges and delete them if they no longer
@@ -560,8 +585,14 @@ impl LinkedMesh {
       }
     }
 
-    let new_edge_key_0 = self.get_or_create_edge([new_vtx_key, pair_vtx_keys[0]]);
-    let new_edge_key_1 = self.get_or_create_edge([new_vtx_key, pair_vtx_keys[1]]);
+    let new_edge_key_0 = self.get_or_create_edge(
+      [new_vtx_key, pair_vtx_keys[0]],
+      edge_displacement_normals[0],
+    );
+    let new_edge_key_1 = self.get_or_create_edge(
+      [new_vtx_key, pair_vtx_keys[1]],
+      edge_displacement_normals[1],
+    );
     self.edges[new_edge_key_0].faces.push(face_key);
     self.edges[new_edge_key_1].faces.push(face_key);
 
@@ -580,8 +611,19 @@ impl LinkedMesh {
     face.vertices[vtx_key_ix_to_alter] = new_vtx_key;
   }
 
-  fn mark_edge_sharpness(&mut self, sharp_edge_threshold_rads: f32) {
+  fn mark_edge_sharpness_and_displacement_normals(&mut self, sharp_edge_threshold_rads: f32) {
     for edge in self.edges.values_mut() {
+      let edge_displacement_normal = edge
+        .faces
+        .iter()
+        .map(|&face_key| {
+          let face = &self.faces[face_key];
+          face.normal(&self.vertices)
+        })
+        .sum::<Vec3>()
+        .normalize();
+      edge.displacement_normal = Some(edge_displacement_normal);
+
       // Border edges as well as edges belonging to more than 3 faces are
       // automatically sharp
       if edge.faces.len() != 2 {
@@ -603,7 +645,8 @@ impl LinkedMesh {
   /// into `smooth_fan_faces`.
   ///
   /// Returns the normal of the smooth fan on `vtx_key`, weighted by the angle
-  /// between the each face's edges that meet at `vtx_key`.
+  /// between the each face's edges that meet at `vtx_key` along with the sum of
+  /// the angles or all corners that make up the fan.
   fn walk_one_smooth_fan(
     &mut self,
     vtx_key: VertexKey,
@@ -611,7 +654,7 @@ impl LinkedMesh {
     visited_faces: &mut SmallVec<[FaceKey; 16]>,
     smooth_fan_faces: &mut SmallVec<[FaceKey; 16]>,
     vtx_normal_acc: &mut NormalAcc,
-  ) -> Vec3 {
+  ) -> ComputedSmoothFanNormal {
     let vtx = &self.vertices[vtx_key];
 
     let mut fan_normal_acc = NormalAcc::new();
@@ -756,7 +799,7 @@ impl LinkedMesh {
   /// normal should be used for displacement.
   fn separate_and_compute_normals_for_vertex(
     &mut self,
-    vertices_to_split: &mut Vec<VertexToSplit>,
+    smooth_fans_acc: &mut Vec<SmoothFan>,
     vtx_key: VertexKey,
   ) -> Vec3 {
     let mut visited_edges = bitarr![0; 1024];
@@ -784,13 +827,16 @@ impl LinkedMesh {
           vtx_normal_acc.add_face(vtx_key, face_key, &self.vertices, &self.faces);
         }
       }
-      return vtx_normal_acc.get();
+      let computed_normal = vtx_normal_acc.get();
+      let vtx = &mut self.vertices[vtx_key];
+      vtx.shading_normal = Some(computed_normal.normal);
+      return computed_normal.normal;
     }
 
     loop {
       let visited_edges = &mut visited_edges[..edge_count];
 
-      let fan_normal = self.walk_one_smooth_fan(
+      let computed_fan_normal = self.walk_one_smooth_fan(
         vtx_key,
         visited_edges,
         &mut visited_faces,
@@ -803,21 +849,64 @@ impl LinkedMesh {
         // All faces from this fan can retain the same vertex, and we can assign
         // it the computed normal directly
         let vtx = &mut self.vertices[vtx_key];
-        vtx.shading_normal = Some(fan_normal);
+        vtx.shading_normal = Some(computed_fan_normal.normal);
 
         break;
       }
 
-      vertices_to_split.push(VertexToSplit {
+      smooth_fans_acc.push(SmoothFan {
         old_key: vtx_key,
         face_keys: smooth_fan_faces.iter().copied().collect(),
-        normal: fan_normal,
+        normal: computed_fan_normal.normal,
+        total_corner_angle: computed_fan_normal.total_angle,
       });
 
       smooth_fan_faces.clear();
     }
 
+    if cfg!(debug_assertions) && self.vertices[vtx_key].shading_normal.is_none() {
+      panic!("Vertex {vtx_key:?} has no shading normal after walking smooth fans",);
+    }
+
+    vtx_normal_acc.get().normal
+  }
+
+  fn compute_displacement_normal(&mut self, vtx_key: VertexKey) -> ComputedSmoothFanNormal {
+    let mut visited_edges = bitarr![0; 1024];
+    let mut visited_faces = SmallVec::<[_; 16]>::new();
+    let mut smooth_fan_faces: SmallVec<[FaceKey; 16]> = SmallVec::new();
+    let mut vtx_normal_acc = NormalAcc::new();
+
+    loop {
+      let visited_edges = &mut visited_edges[..self.vertices[vtx_key].edges.len()];
+
+      self.walk_one_smooth_fan(
+        vtx_key,
+        visited_edges,
+        &mut visited_faces,
+        &mut smooth_fan_faces,
+        &mut vtx_normal_acc,
+      );
+
+      let all_faces_visited = visited_edges.all();
+      if all_faces_visited {
+        break;
+      }
+
+      smooth_fan_faces.clear();
+    }
+
     vtx_normal_acc.get()
+  }
+
+  /// Computes displacement normals for all vertices, replacing any existing
+  /// values.
+  pub fn compute_displacement_normals(&mut self) {
+    let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
+    for vtx_key in all_vtx_keys {
+      let displacement_normal = self.compute_displacement_normal(vtx_key).normal;
+      self.vertices[vtx_key].displacement_normal = Some(displacement_normal);
+    }
   }
 
   /// Does something akin to "shade auto-smooth" from Blender.  For each edge in
@@ -831,7 +920,7 @@ impl LinkedMesh {
   /// Heavily inspired by the Blender implementation:
   /// https://github.com/blender/blender/blob/a4aa5faa2008472413403600382f419280ac8b20/source/blender/bmesh/intern/bmesh_mesh_normals.cc#L1081
   pub fn separate_vertices_and_compute_normals(&mut self, sharp_edge_threshold_rads: f32) {
-    self.mark_edge_sharpness(sharp_edge_threshold_rads);
+    self.mark_edge_sharpness_and_displacement_normals(sharp_edge_threshold_rads);
 
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     // For each vertex in the mesh, we partition its edges into "smooth fans"
@@ -844,22 +933,22 @@ impl LinkedMesh {
     // For each smooth fan, a duplicate vertex is created which gets a normal
     // computed by a weighted average of the face normals of all faces in the
     // fan.
-    let mut vertices_to_split = Vec::new();
+    let mut smooth_fans = Vec::new();
     for vtx_key in all_vtx_keys {
-      let displacement_normal =
-        self.separate_and_compute_normals_for_vertex(&mut vertices_to_split, vtx_key);
+      let computed_normal = self.separate_and_compute_normals_for_vertex(&mut smooth_fans, vtx_key);
       let vtx = &mut self.vertices[vtx_key];
-      vtx.displacement_normal = Some(displacement_normal);
+      vtx.displacement_normal = Some(computed_normal);
     }
 
     // We have to wait until we've walked all the fans for the mesh before splitting
     // vertices because if we do it dynamically while walking, the mesh topology
     // will get torn up and make smooth fan walking incorrect.
-    for VertexToSplit {
+    for SmoothFan {
       old_key,
       face_keys,
       normal,
-    } in vertices_to_split
+      total_corner_angle: _,
+    } in smooth_fans
     {
       // We have to create a new vertex for the faces that are part of the
       // smooth fan so that it can have a distinct normal
@@ -882,10 +971,18 @@ impl LinkedMesh {
 
   pub fn to_raw_indexed(&self) -> OwnedIndexedMesh {
     let mut vertices = Vec::with_capacity(self.vertices.len() * 3);
-    let mut shading_normals = None;
-    let mut displacement_normals = None;
+    let mut shading_normals = Vec::new();
+    let mut displacement_normals = Vec::new();
     let mut indices = Vec::with_capacity(self.faces.len() * 3);
 
+    let has_normals = self
+      .vertices
+      .values()
+      .any(|vtx| vtx.shading_normal.is_some() || vtx.displacement_normal.is_some());
+    if has_normals {
+      shading_normals = Vec::with_capacity(self.vertices.len() * 3);
+      displacement_normals = Vec::with_capacity(self.vertices.len() * 3);
+    }
     let mut cur_vert_ix = 0;
     let mut seen_vertex_keys =
       FxHashMap::with_capacity_and_hasher(self.vertices.len(), fxhash::FxBuildHasher::default());
@@ -897,14 +994,14 @@ impl LinkedMesh {
           let ix = cur_vert_ix;
           vertices.extend(vert.position.iter());
           if let Some(shading_normal) = vert.shading_normal {
-            let shading_normals =
-              shading_normals.get_or_insert_with(|| Vec::with_capacity(self.vertices.len() * 3));
             shading_normals.extend(shading_normal.iter());
+          } else if has_normals {
+            panic!("Missing shading normal for vertex {vert_key:?}");
           }
           if let Some(displacement_normal) = vert.displacement_normal {
-            let displacement_normals = displacement_normals
-              .get_or_insert_with(|| Vec::with_capacity(self.vertices.len() * 3));
             displacement_normals.extend(displacement_normal.iter());
+          } else if has_normals {
+            panic!("Missing displacement normal for vertex {vert_key:?}");
           }
           cur_vert_ix += 1;
           ix
@@ -915,8 +1012,16 @@ impl LinkedMesh {
 
     OwnedIndexedMesh {
       vertices,
-      shading_normals,
-      displacement_normals,
+      shading_normals: if has_normals {
+        Some(shading_normals)
+      } else {
+        None
+      },
+      displacement_normals: if has_normals {
+        Some(displacement_normals)
+      } else {
+        None
+      },
       indices,
       transform: self.transform.clone(),
     }
@@ -925,8 +1030,10 @@ impl LinkedMesh {
   /// Splits an edge in half, creating a new vertex in the middle.  All faces
   /// that include this edge are split into two faces with new edges being
   /// created for each.
-  pub fn split_edge(&mut self, edge_key_to_split: EdgeKey) {
-    let (edge_id_to_split, vm_position, faces_to_split) = {
+  ///
+  /// Returns the key of the new vertex.
+  pub fn split_edge(&mut self, edge_key_to_split: EdgeKey) -> VertexKey {
+    let (edge_id_to_split, edge_displacement_normal, vm_position, faces_to_split) = {
       let edge = self.edges.get(edge_key_to_split).unwrap_or_else(|| {
         panic!("Tried to split edge that doesn't exist; key={edge_key_to_split:?}")
       });
@@ -938,27 +1045,32 @@ impl LinkedMesh {
 
       let faces_to_split = edge.faces.clone();
 
-      (edge_id_to_split, vm_position, faces_to_split)
+      (
+        edge_id_to_split,
+        edge.displacement_normal,
+        vm_position,
+        faces_to_split,
+      )
     };
 
-    let (displacement_normal, shading_normal) = {
+    let shading_normal = {
       let v0 = &self.vertices[edge_id_to_split[0]];
       let v1 = &self.vertices[edge_id_to_split[1]];
-      let displacement_normal = v0
-        .displacement_normal
-        .zip(v1.displacement_normal)
-        .map(|(n0, n1)| (n0 + n1).normalize());
-      let shading_normal = v0
-        .shading_normal
+      v0.shading_normal
         .zip(v1.shading_normal)
-        .map(|(n0, n1)| (n0 + n1).normalize());
-
-      (displacement_normal, shading_normal)
+        .map(|(n0, n1)| (n0 + n1).normalize())
     };
 
     let middle_vertex_key = self.vertices.insert(Vertex {
       position: vm_position,
-      displacement_normal,
+      // We set the displacement normal of the new vertex to be the same as the edge's displacement
+      // normal.
+      //
+      // The other option here is average the displacement normals of the two vertices of the edge
+      // being split.  However, this will cause the normals of other unrelated faces to be averaged
+      // into this new vertex.  That leads to a sort of inflation effect where the straight edges
+      // will become curved and "blown out".
+      displacement_normal: edge_displacement_normal,
       shading_normal,
       edges: SmallVec::new(),
     });
@@ -967,42 +1079,95 @@ impl LinkedMesh {
     let mut new_faces = SmallVec::<[_; 32]>::new();
     for face_key in faces_to_split {
       let old_face = &self.faces[face_key];
-      let [v0_ix, v1_ix, v2_ix] = old_face.vertices;
+      let old_face_normal = old_face.normal(&self.vertices);
+      let [v0_key, v1_key, v2_key] = old_face.vertices;
       let edge_ids: [[VertexKey; 2]; 3] = [
-        sort_edge(v0_ix, v1_ix),
-        sort_edge(v1_ix, v2_ix),
-        sort_edge(v2_ix, v0_ix),
+        sort_edge(v0_key, v1_key),
+        sort_edge(v1_key, v2_key),
+        sort_edge(v2_key, v0_key),
+      ];
+      let edge_displacement_normals = [
+        self.edges[old_face.edges[0]].displacement_normal,
+        self.edges[old_face.edges[1]].displacement_normal,
+        self.edges[old_face.edges[2]].displacement_normal,
       ];
       let split_edge_ix = edge_ids
         .iter()
         .position(|&id| id == edge_id_to_split)
         .unwrap();
-      let (new_face_0_verts, new_face_1_verts) = match split_edge_ix {
+      let (
+        (new_face_0_verts, new_face_0_edge_displacement_normals),
+        (new_face_1_verts, new_face_1_edge_displacement_normals),
+      ) = match split_edge_ix {
         0 => (
-          [v0_ix, middle_vertex_key, v2_ix],
-          [middle_vertex_key, v1_ix, v2_ix],
+          (
+            [v0_key, middle_vertex_key, v2_key],
+            [
+              edge_displacement_normals[0],
+              Some(old_face_normal),
+              edge_displacement_normals[2],
+            ],
+          ),
+          (
+            [middle_vertex_key, v1_key, v2_key],
+            [
+              edge_displacement_normals[0],
+              edge_displacement_normals[1],
+              Some(old_face_normal),
+            ],
+          ),
         ),
         1 => (
-          [v0_ix, v1_ix, middle_vertex_key],
-          [v0_ix, middle_vertex_key, v2_ix],
+          (
+            [v0_key, v1_key, middle_vertex_key],
+            [
+              edge_displacement_normals[0],
+              edge_displacement_normals[1],
+              Some(old_face_normal),
+            ],
+          ),
+          (
+            [v0_key, middle_vertex_key, v2_key],
+            [
+              Some(old_face_normal),
+              edge_displacement_normals[1],
+              edge_displacement_normals[2],
+            ],
+          ),
         ),
         2 => (
-          [v0_ix, v1_ix, middle_vertex_key],
-          [v1_ix, v2_ix, middle_vertex_key],
+          (
+            [v0_key, v1_key, middle_vertex_key],
+            [
+              edge_displacement_normals[0],
+              Some(old_face_normal),
+              edge_displacement_normals[2],
+            ],
+          ),
+          (
+            [v1_key, v2_key, middle_vertex_key],
+            [
+              edge_displacement_normals[1],
+              edge_displacement_normals[2],
+              Some(old_face_normal),
+            ],
+          ),
         ),
         _ => unreachable!(),
       };
-      new_faces.push(new_face_0_verts);
-      new_faces.push(new_face_1_verts);
+      new_faces.push((new_face_0_verts, new_face_0_edge_displacement_normals));
+      new_faces.push((new_face_1_verts, new_face_1_edge_displacement_normals));
 
       self.remove_face(face_key);
     }
 
-    for verts in new_faces {
-      self.add_face(verts);
+    for (verts, edge_displacement_normals) in new_faces {
+      self.add_face(verts, edge_displacement_normals);
     }
 
     self.edges.remove(edge_key_to_split);
+
+    middle_vertex_key
   }
 
   /// Returns the key of the edge between the two provided vertices if it exists
@@ -1010,7 +1175,11 @@ impl LinkedMesh {
   ///
   /// If a new edge was created, the vertices of the edge will be updated to
   /// reference it.
-  fn get_or_create_edge(&mut self, vertices: [VertexKey; 2]) -> EdgeKey {
+  fn get_or_create_edge(
+    &mut self,
+    vertices: [VertexKey; 2],
+    displacement_normal: Option<Vec3>,
+  ) -> EdgeKey {
     let sorted_vertex_keys = sort_edge(vertices[0], vertices[1]);
     match self.vertices[vertices[0]].edges.iter().find(|&&edge_key| {
       let edge = &self.edges[edge_key];
@@ -1022,6 +1191,7 @@ impl LinkedMesh {
           vertices: sorted_vertex_keys,
           faces: SmallVec::new(),
           sharp: false,
+          displacement_normal,
         });
 
         for &vert_key in &vertices {
@@ -1034,7 +1204,11 @@ impl LinkedMesh {
     }
   }
 
-  fn add_face(&mut self, vertices: [VertexKey; 3]) -> Option<FaceKey> {
+  fn add_face(
+    &mut self,
+    vertices: [VertexKey; 3],
+    edge_displacement_normals: [Option<Vec3>; 3],
+  ) -> Option<FaceKey> {
     let edges = [
       sort_edge(vertices[0], vertices[1]),
       sort_edge(vertices[1], vertices[2]),
@@ -1042,7 +1216,7 @@ impl LinkedMesh {
     ];
     let mut edge_keys: [EdgeKey; 3] = [EdgeKey::null(); 3];
     for (i, &[v0, v1]) in edges.iter().enumerate() {
-      let edge_key = self.get_or_create_edge([v0, v1]);
+      let edge_key = self.get_or_create_edge([v0, v1], edge_displacement_normals[i]);
       edge_keys[i] = edge_key;
     }
 
