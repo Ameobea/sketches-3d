@@ -65,7 +65,7 @@ fn displace_mesh(mesh: &mut LinkedMesh, method: DisplacementMethod) {
       let noise = noise::Fbm::new().set_octaves(4);
       for (_vtx_key, vtx) in &mut mesh.vertices {
         let pos = vtx.position * 0.2;
-        let noise = noise.get([pos.x, pos.y, pos.z]).abs();
+        let noise = noise.get([pos.x, pos.y, pos.z]); //.abs();
         let displacement_normal = vtx
           .displacement_normal
           .expect("Expected displacement normal to be set by now");
@@ -77,7 +77,7 @@ fn displace_mesh(mesh: &mut LinkedMesh, method: DisplacementMethod) {
         let displacement_normal = vtx
           .displacement_normal
           .expect("Expected displacement normal to be set by now");
-        vtx.position += displacement_normal * 0.9;
+        vtx.position += displacement_normal * 0.3;
       }
     }
   }
@@ -102,10 +102,15 @@ pub fn tessellate_mesh(
 
   let removed_vert_count = mesh.merge_vertices_by_distance(0.0001);
   info!("Removed {removed_vert_count} vertices from merge by distance");
-  mesh.separate_vertices_and_compute_normals(sharp_edge_threshold_rads, displacement_normal_method);
+
+  mesh.mark_edge_sharpness_and_displacement_normals(sharp_edge_threshold_rads);
+  mesh.compute_vertex_displacement_normals();
   crate::tessellate_mesh(&mut mesh, target_edge_length, displacement_normal_method);
 
   displace_mesh(&mut mesh, displacement_method);
+
+  mesh.mark_edge_sharpness_and_displacement_normals(sharp_edge_threshold_rads);
+  mesh.separate_vertices_and_compute_normals();
 
   let ctx = Box::new(TessellateMeshCtx {
     new_mesh: mesh.to_raw_indexed(),

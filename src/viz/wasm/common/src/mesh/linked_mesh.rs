@@ -284,7 +284,7 @@ impl LinkedMesh {
       let b = vertex_keys_by_ix[b_ix];
       let c = vertex_keys_by_ix[c_ix];
 
-      mesh.add_face([a, b, c], [None; 3]);
+      mesh.add_face([a, b, c], [None; 3], [false; 3]);
     }
 
     mesh
@@ -613,10 +613,12 @@ impl LinkedMesh {
     let new_edge_key_0 = self.get_or_create_edge(
       [new_vtx_key, pair_vtx_keys[0]],
       edge_displacement_normals[0],
+      false,
     );
     let new_edge_key_1 = self.get_or_create_edge(
       [new_vtx_key, pair_vtx_keys[1]],
       edge_displacement_normals[1],
+      false,
     );
     self.edges[new_edge_key_0].faces.push(face_key);
     self.edges[new_edge_key_1].faces.push(face_key);
@@ -636,7 +638,7 @@ impl LinkedMesh {
     face.vertices[vtx_key_ix_to_alter] = new_vtx_key;
   }
 
-  fn mark_edge_sharpness_and_displacement_normals(&mut self, sharp_edge_threshold_rads: f32) {
+  pub fn mark_edge_sharpness_and_displacement_normals(&mut self, sharp_edge_threshold_rads: f32) {
     for edge in self.edges.values_mut() {
       let edge_displacement_normal = edge
         .faces
@@ -662,7 +664,7 @@ impl LinkedMesh {
         self.faces[face1].normal(&self.vertices),
       ];
       let angle = normal0.angle(&normal1);
-      edge.sharp = angle > sharp_edge_threshold_rads;
+      edge.sharp |= angle > sharp_edge_threshold_rads;
     }
   }
 
@@ -926,7 +928,7 @@ impl LinkedMesh {
 
   /// Computes displacement normals for all vertices, replacing any existing
   /// values.
-  pub fn compute_displacement_normals(&mut self) {
+  pub fn compute_vertex_displacement_normals(&mut self) {
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     for vtx_key in all_vtx_keys {
       let displacement_normal = self.compute_displacement_normal(vtx_key).normal;
@@ -944,13 +946,7 @@ impl LinkedMesh {
   ///
   /// Heavily inspired by the Blender implementation:
   /// https://github.com/blender/blender/blob/a4aa5faa2008472413403600382f419280ac8b20/source/blender/bmesh/intern/bmesh_mesh_normals.cc#L1081
-  pub fn separate_vertices_and_compute_normals(
-    &mut self,
-    sharp_edge_threshold_rads: f32,
-    displacement_normal_method: DisplacementNormalMethod,
-  ) {
-    self.mark_edge_sharpness_and_displacement_normals(sharp_edge_threshold_rads);
-
+  pub fn separate_vertices_and_compute_normals(&mut self) {
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     // For each vertex in the mesh, we partition its edges into "smooth fans"
     // (as Blender calls them).  These are group of edges that all share the
@@ -1139,13 +1135,18 @@ impl LinkedMesh {
         self.edges[old_face.edges[1]].displacement_normal,
         self.edges[old_face.edges[2]].displacement_normal,
       ];
+      let edge_sharpnesses = [
+        self.edges[old_face.edges[0]].sharp,
+        self.edges[old_face.edges[1]].sharp,
+        self.edges[old_face.edges[2]].sharp,
+      ];
       let split_edge_ix = edge_ids
         .iter()
         .position(|&id| id == edge_id_to_split)
         .unwrap();
       let (
-        (new_face_0_verts, new_face_0_edge_displacement_normals),
-        (new_face_1_verts, new_face_1_edge_displacement_normals),
+        (new_face_0_verts, new_face_0_edge_displacement_normals, new_face_0_edge_sharpnesses),
+        (new_face_1_verts, new_face_1_edge_displacement_normals, new_face_1_edge_sharpnesses),
       ) = match split_edge_ix {
         0 => (
           (
@@ -1155,6 +1156,7 @@ impl LinkedMesh {
               Some(old_face_normal),
               edge_displacement_normals[2],
             ],
+            [edge_sharpnesses[0], false, edge_sharpnesses[2]],
           ),
           (
             [middle_vertex_key, v1_key, v2_key],
@@ -1163,6 +1165,7 @@ impl LinkedMesh {
               edge_displacement_normals[1],
               Some(old_face_normal),
             ],
+            [edge_sharpnesses[0], edge_sharpnesses[1], false],
           ),
         ),
         1 => (
@@ -1173,6 +1176,7 @@ impl LinkedMesh {
               edge_displacement_normals[1],
               Some(old_face_normal),
             ],
+            [edge_sharpnesses[0], edge_sharpnesses[1], false],
           ),
           (
             [v0_key, middle_vertex_key, v2_key],
@@ -1181,6 +1185,7 @@ impl LinkedMesh {
               edge_displacement_normals[1],
               edge_displacement_normals[2],
             ],
+            [false, edge_sharpnesses[1], edge_sharpnesses[2]],
           ),
         ),
         2 => (
@@ -1191,6 +1196,7 @@ impl LinkedMesh {
               Some(old_face_normal),
               edge_displacement_normals[2],
             ],
+            [edge_sharpnesses[0], false, edge_sharpnesses[2]],
           ),
           (
             [v1_key, v2_key, middle_vertex_key],
@@ -1199,18 +1205,27 @@ impl LinkedMesh {
               edge_displacement_normals[2],
               Some(old_face_normal),
             ],
+            [edge_sharpnesses[1], edge_sharpnesses[2], false],
           ),
         ),
         _ => unreachable!(),
       };
-      new_faces.push((new_face_0_verts, new_face_0_edge_displacement_normals));
-      new_faces.push((new_face_1_verts, new_face_1_edge_displacement_normals));
+      new_faces.push((
+        new_face_0_verts,
+        new_face_0_edge_displacement_normals,
+        new_face_0_edge_sharpnesses,
+      ));
+      new_faces.push((
+        new_face_1_verts,
+        new_face_1_edge_displacement_normals,
+        new_face_1_edge_sharpnesses,
+      ));
 
       self.remove_face(face_key);
     }
 
-    for (verts, edge_displacement_normals) in new_faces {
-      self.add_face(verts, edge_displacement_normals);
+    for (verts, edge_displacement_normals, edge_sharpnesses) in new_faces {
+      self.add_face(verts, edge_displacement_normals, edge_sharpnesses);
     }
 
     self.edges.remove(edge_key_to_split);
@@ -1227,6 +1242,7 @@ impl LinkedMesh {
     &mut self,
     vertices: [VertexKey; 2],
     displacement_normal: Option<Vec3>,
+    sharp: bool,
   ) -> EdgeKey {
     let sorted_vertex_keys = sort_edge(vertices[0], vertices[1]);
     match self.vertices[vertices[0]].edges.iter().find(|&&edge_key| {
@@ -1238,7 +1254,7 @@ impl LinkedMesh {
         let edge_key = self.edges.insert(Edge {
           vertices: sorted_vertex_keys,
           faces: SmallVec::new(),
-          sharp: false,
+          sharp,
           displacement_normal,
         });
 
@@ -1256,6 +1272,7 @@ impl LinkedMesh {
     &mut self,
     vertices: [VertexKey; 3],
     edge_displacement_normals: [Option<Vec3>; 3],
+    edge_sharpnesses: [bool; 3],
   ) -> Option<FaceKey> {
     let edges = [
       sort_edge(vertices[0], vertices[1]),
@@ -1264,7 +1281,8 @@ impl LinkedMesh {
     ];
     let mut edge_keys: [EdgeKey; 3] = [EdgeKey::null(); 3];
     for (i, &[v0, v1]) in edges.iter().enumerate() {
-      let edge_key = self.get_or_create_edge([v0, v1], edge_displacement_normals[i]);
+      let edge_key =
+        self.get_or_create_edge([v0, v1], edge_displacement_normals[i], edge_sharpnesses[i]);
       edge_keys[i] = edge_key;
     }
 

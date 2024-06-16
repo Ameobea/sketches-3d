@@ -1,10 +1,12 @@
 import type { VizState } from 'src/viz';
-import type { VizConfig } from 'src/viz/conf';
+import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import * as THREE from 'three';
+import { N8AOPostPass } from 'n8ao';
 import type { SceneConfig } from '..';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import './graphvizDebug';
+import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 
 const locations = {
   spawn: {
@@ -16,7 +18,7 @@ const locations = {
 export const processLoadedScene = async (
   viz: VizState,
   loadedWorld: THREE.Group,
-  _vizConf: VizConfig
+  vizConf: VizConfig
 ): Promise<SceneConfig> => {
   const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
   viz.scene.add(ambientLight);
@@ -85,6 +87,17 @@ export const processLoadedScene = async (
       // toRemove.push(mesh);
       // return;
     }
+    if (
+      mesh.name === 'another' ||
+      mesh.name === 'repro' ||
+      mesh.name === 'repro2' ||
+      mesh.name === 'woah' ||
+      mesh.name === 'test' ||
+      mesh.name === 'Plane001'
+    ) {
+      toRemove.push(mesh);
+      return;
+    }
     console.log(mesh.name);
     if (!mesh.geometry.index) {
       throw new Error('Expected geometry to have index');
@@ -100,14 +113,14 @@ export const processLoadedScene = async (
       throw new Error('Expected indices to be Uint32Array or Uint16Array');
     }
 
-    const targetEdgeLength = 1;
+    const targetEdgeLength = 0.4;
     const sharpEdgeThresholdRads = 1.3;
     const tessCtx = tessellationEngine.tessellate_mesh(
       verts,
       new Uint32Array(indices),
       targetEdgeLength,
       sharpEdgeThresholdRads,
-      2,
+      1,
       0
     );
     const newVerts = tessellationEngine.tessellate_mesh_ctx_get_vertices(tessCtx);
@@ -127,25 +140,25 @@ export const processLoadedScene = async (
     //   console.log(newDisplacementNormals);
     // }
 
-    if (mesh.name === 'woah') {
-      for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
-        const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
-        // if (
-        //   Math.abs(newDisplacementNormals[vtxIx * 3] - -0.18689574301242828) < 0.001 ||
-        //   Math.abs(newDisplacementNormals[vtxIx * 3] - -0.04491600766777992) < 0.001
-        // ) {
-        //   continue;
-        // }
-        const normal = new THREE.Vector3(
-          newDisplacementNormals[vtxIx * 3],
-          newDisplacementNormals[vtxIx * 3 + 1],
-          newDisplacementNormals[vtxIx * 3 + 2]
-        );
-        const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
-        arrow.userData.nocollide = true;
-        loadedWorld.add(arrow);
-      }
-    }
+    // if (mesh.name === 'woah') {
+    //   for (let vtxIx = 0; vtxIx < newVerts.length / 3; vtxIx++) {
+    //     const vtx = new THREE.Vector3(newVerts[vtxIx * 3], newVerts[vtxIx * 3 + 1], newVerts[vtxIx * 3 + 2]);
+    //     // if (
+    //     //   Math.abs(newDisplacementNormals[vtxIx * 3] - -0.18689574301242828) < 0.001 ||
+    //     //   Math.abs(newDisplacementNormals[vtxIx * 3] - -0.04491600766777992) < 0.001
+    //     // ) {
+    //     //   continue;
+    //     // }
+    //     const normal = new THREE.Vector3(
+    //       newDisplacementNormals[vtxIx * 3],
+    //       newDisplacementNormals[vtxIx * 3 + 1],
+    //       newDisplacementNormals[vtxIx * 3 + 2]
+    //     );
+    //     const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
+    //     arrow.userData.nocollide = true;
+    //     loadedWorld.add(arrow);
+    //   }
+    // }
 
     const newMesh = new THREE.Mesh(newGeometry, mesh.name === 'woah' ? normalMat : pylonMaterial);
     // newMesh.visible = mesh.name === 'repro2';
@@ -203,6 +216,27 @@ export const processLoadedScene = async (
 
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
+
+  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
+    const n8aoPass = new N8AOPostPass(
+      viz.scene,
+      viz.camera,
+      viz.renderer.domElement.width,
+      viz.renderer.domElement.height
+    );
+    composer.addPass(n8aoPass);
+    n8aoPass.gammaCorrection = false;
+    n8aoPass.configuration.intensity = 2;
+    n8aoPass.configuration.aoRadius = 5;
+    n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
+    n8aoPass.setQualityMode(
+      {
+        [GraphicsQuality.Low]: 'Low',
+        [GraphicsQuality.Medium]: 'Low',
+        [GraphicsQuality.High]: 'Medium',
+      }[vizConf.graphics.quality]
+    );
+  });
 
   return {
     spawnLocation: 'spawn',
