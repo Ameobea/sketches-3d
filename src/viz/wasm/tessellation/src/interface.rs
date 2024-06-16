@@ -103,13 +103,14 @@ pub fn tessellate_mesh(
   let removed_vert_count = mesh.merge_vertices_by_distance(0.0001);
   info!("Removed {removed_vert_count} vertices from merge by distance");
 
-  mesh.mark_edge_sharpness_and_displacement_normals(sharp_edge_threshold_rads);
+  mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_vertex_displacement_normals();
   crate::tessellate_mesh(&mut mesh, target_edge_length, displacement_normal_method);
 
   displace_mesh(&mut mesh, displacement_method);
 
-  mesh.mark_edge_sharpness_and_displacement_normals(sharp_edge_threshold_rads);
+  mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
+  mesh.compute_edge_displacement_normals();
   mesh.separate_vertices_and_compute_normals();
 
   let ctx = Box::new(TessellateMeshCtx {

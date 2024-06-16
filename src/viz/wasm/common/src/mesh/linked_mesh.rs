@@ -638,7 +638,7 @@ impl LinkedMesh {
     face.vertices[vtx_key_ix_to_alter] = new_vtx_key;
   }
 
-  pub fn mark_edge_sharpness_and_displacement_normals(&mut self, sharp_edge_threshold_rads: f32) {
+  pub fn compute_edge_displacement_normals(&mut self) {
     for edge in self.edges.values_mut() {
       let edge_displacement_normal = edge
         .faces
@@ -650,7 +650,11 @@ impl LinkedMesh {
         .sum::<Vec3>()
         .normalize();
       edge.displacement_normal = Some(edge_displacement_normal);
+    }
+  }
 
+  pub fn mark_edge_sharpness(&mut self, sharp_edge_threshold_rads: f32) {
+    for edge in self.edges.values_mut() {
       // Border edges as well as edges belonging to more than 3 faces are
       // automatically sharp
       if edge.faces.len() != 2 {
