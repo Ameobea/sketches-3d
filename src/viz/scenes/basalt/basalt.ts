@@ -17,7 +17,7 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
   viz.scene.add(ambientLight);
 
   // TODO: use web worker
@@ -43,7 +43,7 @@ export const processLoadedScene = async (
   const basicMat = new THREE.MeshPhongMaterial({
     color: 0x6720f8,
     specular: 0x000000,
-    shininess: 0,
+    shininess: 8,
     flatShading: true,
   });
   const mesh = new THREE.Mesh(geometry, basicMat);
@@ -71,7 +71,7 @@ export const processLoadedScene = async (
   dirLight.shadow.camera.far = 360;
   dirLight.shadow.camera.left = -280;
   dirLight.shadow.camera.right = 180;
-  dirLight.shadow.camera.top = 20;
+  dirLight.shadow.camera.top = 60;
   dirLight.shadow.camera.bottom = -120;
 
   const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);

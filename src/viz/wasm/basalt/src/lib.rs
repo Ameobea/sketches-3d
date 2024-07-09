@@ -1,9 +1,10 @@
 use std::f32::consts::PI;
 
+use common::random;
 use log::info;
 use mesh::{linked_mesh::set_debug_print, LinkedMesh, OwnedIndexedMesh, Triangle};
 use nalgebra::Vector3;
-use noise::{self, MultiFractal, NoiseModule};
+use noise::{self, MultiFractal, NoiseModule, Seedable};
 use wasm_bindgen::prelude::*;
 
 /// Connects two hexagons by generating the side faces between them.
@@ -154,23 +155,38 @@ fn maybe_init() {
     DID_INIT = true;
   }
 
+  common::maybe_init_rng();
   console_error_panic_hook::set_once();
   wasm_logger::init(wasm_logger::Config::new(log::Level::Debug));
 
   set_debug_print(|s| info!("{}", s));
 }
 
+fn round_to_nearest_multiple(value: f32, multiple: f32) -> f32 {
+  (value / multiple).round() * multiple
+}
+
 #[wasm_bindgen]
 pub fn basalt_gen() -> *mut GenBasaltCtx {
   maybe_init();
 
-  let noise_gen: noise::Fbm<f32> = noise::Fbm::new().set_octaves(2);
-  let get_height = |x, z| (noise_gen.get([x, z]) + 1.).powf(2.) * 20.;
-  // let get_height = |x: f32, z: f32| -> f32 { x.max(z) * 0.1 };
-  let terrain_triangles = gen_tessellated_hex_grid(10, 10, 10.0, get_height);
+  let coarse_noise = noise::Fbm::new().set_octaves(1).set_seed(393939939);
+  let noise_gen: noise::Fbm<f32> = noise::Fbm::new().set_octaves(2).set_seed(393939939);
+  let get_height = |x, z| {
+    let void = coarse_noise.get([x * 0.05, z * 0.05]) < 0.2;
+    if void {
+      return -20.;
+    }
+    let mut height = (noise_gen.get([x * 0.03, z * 0.03]) + 1.) * 20.;
+    if random() < 0.8 {
+      height = round_to_nearest_multiple(height, 20.);
+    }
+    height
+  };
+  let terrain_triangles = gen_tessellated_hex_grid(8, 8, 7., get_height);
 
   let mut mesh = LinkedMesh::from_triangles(&terrain_triangles);
-  let merged_count = mesh.merge_vertices_by_distance(0.001);
+  let merged_count = mesh.merge_vertices_by_distance(0.0001);
   info!(
     "Merged {merged_count} vertices by distance; {} remaining",
     mesh.vertices.len()

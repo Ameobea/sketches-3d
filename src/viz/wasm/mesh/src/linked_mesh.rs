@@ -562,7 +562,10 @@ impl LinkedMesh {
               }
 
               let neighbor_bucket_ix = get_bucket_ix(x_ix, y_ix, z_ix);
-              for &o_vtx_key in &buckets[&neighbor_bucket_ix] {
+              let Some(bucket) = buckets.get(&neighbor_bucket_ix) else {
+                continue;
+              };
+              for &o_vtx_key in bucket {
                 if o_vtx_key == vtx_key {
                   continue;
                 }
@@ -577,7 +580,18 @@ impl LinkedMesh {
         }
       }
 
-      for o_vtx_key in vertices_to_merge.drain(..) {
+      'outer: for o_vtx_key in vertices_to_merge.drain(..) {
+        // if there's a triangle which contains both vertices, we can't merge them
+        for &edge_key in &self.vertices[o_vtx_key].edges {
+          let edge = &self.edges[edge_key];
+          for face in &edge.faces {
+            let face = &self.faces[*face];
+            if face.vertices.contains(&vtx_key) {
+              continue 'outer;
+            }
+          }
+        }
+
         self.merge_vertices(vtx_key, o_vtx_key);
         removed_vert_keys.insert(o_vtx_key);
       }
