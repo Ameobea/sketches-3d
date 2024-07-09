@@ -1,14 +1,14 @@
+#![feature(iter_array_chunks)]
+
 use nalgebra::Vector3;
 
 pub mod linked_mesh;
-
 pub use linked_mesh::LinkedMesh;
-pub extern crate nalgebra;
 
 pub struct Triangle {
-  a: Vector3<f32>,
-  b: Vector3<f32>,
-  c: Vector3<f32>,
+  pub a: Vector3<f32>,
+  pub b: Vector3<f32>,
+  pub c: Vector3<f32>,
 }
 
 impl Triangle {

@@ -13,6 +13,7 @@ bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/cave.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/stone.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/tessellation.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/basalt.wasm --target web --remove-producers-section --out-dir ./build
 
   cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
@@ -30,6 +31,7 @@ opt:
   wasm-opt ./build/stone_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/stone_bg.wasm
   wasm-opt ./geodesics/build/bin/geodesics.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./geodesics/build/bin/geodesics.wasm
   wasm-opt ./build/tessellation_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/tessellation_bg.wasm
+  wasm-opt ./build/basalt_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/basalt_bg.wasm
 
 build:
   #!/bin/bash
@@ -71,3 +73,10 @@ debug:
   just bindgen
   just opt
   just copy-files
+
+# ---
+
+build-basalt:
+  RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package basalt
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/basalt.wasm --target web --remove-producers-section --out-dir ./build
+  cp ./build/basalt* ../wasmComp

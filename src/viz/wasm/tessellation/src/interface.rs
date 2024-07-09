@@ -1,4 +1,4 @@
-use common::mesh::{
+use mesh::{
   linked_mesh::{set_debug_print, set_graphviz_print, DisplacementNormalMethod},
   LinkedMesh, OwnedIndexedMesh,
 };

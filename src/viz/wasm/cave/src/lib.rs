@@ -1,4 +1,5 @@
-use common::{mesh::Mesh, rng};
+use common::rng;
+use mesh::Mesh;
 use nalgebra::{Matrix4, Point2, Point3, Vector3};
 use noise::{NoiseModule, Perlin, Seedable};
 use point_distribute::MeshSurfaceSampler;

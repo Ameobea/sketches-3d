@@ -34,3 +34,8 @@ preview:
 
 deploy:
   phost update 3d patch build
+
+# ---
+
+build-basalt:
+  cd src/viz/wasm && just build-basalt

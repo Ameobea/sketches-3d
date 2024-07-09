@@ -8,10 +8,10 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-common = { path = "../common", features = ["mesh"] }
-wasm-bindgen = "=0.2.82"
+wasm-bindgen = "=0.2.92"
 console_error_panic_hook = "0.1"
 float-ord = "0.3"
 wasm-logger = "0.2"
 log = "0.4"
 noise = "0.4"
+mesh = { path = "../mesh" }

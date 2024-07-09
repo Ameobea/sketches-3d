@@ -1,15 +1,13 @@
 [package]
-name = "point_distribute"
+name = "mesh"
 version = "0.1.0"
 authors = ["Casey Primozic <casey@cprimozic.net>"]
 edition = "2021"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 nalgebra = "0.33"
+slotmap = "1.0"
+fxhash = "0.2"
+smallvec = "1.13"
+bitvec = { version = "1",  default-features = false, features = ["alloc", "std"] }
 common = { path = "../common" }
-mesh = { path = "../mesh" }
-
-[features]

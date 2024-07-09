@@ -4,7 +4,7 @@ use nalgebra::{Matrix4, Vector3};
 use slotmap::{new_key_type, Key, SlotMap};
 use smallvec::SmallVec;
 
-use super::OwnedIndexedMesh;
+use crate::{OwnedIndexedMesh, Triangle};
 
 type Vec3 = Vector3<f32>;
 type Mat4 = Matrix4<f32>;
@@ -162,7 +162,6 @@ fn sort_edge(v0: VertexKey, v1: VertexKey) -> [VertexKey; 2] {
 
 struct ComputedSmoothFanNormal {
   pub normal: Vec3,
-  pub total_angle: f32,
 }
 
 struct NormalAcc {
@@ -192,7 +191,6 @@ impl NormalAcc {
   pub fn get(&self) -> ComputedSmoothFanNormal {
     ComputedSmoothFanNormal {
       normal: self.accumulated_normal.normalize(),
-      total_angle: self.total_angle,
     }
   }
 
@@ -208,7 +206,6 @@ struct SmoothFan {
   pub old_key: VertexKey,
   pub face_keys: SmallVec<[FaceKey; 8]>,
   pub normal: Vec3,
-  pub total_corner_angle: f32,
 }
 
 /// Determines the method used to compute displacement normals for new vertices
@@ -258,7 +255,7 @@ impl LinkedMesh {
     self.vertices.iter()
   }
 
-  pub fn from_triangles(
+  pub fn from_indexed_vertices(
     vertices: &[Vec3],
     indices: &[usize],
     normals: Option<&[Vec3]>,
@@ -285,6 +282,37 @@ impl LinkedMesh {
       let c = vertex_keys_by_ix[c_ix];
 
       mesh.add_face([a, b, c], [None; 3], [false; 3]);
+    }
+
+    mesh
+  }
+
+  pub fn from_triangles(triangles: &[Triangle]) -> Self {
+    let mut mesh = Self::new(triangles.len() * 3, triangles.len(), None);
+
+    for tri in triangles {
+      let [a_key, b_key, c_key] = [
+        mesh.vertices.insert(Vertex {
+          position: tri.a,
+          shading_normal: None,
+          displacement_normal: None,
+          edges: SmallVec::new(),
+        }),
+        mesh.vertices.insert(Vertex {
+          position: tri.b,
+          shading_normal: None,
+          displacement_normal: None,
+          edges: SmallVec::new(),
+        }),
+        mesh.vertices.insert(Vertex {
+          position: tri.c,
+          shading_normal: None,
+          displacement_normal: None,
+          edges: SmallVec::new(),
+        }),
+      ];
+
+      mesh.add_face([a_key, b_key, c_key], [None; 3], [false; 3]);
     }
 
     mesh
@@ -414,36 +442,148 @@ impl LinkedMesh {
     }
   }
 
-  /// Naive brute-force implementation.  Will be incredibly slow for meshes with
-  /// tons of verts to the point where it's impractical to run.
-  ///
-  /// Returns the number of removed vertices.
   pub fn merge_vertices_by_distance(&mut self, max_distance: f32) -> usize {
-    let mut removed_vert_count = 0usize;
+    // simple spatial hashing
+    let buckets_per_dim = 32;
+    let mut buckets: FxHashMap<usize, Vec<_>> = FxHashMap::default();
 
-    loop {
-      let verts_to_merge = self.iter_vertices().find_map(|(vert_key, vert)| {
-        let merge_partner = self.iter_vertices().find(|(o_vert_key, o_vert)| {
-          if vert_key == *o_vert_key {
-            return false;
-          }
+    let (mut mins, mut maxs) = self.vertices.values().fold(
+      (
+        Vec3::new(f32::MAX, f32::MAX, f32::MAX),
+        Vec3::new(f32::MIN, f32::MIN, f32::MIN),
+      ),
+      |(mins, maxs), vtx| (mins.inf(&vtx.position), maxs.sup(&vtx.position)),
+    );
+    // expand bounds and offset center slightly to allow more chances to avoid
+    // searching neighboring buckets
+    mins -= Vec3::new(0.3828593, 0.2859821, 0.18533925);
+    maxs += Vec3::new(0.3828593, 0.2859821, 0.18533925);
 
-          let dist = distance(vert.position, o_vert.position);
-          dist < max_distance
-        });
+    let x_range = maxs.x - mins.x;
+    let y_range = maxs.y - mins.y;
+    let z_range = maxs.z - mins.z;
 
-        merge_partner.map(|(o_vert_key, _)| (vert_key, o_vert_key))
-      });
+    let get_bucket_ix = |x_ix: usize, y_ix: usize, z_ix: usize| -> usize {
+      x_ix + y_ix * buckets_per_dim + z_ix * buckets_per_dim * buckets_per_dim
+    };
 
-      let Some((v0_key, v1_key)) = verts_to_merge else {
-        break;
+    let get_bucket_coords = |pos: Vec3| -> ([usize; 3], bool) {
+      let x_ix = ((pos.x - mins.x) / x_range * buckets_per_dim as f32).floor() as usize;
+      let y_ix = ((pos.y - mins.y) / y_range * buckets_per_dim as f32).floor() as usize;
+      let z_ix = ((pos.z - mins.z) / z_range * buckets_per_dim as f32).floor() as usize;
+
+      // we can completely skip searching neighboring buckets if the distance between
+      // this point and all of the bucket boundaries is greater than the max_distance
+      let needs_neighbor_search = 'b: {
+        let [bucket_mins_x, bucket_maxs_x] = [
+          mins.x + x_ix as f32 / buckets_per_dim as f32 * x_range,
+          mins.x + (x_ix + 1) as f32 / buckets_per_dim as f32 * x_range,
+        ];
+        if pos.x - bucket_mins_x < max_distance || bucket_maxs_x - pos.x < max_distance {
+          break 'b true;
+        }
+
+        let [bucket_mins_y, bucket_maxs_y] = [
+          mins.y + y_ix as f32 / buckets_per_dim as f32 * y_range,
+          mins.y + (y_ix + 1) as f32 / buckets_per_dim as f32 * y_range,
+        ];
+        if pos.y - bucket_mins_y < max_distance || bucket_maxs_y - pos.y < max_distance {
+          break 'b true;
+        }
+
+        let [bucket_mins_z, bucket_maxs_z] = [
+          mins.z + z_ix as f32 / buckets_per_dim as f32 * z_range,
+          mins.z + (z_ix + 1) as f32 / buckets_per_dim as f32 * z_range,
+        ];
+        if pos.z - bucket_mins_z < max_distance || bucket_maxs_z - pos.z < max_distance {
+          break 'b true;
+        }
+
+        false
       };
 
-      self.merge_vertices(v0_key, v1_key);
-      removed_vert_count += 1;
+      ([x_ix, y_ix, z_ix], needs_neighbor_search)
+    };
+
+    for (vtx_key, vtx) in &self.vertices {
+      let (bucket_coords, _) = get_bucket_coords(vtx.position);
+      let bucket_ix = get_bucket_ix(bucket_coords[0], bucket_coords[1], bucket_coords[2]);
+      buckets
+        .entry(bucket_ix)
+        .or_insert_with(Vec::new)
+        .push(vtx_key);
     }
 
-    removed_vert_count
+    let mut removed_vert_keys = FxHashSet::default();
+    let all_vert_keys = self.vertices.keys().collect::<Vec<_>>();
+
+    let mut vertices_to_merge = Vec::new();
+    for vtx_key in all_vert_keys {
+      if removed_vert_keys.contains(&vtx_key) {
+        continue;
+      }
+
+      let vtx = &self.vertices[vtx_key];
+      let (bucket_coords, needs_neighbor_search) = get_bucket_coords(vtx.position);
+      let bucket_ix = get_bucket_ix(bucket_coords[0], bucket_coords[1], bucket_coords[2]);
+
+      let bucket = buckets.get_mut(&bucket_ix).unwrap();
+      let mut o_vtx_ix = 0usize;
+      while o_vtx_ix < bucket.len() {
+        let o_vtx_key = bucket[o_vtx_ix];
+        if o_vtx_key == vtx_key {
+          o_vtx_ix += 1;
+          continue;
+        }
+
+        let o_vtx = &self.vertices[o_vtx_key];
+        if distance(vtx.position, o_vtx.position) < max_distance {
+          vertices_to_merge.push(o_vtx_key);
+          bucket.swap_remove(o_vtx_ix);
+        } else {
+          o_vtx_ix += 1;
+        }
+      }
+
+      if needs_neighbor_search {
+        // this is a bit lazy but this codepath should be rare enough (when using
+        // reasonably small merge distances) that it won't matter
+        for x_ix in 0..buckets_per_dim {
+          if ((x_ix as isize) - bucket_coords[0] as isize).abs() > 1 {
+            continue;
+          }
+          for y_ix in 0..buckets_per_dim {
+            if ((y_ix as isize) - bucket_coords[1] as isize).abs() > 1 {
+              continue;
+            }
+            for z_ix in 0..buckets_per_dim {
+              if ((z_ix as isize) - bucket_coords[2] as isize).abs() > 1 {
+                continue;
+              }
+
+              let neighbor_bucket_ix = get_bucket_ix(x_ix, y_ix, z_ix);
+              for &o_vtx_key in &buckets[&neighbor_bucket_ix] {
+                if o_vtx_key == vtx_key {
+                  continue;
+                }
+
+                let o_vtx = &self.vertices[o_vtx_key];
+                if distance(vtx.position, o_vtx.position) < max_distance {
+                  vertices_to_merge.push(o_vtx_key);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      for o_vtx_key in vertices_to_merge.drain(..) {
+        self.merge_vertices(vtx_key, o_vtx_key);
+        removed_vert_keys.insert(o_vtx_key);
+      }
+    }
+
+    removed_vert_keys.len()
   }
 
   pub fn debug(&self) -> String {
@@ -545,7 +685,7 @@ impl LinkedMesh {
       None
     };
 
-    Self::from_triangles(vertices, indices, normals, transform)
+    Self::from_indexed_vertices(vertices, indices, normals, transform)
   }
 
   fn replace_vertex_in_face(
@@ -889,7 +1029,6 @@ impl LinkedMesh {
         old_key: vtx_key,
         face_keys: smooth_fan_faces.iter().copied().collect(),
         normal: computed_fan_normal.normal,
-        total_corner_angle: computed_fan_normal.total_angle,
       });
 
       smooth_fan_faces.clear();
@@ -976,7 +1115,6 @@ impl LinkedMesh {
       old_key,
       face_keys,
       normal,
-      total_corner_angle: _,
     } in smooth_fans
     {
       // We have to create a new vertex for the faces that are part of the
@@ -1366,7 +1504,7 @@ mod tests {
     // 2 -> 1 -> 3
     let indices = [1, 0, 3, 2, 1, 3];
 
-    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
     let middle_edge_key = mesh
       .iter_edges()
       .find(|(_, e)| e.faces.len() == 2)
@@ -1455,7 +1593,7 @@ mod tests {
     ];
     let indices = [0, 2, 1, 0, 3, 2];
 
-    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
     let vtx_key = vkey(1, 1);
     let mut visited_edges = bitarr![0; 1024];
     let visited_edges = &mut visited_edges[..mesh.vertices[vtx_key].edges.len()];
@@ -1519,7 +1657,7 @@ mod tests {
     ];
     let indices = [0, 1, 2, 0, 4, 3];
 
-    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
     let vtx_key = vkey(1, 1);
 
     let smooth_fans = test_walk_smooth_fan(&mut mesh, vtx_key);
@@ -1584,7 +1722,7 @@ mod tests {
     ];
     let indices = [0, 2, 1, 0, 3, 2];
 
-    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
     // mark the edge between the two triangles as sharp
     let sharp_edge_key = mesh
       .edges
@@ -1612,7 +1750,7 @@ mod tests {
       .collect::<Vec<_>>();
     let indices = [0, 2, 1, 0, 3, 2, 0, 1, 4, 0, 4, 3];
 
-    let mut mesh = LinkedMesh::from_triangles(&verts, &indices, None, None);
+    let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
     let sharp_edge_keys = mesh
       .edges
       .iter()

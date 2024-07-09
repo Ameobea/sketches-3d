@@ -8,7 +8,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-wasm-bindgen = "=0.2.82"
-nalgebra = "0.31"
+wasm-bindgen = "=0.2.92"
+nalgebra = "0.33"
 rand = { version = "0.8", default-features = false, features = ["nightly"] }
 rand_pcg = "0.3"

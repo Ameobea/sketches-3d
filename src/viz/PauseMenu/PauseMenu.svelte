@@ -34,6 +34,7 @@
   const newConfig = writable(startVizConfig);
 
   const saveNewConfig = (newVizConfig: VizConfig) => {
+    newConfig.set(newVizConfig);
     localStorage.setItem('vizConfig', JSON.stringify(newVizConfig));
     activeMenu = Menu.Main;
   };

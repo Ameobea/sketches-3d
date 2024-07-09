@@ -1,10 +1,5 @@
-#![feature(iter_array_chunks)]
-
 pub extern crate rand;
 pub extern crate rand_pcg;
-
-#[cfg(feature = "mesh")]
-pub mod mesh;
 
 use std::ptr::addr_of_mut;
 
@@ -42,4 +37,8 @@ pub fn build_rng(seed: (u64, u64)) -> Pcg32 {
 #[inline(always)]
 pub fn random() -> f32 {
   rng().gen::<f32>()
+}
+
+pub fn uninit<T>() -> T {
+  unsafe { std::mem::MaybeUninit::uninit().assume_init() }
 }

@@ -3,11 +3,11 @@
 #[macro_use]
 extern crate log;
 
-use common::mesh::{
+use float_ord::FloatOrd;
+use mesh::{
   linked_mesh::{DisplacementNormalMethod, Face},
   LinkedMesh,
 };
-use float_ord::FloatOrd;
 
 mod interface;
 

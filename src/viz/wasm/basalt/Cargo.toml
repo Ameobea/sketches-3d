@@ -1,5 +1,5 @@
 [package]
-name = "conduit_particles"
+name = "basalt"
 version = "0.1.0"
 authors = ["Casey Primozic <casey@cprimozic.net>"]
 edition = "2021"
@@ -11,8 +11,8 @@ crate-type = ["cdylib"]
 wasm-bindgen = "=0.2.92"
 # using an older version because new versions don't allow f32 noise anymore
 noise = "0.4"
-nanoserde = "0.1"
-nalgebra = "0.31"
-rand = { version = "0.8", default-features = false, features = ["nightly"] }
-rand_pcg = "0.3"
+nalgebra = "0.33"
 console_error_panic_hook = "0.1"
+wasm-logger = "0.2"
+log = "0.4"
+mesh = { path = "../mesh" }

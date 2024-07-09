@@ -1,8 +1,5 @@
-use common::{
-  maybe_init_rng,
-  mesh::{Mesh, Triangle},
-  random,
-};
+use common::{maybe_init_rng, random};
+use mesh::{Mesh, Triangle};
 use nalgebra::{Point3, Vector3};
 
 /// Largely based on https://github.com/mrdoob/three.js/blob/f8509646d78fcd4efaa4408119b55b2bead6e01b/examples/jsm/math/MeshSurfaceSampler.js
@@ -110,7 +107,7 @@ impl<'a> MeshSurfaceSampler<'a> {
     // Compute transformed normal by multiplying the normal vector with the inverse
     // transpose of the 3x3 submatrix used to transform points.
     let transform_3x3 = transform
-      .fixed_slice::<3, 3>(0, 0)
+      .fixed_view::<3, 3>(0, 0)
       .try_inverse()
       .unwrap()
       .transpose();

@@ -96,6 +96,9 @@ export const buildDefaultSceneConfig = () => ({
 });
 
 export interface SceneDef {
+  /**
+   * The name of the scene in the Blender file to load
+   */
   sceneName: string | null;
   sceneLoader: () => Promise<
     (viz: VizState, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
@@ -298,5 +301,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
       import('./tessellationSandbox/tessellationSandbox').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'tessellation sandbox' },
+  },
+  basalt: {
+    gltfName: 'basalt',
+    extension: 'glb',
+    sceneLoader: () => import('./basalt/basalt').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'basalt' },
   },
 };

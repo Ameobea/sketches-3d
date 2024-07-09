@@ -6,7 +6,7 @@ export const DefaultSceneName = 'bridge';
 
 export const DefaultPlayerColliderHeight = 4.55;
 export const DefaultPlayerColliderRadius = 0.35;
-export const DEFAULT_FOV = 75;
+export const DEFAULT_FOV = 110;
 
 export enum GraphicsQuality {
   Low = 1,
