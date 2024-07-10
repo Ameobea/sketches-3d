@@ -95,7 +95,7 @@ interface CustomShaderProps {
   clearcoat?: number;
   clearcoatRoughness?: number;
   iridescence?: number;
-  color?: THREE.Color;
+  color?: number | THREE.Color;
   normalScale?: number;
   map?: THREE.Texture;
   normalMap?: THREE.Texture;
@@ -289,7 +289,7 @@ export const buildCustomShaderArgs = (
   uniforms.transmissionSamplerMap = { type: 't', value: null };
 
   uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
-  uniforms.diffuse = { type: 'c', value: color };
+  uniforms.diffuse = { type: 'c', value: typeof color === 'number' ? new THREE.Color(color) : color };
   uniforms.mapTransform = { type: 'mat3', value: new THREE.Matrix3().identity() };
   if (uvTransform) {
     uniforms.uvTransform = { type: 'm3', value: uvTransform };
@@ -339,9 +339,9 @@ export const buildCustomShaderArgs = (
     // it would look good either.
     throw new Error('Triplanar mapping cannot be used with generated UVs or tile breaking');
   }
-  if (useTriplanarMapping && !map) {
-    throw new Error('Triplanar mapping requires a map');
-  }
+  // if (useTriplanarMapping && !map) {
+  //   throw new Error('Triplanar mapping requires a map');
+  // }
   if (typeof usePackedDiffuseNormalGBA === 'object' && usePackedDiffuseNormalGBA.lut && tileBreaking) {
     throw new Error('LUT and tile breaking are currently broken together');
   }
@@ -640,7 +640,8 @@ export const buildCustomShaderArgs = (
       return '';
     }
 
-    const normalMapSuffix = `mapN = mapN * 2.0 - 1.0;
+    const normalMapSuffix = `
+    mapN = mapN * 2.0 - 1.0;
     mapN = normalize(mapN);
     mapN.xy *= normalScale;
 
@@ -653,9 +654,10 @@ export const buildCustomShaderArgs = (
     const inner = (() => {
       if (useTriplanarMapping) {
         return `
-          vec3 mapN = triplanarTexture(normalMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vNormalAbsolute).xyz;
-
-          ${normalMapSuffix}`;
+          vec3 newWorldNormal = triplanarTextureNormalMap(normalMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, normalScale).xyz;
+          // Transform \`newWorldNormal\` from world space to view space
+          normal = normalize((viewMatrix * vec4(newWorldNormal, 0.)).xyz);
+          `;
       }
 
       if (tileBreaking)
@@ -720,6 +722,7 @@ ${useDisplacementNormals ? 'attribute vec3 displacementNormal;' : ''}
 uniform float curTimeSeconds;
 varying vec3 pos;
 varying vec3 vNormalAbsolute;
+varying vec3 vWorldNormal;
 uniform mat3 uvTransform;
 
 void main() {
@@ -766,6 +769,7 @@ void main() {
   #endif
 
   vNormalAbsolute = normal;
+  vWorldNormal = normalize((modelMatrix * vec4(normal, 0.)).xyz);
 
   #ifdef USE_UV
   ${(() => {
@@ -865,6 +869,7 @@ uniform float opacity;
 #endif
 
 varying vec3 vViewPosition;
+uniform mat4 modelMatrix;
 
 #include <common>
 #include <packing>
@@ -906,6 +911,7 @@ varying vec3 pos;
 #endif
 
 varying vec3 vNormalAbsolute;
+varying vec3 vWorldNormal;
 uniform mat3 uvTransform;
 
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}

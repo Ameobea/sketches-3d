@@ -178,8 +178,9 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
       return -20.;
     }
     let mut height = (noise_gen.get([x * 0.03, z * 0.03]) + 1.) * 20.;
-    if random() < 0.8 {
-      height = round_to_nearest_multiple(height, 20.);
+    if random() < 0.7 {
+      height =
+        round_to_nearest_multiple(height, 20.) + if random() > 0.6 { random() * 1.2 } else { 0. };
     }
     height
   };

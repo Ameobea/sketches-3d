@@ -308,5 +308,6 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./basalt/basalt').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'basalt' },
+    legacyLights: false,
   },
 };

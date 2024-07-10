@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { N8AOPostPass } from 'n8ao';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+import { loadRawTexture, loadTexture } from 'src/viz/textureLoading';
+import { buildCustomShader } from 'src/viz/shaders/customShader';
 
 const locations = {
   spawn: {
@@ -32,20 +34,47 @@ export const processLoadedScene = async (
   basaltEngine.basalt_free(basaltCtx);
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
+  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   const needsU32Indices = indices.some(i => i > 65535);
-  geometry.setIndex(
-    new THREE.BufferAttribute(needsU32Indices ? new Uint32Array(indices) : new Uint16Array(indices), 1)
+  geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
+  geometry.computeVertexNormals();
+
+  const glassNormalTex = await loadRawTexture('https://i.ameo.link/cbc.jpg');
+  const glassNormalMap = new THREE.Texture(
+    glassNormalTex,
+    THREE.UVMapping,
+    THREE.RepeatWrapping,
+    THREE.RepeatWrapping,
+    THREE.NearestFilter,
+    THREE.NearestMipMapLinearFilter,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+    1
   );
+  glassNormalMap.generateMipmaps = true;
+  glassNormalMap.needsUpdate = true;
 
   // const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
-  const basicMat = new THREE.MeshPhongMaterial({
-    color: 0x6720f8,
-    specular: 0x000000,
-    shininess: 8,
-    flatShading: true,
-  });
+  const basicMat = buildCustomShader(
+    {
+      color: 0x333333,
+      roughness: 0.7,
+      uvTransform: new THREE.Matrix3().scale(0.24, 0.24),
+      normalMap: glassNormalMap,
+      normalScale: 0.9,
+      normalMapType: THREE.TangentSpaceNormalMap,
+      mapDisableDistance: null,
+      // side: THREE.DoubleSide,
+    },
+    {
+      //       roughnessShader: `
+      // float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
+      // return ctx.diffuseColor.r > 0.1 ? 0.3 : 0.9;
+      // }`,
+    },
+    { useTriplanarMapping: true }
+  );
   const mesh = new THREE.Mesh(geometry, basicMat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
@@ -53,7 +82,7 @@ export const processLoadedScene = async (
   viz.scene.add(mesh);
   viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(mesh));
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 14.5);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 4.5);
   dirLight.position.set(242, 65, 220);
   dirLight.target.position.set(0, 0, 0);
 
@@ -67,7 +96,7 @@ export const processLoadedScene = async (
   viz.renderer.shadowMap.type = THREE.VSMShadowMap;
   dirLight.shadow.bias = -0.0001;
 
-  dirLight.shadow.camera.near = 0.008;
+  dirLight.shadow.camera.near = 8;
   dirLight.shadow.camera.far = 360;
   dirLight.shadow.camera.left = -280;
   dirLight.shadow.camera.right = 180;

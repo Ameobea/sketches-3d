@@ -1,10 +1,11 @@
 import { resolve } from 'path';
+import wasm from 'vite-plugin-wasm';
 
 import { sveltekit } from '@sveltejs/kit/vite';
 
 /** @type {import('vite').UserConfig} */
 const config = {
-  plugins: [sveltekit()],
+  plugins: [wasm(), sveltekit()],
   resolve: {
     alias: {
       src: resolve('./src'),
