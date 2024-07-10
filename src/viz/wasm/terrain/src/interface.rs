@@ -51,13 +51,14 @@ pub extern "C" fn malloc(size: usize) -> *mut u8 {
   unsafe {
     v.set_len(size);
   }
-  let boxed = v.into_boxed_slice();
-  Box::into_raw(boxed) as *mut u8
+  let ptr = v.as_mut_ptr();
+  std::mem::forget(v);
+  ptr
 }
 
 #[no_mangle]
-pub extern "C" fn free(ptr: *mut u8) {
-  drop(unsafe { Box::from_raw(ptr) });
+pub extern "C" fn free(ptr: *mut u8, size: usize) {
+  drop(unsafe { Vec::from_raw_parts(ptr, size, size) });
 }
 
 #[no_mangle]

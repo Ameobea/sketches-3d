@@ -17,3 +17,4 @@ wasm-logger = "0.2"
 log = "0.4"
 mesh = { path = "../mesh" }
 common = { path = "../common" }
+tessellation = { path = "../tessellation", default-features = false }

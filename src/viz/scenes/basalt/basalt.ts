@@ -40,6 +40,8 @@ export const processLoadedScene = async (
   geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
   geometry.computeVertexNormals();
 
+  const loader = new THREE.ImageBitmapLoader();
+  const glassDiffuseTex = await loadTexture(loader, 'https://i.ameo.link/cbb.png', {});
   const glassNormalTex = await loadRawTexture('https://i.ameo.link/cbc.jpg');
   const glassNormalMap = new THREE.Texture(
     glassNormalTex,
@@ -59,8 +61,9 @@ export const processLoadedScene = async (
   const basicMat = buildCustomShader(
     {
       color: 0x333333,
-      roughness: 0.7,
-      uvTransform: new THREE.Matrix3().scale(0.24, 0.24),
+      roughnessMap: glassDiffuseTex,
+      roughness: 1,
+      uvTransform: new THREE.Matrix3().scale(0.09, 0.09),
       normalMap: glassNormalMap,
       normalScale: 0.9,
       normalMapType: THREE.TangentSpaceNormalMap,
@@ -68,10 +71,10 @@ export const processLoadedScene = async (
       // side: THREE.DoubleSide,
     },
     {
-      //       roughnessShader: `
-      // float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
-      // return ctx.diffuseColor.r > 0.1 ? 0.3 : 0.9;
-      // }`,
+      roughnessShader: `
+      float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
+      return 1. - baseRoughness;
+      }`,
     },
     { useTriplanarMapping: true }
   );
@@ -103,8 +106,8 @@ export const processLoadedScene = async (
   dirLight.shadow.camera.top = 60;
   dirLight.shadow.camera.bottom = -120;
 
-  const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
-  viz.scene.add(shadowCameraHelper);
+  // const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
+  // viz.scene.add(shadowCameraHelper);
 
   dirLight.shadow.camera.updateProjectionMatrix();
   dirLight.shadow.camera.updateMatrixWorld();

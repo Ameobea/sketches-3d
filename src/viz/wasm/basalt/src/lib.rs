@@ -2,7 +2,10 @@ use std::f32::consts::PI;
 
 use common::random;
 use log::info;
-use mesh::{linked_mesh::set_debug_print, LinkedMesh, OwnedIndexedMesh, Triangle};
+use mesh::{
+  linked_mesh::{set_debug_print, DisplacementNormalMethod},
+  LinkedMesh, OwnedIndexedMesh, Triangle,
+};
 use nalgebra::Vector3;
 use noise::{self, MultiFractal, NoiseModule, Seedable};
 use wasm_bindgen::prelude::*;
@@ -166,6 +169,27 @@ fn round_to_nearest_multiple(value: f32, multiple: f32) -> f32 {
   (value / multiple).round() * multiple
 }
 
+fn displace_mesh(mesh: &mut LinkedMesh) {
+  let noise = noise::Fbm::new().set_octaves(4);
+  for (_vtx_key, vtx) in &mut mesh.vertices {
+    let displacement_normal = vtx
+      .displacement_normal
+      .expect("Expected displacement normal to be set by now");
+    if displacement_normal.x.is_nan()
+      || displacement_normal.y.is_nan()
+      || displacement_normal.z.is_nan()
+    {
+      // TODO: have to figure out why this happens
+      // log::warn!("Displacement normal is NaN; skipping displace");
+      continue;
+    }
+
+    let pos = vtx.position * 0.2;
+    let noise = noise.get([pos.x, pos.y, pos.z]); //.abs();
+    vtx.position += displacement_normal * noise * 0.8;
+  }
+}
+
 #[wasm_bindgen]
 pub fn basalt_gen() -> *mut GenBasaltCtx {
   maybe_init();
@@ -192,7 +216,15 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
     "Merged {merged_count} vertices by distance; {} remaining",
     mesh.vertices.len()
   );
+
   let sharp_edge_threshold_rads = 0.8;
+  mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
+  mesh.compute_vertex_displacement_normals();
+  tessellation::tessellate_mesh(&mut mesh, 1.5, DisplacementNormalMethod::Interpolate);
+  info!("Tessellated mesh; new vertex count={}", mesh.vertices.len());
+
+  displace_mesh(&mut mesh);
+
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_edge_displacement_normals();
   mesh.separate_vertices_and_compute_normals();

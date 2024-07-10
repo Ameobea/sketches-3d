@@ -30,7 +30,8 @@ const getEngine = async () => {
 
 const malloc = (engine: WebAssembly.Instance, size: number) => (engine.exports.malloc as Function)(size);
 
-const free = (engine: WebAssembly.Instance, ptr: number) => (engine.exports.free as Function)(ptr);
+const free = (engine: WebAssembly.Instance, ptr: number, byteCount: number) =>
+  (engine.exports.free as Function)(ptr, byteCount);
 
 const methods = {
   setTerrainGenWasmBytes: async (bytes: Uint8Array) => {
@@ -70,7 +71,7 @@ const methods = {
 
     (engine.exports.set_params as Function)(ctxPtr, paramsPtr, encoded.byteLength);
 
-    free(engine, paramsPtr);
+    free(engine, paramsPtr, encoded.byteLength);
   },
   genHeightmap: async (
     ctxPtr: number,
@@ -90,11 +91,9 @@ const methods = {
     );
     let memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
     // this copies the memory from the wasm module into a new buffer
-    const buf = memory.slice(
-      heightmapPtr,
-      heightmapPtr + resolution[0] * resolution[1] * Float32Array.BYTES_PER_ELEMENT
-    );
-    free(engine, heightmapPtr);
+    const heightmapSizeBytes = resolution[0] * resolution[1] * Float32Array.BYTES_PER_ELEMENT;
+    const buf = memory.slice(heightmapPtr, heightmapPtr + heightmapSizeBytes);
+    free(engine, heightmapPtr, heightmapSizeBytes);
     const heightmap = new Float32Array(buf.buffer);
     return Comlink.transfer(heightmap, [heightmap.buffer]);
   },

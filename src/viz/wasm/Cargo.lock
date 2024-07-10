@@ -33,6 +33,7 @@ dependencies = [
  "mesh",
  "nalgebra 0.33.0",
  "noise",
+ "tessellation",
  "wasm-bindgen",
  "wasm-logger",
 ]

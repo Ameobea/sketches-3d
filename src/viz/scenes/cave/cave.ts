@@ -54,9 +54,14 @@ export const processLoadedScene = async (
   // viz.scene.add(spotlightHelper);
 
   const loader = new THREE.ImageBitmapLoader();
-  const { caveTexture, caveRoughness } = await loadNamedTextures(loader, {
+  const {
+    caveTexture,
+    caveRoughness,
+    // caveNormal
+  } = await loadNamedTextures(loader, {
     caveTexture: 'https://i.ameo.link/bfj.jpg',
     caveRoughness: 'https://i.ameo.link/bfl.jpg',
+    // caveNormal: 'https://i.ameo.link/bfk.jpg',
   });
 
   const playerPointLight = new THREE.PointLight(0xd1c9ab, 0.75, 50, 0.7);
@@ -66,7 +71,6 @@ export const processLoadedScene = async (
 
   const caveMat = buildCustomShader(
     {
-      color: new THREE.Color(0xffffff),
       map: caveTexture,
       roughnessMap: caveRoughness,
       metalness: 0.94,
@@ -85,7 +89,7 @@ export const processLoadedScene = async (
     {
       color: new THREE.Color(0x888888),
       map: caveTexture,
-      normalScale: 1.8,
+      // normalScale: 1.8,
       roughnessMap: caveRoughness,
       metalness: 0.94,
       uvTransform: new THREE.Matrix3().scale(0.1, 0.1),

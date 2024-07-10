@@ -1,6 +1,6 @@
 #![feature(iter_array_chunks)]
 
-#[macro_use]
+#[cfg_attr(feature = "bindgen", macro_use)]
 extern crate log;
 
 use float_ord::FloatOrd;
@@ -9,6 +9,7 @@ use mesh::{
   LinkedMesh,
 };
 
+#[cfg(feature = "bindgen")]
 mod interface;
 
 fn get_face_has_edge_needing_split(
@@ -109,7 +110,7 @@ fn tessellate_one_iter(
   true
 }
 
-fn tessellate_mesh(
+pub fn tessellate_mesh(
   mesh: &mut LinkedMesh,
   target_edge_length: f32,
   displacement_normal_method: DisplacementNormalMethod,

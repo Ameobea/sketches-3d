@@ -1074,6 +1074,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     distanceAttenuation: 0.4,
     raymarchSteps: 86,
     blur: { kernelSize: KernelSize.SMALL, variance: 0.25 },
+    gammaCorrection: false,
   });
   composer.addPass(godraysPass);
   let godraysPassAdded = true;
@@ -1145,7 +1146,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   composer.addPass(bloomPass);
 
   const equipmentScene = new THREE.Scene();
-  equipmentScene.add(new THREE.AmbientLight(0xffffff, 1));
+  equipmentScene.add(new THREE.AmbientLight(0xffffff, 0.3));
   equipmentScene.add(new THREE.DirectionalLight(0xffffff, 1));
   const equipmentCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 100);
   equipmentCamera.position.set(0, 0, 0);
@@ -1213,5 +1214,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
       },
     },
     debugPos: true,
+    legacyLights: false,
   };
 };

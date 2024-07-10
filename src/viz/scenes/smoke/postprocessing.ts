@@ -88,6 +88,7 @@ export const configurePostprocessing = (
       }[quality],
       variance: 0.45,
     },
+    gammaCorrection: false,
   };
 
   const n8aoPass = new N8AOPostPass(
