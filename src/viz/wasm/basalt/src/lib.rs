@@ -23,17 +23,24 @@ fn connect_hexes(
   let hex1_vtx0 = hex1[hex1_vtx0_ix].b;
   let hex1_vtx1 = hex1[hex1_vtx1_ix].b;
 
-  // add two triangles to join the edges
-  triangles.push(Triangle {
+  let tri0 = Triangle {
     a: hex0_vtx0,
     b: hex0_vtx1,
     c: hex1_vtx0,
-  });
-  triangles.push(Triangle {
+  };
+  let tri1 = Triangle {
     a: hex0_vtx1,
     b: hex1_vtx1,
     c: hex1_vtx0,
-  });
+  };
+
+  // add two triangles to join the edges
+  if !tri0.is_degenerate() {
+    triangles.push(tri0);
+  }
+  if !tri1.is_degenerate() {
+    triangles.push(tri1);
+  }
 }
 
 /// Generates a tessellated hex grid centered at the origin.  Each hex is
@@ -172,15 +179,14 @@ fn round_to_nearest_multiple(value: f32, multiple: f32) -> f32 {
 fn displace_mesh(mesh: &mut LinkedMesh) {
   let noise = noise::Fbm::new().set_octaves(4);
   for (_vtx_key, vtx) in &mut mesh.vertices {
-    let displacement_normal = vtx
-      .displacement_normal
-      .expect("Expected displacement normal to be set by now");
+    let Some(displacement_normal) = vtx.displacement_normal else {
+      continue;
+    };
     if displacement_normal.x.is_nan()
       || displacement_normal.y.is_nan()
       || displacement_normal.z.is_nan()
     {
-      // TODO: have to figure out why this happens
-      // log::warn!("Displacement normal is NaN; skipping displace");
+      log::warn!("Displacement normal is NaN; skipping displace");
       continue;
     }
 
@@ -211,16 +217,21 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   let terrain_triangles = gen_tessellated_hex_grid(8, 8, 7., get_height);
 
   let mut mesh = LinkedMesh::from_triangles(&terrain_triangles);
-  let merged_count = mesh.merge_vertices_by_distance(0.0001);
+  let merged_count = mesh.merge_vertices_by_distance(std::f32::EPSILON);
   info!(
     "Merged {merged_count} vertices by distance; {} remaining",
     mesh.vertices.len()
   );
 
   let sharp_edge_threshold_rads = 0.8;
+  let target_edge_length = 1.5;
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_vertex_displacement_normals();
-  tessellation::tessellate_mesh(&mut mesh, 1.5, DisplacementNormalMethod::Interpolate);
+  tessellation::tessellate_mesh(
+    &mut mesh,
+    target_edge_length,
+    DisplacementNormalMethod::Interpolate,
+  );
   info!("Tessellated mesh; new vertex count={}", mesh.vertices.len());
 
   displace_mesh(&mut mesh);

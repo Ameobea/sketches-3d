@@ -5,6 +5,7 @@ use nalgebra::Vector3;
 pub mod linked_mesh;
 pub use linked_mesh::LinkedMesh;
 
+#[derive(Debug)]
 pub struct Triangle {
   pub a: Vector3<f32>,
   pub b: Vector3<f32>,
@@ -29,6 +30,11 @@ impl Triangle {
 
   pub fn center(&self) -> Vector3<f32> {
     (self.a + self.b + self.c) / 3.
+  }
+
+  pub fn is_degenerate(&self) -> bool {
+    let mag = self.normal().magnitude();
+    mag == 0. || mag.is_nan()
   }
 }
 

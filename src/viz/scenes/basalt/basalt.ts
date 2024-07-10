@@ -9,8 +9,8 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 
 const locations = {
   spawn: {
-    pos: new THREE.Vector3(0, 80, 0),
-    rot: new THREE.Vector3(-0.1, 1.378, 0),
+    pos: [63.054371, 25.6321, 63.126],
+    rot: [-0.07, 7.196, 0],
   },
 };
 
@@ -57,8 +57,8 @@ export const processLoadedScene = async (
   glassNormalMap.generateMipmaps = true;
   glassNormalMap.needsUpdate = true;
 
-  // const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
-  const basicMat = buildCustomShader(
+  const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+  const mat = buildCustomShader(
     {
       color: 0x333333,
       roughnessMap: glassDiffuseTex,
@@ -78,7 +78,7 @@ export const processLoadedScene = async (
     },
     { useTriplanarMapping: true }
   );
-  const mesh = new THREE.Mesh(geometry, basicMat);
+  const mesh = new THREE.Mesh(geometry, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.position.set(0, 0, 0);

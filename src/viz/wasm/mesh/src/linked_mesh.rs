@@ -116,6 +116,18 @@ impl Face {
     let edge_1 = c_vtx_pos - target_vtx_pos;
     edge_0.angle(&edge_1)
   }
+
+  pub fn to_triangle(&self, verts: &SlotMap<VertexKey, Vertex>) -> Triangle {
+    Triangle {
+      a: verts[self.vertices[0]].position,
+      b: verts[self.vertices[1]].position,
+      c: verts[self.vertices[2]].position,
+    }
+  }
+
+  pub fn is_degenerate(&self, verts: &SlotMap<VertexKey, Vertex>) -> bool {
+    self.to_triangle(verts).is_degenerate()
+  }
 }
 
 #[derive(Debug)]
@@ -160,13 +172,9 @@ fn sort_edge(v0: VertexKey, v1: VertexKey) -> [VertexKey; 2] {
   }
 }
 
-struct ComputedSmoothFanNormal {
-  pub normal: Vec3,
-}
-
+#[derive(Debug)]
 struct NormalAcc {
   pub accumulated_normal: Vec3,
-  pub total_angle: f32,
 }
 
 impl NormalAcc {
@@ -176,28 +184,38 @@ impl NormalAcc {
     face_key: FaceKey,
     verts: &SlotMap<VertexKey, Vertex>,
     faces: &SlotMap<FaceKey, Face>,
-  ) -> Vec3 {
+  ) -> Option<Vec3> {
     let face = &faces[face_key];
     let face_normal = face.normal(verts);
+    if face_normal.x.is_nan() || face_normal.y.is_nan() || face_normal.z.is_nan() {
+      return None;
+    }
 
     let angle_at_vtx = face.compute_angle_at_vertex(fan_center_vtx_key, verts);
+    if angle_at_vtx.is_nan() {
+      panic!("NaN angle: {:?}", face.to_triangle(verts));
+    }
 
     let weighted_normal = face_normal * angle_at_vtx;
     self.accumulated_normal += weighted_normal;
-    self.total_angle += angle_at_vtx;
-    weighted_normal
+    Some(weighted_normal)
   }
 
-  pub fn get(&self) -> ComputedSmoothFanNormal {
-    ComputedSmoothFanNormal {
-      normal: self.accumulated_normal.normalize(),
+  pub fn get(&self) -> Option<Vec3> {
+    if self.accumulated_normal == Vec3::zeros() {
+      None
+    } else {
+      let normalized = self.accumulated_normal.normalize();
+      if normalized.x.is_nan() || normalized.y.is_nan() || normalized.z.is_nan() {
+        panic!("Non-zero but still NaN normalized: {:?}", self);
+      }
+      Some(normalized)
     }
   }
 
   fn new() -> Self {
     Self {
       accumulated_normal: Vec3::zeros(),
-      total_angle: 0.0,
     }
   }
 }
@@ -291,6 +309,12 @@ impl LinkedMesh {
     let mut mesh = Self::new(triangles.len() * 3, triangles.len(), None);
 
     for tri in triangles {
+      // This might break mesh topology in some cases, but it saves us from dealing
+      // with NaNs
+      if tri.is_degenerate() {
+        continue;
+      }
+
       let [a_key, b_key, c_key] = [
         mesh.vertices.insert(Vertex {
           position: tri.a,
@@ -830,8 +854,7 @@ impl LinkedMesh {
   /// into `smooth_fan_faces`.
   ///
   /// Returns the normal of the smooth fan on `vtx_key`, weighted by the angle
-  /// between the each face's edges that meet at `vtx_key` along with the sum of
-  /// the angles or all corners that make up the fan.
+  /// between the each face's edges that meet at `vtx_key`
   fn walk_one_smooth_fan(
     &mut self,
     vtx_key: VertexKey,
@@ -839,7 +862,7 @@ impl LinkedMesh {
     visited_faces: &mut SmallVec<[FaceKey; 16]>,
     smooth_fan_faces: &mut SmallVec<[FaceKey; 16]>,
     vtx_normal_acc: &mut NormalAcc,
-  ) -> ComputedSmoothFanNormal {
+  ) -> Option<Vec3> {
     let vtx = &self.vertices[vtx_key];
 
     let mut fan_normal_acc = NormalAcc::new();
@@ -858,7 +881,9 @@ impl LinkedMesh {
       visited_faces.push(*cur_face_key);
       let weighted_normal =
         fan_normal_acc.add_face(vtx_key, *cur_face_key, &self.vertices, &self.faces);
-      vtx_normal_acc.accumulated_normal += weighted_normal;
+      if let Some(weighted_normal) = weighted_normal {
+        vtx_normal_acc.accumulated_normal += weighted_normal;
+      }
       let cur_edge_ix = vtx.edges.iter().position(|&e| e == *cur_edge_key).unwrap();
       visited_edges.set(cur_edge_ix, true);
 
@@ -982,11 +1007,14 @@ impl LinkedMesh {
 
   /// Returns the normal of the full vertex, including all smooth fans.  That
   /// normal should be used for displacement.
+  ///
+  /// Can return `None` for cases like disconnected vertices or degenerate
+  /// triangles.
   fn separate_and_compute_normals_for_vertex(
     &mut self,
     smooth_fans_acc: &mut Vec<SmoothFan>,
     vtx_key: VertexKey,
-  ) -> Vec3 {
+  ) -> Option<Vec3> {
     let mut visited_edges = bitarr![0; 1024];
     let mut visited_faces = SmallVec::<[_; 16]>::new();
     let mut smooth_fan_faces: SmallVec<[FaceKey; 16]> = SmallVec::new();
@@ -1014,8 +1042,8 @@ impl LinkedMesh {
       }
       let computed_normal = vtx_normal_acc.get();
       let vtx = &mut self.vertices[vtx_key];
-      vtx.shading_normal = Some(computed_normal.normal);
-      return computed_normal.normal;
+      vtx.shading_normal = computed_normal;
+      return computed_normal;
     }
 
     loop {
@@ -1034,35 +1062,42 @@ impl LinkedMesh {
         // All faces from this fan can retain the same vertex, and we can assign
         // it the computed normal directly
         let vtx = &mut self.vertices[vtx_key];
-        vtx.shading_normal = Some(computed_fan_normal.normal);
+        vtx.shading_normal = computed_fan_normal;
 
         break;
       }
 
-      smooth_fans_acc.push(SmoothFan {
-        old_key: vtx_key,
-        face_keys: smooth_fan_faces.iter().copied().collect(),
-        normal: computed_fan_normal.normal,
-      });
+      if !smooth_fan_faces.is_empty() {
+        let Some(computed_fan_normal) = computed_fan_normal else {
+          continue;
+        };
 
-      smooth_fan_faces.clear();
+        smooth_fans_acc.push(SmoothFan {
+          old_key: vtx_key,
+          face_keys: smooth_fan_faces.iter().copied().collect(),
+          normal: computed_fan_normal,
+        });
+
+        smooth_fan_faces.clear();
+      }
     }
 
     if cfg!(debug_assertions) && self.vertices[vtx_key].shading_normal.is_none() {
       panic!("Vertex {vtx_key:?} has no shading normal after walking smooth fans",);
     }
 
-    vtx_normal_acc.get().normal
+    vtx_normal_acc.get()
   }
 
-  fn compute_displacement_normal(&mut self, vtx_key: VertexKey) -> ComputedSmoothFanNormal {
+  fn compute_displacement_normal(&mut self, vtx_key: VertexKey) -> Option<Vec3> {
     let mut visited_edges = bitarr![0; 1024];
     let mut visited_faces = SmallVec::<[_; 16]>::new();
     let mut smooth_fan_faces: SmallVec<[FaceKey; 16]> = SmallVec::new();
     let mut vtx_normal_acc = NormalAcc::new();
+    let edge_count = self.vertices[vtx_key].edges.len();
 
     loop {
-      let visited_edges = &mut visited_edges[..self.vertices[vtx_key].edges.len()];
+      let visited_edges = &mut visited_edges[..edge_count];
 
       self.walk_one_smooth_fan(
         vtx_key,
@@ -1080,7 +1115,12 @@ impl LinkedMesh {
       smooth_fan_faces.clear();
     }
 
-    vtx_normal_acc.get()
+    let displacement_normal = vtx_normal_acc.get();
+    let Some(displacement_normal) = displacement_normal else {
+      return None;
+    };
+
+    Some(displacement_normal)
   }
 
   /// Computes displacement normals for all vertices, replacing any existing
@@ -1088,8 +1128,8 @@ impl LinkedMesh {
   pub fn compute_vertex_displacement_normals(&mut self) {
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     for vtx_key in all_vtx_keys {
-      let displacement_normal = self.compute_displacement_normal(vtx_key).normal;
-      self.vertices[vtx_key].displacement_normal = Some(displacement_normal);
+      let displacement_normal = self.compute_displacement_normal(vtx_key);
+      self.vertices[vtx_key].displacement_normal = displacement_normal;
     }
   }
 
@@ -1119,7 +1159,7 @@ impl LinkedMesh {
     for vtx_key in all_vtx_keys {
       let computed_normal = self.separate_and_compute_normals_for_vertex(&mut smooth_fans, vtx_key);
       let vtx = &mut self.vertices[vtx_key];
-      vtx.displacement_normal = Some(computed_normal);
+      vtx.displacement_normal = computed_normal;
     }
 
     // We have to wait until we've walked all the fans for the mesh before splitting
@@ -1169,6 +1209,10 @@ impl LinkedMesh {
       FxHashMap::with_capacity_and_hasher(self.vertices.len(), fxhash::FxBuildHasher::default());
 
     for face in self.faces.values() {
+      if face.is_degenerate(&self.vertices) {
+        continue;
+      }
+
       for &vert_key in &face.vertices {
         let vert = &self.vertices[vert_key];
         let vert_ix = *seen_vertex_keys.entry(vert_key).or_insert_with(|| {
@@ -1177,12 +1221,12 @@ impl LinkedMesh {
           if let Some(shading_normal) = vert.shading_normal {
             shading_normals.extend(shading_normal.iter());
           } else if has_normals {
-            panic!("Missing shading normal for vertex {vert_key:?}");
+            shading_normals.extend(Vec3::zeros().iter());
           }
           if let Some(displacement_normal) = vert.displacement_normal {
             displacement_normals.extend(displacement_normal.iter());
           } else if has_normals {
-            panic!("Missing displacement normal for vertex {vert_key:?}");
+            displacement_normals.extend(Vec3::zeros().iter());
           }
           cur_vert_ix += 1;
           ix
@@ -1250,9 +1294,17 @@ impl LinkedMesh {
       DisplacementNormalMethod::Interpolate => {
         let v0 = &self.vertices[edge_id_to_split[0]];
         let v1 = &self.vertices[edge_id_to_split[1]];
-        v0.displacement_normal
-          .zip(v1.displacement_normal)
-          .map(|(n0, n1)| (n0 + n1).normalize())
+        match v0.displacement_normal.zip(v1.displacement_normal) {
+          Some((n0, n1)) => {
+            let merged_normal = (n0 + n1).normalize();
+            if merged_normal.x.is_nan() || merged_normal.y.is_nan() || merged_normal.z.is_nan() {
+              None
+            } else {
+              Some(merged_normal)
+            }
+          }
+          None => None,
+        }
       }
       DisplacementNormalMethod::EdgeNormal => {
         // We set the displacement normal of the new vertex to be the same as the edge's
@@ -1269,7 +1321,6 @@ impl LinkedMesh {
 
     let middle_vertex_key = self.vertices.insert(Vertex {
       position: vm_position,
-
       displacement_normal,
       shading_normal,
       edges: SmallVec::new(),
