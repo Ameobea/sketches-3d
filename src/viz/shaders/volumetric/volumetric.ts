@@ -78,7 +78,7 @@ export interface VolumetricPassParams {
    * Default: false
    */
   halfRes?: boolean;
-  globalScale: number;
+  globalScale?: number;
 }
 
 class VolumetricMaterial extends THREE.ShaderMaterial {

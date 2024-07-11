@@ -6,43 +6,26 @@ import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { loadRawTexture, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 const locations = {
   spawn: {
-    pos: [63.054371, 25.6321, 63.126],
-    rot: [-0.07, 7.196, 0],
+    pos: [157.32884216308594, 32.89010238647461, 313.22882080078125],
+    rot: [-0.2380000000000006, 22.991999999999873, 0],
   },
 };
 
-export const processLoadedScene = async (
-  viz: VizState,
-  loadedWorld: THREE.Group,
-  vizConf: VizConfig
-): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-  viz.scene.add(ambientLight);
-
-  // TODO: use web worker
-  const basaltEngine = await import('../../wasmComp/basalt').then(async engine => {
-    await engine.default();
-    return engine;
-  });
-  const basaltCtx = basaltEngine.basalt_gen();
-  const vertices = basaltEngine.basalt_take_vertices(basaltCtx);
-  const indices = basaltEngine.basalt_take_indices(basaltCtx);
-  const normals = basaltEngine.basalt_take_normals(basaltCtx);
-  basaltEngine.basalt_free(basaltCtx);
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  const needsU32Indices = indices.some(i => i > 65535);
-  geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
-  geometry.computeVertexNormals();
-
+const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
-  const glassDiffuseTex = await loadTexture(loader, 'https://i.ameo.link/cbb.png', {});
-  const glassNormalTex = await loadRawTexture('https://i.ameo.link/cbc.jpg');
+  const glassDiffuseTexPromise = loadTexture(loader, 'https://i.ameo.link/cbg.avif', {});
+  const glassNormalTexPromise = loadRawTexture('https://i.ameo.link/cbf.avif');
+
+  const [glassDiffuseTex, glassNormalTex, bgImage] = await Promise.all([
+    glassDiffuseTexPromise,
+    glassNormalTexPromise,
+    loader.loadAsync('https://i.ameo.link/cbj.avif'),
+  ]);
+
   const glassNormalMap = new THREE.Texture(
     glassNormalTex,
     THREE.UVMapping,
@@ -57,10 +40,70 @@ export const processLoadedScene = async (
   glassNormalMap.generateMipmaps = true;
   glassNormalMap.needsUpdate = true;
 
+  const bgTexture = new THREE.Texture(
+    bgImage,
+    THREE.EquirectangularRefractionMapping,
+    undefined,
+    undefined,
+    THREE.NearestFilter,
+    THREE.NearestFilter
+  );
+  bgTexture.needsUpdate = true;
+
+  return { glassDiffuseTex, glassNormalMap, bgTexture };
+};
+
+export const processLoadedScene = async (
+  viz: VizState,
+  loadedWorld: THREE.Group,
+  vizConf: VizConfig
+): Promise<SceneConfig> => {
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.1);
+  viz.scene.add(ambientLight);
+
+  // dim pointlight that follows the camera
+  const playerPointLight = new THREE.PointLight(0xd1c9ab, 2.75, 50, 0.7);
+  playerPointLight.castShadow = false;
+  viz.scene.add(playerPointLight);
+  const pointLightOffset = new THREE.Vector3(0, 2.2, 0);
+  viz.registerBeforeRenderCb(() => playerPointLight.position.copy(viz.camera.position).add(pointLightOffset));
+
+  // TODO: use web worker
+  const basaltEngine = await import('../../wasmComp/basalt').then(async engine => {
+    await engine.default();
+    return engine;
+  });
+  const basaltCtx = basaltEngine.basalt_gen();
+  const vertices = basaltEngine.basalt_take_vertices(basaltCtx);
+  const indices = basaltEngine.basalt_take_indices(basaltCtx);
+  const normals = basaltEngine.basalt_take_normals(basaltCtx);
+
+  const collisionIndices = basaltEngine.basalt_take_collision_indices(basaltCtx);
+  const collisionVertices = basaltEngine.basalt_take_collision_vertices(basaltCtx);
+
   const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+
+  const collisionGeom = new THREE.BufferGeometry();
+  collisionGeom.setAttribute('position', new THREE.BufferAttribute(collisionVertices, 3));
+  collisionGeom.setIndex(new THREE.BufferAttribute(collisionIndices, 1));
+  const collisionMesh = new THREE.Mesh(collisionGeom, debugMat);
+  viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(collisionMesh));
+
+  basaltEngine.basalt_free(basaltCtx);
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  const needsU32Indices = indices.some(i => i > 65535);
+  geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
+
+  const { glassDiffuseTex, glassNormalMap, bgTexture } = await loadTextures();
+
+  viz.scene.background = bgTexture;
+
   const mat = buildCustomShader(
     {
-      color: 0x333333,
+      color: 0x373737,
       roughnessMap: glassDiffuseTex,
       roughness: 1,
       uvTransform: new THREE.Matrix3().scale(0.09, 0.09),
@@ -68,22 +111,30 @@ export const processLoadedScene = async (
       normalScale: 0.9,
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
-      // side: THREE.DoubleSide,
+      metalness: 0.1,
+      iridescence: 0.1,
     },
     {
       roughnessShader: `
       float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
-      return 1. - baseRoughness;
+        return clamp(1. - baseRoughness + 0.08, 0., 1.);
       }`,
+      iridescenceShader: `
+      float getCustomIridescence(vec3 pos, vec3 normal, float baseIridescence, float curTimeSeconds, SceneCtx ctx) {
+        vec3 noisePos = pos * 0.28 + vec3(curTimeSeconds * 0.004);
+        float noiseVal = pow(fbm(noisePos), 2.);
+        return baseIridescence + smoothstep(0.3, 0.6, noiseVal) * 0.2;
+      }
+      `,
     },
     { useTriplanarMapping: true }
   );
+  viz.registerBeforeRenderCb(curTimeSeconds => mat.setCurTimeSeconds(curTimeSeconds));
   const mesh = new THREE.Mesh(geometry, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.position.set(0, 0, 0);
   viz.scene.add(mesh);
-  viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(mesh));
 
   const dirLight = new THREE.DirectionalLight(0xffffff, 4.5);
   dirLight.position.set(242, 65, 220);
@@ -91,6 +142,7 @@ export const processLoadedScene = async (
 
   dirLight.castShadow = true;
   dirLight.shadow.needsUpdate = true;
+  // TODO: remove
   dirLight.shadow.autoUpdate = true;
   dirLight.shadow.mapSize.width = 2048 * 4;
   dirLight.shadow.mapSize.height = 2048 * 4;
@@ -116,6 +168,37 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight.target);
 
   configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
+    const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+      fogMinY: -60,
+      fogMaxY: -40,
+      fogColorHighDensity: new THREE.Vector3(0.04, 0.024, 0.02),
+      fogColorLowDensity: new THREE.Vector3(0.1, 0.1, 0.1),
+      ambientLightColor: new THREE.Color(0x4d2424),
+      ambientLightIntensity: 1.2,
+      heightFogStartY: -70,
+      heightFogEndY: -55,
+      heightFogFactor: 0.14,
+      maxRayLength: 1000,
+      minStepLength: 0.1,
+      noiseBias: 0.7,
+      noisePow: 2.4,
+      fogFadeOutRangeY: 8,
+      fogFadeOutPow: 0.6,
+      fogDensityMultiplier: 0.32,
+      postDensityMultiplier: 1.7,
+      noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
+      globalScale: 1,
+      halfRes: true,
+      compositor: { edgeRadius: 4, edgeStrength: 2 },
+      ...{
+        [GraphicsQuality.Low]: { baseRaymarchStepCount: 20 },
+        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 40 },
+        [GraphicsQuality.High]: { baseRaymarchStepCount: 80 },
+      }[quality],
+    });
+    composer.addPass(volumetricPass);
+    viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
+
     const n8aoPass = new N8AOPostPass(
       viz.scene,
       viz.camera,

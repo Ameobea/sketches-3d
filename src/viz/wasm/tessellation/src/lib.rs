@@ -5,7 +5,7 @@ extern crate log;
 
 use float_ord::FloatOrd;
 use mesh::{
-  linked_mesh::{DisplacementNormalMethod, Face},
+  linked_mesh::{DisplacementNormalMethod, Edge, Face},
   LinkedMesh,
 };
 
@@ -15,31 +15,25 @@ mod interface;
 fn get_face_has_edge_needing_split(
   face: &Face,
   mesh: &LinkedMesh,
-  target_edge_length: f32,
+  should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
 ) -> bool {
   face
     .edges
     .iter()
     .map(|&edge_key| &mesh.edges[edge_key])
-    .any(|edge| {
-      let length = edge.length(&mesh.vertices);
-      let split_length = target_edge_length / 2.;
-      // if the post-split length would be closer to the target length than the
-      // current length, then we need to split this edge
-      (length - split_length).abs() > (length - target_edge_length).abs()
-    })
+    .any(|edge| should_split_edge(mesh, edge))
 }
 
 /// Returns `true` if at least one face was split
 fn tessellate_one_iter(
   mesh: &mut LinkedMesh,
-  target_edge_length: f32,
   displacement_normal_method: DisplacementNormalMethod,
+  should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
 ) -> bool {
   let face_keys_needing_tessellation: Vec<_> = mesh
     .iter_faces()
     .filter_map(|(face_key, face)| {
-      let has_edge_needing_split = get_face_has_edge_needing_split(face, mesh, target_edge_length);
+      let has_edge_needing_split = get_face_has_edge_needing_split(face, mesh, should_split_edge);
       if has_edge_needing_split {
         Some(face_key)
       } else {
@@ -60,7 +54,7 @@ fn tessellate_one_iter(
     };
 
     // Check again to see if the face still needs tessellation
-    let still_needs_split = get_face_has_edge_needing_split(face, mesh, target_edge_length);
+    let still_needs_split = get_face_has_edge_needing_split(face, mesh, should_split_edge);
     if !still_needs_split {
       continue;
     }
@@ -110,17 +104,32 @@ fn tessellate_one_iter(
   true
 }
 
+pub fn tessellate_mesh_cb(
+  mesh: &mut LinkedMesh,
+  displacement_normal_method: DisplacementNormalMethod,
+  should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
+) {
+  loop {
+    let did_split = tessellate_one_iter(mesh, displacement_normal_method, should_split_edge);
+    if !did_split {
+      break;
+    }
+  }
+}
+
 pub fn tessellate_mesh(
   mesh: &mut LinkedMesh,
   target_edge_length: f32,
   displacement_normal_method: DisplacementNormalMethod,
 ) {
-  loop {
-    let did_split = tessellate_one_iter(mesh, target_edge_length, displacement_normal_method);
-    if !did_split {
-      break;
-    }
-  }
+  let should_split_edge = |mesh: &LinkedMesh, edge: &Edge| -> bool {
+    let length = edge.length(&mesh.vertices);
+    let split_length = length / 2.;
+    // if the post-split length would be closer to the target length than the
+    // current length, then we need to split this edge
+    (split_length - target_edge_length).abs() < (length - target_edge_length).abs()
+  };
+  tessellate_mesh_cb(mesh, displacement_normal_method, &should_split_edge);
 }
 
 #[test]

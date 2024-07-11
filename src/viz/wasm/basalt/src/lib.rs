@@ -1,9 +1,11 @@
+use core::prelude::v1;
 use std::f32::consts::PI;
 
+use bitvec::bitarr;
 use common::random;
 use log::info;
 use mesh::{
-  linked_mesh::{set_debug_print, DisplacementNormalMethod},
+  linked_mesh::{set_debug_print, DisplacementNormalMethod, Edge},
   LinkedMesh, OwnedIndexedMesh, Triangle,
 };
 use nalgebra::Vector3;
@@ -22,6 +24,10 @@ fn connect_hexes(
   let hex0_vtx1 = hex0[hex0_vtx1_ix].b;
   let hex1_vtx0 = hex1[hex1_vtx0_ix].b;
   let hex1_vtx1 = hex1[hex1_vtx1_ix].b;
+
+  if (hex0_vtx0.y - hex1_vtx0.y).abs() < 0.0001 {
+    return;
+  }
 
   let tri0 = Triangle {
     a: hex0_vtx0,
@@ -57,11 +63,16 @@ fn gen_tessellated_hex_grid(
   let mut triangles = Vec::new();
   let hex_height = (3.0_f32).sqrt() * hex_width / 2.0;
 
+  let mut void_flags = vec![bitarr![0; 1024]; y_count];
+
   for y in 0..y_count {
     for x in 0..x_count {
       let hex_center_x = x as f32 * 1.5 * hex_width;
       let hex_center_z = y as f32 * 2.0 * hex_height + if x % 2 == 0 { 0. } else { hex_height };
       let hex_height = get_hex_height(hex_center_x, hex_center_z);
+      if hex_height < -10. {
+        void_flags[y].set(x, true);
+      }
 
       let mut vertices = Vec::new();
       // generates verts in the order of right, bottom right, bottom left, left, top
@@ -148,10 +159,28 @@ fn gen_tessellated_hex_grid(
     }
   }
 
+  let triangles_per_hex = 6;
+  let mut tri_ix = 0;
+  triangles.retain(|_| {
+    let hex_ix = tri_ix / triangles_per_hex;
+    if hex_ix >= x_count * y_count {
+      return true;
+    }
+
+    let y_ix = hex_ix / x_count;
+    let x_ix = hex_ix % x_count;
+    let should_void = void_flags[y_ix].get(x_ix).unwrap();
+    let retain = !should_void;
+
+    tri_ix += 1;
+    retain
+  });
+
   triangles
 }
 
 pub struct GenBasaltCtx {
+  pub collission_mesh: OwnedIndexedMesh,
   pub terrrain_mesh: OwnedIndexedMesh,
 }
 
@@ -190,9 +219,14 @@ fn displace_mesh(mesh: &mut LinkedMesh) {
       continue;
     }
 
-    let pos = vtx.position * 0.2;
+    let pos = vtx.position * 0.05;
     let noise = noise.get([pos.x, pos.y, pos.z]); //.abs();
-    vtx.position += displacement_normal * noise * 0.8;
+    vtx.position += (Vector3::new(
+      displacement_normal.x,
+      displacement_normal.y * 1.2f32,
+      displacement_normal.z,
+    )) * noise
+      * 1.66;
   }
 }
 
@@ -203,41 +237,63 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   let coarse_noise = noise::Fbm::new().set_octaves(1).set_seed(393939939);
   let noise_gen: noise::Fbm<f32> = noise::Fbm::new().set_octaves(2).set_seed(393939939);
   let get_height = |x, z| {
-    let void = coarse_noise.get([x * 0.05, z * 0.05]) < 0.2;
+    let void = coarse_noise.get([x * 0.036, z * 0.036]) < 0.2;
     if void {
-      return -20.;
+      return -50.;
     }
-    let mut height = (noise_gen.get([x * 0.03, z * 0.03]) + 1.) * 20.;
+    let mut height = (noise_gen.get([x * 0.03, z * 0.03]) + 1.) * 24.;
     if random() < 0.7 {
       height =
-        round_to_nearest_multiple(height, 20.) + if random() > 0.6 { random() * 1.2 } else { 0. };
+        round_to_nearest_multiple(height, 11.) + if random() > 0.6 { random() * 1.2 } else { 0. };
     }
     height
   };
-  let terrain_triangles = gen_tessellated_hex_grid(8, 8, 7., get_height);
+  let terrain_triangles = gen_tessellated_hex_grid(20, 20, 11., get_height);
 
   let mut mesh = LinkedMesh::from_triangles(&terrain_triangles);
-  let merged_count = mesh.merge_vertices_by_distance(std::f32::EPSILON);
+  let merged_count = mesh.merge_vertices_by_distance(0.1);
   info!(
     "Merged {merged_count} vertices by distance; {} remaining",
     mesh.vertices.len()
   );
 
+  let collission_mesh = mesh.to_raw_indexed();
+
   let sharp_edge_threshold_rads = 0.8;
-  let target_edge_length = 1.5;
+  let target_edge_length = 2.6;
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_vertex_displacement_normals();
-  tessellation::tessellate_mesh(
+
+  let should_split_edge = |mesh: &LinkedMesh, edge: &Edge| -> bool {
+    // avoid splitting edges that are low down to save resources since they will be
+    // far from the player and not easily visible
+    let [v0_y, v1_y] = [
+      mesh.vertices[edge.vertices[0]].position.y,
+      mesh.vertices[edge.vertices[1]].position.y,
+    ];
+    if v0_y < -20. && v1_y < -20. {
+      return false;
+    } else if v0_y < 0. || v1_y < 0. {
+      return edge.length(&mesh.vertices) > 8.0;
+    }
+
+    let length = edge.length(&mesh.vertices);
+    let split_length = length / 2.;
+    // if the post-split length would be closer to the target length than the
+    // current length, then we need to split this edge
+    (split_length - target_edge_length).abs() < (length - target_edge_length).abs()
+  };
+  tessellation::tessellate_mesh_cb(
     &mut mesh,
-    target_edge_length,
     DisplacementNormalMethod::Interpolate,
+    &should_split_edge,
   );
   info!("Tessellated mesh; new vertex count={}", mesh.vertices.len());
 
   displace_mesh(&mut mesh);
 
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
-  mesh.compute_edge_displacement_normals();
+  // mesh.compute_edge_displacement_normals();
   mesh.separate_vertices_and_compute_normals();
   info!(
     "Separated vertices; new vertex count={}",
@@ -245,6 +301,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   );
 
   Box::into_raw(Box::new(GenBasaltCtx {
+    collission_mesh,
     terrrain_mesh: mesh.to_raw_indexed(),
   }))
 }
@@ -271,6 +328,18 @@ pub fn basalt_take_normals(ctx: *mut GenBasaltCtx) -> Vec<f32> {
       .as_mut()
       .expect("Shading normals not found"),
   )
+}
+
+#[wasm_bindgen]
+pub fn basalt_take_collision_vertices(ctx: *mut GenBasaltCtx) -> Vec<f32> {
+  let ctx = unsafe { &mut (*ctx) };
+  std::mem::take(&mut ctx.collission_mesh.vertices)
+}
+
+#[wasm_bindgen]
+pub fn basalt_take_collision_indices(ctx: *mut GenBasaltCtx) -> Vec<usize> {
+  let ctx = unsafe { &mut (*ctx) };
+  std::mem::take(&mut ctx.collission_mesh.indices)
 }
 
 #[wasm_bindgen]

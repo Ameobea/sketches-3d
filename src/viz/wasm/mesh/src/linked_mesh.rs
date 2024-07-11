@@ -22,7 +22,7 @@ pub struct Vertex {
   pub shading_normal: Option<Vec3>,
   /// Normal of the vertex used for displacement mapping.
   pub displacement_normal: Option<Vec3>,
-  edges: SmallVec<[EdgeKey; 2]>,
+  edges: Vec<EdgeKey>,
 }
 
 #[derive(Debug)]
@@ -289,7 +289,7 @@ impl LinkedMesh {
           position,
           shading_normal: normals.map(|normals| normals[i]),
           displacement_normal: None,
-          edges: SmallVec::new(),
+          edges: Vec::new(),
         })
       })
       .collect::<Vec<_>>();
@@ -320,19 +320,19 @@ impl LinkedMesh {
           position: tri.a,
           shading_normal: None,
           displacement_normal: None,
-          edges: SmallVec::new(),
+          edges: Vec::new(),
         }),
         mesh.vertices.insert(Vertex {
           position: tri.b,
           shading_normal: None,
           displacement_normal: None,
-          edges: SmallVec::new(),
+          edges: Vec::new(),
         }),
         mesh.vertices.insert(Vertex {
           position: tri.c,
           shading_normal: None,
           displacement_normal: None,
-          edges: SmallVec::new(),
+          edges: Vec::new(),
         }),
       ];
 
@@ -432,7 +432,7 @@ impl LinkedMesh {
 
         for &vert_key in &dropped_edge.vertices {
           let vert = &mut self.vertices[vert_key];
-          vert.edges.retain(|&mut e| e != edge_key);
+          vert.edges.retain(|&e| e != edge_key);
         }
       }
     }
@@ -782,7 +782,7 @@ impl LinkedMesh {
       if edge.faces.is_empty() {
         for vtx_key in edge.vertices {
           let vtx = &mut self.vertices[vtx_key];
-          vtx.edges.retain(|&mut e| e != old_edge_key);
+          vtx.edges.retain(|&e| e != old_edge_key);
         }
         self.edges.remove(old_edge_key);
       }
@@ -1181,7 +1181,7 @@ impl LinkedMesh {
         position,
         shading_normal: Some(normal),
         displacement_normal,
-        edges: SmallVec::new(),
+        edges: Vec::new(),
       });
 
       for face_key in face_keys {
@@ -1298,6 +1298,8 @@ impl LinkedMesh {
           Some((n0, n1)) => {
             let merged_normal = (n0 + n1).normalize();
             if merged_normal.x.is_nan() || merged_normal.y.is_nan() || merged_normal.z.is_nan() {
+              // TODO...
+              // Some(Vec3::new(random(), random(), random()).normalize())
               None
             } else {
               Some(merged_normal)
@@ -1323,7 +1325,7 @@ impl LinkedMesh {
       position: vm_position,
       displacement_normal,
       shading_normal,
-      edges: SmallVec::new(),
+      edges: Vec::new(),
     });
 
     // Split each adjacent face
@@ -1537,7 +1539,7 @@ impl LinkedMesh {
 
         for vert_key in edge.vertices {
           let vert = &mut self.vertices[vert_key];
-          vert.edges.retain(|&mut e| e != edge_key);
+          vert.edges.retain(|&e| e != edge_key);
         }
       }
     }

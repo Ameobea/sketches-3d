@@ -152,6 +152,7 @@ interface CustomShaderShaders {
   roughnessShader?: string;
   metalnessShader?: string;
   emissiveShader?: string;
+  iridescenceShader?: string;
   displacementShader?: string;
   includeNoiseShadersVertex?: boolean;
 }
@@ -226,6 +227,7 @@ export const buildCustomShaderArgs = (
     roughnessShader,
     metalnessShader,
     emissiveShader,
+    iridescenceShader,
     displacementShader,
     includeNoiseShadersVertex,
   }: CustomShaderShaders = {},
@@ -406,6 +408,15 @@ export const buildCustomShaderArgs = (
       return `
   diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`;
     }
+  };
+
+  const buildRunIridescenceShaderFragment = () => {
+    if (!iridescenceShader) {
+      return '';
+    }
+
+    return `
+material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iridescence, curTimeSeconds, ctx);`;
   };
 
   const buildLightsFragmentBegin = () => {
@@ -933,6 +944,7 @@ ${normalShader ?? ''}
 ${roughnessShader ?? ''}
 ${metalnessShader ?? ''}
 ${emissiveShader ?? ''}
+${iridescenceShader ?? ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? tileBreakingFragment : ''}
 ${
   tileBreaking?.type === 'neyret'
@@ -1020,6 +1032,7 @@ void main() {
 
 	// accumulation
 	#include <lights_physical_fragment>
+  ${iridescenceShader ? buildRunIridescenceShaderFragment() : ''}
 	// #include <lights_fragment_begin>
   ${buildLightsFragmentBegin()}
 	#include <lights_fragment_maps>
