@@ -406,7 +406,6 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   );
 
   let sharp_edge_threshold_rads = 0.8;
-  let target_edge_length = 2.6;
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_vertex_displacement_normals();
 
@@ -414,6 +413,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   displace_mesh(&noise_gen, &mut collission_mesh);
   let collission_mesh = mesh.to_raw_indexed();
 
+  let target_edge_length = 3.16;
   let should_split_edge = |mesh: &LinkedMesh, edge: &Edge| -> bool {
     // avoid splitting edges that are low down to save resources since they will be
     // far from the player and not easily visible
@@ -421,7 +421,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
       mesh.vertices[edge.vertices[0]].position.y,
       mesh.vertices[edge.vertices[1]].position.y,
     ];
-    if v0_y < -20. && v1_y < -20. {
+    if v0_y < -15. && v1_y < -15. {
       return false;
     } else if v0_y < 0. || v1_y < 0. {
       return edge.length(&mesh.vertices) > 8.0;

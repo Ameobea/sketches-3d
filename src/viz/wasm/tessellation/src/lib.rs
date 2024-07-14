@@ -1,16 +1,10 @@
 #![feature(iter_array_chunks)]
 
-#[cfg_attr(feature = "bindgen", macro_use)]
-extern crate log;
-
 use float_ord::FloatOrd;
 use mesh::{
   linked_mesh::{DisplacementNormalMethod, Edge, Face},
   LinkedMesh,
 };
-
-#[cfg(feature = "bindgen")]
-mod interface;
 
 fn get_face_has_edge_needing_split(
   face: &Face,

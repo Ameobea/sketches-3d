@@ -10,6 +10,7 @@ members = [
   "common",
   "stone",
   "tessellation",
+  "tessellation_sandbox",
   "basalt",
 ]
 resolver = "2"

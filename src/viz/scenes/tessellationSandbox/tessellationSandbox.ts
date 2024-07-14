@@ -32,7 +32,7 @@ export const processLoadedScene = async (
     towerPlinthPedestalTextureP.then(towerPlinthPedestalTexture =>
       generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
     ),
-    import('../../wasmComp/tessellation').then(async engine => {
+    import('../../wasmComp/tessellation_sandbox').then(async engine => {
       await engine.default();
       return engine;
     }),

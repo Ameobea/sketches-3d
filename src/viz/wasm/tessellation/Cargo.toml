@@ -5,17 +5,9 @@ authors = ["Casey Primozic <casey@cprimozic.net>"]
 edition = "2021"
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
-wasm-bindgen = { version = "=0.2.92", optional = true }
-console_error_panic_hook = "0.1"
 float-ord = "0.3"
-wasm-logger = "0.2"
-log = "0.4"
-noise = "0.4"
 mesh = { path = "../mesh" }
 
-[features]
-bindgen = ["wasm-bindgen"]
-default = ["bindgen"]

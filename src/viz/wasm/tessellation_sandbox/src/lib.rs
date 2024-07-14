@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate log;
+
 use mesh::{
   linked_mesh::{set_debug_print, set_graphviz_print, DisplacementNormalMethod},
   LinkedMesh, OwnedIndexedMesh,
@@ -105,7 +108,7 @@ pub fn tessellate_mesh(
 
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_vertex_displacement_normals();
-  crate::tessellate_mesh(&mut mesh, target_edge_length, displacement_normal_method);
+  tessellation::tessellate_mesh(&mut mesh, target_edge_length, displacement_normal_method);
 
   displace_mesh(&mut mesh, displacement_method);
 

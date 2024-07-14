@@ -660,11 +660,19 @@ dependencies = [
 name = "tessellation"
 version = "0.1.0"
 dependencies = [
- "console_error_panic_hook",
  "float-ord",
+ "mesh",
+]
+
+[[package]]
+name = "tessellation_sandbox"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
  "log",
  "mesh",
  "noise",
+ "tessellation",
  "wasm-bindgen",
  "wasm-logger",
 ]

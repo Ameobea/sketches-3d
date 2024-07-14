@@ -1,0 +1,18 @@
+[package]
+name = "tessellation_sandbox"
+version = "0.1.0"
+authors = ["Casey Primozic <casey@cprimozic.net>"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+noise = "0.4"
+wasm-bindgen = "=0.2.92"
+console_error_panic_hook = "0.1"
+wasm-logger = "0.2"
+log = "0.4"
+
+mesh = { path = "../mesh" }
+tessellation = { path = "../tessellation" }
