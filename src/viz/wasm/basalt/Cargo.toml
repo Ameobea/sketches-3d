@@ -19,3 +19,4 @@ mesh = { path = "../mesh" }
 common = { path = "../common" }
 tessellation = { path = "../tessellation", default-features = false }
 bitvec = "1"
+smallvec = "1"

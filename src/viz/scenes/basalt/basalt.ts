@@ -10,8 +10,8 @@ import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 const locations = {
   spawn: {
-    pos: [157.32884216308594, 32.89010238647461, 313.22882080078125],
-    rot: [-0.2380000000000006, 22.991999999999873, 0],
+    pos: [161.5360107421875, 24.351091384887695, 126.96359252929688],
+    rot: [-0.2187963267948967, 25.771999999999085, 0],
   },
 };
 
@@ -23,7 +23,7 @@ const loadTextures = async () => {
   const [glassDiffuseTex, glassNormalTex, bgImage] = await Promise.all([
     glassDiffuseTexPromise,
     glassNormalTexPromise,
-    loader.loadAsync('https://i.ameo.link/cbj.avif'),
+    loader.loadAsync('https://i.ameo.link/cbm.avif'),
   ]);
 
   const glassNormalMap = new THREE.Texture(
@@ -77,6 +77,18 @@ export const processLoadedScene = async (
   const vertices = basaltEngine.basalt_take_vertices(basaltCtx);
   const indices = basaltEngine.basalt_take_indices(basaltCtx);
   const normals = basaltEngine.basalt_take_normals(basaltCtx);
+  const displacementNormals = basaltEngine.basalt_take_displacement_normals(basaltCtx);
+
+  // // add arrows to debug displacement normals
+  // for (let i = 0; i < displacementNormals.length; i += 3) {
+  //   const arrow = new THREE.ArrowHelper(
+  //     new THREE.Vector3(displacementNormals[i], displacementNormals[i + 1], displacementNormals[i + 2]),
+  //     new THREE.Vector3(vertices[i], vertices[i + 1], vertices[i + 2]),
+  //     1.5,
+  //     0xff0000
+  //   );
+  //   viz.scene.add(arrow);
+  // }
 
   const collisionIndices = basaltEngine.basalt_take_collision_indices(basaltCtx);
   const collisionVertices = basaltEngine.basalt_take_collision_vertices(basaltCtx);

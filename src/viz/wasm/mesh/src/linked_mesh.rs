@@ -15,7 +15,7 @@ new_key_type! {
   pub struct EdgeKey;
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Vertex {
   pub position: Vec3,
   /// Normal of the vertex used for shading/lighting.
@@ -25,7 +25,7 @@ pub struct Vertex {
   edges: Vec<EdgeKey>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Face {
   /// Counter-clockwise winding
   pub vertices: [VertexKey; 3],
@@ -130,7 +130,7 @@ impl Face {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Edge {
   // Ordered such that the first vertex key is always less than the second
   pub vertices: [VertexKey; 2],
@@ -157,6 +157,7 @@ fn distance(p0: Vec3, p1: Vec3) -> f32 {
 /// Similar to a half-edge data structure, but with a some differences such as
 /// all faces being triangles and no intrinsic directionality to edges.
 /// Instead, faces store their vertices directly in-order.
+#[derive(Clone)]
 pub struct LinkedMesh {
   pub vertices: SlotMap<VertexKey, Vertex>,
   pub faces: SlotMap<FaceKey, Face>,
@@ -188,6 +189,11 @@ impl NormalAcc {
     let face = &faces[face_key];
     let face_normal = face.normal(verts);
     if face_normal.x.is_nan() || face_normal.y.is_nan() || face_normal.z.is_nan() {
+      panic!(
+        "Face normal is NaN: {:?}; is_degen={}",
+        face.to_triangle(verts),
+        face.is_degenerate(verts)
+      );
       return None;
     }
 
@@ -1117,6 +1123,11 @@ impl LinkedMesh {
 
     let displacement_normal = vtx_normal_acc.get();
     let Some(displacement_normal) = displacement_normal else {
+      panic!(
+        "Vertex {vtx_key:?} has no displacement normal after walking smooth fans; \
+         visited_faces.len()={}",
+        visited_faces.len()
+      );
       return None;
     };
 
@@ -1221,11 +1232,13 @@ impl LinkedMesh {
           if let Some(shading_normal) = vert.shading_normal {
             shading_normals.extend(shading_normal.iter());
           } else if has_normals {
+            // panic!("Vertex {vert_key:?} has no shading normal");
             shading_normals.extend(Vec3::zeros().iter());
           }
           if let Some(displacement_normal) = vert.displacement_normal {
             displacement_normals.extend(displacement_normal.iter());
           } else if has_normals {
+            panic!("Vertex {vert_key:?} has no displacement normal");
             displacement_normals.extend(Vec3::zeros().iter());
           }
           cur_vert_ix += 1;
@@ -1298,7 +1311,7 @@ impl LinkedMesh {
           Some((n0, n1)) => {
             let merged_normal = (n0 + n1).normalize();
             if merged_normal.x.is_nan() || merged_normal.y.is_nan() || merged_normal.z.is_nan() {
-              // TODO...
+              panic!("Merged normal is NaN; n0={n0:?}; n1={n1:?}; merged_normal={merged_normal:?}");
               // Some(Vec3::new(random(), random(), random()).normalize())
               None
             } else {

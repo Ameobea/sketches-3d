@@ -42,3 +42,18 @@ pub fn random() -> f32 {
 pub fn uninit<T>() -> T {
   unsafe { std::mem::MaybeUninit::uninit().assume_init() }
 }
+
+pub fn clamp(val: f32, min: f32, max: f32) -> f32 {
+  if val < min {
+    return min;
+  }
+  if val > max {
+    return max;
+  }
+  val
+}
+
+pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+  let t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}
