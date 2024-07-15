@@ -1,6 +1,4 @@
 import * as Sentry from '@sentry/browser';
-import { CaptureConsole } from '@sentry/integrations';
-import { Integrations } from '@sentry/tracing';
 
 let sentryInitialized = false;
 let sentryDisabled = false;
@@ -15,7 +13,10 @@ export const initSentry = () => {
 
   Sentry.init({
     dsn: 'https://e71a66fc87db4733bc42b675e6f9bc78@sentry.ameo.design/14',
-    integrations: [new Integrations.BrowserTracing(), new CaptureConsole({ levels: ['warn', 'error'] })],
+    integrations: [
+      Sentry.browserTracingIntegration(),
+      Sentry.captureConsoleIntegration({ levels: ['warn', 'error'] }),
+    ],
     tracesSampleRate: 1.0,
   });
 };

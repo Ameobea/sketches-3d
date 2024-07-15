@@ -1,4 +1,4 @@
-import { EffectComposer, EffectPass, RenderPass, SMAAEffect, SMAAPreset } from 'postprocessing';
+import { Effect, EffectComposer, EffectPass, RenderPass, SMAAEffect, SMAAPreset } from 'postprocessing';
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
@@ -37,7 +37,8 @@ export const configureDefaultPostprocessingPipeline = (
   quality: GraphicsQuality,
   addMiddlePasses?: (composer: EffectComposer, viz: VizState, quality: GraphicsQuality) => void,
   onFirstRender?: () => void,
-  extraParams: Partial<ExtraPostprocessingParams> = {}
+  extraParams: Partial<ExtraPostprocessingParams> = {},
+  postEffects?: Effect[]
 ) => {
   const effectComposer = new EffectComposer(viz.renderer, {
     multisampling: 0,
@@ -66,14 +67,13 @@ export const configureDefaultPostprocessingPipeline = (
       [GraphicsQuality.High]: SMAAPreset.HIGH,
     }[quality],
   });
-  const fxPass = new EffectPass(viz.camera, smaaEffect);
+  const fxPass = new EffectPass(viz.camera, ...[smaaEffect, ...(postEffects ?? [])]);
   effectComposer.addPass(fxPass);
 
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
   if (extraParams.toneMappingExposure) {
     viz.renderer.toneMappingExposure = extraParams.toneMappingExposure;
   }
-  // viz.renderer.toneMappingExposure = 1.8;
 
   let didRender = false;
   viz.setRenderOverride(timeDiffSeconds => {

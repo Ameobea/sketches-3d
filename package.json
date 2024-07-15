@@ -31,8 +31,6 @@
   "type": "module",
   "dependencies": {
     "@sentry/browser": "^8.9.2",
-    "@sentry/integrations": "^7.114.0",
-    "@sentry/tracing": "^7.114.0",
     "comlink": "^4.4.1",
     "detect-gpu": "^5.0.38",
     "graphviz-builder": "^0.1.1",

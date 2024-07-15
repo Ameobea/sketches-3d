@@ -7,15 +7,16 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import { loadRawTexture, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
+import { BlendFunction, EffectPass, ToneMappingEffect, ToneMappingMode } from 'postprocessing';
 
 const locations = {
   spawn: {
-    pos: [161.5360107421875, 24.351091384887695, 126.96359252929688],
-    rot: [-0.2187963267948967, 25.771999999999085, 0],
+    pos: [80.12519073486328, 23.87233543395996, 178.36131286621094] as [number, number, number],
+    rot: [-0.31479632679489683, 28.273999999999052, 0] as [number, number, number],
   },
 };
 
-const loadTextures = async () => {
+const loadTextures = async (viz: VizState) => {
   const loader = new THREE.ImageBitmapLoader();
   const glassDiffuseTexPromise = loadTexture(loader, 'https://i.ameo.link/cbg.avif', {});
   const glassNormalTexPromise = loadRawTexture('https://i.ameo.link/cbf.avif');
@@ -23,7 +24,7 @@ const loadTextures = async () => {
   const [glassDiffuseTex, glassNormalTex, bgImage] = await Promise.all([
     glassDiffuseTexPromise,
     glassNormalTexPromise,
-    loader.loadAsync('https://i.ameo.link/cbm.avif'),
+    loader.loadAsync('https://i.ameo.link/cbr.avif'),
   ]);
 
   const glassNormalMap = new THREE.Texture(
@@ -42,9 +43,9 @@ const loadTextures = async () => {
 
   const bgTexture = new THREE.Texture(
     bgImage,
-    THREE.EquirectangularRefractionMapping,
-    undefined,
-    undefined,
+    THREE.EquirectangularReflectionMapping,
+    THREE.RepeatWrapping,
+    THREE.RepeatWrapping,
     THREE.NearestFilter,
     THREE.NearestFilter
   );
@@ -58,7 +59,7 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.1);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2.8);
   viz.scene.add(ambientLight);
 
   // dim pointlight that follows the camera
@@ -109,27 +110,27 @@ export const processLoadedScene = async (
   const needsU32Indices = indices.some(i => i > 65535);
   geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
 
-  const { glassDiffuseTex, glassNormalMap, bgTexture } = await loadTextures();
+  const { glassDiffuseTex, glassNormalMap, bgTexture } = await loadTextures(viz);
 
   viz.scene.background = bgTexture;
 
   const mat = buildCustomShader(
     {
-      color: 0x373737,
+      color: 0x34271d,
       roughnessMap: glassDiffuseTex,
       roughness: 1,
-      uvTransform: new THREE.Matrix3().scale(0.09, 0.09),
+      uvTransform: new THREE.Matrix3().scale(0.083, 0.083),
       normalMap: glassNormalMap,
-      normalScale: 0.9,
+      normalScale: 0.85,
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
-      metalness: 0.1,
+      metalness: 0.11,
       iridescence: 0.1,
     },
     {
       roughnessShader: `
       float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
-        return clamp(1. - baseRoughness + 0.08, 0., 1.);
+        return clamp(1. - baseRoughness + 0.272, 0., 1.);
       }`,
       iridescenceShader: `
       float getCustomIridescence(vec3 pos, vec3 normal, float baseIridescence, float curTimeSeconds, SceneCtx ctx) {
@@ -148,26 +149,23 @@ export const processLoadedScene = async (
   mesh.position.set(0, 0, 0);
   viz.scene.add(mesh);
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 4.5);
-  dirLight.position.set(242, 65, 220);
+  const dirLight = new THREE.DirectionalLight(0xffe6e1, 3.6);
+  dirLight.position.set(142 * 1.1, 65 * 1.1, 380 * 1.1);
   dirLight.target.position.set(0, 0, 0);
 
   dirLight.castShadow = true;
-  dirLight.shadow.needsUpdate = true;
-  // TODO: remove
-  dirLight.shadow.autoUpdate = true;
-  dirLight.shadow.mapSize.width = 2048 * 4;
-  dirLight.shadow.mapSize.height = 2048 * 4;
+  dirLight.shadow.mapSize.width = 2048 * 2;
+  dirLight.shadow.mapSize.height = 2048 * 2;
   dirLight.shadow.radius = 4;
   dirLight.shadow.blurSamples = 16;
   viz.renderer.shadowMap.type = THREE.VSMShadowMap;
   dirLight.shadow.bias = -0.0001;
 
   dirLight.shadow.camera.near = 8;
-  dirLight.shadow.camera.far = 360;
-  dirLight.shadow.camera.left = -280;
-  dirLight.shadow.camera.right = 180;
-  dirLight.shadow.camera.top = 60;
+  dirLight.shadow.camera.far = 460;
+  dirLight.shadow.camera.left = -200;
+  dirLight.shadow.camera.right = 280;
+  dirLight.shadow.camera.top = 34;
   dirLight.shadow.camera.bottom = -120;
 
   // const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
@@ -179,57 +177,71 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
 
-  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
-    const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
-      fogMinY: -60,
-      fogMaxY: -40,
-      fogColorHighDensity: new THREE.Vector3(0.04, 0.024, 0.02),
-      fogColorLowDensity: new THREE.Vector3(0.1, 0.1, 0.1),
-      ambientLightColor: new THREE.Color(0x4d2424),
-      ambientLightIntensity: 1.2,
-      heightFogStartY: -70,
-      heightFogEndY: -55,
-      heightFogFactor: 0.14,
-      maxRayLength: 1000,
-      minStepLength: 0.1,
-      noiseBias: 0.7,
-      noisePow: 2.4,
-      fogFadeOutRangeY: 8,
-      fogFadeOutPow: 0.6,
-      fogDensityMultiplier: 0.32,
-      postDensityMultiplier: 1.7,
-      noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
-      globalScale: 1,
-      halfRes: true,
-      compositor: { edgeRadius: 4, edgeStrength: 2 },
-      ...{
-        [GraphicsQuality.Low]: { baseRaymarchStepCount: 20 },
-        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 40 },
-        [GraphicsQuality.High]: { baseRaymarchStepCount: 80 },
-      }[quality],
-    });
-    composer.addPass(volumetricPass);
-    viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
+  configureDefaultPostprocessingPipeline(
+    viz,
+    vizConf.graphics.quality,
+    (composer, viz, quality) => {
+      const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+        fogMinY: -60,
+        fogMaxY: -40,
+        fogColorHighDensity: new THREE.Vector3(0.04, 0.024, 0.02),
+        fogColorLowDensity: new THREE.Vector3(0.1, 0.1, 0.1),
+        ambientLightColor: new THREE.Color(0x4d2424),
+        ambientLightIntensity: 1.2,
+        heightFogStartY: -70,
+        heightFogEndY: -55,
+        heightFogFactor: 0.14,
+        maxRayLength: 1000,
+        minStepLength: 0.1,
+        noiseBias: 0.7,
+        noisePow: 2.4,
+        fogFadeOutRangeY: 8,
+        fogFadeOutPow: 0.6,
+        fogDensityMultiplier: 0.32,
+        postDensityMultiplier: 1.7,
+        noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
+        globalScale: 1,
+        halfRes: true,
+        compositor: { edgeRadius: 4, edgeStrength: 2 },
+        ...{
+          [GraphicsQuality.Low]: { baseRaymarchStepCount: 20 },
+          [GraphicsQuality.Medium]: { baseRaymarchStepCount: 40 },
+          [GraphicsQuality.High]: { baseRaymarchStepCount: 80 },
+        }[quality],
+      });
+      composer.addPass(volumetricPass);
+      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
 
-    const n8aoPass = new N8AOPostPass(
-      viz.scene,
-      viz.camera,
-      viz.renderer.domElement.width,
-      viz.renderer.domElement.height
-    );
-    composer.addPass(n8aoPass);
-    n8aoPass.gammaCorrection = false;
-    n8aoPass.configuration.intensity = 2;
-    n8aoPass.configuration.aoRadius = 5;
-    n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
-    n8aoPass.setQualityMode(
-      {
-        [GraphicsQuality.Low]: 'Low',
-        [GraphicsQuality.Medium]: 'Low',
-        [GraphicsQuality.High]: 'Medium',
-      }[vizConf.graphics.quality]
-    );
-  });
+      const n8aoPass = new N8AOPostPass(
+        viz.scene,
+        viz.camera,
+        viz.renderer.domElement.width,
+        viz.renderer.domElement.height
+      );
+      composer.addPass(n8aoPass);
+      n8aoPass.gammaCorrection = false;
+      n8aoPass.configuration.intensity = 2;
+      n8aoPass.configuration.aoRadius = 5;
+      n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
+      n8aoPass.setQualityMode(
+        {
+          [GraphicsQuality.Low]: 'Low',
+          [GraphicsQuality.Medium]: 'Low',
+          [GraphicsQuality.High]: 'Medium',
+        }[vizConf.graphics.quality]
+      );
+    },
+    undefined,
+    { toneMappingExposure: 1.33 },
+    (() => {
+      const toneMappingEffect = new ToneMappingEffect({
+        mode: ToneMappingMode.LINEAR,
+      });
+
+      return [toneMappingEffect];
+      return [];
+    })()
+  );
 
   return {
     spawnLocation: 'spawn',

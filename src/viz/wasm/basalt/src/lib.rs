@@ -410,7 +410,8 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   mesh.compute_vertex_displacement_normals();
 
   let mut collission_mesh = mesh.clone();
-  displace_mesh(&noise_gen, &mut collission_mesh);
+  let displ_noise = noise::Fbm::new().set_octaves(3);
+  displace_mesh(&displ_noise, &mut collission_mesh);
   let collission_mesh = mesh.to_raw_indexed();
 
   let target_edge_length = 3.16;
@@ -440,7 +441,6 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   );
   info!("Tessellated mesh; new vertex count={}", mesh.vertices.len());
 
-  let displ_noise = noise::Fbm::new().set_octaves(3);
   displace_mesh(&displ_noise, &mut mesh);
 
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
