@@ -57,22 +57,37 @@ const loadTextures = async (viz: VizState) => {
 const addCrystals = (viz: VizState, basaltEngine: typeof import('src/viz/wasmComp/basalt'), ctx: number) => {
   const crystalCount = basaltEngine.basalt_get_crystal_mesh_count(ctx);
 
-  for (let i = 0; i < crystalCount; i++) {
-    const indices = basaltEngine.basalt_take_crystal_mesh_indices(ctx, i);
-    const vertices = basaltEngine.basalt_take_crystal_mesh_vertices(ctx, i);
-    const normals = basaltEngine.basalt_take_crystal_mesh_normals(ctx, i);
+  for (let crystalIx = 0; crystalIx < crystalCount; crystalIx++) {
+    const indices = basaltEngine.basalt_take_crystal_mesh_indices(ctx, crystalIx);
+    const vertices = basaltEngine.basalt_take_crystal_mesh_vertices(ctx, crystalIx);
+    const normals = basaltEngine.basalt_take_crystal_mesh_normals(ctx, crystalIx);
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 
-    const transforms = basaltEngine.basalt_take_crystal_mesh_transforms(ctx, i);
+    const transforms = basaltEngine.basalt_take_crystal_mesh_transforms(ctx, crystalIx);
 
     const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
     const instancedMesh = new THREE.InstancedMesh(geometry, mat, transforms.length / 16);
     instancedMesh.instanceMatrix.set(transforms);
     viz.scene.add(instancedMesh);
+
+    const collisionMesh = new THREE.Mesh(geometry, mat);
+    viz.collisionWorldLoadedCbs.push(fpCtx => {
+      for (let meshIx = 0; meshIx < transforms.length / 16; meshIx++) {
+        collisionMesh.position.set(
+          transforms[meshIx * 16 + 12],
+          transforms[meshIx * 16 + 13],
+          transforms[meshIx * 16 + 14]
+        );
+        collisionMesh.quaternion.setFromRotationMatrix(
+          new THREE.Matrix4().fromArray(transforms.slice(meshIx * 16, meshIx * 16 + 16))
+        );
+        fpCtx.addTriMesh(collisionMesh);
+      }
+    });
   }
 };
 
@@ -81,7 +96,7 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 2.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2);
   viz.scene.add(ambientLight);
 
   // dim pointlight that follows the camera
@@ -255,7 +270,7 @@ export const processLoadedScene = async (
       );
     },
     undefined,
-    { toneMappingExposure: 1.33 },
+    { toneMappingExposure: 1.38 },
     (() => {
       const toneMappingEffect = new ToneMappingEffect({
         mode: ToneMappingMode.LINEAR,
