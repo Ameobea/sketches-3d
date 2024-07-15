@@ -1,9 +1,7 @@
 #![feature(array_windows)]
 
-use std::f32::consts::PI;
-
 use bitvec::bitarr;
-use common::{random, smoothstep};
+use common::{random, smoothstep, uninit};
 use crystals::{generate_crystals, BatchMesh};
 use log::info;
 use mesh::{
@@ -139,14 +137,24 @@ fn gen_tessellated_hex_grid(
         void_flags[y].set(x, true);
       }
 
-      let mut vertices = Vec::new();
+      let mut vertices = [uninit(); 6];
       // generates verts in the order of right, bottom right, bottom left, left, top
       // left, top right
+      //
+      // pre-calculated (sin, cos) of each vertex's angle
+      const HEX_ANGLES: [(f32, f32); 6] = [
+        (0., 1.),
+        (0.8660254037844386, 0.5),
+        (0.8660254037844386, -0.5),
+        (0., -1.),
+        (-0.8660254037844386, -0.5),
+        (-0.8660254037844386, 0.5),
+      ];
       for i in 0..6 {
-        let angle = PI / 3.0 * i as f32;
-        let px = hex_center_x + hex_width * angle.cos();
-        let pz = hex_center_z + hex_width * angle.sin();
-        vertices.push(Vector3::new(px, hex_height, pz));
+        let (sin, cos) = HEX_ANGLES[i];
+        let px = hex_center_x + hex_width * cos;
+        let pz = hex_center_z + hex_width * sin;
+        vertices[i] = Vector3::new(px, hex_height, pz);
       }
 
       for i in 0..6 {
@@ -414,7 +422,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   mesh.compute_vertex_displacement_normals();
 
   let mut collission_mesh = mesh.clone();
-  let displ_noise = noise::Fbm::new().set_octaves(3);
+  let displ_noise = Fbm::new().set_octaves(3);
   displace_mesh(&displ_noise, &mut collission_mesh);
   let collission_mesh = mesh.to_raw_indexed();
 
