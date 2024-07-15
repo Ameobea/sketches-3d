@@ -20,3 +20,5 @@ common = { path = "../common" }
 tessellation = { path = "../tessellation", default-features = false }
 bitvec = "1"
 smallvec = "1"
+rand = { version = "0.8", default-features = false, features = ["nightly"] }
+point_distribute = { path = "../point_distribute" }

@@ -4,7 +4,7 @@ use nalgebra::{Matrix4, Vector3};
 use slotmap::{new_key_type, Key, SlotMap};
 use smallvec::SmallVec;
 
-use crate::{OwnedIndexedMesh, Triangle};
+use crate::{OwnedIndexedMesh, OwnedMesh, Triangle};
 
 type Vec3 = Vector3<f32>;
 type Mat4 = Matrix4<f32>;
@@ -1262,6 +1262,30 @@ impl LinkedMesh {
       },
       indices,
       transform: self.transform.clone(),
+    }
+  }
+
+  pub fn to_owned_mesh(&self, transform: Option<Mat4>) -> OwnedMesh {
+    OwnedMesh {
+      vertices: self
+        .faces
+        .values()
+        .flat_map(|face| face.vertices.map(|vtx_key| self.vertices[vtx_key].position))
+        .collect(),
+      normals: Some(
+        self
+          .faces
+          .values()
+          .flat_map(|face| {
+            face.vertices.map(|vtx_key| {
+              self.vertices[vtx_key]
+                .displacement_normal
+                .unwrap_or_else(|| Vec3::zeros())
+            })
+          })
+          .collect(),
+      ),
+      transform,
     }
   }
 

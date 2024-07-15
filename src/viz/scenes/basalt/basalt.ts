@@ -54,6 +54,28 @@ const loadTextures = async (viz: VizState) => {
   return { glassDiffuseTex, glassNormalMap, bgTexture };
 };
 
+const addCrystals = (viz: VizState, basaltEngine: typeof import('src/viz/wasmComp/basalt'), ctx: number) => {
+  const crystalCount = basaltEngine.basalt_get_crystal_mesh_count(ctx);
+
+  for (let i = 0; i < crystalCount; i++) {
+    const indices = basaltEngine.basalt_take_crystal_mesh_indices(ctx, i);
+    const vertices = basaltEngine.basalt_take_crystal_mesh_vertices(ctx, i);
+    const normals = basaltEngine.basalt_take_crystal_mesh_normals(ctx, i);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+    const transforms = basaltEngine.basalt_take_crystal_mesh_transforms(ctx, i);
+
+    const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+    const instancedMesh = new THREE.InstancedMesh(geometry, mat, transforms.length / 16);
+    instancedMesh.instanceMatrix.set(transforms);
+    viz.scene.add(instancedMesh);
+  }
+};
+
 export const processLoadedScene = async (
   viz: VizState,
   loadedWorld: THREE.Group,
@@ -102,8 +124,6 @@ export const processLoadedScene = async (
   const collisionMesh = new THREE.Mesh(collisionGeom, debugMat);
   viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(collisionMesh));
 
-  basaltEngine.basalt_free(basaltCtx);
-
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
@@ -148,6 +168,9 @@ export const processLoadedScene = async (
   mesh.receiveShadow = true;
   mesh.position.set(0, 0, 0);
   viz.scene.add(mesh);
+
+  addCrystals(viz, basaltEngine, basaltCtx);
+  basaltEngine.basalt_free(basaltCtx);
 
   const dirLight = new THREE.DirectionalLight(0xffe6e1, 3.6);
   dirLight.position.set(142 * 1.1, 65 * 1.1, 380 * 1.1);

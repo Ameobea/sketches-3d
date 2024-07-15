@@ -4,6 +4,7 @@ use std::f32::consts::PI;
 
 use bitvec::bitarr;
 use common::{random, smoothstep};
+use crystals::{generate_crystals, BatchMesh};
 use log::info;
 use mesh::{
   linked_mesh::{set_debug_print, DisplacementNormalMethod, Edge},
@@ -12,6 +13,8 @@ use mesh::{
 use nalgebra::Vector3;
 use noise::{self, Fbm, MultiFractal, NoiseModule, Seedable};
 use wasm_bindgen::prelude::*;
+
+mod crystals;
 
 /// Connects two hexagons by generating the side faces between them.
 ///
@@ -331,6 +334,7 @@ fn gen_tessellated_hex_grid(
 pub struct GenBasaltCtx {
   pub collission_mesh: OwnedIndexedMesh,
   pub terrrain_mesh: OwnedIndexedMesh,
+  pub(crate) crystals: Vec<BatchMesh>,
 }
 
 static mut DID_INIT: bool = false;
@@ -451,9 +455,11 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
     mesh.vertices.len()
   );
 
+  let crystals = generate_crystals(&mesh);
   Box::into_raw(Box::new(GenBasaltCtx {
     collission_mesh,
     terrrain_mesh: mesh.to_raw_indexed(),
+    crystals,
   }))
 }
 
@@ -508,4 +514,43 @@ pub fn basalt_take_collision_indices(ctx: *mut GenBasaltCtx) -> Vec<usize> {
 #[wasm_bindgen]
 pub fn basalt_free(ctx: *mut GenBasaltCtx) {
   drop(unsafe { Box::from_raw(ctx) });
+}
+
+#[wasm_bindgen]
+pub fn basalt_get_crystal_mesh_count(ctx: *mut GenBasaltCtx) -> usize {
+  let ctx = unsafe { &mut (*ctx) };
+  ctx.crystals.len()
+}
+
+#[wasm_bindgen]
+pub fn basalt_take_crystal_mesh_indices(ctx: *mut GenBasaltCtx, crystal_ix: usize) -> Vec<usize> {
+  let ctx = unsafe { &mut (*ctx) };
+  std::mem::take(&mut ctx.crystals[crystal_ix].mesh.indices)
+}
+
+#[wasm_bindgen]
+pub fn basalt_take_crystal_mesh_vertices(ctx: *mut GenBasaltCtx, crystal_ix: usize) -> Vec<f32> {
+  let ctx = unsafe { &mut (*ctx) };
+  std::mem::take(&mut ctx.crystals[crystal_ix].mesh.vertices)
+}
+
+#[wasm_bindgen]
+pub fn basalt_take_crystal_mesh_normals(ctx: *mut GenBasaltCtx, crystal_ix: usize) -> Vec<f32> {
+  let ctx = unsafe { &mut (*ctx) };
+  std::mem::take(&mut ctx.crystals[crystal_ix].mesh.shading_normals).unwrap()
+}
+
+#[wasm_bindgen]
+pub fn basalt_take_crystal_mesh_transforms(ctx: *mut GenBasaltCtx, crystal_ix: usize) -> Vec<f32> {
+  let ctx = unsafe { &mut (*ctx) };
+  let transforms = std::mem::take(&mut ctx.crystals[crystal_ix].transforms);
+  let raw_transforms = unsafe {
+    Vec::from_raw_parts(
+      transforms.as_ptr() as *mut f32,
+      transforms.len() * (4 * 4),
+      transforms.capacity() * (4 * 4),
+    )
+  };
+  std::mem::forget(transforms);
+  raw_transforms
 }

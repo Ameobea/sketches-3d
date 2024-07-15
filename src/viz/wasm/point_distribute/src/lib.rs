@@ -18,11 +18,11 @@ impl<'a> MeshSurfaceSampler<'a> {
 
     let mut samp = MeshSurfaceSampler {
       mesh,
-      distribution: vec![],
+      distribution: Vec::new(),
     };
 
     let total_faces = samp.mesh.vertices.len() / 3;
-    let mut face_weights = vec![0.0; total_faces];
+    let mut face_weights = Vec::with_capacity(total_faces);
 
     for i in 0..total_faces {
       let a = samp.mesh.vertices[3 * i];
@@ -30,7 +30,7 @@ impl<'a> MeshSurfaceSampler<'a> {
       let c = samp.mesh.vertices[3 * i + 2];
 
       let triangle = Triangle::new(a, b, c);
-      face_weights[i] = triangle.area();
+      face_weights.push(triangle.area());
     }
 
     let mut cumulative_total = 0.0;

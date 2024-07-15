@@ -81,6 +81,26 @@ pub struct OwnedMesh {
   pub transform: Option<nalgebra::Matrix4<f32>>,
 }
 
+impl<'a> From<Mesh<'a>> for OwnedMesh {
+  fn from(mesh: Mesh<'a>) -> Self {
+    OwnedMesh {
+      vertices: mesh.vertices.to_vec(),
+      normals: mesh.normals.map(|normals| normals.to_vec()),
+      transform: mesh.transform,
+    }
+  }
+}
+
+impl<'a> From<&'a OwnedMesh> for Mesh<'a> {
+  fn from(mesh: &'a OwnedMesh) -> Self {
+    Mesh {
+      vertices: &mesh.vertices,
+      normals: mesh.normals.as_ref().map(|normals| normals.as_slice()),
+      transform: mesh.transform,
+    }
+  }
+}
+
 pub struct OwnedIndexedMesh {
   pub vertices: Vec<f32>,
   pub shading_normals: Option<Vec<f32>>,
