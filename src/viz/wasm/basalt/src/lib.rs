@@ -1,4 +1,4 @@
-#![feature(array_windows)]
+#![feature(array_chunks, iter_array_chunks, array_windows)]
 
 use bitvec::bitarr;
 use common::{random, smoothstep, uninit};
@@ -104,6 +104,41 @@ fn is_between(a: f32, b: f32, x: f32) -> bool {
   x > min && x < max
 }
 
+pub(crate) fn gen_hex_triangles(
+  [hex_center_x, hex_center_z]: [f32; 2],
+  hex_width: f32,
+  hex_height_y: f32,
+) -> impl Iterator<Item = Triangle> {
+  let mut vertices = [uninit(); 6];
+  // generates verts in the order of right, bottom right, bottom left, left, top
+  // left, top right
+  //
+  // pre-calculated (sin, cos) of each vertex's angle
+  const HEX_ANGLES: [(f32, f32); 6] = [
+    (0., 1.),
+    (0.8660254037844386, 0.5),
+    (0.8660254037844386, -0.5),
+    (0., -1.),
+    (-0.8660254037844386, -0.5),
+    (-0.8660254037844386, 0.5),
+  ];
+  for i in 0..6 {
+    let (sin, cos) = HEX_ANGLES[i];
+    let px = hex_center_x + hex_width * cos;
+    let pz = hex_center_z + hex_width * sin;
+    vertices[i] = Vector3::new(px, hex_height_y, pz);
+  }
+
+  (0..6).map(move |i| {
+    let next_i = (i + 1) % 6;
+    Triangle::new(
+      vertices[next_i],
+      vertices[i],
+      Vector3::new(hex_center_x, hex_height_y, hex_center_z),
+    )
+  })
+}
+
 /// Generates a tessellated hex grid centered at the origin.  Each hex is
 /// extruded dynamically based on the height returned by `get_hex_height` at its
 /// center.
@@ -116,14 +151,15 @@ fn gen_tessellated_hex_grid(
   get_hex_height: impl Fn(f32, f32) -> f32,
 ) -> Vec<Triangle> {
   let mut triangles = Vec::new();
-  let hex_height = (3.0_f32).sqrt() * hex_width / 2.0;
+  let hex_height_z = (3.0_f32).sqrt() * hex_width / 2.;
 
   let mut hex_heights = Vec::with_capacity(x_count * y_count);
   let mut void_flags = vec![bitarr![0; 1024]; y_count];
 
   let get_hex_center_coords = |y_ix: usize, x_ix: usize| -> (f32, f32) {
     let hex_center_x = x_ix as f32 * 1.5 * hex_width;
-    let hex_center_z = y_ix as f32 * 2.0 * hex_height + if x_ix % 2 == 0 { 0. } else { hex_height };
+    let hex_center_z =
+      y_ix as f32 * 2.0 * hex_height_z + if x_ix % 2 == 0 { 0. } else { hex_height_z };
     (hex_center_x, hex_center_z)
   };
 
@@ -137,35 +173,11 @@ fn gen_tessellated_hex_grid(
         void_flags[y].set(x, true);
       }
 
-      let mut vertices = [uninit(); 6];
-      // generates verts in the order of right, bottom right, bottom left, left, top
-      // left, top right
-      //
-      // pre-calculated (sin, cos) of each vertex's angle
-      const HEX_ANGLES: [(f32, f32); 6] = [
-        (0., 1.),
-        (0.8660254037844386, 0.5),
-        (0.8660254037844386, -0.5),
-        (0., -1.),
-        (-0.8660254037844386, -0.5),
-        (-0.8660254037844386, 0.5),
-      ];
-      for i in 0..6 {
-        let (sin, cos) = HEX_ANGLES[i];
-        let px = hex_center_x + hex_width * cos;
-        let pz = hex_center_z + hex_width * sin;
-        vertices[i] = Vector3::new(px, hex_height, pz);
-      }
-
-      for i in 0..6 {
-        let next_i = (i + 1) % 6;
-        // CCW winding order as usual
-        triangles.push(Triangle {
-          a: vertices[next_i],
-          b: vertices[i],
-          c: Vector3::new(hex_center_x, hex_height, hex_center_z),
-        });
-      }
+      triangles.extend(gen_hex_triangles(
+        [hex_center_x, hex_center_z],
+        hex_width,
+        hex_height,
+      ));
     }
   }
 

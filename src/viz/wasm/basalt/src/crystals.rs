@@ -1,81 +1,47 @@
-use common::{random, rng};
+use common::{random, rng, uninit};
 use mesh::{LinkedMesh, Mesh, OwnedIndexedMesh, Triangle};
 use nalgebra::{Matrix4, Rotation3, Vector3};
 use point_distribute::MeshSurfaceSampler;
 use rand::prelude::*;
 
+use crate::gen_hex_triangles;
+
 const UNIQ_CRYSTAL_MESH_COUNT: usize = 8;
 const TOTAL_CRYSTALS_TO_GENERATE: usize = 258;
 
 fn generate_crystal_mesh() -> LinkedMesh {
-  // placeholder for now - rectangular prism with random height pointed straight
-  // up from origin
-  let width = 0.2f32;
-  let height = rng().gen_range(2.5f32..10.5);
+  // hexagonal prism with random height pointed straight up from origin
+  let hex_width = rng().gen_range(1.5f32..3.3f32);
+  let extrude_height = rng().gen_range(2.5f32..5.5);
 
-  let tris = &[
-    Triangle::new(
-      Vector3::new(-width, 0.0, -width),
-      Vector3::new(width, 0.0, -width),
-      Vector3::new(width, 0.0, width),
-    ),
-    Triangle::new(
-      Vector3::new(-width, 0.0, -width),
-      Vector3::new(width, 0.0, width),
-      Vector3::new(-width, 0.0, width),
-    ),
-    Triangle::new(
-      Vector3::new(-width, 0.0, -width),
-      Vector3::new(-width, height, -width),
-      Vector3::new(width, 0.0, -width),
-    ),
-    Triangle::new(
-      Vector3::new(-width, height, -width),
-      Vector3::new(width, height, -width),
-      Vector3::new(width, 0.0, -width),
-    ),
-    Triangle::new(
-      Vector3::new(width, 0.0, -width),
-      Vector3::new(width, height, -width),
-      Vector3::new(width, 0.0, width),
-    ),
-    Triangle::new(
-      Vector3::new(width, height, -width),
-      Vector3::new(width, height, width),
-      Vector3::new(width, 0.0, width),
-    ),
-    Triangle::new(
-      Vector3::new(width, 0.0, width),
-      Vector3::new(width, height, width),
-      Vector3::new(-width, 0.0, width),
-    ),
-    Triangle::new(
-      Vector3::new(width, height, width),
-      Vector3::new(-width, height, width),
-      Vector3::new(-width, 0.0, width),
-    ),
-    Triangle::new(
-      Vector3::new(-width, 0.0, width),
-      Vector3::new(-width, height, width),
-      Vector3::new(-width, 0.0, -width),
-    ),
-    Triangle::new(
-      Vector3::new(-width, height, width),
-      Vector3::new(-width, height, -width),
-      Vector3::new(-width, 0.0, -width),
-    ),
-    Triangle::new(
-      Vector3::new(-width, height, -width),
-      Vector3::new(-width, height, width),
-      Vector3::new(width, height, -width),
-    ),
-    Triangle::new(
-      Vector3::new(-width, height, width),
-      Vector3::new(width, height, width),
-      Vector3::new(width, height, -width),
-    ),
-  ];
-  let mut mesh = LinkedMesh::from_triangles(tris);
+  let mut tris = Vec::new();
+  let mut base_tris: [Triangle; 6] = uninit();
+  let mut top_tris: [Triangle; 6] = uninit();
+
+  let top_scale = rng().gen_range(0.4f32..0.94);
+  for (i, tri) in gen_hex_triangles([0., 0.], hex_width, 0.).enumerate() {
+    top_tris[i] = Triangle::new(
+      tri.a * top_scale + Vector3::new(0., extrude_height, 0.),
+      tri.b * top_scale + Vector3::new(0., extrude_height, 0.),
+      tri.c * top_scale + Vector3::new(0., extrude_height, 0.),
+    );
+    base_tris[i] = Triangle::new(tri.c, tri.b, tri.a);
+  }
+  tris.extend_from_slice(&base_tris);
+  tris.extend_from_slice(&top_tris);
+
+  // Add side faces
+  for i in 0..6 {
+    let t0_v0 = top_tris[i].b;
+    let t0_v1 = top_tris[i].a;
+    let t1_v0 = base_tris[i].b;
+    let t1_v1 = base_tris[i].c;
+
+    tris.push(Triangle::new(t0_v0, t0_v1, t1_v0));
+    tris.push(Triangle::new(t0_v1, t1_v1, t1_v0));
+  }
+
+  let mut mesh = LinkedMesh::from_triangles(&tris);
 
   mesh.merge_vertices_by_distance(0.000001);
   let sharp_edge_threshold_rads = 0.8;
@@ -107,6 +73,14 @@ pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
     let (point, normal) = loop {
       let (point, normal) = samp.sample();
 
+      // we want to keep crystals mostly horizontal or mostly vertical, because
+      // diagonal crystals are likely generating on a lip or edge and might clip
+      // through geometry
+      let normal_y_abs = normal.y.abs();
+      if normal_y_abs < 0.84 && normal_y_abs > 0.24 {
+        continue;
+      }
+
       // TODO: will have to be more sophisticated here.  will probably end up using
       // noise to make crystals more and less likely to spawn in certain areas
       if point.y < 0. {
@@ -127,7 +101,7 @@ pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
     let mut transform: Matrix4<f32> = Matrix4::identity();
     let mut pos = point.coords;
     // inset into the mesh slightly, moving backwards along the normal
-    pos -= normal * 0.1;
+    pos -= normal * 1.6;
     transform *= Matrix4::new_translation(&pos);
     // crystals are generated pointing up; rotate to align with normal
     let rotation = Rotation3::rotation_between(&Vector3::y_axis(), &normal).unwrap();

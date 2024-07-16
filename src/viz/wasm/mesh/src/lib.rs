@@ -1,4 +1,4 @@
-#![feature(iter_array_chunks)]
+#![feature(array_chunks, iter_array_chunks)]
 
 use nalgebra::Vector3;
 

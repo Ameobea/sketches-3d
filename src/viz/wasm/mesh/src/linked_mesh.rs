@@ -300,7 +300,7 @@ impl LinkedMesh {
       })
       .collect::<Vec<_>>();
 
-    for [&a_ix, &b_ix, &c_ix] in indices.iter().array_chunks::<3>() {
+    for &[a_ix, b_ix, c_ix] in indices.array_chunks::<3>() {
       let a = vertex_keys_by_ix[a_ix];
       let b = vertex_keys_by_ix[b_ix];
       let c = vertex_keys_by_ix[c_ix];

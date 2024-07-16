@@ -7,7 +7,8 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import { loadRawTexture, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
-import { BlendFunction, EffectPass, ToneMappingEffect, ToneMappingMode } from 'postprocessing';
+import { ToneMappingEffect, ToneMappingMode } from 'postprocessing';
+import crystalEmissiveShader from './shaders/crystal/emissive.frag?raw';
 
 const locations = {
   spawn: {
@@ -69,7 +70,15 @@ const addCrystals = (viz: VizState, basaltEngine: typeof import('src/viz/wasmCom
 
     const transforms = basaltEngine.basalt_take_crystal_mesh_transforms(ctx, crystalIx);
 
-    const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+    // const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+    const mat = buildCustomShader(
+      { color: 0x3d0404, metalness: 0.8, roughness: 0.12, ambientLightScale: 2.4 },
+      {
+        emissiveShader: crystalEmissiveShader,
+      },
+      {}
+    );
+    viz.registerBeforeRenderCb(curTimeSeconds => mat.setCurTimeSeconds(curTimeSeconds));
     const instancedMesh = new THREE.InstancedMesh(geometry, mat, transforms.length / 16);
     instancedMesh.instanceMatrix.set(transforms);
     viz.scene.add(instancedMesh);
