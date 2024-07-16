@@ -1,6 +1,7 @@
 use common::{random, rng, uninit};
 use mesh::{LinkedMesh, Mesh, OwnedIndexedMesh, Triangle};
 use nalgebra::{Matrix4, Rotation3, Vector3};
+use noise::{Fbm, MultiFractal, NoiseModule, Seedable};
 use point_distribute::MeshSurfaceSampler;
 use rand::prelude::*;
 
@@ -12,7 +13,7 @@ const TOTAL_CRYSTALS_TO_GENERATE: usize = 258;
 fn generate_crystal_mesh() -> LinkedMesh {
   // hexagonal prism with random height pointed straight up from origin
   let hex_width = rng().gen_range(1.5f32..3.3f32);
-  let extrude_height = rng().gen_range(2.5f32..5.5);
+  let extrude_height = rng().gen_range(2.5f32..12.5);
 
   let mut tris = Vec::new();
   let mut base_tris: [Triangle; 6] = uninit();
@@ -47,6 +48,7 @@ fn generate_crystal_mesh() -> LinkedMesh {
   let sharp_edge_threshold_rads = 0.8;
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_vertex_displacement_normals();
+  mesh.separate_vertices_and_compute_normals();
 
   mesh
 }
@@ -69,6 +71,7 @@ pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
   let samp = MeshSurfaceSampler::new(mesh);
 
   let mut rng = rng();
+  let noise: Fbm<f32> = Fbm::new().set_octaves(2).set_seed(3993393993);
   for _ in 0..TOTAL_CRYSTALS_TO_GENERATE {
     let (point, normal) = loop {
       let (point, normal) = samp.sample();
@@ -81,8 +84,6 @@ pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
         continue;
       }
 
-      // TODO: will have to be more sophisticated here.  will probably end up using
-      // noise to make crystals more and less likely to spawn in certain areas
       if point.y < 0. {
         let roll = random();
         if roll < 0.5 {
@@ -92,6 +93,16 @@ pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
         if point.y < -30. && roll < 0.8 {
           continue;
         }
+      }
+
+      // encourage crystals to generate in clusters rather than evenly distributed
+      let coarse_noise_val = noise.get([point.x * 0.006, point.y * 0.006, point.z * 0.006]);
+      if coarse_noise_val < 0.2 {
+        continue;
+      }
+      let fine_noise_val = noise.get([point.x * 0.04, point.y * 0.04, point.z * 0.04]);
+      if fine_noise_val < 0.54 {
+        continue;
       }
 
       break (point, normal);

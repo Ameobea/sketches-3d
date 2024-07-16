@@ -22,10 +22,11 @@ const loadTextures = async (viz: VizState) => {
   const glassDiffuseTexPromise = loadTexture(loader, 'https://i.ameo.link/cbg.avif', {});
   const glassNormalTexPromise = loadRawTexture('https://i.ameo.link/cbf.avif');
 
-  const [glassDiffuseTex, glassNormalTex, bgImage] = await Promise.all([
+  const [glassDiffuseTex, glassNormalTex, bgImage, crystalNormalTex] = await Promise.all([
     glassDiffuseTexPromise,
     glassNormalTexPromise,
     loader.loadAsync('https://i.ameo.link/cbr.avif'),
+    loader.loadAsync('https://i.ameo.link/cbw.avif'),
   ]);
 
   const glassNormalMap = new THREE.Texture(
@@ -41,6 +42,19 @@ const loadTextures = async (viz: VizState) => {
   );
   glassNormalMap.generateMipmaps = true;
   glassNormalMap.needsUpdate = true;
+  const crystalNormalMap = new THREE.Texture(
+    crystalNormalTex,
+    THREE.UVMapping,
+    THREE.RepeatWrapping,
+    THREE.RepeatWrapping,
+    THREE.NearestFilter,
+    THREE.NearestMipMapLinearFilter,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
+    1
+  );
+  crystalNormalMap.generateMipmaps = true;
+  crystalNormalMap.needsUpdate = true;
 
   const bgTexture = new THREE.Texture(
     bgImage,
@@ -52,10 +66,15 @@ const loadTextures = async (viz: VizState) => {
   );
   bgTexture.needsUpdate = true;
 
-  return { glassDiffuseTex, glassNormalMap, bgTexture };
+  return { glassDiffuseTex, glassNormalMap, bgTexture, crystalNormalMap };
 };
 
-const addCrystals = (viz: VizState, basaltEngine: typeof import('src/viz/wasmComp/basalt'), ctx: number) => {
+const addCrystals = (
+  viz: VizState,
+  basaltEngine: typeof import('src/viz/wasmComp/basalt'),
+  ctx: number,
+  mat: THREE.Material
+) => {
   const crystalCount = basaltEngine.basalt_get_crystal_mesh_count(ctx);
 
   for (let crystalIx = 0; crystalIx < crystalCount; crystalIx++) {
@@ -71,15 +90,9 @@ const addCrystals = (viz: VizState, basaltEngine: typeof import('src/viz/wasmCom
     const transforms = basaltEngine.basalt_take_crystal_mesh_transforms(ctx, crystalIx);
 
     // const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-    const mat = buildCustomShader(
-      { color: 0x3d0404, metalness: 0.8, roughness: 0.12, ambientLightScale: 2.4 },
-      {
-        emissiveShader: crystalEmissiveShader,
-      },
-      {}
-    );
-    viz.registerBeforeRenderCb(curTimeSeconds => mat.setCurTimeSeconds(curTimeSeconds));
     const instancedMesh = new THREE.InstancedMesh(geometry, mat, transforms.length / 16);
+    instancedMesh.castShadow = true;
+    instancedMesh.receiveShadow = true;
     instancedMesh.instanceMatrix.set(transforms);
     viz.scene.add(instancedMesh);
 
@@ -154,7 +167,7 @@ export const processLoadedScene = async (
   const needsU32Indices = indices.some(i => i > 65535);
   geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
 
-  const { glassDiffuseTex, glassNormalMap, bgTexture } = await loadTextures(viz);
+  const { glassDiffuseTex, glassNormalMap, bgTexture, crystalNormalMap } = await loadTextures(viz);
 
   viz.scene.background = bgTexture;
 
@@ -193,7 +206,27 @@ export const processLoadedScene = async (
   mesh.position.set(0, 0, 0);
   viz.scene.add(mesh);
 
-  addCrystals(viz, basaltEngine, basaltCtx);
+  const crystalMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x141414),
+      // color: 0x3d0404,
+      metalness: 0.89,
+      roughness: 0.312,
+      ambientLightScale: 1.4,
+      normalMap: crystalNormalMap,
+      normalScale: 1.5,
+      uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
+    },
+    {
+      emissiveShader: crystalEmissiveShader,
+    },
+    {
+      useTriplanarMapping: true,
+    }
+  );
+  viz.registerBeforeRenderCb(curTimeSeconds => crystalMat.setCurTimeSeconds(curTimeSeconds));
+
+  addCrystals(viz, basaltEngine, basaltCtx, crystalMat);
   basaltEngine.basalt_free(basaltCtx);
 
   const dirLight = new THREE.DirectionalLight(0xffe6e1, 3.6);
