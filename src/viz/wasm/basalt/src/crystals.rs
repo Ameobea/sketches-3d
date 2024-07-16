@@ -96,7 +96,7 @@ pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
       }
 
       // encourage crystals to generate in clusters rather than evenly distributed
-      let coarse_noise_val = noise.get([point.x * 0.006, point.y * 0.006, point.z * 0.006]);
+      let coarse_noise_val = noise.get([point.x * 0.01, point.y * 0.01, point.z * 0.01]);
       if coarse_noise_val < 0.2 {
         continue;
       }

@@ -1190,7 +1190,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
   });
 
   delay(1000)
-    .then(() => initWebSynth({ compositionIDToLoad: 72 }))
+    .then(() => initWebSynth({ compositionIDToLoad: 124 }))
     .then(async ctx => {
       await delay(1000);
 

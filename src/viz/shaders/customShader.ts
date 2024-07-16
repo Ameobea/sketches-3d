@@ -85,6 +85,7 @@ export const setDefaultDistanceAmpParams = (params: AmbientDistanceAmpParams | n
 export enum MaterialClass {
   Default,
   Rock,
+  Crystal,
 }
 
 interface CustomShaderProps {
@@ -1093,6 +1094,9 @@ void main() {
 };
 
 export class CustomShaderMaterial extends THREE.ShaderMaterial {
+  /**
+   * Used to determine behavior when the player walks/lands on this surface for things like sound effects.
+   */
   public materialClass: MaterialClass = MaterialClass.Default;
   public flatShading: boolean = false;
 

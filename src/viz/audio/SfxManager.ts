@@ -6,8 +6,13 @@ export interface SfxWalkConfig {
   timeBetweenStepsJitterSeconds: number;
 }
 
+export interface SfxLandConfig {
+  materialLandSounds: Partial<Record<MaterialClass, () => void>>;
+}
+
 export interface SfxConfig {
   walk: SfxWalkConfig;
+  land?: Partial<SfxLandConfig>;
 }
 
 export const buildDefaultSfxConfig = (): SfxConfig => ({
@@ -20,7 +25,6 @@ export const buildDefaultSfxConfig = (): SfxConfig => ({
 export class SfxManager {
   private config: SfxConfig;
   private ctx: AudioContext;
-  // TODO: implement this properly
   private landSound: AudioBuffer | null = null;
   private filterNode: BiquadFilterNode;
 
@@ -52,7 +56,12 @@ export class SfxManager {
   }
 
   public onPlayerLand(materialClass: MaterialClass) {
-    // TODO: Implement properly
+    const customCb = this.config.land?.materialLandSounds?.[materialClass];
+    if (customCb) {
+      customCb();
+      return;
+    }
+
     if (this.landSound) {
       const source = this.ctx.createBufferSource();
       source.buffer = this.landSound;

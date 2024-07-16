@@ -5,10 +5,11 @@ import { N8AOPostPass } from 'n8ao';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { loadRawTexture, loadTexture } from 'src/viz/textureLoading';
-import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { MaterialClass, buildCustomShader } from 'src/viz/shaders/customShader';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { ToneMappingEffect, ToneMappingMode } from 'postprocessing';
 import crystalEmissiveShader from './shaders/crystal/emissive.frag?raw';
+import { initWebSynth } from 'src/viz/webSynth';
 
 const locations = {
   spawn: {
@@ -128,6 +129,37 @@ export const processLoadedScene = async (
   const pointLightOffset = new THREE.Vector3(0, 2.2, 0);
   viz.registerBeforeRenderCb(() => playerPointLight.position.copy(viz.camera.position).add(pointLightOffset));
 
+  let playCrystalLandSoundInner: (() => void) | undefined;
+  initWebSynth({ compositionIDToLoad: 125 }).then(ctx => {
+    const connectables: {
+      [key: string]: {
+        inputs: { [key: string]: { node: any; type: string } };
+        outputs: { [key: string]: { node: any; type: string } };
+      };
+    } = ctx.getState().viewContextManager.patchNetwork.connectables.toJS();
+
+    for (const { inputs } of Object.values(connectables)) {
+      for (const name of Object.keys(inputs)) {
+        if (name === 'midi') {
+          const synthDesignerMailboxID =
+            inputs.midi.node.getInputCbs().enableRxAudioThreadScheduling.mailboxIDs[0];
+
+          playCrystalLandSoundInner = () => {
+            ctx.postMIDIEventToAudioThread(synthDesignerMailboxID, 0, 26, 255);
+            ctx.scheduleEventTimeRelativeToCurTime(
+              0.2,
+              () => void ctx.postMIDIEventToAudioThread(synthDesignerMailboxID, 1, 26, 255)
+            );
+          };
+        }
+      }
+    }
+
+    ctx.setGlobalVolume(11);
+  });
+
+  const playCrystalLandSound = () => playCrystalLandSoundInner?.();
+
   // TODO: use web worker
   const basaltEngine = await import('../../wasmComp/basalt').then(async engine => {
     await engine.default();
@@ -208,11 +240,11 @@ export const processLoadedScene = async (
 
   const crystalMat = buildCustomShader(
     {
-      color: new THREE.Color(0x141414),
+      color: new THREE.Color(0x24170d),
       // color: 0x3d0404,
       metalness: 0.89,
       roughness: 0.312,
-      ambientLightScale: 1.4,
+      ambientLightScale: 2.4,
       normalMap: crystalNormalMap,
       normalScale: 1.5,
       uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
@@ -222,6 +254,7 @@ export const processLoadedScene = async (
     },
     {
       useTriplanarMapping: true,
+      materialClass: MaterialClass.Crystal,
     }
   );
   viz.registerBeforeRenderCb(curTimeSeconds => crystalMat.setCurTimeSeconds(curTimeSeconds));
@@ -335,6 +368,7 @@ export const processLoadedScene = async (
         enable: true,
       },
     },
+    sfx: { land: { materialLandSounds: { [MaterialClass.Crystal]: playCrystalLandSound } } },
     debugPos: true,
     locations,
     legacyLights: false,

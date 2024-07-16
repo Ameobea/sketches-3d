@@ -1,20 +1,6 @@
 import { applyAudioSettings } from '.';
 import { loadVizConfig } from './conf';
 
-export const initWebSynth = (args: { compositionIDToLoad?: number }) => {
-  const content = document.createElement('div');
-  content.id = 'content';
-  content.style.display = 'none';
-  document.body.appendChild(content);
-  // This is the `web-synth-headless-test` phost deployment
-  applyAudioSettings(loadVizConfig().audio);
-  return import('https://ameo.dev/web-synth-headless/headless.js').then(async mod => {
-    const webSynthHandle = await mod.initHeadlessWebSynth(args);
-    applyAudioSettings(loadVizConfig().audio);
-    return webSynthHandle;
-  });
-};
-
 const ctx = new AudioContext();
 export const setGlobalVolume = (volume: number) => {
   if (volume < 0 || volume > 100) {
@@ -25,3 +11,17 @@ export const setGlobalVolume = (volume: number) => {
   localStorage.globalVolume = volume;
 };
 (window as any).setGlobalVolume = setGlobalVolume;
+
+export const initWebSynth = (args: { compositionIDToLoad?: number }) => {
+  const content = document.createElement('div');
+  content.id = 'content';
+  content.style.display = 'none';
+  document.body.appendChild(content);
+  // This is the `web-synth-headless-test` phost deployment
+  applyAudioSettings(loadVizConfig().audio);
+  return import('https://ameo.dev/web-synth-headless/headless.js').then(async mod => {
+    const webSynthHandle = await mod.initHeadlessWebSynth(args);
+    applyAudioSettings(loadVizConfig().audio);
+    return { ...webSynthHandle, setGlobalVolume };
+  });
+};

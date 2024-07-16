@@ -2,16 +2,16 @@ vec3 getCustomEmissive(vec3 pos, vec3 emissive, float curTimeSeconds, SceneCtx c
   vec3 outColor = ctx.diffuseColor.rgb;
 
   float pulse = sin(curTimeSeconds * 2.5) * 0.5 + 0.5;
-  vec3 pulseColor = vec3(0.538, 0.538, 0.538) * 0.1;
+  vec3 pulseColor = vec3(0.0538, 0.0538, 0.0538) * 0.1;
   outColor = mix(ctx.diffuseColor.rgb, pulseColor, pulse * 0.4 + 0.15);
 
   float flickerVal = noise(curTimeSeconds * 1.5);
   float flickerActivation = smoothstep(0.4, 1.0, flickerVal * 2. + 0.2);
   if (flickerActivation < 0.1) {
-    return outColor;
+    return mix(outColor, vec3(0.), 0.68);
   }
 
-  vec3 noisePos = pos.xyz * 0.46;
+  vec3 noisePos = pos.xyz * 0.41;
   // noisePos += vec2(curTimeSeconds * -1.2, 0.);
   noisePos.x *= 1.5;
   float noiseFreq = 1.4;
@@ -22,6 +22,7 @@ vec3 getCustomEmissive(vec3 pos, vec3 emissive, float curTimeSeconds, SceneCtx c
   noiseVal = sin(noiseVal * 5. + sin(curTimeSeconds * 0.04) * 40. + 12.);
   // [-1, 1] -> [0, 1]
   noiseVal = noiseVal * 0.5 + 0.5;
+  noiseVal = pow(noiseVal, 1.1);
 
   noiseVal = pow(noiseVal, 1.4);
 
