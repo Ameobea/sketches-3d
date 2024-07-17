@@ -116,10 +116,10 @@ const addCrystals = (
 
 export const processLoadedScene = async (
   viz: VizState,
-  loadedWorld: THREE.Group,
+  _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 2);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2.4);
   viz.scene.add(ambientLight);
 
   // dim pointlight that follows the camera
@@ -130,7 +130,7 @@ export const processLoadedScene = async (
   viz.registerBeforeRenderCb(() => playerPointLight.position.copy(viz.camera.position).add(pointLightOffset));
 
   let playCrystalLandSoundInner: (() => void) | undefined;
-  initWebSynth({ compositionIDToLoad: 125 }).then(ctx => {
+  initWebSynth({ compositionIDToLoad: 126 }).then(ctx => {
     const connectables: {
       [key: string]: {
         inputs: { [key: string]: { node: any; type: string } };
@@ -205,10 +205,11 @@ export const processLoadedScene = async (
 
   const mat = buildCustomShader(
     {
-      color: 0x34271d,
+      color: 0x372a20,
+      map: glassDiffuseTex,
       roughnessMap: glassDiffuseTex,
       roughness: 1,
-      uvTransform: new THREE.Matrix3().scale(0.083, 0.083),
+      uvTransform: new THREE.Matrix3().scale(0.073, 0.073),
       normalMap: glassNormalMap,
       normalScale: 0.85,
       normalMapType: THREE.TangentSpaceNormalMap,
@@ -227,6 +228,17 @@ export const processLoadedScene = async (
         float noiseVal = pow(fbm(noisePos), 2.);
         return baseIridescence + smoothstep(0.3, 0.6, noiseVal) * 0.2;
       }
+      `,
+      colorShader: `
+vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+  float downActivation = 1. - smoothstep(-30., 0., pos.y);
+  vec3 lowColor = vec3(0.204,0.153,0.114)*0.03;
+  vec3 outColor = mix(baseColor, lowColor, downActivation);
+  float noiseVal = clamp(pow(fbm(pos * 0.1) * 2.5 - 1., 1.4), 0., 1.);
+  vec3 noiseColor = vec3(0.204,0.153,0.114)*0.03;
+  outColor = mix(outColor, noiseColor, noiseVal);
+  return vec4(outColor, 1.);
+}
       `,
     },
     { useTriplanarMapping: true }
