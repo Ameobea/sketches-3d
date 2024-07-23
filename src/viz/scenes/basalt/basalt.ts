@@ -347,12 +347,12 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
       n8aoPass.gammaCorrection = false;
       n8aoPass.configuration.intensity = 2;
       n8aoPass.configuration.aoRadius = 5;
-      n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
+      // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
       n8aoPass.setQualityMode(
         {
           [GraphicsQuality.Low]: 'Low',
           [GraphicsQuality.Medium]: 'Low',
-          [GraphicsQuality.High]: 'Medium',
+          [GraphicsQuality.High]: 'High',
         }[vizConf.graphics.quality]
       );
     },

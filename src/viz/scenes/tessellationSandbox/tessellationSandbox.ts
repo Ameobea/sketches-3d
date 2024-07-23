@@ -228,7 +228,7 @@ export const processLoadedScene = async (
     n8aoPass.gammaCorrection = false;
     n8aoPass.configuration.intensity = 2;
     n8aoPass.configuration.aoRadius = 5;
-    n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
+    // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
     n8aoPass.setQualityMode(
       {
         [GraphicsQuality.Low]: 'Low',
