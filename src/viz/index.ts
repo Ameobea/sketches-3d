@@ -411,7 +411,7 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
   const camera = new THREE.PerspectiveCamera(
     Conf.DEFAULT_FOV,
     window.innerWidth / window.innerHeight,
-    0.1,
+    0.07,
     3_000
   );
   camera.matrixAutoUpdate = true;

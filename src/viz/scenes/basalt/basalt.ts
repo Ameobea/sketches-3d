@@ -220,7 +220,7 @@ export const processLoadedScene = async (
     {
       roughnessShader: `
       float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
-        return clamp(1. - baseRoughness + 0.272, 0., 1.);
+        return clamp(1. - baseRoughness + 0.242, 0., 1.);
       }`,
       iridescenceShader: `
       float getCustomIridescence(vec3 pos, vec3 normal, float baseIridescence, float curTimeSeconds, SceneCtx ctx) {
@@ -357,7 +357,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
       );
     },
     undefined,
-    { toneMappingExposure: 1.38 },
+    { toneMappingExposure: 1.48 },
     (() => {
       const toneMappingEffect = new ToneMappingEffect({
         mode: ToneMappingMode.LINEAR,

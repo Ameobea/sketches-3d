@@ -310,4 +310,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'basalt' },
     legacyLights: false,
   },
+  nexus: {
+    gltfName: 'nexus',
+    extension: 'glb',
+    sceneLoader: () => import('./nexus/nexus').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'nexus' },
+    legacyLights: false,
+  },
 };

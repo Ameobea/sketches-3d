@@ -737,8 +737,9 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
         };
       } = ctx.getState().viewContextManager.patchNetwork.connectables.toJS();
       const synthDesigner = connectables['5be967b3-409b-e297-2d21-20111e4d3f2c']!;
-      const midiInputs = synthDesigner.inputs.midi.node.inputCbs;
-      // midiInputs.onAttack(35, 255);
+      const midiNode = synthDesigner.inputs.midi.node;
+      const synthDesignerMailboxID = midiNode.getInputCbs().enableRxAudioThreadScheduling.mailboxIDs[0];
+      ctx.postMIDIEventToAudioThread(synthDesignerMailboxID, 0, 35, 255);
 
       if (!localStorage.getItem('globalVolume')) {
         (window as any).setGlobalVolume(50);
