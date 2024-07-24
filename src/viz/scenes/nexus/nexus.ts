@@ -6,8 +6,11 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { N8AOPostPass } from 'n8ao';
 import { ToneMappingEffect, ToneMappingMode } from 'postprocessing';
-import { loadNamedTextures } from 'src/viz/textureLoading';
+import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { DashToken, initDashTokenGraphics } from '../pkPylons/DashToken';
+import { buildGoldMaterial, buildGreenMosaic2Material } from '../pkPylons/materials';
+import { goto } from '$app/navigation';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -21,15 +24,52 @@ const loadTextures = async () => {
     return bgTexture;
   })();
 
-  const [{ platformDiffuse, platformNormal }, bgTexture] = await Promise.all([
+  const towerPlinthPedestalTextureP = loadTexture(
+    loader,
+    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.1476533049.png'
+  );
+  const towerPlinthPedestalTextureCombinedDiffuseNormalTextureP = towerPlinthPedestalTextureP.then(
+    towerPlinthPedestalTexture => generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
+  );
+
+  const [
+    { platformDiffuse, platformNormal },
+    bgTexture,
+    towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
+    greenMosaic2Material,
+    goldMaterial,
+  ] = await Promise.all([
     loadNamedTextures(loader, {
       platformDiffuse: 'https://i.ameo.link/cce.avif',
       platformNormal: 'https://i.ameo.link/ccf.avif',
     }),
     bgTextureP,
+    towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
+    buildGreenMosaic2Material(loader, { ambientLightScale: 0.1 }),
+    buildGoldMaterial(loader, { ambientLightScale: 0.3 }),
   ]);
 
-  return { platformDiffuse, platformNormal, bgTexture };
+  const plinthMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0x292929),
+      metalness: 0.18,
+      roughness: 0.82,
+      map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+      mapDisableDistance: null,
+      normalScale: 5.2,
+      ambientLightScale: 1.8,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      useGeneratedUVs: true,
+      randomizeUVOffset: true,
+      tileBreaking: { type: 'neyret', patchScale: 0.9 },
+    }
+  );
+
+  return { platformDiffuse, platformNormal, bgTexture, plinthMaterial, greenMosaic2Material, goldMaterial };
 };
 
 export const processLoadedScene = async (
@@ -59,8 +99,8 @@ export const processLoadedScene = async (
   dirLight.shadow.camera.top = 94;
   dirLight.shadow.camera.bottom = -140;
 
-  const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
-  viz.scene.add(shadowCameraHelper);
+  // const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
+  // viz.scene.add(shadowCameraHelper);
 
   dirLight.shadow.camera.updateProjectionMatrix();
   dirLight.shadow.camera.updateMatrixWorld();
@@ -68,7 +108,8 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
 
-  const { platformDiffuse, platformNormal, bgTexture } = await loadTextures();
+  const { platformDiffuse, platformNormal, bgTexture, plinthMaterial, greenMosaic2Material, goldMaterial } =
+    await loadTextures();
   viz.scene.background = bgTexture;
 
   const mat = buildCustomShader(
@@ -90,6 +131,23 @@ export const processLoadedScene = async (
 
   const platform = loadedWorld.getObjectByName('platform') as THREE.Mesh;
   platform.material = mat;
+
+  const jumps = loadedWorld.getObjectByName('jumps') as THREE.Mesh;
+  jumps.material = plinthMaterial;
+
+  const dashToken = initDashTokenGraphics(loadedWorld, greenMosaic2Material, goldMaterial);
+  viz.collisionWorldLoadedCbs.push(fpCtx => {
+    const core = (dashToken.getObjectByName('dash_token_core')! as THREE.Mesh).clone();
+    core.position.copy(dashToken.position);
+
+    fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: core }, () =>
+      goto(`/pk_pylons${window.location.origin.includes('localhost') ? '' : '.html'}`)
+    );
+  });
+  const wrappedDashToken = new DashToken(viz, dashToken);
+  wrappedDashToken.userData.nocollide = true;
+  wrappedDashToken.position.copy(dashToken.position);
+  viz.scene.add(wrappedDashToken);
 
   const invisibleStairSlants = loadedWorld.getObjectByName('invisible_stair_slants') as THREE.Mesh;
   invisibleStairSlants.removeFromParent();
@@ -195,7 +253,7 @@ export const processLoadedScene = async (
       moveSpeed: { onGround: 10, inAir: 13 },
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
-      oobYThreshold: -30,
+      oobYThreshold: -80,
       dashConfig: {
         enable: true,
       },

@@ -4,15 +4,13 @@ import * as THREE from 'three';
 import type { VizState } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
-import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
-import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
 import type { SceneConfig } from '..';
-import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
 import { CollectablesCtx, initCollectables } from './collectables';
-import { DashToken } from './DashToken';
+import { initDashTokens } from './DashToken';
 import TimerDisplay from './TimerDisplay.svelte';
 import TimeDisplay, { Score, type ScoreThresholds } from './TimeDisplay.svelte';
+import { buildMaterials } from './materials';
 
 const locations = {
   spawn: {
@@ -23,147 +21,6 @@ const locations = {
     pos: new THREE.Vector3(-73.322, 27.647, -33.4451),
     rot: new THREE.Vector3(-0.212, -8.5, 0),
   },
-};
-
-const buildMaterials = async (viz: VizState) => {
-  const loader = new THREE.ImageBitmapLoader();
-  const towerPlinthPedestalTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.1476533049.png'
-  );
-  const towerPlinthPedestalTextureCombinedDiffuseNormalTextureP = towerPlinthPedestalTextureP.then(
-    towerPlinthPedestalTexture => generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
-  );
-
-  const bgTextureP = (async () => {
-    const bgImage = await loader.loadAsync('https://i.ameo.link/bqn.jpg');
-    const bgTexture = new THREE.Texture(bgImage);
-    bgTexture.mapping = THREE.EquirectangularRefractionMapping;
-    bgTexture.needsUpdate = true;
-    return bgTexture;
-  })();
-
-  const [
-    bgTexture,
-    towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-    {
-      shinyPatchworkStoneAlbedo,
-      shinyPatchworkStoneNormal,
-      shinyPatchworkStoneRoughness,
-      greenMosaic2Albedo,
-      greenMosaic2Normal,
-      greenMosaic2Roughness,
-      goldTextureAlbedo,
-      goldTextureNormal,
-      goldTextureRoughness,
-    },
-  ] = await Promise.all([
-    bgTextureP,
-    towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
-    loadNamedTextures(loader, {
-      shinyPatchworkStoneAlbedo: 'https://i.ameo.link/bqk.jpg',
-      shinyPatchworkStoneNormal: 'https://i.ameo.link/bqm.jpg',
-      shinyPatchworkStoneRoughness: 'https://i.ameo.link/bql.jpg',
-      greenMosaic2Albedo: 'https://i.ameo.link/bqh.jpg',
-      greenMosaic2Normal: 'https://i.ameo.link/bqi.jpg',
-      greenMosaic2Roughness: 'https://i.ameo.link/bqj.jpg',
-      goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
-      goldTextureNormal: 'https://i.ameo.link/be2.jpg',
-      goldTextureRoughness: 'https://i.ameo.link/bdz.jpg',
-    }),
-  ]);
-
-  const pylonMaterial = buildCustomShader(
-    {
-      color: new THREE.Color(0x898989),
-      metalness: 0.18,
-      roughness: 0.82,
-      map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
-      mapDisableDistance: null,
-      normalScale: 5.2,
-    },
-    {},
-    {
-      usePackedDiffuseNormalGBA: true,
-      useGeneratedUVs: true,
-      randomizeUVOffset: true,
-      tileBreaking: { type: 'neyret', patchScale: 0.9 },
-    }
-  );
-
-  const checkpointMat = buildCustomShader(
-    { metalness: 0, alphaTest: 0.05, transparent: true },
-    { colorShader: BridgeMistColorShader },
-    { disableToneMapping: true }
-  );
-  viz.registerBeforeRenderCb(curTimeSeconds => checkpointMat.setCurTimeSeconds(curTimeSeconds));
-
-  const shinyPatchworkStoneMaterial = buildCustomShader(
-    {
-      color: new THREE.Color(0xffffff),
-      metalness: 0.5,
-      roughness: 0.5,
-      map: shinyPatchworkStoneAlbedo,
-      normalMap: shinyPatchworkStoneNormal,
-      roughnessMap: shinyPatchworkStoneRoughness,
-      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
-      mapDisableDistance: null,
-      normalScale: 1.2,
-      ambientLightScale: 2,
-    },
-    {},
-    {
-      useGeneratedUVs: true,
-      randomizeUVOffset: true,
-      tileBreaking: { type: 'neyret', patchScale: 0.9 },
-    }
-  );
-
-  const greenMosaic2Material = buildCustomShader(
-    {
-      color: new THREE.Color(0xffffff),
-      metalness: 0.5,
-      roughness: 0.5,
-      map: greenMosaic2Albedo,
-      normalMap: greenMosaic2Normal,
-      roughnessMap: greenMosaic2Roughness,
-      uvTransform: new THREE.Matrix3().scale(7.8, 7.8),
-      mapDisableDistance: null,
-      normalScale: 2.2,
-      ambientLightScale: 2,
-    },
-    {},
-    {
-      // useTriplanarMapping: true
-      // useGeneratedUVs: true,
-    }
-  );
-
-  const goldMaterial = buildCustomShader(
-    {
-      map: goldTextureAlbedo,
-      roughnessMap: goldTextureRoughness,
-      normalMap: goldTextureNormal,
-      color: new THREE.Color(0xaaaaaa),
-      uvTransform: new THREE.Matrix3().scale(0.6, 0.6),
-      normalScale: 4,
-      roughness: 0.2,
-    },
-    {},
-    {
-      useTriplanarMapping: true,
-    }
-  );
-
-  return {
-    pylonMaterial,
-    checkpointMat,
-    bgTexture,
-    shinyPatchworkStoneMaterial,
-    greenMosaic2Material,
-    goldMaterial,
-  };
 };
 
 const initCheckpoints = (
@@ -235,48 +92,6 @@ const initCheckpoints = (
     dashChargesAtLastCheckpoint = 0;
   };
   return reset;
-};
-
-const initDashTokens = (
-  viz: VizState,
-  loadedWorld: THREE.Group,
-  coreMaterial: THREE.Material,
-  ringMaterial: THREE.Material
-) => {
-  const dashCharges = writable(0);
-  const base = loadedWorld.getObjectByName('dash_token')!;
-  base.visible = false;
-  base.traverse(obj => {
-    if (!(obj instanceof THREE.Mesh)) {
-      return;
-    }
-
-    if (obj.name.includes('ring')) {
-      obj.material = ringMaterial;
-    } else if (obj.name.includes('core')) {
-      obj.material = coreMaterial;
-    }
-  });
-  const dashTokenBase = new DashToken(viz, base);
-  const ctx = initCollectables({
-    viz,
-    loadedWorld,
-    collectableName: 'dash_token_loc',
-    replacementObject: dashTokenBase,
-    onCollect: () => {
-      dashCharges.update(n => n + 1);
-      // TODO: sfx
-    },
-    type: 'aabb',
-  });
-  return {
-    dashCharges,
-    ctx,
-    reset: () => {
-      ctx.reset();
-      dashCharges.set(0);
-    },
-  };
 };
 
 export const processLoadedScene = async (

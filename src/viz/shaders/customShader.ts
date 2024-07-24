@@ -88,7 +88,7 @@ export enum MaterialClass {
   Crystal,
 }
 
-interface CustomShaderProps {
+export interface CustomShaderProps {
   name?: string;
   side?: THREE.Side;
   roughness?: number;

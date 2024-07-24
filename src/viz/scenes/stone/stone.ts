@@ -1,5 +1,5 @@
 import { goto } from '$app/navigation';
-import { BlendFunction, EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
+import { EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
 import * as THREE from 'three';
 
 import { getSentry } from 'src/sentry';

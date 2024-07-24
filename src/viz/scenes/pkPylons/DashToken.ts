@@ -1,5 +1,7 @@
 import type { VizState } from 'src/viz';
+import { writable } from 'svelte/store';
 import * as THREE from 'three';
+import { initCollectables } from './collectables';
 
 export class DashToken extends THREE.Object3D {
   private viz: VizState;
@@ -86,3 +88,54 @@ export class DashToken extends THREE.Object3D {
     return clone as this;
   }
 }
+
+export const initDashTokenGraphics = (
+  loadedWorld: THREE.Group,
+  coreMaterial: THREE.Material,
+  ringMaterial: THREE.Material
+): THREE.Object3D => {
+  const base = loadedWorld.getObjectByName('dash_token')!;
+  base.visible = false;
+  base.traverse(obj => {
+    if (!(obj instanceof THREE.Mesh)) {
+      return;
+    }
+
+    if (obj.name.includes('ring')) {
+      obj.material = ringMaterial;
+    } else if (obj.name.includes('core')) {
+      obj.material = coreMaterial;
+    }
+  });
+  return base;
+};
+
+export const initDashTokens = (
+  viz: VizState,
+  loadedWorld: THREE.Group,
+  coreMaterial: THREE.Material,
+  ringMaterial: THREE.Material
+) => {
+  const dashCharges = writable(0);
+  const base = initDashTokenGraphics(loadedWorld, coreMaterial, ringMaterial);
+  const dashTokenBase = new DashToken(viz, base);
+  const ctx = initCollectables({
+    viz,
+    loadedWorld,
+    collectableName: 'dash_token_loc',
+    replacementObject: dashTokenBase,
+    onCollect: () => {
+      dashCharges.update(n => n + 1);
+      // TODO: sfx
+    },
+    type: 'aabb',
+  });
+  return {
+    dashCharges,
+    ctx,
+    reset: () => {
+      ctx.reset();
+      dashCharges.set(0);
+    },
+  };
+};
