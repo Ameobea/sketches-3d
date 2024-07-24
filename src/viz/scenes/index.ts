@@ -82,6 +82,7 @@ export interface SceneConfig {
     jumpVelocity?: number;
     colliderCapsuleSize?: { height: number; radius: number };
     moveSpeed?: { onGround: number; inAir: number };
+    stepHeight?: number;
     oobYThreshold?: number;
   };
   renderOverride?: (timeDiffSeconds: number) => void;

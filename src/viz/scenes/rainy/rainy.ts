@@ -729,7 +729,7 @@ export const processLoadedScene = async (
     sfx: {
       walk: {
         playWalkSound: (materialClass: MaterialClass) => playWalkSound(materialClass),
-        timeBetweenStepsSeconds: 0.41,
+        timeBetweenStepsSeconds: 0.368,
         timeBetweenStepsJitterSeconds: 0.04,
       },
     },

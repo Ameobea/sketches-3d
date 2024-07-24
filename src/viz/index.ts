@@ -148,6 +148,7 @@ const setupFirstPerson = async ({
     playerColliderRadius,
     playerColliderHeight,
     playerMoveSpeed: playerConf?.moveSpeed,
+    playerStepHeight: playerConf?.stepHeight,
     dashConfig,
     sfxManager,
     vizConfig,

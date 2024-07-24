@@ -52,13 +52,13 @@ export const processLoadedScene = async (
 
   const mat = buildCustomShader(
     {
-      color: 0x474a50,
+      color: 0x474a4d,
       map: platformDiffuse,
       roughness: 0.9,
       metalness: 0.5,
       uvTransform: new THREE.Matrix3().scale(138.073, 138.073),
       normalMap: platformNormal,
-      normalScale: 0.95,
+      normalScale: 1,
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
       ambientLightScale: 1.8,
@@ -69,6 +69,10 @@ export const processLoadedScene = async (
 
   const platform = loadedWorld.getObjectByName('platform') as THREE.Mesh;
   platform.material = mat;
+
+  const invisibleStairSlants = loadedWorld.getObjectByName('invisible_stair_slants') as THREE.Mesh;
+  invisibleStairSlants.removeFromParent();
+  viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(invisibleStairSlants));
 
   // TODO: temp; use different mat for pillars
   const pillars = loadedWorld.getObjectByName('pillars') as THREE.Mesh;

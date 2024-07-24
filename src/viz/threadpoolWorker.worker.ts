@@ -66,8 +66,9 @@ const methods = {
       memory.buffer.slice(outPtr, outPtr + textures.length * textureSize * textureSize * textures.length * 4)
     );
 
-    (engine.exports.wasm_free as Function)(outPtr);
-    (engine.exports.reset as Function)();
+    const outSizeBytes = textures.length * textureSize * textureSize * textures.length * 4;
+    (engine.exports.wasm_free as Function)(outPtr, outSizeBytes);
+    (engine.exports.reset as Function)(textureSize * textureSize * 4);
 
     return Comlink.transfer(out, [out.buffer]);
   },

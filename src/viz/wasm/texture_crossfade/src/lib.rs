@@ -1,19 +1,22 @@
+#![feature(vec_into_raw_parts)]
+
 use std::ptr::{self, addr_of};
 
 static mut TEXTURE_PTRS: [*mut u8; 8] = [ptr::null_mut(); 8];
 
 #[no_mangle]
 pub extern "C" fn wasm_malloc(size: usize) -> *mut u8 {
-  let mut data = Vec::with_capacity(size);
-  let ptr = data.as_mut_ptr();
-  std::mem::forget(data);
+  let data = Vec::with_capacity(size);
+  let (ptr, len, capacity) = data.into_raw_parts();
+  assert_eq!(size, capacity);
+  assert_eq!(len, 0);
   ptr
 }
 
 #[no_mangle]
-pub extern "C" fn wasm_free(ptr: *mut u8) {
+pub extern "C" fn wasm_free(ptr: *mut u8, size: usize) {
   unsafe {
-    drop(Box::from_raw(ptr));
+    drop(Vec::from_raw_parts(ptr, size, size));
   }
 }
 
@@ -25,11 +28,15 @@ pub extern "C" fn set_texture(data: *mut u8, index: usize) {
 }
 
 #[no_mangle]
-pub extern "C" fn reset() {
+pub extern "C" fn reset(texture_size_bytes: usize) {
   unsafe {
     for i in 0..TEXTURE_PTRS.len() {
       if !TEXTURE_PTRS[i].is_null() {
-        drop(Box::from_raw(TEXTURE_PTRS[i]));
+        drop(Vec::from_raw_parts(
+          TEXTURE_PTRS[i],
+          texture_size_bytes,
+          texture_size_bytes,
+        ));
         TEXTURE_PTRS[i] = ptr::null_mut();
       }
     }
@@ -128,8 +135,22 @@ fn get_texture_indices_for_corner(
   }
 }
 
+static mut DID_INIT: bool = false;
+
+fn maybe_init() {
+  unsafe {
+    if !DID_INIT {
+      DID_INIT = true;
+    } else {
+      return;
+    }
+  }
+}
+
 #[no_mangle]
 pub extern "C" fn generate(size: usize, threshold: f32) -> *mut u8 {
+  maybe_init();
+
   if threshold < 0. || threshold > 1. {
     panic!("Threshold must be between 0 and 1");
   }
@@ -263,5 +284,8 @@ pub extern "C" fn generate(size: usize, threshold: f32) -> *mut u8 {
     }
   }
 
-  Box::into_raw(out.into_boxed_slice()) as *mut u8
+  let (ptr, len, capacity) = out.into_raw_parts();
+  assert_eq!(len, capacity);
+  assert_eq!(len, out_size * out_size * 4);
+  ptr
 }

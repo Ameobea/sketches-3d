@@ -137,6 +137,19 @@ export type AddPlayerRegionContactCB = (
   onLeave?: () => void
 ) => void;
 
+// \/ This is vital for making the physics work without bad bugs like falling through floors randomly.
+//
+// After deconstructing what the kinematic character controller does internally, I've worked out that it
+// tries to push the player both up and down by this amount every tick of the simulation.
+//
+// If it's too big, the player tends to clip through geometry or stuff like that.
+const DEFAULT_STEP_HEIGHT = 0.05;
+const MAX_SLOPE_RADS = 0.8;
+// \/ This is a very important config item for the physics engine.  Setting it too high will result in
+// the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
+// weird issues where the player slides around on the floor or clips through geometry.
+const MAX_PENETRATION_DEPTH = 0.075;
+
 interface BulletPhysicsArgs {
   camera: THREE.Camera;
   keyStates: Record<string, boolean>;
@@ -147,6 +160,7 @@ interface BulletPhysicsArgs {
   playerColliderRadius: number;
   playerColliderHeight: number;
   playerMoveSpeed: PlayerMoveSpeed | undefined;
+  playerStepHeight: number | undefined;
   dashConfig: Partial<DashConfig> | undefined;
   sfxManager: SfxManager;
   vizConfig: VizConfig;
@@ -162,6 +176,7 @@ export const initBulletPhysics = ({
   playerColliderRadius,
   playerColliderHeight,
   playerMoveSpeed = DefaultMoveSpeed,
+  playerStepHeight = DEFAULT_STEP_HEIGHT,
   dashConfig = DefaultDashConfig,
   sfxManager,
   vizConfig,
@@ -195,27 +210,15 @@ export const initBulletPhysics = ({
   playerGhostObject.setCollisionShape(playerCapsule);
   playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
 
-  // \/ This is vital for making the physics work without bad bugs like falling through floors randomly.
-  //
-  // After deconstructing what the kinematic character controller does internally, I've worked out that it
-  // tries to push the player both up and down by this amount every tick of the simulation.
-  //
-  // If it's too big, the player tends to clip through geometry or stuff like that.
-  const STEP_HEIGHT = 0.05;
-  const MAX_SLOPE_RADS = 0.8;
-  // \/ This is a very important config item for the physics engine.  Setting it too high will result in
-  // the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
-  // weird issues where the player slides around on the floor or clips through geometry.
-  const MAX_PENETRATION_DEPTH = 0.075;
   playerController = new Ammo.btKinematicCharacterController(
     playerGhostObject,
     playerCapsule,
-    STEP_HEIGHT,
+    playerStepHeight,
     btvec3(0, 1, 0)
   );
   playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
   playerController.setMaxSlope(MAX_SLOPE_RADS);
-  playerController.setStepHeight(STEP_HEIGHT);
+  playerController.setStepHeight(playerStepHeight);
   playerController.setJumpSpeed(jumpSpeed);
 
   collisionWorld.addCollisionObject(
