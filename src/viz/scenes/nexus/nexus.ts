@@ -37,15 +37,36 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 7.4);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 6.4);
   viz.scene.add(ambientLight);
 
-  const dirLight = new THREE.DirectionalLight(0xdde6f1, 3.6);
-  dirLight.position.set(342 * -1.1, 303 * 1.1, 180 * -1.1);
+  const dirLight = new THREE.DirectionalLight(0xdde6f1, 3.2);
+  dirLight.position.set(-160, 163, -80);
   dirLight.target.position.set(0, 0, 0);
-  dirLight.castShadow = false;
+
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048 * 2;
+  dirLight.shadow.mapSize.height = 2048 * 2;
+  dirLight.shadow.radius = 4;
+  dirLight.shadow.blurSamples = 16;
+  viz.renderer.shadowMap.type = THREE.VSMShadowMap;
+  dirLight.shadow.bias = -0.0001;
+
+  dirLight.shadow.camera.near = 8;
+  dirLight.shadow.camera.far = 300;
+  dirLight.shadow.camera.left = -300;
+  dirLight.shadow.camera.right = 380;
+  dirLight.shadow.camera.top = 94;
+  dirLight.shadow.camera.bottom = -140;
+
+  const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
+  viz.scene.add(shadowCameraHelper);
+
+  dirLight.shadow.camera.updateProjectionMatrix();
+  dirLight.shadow.camera.updateMatrixWorld();
 
   viz.scene.add(dirLight);
+  viz.scene.add(dirLight.target);
 
   const { platformDiffuse, platformNormal, bgTexture } = await loadTextures();
   viz.scene.background = bgTexture;
