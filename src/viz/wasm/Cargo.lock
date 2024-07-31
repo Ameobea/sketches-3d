@@ -140,6 +140,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d63d857efc8e722f18e9e2bbdd32b53084211090eb4b3df5d3170eddd0c76d"
 
 [[package]]
+name = "csg_sandbox"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "log",
+ "mesh",
+ "wasm-bindgen",
+ "wasm-logger",
+]
+
+[[package]]
 name = "euclid"
 version = "0.22.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -283,6 +294,7 @@ dependencies = [
  "bitvec",
  "common",
  "fxhash",
+ "log",
  "nalgebra 0.33.0",
  "slotmap",
  "smallvec",

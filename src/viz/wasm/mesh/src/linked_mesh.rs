@@ -6,8 +6,8 @@ use smallvec::SmallVec;
 
 use crate::{OwnedIndexedMesh, OwnedMesh, Triangle};
 
-type Vec3 = Vector3<f32>;
-type Mat4 = Matrix4<f32>;
+pub type Vec3 = Vector3<f32>;
+pub type Mat4 = Matrix4<f32>;
 
 new_key_type! {
   pub struct VertexKey;
@@ -194,7 +194,7 @@ impl NormalAcc {
         face.to_triangle(verts),
         face.is_degenerate(verts)
       );
-      return None;
+      // return None;
     }
 
     let angle_at_vtx = face.compute_angle_at_vertex(fan_center_vtx_key, verts);
@@ -311,8 +311,11 @@ impl LinkedMesh {
     mesh
   }
 
-  pub fn from_triangles(triangles: &[Triangle]) -> Self {
-    let mut mesh = Self::new(triangles.len() * 3, triangles.len(), None);
+  pub fn from_triangles(triangles: impl IntoIterator<Item = Triangle>) -> Self {
+    let triangles = triangles.into_iter();
+    let (min_size, max_size) = triangles.size_hint();
+    let size = max_size.unwrap_or(min_size);
+    let mut mesh = Self::new(size * 3, size, None);
 
     for tri in triangles {
       // This might break mesh topology in some cases, but it saves us from dealing
@@ -1128,7 +1131,7 @@ impl LinkedMesh {
          visited_faces.len()={}",
         visited_faces.len()
       );
-      return None;
+      // return None;
     };
 
     Some(displacement_normal)
@@ -1201,20 +1204,24 @@ impl LinkedMesh {
     }
   }
 
-  pub fn to_raw_indexed(&self) -> OwnedIndexedMesh {
+  pub fn to_raw_indexed(
+    &self,
+    include_shading_normals: bool,
+    include_displacement_normals: bool,
+  ) -> OwnedIndexedMesh {
     let mut vertices = Vec::with_capacity(self.vertices.len() * 3);
-    let mut shading_normals = Vec::new();
-    let mut displacement_normals = Vec::new();
+    let mut shading_normals = if include_shading_normals {
+      Vec::with_capacity(self.vertices.len() * 3)
+    } else {
+      Vec::new()
+    };
+    let mut displacement_normals = if include_displacement_normals {
+      Vec::with_capacity(self.vertices.len() * 3)
+    } else {
+      Vec::new()
+    };
     let mut indices = Vec::with_capacity(self.faces.len() * 3);
 
-    let has_normals = self
-      .vertices
-      .values()
-      .any(|vtx| vtx.shading_normal.is_some() || vtx.displacement_normal.is_some());
-    if has_normals {
-      shading_normals = Vec::with_capacity(self.vertices.len() * 3);
-      displacement_normals = Vec::with_capacity(self.vertices.len() * 3);
-    }
     let mut cur_vert_ix = 0;
     let mut seen_vertex_keys =
       FxHashMap::with_capacity_and_hasher(self.vertices.len(), fxhash::FxBuildHasher::default());
@@ -1231,15 +1238,15 @@ impl LinkedMesh {
           vertices.extend(vert.position.iter());
           if let Some(shading_normal) = vert.shading_normal {
             shading_normals.extend(shading_normal.iter());
-          } else if has_normals {
+          } else if include_shading_normals {
             // panic!("Vertex {vert_key:?} has no shading normal");
             shading_normals.extend(Vec3::zeros().iter());
           }
           if let Some(displacement_normal) = vert.displacement_normal {
             displacement_normals.extend(displacement_normal.iter());
-          } else if has_normals {
+          } else if include_displacement_normals {
             panic!("Vertex {vert_key:?} has no displacement normal");
-            displacement_normals.extend(Vec3::zeros().iter());
+            // displacement_normals.extend(Vec3::zeros().iter());
           }
           cur_vert_ix += 1;
           ix
@@ -1250,12 +1257,12 @@ impl LinkedMesh {
 
     OwnedIndexedMesh {
       vertices,
-      shading_normals: if has_normals {
+      shading_normals: if include_shading_normals {
         Some(shading_normals)
       } else {
         None
       },
-      displacement_normals: if has_normals {
+      displacement_normals: if include_displacement_normals {
         Some(displacement_normals)
       } else {
         None
@@ -1337,7 +1344,7 @@ impl LinkedMesh {
             if merged_normal.x.is_nan() || merged_normal.y.is_nan() || merged_normal.z.is_nan() {
               panic!("Merged normal is NaN; n0={n0:?}; n1={n1:?}; merged_normal={merged_normal:?}");
               // Some(Vec3::new(random(), random(), random()).normalize())
-              None
+              // None
             } else {
               Some(merged_normal)
             }
@@ -1655,7 +1662,7 @@ mod tests {
       [[1, 0, 0], [0, 0, 0], [0, -1, 0]],
       [[0, -1, 0], [0, 0, 0], [-1, 0, 0]],
     ];
-    let actual_indexed_mesh = mesh.to_raw_indexed();
+    let actual_indexed_mesh = mesh.to_raw_indexed(true, true);
     assert_eq!(actual_indexed_mesh.indices.len(), 12);
     let actual_verts = actual_indexed_mesh
       .indices

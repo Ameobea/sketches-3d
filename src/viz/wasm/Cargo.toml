@@ -12,6 +12,7 @@ members = [
   "tessellation",
   "tessellation_sandbox",
   "basalt",
+  "csg_sandbox",
 ]
 resolver = "2"
 

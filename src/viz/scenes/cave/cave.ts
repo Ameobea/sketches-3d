@@ -22,7 +22,7 @@ export const processLoadedScene = async (
     wsCtx.startAll();
   });
 
-  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  viz.scene.add(new THREE.AmbientLight(0xffffff, 3, 3.5));
 
   viz.renderer.shadowMap.enabled = false;
 
@@ -80,7 +80,7 @@ export const processLoadedScene = async (
       iridescence: 0.14,
     },
     {},
-    { useTriplanarMapping: true }
+    { useTriplanarMapping: { sharpenFactor: 8 } }
   );
   cave.material = caveMat;
 
@@ -119,6 +119,7 @@ export const processLoadedScene = async (
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
       oobYThreshold: -210,
+      dashConfig: { enable: false },
     },
     debugPos: true,
     locations: {

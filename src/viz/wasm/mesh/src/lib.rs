@@ -5,6 +5,8 @@ use nalgebra::Vector3;
 pub mod linked_mesh;
 pub use linked_mesh::LinkedMesh;
 
+pub mod csg;
+
 #[derive(Clone, Debug)]
 pub struct Triangle {
   pub a: Vector3<f32>,

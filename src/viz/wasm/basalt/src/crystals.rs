@@ -42,7 +42,7 @@ fn generate_crystal_mesh() -> LinkedMesh {
     tris.push(Triangle::new(t0_v1, t1_v1, t1_v0));
   }
 
-  let mut mesh = LinkedMesh::from_triangles(&tris);
+  let mut mesh = LinkedMesh::from_triangles(tris);
 
   mesh.merge_vertices_by_distance(0.000001);
   let sharp_edge_threshold_rads = 0.8;
@@ -61,7 +61,7 @@ pub(crate) struct BatchMesh {
 pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
   let mut crystal_meshes = (0..UNIQ_CRYSTAL_MESH_COUNT)
     .map(|_| BatchMesh {
-      mesh: generate_crystal_mesh().to_raw_indexed(),
+      mesh: generate_crystal_mesh().to_raw_indexed(true, true),
       transforms: Vec::new(),
     })
     .collect::<Vec<_>>();

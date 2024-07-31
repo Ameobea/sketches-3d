@@ -422,7 +422,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   };
   let terrain_triangles = gen_tessellated_hex_grid(20, 20, 11., get_height);
 
-  let mut mesh = LinkedMesh::from_triangles(&terrain_triangles);
+  let mut mesh = LinkedMesh::from_triangles(terrain_triangles);
   let merged_count = mesh.merge_vertices_by_distance(0.0001);
   info!(
     "Merged {merged_count} vertices by distance; {} remaining",
@@ -436,7 +436,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   let mut collission_mesh = mesh.clone();
   let displ_noise = Fbm::new().set_octaves(3);
   displace_mesh(&displ_noise, &mut collission_mesh);
-  let collission_mesh = mesh.to_raw_indexed();
+  let collission_mesh = mesh.to_raw_indexed(true, true);
 
   let target_edge_length = 3.16;
   let should_split_edge = |mesh: &LinkedMesh, edge: &Edge| -> bool {
@@ -478,7 +478,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   let crystals = generate_crystals(&mesh);
   Box::into_raw(Box::new(GenBasaltCtx {
     collission_mesh,
-    terrrain_mesh: mesh.to_raw_indexed(),
+    terrrain_mesh: mesh.to_raw_indexed(true, true),
     crystals,
   }))
 }

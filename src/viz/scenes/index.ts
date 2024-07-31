@@ -319,4 +319,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'nexus' },
     legacyLights: false,
   },
+  csgSandbox: {
+    gltfName: 'basalt',
+    extension: 'glb',
+    sceneLoader: () => import('./csgSandbox/csgSandbox').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'CSG sandbox' },
+    legacyLights: false,
+  },
 };
