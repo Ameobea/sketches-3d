@@ -3,9 +3,6 @@
 
 use std::ops::BitOr;
 
-use slotmap::new_key_type;
-pub use slotmap::SlotMap;
-
 use crate::{linked_mesh::Vec3, LinkedMesh, Triangle};
 
 const EPSLION: f32 = 1e-5;
@@ -207,51 +204,35 @@ impl Polygon {
   }
 }
 
-new_key_type! {
-  pub struct NodeKey;
-}
-
-pub type NodeMap = SlotMap<NodeKey, Node>;
-
 #[derive(Clone)]
 pub struct Node {
   pub plane: Option<Plane>,
-  pub front: Option<NodeKey>,
-  pub back: Option<NodeKey>,
+  pub front: Option<Box<Node>>,
+  pub back: Option<Box<Node>>,
   pub polygons: Vec<Polygon>,
 }
 
 impl Node {
   /// Convert solid space to empty space and empty space to solid space.
-  pub fn invert(self_key: NodeKey, nodes: &mut NodeMap) {
-    let (front, back) = {
-      let this = &mut nodes[self_key];
-      for polygon in &mut this.polygons {
-        polygon.flip();
-      }
-      if let Some(plane) = &mut this.plane {
-        plane.flip();
-      }
-      (this.front, this.back)
-    };
-    if let Some(front_key) = front {
-      Node::invert(front_key, nodes);
+  pub fn invert(&mut self) {
+    for polygon in &mut self.polygons {
+      polygon.flip();
     }
-    if let Some(back_key) = back {
-      Node::invert(back_key, nodes);
+    if let Some(plane) = &mut self.plane {
+      plane.flip();
+    }
+    if let Some(front) = &mut self.front {
+      front.invert();
+    }
+    if let Some(back) = &mut self.back {
+      back.invert();
     }
 
-    let this = &mut nodes[self_key];
-    std::mem::swap(&mut this.front, &mut this.back);
+    std::mem::swap(&mut self.front, &mut self.back);
   }
 
-  pub fn clip_polygons(
-    self_key: NodeKey,
-    mut polygons: Vec<Polygon>,
-    nodes: &NodeMap,
-  ) -> Vec<Polygon> {
-    let this = &nodes[self_key];
-    let Some(plane) = &this.plane else {
+  pub fn clip_polygons(&mut self, mut polygons: Vec<Polygon>) -> Vec<Polygon> {
+    let Some(plane) = &self.plane else {
       return polygons;
     };
 
@@ -262,11 +243,11 @@ impl Node {
       plane.split_polygon(polygon, Coplanars::UseFrontBack, &mut front, &mut back);
     }
 
-    if let Some(front_key) = this.front {
-      front = Node::clip_polygons(front_key, front, nodes);
+    if let Some(front_node) = &mut self.front {
+      front = front_node.clip_polygons(front);
     }
-    if let Some(back_key) = this.back {
-      back = Node::clip_polygons(back_key, back, nodes);
+    if let Some(back_node) = &mut self.back {
+      back = back_node.clip_polygons(back);
     } else {
       back = Vec::new();
     }
@@ -276,39 +257,27 @@ impl Node {
   }
 
   // Recursively remove all polygons in `polygons` that are inside this BSP tree.
-  pub fn clip_to(self_key: NodeKey, bsp_key: NodeKey, nodes: &mut NodeMap) {
-    let this_polygons = {
-      let this = &mut nodes[self_key];
-      std::mem::take(&mut this.polygons)
-    };
-    let new_this_polygons = Node::clip_polygons(bsp_key, this_polygons, nodes);
-    {
-      let this = &mut nodes[self_key];
-      this.polygons = new_this_polygons;
-    }
+  pub fn clip_to(&mut self, bsp: &mut Self) {
+    self.polygons = bsp.clip_polygons(std::mem::take(&mut self.polygons));
 
-    if let Some(front_key) = nodes[self_key].front {
-      Node::clip_to(front_key, bsp_key, nodes);
+    if let Some(front) = &mut self.front {
+      front.clip_to(bsp);
     }
-    if let Some(back_key) = nodes[self_key].back {
-      Node::clip_to(back_key, bsp_key, nodes);
+    if let Some(back) = &mut self.back {
+      back.clip_to(bsp);
     }
   }
 
   /// Returns a list of all polygons in this BSP tree.
-  pub fn all_polygons(self_key: NodeKey, nodes: &NodeMap) -> Vec<Polygon> {
-    let (mut polygons, this_front, this_back) = {
-      let this = &nodes[self_key];
-      let mut polygons = Vec::with_capacity(this.polygons.len());
-      polygons.extend(this.polygons.iter().cloned());
-      (polygons, this.front, this.back)
-    };
+  pub fn all_polygons(&self) -> Vec<Polygon> {
+    let mut polygons = Vec::with_capacity(self.polygons.len());
+    polygons.extend(self.polygons.iter().cloned());
 
-    if let Some(front_key) = this_front {
-      polygons.extend(Node::all_polygons(front_key, nodes));
+    if let Some(front) = &self.front {
+      polygons.extend(front.all_polygons());
     }
-    if let Some(back_key) = this_back {
-      polygons.extend(Node::all_polygons(back_key, nodes));
+    if let Some(back) = &self.back {
+      polygons.extend(back.all_polygons());
     }
 
     polygons
@@ -316,7 +285,7 @@ impl Node {
 
   /// Build a BSP tree out of `polygons`. Each set of polygons is partitioned
   /// using the first polygon (no heuristic is used to pick a good split).
-  pub fn build(polygons: &[Polygon], nodes: &mut NodeMap) -> Self {
+  pub fn build(polygons: &[Polygon]) -> Self {
     if polygons.is_empty() {
       panic!("No polygons provided to build BSP tree");
     }
@@ -336,57 +305,50 @@ impl Node {
     let front = if front.is_empty() {
       None
     } else {
-      Some(Self::build(&front, nodes))
+      Some(Box::new(Self::build(&front)))
     };
-    let front_key = front.map(|node| nodes.insert(node));
     let back = if back.is_empty() {
       None
     } else {
-      Some(Self::build(&back, nodes))
+      Some(Box::new(Self::build(&back)))
     };
-    let back_key = back.map(|node| nodes.insert(node));
 
     Self {
       plane: Some(plane),
-      front: front_key,
-      back: back_key,
+      front,
+      back,
       polygons: this_polygons,
     }
   }
 
-  pub fn add_polygons(self_key: NodeKey, polygons: &[Polygon], nodes: &mut NodeMap) {
+  pub fn add_polygons(&mut self, polygons: &[Polygon]) {
     let mut front = Vec::new();
     let mut back = Vec::new();
-    let (front_key, back_key) = {
-      let this = &mut nodes[self_key];
-      for polygon in polygons {
-        this.plane.as_ref().unwrap().split_polygon(
-          polygon,
-          Coplanars::SingleBuffer(&mut this.polygons),
-          &mut front,
-          &mut back,
-        );
-      }
-      (this.front, this.back)
-    };
+
+    for polygon in polygons {
+      self.plane.as_ref().unwrap().split_polygon(
+        polygon,
+        Coplanars::SingleBuffer(&mut self.polygons),
+        &mut front,
+        &mut back,
+      );
+    }
 
     if !front.is_empty() {
-      match front_key {
-        Some(front_key) => Node::add_polygons(front_key, &front, nodes),
+      match &mut self.front {
+        Some(front_node) => front_node.add_polygons(&front),
         None => {
-          let new_front = Self::build(&front, nodes);
-          let new_front_key = Some(nodes.insert(new_front));
-          nodes[self_key].front = new_front_key;
+          let new_front = Self::build(&front);
+          self.front = Some(Box::new(new_front));
         }
       }
     }
     if !back.is_empty() {
-      match back_key {
-        Some(back_key) => Node::add_polygons(back_key, &back, nodes),
+      match &mut self.back {
+        Some(back_node) => back_node.add_polygons(&back),
         None => {
-          let new_back = Self::build(&back, nodes);
-          let new_back_key = Some(nodes.insert(new_back));
-          nodes[self_key].back = new_back_key;
+          let new_back = Self::build(&back);
+          self.back = Some(Box::new(new_back));
         }
       }
     }
@@ -408,7 +370,6 @@ impl CSG {
 
   pub fn iter_triangles<'a>(&'a self) -> impl Iterator<Item = Triangle> + 'a {
     self.polygons.iter().flat_map(|polygon| {
-      // \/ Not sure if this will be valid
       (2..polygon.vertices.len()).map(move |i| {
         Triangle::new(
           polygon.vertices[0].pos,
@@ -436,76 +397,71 @@ impl CSG {
   ///          |   B   |            |       |
   ///          |       |            |       |
   ///          +-------+            +-------+
-  pub fn union(self, csg: CSG, nodes: &mut NodeMap) -> Self {
-    let a = Node::build(&self.polygons, nodes);
-    let a_key = nodes.insert(a);
-    let b = Node::build(&csg.polygons, nodes);
-    let b_key = nodes.insert(b);
+  pub fn union(self, csg: CSG) -> Self {
+    let mut a = Node::build(&self.polygons);
+    let mut b = Node::build(&csg.polygons);
 
-    Node::clip_to(a_key, b_key, nodes);
-    Node::clip_to(b_key, a_key, nodes);
-    Node::invert(b_key, nodes);
-    Node::clip_to(b_key, a_key, nodes);
-    Node::invert(b_key, nodes);
-    Node::add_polygons(a_key, &Node::all_polygons(b_key, nodes), nodes);
-    Self::new(Node::all_polygons(a_key, nodes))
+    a.clip_to(&mut b);
+    b.clip_to(&mut a);
+    b.invert();
+    b.clip_to(&mut a);
+    b.invert();
+    a.add_polygons(&b.all_polygons());
+    Self::new(a.all_polygons())
   }
 
   /// Returns a new CSG solid representing space in this solid but not in the
   /// solid `csg`. Neither this solid nor the solid `csg` are modified.
   ///
-  ///    A.subtract(B)
+  ///     A.subtract(B)
   ///
-  ///    +-------+            +-------+
-  ///    |       |            |       |
-  ///    |   A   |            |       |
-  ///    |    +--+----+   =   |    +--+
-  ///    +----+--+    |       +----+
-  ///         |   B   |
-  ///         |       |
-  ///         +-------+
-  pub fn subtract(self, csg: CSG, nodes: &mut NodeMap) -> Self {
-    let a = Node::build(&self.polygons, nodes);
-    let a_key = nodes.insert(a);
-    let b = Node::build(&csg.polygons, nodes);
-    let b_key = nodes.insert(b);
+  ///     +-------+            +-------+
+  ///     |       |            |       |
+  ///     |   A   |            |       |
+  ///     |    +--+----+   =   |    +--+
+  ///     +----+--+    |       +----+
+  ///          |   B   |
+  ///          |       |
+  ///          +-------+
+  pub fn subtract(self, csg: CSG) -> Self {
+    let mut a = Node::build(&self.polygons);
+    let mut b = Node::build(&csg.polygons);
 
-    Node::invert(a_key, nodes);
-    Node::clip_to(a_key, b_key, nodes);
-    Node::clip_to(b_key, a_key, nodes);
-    Node::invert(b_key, nodes);
-    Node::clip_to(b_key, a_key, nodes);
-    Node::invert(b_key, nodes);
-    Node::add_polygons(a_key, &Node::all_polygons(b_key, nodes), nodes);
-    Self::new(Node::all_polygons(a_key, nodes))
+    a.invert();
+    a.clip_to(&mut b);
+    b.clip_to(&mut a);
+    b.invert();
+    b.clip_to(&mut a);
+    b.invert();
+    a.add_polygons(&b.all_polygons());
+    Self::new(a.all_polygons())
   }
 
   /// Return a new CSG solid representing space both this solid and in the
   /// solid `csg`. Neither this solid nor the solid `csg` are modified.
   ///
-  ///    A.intersect(B)
+  ///     A.intersect(B)
   ///
-  ///   +-------+
-  ///   |       |
-  ///   |   A   |
-  ///   |    +--+----+   =   +--+
-  ///   +----+--+    |       +--+
-  ///        |   B   |
-  ///        |       |
-  ///        +-------+
-  pub fn intersect(self, csg: CSG, nodes: &mut NodeMap) -> Self {
-    let a = Node::build(&self.polygons, nodes);
-    let a_key = nodes.insert(a);
-    let b = Node::build(&csg.polygons, nodes);
-    let b_key = nodes.insert(b);
+  ///     +-------+
+  ///     |       |
+  ///     |   A   |
+  ///     |    +--+----+   =   +--+
+  ///     +----+--+    |       +--+
+  ///          |   B   |
+  ///          |       |
+  ///          +-------+
+  pub fn intersect(self, csg: CSG) -> Self {
+    let mut a = Node::build(&self.polygons);
+    let mut b = Node::build(&csg.polygons);
 
-    Node::invert(a_key, nodes);
-    Node::clip_to(a_key, b_key, nodes);
-    Node::invert(b_key, nodes);
-    Node::clip_to(b_key, a_key, nodes);
-    Node::invert(a_key, nodes);
-    Node::add_polygons(a_key, &Node::all_polygons(b_key, nodes), nodes);
-    Self::new(Node::all_polygons(a_key, nodes))
+    a.invert();
+    a.clip_to(&mut b);
+    b.clip_to(&mut a);
+    b.invert();
+    b.clip_to(&mut a);
+    b.invert();
+    a.add_polygons(&b.all_polygons());
+    Self::new(a.all_polygons())
   }
 
   /// Return a new CSG solid with solid and empty space switched. This solid is
