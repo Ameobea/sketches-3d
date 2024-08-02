@@ -451,6 +451,75 @@ impl CSG {
     Self::new(Node::all_polygons(a_key, nodes))
   }
 
+  /// Returns a new CSG solid representing space in this solid but not in the
+  /// solid `csg`. Neither this solid nor the solid `csg` are modified.
+  ///
+  ///    A.subtract(B)
+  ///
+  ///    +-------+            +-------+
+  ///    |       |            |       |
+  ///    |   A   |            |       |
+  ///    |    +--+----+   =   |    +--+
+  ///    +----+--+    |       +----+
+  ///         |   B   |
+  ///         |       |
+  ///         +-------+
+  pub fn subtract(self, csg: CSG, nodes: &mut NodeMap) -> Self {
+    let a = Node::build(&self.polygons, nodes);
+    let a_key = nodes.insert(a);
+    let b = Node::build(&csg.polygons, nodes);
+    let b_key = nodes.insert(b);
+
+    Node::invert(a_key, nodes);
+    Node::clip_to(a_key, b_key, nodes);
+    Node::clip_to(b_key, a_key, nodes);
+    Node::invert(b_key, nodes);
+    Node::clip_to(b_key, a_key, nodes);
+    Node::invert(b_key, nodes);
+    Node::add_polygons(a_key, &Node::all_polygons(b_key, nodes), nodes);
+    Self::new(Node::all_polygons(a_key, nodes))
+  }
+
+  /// Return a new CSG solid representing space both this solid and in the
+  /// solid `csg`. Neither this solid nor the solid `csg` are modified.
+  ///
+  ///    A.intersect(B)
+  ///
+  ///   +-------+
+  ///   |       |
+  ///   |   A   |
+  ///   |    +--+----+   =   +--+
+  ///   +----+--+    |       +--+
+  ///        |   B   |
+  ///        |       |
+  ///        +-------+
+  pub fn intersect(self, csg: CSG, nodes: &mut NodeMap) -> Self {
+    let a = Node::build(&self.polygons, nodes);
+    let a_key = nodes.insert(a);
+    let b = Node::build(&csg.polygons, nodes);
+    let b_key = nodes.insert(b);
+
+    Node::invert(a_key, nodes);
+    Node::clip_to(a_key, b_key, nodes);
+    Node::invert(b_key, nodes);
+    Node::clip_to(b_key, a_key, nodes);
+    Node::invert(a_key, nodes);
+    Node::add_polygons(a_key, &Node::all_polygons(b_key, nodes), nodes);
+    Self::new(Node::all_polygons(a_key, nodes))
+  }
+
+  /// Return a new CSG solid with solid and empty space switched. This solid is
+  /// not modified.
+  pub fn inverse(&self) -> Self {
+    let mut polygons = Vec::with_capacity(self.polygons.len());
+    for polygon in &self.polygons {
+      let mut polygon = polygon.clone();
+      polygon.flip();
+      polygons.push(polygon);
+    }
+    Self::new(polygons)
+  }
+
   /// Construct an axis-aligned solid cuboid. Optional parameters are `center`
   /// and `radius`, which default to `[0, 0, 0]` and `[1, 1, 1]`.
   pub fn new_cube(center: Vec3, radius: f32) -> Self {

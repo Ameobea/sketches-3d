@@ -29,7 +29,7 @@ pub fn csg_sandbox_init() -> *mut CsgSandboxCtx {
   let mut nodes = NodeMap::default();
 
   // let mut mesh = csg0.to_linked_mesh();
-  let mut mesh = csg0.union(csg1, &mut nodes).to_linked_mesh();
+  let mut mesh = csg0.subtract(csg1, &mut nodes).to_linked_mesh();
   mesh.merge_vertices_by_distance(1e-5);
   let sharp_edge_threshold_rads = 0.8;
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
