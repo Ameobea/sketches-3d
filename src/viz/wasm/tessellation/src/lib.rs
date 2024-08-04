@@ -2,7 +2,7 @@
 
 use float_ord::FloatOrd;
 use mesh::{
-  linked_mesh::{DisplacementNormalMethod, Edge, EdgeSplitPos, Face, FaceKey},
+  linked_mesh::{DisplacementNormalMethod, Edge, EdgeSplitPos, Face},
   LinkedMesh,
 };
 

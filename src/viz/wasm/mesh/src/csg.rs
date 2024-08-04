@@ -99,11 +99,7 @@ fn triangulate_polygon<'a>(
   mesh: &'a mut LinkedMesh,
 ) -> impl Iterator<Item = Polygon> + 'a {
   (2..vertices.len()).map(move |i| {
-    let face_vertices = [
-      vertices[0].clone(),
-      vertices[i - 1].clone(),
-      vertices[i].clone(),
-    ];
+    let face_vertices = [vertices[0], vertices[i - 1], vertices[i]];
     let face_key = mesh.add_face(
       [
         face_vertices[0].key,
@@ -113,7 +109,7 @@ fn triangulate_polygon<'a>(
       [None; 3],
       [false; 3],
     );
-    Polygon::new(face_vertices, None, face_key)
+    Polygon::new(face_vertices, None, face_key, false, mesh)
   })
 }
 
@@ -180,7 +176,7 @@ impl Plane {
     let mut polygon_type = PolygonClass::Coplanar;
     let mut types = [PolygonClass::Coplanar; 3];
     for (vtx_ix, vertex) in polygon.vertices.iter().enumerate() {
-      let t = self.normal.dot(&vertex.pos) - self.w;
+      let t = self.normal.dot(&vertex.pos(mesh)) - self.w;
       let polygon_class = if t < -EPSLION {
         PolygonClass::Back
       } else if t > EPSLION {
@@ -231,23 +227,23 @@ impl Plane {
             b.push(vi.clone());
           }
           if (ti | tj) == PolygonClass::Spanning {
-            let t = (self.w - self.normal.dot(&vi.pos)) / self.normal.dot(&(vj.pos - vi.pos));
-            let mut middle_vtx = vi.interpolate(vj, t);
+            let t = (self.w - self.normal.dot(&vi.pos(mesh)))
+              / self.normal.dot(&(vj.pos(mesh) - vi.pos(mesh)));
 
             // TODO: temp debug
-            assert!(
-              mesh.vertices.contains_key(vi.key),
-              "Vertex key: {:?}",
-              vi.key
-            );
-            assert!(
-              mesh.vertices.contains_key(vj.key),
-              "Vertex key: {:?}",
-              vj.key
-            );
+            // assert!(
+            //   mesh.vertices.contains_key(vi.key),
+            //   "Vertex key: {:?}",
+            //   vi.key
+            // );
+            // assert!(
+            //   mesh.vertices.contains_key(vj.key),
+            //   "Vertex key: {:?}",
+            //   vj.key
+            // );
 
-            middle_vtx.key = if let Some(edge_key) = mesh.get_edge_key([vi.key, vj.key]) {
-              let vtx_key = mesh.split_edge_cb(
+            let middle_vtx_key = if let Some(edge_key) = mesh.get_edge_key([vi.key, vj.key]) {
+              mesh.split_edge_cb(
                 edge_key,
                 EdgeSplitPos {
                   pos: t,
@@ -255,14 +251,13 @@ impl Plane {
                 },
                 DisplacementNormalMethod::Interpolate,
                 |old_face_key, new_face_keys| split_faces.push((old_face_key, new_face_keys)),
-              );
-              middle_vtx.pos = mesh.vertices[vtx_key].position;
-              vtx_key
+              )
             } else {
               // The face we're splitting is the only one that uses this edge, we can just
               // add the new vertex to the mesh
+              let position = vi.interpolate(vj, t, mesh);
               let vtx_key = mesh.vertices.insert(linked_mesh::Vertex {
-                position: middle_vtx.pos,
+                position,
                 shading_normal: None,
                 displacement_normal: None,
                 edges: Vec::new(),
@@ -270,8 +265,11 @@ impl Plane {
               log::info!("Creating orphan vertex: {:?}", vtx_key);
               vtx_key
             };
+            let middle_vtx = Vertex {
+              key: middle_vtx_key,
+            };
 
-            f.push(middle_vtx.clone());
+            f.push(middle_vtx);
             b.push(middle_vtx);
           }
         }
@@ -316,59 +314,33 @@ impl Plane {
               )
             });
           let old_poly = node.polygons.swap_remove(old_poly_ix);
-          let mut old_poly_plane = old_poly.plane.clone();
-          if old_poly.is_flipped {
-            old_poly_plane.flip();
-          }
           node_key_by_face_key.remove(&old_poly.key);
 
           let new_faces = [&mesh.faces[new_face_keys[0]], &mesh.faces[new_face_keys[1]]];
-          let [mut new_poly_0, mut new_poly_1] = [
+          let vtx_order = if old_poly.is_flipped {
+            [2, 1, 0]
+          } else {
+            [0, 1, 2]
+          };
+          node.polygons.extend((0..=1).map(|face_ix| {
             Polygon::new(
               [
                 Vertex {
-                  key: new_faces[0].vertices[0],
-                  pos: mesh.vertices[new_faces[0].vertices[0]].position,
+                  key: new_faces[face_ix].vertices[vtx_order[0]],
                 },
                 Vertex {
-                  key: new_faces[0].vertices[1],
-                  pos: mesh.vertices[new_faces[0].vertices[1]].position,
+                  key: new_faces[face_ix].vertices[vtx_order[1]],
                 },
                 Vertex {
-                  key: new_faces[0].vertices[2],
-                  pos: mesh.vertices[new_faces[0].vertices[2]].position,
+                  key: new_faces[face_ix].vertices[vtx_order[2]],
                 },
               ],
-              Some(old_poly_plane.clone()),
-              new_face_keys[0],
-            ),
-            Polygon::new(
-              [
-                Vertex {
-                  key: new_faces[1].vertices[0],
-                  pos: mesh.vertices[new_faces[1].vertices[0]].position,
-                },
-                Vertex {
-                  key: new_faces[1].vertices[1],
-                  pos: mesh.vertices[new_faces[1].vertices[1]].position,
-                },
-                Vertex {
-                  key: new_faces[1].vertices[2],
-                  pos: mesh.vertices[new_faces[1].vertices[2]].position,
-                },
-              ],
-              Some(old_poly_plane),
-              new_face_keys[1],
-            ),
-          ];
-
-          if old_poly.is_flipped {
-            new_poly_0.flip();
-            new_poly_1.flip();
-          }
-
-          node.polygons.push(new_poly_0);
-          node.polygons.push(new_poly_1);
+              Some(old_poly.plane.clone()),
+              new_face_keys[face_ix],
+              old_poly.is_flipped,
+              mesh,
+            )
+          }));
 
           node_key_by_face_key.insert(new_face_keys[0], node_key);
           node_key_by_face_key.insert(new_face_keys[1], node_key);
@@ -378,19 +350,18 @@ impl Plane {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Vertex {
-  // TODO: remove and make a method
-  pub pos: Vec3,
   pub key: VertexKey,
 }
 
 impl Vertex {
-  fn interpolate(&self, vj: &Vertex, t: f32) -> Self {
-    Vertex {
-      pos: self.pos.lerp(&vj.pos, t),
-      key: VertexKey::null(),
-    }
+  fn interpolate(&self, vj: &Vertex, t: f32, mesh: &LinkedMesh) -> Vec3 {
+    self.pos(mesh).lerp(&vj.pos(mesh), t)
+  }
+
+  pub fn pos(&self, mesh: &LinkedMesh) -> Vec3 {
+    mesh.vertices[self.key].position
   }
 }
 
@@ -403,15 +374,27 @@ pub struct Polygon {
 }
 
 impl Polygon {
-  pub fn new(vertices: [Vertex; 3], plane: Option<Plane>, key: FaceKey) -> Self {
+  #[inline(always)]
+  pub fn new(
+    vertices: [Vertex; 3],
+    plane: Option<Plane>,
+    key: FaceKey,
+    is_flipped: bool,
+    mesh: &LinkedMesh,
+  ) -> Self {
     assert!(vertices.len() >= 3);
-    let plane = plane
-      .unwrap_or_else(|| Plane::from_points(vertices[0].pos, vertices[1].pos, vertices[2].pos));
+    let plane = plane.unwrap_or_else(|| {
+      Plane::from_points(
+        vertices[0].pos(mesh),
+        vertices[1].pos(mesh),
+        vertices[2].pos(mesh),
+      )
+    });
     Self {
       vertices,
       plane,
       key,
-      is_flipped: false,
+      is_flipped,
     }
   }
 
@@ -452,7 +435,6 @@ impl Node {
     }
   }
 
-  // TODO: This should accept a temp node key as well
   pub fn clip_polygons(
     self_key: NodeKey,
     from_key: NodeKey,
@@ -529,19 +511,19 @@ impl Node {
   ) {
     log::info!("clip_to");
     // TODO: debug remove
-    for poly in &nodes[self_key].polygons {
-      for vtx in &poly.vertices {
-        assert!(
-          mesh.vertices.contains_key(vtx.key),
-          "Vertex key: {:?}",
-          vtx.key
-        );
-      }
-    }
+    // for poly in &nodes[self_key].polygons {
+    //   for vtx in &poly.vertices {
+    //     assert!(
+    //       mesh.vertices.contains_key(vtx.key),
+    //       "Vertex key: {:?}",
+    //       vtx.key
+    //     );
+    //   }
+    // }
     // TODO: debug remove
-    for poly in &nodes[self_key].polygons {
-      assert!(node_key_by_face_key[&poly.key] == self_key);
-    }
+    // for poly in &nodes[self_key].polygons {
+    //   assert!(node_key_by_face_key[&poly.key] == self_key);
+    // }
     let new_this_polygons =
       Node::clip_polygons(bsp_key, self_key, mesh, nodes, node_key_by_face_key);
 
@@ -873,20 +855,11 @@ impl CSG {
         ];
         let face_key = mesh.add_face(vertices, [None; 3], [false; 3]);
         let face_vertices = [
-          Vertex {
-            pos: mesh.vertices[vertices[0]].position,
-            key: vertices[0],
-          },
-          Vertex {
-            pos: mesh.vertices[vertices[1]].position,
-            key: vertices[1],
-          },
-          Vertex {
-            pos: mesh.vertices[vertices[2]].position,
-            key: vertices[2],
-          },
+          Vertex { key: vertices[0] },
+          Vertex { key: vertices[1] },
+          Vertex { key: vertices[2] },
         ];
-        Polygon::new(face_vertices, None, face_key)
+        Polygon::new(face_vertices, None, face_key, false, &mesh)
       })
       .collect::<Vec<_>>();
     drop(our_vtx_key_by_other_vtx_key);
@@ -936,7 +909,7 @@ impl CSG {
       let mut face_vertices = [VertexKey::null(); 3];
       for (i, vtx) in poly.vertices.into_iter().enumerate() {
         let vtx_key = new_mesh.vertices.insert(linked_mesh::Vertex {
-          position: vtx.pos,
+          position: vtx.pos(&mesh),
           shading_normal: None,
           displacement_normal: None,
           edges: Vec::new(),
@@ -995,28 +968,19 @@ impl CSG {
         ];
         let face_key = mesh.add_face(vertices, [None; 3], [false; 3]);
         let face_vertices = [
-          Vertex {
-            pos: mesh.vertices[vertices[0]].position,
-            key: vertices[0],
-          },
-          Vertex {
-            pos: mesh.vertices[vertices[1]].position,
-            key: vertices[1],
-          },
-          Vertex {
-            pos: mesh.vertices[vertices[2]].position,
-            key: vertices[2],
-          },
+          Vertex { key: vertices[0] },
+          Vertex { key: vertices[1] },
+          Vertex { key: vertices[2] },
         ];
-        Polygon::new(face_vertices, None, face_key)
+        Polygon::new(face_vertices, None, face_key, false, &mesh)
       })
       .collect::<Vec<_>>();
     // TODO: temp debug
-    for poly in &csg_polygons {
-      for vtx in &poly.vertices {
-        assert!(mesh.vertices.contains_key(vtx.key));
-      }
-    }
+    // for poly in &csg_polygons {
+    //   for vtx in &poly.vertices {
+    //     assert!(mesh.vertices.contains_key(vtx.key));
+    //   }
+    // }
     drop(our_vtx_key_by_other_vtx_key);
     drop(other);
     let b_key = Node::build(
@@ -1073,7 +1037,7 @@ impl CSG {
       let mut face_vertices = [VertexKey::null(); 3];
       for (i, vtx) in poly.vertices.into_iter().enumerate() {
         let vtx_key = new_mesh.vertices.insert(linked_mesh::Vertex {
-          position: vtx.pos,
+          position: vtx.pos(&mesh),
           shading_normal: None,
           displacement_normal: None,
           edges: Vec::new(),
@@ -1151,7 +1115,7 @@ impl CSG {
           displacement_normal: None,
           edges: Vec::new(),
         });
-        polygon_vertices.push(Vertex { pos, key: vtx_key });
+        polygon_vertices.push(Vertex { key: vtx_key });
       }
 
       for _ in triangulate_polygon(SmallVec::from_vec(polygon_vertices), &mut mesh) {
@@ -1164,19 +1128,16 @@ impl CSG {
     for (face_key, face) in mesh.faces.iter() {
       let vertices = [
         Vertex {
-          pos: mesh.vertices[face.vertices[0]].position,
           key: face.vertices[0],
         },
         Vertex {
-          pos: mesh.vertices[face.vertices[1]].position,
           key: face.vertices[1],
         },
         Vertex {
-          pos: mesh.vertices[face.vertices[2]].position,
           key: face.vertices[2],
         },
       ];
-      faces.push(Polygon::new(vertices, None, face_key));
+      faces.push(Polygon::new(vertices, None, face_key, false, &mesh));
     }
     Self::new(faces, mesh)
   }

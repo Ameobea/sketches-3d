@@ -10,7 +10,7 @@ export const buildGreenMosaic2Material = async (
   shaderPropOverrides: Partial<CustomShaderProps> = {}
 ) => {
   const { greenMosaic2Albedo, greenMosaic2Normal, greenMosaic2Roughness } = await loadNamedTextures(loader, {
-    greenMosaic2Albedo: 'https://i.ameo.link/bqh.jpg',
+    greenMosaic2Albedo: 'https://i.ameo.link/ccn.avif',
     greenMosaic2Normal: 'https://i.ameo.link/bqi.jpg',
     greenMosaic2Roughness: 'https://i.ameo.link/bqj.jpg',
   });

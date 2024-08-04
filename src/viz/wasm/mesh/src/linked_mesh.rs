@@ -1404,148 +1404,67 @@ impl LinkedMesh {
     });
 
     // Split each adjacent face
-    let mut new_faces: SmallVec<[_; 16]> =
-      SmallVec::<[_; 16]>::with_capacity(faces_to_split.len() * 2);
-    for &face_key in &faces_to_split {
-      let old_face = &self.faces[face_key];
+    for old_face_key in faces_to_split {
+      let old_face = &self.faces[old_face_key];
       let old_face_normal = old_face.normal(&self.vertices);
       let [v0_key, v1_key, v2_key] = old_face.vertices;
-      let edge_ids: [[VertexKey; 2]; 3] = [
-        sort_edge(v0_key, v1_key),
-        sort_edge(v1_key, v2_key),
-        sort_edge(v2_key, v0_key),
-      ];
+      let split_edge_ix = if edge_id_to_split == sort_edge(v0_key, v1_key) {
+        0
+      } else if edge_id_to_split == sort_edge(v1_key, v2_key) {
+        1
+      } else {
+        2
+      };
+
+      let vertex_keys = [v0_key, v1_key, v2_key, middle_vertex_key];
       let edge_displacement_normals = [
         self.edges[old_face.edges[0]].displacement_normal,
         self.edges[old_face.edges[1]].displacement_normal,
         self.edges[old_face.edges[2]].displacement_normal,
+        Some(old_face_normal),
       ];
       let edge_sharpnesses = [
         self.edges[old_face.edges[0]].sharp,
         self.edges[old_face.edges[1]].sharp,
         self.edges[old_face.edges[2]].sharp,
+        false,
       ];
-      let split_edge_ix = edge_ids
-        .iter()
-        .position(|&id| id == edge_id_to_split)
-        .unwrap();
-      let (
-        (new_face_0_verts, new_face_0_edge_displacement_normals, new_face_0_edge_sharpnesses),
-        (new_face_1_verts, new_face_1_edge_displacement_normals, new_face_1_edge_sharpnesses),
-      ) = match split_edge_ix {
-        0 => (
-          (
-            [v0_key, middle_vertex_key, v2_key],
-            [
-              edge_displacement_normals[0],
-              Some(old_face_normal),
-              edge_displacement_normals[2],
-            ],
-            [edge_sharpnesses[0], false, edge_sharpnesses[2]],
-          ),
-          (
-            [middle_vertex_key, v1_key, v2_key],
-            [
-              edge_displacement_normals[0],
-              edge_displacement_normals[1],
-              Some(old_face_normal),
-            ],
-            [edge_sharpnesses[0], edge_sharpnesses[1], false],
-          ),
-        ),
-        1 => (
-          (
-            [v0_key, v1_key, middle_vertex_key],
-            [
-              edge_displacement_normals[0],
-              edge_displacement_normals[1],
-              Some(old_face_normal),
-            ],
-            [edge_sharpnesses[0], edge_sharpnesses[1], false],
-          ),
-          (
-            [v0_key, middle_vertex_key, v2_key],
-            [
-              Some(old_face_normal),
-              edge_displacement_normals[1],
-              edge_displacement_normals[2],
-            ],
-            [false, edge_sharpnesses[1], edge_sharpnesses[2]],
-          ),
-        ),
-        2 => (
-          (
-            [v0_key, v1_key, middle_vertex_key],
-            [
-              edge_displacement_normals[0],
-              Some(old_face_normal),
-              edge_displacement_normals[2],
-            ],
-            [edge_sharpnesses[0], false, edge_sharpnesses[2]],
-          ),
-          (
-            [v1_key, v2_key, middle_vertex_key],
-            [
-              edge_displacement_normals[1],
-              edge_displacement_normals[2],
-              Some(old_face_normal),
-            ],
-            [edge_sharpnesses[1], edge_sharpnesses[2], false],
-          ),
-        ),
+
+      let orders = match split_edge_ix {
+        0 => [[0, 3, 2], [3, 1, 2]],
+        1 => [[0, 1, 3], [0, 3, 2]],
+        2 => [[0, 1, 3], [1, 2, 3]],
         _ => unreachable!(),
       };
-      new_faces.push((
-        new_face_0_verts,
-        new_face_0_edge_displacement_normals,
-        new_face_0_edge_sharpnesses,
-      ));
-      new_faces.push((
-        new_face_1_verts,
-        new_face_1_edge_displacement_normals,
-        new_face_1_edge_sharpnesses,
-      ));
 
-      self.remove_face(face_key);
-    }
+      self.remove_face(old_face_key);
 
-    let mut new_face_keys = [FaceKey::null(); 2];
-    for (i, (verts, edge_displacement_normals, edge_sharpnesses)) in
-      new_faces.into_iter().enumerate()
-    {
-      let new_face_key = self.add_face(verts, edge_displacement_normals, edge_sharpnesses);
-      if i % 2 == 0 {
-        new_face_keys[0] = new_face_key;
-      } else {
-        new_face_keys[1] = new_face_key;
-        let old_face_ix = (i - (i % 2)) / 2;
-        let old_face_key = faces_to_split[old_face_ix];
-        face_split_cb(old_face_key, new_face_keys);
-      }
+      let mut add_face = |order_ix: usize| {
+        let order = &orders[order_ix];
+        self.add_face(
+          [
+            vertex_keys[order[0]],
+            vertex_keys[order[1]],
+            vertex_keys[order[2]],
+          ],
+          [
+            edge_displacement_normals[order[0]],
+            edge_displacement_normals[order[1]],
+            edge_displacement_normals[order[2]],
+          ],
+          [
+            edge_sharpnesses[order[0]],
+            edge_sharpnesses[order[1]],
+            edge_sharpnesses[order[2]],
+          ],
+        )
+      };
+
+      let new_face_keys = [add_face(0), add_face(1)];
+      face_split_cb(old_face_key, new_face_keys);
     }
 
     assert!(self.edges.remove(edge_key_to_split).is_none());
-
-    // TODO: TEMP
-    for vtx in self.vertices.values() {
-      assert!(
-        vtx
-          .edges
-          .iter()
-          .all(|&edge_key| self.edges.contains_key(edge_key)),
-        "Vertex {vtx:?} references non-existent edge"
-      );
-    }
-    // TODO: TEMP
-    for edge in self.edges.values() {
-      assert!(
-        edge
-          .vertices
-          .iter()
-          .all(|&vtx_key| self.vertices.contains_key(vtx_key)),
-        "Edge {edge:?} references non-existent vertex"
-      );
-    }
 
     middle_vertex_key
   }
