@@ -25,6 +25,7 @@ export const processLoadedScene = async (
   const indices = csg.csg_sandbox_take_indices(ctx);
   const vertices = csg.csg_sandbox_take_vertices(ctx);
   const normals = csg.csg_sandbox_take_normals(ctx);
+  const displacementNormals = csg.csg_sandbox_take_displacement_normals(ctx);
   csg.csg_sandbox_free(ctx);
 
   const geometry = new THREE.BufferGeometry();
@@ -35,9 +36,21 @@ export const processLoadedScene = async (
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
 
-  const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+  for (let vtxIx = 0; vtxIx < vertices.length / 3; vtxIx += 1) {
+    const vtx = new THREE.Vector3(vertices[vtxIx * 3], vertices[vtxIx * 3 + 1], vertices[vtxIx * 3 + 2]);
+    const normal = new THREE.Vector3(
+      displacementNormals[vtxIx * 3],
+      displacementNormals[vtxIx * 3 + 1],
+      displacementNormals[vtxIx * 3 + 2]
+    );
+    const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
+    arrow.userData.nocollide = true;
+    viz.scene.add(arrow);
+  }
+
+  // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
   // const debugMat = new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: false });
-  // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, flatShading: true });
+  const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00 });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
 
@@ -63,7 +76,7 @@ export const processLoadedScene = async (
       colliderCapsuleSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
       oobYThreshold: -10,
-      dashConfig: { enable: false },
+      dashConfig: { enable: true },
     },
     debugPos: true,
     locations: { spawn: { pos: new THREE.Vector3(0, 10, 0), rot: new THREE.Vector3(-0.1, 1.378, 0) } },

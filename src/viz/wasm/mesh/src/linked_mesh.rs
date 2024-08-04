@@ -987,7 +987,10 @@ impl LinkedMesh {
 
       // One edge must be not visited in order for us to walk from it
       [edge_key_0, edge_key_1].into_iter().any(|edge_key| {
-        let edge_key_ix = vtx.edges.iter().position(|&e| e == edge_key).unwrap();
+        // TODO: why is this necessary
+        let Some(edge_key_ix) = vtx.edges.iter().position(|&e| e == edge_key) else {
+          return false;
+        };
         !visited_edges[edge_key_ix]
       })
     });
