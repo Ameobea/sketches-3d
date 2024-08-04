@@ -2,7 +2,7 @@
 
 use float_ord::FloatOrd;
 use mesh::{
-  linked_mesh::{DisplacementNormalMethod, Edge, Face},
+  linked_mesh::{DisplacementNormalMethod, Edge, EdgeSplitPos, Face, FaceKey},
   LinkedMesh,
 };
 
@@ -75,7 +75,7 @@ fn tessellate_one_iter(
       continue;
     }
 
-    mesh.split_edge(edge_key, displacement_normal_method);
+    mesh.split_edge(edge_key, EdgeSplitPos::middle(), displacement_normal_method);
   }
 
   if cfg!(debug_assertions) {

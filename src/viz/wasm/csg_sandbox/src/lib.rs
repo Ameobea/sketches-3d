@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use mesh::{linked_mesh::Vec3, OwnedIndexedMesh};
+use mesh::{linked_mesh::Vec3, LinkedMesh, OwnedIndexedMesh};
 
 static mut DID_INIT: bool = false;
 
@@ -20,6 +20,16 @@ pub struct CsgSandboxCtx {
   mesh: OwnedIndexedMesh,
 }
 
+fn displace_mesh(mesh: &mut LinkedMesh) {
+  // for vtx in &mut mesh.vertices.values_mut() {
+  //   *vtx.displacement_normal.as_mut().unwrap() *= -1.;
+  //   vtx.position += vtx
+  //     .displacement_normal
+  //     .expect("Missing displacement normal")
+  //     * 0.8;
+  // }
+}
+
 #[wasm_bindgen]
 pub fn csg_sandbox_init() -> *mut CsgSandboxCtx {
   maybe_init();
@@ -27,9 +37,15 @@ pub fn csg_sandbox_init() -> *mut CsgSandboxCtx {
   let csg0 = mesh::csg::CSG::new_cube(Vec3::zeros(), 2.);
   let csg1 = mesh::csg::CSG::new_cube(Vec3::new(2.5, 2.5, 2.5), 2.);
 
-  let mut mesh = csg0.subtract(csg1).to_linked_mesh();
+  let mut mesh = csg0.union(csg1).mesh;
+  // let mut mesh = csg0.mesh;
   mesh.merge_vertices_by_distance(1e-5);
   let sharp_edge_threshold_rads = 0.8;
+  mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
+
+  mesh.compute_vertex_displacement_normals();
+  displace_mesh(&mut mesh);
+
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.separate_vertices_and_compute_normals();
   let mesh = mesh.to_raw_indexed(true, false);

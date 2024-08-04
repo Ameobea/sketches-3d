@@ -10,8 +10,11 @@ export const processLoadedScene = async (
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
+
+  const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+  viz.scene.add(dirLight);
 
   const csg = await import('../../wasmComp/csg_sandbox').then(async engine => {
     await engine.default();
@@ -33,6 +36,7 @@ export const processLoadedScene = async (
   geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
 
   const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+  // const debugMat = new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: false });
   // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, flatShading: true });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
