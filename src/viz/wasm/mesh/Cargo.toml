@@ -12,3 +12,4 @@ smallvec = "1.13"
 bitvec = { version = "1",  default-features = false, features = ["alloc", "std"] }
 common = { path = "../common" }
 log = "0.4"
+arrayvec = "0.7"

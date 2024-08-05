@@ -50,7 +50,7 @@ export const processLoadedScene = async (
 
   // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
   // const debugMat = new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: false });
-  const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00 });
+  const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, side: THREE.FrontSide });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
 
@@ -58,7 +58,7 @@ export const processLoadedScene = async (
   const platformGeo = new THREE.BoxGeometry(50, 1, 50);
   const platformMat = new THREE.MeshPhysicalMaterial({ color: 0x003300, flatShading: true });
   const platform = new THREE.Mesh(platformGeo, platformMat);
-  platform.position.set(0, -5, 0);
+  platform.position.set(0, -3, 0);
   viz.scene.add(platform);
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
@@ -79,7 +79,12 @@ export const processLoadedScene = async (
       dashConfig: { enable: true },
     },
     debugPos: true,
-    locations: { spawn: { pos: new THREE.Vector3(0, 10, 0), rot: new THREE.Vector3(-0.1, 1.378, 0) } },
+    locations: {
+      spawn: {
+        pos: [1.15471613407135, 5.7756818532943726, -0.19975419342517853],
+        rot: [-0.8227963267948929, -48.78199999999914, 0],
+      },
+    },
     legacyLights: false,
   };
 };

@@ -31,9 +31,9 @@ opt:
   wasm-opt ./build2/terrain.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/terrain.wasm
   wasm-opt ./build/stone_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/stone_bg.wasm
   wasm-opt ./geodesics/build/bin/geodesics.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./geodesics/build/bin/geodesics.wasm
-  wasm-opt ./build/tessellation_sandbox_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/tessellation_bg.wasm
+  wasm-opt ./build/tessellation_sandbox_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/tessellation_sandbox_bg.wasm
   wasm-opt ./build/basalt_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/basalt_bg.wasm
-  wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/csg_bg.wasm
+  wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/csg_sandbox_bg.wasm
 
 build:
   #!/bin/bash

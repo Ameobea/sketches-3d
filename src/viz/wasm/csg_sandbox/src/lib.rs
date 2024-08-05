@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use mesh::{linked_mesh::Vec3, LinkedMesh, OwnedIndexedMesh};
+use mesh::{csg::CSG, linked_mesh::Vec3, LinkedMesh, OwnedIndexedMesh, Triangle};
 
 static mut DID_INIT: bool = false;
 
@@ -25,20 +25,27 @@ fn displace_mesh(mesh: &mut LinkedMesh) {
     vtx.position += vtx
       .displacement_normal
       .expect("Missing displacement normal")
-      * 0.1;
+      * 0.5;
   }
+}
+
+fn cubes() -> LinkedMesh {
+  let csg0 = CSG::new_cube(Vec3::zeros(), 4.);
+  let csg1 = CSG::new_cube(Vec3::new(3.5, 3.5, 3.5), 4.);
+
+  // TODO: Track down backwards-facing triangle produced in this intersection
+  //
+  // It doesn't happen when the welding code is disabled, so it's happening as a result of that.
+  // Shouldn't be too hard to track down.
+  csg0.intersect(csg1.mesh)
 }
 
 #[wasm_bindgen]
 pub fn csg_sandbox_init() -> *mut CsgSandboxCtx {
   maybe_init();
 
-  let csg0 = mesh::csg::CSG::new_cube(Vec3::zeros(), 4.);
-  let csg1 = mesh::csg::CSG::new_cube(Vec3::new(3.5, 3.5, 3.5), 4.);
+  let mut mesh = cubes();
 
-  let mut mesh = csg0.subtract(csg1.mesh);
-  // let mut mesh = csg0.mesh;
-  // mesh.merge_vertices_by_distance(1e-5);
   let sharp_edge_threshold_rads = 0.8;
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
 
