@@ -7,7 +7,7 @@ use mesh::{
 };
 
 fn get_face_has_edge_needing_split(
-  face: &Face,
+  face: &Face<()>,
   mesh: &LinkedMesh,
   should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
 ) -> bool {

@@ -26,11 +26,12 @@ pub struct Vertex {
 }
 
 #[derive(Clone, Debug)]
-pub struct Face {
+pub struct Face<T> {
   /// Counter-clockwise winding
   pub vertices: [VertexKey; 3],
   /// Unordered
   pub edges: [EdgeKey; 3],
+  pub data: T,
 }
 
 static mut GRAPHVIZ_PRINT_INNER: fn(&str) -> () = |s| {
@@ -66,7 +67,7 @@ pub fn set_debug_print(f: fn(&str) -> ()) {
   }
 }
 
-impl Face {
+impl<T> Face<T> {
   pub fn vertex_positions(&self, verts: &SlotMap<VertexKey, Vertex>) -> [Vec3; 3] {
     [
       verts[self.vertices[0]].position,
@@ -158,9 +159,9 @@ fn distance(p0: Vec3, p1: Vec3) -> f32 {
 /// all faces being triangles and no intrinsic directionality to edges.
 /// Instead, faces store their vertices directly in-order.
 #[derive(Clone, Default)]
-pub struct LinkedMesh {
+pub struct LinkedMesh<FaceData = ()> {
   pub vertices: SlotMap<VertexKey, Vertex>,
-  pub faces: SlotMap<FaceKey, Face>,
+  pub faces: SlotMap<FaceKey, Face<FaceData>>,
   pub edges: SlotMap<EdgeKey, Edge>,
   pub transform: Option<Mat4>,
 }
@@ -179,12 +180,12 @@ struct NormalAcc {
 }
 
 impl NormalAcc {
-  pub fn add_face(
+  pub fn add_face<FaceData>(
     &mut self,
     fan_center_vtx_key: VertexKey,
     face_key: FaceKey,
     verts: &SlotMap<VertexKey, Vertex>,
-    faces: &SlotMap<FaceKey, Face>,
+    faces: &SlotMap<FaceKey, Face<FaceData>>,
   ) -> Option<Vec3> {
     let face = &faces[face_key];
     let face_normal = face.normal(verts);
@@ -283,7 +284,7 @@ impl EdgeSplitPos {
   }
 }
 
-impl LinkedMesh {
+impl<FaceData: Default> LinkedMesh<FaceData> {
   pub fn new(vertex_count: usize, face_count: usize, transform: Option<Mat4>) -> Self {
     Self {
       vertices: SlotMap::with_capacity_and_key(vertex_count),
@@ -293,7 +294,7 @@ impl LinkedMesh {
     }
   }
 
-  pub fn iter_faces(&self) -> impl Iterator<Item = (FaceKey, &Face)> {
+  pub fn iter_faces(&self) -> impl Iterator<Item = (FaceKey, &Face<FaceData>)> {
     self.faces.iter()
   }
 
@@ -331,7 +332,7 @@ impl LinkedMesh {
       let b = vertex_keys_by_ix[b_ix];
       let c = vertex_keys_by_ix[c_ix];
 
-      mesh.add_face([a, b, c], [None; 3], [false; 3]);
+      mesh.add_face([a, b, c], Default::default());
     }
 
     mesh
@@ -371,7 +372,7 @@ impl LinkedMesh {
         }),
       ];
 
-      mesh.add_face([a_key, b_key, c_key], [None; 3], [false; 3]);
+      mesh.add_face([a_key, b_key, c_key], Default::default());
     }
 
     mesh
@@ -668,7 +669,7 @@ impl LinkedMesh {
       format!("{key:?} {:?} -> {:?}", edge.vertices[0], edge.vertices[1])
     }
 
-    fn format_face(key: FaceKey, face: &Face) -> String {
+    fn format_face<FaceData>(key: FaceKey, face: &Face<FaceData>) -> String {
       format!(
         "{key:?} {:?} -> {:?} -> {:?}",
         face.vertices[0], face.vertices[1], face.vertices[2]
@@ -823,18 +824,12 @@ impl LinkedMesh {
       }
     }
 
-    let new_edge_key_0 = self.get_or_create_edge(
-      [new_vtx_key, pair_vtx_keys[0]],
-      edge_displacement_normals[0],
-      false,
-    );
-    let new_edge_key_1 = self.get_or_create_edge(
-      [new_vtx_key, pair_vtx_keys[1]],
-      edge_displacement_normals[1],
-      false,
-    );
+    let new_edge_key_0 = self.get_or_create_edge([new_vtx_key, pair_vtx_keys[0]]);
+    let new_edge_key_1 = self.get_or_create_edge([new_vtx_key, pair_vtx_keys[1]]);
     self.edges[new_edge_key_0].faces.push(face_key);
+    self.edges[new_edge_key_0].displacement_normal = edge_displacement_normals[0];
     self.edges[new_edge_key_1].faces.push(face_key);
+    self.edges[new_edge_key_1].displacement_normal = edge_displacement_normals[1];
 
     let face = &mut self.faces[face_key];
 
@@ -1335,7 +1330,7 @@ impl LinkedMesh {
     edge_key_to_split: EdgeKey,
     split_pos: EdgeSplitPos,
     displacement_normal_method: DisplacementNormalMethod,
-    mut face_split_cb: impl FnMut(FaceKey, [FaceKey; 2]) -> (),
+    mut face_split_cb: impl FnMut(FaceKey, FaceData, [FaceKey; 2]) -> (),
   ) -> VertexKey {
     let (edge_id_to_split, edge_displacement_normal, vm_position, faces_to_split) = {
       let edge = self.edges.get(edge_key_to_split).unwrap_or_else(|| {
@@ -1437,31 +1432,30 @@ impl LinkedMesh {
         _ => unreachable!(),
       };
 
-      self.remove_face(old_face_key);
+      let old_face_data = self.remove_face(old_face_key);
 
       let mut add_face = |order_ix: usize| {
         let order = &orders[order_ix];
-        self.add_face(
+        let face_key = self.add_face(
           [
             vertex_keys[order[0]],
             vertex_keys[order[1]],
             vertex_keys[order[2]],
           ],
-          [
-            edge_displacement_normals[order[0]],
-            edge_displacement_normals[order[1]],
-            edge_displacement_normals[order[2]],
-          ],
-          [
-            edge_sharpnesses[order[0]],
-            edge_sharpnesses[order[1]],
-            edge_sharpnesses[order[2]],
-          ],
-        )
+          Default::default(),
+        );
+        let edge_keys = &self.faces[face_key].edges;
+        for edge_ix in 0..3 {
+          let edge_key = edge_keys[edge_ix];
+          let edge = &mut self.edges[edge_key];
+          edge.displacement_normal = edge_displacement_normals[order[edge_ix]];
+          edge.sharp = edge_sharpnesses[order[edge_ix]];
+        }
+        face_key
       };
 
       let new_face_keys = [add_face(0), add_face(1)];
-      face_split_cb(old_face_key, new_face_keys);
+      face_split_cb(old_face_key, old_face_data, new_face_keys);
     }
 
     assert!(self.edges.remove(edge_key_to_split).is_none());
@@ -1484,7 +1478,7 @@ impl LinkedMesh {
       edge_key_to_split,
       split_pos,
       displacement_normal_method,
-      |_, _| {},
+      |_, _, _| {},
     )
   }
 
@@ -1509,12 +1503,7 @@ impl LinkedMesh {
   ///
   /// If a new edge was created, the vertices of the edge will be updated to
   /// reference it.
-  pub fn get_or_create_edge(
-    &mut self,
-    vertices: [VertexKey; 2],
-    displacement_normal: Option<Vec3>,
-    sharp: bool,
-  ) -> EdgeKey {
+  pub fn get_or_create_edge(&mut self, vertices: [VertexKey; 2]) -> EdgeKey {
     let sorted_vertex_keys = sort_edge(vertices[0], vertices[1]);
     match self.get_edge_key_from_sorted(sorted_vertex_keys) {
       Some(edge_key) => edge_key,
@@ -1522,8 +1511,8 @@ impl LinkedMesh {
         let edge_key = self.edges.insert(Edge {
           vertices: sorted_vertex_keys,
           faces: SmallVec::new(),
-          sharp,
-          displacement_normal,
+          sharp: false,
+          displacement_normal: None,
         });
 
         for vert_key in vertices {
@@ -1536,12 +1525,7 @@ impl LinkedMesh {
     }
   }
 
-  pub fn add_face(
-    &mut self,
-    vertices: [VertexKey; 3],
-    edge_displacement_normals: [Option<Vec3>; 3],
-    edge_sharpnesses: [bool; 3],
-  ) -> FaceKey {
+  pub fn add_face(&mut self, vertices: [VertexKey; 3], data: FaceData) -> FaceKey {
     let edges = [
       sort_edge(vertices[0], vertices[1]),
       sort_edge(vertices[1], vertices[2]),
@@ -1549,14 +1533,14 @@ impl LinkedMesh {
     ];
     let mut edge_keys: [EdgeKey; 3] = [EdgeKey::null(); 3];
     for (i, &[v0, v1]) in edges.iter().enumerate() {
-      let edge_key =
-        self.get_or_create_edge([v0, v1], edge_displacement_normals[i], edge_sharpnesses[i]);
+      let edge_key = self.get_or_create_edge([v0, v1]);
       edge_keys[i] = edge_key;
     }
 
     let face_key = self.faces.insert(Face {
       vertices,
       edges: edge_keys,
+      data,
     });
 
     for edge_key in edge_keys {
@@ -1574,7 +1558,7 @@ impl LinkedMesh {
     face_key
   }
 
-  pub fn remove_face(&mut self, face_key: FaceKey) {
+  pub fn remove_face(&mut self, face_key: FaceKey) -> FaceData {
     let face = self
       .faces
       .remove(face_key)
@@ -1596,6 +1580,8 @@ impl LinkedMesh {
         }
       }
     }
+
+    face.data
   }
 }
 
@@ -1624,7 +1610,7 @@ mod tests {
     // 2 -> 1 -> 3
     let indices = [1, 0, 3, 2, 1, 3];
 
-    let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
+    let mut mesh: LinkedMesh<()> = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
     let middle_edge_key = mesh
       .iter_edges()
       .find(|(_, e)| e.faces.len() == 2)
@@ -1717,7 +1703,7 @@ mod tests {
     ];
     let indices = [0, 2, 1, 0, 3, 2];
 
-    let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
+    let mut mesh: LinkedMesh<()> = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
     let vtx_key = vkey(1, 1);
     let mut visited_edges = bitarr![0; 1024];
     let visited_edges = &mut visited_edges[..mesh.vertices[vtx_key].edges.len()];

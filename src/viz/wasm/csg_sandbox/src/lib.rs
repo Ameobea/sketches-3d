@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use mesh::{csg::CSG, linked_mesh::Vec3, LinkedMesh, OwnedIndexedMesh, Triangle};
+use mesh::{csg::CSG, linked_mesh::Vec3, LinkedMesh, OwnedIndexedMesh};
 
 static mut DID_INIT: bool = false;
 
@@ -33,7 +33,7 @@ fn cubes() -> LinkedMesh {
   let csg0 = CSG::new_cube(Vec3::zeros(), 4.);
   let csg1 = CSG::new_cube(Vec3::new(3.5, 3.5, 3.5), 4.);
 
-  csg0.intersect(csg1.mesh)
+  csg0.subtract(csg1.mesh)
 }
 
 #[wasm_bindgen]
