@@ -863,6 +863,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
   pub fn mark_edge_sharpness(&mut self, sharp_edge_threshold_rads: f32) {
     for edge in self.edges.values_mut() {
+      // If edge has explicitly been marked as sharp, don't change it
+      if edge.sharp {
+        continue;
+      }
+
       // Border edges as well as edges belonging to more than 3 faces are
       // automatically sharp
       if edge.faces.len() != 2 {
@@ -876,7 +881,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         self.faces[face1].normal(&self.vertices),
       ];
       let angle = normal0.angle(&normal1);
-      edge.sharp |= angle > sharp_edge_threshold_rads;
+      edge.sharp = angle > sharp_edge_threshold_rads;
     }
   }
 

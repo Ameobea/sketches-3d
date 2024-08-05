@@ -793,7 +793,6 @@ fn weld_polygons(
 }
 
 pub struct Node {
-  pub plane: Option<Plane>,
   pub front: Option<NodeKey>,
   pub back: Option<NodeKey>,
   pub polygons: Vec<Polygon>,
@@ -806,9 +805,6 @@ impl Node {
       let this = &mut nodes[self_key];
       for polygon in &mut this.polygons {
         polygon.flip(mesh);
-      }
-      if let Some(plane) = &mut this.plane {
-        plane.flip();
       }
       std::mem::swap(&mut this.front, &mut this.back);
       (this.front, this.back)
@@ -830,21 +826,17 @@ impl Node {
   ) -> Vec<Polygon> {
     let (plane, front_key, back_key) = {
       let this = &mut nodes[self_key];
-      let Some(plane) = &this.plane else {
-        return std::mem::take(&mut this.polygons);
-      };
+      let plane = this.plane(mesh).expect("no polys in node");
       (plane.clone(), this.front, this.back)
     };
 
     // create temporary nodes to hold the new front and back polys
     let temp_front_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
     });
     let temp_back_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
@@ -935,7 +927,6 @@ impl Node {
     nodes: &mut NodeMap,
   ) -> NodeKey {
     let dummy_node_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons,
@@ -956,19 +947,16 @@ impl Node {
     let plane = nodes[dummy_node_key].polygons[0].plane(mesh).clone();
 
     let temp_front_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
     });
     let temp_back_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
     });
     let self_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
@@ -1001,7 +989,6 @@ impl Node {
 
     {
       let this = &mut nodes[self_key];
-      this.plane = Some(plane);
       this.front = front;
       this.back = back;
     }
@@ -1020,7 +1007,6 @@ impl Node {
     // Add a dummy node to own the polygons so that we can handle pending polygons
     // getting split
     let dummy_node_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
@@ -1042,20 +1028,18 @@ impl Node {
     assert!(self_key != dummy_node_key);
 
     let temp_front_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
     });
     let temp_back_key = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
     });
 
     let (front_key, back_key) = {
-      let plane = nodes[self_key].plane.as_ref().unwrap().clone();
+      let plane = nodes[self_key].plane(mesh).unwrap().clone();
       while let Some(polygon) = nodes[dummy_node_key].polygons.pop() {
         plane.split_polygon(
           None,
@@ -1098,6 +1082,10 @@ impl Node {
         }
       }
     }
+  }
+
+  fn plane<'a>(&'a self, mesh: &'a LinkedMesh<FaceData>) -> Option<&'a Plane> {
+    self.polygons.first().map(|poly| poly.plane(mesh))
   }
 }
 
@@ -1144,14 +1132,12 @@ impl CSG {
   fn init_nodes() -> NodeMap {
     let mut nodes = NodeMap::default();
     let tmp0 = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
     });
     assert_eq!(tmp0, TEMP_NODE_KEY_0);
     let tmp1 = nodes.insert(Node {
-      plane: None,
       front: None,
       back: None,
       polygons: Vec::new(),
@@ -1316,10 +1302,12 @@ impl CSG {
       [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]],     // Front face
     ];
 
-    let mut mesh = LinkedMesh::default();
+    let vtx_count = 4 * 6;
+    let face_count = 6;
+    let mut mesh = LinkedMesh::new(vtx_count, face_count, None);
     for face_vertices in &polygons {
-      let mut polygon_vertices = Vec::new();
-      for vtx in face_vertices {
+      let mut polygon_vertices: [Vertex; 4] = uninit();
+      for (vtx_ix, vtx) in face_vertices.into_iter().enumerate() {
         let pos = Vec3::new(
           center[0] + radius * vtx[0] as f32,
           center[1] + radius * vtx[1] as f32,
@@ -1331,7 +1319,7 @@ impl CSG {
           displacement_normal: None,
           edges: Vec::new(),
         });
-        polygon_vertices.push(Vertex { key: vtx_key });
+        polygon_vertices[vtx_ix] = Vertex { key: vtx_key };
       }
 
       let plane = Plane::from_points(
@@ -1339,12 +1327,7 @@ impl CSG {
         polygon_vertices[1].pos(&mesh),
         polygon_vertices[2].pos(&mesh),
       );
-      for _ in triangulate_polygon(
-        ArrayVec::from_iter(polygon_vertices),
-        &mut mesh,
-        plane,
-        NodeKey::null(),
-      ) {
+      for _ in triangulate_polygon(polygon_vertices.into(), &mut mesh, plane, NodeKey::null()) {
         // pass
       }
     }

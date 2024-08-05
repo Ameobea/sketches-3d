@@ -17,3 +17,4 @@ arrayvec = "0.7"
 [features]
 # disables slotmap's checks for invalid keys
 unsafe_indexing = []
+default = ["unsafe_indexing"]
