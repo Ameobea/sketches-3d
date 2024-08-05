@@ -373,6 +373,7 @@ impl Vertex {
   }
 }
 
+// TODO: Investigate just storing this as user data on the `LinkedMesh` faces
 #[derive(Debug)]
 pub struct Polygon {
   pub vertices: [Vertex; 3],
@@ -559,25 +560,42 @@ fn weld_polygon_at_interior(vtx: Vertex, poly: &Polygon, mesh: &mut LinkedMesh) 
 
   mesh.remove_face(poly.key);
 
-  let new_poly_vertices = [
-    [poly.vertices[0], poly.vertices[1], vtx],
-    [poly.vertices[2], vtx, poly.vertices[1]],
-    [poly.vertices[2], poly.vertices[0], vtx],
+  let vertices = [
+    poly.vertices[0].key,
+    poly.vertices[1].key,
+    poly.vertices[2].key,
+    vtx.key,
   ];
+  let new_poly_vertices = [[0, 1, 3], [2, 3, 1], [2, 0, 3]];
+  let order = if poly.is_flipped {
+    [2, 1, 0]
+  } else {
+    [0, 1, 2]
+  };
 
   let mut new_polys: [Polygon; 3] = uninit();
   for i in 0..3 {
     let face_key = mesh.add_face(
       [
-        new_poly_vertices[i][0].key,
-        new_poly_vertices[i][1].key,
-        new_poly_vertices[i][2].key,
+        vertices[new_poly_vertices[i][order[0]]],
+        vertices[new_poly_vertices[i][order[1]]],
+        vertices[new_poly_vertices[i][order[2]]],
       ],
       [None; 3],
       [false; 3],
     );
     let poly = Polygon::new(
-      new_poly_vertices[i],
+      [
+        Vertex {
+          key: vertices[new_poly_vertices[i][0]],
+        },
+        Vertex {
+          key: vertices[new_poly_vertices[i][1]],
+        },
+        Vertex {
+          key: vertices[new_poly_vertices[i][2]],
+        },
+      ],
       Some(poly.plane.clone()),
       face_key,
       poly.is_flipped,

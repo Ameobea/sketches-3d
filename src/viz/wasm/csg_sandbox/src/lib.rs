@@ -33,10 +33,6 @@ fn cubes() -> LinkedMesh {
   let csg0 = CSG::new_cube(Vec3::zeros(), 4.);
   let csg1 = CSG::new_cube(Vec3::new(3.5, 3.5, 3.5), 4.);
 
-  // TODO: Track down backwards-facing triangle produced in this intersection
-  //
-  // It doesn't happen when the welding code is disabled, so it's happening as a result of that.
-  // Shouldn't be too hard to track down.
   csg0.intersect(csg1.mesh)
 }
 
