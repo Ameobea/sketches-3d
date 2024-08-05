@@ -11,10 +11,12 @@ fxhash = "0.2"
 smallvec = "1.13"
 bitvec = { version = "1",  default-features = false, features = ["alloc", "std"] }
 common = { path = "../common" }
-log = { version = "0.4", features = ["release_max_level_off"] }
+log = { version = "0.4", features = [] }
 arrayvec = "0.7"
 
 [features]
 # disables slotmap's checks for invalid keys
 unsafe_indexing = []
-default = ["unsafe_indexing"]
+
+# enable this is you're very brave
+# default = ["unsafe_indexing"]

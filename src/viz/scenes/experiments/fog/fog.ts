@@ -20,12 +20,9 @@ export const processLoadedScene = async (
 
   const loader = new THREE.ImageBitmapLoader();
   const { groundDiffuse, groundTextureNormal, groundTextureRoughness } = await loadNamedTextures(loader, {
-    // groundDiffuse: 'https://i.ameo.link/bet.jpg',
-    // groundTextureNormal: 'https://i.ameo.link/beu.jpg',
-    // groundTextureRoughness: 'https://i.ameo.link/bev.jpg',
-    groundDiffuse: '/textures/bet.jpg',
-    groundTextureNormal: '/textures/beu.jpg',
-    groundTextureRoughness: '/textures/bev.jpg',
+    groundDiffuse: 'https://i.ameo.link/bet.jpg',
+    groundTextureNormal: 'https://i.ameo.link/beu.jpg',
+    groundTextureRoughness: 'https://i.ameo.link/bev.jpg',
   });
   const ground = loadedWorld.getObjectByName('Cube') as THREE.Mesh;
   ground.scale.y = 0.1;

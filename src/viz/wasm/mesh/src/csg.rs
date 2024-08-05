@@ -266,8 +266,6 @@ impl Plane {
         nodes[back_key].polygons.push(polygon);
       }
       PolygonClass::Spanning => {
-        log::info!("Splitting spanning polygon: {:?}", polygon.key);
-
         let mut f = ArrayVec::<Vertex, 4>::new();
         let mut b = ArrayVec::<Vertex, 4>::new();
         let mut split_vertices = ArrayVec::<_, 2>::new();
@@ -587,8 +585,6 @@ fn weld_polygon_at_interior<'a>(
   poly: &Polygon,
   mesh: &'a mut LinkedMesh<FaceData>,
 ) -> impl Iterator<Item = Polygon> + 'a {
-  log::warn!("welding vertex {:?} onto polygon {:?}", vtx.key, poly.key);
-
   let verts = &mesh.faces[poly.key].vertices;
   let verts = [
     [verts[0], verts[1], vtx.key],
@@ -703,7 +699,6 @@ fn maybe_weld_polygon(
     Intersection::NoIntersection => ArrayVec::from_iter(std::iter::once(poly)),
     Intersection::WithinCenter => ArrayVec::from_iter(weld_polygon_at_interior(vtx, &poly, mesh)),
     Intersection::OnEdge { edge_ix, factor } => {
-      log::warn!("EDGE WELDING: poly face key: {:?}", poly.key);
       let split_polys = weld_polygon_on_edge(out_tmp_key, poly, edge_ix, mesh, nodes, factor);
       ArrayVec::from_iter(split_polys.into_iter())
     }
@@ -729,17 +724,10 @@ fn weld_polygons(
     "should only have a max of 2 vertices intersecting a triangle; weird co-incident or fully \
      contained tri?"
   );
-  let old_poly_count = {
-    let plane_node = &mut nodes[plane_node_key];
-    log::info!(
-      "polys to consider for welding: {}",
-      plane_node.polygons.len()
-    );
-    if plane_node.polygons.is_empty() {
-      return;
-    }
-    plane_node.polygons.len()
-  };
+  let plane_node = &mut nodes[plane_node_key];
+  if plane_node.polygons.is_empty() {
+    return;
+  }
 
   // Splitting edges during this process can cause arbitrary polygons in arbitrary nodes to be
   // split, so all the in-flight/temp polygons have to live in nodes in order to keep things valid
@@ -784,11 +772,6 @@ fn weld_polygons(
   });
   for poly in &nodes[plane_node_key].polygons {
     poly.set_node_key(plane_node_key, mesh);
-  }
-
-  let new_poly_count = nodes[plane_node_key].polygons.len();
-  if old_poly_count != new_poly_count {
-    log::info!("welded {old_poly_count} polygons into {new_poly_count} polygons");
   }
 }
 
@@ -904,21 +887,31 @@ impl Node {
     }
   }
 
+  fn traverse_mut(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut dyn FnMut(&mut Node)) {
+    cb(&mut nodes[self_key]);
+    if let Some(front_key) = nodes[self_key].front {
+      Node::traverse_mut(front_key, nodes, cb);
+    }
+    if let Some(back_key) = nodes[self_key].back {
+      Node::traverse_mut(back_key, nodes, cb);
+    }
+  }
+
   /// Consumes the BSP tree and returns a list of all polygons within it.
   fn into_polygons(self_key: NodeKey, nodes: &mut NodeMap) -> Vec<Polygon> {
-    let (mut polygons, front, back) = {
-      let this = &mut nodes[self_key];
-      (std::mem::take(&mut this.polygons), this.front, this.back)
-    };
-
-    if let Some(front_key) = front {
-      polygons.extend(Node::into_polygons(front_key, nodes));
-    }
-    if let Some(back_key) = back {
-      polygons.extend(Node::into_polygons(back_key, nodes));
-    }
-
+    let mut polygons = Vec::new();
+    Self::traverse_mut(self_key, nodes, &mut |node| {
+      polygons.extend(node.polygons.drain(..));
+    });
     polygons
+  }
+
+  fn drain_polygons(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut dyn FnMut(Polygon)) {
+    Self::traverse_mut(self_key, nodes, &mut |node| {
+      for poly in node.polygons.drain(..) {
+        cb(poly);
+      }
+    });
   }
 
   pub fn build(
@@ -1002,8 +995,6 @@ impl Node {
     mesh: &mut LinkedMesh<FaceData>,
     nodes: &mut NodeMap,
   ) {
-    log::info!("add_polygons");
-
     // Add a dummy node to own the polygons so that we can handle pending polygons
     // getting split
     let dummy_node_key = nodes.insert(Node {
@@ -1163,24 +1154,26 @@ impl CSG {
     a_key: NodeKey,
   ) -> LinkedMesh<()> {
     let mut new_mesh: LinkedMesh<()> = LinkedMesh::default();
-    for poly in Node::into_polygons(a_key, &mut nodes) {
+    let mut new_vtx_key_by_old_vtx_key = FxHashMap::default();
+    Node::drain_polygons(a_key, &mut nodes, &mut |poly| {
       let mut face_vertices = [VertexKey::null(); 3];
-      for (i, vtx) in mesh.faces[poly.key]
-        .vertices
-        .iter()
-        .map(|vtx_key| Vertex { key: *vtx_key })
-        .enumerate()
-      {
-        let vtx_key = new_mesh.vertices.insert(linked_mesh::Vertex {
-          position: vtx.pos(&mesh),
-          shading_normal: None,
-          displacement_normal: None,
-          edges: Vec::new(),
-        });
+      for (i, vtx_key) in mesh.faces[poly.key].vertices.into_iter().enumerate() {
+        let vtx_key = *new_vtx_key_by_old_vtx_key
+          .entry(vtx_key)
+          .or_insert_with(|| {
+            let position = mesh.vertices[vtx_key].position;
+            new_mesh.vertices.insert(linked_mesh::Vertex {
+              position,
+              shading_normal: None,
+              displacement_normal: None,
+              edges: Vec::new(),
+            })
+          });
         face_vertices[i] = vtx_key;
       }
       new_mesh.add_face(face_vertices, ());
-    }
+    });
+
     new_mesh.merge_vertices_by_distance(1e-5);
     new_mesh
   }
@@ -1241,17 +1234,11 @@ impl CSG {
   pub fn subtract(self, other: LinkedMesh<FaceData>) -> LinkedMesh {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(other);
 
-    log::info!("a.invert()");
     Node::invert(a_key, &mut nodes, &mut mesh);
-    log::info!("a.clip_to(b)");
     Node::clip_to(a_key, b_key, &mut mesh, &mut nodes);
-    log::info!("b.clip_to(a)");
     Node::clip_to(b_key, a_key, &mut mesh, &mut nodes);
-    log::info!("b.invert()");
     Node::invert(b_key, &mut nodes, &mut mesh);
-    log::info!("b.clip_to(a)");
     Node::clip_to(b_key, a_key, &mut mesh, &mut nodes);
-    log::info!("b.invert()");
     Node::invert(b_key, &mut nodes, &mut mesh);
 
     let b_polygons = Node::into_polygons(b_key, &mut nodes);
