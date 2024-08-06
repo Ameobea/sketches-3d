@@ -89,7 +89,7 @@ fn displace_mesh(mesh: &mut LinkedMesh, method: DisplacementMethod) {
 #[wasm_bindgen]
 pub fn tessellate_mesh(
   vertices: &[f32],
-  indices: &[usize],
+  indices: &[u32],
   target_edge_length: f32,
   sharp_edge_threshold_rads: f32,
   displacement_method: u32,

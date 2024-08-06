@@ -21,12 +21,12 @@ pub struct CsgSandboxCtx {
 }
 
 fn displace_mesh(mesh: &mut LinkedMesh) {
-  for vtx in &mut mesh.vertices.values_mut() {
-    vtx.position += vtx
-      .displacement_normal
-      .expect("Missing displacement normal")
-      * 0.5;
-  }
+  // for vtx in &mut mesh.vertices.values_mut() {
+  //   vtx.position += vtx
+  //     .displacement_normal
+  //     .expect("Missing displacement normal")
+  //     * 0.5;
+  // }
 }
 
 fn cubes() -> LinkedMesh {
@@ -37,10 +37,14 @@ fn cubes() -> LinkedMesh {
 }
 
 #[wasm_bindgen]
-pub fn csg_sandbox_init() -> *mut CsgSandboxCtx {
+pub fn csg_sandbox_init(indices: &[u32], vertices: &[f32]) -> *mut CsgSandboxCtx {
   maybe_init();
 
-  let mut mesh = cubes();
+  // let mut mesh = cubes();
+  let mesh = LinkedMesh::from_raw_indexed(&vertices, indices, None, None);
+  let csg0 = CSG::from(mesh);
+  let csg1 = CSG::new_cube(Vec3::new(3.5, 3.5, 3.5), 4.);
+  let mut mesh = csg1.subtract(csg0.mesh);
 
   let sharp_edge_threshold_rads = 0.8;
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);

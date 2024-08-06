@@ -21,7 +21,15 @@ export const processLoadedScene = async (
     return engine;
   });
 
-  const ctx = csg.csg_sandbox_init();
+  const sphere = new THREE.SphereGeometry(4, 8, 8);
+  if (!sphere.index) {
+    throw new Error('SphereGeometry missing index buffer');
+  }
+
+  const ctx = csg.csg_sandbox_init(
+    new Uint32Array(sphere.index.array),
+    new Float32Array(sphere.attributes.position.array)
+  );
   const indices = csg.csg_sandbox_take_indices(ctx);
   const vertices = csg.csg_sandbox_take_vertices(ctx);
   const normals = csg.csg_sandbox_take_normals(ctx);
@@ -45,12 +53,12 @@ export const processLoadedScene = async (
     );
     const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
     arrow.userData.nocollide = true;
-    viz.scene.add(arrow);
+    // viz.scene.add(arrow);
   }
 
-  // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+  const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
   // const debugMat = new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: false });
-  const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, side: THREE.FrontSide });
+  // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, side: THREE.FrontSide });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
 

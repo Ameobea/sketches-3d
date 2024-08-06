@@ -22,6 +22,7 @@ bindgen:
   cp ./target/wasm32-unknown-unknown/release/terrain.wasm ./build2
 
 opt:
+  #!/usr/bin/env -S parallel --shebang --ungroup --jobs 6
   wasm-opt ./build/bridge2_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/bridge2_bg.wasm
   wasm-opt ./build/conduit_particles_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build/conduit_particles_bg.wasm
   wasm-opt ./build2/normal_map_gen.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --fast-math --detect-features --strip-dwarf -c -o ./build2/normal_map_gen.wasm

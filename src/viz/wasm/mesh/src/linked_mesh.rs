@@ -308,7 +308,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
   pub fn from_indexed_vertices(
     vertices: &[Vec3],
-    indices: &[usize],
+    indices: &[u32],
     normals: Option<&[Vec3]>,
     transform: Option<Mat4>,
   ) -> Self {
@@ -328,9 +328,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       .collect::<Vec<_>>();
 
     for &[a_ix, b_ix, c_ix] in indices.array_chunks::<3>() {
-      let a = vertex_keys_by_ix[a_ix];
-      let b = vertex_keys_by_ix[b_ix];
-      let c = vertex_keys_by_ix[c_ix];
+      let a = vertex_keys_by_ix[a_ix as usize];
+      let b = vertex_keys_by_ix[b_ix as usize];
+      let c = vertex_keys_by_ix[c_ix as usize];
 
       mesh.add_face([a, b, c], Default::default());
     }
@@ -741,7 +741,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
   pub fn from_raw_indexed(
     vertices: &[f32],
-    indices: &[usize],
+    indices: &[u32],
     normals: Option<&[f32]>,
     transform: Option<Mat4>,
   ) -> Self {
