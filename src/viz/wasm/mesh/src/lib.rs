@@ -35,8 +35,19 @@ impl Triangle {
   }
 
   pub fn is_degenerate(&self) -> bool {
-    let mag = self.normal().magnitude();
-    mag == 0. || mag.is_nan()
+    if (self.a - self.b).magnitude().abs() < 1e-5
+      || (self.b - self.c).magnitude().abs() < 1e-5
+      || (self.c - self.a).magnitude().abs() < 1e-5
+    {
+      return true;
+    }
+
+    let normal = self.normal();
+    if normal.x.is_nan() || normal.y.is_nan() || normal.z.is_nan() {
+      return true;
+    }
+
+    false
   }
 }
 

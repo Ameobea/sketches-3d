@@ -13,6 +13,7 @@ bitvec = { version = "1",  default-features = false, features = ["alloc", "std"]
 common = { path = "../common" }
 log = { version = "0.4", features = [] }
 arrayvec = "0.7"
+delaunator = "1"
 
 [features]
 # disables slotmap's checks for invalid keys

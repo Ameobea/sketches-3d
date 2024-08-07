@@ -4,8 +4,9 @@
 use std::ops::BitOr;
 
 use arrayvec::ArrayVec;
+use bitvec::vec::BitVec;
 use common::uninit;
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use slotmap::Key;
 
 use crate::{
@@ -13,7 +14,7 @@ use crate::{
   LinkedMesh,
 };
 
-const EPSLION: f32 = 1e-5;
+const EPSILON: f32 = 1e-5;
 
 slotmap::new_key_type! {
   pub struct NodeKey;
@@ -174,9 +175,11 @@ fn handle_split_faces(
 ) {
   for ((old_face_key, old_face_data), new_face_keys) in split_faces.drain(..) {
     let node_key = old_face_data.node_key;
-    let node = nodes
-      .get_mut(node_key)
-      .unwrap_or_else(|| panic!("Couldn't find node with key={node_key:?}"));
+    let node = nodes.get_mut(node_key).unwrap_or_else(|| {
+      panic!(
+        "Couldn't find node with key={node_key:?} referenced by face with key={old_face_key:?}"
+      )
+    });
     let old_poly_ix = node
       .polygons
       .iter()
@@ -189,12 +192,18 @@ fn handle_split_faces(
       });
     node.polygons.swap_remove(old_poly_ix);
 
-    node.polygons.extend((0..=1).map(|face_ix| {
-      let poly = Polygon::new(new_face_keys[face_ix]);
+    node.polygons.extend((0..=1).filter_map(|face_ix| {
+      let new_face_key = new_face_keys[face_ix];
+      if mesh.faces[new_face_keys[face_ix]].is_degenerate(&mesh.vertices) {
+        mesh.remove_face(new_face_key);
+        return None;
+      }
+
+      let poly = Polygon::new(new_face_key);
       let user_data = poly.user_data_mut(mesh);
       user_data.plane = old_face_data.plane.clone();
       user_data.node_key = node_key;
-      poly
+      Some(poly)
     }));
   }
 }
@@ -209,6 +218,44 @@ impl Plane {
     let normal = (b - a).cross(&(c - a)).normalize();
     let w = normal.dot(&a);
     Self { normal, w }
+  }
+
+  // Finds an arbitrary point on the plane
+  fn point_on_plane(&self) -> Vec3 {
+    if self.normal.x.abs() > 0.1 {
+      // Avoid division by a small number
+      Vec3::new(-self.w / self.normal.x, 0.0, 0.0)
+    } else if self.normal.y.abs() > 0.1 {
+      Vec3::new(0.0, -self.w / self.normal.y, 0.0)
+    } else {
+      Vec3::new(0.0, 0.0, -self.w / self.normal.z)
+    }
+  }
+
+  // Compute two orthogonal vectors in the plane
+  pub fn compute_basis(&self) -> (Vec3, Vec3) {
+    let u = if self.normal.x.abs() > self.normal.z.abs() {
+      Vec3::new(-self.normal.y, self.normal.x, 0.0).normalize()
+    } else {
+      Vec3::new(0.0, -self.normal.z, self.normal.y).normalize()
+    };
+    let v = self.normal.cross(&u).normalize();
+    (u, v)
+  }
+
+  // Project a 3D point to this plane's 2D coordinates
+  pub fn to_2d(&self, point: Vec3, u: &Vec3, v: &Vec3) -> (f32, f32) {
+    let point_on_plane = self.point_on_plane();
+    let relative_point = point - point_on_plane;
+    let x = relative_point.dot(u);
+    let y = relative_point.dot(v);
+    (x, y)
+  }
+
+  // Reconstruct a 3D point from 2D coordinates in this plane
+  pub fn to_3d(&self, x: f32, y: f32, u: &Vec3, v: &Vec3) -> Vec3 {
+    let point_on_plane = self.point_on_plane();
+    point_on_plane + u * x + v * y
   }
 
   /// Split `polygon` by this plane if needed, then put the polygon or polygon
@@ -236,9 +283,9 @@ impl Plane {
       .enumerate()
     {
       let t = self.normal.dot(&vertex.pos(mesh)) - self.w;
-      let polygon_class = if t < -EPSLION {
+      let polygon_class = if t < -EPSILON {
         PolygonClass::Back
-      } else if t > EPSLION {
+      } else if t > EPSILON {
         PolygonClass::Front
       } else {
         PolygonClass::Coplanar
@@ -348,7 +395,7 @@ impl Plane {
         handle_split_faces(split_faces, mesh, nodes);
 
         if let Some(plane_node_key) = plane_node_key {
-          weld_polygons(&split_vertices, plane_node_key, mesh, nodes);
+          // weld_polygons(&split_vertices, plane_node_key, mesh, nodes);
         }
       }
     }
@@ -544,7 +591,7 @@ fn contains_point_on_edge() {
     Vec3::new(0., 1., 0.),
   ];
   let p = Vec3::new(0., 0.5, 0.);
-  let res = triangle_contains_point(&tri, p, EPSLION);
+  let res = triangle_contains_point(&tri, p, EPSILON);
   assert_eq!(
     res,
     Intersection::OnEdge {
@@ -554,7 +601,7 @@ fn contains_point_on_edge() {
   );
 
   let p = Vec3::new(0.5, 0., 0.);
-  let res = triangle_contains_point(&tri, p, EPSLION);
+  let res = triangle_contains_point(&tri, p, EPSILON);
   assert_eq!(
     res,
     Intersection::OnEdge {
@@ -572,11 +619,11 @@ fn contains_point_on_vertex() {
     Vec3::new(0., 1., 0.),
   ];
   let p = Vec3::new(0., 0., 0.);
-  let res = triangle_contains_point(&tri, p, EPSLION);
+  let res = triangle_contains_point(&tri, p, EPSILON);
   assert_eq!(res, Intersection::OnVertex { vtx_ix: 0 });
 
   let p = Vec3::new(1., 0., 0.);
-  let res = triangle_contains_point(&tri, p, EPSLION);
+  let res = triangle_contains_point(&tri, p, EPSILON);
   assert_eq!(res, Intersection::OnVertex { vtx_ix: 1 });
 }
 
@@ -606,14 +653,14 @@ fn weld_polygon_at_interior<'a>(
 }
 
 /// `edge_pos` is the interpolation factor between the two vertices that the point is on
-fn weld_polygon_on_edge(
+fn weld_polygon_on_edge<'a>(
   out_temp_node_key: NodeKey,
   poly: Polygon,
   edge_ix: u8,
-  mesh: &mut LinkedMesh<FaceData>,
-  nodes: &mut NodeMap,
+  mesh: &'a mut LinkedMesh<FaceData>,
+  nodes: &'a mut NodeMap,
   edge_pos: f32,
-) -> [Polygon; 2] {
+) -> impl Iterator<Item = Polygon> + 'a {
   let [v0, v1] = match edge_ix {
     0 => [poly.vtx(0, mesh), poly.vtx(1, mesh)],
     1 => [poly.vtx(1, mesh), poly.vtx(2, mesh)],
@@ -658,26 +705,15 @@ fn weld_polygon_on_edge(
 
   // take the new polygons out of the temporary node so we can try them with the second vertex if
   // needed
-  let mut new_polys: [Polygon; 2] = uninit();
-  for i in 0..2 {
-    let new_poly = nodes[out_temp_node_key]
+  (0..2).filter_map(move |i| {
+    let poly = nodes[out_temp_node_key]
       .polygons
       .iter()
       .position(|poly| poly.key == new_poly_keys[i])
-      .map(|ix| nodes[out_temp_node_key].polygons.swap_remove(ix))
-      .unwrap_or_else(|| {
-        panic!(
-          "Couldn't find polygon with key={:?} in node with key={out_temp_node_key:?}",
-          new_poly_keys[i]
-        )
-      });
-    new_poly.set_node_key(out_temp_node_key, mesh);
-    unsafe {
-      std::ptr::write(&mut new_polys[i], new_poly);
-    }
-  }
-
-  new_polys
+      .map(|ix| nodes[out_temp_node_key].polygons.swap_remove(ix))?;
+    poly.set_node_key(out_temp_node_key, mesh);
+    Some(poly)
+  })
 }
 
 /// Checks if `poly` contains `vtx`.  If it does, the polygon is split into three
@@ -694,13 +730,16 @@ fn maybe_weld_polygon(
     poly.vtx(1, mesh).pos(mesh),
     poly.vtx(2, mesh).pos(mesh),
   ];
-  let ixn = triangle_contains_point(&vert_coords, vtx.pos(mesh), EPSLION);
+
+  // the epsilon value below seems to matter quite a bit.  The triangle intersection test seems
+  // quite prone to floating point precision issues.
+  let ixn = triangle_contains_point(&vert_coords, vtx.pos(mesh), 1e-4);
   match ixn {
     Intersection::NoIntersection => ArrayVec::from_iter(std::iter::once(poly)),
     Intersection::WithinCenter => ArrayVec::from_iter(weld_polygon_at_interior(vtx, &poly, mesh)),
     Intersection::OnEdge { edge_ix, factor } => {
       let split_polys = weld_polygon_on_edge(out_tmp_key, poly, edge_ix, mesh, nodes, factor);
-      ArrayVec::from_iter(split_polys.into_iter())
+      ArrayVec::from_iter(split_polys)
     }
     Intersection::OnVertex { vtx_ix: _ } => {
       // I guess we ignore for now since vertices are merged at the end anyway...
@@ -899,8 +938,142 @@ impl Node {
     }
   }
 
-  fn traverse_mut(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut dyn FnMut(&mut Node)) {
-    cb(&mut nodes[self_key]);
+  /// Re-triangulate all polygons in this node using Delaunay triangulation.  This helps reduce the
+  /// amount of long, skinny triangles that can be created by the splitting process.
+  pub fn remesh(&mut self, self_key: NodeKey, mesh: &mut LinkedMesh<FaceData>) {
+    if self.polygons.is_empty() {
+      return;
+    }
+
+    // TODO: if we keep the current setup of only calling this at the end of the whole process, we
+    // can avoid re-pushing all of these faces back into the mesh and instead just call this when
+    // draining them.
+
+    let plane = self.polygons[0].plane(mesh).clone();
+    let (u, v) = plane.compute_basis();
+
+    let mut vtx_keys = Vec::with_capacity(self.polygons.len() * 3);
+    let points_2d = self
+      .polygons
+      .drain(..)
+      .flat_map(|poly| {
+        vtx_keys.extend_from_slice(&mesh.faces[poly.key].vertices);
+        let vtx_positions = mesh.faces[poly.key].vertex_positions(&mesh.vertices);
+        mesh.remove_face(poly.key);
+        vtx_positions.into_iter().map(|pos| {
+          let (x, y) = plane.to_2d(pos, &u, &v);
+          delaunator::Point {
+            x: x as f64,
+            y: y as f64,
+          }
+        })
+      })
+      .collect::<Vec<_>>();
+
+    let triangles = delaunator::triangulate(&points_2d).triangles;
+
+    assert!(triangles.len() % 3 == 0);
+
+    self
+      .polygons
+      .extend(triangles.array_chunks::<3>().map(|[i0, i1, i2]| {
+        let vtx_keys = [vtx_keys[*i2], vtx_keys[*i1], vtx_keys[*i0]];
+        let face_key = mesh.add_face(
+          vtx_keys,
+          FaceData {
+            plane: plane.clone(),
+            node_key: self_key,
+          },
+        );
+        let poly = Polygon::new(face_key);
+        poly.set_node_key(self_key, mesh);
+        poly
+      }));
+  }
+
+  fn collapse_interior_vertices(&mut self, mesh: &mut LinkedMesh<FaceData>) {
+    let all_vtx_keys: FxHashSet<_> = self
+      .polygons
+      .iter()
+      .flat_map(|poly| mesh.faces[poly.key].vertices)
+      .collect();
+    let all_vtx_keys_vec: Vec<_> = all_vtx_keys.iter().copied().collect();
+
+    let all_face_keys = self
+      .polygons
+      .iter()
+      .map(|poly| poly.key)
+      .collect::<FxHashSet<_>>();
+    let interior_flags: FxHashMap<VertexKey, bool> = all_vtx_keys
+      .iter()
+      .map(|&vtx_key| (vtx_key, mesh.vertex_has_full_fan(vtx_key, &all_face_keys)))
+      .collect();
+
+    let mut removed_face_keys = FxHashSet::default();
+    for vtx_key in all_vtx_keys_vec {
+      // vtx might have already been deleted
+      if !mesh.vertices.contains_key(vtx_key) {
+        continue;
+      }
+
+      // let is_interior = mesh.vertex_has_full_fan(vtx_key, &all_face_keys);
+      // if !is_interior {
+      //   continue;
+      // }
+      if interior_flags[&vtx_key] {
+        continue;
+      }
+
+      // collapse the longest edge that's fully contained within this plane
+      let Some((edge_key_to_collapse, vtx_to_merge_into, _edge_len)) = mesh.vertices[vtx_key]
+        .edges
+        .iter()
+        .filter_map(|&edge_key| {
+          let edge = &mesh.edges[edge_key];
+          if !edge
+            .faces
+            .iter()
+            .all(|face_key| all_face_keys.contains(face_key))
+          {
+            return None;
+          }
+
+          // only merge with other interior vertices to avoid weird topological issues
+          let o_vtx_key = edge.other_vtx(vtx_key);
+          // TODO TEMP
+          assert!(all_vtx_keys.contains(&o_vtx_key));
+          if !interior_flags[&o_vtx_key] {
+            // return None;
+          }
+
+          let edge_len = edge.length(&mesh.vertices);
+          Some((edge_key, o_vtx_key, edge_len))
+        })
+        .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+      else {
+        continue;
+      };
+
+      // Remove any faces that use the edge we're about to collapse.  This won't result in any holes
+      // in the mesh since they will be closed as a result of the merge.
+      let face_keys = mesh.edges[edge_key_to_collapse].faces.clone();
+      for face_key in face_keys {
+        mesh.remove_face(face_key);
+        removed_face_keys.insert(face_key);
+        // TODO: this should never happen...
+        assert!(all_face_keys.contains(&face_key));
+      }
+
+      mesh.merge_vertices(vtx_to_merge_into, vtx_key);
+    }
+
+    self
+      .polygons
+      .retain(|poly| !removed_face_keys.contains(&poly.key));
+  }
+
+  fn traverse_mut(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut dyn FnMut(NodeKey, &mut Node)) {
+    cb(self_key, &mut nodes[self_key]);
     if let Some(front_key) = nodes[self_key].front {
       Node::traverse_mut(front_key, nodes, cb);
     }
@@ -912,14 +1085,14 @@ impl Node {
   /// Consumes the BSP tree and returns a list of all polygons within it.
   fn into_polygons(self_key: NodeKey, nodes: &mut NodeMap) -> Vec<Polygon> {
     let mut polygons = Vec::new();
-    Self::traverse_mut(self_key, nodes, &mut |node| {
+    Self::traverse_mut(self_key, nodes, &mut |_key, node| {
       polygons.extend(node.polygons.drain(..));
     });
     polygons
   }
 
   fn drain_polygons(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut dyn FnMut(Polygon)) {
-    Self::traverse_mut(self_key, nodes, &mut |node| {
+    Self::traverse_mut(self_key, nodes, &mut |_key, node| {
       for poly in node.polygons.drain(..) {
         cb(poly);
       }
@@ -1171,10 +1344,15 @@ impl CSG {
   }
 
   fn extract_mesh(
-    mesh: LinkedMesh<FaceData>,
+    mut mesh: LinkedMesh<FaceData>,
     mut nodes: NodeMap,
     a_key: NodeKey,
   ) -> LinkedMesh<()> {
+    Node::traverse_mut(a_key, &mut nodes, &mut |node_key, node| {
+      node.collapse_interior_vertices(&mut mesh);
+      node.remesh(node_key, &mut mesh)
+    });
+
     let mut new_mesh: LinkedMesh<()> = LinkedMesh::default();
     let mut new_vtx_key_by_old_vtx_key = FxHashMap::default();
     Node::drain_polygons(a_key, &mut nodes, &mut |poly| {

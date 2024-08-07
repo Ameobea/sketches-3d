@@ -146,6 +146,16 @@ impl Edge {
     let b = verts[self.vertices[1]].position;
     (a - b).magnitude()
   }
+
+  pub fn other_vtx(&self, vtx_key: VertexKey) -> VertexKey {
+    if self.vertices[0] == vtx_key {
+      self.vertices[1]
+    } else if self.vertices[1] == vtx_key {
+      self.vertices[0]
+    } else {
+      panic!("Vertex key {vtx_key:?} not found in edge");
+    }
+  }
 }
 
 fn distance(p0: Vec3, p1: Vec3) -> f32 {
@@ -190,12 +200,17 @@ impl NormalAcc {
     let face = &faces[face_key];
     let face_normal = face.normal(verts);
     if face_normal.x.is_nan() || face_normal.y.is_nan() || face_normal.z.is_nan() {
-      panic!(
-        "Face normal is NaN: {:?}; is_degen={}",
+      // panic!(
+      //   "Face normal is NaN: {:?}; is_degen={}",
+      //   face.to_triangle(verts),
+      //   face.is_degenerate(verts)
+      // );
+      log::warn!(
+        "Face normal is NaN: {:?}; is_degen={}; face_key={face_key:?}",
         face.to_triangle(verts),
         face.is_degenerate(verts)
       );
-      // return None;
+      return None;
     }
 
     let angle_at_vtx = face.compute_angle_at_vertex(fan_center_vtx_key, verts);
@@ -379,7 +394,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   /// Removes `v1` and updates all references to it to point to `v0` instead.
-  fn merge_vertices(&mut self, v0_key: VertexKey, v1_key: VertexKey) {
+  pub fn merge_vertices(&mut self, v0_key: VertexKey, v1_key: VertexKey) {
     let removed_vtx = self.vertices.remove(v1_key).unwrap_or_else(|| {
       panic!(
         "Tried to merge vertex that doesn't exist; key={v1_key:?}. Was referenced by removed \
@@ -1043,17 +1058,108 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     fan_normal_acc.get()
   }
 
-  /// Returns the normal of the full vertex, including all smooth fans.  That
-  /// normal should be used for displacement.
+  /// Walks the fan around `vtx_key` and determines if the fan goes all the way around or not.
+  pub fn vertex_has_full_fan(
+    &self,
+    vtx_key: VertexKey,
+    valid_face_keys: &FxHashSet<FaceKey>,
+  ) -> bool {
+    if self.vertices[vtx_key].edges.len() < 3 {
+      return false;
+    }
+
+    // TODO: this shouldn't be necessary for manifold meshes.  figure out where the non-manifold
+    // geometry is getting produced.
+    let mut visited_edges = bitarr![0; 8192];
+    assert!(self.vertices[vtx_key].edges.len() < 1024 * 8);
+    let start_edge_key = self.vertices[vtx_key].edges[0];
+    visited_edges.set(0, true);
+
+    // TODO: this feels terrible and there must be a better way
+    let mut uniq_faces = FxHashSet::default();
+    for &edge_key in &self.vertices[vtx_key].edges {
+      for face_key in &self.edges[edge_key].faces {
+        uniq_faces.insert(*face_key);
+      }
+    }
+    let face_count = uniq_faces.len();
+    drop(uniq_faces);
+
+    let mut cur_face_key = self.edges[start_edge_key]
+      .faces
+      .iter()
+      .find(|&&face_key| {
+        let face = &self.faces[face_key];
+        face.vertices.contains(&vtx_key)
+      })
+      .copied()
+      .unwrap();
+    let mut visited_face_count = 1;
+    loop {
+      let next_edge_key = self.faces[cur_face_key]
+        .edges
+        .iter()
+        .copied()
+        .find_map(|edge_key| {
+          let edge = &self.edges[edge_key];
+          if !edge.vertices.contains(&vtx_key) {
+            return None;
+          }
+
+          let edge_ix = self.vertices[vtx_key]
+            .edges
+            .iter()
+            .position(|&e| e == edge_key)
+            .unwrap();
+          if visited_edges[edge_ix] {
+            None
+          } else {
+            Some((edge_ix, edge_key))
+          }
+        });
+      let Some((next_edge_ix, next_edge_key)) = next_edge_key else {
+        if visited_face_count > face_count {
+          panic!(
+            "Vertex {vtx_key:?} has more visited faces than total faces; \
+             visited_face_count={visited_face_count}; face_count={face_count}",
+          );
+        } else if visited_face_count == face_count {
+          return true;
+        } else {
+          return false;
+        }
+      };
+      visited_edges.set(next_edge_ix, true);
+
+      let Some(next_face_key) = self.edges[next_edge_key]
+        .faces
+        .iter()
+        .find(|&&face_key| {
+          let face = &self.faces[face_key];
+          face.vertices.contains(&vtx_key)
+            && face_key != cur_face_key
+            && valid_face_keys.contains(&face_key)
+        })
+        .copied()
+      else {
+        return false;
+      };
+
+      cur_face_key = next_face_key;
+      visited_face_count += 1;
+    }
+  }
+
+  /// Returns the normal of the full vertex, including all smooth fans.  That normal should be used
+  /// for displacement.
   ///
-  /// Can return `None` for cases like disconnected vertices or degenerate
-  /// triangles.
+  /// Can return `None` for cases like disconnected vertices or degenerate triangles.
   fn separate_and_compute_normals_for_vertex(
     &mut self,
     smooth_fans_acc: &mut Vec<SmoothFan>,
     vtx_key: VertexKey,
   ) -> Option<Vec3> {
-    let mut visited_edges = bitarr![0; 1024];
+    let mut visited_edges = bitarr![0; 1024*8];
     let mut visited_faces = SmallVec::<[_; 16]>::new();
     let mut smooth_fan_faces: SmallVec<[FaceKey; 16]> = SmallVec::new();
 
@@ -1062,7 +1168,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let edge_count = self.vertices[vtx_key].edges.len();
     // keeps track of which edges have been visited.  Indices match the indices of
     // `vtx.edges`
-    if edge_count > 1024 {
+    if edge_count > 1024 * 8 {
       panic!("Vertex has too many edges; vtx_key={vtx_key:?}; edge_count={edge_count}",);
     }
 
@@ -1128,7 +1234,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   fn compute_displacement_normal(&mut self, vtx_key: VertexKey) -> Option<Vec3> {
-    let mut visited_edges = bitarr![0; 1024];
+    let mut visited_edges = bitarr![0; 1024*8];
+    // TODO: should re-use these buffers and pass them in from outer
     let mut visited_faces = SmallVec::<[_; 16]>::new();
     let mut smooth_fan_faces: SmallVec<[FaceKey; 16]> = SmallVec::new();
     let mut vtx_normal_acc = NormalAcc::new();
@@ -1155,12 +1262,13 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
     let displacement_normal = vtx_normal_acc.get();
     let Some(displacement_normal) = displacement_normal else {
-      panic!(
-        "Vertex {vtx_key:?} has no displacement normal after walking smooth fans; \
-         visited_faces.len()={}",
-        visited_faces.len()
-      );
+      // panic!(
+      //   "Vertex {vtx_key:?} has no displacement normal after walking smooth fans; \
+      //    visited_faces.len()={}",
+      //   visited_faces.len()
+      // );
       // return None;
+      return Some(Vec3::zeros());
     };
 
     Some(displacement_normal)
@@ -1274,8 +1382,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           if let Some(displacement_normal) = vert.displacement_normal {
             displacement_normals.extend(displacement_normal.iter());
           } else if include_displacement_normals {
-            panic!("Vertex {vert_key:?} has no displacement normal");
-            // displacement_normals.extend(Vec3::zeros().iter());
+            // panic!("Vertex {vert_key:?} has no displacement normal");
+            displacement_normals.extend(Vec3::zeros().iter());
           }
           cur_vert_ix += 1;
           ix
@@ -1542,6 +1650,34 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       edge_keys[i] = edge_key;
     }
 
+    // TODO DEBUG REMOVE
+    // check if there's an existing face in the mesh that has the same vertices (in any order)
+    // for (face_key, face) in self.faces.iter() {
+    //   if face.vertices.contains(&vertices[0])
+    //     && face.vertices.contains(&vertices[1])
+    //     && face.vertices.contains(&vertices[2])
+    //   {
+    //     panic!(
+    //       "Tried to add face that already exists; vertices={vertices:?}; existing face \
+    //        key={face_key:?} verts={:?}",
+    //       vertices,
+    //     );
+    //   }
+    // }
+    // for &face_key in &self.edges[edge_keys[0]].faces {
+    //   let face = &self.faces[face_key];
+    //   if face.vertices.contains(&vertices[0])
+    //     && face.vertices.contains(&vertices[1])
+    //     && face.vertices.contains(&vertices[2])
+    //   {
+    //     panic!(
+    //       "Tried to add face that already exists; vertices={vertices:?}; existing face \
+    //        key={face_key:?} verts={:?}",
+    //       face.vertices
+    //     );
+    //   }
+    // }
+
     let face_key = self.faces.insert(Face {
       vertices,
       edges: edge_keys,
@@ -1587,6 +1723,17 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
 
     face.data
+  }
+
+  /// Removes all degenerate faces from the mesh.
+  pub fn cleanup_degenerate_triangles(&mut self) {
+    let all_face_keys = self.faces.keys().collect::<Vec<_>>();
+    for face_key in all_face_keys {
+      let face = &self.faces[face_key];
+      if face.is_degenerate(&self.vertices) {
+        self.remove_face(face_key);
+      }
+    }
   }
 }
 
