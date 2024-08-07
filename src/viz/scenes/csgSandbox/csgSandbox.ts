@@ -53,12 +53,25 @@ export const processLoadedScene = async (
     );
     const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
     arrow.userData.nocollide = true;
-    viz.scene.add(arrow);
+    // viz.scene.add(arrow);
+  }
+
+  const interiorVtxPositions: Float32Array = csg.csg_sandbox_take_interior_vtx_positions();
+  console.log(`interior vtx count: ${interiorVtxPositions.length / 3}`);
+  for (let vtxIx = 0; vtxIx < interiorVtxPositions.length / 3; vtxIx += 1) {
+    const [x, y, z] = interiorVtxPositions.slice(vtxIx * 3, vtxIx * 3 + 3);
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(0.03, 0.03, 0.03),
+      new THREE.MeshBasicMaterial({ color: 0xff0000 })
+    );
+    box.position.set(x, y, z);
+    box.userData.nocollide = true;
+    // viz.scene.add(box);
   }
 
   const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
   // const debugMat = new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: false });
-  // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
+  // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: true, opacity: 0.57 });
   // const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
@@ -90,7 +103,7 @@ export const processLoadedScene = async (
     debugPos: true,
     locations: {
       spawn: {
-        pos: [1.15471613407135, 5.7756818532943726, -0.19975419342517853],
+        pos: [1.15471613407135, 8.7756818532943726, -0.19975419342517853],
         rot: [-0.8227963267948929, -48.78199999999914, 0],
       },
     },

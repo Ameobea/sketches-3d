@@ -23,6 +23,8 @@ slotmap::new_key_type! {
 pub type NodeMap = slotmap::SlotMap<NodeKey, Node>;
 
 static mut SPLIT_FACE_CACHE: *mut Vec<((FaceKey, FaceData), [FaceKey; 2])> = std::ptr::null_mut();
+// TODO TEMP
+pub static mut INTERIOR_VTX_POSITIONS: *mut Vec<f32> = std::ptr::null_mut();
 
 fn init_split_face_scratch() {
   unsafe {
@@ -395,7 +397,7 @@ impl Plane {
         handle_split_faces(split_faces, mesh, nodes);
 
         if let Some(plane_node_key) = plane_node_key {
-          // weld_polygons(&split_vertices, plane_node_key, mesh, nodes);
+          weld_polygons(&split_vertices, plane_node_key, mesh, nodes);
         }
       }
     }
@@ -1008,9 +1010,30 @@ impl Node {
       .iter()
       .map(|&vtx_key| (vtx_key, mesh.vertex_has_full_fan(vtx_key, &all_face_keys)))
       .collect();
+    if unsafe { INTERIOR_VTX_POSITIONS.is_null() } {
+      unsafe {
+        let interior_vtx_positions = all_vtx_keys_vec
+          .iter()
+          .copied()
+          .filter(|&vtx_key| interior_flags[&vtx_key])
+          .flat_map(|vtx_key| {
+            let vtx = &mesh.vertices[vtx_key];
+            vtx.position.iter().copied()
+          })
+          .collect::<Vec<_>>();
+        INTERIOR_VTX_POSITIONS = Box::into_raw(Box::new(interior_vtx_positions));
+      }
+    } else {
+      // return;
+    }
 
     let mut removed_face_keys = FxHashSet::default();
+
     for vtx_key in all_vtx_keys_vec {
+      if !interior_flags[&vtx_key] {
+        continue;
+      }
+
       // vtx might have already been deleted
       if !mesh.vertices.contains_key(vtx_key) {
         continue;
@@ -1020,11 +1043,8 @@ impl Node {
       // if !is_interior {
       //   continue;
       // }
-      if interior_flags[&vtx_key] {
-        continue;
-      }
 
-      // collapse the longest edge that's fully contained within this plane
+      // collapse the shortest edge that's fully contained within this plane
       let Some((edge_key_to_collapse, vtx_to_merge_into, _edge_len)) = mesh.vertices[vtx_key]
         .edges
         .iter()
@@ -1049,10 +1069,14 @@ impl Node {
           let edge_len = edge.length(&mesh.vertices);
           Some((edge_key, o_vtx_key, edge_len))
         })
-        .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+        .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
       else {
         continue;
       };
+
+      unsafe {
+        (*INTERIOR_VTX_POSITIONS).extend(mesh.vertices[vtx_to_merge_into].position.iter().copied());
+      }
 
       // Remove any faces that use the edge we're about to collapse.  This won't result in any holes
       // in the mesh since they will be closed as a result of the merge.
@@ -1123,6 +1147,7 @@ impl Node {
     if nodes[dummy_node_key].polygons.is_empty() {
       panic!("No polygons in temp node");
     }
+    // TODO: figure out a good heuristic for picking the split plane
     let plane = nodes[dummy_node_key].polygons[0].plane(mesh).clone();
 
     let temp_front_key = nodes.insert(Node {
@@ -1348,7 +1373,9 @@ impl CSG {
     mut nodes: NodeMap,
     a_key: NodeKey,
   ) -> LinkedMesh<()> {
+    mesh.merge_vertices_by_distance(1e-5);
     Node::traverse_mut(a_key, &mut nodes, &mut |node_key, node| {
+      // TODO: investigate calling this during building/clipping
       node.collapse_interior_vertices(&mut mesh);
       node.remesh(node_key, &mut mesh)
     });

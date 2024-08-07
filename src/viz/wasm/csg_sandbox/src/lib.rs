@@ -1,6 +1,10 @@
 use wasm_bindgen::prelude::*;
 
-use mesh::{csg::CSG, linked_mesh::Vec3, LinkedMesh, OwnedIndexedMesh};
+use mesh::{
+  csg::{CSG, INTERIOR_VTX_POSITIONS},
+  linked_mesh::Vec3,
+  LinkedMesh, OwnedIndexedMesh,
+};
 
 static mut DID_INIT: bool = false;
 
@@ -44,7 +48,7 @@ pub fn csg_sandbox_init(indices: &[u32], vertices: &[f32]) -> *mut CsgSandboxCtx
   let mesh = LinkedMesh::from_raw_indexed(&vertices, indices, None, None);
   let csg0 = CSG::from(mesh);
   let csg1 = CSG::new_cube(Vec3::new(3.2435, 3.523, 3.59756), 4.);
-  let mut mesh = csg1.union(csg0.mesh);
+  let mut mesh = csg1.subtract(csg0.mesh);
   mesh.cleanup_degenerate_triangles();
   mesh.merge_vertices_by_distance(1e-5);
 
@@ -84,6 +88,7 @@ pub fn csg_sandbox_take_normals(ctx: *mut CsgSandboxCtx) -> Vec<f32> {
   std::mem::take(ctx.mesh.shading_normals.as_mut().expect("no normals"))
 }
 
+// TODO TEMP
 #[wasm_bindgen]
 pub fn csg_sandbox_take_displacement_normals(ctx: *mut CsgSandboxCtx) -> Vec<f32> {
   let ctx = unsafe { &mut *ctx };
@@ -94,4 +99,10 @@ pub fn csg_sandbox_take_displacement_normals(ctx: *mut CsgSandboxCtx) -> Vec<f32
       .as_mut()
       .expect("no displacement normals"),
   )
+}
+
+// TODO TEMP
+#[wasm_bindgen]
+pub fn csg_sandbox_take_interior_vtx_positions() -> Vec<f32> {
+  unsafe { std::mem::take(&mut *INTERIOR_VTX_POSITIONS) }
 }
