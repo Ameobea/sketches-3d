@@ -15,7 +15,7 @@ new_key_type! {
   pub struct EdgeKey;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Vertex {
   pub position: Vec3,
   /// Normal of the vertex used for shading/lighting.
@@ -281,14 +281,12 @@ pub struct EdgeSplitPos {
 }
 
 impl EdgeSplitPos {
-  fn get(&self, v0_key: VertexKey, v0_pos: Vec3, v1_pos: Vec3) -> Vec3 {
-    let x = if v0_key == self.start_vtx_key {
+  fn get(&self, v0_key: VertexKey) -> f32 {
+    if v0_key == self.start_vtx_key {
       self.pos
     } else {
       1. - self.pos
-    };
-
-    v0_pos.lerp(&v1_pos, x)
+    }
   }
 
   pub fn middle() -> Self {
@@ -517,7 +515,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
-  pub fn merge_vertices_by_distance(&mut self, max_distance: f32) -> usize {
+  pub fn merge_vertices_by_distance_cb(
+    &mut self,
+    max_distance: f32,
+    mut cb: impl FnMut(FaceKey, FaceData) -> (),
+  ) -> usize {
     // simple spatial hashing
     let buckets_per_dim = 32;
     let mut buckets: FxHashMap<usize, Vec<_>> = FxHashMap::default();
@@ -637,17 +639,24 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
               }
 
               let neighbor_bucket_ix = get_bucket_ix(x_ix, y_ix, z_ix);
-              let Some(bucket) = buckets.get(&neighbor_bucket_ix) else {
+              let Some(bucket) = buckets.get_mut(&neighbor_bucket_ix) else {
                 continue;
               };
-              for &o_vtx_key in bucket {
+
+              let mut i = 0;
+              while i < bucket.len() {
+                let o_vtx_key = bucket[i];
                 if o_vtx_key == vtx_key {
+                  i += 1;
                   continue;
                 }
 
                 let o_vtx = &self.vertices[o_vtx_key];
                 if distance(vtx.position, o_vtx.position) < max_distance {
                   vertices_to_merge.push(o_vtx_key);
+                  bucket.swap_remove(i);
+                } else {
+                  i += 1;
                 }
               }
             }
@@ -655,14 +664,24 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         }
       }
 
-      'outer: for o_vtx_key in vertices_to_merge.drain(..) {
-        // if there's a triangle which contains both vertices, we can't merge them
+      for o_vtx_key in vertices_to_merge.drain(..) {
+        // for every face that contains both vertices to merge, we remove it
+        let mut face_keys_to_remove = Vec::new();
         for &edge_key in &self.vertices[o_vtx_key].edges {
           let edge = &self.edges[edge_key];
-          for face in &edge.faces {
-            let face = &self.faces[*face];
+          for &face_key in &edge.faces {
+            let face = &self.faces[face_key];
             if face.vertices.contains(&vtx_key) {
-              continue 'outer;
+              face_keys_to_remove.push(face_key);
+            }
+          }
+        }
+        if !face_keys_to_remove.is_empty() {
+          for face_key in face_keys_to_remove {
+            // face might have been removed already
+            if self.faces.contains_key(face_key) {
+              let face_data = self.remove_face(face_key);
+              cb(face_key, face_data);
             }
           }
         }
@@ -673,6 +692,10 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
 
     removed_vert_keys.len()
+  }
+
+  pub fn merge_vertices_by_distance(&mut self, max_distance: f32) -> usize {
+    self.merge_vertices_by_distance_cb(max_distance, |_, _| ())
   }
 
   pub fn debug(&self) -> String {
@@ -1058,98 +1081,6 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     fan_normal_acc.get()
   }
 
-  /// Walks the fan around `vtx_key` and determines if the fan goes all the way around or not.
-  pub fn vertex_has_full_fan(
-    &self,
-    vtx_key: VertexKey,
-    valid_face_keys: &FxHashSet<FaceKey>,
-  ) -> bool {
-    if self.vertices[vtx_key].edges.len() < 3 {
-      return false;
-    }
-
-    // TODO: this shouldn't be necessary for manifold meshes.  figure out where the non-manifold
-    // geometry is getting produced.
-    let mut visited_edges = bitarr![0; 8192];
-    assert!(self.vertices[vtx_key].edges.len() < 1024 * 8);
-    let start_edge_key = self.vertices[vtx_key].edges[0];
-    visited_edges.set(0, true);
-
-    // TODO: this feels terrible and there must be a better way
-    let mut uniq_faces = FxHashSet::default();
-    for &edge_key in &self.vertices[vtx_key].edges {
-      for face_key in &self.edges[edge_key].faces {
-        uniq_faces.insert(*face_key);
-      }
-    }
-    let face_count = uniq_faces.len();
-    drop(uniq_faces);
-
-    let mut cur_face_key = self.edges[start_edge_key]
-      .faces
-      .iter()
-      .find(|&&face_key| {
-        let face = &self.faces[face_key];
-        face.vertices.contains(&vtx_key)
-      })
-      .copied()
-      .unwrap();
-    let mut visited_face_count = 1;
-    loop {
-      let next_edge_key = self.faces[cur_face_key]
-        .edges
-        .iter()
-        .copied()
-        .find_map(|edge_key| {
-          let edge = &self.edges[edge_key];
-          if !edge.vertices.contains(&vtx_key) {
-            return None;
-          }
-
-          let edge_ix = self.vertices[vtx_key]
-            .edges
-            .iter()
-            .position(|&e| e == edge_key)
-            .unwrap();
-          if visited_edges[edge_ix] {
-            None
-          } else {
-            Some((edge_ix, edge_key))
-          }
-        });
-      let Some((next_edge_ix, next_edge_key)) = next_edge_key else {
-        if visited_face_count > face_count {
-          panic!(
-            "Vertex {vtx_key:?} has more visited faces than total faces; \
-             visited_face_count={visited_face_count}; face_count={face_count}",
-          );
-        } else if visited_face_count == face_count {
-          return true;
-        } else {
-          return false;
-        }
-      };
-      visited_edges.set(next_edge_ix, true);
-
-      let Some(next_face_key) = self.edges[next_edge_key]
-        .faces
-        .iter()
-        .find(|&&face_key| {
-          let face = &self.faces[face_key];
-          face.vertices.contains(&vtx_key)
-            && face_key != cur_face_key
-            && valid_face_keys.contains(&face_key)
-        })
-        .copied()
-      else {
-        return false;
-      };
-
-      cur_face_key = next_face_key;
-      visited_face_count += 1;
-    }
-  }
-
   /// Returns the normal of the full vertex, including all smooth fans.  That normal should be used
   /// for displacement.
   ///
@@ -1445,32 +1376,25 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     displacement_normal_method: DisplacementNormalMethod,
     mut face_split_cb: impl FnMut(FaceKey, FaceData, [FaceKey; 2]) -> (),
   ) -> VertexKey {
-    let (edge_id_to_split, edge_displacement_normal, vm_position, faces_to_split) = {
-      let edge = self.edges.get(edge_key_to_split).unwrap_or_else(|| {
-        panic!("Tried to split edge that doesn't exist; key={edge_key_to_split:?}")
-      });
-      let edge_id_to_split = edge.vertices;
-      let [v0_key, v1_key] = edge_id_to_split;
-      let [v0, v1] = [&self.vertices[v0_key], &self.vertices[v1_key]];
+    let edge = self.edges.get(edge_key_to_split).unwrap_or_else(|| {
+      panic!("Tried to split edge that doesn't exist; key={edge_key_to_split:?}")
+    });
+    let edge_id_to_split = edge.vertices;
+    let [v0_key, v1_key] = edge_id_to_split;
+    let [v0, v1] = [&self.vertices[v0_key], &self.vertices[v1_key]];
 
-      let vm_position = split_pos.get(v0_key, v0.position, v1.position);
+    let split_pos = split_pos.get(v0_key);
+    let vm_position = v0.position.lerp(&v1.position, split_pos);
 
-      let faces_to_split = edge.faces.clone();
-
-      (
-        edge_id_to_split,
-        edge.displacement_normal,
-        vm_position,
-        faces_to_split,
-      )
-    };
+    let edge_displacement_normal = edge.displacement_normal;
+    let faces_to_split = edge.faces.clone();
 
     let shading_normal = {
       let v0 = &self.vertices[edge_id_to_split[0]];
       let v1 = &self.vertices[edge_id_to_split[1]];
       v0.shading_normal
         .zip(v1.shading_normal)
-        .map(|(n0, n1)| (n0 + n1).normalize())
+        .map(|(n0, n1)| n0.lerp(&n1, split_pos).normalize())
     };
 
     let displacement_normal = match displacement_normal_method {
@@ -1479,7 +1403,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         let v1 = &self.vertices[edge_id_to_split[1]];
         match v0.displacement_normal.zip(v1.displacement_normal) {
           Some((n0, n1)) => {
-            let merged_normal = (n0 + n1).normalize();
+            let merged_normal = n0.lerp(&n1, split_pos).normalize();
             if merged_normal.x.is_nan() || merged_normal.y.is_nan() || merged_normal.z.is_nan() {
               panic!("Merged normal is NaN; n0={n0:?}; n1={n1:?}; merged_normal={merged_normal:?}");
               // Some(Vec3::new(random(), random(), random()).normalize())
@@ -1726,14 +1650,19 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   /// Removes all degenerate faces from the mesh.
-  pub fn cleanup_degenerate_triangles(&mut self) {
+  pub fn cleanup_degenerate_triangles_cb(&mut self, mut cb: impl FnMut(FaceKey, FaceData) -> ()) {
     let all_face_keys = self.faces.keys().collect::<Vec<_>>();
     for face_key in all_face_keys {
       let face = &self.faces[face_key];
       if face.is_degenerate(&self.vertices) {
-        self.remove_face(face_key);
+        let face_data = self.remove_face(face_key);
+        cb(face_key, face_data);
       }
     }
+  }
+
+  pub fn cleanup_degenerate_triangles(&mut self) {
+    self.cleanup_degenerate_triangles_cb(|_, _| {});
   }
 }
 

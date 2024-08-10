@@ -21,13 +21,19 @@ export const processLoadedScene = async (
     return engine;
   });
 
-  const sphere = new THREE.SphereGeometry(4, 16, 16);
+  // const sphere = new THREE.SphereGeometry(5, 12, 12);
+  const sphere = new THREE.TorusGeometry(5, 1.5, 24, 8);
+  // const sphere = new THREE.BoxGeometry(5, 5, 5);
   if (!sphere.index) {
-    throw new Error('SphereGeometry missing index buffer');
+    const indices = new Uint16Array(sphere.attributes.position.count);
+    for (let i = 0; i < indices.length; i += 1) {
+      indices[i] = i;
+    }
+    sphere.setIndex(new THREE.BufferAttribute(indices, 1));
   }
 
   const ctx = csg.csg_sandbox_init(
-    new Uint32Array(sphere.index.array),
+    new Uint32Array(sphere.index!.array),
     new Float32Array(sphere.attributes.position.array)
   );
   const indices = csg.csg_sandbox_take_indices(ctx);
@@ -46,33 +52,28 @@ export const processLoadedScene = async (
 
   for (let vtxIx = 0; vtxIx < vertices.length / 3; vtxIx += 1) {
     const vtx = new THREE.Vector3(vertices[vtxIx * 3], vertices[vtxIx * 3 + 1], vertices[vtxIx * 3 + 2]);
-    const normal = new THREE.Vector3(
-      displacementNormals[vtxIx * 3],
-      displacementNormals[vtxIx * 3 + 1],
-      displacementNormals[vtxIx * 3 + 2]
-    );
+    const normal = new THREE.Vector3(normals[vtxIx * 3], normals[vtxIx * 3 + 1], normals[vtxIx * 3 + 2]);
+
+    if (normal.length() < 0.01) {
+      // add a marker to indicate this
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.1, 0.1),
+        new THREE.MeshBasicMaterial({ color: 0xff0000 })
+      );
+      box.position.set(vtx.x, vtx.y, vtx.z);
+      box.userData.nocollide = true;
+      viz.scene.add(box);
+      continue;
+    }
+
     const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
     arrow.userData.nocollide = true;
     // viz.scene.add(arrow);
   }
 
-  const interiorVtxPositions: Float32Array = csg.csg_sandbox_take_interior_vtx_positions();
-  console.log(`interior vtx count: ${interiorVtxPositions.length / 3}`);
-  for (let vtxIx = 0; vtxIx < interiorVtxPositions.length / 3; vtxIx += 1) {
-    const [x, y, z] = interiorVtxPositions.slice(vtxIx * 3, vtxIx * 3 + 3);
-    const box = new THREE.Mesh(
-      new THREE.BoxGeometry(0.03, 0.03, 0.03),
-      new THREE.MeshBasicMaterial({ color: 0xff0000 })
-    );
-    box.position.set(x, y, z);
-    box.userData.nocollide = true;
-    // viz.scene.add(box);
-  }
-
-  const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-  // const debugMat = new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: false });
-  // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: true, opacity: 0.57 });
-  // const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
+  // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+  // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: false, opacity: 0.57 });
+  const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
 
