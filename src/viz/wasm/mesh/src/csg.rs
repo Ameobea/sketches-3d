@@ -327,11 +327,7 @@ impl Plane {
         let mut b = ArrayVec::<Vertex, 4>::new();
         let mut split_vertices = ArrayVec::<_, 2>::new();
 
-        let verts = [
-          polygon.vtx(0, mesh),
-          polygon.vtx(1, mesh),
-          polygon.vtx(2, mesh),
-        ];
+        let verts = polygon.verts(mesh);
         let old_poly_user_data = mesh.remove_face(polygon.key);
         let split_faces = get_split_face_scratch();
         assert!(split_faces.is_empty());
@@ -344,14 +340,16 @@ impl Plane {
           let vj = verts[j];
 
           if ti != PolygonClass::Back {
-            f.push(vi.clone());
+            f.push(vi);
           }
           if ti != PolygonClass::Front {
-            b.push(vi.clone());
+            b.push(vi);
           }
           if (ti | tj) == PolygonClass::Spanning {
-            let vi_pos = vi.pos(mesh);
-            let t = (self.w - self.normal.dot(&vi_pos)) / self.normal.dot(&(vj.pos(mesh) - vi_pos));
+            let vi_vtx = &mesh.vertices[vi.key];
+            let vj_vtx = &mesh.vertices[vj.key];
+            let t = (self.w - self.normal.dot(&vi_vtx.position))
+              / self.normal.dot(&(vj_vtx.position - vi_vtx.position));
 
             let middle_vtx_key = if let Some(edge_key) = mesh.get_edge_key([vi.key, vj.key]) {
               mesh.split_edge_cb(
@@ -366,29 +364,24 @@ impl Plane {
                 },
               )
             } else {
-              let shading_normal = match (
-                mesh.vertices[vi.key].shading_normal,
-                mesh.vertices[vj.key].shading_normal,
-              ) {
-                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-                _ => None,
-              };
-              let displacement_normal = match (
-                mesh.vertices[vi.key].displacement_normal,
-                mesh.vertices[vj.key].displacement_normal,
-              ) {
-                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-                _ => None,
-              };
-
               // The face we're splitting is the only one that uses this edge, we can just
               // add the new vertex to the mesh
-              let position = vi.interpolate(vj, t, mesh);
+              let position = vi_vtx.position.lerp(&vj_vtx.position, t);
+              let shading_normal = match (vi_vtx.shading_normal, vj_vtx.shading_normal) {
+                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+                _ => None,
+              };
+              let displacement_normal =
+                match (vi_vtx.displacement_normal, vj_vtx.displacement_normal) {
+                  (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+                  _ => None,
+                };
+
               mesh.vertices.insert(linked_mesh::Vertex {
                 position,
                 shading_normal,
                 displacement_normal,
-                edges: Vec::new(),
+                edges: Vec::with_capacity(2),
               })
             };
             let middle_vtx = Vertex {
@@ -494,24 +487,66 @@ impl Polygon {
   }
 
   fn compute_plane(&self, mesh: &mut LinkedMesh<FaceData>) {
-    *self.plane_mut(mesh) = Plane::from_points(
-      self.vtx(0, mesh).pos(mesh),
-      self.vtx(1, mesh).pos(mesh),
-      self.vtx(2, mesh).pos(mesh),
-    );
+    let [v0_pos, v1_pos, v2_pos] = self.vtx_coords(mesh);
+    *self.plane_mut(mesh) = Plane::from_points(v0_pos, v1_pos, v2_pos);
   }
 
   fn set_node_key(&self, node_key: NodeKey, mesh: &mut LinkedMesh<FaceData>) {
     self.user_data_mut(mesh).node_key = node_key;
   }
 
-  fn vtx(&self, ix: usize, mesh: &LinkedMesh<FaceData>) -> Vertex {
-    Vertex {
-      key: if cfg!(feature = "unsafe_indexing") {
-        unsafe { mesh.faces.get_unchecked(self.key).vertices[ix] }
-      } else {
-        mesh.faces[self.key].vertices[ix]
+  fn vtx2(&self, ix0: usize, ix1: usize, mesh: &LinkedMesh<FaceData>) -> [Vertex; 2] {
+    let face = if cfg!(feature = "unsafe_indexing") {
+      unsafe { mesh.faces.get_unchecked(self.key) }
+    } else {
+      &mesh.faces[self.key]
+    };
+    [
+      Vertex {
+        key: face.vertices[ix0],
       },
+      Vertex {
+        key: face.vertices[ix1],
+      },
+    ]
+  }
+
+  fn verts(&self, mesh: &LinkedMesh<FaceData>) -> [Vertex; 3] {
+    let face = if cfg!(feature = "unsafe_indexing") {
+      unsafe { mesh.faces.get_unchecked(self.key) }
+    } else {
+      &mesh.faces[self.key]
+    };
+    [
+      Vertex {
+        key: face.vertices[0],
+      },
+      Vertex {
+        key: face.vertices[1],
+      },
+      Vertex {
+        key: face.vertices[2],
+      },
+    ]
+  }
+
+  fn vtx_coords(&self, mesh: &LinkedMesh<FaceData>) -> [Vec3; 3] {
+    if cfg!(feature = "unsafe_indexing") {
+      unsafe {
+        let face = mesh.faces.get_unchecked(self.key);
+        [
+          mesh.vertices.get_unchecked(face.vertices[0]).position,
+          mesh.vertices.get_unchecked(face.vertices[1]).position,
+          mesh.vertices.get_unchecked(face.vertices[2]).position,
+        ]
+      }
+    } else {
+      let face = &mesh.faces[self.key];
+      [
+        mesh.vertices[face.vertices[0]].position,
+        mesh.vertices[face.vertices[1]].position,
+        mesh.vertices[face.vertices[2]].position,
+      ]
     }
   }
 }
@@ -693,9 +728,9 @@ fn weld_polygon_on_edge<'a>(
   edge_pos: f32,
 ) -> impl Iterator<Item = Polygon> + 'a {
   let [v0, v1] = match edge_ix {
-    0 => [poly.vtx(0, mesh), poly.vtx(1, mesh)],
-    1 => [poly.vtx(1, mesh), poly.vtx(2, mesh)],
-    2 => [poly.vtx(2, mesh), poly.vtx(0, mesh)],
+    0 => poly.vtx2(0, 1, mesh),
+    1 => poly.vtx2(1, 2, mesh),
+    2 => poly.vtx2(2, 0, mesh),
     _ => unreachable!(),
   };
 
@@ -756,11 +791,7 @@ fn maybe_weld_polygon(
   mesh: &mut LinkedMesh<FaceData>,
   nodes: &mut NodeMap,
 ) -> ArrayVec<Polygon, 3> {
-  let vert_coords = [
-    poly.vtx(0, mesh).pos(mesh),
-    poly.vtx(1, mesh).pos(mesh),
-    poly.vtx(2, mesh).pos(mesh),
-  ];
+  let vert_coords = poly.vtx_coords(mesh);
 
   // the epsilon value below seems to matter quite a bit.  The triangle intersection test seems
   // quite prone to floating point precision issues.
@@ -1368,7 +1399,7 @@ impl Node {
       polygons: Vec::new(),
     });
     let self_key = nodes.insert(Node {
-      plane: None,
+      plane: Some(plane.clone()),
       front: None,
       back: None,
       polygons: Vec::new(),
@@ -1401,7 +1432,6 @@ impl Node {
 
     {
       let this = &mut nodes[self_key];
-      this.plane = Some(plane);
       this.front = front;
       this.back = back;
     }

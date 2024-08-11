@@ -1419,11 +1419,10 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         // We set the displacement normal of the new vertex to be the same as the edge's
         // displacement normal.
         //
-        // The other option here is average the displacement normals of the two vertices
-        // of the edge being split.  However, this will cause the normals of
-        // other unrelated faces to be averaged into this new vertex.  That
-        // leads to a sort of inflation effect where the straight edges
-        // will become curved and "blown out".
+        // The other option here is average the displacement normals of the two vertices of the edge
+        // being split.  However, this will cause the normals of other unrelated faces to be
+        // averaged into this new vertex.  That leads to a sort of inflation effect where the
+        // straight edges will become curved and "blown out".
         edge_displacement_normal
       }
     };
@@ -1573,34 +1572,6 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       let edge_key = self.get_or_create_edge([v0, v1]);
       edge_keys[i] = edge_key;
     }
-
-    // TODO DEBUG REMOVE
-    // check if there's an existing face in the mesh that has the same vertices (in any order)
-    // for (face_key, face) in self.faces.iter() {
-    //   if face.vertices.contains(&vertices[0])
-    //     && face.vertices.contains(&vertices[1])
-    //     && face.vertices.contains(&vertices[2])
-    //   {
-    //     panic!(
-    //       "Tried to add face that already exists; vertices={vertices:?}; existing face \
-    //        key={face_key:?} verts={:?}",
-    //       vertices,
-    //     );
-    //   }
-    // }
-    // for &face_key in &self.edges[edge_keys[0]].faces {
-    //   let face = &self.faces[face_key];
-    //   if face.vertices.contains(&vertices[0])
-    //     && face.vertices.contains(&vertices[1])
-    //     && face.vertices.contains(&vertices[2])
-    //   {
-    //     panic!(
-    //       "Tried to add face that already exists; vertices={vertices:?}; existing face \
-    //        key={face_key:?} verts={:?}",
-    //       face.vertices
-    //     );
-    //   }
-    // }
 
     let face_key = self.faces.insert(Face {
       vertices,

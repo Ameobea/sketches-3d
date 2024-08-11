@@ -22,7 +22,7 @@ export const processLoadedScene = async (
   });
 
   // const sphere = new THREE.SphereGeometry(5, 12, 12);
-  const sphere = new THREE.TorusGeometry(5, 1.5, 24, 8);
+  const sphere = new THREE.TorusGeometry(5, 1.5, 24, 18);
   // const sphere = new THREE.BoxGeometry(5, 5, 5);
   if (!sphere.index) {
     const indices = new Uint16Array(sphere.attributes.position.count);
