@@ -31,7 +31,7 @@ pub fn csg_sandbox_init(indices: &[u32], vertices: &[f32]) -> *mut CsgSandboxCtx
 
   let csg0 = CSG::from(mesh);
   let csg1 = CSG::new_cube(Vec3::new(0.2435, 3.523, 3.59756), 4.);
-  let mesh = csg1.subtract(csg0.mesh);
+  let mesh = csg1.intersect(csg0.mesh);
 
   // let sharp_edge_threshold_rads = 0.8;
   // mesh.mark_edge_sharpness(sharp_edge_threshold_rads);

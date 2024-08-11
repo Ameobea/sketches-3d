@@ -12,7 +12,7 @@ use lyon_tessellation::{
 use slotmap::Key;
 
 use crate::{
-  linked_mesh::{self, DisplacementNormalMethod, EdgeSplitPos, FaceKey, Vec3, VertexKey},
+  linked_mesh::{self, DisplacementNormalMethod, Edge, EdgeSplitPos, FaceKey, Vec3, VertexKey},
   LinkedMesh,
 };
 
@@ -1026,6 +1026,34 @@ impl Node {
       .map(|poly| poly.key)
       .collect::<FxHashSet<_>>();
 
+    fn is_boundary_edge(edge: &Edge, all_face_keys: &FxHashSet<FaceKey>) -> bool {
+      edge
+        .faces
+        .iter()
+        .filter(|&face| all_face_keys.contains(face))
+        .count()
+        == 1
+    }
+
+    fn is_interior_vtx(
+      vtx_key: VertexKey,
+      mesh: &LinkedMesh<FaceData>,
+      all_face_keys: &FxHashSet<FaceKey>,
+    ) -> bool {
+      let vtx = &mesh.vertices[vtx_key];
+      vtx.edges.iter().all(|&edge_key| {
+        let edge = &mesh.edges[edge_key];
+        !is_boundary_edge(edge, all_face_keys)
+      })
+    }
+
+    let interior_vtx_keys: FxHashSet<VertexKey> = all_vtx_keys
+      .iter()
+      .filter(|&vtx_key| is_interior_vtx(*vtx_key, mesh, &all_face_keys))
+      .copied()
+      .collect();
+    let boundary_vtx_count = all_vtx_keys.len() - interior_vtx_keys.len();
+
     let Some((start_face_key, start_edge_key)) = all_face_keys.iter().find_map(|&face_key| {
       for edge in mesh.faces[face_key].edges {
         let mut contained_face_count = 0usize;
@@ -1134,6 +1162,15 @@ impl Node {
     // assert!(perimeter_is_closed, "Perimeter is not closed");
     if !perimeter_is_closed {
       log::warn!("Perimeter is not closed");
+      return None;
+    }
+
+    if perimeter.len() != boundary_vtx_count {
+      log::warn!(
+        "Perimeter has {} vertices, but there are {boundary_vtx_count} boundary vertices.  \
+         Probably has holes or other complicated geometry",
+        perimeter.len()
+      );
       return None;
     }
 
@@ -1623,7 +1660,7 @@ impl CSG {
     // }
 
     Node::traverse_mut(a_key, &mut nodes, &mut |node_key, node| {
-      // node.remesh_lyon(node_key, &mut mesh);
+      node.remesh_lyon(node_key, &mut mesh);
       // node.remesh_earcut(node_key, &mut mesh);
     });
 

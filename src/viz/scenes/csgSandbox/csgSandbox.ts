@@ -71,9 +71,9 @@ export const processLoadedScene = async (
     // viz.scene.add(arrow);
   }
 
-  // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+  const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
   // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: false, opacity: 0.57 });
-  const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
+  // const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
 
