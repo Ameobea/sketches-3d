@@ -67,6 +67,35 @@ pub fn set_debug_print(f: fn(&str) -> ()) {
   }
 }
 
+/// Same as Vec::retain but it doesn't preserve order of elements and can possibly work a bit faster
+/// if only removing a few elements.
+fn swap_retain<T>(vec: &mut Vec<T>, mut f: impl FnMut(&mut T) -> bool) {
+  let mut i = 0;
+  while i < vec.len() {
+    if !f(&mut vec[i]) {
+      vec.swap_remove(i);
+    } else {
+      i += 1;
+    }
+  }
+}
+
+/// Same as SmallVec::retain but it doesn't preserve order of elements and can possibly work a bit
+/// faster if only removing a few elements.
+fn swap_retain_sv<T: smallvec::Array>(
+  vec: &mut SmallVec<T>,
+  mut f: impl FnMut(&mut <T as smallvec::Array>::Item) -> bool,
+) {
+  let mut i = 0;
+  while i < vec.len() {
+    if !f(&mut vec[i]) {
+      vec.swap_remove(i);
+    } else {
+      i += 1;
+    }
+  }
+}
+
 impl<T> Face<T> {
   pub fn vertex_positions(&self, verts: &SlotMap<VertexKey, Vertex>) -> [Vec3; 3] {
     [
@@ -481,7 +510,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
         for &vert_key in &dropped_edge.vertices {
           let vert = &mut self.vertices[vert_key];
-          vert.edges.retain(|&e| e != edge_key);
+          swap_retain(&mut vert.edges, |&mut e| e != edge_key);
         }
       }
     }
@@ -851,12 +880,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     // reference any faces
     for old_edge_key in old_edge_keys {
       let edge = &mut self.edges[old_edge_key];
-      edge.faces.retain(|&mut f| f != face_key);
+      swap_retain_sv(&mut edge.faces, |&mut f| f != face_key);
 
       if edge.faces.is_empty() {
         for vtx_key in edge.vertices {
           let vtx = &mut self.vertices[vtx_key];
-          vtx.edges.retain(|&e| e != old_edge_key);
+          swap_retain(&mut vtx.edges, |&mut e| e != old_edge_key);
         }
         self.edges.remove(old_edge_key);
       }
@@ -1524,7 +1553,18 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   pub fn get_edge_key_from_sorted(&self, sorted_edge_keys: [VertexKey; 2]) -> Option<EdgeKey> {
-    self.vertices[sorted_edge_keys[0]]
+    // iter through the vtx with fewer edges
+    let [vtx0, vtx1] = [
+      &self.vertices[sorted_edge_keys[0]],
+      &self.vertices[sorted_edge_keys[1]],
+    ];
+    let vtx = if vtx0.edges.len() < vtx1.edges.len() {
+      vtx0
+    } else {
+      vtx1
+    };
+
+    vtx
       .edges
       .iter()
       .find(|&&edge_key| {
@@ -1607,12 +1647,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
            with key={face_key:?}",
         )
       });
-      edge.faces.retain(|&mut f| f != face_key);
+      swap_retain_sv(&mut edge.faces, |&mut f| f != face_key);
       if edge.faces.is_empty() {
         let edge = self.edges.remove(edge_key).unwrap();
         for vert_key in edge.vertices {
           let vert = &mut self.vertices[vert_key];
-          vert.edges.retain(|&e| e != edge_key);
+          swap_retain(&mut vert.edges, |&mut e| e != edge_key);
         }
       }
     }

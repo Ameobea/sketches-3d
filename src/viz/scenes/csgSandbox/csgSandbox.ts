@@ -22,7 +22,7 @@ export const processLoadedScene = async (
   });
 
   // const sphere = new THREE.SphereGeometry(5, 12, 12);
-  const sphere = new THREE.TorusGeometry(5, 1.5, 24, 18);
+  const sphere = new THREE.TorusKnotGeometry(5, 1.5, 64, 32);
   // const sphere = new THREE.BoxGeometry(5, 5, 5);
   if (!sphere.index) {
     const indices = new Uint16Array(sphere.attributes.position.count);
@@ -50,30 +50,30 @@ export const processLoadedScene = async (
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
 
-  for (let vtxIx = 0; vtxIx < vertices.length / 3; vtxIx += 1) {
-    const vtx = new THREE.Vector3(vertices[vtxIx * 3], vertices[vtxIx * 3 + 1], vertices[vtxIx * 3 + 2]);
-    const normal = new THREE.Vector3(normals[vtxIx * 3], normals[vtxIx * 3 + 1], normals[vtxIx * 3 + 2]);
+  // for (let vtxIx = 0; vtxIx < vertices.length / 3; vtxIx += 1) {
+  //   const vtx = new THREE.Vector3(vertices[vtxIx * 3], vertices[vtxIx * 3 + 1], vertices[vtxIx * 3 + 2]);
+  //   const normal = new THREE.Vector3(normals[vtxIx * 3], normals[vtxIx * 3 + 1], normals[vtxIx * 3 + 2]);
 
-    if (normal.length() < 0.01) {
-      // add a marker to indicate this
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(0.1, 0.1, 0.1),
-        new THREE.MeshBasicMaterial({ color: 0xff0000 })
-      );
-      box.position.set(vtx.x, vtx.y, vtx.z);
-      box.userData.nocollide = true;
-      viz.scene.add(box);
-      continue;
-    }
+  //   if (normal.length() < 0.01) {
+  //     // add a marker to indicate this
+  //     const box = new THREE.Mesh(
+  //       new THREE.BoxGeometry(0.1, 0.1, 0.1),
+  //       new THREE.MeshBasicMaterial({ color: 0xff0000 })
+  //     );
+  //     box.position.set(vtx.x, vtx.y, vtx.z);
+  //     box.userData.nocollide = true;
+  //     viz.scene.add(box);
+  //     continue;
+  //   }
 
-    const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
-    arrow.userData.nocollide = true;
-    // viz.scene.add(arrow);
-  }
+  //   const arrow = new THREE.ArrowHelper(normal, vtx, 1.5, 0xff0000, 0.2, 0.08);
+  //   arrow.userData.nocollide = true;
+  //   viz.scene.add(arrow);
+  // }
 
-  const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+  // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
   // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: false, opacity: 0.57 });
-  // const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
+  const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
 

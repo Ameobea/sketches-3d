@@ -1008,7 +1008,7 @@ impl Node {
   fn compute_perimeter(
     &self,
     mesh: &LinkedMesh<FaceData>,
-  ) -> Option<(Vec<VertexKey>, FxHashSet<VertexKey>)> {
+  ) -> Option<(Vec<VertexKey>, Vec<VertexKey>)> {
     // don't bother re-meshing already trivial polygons
     if self.polygons.len() < 3 {
       return None;
@@ -1047,7 +1047,7 @@ impl Node {
       })
     }
 
-    let interior_vtx_keys: FxHashSet<VertexKey> = all_vtx_keys
+    let interior_vtx_keys: Vec<VertexKey> = all_vtx_keys
       .iter()
       .filter(|&vtx_key| is_interior_vtx(*vtx_key, mesh, &all_face_keys))
       .copied()
@@ -1174,12 +1174,6 @@ impl Node {
       return None;
     }
 
-    // TODO: detect holes and skip re-meshing if they exist
-    let mut interior_vtx_keys = all_vtx_keys;
-    for &vtx_key in &perimeter {
-      interior_vtx_keys.remove(&vtx_key);
-    }
-
     Some((perimeter, interior_vtx_keys))
   }
 
@@ -1210,8 +1204,7 @@ impl Node {
     }
     for vtx_key in interior_vtx_keys {
       if !mesh.vertices[vtx_key].edges.is_empty() {
-        log::warn!("Interior vertex has edges");
-        continue;
+        panic!("Interior vertex has edges");
       }
       let vtx = mesh.vertices.remove(vtx_key).unwrap();
       assert!(vtx.edges.is_empty());
@@ -1272,8 +1265,7 @@ impl Node {
     }
     for vtx_key in interior_vtx_keys {
       if !mesh.vertices[vtx_key].edges.is_empty() {
-        log::warn!("Interior vertex has edges");
-        continue;
+        panic!("Interior vertex has edges");
       }
       let vtx = mesh.vertices.remove(vtx_key).unwrap();
       assert!(vtx.edges.is_empty());
