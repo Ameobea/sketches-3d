@@ -1185,8 +1185,7 @@ impl Node {
     let is_flipped = self.polygons[0].user_data(mesh).is_flipped;
     for poly in &self.polygons[1..] {
       if poly.user_data(mesh).is_flipped != is_flipped {
-        log::warn!("Polygons have different winding orders");
-        return;
+        panic!("Polygons have different winding orders");
       }
     }
 
@@ -1203,11 +1202,10 @@ impl Node {
       mesh.remove_face(poly.key);
     }
     for vtx_key in interior_vtx_keys {
-      if !mesh.vertices[vtx_key].edges.is_empty() {
-        panic!("Interior vertex has edges");
-      }
-      let vtx = mesh.vertices.remove(vtx_key).unwrap();
-      assert!(vtx.edges.is_empty());
+      assert!(
+        mesh.vertices.remove(vtx_key).unwrap().edges.is_empty(),
+        "Interior vertex has edges"
+      );
     }
 
     let to_2d = |vtx_key: VertexKey| {
@@ -1223,20 +1221,22 @@ impl Node {
     let after_face_count = indices.len() / 3;
     log::info!("earcut: {before_face_count} -> {after_face_count} faces");
 
-    for &[i0, i1, i2] in indices.array_chunks::<3>() {
-      let vtx_keys = [perimeter[i0], perimeter[i1], perimeter[i2]];
-      let face_key = mesh.add_face(
-        vtx_keys,
-        FaceData {
-          plane: plane.clone(),
-          node_key: self_key,
-          is_flipped,
-        },
-      );
-      let poly = Polygon::new(face_key);
-      poly.set_node_key(self_key, mesh);
-      self.polygons.push(poly);
-    }
+    self
+      .polygons
+      .extend(indices.array_chunks::<3>().map(|&[i0, i1, i2]| {
+        let vtx_keys = [perimeter[i0], perimeter[i1], perimeter[i2]];
+        let face_key = mesh.add_face(
+          vtx_keys,
+          FaceData {
+            plane: plane.clone(),
+            node_key: self_key,
+            is_flipped,
+          },
+        );
+        let poly = Polygon::new(face_key);
+        poly.set_node_key(self_key, mesh);
+        poly
+      }));
   }
 
   fn remesh_lyon(&mut self, self_key: NodeKey, mesh: &mut LinkedMesh<FaceData>) {
@@ -1247,8 +1247,7 @@ impl Node {
     let is_flipped = self.polygons[0].user_data(mesh).is_flipped;
     for poly in &self.polygons[1..] {
       if poly.user_data(mesh).is_flipped != is_flipped {
-        log::warn!("Polygons have different winding orders");
-        return;
+        panic!("Polygons have different winding orders");
       }
     }
 
@@ -1264,11 +1263,10 @@ impl Node {
       mesh.remove_face(poly.key);
     }
     for vtx_key in interior_vtx_keys {
-      if !mesh.vertices[vtx_key].edges.is_empty() {
-        panic!("Interior vertex has edges");
-      }
-      let vtx = mesh.vertices.remove(vtx_key).unwrap();
-      assert!(vtx.edges.is_empty());
+      assert!(
+        mesh.vertices.remove(vtx_key).unwrap().edges.is_empty(),
+        "Interior vertex has edges"
+      );
     }
 
     let to_2d = |vtx_key: VertexKey| {
@@ -1290,6 +1288,9 @@ impl Node {
       vertices: Vec<VertexKey>,
       mesh: &'a mut LinkedMesh<FaceData>,
       polys: Vec<Polygon>,
+      plane: Plane,
+      self_key: NodeKey,
+      is_flipped: bool,
     }
 
     impl<'a> GeometryBuilder for CustomBuilder<'a> {
@@ -1299,10 +1300,18 @@ impl Node {
         b: lyon_tessellation::VertexId,
         c: lyon_tessellation::VertexId,
       ) {
+        // idk why these are flipped
         let a = self.vertices[a.0 as usize];
         let b = self.vertices[b.0 as usize];
         let c = self.vertices[c.0 as usize];
-        let face_key = self.mesh.add_face([c, b, a], FaceData::default());
+        let face_key = self.mesh.add_face(
+          [c, b, a],
+          FaceData {
+            plane: self.plane.clone(),
+            node_key: self.self_key,
+            is_flipped: self.is_flipped,
+          },
+        );
         self.polys.push(Polygon::new(face_key));
       }
     }
@@ -1330,6 +1339,9 @@ impl Node {
       vertices: Vec::new(),
       mesh,
       polys: Vec::new(),
+      plane,
+      self_key,
+      is_flipped,
     };
 
     let mut tessellator = FillTessellator::new();
@@ -1349,16 +1361,11 @@ impl Node {
     let new_polys = vertex_builder.polys;
     let after_face_count = new_polys.len();
     log::info!("lyon: {before_face_count} -> {after_face_count} faces for node_key={self_key:?}");
-    for poly in &new_polys {
-      let user_data = poly.user_data_mut(mesh);
-      user_data.node_key = self_key;
-      user_data.plane = plane.clone();
-      user_data.is_flipped = is_flipped;
-    }
+
     self.polygons = new_polys;
   }
 
-  fn traverse_mut(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut dyn FnMut(NodeKey, &mut Node)) {
+  fn traverse_mut(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut impl FnMut(NodeKey, &mut Node)) {
     cb(self_key, &mut nodes[self_key]);
     if let Some(front_key) = nodes[self_key].front {
       Node::traverse_mut(front_key, nodes, cb);
@@ -1377,7 +1384,7 @@ impl Node {
     polygons
   }
 
-  fn drain_polygons(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut dyn FnMut(Polygon)) {
+  fn drain_polygons(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut impl FnMut(Polygon)) {
     Self::traverse_mut(self_key, nodes, &mut |_key, node| {
       for poly in node.polygons.drain(..) {
         cb(poly);
