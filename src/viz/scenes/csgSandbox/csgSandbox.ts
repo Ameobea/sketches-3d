@@ -21,21 +21,29 @@ export const processLoadedScene = async (
     return engine;
   });
 
-  // const sphere = new THREE.SphereGeometry(5, 12, 12);
-  const sphere = new THREE.TorusKnotGeometry(5, 1.5, 64, 32);
-  // const sphere = new THREE.BoxGeometry(5, 5, 5);
-  if (!sphere.index) {
-    const indices = new Uint16Array(sphere.attributes.position.count);
+  const mesh0 = new THREE.SphereGeometry(9, 7, 7);
+  // const mesh0 = new THREE.TorusKnotGeometry(5, 1.5, 16, 8);
+  // const mesh0 = new THREE.BoxGeometry(5, 5, 5);
+  if (!mesh0.index) {
+    const indices = new Uint16Array(mesh0.attributes.position.count);
     for (let i = 0; i < indices.length; i += 1) {
       indices[i] = i;
     }
-    sphere.setIndex(new THREE.BufferAttribute(indices, 1));
+    mesh0.setIndex(new THREE.BufferAttribute(indices, 1));
   }
 
-  const ctx = csg.csg_sandbox_init(
-    new Uint32Array(sphere.index!.array),
-    new Float32Array(sphere.attributes.position.array)
+  const mesh1 = new THREE.TorusKnotGeometry(8, 2.5, 63, 28);
+
+  const mesh0Ptr = csg.create_mesh(
+    new Uint32Array(mesh0.index!.array),
+    new Float32Array(mesh0.attributes.position.array)
   );
+  const mesh1Ptr = csg.create_mesh(
+    new Uint32Array(mesh1.index!.array),
+    new Float32Array(mesh1.attributes.position.array.map(v => v + 0.002))
+  );
+
+  const ctx = csg.csg_sandbox_init(mesh0Ptr, mesh1Ptr);
   const indices = csg.csg_sandbox_take_indices(ctx);
   const vertices = csg.csg_sandbox_take_vertices(ctx);
   const normals = csg.csg_sandbox_take_normals(ctx);
@@ -72,8 +80,8 @@ export const processLoadedScene = async (
   // }
 
   // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-  // const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: false, opacity: 0.57 });
-  const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
+  const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: false, opacity: 0.57 });
+  // const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
   const mesh = new THREE.Mesh(geometry, debugMat);
   viz.scene.add(mesh);
 
@@ -81,7 +89,7 @@ export const processLoadedScene = async (
   const platformGeo = new THREE.BoxGeometry(50, 1, 50);
   const platformMat = new THREE.MeshPhysicalMaterial({ color: 0x003300, flatShading: true });
   const platform = new THREE.Mesh(platformGeo, platformMat);
-  platform.position.set(0, -3, 0);
+  platform.position.set(0, -7, 0);
   viz.scene.add(platform);
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {

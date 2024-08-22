@@ -53,7 +53,7 @@ pub enum Coplanars {
   SingleBuffer(NodeKey),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FaceData {
   pub plane: Plane,
   pub node_key: NodeKey,
@@ -119,27 +119,22 @@ impl Coplanars {
 
 // I'm pretty sure this only works for convex polygons
 fn triangulate_polygon<'a>(
-  vertices: ArrayVec<Vertex, 4>,
+  vertices: ArrayVec<VertexKey, 4>,
   mesh: &'a mut LinkedMesh<FaceData>,
   plane: &'a Plane,
   node_key: NodeKey,
   is_flipped: bool,
 ) -> impl Iterator<Item = Polygon> + 'a {
   (2..vertices.len()).map(move |i| {
-    let face_vertices = [vertices[0], vertices[i - 1], vertices[i]];
     let face_key = mesh.add_face(
-      [
-        face_vertices[0].key,
-        face_vertices[1].key,
-        face_vertices[2].key,
-      ],
+      [vertices[0], vertices[i - 1], vertices[i]],
       FaceData {
         plane: plane.clone(),
         node_key,
         is_flipped,
       },
     );
-    Polygon::new(face_key)
+    Polygon { key: face_key }
   })
 }
 
@@ -148,7 +143,6 @@ enum PolygonClass {
   Coplanar = 0,
   Front = 1,
   Back = 2,
-  #[allow(dead_code)]
   Spanning = 3,
 }
 
@@ -175,6 +169,14 @@ impl BitOr for PolygonClass {
 
 const TEMP_NODE_KEY_0: NodeKey = unsafe { std::mem::transmute((1u32, 1u32)) };
 const TEMP_NODE_KEY_1: NodeKey = unsafe { std::mem::transmute((1u32, 2u32)) };
+
+fn vtx_pos<T>(vtx_key: VertexKey, mesh: &LinkedMesh<T>) -> Vec3 {
+  if cfg!(feature = "unsafe_indexing") {
+    unsafe { mesh.vertices.get_unchecked(vtx_key).position }
+  } else {
+    mesh.vertices[vtx_key].position
+  }
+}
 
 fn handle_split_faces(
   split_faces: &mut Vec<((FaceKey, FaceData), [FaceKey; 2])>,
@@ -208,7 +210,7 @@ fn handle_split_faces(
         // return None;
       }
 
-      let poly = Polygon::new(new_face_key);
+      let poly = Polygon { key: new_face_key };
       let user_data = poly.user_data_mut(mesh);
       user_data.plane = old_face_data.plane.clone();
       user_data.node_key = node_key;
@@ -286,13 +288,8 @@ impl Plane {
   ) {
     let mut polygon_type = PolygonClass::Coplanar;
     let mut types = [PolygonClass::Coplanar; 3];
-    for (vtx_ix, vertex) in mesh.faces[polygon.key]
-      .vertices
-      .iter()
-      .map(|vtx_key| Vertex { key: *vtx_key })
-      .enumerate()
-    {
-      let t = self.normal.dot(&vertex.pos(mesh)) - self.w;
+    for (vtx_ix, vtx) in mesh.faces[polygon.key].vertices.iter().copied().enumerate() {
+      let t = self.normal.dot(&vtx_pos(vtx, mesh)) - self.w;
       let polygon_class = if t < -EPSILON {
         PolygonClass::Back
       } else if t > EPSILON {
@@ -323,11 +320,11 @@ impl Plane {
         nodes[back_key].polygons.push(polygon);
       }
       PolygonClass::Spanning => {
-        let mut f = ArrayVec::<Vertex, 4>::new();
-        let mut b = ArrayVec::<Vertex, 4>::new();
+        let mut f = ArrayVec::<VertexKey, 4>::new();
+        let mut b = ArrayVec::<VertexKey, 4>::new();
         let mut split_vertices = ArrayVec::<_, 2>::new();
 
-        let verts = polygon.verts(mesh);
+        let verts = mesh.faces[polygon.key].vertices;
         let old_poly_user_data = mesh.remove_face(polygon.key);
         let split_faces = get_split_face_scratch();
         assert!(split_faces.is_empty());
@@ -336,27 +333,27 @@ impl Plane {
           let j = (i + 1) % 3;
           let ti = types[i];
           let tj = types[j];
-          let vi = verts[i];
-          let vj = verts[j];
+          let vi_key = verts[i];
+          let vj_key = verts[j];
 
           if ti != PolygonClass::Back {
-            f.push(vi);
+            f.push(vi_key);
           }
           if ti != PolygonClass::Front {
-            b.push(vi);
+            b.push(vi_key);
           }
           if (ti | tj) == PolygonClass::Spanning {
-            let vi_vtx = &mesh.vertices[vi.key];
-            let vj_vtx = &mesh.vertices[vj.key];
-            let t = (self.w - self.normal.dot(&vi_vtx.position))
-              / self.normal.dot(&(vj_vtx.position - vi_vtx.position));
+            let vi = &mesh.vertices[vi_key];
+            let vj = &mesh.vertices[vj_key];
+            let t = (self.w - self.normal.dot(&vi.position))
+              / self.normal.dot(&(vj.position - vi.position));
 
-            let middle_vtx_key = if let Some(edge_key) = mesh.get_edge_key([vi.key, vj.key]) {
+            let middle_vtx_key = if let Some(edge_key) = mesh.get_edge_key([vi_key, vj_key]) {
               mesh.split_edge_cb(
                 edge_key,
                 EdgeSplitPos {
                   pos: t,
-                  start_vtx_key: vi.key,
+                  start_vtx_key: vi_key,
                 },
                 DisplacementNormalMethod::Interpolate,
                 |old_face_key, old_face_data, new_face_keys| {
@@ -366,16 +363,15 @@ impl Plane {
             } else {
               // The face we're splitting is the only one that uses this edge, we can just
               // add the new vertex to the mesh
-              let position = vi_vtx.position.lerp(&vj_vtx.position, t);
-              let shading_normal = match (vi_vtx.shading_normal, vj_vtx.shading_normal) {
+              let position = vi.position.lerp(&vj.position, t);
+              let shading_normal = match (vi.shading_normal, vj.shading_normal) {
                 (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
                 _ => None,
               };
-              let displacement_normal =
-                match (vi_vtx.displacement_normal, vj_vtx.displacement_normal) {
-                  (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-                  _ => None,
-                };
+              let displacement_normal = match (vi.displacement_normal, vj.displacement_normal) {
+                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+                _ => None,
+              };
 
               mesh.vertices.insert(linked_mesh::Vertex {
                 position,
@@ -384,13 +380,10 @@ impl Plane {
                 edges: Vec::with_capacity(2),
               })
             };
-            let middle_vtx = Vertex {
-              key: middle_vtx_key,
-            };
 
-            f.push(middle_vtx);
-            b.push(middle_vtx);
-            split_vertices.push(middle_vtx);
+            f.push(middle_vtx_key);
+            b.push(middle_vtx_key);
+            split_vertices.push(middle_vtx_key);
           }
         }
 
@@ -423,37 +416,12 @@ impl Plane {
   }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Vertex {
-  pub key: VertexKey,
-}
-
-impl Vertex {
-  fn interpolate<T>(&self, vj: Vertex, t: f32, mesh: &LinkedMesh<T>) -> Vec3 {
-    self.pos(mesh).lerp(&vj.pos(mesh), t)
-  }
-
-  #[inline(always)]
-  pub fn pos<T>(&self, mesh: &LinkedMesh<T>) -> Vec3 {
-    if cfg!(feature = "unsafe_indexing") {
-      unsafe { mesh.vertices.get_unchecked(self.key).position }
-    } else {
-      mesh.vertices[self.key].position
-    }
-  }
-}
-
 #[derive(Debug)]
 pub struct Polygon {
   pub key: FaceKey,
 }
 
 impl Polygon {
-  #[inline(always)]
-  pub fn new(key: FaceKey) -> Self {
-    Self { key }
-  }
-
   pub fn user_data<'a, T>(&self, mesh: &'a LinkedMesh<T>) -> &'a T {
     if cfg!(feature = "unsafe_indexing") {
       unsafe { &mesh.faces.get_unchecked(self.key).data }
@@ -495,39 +463,13 @@ impl Polygon {
     self.user_data_mut(mesh).node_key = node_key;
   }
 
-  fn vtx2(&self, ix0: usize, ix1: usize, mesh: &LinkedMesh<FaceData>) -> [Vertex; 2] {
+  fn vtx2(&self, ix0: usize, ix1: usize, mesh: &LinkedMesh<FaceData>) -> [VertexKey; 2] {
     let face = if cfg!(feature = "unsafe_indexing") {
       unsafe { mesh.faces.get_unchecked(self.key) }
     } else {
       &mesh.faces[self.key]
     };
-    [
-      Vertex {
-        key: face.vertices[ix0],
-      },
-      Vertex {
-        key: face.vertices[ix1],
-      },
-    ]
-  }
-
-  fn verts(&self, mesh: &LinkedMesh<FaceData>) -> [Vertex; 3] {
-    let face = if cfg!(feature = "unsafe_indexing") {
-      unsafe { mesh.faces.get_unchecked(self.key) }
-    } else {
-      &mesh.faces[self.key]
-    };
-    [
-      Vertex {
-        key: face.vertices[0],
-      },
-      Vertex {
-        key: face.vertices[1],
-      },
-      Vertex {
-        key: face.vertices[2],
-      },
-    ]
+    [face.vertices[ix0], face.vertices[ix1]]
   }
 
   fn vtx_coords(&self, mesh: &LinkedMesh<FaceData>) -> [Vec3; 3] {
@@ -693,15 +635,15 @@ fn contains_point_on_vertex() {
 }
 
 fn weld_polygon_at_interior<'a>(
-  vtx: Vertex,
+  vtx: VertexKey,
   poly: &Polygon,
   mesh: &'a mut LinkedMesh<FaceData>,
 ) -> impl Iterator<Item = Polygon> + 'a {
   let verts = &mesh.faces[poly.key].vertices;
   let verts = [
-    [verts[0], verts[1], vtx.key],
-    [verts[2], vtx.key, verts[1]],
-    [verts[2], verts[0], vtx.key],
+    [verts[0], verts[1], vtx],
+    [verts[2], vtx, verts[1]],
+    [verts[2], verts[0], vtx],
   ];
   let old_user_data = mesh.remove_face(poly.key);
 
@@ -714,7 +656,7 @@ fn weld_polygon_at_interior<'a>(
         is_flipped: old_user_data.is_flipped,
       },
     );
-    Polygon::new(face_key)
+    Polygon { key: face_key }
   })
 }
 
@@ -737,12 +679,9 @@ fn weld_polygon_on_edge<'a>(
   let split_faces = get_split_face_scratch();
   assert!(split_faces.is_empty());
 
-  let edge = mesh.get_edge_key([v0.key, v1.key]).unwrap_or_else(|| {
-    panic!(
-      "Couldn't find edge key for vertices {:?} and {:?}",
-      v0.key, v1.key
-    )
-  });
+  let edge = mesh
+    .get_edge_key([v0, v1])
+    .unwrap_or_else(|| panic!("Couldn't find edge key for vertices {v0:?} and {v1:?}",));
 
   // Need to move the polygon into the temporary node so that we can split it
   let poly_key = poly.key;
@@ -753,7 +692,7 @@ fn weld_polygon_on_edge<'a>(
     edge,
     EdgeSplitPos {
       pos: edge_pos,
-      start_vtx_key: v0.key,
+      start_vtx_key: v0,
     },
     DisplacementNormalMethod::Interpolate,
     |old_face_key, old_face_data, new_face_keys| {
@@ -785,7 +724,7 @@ fn weld_polygon_on_edge<'a>(
 /// Checks if `poly` contains `vtx`.  If it does, the polygon is split into three
 /// polygons and the new polygons are returned.  If it doesn't, `None` is returned.
 fn maybe_weld_polygon(
-  vtx: Vertex,
+  vtx: VertexKey,
   out_tmp_key: NodeKey,
   poly: Polygon,
   mesh: &mut LinkedMesh<FaceData>,
@@ -795,7 +734,7 @@ fn maybe_weld_polygon(
 
   // the epsilon value below seems to matter quite a bit.  The triangle intersection test seems
   // quite prone to floating point precision issues.
-  let ixn = triangle_contains_point(&vert_coords, vtx.pos(mesh), 1e-4);
+  let ixn = triangle_contains_point(&vert_coords, vtx_pos(vtx, mesh), 1e-4);
   match ixn {
     Intersection::NoIntersection => ArrayVec::from_iter(std::iter::once(poly)),
     Intersection::WithinCenter => ArrayVec::from_iter(weld_polygon_at_interior(vtx, &poly, mesh)),
@@ -811,7 +750,7 @@ fn maybe_weld_polygon(
 }
 
 fn weld_polygons(
-  split_vertices: &[Vertex],
+  split_vertices: &[VertexKey],
   plane_node_key: NodeKey,
   mesh: &mut LinkedMesh<FaceData>,
   nodes: &mut NodeMap,
@@ -911,6 +850,7 @@ impl Node {
     from_key: NodeKey,
     mesh: &mut LinkedMesh<FaceData>,
     nodes: &mut NodeMap,
+    preserve_from_node: bool,
   ) -> Vec<Polygon> {
     let (plane, front_key, back_key) = {
       let this = &mut nodes[self_key];
@@ -946,11 +886,15 @@ impl Node {
       );
     }
 
+    if !preserve_from_node {
+      assert!(nodes.remove(from_key).unwrap().polygons.is_empty());
+    }
+
     let mut front;
     let mut back = Vec::new();
 
     if let Some(front_key) = front_key {
-      front = Node::clip_polygons(front_key, temp_front_key, mesh, nodes);
+      front = Node::clip_polygons(front_key, temp_front_key, mesh, nodes, true);
 
       // we have to put them back into a temp node because clipping the back polys might cause some
       // of them to be split
@@ -958,22 +902,17 @@ impl Node {
       for poly in &front {
         poly.set_node_key(temp_front_key, mesh);
       }
-      nodes[temp_front_key].polygons = std::mem::take(&mut front);
+      nodes[temp_front_key].polygons = front;
     }
     if let Some(back_key) = back_key {
-      back = Node::clip_polygons(back_key, temp_back_key, mesh, nodes);
+      back = Node::clip_polygons(back_key, temp_back_key, mesh, nodes, false);
     } else {
-      if !back.is_empty() {
-        panic!("Dropping {} polygons", back.len());
+      for poly in nodes.remove(temp_back_key).unwrap().polygons {
+        mesh.remove_face(poly.key);
       }
-      back = Vec::new();
     }
 
     front = nodes.remove(temp_front_key).unwrap().polygons;
-
-    for poly in nodes.remove(temp_back_key).unwrap().polygons {
-      mesh.remove_face(poly.key);
-    }
 
     front.extend(back);
     front
@@ -986,7 +925,7 @@ impl Node {
     mesh: &mut LinkedMesh<FaceData>,
     nodes: &mut NodeMap,
   ) {
-    let new_this_polygons = Node::clip_polygons(bsp_key, self_key, mesh, nodes);
+    let new_this_polygons = Node::clip_polygons(bsp_key, self_key, mesh, nodes, true);
 
     let (front, back) = {
       let this = &mut nodes[self_key];
@@ -1233,7 +1172,7 @@ impl Node {
             is_flipped,
           },
         );
-        let poly = Polygon::new(face_key);
+        let poly = Polygon { key: face_key };
         poly.set_node_key(self_key, mesh);
         poly
       }));
@@ -1312,7 +1251,7 @@ impl Node {
             is_flipped: self.is_flipped,
           },
         );
-        self.polys.push(Polygon::new(face_key));
+        self.polys.push(Polygon { key: face_key });
       }
     }
 
@@ -1600,7 +1539,7 @@ impl CSG {
           our_vtx_key_by_other_vtx_key[&face.vertices[2]],
         ];
         let face_key = mesh.add_face(vertices, face.data);
-        Polygon::new(face_key)
+        Polygon { key: face_key }
       })
       .collect::<Vec<_>>();
 
@@ -1817,7 +1756,7 @@ impl CSG {
     let face_count = 6;
     let mut mesh = LinkedMesh::new(vtx_count, face_count, None);
     for face_vertices in &polygons {
-      let mut polygon_vertices: [Vertex; 4] = uninit();
+      let mut polygon_vertices: [VertexKey; 4] = uninit();
       for (vtx_ix, vtx) in face_vertices.into_iter().enumerate() {
         let pos = Vec3::new(
           center[0] + radius * vtx[0] as f32,
@@ -1828,13 +1767,13 @@ impl CSG {
           position: pos,
           ..Default::default()
         });
-        polygon_vertices[vtx_ix] = Vertex { key: vtx_key };
+        polygon_vertices[vtx_ix] = vtx_key;
       }
 
       let plane = Plane::from_points(
-        polygon_vertices[0].pos(&mesh),
-        polygon_vertices[1].pos(&mesh),
-        polygon_vertices[2].pos(&mesh),
+        vtx_pos(polygon_vertices[0], &mesh),
+        vtx_pos(polygon_vertices[1], &mesh),
+        vtx_pos(polygon_vertices[2], &mesh),
       );
       for _ in triangulate_polygon(
         polygon_vertices.into(),
@@ -1853,7 +1792,7 @@ impl CSG {
 
     let mut faces = Vec::with_capacity(mesh.faces.len());
     for (face_key, _face) in mesh.faces.iter() {
-      faces.push(Polygon::new(face_key));
+      faces.push(Polygon { key: face_key });
     }
     for poly in &faces {
       poly.compute_plane(&mut mesh);
@@ -1867,7 +1806,7 @@ impl From<LinkedMesh<FaceData>> for CSG {
     let polygons: Vec<Polygon> = mesh
       .faces
       .iter()
-      .map(|(face_key, _face)| Polygon::new(face_key))
+      .map(|(face_key, _face)| Polygon { key: face_key })
       .collect();
     for poly in &polygons {
       poly.compute_plane(&mut mesh);
