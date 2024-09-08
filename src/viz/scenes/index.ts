@@ -114,7 +114,7 @@ export interface SceneDef {
 const ParticleConduit: SceneDef = {
   sceneName: 'blink',
   sceneLoader: () => import('./blink').then(mod => mod.processLoadedScene),
-  legacyLights: true,
+  legacyLights: false,
   metadata: {
     title: 'Particle Conduit',
     description:

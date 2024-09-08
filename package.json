@@ -15,7 +15,8 @@
     "@ianvs/prettier-plugin-sort-imports": "^4.3.1",
     "@sveltejs/adapter-auto": "next",
     "@sveltejs/adapter-static": "^3.0.4",
-    "@sveltejs/kit": "=1.29.1",
+    "@sveltejs/kit": "=2.5.26",
+    "@sveltejs/vite-plugin-svelte": "^3.1.2",
     "@types/three": "^0.159.0",
     "@typescript-eslint/eslint-plugin": "^8.4.0",
     "@typescript-eslint/parser": "^8.4.0",
@@ -41,6 +42,6 @@
     "svelte-seo": "1.6.1",
     "three": "^0.159.0",
     "three-good-godrays": "^0.7.1",
-    "tweakpane": "^3.1.0"
+    "tweakpane": "^4.0.4"
   }
 }

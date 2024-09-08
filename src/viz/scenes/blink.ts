@@ -3,8 +3,6 @@ import { Pane } from 'tweakpane';
 
 import type { SceneConfig } from '.';
 import type { VizState } from '..';
-// import { buildCustomShader } from '../shaders/customShader';
-// import redNoiseShader from '../shaders/redNoise.frag?raw';
 import { initBaseScene } from '../util';
 
 const buildControls = (
@@ -16,22 +14,22 @@ const buildControls = (
 ) => {
   const defaultConf = JSON.parse(defaultConfJson);
 
-  const pane = new Pane({});
-  pane.addInput({ color_0: 0x8a0606, theme: 'dark' }, 'color_0', { view: 'color' });
-  pane.addInput({ color_1: 0xff2424, theme: 'dark' }, 'color_1', { view: 'color' });
-  pane.addInput({ drag_coefficient: defaultConf['drag_coefficient'], theme: 'dark' }, 'drag_coefficient', {
+  const pane = new Pane();
+  pane.addBinding({ color_0: 0x8a0606, theme: 'dark' }, 'color_0', { view: 'color' });
+  pane.addBinding({ color_1: 0xff2424, theme: 'dark' }, 'color_1', { view: 'color' });
+  pane.addBinding({ drag_coefficient: defaultConf['drag_coefficient'], theme: 'dark' }, 'drag_coefficient', {
     min: 0.92,
     max: 1,
   });
-  pane.addInput({ noise_frequency: defaultConf['noise_frequency'], theme: 'dark' }, 'noise_frequency', {
+  pane.addBinding({ noise_frequency: defaultConf['noise_frequency'], theme: 'dark' }, 'noise_frequency', {
     min: 0.1,
     max: 4,
   });
-  pane.addInput({ noise_amplitude: defaultConf['noise_amplitude'], theme: 'dark' }, 'noise_amplitude', {
+  pane.addBinding({ noise_amplitude: defaultConf['noise_amplitude'], theme: 'dark' }, 'noise_amplitude', {
     min: 0,
     max: 10000,
   });
-  pane.addInput(
+  pane.addBinding(
     { noise_time_warp_speed: defaultConf['noise_time_warp_speed'], theme: 'dark' },
     'noise_time_warp_speed',
     {
@@ -39,7 +37,7 @@ const buildControls = (
       max: 1,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     { conduit_acceleration_per_second: defaultConf['conduit_acceleration_per_second'], theme: 'dark' },
     'conduit_acceleration_per_second',
     {
@@ -47,7 +45,7 @@ const buildControls = (
       max: 1000,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     { tidal_force_amplitude: defaultConf['tidal_force_amplitude'], theme: 'dark' },
     'tidal_force_amplitude',
     {
@@ -55,7 +53,7 @@ const buildControls = (
       max: 1000,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     { tidal_force_frequency: defaultConf['tidal_force_frequency'], theme: 'dark' },
     'tidal_force_frequency',
     {
@@ -63,7 +61,7 @@ const buildControls = (
       max: 16,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     { particle_spawn_rate_per_second: defaultConf['particle_spawn_rate_per_second'], theme: 'dark' },
     'particle_spawn_rate_per_second',
     {
@@ -71,7 +69,7 @@ const buildControls = (
       max: 8000,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     { conduit_twist_frequency: defaultConf['conduit_twist_frequency'], theme: 'dark' },
     'conduit_twist_frequency',
     {
@@ -79,7 +77,7 @@ const buildControls = (
       max: 0.1,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     { conduit_twist_amplitude: defaultConf['conduit_twist_amplitude'], theme: 'dark' },
     'conduit_twist_amplitude',
     {
@@ -87,11 +85,11 @@ const buildControls = (
       max: 50,
     }
   );
-  pane.addInput({ conduit_radius: defaultConf['conduit_radius'], theme: 'dark' }, 'conduit_radius', {
+  pane.addBinding({ conduit_radius: defaultConf['conduit_radius'], theme: 'dark' }, 'conduit_radius', {
     min: 0.01,
     max: 20,
   });
-  pane.addInput(
+  pane.addBinding(
     { conduit_attraction_magnitude: defaultConf['conduit_attraction_magnitude'], theme: 'dark' },
     'conduit_attraction_magnitude',
     {
@@ -99,7 +97,7 @@ const buildControls = (
       max: 1,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     {
       noise_amplitude_modulation_frequency: defaultConf['noise_amplitude_modulation_frequency'],
       theme: 'dark',
@@ -110,7 +108,7 @@ const buildControls = (
       max: 5,
     }
   );
-  pane.addInput(
+  pane.addBinding(
     {
       noise_amplitude_modulation_amplitude: defaultConf['noise_amplitude_modulation_amplitude'],
       theme: 'dark',
@@ -139,7 +137,7 @@ const buildControls = (
     binds['particle count'] = renderedParticleCount;
     pane.refresh();
   }, 500);
-  pane.addMonitor(binds, 'particle count', {});
+  pane.addBinding(binds, 'particle count', { readonly: true });
 
   const curConf = { ...defaultConf };
   const saveButton = pane.addButton({
@@ -160,7 +158,6 @@ const buildControls = (
 
   pane.on('change', evt => {
     if (!evt.presetKey) {
-      console.error(evt);
       return;
     }
 
@@ -185,18 +182,6 @@ const locations = {
 };
 
 export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
-  // const ground = loadedWorld.getObjectByName('ground')! as THREE.Mesh;
-  // const groundMat = new THREE.ShaderMaterial(
-  //   buildCustomShader(
-  //     {
-  //       roughness: 0.9,
-  //       metalness: 0.6,
-  //       color: new THREE.Color(0x020202),
-  //     },
-  //     { colorShader: redNoiseShader }
-  //   )
-  // );
-  // ground.material = groundMat;
   loadedWorld.children.forEach(obj => {
     obj.removeFromParent();
   });
@@ -218,32 +203,6 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
 
   const conduitStartPos = new THREE.Vector3(-50, 40, -50);
   const conduitEndPos = new THREE.Vector3(100, 40, -100);
-
-  // const conduitMesh = new THREE.Mesh(
-  //   new THREE.TubeBufferGeometry(
-  //     new THREE.LineCurve3(conduitStartPos, conduitEndPos),
-  //     100,
-  //     conduitRaduis,
-  //     10,
-  //     false
-  //   ),
-  //   new THREE.MeshStandardMaterial({ color: 0x181818, metalness: 0.5, roughness: 0.5 })
-  // );
-  // viz.scene.add(conduitMesh);
-
-  // add cube at conduit start + end position
-  // const conduitStartCube = new THREE.Mesh(
-  //   new THREE.BoxGeometry(8, 8, 8),
-  //   new THREE.MeshStandardMaterial({ color: 0x00ff00 })
-  // );
-  // conduitStartCube.position.copy(conduitStartPos);
-  // viz.scene.add(conduitStartCube);
-  // const conduitEndCube = new THREE.Mesh(
-  //   new THREE.BoxBufferGeometry(8, 8, 8),
-  //   new THREE.MeshStandardMaterial({ color: 0xff0000 })
-  // );
-  // conduitEndCube.position.copy(conduitEndPos);
-  // viz.scene.add(conduitEndCube);
 
   const MAX_PARTICLE_COUNT = 80_000;
   const conduitParticles = new THREE.InstancedMesh(
@@ -336,12 +295,14 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     conduitParticles.instanceMatrix.needsUpdate = true;
     conduitParticles2.instanceMatrix.needsUpdate = true;
 
-    conduitParticles.instanceMatrix.updateRange.offset = 0;
-    conduitParticles.instanceMatrix.updateRange.count =
-      (newPositions.length / 3) * conduitParticles.instanceMatrix.itemSize;
-    conduitParticles2.instanceMatrix.updateRange.offset = 0;
-    conduitParticles2.instanceMatrix.updateRange.count =
-      (newPositions2.length / 3) * conduitParticles2.instanceMatrix.itemSize;
+    conduitParticles.instanceMatrix.addUpdateRange(
+      0,
+      (newPositions.length / 3) * conduitParticles.instanceMatrix.itemSize
+    );
+    conduitParticles2.instanceMatrix.addUpdateRange(
+      0,
+      (newPositions2.length / 3) * conduitParticles2.instanceMatrix.itemSize
+    );
   });
 
   const defaultConfJson = engine.get_default_conduit_conf_json();

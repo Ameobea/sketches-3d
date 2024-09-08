@@ -545,7 +545,9 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
   }
 
   const onDestroy = () => {
-    (window as any).lastPos = (window as any).recordPos();
+    if ((window as any).recordPos) {
+      (window as any).lastPos = (window as any).recordPos();
+    }
     renderer.dispose();
     beforeRenderCbs.length = 0;
     afterRenderCbs.length = 0;
