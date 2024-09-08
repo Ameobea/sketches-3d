@@ -25,7 +25,7 @@ export const buildTriplanarDefsFragment = ({
     weights = pow(weights, vec3(${sharpenFactor.toFixed(
       3
     )})); // sharpen to get more weight on the dominant axis
-    weights = weights / dot(weights, vec3(1.)); // normalize
+    weights = weights / (weights.x + weights.y + weights.z);
     return weights;
   }
 

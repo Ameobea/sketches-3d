@@ -356,7 +356,7 @@ impl Plane {
                   start_vtx_key: vi_key,
                 },
                 DisplacementNormalMethod::Interpolate,
-                |old_face_key, old_face_data, new_face_keys| {
+                |_mesh, old_face_key, old_face_data, new_face_keys| {
                   split_faces.push(((old_face_key, old_face_data), new_face_keys))
                 },
               )
@@ -695,7 +695,7 @@ fn weld_polygon_on_edge<'a>(
       start_vtx_key: v0,
     },
     DisplacementNormalMethod::Interpolate,
-    |old_face_key, old_face_data, new_face_keys| {
+    |_mesh, old_face_key, old_face_data, new_face_keys| {
       split_faces.push(((old_face_key, old_face_data), new_face_keys))
     },
   );

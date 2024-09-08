@@ -703,6 +703,7 @@ name = "tessellation"
 version = "0.1.0"
 dependencies = [
  "float-ord",
+ "log",
  "mesh",
 ]
 

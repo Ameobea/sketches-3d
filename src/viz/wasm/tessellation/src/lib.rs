@@ -6,7 +6,7 @@ use mesh::{
   LinkedMesh,
 };
 
-fn get_face_has_edge_needing_split(
+fn does_face_have_edge_needing_split(
   face: &Face<()>,
   mesh: &LinkedMesh,
   should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
@@ -18,16 +18,15 @@ fn get_face_has_edge_needing_split(
     .any(|edge| should_split_edge(mesh, edge))
 }
 
-/// Returns `true` if at least one face was split
-fn tessellate_one_iter(
+pub fn tessellate_mesh_cb(
   mesh: &mut LinkedMesh,
   displacement_normal_method: DisplacementNormalMethod,
   should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
-) -> bool {
-  let face_keys_needing_tessellation: Vec<_> = mesh
+) {
+  let mut face_keys_needing_tessellation: Vec<_> = mesh
     .iter_faces()
     .filter_map(|(face_key, face)| {
-      let has_edge_needing_split = get_face_has_edge_needing_split(face, mesh, should_split_edge);
+      let has_edge_needing_split = does_face_have_edge_needing_split(face, mesh, should_split_edge);
       if has_edge_needing_split {
         Some(face_key)
       } else {
@@ -37,76 +36,58 @@ fn tessellate_one_iter(
     .collect();
 
   if face_keys_needing_tessellation.is_empty() {
-    return false;
+    return;
   }
 
   let mut edges_needing_split = Vec::new();
-  for face_key in face_keys_needing_tessellation {
-    let Some(face) = mesh.faces.get(face_key) else {
-      // This face might have already been split and removed from the mesh
-      continue;
-    };
+  while !face_keys_needing_tessellation.is_empty() {
+    while let Some(face_key) = face_keys_needing_tessellation.pop() {
+      let Some(face) = mesh.faces.get(face_key) else {
+        // This face might have already been split and removed from the mesh
+        continue;
+      };
 
-    // Check again to see if the face still needs tessellation
-    let still_needs_split = get_face_has_edge_needing_split(face, mesh, should_split_edge);
-    if !still_needs_split {
-      continue;
-    }
-
-    let longest_edge_key = face
-      .edges
-      .iter()
-      .map(|&edge_key| edge_key)
-      .max_by_key(|&edge_key| {
-        let edge = &mesh.edges[edge_key];
-        let length = edge.length(&mesh.vertices);
-        FloatOrd(length)
-      })
-      .unwrap();
-    edges_needing_split.push(longest_edge_key);
-  }
-
-  if edges_needing_split.is_empty() {
-    return false;
-  }
-  for edge_key in edges_needing_split {
-    if mesh.edges.get(edge_key).is_none() {
-      // This edge might have already been split and removed from the mesh
-      continue;
-    }
-
-    mesh.split_edge(edge_key, EdgeSplitPos::middle(), displacement_normal_method);
-  }
-
-  if cfg!(debug_assertions) {
-    for edge_key in mesh.edges.keys() {
-      let edge = &mesh.edges[edge_key];
-      for &face_key in &edge.faces {
-        let face = &mesh.faces[face_key];
-        for vtx_key in edge.vertices {
-          if !face.vertices.contains(&vtx_key) {
-            panic!(
-              "Edge doesn't contain vertex in face; edge={edge:?}; face={face:?}; \
-               vtx_key={vtx_key:?}",
-            );
-          }
-        }
+      // Check again to see if the face still needs tessellation
+      let still_needs_split = does_face_have_edge_needing_split(face, mesh, should_split_edge);
+      if !still_needs_split {
+        continue;
       }
+
+      let longest_edge_key = face
+        .edges
+        .iter()
+        .map(|&edge_key| edge_key)
+        .max_by_key(|&edge_key| {
+          let edge = &mesh.edges[edge_key];
+          let length = edge.length(&mesh.vertices);
+          FloatOrd(length)
+        })
+        .unwrap();
+      edges_needing_split.push(longest_edge_key);
     }
-  }
 
-  true
-}
+    if edges_needing_split.is_empty() {
+      return;
+    }
+    while let Some(edge_key) = edges_needing_split.pop() {
+      if mesh.edges.get(edge_key).is_none() {
+        // This edge might have already been split and removed from the mesh
+        continue;
+      }
 
-pub fn tessellate_mesh_cb(
-  mesh: &mut LinkedMesh,
-  displacement_normal_method: DisplacementNormalMethod,
-  should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
-) {
-  loop {
-    let did_split = tessellate_one_iter(mesh, displacement_normal_method, should_split_edge);
-    if !did_split {
-      break;
+      mesh.split_edge_cb(
+        edge_key,
+        EdgeSplitPos::middle(),
+        displacement_normal_method,
+        |mesh, _old_face_key, _face_data, new_face_keys| {
+          for face_key in new_face_keys {
+            let face = &mesh.faces[face_key];
+            if does_face_have_edge_needing_split(face, mesh, should_split_edge) {
+              face_keys_needing_tessellation.push(face_key);
+            }
+          }
+        },
+      );
     }
   }
 }

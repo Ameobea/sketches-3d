@@ -18,7 +18,7 @@ const locations = {
   },
 };
 
-const loadTextures = async (viz: VizState) => {
+const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
   const glassDiffuseTexPromise = loadTexture(loader, 'https://i.ameo.link/cbg.avif', {});
   const glassNormalTexPromise = loadRawTexture('https://i.ameo.link/cbf.avif');
@@ -169,7 +169,7 @@ export const processLoadedScene = async (
   const vertices = basaltEngine.basalt_take_vertices(basaltCtx);
   const indices = basaltEngine.basalt_take_indices(basaltCtx);
   const normals = basaltEngine.basalt_take_normals(basaltCtx);
-  const displacementNormals = basaltEngine.basalt_take_displacement_normals(basaltCtx);
+  // const displacementNormals = basaltEngine.basalt_take_displacement_normals(basaltCtx);
 
   // // add arrows to debug displacement normals
   // for (let i = 0; i < displacementNormals.length; i += 3) {
@@ -199,7 +199,7 @@ export const processLoadedScene = async (
   const needsU32Indices = indices.some(i => i > 65535);
   geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
 
-  const { glassDiffuseTex, glassNormalMap, bgTexture, crystalNormalMap } = await loadTextures(viz);
+  const { glassDiffuseTex, glassNormalMap, bgTexture, crystalNormalMap } = await loadTextures();
 
   viz.scene.background = bgTexture;
 

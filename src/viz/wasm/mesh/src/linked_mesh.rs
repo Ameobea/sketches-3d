@@ -1403,7 +1403,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     edge_key_to_split: EdgeKey,
     split_pos: EdgeSplitPos,
     displacement_normal_method: DisplacementNormalMethod,
-    mut face_split_cb: impl FnMut(FaceKey, FaceData, [FaceKey; 2]) -> (),
+    mut face_split_cb: impl FnMut(&Self, FaceKey, FaceData, [FaceKey; 2]) -> (),
   ) -> VertexKey {
     let edge = self.edges.get(edge_key_to_split).unwrap_or_else(|| {
       panic!("Tried to split edge that doesn't exist; key={edge_key_to_split:?}")
@@ -1520,7 +1520,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       };
 
       let new_face_keys = [add_face(0), add_face(1)];
-      face_split_cb(old_face_key, old_face_data, new_face_keys);
+      face_split_cb(&*self, old_face_key, old_face_data, new_face_keys);
     }
 
     assert!(self.edges.remove(edge_key_to_split).is_none());
@@ -1543,7 +1543,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       edge_key_to_split,
       split_pos,
       displacement_normal_method,
-      |_, _, _| {},
+      |_, _, _, _| {},
     )
   }
 

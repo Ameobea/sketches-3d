@@ -11,6 +11,6 @@ crate-type = ["cdylib"]
 wasm-bindgen = "=0.2.92"
 console_error_panic_hook = "0.1"
 wasm-logger = "0.2"
-log = { version = "0.4", features = ["release_max_level_off"] }
+log = { version = "0.4", features = [] }
 
 mesh = { path = "../mesh" }
