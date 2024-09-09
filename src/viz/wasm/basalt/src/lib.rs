@@ -5,7 +5,7 @@ use common::{random, smoothstep, uninit};
 use crystals::{generate_crystals, BatchMesh};
 use log::info;
 use mesh::{
-  linked_mesh::{set_debug_print, DisplacementNormalMethod, Edge},
+  linked_mesh::{set_debug_print, DisplacementNormalMethod, Edge, Face},
   LinkedMesh, OwnedIndexedMesh, Triangle,
 };
 use nalgebra::Vector3;
@@ -166,7 +166,12 @@ fn gen_tessellated_hex_grid(
   for y in 0..y_count {
     for x in 0..x_count {
       let (hex_center_x, hex_center_z) = get_hex_center_coords(y, x);
-      let hex_height = get_hex_height(hex_center_x, hex_center_z);
+      // keep the outer ring clear to ensure that no hexes have missing sides
+      let hex_height = if x == 0 || y == 0 || x == x_count - 1 || y == y_count - 1 {
+        -1000.
+      } else {
+        get_hex_height(hex_center_x, hex_center_z)
+      };
       hex_heights.push(hex_height);
 
       if hex_height < -10. {
@@ -353,7 +358,7 @@ fn gen_tessellated_hex_grid(
 
 pub struct GenBasaltCtx {
   pub collission_mesh: OwnedIndexedMesh,
-  pub terrrain_mesh: OwnedIndexedMesh,
+  pub terrrain_mesh_chunks: Vec<OwnedIndexedMesh>,
   pub(crate) crystals: Vec<BatchMesh>,
 }
 
@@ -420,7 +425,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
     }
     height
   };
-  let terrain_triangles = gen_tessellated_hex_grid(20, 20, 11., get_height);
+  let terrain_triangles = gen_tessellated_hex_grid(25, 25, 11., get_height);
 
   let mut mesh = LinkedMesh::from_triangles(terrain_triangles);
   let merged_count = mesh.merge_vertices_by_distance(0.0001);
@@ -436,7 +441,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   let mut collission_mesh = mesh.clone();
   let displ_noise = Fbm::new().set_octaves(3);
   displace_mesh(&displ_noise, &mut collission_mesh);
-  let collission_mesh = mesh.to_raw_indexed(true, true);
+  let collission_mesh = mesh.to_raw_indexed(false, false);
 
   let target_edge_length = 3.16;
   let should_split_edge = |mesh: &LinkedMesh, edge: &Edge| -> bool {
@@ -478,29 +483,49 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   let crystals = generate_crystals(&mesh);
   Box::into_raw(Box::new(GenBasaltCtx {
     collission_mesh,
-    terrrain_mesh: mesh.to_raw_indexed(true, true),
+    terrrain_mesh_chunks: mesh.to_raw_indexed_multi(
+      true,
+      false,
+      |face: &Face<()>| -> (isize, isize) {
+        let mins: (f32, f32) = face
+          .iter_vtx_positions(&mesh.vertices)
+          .fold((f32::MAX, f32::MAX), |(min_x, min_z), pos| {
+            (min_x.min(pos.x), min_z.min(pos.z))
+          });
+
+        let chunk_size = 50.;
+        let chunk_x = (mins.0 / chunk_size).floor() as isize;
+        let chunk_z = (mins.1 / chunk_size).floor() as isize;
+        (chunk_x, chunk_z)
+      },
+    ),
     crystals,
   }))
 }
 
 #[wasm_bindgen]
-pub fn basalt_take_vertices(ctx: *mut GenBasaltCtx) -> Vec<f32> {
+pub fn basalt_get_chunk_count(ctx: *mut GenBasaltCtx) -> usize {
   let ctx = unsafe { &mut (*ctx) };
-  std::mem::take(&mut ctx.terrrain_mesh.vertices)
+  ctx.terrrain_mesh_chunks.len()
 }
 
 #[wasm_bindgen]
-pub fn basalt_take_indices(ctx: *mut GenBasaltCtx) -> Vec<usize> {
+pub fn basalt_take_vertices(ctx: *mut GenBasaltCtx, chunk_ix: usize) -> Vec<f32> {
   let ctx = unsafe { &mut (*ctx) };
-  std::mem::take(&mut ctx.terrrain_mesh.indices)
+  std::mem::take(&mut ctx.terrrain_mesh_chunks[chunk_ix].vertices)
 }
 
 #[wasm_bindgen]
-pub fn basalt_take_normals(ctx: *mut GenBasaltCtx) -> Vec<f32> {
+pub fn basalt_take_indices(ctx: *mut GenBasaltCtx, chunk_ix: usize) -> Vec<usize> {
+  let ctx = unsafe { &mut (*ctx) };
+  std::mem::take(&mut ctx.terrrain_mesh_chunks[chunk_ix].indices)
+}
+
+#[wasm_bindgen]
+pub fn basalt_take_normals(ctx: *mut GenBasaltCtx, chunk_ix: usize) -> Vec<f32> {
   let ctx = unsafe { &mut (*ctx) };
   std::mem::take(
-    &mut ctx
-      .terrrain_mesh
+    &mut ctx.terrrain_mesh_chunks[chunk_ix]
       .shading_normals
       .as_mut()
       .expect("Shading normals not found"),
@@ -508,11 +533,10 @@ pub fn basalt_take_normals(ctx: *mut GenBasaltCtx) -> Vec<f32> {
 }
 
 #[wasm_bindgen]
-pub fn basalt_take_displacement_normals(ctx: *mut GenBasaltCtx) -> Vec<f32> {
+pub fn basalt_take_displacement_normals(ctx: *mut GenBasaltCtx, chunk_ix: usize) -> Vec<f32> {
   let ctx = unsafe { &mut (*ctx) };
   std::mem::take(
-    &mut ctx
-      .terrrain_mesh
+    &mut ctx.terrrain_mesh_chunks[chunk_ix]
       .displacement_normals
       .as_mut()
       .expect("Displacement normals not found"),

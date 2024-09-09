@@ -166,9 +166,20 @@ export const processLoadedScene = async (
     return engine;
   });
   const basaltCtx = basaltEngine.basalt_gen();
-  const vertices = basaltEngine.basalt_take_vertices(basaltCtx);
-  const indices = basaltEngine.basalt_take_indices(basaltCtx);
-  const normals = basaltEngine.basalt_take_normals(basaltCtx);
+  const chunkCount = basaltEngine.basalt_get_chunk_count(basaltCtx);
+  const geometries = [];
+  for (let chunkIx = 0; chunkIx < chunkCount; chunkIx++) {
+    const vertices = basaltEngine.basalt_take_vertices(basaltCtx, chunkIx);
+    const indices = basaltEngine.basalt_take_indices(basaltCtx, chunkIx);
+    const normals = basaltEngine.basalt_take_normals(basaltCtx, chunkIx);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    const needsU32Indices = indices.some(i => i > 65535);
+    geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
+    geometries.push(geometry);
+  }
   // const displacementNormals = basaltEngine.basalt_take_displacement_normals(basaltCtx);
 
   // // add arrows to debug displacement normals
@@ -192,12 +203,6 @@ export const processLoadedScene = async (
   collisionGeom.setIndex(new THREE.BufferAttribute(collisionIndices, 1));
   const collisionMesh = new THREE.Mesh(collisionGeom, debugMat);
   viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(collisionMesh));
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-  const needsU32Indices = indices.some(i => i > 65535);
-  geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
 
   const { glassDiffuseTex, glassNormalMap, bgTexture, crystalNormalMap } = await loadTextures();
 
@@ -244,11 +249,13 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
     { useTriplanarMapping: true }
   );
   viz.registerBeforeRenderCb(curTimeSeconds => mat.setCurTimeSeconds(curTimeSeconds));
-  const mesh = new THREE.Mesh(geometry, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.position.set(0, 0, 0);
-  viz.scene.add(mesh);
+  for (const geometry of geometries) {
+    const mesh = new THREE.Mesh(geometry, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.position.set(0, 0, 0);
+    viz.scene.add(mesh);
+  }
 
   const crystalMat = buildCustomShader(
     {

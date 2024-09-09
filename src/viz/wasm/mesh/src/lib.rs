@@ -1,5 +1,7 @@
 #![feature(array_chunks, iter_array_chunks)]
 
+use fxhash::FxHashMap;
+use linked_mesh::{Mat4, Vec3, Vertex, VertexKey};
 use nalgebra::Vector3;
 
 pub mod linked_mesh;
@@ -120,4 +122,83 @@ pub struct OwnedIndexedMesh {
   pub displacement_normals: Option<Vec<f32>>,
   pub indices: Vec<usize>,
   pub transform: Option<nalgebra::Matrix4<f32>>,
+}
+
+pub struct OwnedIndexedMeshBuilder {
+  pub cur_vert_ix: usize,
+  pub seen_vtx_keys: FxHashMap<VertexKey, usize>,
+  pub mesh: OwnedIndexedMesh,
+}
+
+impl OwnedIndexedMeshBuilder {
+  pub fn with_capacity(
+    vtx_count: usize,
+    face_count: usize,
+    include_displacement_normals: bool,
+    include_shading_normals: bool,
+  ) -> Self {
+    OwnedIndexedMeshBuilder {
+      cur_vert_ix: 0,
+      seen_vtx_keys: FxHashMap::default(),
+      mesh: OwnedIndexedMesh {
+        vertices: Vec::with_capacity(vtx_count * 3),
+        shading_normals: if include_shading_normals {
+          Some(Vec::with_capacity(vtx_count * 3))
+        } else {
+          None
+        },
+        displacement_normals: if include_displacement_normals {
+          Some(Vec::with_capacity(vtx_count * 3))
+        } else {
+          None
+        },
+        indices: Vec::with_capacity(face_count * 3),
+        transform: None,
+      },
+    }
+  }
+
+  pub fn new(include_displacement_normals: bool, include_shading_normals: bool) -> Self {
+    OwnedIndexedMeshBuilder::with_capacity(
+      0,
+      0,
+      include_displacement_normals,
+      include_shading_normals,
+    )
+  }
+
+  pub fn add_vtx(&mut self, vtx_key: VertexKey, vtx: &Vertex) {
+    let vert_ix = *self.seen_vtx_keys.entry(vtx_key).or_insert_with(|| {
+      let ix = self.cur_vert_ix;
+      self.mesh.vertices.extend(vtx.position.iter());
+      if let Some(shading_normals) = self.mesh.shading_normals.as_mut() {
+        if let Some(shading_normal) = vtx.shading_normal {
+          shading_normals.extend(shading_normal.iter());
+        } else {
+          // panic!("Vertex {vert_key:?} has no shading normal");
+          shading_normals.extend(Vec3::zeros().iter());
+        }
+      }
+      if let Some(displacement_normals) = self.mesh.displacement_normals.as_mut() {
+        if let Some(displacement_normal) = vtx.displacement_normal {
+          displacement_normals.extend(displacement_normal.iter());
+        } else {
+          // panic!("Vertex {vert_key:?} has no displacement normal");
+          displacement_normals.extend(Vec3::zeros().iter());
+        }
+      }
+      self.cur_vert_ix += 1;
+      ix
+    });
+    self.mesh.indices.push(vert_ix);
+  }
+
+  pub fn build(mut self, transform: Option<Mat4>) -> OwnedIndexedMesh {
+    self.mesh.transform = transform;
+    self.mesh
+  }
+
+  fn is_empty(&self) -> bool {
+    self.mesh.vertices.is_empty()
+  }
 }

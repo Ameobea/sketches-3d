@@ -1,10 +1,12 @@
+use std::hash::Hash;
+
 use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxHashMap, FxHashSet};
 use nalgebra::{Matrix4, Vector3};
 use slotmap::{new_key_type, Key, SlotMap};
 use smallvec::SmallVec;
 
-use crate::{OwnedIndexedMesh, OwnedMesh, Triangle};
+use crate::{OwnedIndexedMesh, OwnedIndexedMeshBuilder, OwnedMesh, Triangle};
 
 pub type Vec3 = Vector3<f32>;
 pub type Mat4 = Matrix4<f32>;
@@ -103,6 +105,16 @@ impl<T> Face<T> {
       verts[self.vertices[1]].position,
       verts[self.vertices[2]].position,
     ]
+  }
+
+  pub fn iter_vtx_positions<'a>(
+    &'a self,
+    verts: &'a SlotMap<VertexKey, Vertex>,
+  ) -> impl Iterator<Item = &'a Vec3> + 'a {
+    self
+      .vertices
+      .iter()
+      .map(move |&vtx_key| &verts[vtx_key].position)
   }
 
   pub fn normal(&self, verts: &SlotMap<VertexKey, Vertex>) -> Vector3<f32> {
@@ -1306,67 +1318,59 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     include_shading_normals: bool,
     include_displacement_normals: bool,
   ) -> OwnedIndexedMesh {
-    let mut vertices = Vec::with_capacity(self.vertices.len() * 3);
-    let mut shading_normals = if include_shading_normals {
-      Vec::with_capacity(self.vertices.len() * 3)
-    } else {
-      Vec::new()
-    };
-    let mut displacement_normals = if include_displacement_normals {
-      Vec::with_capacity(self.vertices.len() * 3)
-    } else {
-      Vec::new()
-    };
-    let mut indices = Vec::with_capacity(self.faces.len() * 3);
-
-    let mut cur_vert_ix = 0;
-    let mut seen_vertex_keys =
-      FxHashMap::with_capacity_and_hasher(self.vertices.len(), fxhash::FxBuildHasher::default());
+    let mut builder = OwnedIndexedMeshBuilder::with_capacity(
+      self.vertices.len(),
+      self.faces.len(),
+      include_displacement_normals,
+      include_shading_normals,
+    );
 
     for face in self.faces.values() {
       if face.is_degenerate(&self.vertices) {
         continue;
       }
 
-      for &vert_key in &face.vertices {
-        let vert = &self.vertices[vert_key];
-        let vert_ix = *seen_vertex_keys.entry(vert_key).or_insert_with(|| {
-          let ix = cur_vert_ix;
-          vertices.extend(vert.position.iter());
-          if let Some(shading_normal) = vert.shading_normal {
-            shading_normals.extend(shading_normal.iter());
-          } else if include_shading_normals {
-            // panic!("Vertex {vert_key:?} has no shading normal");
-            shading_normals.extend(Vec3::zeros().iter());
-          }
-          if let Some(displacement_normal) = vert.displacement_normal {
-            displacement_normals.extend(displacement_normal.iter());
-          } else if include_displacement_normals {
-            // panic!("Vertex {vert_key:?} has no displacement normal");
-            displacement_normals.extend(Vec3::zeros().iter());
-          }
-          cur_vert_ix += 1;
-          ix
-        });
-        indices.push(vert_ix);
+      for &vtx_key in &face.vertices {
+        let vtx = &self.vertices[vtx_key];
+        builder.add_vtx(vtx_key, vtx)
       }
     }
 
-    OwnedIndexedMesh {
-      vertices,
-      shading_normals: if include_shading_normals {
-        Some(shading_normals)
-      } else {
-        None
-      },
-      displacement_normals: if include_displacement_normals {
-        Some(displacement_normals)
-      } else {
-        None
-      },
-      indices,
-      transform: self.transform.clone(),
+    builder.build(self.transform.clone())
+  }
+
+  /// Works the same as `to_raw_indexed` but splits the triangles into multiple different meshes
+  /// based on `partition_fn`.
+  pub fn to_raw_indexed_multi<T: Hash + Eq>(
+    &self,
+    include_shading_normals: bool,
+    include_displacement_normals: bool,
+    partition_fn: impl Fn(&Face<FaceData>) -> T,
+  ) -> Vec<OwnedIndexedMesh> {
+    let mut out_meshes = FxHashMap::default();
+
+    for face in self.faces.values() {
+      if face.is_degenerate(&self.vertices) {
+        continue;
+      }
+
+      let out_key = partition_fn(face);
+      let builder = out_meshes.entry(out_key).or_insert_with(|| {
+        OwnedIndexedMeshBuilder::new(include_displacement_normals, include_shading_normals)
+      });
+
+      for &vtx_key in &face.vertices {
+        let vtx = &self.vertices[vtx_key];
+        builder.add_vtx(vtx_key, vtx)
+      }
     }
+
+    out_meshes
+      .into_iter()
+      .map(|(_k, v)| v)
+      .filter(|builder| !builder.is_empty())
+      .map(|builder| builder.build(self.transform.clone()))
+      .collect()
   }
 
   pub fn to_owned_mesh(&self, transform: Option<Mat4>) -> OwnedMesh {
