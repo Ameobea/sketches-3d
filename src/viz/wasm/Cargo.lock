@@ -30,6 +30,7 @@ dependencies = [
  "bitvec",
  "common",
  "console_error_panic_hook",
+ "fxhash",
  "log",
  "mesh",
  "nalgebra 0.33.0",
