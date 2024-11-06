@@ -682,6 +682,8 @@ export const initViz = (
     }
 
     (window as any).locations = () => Object.keys(sceneConf.locations);
+    (window as any).exportScene = () =>
+      import('./helpers/gltfExport').then(({ exportScene }) => exportScene(viz.scene));
 
     if (sceneConf.enableInventory) {
       // TODO: set up inventory CBs
