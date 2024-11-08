@@ -291,7 +291,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
   pk_pylons: {
     gltfName: 'pk_pylons',
     extension: 'glb',
-    sceneLoader: () => import('./pkPylons/pkPylons').then(mod => mod.processLoadedScene),
+    sceneLoader: () => import('./pkPylons/pkPylons.svelte.ts').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'pk_pylons' },
   },
@@ -325,6 +325,14 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./csgSandbox/csgSandbox').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'CSG sandbox' },
+    legacyLights: false,
+  },
+  ssrSandbox: {
+    gltfName: 'basalt',
+    extension: 'glb',
+    sceneLoader: () => import('./ssrSandbox/ssrSandbox').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'SSR sandbox' },
     legacyLights: false,
   },
 };

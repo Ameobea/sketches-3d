@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import type { VizState } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
-import { buildCustomShader, CustomShaderMaterial, type MaterialClass } from 'src/viz/shaders/customShader';
+import { buildCustomShader, type MaterialClass } from 'src/viz/shaders/customShader';
 import {
   genCrossfadedTexture,
   generateNormalMapFromTexture,
@@ -27,7 +27,6 @@ import {
 import { delay, DEVICE_PIXEL_RATIO, smoothstep } from 'src/viz/util';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
-// import { CustomEffectComposer } from './CustomEffectComposer';
 import { FogPass } from './fogShader';
 
 const locations = {
@@ -118,7 +117,7 @@ const loadTextures = async () => {
   };
 };
 
-const initScene = async (viz: VizState, loadedWorld: THREE.Group, vizConfig: VizConfig) => {
+const initScene = async (viz: VizState, loadedWorld: THREE.Group, _vizConfig: VizConfig) => {
   const {
     cementTextureCombinedDiffuseNormal,
     cloudsBgTexture,

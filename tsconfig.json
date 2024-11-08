@@ -12,7 +12,8 @@
     "paths": {
       "src/*": ["./src/*"]
     },
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true
   },
   "exclude": ["node_modules/*", "build/*", "src/ammojs/*", "src/engineComp/*"]
 }

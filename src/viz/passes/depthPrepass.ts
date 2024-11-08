@@ -80,17 +80,4 @@ export class MainRenderPass extends RenderPass {
     super(scene, camera);
     this.clear = false;
   }
-
-  render(
-    renderer: THREE.WebGLRenderer,
-    inputBuffer: THREE.WebGLRenderTarget,
-    outputBuffer: THREE.WebGLRenderTarget,
-    deltaTime?: number | undefined,
-    stencilTest?: boolean | undefined
-  ) {
-    const ctx = renderer.getContext();
-    // ctx.depthFunc(ctx.EQUAL);
-    super.render.apply(this, [renderer, inputBuffer, outputBuffer, deltaTime, stencilTest]);
-    // ctx.depthFunc(ctx.LEQUAL);
-  }
 }

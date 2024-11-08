@@ -1,4 +1,4 @@
-import { get, writable, type Writable } from 'svelte/store';
+import { get, type Writable } from 'svelte/store';
 import * as THREE from 'three';
 
 import type { VizState } from 'src/viz';
@@ -6,11 +6,12 @@ import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import type { SceneConfig } from '..';
-import { CollectablesCtx, initCollectables } from './collectables';
+import { type CollectablesCtx, initCollectables } from './collectables';
 import { initDashTokens } from './DashToken';
 import TimerDisplay from './TimerDisplay.svelte';
 import TimeDisplay, { Score, type ScoreThresholds } from './TimeDisplay.svelte';
 import { buildMaterials } from './materials';
+import { mount, unmount } from 'svelte';
 
 const locations = {
   spawn: {
@@ -137,7 +138,7 @@ export const processLoadedScene = async (
     [Score.B]: 50,
   };
   let curRunStartTimeSeconds: number | null = null;
-  let winState: { winTimeSeconds: number; displayComp: TimeDisplay } | null = null;
+  let winState: { winTimeSeconds: number; displayComp: any } | null = null;
 
   viz.collisionWorldLoadedCbs.push(fpCtx =>
     fpCtx.registerJumpCb(curTimeSeconds => {
@@ -153,7 +154,7 @@ export const processLoadedScene = async (
     const target = document.createElement('div');
     document.body.appendChild(target);
     const time = curTimeSeconds - (curRunStartTimeSeconds ?? 0);
-    const displayComp = new TimeDisplay({ target, props: { scoreThresholds, time } });
+    const displayComp = mount(TimeDisplay, { target, props: { scoreThresholds, time } });
     winState = { winTimeSeconds: curTimeSeconds, displayComp };
 
     viz.fpCtx!.setSpawnPos(locations.spawn.pos, locations.spawn.rot);
@@ -175,7 +176,8 @@ export const processLoadedScene = async (
 
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const timerDisplay = new TimerDisplay({ target, props: { curTime: 0 } });
+  const timerDisplayProps = $state({ curTime: 0 });
+  const _timerDisplay = mount(TimerDisplay, { target, props: timerDisplayProps });
   viz.registerAfterRenderCb(curTimeSeconds => {
     const elapsedSeconds = (() => {
       if (curRunStartTimeSeconds === null) {
@@ -188,7 +190,7 @@ export const processLoadedScene = async (
 
       return curTimeSeconds - curRunStartTimeSeconds;
     })();
-    timerDisplay.$$set({ curTime: elapsedSeconds });
+    timerDisplayProps.curTime = elapsedSeconds;
   });
 
   const reset = () => {
@@ -197,7 +199,9 @@ export const processLoadedScene = async (
     viz.fpCtx!.teleportPlayer(locations.spawn.pos, locations.spawn.rot);
     viz.fpCtx!.reset();
     curRunStartTimeSeconds = null;
-    winState?.displayComp.$destroy();
+    if (winState?.displayComp) {
+      unmount(winState.displayComp);
+    }
     winState = null;
     viz.fpCtx!.setSpawnPos(locations.spawn.pos, locations.spawn.rot);
   };

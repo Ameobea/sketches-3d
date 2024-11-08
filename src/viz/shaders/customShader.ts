@@ -8,6 +8,8 @@ import GeneratedUVsFragment from './generatedUVs.vert?raw';
 import noiseShaders from './noise.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 import { buildTriplanarDefsFragment, type TriplanarMappingParams } from './triplanarMapping';
+import ssrDefsFragment from './ssr/ssrDefs.frag?raw';
+import ssrWriteFragment from './ssr/ssrWrite.frag?raw';
 
 // import noise2Shaders from './noise2.frag?raw';
 const noise2Shaders = 'DISABLED TO SAVE SPACE';
@@ -56,7 +58,8 @@ const AntialiasedRoughnessShaderFragment = `
   roughnessFactor = acc;
 `;
 
-const NonAntialiasedRoughnessShaderFragment = `roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);`;
+const NonAntialiasedRoughnessShaderFragment =
+  'roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);';
 
 const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   if (antialiasRoughnessShader) {
@@ -78,6 +81,14 @@ let DefaultDistanceAmpParams: AmbientDistanceAmpParams | undefined;
 export const setDefaultDistanceAmpParams = (params: AmbientDistanceAmpParams | null | undefined) => {
   DefaultDistanceAmpParams = params ?? undefined;
 };
+
+interface ReflectionParams {
+  alpha: number;
+}
+
+const DefaultReflectionParams: ReflectionParams = Object.freeze({
+  alpha: 1,
+});
 
 /**
  * Used for determining default behavior like sound effects for when the player lands on a surface
@@ -144,6 +155,10 @@ export interface CustomShaderProps {
    * Works in a similar way to exp2 fog but in reverse and with a configurable exponent.
    */
   ambientDistanceAmp?: AmbientDistanceAmpParams;
+  /**
+   * Controls screen-space reflections.
+   */
+  reflection?: Partial<ReflectionParams>;
 }
 
 interface CustomShaderShaders {
@@ -220,6 +235,7 @@ export const buildCustomShaderArgs = (
     fogShadowFactor = 0.1,
     ambientLightScale = 1,
     ambientDistanceAmp = DefaultDistanceAmpParams,
+    reflection: providedReflectionParams,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -304,6 +320,8 @@ export const buildCustomShaderArgs = (
   if (lightMapIntensity !== undefined) {
     uniforms.lightMapIntensity = { type: 'f', value: lightMapIntensity };
   }
+
+  const usingSSR = !!providedReflectionParams;
 
   // TODO: enable physically correct lights, look into it at least
 
@@ -825,6 +843,9 @@ void main() {
   ${customVertexFragment ?? ''}
 }`,
     fragmentShader: `
+layout(location = 0) out vec4 outFragColor;
+${usingSSR ? 'layout(location = 1) out vec4 outReflectionData;' : ''}
+
 #define STANDARD
 
 #ifdef PHYSICAL
@@ -964,6 +985,7 @@ ${
       )
     : ''
 }
+${usingSSR ? ssrDefsFragment : ''}
 
 void main() {
 	#include <clipping_planes_fragment>
@@ -1018,7 +1040,7 @@ void main() {
 
   ${
     metalnessShader
-      ? `metalnessFactor = getCustomMetalness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);`
+      ? 'metalnessFactor = getCustomMetalness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);'
       : ''
   }
 
@@ -1064,9 +1086,29 @@ void main() {
 		outgoingLight = outgoingLight * ( 1.0 - material.clearcoat * Fcc ) + ( clearcoatSpecularDirect + clearcoatSpecularIndirect ) * material.clearcoat;
 	#endif
 
-	#include <opaque_fragment>
-	${!disableToneMapping ? '#include <tonemapping_fragment>' : ''}
-	#include <colorspace_fragment>
+	// #include <opaque_fragment>
+  #ifdef OPAQUE
+  diffuseColor.a = 1.0;
+  #endif
+
+  #ifdef USE_TRANSMISSION
+  diffuseColor.a *= material.transmissionAlpha;
+  #endif
+
+  outFragColor = vec4( outgoingLight, diffuseColor.a );
+  ${
+    !disableToneMapping
+      ? `
+  #if defined( TONE_MAPPING )
+	  outFragColor.rgb = toneMapping( outFragColor.rgb );
+  #endif
+
+  ${usingSSR ? ssrWriteFragment : ''}
+  `
+      : ''
+  }
+	// #include <colorspace_fragment>
+  outFragColor = linearToOutputTexel( outFragColor );
 	${
     enableFog
       ? `
@@ -1081,15 +1123,22 @@ void main() {
     vec3 shadowColor = vec3( 0.0 );
     float fogShadowFactor = ${fogShadowFactor.toFixed(4)};
     vec3 shadowedFogColor = mix(fogColor, shadowColor, fogShadowFactor * (1. - totalShadow) * clamp(0., 1., fogFactor * 1.5));
-    gl_FragColor.rgb = mix( gl_FragColor.rgb, shadowedFogColor, fogFactor );
-    // gl_FragColor.w = mix( gl_FragColor.a, 0., fogFactor );
+    outFragColor.rgb = mix( outFragColor.rgb, shadowedFogColor, fogFactor );
+    // outFragColor.w = mix( outFragColor.a, 0., fogFactor );
   #endif
   `
       : ''
   }
-	#include <premultiplied_alpha_fragment>
-	#include <dithering_fragment>
+	// #include <premultiplied_alpha_fragment>
+  #ifdef PREMULTIPLIED_ALPHA
+    outFragColor.rgb *= outFragColor.a;
+  #endif
+	// #include <dithering_fragment>
+  #ifdef DITHERING
+    outFragColor.rgb = dithering( outFragColor.rgb );
+  #endif
 }`,
+    glslVersion: THREE.GLSL3,
   };
 };
 
@@ -1099,6 +1148,15 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
    */
   public materialClass: MaterialClass = MaterialClass.Default;
   public flatShading: boolean = false;
+  /**
+   * This flag is set when the material makes use of SSR and expects a second color attachment to be
+   * set on the framebuffer.
+   *
+   * This is read in `defaultPostprocessing.ts` which does some hacky patching of Three.JS to handle
+   * binding/unbinding the second buffer as needed to prevent errors that WebGL throws if an output
+   * texture is bound but not written to.
+   */
+  public needsSSRBuffer = false;
 
   constructor(args: THREE.ShaderMaterialParameters, materialClass: MaterialClass) {
     super(args);
@@ -1127,6 +1185,7 @@ export const buildCustomShader = (
     buildCustomShaderArgs(props, shaders, opts),
     opts?.materialClass ?? MaterialClass.Default
   );
+  mat.needsSSRBuffer = !!props.reflection;
 
   if (props.name) {
     mat.name = props.name;
@@ -1147,6 +1206,13 @@ export const buildCustomShader = (
 
   if (props.iridescence) {
     mat.defines.USE_IRIDESCENCE = '1';
+  }
+
+  if (props.reflection) {
+    const reflectionParams = { ...DefaultReflectionParams, ...props.reflection };
+    mat.defines.SSR_ALPHA = reflectionParams.alpha.toFixed(4);
+  } else {
+    mat.defines.SSR_ALPHA = '0.';
   }
 
   mat.defines.PHYSICAL = '1';

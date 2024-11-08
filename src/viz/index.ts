@@ -1,6 +1,6 @@
 import { get, type Writable } from 'svelte/store';
 import * as THREE from 'three';
-import * as Stats from 'three/examples/jsm/libs/stats.module';
+import * as Stats from 'three/examples/jsm/libs/stats.module.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
@@ -9,7 +9,7 @@ import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
 import { type AddPlayerRegionContactCB, getAmmoJS, initBulletPhysics } from './collision';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
-import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger';
+import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger.svelte.ts';
 import { initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
@@ -197,6 +197,7 @@ const setupFirstPerson = async ({
       console.warn(`No location found for ${posName}`);
     }
   };
+  (window as any).tpos = (x: number, y: number, z: number) => teleportPlayer(new THREE.Vector3(x, y, z));
 
   window.onbeforeunload = function () {
     if ((window as any).recordPos) {
@@ -358,7 +359,7 @@ const initPauseHandlers = (
       }
     }
   });
-  document.addEventListener('pointerlockchange', evt => {
+  document.addEventListener('pointerlockchange', _evt => {
     if (isBlurred) {
       return;
     }
@@ -400,7 +401,7 @@ const initCustomKeyHandlers = (customControlsEntries: CustomControlsEntry[] | un
 export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
   try {
     (screen.orientation as any).lock('landscape').catch(() => 0);
-  } catch (err) {
+  } catch (_err) {
     // pass
   }
 
@@ -655,7 +656,7 @@ export const initViz = (
     }
     providedSceneName = providedSceneName.toLowerCase();
 
-    let scene = sceneName
+    const scene = sceneName
       ? gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group()
       : new THREE.Group();
 

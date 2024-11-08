@@ -473,7 +473,7 @@ export const initBulletPhysics = ({
     }
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
-    let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
+    const vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
     const indices = geometry.index?.array as Uint16Array | undefined;
     if (vertices instanceof Uint16Array) {
       throw new Error('GLTF Quantization not yet supported');
@@ -577,7 +577,7 @@ export const initBulletPhysics = ({
           case 'mesh': {
             const mesh = region.mesh;
             const geometry = mesh.geometry as THREE.BufferGeometry;
-            let vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
+            const vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
             const indices = geometry.index?.array as Uint16Array | undefined;
             if (vertices instanceof Uint16Array) {
               throw new Error('GLTF Quantization not yet supported');
