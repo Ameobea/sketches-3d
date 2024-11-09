@@ -1210,7 +1210,8 @@ export const buildCustomShader = (
 
   if (props.reflection) {
     const reflectionParams = { ...DefaultReflectionParams, ...props.reflection };
-    mat.defines.SSR_ALPHA = reflectionParams.alpha.toFixed(4);
+    // Setting alpha to 1. causes no reflections to be emitted since that's the default value for the cleared buffer
+    mat.defines.SSR_ALPHA = Math.min(reflectionParams.alpha, 0.9999).toFixed(4);
   } else {
     mat.defines.SSR_ALPHA = '0.';
   }

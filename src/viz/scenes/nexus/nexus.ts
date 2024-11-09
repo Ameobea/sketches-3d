@@ -215,24 +215,27 @@ export const processLoadedScene = async (
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
 
-      const n8aoPass = new N8AOPostPass(
-        viz.scene,
-        viz.camera,
-        viz.renderer.domElement.width,
-        viz.renderer.domElement.height
-      );
-      composer.addPass(n8aoPass);
-      n8aoPass.gammaCorrection = false;
-      n8aoPass.configuration.intensity = 2;
-      n8aoPass.configuration.aoRadius = 5;
-      // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
-      n8aoPass.setQualityMode(
-        {
-          [GraphicsQuality.Low]: 'Low',
-          [GraphicsQuality.Medium]: 'Low',
-          [GraphicsQuality.High]: 'High',
-        }[vizConf.graphics.quality]
-      );
+      if (vizConf.graphics.quality > GraphicsQuality.Low) {
+        const n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        composer.addPass(n8aoPass);
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.configuration.intensity = 2;
+        n8aoPass.configuration.aoRadius = 5;
+        // \/ this breaks rendering and makes the background black if enabled
+        // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Performance',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'High',
+          }[vizConf.graphics.quality]
+        );
+      }
     },
     undefined,
     { toneMappingExposure: 1.48 },

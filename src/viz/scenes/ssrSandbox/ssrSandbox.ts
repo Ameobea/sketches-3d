@@ -12,6 +12,8 @@ export const processLoadedScene = async (
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
   viz.renderer.shadowMap.enabled = false;
+  // viz.camera.far = 100;
+  // viz.camera.updateProjectionMatrix();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
@@ -20,17 +22,17 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight);
 
   // add a platform to stand on
-  const platformGeo = new THREE.BoxGeometry(50, 1, 50);
+  const platformGeo = new THREE.BoxGeometry(50, 30, 50);
   const platformMat = buildCustomShader({
-    //  reflection: {},
+    reflection: { alpha: 0.95 },
     color: 0x003300,
   });
   const platform = new THREE.Mesh(platformGeo, platformMat);
-  platform.position.set(0, -7, 0);
+  platform.position.set(0, -20, 0);
   viz.scene.add(platform);
 
   const ssrMaterial = buildCustomShader({
-    reflection: { alpha: 0.9 },
+    // reflection: { alpha: 0.9 },
     color: 0x990099,
   });
   const cube = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 3), ssrMaterial);
@@ -38,10 +40,10 @@ export const processLoadedScene = async (
   viz.scene.add(cube);
 
   const vanillaCube = new THREE.Mesh(
-    new THREE.BoxGeometry(3, 3, 3),
+    new THREE.BoxGeometry(3, 30, 3),
     new THREE.MeshBasicMaterial({ color: 0x0000ff })
   );
-  vanillaCube.position.set(10, 3, 10);
+  vanillaCube.position.set(10, -10, 10);
   viz.scene.add(vanillaCube);
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {

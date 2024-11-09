@@ -497,24 +497,28 @@ export const processLoadedScene = async (
   foregroundRenderPass.clearPass.enabled = false;
   effectComposer.addPass(foregroundRenderPass);
 
-  const n8aoPass = new N8AOPostPass(
-    viz.scene,
-    viz.camera,
-    viz.renderer.domElement.width,
-    viz.renderer.domElement.height
-  );
-  effectComposer.addPass(n8aoPass);
-  n8aoPass.gammaCorrection = false;
-  n8aoPass.configuration.intensity = 2;
-  n8aoPass.configuration.aoRadius = 5;
-  n8aoPass.configuration.halfRes = vizConfig.graphics.quality <= GraphicsQuality.Low;
-  n8aoPass.setQualityMode(
-    {
-      [GraphicsQuality.Low]: 'Low',
-      [GraphicsQuality.Medium]: 'Low',
-      [GraphicsQuality.High]: 'Medium',
-    }[vizConfig.graphics.quality]
-  );
+  if (vizConf.graphics.quality > GraphicsQuality.Low) {
+    const n8aoPass = new N8AOPostPass(
+      viz.scene,
+      viz.camera,
+      viz.renderer.domElement.width,
+      viz.renderer.domElement.height
+    );
+    effectComposer.addPass(n8aoPass);
+    n8aoPass.gammaCorrection = false;
+    n8aoPass.configuration.intensity = 2;
+    n8aoPass.configuration.aoRadius = 5;
+    // \/ this breaks rendering and makes the background black if enabled
+    // n8aoPass.configuration.halfRes = vizConfig.graphics.quality <= GraphicsQuality.Medium;
+    n8aoPass.configuration.accumulate = true;
+    n8aoPass.setQualityMode(
+      {
+        [GraphicsQuality.Low]: 'Performance',
+        [GraphicsQuality.Medium]: 'Low',
+        [GraphicsQuality.High]: 'High',
+      }[vizConfig.graphics.quality]
+    );
+  }
 
   const glassScene = new THREE.Scene();
 

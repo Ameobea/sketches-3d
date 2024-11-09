@@ -118,8 +118,13 @@ interface GodraysCompositorMaterialProps {
 }
 
 class GodraysCompositorMaterial extends THREE.ShaderMaterial implements Resizable {
-  constructor({ godrays, edgeStrength, edgeRadius, color }: GodraysCompositorMaterialProps) {
+  constructor(
+    camera: THREE.PerspectiveCamera,
+    { godrays, edgeStrength, edgeRadius, color }: GodraysCompositorMaterialProps
+  ) {
     const uniforms = {
+      cameraNear: { value: 0 },
+      cameraFar: { value: 0 },
       godrays: { value: godrays },
       sceneDiffuse: { value: null },
       sceneDepth: { value: null },
@@ -138,10 +143,15 @@ class GodraysCompositorMaterial extends THREE.ShaderMaterial implements Resizabl
       vertexShader: GodraysCompositorVertexShader,
     });
 
-    this.updateUniforms(edgeStrength, edgeRadius, color);
+    this.updateUniforms(camera, edgeStrength, edgeRadius, color);
   }
 
-  public updateUniforms(edgeStrength: number, edgeRadius: number, color: THREE.Color): void {
+  public updateUniforms(
+    camera: THREE.PerspectiveCamera,
+    edgeStrength: number,
+    edgeRadius: number,
+    color: THREE.Color
+  ): void {
     this.uniforms.edgeStrength.value = edgeStrength;
     this.uniforms.edgeRadius.value = edgeRadius;
     this.uniforms.color.value = color;
@@ -153,13 +163,14 @@ class GodraysCompositorMaterial extends THREE.ShaderMaterial implements Resizabl
 }
 
 class GodraysCompositorPass extends Pass implements Resizable {
-  constructor(props: GodraysCompositorMaterialProps) {
+  constructor(camera: THREE.PerspectiveCamera, props: GodraysCompositorMaterialProps) {
     super('GodraysCompositorPass');
-    this.fullscreenMaterial = new GodraysCompositorMaterial(props);
+    this.fullscreenMaterial = new GodraysCompositorMaterial(camera, props);
   }
 
-  public updateUniforms(params: GodraysEffectParams): void {
+  public updateUniforms(camera: THREE.PerspectiveCamera, params: GodraysEffectParams): void {
     (this.fullscreenMaterial as GodraysCompositorMaterial).updateUniforms(
+      camera,
       params.edgeStrength,
       params.edgeRadius,
       params.color
@@ -195,7 +206,7 @@ class GodraysCompositorPass extends Pass implements Resizable {
 
 interface GodraysEffectProps {
   pointLight: THREE.PointLight;
-  camera: THREE.Camera;
+  camera: THREE.PerspectiveCamera;
   blueNoiseTexture: THREE.Texture;
 }
 
@@ -282,7 +293,7 @@ export class GodraysEffect extends Pass implements Disposable {
    */
   constructor(
     light: THREE.PointLight,
-    camera: THREE.Camera,
+    camera: THREE.PerspectiveCamera,
     blueNoiseTexture: THREE.Texture,
     partialParams: Partial<GodraysEffectParams> = {}
   ) {
@@ -298,7 +309,7 @@ export class GodraysEffect extends Pass implements Disposable {
     this.godraysPass = new GodraysPass(this.props, params);
     this.godraysPass.needsDepthTexture = true;
 
-    this.compositorPass = new GodraysCompositorPass({
+    this.compositorPass = new GodraysCompositorPass(camera, {
       godrays: this.godraysRenderTarget.texture,
       edgeStrength: params.edgeStrength,
       edgeRadius: params.edgeRadius,
@@ -316,7 +327,7 @@ export class GodraysEffect extends Pass implements Disposable {
   public setParams(partialParams: Partial<GodraysEffectParams>): void {
     const params = populateParams(partialParams);
     this.godraysPass.updateUniforms(this.props, params);
-    this.compositorPass.updateUniforms(params);
+    this.compositorPass.updateUniforms(this.props.camera, params);
   }
 
   render(

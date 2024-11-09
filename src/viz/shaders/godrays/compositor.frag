@@ -7,6 +7,8 @@
 
 #include <common>
 
+uniform float cameraNear;
+uniform float cameraFar;
 uniform sampler2D godrays;
 uniform sampler2D sceneDiffuse;
 uniform sampler2D sceneDepth;
@@ -19,7 +21,7 @@ varying vec2 vUv;
 #define DITHERING
 #include <dithering_pars_fragment>
 
-float linearize_depth (float d, float zNear, float zFar) {
+float linearize_depth(float d, float zNear, float zFar) {
   return zNear * zFar / (zFar + d * (zNear - zFar));
 }
 
@@ -27,7 +29,7 @@ void main() {
   vec4 diffuse = texture2D(sceneDiffuse, vUv);
 
   float rawDepth = texture2D(sceneDepth, vUv).x;
-  float correctDepth = linearize_depth(rawDepth, 0.1, 1000.0);
+  float correctDepth = linearize_depth(rawDepth, cameraNear, cameraFar);
 
   vec2 pushDir = vec2(0.0);
   float count = 0.0;

@@ -91,23 +91,27 @@ export const configurePostprocessing = (
     gammaCorrection: false,
   };
 
-  const n8aoPass = new N8AOPostPass(
-    viz.scene,
-    viz.camera,
-    viz.renderer.domElement.width,
-    viz.renderer.domElement.height
-  );
-  n8aoPass.gammaCorrection = false;
-  n8aoPass.configuration.intensity = 7;
-  n8aoPass.configuration.aoRadius = 9;
-  n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Low;
-  n8aoPass.setQualityMode(
-    {
-      [GraphicsQuality.Low]: 'Low',
-      [GraphicsQuality.Medium]: 'Low',
-      [GraphicsQuality.High]: 'Medium',
-    }[quality]
-  );
+  if (vizConf.graphics.quality > GraphicsQuality.Low) {
+    const n8aoPass = new N8AOPostPass(
+      viz.scene,
+      viz.camera,
+      viz.renderer.domElement.width,
+      viz.renderer.domElement.height
+    );
+    n8aoPass.gammaCorrection = false;
+    n8aoPass.configuration.intensity = 7;
+    n8aoPass.configuration.aoRadius = 9;
+    // \/ this breaks rendering and makes the background black if enabled
+    // n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Low;
+    n8aoPass.setQualityMode(
+      {
+        [GraphicsQuality.Low]: 'Performance',
+        [GraphicsQuality.Medium]: 'Low',
+        [GraphicsQuality.High]: 'Medium',
+      }[quality]
+    );
+  }
+
   const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
   effectComposer.addPass(godraysEffect);
 

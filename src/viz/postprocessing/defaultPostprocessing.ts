@@ -147,7 +147,7 @@ class CustomEffectComposer extends EffectComposer {
   }
 
   constructor(
-    renderer: THREE.WebGLRenderer,
+    private viz: VizState,
     options: {
       depthBuffer?: boolean;
       stencilBuffer?: boolean;
@@ -156,12 +156,12 @@ class CustomEffectComposer extends EffectComposer {
       frameBufferType?: number;
     }
   ) {
-    super(renderer, options);
+    super(viz.renderer, options);
 
-    this.multiInputBuffer = createSSRMultiFramebuffer(renderer);
-    this.multiOutputBuffer = createSSRMultiFramebuffer(renderer, this.multiInputBuffer.texture[1]);
+    this.multiInputBuffer = createSSRMultiFramebuffer(viz.renderer);
+    this.multiOutputBuffer = createSSRMultiFramebuffer(viz.renderer, this.multiInputBuffer.texture[1]);
 
-    this.maybeHookRenderer(renderer);
+    this.maybeHookRenderer(viz.renderer);
   }
 
   /**
@@ -241,7 +241,7 @@ class CustomEffectComposer extends EffectComposer {
 
     if (this.didUseSSRBuffer) {
       if (!this.ssrCompositorPass) {
-        this.ssrCompositorPass = new SSRCompositorPass();
+        this.ssrCompositorPass = new SSRCompositorPass(this.viz.scene, this.viz.camera);
         this.ssrCompositorPass.renderToScreen = true;
       }
 
@@ -272,7 +272,7 @@ export const configureDefaultPostprocessingPipeline = (
   extraParams: Partial<ExtraPostprocessingParams> = {},
   postEffects?: Effect[]
 ) => {
-  const effectComposer = new CustomEffectComposer(viz.renderer, {
+  const effectComposer = new CustomEffectComposer(viz, {
     multisampling: 0,
     frameBufferType: THREE.HalfFloatType,
   });

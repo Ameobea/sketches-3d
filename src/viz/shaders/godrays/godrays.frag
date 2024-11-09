@@ -35,10 +35,6 @@ vec3 WorldPosFromDepth(float depth, vec2 coord) {
   return worldSpacePosition.xyz;
 }
 
-float linearize_depth(float d,float zNear,float zFar) {
-  return zNear * zFar / (zFar + d * (zNear - zFar));
-}
-
 vec2 cubeToUV( vec3 v, float texelSizeY ) {
   // Number of texels to avoid at the edge of each square
   vec3 absV = abs( v );
