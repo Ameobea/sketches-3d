@@ -18,30 +18,43 @@ export const processLoadedScene = async (
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 5);
+  dirLight.position.set(0, 100, 0);
+  dirLight.target.position.set(0, 0, 0);
   viz.scene.add(dirLight);
+  viz.scene.add(dirLight.target);
 
   // add a platform to stand on
   const platformGeo = new THREE.BoxGeometry(50, 30, 50);
   const platformMat = buildCustomShader({
-    reflection: { alpha: 0.95 },
-    color: 0x003300,
+    reflection: { alpha: 0.55 },
+    color: 0x304330,
   });
   const platform = new THREE.Mesh(platformGeo, platformMat);
   platform.position.set(0, -20, 0);
   viz.scene.add(platform);
 
   const ssrMaterial = buildCustomShader({
-    // reflection: { alpha: 0.9 },
-    color: 0x990099,
+    reflection: { alpha: 0.9 },
+    color: 0xf900f9,
   });
   const cube = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 3), ssrMaterial);
   cube.position.set(20, 3, 20);
   viz.scene.add(cube);
 
+  const cube2 = new THREE.Mesh(
+    new THREE.BoxGeometry(3, 15, 3),
+    buildCustomShader({
+      reflection: { alpha: 0.9 },
+      color: 0x09f0f9,
+    })
+  );
+  cube2.position.set(-10, 5, -10);
+  viz.scene.add(cube2);
+
   const vanillaCube = new THREE.Mesh(
     new THREE.BoxGeometry(3, 30, 3),
-    new THREE.MeshBasicMaterial({ color: 0x0000ff })
+    new THREE.MeshPhysicalMaterial({ color: 0x0000df })
   );
   vanillaCube.position.set(10, -10, 10);
   viz.scene.add(vanillaCube);

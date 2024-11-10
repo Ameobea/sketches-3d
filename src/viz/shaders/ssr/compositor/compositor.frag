@@ -40,80 +40,89 @@ vec3 computeReflectedRayDirection(vec3 fragPosWorldSpace, vec3 fragNormal) {
 }
 
 vec2 worldSpaceToScreenSpace(vec3 worldSpacePos) {
-  vec4 viewSpacePos = cameraMatrixWorldInverse * vec4(worldSpacePos, 1.0);
+  vec4 viewSpacePos = cameraMatrixWorldInverse * vec4(worldSpacePos, 1.);
   vec4 clipSpacePos = cameraProjectionMatrix * viewSpacePos;
   clipSpacePos /= clipSpacePos.w;
   return clipSpacePos.xy * 0.5 + 0.5;
 }
 
-vec3 raymarchReflection(vec3 startPos, vec3 direction) {
-  float baseStepSizeWorldSpace = 0.5;
-  float targetStepSizeScreenSpace = 0.5;
+vec4 raymarchReflection(vec3 startPos, vec3 direction) {
+  float baseStepSizeWorldSpace = 1.1;
+  float targetStepSizeScreenSpace = 1. / 500.;
+  float maxRayLength = cameraFar - cameraNear;
 
-  float stepSize = baseStepSizeWorldSpace;
-  uint maxSteps = 4000u;
+  float stepSizeWorldSpace = baseStepSizeWorldSpace;
+  uint maxSteps = 1350u;
+  float minStepSizeWorldSpace = 0.01;
+  float maxStepSizeWorldSpace = maxRayLength / 200.;
+
+  // TODO: It might be interesting to have a mipmapped depth texture to read from.
+  //       That way, big regions can be skipped if they contain nothing remotely close.
 
   vec3 lastPos = startPos;
-  vec3 curPos = startPos;
+  vec3 curPos;
   bool hit = false;
-  vec2 lastScreenPos = worldSpaceToScreenSpace(lastPos);
+  vec2 lastScreenPos = worldSpaceToScreenSpace(startPos);
   for (uint i = 0u; i < maxSteps; i++) {
-    curPos = lastPos + direction * stepSize;
+    curPos = lastPos + direction * stepSizeWorldSpace;
+    float traveledDistance = distance(startPos, curPos);
+    if (traveledDistance > maxRayLength) {
+      break;
+    }
     vec2 screenPos = worldSpaceToScreenSpace(curPos);
 
     // we want to try to take steps of a consistent size.
     float actualStepSizeScreenSpace = distance(screenPos, lastScreenPos);
-    lastScreenPos = screenPos;
+    if (actualStepSizeScreenSpace < 0.00001) {
+      return vec4(-1.);
+    }
     float stepSizeScaleFactor = targetStepSizeScreenSpace / actualStepSizeScreenSpace;
-    stepSize = mix(0.5, stepSize, stepSize * stepSizeScaleFactor);
+    stepSizeWorldSpace = mix(stepSizeWorldSpace, stepSizeWorldSpace * stepSizeScaleFactor, 0.5);
+    stepSizeWorldSpace = clamp(stepSizeWorldSpace, minStepSizeWorldSpace, maxStepSizeWorldSpace);
 
+    // TODO: Need to handle stepping back to the edge to avoid jagged edges due to step size
     if (screenPos.x < 0.0 || screenPos.x > 1.0 || screenPos.y < 0.0 || screenPos.y > 1.0) {
-      // return vec3(actualStepSizeScreenSpace);
       break;
     }
 
-    float depth = texture2D(sceneDepth, screenPos).x;
-    float linearDepth = linearizeDepth(depth, cameraNear, cameraFar);
+    float rawSceneDepth = texture2D(sceneDepth, screenPos).x;
+    if (rawSceneDepth == 1.) {
+      lastPos = curPos;
+      lastScreenPos = screenPos;
+      continue;
+    }
+    float linearSceneDepth = linearizeDepth(rawSceneDepth, cameraNear, cameraFar);
 
     vec4 viewPos = cameraMatrixWorldInverse * vec4(curPos, 1.0);
-    float expectedDepth = -viewPos.z;
+    float rayDepth = -viewPos.z;
 
-    bool isBehind = expectedDepth > linearDepth + 0.01;
+    float depthDiff = rayDepth - linearSceneDepth;
+    float rayDistanceThisStepWorldSpace = distance(lastPos, curPos);
+
+    bool isBehind = depthDiff > 0. && depthDiff < rayDistanceThisStepWorldSpace * 2.;
     if (isBehind) {
       hit = true;
       break;
     }
 
     lastPos = curPos;
+    lastScreenPos = screenPos;
   }
 
   if (!hit) {
-    return vec3(-1.0);
+    return vec4(-1.0);
   }
 
-  // Binary search remains the same, using the updated depth calculations
-  uint binarySearchSteps = 6u;
-  vec3 bSearchStart = lastPos;
-  vec3 bSearchEnd = curPos;
-  for (uint i = 0u; i < binarySearchSteps; i++) {
-    curPos = mix(bSearchStart, bSearchEnd, 0.5);
-    vec2 screenPos = worldSpaceToScreenSpace(curPos);
+  vec2 reflectedColorScreenCoord = worldSpaceToScreenSpace(curPos);
+  vec3 reflectedColor = texture2D(sceneDiffuse, reflectedColorScreenCoord).rgb;
 
-    float depth = texture2D(sceneDepth, screenPos).x;
-    float linearDepth = linearizeDepth(depth, cameraNear, cameraFar);
+  // fade out reflections from the edges of the screen to help hide discontinuities
+  vec2 minDistanceToEdges = min(reflectedColorScreenCoord.xy, 1. - reflectedColorScreenCoord.xy);
+  float minDistanceToAnyEdge = min(minDistanceToEdges.x, minDistanceToEdges.y);
+  float alpha = smoothstep(0., 0.07, minDistanceToAnyEdge);
 
-    vec4 viewPos = cameraMatrixWorldInverse * vec4(curPos, 1.0);
-    float expectedDepth = -viewPos.z;
-
-    bool isBehind = expectedDepth > linearDepth;
-    if (isBehind) {
-      bSearchEnd = curPos;
-    } else {
-      bSearchStart = curPos;
-    }
-  }
-
-  return texture2D(sceneDiffuse, worldSpaceToScreenSpace(curPos)).rgb;
+  // return vec4(reflectedColorScreenCoord, 0., 1.);
+  return vec4(reflectedColor, alpha);
 }
 
 void main() {
@@ -134,13 +143,13 @@ void main() {
   vec3 fragPosWorldSpace = computeWorldPosFromDepth(rawDepth, vUv);
   vec3 reflectedRayDirection = computeReflectedRayDirection(fragPosWorldSpace, surfaceNormal);
 
-  vec3 reflectedColor = raymarchReflection(fragPosWorldSpace, reflectedRayDirection);
+  vec4 reflectedColor = raymarchReflection(fragPosWorldSpace, reflectedRayDirection);
   if (reflectedColor.x < 0.) {
     gl_FragColor = diffuse;
     return;
   }
 
-  gl_FragColor = vec4(mix(diffuse.rgb, reflectedColor, reflectionAlpha), 1.);
+  gl_FragColor = vec4(mix(diffuse.rgb, reflectedColor.rgb, reflectionAlpha * reflectedColor.a), 1.);
 
   #include <dithering_fragment>
 }
