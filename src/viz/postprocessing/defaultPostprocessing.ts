@@ -53,14 +53,14 @@ const createSSRMultiFramebuffer = (
   ssrDataTexture?: THREE.Texture
 ): THREE.WebGLMultipleRenderTargets => {
   const size = renderer === null ? new THREE.Vector2() : renderer.getDrawingBufferSize(new THREE.Vector2());
-  const options = {
+  const renderTarget = new THREE.WebGLMultipleRenderTargets(size.width, size.height, 2, {
     minFilter: THREE.LinearFilter,
     magFilter: THREE.LinearFilter,
     stencilBuffer: false,
     depthBuffer: true,
     type: THREE.HalfFloatType,
-  };
-  const renderTarget = new THREE.WebGLMultipleRenderTargets(size.width, size.height, 2, options);
+    generateMipmaps: false,
+  });
   // if (multisampling > 0) {
   //   renderTarget.ignoreDepthForMultisampleCopy = false;
   //   renderTarget.samples = multisampling;
@@ -194,6 +194,9 @@ class CustomEffectComposer extends EffectComposer {
 
       const isLastPass = passIx === this.passes.length - 1;
       if (isLastPass) {
+        if (pass instanceof MainRenderPass) {
+          this.didUseSSRBuffer = true;
+        }
         pass.renderToScreen = !this.didUseSSRBuffer;
       }
 

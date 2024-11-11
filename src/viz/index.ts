@@ -24,7 +24,7 @@ import {
   type CustomControlsEntry,
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
-import { mergeDeep } from './util';
+import { clamp, mergeDeep } from './util';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -185,7 +185,7 @@ const setupFirstPerson = async ({
 
       // Clamp the camera's rotation to the range of -PI/2 to PI/2
       // This is so the camera doesn't flip upside down
-      camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+      camera.rotation.x = clamp(camera.rotation.x, -Math.PI / 2 + 0.001, Math.PI / 2 - 0.001);
     }
   });
 

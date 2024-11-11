@@ -12,8 +12,8 @@ export const processLoadedScene = async (
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
   viz.renderer.shadowMap.enabled = false;
-  // viz.camera.far = 100;
-  // viz.camera.updateProjectionMatrix();
+  viz.camera.far = 500;
+  viz.camera.updateProjectionMatrix();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
@@ -35,7 +35,7 @@ export const processLoadedScene = async (
   viz.scene.add(platform);
 
   const ssrMaterial = buildCustomShader({
-    reflection: { alpha: 0.9 },
+    reflection: { alpha: 0.3 },
     color: 0xf900f9,
   });
   const cube = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 3), ssrMaterial);
@@ -45,7 +45,7 @@ export const processLoadedScene = async (
   const cube2 = new THREE.Mesh(
     new THREE.BoxGeometry(3, 15, 3),
     buildCustomShader({
-      reflection: { alpha: 0.9 },
+      reflection: { alpha: 0.3 },
       color: 0x09f0f9,
     })
   );
