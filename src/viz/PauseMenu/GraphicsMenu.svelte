@@ -1,6 +1,7 @@
 <script lang="ts">
   import { applyGraphicsSettings, type VizState } from '..';
   import { GraphicsQuality, type GraphicsSettings, type VizConfig } from '../conf';
+  import type { SceneConfig } from '../scenes';
   import RangeInput from './RangeInput.svelte';
   import SelectButton from './SelectButton.svelte';
 
@@ -8,6 +9,7 @@
   export let onBack: () => void;
   export let onChange: (vizConf: VizConfig) => void;
   export let startVizConfig: VizConfig;
+  export let sceneConfig: SceneConfig;
 
   let graphicsQuality: GraphicsQuality = startVizConfig.graphics.quality;
   let fov = startVizConfig.graphics.fov;
@@ -33,7 +35,9 @@
       ...startVizConfig,
       graphics: newGraphicsSettings,
     });
-    localStorage['goBackOnLoad'] = 'true';
+    if (sceneConfig.goBackOnLoad !== false) {
+      localStorage['goBackOnLoad'] = 'true';
+    }
 
     const needsReload = graphicsQuality !== startVizConfig.graphics.quality;
     if (needsReload) {

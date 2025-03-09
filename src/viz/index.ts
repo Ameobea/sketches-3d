@@ -1,4 +1,4 @@
-import { get, type Writable } from 'svelte/store';
+import { get, type Readable, type Writable } from 'svelte/store';
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
@@ -76,7 +76,7 @@ export interface FirstPersonCtx {
   setSpawnPos: (pos: THREE.Vector3, rot: THREE.Vector3) => void;
   registerOnRespawnCb: (cb: () => void) => void;
   unregisterOnRespawnCb: (cb: () => void) => void;
-  easyModeMovement: Writable<boolean>;
+  easyModeMovement: Readable<boolean>;
   registerDashCb: (cb: (curTimeSecs: number) => void) => void;
   deregisterDashCb: (cb: (curTimeSecs: number) => void) => void;
   registerJumpCb: (cb: (curTimeSecs: number) => void) => void;
@@ -85,7 +85,7 @@ export interface FirstPersonCtx {
 
 interface SetupFirstPersonArgs {
   locations: Record<string, SceneConfigLocation>;
-  camera: THREE.Camera;
+  camera: THREE.PerspectiveCamera;
   spawnPos: {
     pos: THREE.Vector3;
     rot: THREE.Vector3;
@@ -97,7 +97,7 @@ interface SetupFirstPersonArgs {
   dashConfig: Partial<DashConfig> | undefined;
   oobYThreshold: number | undefined;
   sfxManager: SfxManager;
-  vizConfig: Conf.VizConfig;
+  vizConfig: Writable<Conf.VizConfig>;
 }
 
 const setupFirstPerson = async ({
@@ -183,14 +183,23 @@ const setupFirstPerson = async ({
     });
   }
 
+  let mouseSensitivity = get(vizConfig).controls.mouseSensitivity;
+  vizConfig.subscribe(vizConf => {
+    mouseSensitivity = vizConf.controls.mouseSensitivity;
+  });
+  const cameraEulerScratch = new THREE.Euler();
   document.body.addEventListener('mousemove', event => {
     if (document.pointerLockElement === document.body) {
-      camera.rotation.y -= event.movementX / 500;
-      camera.rotation.x -= event.movementY / 500;
+      cameraEulerScratch.setFromQuaternion(camera.quaternion, 'YXZ');
+
+      cameraEulerScratch.y -= event.movementX * mouseSensitivity * 0.001;
+      cameraEulerScratch.x -= event.movementY * mouseSensitivity * 0.001;
 
       // Clamp the camera's rotation to the range of -PI/2 to PI/2
       // This is so the camera doesn't flip upside down
-      camera.rotation.x = clamp(camera.rotation.x, -Math.PI / 2 + 0.001, Math.PI / 2 - 0.001);
+      cameraEulerScratch.x = clamp(cameraEulerScratch.x, -Math.PI / 2 + 0.001, Math.PI / 2 - 0.001);
+
+      camera.quaternion.setFromEuler(cameraEulerScratch);
     }
   });
 
@@ -626,7 +635,11 @@ export const initViz = (
     paused,
     sceneName: providedSceneName = Conf.DefaultSceneName,
     vizCb,
-  }: { paused: Writable<boolean>; sceneName?: string; vizCb: (viz: VizState, sceneConf: SceneConfig) => void }
+  }: {
+    paused: Writable<boolean>;
+    sceneName?: string;
+    vizCb: (viz: VizState, vizConfig: Writable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
+  }
 ) => {
   initSentry();
 
@@ -666,14 +679,14 @@ export const initViz = (
       : new THREE.Group();
 
     const [sceneLoader, vizConfig] = await Promise.all([getSceneLoader(), Conf.getVizConfig()]);
-    applyGraphicsSettings(viz, vizConfig.graphics);
-    applyAudioSettings(vizConfig.audio);
+    applyGraphicsSettings(viz, get(vizConfig).graphics);
+    applyAudioSettings(get(vizConfig).audio);
     setDefaultDistanceAmpParams(null);
     const sceneConf = {
       ...buildDefaultSceneConfig(),
-      ...((await sceneLoader(viz, scene, vizConfig)) ?? {}),
+      ...((await sceneLoader(viz, scene, get(vizConfig))) ?? {}),
     };
-    vizCb(viz, sceneConf);
+    vizCb(viz, vizConfig, sceneConf);
 
     if (sceneConf.renderOverride) {
       viz.setRenderOverride(sceneConf.renderOverride);

@@ -1,4 +1,4 @@
-import { get, writable } from 'svelte/store';
+import { derived, get, type Writable } from 'svelte/store';
 import * as THREE from 'three';
 
 import type { SfxManager } from './audio/SfxManager.js';
@@ -20,7 +20,7 @@ let ammojs: Promise<any> | null = null;
 
 export const getAmmoJS = async () => {
   if (ammojs) return ammojs;
-  ammojs = import('../ammojs/ammo.wasm.js').then(mod => mod.Ammo.apply({}));
+  ammojs = import('../ammojs/ammo.wasm.js').then(mod => (mod as any).Ammo.apply({}));
   return ammojs;
 };
 
@@ -178,7 +178,7 @@ interface BulletPhysicsArgs {
   externalVelocityAirDampingFactor: THREE.Vector3 | undefined;
   externalVelocityGroundDampingFactor: THREE.Vector3 | undefined;
   sfxManager: SfxManager;
-  vizConfig: VizConfig;
+  vizConfig: Writable<VizConfig>;
 }
 
 export const initBulletPhysics = ({
@@ -270,7 +270,7 @@ export const initBulletPhysics = ({
    * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
    * diagonally, allowing for easier movement.
    */
-  const easyModeMovement = writable(vizConfig.gameplay.easyModeMovement);
+  const easyModeMovement = derived(vizConfig, vizConfig => vizConfig.gameplay.easyModeMovement);
 
   const jumpCbs: ((curTimeSeconds: number) => void)[] = [];
   const registerJumpCb = (cb: (curTimeSeconds: number) => void) => {

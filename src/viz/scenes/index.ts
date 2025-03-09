@@ -97,6 +97,14 @@ export interface SceneConfig {
   sfx?: DeepPartial<SfxConfig>;
   legacyLights?: boolean;
   customControlsEntries?: CustomControlsEntry[];
+  /**
+   * Default true.  If true, the scene will teleport the player back to the location they were at
+   * when reloading after changing graphics settings.
+   *
+   * This should be set to false for timed or stateful scenes where the player should not be able to
+   * start at arbitrary points in the scene.
+   */
+  goBackOnLoad?: boolean;
 }
 
 export const buildDefaultSceneConfig = () => ({

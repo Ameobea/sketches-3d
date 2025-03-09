@@ -1,4 +1,5 @@
 import * as DetectGPU from 'detect-gpu';
+import { writable, type Writable } from 'svelte/store';
 
 import { mergeDeep } from './util';
 
@@ -39,6 +40,10 @@ export interface GameplaySettings {
   easyModeMovement: boolean;
 }
 
+export interface ControlsSettings {
+  mouseSensitivity: number;
+}
+
 /**
  * Config that is persisted between runs and shared between scenes
  */
@@ -46,6 +51,7 @@ export interface VizConfig {
   graphics: GraphicsSettings;
   audio: AudioSettings;
   gameplay: GameplaySettings;
+  controls: ControlsSettings;
 }
 
 const getGraphicsQuality = async (tierRes: DetectGPU.TierResult) => {
@@ -90,6 +96,7 @@ const buildDefaultVizConfig = (): VizConfig => ({
   graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV },
   audio: { globalVolume: 0.4, musicVolume: 0.4 },
   gameplay: { easyModeMovement: true },
+  controls: { mouseSensitivity: 2 },
 });
 
 /**
@@ -111,17 +118,17 @@ const buildInitialVizConfig = async (): Promise<VizConfig> => {
  * if it's not found or if any fields are missing.
  */
 export const loadVizConfig = (): VizConfig => {
-  const vizConfig = JSON.parse(localStorage.getItem('vizConfig') ?? '{}') as VizConfig;
+  const vizConfig = JSON.parse(globalThis.localStorage?.getItem('vizConfig') ?? '{}') as VizConfig;
   return mergeDeep(buildDefaultVizConfig(), vizConfig);
 };
 
-export const getVizConfig = async (): Promise<VizConfig> => {
+export const getVizConfig = async (): Promise<Writable<VizConfig>> => {
   if (localStorage.getItem('vizConfig')) {
     const vizConfig = loadVizConfig();
-    return vizConfig;
+    return writable(vizConfig);
   }
 
   const config = await buildInitialVizConfig();
   localStorage.setItem('vizConfig', JSON.stringify(config));
-  return config;
+  return writable(config);
 };

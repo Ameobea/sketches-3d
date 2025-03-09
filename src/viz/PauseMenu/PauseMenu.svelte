@@ -13,7 +13,7 @@
 </script>
 
 <script lang="ts">
-  import { derived, writable } from 'svelte/store';
+  import { derived, type Writable } from 'svelte/store';
 
   import { applyAudioSettings, type VizState } from '..';
   import { type AudioSettings, loadVizConfig, type VizConfig } from '../conf';
@@ -27,25 +27,30 @@
 
   export let ctx: PauseMenuCtx;
   export let viz: VizState;
+  export let liveConfig: Writable<VizConfig>;
   export let sceneConfig: SceneConfig | null;
   $: customControlsEntries = sceneConfig?.customControlsEntries ?? [];
 
   const startVizConfig = loadVizConfig();
-  const newConfig = writable(startVizConfig);
 
   const saveNewConfig = (newVizConfig: VizConfig) => {
-    newConfig.set(newVizConfig);
+    liveConfig.set(newVizConfig);
     localStorage.setItem('vizConfig', JSON.stringify(newVizConfig));
     activeMenu = Menu.Main;
   };
 
-  const audioConf = derived(newConfig, $newConfig => $newConfig.audio);
+  const audioConf = derived(liveConfig, $newConfig => $newConfig.audio);
   const onAudioConfChanged = (newAudioConf: AudioSettings) => {
     applyAudioSettings(newAudioConf);
-    newConfig.update(conf => ({ ...conf, audio: newAudioConf }));
+    liveConfig.update(conf => ({ ...conf, audio: newAudioConf }));
   };
 
-  const commit = () => saveNewConfig($newConfig);
+  const controlsConf = derived(liveConfig, $newConfig => $newConfig.controls);
+  const onControlsConfChanged = (newControlsConf: any) => {
+    liveConfig.update(conf => ({ ...conf, controls: newControlsConf }));
+  };
+
+  const commit = () => saveNewConfig($liveConfig);
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -117,14 +122,19 @@
           Controls
         </button>
       {:else if activeMenu === Menu.Graphics}
-        <GraphicsMenu
-          onBack={() => {
-            activeMenu = Menu.Main;
-          }}
-          onChange={saveNewConfig}
-          {startVizConfig}
-          {viz}
-        />
+        {#if sceneConfig}
+          <GraphicsMenu
+            onBack={() => {
+              activeMenu = Menu.Main;
+            }}
+            onChange={saveNewConfig}
+            {startVizConfig}
+            {sceneConfig}
+            {viz}
+          />
+        {:else}
+          Loading...
+        {/if}
       {:else if activeMenu === Menu.Audio}
         <AudioMenu
           onBack={() => {
@@ -134,7 +144,11 @@
           onChange={onAudioConfChanged}
         />
       {:else if activeMenu === Menu.Controls}
-        <ControlsMenu customEntries={customControlsEntries} />
+        <ControlsMenu
+          conf={controlsConf}
+          onChange={onControlsConfChanged}
+          customEntries={customControlsEntries}
+        />
         <button
           on:click={() => {
             activeMenu = Menu.Main;

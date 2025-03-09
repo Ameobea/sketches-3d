@@ -18,9 +18,6 @@
       ...startVizConfig,
       gameplay: newGraphicsSettings,
     });
-    if (viz.fpCtx) {
-      viz.fpCtx.easyModeMovement.set(easyModeMovement);
-    }
     onBack();
   };
 </script>

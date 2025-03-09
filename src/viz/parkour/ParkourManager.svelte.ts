@@ -142,6 +142,7 @@ export class ParkourManager {
       locations: this.locations,
       legacyLights: false,
       customControlsEntries: [{ label: 'Reset', key: 'f', action: this.reset }],
+      goBackOnLoad: false,
     };
   };
 }

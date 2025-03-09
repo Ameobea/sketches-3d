@@ -664,5 +664,6 @@ export const processLoadedScene = async (
     },
     debugPos: true,
     locations,
+    goBackOnLoad: false,
   };
 };

@@ -5,7 +5,7 @@ import { getBlueNoiseTexture } from './blueNoise';
 import VolumetricFragmentShader from './volumetric.frag?raw';
 import VolumetricVertexShader from './volumetric.vert?raw';
 import {
-  VolumetricCompositorMaterial,
+  type VolumetricCompositorMaterial,
   VolumetricCompositorPass,
   type VolumetricPassCompositorParams,
 } from './compositorPass';
@@ -129,7 +129,7 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       uniforms,
       fragmentShader: VolumetricFragmentShader,
       vertexShader: VolumetricVertexShader,
-      defines: params.halfRes ? undefined : { DO_DIRECT_COMPOSITING: '1' },
+      defines: params.halfRes ? {} : { DO_DIRECT_COMPOSITING: '1' },
     });
 
     getBlueNoiseTexture(new THREE.TextureLoader()).then(blueNoiseTexture => {
