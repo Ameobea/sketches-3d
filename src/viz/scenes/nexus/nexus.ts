@@ -8,8 +8,8 @@ import { N8AOPostPass } from 'n8ao';
 import { ToneMappingEffect, ToneMappingMode } from 'postprocessing';
 import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { DashToken, initDashTokenGraphics } from '../pkPylons/DashToken';
-import { buildGoldMaterial, buildGreenMosaic2Material } from '../pkPylons/materials';
+import { DashToken, initDashTokenGraphics } from '../../parkour/DashToken';
+import { buildGoldMaterial, buildGreenMosaic2Material } from '../../parkour/regions/pylons/materials';
 import { goto } from '$app/navigation';
 
 const loadTextures = async () => {

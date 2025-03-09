@@ -1,16 +1,24 @@
-<script lang="ts">
-  export let verticalVelocity: number;
-  export let isJumping: boolean;
-  export let isDashing: boolean;
-  export let isOnGround: boolean;
-
-  $: formattedVerticalVelocity = (() => {
-    let formatted = verticalVelocity.toFixed(2);
+<script lang="ts" context="module">
+  const formatNumber = (n: number) => {
+    let formatted = n.toFixed(2);
     while (formatted.length < 6) {
       formatted = ' ' + formatted;
     }
     return formatted;
-  })();
+  };
+</script>
+
+<script lang="ts">
+  export let verticalVelocity: number;
+  export let verticalOffset: number;
+  export let isJumping: boolean;
+  export let jumpAxis: [number, number, number];
+  export let externalVelocity: [number, number, number];
+  export let isDashing: boolean;
+  export let isOnGround: boolean;
+
+  $: formattedVerticalVelocity = formatNumber(verticalVelocity);
+  $: formattedVerticalOffset = formatNumber(verticalOffset);
 
   const getBoolColor = (bool: boolean) => (bool ? 'green' : 'red');
 
@@ -22,6 +30,9 @@
     m_verticalVelocity: <pre>{formattedVerticalVelocity}</pre>
   </div>
   <div>
+    m_verticalOffset: <pre>{formattedVerticalOffset}</pre>
+  </div>
+  <div>
     isJumping: <pre style="color: {getBoolColor(isJumping)}"> {formatBool(isJumping)}</pre>
   </div>
   <div>
@@ -29,6 +40,14 @@
   </div>
   <div>
     isOnGround: <pre style="color: {getBoolColor(isOnGround)}"> {formatBool(isOnGround)}</pre>
+  </div>
+</div>
+<div>
+  <div>
+    jumpAxis: <pre>{jumpAxis.map(formatNumber).join(', ')}</pre>
+  </div>
+  <div>
+    externalVelocity: <pre>{externalVelocity.map(formatNumber).join(', ')}</pre>
   </div>
 </div>
 

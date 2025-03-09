@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type SvelteSEO from 'svelte-seo';
 import type { Writable } from 'svelte/store';
 
@@ -46,6 +47,7 @@ export interface DashConfig {
   chargeConfig?: DashChargeConfig;
   dashMagnitude: number;
   minDashDelaySeconds: number;
+  useExternalVelocity?: boolean;
 }
 
 export const DefaultDashConfig: DashConfig = Object.freeze({
@@ -53,6 +55,9 @@ export const DefaultDashConfig: DashConfig = Object.freeze({
   dashMagnitude: 16,
   minDashDelaySeconds: 0.85,
 });
+
+export const DefaultExternalVelocityAirDampingFactor = new THREE.Vector3(0.12, 0.55, 0.12);
+export const DefaultExternalVelocityGroundDampingFactor = new THREE.Vector3(0.9992, 0.9992, 0.9992);
 
 export interface CustomControlsEntry {
   label: string;
@@ -80,6 +85,8 @@ export interface SceneConfig {
   player?: {
     dashConfig?: Partial<DashConfig>;
     jumpVelocity?: number;
+    externalVelocityAirDampingFactor?: THREE.Vector3;
+    externalVelocityGroundDampingFactor?: THREE.Vector3;
     colliderCapsuleSize?: { height: number; radius: number };
     moveSpeed?: { onGround: number; inAir: number };
     stepHeight?: number;
@@ -294,6 +301,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./pkPylons/pkPylons.svelte.ts').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'pk_pylons' },
+    legacyLights: false,
   },
   tessellationSandbox: {
     gltfName: 'tessellationSandbox',
@@ -333,6 +341,14 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./ssrSandbox/ssrSandbox').then(mod => mod.processLoadedScene),
     sceneName: 'Scene',
     metadata: { title: 'SSR sandbox' },
+    legacyLights: false,
+  },
+  movement_v2: {
+    gltfName: 'movement_v2',
+    extension: 'glb',
+    sceneLoader: () => import('./movement_v2/movement_v2.svelte.ts').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'Movement V2' },
     legacyLights: false,
   },
 };

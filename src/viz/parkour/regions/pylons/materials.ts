@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { VizState } from 'src/viz';
 import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader, type CustomShaderProps } from 'src/viz/shaders/customShader';
-import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
+import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
 
 export const buildGreenMosaic2Material = async (
   loader: THREE.ImageBitmapLoader,
@@ -56,7 +56,7 @@ export const buildGoldMaterial = async (
   );
 };
 
-export const buildMaterials = async (viz: VizState) => {
+export const buildMaterials = async (viz: VizState, loadedWorld: THREE.Group) => {
   const loader = new THREE.ImageBitmapLoader();
   const towerPlinthPedestalTextureP = loadTexture(
     loader,
@@ -138,6 +138,20 @@ export const buildMaterials = async (viz: VizState) => {
       tileBreaking: { type: 'neyret', patchScale: 0.9 },
     }
   );
+
+  viz.scene.background = bgTexture;
+
+  loadedWorld.traverse(obj => {
+    if (!(obj instanceof THREE.Mesh)) {
+      return;
+    }
+
+    if (obj.name.includes('sparkle')) {
+      obj.material = shinyPatchworkStoneMaterial;
+    } else {
+      obj.material = pylonMaterial;
+    }
+  });
 
   return {
     pylonMaterial,

@@ -6,6 +6,8 @@ import type { FpPlayerStateGetters } from './index.js';
 import {
   type DashConfig,
   DefaultDashConfig,
+  DefaultExternalVelocityAirDampingFactor,
+  DefaultExternalVelocityGroundDampingFactor,
   DefaultMoveSpeed,
   type PlayerMoveSpeed,
 } from './scenes/index.js';
@@ -37,7 +39,7 @@ const initBtvec3Scratch = (Ammo: any) => {
 
 class DashManager {
   private config: DashConfig;
-  private lastDashTimeSeconds = 0;
+  public lastDashTimeSeconds = 0;
   /**
    * `true` if the player has not touched the ground since they last dashed
    */
@@ -56,13 +58,24 @@ class DashManager {
   }
 
   private dashInner(origForwardDir: THREE.Vector3, curTimeSeconds: number) {
-    playerController.jump(
-      btvec3(
-        origForwardDir.x * this.config.dashMagnitude,
-        origForwardDir.y * this.config.dashMagnitude,
-        origForwardDir.z * this.config.dashMagnitude
-      )
-    );
+    if (this.config.useExternalVelocity) {
+      playerController.setExternalVelocity(
+        btvec3(
+          origForwardDir.x * this.config.dashMagnitude * 0.008,
+          origForwardDir.y * this.config.dashMagnitude * 0.008,
+          origForwardDir.z * this.config.dashMagnitude * 0.008
+        )
+      );
+      playerController.resetFall();
+    } else {
+      playerController.jump(
+        btvec3(
+          origForwardDir.x * this.config.dashMagnitude,
+          origForwardDir.y * this.config.dashMagnitude,
+          origForwardDir.z * this.config.dashMagnitude
+        )
+      );
+    }
     this.lastDashTimeSeconds = curTimeSeconds;
     this.dashNeedsGroundTouch = true;
 
@@ -162,6 +175,8 @@ interface BulletPhysicsArgs {
   playerMoveSpeed: PlayerMoveSpeed | undefined;
   playerStepHeight: number | undefined;
   dashConfig: Partial<DashConfig> | undefined;
+  externalVelocityAirDampingFactor: THREE.Vector3 | undefined;
+  externalVelocityGroundDampingFactor: THREE.Vector3 | undefined;
   sfxManager: SfxManager;
   vizConfig: VizConfig;
 }
@@ -178,6 +193,8 @@ export const initBulletPhysics = ({
   playerMoveSpeed = DefaultMoveSpeed,
   playerStepHeight = DEFAULT_STEP_HEIGHT,
   dashConfig = DefaultDashConfig,
+  externalVelocityAirDampingFactor = DefaultExternalVelocityAirDampingFactor,
+  externalVelocityGroundDampingFactor = DefaultExternalVelocityGroundDampingFactor,
   sfxManager,
   vizConfig,
 }: BulletPhysicsArgs) => {
@@ -234,6 +251,21 @@ export const initBulletPhysics = ({
   };
   setGravity(gravity);
 
+  playerController.setExternalVelocityAirDampingFactor(
+    btvec3(
+      externalVelocityAirDampingFactor.x,
+      externalVelocityAirDampingFactor.y,
+      externalVelocityAirDampingFactor.z
+    )
+  );
+  playerController.setExternalVelocityGroundDampingFactor(
+    btvec3(
+      externalVelocityGroundDampingFactor.x,
+      externalVelocityGroundDampingFactor.y,
+      externalVelocityGroundDampingFactor.z
+    )
+  );
+
   /**
    * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
    * diagonally, allowing for easier movement.
@@ -254,7 +286,6 @@ export const initBulletPhysics = ({
 
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
-  let lastDashTimeSeconds = 0;
 
   const dashManager = new DashManager(dashConfig);
 
@@ -305,6 +336,13 @@ export const initBulletPhysics = ({
         playerController.jump(
           btvec3(moveDirection.x * (jumpSpeed * 0.18), jumpSpeed, moveDirection.z * (jumpSpeed * 0.18))
         );
+        // playerController.setExternalVelocity(
+        //   btvec3(
+        //     moveDirection.x * (jumpSpeed * 0.18) * 0.01,
+        //     jumpSpeed * 0.01,
+        //     moveDirection.z * (jumpSpeed * 0.18) * 0.01
+        //   )
+        // );
         lastJumpTimeSeconds = curTimeSeconds;
         for (const cb of jumpCbs) {
           cb(curTimeSeconds);
@@ -335,7 +373,10 @@ export const initBulletPhysics = ({
     );
     playerController.setWalkDirection(walkDirBulletVector);
 
-    collisionWorld.stepSimulation(tDiffSeconds, 20, 1 / 160);
+    // TODO: Verify that this values make sense
+    const fixedTimeStep = 1 / 160;
+    const maxSubSteps = 20;
+    collisionWorld.stepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
 
     const newPlayerTransform = playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
@@ -366,6 +407,8 @@ export const initBulletPhysics = ({
     for (const key of Object.keys(keyStates)) {
       keyStates[key] = false;
     }
+    playerController.setExternalVelocity(btvec3(0, 0, 0));
+    playerController.setVerticalVelocity(0);
   };
 
   teleportPlayer(spawnPos.pos, spawnPos.rot);
@@ -750,9 +793,18 @@ export const initBulletPhysics = ({
 
   const playerStateGetters: FpPlayerStateGetters = {
     getVerticalVelocity: () => playerController.getVerticalVelocity(),
+    getVerticalOffset: () => playerController.getVerticalOffset(),
     getIsOnGround: () => playerController.onGround(),
-    getIsJumping: () => playerController.isJumping() && lastJumpTimeSeconds > lastDashTimeSeconds,
-    getIsDashing: () => playerController.isJumping() && lastDashTimeSeconds > lastJumpTimeSeconds,
+    getJumpAxis: () => {
+      const jumpAxis = playerController.getJumpAxis();
+      return [jumpAxis.x(), jumpAxis.y(), jumpAxis.z()];
+    },
+    getExternalVelocity: () => {
+      const externalVelocity = playerController.getExternalVelocity();
+      return [externalVelocity.x(), externalVelocity.y(), externalVelocity.z()];
+    },
+    getIsJumping: () => playerController.isJumping() && lastJumpTimeSeconds > dashManager.lastDashTimeSeconds,
+    getIsDashing: () => playerController.isJumping() && dashManager.lastDashTimeSeconds > lastJumpTimeSeconds,
   };
 
   const setMoveSpeed = (newMoveSpeed: PlayerMoveSpeed) => {

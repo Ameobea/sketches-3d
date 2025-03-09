@@ -169,7 +169,6 @@ class CustomEffectComposer extends EffectComposer {
    */
   render(deltaTime: number) {
     const renderer = (this as any).renderer as THREE.WebGLRenderer;
-    const copyPass = (this as any).copyPass as CopyPass;
     const timer = (this as any).timer as Timer;
 
     let inputBuffer = this.inputBuffer;
@@ -178,7 +177,7 @@ class CustomEffectComposer extends EffectComposer {
     let multiOutputBuffer = this.multiOutputBuffer;
 
     let stencilTest = false;
-    let context, stencil, buffer, multiBuffer;
+    let buffer, multiBuffer;
 
     if (deltaTime === undefined) {
       timer.update();

@@ -25,7 +25,7 @@ export class DashToken extends THREE.Object3D {
     const rotationSpeeds: number[] = [];
 
     // Randomize rotation axis for each ring
-    rings.forEach((ring, index) => {
+    rings.forEach(ring => {
       // rings start out sitting in the XZ plane
       const plane = new THREE.Plane().setFromCoplanarPoints(
         new THREE.Vector3(0, 0, 0),
@@ -84,7 +84,6 @@ export class DashToken extends THREE.Object3D {
     }
 
     const clone = new DashToken(this.viz, this.base);
-    // clone.copy(this, true);
     return clone as this;
   }
 }

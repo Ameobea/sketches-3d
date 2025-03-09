@@ -91,8 +91,9 @@ export const configurePostprocessing = (
     gammaCorrection: false,
   };
 
-  if (vizConf.graphics.quality > GraphicsQuality.Low) {
-    const n8aoPass = new N8AOPostPass(
+  let n8aoPass: typeof N8AOPostPass | null = null;
+  if (quality > GraphicsQuality.Low) {
+    n8aoPass = new N8AOPostPass(
       viz.scene,
       viz.camera,
       viz.renderer.domElement.width,
@@ -205,7 +206,7 @@ export const configurePostprocessing = (
   let didRender = false;
   viz.setRenderOverride(timeDiffSeconds => {
     const newN8AOIntensity = computeN8AOIntensity(viz.camera.position);
-    if (newN8AOIntensity !== lastN8AOIntensity) {
+    if (n8aoPass && newN8AOIntensity !== lastN8AOIntensity) {
       n8aoPass.configuration.intensity = newN8AOIntensity;
       lastN8AOIntensity = newN8AOIntensity;
 

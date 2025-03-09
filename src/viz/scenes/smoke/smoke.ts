@@ -90,8 +90,8 @@ export const processLoadedScene = async (
   viz.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   viz.renderer.shadowMap.needsUpdate = true;
 
-  let lightPos = new THREE.Vector3(-32, 27, -32);
-  let lightTarget = new THREE.Vector3(22, 2, 10);
+  const lightPos = new THREE.Vector3(-32, 27, -32);
+  const lightTarget = new THREE.Vector3(22, 2, 10);
 
   // Move light pos away in a line from target by 0.2x its initial distance
   const lightPosToTarget = lightPos.clone().sub(lightTarget);

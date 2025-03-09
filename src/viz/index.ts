@@ -28,7 +28,10 @@ import { clamp, mergeDeep } from './util';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
+  getVerticalOffset: () => number;
   getIsJumping: () => boolean;
+  getJumpAxis: () => [number, number, number];
+  getExternalVelocity: () => [number, number, number];
   getIsDashing: () => boolean;
   getIsOnGround: () => boolean;
 }
@@ -149,6 +152,8 @@ const setupFirstPerson = async ({
     playerColliderHeight,
     playerMoveSpeed: playerConf?.moveSpeed,
     playerStepHeight: playerConf?.stepHeight,
+    externalVelocityAirDampingFactor: playerConf?.externalVelocityAirDampingFactor,
+    externalVelocityGroundDampingFactor: playerConf?.externalVelocityGroundDampingFactor,
     dashConfig,
     sfxManager,
     vizConfig,

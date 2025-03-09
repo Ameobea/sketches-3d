@@ -5,17 +5,13 @@ import { type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { Score, type ScoreThresholds } from '../../parkour/TimeDisplay.svelte';
 import { buildMaterials } from '../../parkour/regions/pylons/materials';
-import { initPylonsPostprocessing } from './postprocessing';
+import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 import { ParkourManager } from '../../parkour/ParkourManager.svelte';
 
 const locations = {
   spawn: {
-    pos: new THREE.Vector3(4.5, 2, 6),
-    rot: new THREE.Vector3(-0.1, 1.378, 0),
-  },
-  '3': {
-    pos: new THREE.Vector3(-73.322, 27.647, -33.4451),
-    rot: new THREE.Vector3(-0.212, -8.5, 0),
+    pos: new THREE.Vector3(2.82073, 3.56807, 5.98513),
+    rot: new THREE.Vector3(0, Math.PI, 0),
   },
 };
 
@@ -35,10 +31,10 @@ export const processLoadedScene = async (
   viz.scene.add(sunLight);
 
   const scoreThresholds: ScoreThresholds = {
-    [Score.SPlus]: 32.1,
-    [Score.S]: 33.5,
-    [Score.A]: 40,
-    [Score.B]: 50,
+    [Score.SPlus]: 25.5,
+    [Score.S]: 27,
+    [Score.A]: 30,
+    [Score.B]: 38,
   };
 
   const manager = new ParkourManager(viz, loadedWorld, vizConf, locations, scoreThresholds, {
