@@ -10,6 +10,7 @@ import TimerDisplay from './TimerDisplay.svelte';
 import type { ScoreThresholds } from './TimeDisplay.svelte';
 import TimeDisplay from './TimeDisplay.svelte';
 import type { SceneConfig } from '../scenes';
+import { API } from 'src/api/client';
 
 export interface ParkourMaterials {
   dashToken: {
@@ -23,6 +24,7 @@ export class ParkourManager {
   private viz: VizState;
   private locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } };
   private scoreThresholds: ScoreThresholds;
+  private mapID: string;
 
   private curDashCharges: Writable<number>;
   private curRunStartTimeSeconds: number | null = null;
@@ -37,11 +39,13 @@ export class ParkourManager {
     vizConf: VizConfig,
     locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } },
     scoreThresholds: ScoreThresholds,
-    materials: ParkourMaterials
+    materials: ParkourMaterials,
+    mapID: string
   ) {
     this.viz = viz;
     this.locations = locations;
     this.scoreThresholds = scoreThresholds;
+    this.mapID = mapID;
 
     const {
       ctx: dashTokensCtx,
@@ -110,13 +114,27 @@ export class ParkourManager {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const time = curTimeSeconds - (this.curRunStartTimeSeconds ?? 0);
+    const timeDisplayProps = $state({
+      scoreThresholds: this.scoreThresholds,
+      time,
+      mapID: this.mapID,
+      userPlayID: null as string | null,
+      userID: null as string | null,
+    });
     const displayComp = mount(TimeDisplay, {
       target,
-      props: { scoreThresholds: this.scoreThresholds, time },
+      props: timeDisplayProps,
     });
     this.winState = { winTimeSeconds: curTimeSeconds, displayComp };
 
     this.viz.fpCtx!.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
+
+    API.addPlay({ mapId: this.mapID, timeLength: time })
+      .then(res => {
+        timeDisplayProps.userPlayID = res.id ?? null;
+        timeDisplayProps.userID = res.playerId ?? null;
+      })
+      .catch(() => {});
   };
 
   public buildSceneConfig = (): SceneConfig => {
@@ -133,6 +151,7 @@ export class ParkourManager {
           chargeConfig: { curCharges: this.curDashCharges },
           useExternalVelocity: true,
           minDashDelaySeconds: 0,
+          sfx: { play: true, name: 'dash' },
         },
         externalVelocityAirDampingFactor: new THREE.Vector3(0.32, 0.3, 0.32),
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.9992, 0.9992, 0.9992),
@@ -143,6 +162,9 @@ export class ParkourManager {
       legacyLights: false,
       customControlsEntries: [{ label: 'Reset', key: 'f', action: this.reset }],
       goBackOnLoad: false,
+      sfx: {
+        neededSfx: ['dash', 'dash_pickup'],
+      },
     };
   };
 }

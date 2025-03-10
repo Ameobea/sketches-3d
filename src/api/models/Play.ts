@@ -36,6 +36,12 @@ export interface Play {
      * @type {string}
      * @memberof Play
      */
+    playerUserName?: string | null;
+    /**
+     * 
+     * @type {string}
+     * @memberof Play
+     */
     mapId: string | null;
     /**
      * 
@@ -73,6 +79,7 @@ export function PlayFromJSONTyped(json: any, ignoreDiscriminator: boolean): Play
         
         'id': json['id'] == null ? undefined : json['id'],
         'playerId': json['playerId'] == null ? undefined : json['playerId'],
+        'playerUserName': json['playerUserName'] == null ? undefined : json['playerUserName'],
         'mapId': json['mapId'],
         'playLength': json['playLength'],
         'timeSubmitted': (new Date(json['timeSubmitted'])),
@@ -91,6 +98,7 @@ export function PlayToJSONTyped(value?: Omit<Play, 'id'> | null, ignoreDiscrimin
     return {
         
         'playerId': value['playerId'],
+        'playerUserName': value['playerUserName'],
         'mapId': value['mapId'],
         'playLength': value['playLength'],
         'timeSubmitted': ((value['timeSubmitted']).toISOString()),

@@ -30,6 +30,7 @@ export interface GraphicsSettings {
 export interface AudioSettings {
   globalVolume: number;
   musicVolume: number;
+  sfxVolume: number;
 }
 
 export interface GameplaySettings {
@@ -94,7 +95,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
 
 const buildDefaultVizConfig = (): VizConfig => ({
   graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV },
-  audio: { globalVolume: 0.4, musicVolume: 0.4 },
+  audio: { globalVolume: 0.4, musicVolume: 0.4, sfxVolume: 0.4 },
   gameplay: { easyModeMovement: true },
   controls: { mouseSensitivity: 2 },
 });

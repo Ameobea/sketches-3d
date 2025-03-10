@@ -40,7 +40,7 @@
   <div>Shift</div>
 </div>
 {#each customEntries as { key, label }}
-  <div>
+  <div class="control-mapping">
     <div>{label}</div>
     <div>{key}</div>
   </div>

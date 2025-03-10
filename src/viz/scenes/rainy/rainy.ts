@@ -497,7 +497,7 @@ export const processLoadedScene = async (
   foregroundRenderPass.clearPass.enabled = false;
   effectComposer.addPass(foregroundRenderPass);
 
-  if (vizConf.graphics.quality > GraphicsQuality.Low) {
+  if (vizConfig.graphics.quality > GraphicsQuality.Low) {
     const n8aoPass = new N8AOPostPass(
       viz.scene,
       viz.camera,

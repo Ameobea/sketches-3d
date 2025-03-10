@@ -125,7 +125,7 @@ export const initDashTokens = (
     replacementObject: dashTokenBase,
     onCollect: () => {
       dashCharges.update(n => n + 1);
-      // TODO: sfx
+      viz.sfxManager.playSfx('dash_pickup');
     },
     type: 'aabb',
   });

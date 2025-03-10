@@ -48,6 +48,10 @@ export interface DashConfig {
   dashMagnitude: number;
   minDashDelaySeconds: number;
   useExternalVelocity?: boolean;
+  sfx?: {
+    play?: boolean;
+    name?: string;
+  };
 }
 
 export const DefaultDashConfig: DashConfig = Object.freeze({

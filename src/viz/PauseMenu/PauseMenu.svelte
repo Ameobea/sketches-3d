@@ -9,6 +9,7 @@
     Gameplay,
     Controls,
     Audio,
+    Login,
   }
 </script>
 
@@ -22,6 +23,7 @@
   import GraphicsMenu from './GraphicsMenu.svelte';
   import type { SceneConfig } from '../scenes';
   import GameplayMenu from './GameplayMenu.svelte';
+  import LoginMenu from './LoginMenu.svelte';
 
   let activeMenu = Menu.Main;
 
@@ -64,7 +66,7 @@
     }
   }}
 >
-  <div class="root">
+  <div class="pause-menu">
     <div class="menu-items-stack">
       {#if activeMenu === Menu.Main}
         <button
@@ -121,6 +123,13 @@
         >
           Controls
         </button>
+        <button
+          on:click={() => {
+            activeMenu = Menu.Login;
+          }}
+        >
+          Login / Register
+        </button>
       {:else if activeMenu === Menu.Graphics}
         {#if sceneConfig}
           <GraphicsMenu
@@ -137,6 +146,7 @@
         {/if}
       {:else if activeMenu === Menu.Audio}
         <AudioMenu
+          {viz}
           onBack={() => {
             activeMenu = Menu.Main;
           }}
@@ -165,6 +175,12 @@
           {startVizConfig}
           {viz}
         />
+      {:else if activeMenu === Menu.Login}
+        <LoginMenu
+          onBack={() => {
+            activeMenu = Menu.Main;
+          }}
+        />
       {/if}
     </div>
   </div>
@@ -190,7 +206,7 @@
     min-height: 600px;
   }
 
-  .root {
+  .pause-menu {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -200,6 +216,19 @@
     font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     max-width: 1200px;
     width: 100%;
+    color: #eee;
+  }
+
+  :global(.pause-menu h3) {
+    text-align: center;
+    margin-top: 2px;
+    margin-bottom: 16px;
+    font-family: 'Roboto Mono', 'Courier New', Courier, monospace;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    margin-top: 4px;
+    font-size: 24px;
+    font-weight: 500;
   }
 
   :global(.slider-input label) {
@@ -228,7 +257,12 @@
     margin-bottom: auto;
   }
 
-  :global(.menu-items-stack > *) {
+  :global(
+      .menu-items-stack > div,
+      .menu-items-stack > button,
+      .menu-items-stack > input,
+      .menu-items-stack-item
+    ) {
     height: 60px;
     font-size: 24px;
     padding: 10px;
@@ -239,16 +273,22 @@
     outline: none;
   }
 
-  :global(.menu-items-stack > button, .menu-items-stack input) {
+  :global(.menu-items-stack button, .menu-items-stack input) {
     cursor: pointer;
   }
 
-  :global(.menu-items-stack > button:hover) {
-    background-color: rgba(18, 18, 18, 0.4);
+  :global(.menu-items-stack input[type='text'], .menu-items-stack input[type='password']) {
+    cursor: unset;
   }
 
-  :global(.menu-items-stack > button:disabled) {
+  :global(.menu-items-stack button:hover) {
+    background-color: rgba(58, 58, 58, 0.3);
+  }
+
+  :global(.menu-items-stack button:disabled) {
     background-color: rgba(0, 0, 0, 0.3) !important;
+    color: #777 !important;
+    cursor: default !important;
   }
 
   :global(.large-checkbox) {

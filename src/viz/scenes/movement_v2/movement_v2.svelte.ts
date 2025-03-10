@@ -10,8 +10,12 @@ import { ParkourManager } from '../../parkour/ParkourManager.svelte';
 
 const locations = {
   spawn: {
-    pos: new THREE.Vector3(2.82073, 3.56807, 5.98513),
+    pos: new THREE.Vector3(2.82073, 1.56807, 5.98513),
     rot: new THREE.Vector3(0, Math.PI, 0),
+  },
+  end: {
+    pos: new THREE.Vector3(-58.39402770996094, 32.64414978027344, -11.861305236816406),
+    rot: new THREE.Vector3(-0.03848367320531852, -1.8432073464105263, -1.1261142051727861e-13),
   },
 };
 
@@ -37,10 +41,18 @@ export const processLoadedScene = async (
     [Score.B]: 38,
   };
 
-  const manager = new ParkourManager(viz, loadedWorld, vizConf, locations, scoreThresholds, {
-    dashToken: { core: greenMosaic2Material, ring: goldMaterial },
-    checkpoint: checkpointMat,
-  });
+  const manager = new ParkourManager(
+    viz,
+    loadedWorld,
+    vizConf,
+    locations,
+    scoreThresholds,
+    {
+      dashToken: { core: greenMosaic2Material, ring: goldMaterial },
+      checkpoint: checkpointMat,
+    },
+    'movement_v2'
+  );
 
   initPylonsPostprocessing(viz, vizConf);
 

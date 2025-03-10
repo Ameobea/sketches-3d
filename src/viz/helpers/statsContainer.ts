@@ -9,5 +9,7 @@ export const createStatsContainer = (topPx: number): HTMLDivElement => {
   posDisplayElem.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
   posDisplayElem.style.zIndex = '1';
   posDisplayElem.style.top = `${topPx}px`;
+  posDisplayElem.style.pointerEvents = 'none';
+  posDisplayElem.style.userSelect = 'none';
   return posDisplayElem;
 };
