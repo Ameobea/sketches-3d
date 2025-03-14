@@ -359,4 +359,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'Movement V2' },
     legacyLights: false,
   },
+  infinite: {
+    gltfName: null,
+    extension: 'glb',
+    sceneLoader: () => import('./infinite/infinite.svelte.ts').then(mod => mod.processLoadedScene),
+    sceneName: null,
+    metadata: { title: 'Infinite' },
+    legacyLights: false,
+  },
 };
