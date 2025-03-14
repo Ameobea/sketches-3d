@@ -12,3 +12,16 @@ export const initPosDebugger = (viz: VizState, container: HTMLElement, topPx: nu
     posDisplayElem.innerText = `${x}, ${y}, ${z}`;
   });
 };
+
+export const initEulerDebugger = (viz: VizState, container: HTMLElement, topPx: number) => {
+  const eulerDisplayElem = createStatsContainer(topPx);
+  container.appendChild(eulerDisplayElem);
+
+  viz.registerBeforeRenderCb(() => {
+    const euler = viz.camera.rotation;
+    const x = euler.x.toFixed(3);
+    const y = euler.y.toFixed(3);
+    const z = euler.z.toFixed(3);
+    eulerDisplayElem.innerText = `${x}, ${y}, ${z}`;
+  });
+};

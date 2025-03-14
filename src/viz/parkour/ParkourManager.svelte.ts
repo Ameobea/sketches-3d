@@ -25,6 +25,7 @@ export class ParkourManager {
   private locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } };
   private scoreThresholds: ScoreThresholds;
   private mapID: string;
+  private useExternalVelocity: boolean;
 
   private curDashCharges: Writable<number>;
   private curRunStartTimeSeconds: number | null = null;
@@ -40,12 +41,14 @@ export class ParkourManager {
     locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } },
     scoreThresholds: ScoreThresholds,
     materials: ParkourMaterials,
-    mapID: string
+    mapID: string,
+    useExternalVelocity: boolean
   ) {
     this.viz = viz;
     this.locations = locations;
     this.scoreThresholds = scoreThresholds;
     this.mapID = mapID;
+    this.useExternalVelocity = useExternalVelocity;
 
     const {
       ctx: dashTokensCtx,
@@ -149,7 +152,7 @@ export class ParkourManager {
         dashConfig: {
           enable: true,
           chargeConfig: { curCharges: this.curDashCharges },
-          useExternalVelocity: true,
+          useExternalVelocity: this.useExternalVelocity,
           minDashDelaySeconds: 0,
           sfx: { play: true, name: 'dash' },
         },
@@ -157,6 +160,7 @@ export class ParkourManager {
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.9992, 0.9992, 0.9992),
       },
       debugPos: true,
+      debugCamera: true,
       debugPlayerKinematics: true,
       locations: this.locations,
       legacyLights: false,

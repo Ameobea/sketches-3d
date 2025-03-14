@@ -51,7 +51,8 @@ export const processLoadedScene = async (
       dashToken: { core: greenMosaic2Material, ring: goldMaterial },
       checkpoint: checkpointMat,
     },
-    'movement_v2'
+    'movement_v2',
+    true
   );
 
   initPylonsPostprocessing(viz, vizConf);

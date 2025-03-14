@@ -10,7 +10,7 @@ import { type AddPlayerRegionContactCB, getAmmoJS, initBulletPhysics } from './c
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger.svelte.ts';
-import { initPosDebugger } from './helpers/posDebugger';
+import { initEulerDebugger, initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
 import {
@@ -353,7 +353,7 @@ const initPauseHandlers = (
     clock.elapsedTime = clockStopTime;
 
     if (viewMode === 'firstPerson' && !document.pointerLockElement && didManuallyLockPointer) {
-      canvas.requestPointerLock();
+      canvas.requestPointerLock({ unadjustedMovement: true });
     }
   };
 
@@ -386,7 +386,9 @@ const initPauseHandlers = (
   document.addEventListener('mousedown', () => {
     if (viewMode === 'firstPerson' && !get(paused)) {
       didManuallyLockPointer = true;
-      canvas.requestPointerLock();
+      // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
+      // that happen in some cases when using high polling rate mice or something like that
+      canvas.requestPointerLock({ unadjustedMovement: true });
     }
   });
 
@@ -655,6 +657,7 @@ export const initViz = (
   }
 
   const viz: VizState = buildViz(paused, sceneDef);
+  (window as any).viz = viz;
 
   container.appendChild(viz.renderer.domElement);
   container.appendChild(viz.stats.dom);
@@ -764,6 +767,10 @@ export const initViz = (
     if (sceneConf.debugPos) {
       vOffset += 24;
       initPosDebugger(viz, container, 0);
+    }
+    if (sceneConf.debugCamera) {
+      vOffset += 24;
+      initEulerDebugger(viz, container, vOffset);
     }
     if (sceneConf.debugTarget) {
       vOffset += 24;
