@@ -25,6 +25,7 @@ import {
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
 import { clamp, mergeDeep } from './util';
+import type { AmmoInterface, BtVec3 } from 'src/ammojs/ammoTypes.ts';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -37,7 +38,7 @@ export interface FpPlayerStateGetters {
 }
 
 export interface FirstPersonCtx {
-  addTriMesh: (mesh: THREE.Mesh) => void;
+  addTriMesh: (mesh: THREE.Mesh, colliderType?: 'static' | 'kinematic') => void;
   teleportPlayer: (pos: THREE.Vector3, rot?: THREE.Vector3) => void;
   reset: () => void;
   addBox: (
@@ -81,6 +82,8 @@ export interface FirstPersonCtx {
   deregisterDashCb: (cb: (curTimeSecs: number) => void) => void;
   registerJumpCb: (cb: (curTimeSecs: number) => void) => void;
   deregisterJumpCb: (cb: (curTimeSecs: number) => void) => void;
+  Ammo: AmmoInterface;
+  btvec3: (x: number, y: number, z: number) => BtVec3;
 }
 
 interface SetupFirstPersonArgs {
@@ -90,7 +93,7 @@ interface SetupFirstPersonArgs {
     pos: THREE.Vector3;
     rot: THREE.Vector3;
   };
-  registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void) => void;
+  registerBeforeRenderCb: (cb: (curTimeSecs: number, tDiffSecs: number) => void, priority?: number) => void;
   playerConf: SceneConfig['player'];
   gravity: number | undefined;
   inlineConsole: InlineConsole | null | undefined;
@@ -143,6 +146,7 @@ const setupFirstPerson = async ({
     registerJumpCb,
     deregisterDashCb,
     deregisterJumpCb,
+    btvec3,
   } = await initBulletPhysics({
     camera,
     keyStates,
@@ -257,13 +261,19 @@ const setupFirstPerson = async ({
     spawnPos = { pos, rot };
   };
 
-  registerBeforeRenderCb((curTimeSecs, tDiffSecs) => {
-    const newPlayerPos = updateCollisionWorld(curTimeSecs, tDiffSecs);
-    newPlayerPos.y += 0.5 * playerColliderHeight;
-    camera.position.copy(newPlayerPos);
+  registerBeforeRenderCb(
+    (curTimeSecs, tDiffSecs) => {
+      const newPlayerPos = updateCollisionWorld(curTimeSecs, tDiffSecs);
+      newPlayerPos.y += 0.5 * playerColliderHeight;
+      camera.position.copy(newPlayerPos);
 
-    teleportPlayerIfOOB();
-  });
+      teleportPlayerIfOOB();
+    },
+    // Setting this priority ensures that the physics simulation always runs last, after all user-supplied
+    // callbacks have been called.  This avoids issues where the visual positions of objects that are
+    // animated by the user don't line up with the collision world positions.
+    Infinity
+  );
 
   (window as any).getPos = () =>
     camera.position
@@ -302,6 +312,8 @@ const setupFirstPerson = async ({
     registerJumpCb,
     deregisterDashCb,
     deregisterJumpCb,
+    Ammo,
+    btvec3,
   };
 };
 
@@ -344,7 +356,7 @@ const initPauseHandlers = (
     clock.stop();
   };
 
-  const maybeResumeViz = () => {
+  const maybeResumeViz = async () => {
     if (get(paused) || isBlurred) {
       return;
     }
@@ -353,7 +365,16 @@ const initPauseHandlers = (
     clock.elapsedTime = clockStopTime;
 
     if (viewMode === 'firstPerson' && !document.pointerLockElement && didManuallyLockPointer) {
-      canvas.requestPointerLock({ unadjustedMovement: true });
+      try {
+        await canvas.requestPointerLock({ unadjustedMovement: true });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'NotSupportedError') {
+          // some browsers/operating systems do not support the `unadjustedMovement` option
+          await canvas.requestPointerLock();
+        } else {
+          console.error('Failed to get pointer lock: ', err);
+        }
+      }
     }
   };
 
@@ -383,12 +404,21 @@ const initPauseHandlers = (
     paused.set(!document.pointerLockElement);
   });
 
-  document.addEventListener('mousedown', () => {
+  document.addEventListener('mousedown', async () => {
     if (viewMode === 'firstPerson' && !get(paused)) {
       didManuallyLockPointer = true;
       // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
       // that happen in some cases when using high polling rate mice or something like that
-      canvas.requestPointerLock({ unadjustedMovement: true });
+      try {
+        await canvas.requestPointerLock({ unadjustedMovement: true });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'NotSupportedError') {
+          // some browsers/operating systems don't support the `unadjustedMovement` option
+          await canvas.requestPointerLock();
+        } else {
+          console.error('Failed to get pointer lock: ', err);
+        }
+      }
     }
   });
 
@@ -471,7 +501,8 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
   stats.dom.style.top = '0px';
 
   const resizeCbs: (() => void)[] = [];
-  const beforeRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
+  const beforeRenderCbs: { cb: (curTimeSeconds: number, tDiffSeconds: number) => void; priority: number }[] =
+    [];
   const afterRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
 
   function onWindowResize() {
@@ -485,10 +516,24 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
   window.addEventListener('resize', onWindowResize);
 
   const registerResizeCb = (cb: () => void) => resizeCbs.push(cb);
-  const registerBeforeRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) =>
-    beforeRenderCbs.push(cb);
+  /**
+   *
+   * @param cb
+   * @param priority the lower the priority, the earlier the callback will be called.  Defaults to 0 if not set.
+   * @returns
+   */
+  const registerBeforeRenderCb = (
+    cb: (curTimeSeconds: number, tDiffSeconds: number) => void,
+    priority: number = 1
+  ) => {
+    beforeRenderCbs.push({ cb, priority });
+    // sort to maintain priority order
+    beforeRenderCbs.sort((a, b) => {
+      return a.priority - b.priority;
+    });
+  };
   const unregisterBeforeRenderCb = (cb: (curTimeSeconds: number, tDiffSeconds: number) => void) => {
-    const idx = beforeRenderCbs.indexOf(cb);
+    const idx = beforeRenderCbs.findIndex(entry => entry.cb === cb);
     if (idx !== -1) {
       beforeRenderCbs.splice(idx, 1);
     }
@@ -549,7 +594,7 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
     const deltaTime = clock.getDelta();
     const curTimeSeconds = clock.getElapsedTime();
 
-    beforeRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
+    beforeRenderCbs.forEach(({ cb }) => cb(curTimeSeconds, deltaTime));
 
     if (renderOverride) {
       renderOverride(deltaTime);
@@ -658,6 +703,7 @@ export const initViz = (
 
   const viz: VizState = buildViz(paused, sceneDef);
   (window as any).viz = viz;
+  (window as any).THREE = THREE;
 
   container.appendChild(viz.renderer.domElement);
   container.appendChild(viz.stats.dom);

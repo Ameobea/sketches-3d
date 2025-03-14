@@ -370,6 +370,13 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./infinite/infinite.svelte.ts').then(mod => mod.processLoadedScene),
     sceneName: null,
     metadata: { title: 'Infinite' },
+  },
+  kinematic_platforms: {
+    gltfName: null,
+    sceneLoader: () =>
+      import('./kinematic_platforms/kinematic_platforms.svelte.ts').then(mod => mod.processLoadedScene),
+    sceneName: null,
+    metadata: { title: 'kinematic_platforms' },
     legacyLights: false,
   },
 };

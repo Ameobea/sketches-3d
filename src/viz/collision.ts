@@ -13,10 +13,19 @@ import {
 } from './scenes/index.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
-import { assertUnreachable, mergeDeep } from './util.js';
+import { assertUnreachable } from './util.js';
 import type { VizConfig } from './conf.js';
+import type {
+  AmmoInterface,
+  BtCollisionShape,
+  BtDiscreteDynamicsWorld,
+  BtKinematicCharacterController,
+  BtRigidBody,
+  BtVec3,
+} from '../ammojs/ammoTypes';
+import { DashManager } from './DashManager.js';
 
-let ammojs: Promise<any> | null = null;
+let ammojs: Promise<AmmoInterface> | null = null;
 
 export const getAmmoJS = async () => {
   if (ammojs) return ammojs;
@@ -24,125 +33,17 @@ export const getAmmoJS = async () => {
   return ammojs;
 };
 
-let playerController: any = null;
-let btvec3: (x: number, y: number, z: number) => any = () => {
+let btvec3: (x: number, y: number, z: number) => BtVec3 = () => {
   throw new Error('btvec3 not initialized');
 };
 
-const initBtvec3Scratch = (Ammo: any) => {
-  const scratchVec = new Ammo.btVector3();
+const initBtvec3Scratch = (Ammo: AmmoInterface) => {
+  const scratchVec: BtVec3 = new Ammo.btVector3();
   btvec3 = (x: number, y: number, z: number) => {
     scratchVec.setValue(x, y, z);
     return scratchVec;
   };
 };
-
-class DashManager {
-  private sfxManager: SfxManager;
-  private config: DashConfig;
-  public lastDashTimeSeconds = 0;
-  /**
-   * `true` if the player has not touched the ground since they last dashed
-   */
-  private dashNeedsGroundTouch = false;
-  private dashCbs: ((curTimeSeconds: number) => void)[] = [];
-
-  static mergeConfig(config: Partial<DashConfig> | undefined): DashConfig {
-    if (!config) {
-      return DefaultDashConfig;
-    }
-    return mergeDeep({ ...DefaultDashConfig }, config);
-  }
-
-  constructor(sfxManager: SfxManager, config: Partial<DashConfig> | undefined) {
-    this.sfxManager = sfxManager;
-    this.config = DashManager.mergeConfig(config);
-  }
-
-  private dashInner(origForwardDir: THREE.Vector3, curTimeSeconds: number) {
-    if (this.config.useExternalVelocity) {
-      playerController.setExternalVelocity(
-        btvec3(
-          origForwardDir.x * this.config.dashMagnitude * 0.008,
-          origForwardDir.y * this.config.dashMagnitude * 0.008,
-          origForwardDir.z * this.config.dashMagnitude * 0.008
-        )
-      );
-      playerController.resetFall();
-    } else {
-      playerController.jump(
-        btvec3(
-          origForwardDir.x * this.config.dashMagnitude,
-          origForwardDir.y * this.config.dashMagnitude,
-          origForwardDir.z * this.config.dashMagnitude
-        )
-      );
-    }
-    this.lastDashTimeSeconds = curTimeSeconds;
-    this.dashNeedsGroundTouch = true;
-
-    if (this.config.chargeConfig) {
-      this.config.chargeConfig.curCharges.update(n => n - 1);
-    }
-
-    for (const cb of this.dashCbs) {
-      cb(curTimeSeconds);
-    }
-  }
-
-  public tick(curTimeSeconds: number, onGround: boolean) {
-    if (
-      curTimeSeconds - this.lastDashTimeSeconds > this.config.minDashDelaySeconds &&
-      this.dashNeedsGroundTouch &&
-      onGround
-    ) {
-      this.dashNeedsGroundTouch = false;
-    }
-  }
-
-  /**
-   * Attempts to dash if the necessary conditions are met.  Returns `true` if the dash was actually performed.
-   */
-  public tryDash(curTimeSeconds: number, isFlyMode: boolean, origForwardDir: THREE.Vector3): boolean {
-    if (!this.config.enable) {
-      return false;
-    }
-
-    // check if not enough time since last dash
-    if (curTimeSeconds - this.lastDashTimeSeconds <= this.config.minDashDelaySeconds) {
-      return false;
-    }
-
-    if (this.config.chargeConfig) {
-      if (get(this.config.chargeConfig.curCharges) <= 0) {
-        return false;
-      }
-    }
-
-    if (this.dashNeedsGroundTouch && !isFlyMode) {
-      return false;
-    }
-
-    this.dashInner(origForwardDir, curTimeSeconds);
-    if (this.config.sfx?.play) {
-      this.sfxManager.playSfx(this.config.sfx.name ?? 'dash');
-    }
-
-    return true;
-  }
-
-  public registerDashCb(cb: (curTimeSeconds: number) => void) {
-    this.dashCbs.push(cb);
-  }
-
-  public deregisterDashCb(cb: (curTimeSeconds: number) => void) {
-    const ix = this.dashCbs.indexOf(cb);
-    if (ix === -1) {
-      throw new Error('cb not registered');
-    }
-    this.dashCbs.splice(ix, 1);
-  }
-}
 
 export type ContactRegion =
   | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
@@ -172,7 +73,7 @@ const MAX_PENETRATION_DEPTH = 0.075;
 interface BulletPhysicsArgs {
   camera: THREE.Camera;
   keyStates: Record<string, boolean>;
-  Ammo: any;
+  Ammo: AmmoInterface;
   spawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
   gravity: number;
   jumpSpeed: number;
@@ -208,7 +109,7 @@ export const initBulletPhysics = ({
   const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
   const broadphase = new Ammo.btDbvtBroadphase();
   const solver = new Ammo.btSequentialImpulseConstraintSolver();
-  let collisionWorld = new Ammo.btDiscreteDynamicsWorld(
+  let collisionWorld: BtDiscreteDynamicsWorld = new Ammo.btDiscreteDynamicsWorld(
     dispatcher,
     broadphase,
     solver,
@@ -231,9 +132,9 @@ export const initBulletPhysics = ({
     .setInternalGhostPairCallback(new Ammo.btGhostPairCallback());
   const playerCapsule = new Ammo.btCapsuleShape(playerColliderRadius, playerColliderHeight);
   playerGhostObject.setCollisionShape(playerCapsule);
-  playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
+  // playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
 
-  playerController = new Ammo.btKinematicCharacterController(
+  const playerController: BtKinematicCharacterController = new Ammo.btKinematicCharacterController(
     playerGhostObject,
     playerCapsule,
     playerStepHeight,
@@ -293,7 +194,7 @@ export const initBulletPhysics = ({
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
 
-  const dashManager = new DashManager(sfxManager, dashConfig);
+  const dashManager = new DashManager(sfxManager, dashConfig, playerController, btvec3);
 
   let isFlyMode = false;
   const setFlyMode = (newIsFlyMode?: boolean) => {
@@ -370,8 +271,9 @@ export const initBulletPhysics = ({
       dashManager.tryDash(curTimeSeconds, isFlyMode, origForwardDir);
     }
 
+    const simulationTickRate = 160;
     const moveSpeedPerSecond = wasOnGround ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
-    const moveSpeedPerTick = moveSpeedPerSecond * (1 / 160);
+    const moveSpeedPerTick = moveSpeedPerSecond * (1 / simulationTickRate);
     const walkDirBulletVector = btvec3(
       moveDirection.x * moveSpeedPerTick,
       moveDirection.y * moveSpeedPerTick,
@@ -380,8 +282,8 @@ export const initBulletPhysics = ({
     playerController.setWalkDirection(walkDirBulletVector);
 
     // TODO: Verify that this values make sense
-    const fixedTimeStep = 1 / 160;
-    const maxSubSteps = 20;
+    const fixedTimeStep = 1 / simulationTickRate;
+    const maxSubSteps = 200;
     collisionWorld.stepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
 
     const newPlayerTransform = playerGhostObject.getWorldTransform();
@@ -424,14 +326,16 @@ export const initBulletPhysics = ({
   interface CollisionObjectRef {
     materialClass?: MaterialClass;
   }
+
   let nextCollisionObjectRefId = 0;
   const CollisionObjectRefs: Map<number, CollisionObjectRef> = new Map();
 
-  const addStaticShape = (
-    shape: any,
+  const addCollisionObject = (
+    shape: BtCollisionShape,
     pos: THREE.Vector3,
     quat: THREE.Quaternion = new THREE.Quaternion(),
-    objRef?: CollisionObjectRef
+    objRef?: CollisionObjectRef,
+    colliderType: 'static' | 'kinematic' = 'static'
   ) => {
     const transform = new Ammo.btTransform();
     transform.setIdentity();
@@ -444,11 +348,19 @@ export const initBulletPhysics = ({
     const motionState = new Ammo.btDefaultMotionState(transform);
     const localInertia = btvec3(0, 0, 0);
     const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
-    const body = new Ammo.btRigidBody(rbInfo);
-    body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
-    if (!body.isStaticObject()) {
-      throw new Error('body is not static');
+    const body: BtRigidBody = new Ammo.btRigidBody(rbInfo);
+    switch (colliderType) {
+      case 'static':
+        body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
+        break;
+      case 'kinematic':
+        body.setCollisionFlags(2); // btCollisionObject::CF_KINEMATIC_OBJECT
+        body.setActivationState(4); // DISABLE_DEACTIVATION
+        break;
+      default:
+        colliderType satisfies never;
     }
+
     if (objRef) {
       const refIx = nextCollisionObjectRefId++;
       body.setUserIndex(refIx);
@@ -518,7 +430,7 @@ export const initBulletPhysics = ({
     return hull;
   };
 
-  const addTriMesh = (mesh: THREE.Mesh) => {
+  const addTriMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
     if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
       return;
     }
@@ -537,11 +449,11 @@ export const initBulletPhysics = ({
     const objRef: CollisionObjectRef = {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
     };
-    const rigidBody = addStaticShape(shape, mesh.position, mesh.quaternion, objRef);
+    const rigidBody = addCollisionObject(shape, mesh.position, mesh.quaternion, objRef, colliderType);
     mesh.userData.rigidBody = rigidBody;
   };
 
-  const removeRigidBody = (rigidBody: any) => {
+  const removeRigidBody = (rigidBody: BtRigidBody) => {
     collisionWorld.removeRigidBody(rigidBody);
     Ammo.destroy(rigidBody);
   };
@@ -600,7 +512,7 @@ export const initBulletPhysics = ({
       btvec3(worldSpaceWidth / (gridResolutionX - 1), 1, worldSpaceLength / (gridResolutionY - 1))
     );
 
-    addStaticShape(heightfieldShape, new THREE.Vector3(0, 0, 0));
+    addCollisionObject(heightfieldShape, new THREE.Vector3(0, 0, 0));
   };
 
   const addPlayerRegionContactCb: AddPlayerRegionContactCB = (region, onEnter, onLeave) => {
@@ -740,12 +652,12 @@ export const initBulletPhysics = ({
     quat?: THREE.Quaternion
   ) => {
     const shape = new Ammo.btBoxShape(btvec3(...halfExtents));
-    addStaticShape(shape, new THREE.Vector3(...pos), quat);
+    addCollisionObject(shape, new THREE.Vector3(...pos), quat);
   };
 
   const addCone = (pos: THREE.Vector3, radius: number, height: number, quat?: THREE.Quaternion) => {
     const shape = new Ammo.btConeShape(radius, height);
-    addStaticShape(shape, pos, quat);
+    addCollisionObject(shape, pos, quat);
   };
 
   const addCompound = (
@@ -780,7 +692,7 @@ export const initBulletPhysics = ({
       parentShape.addChildShape(childTransform, childShape);
     }
 
-    addStaticShape(parentShape, new THREE.Vector3(...pos), quat);
+    addCollisionObject(parentShape, new THREE.Vector3(...pos), quat);
 
     Ammo.destroy(childTransform);
   };
@@ -841,5 +753,6 @@ export const initBulletPhysics = ({
     deregisterJumpCb,
     registerDashCb: (cb: (curTimeSeconds: number) => void) => dashManager.registerDashCb(cb),
     deregisterDashCb: (cb: (curTimeSeconds: number) => void) => dashManager.deregisterDashCb(cb),
+    btvec3,
   };
 };
