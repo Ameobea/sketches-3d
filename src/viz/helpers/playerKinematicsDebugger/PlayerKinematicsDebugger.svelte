@@ -56,6 +56,8 @@
     display: flex;
     flex-direction: column;
     text-align: right;
+    user-select: none;
+    pointer-events: none;
   }
 
   .root > div {

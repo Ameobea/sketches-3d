@@ -13,6 +13,13 @@ const config = {
   },
   server: {
     port: 4800,
+    proxy: {
+      '/api': {
+        target: 'https://3d.ameo.design/api',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/api/, ''),
+      },
+    },
   },
   build: {
     sourcemap: true,

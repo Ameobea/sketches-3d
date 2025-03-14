@@ -41,10 +41,19 @@ export const processLoadedScene = async (
     [Score.B]: 50,
   };
 
-  const manager = new ParkourManager(viz, loadedWorld, vizConf, locations, scoreThresholds, {
-    dashToken: { core: greenMosaic2Material, ring: goldMaterial },
-    checkpoint: checkpointMat,
-  });
+  const manager = new ParkourManager(
+    viz,
+    loadedWorld,
+    vizConf,
+    locations,
+    scoreThresholds,
+    {
+      dashToken: { core: greenMosaic2Material, ring: goldMaterial },
+      checkpoint: checkpointMat,
+    },
+    'pk_pylons',
+    false
+  );
 
   initPylonsPostprocessing(viz, vizConf);
 

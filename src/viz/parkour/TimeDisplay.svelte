@@ -35,8 +35,17 @@
 </script>
 
 <script lang="ts">
+  import { QueryClientProvider } from '@tanstack/svelte-query';
+
+  import MiniLeaderboardDisplay from './MiniLeaderboardDisplay.svelte';
+  import { queryClient } from '../queryClient';
+
+  export let mapID: string;
   export let scoreThresholds: ScoreThresholds;
   export let time: number;
+  export let userPlayID: string | null = null;
+  export let userID: string | null = null;
+  // TODO: Highlight the current score if it's in the list
 
   $: score = (() => {
     if (time < scoreThresholds[Score.SPlus]) return Score.SPlus;
@@ -48,7 +57,7 @@
   $: scoreFontSize = ScoreFontSizes[score];
 </script>
 
-<div class="root">
+<div class="time-display">
   <div class="score" style="color: {ScoreColors[score]}; font-size: {scoreFontSize}">
     {ScoreNames[score]}
   </div>
@@ -58,22 +67,29 @@
   </div>
 </div>
 
+<QueryClientProvider client={queryClient}>
+  <MiniLeaderboardDisplay {mapID} {userPlayID} {userID} />
+</QueryClientProvider>
+
 <style lang="css">
-  .root {
+  .time-display {
     position: absolute;
-    top: 10%;
-    left: 50%;
+    top: 5%;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
     font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
-    background-color: #00000099;
+    background-color: #000000aa;
     color: white;
     border: 1px solid #ffffff55;
     padding: 10px;
     gap: 12px;
     min-width: 160px;
+    max-width: 250px;
   }
 
   .time {

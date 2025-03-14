@@ -10,7 +10,7 @@ import { type AddPlayerRegionContactCB, getAmmoJS, initBulletPhysics } from './c
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger.svelte.ts';
-import { initPosDebugger } from './helpers/posDebugger';
+import { initEulerDebugger, initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
 import {
@@ -98,6 +98,7 @@ interface SetupFirstPersonArgs {
   oobYThreshold: number | undefined;
   sfxManager: SfxManager;
   vizConfig: Writable<Conf.VizConfig>;
+  canvas: HTMLCanvasElement;
 }
 
 const setupFirstPerson = async ({
@@ -112,6 +113,7 @@ const setupFirstPerson = async ({
   oobYThreshold = -55,
   sfxManager,
   vizConfig,
+  canvas,
 }: SetupFirstPersonArgs): Promise<FirstPersonCtx> => {
   const keyStates: Record<string, boolean> = {};
 
@@ -188,12 +190,12 @@ const setupFirstPerson = async ({
     mouseSensitivity = vizConf.controls.mouseSensitivity;
   });
   const cameraEulerScratch = new THREE.Euler();
-  document.body.addEventListener('mousemove', event => {
-    if (document.pointerLockElement === document.body) {
+  canvas.addEventListener('mousemove', evt => {
+    if (document.pointerLockElement === canvas) {
       cameraEulerScratch.setFromQuaternion(camera.quaternion, 'YXZ');
 
-      cameraEulerScratch.y -= event.movementX * mouseSensitivity * 0.001;
-      cameraEulerScratch.x -= event.movementY * mouseSensitivity * 0.001;
+      cameraEulerScratch.y -= evt.movementX * mouseSensitivity * 0.001;
+      cameraEulerScratch.x -= evt.movementY * mouseSensitivity * 0.001;
 
       // Clamp the camera's rotation to the range of -PI/2 to PI/2
       // This is so the camera doesn't flip upside down
@@ -327,7 +329,8 @@ let isBlurred = false;
 const initPauseHandlers = (
   paused: Writable<boolean>,
   clock: THREE.Clock,
-  viewMode: NonNullable<SceneConfig['viewMode']>['type']
+  viewMode: NonNullable<SceneConfig['viewMode']>['type'],
+  canvas: HTMLCanvasElement
 ) => {
   let didManuallyLockPointer = false;
   let clockStopTime = 0;
@@ -350,7 +353,7 @@ const initPauseHandlers = (
     clock.elapsedTime = clockStopTime;
 
     if (viewMode === 'firstPerson' && !document.pointerLockElement && didManuallyLockPointer) {
-      document.body.requestPointerLock();
+      canvas.requestPointerLock({ unadjustedMovement: true });
     }
   };
 
@@ -383,7 +386,9 @@ const initPauseHandlers = (
   document.addEventListener('mousedown', () => {
     if (viewMode === 'firstPerson' && !get(paused)) {
       didManuallyLockPointer = true;
-      document.body.requestPointerLock();
+      // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
+      // that happen in some cases when using high polling rate mice or something like that
+      canvas.requestPointerLock({ unadjustedMovement: true });
     }
   });
 
@@ -589,6 +594,8 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
 
   const collisionWorldLoadedCbs: ((fpCtx: FirstPersonCtx) => void)[] = [];
 
+  const sfxManager = new SfxManager();
+
   return {
     camera,
     renderer,
@@ -606,6 +613,7 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
     inventory,
     collisionWorldLoadedCbs,
     clock,
+    sfxManager,
   };
 };
 
@@ -649,6 +657,7 @@ export const initViz = (
   }
 
   const viz: VizState = buildViz(paused, sceneDef);
+  (window as any).viz = viz;
 
   container.appendChild(viz.renderer.domElement);
   container.appendChild(viz.stats.dom);
@@ -708,15 +717,15 @@ export const initViz = (
       // TODO: set up inventory CBs
     }
 
-    initPauseHandlers(paused, viz.clock, sceneConf.viewMode.type);
+    initPauseHandlers(paused, viz.clock, sceneConf.viewMode.type, viz.renderer.domElement);
     initCustomKeyHandlers(sceneConf.customControlsEntries);
 
-    let sfxManager: SfxManager | undefined;
+    viz.sfxManager.setConfig(mergeDeep(buildDefaultSfxConfig(), sceneConf.sfx ?? {}));
+    viz.sfxManager.setVizConfig(vizConfig);
+
     if (sceneConf.viewMode.type === 'firstPerson') {
-      const sfxConfig = mergeDeep(buildDefaultSfxConfig(), sceneConf.sfx ?? {});
-      sfxManager = new SfxManager(sfxConfig);
       viz.registerAfterRenderCb((curTimeSeconds, tDiffSeconds) =>
-        sfxManager!.tick(tDiffSeconds, curTimeSeconds)
+        viz.sfxManager.tick(tDiffSeconds, curTimeSeconds)
       );
       const spawnPos = (window as any).lastPos
         ? (() => {
@@ -738,8 +747,9 @@ export const initViz = (
         inlineConsole,
         dashConfig: sceneConf.player?.dashConfig,
         oobYThreshold: sceneConf.player?.oobYThreshold,
-        sfxManager,
+        sfxManager: viz.sfxManager,
         vizConfig,
+        canvas: viz.renderer.domElement,
       });
       viz.fpCtx = fpCtx;
     } else if (sceneConf.viewMode.type === 'orbit') {
@@ -757,6 +767,10 @@ export const initViz = (
     if (sceneConf.debugPos) {
       vOffset += 24;
       initPosDebugger(viz, container, 0);
+    }
+    if (sceneConf.debugCamera) {
+      vOffset += 24;
+      initEulerDebugger(viz, container, vOffset);
     }
     if (sceneConf.debugTarget) {
       vOffset += 24;

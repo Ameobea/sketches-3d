@@ -8,14 +8,6 @@ export const initBaseScene = (viz: VizState) => {
   light.position.set(80, 60, 80);
   viz.scene.add(light);
 
-  // Add a cube at the position of the light
-  // const lightCube = new THREE.Mesh(
-  //   new THREE.BoxGeometry(10.1, 10.1, 10.1),
-  //   new THREE.MeshBasicMaterial({ color: 0xffffff })
-  // );
-  // lightCube.position.copy(light.position);
-  // viz.scene.add(lightCube);
-
   const ambientlight = new THREE.AmbientLight(0xe3d2d2, 0.05);
   viz.scene.add(ambientlight);
   return { ambientlight, light };

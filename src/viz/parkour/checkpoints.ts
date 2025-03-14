@@ -63,6 +63,7 @@ export const initCheckpoints = (
       }
 
       dashTokensCtx.restore(toRestore);
+      viz.fpCtx!.reset();
     })
   );
 

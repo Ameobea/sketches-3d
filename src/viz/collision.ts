@@ -38,6 +38,7 @@ const initBtvec3Scratch = (Ammo: any) => {
 };
 
 class DashManager {
+  private sfxManager: SfxManager;
   private config: DashConfig;
   public lastDashTimeSeconds = 0;
   /**
@@ -53,7 +54,8 @@ class DashManager {
     return mergeDeep({ ...DefaultDashConfig }, config);
   }
 
-  constructor(config: Partial<DashConfig> | undefined) {
+  constructor(sfxManager: SfxManager, config: Partial<DashConfig> | undefined) {
+    this.sfxManager = sfxManager;
     this.config = DashManager.mergeConfig(config);
   }
 
@@ -122,6 +124,10 @@ class DashManager {
     }
 
     this.dashInner(origForwardDir, curTimeSeconds);
+    if (this.config.sfx?.play) {
+      this.sfxManager.playSfx(this.config.sfx.name ?? 'dash');
+    }
+
     return true;
   }
 
@@ -287,7 +293,7 @@ export const initBulletPhysics = ({
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
 
-  const dashManager = new DashManager(dashConfig);
+  const dashManager = new DashManager(sfxManager, dashConfig);
 
   let isFlyMode = false;
   const setFlyMode = (newIsFlyMode?: boolean) => {
@@ -401,6 +407,8 @@ export const initBulletPhysics = ({
     if (rot) {
       camera.rotation.setFromVector3(rot);
     }
+    playerController.setExternalVelocity(btvec3(0, 0, 0));
+    playerController.setVerticalVelocity(0);
   };
 
   const reset = () => {

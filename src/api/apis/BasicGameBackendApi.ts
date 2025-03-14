@@ -65,7 +65,7 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
 
     /**
      */
-    async addPlayRaw(requestParameters: AddPlayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<void>> {
+    async addPlayRaw(requestParameters: AddPlayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Play>> {
         if (requestParameters['mapId'] == null) {
             throw new runtime.RequiredError(
                 'mapId',
@@ -99,13 +99,14 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
             query: queryParameters,
         }, initOverrides);
 
-        return new runtime.VoidApiResponse(response);
+        return new runtime.JSONApiResponse(response, (jsonValue) => PlayFromJSON(jsonValue));
     }
 
     /**
      */
-    async addPlay(requestParameters: AddPlayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<void> {
-        await this.addPlayRaw(requestParameters, initOverrides);
+    async addPlay(requestParameters: AddPlayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Play> {
+        const response = await this.addPlayRaw(requestParameters, initOverrides);
+        return await response.value();
     }
 
     /**

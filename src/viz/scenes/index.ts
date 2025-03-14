@@ -48,6 +48,10 @@ export interface DashConfig {
   dashMagnitude: number;
   minDashDelaySeconds: number;
   useExternalVelocity?: boolean;
+  sfx?: {
+    play?: boolean;
+    name?: string;
+  };
 }
 
 export const DefaultDashConfig: DashConfig = Object.freeze({
@@ -73,6 +77,7 @@ export interface SceneConfig {
    * If true, the current position in the world of the player will be displayed
    */
   debugPos?: boolean;
+  debugCamera?: boolean;
   /**
    * If true, the name of the object at the center of the screen will be displayed
    */
