@@ -17,6 +17,7 @@ static/*.png
 static/*.br
 src/ammojs/*
 !src/ammojs/.gitkeep
+!src/ammojs/ammoTypes.ts
 static/ammo.wasm.wasm
 static/normal_map_gen.wasm
 yarn-error.log
