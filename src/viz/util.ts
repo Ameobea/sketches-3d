@@ -119,10 +119,6 @@ export const mergeDeep = <T extends Record<string, any>>(base: T, rhs: any): T =
 
 export const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
-export const assertUnreachable = (x: never): never => {
-  throw new Error('Unreachable code');
-};
-
 export type DeepPartial<T> = T extends object
   ? {
       [P in keyof T]?: DeepPartial<T[P]>;

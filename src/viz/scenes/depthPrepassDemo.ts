@@ -100,7 +100,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     player: {
       jumpVelocity: 0,
       dashConfig: { enable: false },
-      colliderCapsuleSize: {
+      colliderSize: {
         height: 1.35,
         radius: 0.3,
       },

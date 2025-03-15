@@ -104,7 +104,7 @@ export const processLoadedScene = async (
     gravity: 30,
     player: {
       moveSpeed: { onGround: 10, inAir: 13 },
-      colliderCapsuleSize: { height: 2.2, radius: 0.8 },
+      colliderSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
       oobYThreshold: -10,
       dashConfig: { enable: true },

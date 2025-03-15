@@ -87,12 +87,29 @@ export interface SceneConfig {
    */
   debugPlayerKinematics?: boolean;
   gravity?: number;
+  /**
+   * Tick rate in hertz used to determine the fixed time step for the bullet physics simulation.
+   *
+   * Default: 160
+   */
+  simulationTickRate?: number;
   player?: {
     dashConfig?: Partial<DashConfig>;
     jumpVelocity?: number;
+    /**
+     * Over the course of a second `externalVelocityAirDampingFactor` percent of the external velocity
+     * will bleed off while the player is in the air.  So vec3(0.5, 0.5, 0.5) means that 50% of external
+     * velocity will be lost every second while in the air.
+     */
     externalVelocityAirDampingFactor?: THREE.Vector3;
+    /**
+     * Over the course of a second `externalVelocityGroundDampingFactor` percent of the external velocity
+     * will bleed off while the player is on the ground.  So vec3(0.5, 0.5, 0.5) means that 50% of external
+     * velocity will be lost every second while on the ground.
+     */
     externalVelocityGroundDampingFactor?: THREE.Vector3;
-    colliderCapsuleSize?: { height: number; radius: number };
+    colliderSize?: { height: number; radius: number };
+    playerColliderShape?: 'capsule' | 'cylinder';
     moveSpeed?: { onGround: number; inAir: number };
     stepHeight?: number;
     oobYThreshold?: number;

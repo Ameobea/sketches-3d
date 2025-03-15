@@ -13,13 +13,13 @@ import {
 } from './scenes/index.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
-import { assertUnreachable } from './util.js';
 import type { VizConfig } from './conf.js';
 import type {
   AmmoInterface,
   BtCollisionShape,
   BtDiscreteDynamicsWorld,
   BtKinematicCharacterController,
+  BtPairCachingGhostObject,
   BtRigidBody,
   BtVec3,
 } from '../ammojs/ammoTypes';
@@ -49,13 +49,14 @@ export type ContactRegion =
   | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
   | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 }
   | { type: 'convexHull'; mesh: THREE.Mesh; scale?: THREE.Vector3 }
-  | { type: 'aabb'; mesh: THREE.Mesh; scale?: THREE.Vector3 };
+  | { type: 'aabb'; mesh: THREE.Mesh; scale?: THREE.Vector3 }
+  | { type: 'sphere'; pos: THREE.Vector3; radius: number };
 
 export type AddPlayerRegionContactCB = (
   region: ContactRegion,
   onEnter?: () => void,
   onLeave?: () => void
-) => void;
+) => BtPairCachingGhostObject;
 
 // \/ This is vital for making the physics work without bad bugs like falling through floors randomly.
 //
@@ -69,6 +70,7 @@ const MAX_SLOPE_RADS = 0.8;
 // the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
 // weird issues where the player slides around on the floor or clips through geometry.
 const MAX_PENETRATION_DEPTH = 0.075;
+const DEFAULT_SIMULATION_TICK_RATE_HZ = 160;
 
 interface BulletPhysicsArgs {
   camera: THREE.Camera;
@@ -77,6 +79,7 @@ interface BulletPhysicsArgs {
   spawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
   gravity: number;
   jumpSpeed: number;
+  playerColliderShape: 'capsule' | 'cylinder';
   playerColliderRadius: number;
   playerColliderHeight: number;
   playerMoveSpeed: PlayerMoveSpeed | undefined;
@@ -86,6 +89,7 @@ interface BulletPhysicsArgs {
   externalVelocityGroundDampingFactor: THREE.Vector3 | undefined;
   sfxManager: SfxManager;
   vizConfig: Writable<VizConfig>;
+  simulationTickRate: number | undefined;
 }
 
 export const initBulletPhysics = ({
@@ -95,6 +99,7 @@ export const initBulletPhysics = ({
   spawnPos,
   gravity,
   jumpSpeed,
+  playerColliderShape,
   playerColliderRadius,
   playerColliderHeight,
   playerMoveSpeed = DefaultMoveSpeed,
@@ -104,6 +109,7 @@ export const initBulletPhysics = ({
   externalVelocityGroundDampingFactor = DefaultExternalVelocityGroundDampingFactor,
   sfxManager,
   vizConfig,
+  simulationTickRate = DEFAULT_SIMULATION_TICK_RATE_HZ,
 }: BulletPhysicsArgs) => {
   const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
   const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
@@ -130,13 +136,26 @@ export const initBulletPhysics = ({
     .getBroadphase()
     .getOverlappingPairCache()
     .setInternalGhostPairCallback(new Ammo.btGhostPairCallback());
-  const playerCapsule = new Ammo.btCapsuleShape(playerColliderRadius, playerColliderHeight);
-  playerGhostObject.setCollisionShape(playerCapsule);
-  // playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
+  const playerShape = ((): BtCollisionShape => {
+    switch (playerColliderShape) {
+      case 'capsule':
+        return new Ammo.btCapsuleShape(playerColliderRadius, playerColliderHeight);
+      case 'cylinder':
+        const halfExtents = btvec3(playerColliderRadius, playerColliderHeight / 2, playerColliderRadius);
+        return new Ammo.btCylinderShape(halfExtents);
+      default:
+        playerColliderShape satisfies never;
+        throw new Error(
+          `Unknown player collider shape: ${playerColliderShape}. Expected 'capsule' or 'cylinder'.`
+        );
+    }
+  })();
+  playerGhostObject.setCollisionShape(playerShape);
+  playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
 
   const playerController: BtKinematicCharacterController = new Ammo.btKinematicCharacterController(
     playerGhostObject,
-    playerCapsule,
+    playerShape,
     playerStepHeight,
     btvec3(0, 1, 0)
   );
@@ -271,19 +290,17 @@ export const initBulletPhysics = ({
       dashManager.tryDash(curTimeSeconds, isFlyMode, origForwardDir);
     }
 
-    const simulationTickRate = 160;
     const moveSpeedPerSecond = wasOnGround ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
-    const moveSpeedPerTick = moveSpeedPerSecond * (1 / simulationTickRate);
     const walkDirBulletVector = btvec3(
-      moveDirection.x * moveSpeedPerTick,
-      moveDirection.y * moveSpeedPerTick,
-      moveDirection.z * moveSpeedPerTick
+      moveDirection.x * moveSpeedPerSecond,
+      moveDirection.y * moveSpeedPerSecond,
+      moveDirection.z * moveSpeedPerSecond
     );
     playerController.setWalkDirection(walkDirBulletVector);
 
     // TODO: Verify that this values make sense
     const fixedTimeStep = 1 / simulationTickRate;
-    const maxSubSteps = 200;
+    const maxSubSteps = 20;
     collisionWorld.stepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
 
     const newPlayerTransform = playerGhostObject.getWorldTransform();
@@ -359,6 +376,7 @@ export const initBulletPhysics = ({
         break;
       default:
         colliderType satisfies never;
+        throw new Error(`Unknown collider type: ${colliderType}. Expected 'static' or 'kinematic'.`);
     }
 
     if (objRef) {
@@ -443,9 +461,27 @@ export const initBulletPhysics = ({
     }
     const scale = mesh.scale;
 
-    const shape = mesh.userData.convexhull
-      ? buildConvexHullShape(indices, vertices, scale)
-      : buildTrimeshShape(indices, vertices, scale);
+    const shape = (() => {
+      if (mesh.geometry instanceof THREE.BoxGeometry) {
+        const halfExtents = btvec3(
+          mesh.geometry.parameters.width / 2,
+          mesh.geometry.parameters.height / 2,
+          mesh.geometry.parameters.depth / 2
+        );
+        return new Ammo.btBoxShape(halfExtents);
+      } else if (
+        mesh.geometry instanceof THREE.SphereGeometry ||
+        (mesh.geometry instanceof THREE.IcosahedronGeometry && mesh.geometry.parameters.detail >= 2)
+      ) {
+        const radius = mesh.geometry.parameters.radius;
+        return new Ammo.btSphereShape(radius);
+      }
+
+      if (mesh.userData.convexhull) {
+        return buildConvexHullShape(indices, vertices, scale);
+      }
+      return buildTrimeshShape(indices, vertices, scale);
+    })();
     const objRef: CollisionObjectRef = {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
     };
@@ -612,8 +648,16 @@ export const initBulletPhysics = ({
             );
             return { shape, transform };
           }
+          case 'sphere': {
+            const shape = new Ammo.btSphereShape(region.radius);
+            const transform = new Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(btvec3(region.pos.x, region.pos.y, region.pos.z));
+            return { shape, transform };
+          }
           default:
-            return assertUnreachable(region);
+            region satisfies never;
+            throw new Error(`Unhandled region type: ${(region as any).type}.`);
         }
       })();
 
@@ -644,20 +688,29 @@ export const initBulletPhysics = ({
         onLeave?.();
       }
     });
+
+    return collisionObj;
   };
 
   const addBox = (
     pos: [number, number, number],
     halfExtents: [number, number, number],
-    quat?: THREE.Quaternion
+    quat?: THREE.Quaternion,
+    colliderType: 'static' | 'kinematic' = 'static'
   ) => {
     const shape = new Ammo.btBoxShape(btvec3(...halfExtents));
-    addCollisionObject(shape, new THREE.Vector3(...pos), quat);
+    addCollisionObject(shape, new THREE.Vector3(...pos), quat, undefined, colliderType);
   };
 
-  const addCone = (pos: THREE.Vector3, radius: number, height: number, quat?: THREE.Quaternion) => {
+  const addCone = (
+    pos: THREE.Vector3,
+    radius: number,
+    height: number,
+    quat?: THREE.Quaternion,
+    colliderType: 'static' | 'kinematic' = 'static'
+  ) => {
     const shape = new Ammo.btConeShape(radius, height);
-    addCollisionObject(shape, pos, quat);
+    addCollisionObject(shape, pos, quat, undefined, colliderType);
   };
 
   const addCompound = (

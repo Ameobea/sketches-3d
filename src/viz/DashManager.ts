@@ -40,9 +40,9 @@ export class DashManager {
     if (this.config.useExternalVelocity) {
       this.playerController.setExternalVelocity(
         this.btvec3(
-          origForwardDir.x * this.config.dashMagnitude * 0.008,
-          origForwardDir.y * this.config.dashMagnitude * 0.008,
-          origForwardDir.z * this.config.dashMagnitude * 0.008
+          origForwardDir.x * this.config.dashMagnitude * 1.28,
+          origForwardDir.y * this.config.dashMagnitude * 1.28,
+          origForwardDir.z * this.config.dashMagnitude * 1.28
         )
       );
       this.playerController.resetFall();

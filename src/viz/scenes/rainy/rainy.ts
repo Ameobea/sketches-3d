@@ -719,7 +719,7 @@ export const processLoadedScene = async (
     player: {
       jumpVelocity: 0,
       dashConfig: { enable: false },
-      colliderCapsuleSize: {
+      colliderSize: {
         height: 1.35,
         radius: 0.3,
       },

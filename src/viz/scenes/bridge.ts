@@ -163,7 +163,7 @@ export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group): Sce
     spawnLocation: 'spawn',
     player: {
       moveSpeed: { onGround: 9, inAir: 9 },
-      colliderCapsuleSize: { height: 2.2, radius: 0.3 },
+      colliderSize: { height: 2.2, radius: 0.3 },
       jumpVelocity: 16,
     },
   };
