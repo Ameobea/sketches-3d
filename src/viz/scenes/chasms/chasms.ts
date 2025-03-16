@@ -1204,7 +1204,7 @@ export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group
     gravity: 32,
     player: {
       jumpVelocity: 14.8,
-      colliderCapsuleSize: {
+      colliderSize: {
         height: 2.49,
         radius: 0.85,
       },

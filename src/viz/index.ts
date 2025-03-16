@@ -44,9 +44,16 @@ export interface FirstPersonCtx {
   addBox: (
     pos: [number, number, number],
     halfExtents: [number, number, number],
-    quat?: THREE.Quaternion
+    quat?: THREE.Quaternion,
+    colliderType?: 'static' | 'kinematic'
   ) => void;
-  addCone: (pos: THREE.Vector3, radius: number, height: number, quat?: THREE.Quaternion) => void;
+  addCone: (
+    pos: THREE.Vector3,
+    radius: number,
+    height: number,
+    quat?: THREE.Quaternion,
+    colliderType?: 'static' | 'kinematic'
+  ) => void;
   addCompound: (
     pos: [number, number, number],
     children: {
@@ -99,6 +106,7 @@ interface SetupFirstPersonArgs {
   inlineConsole: InlineConsole | null | undefined;
   dashConfig: Partial<DashConfig> | undefined;
   oobYThreshold: number | undefined;
+  simulationTickRate: number | undefined;
   sfxManager: SfxManager;
   vizConfig: Writable<Conf.VizConfig>;
   canvas: HTMLCanvasElement;
@@ -114,14 +122,16 @@ const setupFirstPerson = async ({
   inlineConsole,
   dashConfig,
   oobYThreshold = -55,
+  simulationTickRate,
   sfxManager,
   vizConfig,
   canvas,
 }: SetupFirstPersonArgs): Promise<FirstPersonCtx> => {
   const keyStates: Record<string, boolean> = {};
 
-  const playerColliderHeight = playerConf?.colliderCapsuleSize?.height ?? Conf.DefaultPlayerColliderHeight;
-  const playerColliderRadius = playerConf?.colliderCapsuleSize?.radius ?? Conf.DefaultPlayerColliderRadius;
+  const playerColliderHeight = playerConf?.colliderSize?.height ?? Conf.DefaultPlayerColliderHeight;
+  const playerColliderRadius = playerConf?.colliderSize?.radius ?? Conf.DefaultPlayerColliderRadius;
+  const playerColliderShape = playerConf?.playerColliderShape ?? 'capsule';
 
   const Ammo = await getAmmoJS();
   const {
@@ -156,6 +166,7 @@ const setupFirstPerson = async ({
     jumpSpeed: playerConf?.jumpVelocity ?? 20,
     playerColliderRadius,
     playerColliderHeight,
+    playerColliderShape,
     playerMoveSpeed: playerConf?.moveSpeed,
     playerStepHeight: playerConf?.stepHeight,
     externalVelocityAirDampingFactor: playerConf?.externalVelocityAirDampingFactor,
@@ -163,6 +174,7 @@ const setupFirstPerson = async ({
     dashConfig,
     sfxManager,
     vizConfig,
+    simulationTickRate,
   });
 
   document.addEventListener('keydown', event => {
@@ -803,6 +815,7 @@ export const initViz = (
         inlineConsole,
         dashConfig: sceneConf.player?.dashConfig,
         oobYThreshold: sceneConf.player?.oobYThreshold,
+        simulationTickRate: sceneConf.simulationTickRate,
         sfxManager: viz.sfxManager,
         vizConfig,
         canvas: viz.renderer.domElement,
