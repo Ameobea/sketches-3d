@@ -2,6 +2,16 @@ import * as THREE from 'three';
 
 import type { VizState } from '.';
 
+export interface InfiniteConfig {
+  seed: string;
+  activePathLength: number;
+  goalLength: number;
+  timerActive: boolean;
+  varyingGaps: boolean;
+}
+
+export type PopupScreenFocus = { type: 'pause' } | { type: 'infinite'; cb: (config: InfiniteConfig) => void };
+
 export const initBaseScene = (viz: VizState) => {
   // Add lights
   const light = new THREE.DirectionalLight(0xcfcfcf, 1.5);

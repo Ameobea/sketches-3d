@@ -24,8 +24,8 @@ import {
   type CustomControlsEntry,
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
-import { clamp, mergeDeep } from './util';
 import type { AmmoInterface, BtVec3 } from 'src/ammojs/ammoTypes.ts';
+import { clamp, mergeDeep, type PopupScreenFocus } from './util';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -447,13 +447,20 @@ const initCustomKeyHandlers = (customControlsEntries: CustomControlsEntry[] | un
   });
 };
 
-export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
+export const buildViz = (
+  paused: Writable<boolean>,
+  popUpCalled: Writable<PopupScreenFocus>,
+  sceneDef: SceneDef
+) => {
   try {
     (screen.orientation as any).lock('landscape').catch(() => 0);
   } catch (_err) {
     // pass
   }
-
+  const callPopup = (screen: PopupScreenFocus) => {
+    paused.update(p => !p);
+    popUpCalled.set(screen);
+  };
   const clock = new THREE.Clock();
 
   const scene = new THREE.Scene();
@@ -655,6 +662,7 @@ export const buildViz = (paused: Writable<boolean>, sceneDef: SceneDef) => {
     unregisterAfterRenderCb,
     onDestroy,
     setRenderOverride,
+    callPopup,
     inventory,
     collisionWorldLoadedCbs,
     clock,
@@ -686,10 +694,12 @@ export const initViz = (
   container: HTMLElement,
   {
     paused,
+    popUpCalled,
     sceneName: providedSceneName = Conf.DefaultSceneName,
     vizCb,
   }: {
     paused: Writable<boolean>;
+    popUpCalled: Writable<PopupScreenFocus>;
     sceneName?: string;
     vizCb: (viz: VizState, vizConfig: Writable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
   }
@@ -701,7 +711,7 @@ export const initViz = (
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
 
-  const viz: VizState = buildViz(paused, sceneDef);
+  const viz: VizState = buildViz(paused, popUpCalled, sceneDef);
   (window as any).viz = viz;
   (window as any).THREE = THREE;
 
