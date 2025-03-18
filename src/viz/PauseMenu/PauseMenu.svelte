@@ -16,7 +16,7 @@
 <script lang="ts">
   import { derived, type Writable } from 'svelte/store';
 
-  import { applyAudioSettings, type VizState } from '..';
+  import { applyAudioSettings, type Viz } from '..';
   import { type AudioSettings, loadVizConfig, type VizConfig } from '../conf';
   import AudioMenu from './AudioMenu.svelte';
   import ControlsMenu from './ControlsMenu.svelte';
@@ -28,7 +28,7 @@
   let activeMenu = Menu.Main;
 
   export let ctx: PauseMenuCtx;
-  export let viz: VizState;
+  export let viz: Viz;
   export let liveConfig: Writable<VizConfig>;
   export let sceneConfig: SceneConfig | null;
   $: customControlsEntries = sceneConfig?.customControlsEntries ?? [];

@@ -5,9 +5,9 @@ import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import type { SceneConfig } from '../..';
-import type { VizState } from '../../..';
+import type { Viz } from '../../..';
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   const loader = new THREE.ImageBitmapLoader();
   const dungeonWallTextureP = loadTexture(loader, 'https://i.ameo.link/akz.jpg');
   const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>

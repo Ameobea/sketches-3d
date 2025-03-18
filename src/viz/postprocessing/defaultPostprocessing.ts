@@ -1,6 +1,5 @@
 import {
   ClearMaskPass,
-  type CopyPass,
   type Effect,
   EffectComposer,
   EffectPass,
@@ -11,13 +10,13 @@ import {
 } from 'postprocessing';
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { GraphicsQuality } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { CustomShaderMaterial } from '../shaders/customShader';
 import { SSRCompositorPass } from '../shaders/ssr/compositor/SSRCompositorPass';
 
-const populateShadowMap = (viz: VizState) => {
+const populateShadowMap = (viz: Viz, autoUpdateShadowMap: boolean) => {
   const shadows: THREE.DirectionalLightShadow[] = [];
   viz.scene.traverse(obj => {
     if (obj instanceof THREE.DirectionalLight) {
@@ -31,12 +30,14 @@ const populateShadowMap = (viz: VizState) => {
   });
   viz.renderer.shadowMap.needsUpdate = true;
   viz.renderer.render(viz.scene, viz.camera);
-  shadows.forEach(shadow => {
-    shadow.needsUpdate = false;
-    shadow.autoUpdate = false;
-  });
-  viz.renderer.shadowMap.needsUpdate = false;
-  viz.renderer.shadowMap.autoUpdate = false;
+  if (!autoUpdateShadowMap) {
+    shadows.forEach(shadow => {
+      shadow.needsUpdate = false;
+      shadow.autoUpdate = false;
+    });
+    viz.renderer.shadowMap.needsUpdate = false;
+    viz.renderer.shadowMap.autoUpdate = false;
+  }
   viz.renderer.shadowMap.enabled = true;
 };
 
@@ -147,7 +148,7 @@ class CustomEffectComposer extends EffectComposer {
   }
 
   constructor(
-    private viz: VizState,
+    private viz: Viz,
     options: {
       depthBuffer?: boolean;
       stencilBuffer?: boolean;
@@ -267,12 +268,13 @@ interface ExtraPostprocessingParams {
 }
 
 export const configureDefaultPostprocessingPipeline = (
-  viz: VizState,
+  viz: Viz,
   quality: GraphicsQuality,
-  addMiddlePasses?: (composer: EffectComposer, viz: VizState, quality: GraphicsQuality) => void,
+  addMiddlePasses?: (composer: EffectComposer, viz: Viz, quality: GraphicsQuality) => void,
   onFirstRender?: () => void,
   extraParams: Partial<ExtraPostprocessingParams> = {},
-  postEffects?: Effect[]
+  postEffects?: Effect[],
+  autoUpdateShadowMap = false
 ) => {
   const effectComposer = new CustomEffectComposer(viz, {
     multisampling: 0,
@@ -312,8 +314,8 @@ export const configureDefaultPostprocessingPipeline = (
   let didRender = false;
   viz.setRenderOverride(timeDiffSeconds => {
     effectComposer.render(timeDiffSeconds);
-    viz.renderer.shadowMap.autoUpdate = false;
-    viz.renderer.shadowMap.needsUpdate = false;
+    viz.renderer.shadowMap.autoUpdate = autoUpdateShadowMap;
+    viz.renderer.shadowMap.needsUpdate = autoUpdateShadowMap;
 
     // For some reason, the shadow map that we render at the start of everything is getting cleared at some
     // point during the setup of this postprocessing pipeline.
@@ -321,7 +323,7 @@ export const configureDefaultPostprocessingPipeline = (
     // So, we have to re-populate the shadowmap so that it can be used to power the godrays and, well, shadows.
     if (!didRender && viz.renderer.shadowMap.enabled) {
       didRender = true;
-      populateShadowMap(viz);
+      populateShadowMap(viz, autoUpdateShadowMap);
     }
   });
 };

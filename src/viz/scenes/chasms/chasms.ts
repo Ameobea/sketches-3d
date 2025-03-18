@@ -15,12 +15,12 @@ import { InventoryItem } from 'src/viz/inventory/Inventory';
 import { ClearDepthPass, DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
-import type { VizState } from '../..';
+import type { Viz } from '../..';
 import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
-import { delay, getMesh, mix, smoothstep } from '../../util';
+import { delay, getMesh, mix, smoothstep } from '../../util/util';
 
 const locations = {
   spawn: {
@@ -253,7 +253,7 @@ const loadTextures = async () => {
   };
 };
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   // render a pass with no fragment shader just to populate the depth buffer
   const depthPassMaterial = new THREE.MeshBasicMaterial();
   const depthPass = new DepthPass(viz.scene, viz.camera, depthPassMaterial);

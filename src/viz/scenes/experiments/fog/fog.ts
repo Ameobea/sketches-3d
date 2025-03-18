@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
@@ -8,7 +8,7 @@ import type { SceneConfig } from '../..';
 import { configurePostprocessing } from './postprocessing';
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConfig: VizConfig
 ): Promise<SceneConfig> => {

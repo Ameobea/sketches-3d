@@ -1,4 +1,4 @@
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import * as THREE from 'three';
 import { N8AOPostPass } from 'n8ao';
@@ -16,7 +16,7 @@ const locations = {
 };
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {

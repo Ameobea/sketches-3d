@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 
 import type { SceneConfig } from '.';
-import type { VizState } from '..';
+import type { Viz } from '..';
 import { buildCustomShaderArgs } from '../shaders/customShader';
 import walkwayColorShader from '../shaders/walkway/color.frag?raw';
 import walkwayRoughnessShader from '../shaders/walkway/roughness.frag?raw';
-import { initBaseScene } from '../util';
+import { initBaseScene } from '../util/util';
 
 const conf = {
   platformCount: 30,
@@ -97,7 +97,7 @@ const buildPlatforms = () => {
   return { platforms, conduits };
 };
 
-export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group): SceneConfig => {
+export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group): SceneConfig => {
   const baseScene = initBaseScene(viz);
   baseScene.light.intensity = 0.0;
   baseScene.ambientlight.intensity = 0.2;

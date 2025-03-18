@@ -1,17 +1,17 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomShader, setDefaultDistanceAmpParams } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
-import { delay } from 'src/viz/util';
+import { delay } from 'src/viz/util/util';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
 import { addDecorations } from './decorations';
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {

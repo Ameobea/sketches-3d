@@ -1,7 +1,7 @@
 import * as Comlink from 'comlink';
 
 import type { TerrainGenWorker } from './terrain/TerrainGenWorker/TerrainGenWorker.worker';
-import { clamp, hasWasmSIMDSupport } from './util';
+import { clamp, hasWasmSIMDSupport } from './util/util';
 
 class WorkerPoolManager<T> {
   private allWorkers: Comlink.Remote<T>[];

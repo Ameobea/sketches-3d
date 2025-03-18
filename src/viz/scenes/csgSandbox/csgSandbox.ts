@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {

@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { applyGraphicsSettings, type VizState } from '..';
+  import { applyGraphicsSettings, type Viz } from '..';
   import { GraphicsQuality, type GraphicsSettings, type VizConfig } from '../conf';
   import type { SceneConfig } from '../scenes';
   import RangeInput from './RangeInput.svelte';
   import SelectButton from './SelectButton.svelte';
 
-  export let viz: VizState;
+  export let viz: Viz;
   export let onBack: () => void;
   export let onChange: (vizConf: VizConfig) => void;
   export let startVizConfig: VizConfig;

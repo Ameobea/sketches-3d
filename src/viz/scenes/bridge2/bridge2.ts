@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 
 import type { SceneConfig } from '..';
-import type { VizState } from '../../../viz';
+import type { Viz } from '../../../viz';
 import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
 import { buildCustomShader } from '../../../viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
-import { delay, getMesh, smoothstep } from '../../../viz/util';
+import { delay, getMesh, smoothstep } from '../../util/util';
 import { initWebSynth } from '../../../viz/webSynth';
 import { CustomSky as Sky } from '../../CustomSky';
 import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
@@ -191,7 +191,7 @@ const loadTextures = async (/* pillarMap: THREE.Texture */) => {
   };
 };
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   const dLight = new THREE.DirectionalLight(0xcfcfcf, 1.5);
 
   const ambientlight = new THREE.AmbientLight(0xfac969, 0.33);

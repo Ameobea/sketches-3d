@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { Score, type ScoreThresholds } from '../../parkour/TimeDisplay.svelte';
-import { buildMaterials } from '../../parkour/regions/pylons/materials';
+import { buildPylonsMaterials } from '../../parkour/regions/pylons/materials';
 import { initPylonsPostprocessing } from './postprocessing';
 import { ParkourManager } from '../../parkour/ParkourManager.svelte';
 
@@ -20,14 +20,14 @@ const locations = {
 };
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
-  const { checkpointMat, greenMosaic2Material, goldMaterial } = await buildMaterials(viz, loadedWorld);
+  const { checkpointMat, greenMosaic2Material, goldMaterial } = await buildPylonsMaterials(viz, loadedWorld);
 
   const sunPos = new THREE.Vector3(200, 290, -135);
   const sunLight = new THREE.DirectionalLight(0xffffff, 3.6);

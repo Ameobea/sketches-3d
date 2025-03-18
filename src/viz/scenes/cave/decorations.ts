@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
 
 export const addDecorations = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   stalagMaterial: CustomBasicShaderMaterial
 ) => {

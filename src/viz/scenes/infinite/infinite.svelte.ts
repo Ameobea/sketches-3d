@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 
-import type { FirstPersonCtx, VizState } from 'src/viz';
+import type { FirstPersonCtx, Viz } from 'src/viz';
 import { type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { buildMaterials } from '../../parkour/regions/pylons/materials';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
-import Rand, { PRNG } from 'rand-seed';
-import type { PopupScreenFocus, InfiniteConfig } from 'src/viz/util';
+import Rand from 'rand-seed';
+import type { InfiniteConfig } from 'src/viz/util/util';
 import InfiniteEndSvelte from 'src/viz/EndScreens/InfiniteEnd.svelte';
 import { mount } from 'svelte';
 
@@ -19,13 +18,13 @@ const locations = {
 let oldestSquareIdx = 0;
 let lastRot = new THREE.Vector3(0, 0, -1);
 
-let squares = [
+const squares = [
   new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), new THREE.MeshBasicMaterial({ color: 0xadd8e6 })),
   new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), new THREE.MeshBasicMaterial({ color: 0xadd8e6 })),
 ];
 //additional squares generated
 let extraGeneratedCount: number = 0;
-const initLevel = async (viz: VizState) => {
+const initLevel = async (viz: Viz) => {
   const fpCtx = await new Promise<FirstPersonCtx>(resolve => viz.collisionWorldLoadedCbs.push(resolve));
   //first
   for (let i = 0; i < 2; i++) {
@@ -39,7 +38,7 @@ const initLevel = async (viz: VizState) => {
     onInfiniteConfigured = resolve;
   });
   viz.callPopup({ type: 'infinite', cb: onInfiniteConfigured });
-  let currentConfig = await infiniteConfigured;
+  const currentConfig = await infiniteConfigured;
   if (currentConfig.goalLength < 1) {
     currentConfig.goalLength = 1;
   }
@@ -52,7 +51,7 @@ const initLevel = async (viz: VizState) => {
   //build the rest into the world
   const rand = new Rand(currentConfig.seed);
   for (let i = 2; i < currentConfig.activePathLength; i++) {
-    let destPoint = generateNextPositionAndRot(rand, squares[i - 1].position, currentConfig.varyingGaps);
+    const destPoint = generateNextPositionAndRot(rand, squares[i - 1].position, currentConfig.varyingGaps);
     squares[i].position.set(destPoint.x, destPoint.y, destPoint.z);
     viz.scene.add(squares[i]);
     fpCtx.addTriMesh(squares[i]);
@@ -61,33 +60,31 @@ const initLevel = async (viz: VizState) => {
   squares[squares.length - 1].material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
   viz.clock.start();
   setInterval(() => {
-    let newestSquareIdx = (oldestSquareIdx - 1 + squares.length) % squares.length;
-    viz.camera.position.z;
-    let total_dif_to_start =
+    const newestSquareIdx = (oldestSquareIdx - 1 + squares.length) % squares.length;
+    const total_dif_to_start =
       Math.abs(squares[oldestSquareIdx].position.x - viz.camera.position.x) +
       Math.abs(squares[oldestSquareIdx].position.y - viz.camera.position.y) +
       Math.abs(squares[oldestSquareIdx].position.z - viz.camera.position.z);
-    let total_dif_to_end =
+    const total_dif_to_end =
       Math.abs(squares[newestSquareIdx].position.x - viz.camera.position.x) +
       Math.abs(squares[newestSquareIdx].position.y - viz.camera.position.y) +
       Math.abs(squares[newestSquareIdx].position.z - viz.camera.position.z);
     if (total_dif_to_end < total_dif_to_start) {
-      let destPoint = generateNextPositionAndRot(
+      const destPoint = generateNextPositionAndRot(
         rand,
         squares[newestSquareIdx].position,
         currentConfig.varyingGaps
       );
       squares[oldestSquareIdx].position.set(destPoint.x, destPoint.y, destPoint.z);
-      fpCtx.removeRigidBody(squares[oldestSquareIdx].userData.rigidBody);
+      fpCtx.removeCollisionObject(squares[oldestSquareIdx].userData.rigidBody);
       fpCtx.addTriMesh(squares[oldestSquareIdx]);
       squares[oldestSquareIdx].material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
       squares[newestSquareIdx].material = new THREE.MeshBasicMaterial({ color: 0xadd8e6 });
       oldestSquareIdx = (oldestSquareIdx + 1) % squares.length;
       const { position: newPosition, rotation: newRotation } = generateNewSpawnPoint();
-      viz.fpCtx!.setSpawnPos(newPosition, newRotation);
+      viz.setSpawnPos(newPosition, newRotation);
       extraGeneratedCount++;
       if (extraGeneratedCount === currentConfig.goalLength) {
-        viz.clock.stop;
         console.log('won', extraGeneratedCount, currentConfig.goalLength);
         const target = document.createElement('div');
         document.body.appendChild(target);
@@ -132,14 +129,12 @@ function generateNextPositionAndRot(
   return curDir.clone().multiplyScalar(distance).add(lastNewestPostion);
 }
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
-  viz.registerDistanceMaterialSwap;
-  const { checkpointMat, greenMosaic2Material, goldMaterial } = await buildMaterials(viz, loadedWorld);
 
   const sunPos = new THREE.Vector3(200, 290, -135);
   const sunLight = new THREE.DirectionalLight(0xffffff, 3.6);

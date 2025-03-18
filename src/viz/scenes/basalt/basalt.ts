@@ -1,4 +1,4 @@
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import * as THREE from 'three';
 import { N8AOPostPass } from 'n8ao';
@@ -71,7 +71,7 @@ const loadTextures = async () => {
 };
 
 const addCrystals = (
-  viz: VizState,
+  viz: Viz,
   basaltEngine: typeof import('src/viz/wasmComp/basalt'),
   ctx: number,
   mat: THREE.Material
@@ -114,7 +114,7 @@ const addCrystals = (
 };
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {

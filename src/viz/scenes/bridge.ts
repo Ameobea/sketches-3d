@@ -4,14 +4,14 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
 import type { SceneConfig } from '.';
-import type { VizState } from '..';
+import type { Viz } from '..';
 import bigCubeShader from '../shaders/bigCube.frag?raw';
 import bridgeShader from '../shaders/bridge.frag?raw';
 import { buildCustomShaderArgs } from '../shaders/customShader';
 import redNoiseShader from '../shaders/redNoise.frag?raw';
-import { getFlickerActivation, initBaseScene } from '../util';
+import { getFlickerActivation, initBaseScene } from '../util/util';
 
-const buildBridge = (viz: VizState, bridge: THREE.Mesh) => {
+const buildBridge = (viz: Viz, bridge: THREE.Mesh) => {
   bridge.material = new THREE.ShaderMaterial(
     buildCustomShaderArgs(
       {
@@ -40,7 +40,7 @@ const locations = {
   },
 };
 
-export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group): SceneConfig => {
+export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group): SceneConfig => {
   initBaseScene(viz);
 
   // Add close fog

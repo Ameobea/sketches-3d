@@ -12,10 +12,10 @@ import {
 import * as THREE from 'three';
 import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { GraphicsQuality } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
-import { smoothstep, smoothstepScale } from 'src/viz/util';
+import { smoothstep, smoothstepScale } from 'src/viz/util/util';
 
 /**
  * We want to back off the AO when outside of the building
@@ -40,7 +40,7 @@ const computeN8AOIntensity = (playerPos: THREE.Vector3): number => {
 const USE_DEPTH_PREPASS = true;
 
 export const configurePostprocessing = (
-  viz: VizState,
+  viz: Viz,
   dirLight: THREE.DirectionalLight,
   quality: GraphicsQuality,
   onFirstRender: () => void

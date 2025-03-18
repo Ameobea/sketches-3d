@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { ContactRegion } from 'src/viz/collision';
 
 export class CollectablesCtx {
@@ -24,7 +24,7 @@ export class CollectablesCtx {
 }
 
 interface InitCollectablesArgs {
-  viz: VizState;
+  viz: Viz;
   loadedWorld: THREE.Group;
   collectableName: string;
   replacementObject?: THREE.Object3D;

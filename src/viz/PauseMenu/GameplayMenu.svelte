@@ -1,9 +1,9 @@
 <script lang="ts">
   import { get } from 'svelte/store';
-  import type { VizState } from '..';
+  import type { Viz } from '..';
   import type { GameplaySettings, VizConfig } from '../conf';
 
-  export let viz: VizState;
+  export let viz: Viz;
   export let onBack: () => void;
   export let onChange: (vizConf: VizConfig) => void;
   export let startVizConfig: VizConfig;
@@ -11,9 +11,7 @@
   let easyModeMovement = viz.fpCtx ? get(viz.fpCtx.easyModeMovement) : false;
 
   const handleSave = () => {
-    const newGraphicsSettings: GameplaySettings = {
-      easyModeMovement,
-    };
+    const newGraphicsSettings: GameplaySettings = { easyModeMovement };
     onChange({
       ...startVizConfig,
       gameplay: newGraphicsSettings,

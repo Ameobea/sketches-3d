@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 import type { SceneConfig } from '.';
-import type { VizState } from '..';
-import { initBaseScene } from '../util';
+import type { Viz } from '..';
+import { initBaseScene } from '../util/util';
 
 const locations = {
   spawn: {
@@ -11,7 +11,7 @@ const locations = {
   },
 };
 
-export const processLoadedScene = (viz: VizState, loadedWorld: THREE.Group): SceneConfig => {
+export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group): SceneConfig => {
   initBaseScene(viz);
 
   const cube = new THREE.Mesh(

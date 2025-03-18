@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 
-import type { VizState } from '..';
+import type { Viz } from '..';
 import { createStatsContainer } from './statsContainer';
 
-export const initTargetDebugger = (viz: VizState, container: HTMLElement, topPx: number) => {
+export const initTargetDebugger = (viz: Viz, container: HTMLElement, topPx: number) => {
   const targetDisplayElem = createStatsContainer(topPx);
   container.appendChild(targetDisplayElem);
 

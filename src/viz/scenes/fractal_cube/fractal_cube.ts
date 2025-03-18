@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 
 import type { SceneConfig } from '..';
-import type { VizState } from '../..';
+import type { Viz } from '../..';
 import bigCubeColorShader from '../../shaders/bigCube.frag?raw';
 import { buildCustomShader } from '../../shaders/customShader';
 import groundColorShader from '../../shaders/fractal_cube/ground/color.frag?raw';
 import groundRoughnessShader from '../../shaders/fractal_cube/ground/roughness.frag?raw';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
-import { initBaseScene } from '../../util';
+import { initBaseScene } from '../../util/util';
 import { initWebSynth } from '../../webSynth';
 import { buildCube } from './genCube';
 
@@ -18,7 +18,7 @@ const locations = {
   },
 };
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   viz.camera.far = 10_000;
   viz.camera.updateMatrixWorld();
 

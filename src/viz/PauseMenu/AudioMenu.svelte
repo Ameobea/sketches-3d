@@ -2,10 +2,10 @@
   import type { Readable } from 'svelte/store';
 
   import type { AudioSettings } from '../conf';
-  import type { VizState } from '..';
+  import type { Viz } from '..';
   import { onMount } from 'svelte';
 
-  export let viz: VizState;
+  export let viz: Viz;
   export let onBack: () => void;
   export let conf: Readable<AudioSettings>;
   export let onChange: (newConf: AudioSettings) => void;
@@ -25,9 +25,7 @@
     max="1"
     step="0.01"
     value={$conf.globalVolume}
-    on:change={e => {
-      onChange({ ...$conf, globalVolume: +e.currentTarget.value });
-    }}
+    on:change={evt => void onChange({ ...$conf, globalVolume: +evt.currentTarget.value })}
   />
 </div>
 <div class="slider-input">

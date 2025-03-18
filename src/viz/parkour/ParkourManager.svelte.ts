@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { mount, unmount } from 'svelte';
-import type { Writable } from 'svelte/store';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { initDashTokens } from './DashToken';
 import { initCheckpoints } from './checkpoints';
@@ -11,6 +10,7 @@ import type { ScoreThresholds } from './TimeDisplay.svelte';
 import TimeDisplay from './TimeDisplay.svelte';
 import type { SceneConfig } from '../scenes';
 import { API } from 'src/api/client';
+import type { TransparentWritable } from '../util/TransparentWritable';
 
 export interface ParkourMaterials {
   dashToken: {
@@ -21,13 +21,13 @@ export interface ParkourMaterials {
 }
 
 export class ParkourManager {
-  private viz: VizState;
+  private viz: Viz;
   private locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } };
   private scoreThresholds: ScoreThresholds;
   private mapID: string;
   private useExternalVelocity: boolean;
 
-  private curDashCharges: Writable<number>;
+  private curDashCharges: TransparentWritable<number>;
   private curRunStartTimeSeconds: number | null = null;
   private winState: { winTimeSeconds: number; displayComp: any } | null = null;
 
@@ -35,7 +35,7 @@ export class ParkourManager {
   private resetCheckpoints: () => void;
 
   constructor(
-    viz: VizState,
+    viz: Viz,
     loadedWorld: THREE.Group,
     vizConf: VizConfig,
     locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } },
@@ -108,7 +108,7 @@ export class ParkourManager {
       unmount(this.winState.displayComp);
     }
     this.winState = null;
-    this.viz.fpCtx!.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
+    this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
   };
 
   private onWin = () => {
@@ -130,7 +130,7 @@ export class ParkourManager {
     });
     this.winState = { winTimeSeconds: curTimeSeconds, displayComp };
 
-    this.viz.fpCtx!.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
+    this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
 
     API.addPlay({ mapId: this.mapID, timeLength: time })
       .then(res => {

@@ -1,13 +1,14 @@
-import type { VizState } from 'src/viz';
-import { writable } from 'svelte/store';
 import * as THREE from 'three';
+
+import type { Viz } from 'src/viz';
 import { initCollectables } from './collectables';
+import { rwritable } from '../util/TransparentWritable';
 
 export class DashToken extends THREE.Object3D {
-  private viz: VizState;
+  private viz: Viz;
   private base: THREE.Object3D;
 
-  constructor(viz: VizState, base: THREE.Object3D) {
+  constructor(viz: Viz, base: THREE.Object3D) {
     super();
     this.viz = viz;
     this.base = base;
@@ -110,12 +111,12 @@ export const initDashTokenGraphics = (
 };
 
 export const initDashTokens = (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   coreMaterial: THREE.Material,
   ringMaterial: THREE.Material
 ) => {
-  const dashCharges = writable(0);
+  const dashCharges = rwritable(0);
   const base = initDashTokenGraphics(loadedWorld, coreMaterial, ringMaterial);
   const dashTokenBase = new DashToken(viz, base);
   const ctx = initCollectables({

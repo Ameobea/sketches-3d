@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { SceneConfig } from '../..';
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   viz.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
   console.log(loadedWorld.children);
 

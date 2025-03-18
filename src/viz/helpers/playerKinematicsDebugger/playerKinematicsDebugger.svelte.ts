@@ -1,9 +1,10 @@
 import { mount } from 'svelte';
-import type { VizState } from '../..';
+
+import type { Viz } from '../..';
 import { createStatsContainer } from '../statsContainer';
 import PlayerKinematicsDebugger from './PlayerKinematicsDebugger.svelte';
 
-export const initPlayerKinematicsDebugger = (viz: VizState, container: HTMLElement, topPx: number) => {
+export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, topPx: number) => {
   const targetDisplayElem = createStatsContainer(topPx);
   container.appendChild(targetDisplayElem);
 

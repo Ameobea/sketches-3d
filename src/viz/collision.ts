@@ -1,21 +1,21 @@
-import { derived, get, type Writable } from 'svelte/store';
+import { derived } from 'svelte/store';
 import * as THREE from 'three';
 
-import type { SfxManager } from './audio/SfxManager.js';
-import type { FpPlayerStateGetters } from './index.js';
+import type { FpPlayerStateGetters, Viz } from './index.js';
 import {
   type DashConfig,
   DefaultDashConfig,
   DefaultExternalVelocityAirDampingFactor,
   DefaultExternalVelocityGroundDampingFactor,
   DefaultMoveSpeed,
-  type PlayerMoveSpeed,
+  type SceneConfig,
 } from './scenes/index.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
-import type { VizConfig } from './conf.js';
+import { DefaultPlayerColliderHeight, DefaultPlayerColliderRadius } from './conf.js';
 import type {
   AmmoInterface,
+  BtCollisionObject,
   BtCollisionShape,
   BtDiscreteDynamicsWorld,
   BtKinematicCharacterController,
@@ -55,7 +55,8 @@ export type ContactRegion =
 export type AddPlayerRegionContactCB = (
   region: ContactRegion,
   onEnter?: () => void,
-  onLeave?: () => void
+  onLeave?: () => void,
+  minPenetrationDepth?: number
 ) => BtPairCachingGhostObject;
 
 // \/ This is vital for making the physics work without bad bugs like falling through floors randomly.
@@ -73,42 +74,28 @@ const MAX_PENETRATION_DEPTH = 0.075;
 const DEFAULT_SIMULATION_TICK_RATE_HZ = 160;
 
 interface BulletPhysicsArgs {
-  camera: THREE.Camera;
-  keyStates: Record<string, boolean>;
+  viz: Viz;
   Ammo: AmmoInterface;
-  spawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
   gravity: number;
   jumpSpeed: number;
-  playerColliderShape: 'capsule' | 'cylinder';
-  playerColliderRadius: number;
-  playerColliderHeight: number;
-  playerMoveSpeed: PlayerMoveSpeed | undefined;
-  playerStepHeight: number | undefined;
+  playerColliderShape: 'capsule' | 'cylinder' | 'sphere';
   dashConfig: Partial<DashConfig> | undefined;
   externalVelocityAirDampingFactor: THREE.Vector3 | undefined;
   externalVelocityGroundDampingFactor: THREE.Vector3 | undefined;
-  sfxManager: SfxManager;
-  vizConfig: Writable<VizConfig>;
+  initialSpawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
   simulationTickRate: number | undefined;
 }
 
 export const initBulletPhysics = ({
-  camera,
-  keyStates,
+  viz,
   Ammo,
-  spawnPos,
   gravity,
   jumpSpeed,
   playerColliderShape,
-  playerColliderRadius,
-  playerColliderHeight,
-  playerMoveSpeed = DefaultMoveSpeed,
-  playerStepHeight = DEFAULT_STEP_HEIGHT,
   dashConfig = DefaultDashConfig,
   externalVelocityAirDampingFactor = DefaultExternalVelocityAirDampingFactor,
   externalVelocityGroundDampingFactor = DefaultExternalVelocityGroundDampingFactor,
-  sfxManager,
-  vizConfig,
+  initialSpawnPos,
   simulationTickRate = DEFAULT_SIMULATION_TICK_RATE_HZ,
 }: BulletPhysicsArgs) => {
   const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
@@ -124,10 +111,13 @@ export const initBulletPhysics = ({
 
   initBtvec3Scratch(Ammo);
 
+  const playerColliderHeight = viz.sceneConf.player?.colliderSize?.height ?? DefaultPlayerColliderHeight;
+  const playerColliderRadius = viz.sceneConf.player?.colliderSize?.radius ?? DefaultPlayerColliderRadius;
+
   const playerInitialTransform = new Ammo.btTransform();
   playerInitialTransform.setIdentity();
   playerInitialTransform.setOrigin(
-    btvec3(spawnPos.pos.x, spawnPos.pos.y + playerColliderHeight, spawnPos.pos.z)
+    btvec3(initialSpawnPos.pos.x, initialSpawnPos.pos.y + playerColliderHeight, initialSpawnPos.pos.z)
   );
   const playerGhostObject = new Ammo.btPairCachingGhostObject();
   playerGhostObject.setWorldTransform(playerInitialTransform);
@@ -143,6 +133,8 @@ export const initBulletPhysics = ({
       case 'cylinder':
         const halfExtents = btvec3(playerColliderRadius, playerColliderHeight / 2, playerColliderRadius);
         return new Ammo.btCylinderShape(halfExtents);
+      case 'sphere':
+        return new Ammo.btSphereShape(playerColliderRadius);
       default:
         playerColliderShape satisfies never;
         throw new Error(
@@ -153,6 +145,7 @@ export const initBulletPhysics = ({
   playerGhostObject.setCollisionShape(playerShape);
   playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
 
+  const playerStepHeight = viz.sceneConf.player?.stepHeight ?? DEFAULT_STEP_HEIGHT;
   const playerController: BtKinematicCharacterController = new Ammo.btKinematicCharacterController(
     playerGhostObject,
     playerShape,
@@ -196,7 +189,7 @@ export const initBulletPhysics = ({
    * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
    * diagonally, allowing for easier movement.
    */
-  const easyModeMovement = derived(vizConfig, vizConfig => vizConfig.gameplay.easyModeMovement);
+  const easyModeMovement = derived(viz.vizConfig, vizConfig => vizConfig.gameplay.easyModeMovement);
 
   const jumpCbs: ((curTimeSeconds: number) => void)[] = [];
   const registerJumpCb = (cb: (curTimeSeconds: number) => void) => {
@@ -213,7 +206,7 @@ export const initBulletPhysics = ({
   let lastJumpTimeSeconds = 0;
   const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
 
-  const dashManager = new DashManager(sfxManager, dashConfig, playerController, btvec3);
+  const dashManager = new DashManager(viz.sfxManager, dashConfig, playerController, btvec3);
 
   let isFlyMode = false;
   const setFlyMode = (newIsFlyMode?: boolean) => {
@@ -225,31 +218,68 @@ export const initBulletPhysics = ({
     setGravity(isFlyMode ? 0 : gravity);
   };
 
-  const tickCallbacks: ((tDiffSeconds: number) => void)[] = [];
-  /**
-   * Returns the new position of the player.
-   */
+  const getViewMode = (): Extract<
+    NonNullable<SceneConfig['viewMode']>,
+    { type: 'firstPerson' | 'top-down' }
+  > => {
+    const viewMode = viz.sceneConf.viewMode!;
+    if (viewMode.type !== 'firstPerson' && viewMode.type !== 'top-down') {
+      throw new Error(
+        `View mode must be 'firstPerson' or 'top-down' for collision; found: '${viewMode.type}'`
+      );
+    }
+
+    return viewMode;
+  };
+
   const moveDirection = new THREE.Vector3();
   let isWalking = false;
   const upDir = new THREE.Vector3(0, 1, 0);
   let forwardDir = new THREE.Vector3();
   let leftDir = new THREE.Vector3();
-  const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
-    forwardDir = camera.getWorldDirection(forwardDir).normalize();
-    const origForwardDir = forwardDir.clone();
+
+  const handleFirstPersonInput = () => {
+    forwardDir = viz.camera.getWorldDirection(forwardDir).normalize();
     leftDir = leftDir.crossVectors(upDir, forwardDir).normalize();
     // Adjust `forwardDir` to be horizontal.
     forwardDir = forwardDir.crossVectors(leftDir, upDir).normalize();
 
+    moveDirection.set(0, 0, 0);
+    if (viz.keyStates['KeyW']) moveDirection.add(forwardDir);
+    if (viz.keyStates['KeyS']) moveDirection.sub(forwardDir);
+    if (viz.keyStates['KeyA']) moveDirection.add(leftDir);
+    if (viz.keyStates['KeyD']) moveDirection.sub(leftDir);
+  };
+
+  const handleTopDownInput = () => {
+    moveDirection.set(0, 0, 0);
+    // camera looks towards negative Y.  negative X is left, negative Z is down
+    if (viz.keyStates['KeyW']) moveDirection.add(new THREE.Vector3(0, 0, 1));
+    if (viz.keyStates['KeyS']) moveDirection.add(new THREE.Vector3(0, 0, -1));
+    if (viz.keyStates['KeyA']) moveDirection.add(new THREE.Vector3(1, 0, 0));
+    if (viz.keyStates['KeyD']) moveDirection.add(new THREE.Vector3(-1, 0, 0));
+  };
+
+  const handleInput = (curTimeSeconds: number) => {
+    const cameraDir = viz.camera.getWorldDirection(forwardDir).normalize().clone();
     const wasOnGround = playerController.onGround();
 
-    moveDirection.set(0, 0, 0);
-    if (keyStates['KeyW']) moveDirection.add(forwardDir);
-    if (keyStates['KeyS']) moveDirection.sub(forwardDir);
-    if (keyStates['KeyA']) moveDirection.add(leftDir);
-    if (keyStates['KeyD']) moveDirection.sub(leftDir);
+    if (viz.controlState.movementEnabled) {
+      const viewMode = getViewMode();
+      switch (viewMode.type) {
+        case 'firstPerson':
+          handleFirstPersonInput();
+          break;
+        case 'top-down':
+          handleTopDownInput();
+          break;
+        default:
+          viewMode satisfies never;
+          throw new Error(`Unknown view mode: ${viewMode}`);
+      }
+    }
 
-    if (get(easyModeMovement)) {
+    if (viz.vizConfig.current.gameplay.easyModeMovement) {
       const targetMagnitude = new THREE.Vector3().add(forwardDir).add(leftDir).length();
       const magnitude = moveDirection.length();
       if (magnitude > 0) {
@@ -257,7 +287,7 @@ export const initBulletPhysics = ({
       }
     }
 
-    if (keyStates['Space'] && wasOnGround) {
+    if (viz.keyStates['Space'] && wasOnGround) {
       if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
         playerController.jump(
           btvec3(moveDirection.x * (jumpSpeed * 0.18), jumpSpeed, moveDirection.z * (jumpSpeed * 0.18))
@@ -279,17 +309,42 @@ export const initBulletPhysics = ({
     const wasWalking = isWalking;
     isWalking = moveDirection.x !== 0 || moveDirection.y !== 0 || moveDirection.z !== 0;
     if (wasWalking && !isWalking) {
-      sfxManager.onWalkStop();
+      viz.sfxManager.onWalkStop();
     } else if (!wasWalking && isWalking) {
-      sfxManager.onWalkStart(MaterialClass.Default);
+      viz.sfxManager.onWalkStart(MaterialClass.Default);
     }
 
     dashManager.tick(curTimeSeconds, wasOnGround);
 
-    if (keyStates['ShiftLeft'] || keyStates['ShiftRight']) {
-      dashManager.tryDash(curTimeSeconds, isFlyMode, origForwardDir);
+    if (viz.keyStates['ShiftLeft'] || viz.keyStates['ShiftRight']) {
+      const dashDir = getDashDir(getViewMode().type, cameraDir);
+      dashManager.tryDash(curTimeSeconds, isFlyMode, dashDir);
     }
+  };
 
+  const getDashDir = (viewModeType: 'firstPerson' | 'top-down', cameraDir: THREE.Vector3) => {
+    switch (viewModeType) {
+      case 'firstPerson':
+        return cameraDir;
+      case 'top-down':
+        return moveDirection.clone().lerp(upDir, 0.5).normalize();
+      default:
+        viewModeType satisfies never;
+        throw new Error(`Unknown view mode: ${viewModeType}`);
+    }
+  };
+
+  const tickCallbacks: ((tDiffSeconds: number) => void)[] = [];
+
+  /**
+   * Returns the new position of the player.
+   */
+  const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
+    const wasOnGround = playerController.onGround();
+
+    handleInput(curTimeSeconds);
+
+    const playerMoveSpeed = viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
     const moveSpeedPerSecond = wasOnGround ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
     const walkDirBulletVector = btvec3(
       moveDirection.x * moveSpeedPerSecond,
@@ -298,7 +353,6 @@ export const initBulletPhysics = ({
     );
     playerController.setWalkDirection(walkDirBulletVector);
 
-    // TODO: Verify that this values make sense
     const fixedTimeStep = 1 / simulationTickRate;
     const maxSubSteps = 20;
     collisionWorld.stepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
@@ -311,7 +365,7 @@ export const initBulletPhysics = ({
       const landedOnObjectIx: number = playerController.getFloorUserIndex();
       const landedOnObject = CollisionObjectRefs.get(landedOnObjectIx);
       const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
-      sfxManager.onPlayerLand(materialClass);
+      viz.sfxManager.onPlayerLand(materialClass);
     }
 
     for (const cb of tickCallbacks) {
@@ -321,24 +375,33 @@ export const initBulletPhysics = ({
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
 
-  const teleportPlayer = (pos: THREE.Vector3, rot?: THREE.Vector3) => {
-    playerController.warp(btvec3(pos.x, pos.y + playerColliderHeight, pos.z));
-    if (rot) {
-      camera.rotation.setFromVector3(rot);
+  const teleportPlayer = (
+    pos: THREE.Vector3 | [number, number, number],
+    rot?: THREE.Vector3 | [number, number, number]
+  ) => {
+    playerController.warp(
+      Array.isArray(pos)
+        ? btvec3(pos[0], pos[1] + playerColliderHeight, pos[2])
+        : btvec3(pos.x, pos.y + playerColliderHeight, pos.z)
+    );
+    if (rot && getViewMode().type === 'firstPerson') {
+      viz.camera.rotation.setFromVector3(
+        Array.isArray(rot) ? new THREE.Vector3(rot[0], rot[1], rot[2]) : rot
+      );
     }
     playerController.setExternalVelocity(btvec3(0, 0, 0));
     playerController.setVerticalVelocity(0);
   };
 
   const reset = () => {
-    for (const key of Object.keys(keyStates)) {
-      keyStates[key] = false;
+    for (const key of Object.keys(viz.keyStates)) {
+      viz.keyStates[key] = false;
     }
     playerController.setExternalVelocity(btvec3(0, 0, 0));
     playerController.setVerticalVelocity(0);
   };
 
-  teleportPlayer(spawnPos.pos, spawnPos.rot);
+  teleportPlayer(viz.spawnPos.pos, viz.spawnPos.rot);
 
   interface CollisionObjectRef {
     materialClass?: MaterialClass;
@@ -448,9 +511,23 @@ export const initBulletPhysics = ({
     return hull;
   };
 
-  const addTriMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
-    if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
-      return;
+  const buildCollisionShapeFromMesh = (mesh: THREE.Mesh, extraScale?: THREE.Vector3) => {
+    if (mesh.geometry instanceof THREE.BoxGeometry) {
+      const halfExtents = btvec3(
+        mesh.geometry.parameters.width * mesh.scale.x * (extraScale?.x ?? 1) * 0.5,
+        mesh.geometry.parameters.height * mesh.scale.y * (extraScale?.y ?? 1) * 0.5,
+        mesh.geometry.parameters.depth * mesh.scale.z * (extraScale?.z ?? 1) * 0.5
+      );
+      return new Ammo.btBoxShape(halfExtents);
+    } else if (
+      (mesh.geometry instanceof THREE.SphereGeometry ||
+        (mesh.geometry instanceof THREE.IcosahedronGeometry && mesh.geometry.parameters.detail >= 2)) &&
+      mesh.scale.x === mesh.scale.y &&
+      mesh.scale.y === mesh.scale.z &&
+      (!extraScale || (extraScale.x === extraScale.y && extraScale.y === extraScale.z))
+    ) {
+      const radius = mesh.geometry.parameters.radius * mesh.scale.x * (extraScale?.x ?? 1);
+      return new Ammo.btSphereShape(radius);
     }
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
@@ -459,29 +536,35 @@ export const initBulletPhysics = ({
     if (vertices instanceof Uint16Array) {
       throw new Error('GLTF Quantization not yet supported');
     }
-    const scale = mesh.scale;
+    let scale = mesh.scale.clone();
+    if (extraScale) {
+      scale = scale.multiply(extraScale);
+    }
 
-    const shape = (() => {
-      if (mesh.geometry instanceof THREE.BoxGeometry) {
-        const halfExtents = btvec3(
-          mesh.geometry.parameters.width / 2,
-          mesh.geometry.parameters.height / 2,
-          mesh.geometry.parameters.depth / 2
-        );
-        return new Ammo.btBoxShape(halfExtents);
-      } else if (
-        mesh.geometry instanceof THREE.SphereGeometry ||
-        (mesh.geometry instanceof THREE.IcosahedronGeometry && mesh.geometry.parameters.detail >= 2)
-      ) {
-        const radius = mesh.geometry.parameters.radius;
-        return new Ammo.btSphereShape(radius);
-      }
+    if (mesh.userData.convexhull) {
+      return buildConvexHullShape(indices, vertices, scale);
+    }
+    return buildTrimeshShape(indices, vertices, scale);
+  };
 
-      if (mesh.userData.convexhull) {
-        return buildConvexHullShape(indices, vertices, scale);
-      }
-      return buildTrimeshShape(indices, vertices, scale);
-    })();
+  const addTriMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
+    if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
+      return;
+    }
+
+    if (
+      (mesh.material instanceof CustomShaderMaterial &&
+        mesh.material.materialClass === MaterialClass.Instakill) ||
+      mesh.userData.instakill
+    ) {
+      const collisionObj = addPlayerRegionContactCb({ type: 'mesh', mesh }, () =>
+        viz.onInstakillTerrainCollision()
+      );
+      mesh.userData.collisionObj = collisionObj;
+      return;
+    }
+
+    const shape = buildCollisionShapeFromMesh(mesh);
     const objRef: CollisionObjectRef = {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
     };
@@ -489,9 +572,9 @@ export const initBulletPhysics = ({
     mesh.userData.rigidBody = rigidBody;
   };
 
-  const removeRigidBody = (rigidBody: BtRigidBody) => {
-    collisionWorld.removeRigidBody(rigidBody);
-    Ammo.destroy(rigidBody);
+  const removeCollisionObject = (collisionObj: BtCollisionObject) => {
+    collisionWorld.removeCollisionObject(collisionObj);
+    Ammo.destroy(collisionObj);
   };
 
   const addHeightmapTerrain = (
@@ -551,7 +634,12 @@ export const initBulletPhysics = ({
     addCollisionObject(heightfieldShape, new THREE.Vector3(0, 0, 0));
   };
 
-  const addPlayerRegionContactCb: AddPlayerRegionContactCB = (region, onEnter, onLeave) => {
+  const addPlayerRegionContactCb: AddPlayerRegionContactCB = (
+    region,
+    onEnter,
+    onLeave,
+    minPenetrationDepth = 0.04
+  ) => {
     if (!onEnter && !onLeave) {
       throw new Error('Must provide at least one callback');
     }
@@ -574,19 +662,14 @@ export const initBulletPhysics = ({
             return { shape, transform };
           }
           case 'mesh': {
-            const mesh = region.mesh;
-            const geometry = mesh.geometry as THREE.BufferGeometry;
-            const vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
-            const indices = geometry.index?.array as Uint16Array | undefined;
-            if (vertices instanceof Uint16Array) {
-              throw new Error('GLTF Quantization not yet supported');
-            }
+            const { mesh } = region;
             let scale = mesh.scale.clone().multiplyScalar(1 + (region.margin ?? 0));
             if (region.scale) {
               scale = scale.multiply(region.scale);
             }
 
-            const shape = buildTrimeshShape(indices, vertices, scale);
+            const shape = buildCollisionShapeFromMesh(region.mesh, scale);
+
             const transform = new Ammo.btTransform();
             transform.setIdentity();
             transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
@@ -680,10 +763,16 @@ export const initBulletPhysics = ({
     let isOverlapping = false;
     tickCallbacks.push(() => {
       const numOverlappingObjects = collisionObj.getNumOverlappingObjects();
-      if (numOverlappingObjects > 0 && !isOverlapping) {
+      // `getNumOverlappingObjects` reports the number of objects that are intersecting in the
+      // broadphase, so we have to manually check if the objects are _actually_ colliding.
+      const isNowColliding =
+        numOverlappingObjects > 0 &&
+        collisionWorld.contactPairTestBinary(collisionObj, playerGhostObject, minPenetrationDepth);
+
+      if (isNowColliding && !isOverlapping) {
         isOverlapping = true;
         onEnter?.();
-      } else if (numOverlappingObjects === 0 && isOverlapping) {
+      } else if (!isNowColliding && isOverlapping) {
         isOverlapping = false;
         onLeave?.();
       }
@@ -765,6 +854,10 @@ export const initBulletPhysics = ({
   };
 
   const playerStateGetters: FpPlayerStateGetters = {
+    getPlayerPos: () => {
+      const pos = playerController.getPosition();
+      return [pos.x(), pos.y(), pos.z()];
+    },
     getVerticalVelocity: () => playerController.getVerticalVelocity(),
     getVerticalOffset: () => playerController.getVerticalOffset(),
     getIsOnGround: () => playerController.onGround(),
@@ -778,10 +871,6 @@ export const initBulletPhysics = ({
     },
     getIsJumping: () => playerController.isJumping() && lastJumpTimeSeconds > dashManager.lastDashTimeSeconds,
     getIsDashing: () => playerController.isJumping() && dashManager.lastDashTimeSeconds > lastJumpTimeSeconds,
-  };
-
-  const setMoveSpeed = (newMoveSpeed: PlayerMoveSpeed) => {
-    playerMoveSpeed = newMoveSpeed;
   };
 
   return {
@@ -799,8 +888,7 @@ export const initBulletPhysics = ({
     clearCollisionWorld,
     addPlayerRegionContactCb,
     playerStateGetters,
-    removeRigidBody,
-    setMoveSpeed,
+    removeCollisionObject,
     easyModeMovement,
     registerJumpCb,
     deregisterJumpCb,

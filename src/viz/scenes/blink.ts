@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { Pane } from 'tweakpane';
 
 import type { SceneConfig } from '.';
-import type { VizState } from '..';
-import { initBaseScene } from '../util';
+import type { Viz } from '..';
+import { initBaseScene } from '../util/util';
 
 const buildControls = (
   defaultConfJson: string,
@@ -181,7 +181,7 @@ const locations = {
   },
 };
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   loadedWorld.children.forEach(obj => {
     obj.removeFromParent();
   });

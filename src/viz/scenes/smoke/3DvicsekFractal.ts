@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 
 type Point3D = [number, number, number];
@@ -54,7 +54,7 @@ const computeFinalScale = (scale: number, iterations: number): number => {
 };
 
 const buildAndAdd3DVicsekFractal = (
-  viz: VizState,
+  viz: Viz,
   pos: THREE.Vector3,
   scale: number,
   iterations: number,
@@ -128,7 +128,7 @@ const buildAndAdd3DVicsekFractal = (
 };
 
 export const buildAndAddFractals = (
-  viz: VizState,
+  viz: Viz,
   cubesTexture: THREE.Texture,
   cubesTextureNormal: THREE.Texture,
   cubesTextureRoughness: THREE.Texture

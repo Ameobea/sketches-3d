@@ -1,20 +1,20 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { initCollectables, type CollectablesCtx } from './collectables';
-import { get, type Writable } from 'svelte/store';
+import type { TransparentWritable } from '../util/TransparentWritable';
 
 export const initCheckpoints = (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group<THREE.Object3DEventMap>,
   checkpointMat: THREE.Material,
   dashTokensCtx: CollectablesCtx,
-  curDashCharges: Writable<number>,
+  curDashCharges: TransparentWritable<number>,
   onComplete: () => void
 ) => {
   let latestReachedCheckpointIx: number | null = 0;
   let dashChargesAtLastCheckpoint = 0;
-  const setSpawnPoint = (pos: THREE.Vector3, rot: THREE.Vector3) => viz.fpCtx!.setSpawnPos(pos, rot);
+  const setSpawnPoint = (pos: THREE.Vector3, rot: THREE.Vector3) => viz.setSpawnPos(pos, rot);
 
   const parseCheckpointIx = (name: string) => {
     // names are like "checkpoint", "checkpoint001", "checkpoint002", etc.
@@ -41,7 +41,7 @@ export const initCheckpoints = (
 
       const checkpointIx = parseCheckpointIx(checkpoint.name);
       latestReachedCheckpointIx = checkpointIx;
-      dashChargesAtLastCheckpoint = get(curDashCharges);
+      dashChargesAtLastCheckpoint = curDashCharges.current;
       if (checkpointIx === 1) {
         onComplete();
       }
@@ -50,22 +50,20 @@ export const initCheckpoints = (
     collisionRegionScale: new THREE.Vector3(1, 30, 1),
   });
 
-  viz.collisionWorldLoadedCbs.push(fpCtx =>
-    fpCtx.registerOnRespawnCb(() => {
-      curDashCharges.set(dashChargesAtLastCheckpoint);
+  viz.registerOnRespawnCb(() => {
+    curDashCharges.set(dashChargesAtLastCheckpoint);
 
-      const needle = `ck${latestReachedCheckpointIx === null ? 0 : latestReachedCheckpointIx + 1}`;
-      const toRestore: THREE.Object3D[] = [];
-      for (const obj of dashTokensCtx.hiddenCollectables) {
-        if (obj.name.includes(needle)) {
-          toRestore.push(obj);
-        }
+    const needle = `ck${latestReachedCheckpointIx === null ? 0 : latestReachedCheckpointIx + 1}`;
+    const toRestore: THREE.Object3D[] = [];
+    for (const obj of dashTokensCtx.hiddenCollectables) {
+      if (obj.name.includes(needle)) {
+        toRestore.push(obj);
       }
+    }
 
-      dashTokensCtx.restore(toRestore);
-      viz.fpCtx!.reset();
-    })
-  );
+    dashTokensCtx.restore(toRestore);
+    viz.fpCtx!.reset();
+  });
 
   const reset = () => {
     ctx.reset();

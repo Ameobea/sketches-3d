@@ -1,7 +1,8 @@
 import * as DetectGPU from 'detect-gpu';
 import { writable, type Writable } from 'svelte/store';
 
-import { mergeDeep } from './util';
+import { mergeDeep } from './util/util';
+import { rwritable, type TransparentWritable } from './util/TransparentWritable';
 
 export const DefaultSceneName = 'bridge';
 
@@ -123,13 +124,13 @@ export const loadVizConfig = (): VizConfig => {
   return mergeDeep(buildDefaultVizConfig(), vizConfig);
 };
 
-export const getVizConfig = async (): Promise<Writable<VizConfig>> => {
+export const getVizConfig = async (): Promise<TransparentWritable<VizConfig>> => {
   if (localStorage.getItem('vizConfig')) {
     const vizConfig = loadVizConfig();
-    return writable(vizConfig);
+    return rwritable(vizConfig);
   }
 
   const config = await buildInitialVizConfig();
   localStorage.setItem('vizConfig', JSON.stringify(config));
-  return writable(config);
+  return rwritable(config);
 };

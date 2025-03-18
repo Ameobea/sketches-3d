@@ -3,7 +3,7 @@ import { EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
 import * as THREE from 'three';
 
 import { getSentry } from 'src/sentry';
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomBasicShader } from 'src/viz/shaders/customBasicShader';
@@ -12,7 +12,7 @@ import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { LODTerrain } from 'src/viz/terrain/LODTerrain';
 import type { TerrainGenParams } from 'src/viz/terrain/TerrainGenWorker/TerrainGenWorker.worker';
 import { loadNamedTextures } from 'src/viz/textureLoading';
-import { smoothstepScale } from 'src/viz/util';
+import { smoothstepScale } from 'src/viz/util/util';
 import { getTerrainGenWorker } from 'src/viz/workerPool';
 import type { SceneConfig, SceneLocations } from '..';
 import { getRuneGenerator } from './runeGen/runeGen';
@@ -47,7 +47,7 @@ const locations: SceneLocations = {
 };
 
 const initTerrain = async (
-  viz: VizState,
+  viz: Viz,
   texturesPromise: Promise<{
     goldFleckedObsidianColor: THREE.Texture;
     goldFleckedObsidianNormal: THREE.Texture;
@@ -118,7 +118,7 @@ const initTerrain = async (
 };
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
@@ -516,7 +516,7 @@ export const processLoadedScene = async (
   const handleAllTotemsCollected = () => {
     const door = loadedWorld.getObjectByName('monolith_door') as THREE.Mesh;
     door.visible = false;
-    viz.fpCtx!.removeRigidBody(door.userData.rigidBody);
+    viz.fpCtx!.removeCollisionObject(door.userData.rigidBody);
 
     doorLight.intensity = 3;
 
@@ -545,7 +545,7 @@ export const processLoadedScene = async (
 
     if (i === 2) {
       getSentry()?.captureMessage('Stone level jump puzzle totem collected');
-      viz.fpCtx!.setMoveSpeed({ inAir: baseMoveSpeed * 1.3, onGround: baseMoveSpeed * 1.3 });
+      viz.sceneConf.player!.moveSpeed = { inAir: baseMoveSpeed * 1.3, onGround: baseMoveSpeed * 1.3 };
       // animate FOV increase
       const fovChangeDurationSeconds = 0.3;
       const initialFOV = vizConf.graphics.fov;

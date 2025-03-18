@@ -31,6 +31,7 @@ export interface BtKinematicCharacterController {
   setWalkDirection(velocity: BtVec3): void;
   getFloorUserIndex(): number;
   warp(position: BtVec3): void;
+  getPosition(): BtVec3;
   setExternalVelocity(velocity: BtVec3): void;
   getExternalVelocity(): BtVec3;
   addExternalVelocity(velocity: BtVec3): void;
@@ -57,6 +58,7 @@ export interface BtCollisionObject {
   setCollisionShape(shape: BtCollisionShape): void;
   setCollisionFlags(flags: number): void;
   getNumOverlappingObjects(): number;
+  // getOverlappingObject(index: number): BtCollisionObject;
   setActivationState(state: number): void;
 }
 
@@ -84,14 +86,19 @@ export interface BtDispatcherInfo {
 export interface BtDiscreteDynamicsWorld {
   getBroadphase(): BtBroadphaseInterface;
   addCollisionObject(obj: BtCollisionObject, collisionFilterGroup: number, collisionFilterMask: number): void;
+  removeCollisionObject(obj: BtCollisionObject): void;
   addAction(action: BtActionInterface): void;
   setGravity(gravity: BtVec3): void;
   stepSimulation(tDiffSeconds: number, maxSubSteps: number, fixedTimeStep: number): number;
   addRigidBody(body: BtRigidBody): void;
-  removeRigidBody(body: BtRigidBody): void;
   // setSynchronizeAllMotionStates(synchronize: boolean): void;
   // getSynchronizeAllMotionStates(): boolean;
   getDispatchInfo(): BtDispatcherInfo;
+  contactPairTestBinary(
+    colObjA: BtCollisionObject,
+    colObjB: BtCollisionObject,
+    minPenetrationDepth: number
+  ): boolean;
 }
 
 export type BtCollisionConfiguration = Empty;

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader, type CustomShaderProps } from 'src/viz/shaders/customShader';
 import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
@@ -56,7 +56,7 @@ export const buildGoldMaterial = async (
   );
 };
 
-export const buildMaterials = async (viz: VizState, loadedWorld: THREE.Group) => {
+export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) => {
   const loader = new THREE.ImageBitmapLoader();
   const towerPlinthPedestalTextureP = loadTexture(
     loader,

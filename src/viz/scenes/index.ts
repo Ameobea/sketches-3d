@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import type SvelteSEO from 'svelte-seo';
-import type { Writable } from 'svelte/store';
 
-import type { VizState } from '..';
+import type { Viz } from '..';
 import type { SfxConfig } from '../audio/SfxManager';
 import type { VizConfig } from '../conf';
-import type { DeepPartial } from '../util';
+import type { DeepPartial } from '../util/util.ts';
 import type { ComponentProps } from 'svelte';
+import type { TransparentWritable } from '../util/TransparentWritable.ts';
 
 type SvelteSEOProps = ComponentProps<SvelteSEO>;
 
@@ -33,7 +33,7 @@ export const DefaultMoveSpeed: PlayerMoveSpeed = Object.freeze({
 });
 
 export interface DashChargeConfig {
-  curCharges: Writable<number>;
+  curCharges: TransparentWritable<number>;
 }
 
 export interface DashConfig {
@@ -54,23 +54,41 @@ export interface DashConfig {
   };
 }
 
-export const DefaultDashConfig: DashConfig = Object.freeze({
-  enable: true,
-  dashMagnitude: 16,
-  minDashDelaySeconds: 0.85,
-});
-
-export const DefaultExternalVelocityAirDampingFactor = new THREE.Vector3(0.12, 0.55, 0.12);
-export const DefaultExternalVelocityGroundDampingFactor = new THREE.Vector3(0.9992, 0.9992, 0.9992);
-
 export interface CustomControlsEntry {
   label: string;
   key: string;
   action: () => void;
 }
 
+export type ViewMode =
+  | { type: 'firstPerson' }
+  | { type: 'orbit'; pos: THREE.Vector3; target: THREE.Vector3 }
+  | {
+      type: 'top-down';
+      cameraOffset?: THREE.Vector3;
+      cameraRotation?: THREE.Euler;
+      cameraFOV?: number;
+      cameraFocusPoint?: { type: 'player' } | { type: 'fixed'; pos: THREE.Vector3 };
+    };
+
+export const DefaultDashConfig: DashConfig = Object.freeze({
+  enable: true,
+  dashMagnitude: 16,
+  minDashDelaySeconds: 0.85,
+});
+
+export const DefaultOOBThreshold = -55;
+
+export const DefaultExternalVelocityAirDampingFactor = new THREE.Vector3(0.12, 0.55, 0.12);
+export const DefaultExternalVelocityGroundDampingFactor = new THREE.Vector3(0.9992, 0.9992, 0.9992);
+
+export const DefaultTopDownCameraOffset = new THREE.Vector3(0, 80, -47);
+export const DefaultTopDownCameraRotation = new THREE.Euler(-1, Math.PI, 0, 'YXZ');
+export const DefaultTopDownCameraFOV = 40;
+export const DefaultTopDownCameraFocusPoint = { type: 'player' as const };
+
 export interface SceneConfig {
-  viewMode?: { type: 'firstPerson' } | { type: 'orbit'; pos: THREE.Vector3; target: THREE.Vector3 };
+  viewMode?: ViewMode;
   locations: SceneLocations;
   spawnLocation: string;
   /**
@@ -109,10 +127,15 @@ export interface SceneConfig {
      */
     externalVelocityGroundDampingFactor?: THREE.Vector3;
     colliderSize?: { height: number; radius: number };
-    playerColliderShape?: 'capsule' | 'cylinder';
+    playerColliderShape?: 'capsule' | 'cylinder' | 'sphere';
     moveSpeed?: { onGround: number; inAir: number };
     stepHeight?: number;
     oobYThreshold?: number;
+    /**
+     * If provided, this mesh will be added to the world and moved in sync with the player.  This is not
+     * usually needed in `firstPerson` view mode, but is useful for `top-down` mode.
+     */
+    mesh?: THREE.Mesh;
   };
   renderOverride?: (timeDiffSeconds: number) => void;
   enableInventory?: boolean;
@@ -139,7 +162,7 @@ export interface SceneDef {
    */
   sceneName: string | null;
   sceneLoader: () => Promise<
-    (viz: VizState, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
+    (viz: Viz, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
   >;
   metadata: SvelteSEOProps;
   gltfName?: string | null;

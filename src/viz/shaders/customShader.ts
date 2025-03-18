@@ -97,6 +97,7 @@ export enum MaterialClass {
   Default,
   Rock,
   Crystal,
+  Instakill,
 }
 
 export interface CustomShaderProps {

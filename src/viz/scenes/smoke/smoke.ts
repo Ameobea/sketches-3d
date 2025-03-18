@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { buildCustomShader, setDefaultDistanceAmpParams } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
-import { delay } from 'src/viz/util';
+import { delay } from 'src/viz/util/util';
 import type { SceneConfig } from '..';
-import type { VizState } from '../..';
+import type { Viz } from '../..';
 import { initWebSynth } from '../../../viz/webSynth';
 import { buildAndAddFractals } from './3DvicsekFractal';
 import { Locations } from './locations';
@@ -13,7 +13,7 @@ import { configurePostprocessing } from './postprocessing';
 import BgMonolithColorShader from './shaders/bgMonolith/color.frag?raw';
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {

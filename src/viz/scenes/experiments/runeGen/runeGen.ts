@@ -1,7 +1,7 @@
 import type * as Comlink from 'comlink';
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
@@ -46,7 +46,7 @@ import { getRuneGenerator } from '../../stone/runeGen/runeGen';
 //   }
 // }
 
-const initAsync = async (viz: VizState, loadedWorld: THREE.Group) => {
+const initAsync = async (viz: Viz, loadedWorld: THREE.Group) => {
   const runeGenWorker = await getRuneGenerator();
 
   const loader = new THREE.ImageBitmapLoader();
@@ -107,7 +107,7 @@ const initAsync = async (viz: VizState, loadedWorld: THREE.Group) => {
 };
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConfig: VizConfig
 ): Promise<SceneConfig> => {

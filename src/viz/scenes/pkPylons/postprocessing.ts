@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
-export const initPylonsPostprocessing = (viz: VizState, vizConf: VizConfig) => {
+export const initPylonsPostprocessing = (viz: Viz, vizConf: VizConfig) => {
   configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
     const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
       fogMinY: -140,

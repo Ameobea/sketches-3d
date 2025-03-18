@@ -1,7 +1,7 @@
-import type { VizState } from '..';
+import type { Viz } from '..';
 import { createStatsContainer } from './statsContainer';
 
-export const initPosDebugger = (viz: VizState, container: HTMLElement, topPx: number) => {
+export const initPosDebugger = (viz: Viz, container: HTMLElement, topPx: number) => {
   const posDisplayElem = createStatsContainer(topPx);
   container.appendChild(posDisplayElem);
 
@@ -13,7 +13,7 @@ export const initPosDebugger = (viz: VizState, container: HTMLElement, topPx: nu
   });
 };
 
-export const initEulerDebugger = (viz: VizState, container: HTMLElement, topPx: number) => {
+export const initEulerDebugger = (viz: Viz, container: HTMLElement, topPx: number) => {
   const eulerDisplayElem = createStatsContainer(topPx);
   container.appendChild(eulerDisplayElem);
 

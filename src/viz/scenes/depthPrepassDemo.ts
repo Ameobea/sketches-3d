@@ -2,7 +2,7 @@ import { EffectComposer, RenderPass } from 'postprocessing';
 import * as THREE from 'three';
 
 import type { SceneConfig } from '.';
-import type { VizState } from '..';
+import type { Viz } from '..';
 import { loadTexture } from '../textureLoading';
 
 const locations = {
@@ -63,7 +63,7 @@ export class MainRenderPass extends RenderPass {
   }
 }
 
-export const processLoadedScene = async (viz: VizState, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
   await initScene(loadedWorld);
 
   /////////

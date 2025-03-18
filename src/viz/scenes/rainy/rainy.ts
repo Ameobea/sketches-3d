@@ -13,7 +13,7 @@ import {
 } from 'postprocessing';
 import * as THREE from 'three';
 
-import type { VizState } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { buildCustomShader, type MaterialClass } from 'src/viz/shaders/customShader';
@@ -24,7 +24,7 @@ import {
   loadRawTexture,
   loadTexture,
 } from 'src/viz/textureLoading';
-import { delay, DEVICE_PIXEL_RATIO, smoothstep } from 'src/viz/util';
+import { delay, DEVICE_PIXEL_RATIO, smoothstep } from 'src/viz/util/util';
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
 import { FogPass } from './fogShader';
@@ -117,7 +117,7 @@ const loadTextures = async () => {
   };
 };
 
-const initScene = async (viz: VizState, loadedWorld: THREE.Group, _vizConfig: VizConfig) => {
+const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConfig) => {
   const {
     cementTextureCombinedDiffuseNormal,
     cloudsBgTexture,
@@ -424,7 +424,7 @@ const initScene = async (viz: VizState, loadedWorld: THREE.Group, _vizConfig: Vi
 };
 
 export const processLoadedScene = async (
-  viz: VizState,
+  viz: Viz,
   loadedWorld: THREE.Group,
   vizConfig: VizConfig
 ): Promise<SceneConfig> => {

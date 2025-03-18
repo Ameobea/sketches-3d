@@ -1,9 +1,7 @@
-import { get } from 'svelte/store';
-
 import type { BtKinematicCharacterController, BtVec3 } from 'src/ammojs/ammoTypes';
 import type { SfxManager } from './audio/SfxManager';
 import { DefaultDashConfig, type DashConfig } from './scenes';
-import { mergeDeep } from './util';
+import { mergeDeep } from './util/util';
 
 export class DashManager {
   private sfxManager: SfxManager;
@@ -36,22 +34,22 @@ export class DashManager {
     this.playerController = playerController;
   }
 
-  private dashInner(origForwardDir: THREE.Vector3, curTimeSeconds: number) {
+  private dashInner(dashDir: THREE.Vector3, curTimeSeconds: number) {
     if (this.config.useExternalVelocity) {
       this.playerController.setExternalVelocity(
         this.btvec3(
-          origForwardDir.x * this.config.dashMagnitude * 1.28,
-          origForwardDir.y * this.config.dashMagnitude * 1.28,
-          origForwardDir.z * this.config.dashMagnitude * 1.28
+          dashDir.x * this.config.dashMagnitude * 1.28,
+          dashDir.y * this.config.dashMagnitude * 1.28,
+          dashDir.z * this.config.dashMagnitude * 1.28
         )
       );
       this.playerController.resetFall();
     } else {
       this.playerController.jump(
         this.btvec3(
-          origForwardDir.x * this.config.dashMagnitude,
-          origForwardDir.y * this.config.dashMagnitude,
-          origForwardDir.z * this.config.dashMagnitude
+          dashDir.x * this.config.dashMagnitude,
+          dashDir.y * this.config.dashMagnitude,
+          dashDir.z * this.config.dashMagnitude
         )
       );
     }
@@ -80,7 +78,7 @@ export class DashManager {
   /**
    * Attempts to dash if the necessary conditions are met.  Returns `true` if the dash was actually performed.
    */
-  public tryDash(curTimeSeconds: number, isFlyMode: boolean, origForwardDir: THREE.Vector3): boolean {
+  public tryDash(curTimeSeconds: number, isFlyMode: boolean, dashDir: THREE.Vector3): boolean {
     if (!this.config.enable) {
       return false;
     }
@@ -91,7 +89,7 @@ export class DashManager {
     }
 
     if (this.config.chargeConfig) {
-      if (get(this.config.chargeConfig.curCharges) <= 0) {
+      if (this.config.chargeConfig.curCharges.current <= 0) {
         return false;
       }
     }
@@ -100,7 +98,7 @@ export class DashManager {
       return false;
     }
 
-    this.dashInner(origForwardDir, curTimeSeconds);
+    this.dashInner(dashDir, curTimeSeconds);
     if (this.config.sfx?.play) {
       this.sfxManager.playSfx(this.config.sfx.name ?? 'dash');
     }
