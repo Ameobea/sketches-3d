@@ -4,7 +4,11 @@ let sentryInitialized = false;
 let sentryDisabled = false;
 
 export const initSentry = () => {
-  if (sentryInitialized || window.location.href.includes('localhost')) {
+  if (sentryInitialized) {
+    return;
+  }
+
+  if (window.location.href.includes('localhost')) {
     sentryDisabled = true;
     return;
   }

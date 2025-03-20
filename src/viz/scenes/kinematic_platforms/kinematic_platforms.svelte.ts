@@ -3,22 +3,26 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { buildPylonsMaterials } from '../../parkour/regions/pylons/materials';
+import { buildPylonMaterial } from '../../parkour/regions/pylons/materials';
 import type { BtCollisionObject, BtRigidBody } from 'src/ammojs/ammoTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
-import { buildCustomShader, MaterialClass } from 'src/viz/shaders/customShader';
+import { buildCustomShader, type CustomShaderMaterial, MaterialClass } from 'src/viz/shaders/customShader';
 import { BulletHellManager, type BulletHellEvent } from 'src/viz/bulletHell/BulletHellManager';
 import { EasingFnType } from 'src/viz/util/easingFns';
 
-const initLevel = async (viz: Viz, matsPromise: ReturnType<typeof buildPylonsMaterials>) => {
+const initLevel = async (viz: Viz, pylonMatPromise: Promise<CustomShaderMaterial>) => {
   const fpCtx = viz.fpCtx!;
   const btvec3 = fpCtx.btvec3;
 
-  const { pylonMaterial } = await matsPromise;
-
   // add a platform to stand on
   const platformGeo = new THREE.BoxGeometry(500, 1, 500);
-  const platform = new THREE.Mesh(platformGeo, pylonMaterial);
+  const platform: THREE.Mesh<THREE.BoxGeometry, THREE.Material> = new THREE.Mesh(
+    platformGeo,
+    new THREE.MeshStandardMaterial({ color: 0 })
+  );
+  pylonMatPromise.then(pylonMat => {
+    platform.material = pylonMat;
+  });
   platform.receiveShadow = true;
   platform.position.set(0, -7, 0);
   viz.scene.add(platform);
@@ -125,13 +129,13 @@ const initLevel = async (viz: Viz, matsPromise: ReturnType<typeof buildPylonsMat
 
 export const processLoadedScene = async (
   viz: Viz,
-  loadedWorld: THREE.Group,
+  _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
+  const pylonMatPromise = buildPylonMaterial();
+
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
-
-  const matsPromise = buildPylonsMaterials(viz, loadedWorld);
 
   const sunPos = new THREE.Vector3(0, 80, 0);
   const sunLight = new THREE.DirectionalLight(0xffffff, 3.6);
@@ -163,7 +167,6 @@ export const processLoadedScene = async (
   const playerRadius = 0.5;
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
-    // new THREE.SphereGeometry(playerRadius, 16, 16),
     buildCustomShader({
       color: new THREE.Color(0xa989a9),
       metalness: 0.18,
@@ -176,7 +179,7 @@ export const processLoadedScene = async (
   playerMesh.castShadow = true;
   playerMesh.receiveShadow = true;
 
-  viz.collisionWorldLoadedCbs.push(() => void initLevel(viz, matsPromise));
+  viz.collisionWorldLoadedCbs.push(() => void initLevel(viz, pylonMatPromise));
 
   // initPylonsPostprocessing(viz, vizConf);
   configureDefaultPostprocessingPipeline(

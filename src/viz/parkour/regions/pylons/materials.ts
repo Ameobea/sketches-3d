@@ -56,48 +56,23 @@ export const buildGoldMaterial = async (
   );
 };
 
-export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) => {
-  const loader = new THREE.ImageBitmapLoader();
-  const towerPlinthPedestalTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.1476533049.png'
+const buildTowerPlinthPedestalTextureCombinedDiffuseNormalTextureP = (
+  providedLoader?: THREE.ImageBitmapLoader
+): Promise<THREE.Texture> => {
+  const loader = providedLoader ?? new THREE.ImageBitmapLoader();
+  const towerPlinthPedestalTextureP = loadTexture(loader, 'https://i.ameo.link/cul.png');
+  return towerPlinthPedestalTextureP.then(towerPlinthPedestalTexture =>
+    generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
   );
-  const towerPlinthPedestalTextureCombinedDiffuseNormalTextureP = towerPlinthPedestalTextureP.then(
-    towerPlinthPedestalTexture => generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
-  );
+};
 
-  const bgTextureP = (async () => {
-    const bgImage = await loader.loadAsync('https://i.ameo.link/bqn.jpg');
-    const bgTexture = new THREE.Texture(bgImage);
-    bgTexture.mapping = THREE.EquirectangularRefractionMapping;
-    bgTexture.needsUpdate = true;
-    return bgTexture;
-  })();
-
-  const [
-    bgTexture,
-    towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-    { shinyPatchworkStoneAlbedo, shinyPatchworkStoneNormal, shinyPatchworkStoneRoughness },
-    greenMosaic2Material,
-    goldMaterial,
-  ] = await Promise.all([
-    bgTextureP,
-    towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
-    loadNamedTextures(loader, {
-      shinyPatchworkStoneAlbedo: 'https://i.ameo.link/bqk.jpg',
-      shinyPatchworkStoneNormal: 'https://i.ameo.link/bqm.jpg',
-      shinyPatchworkStoneRoughness: 'https://i.ameo.link/bql.jpg',
-    }),
-    buildGreenMosaic2Material(loader),
-    buildGoldMaterial(loader),
-  ]);
-
-  const pylonMaterial = buildCustomShader(
+export const buildPylonMaterial = async (loader?: THREE.ImageBitmapLoader) =>
+  buildCustomShader(
     {
       color: new THREE.Color(0x898989),
       metalness: 0.18,
       roughness: 0.82,
-      map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
+      map: await buildTowerPlinthPedestalTextureCombinedDiffuseNormalTextureP(loader),
       uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
       mapDisableDistance: null,
       normalScale: 5.2,
@@ -110,6 +85,35 @@ export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) =
       tileBreaking: { type: 'neyret', patchScale: 0.9 },
     }
   );
+
+export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) => {
+  const loader = new THREE.ImageBitmapLoader();
+
+  const bgTextureP = (async () => {
+    const bgImage = await loader.loadAsync('https://i.ameo.link/bqn.jpg');
+    const bgTexture = new THREE.Texture(bgImage);
+    bgTexture.mapping = THREE.EquirectangularRefractionMapping;
+    bgTexture.needsUpdate = true;
+    return bgTexture;
+  })();
+
+  const [
+    bgTexture,
+    { shinyPatchworkStoneAlbedo, shinyPatchworkStoneNormal, shinyPatchworkStoneRoughness },
+    greenMosaic2Material,
+    goldMaterial,
+    pylonMaterial,
+  ] = await Promise.all([
+    bgTextureP,
+    loadNamedTextures(loader, {
+      shinyPatchworkStoneAlbedo: 'https://i.ameo.link/bqk.jpg',
+      shinyPatchworkStoneNormal: 'https://i.ameo.link/bqm.jpg',
+      shinyPatchworkStoneRoughness: 'https://i.ameo.link/bql.jpg',
+    }),
+    buildGreenMosaic2Material(loader),
+    buildGoldMaterial(loader),
+    buildPylonMaterial(loader),
+  ]);
 
   const checkpointMat = buildCustomShader(
     { metalness: 0, alphaTest: 0.05, transparent: true },

@@ -660,19 +660,23 @@ export class Viz {
   };
 }
 
+interface InitVizArgs {
+  paused: TransparentWritable<boolean>;
+  popUpCalled: TransparentWritable<PopupScreenFocus>;
+  sceneName?: string;
+  vizCb: (viz: Viz, vizConfig: TransparentWritable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
+}
+
+/**
+ * This is the main entrypoint for the application.  It loads the specified scene and configures the
+ * engine based on its configuration.
+ *
+ * It also initializes the core of the engine (including functionality like input handling, physics,
+ * and audio) and sets up the rendering loop.
+ */
 export const initViz = (
   container: HTMLElement,
-  {
-    paused,
-    popUpCalled,
-    sceneName: providedSceneName = Conf.DefaultSceneName,
-    vizCb,
-  }: {
-    paused: TransparentWritable<boolean>;
-    popUpCalled: TransparentWritable<PopupScreenFocus>;
-    sceneName?: string;
-    vizCb: (viz: Viz, vizConfig: TransparentWritable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
-  }
+  { paused, popUpCalled, sceneName: providedSceneName = Conf.DefaultSceneName, vizCb }: InitVizArgs
 ) => {
   initSentry();
 
@@ -681,23 +685,17 @@ export const initViz = (
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
 
+  const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName, extension = 'gltf' } = sceneDef;
+  const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
+
+  const scenePromises = Promise.all([getSceneLoader(), Conf.getVizConfig()]);
+
   const viz = new Viz(paused, popUpCalled, sceneDef);
   (window as any).viz = viz;
   (window as any).THREE = THREE;
 
   container.appendChild(viz.renderer.domElement);
   container.appendChild(viz.stats.dom);
-
-  const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName, extension = 'gltf' } = sceneDef;
-  const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
-
-  let loader = new GLTFLoader().setPath('/');
-  if (sceneDef.needsDraco) {
-    const dracoLoader = new DRACOLoader().setDecoderPath(
-      'https://www.gstatic.com/draco/versioned/decoders/1.5.6/'
-    );
-    loader = loader.setDRACOLoader(dracoLoader);
-  }
 
   const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
     if (viz.destroyed) {
@@ -709,7 +707,7 @@ export const initViz = (
       ? gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group()
       : new THREE.Group();
 
-    const [sceneLoader, vizConfig] = await Promise.all([getSceneLoader(), Conf.getVizConfig()]);
+    const [sceneLoader, vizConfig] = await scenePromises;
     viz.vizConfig = vizConfig;
     applyGraphicsSettings(viz, vizConfig.current.graphics);
     applyAudioSettings(vizConfig.current.audio);
@@ -809,21 +807,21 @@ export const initViz = (
       initPlayerKinematicsDebugger(viz, container, vOffset);
     }
 
-    const traverseCollidable = function (obj: THREE.Object3D, cb: (obj: THREE.Object3D) => void) {
-      if (obj.name.includes('nocollide') || obj.name.endsWith('far') || obj.userData.nocollide) {
-        return;
-      }
-
-      cb(obj);
-
-      const children = obj.children;
-
-      for (let i = 0, l = children.length; i < l; i++) {
-        traverseCollidable(children[i], cb);
-      }
-    };
-
     if (viz.fpCtx) {
+      const traverseCollidable = function (obj: THREE.Object3D, cb: (obj: THREE.Object3D) => void) {
+        if (obj.name.includes('nocollide') || obj.name.endsWith('far') || obj.userData.nocollide) {
+          return;
+        }
+
+        cb(obj);
+
+        const children = obj.children;
+
+        for (let i = 0, l = children.length; i < l; i++) {
+          traverseCollidable(children[i], cb);
+        }
+      };
+
       const traverseCb = (obj: THREE.Object3D) => {
         const children = obj.children;
         obj.children = [];
@@ -867,6 +865,14 @@ export const initViz = (
   };
 
   if (gltfName) {
+    let loader = new GLTFLoader().setPath('/');
+    if (sceneDef.needsDraco) {
+      const dracoLoader = new DRACOLoader().setDecoderPath(
+        'https://www.gstatic.com/draco/versioned/decoders/1.5.6/'
+      );
+      loader = loader.setDRACOLoader(dracoLoader);
+    }
+
     loader.load(`${gltfName}.${extension}`, gltfLoadedCB);
   } else {
     gltfLoadedCB({ scenes: [] });
