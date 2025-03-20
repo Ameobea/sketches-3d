@@ -1,4 +1,3 @@
-import { derived, type Readable } from 'svelte/store';
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
@@ -6,7 +5,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { initSentry } from 'src/sentry';
 import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
-import { type AddPlayerRegionContactCB, getAmmoJS, BulletPhysics } from './collision';
+import { getAmmoJS, BulletPhysics } from './collision';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger.svelte.ts';
@@ -21,49 +20,12 @@ import {
   type CustomControlsEntry,
   DefaultTopDownCameraFOV,
   DefaultTopDownCameraRotation,
-  DefaultTopDownCameraOffset,
-  DefaultOOBThreshold,
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
-import type {
-  AmmoInterface,
-  BtCollisionObject,
-  BtKinematicCharacterController,
-  BtPairCachingGhostObject,
-  BtVec3,
-} from 'src/ammojs/ammoTypes.ts';
+import type { BtPairCachingGhostObject } from 'src/ammojs/ammoTypes.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
 import { buildEasingFn, EasingFnType } from './util/easingFns.ts';
-
-const computeCameraPos = (
-  newPlayerPos: THREE.Vector3,
-  viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'firstPerson' | 'top-down' }>,
-  playerColliderHeight: number
-) => {
-  switch (viewMode.type) {
-    case 'firstPerson':
-      return newPlayerPos.add(new THREE.Vector3(0, 0.5 * playerColliderHeight, 0));
-    case 'top-down':
-      switch (viewMode.cameraFocusPoint?.type) {
-        case undefined:
-        case null:
-        case 'player':
-          return newPlayerPos.add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
-        case 'fixed':
-          return viewMode.cameraFocusPoint.pos
-            .clone()
-            .add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
-        default:
-          viewMode.cameraFocusPoint satisfies never;
-          throw new Error('Unknown camera focus point type');
-      }
-
-    default:
-      viewMode satisfies never;
-      throw new Error('Unsupported view mode');
-  }
-};
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -75,241 +37,6 @@ export interface FpPlayerStateGetters {
   getIsOnGround: () => boolean;
   getPlayerPos: () => [number, number, number];
 }
-
-export interface FirstPersonCtx {
-  addTriMesh: (mesh: THREE.Mesh, colliderType?: 'static' | 'kinematic') => void;
-  teleportPlayer: (pos: THREE.Vector3, rot?: THREE.Vector3) => void;
-  reset: () => void;
-  addBox: (
-    pos: [number, number, number],
-    halfExtents: [number, number, number],
-    quat?: THREE.Quaternion,
-    colliderType?: 'static' | 'kinematic'
-  ) => void;
-  addCone: (
-    pos: THREE.Vector3,
-    radius: number,
-    height: number,
-    quat?: THREE.Quaternion,
-    colliderType?: 'static' | 'kinematic'
-  ) => void;
-  addCompound: (
-    pos: [number, number, number],
-    children: {
-      type: 'box';
-      pos: [number, number, number];
-      halfExtents: [number, number, number];
-      quat?: THREE.Quaternion;
-    }[],
-    quat?: THREE.Quaternion
-  ) => void;
-  removeCollisionObject: (collisionObj: BtCollisionObject) => void;
-  addHeightmapTerrain: (
-    heightmapData: Float32Array,
-    minHeight: number,
-    maxHeight: number,
-    gridResolutionX: number,
-    gridResolutionY: number,
-    worldSpaceWidth: number,
-    worldSpaceLength: number
-  ) => void;
-  optimize: () => void;
-  setFlyMode: (isFlyMode: boolean) => void;
-  setGravity: (gravity: number) => void;
-  clearCollisionWorld: () => void;
-  addPlayerRegionContactCb: AddPlayerRegionContactCB;
-  removePlayerRegionContactCb: (ghostObj: BtPairCachingGhostObject) => void;
-  playerStateGetters: FpPlayerStateGetters;
-  easyModeMovement: Readable<boolean>;
-  registerDashCb: (cb: (curTimeSecs: number) => void) => void;
-  deregisterDashCb: (cb: (curTimeSecs: number) => void) => void;
-  registerJumpCb: (cb: (curTimeSecs: number) => void) => void;
-  deregisterJumpCb: (cb: (curTimeSecs: number) => void) => void;
-  Ammo: AmmoInterface;
-  btvec3: (x: number, y: number, z: number) => BtVec3;
-  playerController: BtKinematicCharacterController;
-}
-
-interface SetupFirstPersonArgs {
-  viz: Viz;
-  initialSpawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
-}
-
-const setupFirstPerson = async ({ viz, initialSpawnPos }: SetupFirstPersonArgs): Promise<FirstPersonCtx> => {
-  const playerColliderShape = viz.sceneConf.player?.playerColliderShape ?? 'capsule';
-
-  const Ammo = await getAmmoJS();
-  const physics = new BulletPhysics({
-    viz,
-    Ammo,
-    gravity: viz.sceneConf.gravity ?? 40,
-    jumpSpeed: viz.sceneConf.player?.jumpVelocity ?? 20,
-    playerColliderShape,
-    externalVelocityAirDampingFactor: viz.sceneConf.player?.externalVelocityAirDampingFactor,
-    externalVelocityGroundDampingFactor: viz.sceneConf.player?.externalVelocityGroundDampingFactor,
-    dashConfig: viz.sceneConf.player?.dashConfig,
-    initialSpawnPos,
-    simulationTickRate: viz.sceneConf.simulationTickRate,
-  });
-
-  if (window.location?.href.includes('localhost')) {
-    document.body.addEventListener('mousedown', evt => {
-      if (evt.button === 3) {
-        (window as any).back();
-      }
-    });
-  }
-
-  const cameraEulerScratch = new THREE.Euler();
-  viz.renderer.domElement.addEventListener('mousemove', evt => {
-    if (
-      document.pointerLockElement !== viz.renderer.domElement ||
-      viz.sceneConf.viewMode!.type !== 'firstPerson' ||
-      !viz.controlState.cameraControlEnabled
-    ) {
-      return;
-    }
-
-    cameraEulerScratch.setFromQuaternion(viz.camera.quaternion, 'YXZ');
-
-    const mouseSensitivity = viz.vizConfig.current.controls.mouseSensitivity;
-    cameraEulerScratch.y -= evt.movementX * mouseSensitivity * 0.001;
-    cameraEulerScratch.x -= evt.movementY * mouseSensitivity * 0.001;
-
-    // Clamp the camera's rotation to the range of -PI/2 to PI/2
-    // This is so the camera doesn't flip upside down
-    cameraEulerScratch.x = clamp(cameraEulerScratch.x, -Math.PI / 2 + 0.1, Math.PI / 2 - 0.001);
-
-    viz.camera.quaternion.setFromEuler(cameraEulerScratch);
-  });
-
-  (window as any).tp = (posName: string) => {
-    const location = viz.sceneConf.locations[posName];
-    const pos = Array.isArray(location.pos)
-      ? new THREE.Vector3(location.pos[0], location.pos[1], location.pos[2])
-      : location.pos;
-    const rot = Array.isArray(location.rot)
-      ? new THREE.Vector3(location.rot[0], location.rot[1], location.rot[2])
-      : location.rot;
-    if (location) {
-      physics.teleportPlayer(pos, rot);
-    } else {
-      console.warn(`No location found for ${posName}`);
-    }
-  };
-  (window as any).tpos = (x: number, y: number, z: number) =>
-    physics.teleportPlayer(new THREE.Vector3(x, y, z));
-
-  window.onbeforeunload = function () {
-    if ((window as any).recordPos) {
-      localStorage.backPos = (window as any).recordPos();
-    }
-  };
-
-  (window as any).back = () => {
-    const backPos = localStorage.backPos;
-    if (!backPos) {
-      console.warn('No back position found');
-      return;
-    }
-
-    const { pos, rot } = JSON.parse(backPos);
-    physics.teleportPlayer(
-      new THREE.Vector3(pos[0], pos[1], pos[2]),
-      new THREE.Vector3(rot[0], rot[1], rot[2])
-    );
-  };
-
-  if (localStorage.goBackOnLoad) {
-    (window as any).back();
-    delete localStorage.goBackOnLoad;
-  }
-
-  const teleportPlayerIfOOB = () => {
-    if (viz.camera.position.y <= (viz.sceneConf.player?.oobYThreshold ?? DefaultOOBThreshold)) {
-      viz.respawnPlayer();
-    }
-  };
-
-  viz.registerBeforeRenderCb(
-    (curTimeSecs, tDiffSecs) => {
-      const newPlayerPos = physics.updateCollisionWorld(curTimeSecs, tDiffSecs);
-      if (viz.sceneConf.player?.mesh) {
-        viz.sceneConf.player.mesh.position.copy(newPlayerPos);
-      }
-
-      if (viz.controlState.cameraControlEnabled) {
-        const playerColliderHeight =
-          viz.sceneConf.player?.colliderSize?.height ?? Conf.DefaultPlayerColliderHeight;
-        newPlayerPos.y += 0.5 * playerColliderHeight;
-        const cameraPos = computeCameraPos(
-          newPlayerPos,
-          viz.sceneConf.viewMode! as any,
-          playerColliderHeight
-        );
-        viz.camera.position.copy(cameraPos);
-      }
-
-      teleportPlayerIfOOB();
-    },
-    // Setting this priority ensures that the physics simulation always runs last, after all user-supplied
-    // callbacks have been called.  This avoids issues where the visual positions of objects that are
-    // animated by the user don't line up with the collision world positions.
-    Infinity
-  );
-
-  (window as any).getPos = () =>
-    viz.camera.position
-      .clone()
-      .sub(
-        new THREE.Vector3(
-          0,
-          (viz.sceneConf.player?.colliderSize?.height ?? Conf.DefaultPlayerColliderHeight) / 2,
-          0
-        )
-      )
-      .toArray();
-  (window as any).getRot = () => viz.camera.rotation.toArray();
-  (window as any).recordPos = () =>
-    JSON.stringify({
-      pos: (window as any).getPos(),
-      rot: viz.camera.rotation.toArray().slice(0, 3),
-    });
-  (window as any).fly = () => physics.setFlyMode();
-
-  /**
-   * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
-   * diagonally, allowing for easier movement.
-   */
-  const easyModeMovement = derived(viz.vizConfig, vizConfig => vizConfig.gameplay.easyModeMovement);
-
-  // TODO: This needs to be a class too, or better yet find a way to just bake this into the `BulletPhysics` class.
-  return {
-    addTriMesh: physics.addTriMesh,
-    teleportPlayer: physics.teleportPlayer,
-    reset: physics.reset,
-    addBox: physics.addBox,
-    addCone: physics.addCone,
-    addCompound: physics.addCompound,
-    addHeightmapTerrain: physics.addHeightmapTerrain,
-    optimize: physics.optimize,
-    setFlyMode: physics.setFlyMode,
-    setGravity: physics.setGravity,
-    clearCollisionWorld: physics.clearCollisionWorld,
-    addPlayerRegionContactCb: physics.addPlayerRegionContactCb,
-    removePlayerRegionContactCb: physics.removePlayerRegionContactCb,
-    playerStateGetters: physics.playerStateGetters,
-    removeCollisionObject: physics.removeCollisionObject,
-    easyModeMovement,
-    registerDashCb: physics.registerDashCb,
-    registerJumpCb: physics.registerJumpCb,
-    deregisterDashCb: physics.deregisterDashCb,
-    deregisterJumpCb: physics.deregisterJumpCb,
-    Ammo,
-    btvec3: physics.btvec3,
-    playerController: physics.playerController,
-  };
-};
 
 const setupOrbitControls = async (
   canvas: HTMLCanvasElement,
@@ -386,8 +113,8 @@ export class Viz {
   public scene: THREE.Scene = new THREE.Scene();
   public paused: TransparentWritable<boolean>;
   public popupCalled: TransparentWritable<PopupScreenFocus>;
-  public collisionWorldLoadedCbs: ((fpCtx: FirstPersonCtx) => void)[] = [];
-  public fpCtx: FirstPersonCtx | undefined;
+  public collisionWorldLoadedCbs: ((fpCtx: BulletPhysics) => void)[] = [];
+  public fpCtx: BulletPhysics | undefined;
   /**
    * Persistent user-configurable settings, mostly set via the pause menu.
    */
@@ -602,24 +329,11 @@ export class Viz {
       const elapsed = curTimeSeconds - this.viewModeInterpolationState!.startTimeSecs;
       const t = easingFn(clamp(elapsed / this.viewModeInterpolationState!.durationSecs, 0, 1));
 
-      const cameraPos = new THREE.Vector3(
-        mix(
-          this.viewModeInterpolationState!.startCameraPos.x,
-          this.viewModeInterpolationState!.endCameraPos.x,
-          t
-        ),
-        mix(
-          this.viewModeInterpolationState!.startCameraPos.y,
-          this.viewModeInterpolationState!.endCameraPos.y,
-          t
-        ),
-        mix(
-          this.viewModeInterpolationState!.startCameraPos.z,
-          this.viewModeInterpolationState!.endCameraPos.z,
-          t
-        )
+      const cameraPos = this.viewModeInterpolationState!.startCameraPos.clone().lerp(
+        this.viewModeInterpolationState!.endCameraPos,
+        t
       );
-      // TODO: lerp this properly taking into account angle wrapping
+      // TODO: interpolate this properly taking into account angle wrapping
       const cameraRot = new THREE.Euler(
         mix(
           this.viewModeInterpolationState!.startCameraRot.x,
@@ -686,10 +400,9 @@ export class Viz {
         ? (newViewMode.cameraFOV ?? DefaultTopDownCameraFOV)
         : this.vizConfig.current.graphics.fov;
     const playerPos = this.fpCtx!.playerStateGetters.getPlayerPos();
-    const endCameraPos = computeCameraPos(
+    const endCameraPos = this.fpCtx!.computeCameraPos(
       new THREE.Vector3(playerPos[0], playerPos[1], playerPos[2]),
-      newViewMode,
-      this.sceneConf.player?.colliderSize?.height ?? Conf.DefaultPlayerColliderHeight
+      newViewMode
     );
     const endCameraRot =
       newViewMode.type === 'top-down'
@@ -1065,7 +778,8 @@ export const initViz = (
         throw new Error(`Unhandled view mode: ${(sceneConf.viewMode as any).type}`);
       }
 
-      viz.fpCtx = await setupFirstPerson({ viz, initialSpawnPos });
+      const Ammo = await getAmmoJS();
+      viz.fpCtx = new BulletPhysics({ viz, Ammo, initialSpawnPos });
     } else if (sceneConf.viewMode.type === 'orbit') {
       await setupOrbitControls(
         viz.renderer.domElement,

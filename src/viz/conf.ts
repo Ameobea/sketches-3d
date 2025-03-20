@@ -1,5 +1,4 @@
 import * as DetectGPU from 'detect-gpu';
-import { writable, type Writable } from 'svelte/store';
 
 import { mergeDeep } from './util/util';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable';
@@ -8,7 +7,10 @@ export const DefaultSceneName = 'bridge';
 
 export const DefaultPlayerColliderHeight = 4.55;
 export const DefaultPlayerColliderRadius = 0.35;
+export const DefaultPlayerColliderShape = 'capsule' as const;
 export const DEFAULT_FOV = 110;
+export const DefaultGravity = 40;
+export const DefaultJumpSpeed = 20;
 
 export enum GraphicsQuality {
   Low = 1,

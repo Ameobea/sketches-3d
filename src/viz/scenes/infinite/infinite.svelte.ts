@@ -1,13 +1,14 @@
 import * as THREE from 'three';
+import { mount } from 'svelte';
+import Rand from 'rand-seed';
 
-import type { FirstPersonCtx, Viz } from 'src/viz';
+import type { Viz } from 'src/viz';
 import { type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
-import Rand from 'rand-seed';
 import type { InfiniteConfig } from 'src/viz/util/util';
 import InfiniteEndSvelte from 'src/viz/EndScreens/InfiniteEnd.svelte';
-import { mount } from 'svelte';
+import type { BulletPhysics } from 'src/viz/collision';
 
 const locations = {
   spawn: {
@@ -25,7 +26,7 @@ const squares = [
 //additional squares generated
 let extraGeneratedCount: number = 0;
 const initLevel = async (viz: Viz) => {
-  const fpCtx = await new Promise<FirstPersonCtx>(resolve => viz.collisionWorldLoadedCbs.push(resolve));
+  const fpCtx = await new Promise<BulletPhysics>(resolve => viz.collisionWorldLoadedCbs.push(resolve));
   //first
   for (let i = 0; i < 2; i++) {
     squares[i].position.set(0, 15, 0 + i * -16);

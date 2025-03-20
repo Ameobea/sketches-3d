@@ -278,7 +278,6 @@ class BulletManager {
     const bullet = this.buildBullet(def);
     this.bullets.push(bullet);
     this.viz.scene.add(bullet.mesh);
-    // this.viz.fpCtx!.addTriMesh(bullet.mesh);
     const collisionObj = this.viz.fpCtx!.addPlayerRegionContactCb(
       { type: 'mesh', mesh: bullet.mesh },
       () => this.viz.onInstakillTerrainCollision(collisionObj, bullet.mesh),
@@ -488,15 +487,7 @@ export class BulletHellManager {
       bulletMesh.material = KillerBulletMaterial;
 
       const startCameraPos = this.viz.camera.position.clone();
-      const endCameraPos = new THREE.Vector3(
-        bulletMesh!.position.x * 0.8 + startCameraPos.x * 0.2,
-        bulletMesh!.position.y * 0.8 + startCameraPos.y * 0.2,
-        bulletMesh!.position.z * 0.8 + startCameraPos.z * 0.2
-      );
-
-      const tempObj = new THREE.Object3D();
-      tempObj.position.copy(endCameraPos);
-      tempObj.lookAt(bulletMesh.position);
+      const endCameraPos = bulletMesh!.position.clone().lerp(startCameraPos, 0.2);
       const startCameraRot = this.viz.camera.rotation.clone();
 
       try {
@@ -534,10 +525,10 @@ export class BulletHellManager {
       await delay(animationLengthSecs * 1000);
     }
 
-    this.viz.controlState.movementEnabled = true;
-    this.viz.controlState.cameraControlEnabled = true;
     this.gameEndCb?.({ type: 'loss' });
     this.reset();
+    this.viz.controlState.movementEnabled = true;
+    this.viz.controlState.cameraControlEnabled = true;
   };
 
   /**

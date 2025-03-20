@@ -1,7 +1,7 @@
 import type { Resizable } from 'postprocessing';
 import * as THREE from 'three';
 
-import type { FirstPersonCtx } from '..';
+import type { BulletPhysics } from '../collision';
 
 export type TerrainSampler =
   | { type: 'simple'; fn: (x: number, z: number) => number }
@@ -326,7 +326,7 @@ export class LODTerrain extends THREE.Group implements Resizable {
     this.add(this.rootTile);
   }
 
-  public async initializeCollision(fpCtx: FirstPersonCtx) {
+  public async initializeCollision(fpCtx: BulletPhysics) {
     // TODO: make this configurable
     const heightmapResolution = 1024 * 1;
     const heightmapData = new Float32Array(heightmapResolution * heightmapResolution);

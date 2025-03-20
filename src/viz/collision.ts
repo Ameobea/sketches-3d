@@ -1,17 +1,25 @@
 import * as THREE from 'three';
+import { derived, type Readable } from 'svelte/store';
 
 import type { FpPlayerStateGetters, Viz } from './index.js';
 import {
-  type DashConfig,
   DefaultDashConfig,
   DefaultExternalVelocityAirDampingFactor,
   DefaultExternalVelocityGroundDampingFactor,
   DefaultMoveSpeed,
+  DefaultOOBThreshold,
+  DefaultTopDownCameraOffset,
   type SceneConfig,
 } from './scenes/index.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
-import { DefaultPlayerColliderHeight, DefaultPlayerColliderRadius } from './conf.js';
+import {
+  DefaultGravity,
+  DefaultJumpSpeed,
+  DefaultPlayerColliderHeight,
+  DefaultPlayerColliderRadius,
+  DefaultPlayerColliderShape,
+} from './conf.js';
 import type {
   AmmoInterface,
   BtBroadphaseInterface,
@@ -27,6 +35,7 @@ import type {
   BtVec3,
 } from '../ammojs/ammoTypes';
 import { DashManager } from './DashManager.js';
+import { clamp } from './util/util.js';
 
 let ammojs: Promise<AmmoInterface> | null = null;
 
@@ -79,14 +88,7 @@ const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
 interface BulletPhysicsArgs {
   viz: Viz;
   Ammo: AmmoInterface;
-  gravity: number;
-  jumpSpeed: number;
-  playerColliderShape: 'capsule' | 'cylinder' | 'sphere';
-  dashConfig: Partial<DashConfig> | undefined;
-  externalVelocityAirDampingFactor: THREE.Vector3 | undefined;
-  externalVelocityGroundDampingFactor: THREE.Vector3 | undefined;
   initialSpawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
-  simulationTickRate: number | undefined;
 }
 
 export class BulletPhysics {
@@ -102,6 +104,11 @@ export class BulletPhysics {
   public dashManager: DashManager;
   public playerStateGetters: FpPlayerStateGetters;
   public btvec3!: (x: number, y: number, z: number) => BtVec3;
+  /**
+   * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
+   * diagonally, allowing for easier movement.
+   */
+  public easyModeMovement: Readable<boolean>;
 
   private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
   private lastJumpTimeSeconds = 0;
@@ -116,21 +123,10 @@ export class BulletPhysics {
   private collisionObjectRefs: Map<number, CollisionObjectRef> = new Map();
   private sensors: Map<BtPairCachingGhostObject, SensorState> = new Map();
 
-  constructor({
-    viz,
-    Ammo,
-    gravity,
-    jumpSpeed,
-    playerColliderShape,
-    dashConfig = DefaultDashConfig,
-    externalVelocityAirDampingFactor = DefaultExternalVelocityAirDampingFactor,
-    externalVelocityGroundDampingFactor = DefaultExternalVelocityGroundDampingFactor,
-    initialSpawnPos,
-    simulationTickRate = DEFAULT_SIMULATION_TICK_RATE_HZ,
-  }: BulletPhysicsArgs) {
+  constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
     this.Ammo = Ammo;
     this.viz = viz;
-    this.simulationTickRate = simulationTickRate;
+    this.simulationTickRate = viz.sceneConf.simulationTickRate ?? DEFAULT_SIMULATION_TICK_RATE_HZ;
 
     this.collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
     this.dispatcher = new Ammo.btCollisionDispatcher(this.collisionConfiguration);
@@ -145,18 +141,27 @@ export class BulletPhysics {
 
     this.initBtvec3Scratch(Ammo);
 
-    this.setupPlayerController({
-      gravity,
-      jumpSpeed,
-      playerColliderShape,
-      externalVelocityAirDampingFactor,
-      externalVelocityGroundDampingFactor,
-      initialSpawnPos,
-    });
+    this.setupPlayerController(initialSpawnPos);
 
-    this.dashManager = new DashManager(viz.sfxManager, dashConfig, this.playerController, this.btvec3);
+    this.installMouseInputHandlers();
 
-    this.teleportPlayer(viz.spawnPos.pos, viz.spawnPos.rot);
+    this.initGlobalConsoleHelpers();
+
+    this.dashManager = new DashManager(
+      viz.sfxManager,
+      viz.sceneConf.player?.dashConfig ?? DefaultDashConfig,
+      this.playerController,
+      this.btvec3
+    );
+
+    if (localStorage.goBackOnLoad && localStorage.backPos) {
+      (window as any).back();
+      delete localStorage.goBackOnLoad;
+    } else {
+      this.teleportPlayer(viz.spawnPos.pos, viz.spawnPos.rot);
+    }
+
+    this.easyModeMovement = derived(viz.vizConfig, vizConfig => vizConfig.gameplay.easyModeMovement);
 
     this.playerStateGetters = {
       getPlayerPos: () => {
@@ -179,6 +184,8 @@ export class BulletPhysics {
       getIsDashing: () =>
         this.playerController.isJumping() && this.dashManager.lastDashTimeSeconds > this.lastJumpTimeSeconds,
     };
+
+    this.startMainGameTick();
   }
 
   private get gravity() {
@@ -202,21 +209,7 @@ export class BulletPhysics {
     };
   };
 
-  private setupPlayerController = ({
-    initialSpawnPos,
-    playerColliderShape,
-    jumpSpeed,
-    gravity,
-    externalVelocityAirDampingFactor,
-    externalVelocityGroundDampingFactor,
-  }: {
-    initialSpawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
-    playerColliderShape: 'capsule' | 'cylinder' | 'sphere';
-    jumpSpeed: number;
-    gravity: number;
-    externalVelocityAirDampingFactor: THREE.Vector3;
-    externalVelocityGroundDampingFactor: THREE.Vector3;
-  }) => {
+  private setupPlayerController = (initialSpawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 }) => {
     const playerInitialTransform = new this.Ammo.btTransform();
     playerInitialTransform.setIdentity();
     playerInitialTransform.setOrigin(
@@ -233,6 +226,8 @@ export class BulletPhysics {
       .getBroadphase()
       .getOverlappingPairCache()
       .setInternalGhostPairCallback(new this.Ammo.btGhostPairCallback());
+
+    const playerColliderShape = this.viz.sceneConf.player?.playerColliderShape ?? DefaultPlayerColliderShape;
     const playerShape = ((): BtCollisionShape => {
       switch (playerColliderShape) {
         case 'capsule':
@@ -266,7 +261,7 @@ export class BulletPhysics {
     this.playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
     this.playerController.setMaxSlope(MAX_SLOPE_RADS);
     this.playerController.setStepHeight(playerStepHeight);
-    this.playerController.setJumpSpeed(jumpSpeed);
+    this.playerController.setJumpSpeed(this.viz.sceneConf.player?.jumpVelocity ?? DefaultJumpSpeed);
 
     this.collisionWorld.addCollisionObject(
       this.playerGhostObject,
@@ -275,8 +270,13 @@ export class BulletPhysics {
     );
     this.collisionWorld.addAction(this.playerController);
 
-    this.setGravity(gravity);
+    this.setGravity(this.viz.sceneConf.gravity ?? DefaultGravity);
 
+    const externalVelocityAirDampingFactor =
+      this.viz.sceneConf.player?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor;
+    const externalVelocityGroundDampingFactor =
+      this.viz.sceneConf.player?.externalVelocityGroundDampingFactor ??
+      DefaultExternalVelocityGroundDampingFactor;
     this.playerController.setExternalVelocityAirDampingFactor(
       this.btvec3(
         externalVelocityAirDampingFactor.x,
@@ -291,6 +291,147 @@ export class BulletPhysics {
         externalVelocityGroundDampingFactor.z
       )
     );
+  };
+
+  private installMouseInputHandlers = () => {
+    if (window.location?.href.includes('localhost')) {
+      document.body.addEventListener('mousedown', evt => {
+        if (evt.button === 3) {
+          (window as any).back();
+        }
+      });
+    }
+
+    const cameraEulerScratch = new THREE.Euler();
+    this.viz.renderer.domElement.addEventListener('mousemove', evt => {
+      if (
+        document.pointerLockElement !== this.viz.renderer.domElement ||
+        this.viz.sceneConf.viewMode!.type !== 'firstPerson' ||
+        !this.viz.controlState.cameraControlEnabled
+      ) {
+        return;
+      }
+
+      cameraEulerScratch.setFromQuaternion(this.viz.camera.quaternion, 'YXZ');
+
+      const mouseSensitivity = this.viz.vizConfig.current.controls.mouseSensitivity;
+      cameraEulerScratch.y -= evt.movementX * mouseSensitivity * 0.001;
+      cameraEulerScratch.x -= evt.movementY * mouseSensitivity * 0.001;
+
+      // Clamp the camera's rotation to the range of -PI/2 to PI/2
+      // This is so the camera doesn't flip upside down
+      cameraEulerScratch.x = clamp(cameraEulerScratch.x, -Math.PI / 2 + 0.1, Math.PI / 2 - 0.001);
+
+      this.viz.camera.quaternion.setFromEuler(cameraEulerScratch);
+    });
+  };
+
+  private initGlobalConsoleHelpers = () => {
+    (window as any).tp = (posName: string) => {
+      const location = this.viz.sceneConf.locations[posName];
+      const pos = Array.isArray(location.pos)
+        ? new THREE.Vector3(location.pos[0], location.pos[1], location.pos[2])
+        : location.pos;
+      const rot = Array.isArray(location.rot)
+        ? new THREE.Vector3(location.rot[0], location.rot[1], location.rot[2])
+        : location.rot;
+      if (location) {
+        this.teleportPlayer(pos, rot);
+      } else {
+        console.warn(`No location found for ${posName}`);
+      }
+    };
+    (window as any).tpos = (x: number, y: number, z: number) =>
+      this.teleportPlayer(new THREE.Vector3(x, y, z));
+
+    (window as any).back = () => {
+      const backPos = localStorage.backPos;
+      if (!backPos) {
+        console.warn('No back position found');
+        return;
+      }
+
+      const { pos, rot } = JSON.parse(backPos);
+      this.teleportPlayer(
+        new THREE.Vector3(pos[0], pos[1], pos[2]),
+        new THREE.Vector3(rot[0], rot[1], rot[2])
+      );
+    };
+    (window as any).getPos = () =>
+      this.viz.camera.position
+        .clone()
+        .sub(new THREE.Vector3(0, this.playerColliderHeight / 2, 0))
+        .toArray();
+    (window as any).getRot = () => this.viz.camera.rotation.toArray();
+    (window as any).recordPos = () =>
+      JSON.stringify({
+        pos: (window as any).getPos(),
+        rot: this.viz.camera.rotation.toArray().slice(0, 3),
+      });
+    (window as any).fly = () => this.setFlyMode();
+
+    window.onbeforeunload = function () {
+      if ((window as any).recordPos) {
+        localStorage.backPos = (window as any).recordPos();
+      }
+    };
+  };
+
+  private startMainGameTick = () => {
+    const teleportPlayerIfOOB = () => {
+      if (this.viz.camera.position.y <= (this.viz.sceneConf.player?.oobYThreshold ?? DefaultOOBThreshold)) {
+        this.viz.respawnPlayer();
+      }
+    };
+
+    this.viz.registerBeforeRenderCb(
+      (curTimeSecs, tDiffSecs) => {
+        const newPlayerPos = this.updateCollisionWorld(curTimeSecs, tDiffSecs);
+        if (this.viz.sceneConf.player?.mesh) {
+          this.viz.sceneConf.player.mesh.position.copy(newPlayerPos);
+        }
+
+        if (this.viz.controlState.cameraControlEnabled) {
+          newPlayerPos.y += 0.5 * this.playerColliderHeight;
+          const cameraPos = this.computeCameraPos(newPlayerPos, this.viz.sceneConf.viewMode! as any);
+          this.viz.camera.position.copy(cameraPos);
+        }
+
+        teleportPlayerIfOOB();
+      },
+      // Setting this priority ensures that the physics simulation always runs last, after all user-supplied
+      // callbacks have been called.  This avoids issues where the visual positions of objects that are
+      // animated by the user don't line up with the collision world positions.
+      Infinity
+    );
+  };
+
+  public computeCameraPos = (
+    newPlayerPos: THREE.Vector3,
+    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'firstPerson' | 'top-down' }>
+  ) => {
+    switch (viewMode.type) {
+      case 'firstPerson':
+        return newPlayerPos.add(new THREE.Vector3(0, 0.5 * this.playerColliderHeight, 0));
+      case 'top-down':
+        switch (viewMode.cameraFocusPoint?.type) {
+          case undefined:
+          case null:
+          case 'player':
+            return newPlayerPos.add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
+          case 'fixed':
+            return viewMode.cameraFocusPoint.pos
+              .clone()
+              .add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
+          default:
+            viewMode.cameraFocusPoint satisfies never;
+            throw new Error('Unknown camera focus point type');
+        }
+
+      default:
+        viewMode satisfies never;
+        throw new Error('Unsupported view mode');
+    }
   };
 
   private handleFirstPersonInput = () => {
