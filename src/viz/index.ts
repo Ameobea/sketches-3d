@@ -1,4 +1,4 @@
-import { type Readable } from 'svelte/store';
+import { derived, type Readable } from 'svelte/store';
 import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { initSentry } from 'src/sentry';
 import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
-import { type AddPlayerRegionContactCB, getAmmoJS, initBulletPhysics } from './collision';
+import { type AddPlayerRegionContactCB, getAmmoJS, BulletPhysics } from './collision';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger.svelte.ts';
@@ -26,7 +26,12 @@ import {
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
 import { clamp, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
-import type { AmmoInterface, BtCollisionObject, BtVec3 } from 'src/ammojs/ammoTypes.ts';
+import type {
+  AmmoInterface,
+  BtCollisionObject,
+  BtPairCachingGhostObject,
+  BtVec3,
+} from 'src/ammojs/ammoTypes.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
 
 const computeCameraPos = (
@@ -111,6 +116,7 @@ export interface FirstPersonCtx {
   setGravity: (gravity: number) => void;
   clearCollisionWorld: () => void;
   addPlayerRegionContactCb: AddPlayerRegionContactCB;
+  removePlayerRegionContactCb: (ghostObj: BtPairCachingGhostObject) => void;
   playerStateGetters: FpPlayerStateGetters;
   easyModeMovement: Readable<boolean>;
   registerDashCb: (cb: (curTimeSecs: number) => void) => void;
@@ -130,29 +136,7 @@ const setupFirstPerson = async ({ viz, initialSpawnPos }: SetupFirstPersonArgs):
   const playerColliderShape = viz.sceneConf.player?.playerColliderShape ?? 'capsule';
 
   const Ammo = await getAmmoJS();
-  const {
-    updateCollisionWorld,
-    addTriMesh,
-    teleportPlayer,
-    reset,
-    addBox,
-    addCone,
-    addCompound,
-    addHeightmapTerrain,
-    optimize,
-    setGravity,
-    setFlyMode,
-    clearCollisionWorld,
-    addPlayerRegionContactCb,
-    playerStateGetters,
-    removeCollisionObject,
-    easyModeMovement,
-    registerDashCb,
-    registerJumpCb,
-    deregisterDashCb,
-    deregisterJumpCb,
-    btvec3,
-  } = await initBulletPhysics({
+  const physics = new BulletPhysics({
     viz,
     Ammo,
     gravity: viz.sceneConf.gravity ?? 40,
@@ -205,12 +189,13 @@ const setupFirstPerson = async ({ viz, initialSpawnPos }: SetupFirstPersonArgs):
       ? new THREE.Vector3(location.rot[0], location.rot[1], location.rot[2])
       : location.rot;
     if (location) {
-      teleportPlayer(pos, rot);
+      physics.teleportPlayer(pos, rot);
     } else {
       console.warn(`No location found for ${posName}`);
     }
   };
-  (window as any).tpos = (x: number, y: number, z: number) => teleportPlayer(new THREE.Vector3(x, y, z));
+  (window as any).tpos = (x: number, y: number, z: number) =>
+    physics.teleportPlayer(new THREE.Vector3(x, y, z));
 
   window.onbeforeunload = function () {
     if ((window as any).recordPos) {
@@ -226,7 +211,10 @@ const setupFirstPerson = async ({ viz, initialSpawnPos }: SetupFirstPersonArgs):
     }
 
     const { pos, rot } = JSON.parse(backPos);
-    teleportPlayer(new THREE.Vector3(pos[0], pos[1], pos[2]), new THREE.Vector3(rot[0], rot[1], rot[2]));
+    physics.teleportPlayer(
+      new THREE.Vector3(pos[0], pos[1], pos[2]),
+      new THREE.Vector3(rot[0], rot[1], rot[2])
+    );
   };
 
   if (localStorage.goBackOnLoad) {
@@ -242,7 +230,7 @@ const setupFirstPerson = async ({ viz, initialSpawnPos }: SetupFirstPersonArgs):
 
   viz.registerBeforeRenderCb(
     (curTimeSecs, tDiffSecs) => {
-      const newPlayerPos = updateCollisionWorld(curTimeSecs, tDiffSecs);
+      const newPlayerPos = physics.updateCollisionWorld(curTimeSecs, tDiffSecs);
       if (viz.sceneConf.player?.mesh) {
         viz.sceneConf.player.mesh.position.copy(newPlayerPos);
       }
@@ -284,30 +272,38 @@ const setupFirstPerson = async ({ viz, initialSpawnPos }: SetupFirstPersonArgs):
       pos: (window as any).getPos(),
       rot: viz.camera.rotation.toArray().slice(0, 3),
     });
-  (window as any).fly = () => setFlyMode();
+  (window as any).fly = () => physics.setFlyMode();
 
+  /**
+   * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
+   * diagonally, allowing for easier movement.
+   */
+  const easyModeMovement = derived(viz.vizConfig, vizConfig => vizConfig.gameplay.easyModeMovement);
+
+  // TODO: This needs to be a class too, or better yet find a way to just bake this into the `BulletPhysics` class.
   return {
-    addTriMesh,
-    teleportPlayer,
-    reset,
-    addBox,
-    addCone,
-    addCompound,
-    addHeightmapTerrain,
-    optimize,
-    setFlyMode,
-    setGravity,
-    clearCollisionWorld,
-    addPlayerRegionContactCb,
-    playerStateGetters,
-    removeCollisionObject,
+    addTriMesh: physics.addTriMesh,
+    teleportPlayer: physics.teleportPlayer,
+    reset: physics.reset,
+    addBox: physics.addBox,
+    addCone: physics.addCone,
+    addCompound: physics.addCompound,
+    addHeightmapTerrain: physics.addHeightmapTerrain,
+    optimize: physics.optimize,
+    setFlyMode: physics.setFlyMode,
+    setGravity: physics.setGravity,
+    clearCollisionWorld: physics.clearCollisionWorld,
+    addPlayerRegionContactCb: physics.addPlayerRegionContactCb,
+    removePlayerRegionContactCb: physics.removePlayerRegionContactCb,
+    playerStateGetters: physics.playerStateGetters,
+    removeCollisionObject: physics.removeCollisionObject,
     easyModeMovement,
-    registerDashCb,
-    registerJumpCb,
-    deregisterDashCb,
-    deregisterJumpCb,
+    registerDashCb: physics.registerDashCb,
+    registerJumpCb: physics.registerJumpCb,
+    deregisterDashCb: physics.deregisterDashCb,
+    deregisterJumpCb: physics.deregisterJumpCb,
     Ammo,
-    btvec3,
+    btvec3: physics.btvec3,
   };
 };
 

@@ -83,10 +83,34 @@ const initLevel = async (viz: Viz, matsPromise: ReturnType<typeof buildPylonsMat
     {
       type: 'spawnPattern',
       pattern: { type: 'circle', count: 250, direction: 'cw', revolutions: 8 },
-      pos: new THREE.Vector3(0, -4, -20),
+      pos: new THREE.Vector3(-20, -4, -20),
       time: 1,
       spawnIntervalSeconds: 0.04,
-      velocity: 1,
+      velocity: 15,
+    },
+    {
+      type: 'spawnPattern',
+      pattern: { type: 'circle', count: 250, direction: 'cw', revolutions: 8 },
+      pos: new THREE.Vector3(20, -4, 20),
+      time: 3,
+      spawnIntervalSeconds: 0.04,
+      velocity: 15,
+    },
+    {
+      type: 'spawnPattern',
+      pattern: { type: 'circle', count: 250, direction: 'cw', revolutions: 8 },
+      pos: new THREE.Vector3(-20, -4, 20),
+      time: 6,
+      spawnIntervalSeconds: 0.04,
+      velocity: 15,
+    },
+    {
+      type: 'spawnPattern',
+      pattern: { type: 'circle', count: 250, direction: 'cw', revolutions: 8 },
+      pos: new THREE.Vector3(20, -4, -20),
+      time: 10,
+      spawnIntervalSeconds: 0.04,
+      velocity: 15,
     },
   ];
   const manager = new BulletHellManager(
@@ -135,7 +159,7 @@ export const processLoadedScene = async (
   // viz.scene.add(shadowCameraHelper);
 
   const playerHeight = 2.2;
-  const playerRadius = 0.8;
+  const playerRadius = 0.5;
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
     // new THREE.SphereGeometry(playerRadius, 16, 16),
@@ -182,7 +206,7 @@ export const processLoadedScene = async (
     spawnLocation: 'spawn',
     gravity: 60,
     player: {
-      moveSpeed: { onGround: 26, inAir: 26 },
+      moveSpeed: { onGround: 16, inAir: 16 },
       colliderSize: { height: playerHeight, radius: playerRadius },
       playerColliderShape: 'capsule',
       // playerColliderShape: 'sphere',
@@ -218,8 +242,8 @@ export const processLoadedScene = async (
         label: 'Top-Down View Mode',
         key: '2',
         action: () => {
-          viz.sceneConf.player!.moveSpeed = { onGround: 26, inAir: 26 };
-          viz.setViewMode(viewMode, 2).then(() => console.log('view mode transition done'));
+          viz.sceneConf.player!.moveSpeed = { onGround: 10, inAir: 10 };
+          viz.setViewMode(viewMode, 1.2).then(() => console.log('view mode transition done'));
         },
       },
       {
@@ -227,7 +251,7 @@ export const processLoadedScene = async (
         key: '1',
         action: () => {
           viz.sceneConf.player!.moveSpeed = { onGround: 10, inAir: 13 };
-          viz.setViewMode({ type: 'firstPerson' }, 2).then(() => console.log('view mode transition done'));
+          viz.setViewMode({ type: 'firstPerson' }, 1.2).then(() => console.log('view mode transition done'));
         },
       },
     ],

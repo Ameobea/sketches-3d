@@ -74,7 +74,7 @@ interface Bullet {
 }
 
 const DefaultBulletVelocity = 20;
-const DefaultBulletShape: BulletShape = Object.freeze({ type: 'sphere', radius: 1 });
+const DefaultBulletShape: BulletShape = Object.freeze({ type: 'sphere', radius: 0.5 });
 const MinBulletCollisionDepth = 0.2;
 
 const StandardBulletMat = buildCustomShader(
@@ -284,7 +284,7 @@ class BulletManager {
 
   private despawnBullet = (bullet: Bullet) => {
     this.viz.scene.remove(bullet.mesh);
-    this.viz.fpCtx!.removeCollisionObject(bullet.mesh.userData.collisionObj);
+    this.viz.fpCtx!.removePlayerRegionContactCb(bullet.mesh.userData.collisionObj);
   };
 
   public reset = () => {

@@ -1,4 +1,3 @@
-import { derived } from 'svelte/store';
 import * as THREE from 'three';
 
 import type { FpPlayerStateGetters, Viz } from './index.js';
@@ -15,12 +14,16 @@ import { MaterialClass } from './shaders/customShader.js';
 import { DefaultPlayerColliderHeight, DefaultPlayerColliderRadius } from './conf.js';
 import type {
   AmmoInterface,
+  BtBroadphaseInterface,
+  BtCollisionConfiguration,
+  BtCollisionDispatcher,
   BtCollisionObject,
   BtCollisionShape,
   BtDiscreteDynamicsWorld,
   BtKinematicCharacterController,
   BtPairCachingGhostObject,
   BtRigidBody,
+  BtSequentialImpulseConstraintSolver,
   BtVec3,
 } from '../ammojs/ammoTypes';
 import { DashManager } from './DashManager.js';
@@ -31,18 +34,6 @@ export const getAmmoJS = async () => {
   if (ammojs) return ammojs;
   ammojs = import('../ammojs/ammo.wasm.js').then(mod => (mod as any).Ammo.apply({}));
   return ammojs;
-};
-
-let btvec3: (x: number, y: number, z: number) => BtVec3 = () => {
-  throw new Error('btvec3 not initialized');
-};
-
-const initBtvec3Scratch = (Ammo: AmmoInterface) => {
-  const scratchVec: BtVec3 = new Ammo.btVector3();
-  btvec3 = (x: number, y: number, z: number) => {
-    scratchVec.setValue(x, y, z);
-    return scratchVec;
-  };
 };
 
 export type ContactRegion =
@@ -59,6 +50,17 @@ export type AddPlayerRegionContactCB = (
   minPenetrationDepth?: number
 ) => BtPairCachingGhostObject;
 
+interface SensorState {
+  isOverlapping: boolean;
+  onEnter?: () => void;
+  onLeave?: () => void;
+  minPenetrationDepth: number;
+}
+
+interface CollisionObjectRef {
+  materialClass?: MaterialClass;
+}
+
 // \/ This is vital for making the physics work without bad bugs like falling through floors randomly.
 //
 // After deconstructing what the kinematic character controller does internally, I've worked out that it
@@ -72,6 +74,7 @@ const MAX_SLOPE_RADS = 0.8;
 // weird issues where the player slides around on the floor or clips through geometry.
 const MAX_PENETRATION_DEPTH = 0.075;
 const DEFAULT_SIMULATION_TICK_RATE_HZ = 160;
+const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
 
 interface BulletPhysicsArgs {
   viz: Viz;
@@ -86,143 +89,329 @@ interface BulletPhysicsArgs {
   simulationTickRate: number | undefined;
 }
 
-export const initBulletPhysics = ({
-  viz,
-  Ammo,
-  gravity,
-  jumpSpeed,
-  playerColliderShape,
-  dashConfig = DefaultDashConfig,
-  externalVelocityAirDampingFactor = DefaultExternalVelocityAirDampingFactor,
-  externalVelocityGroundDampingFactor = DefaultExternalVelocityGroundDampingFactor,
-  initialSpawnPos,
-  simulationTickRate = DEFAULT_SIMULATION_TICK_RATE_HZ,
-}: BulletPhysicsArgs) => {
-  const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
-  const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
-  const broadphase = new Ammo.btDbvtBroadphase();
-  const solver = new Ammo.btSequentialImpulseConstraintSolver();
-  let collisionWorld: BtDiscreteDynamicsWorld = new Ammo.btDiscreteDynamicsWorld(
-    dispatcher,
-    broadphase,
-    solver,
-    collisionConfiguration
-  );
+export class BulletPhysics {
+  public Ammo: AmmoInterface;
+  public viz: Viz;
+  public collisionWorld!: BtDiscreteDynamicsWorld;
+  public collisionConfiguration!: BtCollisionConfiguration;
+  public dispatcher!: BtCollisionDispatcher;
+  public broadphase!: BtBroadphaseInterface;
+  public solver!: BtSequentialImpulseConstraintSolver;
+  public playerController!: BtKinematicCharacterController;
+  public playerGhostObject!: BtPairCachingGhostObject;
+  public dashManager: DashManager;
+  public playerStateGetters: FpPlayerStateGetters;
+  public btvec3!: (x: number, y: number, z: number) => BtVec3;
 
-  initBtvec3Scratch(Ammo);
+  private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
+  private lastJumpTimeSeconds = 0;
+  private moveDirection = new THREE.Vector3();
+  private isWalking = false;
+  private upDir = new THREE.Vector3(0, 1, 0);
+  private forwardDir = new THREE.Vector3();
+  private leftDir = new THREE.Vector3();
+  private isFlyMode = false;
+  private simulationTickRate: number;
+  private nextCollisionObjectRefId = 0;
+  private collisionObjectRefs: Map<number, CollisionObjectRef> = new Map();
+  private sensors: Map<BtPairCachingGhostObject, SensorState> = new Map();
 
-  const playerColliderHeight = viz.sceneConf.player?.colliderSize?.height ?? DefaultPlayerColliderHeight;
-  const playerColliderRadius = viz.sceneConf.player?.colliderSize?.radius ?? DefaultPlayerColliderRadius;
+  constructor({
+    viz,
+    Ammo,
+    gravity,
+    jumpSpeed,
+    playerColliderShape,
+    dashConfig = DefaultDashConfig,
+    externalVelocityAirDampingFactor = DefaultExternalVelocityAirDampingFactor,
+    externalVelocityGroundDampingFactor = DefaultExternalVelocityGroundDampingFactor,
+    initialSpawnPos,
+    simulationTickRate = DEFAULT_SIMULATION_TICK_RATE_HZ,
+  }: BulletPhysicsArgs) {
+    this.Ammo = Ammo;
+    this.viz = viz;
+    this.simulationTickRate = simulationTickRate;
 
-  const playerInitialTransform = new Ammo.btTransform();
-  playerInitialTransform.setIdentity();
-  playerInitialTransform.setOrigin(
-    btvec3(initialSpawnPos.pos.x, initialSpawnPos.pos.y + playerColliderHeight, initialSpawnPos.pos.z)
-  );
-  const playerGhostObject = new Ammo.btPairCachingGhostObject();
-  playerGhostObject.setWorldTransform(playerInitialTransform);
-  Ammo.destroy(playerInitialTransform);
-  collisionWorld
-    .getBroadphase()
-    .getOverlappingPairCache()
-    .setInternalGhostPairCallback(new Ammo.btGhostPairCallback());
-  const playerShape = ((): BtCollisionShape => {
-    switch (playerColliderShape) {
-      case 'capsule':
-        return new Ammo.btCapsuleShape(playerColliderRadius, playerColliderHeight);
-      case 'cylinder':
-        const halfExtents = btvec3(playerColliderRadius, playerColliderHeight / 2, playerColliderRadius);
-        return new Ammo.btCylinderShape(halfExtents);
-      case 'sphere':
-        return new Ammo.btSphereShape(playerColliderRadius);
-      default:
-        playerColliderShape satisfies never;
-        throw new Error(
-          `Unknown player collider shape: ${playerColliderShape}. Expected 'capsule' or 'cylinder'.`
+    this.collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+    this.dispatcher = new Ammo.btCollisionDispatcher(this.collisionConfiguration);
+    this.broadphase = new Ammo.btDbvtBroadphase();
+    this.solver = new Ammo.btSequentialImpulseConstraintSolver();
+    this.collisionWorld = new Ammo.btDiscreteDynamicsWorld(
+      this.dispatcher,
+      this.broadphase,
+      this.solver,
+      this.collisionConfiguration
+    );
+
+    this.initBtvec3Scratch(Ammo);
+
+    this.setupPlayerController({
+      gravity,
+      jumpSpeed,
+      playerColliderShape,
+      externalVelocityAirDampingFactor,
+      externalVelocityGroundDampingFactor,
+      initialSpawnPos,
+    });
+
+    this.dashManager = new DashManager(viz.sfxManager, dashConfig, this.playerController, this.btvec3);
+
+    this.teleportPlayer(viz.spawnPos.pos, viz.spawnPos.rot);
+
+    this.playerStateGetters = {
+      getPlayerPos: () => {
+        const pos = this.playerController.getPosition();
+        return [pos.x(), pos.y(), pos.z()];
+      },
+      getVerticalVelocity: () => this.playerController.getVerticalVelocity(),
+      getVerticalOffset: () => this.playerController.getVerticalOffset(),
+      getIsOnGround: () => this.playerController.onGround(),
+      getJumpAxis: () => {
+        const jumpAxis = this.playerController.getJumpAxis();
+        return [jumpAxis.x(), jumpAxis.y(), jumpAxis.z()];
+      },
+      getExternalVelocity: () => {
+        const externalVelocity = this.playerController.getExternalVelocity();
+        return [externalVelocity.x(), externalVelocity.y(), externalVelocity.z()];
+      },
+      getIsJumping: () =>
+        this.playerController.isJumping() && this.lastJumpTimeSeconds > this.dashManager.lastDashTimeSeconds,
+      getIsDashing: () =>
+        this.playerController.isJumping() && this.dashManager.lastDashTimeSeconds > this.lastJumpTimeSeconds,
+    };
+  }
+
+  private get gravity() {
+    return this.viz.sceneConf.gravity ?? 40;
+  }
+  private get jumpSpeed() {
+    return this.viz.sceneConf.player?.jumpVelocity ?? 20;
+  }
+  private get playerColliderHeight() {
+    return this.viz.sceneConf.player?.colliderSize?.height ?? DefaultPlayerColliderHeight;
+  }
+  private get playerColliderRadius() {
+    return this.viz.sceneConf.player?.colliderSize?.radius ?? DefaultPlayerColliderRadius;
+  }
+
+  private initBtvec3Scratch = (Ammo: AmmoInterface) => {
+    const scratchVec: BtVec3 = new Ammo.btVector3();
+    this.btvec3 = (x: number, y: number, z: number) => {
+      scratchVec.setValue(x, y, z);
+      return scratchVec;
+    };
+  };
+
+  private setupPlayerController = ({
+    initialSpawnPos,
+    playerColliderShape,
+    jumpSpeed,
+    gravity,
+    externalVelocityAirDampingFactor,
+    externalVelocityGroundDampingFactor,
+  }: {
+    initialSpawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 };
+    playerColliderShape: 'capsule' | 'cylinder' | 'sphere';
+    jumpSpeed: number;
+    gravity: number;
+    externalVelocityAirDampingFactor: THREE.Vector3;
+    externalVelocityGroundDampingFactor: THREE.Vector3;
+  }) => {
+    const playerInitialTransform = new this.Ammo.btTransform();
+    playerInitialTransform.setIdentity();
+    playerInitialTransform.setOrigin(
+      this.btvec3(
+        initialSpawnPos.pos.x,
+        initialSpawnPos.pos.y + this.playerColliderHeight,
+        initialSpawnPos.pos.z
+      )
+    );
+    this.playerGhostObject = new this.Ammo.btPairCachingGhostObject();
+    this.playerGhostObject.setWorldTransform(playerInitialTransform);
+    this.Ammo.destroy(playerInitialTransform);
+    this.collisionWorld
+      .getBroadphase()
+      .getOverlappingPairCache()
+      .setInternalGhostPairCallback(new this.Ammo.btGhostPairCallback());
+    const playerShape = ((): BtCollisionShape => {
+      switch (playerColliderShape) {
+        case 'capsule':
+          return new this.Ammo.btCapsuleShape(this.playerColliderRadius, this.playerColliderHeight);
+        case 'cylinder':
+          const halfExtents = this.btvec3(
+            this.playerColliderRadius,
+            this.playerColliderHeight / 2,
+            this.playerColliderRadius
+          );
+          return new this.Ammo.btCylinderShape(halfExtents);
+        case 'sphere':
+          return new this.Ammo.btSphereShape(this.playerColliderRadius);
+        default:
+          playerColliderShape satisfies never;
+          throw new Error(
+            `Unknown player collider shape: ${playerColliderShape}. Expected 'capsule' or 'cylinder'.`
+          );
+      }
+    })();
+    this.playerGhostObject.setCollisionShape(playerShape);
+    this.playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
+
+    const playerStepHeight = this.viz.sceneConf.player?.stepHeight ?? DEFAULT_STEP_HEIGHT;
+    this.playerController = new this.Ammo.btKinematicCharacterController(
+      this.playerGhostObject,
+      playerShape,
+      playerStepHeight,
+      this.btvec3(0, 1, 0)
+    );
+    this.playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
+    this.playerController.setMaxSlope(MAX_SLOPE_RADS);
+    this.playerController.setStepHeight(playerStepHeight);
+    this.playerController.setJumpSpeed(jumpSpeed);
+
+    this.collisionWorld.addCollisionObject(
+      this.playerGhostObject,
+      32, // btBroadphaseProxy::CharacterFilter
+      1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
+    );
+    this.collisionWorld.addAction(this.playerController);
+
+    this.setGravity(gravity);
+
+    this.playerController.setExternalVelocityAirDampingFactor(
+      this.btvec3(
+        externalVelocityAirDampingFactor.x,
+        externalVelocityAirDampingFactor.y,
+        externalVelocityAirDampingFactor.z
+      )
+    );
+    this.playerController.setExternalVelocityGroundDampingFactor(
+      this.btvec3(
+        externalVelocityGroundDampingFactor.x,
+        externalVelocityGroundDampingFactor.y,
+        externalVelocityGroundDampingFactor.z
+      )
+    );
+  };
+
+  private handleFirstPersonInput = () => {
+    this.forwardDir = this.viz.camera.getWorldDirection(this.forwardDir).normalize();
+    this.leftDir = this.leftDir.crossVectors(this.upDir, this.forwardDir).normalize();
+    // Adjust `forwardDir` to be horizontal.
+    this.forwardDir = this.forwardDir.crossVectors(this.leftDir, this.upDir).normalize();
+
+    this.moveDirection.set(0, 0, 0);
+    if (this.viz.keyStates['KeyW']) this.moveDirection.add(this.forwardDir);
+    if (this.viz.keyStates['KeyS']) this.moveDirection.sub(this.forwardDir);
+    if (this.viz.keyStates['KeyA']) this.moveDirection.add(this.leftDir);
+    if (this.viz.keyStates['KeyD']) this.moveDirection.sub(this.leftDir);
+  };
+
+  private handleTopDownInput = () => {
+    this.moveDirection.set(0, 0, 0);
+    // camera looks towards negative Y.  negative X is left, negative Z is down
+    if (this.viz.keyStates['KeyW']) this.moveDirection.add(new THREE.Vector3(0, 0, 1));
+    if (this.viz.keyStates['KeyS']) this.moveDirection.add(new THREE.Vector3(0, 0, -1));
+    if (this.viz.keyStates['KeyA']) this.moveDirection.add(new THREE.Vector3(1, 0, 0));
+    if (this.viz.keyStates['KeyD']) this.moveDirection.add(new THREE.Vector3(-1, 0, 0));
+  };
+
+  private handleInput = (curTimeSeconds: number) => {
+    const cameraDir = this.viz.camera.getWorldDirection(this.forwardDir).normalize().clone();
+    const wasOnGround = this.playerController.onGround();
+
+    if (this.viz.controlState.movementEnabled) {
+      const viewMode = this.getViewMode();
+      switch (viewMode.type) {
+        case 'firstPerson':
+          this.handleFirstPersonInput();
+          break;
+        case 'top-down':
+          this.handleTopDownInput();
+          break;
+        default:
+          viewMode satisfies never;
+          throw new Error(`Unknown view mode: ${viewMode}`);
+      }
+    }
+
+    if (this.viz.vizConfig.current.gameplay.easyModeMovement) {
+      const targetMagnitude = new THREE.Vector3().add(this.forwardDir).add(this.leftDir).length();
+      const magnitude = this.moveDirection.length();
+      if (magnitude > 0) {
+        this.moveDirection.multiplyScalar(targetMagnitude / magnitude);
+      }
+    }
+
+    if (this.viz.keyStates['Space'] && wasOnGround) {
+      if (curTimeSeconds - this.lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
+        this.playerController.jump(
+          this.btvec3(
+            this.moveDirection.x * (this.jumpSpeed * 0.18),
+            this.jumpSpeed,
+            this.moveDirection.z * (this.jumpSpeed * 0.18)
+          )
         );
+        // playerController.setExternalVelocity(
+        //   this.btvec3(
+        //     moveDirection.x * (jumpSpeed * 0.18) * 0.01,
+        //     jumpSpeed * 0.01,
+        //     moveDirection.z * (jumpSpeed * 0.18) * 0.01
+        //   )
+        // );
+        this.lastJumpTimeSeconds = curTimeSeconds;
+        for (const cb of this.jumpCbs) {
+          cb(curTimeSeconds);
+        }
+      }
     }
-  })();
-  playerGhostObject.setCollisionShape(playerShape);
-  playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
 
-  const playerStepHeight = viz.sceneConf.player?.stepHeight ?? DEFAULT_STEP_HEIGHT;
-  const playerController: BtKinematicCharacterController = new Ammo.btKinematicCharacterController(
-    playerGhostObject,
-    playerShape,
-    playerStepHeight,
-    btvec3(0, 1, 0)
-  );
-  playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
-  playerController.setMaxSlope(MAX_SLOPE_RADS);
-  playerController.setStepHeight(playerStepHeight);
-  playerController.setJumpSpeed(jumpSpeed);
-
-  collisionWorld.addCollisionObject(
-    playerGhostObject,
-    32, // btBroadphaseProxy::CharacterFilter
-    1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
-  );
-  collisionWorld.addAction(playerController);
-
-  const setGravity = (gravity: number) => {
-    collisionWorld.setGravity(btvec3(0, -gravity, 0));
-    playerController.setGravity(btvec3(0, -gravity, 0));
-  };
-  setGravity(gravity);
-
-  playerController.setExternalVelocityAirDampingFactor(
-    btvec3(
-      externalVelocityAirDampingFactor.x,
-      externalVelocityAirDampingFactor.y,
-      externalVelocityAirDampingFactor.z
-    )
-  );
-  playerController.setExternalVelocityGroundDampingFactor(
-    btvec3(
-      externalVelocityGroundDampingFactor.x,
-      externalVelocityGroundDampingFactor.y,
-      externalVelocityGroundDampingFactor.z
-    )
-  );
-
-  /**
-   * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
-   * diagonally, allowing for easier movement.
-   */
-  const easyModeMovement = derived(viz.vizConfig, vizConfig => vizConfig.gameplay.easyModeMovement);
-
-  const jumpCbs: ((curTimeSeconds: number) => void)[] = [];
-  const registerJumpCb = (cb: (curTimeSeconds: number) => void) => {
-    jumpCbs.push(cb);
-  };
-  const deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
-    const ix = jumpCbs.indexOf(cb);
-    if (ix === -1) {
-      throw new Error('cb not registered');
+    const wasWalking = this.isWalking;
+    this.isWalking = this.moveDirection.x !== 0 || this.moveDirection.y !== 0 || this.moveDirection.z !== 0;
+    if (wasWalking && !this.isWalking) {
+      this.viz.sfxManager.onWalkStop();
+    } else if (!wasWalking && this.isWalking) {
+      this.viz.sfxManager.onWalkStart(MaterialClass.Default);
     }
-    jumpCbs.splice(ix, 1);
+
+    this.dashManager.tick(curTimeSeconds, wasOnGround);
+
+    if (this.viz.keyStates['ShiftLeft'] || this.viz.keyStates['ShiftRight']) {
+      const dashDir = this.getDashDir(this.getViewMode().type, cameraDir);
+      this.dashManager.tryDash(curTimeSeconds, this.isFlyMode, dashDir);
+    }
   };
 
-  let lastJumpTimeSeconds = 0;
-  const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
+  private getDashDir = (viewModeType: 'firstPerson' | 'top-down', cameraDir: THREE.Vector3) => {
+    switch (viewModeType) {
+      case 'firstPerson':
+        return cameraDir;
+      case 'top-down':
+        return this.moveDirection.clone().lerp(this.upDir, 0.5).normalize();
+      default:
+        viewModeType satisfies never;
+        throw new Error(`Unknown view mode: ${viewModeType}`);
+    }
+  };
 
-  const dashManager = new DashManager(viz.sfxManager, dashConfig, playerController, btvec3);
+  public setGravity = (gravity: number) => {
+    this.collisionWorld.setGravity(this.btvec3(0, -gravity, 0));
+    this.playerController.setGravity(this.btvec3(0, -gravity, 0));
+  };
 
-  let isFlyMode = false;
-  const setFlyMode = (newIsFlyMode?: boolean) => {
-    if (newIsFlyMode === isFlyMode) {
+  public setFlyMode = (newIsFlyMode?: boolean) => {
+    if (newIsFlyMode === this.isFlyMode) {
       return;
     }
 
-    isFlyMode = newIsFlyMode ?? !isFlyMode;
-    setGravity(isFlyMode ? 0 : gravity);
+    this.isFlyMode = newIsFlyMode ?? !this.isFlyMode;
+    this.setGravity(this.isFlyMode ? 0 : this.gravity);
   };
 
-  const getViewMode = (): Extract<
+  private getViewMode = (): Extract<
     NonNullable<SceneConfig['viewMode']>,
     { type: 'firstPerson' | 'top-down' }
   > => {
-    const viewMode = viz.sceneConf.viewMode!;
+    const viewMode = this.viz.sceneConf.viewMode!;
     if (viewMode.type !== 'firstPerson' && viewMode.type !== 'top-down') {
       throw new Error(
         `View mode must be 'firstPerson' or 'top-down' for collision; found: '${viewMode.type}'`
@@ -232,203 +421,101 @@ export const initBulletPhysics = ({
     return viewMode;
   };
 
-  const moveDirection = new THREE.Vector3();
-  let isWalking = false;
-  const upDir = new THREE.Vector3(0, 1, 0);
-  let forwardDir = new THREE.Vector3();
-  let leftDir = new THREE.Vector3();
-
-  const handleFirstPersonInput = () => {
-    forwardDir = viz.camera.getWorldDirection(forwardDir).normalize();
-    leftDir = leftDir.crossVectors(upDir, forwardDir).normalize();
-    // Adjust `forwardDir` to be horizontal.
-    forwardDir = forwardDir.crossVectors(leftDir, upDir).normalize();
-
-    moveDirection.set(0, 0, 0);
-    if (viz.keyStates['KeyW']) moveDirection.add(forwardDir);
-    if (viz.keyStates['KeyS']) moveDirection.sub(forwardDir);
-    if (viz.keyStates['KeyA']) moveDirection.add(leftDir);
-    if (viz.keyStates['KeyD']) moveDirection.sub(leftDir);
+  public registerJumpCb = (cb: (curTimeSeconds: number) => void) => {
+    this.jumpCbs.push(cb);
   };
-
-  const handleTopDownInput = () => {
-    moveDirection.set(0, 0, 0);
-    // camera looks towards negative Y.  negative X is left, negative Z is down
-    if (viz.keyStates['KeyW']) moveDirection.add(new THREE.Vector3(0, 0, 1));
-    if (viz.keyStates['KeyS']) moveDirection.add(new THREE.Vector3(0, 0, -1));
-    if (viz.keyStates['KeyA']) moveDirection.add(new THREE.Vector3(1, 0, 0));
-    if (viz.keyStates['KeyD']) moveDirection.add(new THREE.Vector3(-1, 0, 0));
+  public deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
+    const ix = this.jumpCbs.indexOf(cb);
+    if (ix === -1) {
+      throw new Error('cb not registered');
+    }
+    this.jumpCbs[ix] = this.jumpCbs[this.jumpCbs.length - 1];
+    this.jumpCbs.pop();
   };
-
-  const handleInput = (curTimeSeconds: number) => {
-    const cameraDir = viz.camera.getWorldDirection(forwardDir).normalize().clone();
-    const wasOnGround = playerController.onGround();
-
-    if (viz.controlState.movementEnabled) {
-      const viewMode = getViewMode();
-      switch (viewMode.type) {
-        case 'firstPerson':
-          handleFirstPersonInput();
-          break;
-        case 'top-down':
-          handleTopDownInput();
-          break;
-        default:
-          viewMode satisfies never;
-          throw new Error(`Unknown view mode: ${viewMode}`);
-      }
-    }
-
-    if (viz.vizConfig.current.gameplay.easyModeMovement) {
-      const targetMagnitude = new THREE.Vector3().add(forwardDir).add(leftDir).length();
-      const magnitude = moveDirection.length();
-      if (magnitude > 0) {
-        moveDirection.multiplyScalar(targetMagnitude / magnitude);
-      }
-    }
-
-    if (viz.keyStates['Space'] && wasOnGround) {
-      if (curTimeSeconds - lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
-        playerController.jump(
-          btvec3(moveDirection.x * (jumpSpeed * 0.18), jumpSpeed, moveDirection.z * (jumpSpeed * 0.18))
-        );
-        // playerController.setExternalVelocity(
-        //   btvec3(
-        //     moveDirection.x * (jumpSpeed * 0.18) * 0.01,
-        //     jumpSpeed * 0.01,
-        //     moveDirection.z * (jumpSpeed * 0.18) * 0.01
-        //   )
-        // );
-        lastJumpTimeSeconds = curTimeSeconds;
-        for (const cb of jumpCbs) {
-          cb(curTimeSeconds);
-        }
-      }
-    }
-
-    const wasWalking = isWalking;
-    isWalking = moveDirection.x !== 0 || moveDirection.y !== 0 || moveDirection.z !== 0;
-    if (wasWalking && !isWalking) {
-      viz.sfxManager.onWalkStop();
-    } else if (!wasWalking && isWalking) {
-      viz.sfxManager.onWalkStart(MaterialClass.Default);
-    }
-
-    dashManager.tick(curTimeSeconds, wasOnGround);
-
-    if (viz.keyStates['ShiftLeft'] || viz.keyStates['ShiftRight']) {
-      const dashDir = getDashDir(getViewMode().type, cameraDir);
-      dashManager.tryDash(curTimeSeconds, isFlyMode, dashDir);
-    }
-  };
-
-  const getDashDir = (viewModeType: 'firstPerson' | 'top-down', cameraDir: THREE.Vector3) => {
-    switch (viewModeType) {
-      case 'firstPerson':
-        return cameraDir;
-      case 'top-down':
-        return moveDirection.clone().lerp(upDir, 0.5).normalize();
-      default:
-        viewModeType satisfies never;
-        throw new Error(`Unknown view mode: ${viewModeType}`);
-    }
-  };
-
-  const tickCallbacks: ((tDiffSeconds: number) => void)[] = [];
 
   /**
    * Returns the new position of the player.
    */
-  const updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
-    const wasOnGround = playerController.onGround();
+  public updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
+    const wasOnGround = this.playerController.onGround();
 
-    handleInput(curTimeSeconds);
+    this.handleInput(curTimeSeconds);
 
-    const playerMoveSpeed = viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
+    const playerMoveSpeed = this.viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
     const moveSpeedPerSecond = wasOnGround ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
-    const walkDirBulletVector = btvec3(
-      moveDirection.x * moveSpeedPerSecond,
-      moveDirection.y * moveSpeedPerSecond,
-      moveDirection.z * moveSpeedPerSecond
+    const walkDirBulletVector = this.btvec3(
+      this.moveDirection.x * moveSpeedPerSecond,
+      this.moveDirection.y * moveSpeedPerSecond,
+      this.moveDirection.z * moveSpeedPerSecond
     );
-    playerController.setWalkDirection(walkDirBulletVector);
+    this.playerController.setWalkDirection(walkDirBulletVector);
 
-    const fixedTimeStep = 1 / simulationTickRate;
+    const fixedTimeStep = 1 / this.simulationTickRate;
     const maxSubSteps = 20;
-    collisionWorld.stepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
+    this.collisionWorld.stepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
 
-    const newPlayerTransform = playerGhostObject.getWorldTransform();
+    const newPlayerTransform = this.playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
 
-    const nowOnGround = playerController.onGround();
+    const nowOnGround = this.playerController.onGround();
     if (!wasOnGround && nowOnGround) {
-      const landedOnObjectIx: number = playerController.getFloorUserIndex();
-      const landedOnObject = CollisionObjectRefs.get(landedOnObjectIx);
+      const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
+      const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
       const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
-      viz.sfxManager.onPlayerLand(materialClass);
+      this.viz.sfxManager.onPlayerLand(materialClass);
     }
 
-    for (const cb of tickCallbacks) {
-      cb(tDiffSeconds);
+    for (const [ghostObj, state] of this.sensors) {
+      const numOverlappingObjects = ghostObj.getNumOverlappingObjects();
+      // `getNumOverlappingObjects` reports the number of objects that are intersecting in the
+      // broadphase, so we have to manually check if the objects are _actually_ colliding.
+      const isNowColliding =
+        numOverlappingObjects > 0 &&
+        this.collisionWorld.contactPairTestBinary(
+          ghostObj,
+          this.playerGhostObject,
+          state.minPenetrationDepth
+        );
+
+      if (isNowColliding && !state.isOverlapping) {
+        state.isOverlapping = true;
+        state.onEnter?.();
+      } else if (!isNowColliding && state.isOverlapping) {
+        state.isOverlapping = false;
+        state.onLeave?.();
+      }
     }
 
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
 
-  const teleportPlayer = (
-    pos: THREE.Vector3 | [number, number, number],
-    rot?: THREE.Vector3 | [number, number, number]
-  ) => {
-    playerController.warp(
-      Array.isArray(pos)
-        ? btvec3(pos[0], pos[1] + playerColliderHeight, pos[2])
-        : btvec3(pos.x, pos.y + playerColliderHeight, pos.z)
-    );
-    if (rot && getViewMode().type === 'firstPerson') {
-      viz.camera.rotation.setFromVector3(
-        Array.isArray(rot) ? new THREE.Vector3(rot[0], rot[1], rot[2]) : rot
-      );
+  public reset = () => {
+    for (const key of Object.keys(this.viz.keyStates)) {
+      this.viz.keyStates[key] = false;
     }
-    playerController.setExternalVelocity(btvec3(0, 0, 0));
-    playerController.setVerticalVelocity(0);
+    this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
+    this.playerController.setVerticalVelocity(0);
   };
 
-  const reset = () => {
-    for (const key of Object.keys(viz.keyStates)) {
-      viz.keyStates[key] = false;
-    }
-    playerController.setExternalVelocity(btvec3(0, 0, 0));
-    playerController.setVerticalVelocity(0);
-  };
-
-  teleportPlayer(viz.spawnPos.pos, viz.spawnPos.rot);
-
-  interface CollisionObjectRef {
-    materialClass?: MaterialClass;
-  }
-
-  let nextCollisionObjectRefId = 0;
-  const CollisionObjectRefs: Map<number, CollisionObjectRef> = new Map();
-
-  const addCollisionObject = (
+  public addCollisionObject = (
     shape: BtCollisionShape,
     pos: THREE.Vector3,
     quat: THREE.Quaternion = new THREE.Quaternion(),
     objRef?: CollisionObjectRef,
     colliderType: 'static' | 'kinematic' = 'static'
   ) => {
-    const transform = new Ammo.btTransform();
+    const transform = new this.Ammo.btTransform();
     transform.setIdentity();
-    transform.setOrigin(btvec3(pos.x, pos.y, pos.z));
-    const rot = new Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w);
+    transform.setOrigin(this.btvec3(pos.x, pos.y, pos.z));
+    const rot = new this.Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w);
     transform.setRotation(rot);
-    Ammo.destroy(rot);
+    this.Ammo.destroy(rot);
 
     // Add the object as static, so it doesn't move but still collides
-    const motionState = new Ammo.btDefaultMotionState(transform);
-    const localInertia = btvec3(0, 0, 0);
-    const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
-    const body: BtRigidBody = new Ammo.btRigidBody(rbInfo);
+    const motionState = new this.Ammo.btDefaultMotionState(transform);
+    const localInertia = this.btvec3(0, 0, 0);
+    const rbInfo = new this.Ammo.btRigidBodyConstructionInfo(0, motionState, shape, localInertia);
+    const body: BtRigidBody = new this.Ammo.btRigidBody(rbInfo);
     switch (colliderType) {
       case 'static':
         body.setCollisionFlags(1); // btCollisionObject::CF_STATIC_OBJECT
@@ -443,31 +530,35 @@ export const initBulletPhysics = ({
     }
 
     if (objRef) {
-      const refIx = nextCollisionObjectRefId++;
+      const refIx = this.nextCollisionObjectRefId++;
       body.setUserIndex(refIx);
-      CollisionObjectRefs.set(refIx, objRef);
+      this.collisionObjectRefs.set(refIx, objRef);
     }
-    collisionWorld.addRigidBody(body);
+    this.collisionWorld.addRigidBody(body);
 
-    Ammo.destroy(rbInfo);
-    // Ammo.destroy(motionState);
-    Ammo.destroy(transform);
+    this.Ammo.destroy(rbInfo);
+    this.Ammo.destroy(transform);
     return body;
   };
 
-  const buildTrimeshShape = (
+  public removeCollisionObject = (collisionObj: BtCollisionObject) => {
+    this.collisionWorld.removeCollisionObject(collisionObj);
+    this.Ammo.destroy(collisionObj);
+  };
+
+  private buildTrimeshShape = (
     indices: Uint16Array | undefined,
     vertices: Float32Array,
     scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
   ) => {
     // TODO: update IDL and use native indexed triangle mesh
-    const trimesh = new Ammo.btTriangleMesh();
+    const trimesh = new this.Ammo.btTriangleMesh();
     trimesh.preallocateIndices((indices ?? vertices).length);
     trimesh.preallocateVertices(vertices.length);
 
-    const v0 = new Ammo.btVector3();
-    const v1 = new Ammo.btVector3();
-    const v2 = new Ammo.btVector3();
+    const v0 = new this.Ammo.btVector3();
+    const v1 = new this.Ammo.btVector3();
+    const v2 = new this.Ammo.btVector3();
 
     for (let i = 0; i < (indices ?? vertices).length; i += 3) {
       const i0 = indices ? indices[i] * 3 : i * 3;
@@ -482,43 +573,22 @@ export const initBulletPhysics = ({
       // Should be greater than 0.05 or something like that too probably
       trimesh.addTriangle(v0, v1, v2);
     }
-    Ammo.destroy(v0);
-    Ammo.destroy(v1);
-    Ammo.destroy(v2);
+    this.Ammo.destroy(v0);
+    this.Ammo.destroy(v1);
+    this.Ammo.destroy(v2);
 
-    const shape = new Ammo.btBvhTriangleMeshShape(trimesh, true, true);
+    const shape = new this.Ammo.btBvhTriangleMeshShape(trimesh, true, true);
     return shape;
   };
 
-  const buildConvexHullShape = (
-    indices: Uint16Array | undefined,
-    vertices: Float32Array,
-    scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
-  ) => {
-    const hull = new Ammo.btConvexHullShape();
-
-    if (indices) {
-      for (let i = 0; i < indices.length; i++) {
-        const ix = indices[i] * 3;
-        hull.addPoint(btvec3(vertices[ix] * scale.x, vertices[ix + 1] * scale.y, vertices[ix + 2] * scale.z));
-      }
-    } else {
-      for (let i = 0; i < vertices.length; i += 3) {
-        hull.addPoint(btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z));
-      }
-    }
-
-    return hull;
-  };
-
-  const buildCollisionShapeFromMesh = (mesh: THREE.Mesh, extraScale?: THREE.Vector3) => {
+  private buildCollisionShapeFromMesh = (mesh: THREE.Mesh, extraScale?: THREE.Vector3) => {
     if (mesh.geometry instanceof THREE.BoxGeometry) {
-      const halfExtents = btvec3(
+      const halfExtents = this.btvec3(
         mesh.geometry.parameters.width * mesh.scale.x * (extraScale?.x ?? 1) * 0.5,
         mesh.geometry.parameters.height * mesh.scale.y * (extraScale?.y ?? 1) * 0.5,
         mesh.geometry.parameters.depth * mesh.scale.z * (extraScale?.z ?? 1) * 0.5
       );
-      return new Ammo.btBoxShape(halfExtents);
+      return new this.Ammo.btBoxShape(halfExtents);
     } else if (
       (mesh.geometry instanceof THREE.SphereGeometry ||
         (mesh.geometry instanceof THREE.IcosahedronGeometry && mesh.geometry.parameters.detail >= 2)) &&
@@ -527,7 +597,7 @@ export const initBulletPhysics = ({
       (!extraScale || (extraScale.x === extraScale.y && extraScale.y === extraScale.z))
     ) {
       const radius = mesh.geometry.parameters.radius * mesh.scale.x * (extraScale?.x ?? 1);
-      return new Ammo.btSphereShape(radius);
+      return new this.Ammo.btSphereShape(radius);
     }
 
     const geometry = mesh.geometry as THREE.BufferGeometry;
@@ -542,12 +612,30 @@ export const initBulletPhysics = ({
     }
 
     if (mesh.userData.convexhull) {
-      return buildConvexHullShape(indices, vertices, scale);
+      return this.buildConvexHullShape(indices, vertices, scale);
     }
-    return buildTrimeshShape(indices, vertices, scale);
+    return this.buildTrimeshShape(indices, vertices, scale);
   };
 
-  const addTriMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
+  public teleportPlayer = (
+    pos: THREE.Vector3 | [number, number, number],
+    rot?: THREE.Vector3 | [number, number, number]
+  ) => {
+    this.playerController.warp(
+      Array.isArray(pos)
+        ? this.btvec3(pos[0], pos[1] + this.playerColliderHeight, pos[2])
+        : this.btvec3(pos.x, pos.y + this.playerColliderHeight, pos.z)
+    );
+    if (rot && this.getViewMode().type === 'firstPerson') {
+      this.viz.camera.rotation.setFromVector3(
+        Array.isArray(rot) ? new THREE.Vector3(rot[0], rot[1], rot[2]) : rot
+      );
+    }
+    this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
+    this.playerController.setVerticalVelocity(0);
+  };
+
+  public addTriMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
     if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
       return;
     }
@@ -557,27 +645,284 @@ export const initBulletPhysics = ({
         mesh.material.materialClass === MaterialClass.Instakill) ||
       mesh.userData.instakill
     ) {
-      const collisionObj = addPlayerRegionContactCb({ type: 'mesh', mesh }, () =>
-        viz.onInstakillTerrainCollision()
+      const collisionObj = this.addPlayerRegionContactCb({ type: 'mesh', mesh }, () =>
+        this.viz.onInstakillTerrainCollision()
       );
       mesh.userData.collisionObj = collisionObj;
       return;
     }
 
-    const shape = buildCollisionShapeFromMesh(mesh);
+    const shape = this.buildCollisionShapeFromMesh(mesh);
     const objRef: CollisionObjectRef = {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
     };
-    const rigidBody = addCollisionObject(shape, mesh.position, mesh.quaternion, objRef, colliderType);
+    const rigidBody = this.addCollisionObject(shape, mesh.position, mesh.quaternion, objRef, colliderType);
     mesh.userData.rigidBody = rigidBody;
   };
 
-  const removeCollisionObject = (collisionObj: BtCollisionObject) => {
-    collisionWorld.removeCollisionObject(collisionObj);
-    Ammo.destroy(collisionObj);
+  public addPlayerRegionContactCb: AddPlayerRegionContactCB = (
+    region,
+    onEnter,
+    onLeave,
+    minPenetrationDepth = 0.04
+  ) => {
+    if (!onEnter && !onLeave) {
+      throw new Error('Must provide at least one callback');
+    }
+
+    const collisionObj = (() => {
+      const { shape, transform } = (() => {
+        switch (region.type) {
+          case 'box': {
+            const shape = new this.Ammo.btBoxShape(
+              this.btvec3(region.halfExtents.x, region.halfExtents.y, region.halfExtents.z)
+            );
+            const transform = new this.Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(this.btvec3(region.pos.x, region.pos.y, region.pos.z));
+            if (region.quat) {
+              const rot = new this.Ammo.btQuaternion(
+                region.quat.x,
+                region.quat.y,
+                region.quat.z,
+                region.quat.w
+              );
+              transform.setRotation(rot);
+              this.Ammo.destroy(rot);
+            }
+            return { shape, transform };
+          }
+          case 'mesh': {
+            const { mesh } = region;
+            let scale = mesh.scale.clone().multiplyScalar(1 + (region.margin ?? 0));
+            if (region.scale) {
+              scale = scale.multiply(region.scale);
+            }
+
+            const shape = this.buildCollisionShapeFromMesh(region.mesh, scale);
+
+            const transform = new this.Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(this.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+            if (mesh.quaternion) {
+              const rot = new this.Ammo.btQuaternion(
+                mesh.quaternion.x,
+                mesh.quaternion.y,
+                mesh.quaternion.z,
+                mesh.quaternion.w
+              );
+              transform.setRotation(rot);
+              this.Ammo.destroy(rot);
+            }
+            return { shape, transform };
+          }
+          case 'convexHull': {
+            const mesh = region.mesh;
+            const geometry = mesh.geometry as THREE.BufferGeometry;
+            const indices = geometry.index?.array as Uint16Array | undefined;
+            const vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
+            if (vertices instanceof Uint16Array) {
+              throw new Error('GLTF Quantization not yet supported');
+            }
+            const scale = mesh.scale.clone();
+            if (region.scale) {
+              scale.multiply(region.scale);
+            }
+
+            const shape = this.buildConvexHullShape(indices, vertices, scale);
+            const transform = new this.Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(this.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+            if (mesh.quaternion) {
+              const rot = new this.Ammo.btQuaternion(
+                mesh.quaternion.x,
+                mesh.quaternion.y,
+                mesh.quaternion.z,
+                mesh.quaternion.w
+              );
+              transform.setRotation(rot);
+              this.Ammo.destroy(rot);
+            }
+            return { shape, transform };
+          }
+          case 'aabb': {
+            const mesh = region.mesh;
+            if (region.scale) {
+              throw new Error('unimplemented');
+            }
+            const geometry = mesh.geometry as THREE.BufferGeometry;
+            geometry.computeBoundingBox();
+            const box = geometry.boundingBox!;
+            const transform = new this.Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(this.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+
+            const shape = new this.Ammo.btBoxShape(
+              this.btvec3(
+                (box.max.x - box.min.x) / 2,
+                (box.max.y - box.min.y) / 2,
+                (box.max.z - box.min.z) / 2
+              )
+            );
+            return { shape, transform };
+          }
+          case 'sphere': {
+            const shape = new this.Ammo.btSphereShape(region.radius);
+            const transform = new this.Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(this.btvec3(region.pos.x, region.pos.y, region.pos.z));
+            return { shape, transform };
+          }
+          default:
+            region satisfies never;
+            throw new Error(`Unhandled region type: ${(region as any).type}.`);
+        }
+      })();
+
+      const obj = new this.Ammo.btPairCachingGhostObject();
+      obj.setWorldTransform(transform);
+      obj.setCollisionShape(shape);
+      obj.setCollisionFlags(4); // btCollisionObject::CF_NO_CONTACT_RESPONSE
+      this.Ammo.destroy(transform);
+      return obj;
+    })();
+
+    // player interacts with static and default filters, so we set the region's ghost object
+    // to be of type static and only collide with the player
+    this.collisionWorld.addCollisionObject(
+      collisionObj,
+      1, // btBroadphaseProxy::StaticFilter,
+      32 // btBroadphaseProxy::CharacterFilter
+    );
+
+    const state: SensorState = {
+      isOverlapping: false,
+      minPenetrationDepth,
+      onEnter,
+      onLeave,
+    };
+    this.sensors.set(collisionObj, state);
+
+    return collisionObj;
   };
 
-  const addHeightmapTerrain = (
+  public removePlayerRegionContactCb = (ghostObj: BtPairCachingGhostObject, destroyCollisionObj = true) => {
+    const state = this.sensors.get(ghostObj);
+    if (!state) {
+      console.warn('No sensor registered for given collision object');
+      return;
+    }
+
+    this.sensors.delete(ghostObj);
+    this.collisionWorld.removeCollisionObject(ghostObj);
+    if (destroyCollisionObj) {
+      this.Ammo.destroy(ghostObj);
+    }
+  };
+
+  public addBox = (
+    pos: [number, number, number],
+    halfExtents: [number, number, number],
+    quat?: THREE.Quaternion,
+    colliderType: 'static' | 'kinematic' = 'static'
+  ) => {
+    const shape = new this.Ammo.btBoxShape(this.btvec3(...halfExtents));
+    this.addCollisionObject(shape, new THREE.Vector3(...pos), quat, undefined, colliderType);
+  };
+
+  public addCone = (
+    pos: THREE.Vector3,
+    radius: number,
+    height: number,
+    quat?: THREE.Quaternion,
+    colliderType: 'static' | 'kinematic' = 'static'
+  ) => {
+    const shape = new this.Ammo.btConeShape(radius, height);
+    this.addCollisionObject(shape, pos, quat, undefined, colliderType);
+  };
+
+  public addCompound = (
+    pos: [number, number, number],
+    children: {
+      type: 'box';
+      pos: [number, number, number];
+      halfExtents: [number, number, number];
+      quat?: THREE.Quaternion;
+    }[],
+    quat?: THREE.Quaternion
+  ) => {
+    const parentShape = new this.Ammo.btCompoundShape(true);
+
+    const childTransform = new this.Ammo.btTransform();
+    for (const child of children) {
+      const childShape = (() => {
+        if (child.type === 'box') {
+          return new this.Ammo.btBoxShape(this.btvec3(...child.halfExtents));
+        }
+
+        throw new Error('Unimplemented');
+      })();
+
+      childTransform.setIdentity();
+      childTransform.setOrigin(this.btvec3(...child.pos));
+      if (child.quat) {
+        const rot = new this.Ammo.btQuaternion(child.quat.x, child.quat.y, child.quat.z, child.quat.w);
+        childTransform.setRotation(rot);
+        this.Ammo.destroy(rot);
+      }
+      parentShape.addChildShape(childTransform, childShape);
+    }
+
+    this.addCollisionObject(parentShape, new THREE.Vector3(...pos), quat);
+
+    this.Ammo.destroy(childTransform);
+  };
+
+  public optimize = () => this.broadphase.optimize();
+
+  public clearCollisionWorld = () => {
+    for (const sensor of this.sensors.keys()) {
+      this.removePlayerRegionContactCb(sensor);
+    }
+    this.sensors.clear();
+
+    // TODO: Probably need to actually destroy everything in the old world...
+    const newCollisionWorld = new this.Ammo.btDiscreteDynamicsWorld(
+      this.dispatcher,
+      this.broadphase,
+      this.solver,
+      this.collisionConfiguration
+    );
+    this.Ammo.destroy(this.collisionWorld);
+    this.collisionWorld = newCollisionWorld;
+  };
+
+  private buildConvexHullShape = (
+    indices: Uint16Array | undefined,
+    vertices: Float32Array,
+    scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
+  ) => {
+    const hull = new this.Ammo.btConvexHullShape();
+
+    if (indices) {
+      for (let i = 0; i < indices.length; i++) {
+        const ix = indices[i] * 3;
+        hull.addPoint(
+          this.btvec3(vertices[ix] * scale.x, vertices[ix + 1] * scale.y, vertices[ix + 2] * scale.z)
+        );
+      }
+    } else {
+      for (let i = 0; i < vertices.length; i += 3) {
+        hull.addPoint(
+          this.btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z)
+        );
+      }
+    }
+
+    return hull;
+  };
+
+  public addHeightmapTerrain = (
     heightmapData: Float32Array,
     minHeight: number,
     maxHeight: number,
@@ -599,8 +944,8 @@ export const initBulletPhysics = ({
     //   int heightStickWidth, int heightStickLength, const void* heightfieldData,
     //   btScalar heightScale, btScalar minHeight, btScalar maxHeight, int upAxis,
     //   PHY_ScalarType hdt, bool flipQuadEdges){}
-    const terrainDataPtr = Ammo._malloc(4 * heightmapData.length);
-    const terrainData = new Float32Array(Ammo.HEAPF32.buffer, terrainDataPtr, heightmapData.length);
+    const terrainDataPtr = this.Ammo._malloc(4 * heightmapData.length);
+    const terrainData = new Float32Array(this.Ammo.HEAPF32.buffer, terrainDataPtr, heightmapData.length);
     terrainData.set(heightmapData);
 
     // The center between minHeight and maxHeight must be zero, otherwise the terrain will be
@@ -616,7 +961,7 @@ export const initBulletPhysics = ({
       maxHeight += deltaCenter;
     }
 
-    const heightfieldShape = new Ammo.btHeightfieldTerrainShape(
+    const heightfieldShape = new this.Ammo.btHeightfieldTerrainShape(
       gridResolutionX,
       gridResolutionY,
       terrainDataPtr,
@@ -628,272 +973,12 @@ export const initBulletPhysics = ({
     );
 
     heightfieldShape.setLocalScaling(
-      btvec3(worldSpaceWidth / (gridResolutionX - 1), 1, worldSpaceLength / (gridResolutionY - 1))
+      this.btvec3(worldSpaceWidth / (gridResolutionX - 1), 1, worldSpaceLength / (gridResolutionY - 1))
     );
 
-    addCollisionObject(heightfieldShape, new THREE.Vector3(0, 0, 0));
+    this.addCollisionObject(heightfieldShape, new THREE.Vector3(0, 0, 0));
   };
 
-  const addPlayerRegionContactCb: AddPlayerRegionContactCB = (
-    region,
-    onEnter,
-    onLeave,
-    minPenetrationDepth = 0.04
-  ) => {
-    if (!onEnter && !onLeave) {
-      throw new Error('Must provide at least one callback');
-    }
-
-    const collisionObj = (() => {
-      const { shape, transform } = (() => {
-        switch (region.type) {
-          case 'box': {
-            const shape = new Ammo.btBoxShape(
-              btvec3(region.halfExtents.x, region.halfExtents.y, region.halfExtents.z)
-            );
-            const transform = new Ammo.btTransform();
-            transform.setIdentity();
-            transform.setOrigin(btvec3(region.pos.x, region.pos.y, region.pos.z));
-            if (region.quat) {
-              const rot = new Ammo.btQuaternion(region.quat.x, region.quat.y, region.quat.z, region.quat.w);
-              transform.setRotation(rot);
-              Ammo.destroy(rot);
-            }
-            return { shape, transform };
-          }
-          case 'mesh': {
-            const { mesh } = region;
-            let scale = mesh.scale.clone().multiplyScalar(1 + (region.margin ?? 0));
-            if (region.scale) {
-              scale = scale.multiply(region.scale);
-            }
-
-            const shape = buildCollisionShapeFromMesh(region.mesh, scale);
-
-            const transform = new Ammo.btTransform();
-            transform.setIdentity();
-            transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-            if (mesh.quaternion) {
-              const rot = new Ammo.btQuaternion(
-                mesh.quaternion.x,
-                mesh.quaternion.y,
-                mesh.quaternion.z,
-                mesh.quaternion.w
-              );
-              transform.setRotation(rot);
-              Ammo.destroy(rot);
-            }
-            return { shape, transform };
-          }
-          case 'convexHull': {
-            const mesh = region.mesh;
-            const geometry = mesh.geometry as THREE.BufferGeometry;
-            const indices = geometry.index?.array as Uint16Array | undefined;
-            const vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
-            if (vertices instanceof Uint16Array) {
-              throw new Error('GLTF Quantization not yet supported');
-            }
-            const scale = mesh.scale.clone();
-            if (region.scale) {
-              scale.multiply(region.scale);
-            }
-
-            const shape = buildConvexHullShape(indices, vertices, scale);
-            const transform = new Ammo.btTransform();
-            transform.setIdentity();
-            transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-            if (mesh.quaternion) {
-              const rot = new Ammo.btQuaternion(
-                mesh.quaternion.x,
-                mesh.quaternion.y,
-                mesh.quaternion.z,
-                mesh.quaternion.w
-              );
-              transform.setRotation(rot);
-              Ammo.destroy(rot);
-            }
-            return { shape, transform };
-          }
-          case 'aabb': {
-            const mesh = region.mesh;
-            if (region.scale) {
-              throw new Error('unimplemented');
-            }
-            const geometry = mesh.geometry as THREE.BufferGeometry;
-            geometry.computeBoundingBox();
-            const box = geometry.boundingBox!;
-            const transform = new Ammo.btTransform();
-            transform.setIdentity();
-            transform.setOrigin(btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-
-            const shape = new Ammo.btBoxShape(
-              btvec3((box.max.x - box.min.x) / 2, (box.max.y - box.min.y) / 2, (box.max.z - box.min.z) / 2)
-            );
-            return { shape, transform };
-          }
-          case 'sphere': {
-            const shape = new Ammo.btSphereShape(region.radius);
-            const transform = new Ammo.btTransform();
-            transform.setIdentity();
-            transform.setOrigin(btvec3(region.pos.x, region.pos.y, region.pos.z));
-            return { shape, transform };
-          }
-          default:
-            region satisfies never;
-            throw new Error(`Unhandled region type: ${(region as any).type}.`);
-        }
-      })();
-
-      const obj = new Ammo.btPairCachingGhostObject();
-      obj.setWorldTransform(transform);
-      obj.setCollisionShape(shape);
-      obj.setCollisionFlags(4); // btCollisionObject::CF_NO_CONTACT_RESPONSE
-      Ammo.destroy(transform);
-      return obj;
-    })();
-
-    // player interacts with static and default filters, so we set the region's ghost object
-    // to be of type static and only collide with the player
-    collisionWorld.addCollisionObject(
-      collisionObj,
-      1, // btBroadphaseProxy::StaticFilter,
-      32 // btBroadphaseProxy::CharacterFilter
-    );
-
-    let isOverlapping = false;
-    tickCallbacks.push(() => {
-      const numOverlappingObjects = collisionObj.getNumOverlappingObjects();
-      // `getNumOverlappingObjects` reports the number of objects that are intersecting in the
-      // broadphase, so we have to manually check if the objects are _actually_ colliding.
-      const isNowColliding =
-        numOverlappingObjects > 0 &&
-        collisionWorld.contactPairTestBinary(collisionObj, playerGhostObject, minPenetrationDepth);
-
-      if (isNowColliding && !isOverlapping) {
-        isOverlapping = true;
-        onEnter?.();
-      } else if (!isNowColliding && isOverlapping) {
-        isOverlapping = false;
-        onLeave?.();
-      }
-    });
-
-    return collisionObj;
-  };
-
-  const addBox = (
-    pos: [number, number, number],
-    halfExtents: [number, number, number],
-    quat?: THREE.Quaternion,
-    colliderType: 'static' | 'kinematic' = 'static'
-  ) => {
-    const shape = new Ammo.btBoxShape(btvec3(...halfExtents));
-    addCollisionObject(shape, new THREE.Vector3(...pos), quat, undefined, colliderType);
-  };
-
-  const addCone = (
-    pos: THREE.Vector3,
-    radius: number,
-    height: number,
-    quat?: THREE.Quaternion,
-    colliderType: 'static' | 'kinematic' = 'static'
-  ) => {
-    const shape = new Ammo.btConeShape(radius, height);
-    addCollisionObject(shape, pos, quat, undefined, colliderType);
-  };
-
-  const addCompound = (
-    pos: [number, number, number],
-    children: {
-      type: 'box';
-      pos: [number, number, number];
-      halfExtents: [number, number, number];
-      quat?: THREE.Quaternion;
-    }[],
-    quat?: THREE.Quaternion
-  ) => {
-    const parentShape = new Ammo.btCompoundShape(true);
-
-    const childTransform = new Ammo.btTransform();
-    for (const child of children) {
-      const childShape = (() => {
-        if (child.type === 'box') {
-          return new Ammo.btBoxShape(btvec3(...child.halfExtents));
-        }
-
-        throw new Error('Unimplemented');
-      })();
-
-      childTransform.setIdentity();
-      childTransform.setOrigin(btvec3(...child.pos));
-      if (child.quat) {
-        const rot = new Ammo.btQuaternion(child.quat.x, child.quat.y, child.quat.z, child.quat.w);
-        childTransform.setRotation(rot);
-        Ammo.destroy(rot);
-      }
-      parentShape.addChildShape(childTransform, childShape);
-    }
-
-    addCollisionObject(parentShape, new THREE.Vector3(...pos), quat);
-
-    Ammo.destroy(childTransform);
-  };
-
-  const optimize = () => broadphase.optimize();
-
-  const clearCollisionWorld = () => {
-    tickCallbacks.length = 0;
-    const newCollisionWorld = new Ammo.btDiscreteDynamicsWorld(
-      dispatcher,
-      broadphase,
-      solver,
-      collisionConfiguration
-    );
-    Ammo.destroy(collisionWorld);
-    collisionWorld = newCollisionWorld;
-  };
-
-  const playerStateGetters: FpPlayerStateGetters = {
-    getPlayerPos: () => {
-      const pos = playerController.getPosition();
-      return [pos.x(), pos.y(), pos.z()];
-    },
-    getVerticalVelocity: () => playerController.getVerticalVelocity(),
-    getVerticalOffset: () => playerController.getVerticalOffset(),
-    getIsOnGround: () => playerController.onGround(),
-    getJumpAxis: () => {
-      const jumpAxis = playerController.getJumpAxis();
-      return [jumpAxis.x(), jumpAxis.y(), jumpAxis.z()];
-    },
-    getExternalVelocity: () => {
-      const externalVelocity = playerController.getExternalVelocity();
-      return [externalVelocity.x(), externalVelocity.y(), externalVelocity.z()];
-    },
-    getIsJumping: () => playerController.isJumping() && lastJumpTimeSeconds > dashManager.lastDashTimeSeconds,
-    getIsDashing: () => playerController.isJumping() && dashManager.lastDashTimeSeconds > lastJumpTimeSeconds,
-  };
-
-  return {
-    updateCollisionWorld,
-    addTriMesh,
-    addBox,
-    addCone,
-    addCompound,
-    addHeightmapTerrain,
-    teleportPlayer,
-    reset,
-    optimize,
-    setGravity,
-    setFlyMode,
-    clearCollisionWorld,
-    addPlayerRegionContactCb,
-    playerStateGetters,
-    removeCollisionObject,
-    easyModeMovement,
-    registerJumpCb,
-    deregisterJumpCb,
-    registerDashCb: (cb: (curTimeSeconds: number) => void) => dashManager.registerDashCb(cb),
-    deregisterDashCb: (cb: (curTimeSeconds: number) => void) => dashManager.deregisterDashCb(cb),
-    btvec3,
-  };
-};
+  public registerDashCb = (cb: (curTimeSeconds: number) => void) => this.dashManager.registerDashCb(cb);
+  public deregisterDashCb = (cb: (curTimeSeconds: number) => void) => this.dashManager.deregisterDashCb(cb);
+}
