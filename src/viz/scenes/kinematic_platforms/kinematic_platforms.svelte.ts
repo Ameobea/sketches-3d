@@ -8,6 +8,7 @@ import type { BtCollisionObject, BtRigidBody } from 'src/ammojs/ammoTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomShader, MaterialClass } from 'src/viz/shaders/customShader';
 import { BulletHellManager, type BulletHellEvent } from 'src/viz/bulletHell/BulletHellManager';
+import { EasingFnType } from 'src/viz/util/easingFns';
 
 const initLevel = async (viz: Viz, matsPromise: ReturnType<typeof buildPylonsMaterials>) => {
   const fpCtx = viz.fpCtx!;
@@ -243,7 +244,7 @@ export const processLoadedScene = async (
         key: '2',
         action: () => {
           viz.sceneConf.player!.moveSpeed = { onGround: 10, inAir: 10 };
-          viz.setViewMode(viewMode, 1.2).then(() => console.log('view mode transition done'));
+          viz.setViewMode(viewMode, EasingFnType.InOutCubic, 1.2);
         },
       },
       {
@@ -251,7 +252,24 @@ export const processLoadedScene = async (
         key: '1',
         action: () => {
           viz.sceneConf.player!.moveSpeed = { onGround: 10, inAir: 13 };
-          viz.setViewMode({ type: 'firstPerson' }, 1.2).then(() => console.log('view mode transition done'));
+          viz.setViewMode({ type: 'firstPerson' }, EasingFnType.InOutCubic, 1.2);
+        },
+      },
+      {
+        label: 'Isometric-Like View Mode',
+        key: '3',
+        action: () => {
+          viz.sceneConf.player!.moveSpeed = { onGround: 10, inAir: 13 };
+          viz.setViewMode(
+            {
+              ...viewMode,
+              cameraOffset: new THREE.Vector3(0, 60, -50),
+              cameraRotation: new THREE.Euler(-0.8, Math.PI, 0, 'YXZ'),
+              cameraFocusPoint: { type: 'player' },
+            },
+            EasingFnType.InOutCubic,
+            1.2
+          );
         },
       },
     ],

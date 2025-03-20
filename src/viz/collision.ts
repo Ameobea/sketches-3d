@@ -299,7 +299,6 @@ export class BulletPhysics {
     // Adjust `forwardDir` to be horizontal.
     this.forwardDir = this.forwardDir.crossVectors(this.leftDir, this.upDir).normalize();
 
-    this.moveDirection.set(0, 0, 0);
     if (this.viz.keyStates['KeyW']) this.moveDirection.add(this.forwardDir);
     if (this.viz.keyStates['KeyS']) this.moveDirection.sub(this.forwardDir);
     if (this.viz.keyStates['KeyA']) this.moveDirection.add(this.leftDir);
@@ -307,7 +306,6 @@ export class BulletPhysics {
   };
 
   private handleTopDownInput = () => {
-    this.moveDirection.set(0, 0, 0);
     // camera looks towards negative Y.  negative X is left, negative Z is down
     if (this.viz.keyStates['KeyW']) this.moveDirection.add(new THREE.Vector3(0, 0, 1));
     if (this.viz.keyStates['KeyS']) this.moveDirection.add(new THREE.Vector3(0, 0, -1));
@@ -319,6 +317,7 @@ export class BulletPhysics {
     const cameraDir = this.viz.camera.getWorldDirection(this.forwardDir).normalize().clone();
     const wasOnGround = this.playerController.onGround();
 
+    this.moveDirection.set(0, 0, 0);
     if (this.viz.controlState.movementEnabled) {
       const viewMode = this.getViewMode();
       switch (viewMode.type) {
@@ -646,7 +645,7 @@ export class BulletPhysics {
       mesh.userData.instakill
     ) {
       const collisionObj = this.addPlayerRegionContactCb({ type: 'mesh', mesh }, () =>
-        this.viz.onInstakillTerrainCollision()
+        this.viz.onInstakillTerrainCollision(collisionObj, mesh)
       );
       mesh.userData.collisionObj = collisionObj;
       return;

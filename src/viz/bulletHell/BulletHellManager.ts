@@ -2,7 +2,10 @@ import * as THREE from 'three';
 
 import type { Viz } from '../index';
 import { buildCustomShader, MaterialClass } from '../shaders/customShader';
-import type { BtCollisionObject } from 'src/ammojs/ammoTypes';
+import type { BtCollisionObject, BtPairCachingGhostObject } from 'src/ammojs/ammoTypes';
+import { delay } from '../util/util';
+import killerBulletColorShader from './shaders/killerBulletColor.frag?raw';
+import { EasingFnType } from '../util/easingFns';
 
 interface BaseBulletHellEvent {
   /**
@@ -75,13 +78,14 @@ interface Bullet {
 
 const DefaultBulletVelocity = 20;
 const DefaultBulletShape: BulletShape = Object.freeze({ type: 'sphere', radius: 0.5 });
-const MinBulletCollisionDepth = 0.2;
+const MinBulletCollisionDepth = 0.06;
 
 const StandardBulletMat = buildCustomShader(
   { color: 0xff0000 },
   {},
   { materialClass: MaterialClass.Instakill }
 );
+const KillerBulletMaterial = buildCustomShader({}, { colorShader: killerBulletColorShader }, {});
 
 interface ScheduledEvent {
   time: number;
@@ -186,6 +190,8 @@ class Scheduler {
   }
 }
 
+type BulletHellOutcome = { type: 'win' } | { type: 'loss' };
+
 class BulletManager {
   private viz: Viz;
   private bullets: Bullet[] = [];
@@ -275,7 +281,7 @@ class BulletManager {
     // this.viz.fpCtx!.addTriMesh(bullet.mesh);
     const collisionObj = this.viz.fpCtx!.addPlayerRegionContactCb(
       { type: 'mesh', mesh: bullet.mesh },
-      this.viz.onInstakillTerrainCollision,
+      () => this.viz.onInstakillTerrainCollision(collisionObj, bullet.mesh),
       undefined,
       MinBulletCollisionDepth
     );
@@ -302,10 +308,12 @@ export class BulletHellManager {
   private events: BulletHellEvent[] = [];
   private nextEventIx: number = 0;
   private bulletManager: BulletManager;
-  private onWin?: () => void;
   private scheduler: Scheduler = new Scheduler();
+  private gameEndCb?: (outcome: BulletHellOutcome) => void;
+  private isPaused: boolean = false;
+  private pauseTimeSeconds: number = 0;
 
-  constructor(viz: Viz, events: BulletHellEvent[], bounds: THREE.Box3, onWin?: () => void) {
+  constructor(viz: Viz, events: BulletHellEvent[], bounds: THREE.Box3) {
     // ensure events are sorted by time
     for (let i = 1; i < events.length; i++) {
       if (events[i].time < events[i - 1].time) {
@@ -316,7 +324,6 @@ export class BulletHellManager {
     this.viz = viz;
     this.events = events;
     this.bulletManager = new BulletManager(viz, bounds);
-    this.onWin = onWin;
   }
 
   /**
@@ -399,7 +406,14 @@ export class BulletHellManager {
   };
 
   private tick = (curTimeSeconds: number, tDiffSeconds: number) => {
-    const elapsedSinceStart = curTimeSeconds - this.startTimeSeconds;
+    KillerBulletMaterial.setCurTimeSeconds(curTimeSeconds);
+
+    if (this.isPaused) {
+      return;
+    }
+
+    // have to factor in pause time and make time look continuous
+    const elapsedSinceStart = curTimeSeconds - this.pauseTimeSeconds - this.startTimeSeconds;
 
     this.scheduler.tick(curTimeSeconds);
 
@@ -415,19 +429,26 @@ export class BulletHellManager {
       this.bulletManager.size() === 0 &&
       (!this.events.length || elapsedSinceStart >= this.events[this.events.length - 1].time + 1)
     ) {
-      this.onWin?.();
+      this.gameEndCb?.({ type: 'win' });
       this.reset();
     }
   };
 
-  public start = () => {
+  public start = (): Promise<BulletHellOutcome> => {
+    const promise = new Promise<BulletHellOutcome>(resolve => {
+      this.gameEndCb = resolve;
+    });
     if (this.startTimeSeconds !== 0) {
       throw new Error('`BulletHellManager` already started');
     }
 
     this.startTimeSeconds = this.viz.clock.getElapsedTime();
+    this.pauseTimeSeconds = 0;
     this.viz.registerBeforeRenderCb(this.tick);
     this.viz.registerOnRespawnCb(this.reset);
+    this.viz.setOnInstakillTerrainCollisionCb(this.onBulletHit);
+
+    return promise;
   };
 
   public reset = () => {
@@ -435,8 +456,88 @@ export class BulletHellManager {
     this.nextEventIx = 0;
     this.bulletManager.reset();
     this.scheduler.clear();
+    this.gameEndCb = undefined;
     this.viz.unregisterBeforeRenderCb(this.tick);
     this.viz.unregisterOnRespawnCb(this.reset);
+    this.viz.setOnInstakillTerrainCollisionCb(null);
+  };
+
+  public pause = () => {
+    this.pauseTimeSeconds = this.viz.clock.getElapsedTime();
+    this.isPaused = true;
+  };
+
+  public resume = () => {
+    this.startTimeSeconds += this.viz.clock.getElapsedTime() - this.pauseTimeSeconds;
+    this.isPaused = false;
+  };
+
+  private onBulletHit = async (_sensor: BtPairCachingGhostObject, bulletMesh: THREE.Mesh | null) => {
+    this.pause();
+    this.viz.controlState.movementEnabled = false;
+    this.viz.controlState.cameraControlEnabled = false;
+    this.viz.fpCtx!.playerController.setExternalVelocity(this.viz.fpCtx!.btvec3(0, 0, 0));
+    for (const k of Object.keys(this.viz.keyStates)) {
+      this.viz.keyStates[k] = false;
+    }
+
+    const animationLengthSecs = 2;
+    let didRunDeathAnimation = false;
+
+    if (bulletMesh) {
+      bulletMesh.material = KillerBulletMaterial;
+
+      const startCameraPos = this.viz.camera.position.clone();
+      const endCameraPos = new THREE.Vector3(
+        bulletMesh!.position.x * 0.8 + startCameraPos.x * 0.2,
+        bulletMesh!.position.y * 0.8 + startCameraPos.y * 0.2,
+        bulletMesh!.position.z * 0.8 + startCameraPos.z * 0.2
+      );
+
+      const tempObj = new THREE.Object3D();
+      tempObj.position.copy(endCameraPos);
+      tempObj.lookAt(bulletMesh.position);
+      const startCameraRot = this.viz.camera.rotation.clone();
+
+      try {
+        let animationDoneCb!: () => void;
+        const animationDonePromise = new Promise<void>(resolve => {
+          animationDoneCb = resolve;
+        });
+
+        this.viz.startViewModeInterpolation(
+          {
+            durationSecs: animationLengthSecs,
+            endCameraFov: this.viz.camera.fov,
+            endCameraPos,
+            endCameraRot: startCameraRot,
+            startCameraFov: this.viz.camera.fov,
+            startCameraPos,
+            startCameraRot,
+            startTimeSecs: this.viz.clock.getElapsedTime(),
+          },
+          EasingFnType.OutCubic,
+          animationDoneCb,
+          0.3
+        );
+
+        await animationDonePromise;
+        didRunDeathAnimation = true;
+      } catch (_err) {
+        console.warn('Some view mode interpolation already going on; skipping death animation');
+      }
+    } else {
+      console.error('No bullet mesh found');
+    }
+
+    if (!didRunDeathAnimation) {
+      await delay(animationLengthSecs * 1000);
+    }
+
+    this.viz.controlState.movementEnabled = true;
+    this.viz.controlState.cameraControlEnabled = true;
+    this.gameEndCb?.({ type: 'loss' });
+    this.reset();
   };
 
   /**

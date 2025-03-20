@@ -25,14 +25,16 @@ import {
   DefaultOOBThreshold,
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
-import { clamp, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
+import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
 import type {
   AmmoInterface,
   BtCollisionObject,
+  BtKinematicCharacterController,
   BtPairCachingGhostObject,
   BtVec3,
 } from 'src/ammojs/ammoTypes.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
+import { buildEasingFn, EasingFnType } from './util/easingFns.ts';
 
 const computeCameraPos = (
   newPlayerPos: THREE.Vector3,
@@ -125,6 +127,7 @@ export interface FirstPersonCtx {
   deregisterJumpCb: (cb: (curTimeSecs: number) => void) => void;
   Ammo: AmmoInterface;
   btvec3: (x: number, y: number, z: number) => BtVec3;
+  playerController: BtKinematicCharacterController;
 }
 
 interface SetupFirstPersonArgs {
@@ -304,6 +307,7 @@ const setupFirstPerson = async ({ viz, initialSpawnPos }: SetupFirstPersonArgs):
     deregisterJumpCb: physics.deregisterJumpCb,
     Ammo,
     btvec3: physics.btvec3,
+    playerController: physics.playerController,
   };
 };
 
@@ -418,6 +422,9 @@ export class Viz {
   private viewModeInterpolationState: ViewModeInterpolationState | null = null;
   private onRespawnCBs: (() => void)[] = [];
   private inlineConsole = window.location.href.includes('localhost') ? new InlineConsole() : undefined;
+  private customOnInstakillTerrainCollisionCb:
+    | ((sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => void)
+    | null = null;
 
   constructor(
     paused: TransparentWritable<boolean>,
@@ -574,8 +581,90 @@ export class Viz {
     this.distanceSwapEntries.push({ mesh, baseMat, replacementMat, distance });
   };
 
+  /**
+   * @param extraEndTimeSeconds amount of time the view mode will remain at its final value before
+   * the `onComplete` callback is called
+   */
+  public startViewModeInterpolation = (
+    interpolationState: ViewModeInterpolationState,
+    easingFnType: EasingFnType = EasingFnType.Linear,
+    onComplete?: () => void,
+    extraEndTimeSeconds = 0
+  ) => {
+    if (this.viewModeInterpolationState) {
+      throw new Error('Already interpolating view mode');
+    }
+    this.viewModeInterpolationState = interpolationState;
+
+    const easingFn = buildEasingFn(easingFnType);
+
+    const cb = async (curTimeSeconds: number) => {
+      const elapsed = curTimeSeconds - this.viewModeInterpolationState!.startTimeSecs;
+      const t = easingFn(clamp(elapsed / this.viewModeInterpolationState!.durationSecs, 0, 1));
+
+      const cameraPos = new THREE.Vector3(
+        mix(
+          this.viewModeInterpolationState!.startCameraPos.x,
+          this.viewModeInterpolationState!.endCameraPos.x,
+          t
+        ),
+        mix(
+          this.viewModeInterpolationState!.startCameraPos.y,
+          this.viewModeInterpolationState!.endCameraPos.y,
+          t
+        ),
+        mix(
+          this.viewModeInterpolationState!.startCameraPos.z,
+          this.viewModeInterpolationState!.endCameraPos.z,
+          t
+        )
+      );
+      // TODO: lerp this properly taking into account angle wrapping
+      const cameraRot = new THREE.Euler(
+        mix(
+          this.viewModeInterpolationState!.startCameraRot.x,
+          this.viewModeInterpolationState!.endCameraRot.x,
+          t
+        ),
+        mix(
+          this.viewModeInterpolationState!.startCameraRot.y,
+          this.viewModeInterpolationState!.endCameraRot.y,
+          t
+        ),
+        mix(
+          this.viewModeInterpolationState!.startCameraRot.z,
+          this.viewModeInterpolationState!.endCameraRot.z,
+          t
+        ),
+        'YXZ'
+      );
+      this.camera.position.copy(cameraPos);
+      this.camera.rotation.copy(cameraRot);
+      this.camera.fov = mix(
+        this.viewModeInterpolationState!.startCameraFov,
+        this.viewModeInterpolationState!.endCameraFov,
+        t
+      );
+      this.camera.updateProjectionMatrix();
+
+      if (t >= 1) {
+        if (extraEndTimeSeconds) {
+          await delay(extraEndTimeSeconds * 1_000);
+        }
+
+        this.controlState.cameraControlEnabled = true;
+        this.controlState.movementEnabled = true;
+        this.viewModeInterpolationState = null;
+        onComplete?.();
+        this.unregisterBeforeRenderCb(cb);
+      }
+    };
+    this.registerBeforeRenderCb(cb);
+  };
+
   public setViewMode = (
     newViewMode: NonNullable<SceneConfig['viewMode']>,
+    easingFnType: EasingFnType = EasingFnType.Linear,
     transitionTimeSeconds = 0
   ): Promise<void> => {
     if (this.sceneConf.viewMode!.type === 'orbit' || newViewMode.type === 'orbit') {
@@ -625,76 +714,23 @@ export class Viz {
     this.controlState.cameraControlEnabled = false;
     this.controlState.movementEnabled = false;
 
-    this.viewModeInterpolationState = {
-      durationSecs: transitionTimeSeconds,
-      startTimeSecs: this.clock.getElapsedTime(),
-      startCameraPos: this.camera.position.clone(),
-      startCameraRot: this.camera.rotation.clone(),
-      startCameraFov: this.camera.fov,
-      endCameraPos,
-      endCameraRot,
-      endCameraFov: endFOV,
-    };
-
-    const cb = (curTimeSeconds: number) => {
-      const elapsed = curTimeSeconds - this.viewModeInterpolationState!.startTimeSecs;
-      const t = clamp(elapsed / this.viewModeInterpolationState!.durationSecs, 0, 1);
-
-      const cameraPos = new THREE.Vector3(
-        mix(
-          this.viewModeInterpolationState!.startCameraPos.x,
-          this.viewModeInterpolationState!.endCameraPos.x,
-          t
-        ),
-        mix(
-          this.viewModeInterpolationState!.startCameraPos.y,
-          this.viewModeInterpolationState!.endCameraPos.y,
-          t
-        ),
-        mix(
-          this.viewModeInterpolationState!.startCameraPos.z,
-          this.viewModeInterpolationState!.endCameraPos.z,
-          t
-        )
-      );
-      // TODO: lerp this properly taking into account angle wrapping
-      const cameraRot = new THREE.Euler(
-        mix(
-          this.viewModeInterpolationState!.startCameraRot.x,
-          this.viewModeInterpolationState!.endCameraRot.x,
-          t
-        ),
-        mix(
-          this.viewModeInterpolationState!.startCameraRot.y,
-          this.viewModeInterpolationState!.endCameraRot.y,
-          t
-        ),
-        mix(
-          this.viewModeInterpolationState!.startCameraRot.z,
-          this.viewModeInterpolationState!.endCameraRot.z,
-          t
-        ),
-        'YXZ'
-      );
-      this.camera.position.copy(cameraPos);
-      this.camera.rotation.copy(cameraRot);
-      this.camera.fov = mix(
-        this.viewModeInterpolationState!.startCameraFov,
-        this.viewModeInterpolationState!.endCameraFov,
-        t
-      );
-      this.camera.updateProjectionMatrix();
-
-      if (t >= 1) {
-        this.controlState.cameraControlEnabled = true;
-        this.controlState.movementEnabled = true;
-        this.viewModeInterpolationState = null;
+    this.startViewModeInterpolation(
+      {
+        durationSecs: transitionTimeSeconds,
+        startTimeSecs: this.clock.getElapsedTime(),
+        startCameraPos: this.camera.position.clone(),
+        startCameraRot: this.camera.rotation.clone(),
+        startCameraFov: this.camera.fov,
+        endCameraPos,
+        endCameraRot,
+        endCameraFov: endFOV,
+      },
+      easingFnType,
+      () => {
         this.sceneConf.viewMode = newViewMode;
         onComplete();
-        this.unregisterBeforeRenderCb(cb);
       }
-    };
-    this.registerBeforeRenderCb(cb);
+    );
 
     return completePromise;
   };
@@ -801,9 +837,27 @@ export class Viz {
     this.onRespawnCBs.forEach(cb => cb());
   };
 
-  public onInstakillTerrainCollision = () => {
+  private defaultOnInstakillTerrainCollision = (
+    _sensor: BtPairCachingGhostObject,
+    _mesh: THREE.Mesh | null
+  ) => {
     // TODO: Should at least play a sfx...
     this.respawnPlayer();
+  };
+
+  public onInstakillTerrainCollision = (sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => {
+    if (this.customOnInstakillTerrainCollisionCb) {
+      this.customOnInstakillTerrainCollisionCb(sensor, mesh);
+      return;
+    }
+
+    this.defaultOnInstakillTerrainCollision(sensor, mesh);
+  };
+
+  public setOnInstakillTerrainCollisionCb = (
+    cb: ((sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => void) | null
+  ) => {
+    this.customOnInstakillTerrainCollisionCb = cb;
   };
 
   public registerOnRespawnCb = (cb: () => void) => this.onRespawnCBs.push(cb);
