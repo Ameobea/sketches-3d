@@ -12,10 +12,17 @@ export interface BtTransform {
   getOrigin(): BtVec3;
   setOrigin(vec: BtVec3): void;
   setRotation(quat: BtQuaternion): void;
+  // getRotation(): BtQuaternion;
+  setEulerZYX(x: number, y: number, z: number): void;
 }
 
 export interface BtQuaternion {
   setValue(x: number, y: number, z: number, w: number): void;
+  setEulerZYX(z: number, y: number, x: number): void;
+  x(): number;
+  y(): number;
+  z(): number;
+  w(): number;
 }
 
 export interface BtKinematicCharacterController {
@@ -36,11 +43,14 @@ export interface BtKinematicCharacterController {
   getExternalVelocity(): BtVec3;
   addExternalVelocity(velocity: BtVec3): void;
   setVerticalVelocity(velocity: number): void;
+  setOnGround(onGround: boolean): void;
   getVerticalVelocity(): number;
   getVerticalOffset(): number;
   getJumpAxis(): BtVec3;
   isJumping(): boolean;
   resetFall(): void;
+  getForcedRotation(): BtQuaternion;
+  resetForcedRotation(): void;
 }
 
 export type BtActionInterface = BtKinematicCharacterController;
@@ -60,6 +70,7 @@ export interface BtCollisionObject {
   getNumOverlappingObjects(): number;
   // getOverlappingObject(index: number): BtCollisionObject;
   setActivationState(state: number): void;
+  getCollisionShape(): BtCollisionShape;
 }
 
 export interface BtRigidBody extends BtCollisionObject {
@@ -184,7 +195,6 @@ export interface AmmoInterface {
     collisionShape: BtCollisionShape,
     localInertia?: BtVec3
   ) => BtRigidBodyConstructionInfo;
-  btRigidBody: new (info: BtRigidBodyConstructionInfo) => BtRigidBody;
   btTriangleMesh: new () => BtTriangleMesh;
   btVector3: new () => BtVec3;
   btBvhTriangleMeshShape: new (
@@ -208,4 +218,10 @@ export interface AmmoInterface {
   btBoxShape: new (halfExtents: BtVec3) => BtBoxShape;
   btConeShape: new (radius: number, height: number) => BtConeShape;
   btCompoundShape: new (enableDynamicAabbTree: boolean) => BtCompoundShape;
+  btRigidBody: {
+    new (info: BtRigidBodyConstructionInfo): BtRigidBody;
+    prototype: {
+      upcast: (obj: BtCollisionObject) => BtRigidBody | null;
+    };
+  };
 }

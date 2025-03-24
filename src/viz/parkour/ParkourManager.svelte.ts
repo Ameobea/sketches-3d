@@ -11,6 +11,8 @@ import TimeDisplay from './TimeDisplay.svelte';
 import type { SceneConfig } from '../scenes';
 import { API } from 'src/api/client';
 import type { TransparentWritable } from '../util/TransparentWritable';
+import type { BtRigidBody } from 'src/ammojs/ammoTypes';
+import { Scheduler, type SchedulerHandle } from '../bulletHell/Scheduler';
 
 export interface ParkourMaterials {
   dashToken: {
@@ -18,6 +20,22 @@ export interface ParkourMaterials {
     ring: THREE.Material;
   };
   checkpoint: THREE.Material;
+}
+
+interface Ticker {
+  /**
+   * If `false` is returned, the ticker will be removed and never called again.
+   *
+   * Returning `true`, `undefined`, or any other value will keep the ticker alive.
+   */
+  tick: (curTimeSeconds: number, tDiffSeconds: number) => boolean | void;
+  reset: () => void;
+}
+
+interface MakeSliderArgs {
+  moveDir: THREE.Vector3;
+  despawnCond?: (mesh: THREE.Mesh, curTimeSeconds: number) => boolean;
+  spawnTimeSeconds?: number;
 }
 
 export class ParkourManager {
@@ -28,8 +46,13 @@ export class ParkourManager {
   private useExternalVelocity: boolean;
 
   private curDashCharges: TransparentWritable<number>;
+  private lastResetTime: number = 0;
   private curRunStartTimeSeconds: number | null = null;
   private winState: { winTimeSeconds: number; displayComp: any } | null = null;
+  private tickers: Ticker[] = [];
+  private onStartCbs: (() => void)[] = [];
+  private timerDisplay!: any;
+  private scheduler: Scheduler = new Scheduler();
 
   private resetDashes: () => void;
   private resetCheckpoints: () => void;
@@ -68,20 +91,47 @@ export class ParkourManager {
 
     this.initTimer();
 
-    viz.collisionWorldLoadedCbs.push(fpCtx =>
+    viz.collisionWorldLoadedCbs.push(fpCtx => {
       fpCtx.registerJumpCb(curTimeSeconds => {
         if (this.curRunStartTimeSeconds === null) {
           this.curRunStartTimeSeconds = curTimeSeconds;
         }
-      })
-    );
+      });
+
+      let didTick = false;
+      viz.registerBeforeRenderCb((curTimeSeconds, tDiffSeconds) => {
+        if (!didTick) {
+          didTick = true;
+          for (const cb of this.onStartCbs) {
+            cb();
+          }
+        }
+
+        const elapsedTimeSeconds = curTimeSeconds - this.lastResetTime;
+        let tickerIx = 0;
+        while (tickerIx < this.tickers.length) {
+          const ticker = this.tickers[tickerIx];
+          const shouldCancel = ticker.tick(elapsedTimeSeconds, tDiffSeconds) === false;
+          if (shouldCancel) {
+            this.tickers[tickerIx] = this.tickers[this.tickers.length - 1];
+            this.tickers.pop();
+          } else {
+            tickerIx += 1;
+          }
+        }
+
+        this.scheduler.tick(elapsedTimeSeconds);
+      });
+    });
+
+    viz.registerDestroyedCb(this.destroy);
   }
 
   private initTimer = () => {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const timerDisplayProps = $state({ curTime: 0 });
-    const _timerDisplay = mount(TimerDisplay, { target, props: timerDisplayProps });
+    this.timerDisplay = mount(TimerDisplay, { target, props: timerDisplayProps });
     this.viz.registerAfterRenderCb(curTimeSeconds => {
       const elapsedSeconds = (() => {
         if (this.curRunStartTimeSeconds === null) {
@@ -98,17 +148,32 @@ export class ParkourManager {
     });
   };
 
+  public registerOnStartCb = (cb: () => void) => {
+    this.onStartCbs.push(cb);
+  };
+
   private reset = () => {
     this.resetDashes();
     this.resetCheckpoints();
     this.viz.fpCtx!.teleportPlayer(this.locations.spawn.pos, this.locations.spawn.rot);
     this.viz.fpCtx!.reset();
     this.curRunStartTimeSeconds = null;
+    this.lastResetTime = this.viz.clock.getElapsedTime();
     if (this.winState?.displayComp) {
       unmount(this.winState.displayComp);
     }
     this.winState = null;
     this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
+
+    for (const ticker of this.tickers) {
+      ticker.reset();
+    }
+    this.tickers.length = 0;
+    this.scheduler.clear();
+
+    for (const cb of this.onStartCbs) {
+      cb();
+    }
   };
 
   private onWin = () => {
@@ -140,6 +205,99 @@ export class ParkourManager {
       .catch(() => {});
   };
 
+  public addTicker = (ticker: Ticker) => {
+    this.tickers.push(ticker);
+  };
+
+  public makeSpinner = (mesh: THREE.Mesh, rpm: number) => {
+    const fpCtx = this.viz.fpCtx;
+    if (!fpCtx) {
+      throw new Error('fpCtx not initialized');
+    }
+
+    const rigidBody = mesh.userData.rigidBody as BtRigidBody;
+    rigidBody.setCollisionFlags(2); // btCollisionObject::CF_KINEMATIC_OBJECT
+    rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
+    const tfn = new fpCtx.Ammo.btTransform();
+    tfn.setIdentity();
+    tfn.setOrigin(fpCtx.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+    const initialRot = mesh.rotation.y;
+    const rps = rpm / 60;
+    this.addTicker({
+      tick: (curTimeSeconds, _tDiffSeconds) => {
+        mesh.rotation.y = initialRot - rps * curTimeSeconds * Math.PI * 2;
+        tfn.setEulerZYX(0, mesh.rotation.y, 0);
+        rigidBody.getMotionState()!.setWorldTransform(tfn);
+      },
+      reset: () => {
+        mesh.rotation.y = initialRot;
+      },
+    });
+
+    this.viz.registerDestroyedCb(() => {
+      this.viz.fpCtx!.Ammo.destroy(tfn);
+    });
+  };
+
+  public makeSlider = (
+    mesh: THREE.Mesh,
+    { moveDir, despawnCond, spawnTimeSeconds = this.viz.clock.getElapsedTime() }: MakeSliderArgs
+  ) => {
+    const fpCtx = this.viz.fpCtx;
+    if (!fpCtx) {
+      throw new Error('fpCtx not initialized');
+    }
+
+    const startPos = mesh.position.clone();
+
+    const rigidBody = mesh.userData.rigidBody as BtRigidBody;
+    rigidBody.setCollisionFlags(2); // btCollisionObject::CF_KINEMATIC_OBJECT
+    rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
+    const tfn = new fpCtx.Ammo.btTransform();
+    tfn.setIdentity();
+    tfn.setOrigin(fpCtx.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+    tfn.setEulerZYX(mesh.rotation.x, mesh.rotation.y, mesh.rotation.z);
+
+    const reset = () => {
+      this.viz.scene.remove(mesh);
+      fpCtx.removeCollisionObject(rigidBody);
+    };
+
+    const ticker = {
+      tick: (curTimeSeconds: number) => {
+        if (despawnCond?.(mesh, curTimeSeconds)) {
+          reset();
+          return false;
+        }
+
+        const newPos = startPos
+          .clone()
+          .add(moveDir.clone().multiplyScalar(curTimeSeconds - spawnTimeSeconds));
+        mesh.position.copy(newPos);
+        tfn.setOrigin(fpCtx.btvec3(newPos.x, newPos.y, newPos.z));
+        rigidBody.getMotionState()!.setWorldTransform(tfn);
+      },
+      reset,
+    };
+    this.addTicker(ticker);
+
+    this.viz.registerDestroyedCb(() => {
+      this.viz.fpCtx!.Ammo.destroy(tfn);
+    });
+  };
+
+  /**
+   * Registers a periodic callback that will be executed at `initialTimeSeconds` and then repeatedly every
+   * `intervalSeconds` after that.
+   */
+  public schedulePeriodic(
+    callback: (invokeTimeSeconds: number) => void,
+    initialTimeSeconds: number,
+    intervalSeconds: number
+  ): SchedulerHandle {
+    return this.scheduler.schedule(callback, initialTimeSeconds, intervalSeconds);
+  }
+
   public buildSceneConfig = (): SceneConfig => {
     return {
       spawnLocation: 'spawn',
@@ -170,5 +328,13 @@ export class ParkourManager {
         neededSfx: ['dash', 'dash_pickup'],
       },
     };
+  };
+
+  private destroy = () => {
+    unmount(this.timerDisplay);
+    if (this.winState?.displayComp) {
+      unmount(this.winState.displayComp);
+      this.winState = null;
+    }
   };
 }

@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import type { Viz } from '..';
 import { createStatsContainer } from './statsContainer';
 
+/**
+ * @returns the created HTML element for the debug display
+ */
 export const initTargetDebugger = (viz: Viz, container: HTMLElement, topPx: number) => {
   const targetDisplayElem = createStatsContainer(topPx);
   container.appendChild(targetDisplayElem);
@@ -30,4 +33,6 @@ export const initTargetDebugger = (viz: Viz, container: HTMLElement, topPx: numb
       targetDisplayElem.innerText = target.name;
     }
   });
+
+  return targetDisplayElem;
 };

@@ -202,11 +202,22 @@ interface CustomShaderOptions {
   usePackedDiffuseNormalGBA?: boolean | { lut: Uint8Array };
   readRoughnessMapFromRChannel?: boolean;
   disableToneMapping?: boolean;
+  // TODO: This is a shocking hack and should be removed
   disabledDirectionalLightIndices?: number[];
   disabledSpotLightIndices?: number[];
   randomizeUVOffset?: boolean;
+  /**
+   * Enabling this option will cause UV coordinates to be generated for this object using object space position and normal.
+   *
+   * This works very well for flat surfaces and simple geometries like boxes. For more complex objects, triplanar mapping
+   * is a better alternative.
+   */
   useGeneratedUVs?: boolean;
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
+  /**
+   * Material class controls things like the sfx that are played when players land on the surface and
+   * may also impact physics or other behavior in the future.
+   */
   materialClass?: MaterialClass;
 }
 
@@ -808,7 +819,7 @@ void main() {
       return `
       // convert normal into the world space
       vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
-      vUv = generateUV(pos, worldNormal);
+      vUv = generateUV(position, normal);
       vUv = ( uvTransform * vec3( vUv, 1 ) ).xy;
       `;
     }

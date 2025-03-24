@@ -81,7 +81,7 @@ export const buildPylonMaterial = async (loader?: THREE.ImageBitmapLoader) =>
     {
       usePackedDiffuseNormalGBA: true,
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      randomizeUVOffset: false,
       tileBreaking: { type: 'neyret', patchScale: 0.9 },
     }
   );
@@ -130,7 +130,7 @@ export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) =
       map: shinyPatchworkStoneAlbedo,
       normalMap: shinyPatchworkStoneNormal,
       roughnessMap: shinyPatchworkStoneRoughness,
-      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+      uvTransform: new THREE.Matrix3().scale(0.6, 0.6),
       mapDisableDistance: null,
       normalScale: 1.2,
       ambientLightScale: 2,
@@ -138,7 +138,7 @@ export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) =
     {},
     {
       useGeneratedUVs: true,
-      randomizeUVOffset: true,
+      randomizeUVOffset: false,
       tileBreaking: { type: 'neyret', patchScale: 0.9 },
     }
   );
@@ -164,5 +164,6 @@ export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) =
     shinyPatchworkStoneMaterial,
     greenMosaic2Material,
     goldMaterial,
+    loader,
   };
 };

@@ -4,6 +4,9 @@ import type { Viz } from '../..';
 import { createStatsContainer } from '../statsContainer';
 import PlayerKinematicsDebugger from './PlayerKinematicsDebugger.svelte';
 
+/**
+ * @returns the Svelte component that was mounted
+ */
 export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, topPx: number) => {
   const targetDisplayElem = createStatsContainer(topPx);
   container.appendChild(targetDisplayElem);
@@ -17,7 +20,7 @@ export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, t
     isOnGround: false,
     isDashing: false,
   });
-  const _comp = mount(PlayerKinematicsDebugger, { target: targetDisplayElem, props });
+  const comp = mount(PlayerKinematicsDebugger, { target: targetDisplayElem, props });
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     viz.registerBeforeRenderCb(() => {
@@ -30,4 +33,6 @@ export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, t
       props.isDashing = fpCtx.playerStateGetters.getIsDashing();
     });
   });
+
+  return comp;
 };

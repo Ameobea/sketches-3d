@@ -6,6 +6,7 @@ import type { BtCollisionObject, BtPairCachingGhostObject } from 'src/ammojs/amm
 import { delay } from '../util/util';
 import killerBulletColorShader from './shaders/killerBulletColor.frag?raw';
 import { EasingFnType } from '../util/easingFns';
+import { Scheduler, type SchedulerHandle } from './Scheduler';
 
 interface BaseBulletHellEvent {
   /**
@@ -76,119 +77,16 @@ interface Bullet {
   def: BulletDef;
 }
 
-const DefaultBulletVelocity = 20;
-const DefaultBulletShape: BulletShape = Object.freeze({ type: 'sphere', radius: 0.5 });
-const MinBulletCollisionDepth = 0.06;
+const DefaultBulletVelocity = 14;
+const DefaultBulletShape: BulletShape = Object.freeze({ type: 'sphere', radius: 0.45 });
+const MinBulletCollisionDepth = 0.05;
 
 const StandardBulletMat = buildCustomShader(
-  { color: 0xff0000 },
+  { color: 0xc32308, roughness: 0.5, metalness: 0.4 },
   {},
   { materialClass: MaterialClass.Instakill }
 );
 const KillerBulletMaterial = buildCustomShader({}, { colorShader: killerBulletColorShader }, {});
-
-interface ScheduledEvent {
-  time: number;
-  callback: () => void;
-  /**
-   * If set, the callback will be re-called every `interval` seconds after the first call
-   */
-  interval?: number;
-  id: number;
-  cancelled: boolean;
-}
-
-export interface SchedulerHandle {
-  cancel: () => void;
-}
-
-class Scheduler {
-  private events: ScheduledEvent[] = [];
-  private nextId: number = 0;
-
-  public schedule(callback: () => void, time: number, interval?: number): SchedulerHandle {
-    const event: ScheduledEvent = {
-      time,
-      callback,
-      id: this.nextId++,
-      cancelled: false,
-      interval,
-    };
-    this.push(event);
-    return {
-      cancel: () => {
-        event.cancelled = true;
-      },
-    };
-  }
-
-  public tick(currentTime: number) {
-    while (this.events.length > 0 && this.peek().time <= currentTime) {
-      const event = this.pop();
-      if (event.cancelled) {
-        continue;
-      }
-
-      event.callback();
-      if (!!event.interval && !event.cancelled) {
-        event.time += event.interval;
-        this.push(event);
-      }
-    }
-  }
-
-  private push(event: ScheduledEvent) {
-    this.events.push(event);
-    this.heapifyUp(this.events.length - 1);
-  }
-
-  private pop(): ScheduledEvent {
-    const top = this.events[0];
-    const last = this.events.pop()!;
-    if (this.events.length > 0) {
-      this.events[0] = last;
-      this.heapifyDown(0);
-    }
-    return top;
-  }
-
-  private peek(): ScheduledEvent {
-    return this.events[0];
-  }
-
-  private heapifyUp(index: number) {
-    while (index > 0) {
-      const parent = Math.floor((index - 1) / 2);
-      if (this.events[parent].time <= this.events[index].time) {
-        break;
-      }
-      [this.events[parent], this.events[index]] = [this.events[index], this.events[parent]];
-      index = parent;
-    }
-  }
-
-  private heapifyDown(index: number) {
-    const length = this.events.length;
-    while (true) {
-      const left = 2 * index + 1;
-      const right = 2 * index + 2;
-      let smallest = index;
-      if (left < length && this.events[left].time < this.events[smallest].time) {
-        smallest = left;
-      }
-      if (right < length && this.events[right].time < this.events[smallest].time) {
-        smallest = right;
-      }
-      if (smallest === index) break;
-      [this.events[smallest], this.events[index]] = [this.events[index], this.events[smallest]];
-      index = smallest;
-    }
-  }
-
-  public clear() {
-    this.events = [];
-  }
-}
 
 type BulletHellOutcome = { type: 'win' } | { type: 'loss' };
 
@@ -235,7 +133,7 @@ class BulletManager {
     }
   };
 
-  private buildBullet = (def: BulletDef): Bullet => {
+  private buildBullet = (def: BulletDef, spawnTimeSeconds: number): Bullet => {
     const geometry = (() => {
       switch (def.shape.type) {
         case 'sphere':
@@ -269,13 +167,13 @@ class BulletManager {
 
     return {
       mesh,
-      spawnTime: this.viz.clock.getElapsedTime(),
+      spawnTime: spawnTimeSeconds,
       def,
     };
   };
 
-  public spawnBullet = (def: BulletDef) => {
-    const bullet = this.buildBullet(def);
+  public spawnBullet = (def: BulletDef, spawnTimeSeconds: number) => {
+    const bullet = this.buildBullet(def, spawnTimeSeconds);
     this.bullets.push(bullet);
     this.viz.scene.add(bullet.mesh);
     const collisionObj = this.viz.fpCtx!.addPlayerRegionContactCb(
@@ -293,10 +191,7 @@ class BulletManager {
   };
 
   public reset = () => {
-    this.bullets.forEach(bullet => {
-      this.viz.scene.remove(bullet.mesh);
-      this.viz.fpCtx!.removeCollisionObject(bullet.mesh.userData.collisionObj);
-    });
+    this.bullets.forEach(this.despawnBullet);
     this.bullets = [];
   };
 }
@@ -372,7 +267,7 @@ export class BulletHellManager {
     switch (event.type) {
       case 'spawnBullets':
         for (const def of event.defs) {
-          this.bulletManager.spawnBullet(def);
+          this.bulletManager.spawnBullet(def, event.time);
         }
         break;
       case 'spawnPattern': {
@@ -384,7 +279,7 @@ export class BulletHellManager {
         );
         if (!event.spawnIntervalSeconds) {
           for (const def of defs) {
-            this.bulletManager.spawnBullet(def);
+            this.bulletManager.spawnBullet(def, event.time);
           }
           break;
         }
@@ -392,7 +287,7 @@ export class BulletHellManager {
         for (let i = 0; i < defs.length; i++) {
           const def = defs[i];
           this.scheduler.schedule(
-            () => void this.bulletManager.spawnBullet(def),
+            () => void this.bulletManager.spawnBullet(def, event.time + i * event.spawnIntervalSeconds!),
             event.time + i * event.spawnIntervalSeconds
           );
         }
@@ -414,14 +309,14 @@ export class BulletHellManager {
     // have to factor in pause time and make time look continuous
     const elapsedSinceStart = curTimeSeconds - this.pauseTimeSeconds - this.startTimeSeconds;
 
-    this.scheduler.tick(curTimeSeconds);
+    this.scheduler.tick(elapsedSinceStart);
 
     while (this.nextEventIx < this.events.length && this.events[this.nextEventIx].time <= elapsedSinceStart) {
       this.triggerEvent(this.events[this.nextEventIx]);
       this.nextEventIx += 1;
     }
 
-    this.bulletManager.tick(curTimeSeconds, tDiffSeconds);
+    this.bulletManager.tick(elapsedSinceStart, tDiffSeconds);
 
     if (
       this.nextEventIx >= this.events.length &&
@@ -456,6 +351,7 @@ export class BulletHellManager {
     this.bulletManager.reset();
     this.scheduler.clear();
     this.gameEndCb = undefined;
+    this.isPaused = false;
     this.viz.unregisterBeforeRenderCb(this.tick);
     this.viz.unregisterOnRespawnCb(this.reset);
     this.viz.setOnInstakillTerrainCollisionCb(null);
@@ -472,6 +368,10 @@ export class BulletHellManager {
   };
 
   private onBulletHit = async (_sensor: BtPairCachingGhostObject, bulletMesh: THREE.Mesh | null) => {
+    if (this.isPaused) {
+      return;
+    }
+
     this.pause();
     this.viz.controlState.movementEnabled = false;
     this.viz.controlState.cameraControlEnabled = false;
@@ -514,8 +414,8 @@ export class BulletHellManager {
 
         await animationDonePromise;
         didRunDeathAnimation = true;
-      } catch (_err) {
-        console.warn('Some view mode interpolation already going on; skipping death animation');
+      } catch (err) {
+        console.warn('Some view mode interpolation already going on; skipping death animation', err);
       }
     } else {
       console.error('No bullet mesh found');

@@ -17,7 +17,6 @@ import {
   type SceneConfig,
   type SceneDef,
   ScenesByName,
-  type CustomControlsEntry,
   DefaultTopDownCameraFOV,
   DefaultTopDownCameraRotation,
 } from './scenes';
@@ -26,6 +25,8 @@ import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util
 import type { BtPairCachingGhostObject } from 'src/ammojs/ammoTypes.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
 import { buildEasingFn, EasingFnType } from './util/easingFns.ts';
+import type { Unsubscriber } from 'svelte/store';
+import { unmount } from 'svelte';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -55,22 +56,6 @@ const setupOrbitControls = async (
   (window as any).getView = () =>
     console.log({ pos: camera.position.toArray(), target: controls.target.toArray() });
   (window as any).recordPos = (window as any).getView;
-};
-
-const initCustomKeyHandlers = (customControlsEntries: CustomControlsEntry[] | undefined) => {
-  if (!customControlsEntries) {
-    return;
-  }
-
-  const eventMap = new Map<string, () => void>();
-  for (const { key, action } of customControlsEntries) {
-    eventMap.set(key, action);
-  }
-
-  document.addEventListener('keydown', event => {
-    const action = eventMap.get(event.key.toLowerCase());
-    action?.();
-  });
 };
 
 export const applyGraphicsSettings = (viz: Viz, graphics: Conf.GraphicsSettings) => {
@@ -104,9 +89,9 @@ interface ViewModeInterpolationState {
 }
 
 export class Viz {
-  public camera: THREE.PerspectiveCamera;
-  public renderer: THREE.WebGLRenderer;
-  public stats: Stats;
+  public camera!: THREE.PerspectiveCamera;
+  public renderer!: THREE.WebGLRenderer;
+  public stats!: Stats;
   public clock: THREE.Clock = new THREE.Clock();
   public inventory: Inventory = new Inventory();
   public sfxManager: SfxManager = new SfxManager();
@@ -128,6 +113,7 @@ export class Viz {
   public controlState: ControlState = { cameraControlEnabled: true, movementEnabled: true };
 
   private resizeCbs: (() => void)[] = [];
+  private onDestroyedCbs: (() => void)[] = [];
   private isDestroyed = false;
   private beforeRenderCbs: {
     cb: (curTimeSeconds: number, tDiffSeconds: number) => void;
@@ -152,6 +138,10 @@ export class Viz {
   private customOnInstakillTerrainCollisionCb:
     | ((sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => void)
     | null = null;
+  private didManuallyLockPointer = false;
+  private clockStopTime = 0;
+  private unsubscribePauseStateChange: Unsubscriber | null = null;
+  private customKeyEventMap = new Map<string, () => void>();
 
   constructor(
     paused: TransparentWritable<boolean>,
@@ -161,6 +151,31 @@ export class Viz {
     this.paused = paused;
     this.popupCalled = popupCalled;
 
+    this.setupCameraAndRenderer(sceneDef);
+
+    const stats = new Stats.default();
+    stats.dom.style.position = 'absolute';
+    stats.dom.style.top = '0px';
+
+    this.registerBeforeRenderCb(() => {
+      for (const { mesh, baseMat, replacementMat, distance } of this.distanceSwapEntries) {
+        const distanceToCamera = this.camera.position.distanceTo(mesh.position);
+        if (distanceToCamera < distance) {
+          if (mesh.material !== baseMat) {
+            // console.log('swapping back to close mat', mesh.name);
+          }
+          mesh.material = baseMat;
+        } else {
+          if (mesh.material !== replacementMat) {
+            // console.log('swapping to far mat', mesh.name);
+          }
+          mesh.material = replacementMat;
+        }
+      }
+    });
+  }
+
+  private setupCameraAndRenderer = (sceneDef: SceneDef) => {
     try {
       (screen.orientation as any).lock('landscape').catch(() => 0);
     } catch (_err) {
@@ -211,46 +226,7 @@ export class Viz {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-    const stats = new Stats.default();
-    stats.dom.style.position = 'absolute';
-    stats.dom.style.top = '0px';
-
-    document.addEventListener('keydown', event => {
-      if (this.inlineConsole?.isOpen) {
-        return;
-      }
-
-      this.keyStates[event.code] = true;
-    });
-
-    document.addEventListener('keyup', event => {
-      if (this.inlineConsole?.isOpen) {
-        return;
-      }
-
-      this.keyStates[event.code] = false;
-    });
-
-    window.addEventListener('resize', this.onWindowResize);
-
-    this.registerBeforeRenderCb(() => {
-      for (const { mesh, baseMat, replacementMat, distance } of this.distanceSwapEntries) {
-        const distanceToCamera = this.camera.position.distanceTo(mesh.position);
-        if (distanceToCamera < distance) {
-          if (mesh.material !== baseMat) {
-            // console.log('swapping back to close mat', mesh.name);
-          }
-          mesh.material = baseMat;
-        } else {
-          if (mesh.material !== replacementMat) {
-            // console.log('swapping to far mat', mesh.name);
-          }
-          mesh.material = replacementMat;
-        }
-      }
-    });
-  }
+  };
 
   public animate = () => {
     if (this.isBlurred || this.paused.current) {
@@ -452,97 +428,134 @@ export class Viz {
     this.spawnPos = { pos, rot };
   };
 
-  public initPauseHandlers = (viewMode: NonNullable<SceneConfig['viewMode']>['type']) => {
-    let didManuallyLockPointer = false;
-    let clockStopTime = 0;
+  private maybePauseViz = () => {
+    if (!this.paused.current && !this.isBlurred) {
+      return;
+    }
 
-    const maybePauseViz = () => {
-      if (!this.paused.current && !this.isBlurred) {
-        return;
-      }
+    this.clockStopTime = this.clock.getElapsedTime();
+    this.clock.stop();
+  };
 
-      clockStopTime = this.clock.getElapsedTime();
-      this.clock.stop();
-    };
+  private maybeResumeViz = async () => {
+    if (this.paused.current || this.isBlurred) {
+      return;
+    }
 
-    const maybeResumeViz = async () => {
-      if (this.paused.current || this.isBlurred) {
-        return;
-      }
+    this.clock.start();
+    this.clock.elapsedTime = this.clockStopTime;
 
-      this.clock.start();
-      this.clock.elapsedTime = clockStopTime;
-
-      if (
-        (viewMode === 'firstPerson' || viewMode === 'top-down') &&
-        !document.pointerLockElement &&
-        didManuallyLockPointer
-      ) {
-        const canvas = this.renderer.domElement;
-        try {
-          await canvas.requestPointerLock({ unadjustedMovement: true });
-        } catch (err) {
-          if (err instanceof Error && err.name === 'NotSupportedError') {
-            // some browsers/operating systems do not support the `unadjustedMovement` option
-            await canvas.requestPointerLock();
-          } else {
-            console.error('Failed to get pointer lock: ', err);
-          }
-        }
-      }
-    };
-
-    window.addEventListener('blur', () => {
-      this.isBlurred = true;
-      maybePauseViz();
-    });
-    window.addEventListener('focus', () => {
-      this.isBlurred = false;
-      maybeResumeViz();
-    });
-
-    window.addEventListener('keydown', event => {
-      if (event.code === 'Escape') {
-        this.paused.update(p => !p);
-        if (this.paused.current) {
-          maybePauseViz();
+    if (
+      (this.viewMode.type === 'firstPerson' || this.viewMode.type === 'top-down') &&
+      !document.pointerLockElement &&
+      this.didManuallyLockPointer
+    ) {
+      const canvas = this.renderer.domElement;
+      try {
+        await canvas.requestPointerLock({ unadjustedMovement: true });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'NotSupportedError') {
+          // some browsers/operating systems do not support the `unadjustedMovement` option
+          await canvas.requestPointerLock();
         } else {
-          maybeResumeViz();
+          console.error('Failed to get pointer lock: ', err);
         }
       }
-    });
-    document.addEventListener('pointerlockchange', _evt => {
-      if (this.isBlurred) {
-        return;
-      }
-      this.paused.set(!document.pointerLockElement);
-    });
+    }
+  };
 
-    document.addEventListener('mousedown', async () => {
-      if ((viewMode === 'firstPerson' || viewMode === 'top-down') && !this.paused.current) {
-        didManuallyLockPointer = true;
-        // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
-        // that happen in some cases when using high polling rate mice or something like that
-        try {
-          await this.renderer.domElement.requestPointerLock({ unadjustedMovement: true });
-        } catch (err) {
-          if (err instanceof Error && err.name === 'NotSupportedError') {
-            // some browsers/operating systems don't support the `unadjustedMovement` option
-            await this.renderer.domElement.requestPointerLock();
-          } else {
-            console.error('Failed to get pointer lock: ', err);
-          }
-        }
-      }
-    });
+  private onBlur = () => {
+    this.isBlurred = true;
+    this.maybePauseViz();
+  };
 
-    this.paused.subscribe(paused => {
-      if (paused) {
-        maybePauseViz();
+  private onFocus = () => {
+    this.isBlurred = false;
+    this.maybeResumeViz();
+  };
+
+  private handleKeyDown = (evt: KeyboardEvent) => {
+    if (evt.code === 'Escape') {
+      this.paused.update(p => !p);
+      if (this.paused.current) {
+        this.maybePauseViz();
       } else {
-        maybeResumeViz();
+        this.maybeResumeViz();
       }
-    });
+    }
+
+    if (!this.inlineConsole?.isOpen) {
+      this.keyStates[evt.code] = true;
+    }
+
+    this.customKeyEventMap.get(evt.key.toLowerCase())?.();
+  };
+
+  private handleKeyUp = (evt: KeyboardEvent) => {
+    if (!this.inlineConsole?.isOpen) {
+      this.keyStates[evt.code] = false;
+    }
+  };
+
+  private handleMouseDown = async (_evt: MouseEvent) => {
+    if ((this.viewMode.type === 'firstPerson' || this.viewMode.type === 'top-down') && !this.paused.current) {
+      this.didManuallyLockPointer = true;
+      // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
+      // that happen in some cases when using high polling rate mice or something like that
+      try {
+        await this.renderer.domElement.requestPointerLock({ unadjustedMovement: true });
+      } catch (err) {
+        if (err instanceof Error && err.name === 'NotSupportedError') {
+          // some browsers/operating systems don't support the `unadjustedMovement` option
+          await this.renderer.domElement.requestPointerLock();
+        } else {
+          console.error('Failed to get pointer lock: ', err);
+        }
+      }
+    }
+  };
+
+  private handlePointerLockChange = (_evt: Event) => {
+    if (this.isBlurred) {
+      return;
+    }
+    this.paused.set(!document.pointerLockElement);
+  };
+
+  private handlePauseStateChange = (paused: boolean) => {
+    if (paused) {
+      this.maybePauseViz();
+    } else {
+      this.maybeResumeViz();
+    }
+  };
+
+  public initEventHandlers = () => {
+    window.addEventListener('blur', this.onBlur);
+    window.addEventListener('focus', this.onFocus);
+    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('keyup', this.handleKeyUp);
+    document.addEventListener('pointerlockchange', this.handlePointerLockChange);
+    document.addEventListener('mousedown', this.handleMouseDown);
+    window.addEventListener('resize', this.onWindowResize);
+    this.unsubscribePauseStateChange = this.paused.subscribe(this.handlePauseStateChange);
+
+    if (this.sceneConf.customControlsEntries) {
+      for (const { key, action } of this.sceneConf.customControlsEntries) {
+        this.customKeyEventMap.set(key, action);
+      }
+    }
+  };
+
+  private deregisterEventHandlers = () => {
+    window.removeEventListener('blur', this.onBlur);
+    window.removeEventListener('focus', this.onFocus);
+    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('keyup', this.handleKeyUp);
+    document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
+    document.removeEventListener('mousedown', this.handleMouseDown);
+    window.removeEventListener('resize', this.onWindowResize);
+    this.unsubscribePauseStateChange?.();
   };
 
   public respawnPlayer = () => {
@@ -614,32 +627,45 @@ export class Viz {
     }
   };
 
+  public registerDestroyedCb = (cb: () => void) => {
+    this.onDestroyedCbs.push(cb);
+  };
+
   public get destroyed() {
     return this.isDestroyed;
   }
 
-  public onDestroy = () => {
+  public get viewMode() {
+    return this.sceneConf.viewMode!;
+  }
+
+  public destroy = () => {
     if (this.isDestroyed) {
       console.error('Tried to destroy already destroyed viz');
     }
+    this.isDestroyed = true;
 
     if ((window as any).recordPos) {
       (window as any).lastPos = (window as any).recordPos();
     }
-    this.renderer.dispose();
-    this.beforeRenderCbs.length = 0;
-    this.afterRenderCbs.length = 0;
 
     if (this.animateHandle) {
       cancelAnimationFrame(this.animateHandle);
     }
 
+    this.renderer.dispose();
+    this.beforeRenderCbs.length = 0;
+    this.afterRenderCbs.length = 0;
     this.resizeCbs.length = 0;
     this.collisionWorldLoadedCbs.length = 0;
     this.distanceSwapEntries.length = 0;
     this.renderOverride = null;
 
-    window.removeEventListener('resize', this.onWindowResize);
+    this.deregisterEventHandlers();
+
+    for (const cb of this.onDestroyedCbs) {
+      cb();
+    }
 
     this.scene.traverse(o => {
       if (o instanceof THREE.Mesh) {
@@ -649,6 +675,11 @@ export class Viz {
         } else {
           o.material?.dispose();
         }
+        if (o.userData.rigidBody) {
+          this.fpCtx!.removeCollisionObject(o.userData.rigidBody);
+        } else if (o.userData.collisionObj) {
+          this.fpCtx!.removeCollisionObject(o.userData.collisionObj);
+        }
       }
     });
 
@@ -656,7 +687,7 @@ export class Viz {
 
     console.clear();
 
-    this.isDestroyed = true;
+    this.fpCtx?.destroy();
   };
 }
 
@@ -745,8 +776,8 @@ export const initViz = (
       // TODO: set up inventory CBs
     }
 
-    viz.initPauseHandlers(sceneConf.viewMode.type);
-    initCustomKeyHandlers(sceneConf.customControlsEntries);
+    // these rely on `sceneConf` being set, so we initialize them here rather than when `Viz` is constructed
+    viz.initEventHandlers();
 
     viz.sfxManager.setConfig(mergeDeep(buildDefaultSfxConfig(), sceneConf.sfx ?? {}));
     viz.sfxManager.setVizConfig(vizConfig);
@@ -761,11 +792,11 @@ export const initViz = (
         })()
       : viz.spawnPos;
 
-    if (sceneConf.viewMode.type === 'firstPerson' || sceneConf.viewMode.type === 'top-down') {
-      viz.registerAfterRenderCb((curTimeSeconds, tDiffSeconds) =>
-        viz.sfxManager.tick(tDiffSeconds, curTimeSeconds)
-      );
+    viz.registerAfterRenderCb((curTimeSeconds, tDiffSeconds) =>
+      viz.sfxManager.tick(tDiffSeconds, curTimeSeconds)
+    );
 
+    if (sceneConf.viewMode.type === 'firstPerson' || sceneConf.viewMode.type === 'top-down') {
       if (sceneConf.viewMode.type === 'firstPerson') {
         viz.camera.rotation.setFromVector3(initialSpawnPos.rot, 'YXZ');
       } else if (sceneConf.viewMode.type === 'top-down') {
@@ -790,22 +821,33 @@ export const initViz = (
     viz.scene.add(scene);
 
     let vOffset = 0;
+    const mountedElements: any[] = [];
     if (sceneConf.debugPos) {
       vOffset += 24;
-      initPosDebugger(viz, container, 0);
+      mountedElements.push(initPosDebugger(viz, container, 0));
     }
     if (sceneConf.debugCamera) {
       vOffset += 24;
-      initEulerDebugger(viz, container, vOffset);
+      mountedElements.push(initEulerDebugger(viz, container, vOffset));
     }
     if (sceneConf.debugTarget) {
       vOffset += 24;
-      initTargetDebugger(viz, container, vOffset);
+      mountedElements.push(initTargetDebugger(viz, container, vOffset));
     }
     if (sceneConf.debugPlayerKinematics) {
       vOffset += 24;
-      initPlayerKinematicsDebugger(viz, container, vOffset);
+      mountedElements.push(initPlayerKinematicsDebugger(viz, container, vOffset));
     }
+
+    viz.registerDestroyedCb(() => {
+      for (const elem of mountedElements) {
+        if (elem instanceof HTMLElement) {
+          elem.remove();
+        } else {
+          unmount(elem);
+        }
+      }
+    });
 
     if (viz.fpCtx) {
       const traverseCollidable = function (obj: THREE.Object3D, cb: (obj: THREE.Object3D) => void) {
@@ -880,8 +922,7 @@ export const initViz = (
 
   return {
     destroy() {
-      viz.onDestroy();
-      viz.fpCtx?.clearCollisionWorld();
+      viz.destroy();
     },
   };
 };

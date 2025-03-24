@@ -419,4 +419,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'kinematic_platforms' },
     legacyLights: false,
   },
+  plats: {
+    gltfName: 'plats',
+    extension: 'glb',
+    sceneLoader: () => import('./plats/plats.svelte.ts').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'plats' },
+    legacyLights: false,
+  },
 };

@@ -3,26 +3,23 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { buildPylonMaterial } from '../../parkour/regions/pylons/materials';
-import type { BtCollisionObject, BtRigidBody } from 'src/ammojs/ammoTypes';
+import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
-import { buildCustomShader, type CustomShaderMaterial, MaterialClass } from 'src/viz/shaders/customShader';
+import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { BulletHellManager, type BulletHellEvent } from 'src/viz/bulletHell/BulletHellManager';
 import { EasingFnType } from 'src/viz/util/easingFns';
+import { ObjectivePadMaterial } from 'src/viz/materials/ObjectivePad/ObjectivePadMaterial';
+import { buildGraySToneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
 
-const initLevel = async (viz: Viz, pylonMatPromise: Promise<CustomShaderMaterial>) => {
+const initLevel = async (viz: Viz) => {
   const fpCtx = viz.fpCtx!;
   const btvec3 = fpCtx.btvec3;
 
+  const stoneMat = await buildGraySToneBricksFloorMaterial(new THREE.ImageBitmapLoader());
+
   // add a platform to stand on
   const platformGeo = new THREE.BoxGeometry(500, 1, 500);
-  const platform: THREE.Mesh<THREE.BoxGeometry, THREE.Material> = new THREE.Mesh(
-    platformGeo,
-    new THREE.MeshStandardMaterial({ color: 0 })
-  );
-  pylonMatPromise.then(pylonMat => {
-    platform.material = pylonMat;
-  });
+  const platform: THREE.Mesh<THREE.BoxGeometry, THREE.Material> = new THREE.Mesh(platformGeo, stoneMat);
   platform.receiveShadow = true;
   platform.position.set(0, -7, 0);
   viz.scene.add(platform);
@@ -67,22 +64,22 @@ const initLevel = async (viz: Viz, pylonMatPromise: Promise<CustomShaderMaterial
     motionState.setWorldTransform(btTransform);
   });
 
-  const bulletGeo = new THREE.SphereGeometry(2, 16, 16);
-  const bulletMat = buildCustomShader({ color: 0xff0000 }, {}, { materialClass: MaterialClass.Instakill });
-  const bullet = new THREE.Mesh(bulletGeo, bulletMat);
-  bullet.castShadow = true;
-  bullet.receiveShadow = true;
-  viz.scene.add(bullet);
-  fpCtx.addTriMesh(bullet);
-  const bulletCollider: BtCollisionObject = bullet.userData.collisionObj;
+  // const bulletGeo = new THREE.SphereGeometry(2, 16, 16);
+  // const bulletMat = buildCustomShader({ color: 0xff0000 }, {}, { materialClass: MaterialClass.Instakill });
+  // const bullet = new THREE.Mesh(bulletGeo, bulletMat);
+  // bullet.castShadow = true;
+  // bullet.receiveShadow = true;
+  // viz.scene.add(bullet);
+  // fpCtx.addTriMesh(bullet);
+  // const bulletCollider: BtCollisionObject = bullet.userData.collisionObj;
 
-  viz.registerBeforeRenderCb(curTimeSeconds => {
-    const t = curTimeSeconds * 0.5 * 3;
-    bullet.position.set(10 + Math.sin(t) * 20, -4, 0);
-    const tfn = bulletCollider.getWorldTransform();
-    tfn.setOrigin(btvec3(bullet.position.x, bullet.position.y, bullet.position.z));
-    bulletCollider.setWorldTransform(tfn);
-  });
+  // viz.registerBeforeRenderCb(curTimeSeconds => {
+  //   const t = curTimeSeconds * 0.5 * 3;
+  //   bullet.position.set(10 + Math.sin(t) * 20, -4, 0);
+  //   const tfn = bulletCollider.getWorldTransform();
+  //   tfn.setOrigin(btvec3(bullet.position.x, bullet.position.y, bullet.position.z));
+  //   bulletCollider.setWorldTransform(tfn);
+  // });
 
   const bulletHellEvents: BulletHellEvent[] = [
     {
@@ -124,7 +121,35 @@ const initLevel = async (viz: Viz, pylonMatPromise: Promise<CustomShaderMaterial
     new THREE.Box3(new THREE.Vector3(-100, -100, -100), new THREE.Vector3(100, 100, 100))
   );
 
-  manager.start();
+  viz.registerBeforeRenderCb(curTimeSeconds => ObjectivePadMaterial.setCurTimeSeconds(curTimeSeconds));
+  const startPlatform = new THREE.Mesh(new THREE.BoxGeometry(3.55, 1, 3.55), ObjectivePadMaterial);
+  startPlatform.position.set(-10, -6.2, -20);
+  viz.scene.add(startPlatform);
+
+  const initStartPlatform = () => {
+    const startPlatformGhostObj = viz.fpCtx!.addPlayerRegionContactCb(
+      { type: 'mesh', mesh: startPlatform },
+      async () => {
+        viz.scene.remove(startPlatform);
+        viz.fpCtx!.removePlayerRegionContactCb(startPlatformGhostObj);
+        const outcome = await manager.start();
+        switch (outcome.type) {
+          case 'win':
+            // TODO
+            break;
+          case 'loss':
+            initStartPlatform();
+            break;
+          default:
+            outcome satisfies never;
+            throw new Error('unreachable');
+        }
+      }
+    );
+    viz.scene.add(startPlatform);
+  };
+
+  initStartPlatform();
 };
 
 export const processLoadedScene = async (
@@ -132,8 +157,6 @@ export const processLoadedScene = async (
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const pylonMatPromise = buildPylonMaterial();
-
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
@@ -168,18 +191,15 @@ export const processLoadedScene = async (
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
     buildCustomShader({
-      color: new THREE.Color(0xa989a9),
+      color: new THREE.Color(0xad6dcf),
       metalness: 0.18,
       roughness: 0.82,
-      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
-      mapDisableDistance: null,
-      normalScale: 5.2,
     })
   );
   playerMesh.castShadow = true;
   playerMesh.receiveShadow = true;
 
-  viz.collisionWorldLoadedCbs.push(() => void initLevel(viz, pylonMatPromise));
+  viz.collisionWorldLoadedCbs.push(() => void initLevel(viz));
 
   // initPylonsPostprocessing(viz, vizConf);
   configureDefaultPostprocessingPipeline(
@@ -202,7 +222,7 @@ export const processLoadedScene = async (
     // cameraRotation: new THREE.Euler(-0.8, Math.PI, 0, 'YXZ'),
 
     // \/ almost top-down
-    cameraOffset: new THREE.Vector3(0, 120, -40),
+    cameraOffset: new THREE.Vector3(0, 85, -28),
     cameraRotation: new THREE.Euler(-1.3, Math.PI, 0, 'YXZ'),
   };
 

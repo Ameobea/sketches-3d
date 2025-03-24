@@ -3,7 +3,6 @@ import { derived, type Readable } from 'svelte/store';
 
 import type { FpPlayerStateGetters, Viz } from './index.js';
 import {
-  DefaultDashConfig,
   DefaultExternalVelocityAirDampingFactor,
   DefaultExternalVelocityGroundDampingFactor,
   DefaultMoveSpeed,
@@ -147,12 +146,7 @@ export class BulletPhysics {
 
     this.initGlobalConsoleHelpers();
 
-    this.dashManager = new DashManager(
-      viz.sfxManager,
-      viz.sceneConf.player?.dashConfig ?? DefaultDashConfig,
-      this.playerController,
-      this.btvec3
-    );
+    this.dashManager = new DashManager(viz);
 
     if (localStorage.goBackOnLoad && localStorage.backPos) {
       (window as any).back();
@@ -392,7 +386,6 @@ export class BulletPhysics {
         }
 
         if (this.viz.controlState.cameraControlEnabled) {
-          newPlayerPos.y += 0.5 * this.playerColliderHeight;
           const cameraPos = this.computeCameraPos(newPlayerPos, this.viz.sceneConf.viewMode! as any);
           this.viz.camera.position.copy(cameraPos);
         }
@@ -410,6 +403,7 @@ export class BulletPhysics {
     newPlayerPos: THREE.Vector3,
     viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'firstPerson' | 'top-down' }>
   ) => {
+    newPlayerPos.y += 0.5 * this.playerColliderHeight;
     switch (viewMode.type) {
       case 'firstPerson':
         return newPlayerPos.add(new THREE.Vector3(0, 0.5 * this.playerColliderHeight, 0));
@@ -482,7 +476,7 @@ export class BulletPhysics {
       }
     }
 
-    if (this.viz.keyStates['Space'] && wasOnGround) {
+    if (this.viz.controlState.movementEnabled && this.viz.keyStates['Space'] && wasOnGround) {
       if (curTimeSeconds - this.lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
         this.playerController.jump(
           this.btvec3(
@@ -589,6 +583,7 @@ export class BulletPhysics {
       this.moveDirection.z * moveSpeedPerSecond
     );
     this.playerController.setWalkDirection(walkDirBulletVector);
+    this.playerController.resetForcedRotation();
 
     const fixedTimeStep = 1 / this.simulationTickRate;
     const maxSubSteps = 20;
@@ -596,6 +591,14 @@ export class BulletPhysics {
 
     const newPlayerTransform = this.playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
+
+    if (this.viz.viewMode.type === 'firstPerson') {
+      const forcedRotation = this.playerController.getForcedRotation();
+      // apply forced rotation to the camera to match the rotation of any kinematic object the player is standing on
+      // this.viz.camera.applyQuaternion(
+      //   new THREE.Quaternion(forcedRotation.x(), forcedRotation.y(), forcedRotation.z(), forcedRotation.w())
+      // );
+    }
 
     const nowOnGround = this.playerController.onGround();
     if (!wasOnGround && nowOnGround) {
@@ -635,6 +638,7 @@ export class BulletPhysics {
     }
     this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
     this.playerController.setVerticalVelocity(0);
+    this.playerController.setOnGround(false);
   };
 
   public addCollisionObject = (
@@ -683,6 +687,23 @@ export class BulletPhysics {
 
   public removeCollisionObject = (collisionObj: BtCollisionObject) => {
     this.collisionWorld.removeCollisionObject(collisionObj);
+
+    const rigidBody = this.Ammo.btRigidBody.prototype.upcast(collisionObj);
+    if (rigidBody) {
+      const motionState = rigidBody.getMotionState();
+      if (motionState) {
+        this.Ammo.destroy(motionState);
+      }
+    }
+
+    // currently, every collision object owns its own shape, so we need to destroy it here
+    //
+    // we could re-use idential shape objects between collision objs in the future as an optimization, at which
+    // point we would need to refcount them or something and not destroy them here.
+    const collisionShape = collisionObj.getCollisionShape();
+    if (collisionShape) {
+      this.Ammo.destroy(collisionShape);
+    }
     this.Ammo.destroy(collisionObj);
   };
 
@@ -773,6 +794,7 @@ export class BulletPhysics {
     }
     this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
     this.playerController.setVerticalVelocity(0);
+    this.playerController.setOnGround(false);
   };
 
   public addTriMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
@@ -956,7 +978,11 @@ export class BulletPhysics {
     this.sensors.delete(ghostObj);
     this.collisionWorld.removeCollisionObject(ghostObj);
     if (destroyCollisionObj) {
-      this.Ammo.destroy(ghostObj);
+      try {
+        this.Ammo.destroy(ghostObj);
+      } catch (err) {
+        console.error('Error destroying ghostObj', ghostObj, err);
+      }
     }
   };
 
@@ -1020,7 +1046,7 @@ export class BulletPhysics {
 
   public optimize = () => this.broadphase.optimize();
 
-  public clearCollisionWorld = () => {
+  private clearCollisionWorld = () => {
     for (const sensor of this.sensors.keys()) {
       this.removePlayerRegionContactCb(sensor);
     }
@@ -1035,6 +1061,18 @@ export class BulletPhysics {
     );
     this.Ammo.destroy(this.collisionWorld);
     this.collisionWorld = newCollisionWorld;
+  };
+
+  public destroy = () => {
+    this.clearCollisionWorld();
+
+    this.Ammo.destroy(this.broadphase);
+    this.Ammo.destroy(this.collisionConfiguration);
+    this.Ammo.destroy(this.dispatcher);
+    this.Ammo.destroy(this.solver);
+    this.Ammo.destroy(this.playerController);
+    this.Ammo.destroy(this.playerGhostObject);
+    this.Ammo.destroy(this.collisionWorld);
   };
 
   private buildConvexHullShape = (

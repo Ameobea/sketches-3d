@@ -11,6 +11,8 @@ export const initPosDebugger = (viz: Viz, container: HTMLElement, topPx: number)
     const z = viz.camera.position.z.toFixed(2);
     posDisplayElem.innerText = `${x}, ${y}, ${z}`;
   });
+
+  return posDisplayElem;
 };
 
 export const initEulerDebugger = (viz: Viz, container: HTMLElement, topPx: number) => {
@@ -24,4 +26,6 @@ export const initEulerDebugger = (viz: Viz, container: HTMLElement, topPx: numbe
     const z = euler.z.toFixed(3);
     eulerDisplayElem.innerText = `${x}, ${y}, ${z}`;
   });
+
+  return eulerDisplayElem;
 };

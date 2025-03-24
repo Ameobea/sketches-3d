@@ -29,13 +29,13 @@ export const buildDefaultSfxConfig = (): SfxConfig => ({
 const SFX_DEFS: Record<string, { url: string; playbackRate?: number }> = {
   dash: { url: 'https://i.ameo.link/cta.ogg' },
   dash_pickup: { url: 'https://i.ameo.link/ctb.ogg', playbackRate: 1.4 },
+  land_default: { url: 'https://i.ameo.link/cvk.ogg' }, // original unfiltered: https://i.ameo.link/bga.mp3
 };
 
 export class SfxManager {
   private vizConfig: Readable<VizConfig> | null = null;
   private config: SfxConfig;
   private ctx: AudioContext;
-  private landSound: AudioBuffer | null = null;
   private loadedSfx: Set<string> = new Set();
   private registeredSfx: Map<string, AudioBuffer> = new Map();
 
@@ -43,7 +43,6 @@ export class SfxManager {
   private timeSinceLastStepSound = 0;
   private nextStepSoundTime = 0;
 
-  private landFilterNode: BiquadFilterNode;
   private GlobalVolumeNode: GainNode;
   private sfxGainNode: GainNode;
 
@@ -61,29 +60,18 @@ export class SfxManager {
     this.sfxGainNode.gain.value = 0.5;
     this.sfxGainNode.connect(this.GlobalVolumeNode);
 
-    this.landFilterNode = this.ctx.createBiquadFilter();
-    this.landFilterNode.type = 'lowpass';
-    this.landFilterNode.frequency.value = 500;
-    this.landFilterNode.connect(this.sfxGainNode);
-
     this.init();
 
     this.nextStepSoundTime = this.getNextStepSoundTime();
   }
 
   private async init() {
-    const landSoundURL = 'https://i.ameo.link/bga.mp3';
-    fetch(landSoundURL)
-      .then(res => res.arrayBuffer())
-      .then(buf => this.ctx.decodeAudioData(buf))
-      .then(buf => {
-        this.landSound = buf;
-      });
-
     this.loadNeededSfx();
   }
 
   private loadNeededSfx() {
+    this.loadSfx('land_default');
+
     if (!this.config.neededSfx) {
       return;
     }
@@ -130,12 +118,7 @@ export class SfxManager {
       return;
     }
 
-    if (this.landSound) {
-      const source = this.ctx.createBufferSource();
-      source.buffer = this.landSound;
-      source.connect(this.landFilterNode);
-      source.start();
-    }
+    this.playSfx('land_default');
   }
 
   public onWalkStart(materialClass: MaterialClass) {
