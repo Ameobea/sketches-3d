@@ -78,17 +78,9 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const {
-    checkpointMat,
-    greenMosaic2Material,
-    goldMaterial,
-    bgTexture,
-    pylonMaterial,
-    shinyPatchworkStoneMaterial,
-    loader,
-  } = await buildPylonsMaterials(viz, loadedWorld);
+  const { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial } =
+    await buildPylonsMaterials(viz, loadedWorld);
 
-  // TODO
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: 39,
     [Score.S]: 40,
@@ -178,7 +170,6 @@ export const processLoadedScene = async (
       });
     }
 
-    let threeIx = 0;
     for (const slider of threeSliders) {
       slider.removeFromParent();
       fpCtx.removeCollisionObject(slider.userData.rigidBody as BtRigidBody);
@@ -201,7 +192,6 @@ export const processLoadedScene = async (
           0.7
         );
       });
-      threeIx += 1;
     }
   });
 

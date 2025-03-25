@@ -259,12 +259,19 @@ export const processLoadedScene = async (
       oobYThreshold: -80,
       dashConfig: {
         enable: true,
+        useExternalVelocity: true,
+        sfx: { play: true, name: 'dash' },
       },
+      externalVelocityAirDampingFactor: new THREE.Vector3(0.32, 0.3, 0.32),
+      externalVelocityGroundDampingFactor: new THREE.Vector3(0.9992, 0.9992, 0.9992),
     },
     debugPos: true,
     locations: {
       spawn: { pos: [50, 6, 0], rot: [0.1, 26, 0] },
     },
     legacyLights: false,
+    sfx: {
+      neededSfx: ['dash'],
+    },
   };
 };

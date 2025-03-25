@@ -427,4 +427,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'plats' },
     legacyLights: false,
   },
+  tutorial: {
+    gltfName: 'tutorial',
+    extension: 'glb',
+    sceneLoader: () => import('./tutorial/tutorial.svelte.ts').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'tutorial' },
+    legacyLights: false,
+  },
 };
