@@ -11,8 +11,8 @@ export const buildGreenMosaic2Material = async (
 ) => {
   const { greenMosaic2Albedo, greenMosaic2Normal, greenMosaic2Roughness } = await loadNamedTextures(loader, {
     greenMosaic2Albedo: 'https://i.ameo.link/ccn.avif',
-    greenMosaic2Normal: 'https://i.ameo.link/bqi.jpg',
-    greenMosaic2Roughness: 'https://i.ameo.link/bqj.jpg',
+    greenMosaic2Normal: 'https://i.ameo.link/cwb.avif',
+    greenMosaic2Roughness: 'https://i.ameo.link/cwc.avif',
   });
 
   return buildCustomShader({

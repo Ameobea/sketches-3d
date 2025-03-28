@@ -595,9 +595,9 @@ export class BulletPhysics {
     if (this.viz.viewMode.type === 'firstPerson') {
       const forcedRotation = this.playerController.getForcedRotation();
       // apply forced rotation to the camera to match the rotation of any kinematic object the player is standing on
-      // this.viz.camera.applyQuaternion(
-      //   new THREE.Quaternion(forcedRotation.x(), forcedRotation.y(), forcedRotation.z(), forcedRotation.w())
-      // );
+      this.viz.camera.applyQuaternion(
+        new THREE.Quaternion(forcedRotation.x(), forcedRotation.y(), forcedRotation.z(), forcedRotation.w())
+      );
     }
 
     const nowOnGround = this.playerController.onGround();

@@ -77,33 +77,39 @@ const setupScene = (
 
   addStartSignpost(
     new THREE.Vector3(10, 7, 4),
-    'Your goal is simple:\n\nGet to the finish as fast as you can'
+    'Your goal is simple:\n\nGet to the finish as fast as you can.\n\nJust a few tips to get you started...'
   );
-  addStartSignpost(new THREE.Vector3(10, 7, 18), 'Just a few tips to get you started...');
+  addStartSignpost(
+    new THREE.Vector3(10, 7, 18),
+    'You move faster while in the air, so stay airborne as much as possible for maximum speed.'
+  );
   addStartSignpost(
     new THREE.Vector3(10, 7, 32),
-    'You move faster while in the air than while walking, so stay airborne as much as possible for maximum speed'
+    "The timer doesn't start until after you jump for the first time, so you can take your time lining up your start on the spawn platform."
   );
   addStartSignpost(
     new THREE.Vector3(10, 7, 46),
-    "The timer doesn't start until after you jump for the first time, so you can take your time lining up your start on the spawn platform"
+    "Press 'F' to reset to the start of the level if you mess up or miss a jump"
   );
 
   addStartSignpost(
     new THREE.Vector3(22, 17, 110.7),
     "That transparent wall was a checkpoint.  You'll respawn here if you die or fall."
   );
-  addStartSignpost(
-    new THREE.Vector3(22, 17, 124.7),
-    "Press 'F' to reset to the start of the level if you mess up or miss a jump"
-  );
 
   const sign = addStartSignpost(
     new THREE.Vector3(16, 18, 137.3),
-    'This is a dash token.\n\nPicking these up will give you a dash charge that you can use by pressing Left Shift\n\n(You can find all keybinds in the pause menu under "Controls" by pressing Escape)',
+    'This is a dash token.\n\nPress Left Shift to dash after picking one up.',
     { width: 10 * 0.6, height: 5 * 0.6, canvasWidth: 500 * 0.6, canvasHeight: 250 * 0.6, fontSize: 20 * 0.6 }
   );
   sign.rotation.y = Math.PI;
+
+  const sign4 = addStartSignpost(
+    new THREE.Vector3(31, 24, 177),
+    'Dash across to the transparent wall to finish the level',
+    { width: 10 * 0.6, height: 5 * 0.6, canvasWidth: 500 * 0.6, canvasHeight: 250 * 0.6, fontSize: 20 * 0.6 }
+  );
+  sign4.rotation.y = -1.17;
 
   addStartSignpost(
     new THREE.Vector3(22, 18, 137.3 + 12),
@@ -158,13 +164,10 @@ const setupScene = (
 
     if (obj.name.startsWith('spin') || obj.name.startsWith('backtonexus')) {
       bobbers.push(obj);
+      spinners.push(obj);
       if (obj.name.startsWith('spin') && !obj.name.includes('2')) {
         obj.material = shinyPatchworkStoneMaterial;
       }
-    }
-
-    if (obj.name.startsWith('spin')) {
-      spinners.push(obj);
     }
 
     if (obj.name.startsWith('backtonexus')) {
@@ -177,11 +180,11 @@ const setupScene = (
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: nextLevelTP }, () => {
-      goto('/nexus');
+      goto(`/nexus${window.location.origin.includes('localhost') ? '' : '.html'}`);
     });
 
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: backToNexusTP }, () => {
-      goto('/movement_v2');
+      goto(`/movement_v2${window.location.origin.includes('localhost') ? '' : '.html'}`);
     });
   });
 
@@ -196,7 +199,7 @@ const setupScene = (
     }
 
     const bobsPerSecond = 0.44;
-    const bobHeight = 1.1;
+    const bobHeight = 0.5;
     for (let bobberIx = 0; bobberIx < bobbers.length; bobberIx += 1) {
       bobbers[bobberIx].position.y =
         originalBobberYs[bobberIx] + Math.sin(curTimeSeconds * bobsPerSecond * 2 * Math.PI) * bobHeight;

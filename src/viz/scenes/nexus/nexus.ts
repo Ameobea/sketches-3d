@@ -11,6 +11,7 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { DashToken, initDashTokenGraphics } from '../../parkour/DashToken';
 import { buildGoldMaterial, buildGreenMosaic2Material } from '../../parkour/regions/pylons/materials';
 import { goto } from '$app/navigation';
+import type { BulletPhysics } from 'src/viz/collision';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -24,52 +25,46 @@ const loadTextures = async () => {
     return bgTexture;
   })();
 
-  const towerPlinthPedestalTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.1476533049.png'
-  );
+  const platformTexs = loadNamedTextures(loader, {
+    platformDiffuse: 'https://i.ameo.link/cce.avif',
+    platformNormal: 'https://i.ameo.link/ccf.avif',
+  });
+
+  const towerPlinthPedestalTextureP = loadTexture(loader, 'https://i.ameo.link/cwa.avif');
   const towerPlinthPedestalTextureCombinedDiffuseNormalTextureP = towerPlinthPedestalTextureP.then(
     towerPlinthPedestalTexture => generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
   );
 
-  const [
-    { platformDiffuse, platformNormal },
-    bgTexture,
-    towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-    greenMosaic2Material,
-    goldMaterial,
-  ] = await Promise.all([
-    loadNamedTextures(loader, {
-      platformDiffuse: 'https://i.ameo.link/cce.avif',
-      platformNormal: 'https://i.ameo.link/ccf.avif',
-    }),
-    bgTextureP,
-    towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
+  const lazyMatsP = Promise.all([
     buildGreenMosaic2Material(loader, { ambientLightScale: 0.1 }),
     buildGoldMaterial(loader, { ambientLightScale: 0.3 }),
-  ]);
+  ]).then(async ([greenMosaic2Material, goldMaterial]) => {
+    const plinthMaterial = buildCustomShader(
+      {
+        color: new THREE.Color(0x292929),
+        metalness: 0.18,
+        roughness: 0.82,
+        map: await towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
+        uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
+        mapDisableDistance: null,
+        normalScale: 5.2,
+        ambientLightScale: 1.8,
+      },
+      {},
+      {
+        usePackedDiffuseNormalGBA: true,
+        useGeneratedUVs: true,
+        randomizeUVOffset: true,
+        tileBreaking: { type: 'neyret', patchScale: 0.9 },
+      }
+    );
 
-  const plinthMaterial = buildCustomShader(
-    {
-      color: new THREE.Color(0x292929),
-      metalness: 0.18,
-      roughness: 0.82,
-      map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
-      mapDisableDistance: null,
-      normalScale: 5.2,
-      ambientLightScale: 1.8,
-    },
-    {},
-    {
-      usePackedDiffuseNormalGBA: true,
-      useGeneratedUVs: true,
-      randomizeUVOffset: true,
-      tileBreaking: { type: 'neyret', patchScale: 0.9 },
-    }
-  );
+    return { plinthMaterial, greenMosaic2Material, goldMaterial };
+  });
 
-  return { platformDiffuse, platformNormal, bgTexture, plinthMaterial, greenMosaic2Material, goldMaterial };
+  const [{ platformDiffuse, platformNormal }, bgTexture] = await Promise.all([platformTexs, bgTextureP]);
+
+  return { platformDiffuse, platformNormal, bgTexture, lazyMatsP };
 };
 
 export const processLoadedScene = async (
@@ -108,8 +103,7 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
 
-  const { platformDiffuse, platformNormal, bgTexture, plinthMaterial, greenMosaic2Material, goldMaterial } =
-    await loadTextures();
+  const { platformDiffuse, platformNormal, bgTexture, lazyMatsP } = await loadTextures();
   viz.scene.background = bgTexture;
 
   const mat = buildCustomShader(
@@ -133,21 +127,33 @@ export const processLoadedScene = async (
   platform.material = mat;
 
   const jumps = loadedWorld.getObjectByName('jumps') as THREE.Mesh;
-  jumps.material = plinthMaterial;
+  jumps.visible = false;
+  (loadedWorld.getObjectByName('dash_token')! as THREE.Mesh).userData.nocollide = true;
 
-  const dashToken = initDashTokenGraphics(loadedWorld, greenMosaic2Material, goldMaterial);
-  viz.collisionWorldLoadedCbs.push(fpCtx => {
-    const core = (dashToken.getObjectByName('dash_token_core')! as THREE.Mesh).clone();
-    core.position.copy(dashToken.position);
+  lazyMatsP.then(({ plinthMaterial, greenMosaic2Material, goldMaterial }) => {
+    jumps.material = plinthMaterial;
+    jumps.visible = true;
 
-    fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: core }, () =>
-      goto(`/pk_pylons${window.location.origin.includes('localhost') ? '' : '.html'}`)
-    );
+    const dashToken = initDashTokenGraphics(loadedWorld, greenMosaic2Material, goldMaterial);
+    const cb = (fpCtx: BulletPhysics) => {
+      const core = (dashToken.getObjectByName('dash_token_core')! as THREE.Mesh).clone();
+      core.position.copy(dashToken.position);
+
+      fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: core }, () =>
+        goto(`/pk_pylons${window.location.origin.includes('localhost') ? '' : '.html'}`)
+      );
+    };
+    if (viz.fpCtx) {
+      cb(viz.fpCtx);
+    } else {
+      viz.collisionWorldLoadedCbs.push(cb);
+    }
+
+    const wrappedDashToken = new DashToken(viz, dashToken);
+    wrappedDashToken.userData.nocollide = true;
+    wrappedDashToken.position.copy(dashToken.position);
+    viz.scene.add(wrappedDashToken);
   });
-  const wrappedDashToken = new DashToken(viz, dashToken);
-  wrappedDashToken.userData.nocollide = true;
-  wrappedDashToken.position.copy(dashToken.position);
-  viz.scene.add(wrappedDashToken);
 
   const invisibleStairSlants = loadedWorld.getObjectByName('invisible_stair_slants') as THREE.Mesh;
   invisibleStairSlants.removeFromParent();
@@ -254,7 +260,7 @@ export const processLoadedScene = async (
     gravity: 30,
     player: {
       moveSpeed: { onGround: 10, inAir: 13 },
-      colliderSize: { height: 2.2, radius: 0.8 },
+      colliderSize: { height: 2.2, radius: 1.14 },
       jumpVelocity: 12,
       oobYThreshold: -80,
       dashConfig: {
@@ -267,7 +273,10 @@ export const processLoadedScene = async (
     },
     debugPos: true,
     locations: {
-      spawn: { pos: [50, 6, 0], rot: [0.1, 26, 0] },
+      spawn: {
+        pos: [49.83, 7.062, 1.226],
+        rot: [0, 1.5, 0],
+      },
     },
     legacyLights: false,
     sfx: {

@@ -24,10 +24,7 @@ export const processLoadedScene = async (
   viz.scene.add(ambientLight);
 
   const loader = new THREE.ImageBitmapLoader();
-  const towerPlinthPedestalTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.1476533049.png'
-  );
+  const towerPlinthPedestalTextureP = loadTexture(loader, 'https://i.ameo.link/cwa.avif');
   const [towerPlinthPedestalTextureCombinedDiffuseNormalTexture, tessellationEngine] = await Promise.all([
     towerPlinthPedestalTextureP.then(towerPlinthPedestalTexture =>
       generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
