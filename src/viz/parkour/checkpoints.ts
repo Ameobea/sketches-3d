@@ -47,7 +47,7 @@ export const initCheckpoints = (
       }
     },
     material: checkpointMat,
-    collisionRegionScale: new THREE.Vector3(1, 30, 1),
+    collisionRegionScale: new THREE.Vector3(1, 1, 1),
   });
 
   viz.registerOnRespawnCb(() => {

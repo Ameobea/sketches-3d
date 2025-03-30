@@ -363,9 +363,9 @@ export const buildCustomShaderArgs = (
   if (usePackedDiffuseNormalGBA && useComputedNormalMap) {
     throw new Error('Cannot use packed diffuse/normal map with computed normal map');
   }
-  if (useGeneratedUVs && !map) {
-    throw new Error('Cannot use generated UVs without a map');
-  }
+  // if (useGeneratedUVs && !map) {
+  //   throw new Error('Cannot use generated UVs without a map');
+  // }
   if (useTriplanarMapping && (useGeneratedUVs || !!tileBreaking)) {
     // We could technically use it with tile breaking, but at that point we'd be doing up to like
     // 3 * 3 * 3 = 27 texture lookups per fragment which is a bit ridiculous and there's no way

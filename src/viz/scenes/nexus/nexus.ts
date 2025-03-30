@@ -6,12 +6,19 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { N8AOPostPass } from 'n8ao';
 import { ToneMappingEffect, ToneMappingMode } from 'postprocessing';
-import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
+import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { DashToken, initDashTokenGraphics } from '../../parkour/DashToken';
 import { buildGoldMaterial, buildGreenMosaic2Material } from '../../parkour/regions/pylons/materials';
 import { goto } from '$app/navigation';
 import type { BulletPhysics } from 'src/viz/collision';
+import {
+  buildGrayFossilRockMaterial,
+  GrayFossilRockTextures,
+} from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
+import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
+import { createSignboard, type CreateSignboardArgs } from 'src/viz/helpers/signboardBuilder';
+import { mix, smoothstep } from 'src/viz/util/util';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -25,10 +32,8 @@ const loadTextures = async () => {
     return bgTexture;
   })();
 
-  const platformTexs = loadNamedTextures(loader, {
-    platformDiffuse: 'https://i.ameo.link/cce.avif',
-    platformNormal: 'https://i.ameo.link/ccf.avif',
-  });
+  const platformTexsP = GrayFossilRockTextures.get(loader);
+  const platformMatP = buildGrayFossilRockMaterial(loader);
 
   const towerPlinthPedestalTextureP = loadTexture(loader, 'https://i.ameo.link/cwa.avif');
   const towerPlinthPedestalTextureCombinedDiffuseNormalTextureP = towerPlinthPedestalTextureP.then(
@@ -62,9 +67,13 @@ const loadTextures = async () => {
     return { plinthMaterial, greenMosaic2Material, goldMaterial };
   });
 
-  const [{ platformDiffuse, platformNormal }, bgTexture] = await Promise.all([platformTexs, bgTextureP]);
+  const [platformMat, bgTexture, { platformDiffuse, platformNormal }] = await Promise.all([
+    platformMatP,
+    bgTextureP,
+    platformTexsP,
+  ]);
 
-  return { platformDiffuse, platformNormal, bgTexture, lazyMatsP };
+  return { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal };
 };
 
 export const processLoadedScene = async (
@@ -103,28 +112,113 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
 
-  const { platformDiffuse, platformNormal, bgTexture, lazyMatsP } = await loadTextures();
+  const pointLightPos = new THREE.Vector3(-42.973, -20, -0.20153);
+  const pointLightColor = new THREE.Color(0x9d4444);
+  const pointLight = new THREE.PointLight(pointLightColor, 1, 0, 0);
+  pointLight.castShadow = false;
+  pointLight.position.copy(pointLightPos);
+  viz.scene.add(pointLight);
+
+  viz.registerBeforeRenderCb(() => {
+    const pointLightActivation = 1 - smoothstep(-20, 0, viz.camera.position.y);
+    pointLight.intensity = 17 * pointLightActivation;
+    pointLight.position.x = mix(pointLightPos.x, viz.camera.position.x, 0.9);
+    pointLight.position.z = mix(pointLightPos.z, viz.camera.position.z, 0.9);
+  });
+
+  const portalFrames: THREE.Mesh[] = [];
+  const portals: THREE.Mesh[] = [];
+  loadedWorld.traverse(obj => {
+    if (!(obj instanceof THREE.Mesh)) {
+      return;
+    }
+
+    if (obj.name.startsWith('portalframe')) {
+      portalFrames.push(obj);
+    } else if (obj.name.startsWith('portal')) {
+      portals.push(obj);
+    }
+  });
+
+  // TODO: Temp?
+  const checkpointMat = buildCustomShader(
+    { metalness: 0, alphaTest: 0.05, transparent: true },
+    { colorShader: BridgeMistColorShader },
+    { disableToneMapping: true }
+  );
+  viz.registerBeforeRenderCb(curTimeSeconds => checkpointMat.setCurTimeSeconds(curTimeSeconds));
+
+  for (const portal of portals) {
+    portal.userData.nocollide = true;
+    portal.material = checkpointMat;
+    portal.userData.noLight = true;
+
+    if (!portal.name.includes('_')) {
+      portal.visible = false;
+    }
+  }
+
+  const { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal } = await loadTextures();
   viz.scene.background = bgTexture;
 
-  const mat = buildCustomShader(
+  const platform = loadedWorld.getObjectByName('platform') as THREE.Mesh;
+  platform.material = platformMat;
+
+  // TODO: Temp
+  const portalFrameMat = buildCustomShader(
     {
-      color: 0x474a4d,
-      map: platformDiffuse,
-      roughness: 0.9,
-      metalness: 0.5,
-      uvTransform: new THREE.Matrix3().scale(138.073, 138.073),
+      color: 0x080808,
+      uvTransform: new THREE.Matrix3().scale(0.24073, 0.24073),
       normalMap: platformNormal,
-      normalScale: 1,
+      normalScale: 0.95,
       normalMapType: THREE.TangentSpaceNormalMap,
-      mapDisableDistance: null,
-      ambientLightScale: 1.8,
     },
     {},
-    { useTriplanarMapping: false, tileBreaking: { type: 'neyret', patchScale: 2 } }
+    { useGeneratedUVs: true, randomizeUVOffset: true }
   );
 
-  const platform = loadedWorld.getObjectByName('platform') as THREE.Mesh;
-  platform.material = mat;
+  const addPortalFrameSign = (portalFrame: THREE.Mesh, params: CreateSignboardArgs) => {
+    const sign = createSignboard({
+      width: 7.75,
+      height: 7 / 2,
+      fontSize: 56,
+      align: 'center',
+      canvasWidth: 400,
+      canvasHeight: 200,
+      ...params,
+    });
+    sign.position.copy(portalFrame.position);
+    sign.rotation.copy(portalFrame.rotation);
+    sign.rotation.y = sign.rotation.y + Math.PI;
+    sign.position.y += 12.3;
+    // move the sign forward wrt. the direction it's facing a bit
+    sign.position.addScaledVector(portalFrame.getWorldDirection(new THREE.Vector3()), -2.3);
+    viz.scene.add(sign);
+  };
+
+  for (const portalFrame of portalFrames) {
+    portalFrame.material = portalFrameMat;
+
+    if (portalFrame.name.includes('tutorial')) {
+      addPortalFrameSign(portalFrame, { text: 'Tutorial' });
+    } else if (portalFrame.name.includes('pylons')) {
+      addPortalFrameSign(portalFrame, { text: 'Pylons' });
+    }
+  }
+
+  viz.collisionWorldLoadedCbs.push(fpCtx => {
+    for (const portal of portals) {
+      if (portal.name.includes('_tutorial')) {
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          goto(`/tutorial${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
+      } else if (portal.name.includes('_pylons')) {
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          goto(`/pk_pylons${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
+      }
+    }
+  });
 
   const jumps = loadedWorld.getObjectByName('jumps') as THREE.Mesh;
   jumps.visible = false;
@@ -161,7 +255,7 @@ export const processLoadedScene = async (
 
   // TODO: temp; use different mat for pillars
   const pillars = loadedWorld.getObjectByName('pillars') as THREE.Mesh;
-  pillars.material = mat;
+  pillars.material = portalFrameMat;
 
   // TODO: temp; use different mat for totems
   const totemMat = buildCustomShader(
@@ -251,8 +345,8 @@ export const processLoadedScene = async (
       });
 
       return [toneMappingEffect];
-      return [];
-    })()
+    })(),
+    true
   );
 
   return {
@@ -274,7 +368,7 @@ export const processLoadedScene = async (
     debugPos: true,
     locations: {
       spawn: {
-        pos: [49.83, 7.062, 1.226],
+        pos: [49.83, 7.062, 0],
         rot: [0, 1.5, 0],
       },
     },

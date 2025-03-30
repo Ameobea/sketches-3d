@@ -885,6 +885,7 @@ export const initViz = (
       viz.scene.add(sceneConf.player.mesh);
     }
 
+    console.log('traversing');
     scene.traverse(child => {
       if (child instanceof THREE.Mesh && !child.name.includes('background')) {
         if (child.userData.noLight) {
@@ -894,10 +895,10 @@ export const initViz = (
           child.castShadow = true;
           child.receiveShadow = true;
         }
-        if (child.userData.noCastShadow) {
+        if (child.userData.noCastShadow || child.userData.castShadow === false) {
           child.castShadow = false;
         }
-        if (child.userData.noReceiveShadow) {
+        if (child.userData.noReceiveShadow || child.userData.receiveShadow === false) {
           child.receiveShadow = false;
         }
       }

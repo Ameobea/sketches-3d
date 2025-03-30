@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { createQuery } from '@tanstack/svelte-query';
-  import { API, IsLoggedIn } from 'src/api/client';
+  import { API, checkLogin, IsLoggedIn } from 'src/api/client';
+  import { onMount } from 'svelte';
 
   export let mapID: string;
   export let userPlayID: string | null = null;
@@ -9,6 +11,12 @@
   $: res = createQuery({
     queryKey: ['leaderboard', mapID, userPlayID],
     queryFn: async () => API.getLeaderboardByIndex({ mapId: mapID, startIndex: 0, endIndex: 20 }),
+  });
+
+  onMount(() => {
+    if (browser) {
+      checkLogin();
+    }
   });
 </script>
 
