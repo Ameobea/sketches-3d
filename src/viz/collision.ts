@@ -406,7 +406,7 @@ export class BulletPhysics {
     newPlayerPos.y += 0.5 * this.playerColliderHeight;
     switch (viewMode.type) {
       case 'firstPerson':
-        return newPlayerPos.add(new THREE.Vector3(0, 0.5 * this.playerColliderHeight, 0));
+        return newPlayerPos;
       case 'top-down':
         switch (viewMode.cameraFocusPoint?.type) {
           case undefined:
@@ -685,14 +685,19 @@ export class BulletPhysics {
     return body;
   };
 
-  public removeCollisionObject = (collisionObj: BtCollisionObject) => {
+  public removeCollisionObject = (collisionObj: BtCollisionObject, meshName?: string) => {
     this.collisionWorld.removeCollisionObject(collisionObj);
 
     const rigidBody = this.Ammo.btRigidBody.prototype.upcast(collisionObj);
     if (rigidBody) {
       const motionState = rigidBody.getMotionState();
       if (motionState) {
-        this.Ammo.destroy(motionState);
+        try {
+          this.Ammo.destroy(motionState);
+        } catch (err) {
+          console.error(`Error destroying motion state for rigid body on mesh ${meshName ?? '<Unknown>'}`);
+          console.error(err);
+        }
       }
     }
 
@@ -702,7 +707,12 @@ export class BulletPhysics {
     // point we would need to refcount them or something and not destroy them here.
     const collisionShape = collisionObj.getCollisionShape();
     if (collisionShape) {
-      this.Ammo.destroy(collisionShape);
+      try {
+        this.Ammo.destroy(collisionShape);
+      } catch (err) {
+        console.error(`Error destroying collision shape for mesh ${meshName ?? '<Unknown>'}`);
+        console.error(err);
+      }
     }
     this.Ammo.destroy(collisionObj);
   };
@@ -772,7 +782,7 @@ export class BulletPhysics {
       scale = scale.multiply(extraScale);
     }
 
-    if (mesh.userData.convexhull) {
+    if (mesh.userData.convexhull || mesh.userData.convexHull) {
       return this.buildConvexHullShape(indices, vertices, scale);
     }
     return this.buildTrimeshShape(indices, vertices, scale);

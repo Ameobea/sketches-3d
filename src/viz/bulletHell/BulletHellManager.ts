@@ -379,6 +379,7 @@ export class BulletHellManager {
     for (const k of Object.keys(this.viz.keyStates)) {
       this.viz.keyStates[k] = false;
     }
+    this.viz.sfxManager.playSfx('player_die');
 
     const animationLengthSecs = 2;
     let didRunDeathAnimation = false;

@@ -9,13 +9,13 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { BulletHellManager, type BulletHellEvent } from 'src/viz/bulletHell/BulletHellManager';
 import { EasingFnType } from 'src/viz/util/easingFns';
 import { ObjectivePadMaterial } from 'src/viz/materials/ObjectivePad/ObjectivePadMaterial';
-import { buildGraySToneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
+import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
 
 const initLevel = async (viz: Viz) => {
   const fpCtx = viz.fpCtx!;
   const btvec3 = fpCtx.btvec3;
 
-  const stoneMat = await buildGraySToneBricksFloorMaterial(new THREE.ImageBitmapLoader());
+  const stoneMat = await buildGrayStoneBricksFloorMaterial(new THREE.ImageBitmapLoader());
 
   // add a platform to stand on
   const platformGeo = new THREE.BoxGeometry(500, 1, 500);
@@ -259,7 +259,7 @@ export const processLoadedScene = async (
     legacyLights: false,
     goBackOnLoad: false,
     sfx: {
-      neededSfx: ['dash'],
+      neededSfx: ['dash', 'player_die'],
     },
     customControlsEntries: [
       {

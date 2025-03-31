@@ -4,7 +4,7 @@
 
 <!-- TODO: Should display icons rather than a number -->
 <div class="root">
-  Dashes: <b>{curCharges}</b>
+  Dashes: <b>{curCharges === Infinity ? '∞' : curCharges}</b>
 </div>
 
 <style lang="css">

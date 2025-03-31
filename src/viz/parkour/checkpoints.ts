@@ -4,6 +4,18 @@ import type { Viz } from 'src/viz';
 import { initCollectables, type CollectablesCtx } from './collectables';
 import type { TransparentWritable } from '../util/TransparentWritable';
 
+/**
+ * The names of checkpoints and dash tokens must be very particularly set.
+ *
+ * Checkpoints are named "checkpoint", "checkpoint001", "checkpoint002", etc.
+ *
+ * Dash tokens are like `dash_token_loc_ck0.001`, `dash_token_loc_ck0`, etc.
+ *
+ * The `n` in `ck{n}` should be set to the index of the checkpoint that is reached before
+ * that dash token can be picked up.  So if the dash token is reachable before any checkpoint
+ * is reached, it should be `ck0`.  This controls the respawn behavior of dash tokens when
+ * respawning at checkpoints.
+ */
 export const initCheckpoints = (
   viz: Viz,
   loadedWorld: THREE.Group<THREE.Object3DEventMap>,

@@ -30,6 +30,7 @@ const SFX_DEFS: Record<string, { url: string; playbackRate?: number }> = {
   dash: { url: 'https://i.ameo.link/cta.ogg' },
   dash_pickup: { url: 'https://i.ameo.link/ctb.ogg', playbackRate: 1.4 },
   land_default: { url: 'https://i.ameo.link/cvk.ogg' }, // original unfiltered: https://i.ameo.link/bga.mp3
+  player_die: { url: 'https://i.ameo.link/cx8.ogg' },
 };
 
 export class SfxManager {

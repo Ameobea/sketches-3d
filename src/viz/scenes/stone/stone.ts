@@ -517,6 +517,7 @@ export const processLoadedScene = async (
     const door = loadedWorld.getObjectByName('monolith_door') as THREE.Mesh;
     door.visible = false;
     viz.fpCtx!.removeCollisionObject(door.userData.rigidBody);
+    delete door.userData.rigidBody;
 
     doorLight.intensity = 3;
 

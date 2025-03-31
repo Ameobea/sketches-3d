@@ -676,9 +676,9 @@ export class Viz {
           o.material?.dispose();
         }
         if (o.userData.rigidBody) {
-          this.fpCtx!.removeCollisionObject(o.userData.rigidBody);
+          this.fpCtx!.removeCollisionObject(o.userData.rigidBody, o.name);
         } else if (o.userData.collisionObj) {
-          this.fpCtx!.removeCollisionObject(o.userData.collisionObj);
+          this.fpCtx!.removeCollisionObject(o.userData.collisionObj, o.name);
         }
       }
     });
@@ -885,7 +885,6 @@ export const initViz = (
       viz.scene.add(sceneConf.player.mesh);
     }
 
-    console.log('traversing');
     scene.traverse(child => {
       if (child instanceof THREE.Mesh && !child.name.includes('background')) {
         if (child.userData.noLight) {

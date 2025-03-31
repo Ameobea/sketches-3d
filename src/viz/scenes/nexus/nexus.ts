@@ -1,24 +1,27 @@
 import * as THREE from 'three';
+import { goto } from '$app/navigation';
+import { N8AOPostPass } from 'n8ao';
+
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
-import { N8AOPostPass } from 'n8ao';
-import { ToneMappingEffect, ToneMappingMode } from 'postprocessing';
+import { BlendFunction, BloomEffect, EffectPass, ToneMappingEffect, ToneMappingMode } from 'postprocessing';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { DashToken, initDashTokenGraphics } from '../../parkour/DashToken';
 import { buildGoldMaterial, buildGreenMosaic2Material } from '../../parkour/regions/pylons/materials';
-import { goto } from '$app/navigation';
 import type { BulletPhysics } from 'src/viz/collision';
 import {
   buildGrayFossilRockMaterial,
   GrayFossilRockTextures,
 } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
-import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
 import { createSignboard, type CreateSignboardArgs } from 'src/viz/helpers/signboardBuilder';
 import { mix, smoothstep } from 'src/viz/util/util';
+import { rwritable } from 'src/viz/util/TransparentWritable';
+import { buildCheckpointMaterial } from 'src/viz/materials/Checkpoint/CheckpointMaterial';
+import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -73,7 +76,7 @@ const loadTextures = async () => {
     platformTexsP,
   ]);
 
-  return { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal };
+  return { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal, loader };
 };
 
 export const processLoadedScene = async (
@@ -113,7 +116,7 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight.target);
 
   const pointLightPos = new THREE.Vector3(-42.973, -20, -0.20153);
-  const pointLightColor = new THREE.Color(0x9d4444);
+  const pointLightColor = new THREE.Color(0xbd6464);
   const pointLight = new THREE.PointLight(pointLightColor, 1, 0, 0);
   pointLight.castShadow = false;
   pointLight.position.copy(pointLightPos);
@@ -121,7 +124,7 @@ export const processLoadedScene = async (
 
   viz.registerBeforeRenderCb(() => {
     const pointLightActivation = 1 - smoothstep(-20, 0, viz.camera.position.y);
-    pointLight.intensity = 17 * pointLightActivation;
+    pointLight.intensity = 13 * pointLightActivation;
     pointLight.position.x = mix(pointLightPos.x, viz.camera.position.x, 0.9);
     pointLight.position.z = mix(pointLightPos.z, viz.camera.position.z, 0.9);
   });
@@ -140,17 +143,14 @@ export const processLoadedScene = async (
     }
   });
 
-  // TODO: Temp?
-  const checkpointMat = buildCustomShader(
-    { metalness: 0, alphaTest: 0.05, transparent: true },
-    { colorShader: BridgeMistColorShader },
-    { disableToneMapping: true }
-  );
-  viz.registerBeforeRenderCb(curTimeSeconds => checkpointMat.setCurTimeSeconds(curTimeSeconds));
+  const PortalColorByName: Record<string, [number, number, number]> = {
+    tutorial: [0.4, 0.7, 0.4],
+    stone: [0.11, 0.31, 0.7],
+  };
 
   for (const portal of portals) {
     portal.userData.nocollide = true;
-    portal.material = checkpointMat;
+    portal.material = buildCheckpointMaterial(viz, PortalColorByName[portal.name.split('_')[1]]);
     portal.userData.noLight = true;
 
     if (!portal.name.includes('_')) {
@@ -158,11 +158,87 @@ export const processLoadedScene = async (
     }
   }
 
-  const { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal } = await loadTextures();
+  const { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal, loader } = await loadTextures();
   viz.scene.background = bgTexture;
 
   const platform = loadedWorld.getObjectByName('platform') as THREE.Mesh;
   platform.material = platformMat;
+
+  const lowerPlatform = loadedWorld.getObjectByName('lower_platform') as THREE.Mesh;
+  lowerPlatform.material = platformMat;
+  buildGrayStoneBricksFloorMaterial(
+    loader,
+    {
+      uvTransform: new THREE.Matrix3().scale(0.148, 0.148),
+      metalness: 0.513,
+      mapDisableDistance: null,
+    },
+    {
+      colorShader: `
+const vec3[5] PLATFORM_COLOR_RAMP = vec3[5](vec3(0.0712, 0.091, 0.0904), vec3(0.0912, 0.131, 0.1304), vec3(0.22, 0.21, 0.27), vec3(0.52, 0.54, 0.73), vec3(0.22, 0.24, 0.23));
+
+vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+  float brightness = fract(baseColor.r * 1.5);
+  float rampIndex = brightness * float(5 - 1);
+  int low = int(floor(rampIndex));
+  int high = int(ceil(rampIndex));
+  float t = fract(rampIndex);
+  vec3 rampColor = mix(PLATFORM_COLOR_RAMP[low], PLATFORM_COLOR_RAMP[high], t);
+  vec3 outColor = mix(rampColor, baseColor, 0.2);
+  return vec4(outColor * 0.3, 1.);
+}
+`,
+      roughnessShader: `
+float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
+  float shinyness = pow(ctx.diffuseColor.r * 4.5, 2.5) * 0.4;
+  shinyness = clamp(shinyness, 0.0, 0.6);
+  return 1. - shinyness;
+}`,
+    },
+    { randomizeUVOffset: false }
+  ).then(mat => {
+    lowerPlatform.material = mat;
+  });
+
+  const spawnPlatformMat = buildCustomShader(
+    {
+      color: 0x676a80,
+      map: platformDiffuse,
+      roughness: 0.9,
+      metalness: 0.5,
+      uvTransform: new THREE.Matrix3().scale(28.2073, 28.2073),
+      normalMap: platformNormal,
+      normalScale: 0.95,
+      normalMapType: THREE.TangentSpaceNormalMap,
+      mapDisableDistance: null,
+      ambientLightScale: 0.5,
+    },
+    {},
+    { useTriplanarMapping: false, tileBreaking: { type: 'neyret', patchScale: 2 } }
+  );
+
+  const spawnPlatformDarkMat = buildCustomShader(
+    {
+      color: 0x62667d,
+      map: platformDiffuse,
+      roughness: 0.9,
+      metalness: 0.5,
+      uvTransform: new THREE.Matrix3().scale(8.2073, 8.2073),
+      normalMap: platformNormal,
+      normalScale: 0.95,
+      normalMapType: THREE.TangentSpaceNormalMap,
+      mapDisableDistance: null,
+      ambientLightScale: 0.5,
+    },
+    {},
+    { useTriplanarMapping: false, tileBreaking: { type: 'neyret', patchScale: 2 } }
+  );
+
+  const spawnPlatform = loadedWorld.getObjectByName('spawn_platform') as THREE.Mesh;
+  spawnPlatform.material = spawnPlatformMat;
+
+  const spawnPlatformDark = loadedWorld.getObjectByName('spawn_platform_dark') as THREE.Mesh;
+  spawnPlatformDark.material = spawnPlatformDarkMat;
 
   // TODO: Temp
   const portalFrameMat = buildCustomShader(
@@ -170,8 +246,10 @@ export const processLoadedScene = async (
       color: 0x080808,
       uvTransform: new THREE.Matrix3().scale(0.24073, 0.24073),
       normalMap: platformNormal,
-      normalScale: 0.95,
+      normalScale: 0.75,
       normalMapType: THREE.TangentSpaceNormalMap,
+      roughness: 0.7,
+      metalness: 0.1,
     },
     {},
     { useGeneratedUVs: true, randomizeUVOffset: true }
@@ -185,6 +263,7 @@ export const processLoadedScene = async (
       align: 'center',
       canvasWidth: 400,
       canvasHeight: 200,
+      textColor: '#888',
       ...params,
     });
     sign.position.copy(portalFrame.position);
@@ -203,6 +282,14 @@ export const processLoadedScene = async (
       addPortalFrameSign(portalFrame, { text: 'Tutorial' });
     } else if (portalFrame.name.includes('pylons')) {
       addPortalFrameSign(portalFrame, { text: 'Pylons' });
+    } else if (portalFrame.name.includes('movementv2')) {
+      addPortalFrameSign(portalFrame, { text: 'Movement V2' });
+    } else if (portalFrame.name.includes('plats')) {
+      addPortalFrameSign(portalFrame, { text: 'Plats' });
+    } else if (portalFrame.name.includes('stone')) {
+      addPortalFrameSign(portalFrame, { text: 'Stone' });
+    } else if (portalFrame.name.includes('basalt')) {
+      addPortalFrameSign(portalFrame, { text: 'Basalt' });
     }
   }
 
@@ -216,6 +303,24 @@ export const processLoadedScene = async (
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
           goto(`/pk_pylons${window.location.origin.includes('localhost') ? '' : '.html'}`);
         });
+      } else if (portal.name.includes('_movementv2')) {
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          goto(`/movement_v2${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
+      } else if (portal.name.includes('_plats')) {
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          goto(`/plats${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
+      } else if (portal.name.includes('_stone')) {
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          goto(`/stone${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
+      } else if (portal.name.includes('_basalt')) {
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          goto(`/basalt${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
+      } else {
+        portal.visible = false;
       }
     }
   });
@@ -257,19 +362,15 @@ export const processLoadedScene = async (
   const pillars = loadedWorld.getObjectByName('pillars') as THREE.Mesh;
   pillars.material = portalFrameMat;
 
-  // TODO: temp; use different mat for totems
   const totemMat = buildCustomShader(
     {
-      color: 0x474a50,
-      map: platformDiffuse,
-      roughness: 0.9,
-      metalness: 0.5,
-      uvTransform: new THREE.Matrix3().scale(0.4073, 0.4073),
+      color: 0x190808,
+      uvTransform: new THREE.Matrix3().scale(0.24073, 0.24073),
       normalMap: platformNormal,
-      normalScale: 0.95,
+      normalScale: 0.75,
       normalMapType: THREE.TangentSpaceNormalMap,
-      mapDisableDistance: null,
-      ambientLightScale: 1.8,
+      roughness: 0.6,
+      metalness: 0,
     },
     {},
     { useTriplanarMapping: true }
@@ -336,18 +437,41 @@ export const processLoadedScene = async (
           }[vizConf.graphics.quality]
         );
       }
+
+      const bloomEffect = new BloomEffect({
+        intensity: 4,
+        mipmapBlur: true,
+        luminanceThreshold: 0.53,
+        blendFunction: BlendFunction.ADD,
+        luminanceSmoothing: 0.05,
+        radius: 0.186,
+      });
+      const bloomPass = new EffectPass(viz.camera, bloomEffect);
+      bloomPass.dithering = false;
+
+      composer.addPass(bloomPass);
     },
     undefined,
-    { toneMappingExposure: 1.48 },
+    {
+      toneMappingExposure: 2.2,
+    },
     (() => {
       const toneMappingEffect = new ToneMappingEffect({
-        mode: ToneMappingMode.LINEAR,
+        mode: ToneMappingMode.UNCHARTED2,
       });
 
+      // return [];
       return [toneMappingEffect];
     })(),
     true
   );
+
+  const locations = {
+    spawn: {
+      pos: [-66.184, 2.928, -0.201] as [number, number, number],
+      rot: [0, Math.PI / 2, 0] as [number, number, number],
+    },
+  };
 
   return {
     spawnLocation: 'spawn',
@@ -361,17 +485,20 @@ export const processLoadedScene = async (
         enable: true,
         useExternalVelocity: true,
         sfx: { play: true, name: 'dash' },
+        chargeConfig: { curCharges: rwritable(Infinity) },
       },
       externalVelocityAirDampingFactor: new THREE.Vector3(0.32, 0.3, 0.32),
       externalVelocityGroundDampingFactor: new THREE.Vector3(0.9992, 0.9992, 0.9992),
     },
     debugPos: true,
-    locations: {
-      spawn: {
-        pos: [49.83, 7.062, 0],
-        rot: [0, 1.5, 0],
+    locations,
+    customControlsEntries: [
+      {
+        key: 'f',
+        action: () => viz.fpCtx?.teleportPlayer(locations.spawn.pos, locations.spawn.rot),
+        label: 'Respawn',
       },
-    },
+    ],
     legacyLights: false,
     sfx: {
       neededSfx: ['dash'],

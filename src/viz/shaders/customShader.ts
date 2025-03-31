@@ -162,7 +162,7 @@ export interface CustomShaderProps {
   reflection?: Partial<ReflectionParams>;
 }
 
-interface CustomShaderShaders {
+export interface CustomShaderShaders {
   customVertexFragment?: string;
   colorShader?: string;
   normalShader?: string;
@@ -179,7 +179,7 @@ const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
   sharpenFactor: 12.8,
 });
 
-interface CustomShaderOptions {
+export interface CustomShaderOptions {
   antialiasColorShader?: boolean;
   antialiasRoughnessShader?: boolean;
   tileBreaking?: { type: 'neyret'; patchScale?: number } | { type: 'fastFixMipmap' };
@@ -1049,6 +1049,8 @@ void main() {
   }
 
   ${roughnessShader ? buildRoughnessShaderFragment(antialiasRoughnessShader) : ''}
+  // outFragColor.rgb = vec3(roughnessFactor, roughnessFactor, roughnessFactor);
+  // return;
 
   ${
     metalnessShader

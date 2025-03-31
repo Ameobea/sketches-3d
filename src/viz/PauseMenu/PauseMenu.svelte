@@ -24,6 +24,8 @@
   import type { SceneConfig } from '../scenes';
   import GameplayMenu from './GameplayMenu.svelte';
   import LoginMenu from './LoginMenu.svelte';
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
 
   let activeMenu = Menu.Main;
 
@@ -77,6 +79,16 @@
         >
           Resume
         </button>
+        {#if !$page.url.pathname.includes('nexus')}
+          <button
+            on:click={() => {
+              const ext = $page.url.hostname.includes('localhost') ? '' : '.html';
+              goto(`/nexus${ext}`);
+            }}
+          >
+            Return to Nexus
+          </button>
+        {/if}
         <button
           on:click={() => {
             activeMenu = Menu.Graphics;
