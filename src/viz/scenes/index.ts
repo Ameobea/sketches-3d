@@ -435,4 +435,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'tutorial' },
     legacyLights: false,
   },
+  cornered: {
+    gltfName: 'cornered',
+    extension: 'glb',
+    sceneLoader: () => import('./cornered/cornered.svelte.ts').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'cornered' },
+    legacyLights: false,
+  },
 };

@@ -30,7 +30,6 @@ export const initCheckpoints = (
 
   const parseCheckpointIx = (name: string) => {
     // names are like "checkpoint", "checkpoint001", "checkpoint002", etc.
-    // "checkpoint" = 0
     const match = name.match(/checkpoint(\d+)/);
     if (!match) {
       return 0;

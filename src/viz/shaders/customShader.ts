@@ -40,7 +40,7 @@ const buildNoiseTexture = (): THREE.DataTexture => {
 };
 
 const AntialiasedRoughnessShaderFragment = `
-  float acc = 0.;
+  float roughnessAcc = 0.;
   // 2x oversampling
   for (int i = 0; i < 2; i++) {
     for (int j = 0; j < 2; j++) {
@@ -50,12 +50,12 @@ const AntialiasedRoughnessShaderFragment = `
         offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
         offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
         offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getCustomRoughness(offsetPos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);
+        roughnessAcc += getCustomRoughness(offsetPos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);
       }
     }
   }
-  acc /= 8.;
-  roughnessFactor = acc;
+  roughnessAcc /= 8.;
+  roughnessFactor = roughnessAcc;
 `;
 
 const NonAntialiasedRoughnessShaderFragment =
@@ -434,10 +434,12 @@ export const buildCustomShaderArgs = (
     }
   }
   acc /= 8.;
-  diffuseColor = acc;`;
+  diffuseColor = acc;
+  ctx.diffuseColor = diffuseColor;`;
     } else {
       return `
-  diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);`;
+  diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);
+  ctx.diffuseColor = diffuseColor;`;
     }
   };
 
@@ -1049,8 +1051,6 @@ void main() {
   }
 
   ${roughnessShader ? buildRoughnessShaderFragment(antialiasRoughnessShader) : ''}
-  // outFragColor.rgb = vec3(roughnessFactor, roughnessFactor, roughnessFactor);
-  // return;
 
   ${
     metalnessShader

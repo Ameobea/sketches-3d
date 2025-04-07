@@ -71,6 +71,9 @@ export class DashManager {
    * Attempts to dash if the necessary conditions are met.  Returns `true` if the dash was actually performed.
    */
   public tryDash(curTimeSeconds: number, isFlyMode: boolean, dashDir: THREE.Vector3): boolean {
+    // this.dashInner(dashDir.clone().normalize(), curTimeSeconds);
+    // return true;
+
     if (!this.config.enable) {
       return false;
     }

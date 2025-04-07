@@ -190,7 +190,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
 `,
       roughnessShader: `
 float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
-  float shinyness = pow(ctx.diffuseColor.r * 4.5, 2.5) * 0.4;
+  float shinyness = pow(ctx.diffuseColor.b * 24.5, 2.5) * 0.2;
   shinyness = clamp(shinyness, 0.0, 0.6);
   return 1. - shinyness;
 }`,
@@ -202,7 +202,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
   const spawnPlatformMat = buildCustomShader(
     {
-      color: 0x676a80,
+      color: 0x474a4d,
       map: platformDiffuse,
       roughness: 0.9,
       metalness: 0.5,
@@ -211,7 +211,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       normalScale: 0.95,
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
-      ambientLightScale: 0.5,
+      ambientLightScale: 1.8,
     },
     {},
     { useTriplanarMapping: false, tileBreaking: { type: 'neyret', patchScale: 2 } }
@@ -219,7 +219,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
   const spawnPlatformDarkMat = buildCustomShader(
     {
-      color: 0x62667d,
+      color: 0x474a4d,
       map: platformDiffuse,
       roughness: 0.9,
       metalness: 0.5,
@@ -228,19 +228,19 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       normalScale: 0.95,
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
-      ambientLightScale: 0.5,
+      ambientLightScale: 1.2,
     },
-    {},
+    {
+      roughnessShader: `
+float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
+  float shinyness = pow(ctx.diffuseColor.r * 27.5, 2.5) * 0.6;
+  shinyness = clamp(shinyness, 0.0, 0.6);
+  return 1. - shinyness;
+}`,
+    },
     { useTriplanarMapping: false, tileBreaking: { type: 'neyret', patchScale: 2 } }
   );
 
-  const spawnPlatform = loadedWorld.getObjectByName('spawn_platform') as THREE.Mesh;
-  spawnPlatform.material = spawnPlatformMat;
-
-  const spawnPlatformDark = loadedWorld.getObjectByName('spawn_platform_dark') as THREE.Mesh;
-  spawnPlatformDark.material = spawnPlatformDarkMat;
-
-  // TODO: Temp
   const portalFrameMat = buildCustomShader(
     {
       color: 0x080808,
@@ -254,6 +254,12 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     {},
     { useGeneratedUVs: true, randomizeUVOffset: true }
   );
+
+  const spawnPlatform = loadedWorld.getObjectByName('spawn_platform') as THREE.Mesh;
+  spawnPlatform.material = spawnPlatformMat;
+
+  const spawnPlatformDark = loadedWorld.getObjectByName('spawn_platform_dark') as THREE.Mesh;
+  spawnPlatformDark.material = spawnPlatformDarkMat;
 
   const addPortalFrameSign = (portalFrame: THREE.Mesh, params: CreateSignboardArgs) => {
     const sign = createSignboard({
@@ -286,6 +292,8 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       addPortalFrameSign(portalFrame, { text: 'Movement V2' });
     } else if (portalFrame.name.includes('plats')) {
       addPortalFrameSign(portalFrame, { text: 'Plats' });
+    } else if (portalFrame.name.includes('cornered')) {
+      addPortalFrameSign(portalFrame, { text: 'Cornered' });
     } else if (portalFrame.name.includes('stone')) {
       addPortalFrameSign(portalFrame, { text: 'Stone' });
     } else if (portalFrame.name.includes('basalt')) {
@@ -310,6 +318,10 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       } else if (portal.name.includes('_plats')) {
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
           goto(`/plats${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
+      } else if (portal.name.includes('_cornered')) {
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          goto(`/cornered${window.location.origin.includes('localhost') ? '' : '.html'}`);
         });
       } else if (portal.name.includes('_stone')) {
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
@@ -358,18 +370,17 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   invisibleStairSlants.removeFromParent();
   viz.collisionWorldLoadedCbs.push(fpCtx => fpCtx.addTriMesh(invisibleStairSlants));
 
-  // TODO: temp; use different mat for pillars
   const pillars = loadedWorld.getObjectByName('pillars') as THREE.Mesh;
   pillars.material = portalFrameMat;
 
   const totemMat = buildCustomShader(
     {
-      color: 0x190808,
+      color: 0x1c0a0a,
       uvTransform: new THREE.Matrix3().scale(0.24073, 0.24073),
       normalMap: platformNormal,
-      normalScale: 0.75,
+      normalScale: 0.65,
       normalMapType: THREE.TangentSpaceNormalMap,
-      roughness: 0.6,
+      roughness: 0.8,
       metalness: 0,
     },
     {},
@@ -453,11 +464,11 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     },
     undefined,
     {
-      toneMappingExposure: 2.2,
+      toneMappingExposure: 1.3,
     },
     (() => {
       const toneMappingEffect = new ToneMappingEffect({
-        mode: ToneMappingMode.UNCHARTED2,
+        mode: ToneMappingMode.LINEAR,
       });
 
       // return [];
