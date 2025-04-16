@@ -7,8 +7,17 @@
 #define NOISE fbm
 #define NUM_NOISE_OCTAVES 4
 
-float hash(float p) { p = fract(p * 0.011); p *= p + 7.5; p *= p + p; return fract(p); }
-float hash(vec2 p) {vec3 p3 = fract(vec3(p.xyx) * 0.13); p3 += dot(p3, p3.yzx + 3.333); return fract((p3.x + p3.y) * p3.z); }
+float hash(float p) {
+	p = fract(p * 0.011);
+	p *= p + 7.5;
+	p *= p + p;
+	return fract(p);
+}
+float hash(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.13);
+	p3 += dot(p3, p3.yzx + 3.333);
+	return fract((p3.x + p3.y) * p3.z);
+}
 
 float noise(float x) {
 	float i = floor(x);
@@ -49,16 +58,13 @@ float noise(vec3 x) {
 	float n = dot(i, step);
 
 	vec3 u = f * f * (3. - 2. * f);
-	return mix(mix(mix( hash(n + dot(step, vec3(0, 0, 0))), hash(n + dot(step, vec3(1, 0, 0))), u.x),
-									mix( hash(n + dot(step, vec3(0, 1, 0))), hash(n + dot(step, vec3(1, 1, 0))), u.x), u.y),
-							mix(mix( hash(n + dot(step, vec3(0, 0, 1))), hash(n + dot(step, vec3(1, 0, 1))), u.x),
-									mix( hash(n + dot(step, vec3(0, 1, 1))), hash(n + dot(step, vec3(1, 1, 1))), u.x), u.y), u.z);
+	return mix(mix(mix(hash(n + dot(step, vec3(0, 0, 0))), hash(n + dot(step, vec3(1, 0, 0))), u.x), mix(hash(n + dot(step, vec3(0, 1, 0))), hash(n + dot(step, vec3(1, 1, 0))), u.x), u.y), mix(mix(hash(n + dot(step, vec3(0, 0, 1))), hash(n + dot(step, vec3(1, 0, 1))), u.x), mix(hash(n + dot(step, vec3(0, 1, 1))), hash(n + dot(step, vec3(1, 1, 1))), u.x), u.y), u.z);
 }
 
 float fbm(float x) {
 	float v = 0.;
 	float a = 0.5;
-	float shift = float(100);
+	float shift = 100.;
 	for (int i = 0; i < NUM_NOISE_OCTAVES; ++i) {
 		v += a * noise(x);
 		x = x * 2. + shift;

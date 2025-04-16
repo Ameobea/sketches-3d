@@ -29,12 +29,21 @@ interface Ticker {
    * Returning `true`, `undefined`, or any other value will keep the ticker alive.
    */
   tick: (curTimeSeconds: number, tDiffSeconds: number) => boolean | void;
-  reset: () => void;
+  /**
+   * If `false` is returned, the ticker will be removed and never called again.
+   *
+   * Returning `true`, `undefined`, or any other value will keep the ticker alive.
+   */
+  reset: () => boolean | void;
 }
 
 interface MakeSliderArgs {
-  moveDir: THREE.Vector3;
+  getPos: (curTimeSeconds: number, secondsSinceSpawn: number) => THREE.Vector3;
   despawnCond?: (mesh: THREE.Mesh, curTimeSeconds: number) => boolean;
+  /**
+   * default true
+   */
+  removeOnReset?: boolean;
   spawnTimeSeconds?: number;
 }
 
@@ -165,10 +174,14 @@ export class ParkourManager {
     this.winState = null;
     this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
 
+    const newTickers: Ticker[] = [];
     for (const ticker of this.tickers) {
-      ticker.reset();
+      const retain = ticker.reset();
+      if (retain !== false) {
+        newTickers.push(ticker);
+      }
     }
-    this.tickers.length = 0;
+    this.tickers = newTickers;
     this.scheduler.clear();
 
     for (const cb of this.onStartCbs) {
@@ -241,38 +254,59 @@ export class ParkourManager {
 
   public makeSlider = (
     mesh: THREE.Mesh,
-    { moveDir, despawnCond, spawnTimeSeconds = this.viz.clock.getElapsedTime() }: MakeSliderArgs
+    {
+      getPos,
+      despawnCond,
+      spawnTimeSeconds = this.viz.clock.getElapsedTime(),
+      removeOnReset = true,
+    }: MakeSliderArgs
   ) => {
     const fpCtx = this.viz.fpCtx;
     if (!fpCtx) {
       throw new Error('fpCtx not initialized');
     }
 
-    const startPos = mesh.position.clone();
+    let rigidBody = mesh.userData.rigidBody as BtRigidBody | undefined;
+    if (!rigidBody) {
+      if (mesh.userData.collisionObj) {
+        throw new Error('Unhandled case where slider has collision object but no rigid body');
+      }
 
-    const rigidBody = mesh.userData.rigidBody as BtRigidBody;
-    rigidBody.setCollisionFlags(2); // btCollisionObject::CF_KINEMATIC_OBJECT
-    rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
+      fpCtx.addTriMesh(mesh, 'kinematic');
+      rigidBody = mesh.userData.rigidBody as BtRigidBody;
+    } else {
+      rigidBody.setCollisionFlags(2); // btCollisionObject::CF_KINEMATIC_OBJECT
+      rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
+    }
+
     const tfn = new fpCtx.Ammo.btTransform();
     tfn.setIdentity();
     tfn.setOrigin(fpCtx.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
     tfn.setEulerZYX(mesh.rotation.x, mesh.rotation.y, mesh.rotation.z);
 
     const reset = () => {
-      this.viz.scene.remove(mesh);
-      fpCtx.removeCollisionObject(rigidBody);
+      if (removeOnReset) {
+        this.viz.scene.remove(mesh);
+        fpCtx.removeCollisionObject(rigidBody);
+        return false;
+      } else {
+        const startPos = getPos(spawnTimeSeconds, 0);
+        mesh.position.copy(startPos);
+        tfn.setOrigin(fpCtx.btvec3(startPos.x, startPos.y, startPos.z));
+        rigidBody.getMotionState()!.setWorldTransform(tfn);
+        return true;
+      }
     };
 
     const ticker = {
       tick: (curTimeSeconds: number) => {
         if (despawnCond?.(mesh, curTimeSeconds)) {
           reset();
-          return false;
+          return !removeOnReset;
         }
 
-        const newPos = startPos
-          .clone()
-          .add(moveDir.clone().multiplyScalar(curTimeSeconds - spawnTimeSeconds));
+        const secondsSinceSpawn = curTimeSeconds - spawnTimeSeconds;
+        const newPos = getPos(curTimeSeconds, secondsSinceSpawn);
         mesh.position.copy(newPos);
         tfn.setOrigin(fpCtx.btvec3(newPos.x, newPos.y, newPos.z));
         rigidBody.getMotionState()!.setWorldTransform(tfn);

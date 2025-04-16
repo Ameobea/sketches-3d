@@ -86,9 +86,11 @@ export const buildPylonMaterial = async (loader?: THREE.ImageBitmapLoader) =>
     }
   );
 
-export const buildPylonsMaterials = async (viz: Viz, loadedWorld: THREE.Group) => {
-  const loader = new THREE.ImageBitmapLoader();
-
+export const buildPylonsMaterials = async (
+  viz: Viz,
+  loadedWorld: THREE.Group,
+  loader = new THREE.ImageBitmapLoader()
+) => {
   const bgTextureP = (async () => {
     const bgImage = await loader.loadAsync('https://i.ameo.link/bqn.jpg');
     const bgTexture = new THREE.Texture(bgImage);

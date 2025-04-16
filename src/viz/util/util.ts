@@ -167,3 +167,13 @@ export const retryAsync = async <T>(
   }
   throw new Error('unreachable');
 };
+
+/**
+ * Returns a best guess as to whether the user is on a mobile device that doesn't have a
+ * mouse/pointer device or keyboard.
+ */
+export const detectIsMobile = () => {
+  const noMouse = window.matchMedia('(pointer: coarse)').matches;
+  const noKeyboard = window.matchMedia('(hover: none)').matches;
+  return noMouse && noKeyboard;
+};

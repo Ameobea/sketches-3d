@@ -21,7 +21,13 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   outColor = mix(vec3(0.95, 0.85, 0.24) * outColor, outColor, getStripeActivation(pos, normal, 0.8, 0.8, 0.283));
 
   // [-1, 1]
-  float noise = fbm(pos.xy * 10.);
+  vec2 noisePos;
+  if (abs(normal.z) > 0.5) {
+    noisePos = pos.xy;
+  } else {
+    noisePos = pos.xz;
+  }
+  float noise = fbm(noisePos * 10.);
   // [0, 1]
   noise = pow((noise + 1.) * 0.5, 9.5);
 

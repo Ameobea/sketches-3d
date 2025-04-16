@@ -78,7 +78,7 @@ export const processLoadedScene = async (
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
   const [
-    { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial, pylonMaterial },
+    { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial },
     { buildingTexture },
   ] = await Promise.all([buildPylonsMaterials(viz, loadedWorld), loadLevelMats()]);
 

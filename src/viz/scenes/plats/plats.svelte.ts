@@ -133,9 +133,11 @@ export const processLoadedScene = async (
             viz.scene.add(sliderClone);
             fpCtx.addTriMesh(sliderClone);
 
+            const startPos = slider.position.clone();
             const moveDir = new THREE.Vector3(0, 0, 15.8);
             pkManager.makeSlider(sliderClone, {
-              moveDir,
+              getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
+                startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
               despawnCond: (mesh, _curTimeSeconds) => mesh.position.z > 279,
               spawnTimeSeconds: invokeTimeSeconds,
             });
@@ -157,9 +159,11 @@ export const processLoadedScene = async (
             viz.scene.add(sliderClone);
             fpCtx.addTriMesh(sliderClone);
 
+            const startPos = slider.position.clone();
             const moveDir = new THREE.Vector3(14, 0, 0);
             pkManager.makeSlider(sliderClone, {
-              moveDir,
+              getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
+                startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
               despawnCond: (mesh, _curTimeSeconds) => mesh.position.x > -165,
               spawnTimeSeconds: invokeTimeSeconds,
             });
@@ -181,9 +185,11 @@ export const processLoadedScene = async (
             viz.scene.add(sliderClone);
             fpCtx.addTriMesh(sliderClone);
 
+            const startPos = slider.position.clone();
             const moveDir = new THREE.Vector3(-14, 0, 0);
             pkManager.makeSlider(sliderClone, {
-              moveDir,
+              getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
+                startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
               despawnCond: (mesh, _curTimeSeconds) => mesh.position.x < -209,
               spawnTimeSeconds: invokeTimeSeconds,
             });

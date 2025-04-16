@@ -443,4 +443,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'cornered' },
     legacyLights: false,
   },
+  stronghold: {
+    gltfName: 'stronghold',
+    extension: 'glb',
+    sceneLoader: () => import('./stronghold/stronghold.svelte.ts').then(mod => mod.processLoadedScene),
+    sceneName: 'Scene',
+    metadata: { title: 'stronghold' },
+    legacyLights: false,
+  },
 };
