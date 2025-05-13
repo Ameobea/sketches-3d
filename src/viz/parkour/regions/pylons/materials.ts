@@ -2,32 +2,49 @@ import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
 import { generateNormalMapFromTexture, loadNamedTextures, loadTexture } from 'src/viz/textureLoading';
-import { buildCustomShader, type CustomShaderProps } from 'src/viz/shaders/customShader';
+import {
+  buildCustomShader,
+  type CustomShaderOptions,
+  type CustomShaderProps,
+  type CustomShaderShaders,
+} from 'src/viz/shaders/customShader';
 import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
+import { AsyncOnce } from 'src/viz/util/AsyncOnce';
 
-export const buildGreenMosaic2Material = async (
-  loader: THREE.ImageBitmapLoader,
-  shaderPropOverrides: Partial<CustomShaderProps> = {}
-) => {
-  const { greenMosaic2Albedo, greenMosaic2Normal, greenMosaic2Roughness } = await loadNamedTextures(loader, {
+const GreenMosaic2Textures = new AsyncOnce((loader: THREE.ImageBitmapLoader) =>
+  loadNamedTextures(loader, {
     greenMosaic2Albedo: 'https://i.ameo.link/ccn.avif',
     greenMosaic2Normal: 'https://i.ameo.link/cwb.avif',
     greenMosaic2Roughness: 'https://i.ameo.link/cwc.avif',
-  });
+  })
+);
 
-  return buildCustomShader({
-    color: new THREE.Color(0xffffff),
-    metalness: 0.5,
-    roughness: 0.5,
-    map: greenMosaic2Albedo,
-    normalMap: greenMosaic2Normal,
-    roughnessMap: greenMosaic2Roughness,
-    uvTransform: new THREE.Matrix3().scale(7.8, 7.8),
-    mapDisableDistance: null,
-    normalScale: 2.2,
-    ambientLightScale: 2,
-    ...shaderPropOverrides,
-  });
+export const buildGreenMosaic2Material = async (
+  loader: THREE.ImageBitmapLoader,
+  shaderPropOverrides: Partial<CustomShaderProps> = {},
+  shaderShaderOverrides: Partial<CustomShaderShaders> = {},
+  shaderOptOverrides: Partial<CustomShaderOptions> = {}
+) => {
+  const { greenMosaic2Albedo, greenMosaic2Normal, greenMosaic2Roughness } =
+    await GreenMosaic2Textures.get(loader);
+
+  return buildCustomShader(
+    {
+      color: new THREE.Color(0xffffff),
+      metalness: 0.5,
+      roughness: 0.5,
+      map: greenMosaic2Albedo,
+      normalMap: greenMosaic2Normal,
+      roughnessMap: greenMosaic2Roughness,
+      uvTransform: new THREE.Matrix3().scale(7.8, 7.8),
+      mapDisableDistance: null,
+      normalScale: 2.2,
+      ambientLightScale: 2,
+      ...shaderPropOverrides,
+    },
+    shaderShaderOverrides,
+    shaderOptOverrides
+  );
 };
 
 export const buildGoldMaterial = async (
@@ -86,6 +103,14 @@ export const buildPylonMaterial = async (loader?: THREE.ImageBitmapLoader) =>
     }
   );
 
+export const ShinyPatchworkStoneTextures = new AsyncOnce((loader: THREE.ImageBitmapLoader) =>
+  loadNamedTextures(loader, {
+    shinyPatchworkStoneAlbedo: 'https://i.ameo.link/bqk.jpg',
+    shinyPatchworkStoneNormal: 'https://i.ameo.link/bqm.jpg',
+    shinyPatchworkStoneRoughness: 'https://i.ameo.link/bql.jpg',
+  })
+);
+
 export const buildPylonsMaterials = async (
   viz: Viz,
   loadedWorld: THREE.Group,
@@ -107,11 +132,7 @@ export const buildPylonsMaterials = async (
     pylonMaterial,
   ] = await Promise.all([
     bgTextureP,
-    loadNamedTextures(loader, {
-      shinyPatchworkStoneAlbedo: 'https://i.ameo.link/bqk.jpg',
-      shinyPatchworkStoneNormal: 'https://i.ameo.link/bqm.jpg',
-      shinyPatchworkStoneRoughness: 'https://i.ameo.link/bql.jpg',
-    }),
+    ShinyPatchworkStoneTextures.get(loader),
     buildGreenMosaic2Material(loader),
     buildGoldMaterial(loader),
     buildPylonMaterial(loader),
