@@ -263,8 +263,8 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
   const addPortalFrameSign = (portalFrame: THREE.Mesh, params: CreateSignboardArgs) => {
     const sign = createSignboard({
-      width: 7.75,
-      height: 7 / 2,
+      width: 5.75,
+      height: 3,
       fontSize: 56,
       align: 'center',
       canvasWidth: 400,
@@ -275,67 +275,63 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     sign.position.copy(portalFrame.position);
     sign.rotation.copy(portalFrame.rotation);
     sign.rotation.y = sign.rotation.y + Math.PI;
-    sign.position.y += 12.3;
+    sign.position.y += 9.3;
     // move the sign forward wrt. the direction it's facing a bit
-    sign.position.addScaledVector(portalFrame.getWorldDirection(new THREE.Vector3()), -2.3);
+    sign.position.addScaledVector(portalFrame.getWorldDirection(new THREE.Vector3()), -2);
     viz.scene.add(sign);
+  };
+
+  const PortalDefs: Record<string, { scene: string; displayName: string }> = {
+    tutorial: { scene: 'tutorial', displayName: 'TUTORIAL' },
+    pylons: { scene: 'pk_pylons', displayName: 'PYLONS' },
+    movementv2: { scene: 'movement_v2', displayName: 'MOVEMENT V2' },
+    plats: { scene: 'plats', displayName: 'PLATS' },
+    cornered: { scene: 'cornered', displayName: 'CORNERED' },
+    stone: { scene: 'stone', displayName: 'STONE' },
+    basalt: { scene: 'basalt', displayName: 'BASALT' },
+    stronghold: { scene: 'stronghold', displayName: 'STRONGHOLD' },
+    pinklights: { scene: 'pinklights', displayName: 'PINKLIGHTS' },
   };
 
   for (const portalFrame of portalFrames) {
     portalFrame.material = portalFrameMat;
 
-    if (portalFrame.name.includes('tutorial')) {
-      addPortalFrameSign(portalFrame, { text: 'Tutorial' });
-    } else if (portalFrame.name.includes('pylons')) {
-      addPortalFrameSign(portalFrame, { text: 'Pylons' });
-    } else if (portalFrame.name.includes('movementv2')) {
-      addPortalFrameSign(portalFrame, { text: 'Movement V2' });
-    } else if (portalFrame.name.includes('plats')) {
-      addPortalFrameSign(portalFrame, { text: 'Plats' });
-    } else if (portalFrame.name.includes('cornered')) {
-      addPortalFrameSign(portalFrame, { text: 'Cornered' });
-    } else if (portalFrame.name.includes('stone')) {
-      addPortalFrameSign(portalFrame, { text: 'Stone' });
-    } else if (portalFrame.name.includes('basalt')) {
-      addPortalFrameSign(portalFrame, { text: 'Basalt' });
+    const portalKey = portalFrame.name.split('_')[1];
+    const portal = PortalDefs[portalKey];
+    if (portal) {
+      addPortalFrameSign(portalFrame, { text: portal.displayName });
     }
   }
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     for (const portal of portals) {
-      if (portal.name.includes('_tutorial')) {
-        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          goto(`/tutorial${window.location.origin.includes('localhost') ? '' : '.html'}`);
-        });
-      } else if (portal.name.includes('_pylons')) {
-        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          goto(`/pk_pylons${window.location.origin.includes('localhost') ? '' : '.html'}`);
-        });
-      } else if (portal.name.includes('_movementv2')) {
-        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          goto(`/movement_v2${window.location.origin.includes('localhost') ? '' : '.html'}`);
-        });
-      } else if (portal.name.includes('_plats')) {
-        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          goto(`/plats${window.location.origin.includes('localhost') ? '' : '.html'}`);
-        });
-      } else if (portal.name.includes('_cornered')) {
-        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          goto(`/cornered${window.location.origin.includes('localhost') ? '' : '.html'}`);
-        });
-      } else if (portal.name.includes('_stone')) {
-        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          goto(`/stone${window.location.origin.includes('localhost') ? '' : '.html'}`);
-        });
-      } else if (portal.name.includes('_basalt')) {
-        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          goto(`/basalt${window.location.origin.includes('localhost') ? '' : '.html'}`);
-        });
+      const key = portal.name.split('_')[1];
+      const def = PortalDefs[key];
+
+      if (def) {
+        fpCtx.addPlayerRegionContactCb(
+          { type: 'convexHull', mesh: portal },
+          () => void goto(`/${def.scene}${window.location.origin.includes('localhost') ? '' : '.html'}`)
+        );
       } else {
         portal.visible = false;
       }
     }
   });
+
+  const lowerPortalsSign = createSignboard({
+    width: 10,
+    height: 5,
+    fontSize: 16,
+    align: 'center',
+    canvasWidth: 400,
+    canvasHeight: 200,
+    textColor: '#888',
+    text: "These portals go to worlds that aren't part of the main game.\n\nSome of them were created early during development and may be janky or unfinished.\n\nMost have no objective, but feel free to explore them",
+  });
+  lowerPortalsSign.position.set(-47.2, -33.6, 19);
+  lowerPortalsSign.rotation.set(0, Math.PI / 2, 0);
+  viz.scene.add(lowerPortalsSign);
 
   const jumps = loadedWorld.getObjectByName('jumps') as THREE.Mesh;
   jumps.visible = false;
