@@ -1,0 +1,30 @@
+---
+# Telemetry settings.
+telemetry:
+  # Metrics settings.
+  metrics:
+    # How the metrics service identifier defined in `ServiceInfo` is used
+    # for this service.
+    service_name_format: metric_prefix
+    # Whether to report optional metrics in the telemetry server.
+    report_optional: false
+  # Memory profiler settings
+  memory_profiler:
+    # Enables memory profiling
+    enabled: false
+    # Value between `0` and `64` which specifies the number of bytes of
+    # allocation activity between samples as `number_of_bytes = 2 ^ sample_interval`.
+    #
+    # Increasing the `sample_interval` decreases profile fidelity, but also decreases the
+    # computational overhead.
+    #
+    # The default is `19` (2 ^ 19 = 512KiB).
+    sample_interval: 19
+  # Server settings.
+  server:
+    # Enables telemetry server
+    enabled: true
+    # Telemetry server address.
+    addr: "127.0.0.1:5804"
+# Port that the HTTP server will listen on.
+port: 5803

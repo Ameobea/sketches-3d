@@ -9,7 +9,7 @@ import TimerDisplay from './TimerDisplay.svelte';
 import type { ScoreThresholds } from './TimeDisplay.svelte';
 import TimeDisplay from './TimeDisplay.svelte';
 import type { SceneConfig } from '../scenes';
-import { API } from 'src/api/client';
+import { API, checkLogin, LoggedInUserID, MetricsAPI } from 'src/api/client';
 import type { TransparentWritable } from '../util/TransparentWritable';
 import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { Scheduler, type SchedulerHandle } from '../bulletHell/Scheduler';
@@ -162,15 +162,18 @@ export class ParkourManager {
   };
 
   private reset = () => {
+    const elapsedTimeSeconds = this.viz.clock.getElapsedTime() - (this.curRunStartTimeSeconds ?? 0);
     this.resetDashes();
     this.resetCheckpoints();
     this.viz.fpCtx!.teleportPlayer(this.locations.spawn.pos, this.locations.spawn.rot);
     this.viz.fpCtx!.reset();
+    const wasStarted = this.curRunStartTimeSeconds !== null;
     this.curRunStartTimeSeconds = null;
     this.lastResetTime = this.viz.clock.getElapsedTime();
     if (this.winState?.displayComp) {
       unmount(this.winState.displayComp);
     }
+    const wasWin = !!this.winState;
     this.winState = null;
     this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
 
@@ -186,6 +189,16 @@ export class ParkourManager {
 
     for (const cb of this.onStartCbs) {
       cb();
+    }
+
+    if (!wasWin && wasStarted) {
+      console.log({ elapsedTimeSeconds });
+      (async () => {
+        if (!LoggedInUserID.current) {
+          await checkLogin();
+        }
+        MetricsAPI.recordRestart(this.mapID, LoggedInUserID.current, elapsedTimeSeconds);
+      })();
     }
   };
 
@@ -216,6 +229,13 @@ export class ParkourManager {
         timeDisplayProps.userID = res.playerId ?? null;
       })
       .catch(() => {});
+
+    (async () => {
+      if (!LoggedInUserID.current) {
+        await checkLogin();
+      }
+      MetricsAPI.recordPlayCompletion(this.mapID, true, time, LoggedInUserID.current);
+    })();
   };
 
   public addTicker = (ticker: Ticker) => {

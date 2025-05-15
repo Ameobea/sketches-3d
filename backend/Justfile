@@ -1,0 +1,22 @@
+code:
+  RUSTFLAGS="--cfg tokio_unstable --cfg foundations_unstable" code .
+
+generate-default-config:
+  RUSTFLAGS="--cfg tokio_unstable --cfg foundations_unstable" RUST_LOG=debug cargo run -- --generate default-config.yml
+
+docker-build:
+  docker build --network host -t ameo/dream-backend:latest .
+
+run:
+  RUSTFLAGS="--cfg tokio_unstable --cfg foundations_unstable" RUST_LOG=debug cargo run -- --config=config.yml
+
+release:
+  RUSTFLAGS="--cfg tokio_unstable --cfg foundations_unstable" RUST_LOG=debug cargo run --release -- --config=config.yml
+
+build-and-deploy:
+  #!/bin/bash
+
+  just docker-build
+  docker save ameo/dream-backend:latest | bzip2 > /tmp/dream-backend.tar.bz2
+  scp /tmp/dream-backend.tar.bz2 debian@ameo.dev:/tmp/dream-backend.tar.bz2
+  ssh debian@ameo.dev -t 'cat /tmp/dream-backend.tar.bz2 | bunzip2 | docker load && docker kill dream-backend && docker container rm dream-backend && docker run   --name dream-backend   --restart=always   -d   --net host   -v /opt/conf/dream/dream-backend.yml:/opt/conf.yml   -e RUST_LOG=info   ameo/dream-backend:latest   /usr/local/bin/dream-backend --config /opt/conf.yml && rm /tmp/dream-backend.tar.bz2'
