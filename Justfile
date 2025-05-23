@@ -38,6 +38,9 @@ preview:
 deploy:
   phost update 3d patch build
 
+build-and-deploy:
+  just build && just deploy
+
 # ---
 
 build-basalt:

@@ -9,10 +9,11 @@ import TimerDisplay from './TimerDisplay.svelte';
 import type { ScoreThresholds } from './TimeDisplay.svelte';
 import TimeDisplay from './TimeDisplay.svelte';
 import type { SceneConfig } from '../scenes';
-import { API, checkLogin, LoggedInUserID, MetricsAPI } from 'src/api/client';
-import type { TransparentWritable } from '../util/TransparentWritable';
+import { API, MetricsAPI } from 'src/api/client';
+import { rwritable, type TransparentWritable } from '../util/TransparentWritable';
 import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { Scheduler, type SchedulerHandle } from '../bulletHell/Scheduler';
+import { getAmmoJS } from '../collision';
 
 export interface ParkourMaterials {
   dashToken: {
@@ -49,12 +50,13 @@ interface MakeSliderArgs {
 
 export class ParkourManager {
   private viz: Viz;
+  private loadedWorld: THREE.Group;
   private locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } };
   private scoreThresholds: ScoreThresholds;
   private mapID: string;
   private useExternalVelocity: boolean;
 
-  private curDashCharges: TransparentWritable<number>;
+  private curDashCharges: TransparentWritable<number> = rwritable(0);
   private lastResetTime: number = 0;
   private curRunStartTimeSeconds: number | null = null;
   private winState: { winTimeSeconds: number; displayComp: any } | null = null;
@@ -63,8 +65,12 @@ export class ParkourManager {
   private timerDisplay!: any;
   private scheduler: Scheduler = new Scheduler();
 
-  private resetDashes: () => void;
-  private resetCheckpoints: () => void;
+  private resetDashes: () => void = () => {
+    throw new Error('materials not set yet');
+  };
+  private resetCheckpoints: () => void = () => {
+    throw new Error('materials not set yet');
+  };
 
   constructor(
     viz: Viz,
@@ -72,31 +78,24 @@ export class ParkourManager {
     vizConf: VizConfig,
     locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } },
     scoreThresholds: ScoreThresholds,
-    materials: ParkourMaterials,
+    materials: ParkourMaterials | undefined,
     mapID: string,
     useExternalVelocity: boolean
   ) {
+    // pre-load physics engine since we know we'll need it and the viz can't start loading that until we return from
+    // `processLoadedScene` function
+    getAmmoJS();
+
     this.viz = viz;
+    this.loadedWorld = loadedWorld;
     this.locations = locations;
     this.scoreThresholds = scoreThresholds;
     this.mapID = mapID;
     this.useExternalVelocity = useExternalVelocity;
 
-    const {
-      ctx: dashTokensCtx,
-      dashCharges: curDashCharges,
-      reset: resetDashes,
-    } = initDashTokens(viz, loadedWorld, materials.dashToken.core, materials.dashToken.ring);
-    this.curDashCharges = curDashCharges;
-    this.resetCheckpoints = initCheckpoints(
-      viz,
-      loadedWorld,
-      materials.checkpoint,
-      dashTokensCtx,
-      curDashCharges,
-      this.onWin
-    );
-    this.resetDashes = resetDashes;
+    if (materials) {
+      this.setMaterials(materials);
+    }
 
     this.initTimer();
 
@@ -135,6 +134,29 @@ export class ParkourManager {
 
     viz.registerDestroyedCb(this.destroy);
   }
+
+  public setMaterials = (materials: ParkourMaterials) => {
+    const {
+      ctx: dashTokensCtx,
+      dashCharges: curDashCharges,
+      reset: resetDashes,
+    } = initDashTokens(
+      this.viz,
+      this.loadedWorld,
+      materials.dashToken.core,
+      materials.dashToken.ring,
+      this.curDashCharges
+    );
+    this.resetCheckpoints = initCheckpoints(
+      this.viz,
+      this.loadedWorld,
+      materials.checkpoint,
+      dashTokensCtx,
+      curDashCharges,
+      this.onWin
+    );
+    this.resetDashes = resetDashes;
+  };
 
   private initTimer = () => {
     const target = document.createElement('div');
@@ -192,13 +214,7 @@ export class ParkourManager {
     }
 
     if (!wasWin && wasStarted) {
-      console.log({ elapsedTimeSeconds });
-      (async () => {
-        if (!LoggedInUserID.current) {
-          await checkLogin();
-        }
-        MetricsAPI.recordRestart(this.mapID, LoggedInUserID.current, elapsedTimeSeconds);
-      })();
+      MetricsAPI.recordRestart(this.mapID, elapsedTimeSeconds);
     }
   };
 
@@ -230,12 +246,7 @@ export class ParkourManager {
       })
       .catch(() => {});
 
-    (async () => {
-      if (!LoggedInUserID.current) {
-        await checkLogin();
-      }
-      MetricsAPI.recordPlayCompletion(this.mapID, true, time, LoggedInUserID.current);
-    })();
+    MetricsAPI.recordPlayCompletion(this.mapID, true, time);
   };
 
   public addTicker = (ticker: Ticker) => {

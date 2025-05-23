@@ -133,10 +133,7 @@ const loadTextures = async () => {
     towerPlinthStatueTexture => generateNormalMapFromTexture(towerPlinthStatueTexture, {}, true)
   );
 
-  const towerCeilingTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1761839491.png'
-  );
+  const towerCeilingTextureP = loadTexture(loader, 'https://i.ameo.link/d1k.avif');
   const towerCeilingTextureCombinedDiffuseNormalTextureP = towerCeilingTextureP.then(towerCeilingTexture =>
     generateNormalMapFromTexture(towerCeilingTexture, {}, true)
   );
@@ -160,16 +157,13 @@ const loadTextures = async () => {
   const dungeonWallTextureP = loadTexture(
     loader,
     // 'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.3723778949.png'
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1999177113.png'
+    'https://i.ameo.link/d1j.avif'
   );
   const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>
     generateNormalMapFromTexture(dungeonWallTexture, {}, true)
   );
 
-  const dungeonCeilingTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000005.2204019256.png'
-  );
+  const dungeonCeilingTextureP = loadTexture(loader, 'https://i.ameo.link/d1l.avif');
   const dungeonCeilingTextureCombinedDiffuseNormalTextureP = dungeonCeilingTextureP.then(
     dungeonCeilingTexture => generateNormalMapFromTexture(dungeonCeilingTexture, {}, true)
   );

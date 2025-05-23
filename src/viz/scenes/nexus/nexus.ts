@@ -8,11 +8,7 @@ import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { BlendFunction, BloomEffect, EffectPass, ToneMappingEffect, ToneMappingMode } from 'postprocessing';
-import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { DashToken, initDashTokenGraphics } from '../../parkour/DashToken';
-import { buildGoldMaterial, buildGreenMosaic2Material } from '../../parkour/regions/pylons/materials';
-import type { BulletPhysics } from 'src/viz/collision';
 import {
   buildGrayFossilRockMaterial,
   GrayFossilRockTextures,
@@ -22,6 +18,8 @@ import { mix, smoothstep } from 'src/viz/util/util';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildCheckpointMaterial } from 'src/viz/materials/Checkpoint/CheckpointMaterial';
 import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
+import { getAmmoJS } from 'src/viz/collision';
+import { MetricsAPI } from 'src/api/client';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -38,45 +36,13 @@ const loadTextures = async () => {
   const platformTexsP = GrayFossilRockTextures.get(loader);
   const platformMatP = buildGrayFossilRockMaterial(loader);
 
-  const towerPlinthPedestalTextureP = loadTexture(loader, 'https://i.ameo.link/cwa.avif');
-  const towerPlinthPedestalTextureCombinedDiffuseNormalTextureP = towerPlinthPedestalTextureP.then(
-    towerPlinthPedestalTexture => generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
-  );
-
-  const lazyMatsP = Promise.all([
-    buildGreenMosaic2Material(loader, { ambientLightScale: 0.1 }),
-    buildGoldMaterial(loader, { ambientLightScale: 0.3 }),
-  ]).then(async ([greenMosaic2Material, goldMaterial]) => {
-    const plinthMaterial = buildCustomShader(
-      {
-        color: new THREE.Color(0x292929),
-        metalness: 0.18,
-        roughness: 0.82,
-        map: await towerPlinthPedestalTextureCombinedDiffuseNormalTextureP,
-        uvTransform: new THREE.Matrix3().scale(0.8, 0.8),
-        mapDisableDistance: null,
-        normalScale: 5.2,
-        ambientLightScale: 1.8,
-      },
-      {},
-      {
-        usePackedDiffuseNormalGBA: true,
-        useGeneratedUVs: true,
-        randomizeUVOffset: true,
-        tileBreaking: { type: 'neyret', patchScale: 0.9 },
-      }
-    );
-
-    return { plinthMaterial, greenMosaic2Material, goldMaterial };
-  });
-
   const [platformMat, bgTexture, { platformDiffuse, platformNormal }] = await Promise.all([
     platformMatP,
     bgTextureP,
     platformTexsP,
   ]);
 
-  return { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal, loader };
+  return { platformMat, bgTexture, platformDiffuse, platformNormal, loader };
 };
 
 export const processLoadedScene = async (
@@ -84,6 +50,10 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
+  // kick off request for physics engine wasm early.  This normally has to wait until after
+  // this function returns, but we know we're going to be first-person so we can start it now
+  getAmmoJS();
+
   const ambientLight = new THREE.AmbientLight(0xffffff, 6.4);
   viz.scene.add(ambientLight);
 
@@ -158,7 +128,7 @@ export const processLoadedScene = async (
     }
   }
 
-  const { platformMat, bgTexture, lazyMatsP, platformDiffuse, platformNormal, loader } = await loadTextures();
+  const { platformMat, bgTexture, platformDiffuse, platformNormal, loader } = await loadTextures();
   viz.scene.background = bgTexture;
 
   const platform = loadedWorld.getObjectByName('platform') as THREE.Mesh;
@@ -309,10 +279,10 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       const def = PortalDefs[key];
 
       if (def) {
-        fpCtx.addPlayerRegionContactCb(
-          { type: 'convexHull', mesh: portal },
-          () => void goto(`/${def.scene}${window.location.origin.includes('localhost') ? '' : '.html'}`)
-        );
+        fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          MetricsAPI.recordPortalTravel(def.scene);
+          goto(`/${def.scene}${window.location.origin.includes('localhost') ? '' : '.html'}`);
+        });
       } else {
         portal.visible = false;
       }
@@ -332,35 +302,6 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   lowerPortalsSign.position.set(-47.2, -33.6, 19);
   lowerPortalsSign.rotation.set(0, Math.PI / 2, 0);
   viz.scene.add(lowerPortalsSign);
-
-  const jumps = loadedWorld.getObjectByName('jumps') as THREE.Mesh;
-  jumps.visible = false;
-  (loadedWorld.getObjectByName('dash_token')! as THREE.Mesh).userData.nocollide = true;
-
-  lazyMatsP.then(({ plinthMaterial, greenMosaic2Material, goldMaterial }) => {
-    jumps.material = plinthMaterial;
-    jumps.visible = true;
-
-    const dashToken = initDashTokenGraphics(loadedWorld, greenMosaic2Material, goldMaterial);
-    const cb = (fpCtx: BulletPhysics) => {
-      const core = (dashToken.getObjectByName('dash_token_core')! as THREE.Mesh).clone();
-      core.position.copy(dashToken.position);
-
-      fpCtx.addPlayerRegionContactCb({ type: 'mesh', mesh: core }, () =>
-        goto(`/pk_pylons${window.location.origin.includes('localhost') ? '' : '.html'}`)
-      );
-    };
-    if (viz.fpCtx) {
-      cb(viz.fpCtx);
-    } else {
-      viz.collisionWorldLoadedCbs.push(cb);
-    }
-
-    const wrappedDashToken = new DashToken(viz, dashToken);
-    wrappedDashToken.userData.nocollide = true;
-    wrappedDashToken.position.copy(dashToken.position);
-    viz.scene.add(wrappedDashToken);
-  });
 
   const invisibleStairSlants = loadedWorld.getObjectByName('invisible_stair_slants') as THREE.Mesh;
   invisibleStairSlants.removeFromParent();

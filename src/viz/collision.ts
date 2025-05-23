@@ -39,7 +39,10 @@ import { clamp } from './util/util.js';
 let ammojs: Promise<AmmoInterface> | null = null;
 
 export const getAmmoJS = async () => {
-  if (ammojs) return ammojs;
+  if (ammojs) {
+    return ammojs;
+  }
+
   ammojs = import('../ammojs/ammo.wasm.js').then(mod => (mod as any).Ammo.apply({}));
   return ammojs;
 };
@@ -705,14 +708,14 @@ export class BulletPhysics {
     //
     // we could re-use idential shape objects between collision objs in the future as an optimization, at which
     // point we would need to refcount them or something and not destroy them here.
-    const collisionShape = collisionObj.getCollisionShape();
-    if (collisionShape) {
-      try {
+    try {
+      const collisionShape = collisionObj.getCollisionShape();
+      if (collisionShape) {
         this.Ammo.destroy(collisionShape);
-      } catch (err) {
-        console.error(`Error destroying collision shape for mesh ${meshName ?? '<Unknown>'}`);
-        console.error(err);
       }
+    } catch (err) {
+      console.error(`Error destroying collision shape for mesh ${meshName ?? '<Unknown>'}`, { collisionObj });
+      console.error(err);
     }
     this.Ammo.destroy(collisionObj);
   };

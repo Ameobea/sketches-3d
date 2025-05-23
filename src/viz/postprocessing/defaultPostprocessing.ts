@@ -321,7 +321,7 @@ export const configureDefaultPostprocessingPipeline = (
     // point during the setup of this postprocessing pipeline.
     //
     // So, we have to re-populate the shadowmap so that it can be used to power the godrays and, well, shadows.
-    if (!didRender && viz.renderer.shadowMap.enabled) {
+    if (!didRender && viz.renderer.shadowMap.enabled && !autoUpdateShadowMap) {
       didRender = true;
       populateShadowMap(viz, autoUpdateShadowMap);
     }

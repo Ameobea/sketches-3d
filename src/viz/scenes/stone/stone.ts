@@ -167,7 +167,7 @@ export const processLoadedScene = async (
     gemTexture: 'https://i.ameo.link/bfy.jpg',
     gemRoughness: 'https://i.ameo.link/bfz.jpg',
     gemNormal: 'https://i.ameo.link/bg0.jpg',
-    glossyBlackBricksColor: 'https://i.ameo.link/bip.jpg',
+    glossyBlackBricksColor: 'https://i.ameo.link/d1m.avif',
     glossyBlackBricksNormal: 'https://i.ameo.link/biq.jpg',
     glossyBlackBricksRoughness: 'https://i.ameo.link/bir.jpg',
     goldFleckedObsidianColor: 'https://i.ameo.link/biv.jpg',

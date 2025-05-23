@@ -1,26 +1,12 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
-  import { ResponseError } from 'src/api';
-  import { API } from 'src/api/client';
+  import { API, getUser, refetchUser, setUserLoggedOut } from 'src/api/client';
 
   export let onBack: () => void;
 
   $: curUser = createQuery({
     queryKey: ['user'],
-    queryFn: async () => {
-      try {
-        return await API.getPlayer();
-      } catch (err) {
-        if (err instanceof ResponseError) {
-          if (err.response.status === 401) {
-            return null;
-          }
-        }
-
-        console.error('Error fetching user data:', err);
-        throw err;
-      }
-    },
+    queryFn: () => getUser(),
     refetchInterval: 25 * 60 * 1000,
   });
 
@@ -28,6 +14,12 @@
 
   const logout = async () => {
     await API.logOutPlayer();
+
+    username = '';
+    password = '';
+    passwordConfirm = '';
+
+    setUserLoggedOut();
     $curUser.refetch();
   };
 
@@ -42,8 +34,14 @@
 
   let username = '';
   let password = '';
+  let passwordConfirm = '';
 
   const submitLogin = async () => {
+    if (loginMode === 'Register' && password !== passwordConfirm) {
+      alert('Passwords do not match.');
+      return;
+    }
+
     try {
       if (loginMode === 'Login') {
         await API.login({ playerLogin: { username: username.toLowerCase(), password } });
@@ -51,7 +49,13 @@
         await API.createPlayer({ playerLogin: { username: username.toLowerCase(), password } });
         await API.login({ playerLogin: { username: username.toLowerCase(), password } });
       }
+
+      refetchUser();
       $curUser.refetch();
+
+      username = '';
+      password = '';
+      passwordConfirm = '';
     } catch (error) {
       console.error('Error during login/register:', error);
       alert(
@@ -63,15 +67,19 @@
   };
 </script>
 
-{#if isLoggedIn}
+{#if $curUser.fetchStatus === 'fetching'}
   <div class="user-info">
-    <span>Logged in as: {$curUser.data?.username}</span>
+    <span>Loading...</span>
+  </div>
+{:else if isLoggedIn}
+  <div class="user-info">
+    <span>Logged in as: {$curUser.data?.username ?? null}</span>
     <button class="menu-items-stack-item" style="font-size: 15px; padding: 2px 8px" on:click={logout}>
       Logout
     </button>
   </div>
 {:else if loginMode}
-  <div class="login-form">
+  <div class="login-form" style:height={loginMode === 'Register' ? '267px' : '210px'}>
     <h3 style="margin-bottom: -4px;">{loginMode}</h3>
     <input
       class="menu-items-stack-item"
@@ -95,6 +103,19 @@
         }
       }}
     />
+    {#if loginMode === 'Register'}
+      <input
+        class="menu-items-stack-item"
+        type="password"
+        placeholder="Confirm Password"
+        bind:value={passwordConfirm}
+        on:keypress={e => {
+          if (e.key === 'Enter') {
+            submitLogin();
+          }
+        }}
+      />
+    {/if}
 
     <div class="side-by-side-buttons">
       <button class="menu-items-stack-item" on:click={() => (loginMode = null)} style="color: #ccc">
@@ -119,7 +140,8 @@
     flex-direction: column;
     align-items: center;
     gap: 6px;
-    height: 90px;
+    min-height: 90px;
+    height: 100%;
   }
 
   .side-by-side-buttons {
@@ -144,7 +166,6 @@
   .login-form {
     display: flex;
     flex-direction: column;
-    height: 210px;
     gap: 10px;
   }
 </style>

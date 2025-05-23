@@ -10,6 +10,7 @@ import {
 } from 'src/viz/shaders/customShader';
 import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+import { getNormalGenWorkers } from 'src/viz/workerPool';
 
 const GreenMosaic2Textures = new AsyncOnce((loader: THREE.ImageBitmapLoader) =>
   loadNamedTextures(loader, {
@@ -116,6 +117,9 @@ export const buildPylonsMaterials = async (
   loadedWorld: THREE.Group,
   loader = new THREE.ImageBitmapLoader()
 ) => {
+  // kick off loading of the normal gen worker pool so that can be ready as soon as possible
+  getNormalGenWorkers();
+
   const bgTextureP = (async () => {
     const bgImage = await loader.loadAsync('https://i.ameo.link/bqn.jpg');
     const bgTexture = new THREE.Texture(bgImage);
@@ -125,17 +129,17 @@ export const buildPylonsMaterials = async (
   })();
 
   const [
+    pylonMaterial,
     bgTexture,
     { shinyPatchworkStoneAlbedo, shinyPatchworkStoneNormal, shinyPatchworkStoneRoughness },
     greenMosaic2Material,
     goldMaterial,
-    pylonMaterial,
   ] = await Promise.all([
+    buildPylonMaterial(loader),
     bgTextureP,
     ShinyPatchworkStoneTextures.get(loader),
     buildGreenMosaic2Material(loader),
     buildGoldMaterial(loader),
-    buildPylonMaterial(loader),
   ]);
 
   const checkpointMat = buildCustomShader(

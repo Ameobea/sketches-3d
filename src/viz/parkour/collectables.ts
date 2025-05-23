@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
-import type { ContactRegion } from 'src/viz/collision';
+import type { BulletPhysics, ContactRegion } from 'src/viz/collision';
 
 export class CollectablesCtx {
   public hiddenCollectables: Set<THREE.Object3D> = new Set();
@@ -70,6 +70,32 @@ export const initCollectables = ({
     } else {
       if (obj instanceof THREE.Mesh && obj.name.includes(collectableName)) {
         obj.userData.nocollide = true;
+        if (obj.userData.rigidBody) {
+          const cb = (fpCtx: BulletPhysics) => {
+            fpCtx.removeCollisionObject(obj.userData.rigidBody);
+            delete obj.userData.rigidBody;
+          };
+          if (viz.fpCtx) {
+            cb(viz.fpCtx);
+          } else {
+            viz.collisionWorldLoadedCbs.push(cb);
+          }
+        }
+
+        obj.traverse(child => {
+          if (child.userData.rigidBody) {
+            const cb = (fpCtx: BulletPhysics) => {
+              fpCtx.removeCollisionObject(child.userData.rigidBody);
+              delete child.userData.rigidBody;
+            };
+            if (viz.fpCtx) {
+              cb(viz.fpCtx);
+            } else {
+              viz.collisionWorldLoadedCbs.push(cb);
+            }
+          }
+        });
+
         collectables.push(obj);
         if (material) {
           obj.material = material;
@@ -79,7 +105,7 @@ export const initCollectables = ({
   });
 
   const ctx = new CollectablesCtx();
-  viz.collisionWorldLoadedCbs.push(fpCtx => {
+  const cb = (fpCtx: BulletPhysics) => {
     for (const collectable of collectables) {
       const region: ContactRegion = ((): ContactRegion => {
         if (replacementObject && !(collectable instanceof THREE.Mesh)) {
@@ -119,7 +145,12 @@ export const initCollectables = ({
         }
       });
     }
-  });
+  };
+  if (viz.fpCtx) {
+    cb(viz.fpCtx);
+  } else {
+    viz.collisionWorldLoadedCbs.push(cb);
+  }
 
   return ctx;
 };

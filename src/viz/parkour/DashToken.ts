@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { initCollectables } from './collectables';
 import { rwritable } from '../util/TransparentWritable';
+import type { BulletPhysics } from '../collision';
 
 export class DashToken extends THREE.Object3D {
   private viz: Viz;
@@ -14,6 +15,31 @@ export class DashToken extends THREE.Object3D {
     this.base = base;
 
     this.scale.setScalar(0.9);
+
+    if (base.userData.rigidBody) {
+      const cb = (fpCtx: BulletPhysics) => {
+        fpCtx.removeCollisionObject(base.userData.rigidBody);
+        delete base.userData.rigidBody;
+      };
+      if (viz.fpCtx) {
+        cb(viz.fpCtx);
+      } else {
+        viz.collisionWorldLoadedCbs.push(cb);
+      }
+    }
+    base.traverse(child => {
+      if (child.userData.rigidBody) {
+        const cb = (fpCtx: BulletPhysics) => {
+          fpCtx.removeCollisionObject(child.userData.rigidBody);
+          delete child.userData.rigidBody;
+        };
+        if (viz.fpCtx) {
+          cb(viz.fpCtx);
+        } else {
+          viz.collisionWorldLoadedCbs.push(cb);
+        }
+      }
+    });
 
     const core = base.children.find(c => c.name.includes('core'))!.clone();
     const rings = base.children.filter(c => c.name.includes('ring')).map(obj => obj.clone()) as THREE.Mesh[];
@@ -114,9 +140,9 @@ export const initDashTokens = (
   viz: Viz,
   loadedWorld: THREE.Group,
   coreMaterial: THREE.Material,
-  ringMaterial: THREE.Material
+  ringMaterial: THREE.Material,
+  dashCharges = rwritable(0)
 ) => {
-  const dashCharges = rwritable(0);
   const base = initDashTokenGraphics(loadedWorld, coreMaterial, ringMaterial);
   const dashTokenBase = new DashToken(viz, base);
   const ctx = initCollectables({

@@ -3,12 +3,8 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
-import {
-  buildGreenMosaic2Material,
-  buildPylonsMaterials,
-  ShinyPatchworkStoneTextures,
-} from 'src/viz/parkour/regions/pylons/materials';
+import { ParkourManager, type ParkourMaterials } from 'src/viz/parkour/ParkourManager.svelte';
+import { buildPylonsMaterials, ShinyPatchworkStoneTextures } from 'src/viz/parkour/regions/pylons/materials';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/TimeDisplay.svelte';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
@@ -82,229 +78,25 @@ const makeRotatingPlatforms = (
   }
 };
 
-const setupScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig) => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.58);
-  viz.scene.add(ambientLight);
-
-  const sunPos = new THREE.Vector3(20, 50, -20);
-  const sunLight = new THREE.DirectionalLight(0xffffff, 4.3);
-  const shadowMapSize = {
-    [GraphicsQuality.Low]: 1024,
-    [GraphicsQuality.Medium]: 2048,
-    [GraphicsQuality.High]: 4096,
-  }[vizConf.graphics.quality];
-  sunLight.castShadow = true;
-  // sunLight.shadow.bias = 0.01;
-  sunLight.shadow.mapSize.width = shadowMapSize;
-  sunLight.shadow.mapSize.height = shadowMapSize;
-  sunLight.shadow.camera.near = 0.1;
-  sunLight.shadow.camera.far = 200;
-  sunLight.shadow.camera.left = -250;
-  sunLight.shadow.camera.right = 250;
-  sunLight.shadow.camera.top = 250;
-  sunLight.shadow.camera.bottom = -250;
-  sunLight.shadow.camera.updateProjectionMatrix();
-  sunLight.matrixWorldNeedsUpdate = true;
-  sunLight.updateMatrixWorld();
-  sunLight.position.copy(sunPos);
-  viz.scene.add(sunLight);
-
-  // const shadowCameraHelper = new THREE.CameraHelper(sunLight.shadow.camera);
-  // viz.scene.add(shadowCameraHelper);
-
-  const spotlight = new THREE.SpotLight(0xf2dd99, 5.5);
-  spotlight.position.set(-75, 100, 75);
-  spotlight.angle = Math.PI / 8;
-  spotlight.penumbra = 0.5;
-  spotlight.decay = 0;
-  spotlight.distance = 0;
-  spotlight.castShadow = false;
-  spotlight.target.position.set(-100, 20, 60);
-  spotlight.target.updateMatrixWorld();
-  viz.scene.add(spotlight);
-  viz.scene.add(spotlight.target);
-};
-
-const loadCustomMats = async (loader: THREE.ImageBitmapLoader) => {
-  const towerCeilingTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1761839491.png'
-  );
-  const towerCeilingCombinedDiffuseNormalTextureP = towerCeilingTextureP.then(towerCeilingTexture =>
-    generateNormalMapFromTexture(towerCeilingTexture, {}, true)
-  );
-  const towerTrimTextureP = loadTexture(
-    loader,
-    'https://pub-80300747d44d418ca912329092f69f65.r2.dev/img-samples/000008.1999177113.png'
-  );
-  const towerTrimTextureCombinedDiffuseNormalTextureP = towerTrimTextureP.then(towerTrimTexture =>
-    generateNormalMapFromTexture(towerTrimTexture, {}, true)
-  );
-
-  const towerPlinthArchTextureP = loadTexture(loader, 'https://i.ameo.link/bip.jpg');
-  const towerPlinthArchTextureCombinedDiffuseNormalTextureP = towerPlinthArchTextureP.then(
-    towerPlinthArchTexture => generateNormalMapFromTexture(towerPlinthArchTexture, {}, true)
-  );
-
-  const [
-    towerCeilingCombinedDiffuseNormalTexture,
-    towerTrimCombinedDiffuseNormalTexture,
-    towerPlinthArchTexture,
-    { shinyPatchworkStoneAlbedo, shinyPatchworkStoneNormal, shinyPatchworkStoneRoughness },
-  ] = await Promise.all([
-    towerCeilingCombinedDiffuseNormalTextureP,
-    towerTrimTextureCombinedDiffuseNormalTextureP,
-    towerPlinthArchTextureCombinedDiffuseNormalTextureP,
-    ShinyPatchworkStoneTextures.get(loader),
-  ]);
-
-  const blockerInteriorMaterial = buildCustomShader(
-    {
-      color: new THREE.Color(0xffffff),
-      metalness: 0.5,
-      roughness: 0.7,
-      iridescence: 0.5,
-      map: shinyPatchworkStoneAlbedo,
-      normalMap: shinyPatchworkStoneNormal,
-      roughnessMap: shinyPatchworkStoneRoughness,
-      uvTransform: new THREE.Matrix3().scale(1.6, 1.6),
-      mapDisableDistance: null,
-      normalScale: 1.2,
-      ambientLightScale: 2,
-    },
-    {
-      colorShader: `
-      vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-        return vec4(baseColor.gbr, 1.);
-      }`,
-      iridescenceShader: `
-      float getCustomIridescence(vec3 pos, vec3 normal, float baseIridescence, float curTimeSeconds, SceneCtx ctx) {
-        float irid = sin(curTimeSeconds) * 0.5 + 0.5;
-        return irid;
-      }`,
-    },
-    {}
-  );
-
-  const towerMat = buildCustomShader(
-    {
-      color: new THREE.Color(0x8b8b8c),
-      metalness: 0.001,
-      roughness: 0.97,
-      map: towerCeilingCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(20.14, 20.14),
-      mapDisableDistance: null,
-      normalScale: 1,
-    },
-    {},
-    {
-      usePackedDiffuseNormalGBA: true,
-      tileBreaking: { type: 'neyret', patchScale: 2 },
-    }
-  );
-
-  const towerTrimMat = buildCustomShader(
-    {
-      color: new THREE.Color(0xa7a6a5),
-      metalness: 0,
-      roughness: 1,
-      map: towerTrimCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(22.14, 22.14),
-      mapDisableDistance: null,
-      normalScale: 1,
-    },
-    {},
-    {
-      usePackedDiffuseNormalGBA: true,
-      tileBreaking: { type: 'neyret', patchScale: 2 },
-    }
-  );
-
-  const plinthArchMat = buildCustomShader(
-    {
-      color: new THREE.Color(0xcccccc2),
-      metalness: 0.001,
-      roughness: 0.77,
-      map: towerPlinthArchTexture,
-      uvTransform: new THREE.Matrix3().scale(0.05 * 2, 0.1 * 2),
-      mapDisableDistance: null,
-      normalScale: 4,
-      ambientLightScale: 1,
-    },
-    {},
-    {
-      usePackedDiffuseNormalGBA: true,
-      useGeneratedUVs: true,
-      // useTriplanarMapping: true,
-      // tileBreaking: { type: 'neyret', patchScale: 2 },
-    }
-  );
-
-  return { towerMat, towerTrimMat, plinthArchMat, blockerInteriorMaterial };
-};
-
-export const processLoadedScene = async (
+const setupScene = async (
   viz: Viz,
   loadedWorld: THREE.Group,
-  vizConf: VizConfig
-): Promise<SceneConfig> => {
+  vizConf: VizConfig,
+  pkManager: ParkourManager
+) => {
   const loader = new THREE.ImageBitmapLoader();
   const [
-    { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial, pylonMaterial },
+    { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial },
     { towerMat, towerTrimMat, plinthArchMat, blockerInteriorMaterial },
   ] = await Promise.all([buildPylonsMaterials(viz, loadedWorld, loader), loadCustomMats(loader)]);
 
-  // TODO
-  const scoreThresholds: ScoreThresholds = {
-    [Score.SPlus]: 45,
-    [Score.S]: 50,
-    [Score.A]: 56,
-    [Score.B]: 65,
+  const pkMaterials: ParkourMaterials = {
+    dashToken: { core: greenMosaic2Material, ring: goldMaterial },
+    checkpoint: checkpointMat,
   };
+  pkManager.setMaterials(pkMaterials);
 
-  loadedWorld.traverse(obj => {
-    if (!(obj instanceof THREE.Mesh)) {
-      return;
-    }
-
-    if (obj.name.startsWith('tower')) {
-      obj.material = towerMat;
-    } else if (obj.name.startsWith('trim')) {
-      obj.material = towerTrimMat;
-    } else if (obj.name.startsWith('ridge')) {
-      obj.material = shinyPatchworkStoneMaterial;
-    } else if (obj.name.startsWith('jump_plat')) {
-      obj.material = plinthArchMat;
-    } else if (obj.name.startsWith('obstacle_blocks')) {
-      obj.material = plinthArchMat;
-    } else if (obj.name.startsWith('obstacle_soil')) {
-      obj.material = shinyPatchworkStoneMaterial;
-    } else if (obj.name.startsWith('top_pads')) {
-      obj.material = shinyPatchworkStoneMaterial;
-    }
-  });
-
-  const pkManager = new ParkourManager(
-    viz,
-    loadedWorld,
-    vizConf,
-    locations,
-    scoreThresholds,
-    {
-      dashToken: { core: greenMosaic2Material, ring: goldMaterial },
-      checkpoint: checkpointMat,
-    },
-    'stronghold',
-    true
-  );
-
-  viz.collisionWorldLoadedCbs.push(() => {
-    const placeholder = loadedWorld.getObjectByName('placeholder') as THREE.Mesh | undefined;
-    if (placeholder) {
-      placeholder.removeFromParent();
-      viz.fpCtx!.removeCollisionObject(placeholder.userData.rigidBody);
-    }
-
+  const cb = () => {
     const plat1 = loadedWorld.getObjectByName('plat1') as THREE.Mesh;
     viz.fpCtx!.removeCollisionObject(plat1.userData.rigidBody, 'plat1');
     delete plat1.userData.rigidBody;
@@ -396,9 +188,209 @@ export const processLoadedScene = async (
 
     plat1.removeFromParent();
     plat2.removeFromParent();
-  });
+  };
 
-  setupScene(viz, loadedWorld, vizConf);
+  if (viz.fpCtx) {
+    cb();
+  } else {
+    viz.collisionWorldLoadedCbs.push(cb);
+  }
+
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.58);
+  viz.scene.add(ambientLight);
+
+  const sunPos = new THREE.Vector3(20, 50, -20);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 4.3);
+  const shadowMapSize = {
+    [GraphicsQuality.Low]: 1024,
+    [GraphicsQuality.Medium]: 2048,
+    [GraphicsQuality.High]: 4096,
+  }[vizConf.graphics.quality];
+  sunLight.castShadow = true;
+  // sunLight.shadow.bias = 0.01;
+  sunLight.shadow.mapSize.width = shadowMapSize;
+  sunLight.shadow.mapSize.height = shadowMapSize;
+  sunLight.shadow.camera.near = 0.1;
+  sunLight.shadow.camera.far = 200;
+  sunLight.shadow.camera.left = -250;
+  sunLight.shadow.camera.right = 250;
+  sunLight.shadow.camera.top = 250;
+  sunLight.shadow.camera.bottom = -250;
+  sunLight.shadow.camera.updateProjectionMatrix();
+  sunLight.matrixWorldNeedsUpdate = true;
+  sunLight.updateMatrixWorld();
+  sunLight.position.copy(sunPos);
+  viz.scene.add(sunLight);
+
+  // const shadowCameraHelper = new THREE.CameraHelper(sunLight.shadow.camera);
+  // viz.scene.add(shadowCameraHelper);
+
+  const spotlight = new THREE.SpotLight(0xf2dd99, 5.5);
+  spotlight.position.set(-75, 100, 75);
+  spotlight.angle = Math.PI / 8;
+  spotlight.penumbra = 0.5;
+  spotlight.decay = 0;
+  spotlight.distance = 0;
+  spotlight.castShadow = false;
+  spotlight.target.position.set(-100, 20, 60);
+  spotlight.target.updateMatrixWorld();
+  viz.scene.add(spotlight);
+  viz.scene.add(spotlight.target);
+
+  loadedWorld.traverse(obj => {
+    if (!(obj instanceof THREE.Mesh)) {
+      return;
+    }
+
+    if (obj.name.startsWith('tower')) {
+      obj.material = towerMat;
+    } else if (obj.name.startsWith('trim')) {
+      obj.material = towerTrimMat;
+    } else if (obj.name.startsWith('ridge')) {
+      obj.material = shinyPatchworkStoneMaterial;
+    } else if (obj.name.startsWith('jump_plat')) {
+      obj.material = plinthArchMat;
+    } else if (obj.name.startsWith('obstacle_blocks')) {
+      obj.material = plinthArchMat;
+    } else if (obj.name.startsWith('obstacle_soil')) {
+      obj.material = shinyPatchworkStoneMaterial;
+    } else if (obj.name.startsWith('top_pads')) {
+      obj.material = shinyPatchworkStoneMaterial;
+    }
+  });
+};
+
+const loadCustomMats = async (loader: THREE.ImageBitmapLoader) => {
+  const towerCeilingTextureP = loadTexture(loader, 'https://i.ameo.link/d1k.avif');
+  const towerCeilingCombinedDiffuseNormalTextureP = towerCeilingTextureP.then(towerCeilingTexture =>
+    generateNormalMapFromTexture(towerCeilingTexture, {}, true)
+  );
+  const towerTrimTextureP = loadTexture(loader, 'https://i.ameo.link/d1j.avif');
+  const towerTrimTextureCombinedDiffuseNormalTextureP = towerTrimTextureP.then(towerTrimTexture =>
+    generateNormalMapFromTexture(towerTrimTexture, {}, true)
+  );
+
+  const towerPlinthArchTextureP = loadTexture(loader, 'https://i.ameo.link/d1m.avif');
+
+  const [
+    towerCeilingCombinedDiffuseNormalTexture,
+    towerTrimCombinedDiffuseNormalTexture,
+    towerPlinthArchTexture,
+    { shinyPatchworkStoneAlbedo, shinyPatchworkStoneNormal, shinyPatchworkStoneRoughness },
+  ] = await Promise.all([
+    towerCeilingCombinedDiffuseNormalTextureP,
+    towerTrimTextureCombinedDiffuseNormalTextureP,
+    towerPlinthArchTextureP,
+    ShinyPatchworkStoneTextures.get(loader),
+  ]);
+
+  const blockerInteriorMaterial = buildCustomShader(
+    {
+      color: new THREE.Color(0xffffff),
+      metalness: 0.5,
+      roughness: 0.7,
+      iridescence: 0.5,
+      map: shinyPatchworkStoneAlbedo,
+      normalMap: shinyPatchworkStoneNormal,
+      roughnessMap: shinyPatchworkStoneRoughness,
+      uvTransform: new THREE.Matrix3().scale(1.6, 1.6),
+      mapDisableDistance: null,
+      normalScale: 1.2,
+      ambientLightScale: 2,
+    },
+    {
+      colorShader: `
+      vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+        return vec4(baseColor.gbr, 1.);
+      }`,
+      iridescenceShader: `
+      float getCustomIridescence(vec3 pos, vec3 normal, float baseIridescence, float curTimeSeconds, SceneCtx ctx) {
+        float irid = sin(curTimeSeconds) * 0.5 + 0.5;
+        return irid;
+      }`,
+    },
+    {}
+  );
+
+  const towerMat = buildCustomShader(
+    {
+      color: new THREE.Color(0x8b8b8c),
+      metalness: 0.001,
+      roughness: 0.97,
+      map: towerCeilingCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(20.14, 20.14),
+      mapDisableDistance: null,
+      normalScale: 1,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+
+  const towerTrimMat = buildCustomShader(
+    {
+      color: new THREE.Color(0xa7a6a5),
+      metalness: 0,
+      roughness: 1,
+      map: towerTrimCombinedDiffuseNormalTexture,
+      uvTransform: new THREE.Matrix3().scale(22.14, 22.14),
+      mapDisableDistance: null,
+      normalScale: 1,
+    },
+    {},
+    {
+      usePackedDiffuseNormalGBA: true,
+      tileBreaking: { type: 'neyret', patchScale: 2 },
+    }
+  );
+
+  const plinthArchMat = buildCustomShader(
+    {
+      color: new THREE.Color(0xcccccc2),
+      metalness: 0.001,
+      roughness: 0.77,
+      map: towerPlinthArchTexture,
+      uvTransform: new THREE.Matrix3().scale(0.05 * 2, 0.1 * 2),
+      mapDisableDistance: null,
+      normalScale: 4,
+      ambientLightScale: 1,
+    },
+    {},
+    { useGeneratedUVs: true }
+  );
+
+  return { towerMat, towerTrimMat, plinthArchMat, blockerInteriorMaterial };
+};
+
+export const processLoadedScene = async (
+  viz: Viz,
+  loadedWorld: THREE.Group,
+  vizConf: VizConfig
+): Promise<SceneConfig> => {
+  const scoreThresholds: ScoreThresholds = {
+    [Score.SPlus]: 45,
+    [Score.S]: 50,
+    [Score.A]: 56,
+    [Score.B]: 65,
+  };
+
+  const pkManager = new ParkourManager(
+    viz,
+    loadedWorld,
+    vizConf,
+    locations,
+    scoreThresholds,
+    undefined,
+    'stronghold',
+    true
+  );
+
+  const placeholder = loadedWorld.getObjectByName('placeholder') as THREE.Mesh | undefined;
+  placeholder?.removeFromParent();
+
+  setTimeout(() => setupScene(viz, loadedWorld, vizConf, pkManager));
 
   initPylonsPostprocessing(viz, vizConf, true);
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { createQuery } from '@tanstack/svelte-query';
-  import { API, checkLogin, IsLoggedIn } from 'src/api/client';
+  import { API, getUser, IsLoggedIn } from 'src/api/client';
   import { onMount } from 'svelte';
 
   export let mapID: string;
@@ -15,7 +15,7 @@
 
   onMount(() => {
     if (browser) {
-      checkLogin();
+      getUser();
     }
   });
 </script>
@@ -58,7 +58,7 @@
   {:else}
     <div>Loading...</div>
   {/if}
-  {#if $IsLoggedIn === false}
+  {#if !$IsLoggedIn}
     <div style="color: #eb9b34; font-size: 12px;">
       <p>You must be logged in to save your times to the leaderboard</p>
       <p>You can log in via the pause menu (press ESC)</p>
