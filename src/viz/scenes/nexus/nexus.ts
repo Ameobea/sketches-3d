@@ -281,7 +281,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       if (def) {
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
           MetricsAPI.recordPortalTravel(def.scene);
-          goto(`/${def.scene}${window.location.origin.includes('localhost') ? '' : '.html'}`);
+          goto(`/${def.scene}`, { keepFocus: true });
         });
       } else {
         portal.visible = false;

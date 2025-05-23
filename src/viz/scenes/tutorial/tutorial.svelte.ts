@@ -10,6 +10,7 @@ import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 import { createSignboard, type CreateSignboardArgs } from 'src/viz/helpers/signboardBuilder';
 import type { CustomShaderMaterial } from 'src/viz/shaders/customShader';
 import { goto } from '$app/navigation';
+import { MetricsAPI } from 'src/api/client';
 
 const locations = {
   spawn: {
@@ -180,11 +181,13 @@ const setupScene = (
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: nextLevelTP }, () => {
-      goto(`/nexus${window.location.origin.includes('localhost') ? '' : '.html'}`);
+      MetricsAPI.recordPortalTravel('nexus');
+      goto('/nexus', { keepFocus: true });
     });
 
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: backToNexusTP }, () => {
-      goto(`/movement_v2${window.location.origin.includes('localhost') ? '' : '.html'}`);
+      MetricsAPI.recordPortalTravel('movement_v2');
+      goto('/movement_v2', { keepFocus: true });
     });
   });
 

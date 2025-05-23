@@ -437,7 +437,7 @@ export class Viz {
     this.clock.stop();
   };
 
-  private maybeResumeViz = async () => {
+  public maybeResumeViz = async (forceLock = false) => {
     if (this.paused.current || this.isBlurred) {
       return;
     }
@@ -445,18 +445,22 @@ export class Viz {
     this.clock.start();
     this.clock.elapsedTime = this.clockStopTime;
 
+    if (forceLock) {
+      this.didManuallyLockPointer = true;
+    }
+
     if (
       (this.viewMode.type === 'firstPerson' || this.viewMode.type === 'top-down') &&
       !document.pointerLockElement &&
       this.didManuallyLockPointer
     ) {
-      const canvas = this.renderer.domElement;
+      console.log('Requesting pointer lock');
       try {
-        await canvas.requestPointerLock({ unadjustedMovement: true });
+        await document.body.requestPointerLock({ unadjustedMovement: true });
       } catch (err) {
         if (err instanceof Error && err.name === 'NotSupportedError') {
           // some browsers/operating systems do not support the `unadjustedMovement` option
-          await canvas.requestPointerLock();
+          await document.body.requestPointerLock();
         } else {
           console.error('Failed to get pointer lock: ', err);
         }
@@ -503,11 +507,11 @@ export class Viz {
       // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
       // that happen in some cases when using high polling rate mice or something like that
       try {
-        await this.renderer.domElement.requestPointerLock({ unadjustedMovement: true });
+        await document.body.requestPointerLock({ unadjustedMovement: true });
       } catch (err) {
         if (err instanceof Error && err.name === 'NotSupportedError') {
           // some browsers/operating systems don't support the `unadjustedMovement` option
-          await this.renderer.domElement.requestPointerLock();
+          await document.body.requestPointerLock();
         } else {
           console.error('Failed to get pointer lock: ', err);
         }

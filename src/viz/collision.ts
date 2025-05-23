@@ -300,9 +300,9 @@ export class BulletPhysics {
     }
 
     const cameraEulerScratch = new THREE.Euler();
-    this.viz.renderer.domElement.addEventListener('mousemove', evt => {
+    document.body.addEventListener('mousemove', evt => {
       if (
-        document.pointerLockElement !== this.viz.renderer.domElement ||
+        document.pointerLockElement !== document.body ||
         this.viz.sceneConf.viewMode!.type !== 'firstPerson' ||
         !this.viz.controlState.cameraControlEnabled
       ) {

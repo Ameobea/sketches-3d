@@ -82,8 +82,12 @@
         {#if !$page.url.pathname.includes('nexus')}
           <button
             on:click={() => {
-              const ext = $page.url.hostname.includes('localhost') ? '' : '.html';
-              goto(`/nexus${ext}`);
+              ctx.onResume();
+              viz.maybeResumeViz(true);
+              void goto('/nexus', { keepFocus: true }).then(() => {
+                ctx.onResume();
+                viz.maybeResumeViz(true);
+              });
             }}
           >
             Return to Nexus

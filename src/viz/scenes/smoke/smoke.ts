@@ -11,6 +11,8 @@ import { buildAndAddFractals } from './3DvicsekFractal';
 import { Locations } from './locations';
 import { configurePostprocessing } from './postprocessing';
 import BgMonolithColorShader from './shaders/bgMonolith/color.frag?raw';
+import { goto } from '$app/navigation';
+import { MetricsAPI } from 'src/api/client';
 
 export const processLoadedScene = async (
   viz: Viz,
@@ -298,10 +300,8 @@ export const processLoadedScene = async (
         halfExtents: new THREE.Vector3(5, 5, 5),
       },
       () => {
-        console.log('entered!!');
-        // TODO: Init next level properly
-        // navigate to /cave
-        window.location.assign(window.location.origin.includes('localhost') ? '/cave' : '/cave.html');
+        MetricsAPI.recordPortalTravel('cave');
+        goto('/cave', { keepFocus: true });
       }
     )
   );

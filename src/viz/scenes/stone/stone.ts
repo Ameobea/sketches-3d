@@ -18,6 +18,7 @@ import type { SceneConfig, SceneLocations } from '..';
 import { getRuneGenerator } from './runeGen/runeGen';
 import MonolithLightBeamColorShader from './shaders/monolithLightBeam/color.frag?raw';
 import TotemBeamColorShader from './shaders/totemBeam/color.frag?raw';
+import { MetricsAPI } from 'src/api/client';
 
 const locations: SceneLocations = {
   spawn: {
@@ -486,7 +487,7 @@ export const processLoadedScene = async (
   exitPortal.userData.noLight = true;
   exitPortal.userData.noCollide = true;
   viz.scene.add(exitPortal);
-  const nextLevelURL = `/construction${window.location.origin.includes('localhost') ? '' : '.html'}`;
+  const nextLevelURL = '/construction';
   viz.registerBeforeRenderCb(curTimeSeconds => {
     const addedRotation = 0.015 * (Math.sin(curTimeSeconds) * 0.5 + 0.5) + 0.02;
     exitPortal.rotation.y += addedRotation;
@@ -508,7 +509,8 @@ export const processLoadedScene = async (
       () => {
         const curTimeSeconds = viz.clock.getElapsedTime();
         getSentry()?.captureMessage('Stone level completed', { extra: { levelPlayTime: curTimeSeconds } });
-        goto(nextLevelURL);
+        MetricsAPI.recordPortalTravel('construction');
+        goto(nextLevelURL, { keepFocus: true });
       }
     );
   });

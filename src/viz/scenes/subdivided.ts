@@ -34,7 +34,6 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   const groundTexture = await loadTexture(loader, 'https://i.ameo.link/aau.jpg');
 
   const groundNormalTexture = await generateNormalMapFromTexture(groundTexture);
-  console.log({ groundNormalTexture });
 
   const ground = loadedWorld.getObjectByName('ground001')! as THREE.Mesh;
   const groundUVTransform = new THREE.Matrix3().scale(3 * 32, 4 * 32);
