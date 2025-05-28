@@ -64,21 +64,17 @@ export const buildTriplanarDefsFragment = ({
       weights.z = 0.;
     }
 
-    vec2 uvX = pos.yz * uvScale;
-    vec2 uvY = pos.zx * uvScale;
-    vec2 uvZ = pos.xy * uvScale;
-
     vec3 tnormalX = vec3(0.);
     if (weights.x > 0.) {
-      tnormalX = texture2D(map, uvX).xyz * vec3(normalScale, 1.);
+      tnormalX = (texture2D(map, pos.yz * uvScale).xyz * vec3(normalScale, 1.)) * 2. - 1.;
     }
     vec3 tnormalY = vec3(0.);
     if (weights.y > 0.) {
-      tnormalY = texture2D(map, uvY).xyz * vec3(normalScale, 1.);
+      tnormalY = (texture2D(map, pos.zx * uvScale).xyz * vec3(normalScale, 1.)) * 2. - 1.;
     }
     vec3 tnormalZ = vec3(0.);
     if (weights.z > 0.) {
-      tnormalZ = texture2D(map, uvZ).xyz * vec3(normalScale, 1.);
+      tnormalZ = (texture2D(map, pos.xy * uvScale).xyz * vec3(normalScale, 1.)) * 2. - 1.;
     }
 
     vec3 axisSign = sign(normal);

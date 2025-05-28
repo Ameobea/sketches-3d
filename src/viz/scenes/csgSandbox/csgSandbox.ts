@@ -107,7 +107,9 @@ export const processLoadedScene = async (
       colliderSize: { height: 2.2, radius: 0.8 },
       jumpVelocity: 12,
       oobYThreshold: -10,
-      dashConfig: { enable: true },
+      dashConfig: { enable: true, useExternalVelocity: true },
+      externalVelocityAirDampingFactor: new THREE.Vector3(0.32, 0.3, 0.32),
+      externalVelocityGroundDampingFactor: new THREE.Vector3(0.9992, 0.9992, 0.9992),
     },
     debugPos: true,
     locations: {

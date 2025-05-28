@@ -51,6 +51,7 @@ export interface DashConfig {
   sfx?: {
     play?: boolean;
     name?: string;
+    gainDb?: number;
   };
 }
 
