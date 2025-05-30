@@ -531,7 +531,7 @@ material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iride
       if (useTriplanarMapping) {
         return `
         #ifdef USE_MAP
-          sampledDiffuseColor_ = triplanarTextureFixContrast(map, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vNormalAbsolute);
+          sampledDiffuseColor_ = triplanarTextureFixContrast(map, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal);
         #endif`;
       }
 
@@ -580,7 +580,7 @@ material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iride
     const inner = (() => {
       if (useTriplanarMapping && roughnessMap) {
         return `
-          vec3 texelRoughness = triplanarTexture(roughnessMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vNormalAbsolute).xyz;
+          vec3 texelRoughness = triplanarTexture(roughnessMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal).xyz;
         `;
       }
 

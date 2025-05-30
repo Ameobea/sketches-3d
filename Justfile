@@ -45,3 +45,6 @@ build-and-deploy:
 
 build-basalt:
   cd src/viz/wasm && just build-basalt
+
+build-csg-sandbox:
+  cd src/viz/wasm && just build-csg-sandbox

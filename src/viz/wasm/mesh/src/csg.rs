@@ -1303,14 +1303,6 @@ impl Node {
     polygons
   }
 
-  fn drain_polygons(self_key: NodeKey, nodes: &mut NodeMap, cb: &mut impl FnMut(Polygon)) {
-    Self::traverse_mut(self_key, nodes, &mut |_key, node| {
-      for poly in node.polygons.drain(..) {
-        cb(poly);
-      }
-    });
-  }
-
   pub fn build(
     polygons: Vec<Polygon>,
     mesh: &mut LinkedMesh<FaceData>,

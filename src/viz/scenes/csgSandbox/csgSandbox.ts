@@ -5,6 +5,7 @@ import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 // import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
+import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 
 export const processLoadedScene = async (
   viz: Viz,
@@ -15,7 +16,7 @@ export const processLoadedScene = async (
   viz.scene.add(ambientLight);
 
   const dirLight = new THREE.DirectionalLight(0xffffff, 2);
-  dirLight.position.set(0, 50, 0);
+  dirLight.position.set(-20, 50, 0);
   viz.scene.add(dirLight);
 
   dirLight.castShadow = true;
@@ -59,6 +60,7 @@ export const processLoadedScene = async (
   }
 
   const mesh1 = new THREE.TorusKnotGeometry(8, 2.5, 63, 28);
+  // const mesh1 = new THREE.BoxGeometry(12, 12, 12);
 
   const mesh0Ptr = csg.create_mesh(
     new Uint32Array(mesh0.index!.array),
@@ -108,12 +110,13 @@ export const processLoadedScene = async (
   const loader = new THREE.ImageBitmapLoader();
   let wireframeActive = false;
   const wireframeMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-  const debugMat = await buildGrayStoneBricksFloorMaterial(
+  const debugMat = await buildGrayFossilRockMaterial(
     loader,
-    {},
+    { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc },
     {},
     { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
   );
+  // const debugMat = new THREE.MeshNormalMaterial();
   const mesh = new THREE.Mesh(geometry, debugMat as THREE.Material);
   mesh.castShadow = true;
   mesh.receiveShadow = true;

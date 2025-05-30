@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 
-import { buildCustomShader } from 'src/viz/shaders/customShader';
+import {
+  buildCustomShader,
+  type CustomShaderOptions,
+  type CustomShaderProps,
+  type CustomShaderShaders,
+} from 'src/viz/shaders/customShader';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
 import { loadNamedTextures } from 'src/viz/textureLoading';
 
@@ -11,7 +16,12 @@ export const GrayFossilRockTextures = new AsyncOnce((loader: THREE.ImageBitmapLo
   })
 );
 
-export const buildGrayFossilRockMaterial = async (loader: THREE.ImageBitmapLoader) => {
+export const buildGrayFossilRockMaterial = async (
+  loader: THREE.ImageBitmapLoader,
+  propsOverrides?: CustomShaderProps,
+  shadersOverrides?: CustomShaderShaders,
+  optsOverrides?: CustomShaderOptions
+) => {
   const { platformDiffuse, platformNormal } = await GrayFossilRockTextures.get(loader);
 
   return buildCustomShader(
@@ -26,8 +36,9 @@ export const buildGrayFossilRockMaterial = async (loader: THREE.ImageBitmapLoade
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
       ambientLightScale: 1.8,
+      ...(propsOverrides ?? {}),
     },
-    {},
-    { useTriplanarMapping: false, tileBreaking: { type: 'neyret', patchScale: 2 } }
+    shadersOverrides,
+    { useTriplanarMapping: false, tileBreaking: { type: 'neyret', patchScale: 2 }, ...(optsOverrides ?? {}) }
   );
 };

@@ -16,7 +16,7 @@ fn maybe_init() {
   }
 
   console_error_panic_hook::set_once();
-  // wasm_logger::init(wasm_logger::Config::new(log::Level::Debug));
+  wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
 }
 
 pub struct CsgSandboxCtx {
@@ -50,12 +50,18 @@ pub fn csg_sandbox_init(
 
   let csg0 = CSG::from(mesh0);
   let csg1 = CSG::from(mesh1);
-  let mesh = csg0.subtract(csg1.mesh);
+  let mut mesh = csg0.subtract(csg1.mesh);
 
   // mesh.merge_vertices_by_distance(1e-3);
-  // let sharp_edge_threshold_rads = 0.8;
+  // let sharp_edge_threshold_rads = 1.8;
   // mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   // mesh.separate_vertices_and_compute_normals();
+
+  let mut deleted_tri_count = 0;
+  mesh.cleanup_degenerate_triangles_cb(|_, _| {
+    deleted_tri_count += 1;
+  });
+  log::info!("deleted {deleted_tri_count} degenerate triangles");
 
   let mesh = mesh.to_raw_indexed(true, true);
   Box::into_raw(Box::new(CsgSandboxCtx { mesh }))
