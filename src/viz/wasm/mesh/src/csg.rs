@@ -57,7 +57,6 @@ pub enum Coplanars {
 pub struct FaceData {
   pub plane: Plane,
   pub node_key: NodeKey,
-  pub is_flipped: bool,
 }
 
 impl Default for FaceData {
@@ -68,7 +67,6 @@ impl Default for FaceData {
         w: 0.,
       },
       node_key: NodeKey::null(),
-      is_flipped: false,
     }
   }
 }
@@ -123,7 +121,6 @@ fn triangulate_polygon<'a>(
   mesh: &'a mut LinkedMesh<FaceData>,
   plane: &'a Plane,
   node_key: NodeKey,
-  is_flipped: bool,
 ) -> impl Iterator<Item = Polygon> + 'a {
   (2..vertices.len()).map(move |i| {
     let face_key = mesh.add_face(
@@ -131,7 +128,6 @@ fn triangulate_polygon<'a>(
       FaceData {
         plane: plane.clone(),
         node_key,
-        is_flipped,
       },
     );
     Polygon { key: face_key }
@@ -178,6 +174,12 @@ fn vtx_pos<T>(vtx_key: VertexKey, mesh: &LinkedMesh<T>) -> Vec3 {
   }
 }
 
+fn vtx_key_ix(vtx_key: VertexKey) -> u32 {
+  let k = vtx_key.data().as_ffi();
+  let [ix, _version]: [u32; 2] = unsafe { std::mem::transmute(k) };
+  ix
+}
+
 fn handle_split_faces(
   split_faces: &mut Vec<((FaceKey, FaceData), [FaceKey; 2])>,
   mesh: &mut LinkedMesh<FaceData>,
@@ -204,17 +206,16 @@ fn handle_split_faces(
 
     node.polygons.extend((0..=1).filter_map(|face_ix| {
       let new_face_key = new_face_keys[face_ix];
-      if mesh.faces[new_face_keys[face_ix]].is_degenerate(&mesh.vertices) {
-        // log::warn!("Dropping degenerate face with key={new_face_key:?}");
-        // mesh.remove_face(new_face_key);
-        // return None;
-      }
+      // if mesh.faces[new_face_keys[face_ix]].is_degenerate(&mesh.vertices) {
+      //   log::warn!("Dropping degenerate face with key={new_face_key:?}");
+      //   mesh.remove_face(new_face_key);
+      //   return None;
+      // }
 
       let poly = Polygon { key: new_face_key };
       let user_data = poly.user_data_mut(mesh);
       user_data.plane = old_face_data.plane.clone();
       user_data.node_key = node_key;
-      user_data.is_flipped = old_face_data.is_flipped;
       Some(poly)
     }));
   }
@@ -393,7 +394,6 @@ impl Plane {
             mesh,
             &old_poly_user_data.plane,
             front_key,
-            old_poly_user_data.is_flipped,
           ));
         }
         if b.len() >= 3 {
@@ -402,7 +402,6 @@ impl Plane {
             mesh,
             &old_poly_user_data.plane,
             back_key,
-            old_poly_user_data.is_flipped,
           ));
         }
 
@@ -448,7 +447,6 @@ impl Polygon {
 
   pub fn flip(&mut self, mesh: &mut LinkedMesh<FaceData>) {
     let user_data = self.user_data_mut(mesh);
-    user_data.is_flipped = !user_data.is_flipped;
     user_data.plane.flip();
     let verts = &mut mesh.faces[self.key].vertices;
     verts.swap(0, 2);
@@ -653,7 +651,6 @@ fn weld_polygon_at_interior<'a>(
       FaceData {
         plane: old_user_data.plane.clone(),
         node_key: old_user_data.node_key,
-        is_flipped: old_user_data.is_flipped,
       },
     );
     Polygon { key: face_key }
@@ -1121,13 +1118,6 @@ impl Node {
       return;
     };
 
-    let is_flipped = self.polygons[0].user_data(mesh).is_flipped;
-    for poly in &self.polygons[1..] {
-      if poly.user_data(mesh).is_flipped != is_flipped {
-        panic!("Polygons have different winding orders");
-      }
-    }
-
     // TODO: dedup?
     // earcut tessellates 2D polygons, so we use the plane to project the vertices into 2D space
     //
@@ -1169,7 +1159,6 @@ impl Node {
           FaceData {
             plane: plane.clone(),
             node_key: self_key,
-            is_flipped,
           },
         );
         let poly = Polygon { key: face_key };
@@ -1183,13 +1172,6 @@ impl Node {
       return;
     };
 
-    let is_flipped = self.polygons[0].user_data(mesh).is_flipped;
-    for poly in &self.polygons[1..] {
-      if poly.user_data(mesh).is_flipped != is_flipped {
-        panic!("Polygons have different winding orders");
-      }
-    }
-
     // lyon tessellates 2D polygons, so we use the plane to project the vertices into 2D space
     //
     // they can be projected back using these vectors after we re-add the new path
@@ -1197,7 +1179,7 @@ impl Node {
     let (u, v) = plane.compute_basis();
 
     // remove all faces and interior vertices
-    let before_face_count = self.polygons.len();
+    // let before_face_count = self.polygons.len();
     for poly in self.polygons.drain(..) {
       mesh.remove_face(poly.key);
     }
@@ -1229,7 +1211,6 @@ impl Node {
       polys: Vec<Polygon>,
       plane: Plane,
       self_key: NodeKey,
-      is_flipped: bool,
     }
 
     impl<'a> GeometryBuilder for CustomBuilder<'a> {
@@ -1248,7 +1229,6 @@ impl Node {
           FaceData {
             plane: self.plane.clone(),
             node_key: self.self_key,
-            is_flipped: self.is_flipped,
           },
         );
         self.polys.push(Polygon { key: face_key });
@@ -1280,7 +1260,6 @@ impl Node {
       polys: Vec::new(),
       plane,
       self_key,
-      is_flipped,
     };
 
     let mut tessellator = FillTessellator::new();
@@ -1298,8 +1277,9 @@ impl Node {
       .expect("tessellation failed");
 
     let new_polys = vertex_builder.polys;
-    let after_face_count = new_polys.len();
-    log::info!("lyon: {before_face_count} -> {after_face_count} faces for node_key={self_key:?}");
+    // let after_face_count = new_polys.len();
+    // log::info!("lyon: {before_face_count} -> {after_face_count} faces for
+    // node_key={self_key:?}");
 
     self.polygons = new_polys;
   }
@@ -1578,67 +1558,11 @@ impl CSG {
     (mesh, nodes, a_key, b_key)
   }
 
-  fn extract_mesh(
-    mut mesh: LinkedMesh<FaceData>,
-    mut nodes: NodeMap,
-    a_key: NodeKey,
-  ) -> LinkedMesh<()> {
-    // let mut removed_faces = Vec::new();
-    // mesh.merge_vertices_by_distance_cb(1e-5, |face_key, face_data| {
-    //   removed_faces.push((face_key, face_data.node_key));
-    // });
-    // for (face_key, node_key) in removed_faces {
-    //   let node = &mut nodes[node_key];
-    //   let poly_ix = node
-    //     .polygons
-    //     .iter()
-    //     .position(|poly| poly.key == face_key)
-    //     .expect("face not found in node");
-    //   node.polygons.swap_remove(poly_ix);
-    // }
-
-    Node::traverse_mut(a_key, &mut nodes, &mut |node_key, node| {
-      node.remesh_lyon(node_key, &mut mesh);
+  fn remesh(mesh: &mut LinkedMesh<FaceData>, nodes: &mut NodeMap, a_key: NodeKey) {
+    Node::traverse_mut(a_key, nodes, &mut |node_key, node| {
+      node.remesh_lyon(node_key, mesh);
       // node.remesh_earcut(node_key, &mut mesh);
     });
-
-    let mut new_mesh: LinkedMesh<()> = LinkedMesh::default();
-    let mut new_vtx_key_by_old_vtx_key = FxHashMap::default();
-    Node::drain_polygons(a_key, &mut nodes, &mut |poly| {
-      let mut face_vertices = [VertexKey::null(); 3];
-      for (i, vtx_key) in mesh.faces[poly.key].vertices.into_iter().enumerate() {
-        let is_flipped = poly.user_data(&mesh).is_flipped;
-        let vtx_key = *new_vtx_key_by_old_vtx_key
-          .entry((vtx_key, is_flipped))
-          .or_insert_with(|| {
-            let vtx = &mesh.vertices[vtx_key];
-            let position = vtx.position;
-            let mut shading_normal = vtx.shading_normal;
-            let mut displacement_normal = vtx.displacement_normal;
-            if is_flipped {
-              if let Some(shading_normal) = &mut shading_normal {
-                *shading_normal *= -1.;
-              }
-              if let Some(displacement_normal) = &mut displacement_normal {
-                *displacement_normal *= -1.;
-              }
-            }
-            new_mesh.vertices.insert(linked_mesh::Vertex {
-              position,
-              shading_normal,
-              displacement_normal,
-              edges: Vec::new(),
-            })
-          });
-        face_vertices[i] = vtx_key;
-      }
-      new_mesh.add_face(face_vertices, ());
-    });
-    drop(mesh);
-
-    // new_mesh.cleanup_degenerate_triangles();
-    // new_mesh.merge_vertices_by_distance(1e-5);
-    new_mesh
   }
 
   /// Return a new CSG solid representing space in either this solid or in the
@@ -1654,7 +1578,7 @@ impl CSG {
   ///          |   B   |            |       |
   ///          |       |            |       |
   ///          +-------+            +-------+
-  pub fn union(self, other: LinkedMesh<FaceData>) -> LinkedMesh {
+  pub fn union(self, other: LinkedMesh<FaceData>) -> LinkedMesh<FaceData> {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(other);
 
     Node::clip_to(a_key, b_key, &mut mesh, &mut nodes);
@@ -1666,11 +1590,12 @@ impl CSG {
     let b_polygons = Node::into_polygons(b_key, &mut nodes);
     Node::add_polygons(a_key, b_polygons, &mut mesh, &mut nodes);
 
-    Self::extract_mesh(mesh, nodes, a_key)
+    CSG::remesh(&mut mesh, &mut nodes, a_key);
+    mesh
   }
 
   /// Removes all parts of `other` that are inside of `self` and returns the result.
-  pub fn clip_to_self(self, other: LinkedMesh<FaceData>) -> LinkedMesh {
+  pub fn clip_to_self(self, other: LinkedMesh<FaceData>) -> LinkedMesh<FaceData> {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(other);
 
     Node::clip_to(b_key, a_key, &mut mesh, &mut nodes);
@@ -1678,7 +1603,8 @@ impl CSG {
     let b_polygons = Node::into_polygons(b_key, &mut nodes);
     Node::add_polygons(a_key, b_polygons, &mut mesh, &mut nodes);
 
-    Self::extract_mesh(mesh, nodes, a_key)
+    CSG::remesh(&mut mesh, &mut nodes, a_key);
+    mesh
   }
 
   /// Returns a new CSG solid representing space in this solid but not in the
@@ -1694,7 +1620,7 @@ impl CSG {
   ///          |   B   |
   ///          |       |
   ///          +-------+
-  pub fn subtract(self, other: LinkedMesh<FaceData>) -> LinkedMesh {
+  pub fn subtract(self, other: LinkedMesh<FaceData>) -> LinkedMesh<FaceData> {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(other);
 
     Node::invert(a_key, &mut nodes, &mut mesh);
@@ -1708,7 +1634,8 @@ impl CSG {
     Node::add_polygons(a_key, b_polygons, &mut mesh, &mut nodes);
     Node::invert(a_key, &mut nodes, &mut mesh);
 
-    Self::extract_mesh(mesh, nodes, a_key)
+    CSG::remesh(&mut mesh, &mut nodes, a_key);
+    mesh
   }
 
   /// Return a new CSG solid representing space both this solid and in the
@@ -1724,7 +1651,7 @@ impl CSG {
   ///          |   B   |
   ///          |       |
   ///          +-------+
-  pub fn intersect(self, csg: LinkedMesh<FaceData>) -> LinkedMesh<()> {
+  pub fn intersect(self, csg: LinkedMesh<FaceData>) -> LinkedMesh<FaceData> {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(csg);
 
     Node::invert(a_key, &mut nodes, &mut mesh);
@@ -1737,7 +1664,8 @@ impl CSG {
     Node::add_polygons(a_key, b_polygons, &mut mesh, &mut nodes);
     Node::invert(a_key, &mut nodes, &mut mesh);
 
-    Self::extract_mesh(mesh, nodes, a_key)
+    CSG::remesh(&mut mesh, &mut nodes, a_key);
+    mesh
   }
 
   /// Construct an axis-aligned solid cuboid. Optional parameters are `center`
@@ -1775,13 +1703,7 @@ impl CSG {
         vtx_pos(polygon_vertices[1], &mesh),
         vtx_pos(polygon_vertices[2], &mesh),
       );
-      for _ in triangulate_polygon(
-        polygon_vertices.into(),
-        &mut mesh,
-        &plane,
-        NodeKey::null(),
-        false,
-      ) {
+      for _ in triangulate_polygon(polygon_vertices.into(), &mut mesh, &plane, NodeKey::null()) {
         // pass
       }
     }

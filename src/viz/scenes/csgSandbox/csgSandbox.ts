@@ -3,18 +3,44 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+// import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
 
 export const processLoadedScene = async (
   viz: Viz,
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
   viz.scene.add(ambientLight);
 
   const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+  dirLight.position.set(0, 50, 0);
   viz.scene.add(dirLight);
+
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048 * 2;
+  dirLight.shadow.mapSize.height = 2048 * 2;
+  dirLight.shadow.radius = 4;
+  dirLight.shadow.blurSamples = 16;
+  viz.renderer.shadowMap.type = THREE.VSMShadowMap;
+  dirLight.shadow.bias = -0.0001;
+
+  dirLight.shadow.camera.near = 8;
+  dirLight.shadow.camera.far = 300;
+  dirLight.shadow.camera.left = -300;
+  dirLight.shadow.camera.right = 380;
+  dirLight.shadow.camera.top = 94;
+  dirLight.shadow.camera.bottom = -140;
+
+  // const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
+  // viz.scene.add(shadowCameraHelper);
+
+  dirLight.shadow.camera.updateProjectionMatrix();
+  dirLight.shadow.camera.updateMatrixWorld();
+
+  viz.scene.add(dirLight);
+  viz.scene.add(dirLight.target);
 
   const csg = await import('../../wasmComp/csg_sandbox').then(async engine => {
     await engine.default();
@@ -79,10 +105,18 @@ export const processLoadedScene = async (
   //   viz.scene.add(arrow);
   // }
 
-  // const debugMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-  const debugMat = new THREE.MeshPhysicalMaterial({ color: 0x00ff00, transparent: false, opacity: 0.57 });
-  // const debugMat = new THREE.MeshNormalMaterial({ side: THREE.FrontSide });
-  const mesh = new THREE.Mesh(geometry, debugMat);
+  const loader = new THREE.ImageBitmapLoader();
+  let wireframeActive = false;
+  const wireframeMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+  const debugMat = await buildGrayStoneBricksFloorMaterial(
+    loader,
+    {},
+    {},
+    { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
+  );
+  const mesh = new THREE.Mesh(geometry, debugMat as THREE.Material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   viz.scene.add(mesh);
 
   // add a platform to stand on
@@ -118,6 +152,16 @@ export const processLoadedScene = async (
         rot: [-0.8227963267948929, -48.78199999999914, 0],
       },
     },
+    customControlsEntries: [
+      {
+        key: 'v',
+        label: 'Toggle Wireframe',
+        action: () => {
+          wireframeActive = !wireframeActive;
+          mesh.material = wireframeActive ? wireframeMat : debugMat;
+        },
+      },
+    ],
     legacyLights: false,
   };
 };
