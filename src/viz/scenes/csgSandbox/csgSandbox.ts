@@ -3,8 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-// import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
-import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
+import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 
 export const processLoadedScene = async (
@@ -12,6 +11,14 @@ export const processLoadedScene = async (
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
+  const loader = new THREE.ImageBitmapLoader();
+  const debugMatPromise = buildGrayFossilRockMaterial(
+    loader,
+    { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc },
+    {},
+    { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
+  );
+
   const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
   viz.scene.add(ambientLight);
 
@@ -107,15 +114,9 @@ export const processLoadedScene = async (
   //   viz.scene.add(arrow);
   // }
 
-  const loader = new THREE.ImageBitmapLoader();
   let wireframeActive = false;
   const wireframeMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-  const debugMat = await buildGrayFossilRockMaterial(
-    loader,
-    { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc },
-    {},
-    { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
-  );
+  const debugMat = await debugMatPromise;
   // const debugMat = new THREE.MeshNormalMaterial();
   const mesh = new THREE.Mesh(geometry, debugMat as THREE.Material);
   mesh.castShadow = true;
@@ -134,7 +135,7 @@ export const processLoadedScene = async (
     fpCtx.addTriMesh(platform);
   });
 
-  // configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
+  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
 
   return {
     spawnLocation: 'spawn',

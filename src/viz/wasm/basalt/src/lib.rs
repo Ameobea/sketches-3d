@@ -395,7 +395,7 @@ fn maybe_init() {
   console_error_panic_hook::set_once();
   wasm_logger::init(wasm_logger::Config::new(log::Level::Debug));
 
-  set_debug_print(|s| info!("{}", s));
+  set_debug_print(|s| info!("{s}"));
 }
 
 fn round_to_nearest_multiple(value: f32, multiple: f32) -> f32 {

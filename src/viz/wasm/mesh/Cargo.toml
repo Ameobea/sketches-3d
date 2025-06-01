@@ -14,11 +14,13 @@ common = { path = "../common" }
 log = { version = "0.4", features = [] }
 arrayvec = "0.7"
 lyon_tessellation = "1.0"
-earcutr = "0.4"
+earcutr = { version = "0.4", optional = true }
+parry3d = "0.21"
 
 [features]
 # disables slotmap's checks for invalid keys
 unsafe_indexing = []
+earcut = ["earcutr"]
 
 # enable this is you're very brave
 # default = ["unsafe_indexing"]

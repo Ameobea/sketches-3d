@@ -314,6 +314,29 @@ impl TryFrom<u32> for DisplacementNormalMethod {
   }
 }
 
+#[derive(Debug, Clone)]
+pub enum NonManifoldError {
+  /// No faces in the mesh
+  EmptyMesh,
+  /// Edge is not connected to any faces
+  LooseEdge { edge_key: EdgeKey },
+  /// Vertex is either not connected to any edges or not used in any faces
+  LooseVertex { vtx_key: VertexKey },
+  /// Edge is connected to more than two faces
+  NonManifoldEdge {
+    edge_key: EdgeKey,
+    face_count: usize,
+  },
+  /// Vertex has more than one fan of faces around it
+  MultipleFans {
+    vtx_key: VertexKey,
+    incident_face_count: usize,
+    visited_face_count: usize,
+  },
+  /// The fan of faces around a vertex is not closed
+  NonClosedFan { vtx_key: VertexKey },
+}
+
 pub struct EdgeSplitPos {
   /// Number from 0. to 1. representing the position along the edge from the
   /// starting vertex to split at
@@ -366,6 +389,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     normals: Option<&[Vec3]>,
     transform: Option<Mat4>,
   ) -> Self {
+    if indices.len() % 3 != 0 {
+      panic!(
+        "Indices length must be a multiple of 3; got {}",
+        indices.len()
+      );
+    }
     let mut mesh = Self::new(vertices.len(), indices.len() / 3, transform);
 
     let vertex_keys_by_ix = vertices
@@ -402,6 +431,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       // This might break mesh topology in some cases, but it saves us from dealing
       // with NaNs
       if tri.is_degenerate() {
+        log::warn!("Skipping degenerate triangle: {tri:?}");
         continue;
       }
 
@@ -556,6 +586,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
+  // TODO: The spatial bucketing used here could maybe be replaced with the `rstar` crate
+  // https://docs.rs/rstar/latest/rstar/
   pub fn merge_vertices_by_distance_cb(
     &mut self,
     max_distance: f32,
@@ -925,6 +957,128 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     face.vertices[vtx_key_ix_to_alter] = new_vtx_key;
   }
 
+  /// Returns `true` when the mesh is a single connected component.  This check assumes that the
+  /// mesh consists of a single connected component.  If there are islands or disconnected parts,
+  /// this may produce incorrect results.
+  ///
+  /// If `TWO_MANIFOLD` is `true`, additionally enforces that every edge is shared by *exactly* two
+  /// faces, meaning that the mesh is watertight and forms a continuous surface.
+  ///
+  /// The test is entirely topological; positions, normals, triangle winding order, etc. are not
+  /// checked.
+  pub fn check_is_manifold<const TWO_MANIFOLD: bool>(&self) -> Result<(), NonManifoldError> {
+    for (edge_key, edge) in self.edges.iter() {
+      let face_count = edge.faces.len();
+      if TWO_MANIFOLD {
+        if face_count != 2 {
+          return Err(NonManifoldError::NonManifoldEdge {
+            edge_key: edge_key,
+            face_count,
+          });
+        }
+      } else {
+        if face_count == 0 {
+          log::error!("Found edge with no faces: {edge:?}");
+          return Err(NonManifoldError::LooseEdge { edge_key: edge_key });
+        } else if face_count > 2 {
+          return Err(NonManifoldError::NonManifoldEdge {
+            edge_key: edge_key,
+            face_count,
+          });
+        }
+      }
+    }
+
+    if self.faces.is_empty() {
+      return Err(NonManifoldError::EmptyMesh);
+    }
+
+    // For each vertex, walk the fan of incident faces
+    let mut incident_faces = Vec::new();
+    let mut visited_faces = FxHashSet::default();
+    let mut visited_edges = FxHashSet::default();
+    for (vtx_key, vtx) in &self.vertices {
+      if vtx.edges.is_empty() {
+        return Err(NonManifoldError::LooseVertex { vtx_key });
+      }
+
+      incident_faces.clear();
+      for &edge_key in &vtx.edges {
+        incident_faces.extend(self.edges[edge_key].faces.iter().copied());
+      }
+      incident_faces.sort_unstable();
+      incident_faces.dedup();
+      let Some(&start_face_key) = incident_faces.first() else {
+        return Err(NonManifoldError::LooseVertex { vtx_key });
+      };
+      let start_face = &self.faces[start_face_key];
+
+      visited_faces.clear();
+      visited_edges.clear();
+
+      // Find an edge of the face that contains this vertex
+      let start_edge_key = start_face
+        .edges
+        .iter()
+        .find(|&&e| self.edges[e].vertices.contains(&vtx_key))
+        .copied()
+        .unwrap();
+      let mut cur_face_key = start_face_key;
+      let mut cur_edge_key = start_edge_key;
+      let mut full_fan = false;
+      loop {
+        visited_faces.insert(cur_face_key);
+        visited_edges.insert(cur_edge_key);
+        // choose the next edge in the current face that contains this vertex and is not the
+        // previous edge
+        let face = &self.faces[cur_face_key];
+        let next_edge_key = face
+          .edges
+          .iter()
+          .find(|&&edge_key| {
+            self.edges[edge_key].vertices.contains(&vtx_key) && edge_key != cur_edge_key
+          })
+          .copied();
+        if next_edge_key.is_none() {
+          break;
+        }
+
+        let next_edge_key = next_edge_key.unwrap();
+        // Find the other face (besides cur_face_key) that shares this edge and contains the vertex
+        let edge = &self.edges[next_edge_key];
+        let Some(&next_face_key) = edge.faces.iter().find(|&&face_key| {
+          face_key != cur_face_key && self.faces[face_key].vertices.contains(&vtx_key)
+        }) else {
+          // reached a border edge
+          break;
+        };
+
+        if visited_faces.contains(&next_face_key) {
+          full_fan = true;
+          break;
+        }
+        cur_face_key = next_face_key;
+        cur_edge_key = next_edge_key;
+      }
+
+      if visited_faces.len() != incident_faces.len() {
+        return Err(NonManifoldError::MultipleFans {
+          vtx_key,
+          incident_face_count: incident_faces.len(),
+          visited_face_count: visited_faces.len(),
+        });
+      }
+
+      if TWO_MANIFOLD {
+        if !full_fan {
+          return Err(NonManifoldError::NonClosedFan { vtx_key });
+        }
+      }
+    }
+
+    Ok(())
+  }
+
   pub fn compute_edge_displacement_normals(&mut self) {
     for edge in self.edges.values_mut() {
       let edge_displacement_normal = edge
@@ -1256,8 +1410,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
-  /// Does something akin to "shade auto-smooth" from Blender.  For each edge in
-  /// the mesh, it is determined to be sharp or smooth based on the angle
+  /// Does something akin to "shade auto-smooth" from Blender.  For each edge in the
+  /// mesh, it is determined to be sharp or smooth based on the angle
   /// between it and the face that shares it.
   ///
   /// Then, each vertex is considered and potentially duplicated one or more
@@ -2030,5 +2184,35 @@ mod tests {
       .collect::<FxHashSet<_>>();
 
     assert_eq!(smooth_fans[0], expected_smooth_fan);
+  }
+
+  #[test]
+  fn cube_two_manifold() {
+    let mesh: LinkedMesh<()> = LinkedMesh::from_indexed_vertices(
+      &[
+        Vec3::new(-1., -1., -1.),
+        Vec3::new(1., -1., -1.),
+        Vec3::new(1., 1., -1.),
+        Vec3::new(-1., 1., -1.),
+        Vec3::new(-1., -1., 1.),
+        Vec3::new(1., -1., 1.),
+        Vec3::new(1., 1., 1.),
+        Vec3::new(-1., 1., 1.),
+      ],
+      &[
+        0, 1, 2, 0, 2, 3, // bottom
+        4, 5, 6, 4, 6, 7, // top
+        0, 1, 5, 0, 5, 4, // front
+        2, 3, 7, 2, 7, 6, // back
+        0, 3, 7, 0, 7, 4, // left
+        1, 2, 6, 1, 6, 5, // right
+      ],
+      None,
+      None,
+    );
+
+    mesh
+      .check_is_manifold::<true>()
+      .expect("basic cube mesh should be two-manifold");
   }
 }

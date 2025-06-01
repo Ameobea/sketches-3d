@@ -5,9 +5,21 @@ use std::ops::BitOr;
 
 use arrayvec::ArrayVec;
 use common::uninit;
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use lyon_tessellation::{
-  math::point, path::Path, FillGeometryBuilder, FillOptions, FillTessellator, GeometryBuilder,
+  geom::Vector, math::point, path::Path, FillGeometryBuilder, FillOptions, FillTessellator,
+  GeometryBuilder,
+};
+use nalgebra::{Point3, SimdBool};
+use parry3d::{
+  bounding_volume::SimdAabb,
+  math::{Isometry, SIMD_WIDTH},
+  partitioning::{Qbvh, SimdSimultaneousVisitStatus, SimdSimultaneousVisitor},
+  shape::{TriMesh, TriMeshFlags},
+  transformation::{
+    intersect_meshes, intersect_meshes_with_tolerances, MeshIntersectionError,
+    MeshIntersectionTolerances,
+  },
 };
 use slotmap::Key;
 
@@ -1113,6 +1125,7 @@ impl Node {
     Some((perimeter, interior_vtx_keys))
   }
 
+  #[cfg(feature = "earcut")]
   fn remesh_earcut(&mut self, self_key: NodeKey, mesh: &mut LinkedMesh<FaceData>) {
     let Some((perimeter, interior_vtx_keys)) = self.compute_perimeter(mesh) else {
       return;
@@ -1550,6 +1563,46 @@ impl CSG {
     (mesh, nodes, a_key, b_key)
   }
 
+  fn build_trimeshes(self: CSG, other: LinkedMesh<FaceData>) -> (TriMesh, TriMesh) {
+    fn populate_trimesh(
+      verts: &mut Vec<Point3<f32>>,
+      indices: &mut Vec<[u32; 3]>,
+      mesh: &LinkedMesh<FaceData>,
+    ) {
+      let mut vtx_ix_by_key =
+        FxHashMap::with_capacity_and_hasher(mesh.vertices.len(), FxBuildHasher::default());
+
+      for face in mesh.faces.values() {
+        let ixs = std::array::from_fn(|i| {
+          let vtx_key = face.vertices[i];
+          let vtx_ix = vtx_ix_by_key.entry(vtx_key).or_insert_with(|| {
+            let ix = verts.len();
+            verts.push(mesh.vertices[vtx_key].position.into());
+            ix as u32
+          });
+          *vtx_ix as u32
+        });
+        indices.push(ixs);
+      }
+    }
+
+    let flags = TriMeshFlags::default() | TriMeshFlags::ORIENTED | TriMeshFlags::HALF_EDGE_TOPOLOGY;
+
+    let mut a_verts = Vec::with_capacity(self.mesh.vertices.len());
+    let mut a_indices = Vec::with_capacity(self.mesh.faces.len());
+    populate_trimesh(&mut a_verts, &mut a_indices, &self.mesh);
+    let a_trimesh =
+      TriMesh::with_flags(a_verts, a_indices, flags).expect("Failed to build trimesh for A");
+
+    let mut b_verts = Vec::with_capacity(other.vertices.len());
+    let mut b_indices = Vec::with_capacity(other.faces.len());
+    populate_trimesh(&mut b_verts, &mut b_indices, &other);
+    let b_trimesh =
+      TriMesh::with_flags(b_verts, b_indices, flags).expect("Failed to build trimesh for B");
+
+    (a_trimesh, b_trimesh)
+  }
+
   fn remesh(mesh: &mut LinkedMesh<FaceData>, nodes: &mut NodeMap, a_key: NodeKey) {
     Node::traverse_mut(a_key, nodes, &mut |node_key, node| {
       node.remesh_lyon(node_key, mesh);
@@ -1658,6 +1711,56 @@ impl CSG {
 
     CSG::remesh(&mut mesh, &mut nodes, a_key);
     mesh
+  }
+
+  pub fn intersect_experimental(
+    self,
+    csg: LinkedMesh<FaceData>,
+  ) -> Result<LinkedMesh<()>, MeshIntersectionError> {
+    let (a_trimesh, b_trimesh) = Self::build_trimeshes(self, csg);
+
+    let mut tolerances = MeshIntersectionTolerances::default();
+    tolerances.angle_epsilon = 0.00000000001;
+    tolerances.collinearity_epsilon = std::f32::EPSILON * 10_000.;
+    tolerances.global_insertion_epsilon = 0.000000000001;
+    let opt = intersect_meshes_with_tolerances(
+      &Isometry::translation(0.23423, 1.4423423, -0.2334283432),
+      &a_trimesh,
+      false,
+      &Isometry::identity(),
+      &b_trimesh,
+      true,
+      tolerances,
+    )?;
+    let Some(out_mesh) = opt else {
+      log::warn!("`None` returned from `intersect_meshes`");
+      return Ok(LinkedMesh::new(0, 0, None));
+    };
+
+    let mut mesh = LinkedMesh::new(out_mesh.vertices().len(), out_mesh.indices().len(), None);
+    let mut vtx_keys = Vec::with_capacity(out_mesh.vertices().len());
+    for vtx in out_mesh.vertices() {
+      let vtx_key = mesh.vertices.insert(linked_mesh::Vertex {
+        position: Vec3::new(vtx.x, vtx.y, vtx.z),
+        shading_normal: None,
+        displacement_normal: None,
+        edges: Vec::new(),
+      });
+      vtx_keys.push(vtx_key);
+    }
+
+    for &[v0, v1, v2] in out_mesh.indices() {
+      mesh.add_face(
+        [
+          vtx_keys[v0 as usize],
+          vtx_keys[v1 as usize],
+          vtx_keys[v2 as usize],
+        ],
+        (),
+      );
+    }
+
+    Ok(mesh)
   }
 
   /// Construct an axis-aligned solid cuboid. Optional parameters are `center`
