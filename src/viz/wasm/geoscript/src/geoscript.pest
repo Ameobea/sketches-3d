@@ -1,0 +1,31 @@
+WHITESPACE       = _{ " " | "\t" | "\n" | "\r" }
+COMMENT          = _{ "//" ~ (!"\n" ~ ANY)* }
+
+program          = { SOI ~ statement* ~ EOI }
+statement        = _{ (assignment | func_call | pipeline) ~ EOL* }
+EOL              = _{ WHITESPACE* ~ ("\n" | "\r\n") }
+
+assignment       = { ident ~ "=" ~ expr }
+
+expr             = _{ pipeline }
+
+val              = _{ range | range_inclusive | func_call | value_expr  }
+pipeline         = { val ~ (pipe_op ~ (func_call | ident))* }
+pipe_op          = _{ "|" }
+
+func_call        = { ident ~ "(" ~ arg_list? ~ ")" }
+
+arg_list         = _{ (arg ~ ("," ~ arg)*)? ~ ","? }
+arg              = { keyword_arg | expr }
+keyword_arg      = { ident ~ "=" ~ expr }
+
+value_expr       = _{ ident | literal }
+
+literal          = _{ float | int }
+int              = @{ ("+" | "-")? ~ ASCII_DIGIT+ }
+float            = @{ ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
+
+ident            = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+range            = { int ~ ".." ~ int }
+range_inclusive  = { int ~ "..=" ~ int }

@@ -5,12 +5,14 @@ import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
+import { initManifoldWasm } from 'src/viz/wasmComp/manifold';
 
 export const processLoadedScene = async (
   viz: Viz,
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
+  const manifoldInitPromise = initManifoldWasm();
   const loader = new THREE.ImageBitmapLoader();
   const debugMatPromise = buildGrayFossilRockMaterial(
     loader,
@@ -19,10 +21,10 @@ export const processLoadedScene = async (
     { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
   );
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
   viz.scene.add(ambientLight);
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 2.4);
   dirLight.position.set(-20, 50, 0);
   viz.scene.add(dirLight);
 
@@ -50,10 +52,13 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
 
-  const csg = await import('../../wasmComp/csg_sandbox').then(async engine => {
-    await engine.default();
-    return engine;
-  });
+  const [csg] = await Promise.all([
+    import('../../wasmComp/csg_sandbox').then(async engine => {
+      await engine.default();
+      return engine;
+    }),
+    manifoldInitPromise,
+  ]);
 
   const mesh0 = new THREE.SphereGeometry(9, 7, 7);
   // const mesh0 = new THREE.TorusKnotGeometry(5, 1.5, 16, 8);
@@ -135,7 +140,7 @@ export const processLoadedScene = async (
     fpCtx.addTriMesh(platform);
   });
 
-  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
+  // configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
 
   return {
     spawnLocation: 'spawn',
@@ -152,7 +157,7 @@ export const processLoadedScene = async (
     debugPos: true,
     locations: {
       spawn: {
-        pos: [1.15471613407135, 8.7756818532943726, -0.19975419342517853],
+        pos: [1.15471613407135, 16.7756818532943726, -0.19975419342517853],
         rot: [-0.8227963267948929, -48.78199999999914, 0],
       },
     },

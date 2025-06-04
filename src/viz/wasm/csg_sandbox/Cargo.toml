@@ -17,3 +17,4 @@ noise = "0.4"
 
 mesh = { path = "../mesh" }
 tessellation = { path = "../tessellation" }
+geoscript = { path = "../geoscript" }

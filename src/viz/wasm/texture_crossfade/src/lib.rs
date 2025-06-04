@@ -2,7 +2,8 @@
 
 use std::ptr::{self, addr_of};
 
-static mut TEXTURE_PTRS: [*mut u8; 8] = [ptr::null_mut(); 8];
+const TEXTURE_PTR_COUNT: usize = 8;
+static mut TEXTURE_PTRS: [*mut u8; TEXTURE_PTR_COUNT] = [ptr::null_mut(); TEXTURE_PTR_COUNT];
 
 #[no_mangle]
 pub extern "C" fn wasm_malloc(size: usize) -> *mut u8 {
@@ -30,7 +31,7 @@ pub extern "C" fn set_texture(data: *mut u8, index: usize) {
 #[no_mangle]
 pub extern "C" fn reset(texture_size_bytes: usize) {
   unsafe {
-    for i in 0..TEXTURE_PTRS.len() {
+    for i in 0..TEXTURE_PTR_COUNT {
       if !TEXTURE_PTRS[i].is_null() {
         drop(Vec::from_raw_parts(
           TEXTURE_PTRS[i],

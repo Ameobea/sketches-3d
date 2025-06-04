@@ -1,11 +1,7 @@
-use noise::{MultiFractal, NoiseModule};
 use wasm_bindgen::prelude::*;
 
-use mesh::{
-  csg::{FaceData, CSG},
-  linked_mesh::DisplacementNormalMethod,
-  LinkedMesh, OwnedIndexedMesh,
-};
+use geoscript::mesh_boolean::{apply_boolean, decode_manifold_output, MeshBooleanOp};
+use mesh::{csg::FaceData, linked_mesh::DisplacementNormalMethod, LinkedMesh, OwnedIndexedMesh};
 
 static mut DID_INIT: bool = false;
 
@@ -26,10 +22,10 @@ pub struct CsgSandboxCtx {
 }
 
 #[wasm_bindgen]
-pub fn create_mesh(indices: &[u32], vertices: &[f32]) -> *mut LinkedMesh<FaceData> {
+pub fn create_mesh(indices: Vec<u32>, vertices: Vec<f32>) -> *mut LinkedMesh<FaceData> {
   maybe_init();
 
-  let mut mesh = LinkedMesh::from_raw_indexed(vertices, indices, None, None);
+  let mut mesh = LinkedMesh::from_raw_indexed(&vertices, &indices, None, None);
   mesh.merge_vertices_by_distance(1e-5);
   mesh
     .check_is_manifold::<true>()
@@ -45,23 +41,25 @@ pub fn free_mesh(mesh: *mut LinkedMesh<FaceData>) {
   drop(unsafe { Box::from_raw(mesh) });
 }
 
-fn displace_mesh(mesh: &mut LinkedMesh) {
-  // let noise = noise::Fbm::new().set_octaves(4);
-  // for (_vtx_key, vtx) in &mut mesh.vertices {
-  //   let pos = vtx.position * 0.2;
-  //   let noise = noise.get([pos.x, pos.y, pos.z]); //.abs();
-  //   let displacement_normal = vtx
-  //     .displacement_normal
-  //     .expect("Expected displacement normal to be set by now");
-  //   vtx.position += displacement_normal * noise * 1.8;
-  // }
+fn displace_mesh<T>(mesh: &mut LinkedMesh<T>) {
+  use noise::{MultiFractal, NoiseModule};
 
+  let noise = noise::Fbm::new().set_octaves(4);
   for (_vtx_key, vtx) in &mut mesh.vertices {
+    let pos = vtx.position * 0.2;
+    let noise = noise.get([pos.x, pos.y, pos.z]); //.abs();
     let displacement_normal = vtx
       .displacement_normal
       .expect("Expected displacement normal to be set by now");
-    vtx.position += displacement_normal * 0.3;
+    vtx.position += displacement_normal * noise * 1.8;
   }
+
+  // for (_vtx_key, vtx) in &mut mesh.vertices {
+  //   let displacement_normal = vtx
+  //     .displacement_normal
+  //     .expect("Expected displacement normal to be set by now");
+  //   vtx.position += displacement_normal * 0.3;
+  // }
 }
 
 #[wasm_bindgen]
@@ -69,15 +67,57 @@ pub fn csg_sandbox_init(
   mesh_0: *const LinkedMesh<FaceData>,
   mesh_1: *const LinkedMesh<FaceData>,
 ) -> *mut CsgSandboxCtx {
-  let mesh0 = unsafe { &*mesh_0 }.clone();
-  let mesh1 = unsafe { &*mesh_1 }.clone();
+  let mesh0 = unsafe { &*mesh_0 };
+  let mesh1 = unsafe { &*mesh_1 };
+  let mut mesh1 = mesh1.clone();
 
-  let csg0 = CSG::from(mesh0);
-  let csg1 = CSG::from(mesh1);
+  // let csg0 = CSG::from(mesh0.mesh.clone());
+  // let csg1 = CSG::from(mesh1.mesh.clone());
+
   // let mut mesh = csg0.subtract(csg1.mesh);
-  let mut mesh = csg0
-    .intersect_experimental(csg1.mesh)
-    .expect("Error applying CSG");
+  // let mut mesh = csg0
+  //   .intersect_experimental(csg1.mesh)
+  //   .expect("Error applying CSG");
+
+  let target_edge_length = 0.56;
+  tessellation::tessellate_mesh(
+    &mut mesh1,
+    target_edge_length,
+    DisplacementNormalMethod::Interpolate,
+  );
+
+  mesh1.compute_vertex_displacement_normals();
+  displace_mesh(&mut mesh1);
+
+  let mesh0_exported = mesh0.to_raw_indexed(false, false);
+  let mesh1_exported = mesh1.to_raw_indexed(false, false);
+
+  assert!(std::mem::size_of::<u32>() == std::mem::size_of::<usize>());
+  let mesh0_exported_indices = unsafe {
+    std::slice::from_raw_parts(
+      mesh0_exported.indices.as_ptr() as *const u32,
+      mesh0_exported.indices.len(),
+    )
+  };
+  let mesh1_exported_indices = unsafe {
+    std::slice::from_raw_parts(
+      mesh1_exported.indices.as_ptr() as *const u32,
+      mesh1_exported.indices.len(),
+    )
+  };
+
+  let encoded_output = apply_boolean(
+    &mesh0_exported.vertices,
+    &mesh0_exported_indices,
+    &mesh1_exported.vertices,
+    &mesh1_exported_indices,
+    MeshBooleanOp::Difference as u8,
+  );
+  let (out_verts, out_indices) = decode_manifold_output(&encoded_output);
+  let mut mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(&out_verts, &out_indices, None, None);
+  mesh
+    .check_is_manifold::<true>()
+    .expect("Mesh is not manifold after CSG operation");
 
   mesh.merge_vertices_by_distance(1e-3);
   let sharp_edge_threshold_rads = 0.8;
@@ -85,24 +125,49 @@ pub fn csg_sandbox_init(
   mesh.compute_vertex_displacement_normals();
   // mesh.separate_vertices_and_compute_normals();
 
-  let target_edge_length = 4.26;
-  tessellation::tessellate_mesh(
-    &mut mesh,
-    target_edge_length,
-    DisplacementNormalMethod::Interpolate,
-  );
+  // let target_edge_length = 0.56;
+  // tessellation::tessellate_mesh(
+  //   &mut mesh,
+  //   target_edge_length,
+  //   DisplacementNormalMethod::Interpolate,
+  // );
 
-  displace_mesh(&mut mesh);
+  // displace_mesh(&mut mesh);
+
+  // mesh.merge_vertices_by_distance(1e-5);
+
+  // mesh
+  //   .check_is_manifold::<true>()
+  //   .expect("Mesh is not manifold after tessellation and displacement");
+
+  // let mesh_exported = mesh.to_raw_indexed(false, false);
+  // let mesh_exported_indices = unsafe {
+  //   std::slice::from_raw_parts(
+  //     mesh_exported.indices.as_ptr() as *const u32,
+  //     mesh_exported.indices.len(),
+  //   )
+  // };
+
+  // let mut mesh1_exported_vertices_offset = mesh1_exported.vertices.clone();
+  // for vtx in mesh1_exported_vertices_offset.chunks_exact_mut(3) {
+  //   vtx[0] += 15.5;
+  // }
+  // let encoded_output = apply_boolean(
+  //   &mesh_exported.vertices,
+  //   &mesh_exported_indices,
+  //   &mesh1_exported_vertices_offset,
+  //   &mesh1_exported_indices,
+  //   BooleanOp::Difference as u8,
+  // );
+  // let (out_verts, out_indices) = decode_manifold_output(&encoded_output);
+  // let mut mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(&out_verts, &out_indices, None,
+  // None); mesh
+  //   .check_is_manifold::<true>()
+  //   .expect("Mesh is not manifold after CSG operation");
 
   mesh.mark_edge_sharpness(sharp_edge_threshold_rads);
   mesh.compute_edge_displacement_normals();
   mesh.separate_vertices_and_compute_normals();
-
-  let mut deleted_tri_count = 0;
-  mesh.cleanup_degenerate_triangles_cb(|_, _| {
-    deleted_tri_count += 1;
-  });
-  log::info!("deleted {deleted_tri_count} degenerate triangles");
 
   let mesh = mesh.to_raw_indexed(true, true);
   Box::into_raw(Box::new(CsgSandboxCtx { mesh }))

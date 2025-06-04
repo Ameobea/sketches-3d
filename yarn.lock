@@ -1937,6 +1937,11 @@ make-dir@^3.1.0:
   dependencies:
     semver "^6.0.0"
 
+manifold-3d@^3.1.1:
+  version "3.1.1"
+  resolved "https://registry.yarnpkg.com/manifold-3d/-/manifold-3d-3.1.1.tgz#ea512f16ce57583355100d3ab3f702f7a5b31748"
+  integrity sha512-1u/9BUYNDWfEZt2BJHjgrmFREdlwbQdrvtCmiazMrspJHF18u7CSDIqNcT/Pe/wa4Gsbfq2WEYwCzGMq+/qqAw==
+
 merge2@^1.3.0:
   version "1.4.1"
   resolved "https://registry.yarnpkg.com/merge2/-/merge2-1.4.1.tgz#4368892f885e907455a6fd7dc55c0c9d404990ae"

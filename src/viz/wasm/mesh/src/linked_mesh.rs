@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::{fmt::Debug, hash::Hash};
 
 use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxHashMap, FxHashSet};
@@ -132,21 +132,12 @@ impl<T> Face<T> {
     (a + b + c) / 3.
   }
 
-  pub fn compute_angle_at_vertex(
-    &self,
-    vtx_key: VertexKey,
-    verts: &SlotMap<VertexKey, Vertex>,
-  ) -> f32 {
-    let vtx_ix = self
-      .vertices
-      .iter()
-      .position(|&v| v == vtx_key)
-      .unwrap_or_else(|| panic!("Vertex key {vtx_key:?} not found in face"));
+  pub fn compute_angle_at_vertex(&self, vtx_ix: usize, verts: &SlotMap<VertexKey, Vertex>) -> f32 {
     let (target_vtx_key, b, c) = match vtx_ix {
       0 => (self.vertices[0], self.vertices[1], self.vertices[2]),
       1 => (self.vertices[1], self.vertices[2], self.vertices[0]),
       2 => (self.vertices[2], self.vertices[0], self.vertices[1]),
-      _ => unreachable!(),
+      _ => panic!("Vertex index {vtx_ix} out of bounds for triangle with 3 vertices"),
     };
     let [target_vtx_pos, b_vtx_pos, c_vtx_pos] = [
       verts[target_vtx_key].position,
@@ -157,6 +148,19 @@ impl<T> Face<T> {
     let edge_0 = b_vtx_pos - target_vtx_pos;
     let edge_1 = c_vtx_pos - target_vtx_pos;
     edge_0.angle(&edge_1)
+  }
+
+  pub fn compute_angle_at_vertex_key(
+    &self,
+    vtx_key: VertexKey,
+    verts: &SlotMap<VertexKey, Vertex>,
+  ) -> f32 {
+    let vtx_ix = self
+      .vertices
+      .iter()
+      .position(|&v| v == vtx_key)
+      .unwrap_or_else(|| panic!("Vertex key {vtx_key:?} not found in face"));
+    self.compute_angle_at_vertex(vtx_ix, verts)
   }
 
   pub fn to_triangle(&self, verts: &SlotMap<VertexKey, Vertex>) -> Triangle {
@@ -217,6 +221,18 @@ pub struct LinkedMesh<FaceData = ()> {
   pub transform: Option<Mat4>,
 }
 
+impl<T> Debug for LinkedMesh<T> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "LinkedMesh {{ vertices: {}, faces: {}, edges: {} }}",
+      self.vertices.len(),
+      self.faces.len(),
+      self.edges.len()
+    )
+  }
+}
+
 fn sort_edge(v0: VertexKey, v1: VertexKey) -> [VertexKey; 2] {
   if v0 < v1 {
     [v0, v1]
@@ -254,7 +270,7 @@ impl NormalAcc {
       return None;
     }
 
-    let angle_at_vtx = face.compute_angle_at_vertex(fan_center_vtx_key, verts);
+    let angle_at_vtx = face.compute_angle_at_vertex_key(fan_center_vtx_key, verts);
     if angle_at_vtx.is_nan() {
       panic!("NaN angle: {:?}", face.to_triangle(verts));
     }
@@ -479,8 +495,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           if face.vertices.contains(&v0_key) && face.vertices.contains(&v1_key) {
             let v0 = &self.vertices[v0_key];
             panic!(
-              "Triangle contains both vertices to merge: {v0_key:?}, {v1_key:?} with positions {} \
-               and {}",
+              "Triangle {face_key:?} contains both vertices to merge: {v0_key:?}, {v1_key:?} with \
+               positions {} and {}",
               v0.position, removed_vtx.position
             );
           }
@@ -856,12 +872,22 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     normals: Option<&[f32]>,
     transform: Option<Mat4>,
   ) -> Self {
+    assert!(
+      vertices.len() % 3 == 0,
+      "Vertices length must be a multiple of 3; got {}",
+      vertices.len()
+    );
     let vertices =
       unsafe { std::slice::from_raw_parts(vertices.as_ptr() as *const Vec3, vertices.len() / 3) };
     let normals = if let Some(normals) = normals {
       if normals.is_empty() {
         None
       } else {
+        assert!(
+          normals.len() % 3 == 0,
+          "Normals length must be a multiple of 3; got {}",
+          normals.len()
+        );
         Some(unsafe {
           std::slice::from_raw_parts(normals.as_ptr() as *const Vec3, normals.len() / 3)
         })
@@ -1070,6 +1096,128 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
 
       if TWO_MANIFOLD {
+        if !full_fan {
+          return Err(NonManifoldError::NonClosedFan { vtx_key });
+        }
+      }
+    }
+
+    Ok(())
+  }
+
+  /// Returns `true` when the mesh is a single connected component.  This check assumes that the
+  /// mesh consists of a single connected component.  If there are islands or disconnected parts,
+  /// this may produce incorrect results.
+  ///
+  /// If `TWO_MANIFOLD` is `true`, additionally enforces that every edge is shared by *exactly* two
+  /// faces, meaning that the mesh is watertight and forms a continuous surface.
+  ///
+  /// The test is entirely topological; positions, normals, triangle winding order, etc. are not
+  /// checked.
+  pub fn check_is_manifold_dynamic(&self, two_manifold: bool) -> Result<(), NonManifoldError> {
+    for (edge_key, edge) in self.edges.iter() {
+      let face_count = edge.faces.len();
+      if two_manifold {
+        if face_count != 2 {
+          return Err(NonManifoldError::NonManifoldEdge {
+            edge_key: edge_key,
+            face_count,
+          });
+        }
+      } else {
+        if face_count == 0 {
+          log::error!("Found edge with no faces: {edge:?}");
+          return Err(NonManifoldError::LooseEdge { edge_key: edge_key });
+        } else if face_count > 2 {
+          return Err(NonManifoldError::NonManifoldEdge {
+            edge_key: edge_key,
+            face_count,
+          });
+        }
+      }
+    }
+
+    if self.faces.is_empty() {
+      return Err(NonManifoldError::EmptyMesh);
+    }
+
+    // For each vertex, walk the fan of incident faces
+    let mut incident_faces = Vec::new();
+    let mut visited_faces = FxHashSet::default();
+    let mut visited_edges = FxHashSet::default();
+    for (vtx_key, vtx) in &self.vertices {
+      if vtx.edges.is_empty() {
+        return Err(NonManifoldError::LooseVertex { vtx_key });
+      }
+
+      incident_faces.clear();
+      for &edge_key in &vtx.edges {
+        incident_faces.extend(self.edges[edge_key].faces.iter().copied());
+      }
+      incident_faces.sort_unstable();
+      incident_faces.dedup();
+      let Some(&start_face_key) = incident_faces.first() else {
+        return Err(NonManifoldError::LooseVertex { vtx_key });
+      };
+      let start_face = &self.faces[start_face_key];
+
+      visited_faces.clear();
+      visited_edges.clear();
+
+      // Find an edge of the face that contains this vertex
+      let start_edge_key = start_face
+        .edges
+        .iter()
+        .find(|&&e| self.edges[e].vertices.contains(&vtx_key))
+        .copied()
+        .unwrap();
+      let mut cur_face_key = start_face_key;
+      let mut cur_edge_key = start_edge_key;
+      let mut full_fan = false;
+      loop {
+        visited_faces.insert(cur_face_key);
+        visited_edges.insert(cur_edge_key);
+        // choose the next edge in the current face that contains this vertex and is not the
+        // previous edge
+        let face = &self.faces[cur_face_key];
+        let next_edge_key = face
+          .edges
+          .iter()
+          .find(|&&edge_key| {
+            self.edges[edge_key].vertices.contains(&vtx_key) && edge_key != cur_edge_key
+          })
+          .copied();
+        if next_edge_key.is_none() {
+          break;
+        }
+
+        let next_edge_key = next_edge_key.unwrap();
+        // Find the other face (besides cur_face_key) that shares this edge and contains the vertex
+        let edge = &self.edges[next_edge_key];
+        let Some(&next_face_key) = edge.faces.iter().find(|&&face_key| {
+          face_key != cur_face_key && self.faces[face_key].vertices.contains(&vtx_key)
+        }) else {
+          // reached a border edge
+          break;
+        };
+
+        if visited_faces.contains(&next_face_key) {
+          full_fan = true;
+          break;
+        }
+        cur_face_key = next_face_key;
+        cur_edge_key = next_edge_key;
+      }
+
+      if visited_faces.len() != incident_faces.len() {
+        return Err(NonManifoldError::MultipleFans {
+          vtx_key,
+          incident_face_count: incident_faces.len(),
+          visited_face_count: visited_faces.len(),
+        });
+      }
+
+      if two_manifold {
         if !full_fan {
           return Err(NonManifoldError::NonClosedFan { vtx_key });
         }
@@ -1833,6 +1981,65 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   pub fn cleanup_degenerate_triangles(&mut self) {
     self.cleanup_degenerate_triangles_cb(|_, _| {});
   }
+
+  pub fn new_box(width: f32, height: f32, depth: f32) -> Self {
+    let half_width = width / 2.;
+    let half_height = height / 2.;
+    let half_depth = depth / 2.;
+
+    LinkedMesh::from_indexed_vertices(
+      &[
+        Vec3::new(-half_width, -half_height, -half_depth),
+        Vec3::new(half_width, -half_height, -half_depth),
+        Vec3::new(half_width, half_height, -half_depth),
+        Vec3::new(-half_width, half_height, -half_depth),
+        Vec3::new(-half_width, -half_height, half_depth),
+        Vec3::new(half_width, -half_height, half_depth),
+        Vec3::new(half_width, half_height, half_depth),
+        Vec3::new(-half_width, half_height, half_depth),
+      ],
+      &[
+        0, 1, 2, 0, 2, 3, // bottom
+        4, 5, 6, 4, 6, 7, // top
+        0, 1, 5, 0, 5, 4, // front
+        2, 3, 7, 2, 7, 6, // back
+        0, 3, 7, 0, 7, 4, // left
+        1, 2, 6, 1, 6, 5, // right
+      ],
+      None,
+      None,
+    )
+  }
+}
+
+impl<T: Default> From<parry3d::shape::TriMesh> for LinkedMesh<T> {
+  fn from(trimesh: parry3d::shape::TriMesh) -> Self {
+    let mut mesh: LinkedMesh<T> =
+      LinkedMesh::new(trimesh.vertices().len(), trimesh.indices().len(), None);
+    let mut vtx_keys = Vec::with_capacity(trimesh.vertices().len());
+    for vtx in trimesh.vertices() {
+      let vtx_key = mesh.vertices.insert(Vertex {
+        position: Vec3::new(vtx.x, vtx.y, vtx.z),
+        shading_normal: None,
+        displacement_normal: None,
+        edges: Vec::new(),
+      });
+      vtx_keys.push(vtx_key);
+    }
+
+    for &[v0, v1, v2] in trimesh.indices() {
+      mesh.add_face(
+        [
+          vtx_keys[v0 as usize],
+          vtx_keys[v1 as usize],
+          vtx_keys[v2 as usize],
+        ],
+        T::default(),
+      );
+    }
+
+    mesh
+  }
 }
 
 #[cfg(test)]
@@ -2188,28 +2395,7 @@ mod tests {
 
   #[test]
   fn cube_two_manifold() {
-    let mesh: LinkedMesh<()> = LinkedMesh::from_indexed_vertices(
-      &[
-        Vec3::new(-1., -1., -1.),
-        Vec3::new(1., -1., -1.),
-        Vec3::new(1., 1., -1.),
-        Vec3::new(-1., 1., -1.),
-        Vec3::new(-1., -1., 1.),
-        Vec3::new(1., -1., 1.),
-        Vec3::new(1., 1., 1.),
-        Vec3::new(-1., 1., 1.),
-      ],
-      &[
-        0, 1, 2, 0, 2, 3, // bottom
-        4, 5, 6, 4, 6, 7, // top
-        0, 1, 5, 0, 5, 4, // front
-        2, 3, 7, 2, 7, 6, // back
-        0, 3, 7, 0, 7, 4, // left
-        1, 2, 6, 1, 6, 5, // right
-      ],
-      None,
-      None,
-    );
+    let mesh: LinkedMesh<()> = LinkedMesh::new_box(1., 1., 1.);
 
     mesh
       .check_is_manifold::<true>()

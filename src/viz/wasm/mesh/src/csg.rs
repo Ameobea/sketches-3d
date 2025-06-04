@@ -7,18 +7,14 @@ use arrayvec::ArrayVec;
 use common::uninit;
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use lyon_tessellation::{
-  geom::Vector, math::point, path::Path, FillGeometryBuilder, FillOptions, FillTessellator,
-  GeometryBuilder,
+  math::point, path::Path, FillGeometryBuilder, FillOptions, FillTessellator, GeometryBuilder,
 };
-use nalgebra::{Point3, SimdBool};
+use nalgebra::Point3;
 use parry3d::{
-  bounding_volume::SimdAabb,
-  math::{Isometry, SIMD_WIDTH},
-  partitioning::{Qbvh, SimdSimultaneousVisitStatus, SimdSimultaneousVisitor},
+  math::Isometry,
   shape::{TriMesh, TriMeshFlags},
   transformation::{
-    intersect_meshes, intersect_meshes_with_tolerances, MeshIntersectionError,
-    MeshIntersectionTolerances,
+    intersect_meshes_with_tolerances, MeshIntersectionError, MeshIntersectionTolerances,
   },
 };
 use slotmap::Key;
@@ -1714,20 +1710,22 @@ impl CSG {
   }
 
   pub fn intersect_experimental(
+    // TODO: Switch to accepting indices and vertices directly
     self,
     csg: LinkedMesh<FaceData>,
   ) -> Result<LinkedMesh<()>, MeshIntersectionError> {
     let (a_trimesh, b_trimesh) = Self::build_trimeshes(self, csg);
 
     let mut tolerances = MeshIntersectionTolerances::default();
-    tolerances.angle_epsilon = 0.00000000001;
-    tolerances.collinearity_epsilon = std::f32::EPSILON * 10_000.;
+    // tolerances.angle_epsilon = 0.00000000001;
+    // tolerances.collinearity_epsilon = std::f32::EPSILON * 0.000001;
     tolerances.global_insertion_epsilon = 0.000000000001;
+    // tolerances.local_insertion_epsilon_scale = 1.;
     let opt = intersect_meshes_with_tolerances(
-      &Isometry::translation(0.23423, 1.4423423, -0.2334283432),
+      &Isometry::translation(-1.423 + 0.000001, 5.4423423, 2.2334283432),
       &a_trimesh,
       false,
-      &Isometry::identity(),
+      &Isometry::translation(0., 0., 0.),
       &b_trimesh,
       true,
       tolerances,
@@ -1737,28 +1735,167 @@ impl CSG {
       return Ok(LinkedMesh::new(0, 0, None));
     };
 
-    let mut mesh = LinkedMesh::new(out_mesh.vertices().len(), out_mesh.indices().len(), None);
-    let mut vtx_keys = Vec::with_capacity(out_mesh.vertices().len());
-    for vtx in out_mesh.vertices() {
-      let vtx_key = mesh.vertices.insert(linked_mesh::Vertex {
-        position: Vec3::new(vtx.x, vtx.y, vtx.z),
-        shading_normal: None,
-        displacement_normal: None,
-        edges: Vec::new(),
-      });
-      vtx_keys.push(vtx_key);
+    let mut mesh: LinkedMesh<()> = out_mesh.into();
+    mesh.merge_vertices_by_distance(0.00001);
+
+    log::info!(
+      "PRE CLEANUP mesh topology check: 1-manifold={:?}; 2-manifold={:?}",
+      mesh.check_is_manifold::<false>(),
+      mesh.check_is_manifold::<true>()
+    );
+
+    fn cleanup_mesh(mesh: &mut LinkedMesh<()>) -> usize {
+      const MIN_ANGLE_RADS: f32 = 0.01;
+
+      let mut removed_face_count = 0usize;
+
+      let all_face_keys = mesh.faces.keys().collect::<Vec<_>>();
+      'face: for face_key in all_face_keys {
+        let verts_to_merge = 'verts: {
+          let Some(face) = mesh.faces.get(face_key) else {
+            // face was possibly removed by a previous operation
+            continue 'face;
+          };
+
+          if face.is_degenerate(&mesh.vertices) {
+            log::info!("Removing degenerate face: {face_key:?}");
+            mesh.remove_face(face_key);
+            removed_face_count += 1;
+            continue 'face;
+          }
+
+          // sometimes weird flag triangles that are stuck to the mesh get generated
+          let border_edge_count = face
+            .edges
+            .iter()
+            .filter(|&&edge_key| {
+              let edge = &mesh.edges[edge_key];
+              edge.faces.len() == 1
+            })
+            .count();
+          if border_edge_count >= 2 {
+            log::info!(
+              "Removing flag face: {face_key:?}; area={}",
+              face.area(&mesh.vertices)
+            );
+            mesh.remove_face(face_key);
+            removed_face_count += 1;
+            continue 'face;
+          }
+
+          let vtx_0_angle = face.compute_angle_at_vertex(0, &mesh.vertices);
+          if vtx_0_angle < MIN_ANGLE_RADS {
+            log::info!(
+              "v0 angle: {vtx_0_angle}; vtxs: {:?}",
+              face.vertex_positions(&mesh.vertices)
+            );
+            break 'verts (face.vertices[1], face.vertices[2]);
+          }
+
+          let vtx_1_angle = face.compute_angle_at_vertex(1, &mesh.vertices);
+          if vtx_1_angle < MIN_ANGLE_RADS {
+            log::info!(
+              "v1 angle: {vtx_1_angle}; vtxs: {:?}",
+              face.vertex_positions(&mesh.vertices)
+            );
+            break 'verts (face.vertices[0], face.vertices[2]);
+          }
+
+          let vtx_2_angle = face.compute_angle_at_vertex(2, &mesh.vertices);
+          if vtx_2_angle < MIN_ANGLE_RADS {
+            log::info!(
+              "v2 angle: {vtx_2_angle}; vtxs: {:?}",
+              face.vertex_positions(&mesh.vertices)
+            );
+            break 'verts (face.vertices[0], face.vertices[1]);
+          }
+
+          continue 'face;
+        };
+
+        // TODO: check for triangles with tiny area
+
+        log::info!(
+          "Merging vertices {:?} in face {:?}",
+          verts_to_merge,
+          face_key
+        );
+        // TODO: make sure this is valid (pretty sure it's not, it's tearing holes in the mesh)
+        // remove all faces that include the edge we're collapsing
+        let Some(edge_key_to_remove) = mesh.get_edge_key([verts_to_merge.0, verts_to_merge.1])
+        else {
+          log::error!(
+            "No edge found for vertices {:?} in face {:?} yet they appear in the same face?",
+            verts_to_merge,
+            face_key
+          );
+          continue;
+        };
+        let face_keys_to_remove = mesh.edges[edge_key_to_remove].faces.clone();
+        log::info!(
+          "Face count for edge being collapsed: {}",
+          face_keys_to_remove.len()
+        );
+        if face_keys_to_remove.len() > 2 {
+          continue;
+        }
+        for face_key in face_keys_to_remove {
+          mesh.remove_face(face_key);
+          removed_face_count += 1;
+        }
+        mesh.merge_vertices(verts_to_merge.0, verts_to_merge.1);
+      }
+
+      removed_face_count
     }
 
-    for &[v0, v1, v2] in out_mesh.indices() {
-      mesh.add_face(
-        [
-          vtx_keys[v0 as usize],
-          vtx_keys[v1 as usize],
-          vtx_keys[v2 as usize],
-        ],
-        (),
-      );
+    loop {
+      let removed_face_count = cleanup_mesh(&mut mesh);
+      if removed_face_count == 0 {
+        break;
+      }
+      log::info!("Removed {removed_face_count} faces");
     }
+
+    mesh.vertices.retain(|_key, vtx| !vtx.edges.is_empty());
+
+    mesh.merge_vertices_by_distance(0.00001);
+
+    log::info!(
+      "mesh topology check: 1-manifold={:?}; 2-manifold={:?}",
+      mesh.check_is_manifold::<false>(),
+      mesh.check_is_manifold::<true>()
+    );
+
+    // // TODO TEMP REMOVE
+    // if let Err(NonManifoldError::NonManifoldEdge { edge_key, .. }) =
+    //   mesh.check_is_manifold::<false>()
+    // {
+    //   let face_keys = mesh.edges[edge_key]
+    //     .faces
+    //     .iter()
+    //     .copied()
+    //     .collect::<FxHashSet<_>>();
+
+    //   log::info!("BAD FACES:");
+    //   //
+    //   for &face_key in &face_keys {
+    //     log::info!(
+    //       " {:?}; area: {:?}",
+    //       mesh.faces[face_key].vertex_positions(&mesh.vertices),
+    //       mesh.faces[face_key].area(&mesh.vertices),
+    //     );
+    //   }
+
+    //   let all_face_keys = mesh.faces.keys().collect::<Vec<_>>();
+    //   for face_key in all_face_keys {
+    //     if face_keys.contains(&face_key) {
+    //       continue;
+    //     }
+
+    //     mesh.remove_face(face_key);
+    //   }
+    // }
 
     Ok(mesh)
   }

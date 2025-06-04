@@ -18,8 +18,9 @@ pub fn maybe_init_rng() {
     RNG = rand_pcg::Pcg32::from_seed(std::mem::transmute([89538u64, 382173857842u64]));
 
     // pump the rng a few times to avoid possible issues with seeding
+    let rng = addr_of_mut!(RNG);
     for _ in 0..8 {
-      let _ = RNG.gen::<f32>();
+      let _ = (*rng).gen::<f32>();
     }
   }
 }

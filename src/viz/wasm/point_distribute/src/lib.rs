@@ -1,36 +1,124 @@
 use common::{maybe_init_rng, random};
-use mesh::{Mesh, Triangle};
+use mesh::{linked_mesh::FaceKey, LinkedMesh, Mesh, Triangle};
 use nalgebra::{Point3, Vector3};
 
+pub enum MeshImpl<'a, T = ()> {
+  Mesh(Mesh<'a>),
+  LinkedMesh {
+    mesh: &'a LinkedMesh<T>,
+    face_keys: Vec<FaceKey>,
+  },
+}
+
+impl<'a, T> MeshImpl<'a, T> {
+  pub fn face_count(&self) -> usize {
+    match self {
+      MeshImpl::Mesh(mesh) => mesh.vertices.len() / 3,
+      MeshImpl::LinkedMesh { mesh, .. } => mesh.faces.len(),
+    }
+  }
+
+  pub fn get_face(&self, face_index: usize) -> Triangle {
+    match self {
+      MeshImpl::Mesh(mesh) => {
+        let a = mesh.vertices[3 * face_index];
+        let b = mesh.vertices[3 * face_index + 1];
+        let c = mesh.vertices[3 * face_index + 2];
+        Triangle::new(a, b, c)
+      }
+      MeshImpl::LinkedMesh { mesh, face_keys } => {
+        let face_key = face_keys[face_index];
+        mesh.faces[face_key].to_triangle(&mesh.vertices)
+      }
+    }
+  }
+
+  pub fn iter_faces(&self) -> Box<dyn Iterator<Item = Triangle> + '_> {
+    match self {
+      MeshImpl::Mesh(mesh) => Box::new((0..mesh.vertices.len() / 3).map(move |i| {
+        let a = mesh.vertices[3 * i];
+        let b = mesh.vertices[3 * i + 1];
+        let c = mesh.vertices[3 * i + 2];
+        Triangle::new(a, b, c)
+      })),
+      MeshImpl::LinkedMesh { mesh, .. } => {
+        Box::new(mesh.faces.values().map(|f| f.to_triangle(&mesh.vertices)))
+      }
+    }
+  }
+
+  pub fn transform(&self) -> Option<nalgebra::Matrix4<f32>> {
+    match self {
+      MeshImpl::Mesh(mesh) => mesh.transform,
+      MeshImpl::LinkedMesh { mesh, .. } => mesh.transform,
+    }
+  }
+
+  fn get_normals(&self, face_index: usize, u: f32, v: f32) -> Option<Vector3<f32>> {
+    let (a, b, c) = match self {
+      MeshImpl::Mesh(mesh) => {
+        if let Some(normals) = mesh.normals {
+          let a: Vector3<_> = normals[3 * face_index];
+          let b: Vector3<_> = normals[3 * face_index + 1];
+          let c: Vector3<_> = normals[3 * face_index + 2];
+          (a, b, c)
+        } else {
+          return None;
+        }
+      }
+      MeshImpl::LinkedMesh { mesh, face_keys } => {
+        let face_key = face_keys[face_index];
+        let vtxs = mesh.faces[face_key].vertices;
+        let Some(a) = mesh.vertices[vtxs[0]].shading_normal else {
+          return None;
+        };
+        let Some(b) = mesh.vertices[vtxs[1]].shading_normal else {
+          return None;
+        };
+        let Some(c) = mesh.vertices[vtxs[2]].shading_normal else {
+          return None;
+        };
+        (a, b, c)
+      }
+    };
+
+    Some(Vector3::zeros() + a.scale(u) + b.scale(v) + c.scale(1.0 - (u + v)))
+  }
+}
+
+impl<'a> From<Mesh<'a>> for MeshImpl<'a> {
+  fn from(mesh: Mesh<'a>) -> Self {
+    MeshImpl::Mesh(mesh)
+  }
+}
+
+impl<'a, T> From<&'a LinkedMesh<T>> for MeshImpl<'a, T> {
+  fn from(mesh: &'a LinkedMesh<T>) -> Self {
+    let face_keys: Vec<FaceKey> = mesh.faces.keys().collect();
+    MeshImpl::LinkedMesh { mesh, face_keys }
+  }
+}
+
 /// Largely based on https://github.com/mrdoob/three.js/blob/f8509646d78fcd4efaa4408119b55b2bead6e01b/examples/jsm/math/MeshSurfaceSampler.js
-pub struct MeshSurfaceSampler<'a> {
-  mesh: Mesh<'a>,
+pub struct MeshSurfaceSampler<'a, T = ()> {
+  mesh: MeshImpl<'a, T>,
   distribution: Vec<f32>,
 }
 
-impl<'a> MeshSurfaceSampler<'a> {
-  pub fn new(mesh: Mesh<'a>) -> Self {
+impl<'a, T> MeshSurfaceSampler<'a, T> {
+  pub fn new(mesh: impl Into<MeshImpl<'a, T>>) -> Self {
     maybe_init_rng();
 
-    if let Some(normals) = mesh.normals.as_ref() {
-      assert_eq!(mesh.vertices.len(), normals.len());
-    }
-
     let mut samp = MeshSurfaceSampler {
-      mesh,
+      mesh: mesh.into(),
       distribution: Vec::new(),
     };
 
-    let total_faces = samp.mesh.vertices.len() / 3;
+    let total_faces = samp.mesh.face_count();
     let mut face_weights = Vec::with_capacity(total_faces);
 
-    for i in 0..total_faces {
-      let a = samp.mesh.vertices[3 * i];
-      let b = samp.mesh.vertices[3 * i + 1];
-      let c = samp.mesh.vertices[3 * i + 2];
-
-      let triangle = Triangle::new(a, b, c);
-      face_weights.push(triangle.area());
+    for tri in samp.mesh.iter_faces() {
+      face_weights.push(tri.area());
     }
 
     let mut cumulative_total = 0.0;
@@ -43,7 +131,10 @@ impl<'a> MeshSurfaceSampler<'a> {
   }
 
   fn transform_matrix(&self) -> nalgebra::Matrix4<f32> {
-    self.mesh.transform.unwrap_or(nalgebra::Matrix4::identity())
+    self
+      .mesh
+      .transform()
+      .unwrap_or(nalgebra::Matrix4::identity())
   }
 
   /// Returns `(position, normal)`.
@@ -84,25 +175,17 @@ impl<'a> MeshSurfaceSampler<'a> {
       v = 1.0 - v;
     }
 
-    let (a, b, c) = (
-      self.mesh.vertices[3 * face_index],
-      self.mesh.vertices[3 * face_index + 1],
-      self.mesh.vertices[3 * face_index + 2],
-    );
+    let tri = self.mesh.get_face(face_index);
 
-    let position: Point3<f32> = (a.scale(u) + b.scale(v) + c.scale(1.0 - (u + v))).into();
+    let position: Point3<f32> =
+      (tri.a.scale(u) + tri.b.scale(v) + tri.c.scale(1.0 - (u + v))).into();
     let transform = self.transform_matrix();
     let transformed_position = transform.transform_point(&position);
 
-    let normal = match self.mesh.normals.as_ref() {
-      Some(normals) => {
-        let a: Vector3<_> = normals[3 * face_index];
-        let b: Vector3<_> = normals[3 * face_index + 1];
-        let c: Vector3<_> = normals[3 * face_index + 2];
-        (Vector3::zeros() + a.scale(u) + b.scale(v) + c.scale(1.0 - (u + v))).normalize()
-      }
-      None => Triangle::new(a, b, c).normal(),
-    };
+    let normal = self
+      .mesh
+      .get_normals(face_index, u, v)
+      .unwrap_or_else(|| self.mesh.get_face(face_index).normal());
 
     // Compute transformed normal by multiplying the normal vector with the inverse
     // transpose of the 3x3 submatrix used to transform points.
@@ -117,6 +200,7 @@ impl<'a> MeshSurfaceSampler<'a> {
   }
 }
 
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn malloc(size: usize) -> *mut u8 {
   let mut v = Vec::with_capacity(size);
@@ -125,6 +209,7 @@ pub extern "C" fn malloc(size: usize) -> *mut u8 {
   ptr
 }
 
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn free(ptr: *mut u8) {
   unsafe {

@@ -6,10 +6,10 @@ use mesh::{
   LinkedMesh,
 };
 
-fn does_face_have_edge_needing_split(
-  face: &Face<()>,
-  mesh: &LinkedMesh,
-  should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
+fn does_face_have_edge_needing_split<T>(
+  face: &Face<T>,
+  mesh: &LinkedMesh<T>,
+  should_split_edge: &impl Fn(&LinkedMesh<T>, &Edge) -> bool,
 ) -> bool {
   face
     .edges
@@ -18,13 +18,14 @@ fn does_face_have_edge_needing_split(
     .any(|edge| should_split_edge(mesh, edge))
 }
 
-pub fn tessellate_mesh_cb(
-  mesh: &mut LinkedMesh,
+pub fn tessellate_mesh_cb<T: Default>(
+  mesh: &mut LinkedMesh<T>,
   displacement_normal_method: DisplacementNormalMethod,
-  should_split_edge: &impl Fn(&LinkedMesh, &Edge) -> bool,
+  should_split_edge: &impl Fn(&LinkedMesh<T>, &Edge) -> bool,
 ) {
   let mut face_keys_needing_tessellation: Vec<_> = mesh
-    .iter_faces()
+    .faces
+    .iter()
     .filter_map(|(face_key, face)| {
       let has_edge_needing_split = does_face_have_edge_needing_split(face, mesh, should_split_edge);
       if has_edge_needing_split {
@@ -92,12 +93,12 @@ pub fn tessellate_mesh_cb(
   }
 }
 
-pub fn tessellate_mesh(
-  mesh: &mut LinkedMesh,
+pub fn tessellate_mesh<T: Default>(
+  mesh: &mut LinkedMesh<T>,
   target_edge_length: f32,
   displacement_normal_method: DisplacementNormalMethod,
 ) {
-  let should_split_edge = |mesh: &LinkedMesh, edge: &Edge| -> bool {
+  let should_split_edge = |mesh: &LinkedMesh<T>, edge: &Edge| -> bool {
     let length = edge.length(&mesh.vertices);
     let split_length = length / 2.;
     // if the post-split length would be closer to the target length than the
@@ -112,7 +113,7 @@ fn tessellate_sanity() {
   let indices = [0, 1, 2];
   let vertices = [0., 0., 0., 1., 0., 0., 0., 1., 0.];
 
-  let mut mesh = LinkedMesh::from_raw_indexed(&vertices, &indices, None, None);
+  let mut mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(&vertices, &indices, None, None);
   tessellate_mesh(&mut mesh, 0.1, DisplacementNormalMethod::EdgeNormal);
 
   let raw = mesh.to_raw_indexed(false, false);

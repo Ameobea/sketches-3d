@@ -1,0 +1,15 @@
+[package]
+name = "geoscript"
+version = "0.1.0"
+authors = ["Casey Primozic <casey@cprimozic.net>"]
+edition = "2021"
+
+[dependencies]
+pest = "2.6"
+pest_derive = "2.6"
+fxhash = "0.2"
+phf = { version = "0.11.3", features = ["macros"] }
+wasm-bindgen = "=0.2.92"
+
+mesh = { path = "../mesh" }
+point_distribute = { path = "../point_distribute" }

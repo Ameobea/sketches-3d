@@ -38,6 +38,7 @@
     "comlink": "^4.4.1",
     "detect-gpu": "^5.0.55",
     "graphviz-builder": "^0.1.1",
+    "manifold-3d": "^3.1.1",
     "n8ao": "^1.9.3",
     "postprocessing": "^6.36.4",
     "rand-seed": "^2.1.7",
