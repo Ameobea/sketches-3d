@@ -3,7 +3,7 @@ use mesh::{linked_mesh::Vec3, LinkedMesh};
 
 use crate::{
   mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
-  seq::PointDistributeSeq,
+  seq::{FilterSeq, PointDistributeSeq},
   ArgRef, ArgType, EvalCtx, MapSeq, Value,
 };
 
@@ -63,15 +63,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("meshes", &[ArgType::Sequence]),
     ]
   ],
-  "subtract" => &[
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-    &[
-      ("meshes", &[ArgType::Sequence]),
-    ]
-  ],
   "difference" => &[
     &[
       ("a", &[ArgType::Mesh]),
@@ -103,13 +94,34 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("sequence", &[ArgType::Sequence]),
     ],
   ],
+  "neg" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+    &[
+      ("value", &[ArgType::Bool]),
+    ],
+  ],
+  "pos" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
+  "abs" => &[], // TODO
+  "sqrt" => &[], // TODO
   "add" => &[
     &[
       ("a", &[ArgType::Vec3]),
       ("b", &[ArgType::Vec3]),
     ],
     &[
-      ("a", &[ArgType::Float]),
+      ("a", &[ArgType::Numeric]),
       ("b", &[ArgType::Float]),
     ],
     &[
@@ -120,6 +132,32 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("a", &[ArgType::Int]),
       ("b", &[ArgType::Int]),
     ],
+    &[
+      ("a", &[ArgType::Mesh]),
+      ("b", &[ArgType::Mesh]),
+    ]
+  ],
+  "sub" => &[
+    &[
+      ("a", &[ArgType::Vec3]),
+      ("b", &[ArgType::Vec3]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Float]),
+    ],
+    &[
+      ("a", &[ArgType::Float]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Mesh]),
+      ("b", &[ArgType::Mesh]),
+    ]
   ],
   "mul" => &[
     &[
@@ -132,10 +170,56 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
     ],
     &[
       ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Float]),
+    ],
+    &[
+      ("a", &[ArgType::Float]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+  ],
+  "div" => &[
+    &[
+      ("a", &[ArgType::Vec3]),
+      ("b", &[ArgType::Vec3]),
+    ],
+    &[
+      ("a", &[ArgType::Vec3]),
       ("b", &[ArgType::Numeric]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Float]),
+    ],
+    &[
+      ("a", &[ArgType::Float]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+  ],
+  "mod" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Float]),
+      ("b", &[ArgType::Float]),
     ],
   ],
   "map" => &[
+    &[
+      ("fn", &[ArgType::PartiallyAppliedFn]),
+      ("sequence", &[ArgType::Sequence]),
+    ],
+  ],
+  "filter" => &[
     &[
       ("fn", &[ArgType::PartiallyAppliedFn]),
       ("sequence", &[ArgType::Sequence]),
@@ -165,13 +249,133 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("value", &[ArgType::Numeric]),
     ],
   ],
+  "gte" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Numeric]),
+    ],
+  ],
+  "lte" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Numeric]),
+    ],
+  ],
+  "gt" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Numeric]),
+    ],
+  ],
+  "lt" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Numeric]),
+    ],
+  ],
+  "eq" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Numeric]),
+    ],
+  ],
+  "neq" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Numeric]),
+    ],
+  ],
   "point_distribute" => &[
     &[
       ("mesh", &[ArgType::Mesh]),
       ("count", &[ArgType::Int]),
     ],
   ],
+  "lerp" => &[
+    &[
+      ("a", &[ArgType::Vec3]),
+      ("b", &[ArgType::Vec3]),
+      ("t", &[ArgType::Float]),
+    ],
+    &[
+      ("a", &[ArgType::Numeric]),
+      ("b", &[ArgType::Numeric]),
+      ("t", &[ArgType::Float]),
+    ],
+  ],
+  "compose" => &[]
 };
+
+enum BoolOp {
+  Gte,
+  Lte,
+  Gt,
+  Lt,
+  Eq,
+  Neq,
+}
+
+fn eval_numeric_bool_op(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+  op: BoolOp,
+) -> Result<Value, String> {
+  match def_ix {
+    0 => {
+      let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
+      let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+      let result = match op {
+        BoolOp::Gte => a >= b,
+        BoolOp::Lte => a <= b,
+        BoolOp::Gt => a > b,
+        BoolOp::Lt => a < b,
+        BoolOp::Eq => a == b,
+        BoolOp::Neq => a != b,
+      };
+      Ok(Value::Bool(result))
+    }
+    1 => {
+      let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+      let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+      let result = match op {
+        BoolOp::Gte => a >= b,
+        BoolOp::Lte => a <= b,
+        BoolOp::Gt => a > b,
+        BoolOp::Lt => a < b,
+        BoolOp::Eq => a == b,
+        BoolOp::Neq => a != b,
+      };
+      Ok(Value::Bool(result))
+    }
+    _ => unimplemented!(),
+  }
+}
 
 pub(crate) fn eval_builtin_fn(
   name: &str,
@@ -300,7 +504,7 @@ pub(crate) fn eval_builtin_fn(
       _ => unimplemented!(),
     },
     "union" => eval_mesh_boolean(def_ix, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
-    "subtract" | "difference" => eval_mesh_boolean(
+    "difference" => eval_mesh_boolean(
       def_ix,
       arg_refs,
       args,
@@ -342,6 +546,44 @@ pub(crate) fn eval_builtin_fn(
         inner: sequence.clone_box(),
       })))
     }
+    "filter" => {
+      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_fn().unwrap();
+      let sequence = arg_refs[1].resolve(&args, &kwargs).as_sequence().unwrap();
+
+      Ok(Value::Sequence(Box::new(FilterSeq {
+        f: fn_value.clone(),
+        inner: sequence.clone_box(),
+      })))
+    }
+    "neg" => match def_ix {
+      0 => {
+        // negate numeric value
+        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(-value))
+      }
+      1 => {
+        // negate vec3
+        let value = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(-*value))
+      }
+      2 => {
+        // negate bool
+        let value = arg_refs[0].resolve(&args, &kwargs).as_bool().unwrap();
+        Ok(Value::Bool(!value))
+      }
+      _ => unimplemented!(),
+    },
+    "pos" => match def_ix {
+      0 => {
+        // pass through numeric value
+        Ok(arg_refs[0].resolve(&args, &kwargs).clone())
+      }
+      1 => {
+        // pass through vec3
+        Ok(arg_refs[0].resolve(&args, &kwargs).clone())
+      }
+      _ => unimplemented!(),
+    },
     "add" => match def_ix {
       0 => {
         // vec3 + vec3
@@ -369,6 +611,33 @@ pub(crate) fn eval_builtin_fn(
       }
       _ => unimplemented!(),
     },
+    "sub" => match def_ix {
+      0 => {
+        // vec3 - vec3
+        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(*a - *b))
+      }
+      1 => {
+        // float - float
+        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(a - b))
+      }
+      2 => {
+        // float - int
+        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Float(a - b as f32))
+      }
+      3 => {
+        // int - int
+        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(a - b))
+      }
+      _ => unimplemented!(),
+    },
     "mul" => match def_ix {
       0 => {
         let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
@@ -381,12 +650,77 @@ pub(crate) fn eval_builtin_fn(
         Ok(Value::Vec3(a * b))
       }
       2 => {
+        // float * float
         let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
         let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a * b))
       }
+      3 => {
+        // float * int
+        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Float(a * b as f32))
+      }
+      4 => {
+        // int * int
+        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(a * b))
+      }
       _ => unimplemented!(),
     },
+    "div" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(a.x / b.x, a.y / b.y, a.z / b.z)))
+      }
+      1 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Vec3(a / b))
+      }
+      2 => {
+        // float * float
+        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(a / b))
+      }
+      3 => {
+        // float * int
+        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Float(a / b as f32))
+      }
+      4 => {
+        // int * int
+        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(a / b))
+      }
+      _ => unimplemented!(),
+    },
+    "mod" => match def_ix {
+      0 => {
+        // int % int
+        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(a % b))
+      }
+      1 => {
+        // float % float
+        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(a % b))
+      }
+      _ => unimplemented!(),
+    },
+    "gte" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Gte),
+    "lte" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Lte),
+    "gt" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Gt),
+    "lt" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Lt),
+    "eq" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Eq),
+    "neq" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Neq),
     "sin" => match def_ix {
       0 => {
         let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
@@ -405,6 +739,21 @@ pub(crate) fn eval_builtin_fn(
       0 => {
         let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.tan()))
+      }
+      _ => unimplemented!(),
+    },
+    "lerp" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
+        let t = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Vec3(a.lerp(b, t)))
+      }
+      1 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let t = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(a + (b - a) * t))
       }
       _ => unimplemented!(),
     },
@@ -460,6 +809,21 @@ pub(crate) fn eval_builtin_fn(
         point_count: count as usize,
       };
       Ok(Value::Sequence(Box::new(sampler_seq)))
+    }
+    "compose" => {
+      if !kwargs.is_empty() {
+        return Err("compose function does not accept keyword arguments".to_owned());
+      }
+
+      if args.is_empty() {
+        return Err("compose function requires at least one argument".to_owned());
+      }
+
+      if args.len() == 1 {
+        return Ok(args[0].clone());
+      }
+
+      todo!()
     }
     _ => unimplemented!("Function `{name}` not yet implemented"),
   }

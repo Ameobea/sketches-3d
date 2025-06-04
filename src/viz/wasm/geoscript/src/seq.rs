@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use point_distribute::MeshSurfaceSampler;
 
@@ -79,6 +80,49 @@ impl Sequence for MapSeq {
       }
       Err(e) => Err(e),
     }))
+  }
+}
+
+#[derive(Debug)]
+pub(crate) struct FilterSeq {
+  pub inner: Box<dyn Sequence>,
+  pub f: PartiallyAppliedFn,
+}
+
+impl Sequence for FilterSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(Self {
+      inner: self.inner.clone_box(),
+      f: self.f.clone(),
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+    let inner = self.inner.consume(ctx);
+    let PartiallyAppliedFn { name, args, kwargs } = self.f;
+
+    Box::new(
+      inner
+        .map(move |res| match res {
+          Ok(v) => {
+            let mut args = args.clone();
+            args.push(v.clone());
+            let flag = ctx.eval_fn_call(&name, args, kwargs.clone())?;
+            let Some(flag) = flag.as_bool() else {
+              return Err(format!(
+                "cb `{name}` passed to filter produced value which could not be interpreted as a \
+                 bool: {flag:?}"
+              ));
+            };
+            Ok(if flag { Some(v) } else { None })
+          }
+          Err(e) => Err(e),
+        })
+        .filter_map_ok(|opt| opt),
+    )
   }
 }
 

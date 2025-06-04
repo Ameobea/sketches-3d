@@ -2,7 +2,11 @@ use std::{fmt::Debug, sync::Mutex};
 
 use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
-use pest::Parser;
+use pest::{
+  iterators::Pair,
+  pratt_parser::{Assoc, Op, PrattParser},
+  Parser,
+};
 use pest_derive::Parser;
 
 use crate::{
@@ -17,6 +21,20 @@ mod seq;
 #[derive(Parser)]
 #[grammar = "src/geoscript.pest"]
 pub struct GSParser;
+
+lazy_static::lazy_static! {
+  static ref PRATT_PARSER: PrattParser<Rule> = PrattParser::new()
+    // TODO: should verify that these match other languages and expectations
+    .op(Op::infix(Rule::gte_op, Assoc::Left) | Op::infix(Rule::lte_op, Assoc::Left))
+    .op(Op::infix(Rule::gt_op, Assoc::Left) | Op::infix(Rule::lt_op, Assoc::Left))
+    .op(Op::infix(Rule::eq_op, Assoc::Left) | Op::infix(Rule::neq_op, Assoc::Left))
+    .op(Op::infix(Rule::range_inclusive_op, Assoc::Left))
+    .op(Op::infix(Rule::range_op, Assoc::Left))
+    .op(Op::infix(Rule::pipeline_op, Assoc::Left))
+    .op(Op::infix(Rule::add_op, Assoc::Left) | Op::infix(Rule::sub_op, Assoc::Left))
+    .op(Op::infix(Rule::mul_op, Assoc::Left) | Op::infix(Rule::div_op, Assoc::Left))
+    .op(Op::prefix(Rule::neg_op) | Op::prefix(Rule::pos_op) | Op::prefix(Rule::negate_op));
+}
 
 pub trait Sequence: Debug {
   fn clone_box(&self) -> Box<dyn Sequence>;
@@ -42,6 +60,7 @@ pub enum Value {
   Mesh(LinkedMesh<()>),
   PartiallyAppliedFn(PartiallyAppliedFn),
   Sequence(Box<dyn Sequence>),
+  Bool(bool),
   Nil,
 }
 
@@ -54,6 +73,7 @@ impl Clone for Value {
       Value::Mesh(mesh) => Value::Mesh(mesh.clone()),
       Value::PartiallyAppliedFn(paf) => Value::PartiallyAppliedFn(paf.clone()),
       Value::Sequence(seq) => Value::Sequence(seq.clone_box()),
+      Value::Bool(b) => Value::Bool(*b),
       Value::Nil => Value::Nil,
     }
   }
@@ -102,6 +122,15 @@ impl Value {
       _ => None,
     }
   }
+
+  fn as_bool(&self) -> Option<bool> {
+    match self {
+      Value::Bool(b) => Some(*b),
+      Value::Int(i) => Some(*i != 0),
+      Value::Float(f) => Some(*f != 0.0),
+      _ => None,
+    }
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +142,7 @@ enum ArgType {
   Mesh,
   PartiallyAppliedFn,
   Sequence,
+  Bool,
   Any,
 }
 
@@ -126,6 +156,7 @@ impl ArgType {
       ArgType::Mesh => matches!(arg, Value::Mesh(_)),
       ArgType::PartiallyAppliedFn => matches!(arg, Value::PartiallyAppliedFn { .. }),
       ArgType::Sequence => matches!(arg, Value::Sequence(_)),
+      ArgType::Bool => matches!(arg, Value::Bool(_)),
       ArgType::Any => true,
     }
   }
@@ -249,22 +280,51 @@ impl RenderedMeshes {
 }
 
 #[derive(Default)]
+pub struct Globals {
+  // same thing as above for globals
+  globals: Mutex<FxHashMap<String, Value>>,
+}
+
+impl Globals {
+  pub fn insert(&self, key: String, value: Value) {
+    self.globals.lock().unwrap().insert(key, value);
+  }
+
+  pub fn get(&self, key: &str) -> Option<Value> {
+    // TODO: can't be cloning here...
+    self.globals.lock().unwrap().get(key).cloned()
+  }
+}
+
+#[derive(Default)]
 pub struct EvalCtx {
-  globals: FxHashMap<String, Value>,
+  globals: Globals,
   rendered_meshes: RenderedMeshes,
 }
 
-/// Returns `true` if the given arguments fully match the function signature, meaning all required
-/// arguments are provided and types match.
-fn validate_fn_args(name: &str, args: &[Value], kwargs: &FxHashMap<String, Value>) -> bool {
+enum ValidateFnOutput {
+  /// Bad argument types
+  Invalid,
+  /// Fully valid function call, ready to be executed.  All required args are provided and types
+  /// match.
+  Valid,
+  /// All applied arguments are valid, but not all required args are provided
+  PartiallyApplied,
+}
+
+fn validate_fn_args(
+  name: &str,
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> ValidateFnOutput {
   let Some(&defs) = FN_SIGNATURE_DEFS.get(name) else {
-    return false;
+    return ValidateFnOutput::Invalid;
   };
 
   match get_args(name, defs, args, kwargs) {
-    Ok(GetArgsOutput::Valid { .. }) => true,
-    Ok(GetArgsOutput::PartiallyApplied) => false,
-    Err(_) => false,
+    Ok(GetArgsOutput::Valid { .. }) => ValidateFnOutput::Valid,
+    Ok(GetArgsOutput::PartiallyApplied) => ValidateFnOutput::PartiallyApplied,
+    Err(_) => ValidateFnOutput::Invalid,
   }
 }
 
@@ -333,7 +393,7 @@ impl EvalCtx {
     };
 
     let Value::PartiallyAppliedFn(PartiallyAppliedFn {
-      name: global_name,
+      name: builtin_name,
       args: global_args,
       kwargs: global_kwargs,
     }) = global
@@ -350,18 +410,22 @@ impl EvalCtx {
       combined_kwargs.insert(key.clone(), value.clone());
     }
 
-    if validate_fn_args(global_name, &combined_args, &combined_kwargs) {
-      return self.eval_fn_call(global_name, combined_args, combined_kwargs);
+    match validate_fn_args(&builtin_name, &combined_args, &combined_kwargs) {
+      ValidateFnOutput::Valid => self.eval_fn_call(&builtin_name, combined_args, combined_kwargs),
+      ValidateFnOutput::PartiallyApplied => Ok(Value::PartiallyAppliedFn(PartiallyAppliedFn {
+        name: builtin_name.to_owned(),
+        args: combined_args,
+        kwargs: combined_kwargs,
+      })),
+      ValidateFnOutput::Invalid => Err(format!(
+        "Invalid arguments for function \"{builtin_name}\": args: {:?}, kwargs: {:?}",
+        combined_args, combined_kwargs
+      )),
     }
-
-    Err(format!(
-      "Invalid arguments for function \"{name}\": args: {:?}, kwargs: {:?}",
-      combined_args, combined_kwargs
-    ))
   }
 
   fn parse_fn_call<'a>(
-    &mut self,
+    &self,
     expr: pest::iterators::Pair<'a, Rule>,
   ) -> Result<(&'a str, Vec<Value>, FxHashMap<String, Value>), String> {
     let mut inner = expr.into_inner();
@@ -402,12 +466,12 @@ impl EvalCtx {
               let value_expr = kw_inner
                 .next()
                 .ok_or("Expected value expression for keyword argument")?;
-              let value = self.eval_expr(value_expr)?;
+              let value = self.eval_pair(value_expr)?;
 
               kwargs.insert(name_str, value);
             }
             _ => {
-              let val = self.eval_expr(child)?;
+              let val = self.eval_pair(child)?;
               args.push(val);
             }
           }
@@ -424,14 +488,93 @@ impl EvalCtx {
     Ok((func_name_str, args, kwargs))
   }
 
-  pub fn eval_expr(&mut self, expr: pest::iterators::Pair<Rule>) -> Result<Value, String> {
-    match expr.as_rule() {
-      Rule::EOI | Rule::EOL => Ok(Value::Nil),
-      Rule::program => Err(format!(
-        "`program` rule should not show up other than at the top level"
-      )),
+  fn eval_expr(&self, expr: Pair<Rule>) -> Result<Value, String> {
+    if expr.as_rule() != Rule::expr {
+      return Err(format!(
+        "`parse_expr` can only handle `expr` rules, found: {:?}",
+        expr.as_rule()
+      ));
+    }
+
+    PRATT_PARSER
+      .map_primary(|primary| -> Result<Value, String> {
+        match primary.as_rule() {
+          Rule::term => self.eval_pair(primary),
+          _ => unimplemented!("Unexpected primary rule: {:?}", primary.as_rule()),
+        }
+      })
+      .map_prefix(|op, expr| match op.as_rule() {
+        Rule::neg_op => self.eval_fn_call("neg", vec![expr?], Default::default()),
+        Rule::pos_op => self.eval_fn_call("pos", vec![expr?], Default::default()),
+        Rule::negate_op => self.eval_fn_call("neg", vec![expr?], Default::default()),
+        _ => unreachable!("Unexpected prefix operator rule: {:?}", op.as_rule()),
+      })
+      .map_infix(|lhs, op, rhs| match op.as_rule() {
+        Rule::add_op => self.eval_fn_call("add", vec![lhs?, rhs?], Default::default()),
+        Rule::sub_op => self.eval_fn_call("sub", vec![lhs?, rhs?], Default::default()),
+        Rule::mul_op => self.eval_fn_call("mul", vec![lhs?, rhs?], Default::default()),
+        Rule::div_op => self.eval_fn_call("div", vec![lhs?, rhs?], Default::default()),
+        Rule::pipeline_op => {
+          let lhs = lhs?;
+          let rhs = rhs?;
+
+          let Some(paf) = rhs.as_fn() else {
+            return Err(format!(
+              "Pipeline operator requires a function on the right, found: {rhs:?}",
+            ));
+          };
+
+          let mut args = paf.args.clone();
+          args.push(lhs);
+          let kwargs = paf.kwargs.clone();
+
+          self.eval_fn_call(&paf.name, args, kwargs)
+        }
+        Rule::range_op => {
+          let lhs = lhs?;
+          let rhs = rhs?;
+
+          let start = lhs
+            .as_int()
+            .ok_or_else(|| format!("Range operator requires integer start, found: {lhs:?}",))?;
+          let end = rhs
+            .as_int()
+            .ok_or_else(|| format!("Range operator requires integer end, found: {rhs:?}",))?;
+
+          Ok(Value::Sequence(Box::new(IntRange { start, end })))
+        }
+        Rule::range_inclusive_op => {
+          let lhs = lhs?;
+          let rhs = rhs?;
+
+          let start = lhs
+            .as_int()
+            .ok_or_else(|| format!("Range operator requires integer start, found: {lhs:?}",))?;
+          let end = rhs
+            .as_int()
+            .ok_or_else(|| format!("Range operator requires integer end, found: {rhs:?}",))?;
+
+          Ok(Value::Sequence(Box::new(IntRange {
+            start,
+            end: end + 1,
+          })))
+        }
+        Rule::gte_op => self.eval_fn_call("gte", vec![lhs?, rhs?], Default::default()),
+        Rule::lte_op => self.eval_fn_call("lte", vec![lhs?, rhs?], Default::default()),
+        Rule::gt_op => self.eval_fn_call("gt", vec![lhs?, rhs?], Default::default()),
+        Rule::lt_op => self.eval_fn_call("lt", vec![lhs?, rhs?], Default::default()),
+        Rule::eq_op => self.eval_fn_call("eq", vec![lhs?, rhs?], Default::default()),
+        Rule::neq_op => self.eval_fn_call("neq", vec![lhs?, rhs?], Default::default()),
+        _ => unreachable!("Unexpected operator rule: {:?}", op.as_rule()),
+      })
+      .parse(expr.into_inner())
+  }
+
+  pub fn eval_pair(&self, pair: Pair<Rule>) -> Result<Value, String> {
+    match pair.as_rule() {
+      Rule::expr => self.eval_expr(pair),
       Rule::assignment => {
-        let mut inner = expr.into_inner();
+        let mut inner = pair.into_inner();
         let ident = inner.next().ok_or("Expected identifier in assignment")?;
         let value_expr = inner
           .next()
@@ -441,78 +584,38 @@ impl EvalCtx {
           return Err(format!("Expected identifier, found: {:?}", ident.as_rule()));
         }
 
-        let val = self.eval_expr(value_expr)?;
+        let val = self.eval_pair(value_expr)?;
         self.globals.insert(ident.as_str().to_owned(), val);
         Ok(Value::Nil)
       }
-      Rule::pipeline => {
-        let mut inner = expr.into_inner();
-        let first_expr = inner
-          .next()
-          .ok_or("Expected first expression in pipeline")?;
-        let mut value = self.eval_expr(first_expr)?;
-
-        for expr in inner {
-          match expr.as_rule() {
-            Rule::func_call => {
-              let (func_name_str, mut args, kwargs) = self.parse_fn_call(expr)?;
-
-              args.push(value);
-              value = self
-                .eval_fn_call(func_name_str, args, kwargs)
-                .map_err(|e| format!("Function call error: {}", e))?;
-            }
-            Rule::ident => {
-              value = self.eval_fn_call(expr.as_str(), vec![value], Default::default())?;
-            }
-            _ => unreachable!(),
-          }
-        }
-
-        Ok(value)
-      }
       Rule::func_call => {
-        let (func_name_str, args, kwargs) = self.parse_fn_call(expr)?;
-
+        let (func_name_str, args, kwargs) = self.parse_fn_call(pair)?;
         self
           .eval_fn_call(func_name_str, args, kwargs)
           .map_err(|e| format!("Function call error: {}", e))
       }
-      Rule::statement
-      | Rule::arg_list
-      | Rule::pipe_op
-      | Rule::literal
-      | Rule::value_expr
-      | Rule::expr
-      | Rule::val
-      | Rule::WHITESPACE
-      | Rule::COMMENT => {
-        unreachable!("this rule is silent and shouldn't show up in the AST")
-      }
-      Rule::arg | Rule::keyword_arg => panic!("These rules should never be evaluated directly"),
       Rule::int => {
-        let int_str = expr.as_str();
+        let int_str = pair.as_str();
         int_str
           .parse::<i64>()
           .map(Value::Int)
           .map_err(|_| format!("Invalid integer: {int_str}"))
       }
       Rule::float => {
-        let float_str = expr.as_str();
+        let float_str = pair.as_str();
         float_str
           .parse::<f32>()
           .map(Value::Float)
           .map_err(|_| format!("Invalid float: {float_str}"))
       }
       Rule::ident => {
-        let ident_str = expr.as_str();
+        let ident_str = pair.as_str();
         if ident_str.is_empty() {
           return Err("Identifier cannot be empty".to_owned());
         }
 
         if let Some(value) = self.globals.get(ident_str) {
-          // TODO: can't be cloning here...
-          return Ok(value.clone());
+          return Ok(value);
         }
 
         // look it up as a global function
@@ -526,28 +629,15 @@ impl EvalCtx {
 
         Err(format!("Undefined identifier: {ident_str}"))
       }
-      Rule::range => {
-        let mut inner = expr.into_inner();
+      Rule::term => self.eval_pair(pair.into_inner().next().unwrap()),
+      Rule::EOI | Rule::EOL => Ok(Value::Nil),
+      Rule::range_inclusive_literal_expr => {
+        let mut inner = pair.into_inner();
         let start_expr = inner.next().ok_or("Expected start expression in range")?;
         let end_expr = inner.next().ok_or("Expected end expression in range")?;
 
-        let start_value = self.eval_expr(start_expr)?;
-        let end_value = self.eval_expr(end_expr)?;
-
-        match (start_value, end_value) {
-          (Value::Int(start), Value::Int(end)) => {
-            Ok(Value::Sequence(Box::new(IntRange { start, end })))
-          }
-          _ => Err("Range must be defined by two integer values".to_owned()),
-        }
-      }
-      Rule::range_inclusive => {
-        let mut inner = expr.into_inner();
-        let start_expr = inner.next().ok_or("Expected start expression in range")?;
-        let end_expr = inner.next().ok_or("Expected end expression in range")?;
-
-        let start_value = self.eval_expr(start_expr)?;
-        let end_value = self.eval_expr(end_expr)?;
+        let start_value = self.eval_pair(start_expr)?;
+        let end_value = self.eval_pair(end_expr)?;
 
         match (start_value, end_value) {
           (Value::Int(start), Value::Int(end)) => Ok(Value::Sequence(Box::new(IntRange {
@@ -557,6 +647,22 @@ impl EvalCtx {
           _ => Err("Range must be defined by two integer values".to_owned()),
         }
       }
+      Rule::range_literal_expr => {
+        let mut inner = pair.into_inner();
+        let start_expr = inner.next().ok_or("Expected start expression in range")?;
+        let end_expr = inner.next().ok_or("Expected end expression in range")?;
+
+        let start_value = self.eval_pair(start_expr)?;
+        let end_value = self.eval_pair(end_expr)?;
+
+        match (start_value, end_value) {
+          (Value::Int(start), Value::Int(end)) => {
+            Ok(Value::Sequence(Box::new(IntRange { start, end })))
+          }
+          _ => Err("Range must be defined by two integer values".to_owned()),
+        }
+      }
+      other => unreachable!("Unexpected rule: {other:?}"),
     }
   }
 }
@@ -564,14 +670,13 @@ impl EvalCtx {
 pub fn parse_and_eval_program(src: &str) -> Result<EvalCtx, String> {
   let pairs = GSParser::parse(Rule::program, src).map_err(|e| format!("Parsing error: {}", e))?;
 
-  let mut ctx = EvalCtx::default();
+  let ctx = EvalCtx::default();
 
   for pair in pairs {
     match pair.as_rule() {
-      Rule::EOI | Rule::WHITESPACE | Rule::COMMENT | Rule::EOL => continue,
       Rule::program => {
-        for inner_pair in pair.into_inner() {
-          ctx.eval_expr(inner_pair)?;
+        for pair in pair.into_inner() {
+          let _val = ctx.eval_pair(pair)?;
         }
       }
       _ => return Err(format!("Unexpected rule in program: {:?}", pair.as_rule())),
@@ -685,7 +790,7 @@ print(result, asdf=result, x=4.2)
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
-  let result = &ctx.globals["result"];
+  let result = &ctx.globals.get("result").unwrap();
   let result = result.as_int().expect("Expected result to be an Int");
   // (0+1) + (1+1) + (2+1) + (3+1) + (4+1) = 15
   assert_eq!(result, 15);
@@ -700,4 +805,160 @@ print(points | reduce(add))
 "#;
 
   parse_and_eval_program(src).unwrap();
+}
+
+#[test]
+fn test_infix_ops_and_precedence() {
+  let src = r#"
+a = 1 + (3 - 2) * 2 + 4
+b = (a + 1) / 2.0
+c = vec3(1) * 2 + (vec3(4,4,4) / 2)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = &ctx.globals.get("a").unwrap();
+  let a = a.as_int().expect("Expected result to be an Int");
+  assert_eq!(a, 7);
+
+  let b = &ctx.globals.get("b").unwrap();
+  let Value::Float(b) = b else {
+    panic!("Expected result to be a Float");
+  };
+  assert_eq!(*b, 4.);
+
+  let c = &ctx.globals.get("c").unwrap();
+  let Value::Vec3(c) = c else {
+    panic!("Expected result to be a Vec3");
+  };
+  assert_eq!(
+    *c,
+    Vec3::new(1., 1., 1.) * 2. + (Vec3::new(4., 4., 4.) / 2.)
+  );
+}
+
+#[test]
+fn test_range_op_edge_cases() {
+  let src = r#"
+a = 0..5
+start = 0
+b = start..5
+end = 5
+c = 0..end
+d = start..end
+
+sum = reduce(add)
+a = a | sum
+b = b | sum
+c = c | sum
+d = d | sum
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = &ctx.globals.get("a").unwrap();
+  let a = a.as_int().expect("Expected result to be an Int");
+  assert_eq!(a, 10); // 0 + 1 + 2 + 3 + 4
+
+  let b = &ctx.globals.get("b").unwrap();
+  let b = b.as_int().expect("Expected result to be an Int");
+  assert_eq!(b, 10);
+
+  let c = &ctx.globals.get("c").unwrap();
+  let c = c.as_int().expect("Expected result to be an Int");
+  assert_eq!(c, 10);
+
+  let d = &ctx.globals.get("d").unwrap();
+  let d = d.as_int().expect("Expected result to be an Int");
+  assert_eq!(d, 10);
+}
+
+#[test]
+fn test_lerp() {
+  let src = r#"
+a = lerp(vec3(0,0,0), vec3(1,1,1), 0.5)
+b = 0.5 | lerp(0.0, 1)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = &ctx.globals.get("a").unwrap();
+  let Value::Vec3(a) = a else {
+    panic!("Expected result to be a Vec3");
+  };
+  assert_eq!(*a, Vec3::new(0.5, 0.5, 0.5));
+
+  let b = &ctx.globals.get("b").unwrap();
+  let Value::Float(b) = b else {
+    panic!("Expected result to be a Float");
+  };
+  assert_eq!(*b, 0.5);
+}
+
+#[test]
+fn test_comparison_ops() {
+  let src = r#"
+a = 1 < 2
+b = 2. < 1
+c = 1 <= 1
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = &ctx.globals.get("a").unwrap();
+  let Value::Bool(a) = a else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(*a);
+
+  let b = &ctx.globals.get("b").unwrap();
+  let Value::Bool(b) = b else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(!*b);
+
+  let c = &ctx.globals.get("c").unwrap();
+  let Value::Bool(c) = c else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(*c);
+}
+
+#[test]
+fn test_prefix_ops() {
+  let src = r#"
+a = -1. - -2
+b = -vec3(1,2,3)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = &ctx.globals.get("a").unwrap();
+  let Value::Float(a) = a else {
+    panic!("Expected result to be a Float");
+  };
+  assert_eq!(*a, 1.0);
+
+  let b = &ctx.globals.get("b").unwrap();
+  let Value::Vec3(b) = b else {
+    panic!("Expected result to be a Vec3");
+  };
+  assert_eq!(*b, Vec3::new(-1.0, -2.0, -3.0));
+}
+
+#[test]
+fn test_filter() {
+  let src = r#"
+is_even = compose(mod(b=2), eq(0))
+seq = 0..10 | filter(is_even) | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let is_even = &ctx.globals.get("is_even").unwrap();
+  dbg!(is_even);
+
+  let seq = &ctx.globals.get("seq").unwrap();
+  let seq = seq.as_int().expect("Expected result to be an Int");
+  assert_eq!(seq, 20); // 0 + 2 + 4 + 6 + 8
 }
