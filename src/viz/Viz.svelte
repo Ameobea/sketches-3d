@@ -43,7 +43,7 @@
   {/if}
 
   <!-- svelte-ignore element_invalid_self_closing_tag -->
-  <div use:initViz={{ paused, popUpCalled, sceneName, vizCb }} />
+  <div use:initViz={{ paused, popUpCalled, sceneName, vizCb }} id="viz-container" />
   {#if $paused && viz}
     {#if $popUpCalled.type === 'pause'}
       <PauseMenu ctx={{ onResume }} {viz} {sceneConfig} liveConfig={liveVizConfig} />

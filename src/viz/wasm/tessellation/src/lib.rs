@@ -116,7 +116,7 @@ fn tessellate_sanity() {
   let mut mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(&vertices, &indices, None, None);
   tessellate_mesh(&mut mesh, 0.1, DisplacementNormalMethod::EdgeNormal);
 
-  let raw = mesh.to_raw_indexed(false, false);
+  let raw = mesh.to_raw_indexed(false, false, false);
   dbg!(&raw.vertices);
   dbg!(&raw.indices);
 }

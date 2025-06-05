@@ -1619,6 +1619,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     &self,
     include_shading_normals: bool,
     include_displacement_normals: bool,
+    include_degenerate_faces: bool,
   ) -> OwnedIndexedMesh {
     let mut builder = OwnedIndexedMeshBuilder::with_capacity(
       self.vertices.len(),
@@ -1628,7 +1629,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     );
 
     for face in self.faces.values() {
-      if face.is_degenerate(&self.vertices) {
+      if !include_degenerate_faces && face.is_degenerate(&self.vertices) {
         continue;
       }
 
@@ -1999,12 +2000,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         Vec3::new(-half_width, half_height, half_depth),
       ],
       &[
-        0, 1, 2, 0, 2, 3, // bottom
-        4, 5, 6, 4, 6, 7, // top
-        0, 1, 5, 0, 5, 4, // front
-        2, 3, 7, 2, 7, 6, // back
-        0, 3, 7, 0, 7, 4, // left
-        1, 2, 6, 1, 6, 5, // right
+        0, 2, 1, 0, 3, 2, //
+        4, 5, 6, 4, 6, 7, //
+        0, 1, 5, 0, 5, 4, //
+        2, 3, 7, 2, 7, 6, //
+        0, 7, 3, 0, 4, 7, //
+        1, 2, 6, 1, 6, 5, //
       ],
       None,
       None,
@@ -2118,7 +2119,7 @@ mod tests {
       [[1, 0, 0], [0, 0, 0], [0, -1, 0]],
       [[0, -1, 0], [0, 0, 0], [-1, 0, 0]],
     ];
-    let actual_indexed_mesh = mesh.to_raw_indexed(true, true);
+    let actual_indexed_mesh = mesh.to_raw_indexed(true, true, false);
     assert_eq!(actual_indexed_mesh.indices.len(), 12);
     let actual_verts = actual_indexed_mesh
       .indices

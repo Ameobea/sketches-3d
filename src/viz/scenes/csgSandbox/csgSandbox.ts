@@ -92,11 +92,9 @@ export const processLoadedScene = async (
 
   const geometry = new THREE.BufferGeometry();
   const needsU32Indices = indices.some(i => i > 65535);
-  geometry.setIndex(
-    new THREE.BufferAttribute(needsU32Indices ? new Uint32Array(indices) : new Uint16Array(indices), 1)
-  );
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
+  geometry.setIndex(new THREE.BufferAttribute(needsU32Indices ? indices : new Uint16Array(indices), 1));
+  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
 
   // for (let vtxIx = 0; vtxIx < vertices.length / 3; vtxIx += 1) {
   //   const vtx = new THREE.Vector3(vertices[vtxIx * 3], vertices[vtxIx * 3 + 1], vertices[vtxIx * 3 + 2]);

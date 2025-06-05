@@ -452,4 +452,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'stronghold' },
     legacyLights: false,
   },
+  geoscript: {
+    sceneName: null,
+    sceneLoader: () =>
+      import('./geoscriptPlayground/geoscriptPlayground.ts').then(mod => mod.processLoadedScene),
+    gltfName: null,
+    legacyLights: false,
+    metadata: { title: 'geoscript ' },
+  },
 };

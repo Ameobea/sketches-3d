@@ -34,9 +34,9 @@ export const apply_boolean = (
   const { Manifold, Mesh } = ManifoldWasm;
 
   const a = new Manifold(new Mesh({ numProp: 3, triVerts: aIndices, vertProperties: aVerts }));
-  let b = new Manifold(new Mesh({ numProp: 3, triVerts: bIndices, vertProperties: bVerts }));
+  const b = new Manifold(new Mesh({ numProp: 3, triVerts: bIndices, vertProperties: bVerts }));
 
-  let outManifold = (() => {
+  const outManifold = (() => {
     switch (op) {
       case BooleanOperation.Union:
         return Manifold.union(a, b);
@@ -49,23 +49,6 @@ export const apply_boolean = (
         throw new Error(`Unknown boolean operation: ${op}`);
     }
   })();
-
-  // b = b.transform(
-  //   // 4x4 matrix stored in column-major order
-  //   new THREE.Matrix4()
-  //     .makeTranslation(new THREE.Vector3(-5, -1, 2))
-  //     .scale(new THREE.Vector3(1.5))
-  //     .transpose()
-  //     .toArray()
-  // );
-  b = b.translate(-5, -1, 2);
-  outManifold = Manifold.difference(outManifold, b);
-
-  b = b.translate(-5, -1, 2);
-  outManifold = Manifold.difference(outManifold, b);
-
-  b = b.translate(8, 1, -5).scale(0.5);
-  outManifold = Manifold.union(outManifold, b);
 
   // can make use of information about src mesh for different triangles within the output in the
   // future if we want to

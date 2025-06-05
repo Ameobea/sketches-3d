@@ -67,8 +67,8 @@ fn apply_boolean_op(
 ) -> Result<LinkedMesh<()>, String> {
   use mesh::LinkedMesh;
 
-  let a_exported = a.to_raw_indexed(false, false);
-  let b_exported = b.to_raw_indexed(false, false);
+  let a_exported = a.to_raw_indexed(false, false, true);
+  let b_exported = b.to_raw_indexed(false, false, true);
 
   assert!(std::mem::size_of::<u32>() == std::mem::size_of::<usize>());
   let mesh0_exported_indices = unsafe {
@@ -155,5 +155,6 @@ pub(crate) fn eval_mesh_boolean(
   _ctx: &EvalCtx,
   _op: MeshBooleanOp,
 ) -> Result<Value, String> {
-  Err("mesh boolean ops are only supported in wasm".to_owned())
+  // Err("mesh boolean ops are only supported in wasm".to_owned())
+  Ok(Value::Mesh(mesh::LinkedMesh::new(0, 0, None)))
 }

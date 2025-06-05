@@ -14,6 +14,7 @@ members = [
   "basalt",
   "csg_sandbox",
   "geoscript",
+  "geoscript_repl",
 ]
 resolver = "2"
 

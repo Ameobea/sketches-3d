@@ -2,7 +2,7 @@ use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use point_distribute::MeshSurfaceSampler;
 
-use crate::{EvalCtx, PartiallyAppliedFn, Sequence, Value};
+use crate::{Callable, EvalCtx, Sequence, Value};
 
 #[derive(Clone, Debug)]
 pub(crate) struct IntRange {
@@ -54,14 +54,14 @@ impl Sequence for IntRange {
 #[derive(Debug)]
 pub(crate) struct MapSeq {
   pub inner: Box<dyn Sequence>,
-  pub f: PartiallyAppliedFn,
+  pub cb: Callable,
 }
 
 impl Sequence for MapSeq {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(Self {
       inner: self.inner.clone_box(),
-      f: self.f.clone(),
+      cb: self.cb.clone(),
     })
   }
 
@@ -70,15 +70,15 @@ impl Sequence for MapSeq {
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
     let inner = self.inner.consume(ctx);
-    let PartiallyAppliedFn { name, args, kwargs } = self.f;
     // TODO: more clones here
-    Box::new(inner.map(move |res| match res {
-      Ok(v) => {
-        let mut args = args.clone();
-        args.push(v);
-        ctx.eval_fn_call(&name, args, kwargs.clone())
+    let cb = self.cb;
+    Box::new(inner.map(move |res| {
+      match res {
+        Ok(v) => ctx
+          .invoke_callable(&cb, vec![v], Default::default(), &ctx.globals)
+          .map_err(|err| format!("cb passed to map produced an error: {err}",)),
+        Err(e) => Err(e),
       }
-      Err(e) => Err(e),
     }))
   }
 }
@@ -86,14 +86,14 @@ impl Sequence for MapSeq {
 #[derive(Debug)]
 pub(crate) struct FilterSeq {
   pub inner: Box<dyn Sequence>,
-  pub f: PartiallyAppliedFn,
+  pub cb: Callable,
 }
 
 impl Sequence for FilterSeq {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(Self {
       inner: self.inner.clone_box(),
-      f: self.f.clone(),
+      cb: self.cb.clone(),
     })
   }
 
@@ -102,19 +102,19 @@ impl Sequence for FilterSeq {
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
     let inner = self.inner.consume(ctx);
-    let PartiallyAppliedFn { name, args, kwargs } = self.f;
+    let cb = self.cb;
 
     Box::new(
       inner
         .map(move |res| match res {
           Ok(v) => {
-            let mut args = args.clone();
-            args.push(v.clone());
-            let flag = ctx.eval_fn_call(&name, args, kwargs.clone())?;
+            let flag = ctx
+              .invoke_callable(&cb, vec![v.clone()], Default::default(), &ctx.globals)
+              .map_err(|err| format!("cb passed to filter produced an error: {err}"))?;
             let Some(flag) = flag.as_bool() else {
               return Err(format!(
-                "cb `{name}` passed to filter produced value which could not be interpreted as a \
-                 bool: {flag:?}"
+                "cb passed to filter produced value which could not be interpreted as a bool: \
+                 {flag:?}"
               ));
             };
             Ok(if flag { Some(v) } else { None })
@@ -123,6 +123,24 @@ impl Sequence for FilterSeq {
         })
         .filter_map_ok(|opt| opt),
     )
+  }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct EagerSeq {
+  pub inner: Vec<Value>,
+}
+
+impl Sequence for EagerSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(self.clone())
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    _ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+    Box::new(self.inner.into_iter().map(Ok))
   }
 }
 

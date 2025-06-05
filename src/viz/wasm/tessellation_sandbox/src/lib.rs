@@ -117,7 +117,7 @@ pub fn tessellate_mesh(
   mesh.separate_vertices_and_compute_normals();
 
   let ctx = Box::new(TessellateMeshCtx {
-    new_mesh: mesh.to_raw_indexed(true, true),
+    new_mesh: mesh.to_raw_indexed(true, true, false),
   });
 
   Box::into_raw(ctx)

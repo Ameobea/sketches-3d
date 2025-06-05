@@ -4,12 +4,17 @@ use mesh::{linked_mesh::Vec3, LinkedMesh};
 use crate::{
   mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
   seq::{FilterSeq, PointDistributeSeq},
-  ArgRef, ArgType, EvalCtx, MapSeq, Value,
+  ArgRef, ArgType, Callable, ComposedFn, EvalCtx, MapSeq, Value,
 };
 
 // TODO: support optional arguments and default values
 pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &[ArgType])]]> = phf::phf_map! {
-  "sphere" => &[&[("radius", &[ArgType::Numeric])]],
+  "sphere" => &[
+    &[
+      ("radius", &[ArgType::Numeric])
+    ]
+    // TODO: optional args for origin and for resolution
+  ],
   "box" => &[
     &[
       ("width", &[ArgType::Numeric]),
@@ -19,6 +24,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
     &[
       ("size", &[ArgType::Vec3, ArgType::Numeric]),
     ]
+    // TODO: optional args for origin and for resolution
   ],
   "translate" => &[
     &[
@@ -31,6 +37,14 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("z", &[ArgType::Numeric]),
       ("mesh", &[ArgType::Mesh]),
     ],
+  ],
+  "rot" => &[
+    &[
+      ("x", &[ArgType::Numeric]),
+      ("y", &[ArgType::Numeric]),
+      ("z", &[ArgType::Numeric]),
+      ("mesh", &[ArgType::Mesh]),
+    ]
   ],
   "scale" => &[
     &[
@@ -84,13 +98,13 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
   "fold" => &[
     &[
       ("initial_val", &[ArgType::Any]),
-      ("fn", &[ArgType::PartiallyAppliedFn]),
+      ("fn", &[ArgType::Callable]),
       ("sequence", &[ArgType::Sequence]),
     ],
   ],
   "reduce" => &[
     &[
-      ("fn", &[ArgType::PartiallyAppliedFn]),
+      ("fn", &[ArgType::Callable]),
       ("sequence", &[ArgType::Sequence]),
     ],
   ],
@@ -213,15 +227,61 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("b", &[ArgType::Float]),
     ],
   ],
+  "and" => &[
+    &[
+      ("a", &[ArgType::Bool]),
+      ("b", &[ArgType::Bool]),
+    ],
+    &[
+      ("a", &[ArgType::Mesh]),
+      ("b", &[ArgType::Mesh]),
+    ],
+  ],
+  "or" => &[
+    &[
+      ("a", &[ArgType::Bool]),
+      ("b", &[ArgType::Bool]),
+    ],
+    &[
+      ("a", &[ArgType::Mesh]),
+      ("b", &[ArgType::Mesh]),
+    ],
+  ],
+  "xor" => &[
+    &[
+      ("a", &[ArgType::Bool]),
+      ("b", &[ArgType::Bool]),
+    ],
+  ],
+  "bit_and" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Mesh]),
+      ("b", &[ArgType::Mesh]),
+    ],
+  ],
+  "bit_or" => &[
+    &[
+      ("a", &[ArgType::Int]),
+      ("b", &[ArgType::Int]),
+    ],
+    &[
+      ("a", &[ArgType::Mesh]),
+      ("b", &[ArgType::Mesh]),
+    ],
+  ],
   "map" => &[
     &[
-      ("fn", &[ArgType::PartiallyAppliedFn]),
+      ("fn", &[ArgType::Callable]),
       ("sequence", &[ArgType::Sequence]),
     ],
   ],
   "filter" => &[
     &[
-      ("fn", &[ArgType::PartiallyAppliedFn]),
+      ("fn", &[ArgType::Callable]),
       ("sequence", &[ArgType::Sequence]),
     ],
   ],
@@ -245,6 +305,16 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
     ],
   ],
   "tan" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+  ],
+  "rad2deg" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+  ],
+  "deg2rad" => &[
     &[
       ("value", &[ArgType::Numeric]),
     ],
@@ -327,7 +397,16 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("t", &[ArgType::Float]),
     ],
   ],
-  "compose" => &[]
+  "compose" => &[],
+  "join" => &[
+    &[
+      ("strings", &[ArgType::Sequence]),
+    ],
+  ],
+};
+
+pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
+  "trans" => "translate",
 };
 
 enum BoolOp {
@@ -388,21 +467,21 @@ pub(crate) fn eval_builtin_fn(
   match name {
     "sphere" => todo!(),
     "box" => {
-      let v3 = match def_ix {
+      let (width, height, depth) = match def_ix {
         0 => {
-          let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-          let y = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
-          let z = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
-          Vec3::new(x, y, z)
+          let w = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+          let h = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+          let d = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+          (w, h, d)
         }
         1 => {
           let val = arg_refs[0].resolve(&args, &kwargs);
           match val {
-            Value::Vec3(v3) => *v3,
-            Value::Float(size) => Vec3::new(*size, *size, *size),
+            Value::Vec3(v3) => (v3.x, v3.y, v3.z),
+            Value::Float(size) => (*size, *size, *size),
             Value::Int(size) => {
               let size = *size as f32;
-              Vec3::new(size, size, size)
+              (size, size, size)
             }
             _ => {
               return Err(format!(
@@ -414,7 +493,7 @@ pub(crate) fn eval_builtin_fn(
         }
         _ => unimplemented!(),
       };
-      Ok(Value::Mesh(LinkedMesh::new_box(v3.x, v3.y, v3.z)))
+      Ok(Value::Mesh(LinkedMesh::new_box(width, height, depth)))
     }
     "translate" => {
       let (translation, mesh) = match def_ix {
@@ -490,6 +569,24 @@ pub(crate) fn eval_builtin_fn(
 
       Ok(Value::Mesh(mesh))
     }
+    "rot" => match def_ix {
+      0 => {
+        let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let y = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let z = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+        let mesh = arg_refs[3].resolve(&args, &kwargs).as_mesh().unwrap();
+
+        // interpret as a euler angle in radians
+        let mut rotated_mesh = mesh.clone();
+        let rotation = nalgebra::UnitQuaternion::from_euler_angles(x, y, z);
+        for vtx in rotated_mesh.vertices.values_mut() {
+          vtx.position = rotation * vtx.position;
+        }
+
+        Ok(Value::Mesh(rotated_mesh))
+      }
+      _ => unimplemented!(),
+    },
     "vec3" => match def_ix {
       0 => {
         let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
@@ -522,36 +619,32 @@ pub(crate) fn eval_builtin_fn(
     ),
     "fold" => {
       let initial_val = arg_refs[0].resolve(&args, &kwargs).clone();
-      let fn_value = arg_refs[1].resolve(&args, &kwargs).as_fn().unwrap();
+      let fn_value = arg_refs[1].resolve(&args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[2].resolve(&args, &kwargs).as_sequence().unwrap();
 
-      ctx.fold(
-        initial_val,
-        fn_value.clone(),
-        sequence.clone_box().consume(ctx),
-      )
+      ctx.fold(initial_val, fn_value, sequence.clone_box().consume(ctx))
     }
     "reduce" => {
-      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_fn().unwrap();
+      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(&args, &kwargs).as_sequence().unwrap();
 
-      ctx.reduce(fn_value.clone(), sequence.clone_box())
+      ctx.reduce(fn_value, sequence.clone_box())
     }
     "map" => {
-      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_fn().unwrap();
+      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(&args, &kwargs).as_sequence().unwrap();
 
       Ok(Value::Sequence(Box::new(MapSeq {
-        f: fn_value.clone(),
+        cb: fn_value.clone(),
         inner: sequence.clone_box(),
       })))
     }
     "filter" => {
-      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_fn().unwrap();
+      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(&args, &kwargs).as_sequence().unwrap();
 
       Ok(Value::Sequence(Box::new(FilterSeq {
-        f: fn_value.clone(),
+        cb: fn_value.clone(),
         inner: sequence.clone_box(),
       })))
     }
@@ -609,6 +702,10 @@ pub(crate) fn eval_builtin_fn(
         let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a + b))
       }
+      4 => {
+        // mesh + mesh
+        eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union)
+      }
       _ => unimplemented!(),
     },
     "sub" => match def_ix {
@@ -635,6 +732,10 @@ pub(crate) fn eval_builtin_fn(
         let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
         let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a - b))
+      }
+      4 => {
+        // mesh - mesh
+        eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Difference)
       }
       _ => unimplemented!(),
     },
@@ -721,6 +822,42 @@ pub(crate) fn eval_builtin_fn(
     "lt" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Lt),
     "eq" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Eq),
     "neq" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Neq),
+    "and" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_bool().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_bool().unwrap();
+        Ok(Value::Bool(a && b))
+      }
+      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Intersection),
+      _ => unimplemented!(),
+    },
+    "or" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_bool().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_bool().unwrap();
+        Ok(Value::Bool(a || b))
+      }
+      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
+      _ => unimplemented!(),
+    },
+    "bit_and" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(a & b))
+      }
+      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Intersection),
+      _ => unimplemented!(),
+    },
+    "bit_or" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(a | b))
+      }
+      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
+      _ => unimplemented!(),
+    },
     "sin" => match def_ix {
       0 => {
         let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
@@ -739,6 +876,20 @@ pub(crate) fn eval_builtin_fn(
       0 => {
         let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.tan()))
+      }
+      _ => unimplemented!(),
+    },
+    "rad2deg" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.to_degrees()))
+      }
+      _ => unimplemented!(),
+    },
+    "deg2rad" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.to_radians()))
       }
       _ => unimplemented!(),
     },
@@ -769,7 +920,7 @@ pub(crate) fn eval_builtin_fn(
         .collect::<Vec<_>>()
         .join(", ");
 
-      println!("{}, {}", formatted_pos_ags, formatted_kwargs);
+      (ctx.log_fn)(&format!("{}, {}", formatted_pos_ags, formatted_kwargs));
       Ok(Value::Nil)
     }
     "render" => match def_ix {
@@ -819,12 +970,50 @@ pub(crate) fn eval_builtin_fn(
         return Err("compose function requires at least one argument".to_owned());
       }
 
-      if args.len() == 1 {
-        return Ok(args[0].clone());
-      }
+      let inner: Vec<Value> = if args.len() == 1 {
+        if matches!(args[0], Value::Callable(_)) {
+          return Ok(args[0].clone());
+        }
 
-      todo!()
+        if let Some(seq) = args[0].as_sequence() {
+          // have to eagerly evaluate the sequence to get the inner callables
+          seq
+            .clone_box()
+            .consume(ctx)
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+          return Err(format!(
+            "compose function requires a sequence or callable if a single arg is provided, found: \
+             {:?}",
+            args[0]
+          ));
+        }
+      } else {
+        args.to_owned()
+      };
+
+      let inner = inner
+        .into_iter()
+        .map(|val| {
+          if let Value::Callable(callable) = val {
+            Ok(callable)
+          } else {
+            Err(format!(
+              "Non-callable found in sequence passed to compose, found: {val:?}"
+            ))
+          }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+      Ok(Value::Callable(Callable::ComposedFn(ComposedFn { inner })))
     }
+    "join" => match def_ix {
+      0 => {
+        let seq = arg_refs[0].resolve(&args, &kwargs).as_sequence().unwrap();
+        ctx.reduce(&Callable::Builtin("union".to_owned()), seq.clone_box())
+      }
+      _ => unimplemented!(),
+    },
     _ => unimplemented!("Function `{name}` not yet implemented"),
   }
 }

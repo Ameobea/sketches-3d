@@ -313,11 +313,24 @@ dependencies = [
  "itertools 0.14.0",
  "lazy_static",
  "mesh",
+ "nalgebra",
  "pest",
  "pest_derive",
  "phf",
  "point_distribute",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "geoscript_repl"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "geoscript",
+ "log",
+ "mesh",
+ "wasm-bindgen",
+ "wasm-logger",
 ]
 
 [[package]]

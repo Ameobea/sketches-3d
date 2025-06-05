@@ -89,8 +89,8 @@ pub fn csg_sandbox_init(
   mesh1.compute_vertex_displacement_normals();
   displace_mesh(&mut mesh1);
 
-  let mesh0_exported = mesh0.to_raw_indexed(false, false);
-  let mesh1_exported = mesh1.to_raw_indexed(false, false);
+  let mesh0_exported = mesh0.to_raw_indexed(false, false, false);
+  let mesh1_exported = mesh1.to_raw_indexed(false, false, false);
 
   assert!(std::mem::size_of::<u32>() == std::mem::size_of::<usize>());
   let mesh0_exported_indices = unsafe {
@@ -169,7 +169,7 @@ pub fn csg_sandbox_init(
   mesh.compute_edge_displacement_normals();
   mesh.separate_vertices_and_compute_normals();
 
-  let mesh = mesh.to_raw_indexed(true, true);
+  let mesh = mesh.to_raw_indexed(true, true, false);
   Box::into_raw(Box::new(CsgSandboxCtx { mesh }))
 }
 

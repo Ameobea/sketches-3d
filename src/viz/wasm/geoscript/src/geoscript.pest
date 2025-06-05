@@ -5,22 +5,24 @@ program                      = { SOI ~ statement* ~ EOI }
 statement                    = _{ (assignment | expr) ~ EOL* }
 EOL                          = _{ WHITESPACE* ~ ("\n" | "\r\n") }
 
-assignment                   = { ident ~ "=" ~ expr }
+assignment                   = { ident ~ type_hint? ~ "=" ~ expr }
+type_hint                    = { ":" ~ ident }
 
 expr                         = { prefix_op* ~ term ~ (operator ~ prefix_op* ~ term)* }
 
 // TODO: ternary would be cool at some point
 
 prefix_op                    = _{ neg_op | pos_op }
-term                         = { func_call | range_inclusive_literal_expr | range_literal_expr | ident | literal | "(" ~ expr ~ ")" }
+term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr | ident | literal | "(" ~ expr ~ ")" }
 
 // need these to work around ambiguity where a range expression starting with an
 // integer literal looks like a float
 range_literal_expr           = { int ~ ".." ~ term }
 range_inclusive_literal_expr = { int ~ "..=" ~ term }
 
-operator                     = _{ range_inclusive_op | range_op | pipeline_op | add_op | sub_op
-                                  | mul_op | div_op | mod_op | gte_op | lte_op | gt_op | lt_op | neq_op | eq_op }
+operator                     = _{ range_inclusive_op | range_op | add_op | sub_op
+                                  | mul_op | div_op | mod_op | gte_op | lte_op | gt_op | lt_op
+                                  | neq_op | eq_op | or_op | and_op | bit_and_op | pipeline_op }
 
 neg_op                       = { "-" }
 pos_op                       = { "+" }
@@ -40,11 +42,21 @@ gt_op                        = { ">" }
 lt_op                        = { "<" }
 neq_op                       = { "!=" }
 eq_op                        = { "==" }
+and_op                       = { "&&" }
+or_op                        = { "||" }
+bit_and_op                   = { "&" }
 
 func_call                    = { ident ~ "(" ~ arg_list? ~ ")" }
 arg_list                     = _{ (arg ~ ("," ~ arg)*)? ~ ","? }
 arg                          = { keyword_arg | expr }
 keyword_arg                  = { ident ~ "=" ~ expr }
+
+closure                      = { "|" ~ fn_arg_list ~ "|" ~ type_hint? ~ closure_body }
+fn_arg_list                  = { (ident* ~ ("," ~ ident)*)}
+closure_body                 = _{ bracketed_closure_body | expr }
+bracketed_closure_body       = { "{" ~ statement* ~ "}" }
+
+array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
 
 literal                      = _{ float | int }
 int                          = @{ ASCII_DIGIT+ }

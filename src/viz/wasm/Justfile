@@ -15,6 +15,7 @@ bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/tessellation_sandbox.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/basalt.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/csg_sandbox.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
 
   cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
@@ -35,6 +36,7 @@ opt:
   wasm-opt ./build/tessellation_sandbox_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/tessellation_sandbox_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
   wasm-opt ./build/basalt_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/basalt_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
   wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/csg_sandbox_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
+  wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
 
 build:
   #!/bin/bash
@@ -89,3 +91,9 @@ build-csg-sandbox:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/csg_sandbox.wasm --target web --remove-producers-section --out-dir ./build
   # wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/csg_sandbox_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
   cp ./build/csg_sandbox* ../wasmComp
+
+build-geoscript-repl:
+  cargo build --release --target wasm32-unknown-unknown --package geoscript_repl
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
+  # wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
+  cp ./build/geoscript_repl* ../wasmComp

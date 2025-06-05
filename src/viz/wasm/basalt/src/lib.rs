@@ -432,7 +432,7 @@ fn gen_standalone_pillar_mesh(hex_width: f32, hex_height: f32) -> OwnedIndexedMe
   mesh.compute_vertex_displacement_normals();
   mesh.mark_edge_sharpness(0.8);
   mesh.separate_vertices_and_compute_normals();
-  mesh.to_raw_indexed(true, false)
+  mesh.to_raw_indexed(true, false, false)
 }
 
 fn gen_stand_alone_pillar_instance_transforms(instance_count: usize, hex_width: f32) -> Vec<f32> {
@@ -528,7 +528,7 @@ pub fn basalt_gen() -> *mut GenBasaltCtx {
   let mut collission_mesh = mesh.clone();
   let displ_noise = Fbm::new().set_octaves(3);
   displace_mesh(&displ_noise, &mut collission_mesh);
-  let collission_mesh = mesh.to_raw_indexed(false, false);
+  let collission_mesh = mesh.to_raw_indexed(false, false, false);
 
   let target_edge_length = 4.26;
   let should_split_edge = |mesh: &LinkedMesh, edge: &Edge| -> bool {

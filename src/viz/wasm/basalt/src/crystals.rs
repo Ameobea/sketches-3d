@@ -61,7 +61,7 @@ pub(crate) struct BatchMesh {
 pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
   let mut crystal_meshes = (0..UNIQ_CRYSTAL_MESH_COUNT)
     .map(|_| BatchMesh {
-      mesh: generate_crystal_mesh().to_raw_indexed(true, true),
+      mesh: generate_crystal_mesh().to_raw_indexed(true, true, false),
       transforms: Vec::new(),
     })
     .collect::<Vec<_>>();

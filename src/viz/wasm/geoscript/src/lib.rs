@@ -1,19 +1,22 @@
 use std::{fmt::Debug, sync::Mutex};
 
+use ast::{parse_program, Expr, Statement};
 use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use pest::{
-  iterators::Pair,
   pratt_parser::{Assoc, Op, PrattParser},
   Parser,
 };
 use pest_derive::Parser;
+use seq::EagerSeq;
 
 use crate::{
-  builtins::{eval_builtin_fn, FN_SIGNATURE_DEFS},
+  ast::TypeName,
+  builtins::{eval_builtin_fn, FN_SIGNATURE_DEFS, FUNCTION_ALIASES},
   seq::{IntRange, MapSeq},
 };
 
+mod ast;
 mod builtins;
 pub mod mesh_boolean;
 mod seq;
@@ -24,16 +27,32 @@ pub struct GSParser;
 
 lazy_static::lazy_static! {
   static ref PRATT_PARSER: PrattParser<Rule> = PrattParser::new()
-    // TODO: should verify that these match other languages and expectations
-    .op(Op::infix(Rule::gte_op, Assoc::Left) | Op::infix(Rule::lte_op, Assoc::Left))
-    .op(Op::infix(Rule::gt_op, Assoc::Left) | Op::infix(Rule::lt_op, Assoc::Left))
-    .op(Op::infix(Rule::eq_op, Assoc::Left) | Op::infix(Rule::neq_op, Assoc::Left))
-    .op(Op::infix(Rule::range_inclusive_op, Assoc::Left))
-    .op(Op::infix(Rule::range_op, Assoc::Left))
+    .op(Op::infix(Rule::range_inclusive_op, Assoc::Left) | Op::infix(Rule::range_op, Assoc::Left))
+    .op(Op::infix(Rule::or_op, Assoc::Left))
+    .op(Op::infix(Rule::and_op, Assoc::Left))
     .op(Op::infix(Rule::pipeline_op, Assoc::Left))
-    .op(Op::infix(Rule::add_op, Assoc::Left) | Op::infix(Rule::sub_op, Assoc::Left))
-    .op(Op::infix(Rule::mul_op, Assoc::Left) | Op::infix(Rule::div_op, Assoc::Left))
-    .op(Op::prefix(Rule::neg_op) | Op::prefix(Rule::pos_op) | Op::prefix(Rule::negate_op));
+    .op(Op::infix(Rule::bit_and_op, Assoc::Left))
+    .op(Op::infix(Rule::eq_op, Assoc::Left) | Op::infix(Rule::neq_op, Assoc::Left))
+    .op(
+      Op::infix(Rule::lt_op,Assoc::Left)
+        | Op::infix(Rule::lte_op, Assoc::Left)
+        | Op::infix(Rule::gt_op, Assoc::Left)
+        | Op::infix(Rule::gte_op, Assoc::Left)
+    )
+    .op(
+      Op::infix(Rule::add_op, Assoc::Left)
+        | Op::infix(Rule::sub_op, Assoc::Left)
+    )
+    .op(
+      Op::infix(Rule::mul_op, Assoc::Left)
+        | Op::infix(Rule::div_op, Assoc::Left)
+        | Op::infix(Rule::mod_op, Assoc::Left)
+    )
+    .op(
+      Op::prefix(Rule::neg_op)
+        | Op::prefix(Rule::pos_op)
+        | Op::prefix(Rule::negate_op)
+    );
 }
 
 pub trait Sequence: Debug {
@@ -45,11 +64,52 @@ pub trait Sequence: Debug {
   ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PartiallyAppliedFn {
-  name: String,
+  inner: Box<Callable>,
   args: Vec<Value>,
   kwargs: FxHashMap<String, Value>,
+}
+
+impl Debug for PartiallyAppliedFn {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "PartiallyAppliedFn(inner={:?} with {} args, {} kwargs)",
+      self.inner,
+      self.args.len(),
+      self.kwargs.len()
+    )
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct Closure {
+  /// Names of parameters for this closure in order
+  params: Vec<String>,
+  body: Vec<Statement>,
+  /// Contains variables captured from the environment when the closure was created
+  captured_scope: Scope,
+  return_type_hint: Option<TypeName>,
+}
+
+#[derive(Clone)]
+pub struct ComposedFn {
+  pub inner: Vec<Callable>,
+}
+
+impl Debug for ComposedFn {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "ComposedFn({} inner callables)", self.inner.len())
+  }
+}
+
+#[derive(Clone, Debug)]
+pub enum Callable {
+  Builtin(String),
+  PartiallyAppliedFn(PartiallyAppliedFn),
+  Closure(Closure),
+  ComposedFn(ComposedFn),
 }
 
 #[derive(Debug)]
@@ -58,7 +118,7 @@ pub enum Value {
   Float(f32),
   Vec3(Vec3),
   Mesh(LinkedMesh<()>),
-  PartiallyAppliedFn(PartiallyAppliedFn),
+  Callable(Callable),
   Sequence(Box<dyn Sequence>),
   Bool(bool),
   Nil,
@@ -71,7 +131,7 @@ impl Clone for Value {
       Value::Float(f) => Value::Float(*f),
       Value::Vec3(v3) => Value::Vec3(*v3),
       Value::Mesh(mesh) => Value::Mesh(mesh.clone()),
-      Value::PartiallyAppliedFn(paf) => Value::PartiallyAppliedFn(paf.clone()),
+      Value::Callable(callable) => Value::Callable(callable.clone()),
       Value::Sequence(seq) => Value::Sequence(seq.clone_box()),
       Value::Bool(b) => Value::Bool(*b),
       Value::Nil => Value::Nil,
@@ -102,9 +162,9 @@ impl Value {
     }
   }
 
-  fn as_fn(&self) -> Option<&PartiallyAppliedFn> {
+  fn as_callable(&self) -> Option<&Callable> {
     match self {
-      Value::PartiallyAppliedFn(paf) => Some(paf),
+      Value::Callable(callable) => Some(callable),
       _ => None,
     }
   }
@@ -140,7 +200,7 @@ enum ArgType {
   Numeric,
   Vec3,
   Mesh,
-  PartiallyAppliedFn,
+  Callable,
   Sequence,
   Bool,
   Any,
@@ -154,7 +214,7 @@ impl ArgType {
       ArgType::Numeric => matches!(arg, Value::Int(_) | Value::Float(_)),
       ArgType::Vec3 => matches!(arg, Value::Vec3(_)),
       ArgType::Mesh => matches!(arg, Value::Mesh(_)),
-      ArgType::PartiallyAppliedFn => matches!(arg, Value::PartiallyAppliedFn { .. }),
+      ArgType::Callable => matches!(arg, Value::Callable { .. }),
       ArgType::Sequence => matches!(arg, Value::Sequence(_)),
       ArgType::Bool => matches!(arg, Value::Bool(_)),
       ArgType::Any => true,
@@ -266,7 +326,7 @@ pub struct RenderedMeshes {
   // Using a mutex here to avoid making the whole `EvalCtx` require `&mut` when evaluating code.
   //
   // This thing is essentially "write-only", and the mutex should become a no-op in Wasm anyway.
-  meshes: Mutex<Vec<LinkedMesh<()>>>,
+  pub meshes: Mutex<Vec<LinkedMesh<()>>>,
 }
 
 impl RenderedMeshes {
@@ -277,83 +337,206 @@ impl RenderedMeshes {
   pub fn into_inner(self) -> Vec<LinkedMesh<()>> {
     self.meshes.into_inner().unwrap()
   }
+
+  pub fn len(&self) -> usize {
+    self.meshes.lock().unwrap().len()
+  }
 }
 
-#[derive(Default)]
-pub struct Globals {
-  // same thing as above for globals
-  globals: Mutex<FxHashMap<String, Value>>,
+#[derive(Default, Debug)]
+pub struct Scope {
+  vars: Mutex<FxHashMap<String, Value>>,
+  parent: Option<Box<Scope>>,
 }
 
-impl Globals {
+impl Clone for Scope {
+  fn clone(&self) -> Self {
+    Scope {
+      vars: Mutex::new(self.vars.lock().unwrap().clone()),
+      parent: self.parent.clone(),
+    }
+  }
+}
+
+impl Scope {
   pub fn insert(&self, key: String, value: Value) {
-    self.globals.lock().unwrap().insert(key, value);
+    self.vars.lock().unwrap().insert(key, value);
   }
 
   pub fn get(&self, key: &str) -> Option<Value> {
     // TODO: can't be cloning here...
-    self.globals.lock().unwrap().get(key).cloned()
+    if let Some(val) = self.vars.lock().unwrap().get(key).cloned() {
+      return Some(val);
+    }
+
+    // TODO: look up recursively in parent scopes
+
+    None
   }
 }
 
-#[derive(Default)]
 pub struct EvalCtx {
-  globals: Globals,
-  rendered_meshes: RenderedMeshes,
+  pub globals: Scope,
+  pub rendered_meshes: RenderedMeshes,
+  pub log_fn: fn(&str),
 }
 
-enum ValidateFnOutput {
-  /// Bad argument types
-  Invalid,
-  /// Fully valid function call, ready to be executed.  All required args are provided and types
-  /// match.
-  Valid,
-  /// All applied arguments are valid, but not all required args are provided
-  PartiallyApplied,
-}
-
-fn validate_fn_args(
-  name: &str,
-  args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
-) -> ValidateFnOutput {
-  let Some(&defs) = FN_SIGNATURE_DEFS.get(name) else {
-    return ValidateFnOutput::Invalid;
-  };
-
-  match get_args(name, defs, args, kwargs) {
-    Ok(GetArgsOutput::Valid { .. }) => ValidateFnOutput::Valid,
-    Ok(GetArgsOutput::PartiallyApplied) => ValidateFnOutput::PartiallyApplied,
-    Err(_) => ValidateFnOutput::Invalid,
+impl Default for EvalCtx {
+  fn default() -> Self {
+    EvalCtx {
+      globals: Scope::default(),
+      rendered_meshes: RenderedMeshes::default(),
+      log_fn: |msg| println!("{msg}"),
+    }
   }
 }
 
 impl EvalCtx {
+  pub fn set_log_fn(mut self, log: fn(&str)) -> EvalCtx {
+    self.log_fn = log;
+    self
+  }
+
+  pub fn eval_expr(&self, expr: &Expr, scope: &Scope) -> Result<Value, String> {
+    match expr {
+      Expr::Call(call) => {
+        let args = call
+          .args
+          .iter()
+          .map(|a| self.eval_expr(a, scope))
+          .collect::<Result<Vec<_>, _>>()?;
+        let kwargs = call
+          .kwargs
+          .iter()
+          .map(|(k, v)| self.eval_expr(v, scope).map(|val| (k.clone(), val)))
+          .collect::<Result<FxHashMap<_, _>, _>>()?;
+        self
+          .eval_fn_call(&call.name, args, kwargs, scope)
+          .map_err(|err| format!("Error evaluating function call `{}`: {err}", call.name))
+      }
+      Expr::BinOp { op, lhs, rhs } => {
+        let lhs = self.eval_expr(lhs, scope)?;
+        let rhs = self.eval_expr(rhs, scope)?;
+        op.apply(self, lhs, rhs)
+          .map_err(|err| format!("Error applying binary operator `{op:?}`: {err}"))
+      }
+      Expr::PrefixOp { op, expr } => {
+        let val = self.eval_expr(expr, scope)?;
+        op.apply(self, val)
+          .map_err(|err| format!("Error applying prefix operator `{op:?}`: {err}"))
+      }
+      Expr::Range {
+        start,
+        end,
+        inclusive,
+      } => {
+        let start = self.eval_expr(start, scope)?;
+        let Value::Int(start) = start else {
+          return Err(format!("Range start must be an integer, found: {start:?}"));
+        };
+        let end = self.eval_expr(end, scope)?;
+        let Value::Int(end) = end else {
+          return Err(format!("Range end must be an integer, found: {end:?}"));
+        };
+
+        Ok(if *inclusive {
+          Value::Sequence(Box::new(IntRange {
+            start,
+            end: end + 1,
+          }))
+        } else {
+          Value::Sequence(Box::new(IntRange { start, end }))
+        })
+      }
+      Expr::Ident(name) => {
+        if let Some(local) = scope.get(name) {
+          return Ok(local);
+        }
+
+        // look it up as a builtin fn
+        if FN_SIGNATURE_DEFS.contains_key(&name) {
+          return Ok(Value::Callable(Callable::Builtin(name.to_owned())));
+        }
+
+        Err(format!("Variable not found: {name}"))
+      }
+      Expr::Int(i) => Ok(Value::Int(*i)),
+      Expr::Float(f) => Ok(Value::Float(*f)),
+      Expr::Bool(b) => Ok(Value::Bool(*b)),
+      Expr::Array(elems) => {
+        let elems = elems
+          .iter()
+          .map(|expr| self.eval_expr(expr, scope))
+          .collect::<Result<Vec<_>, _>>()?;
+        Ok(Value::Sequence(Box::new(EagerSeq { inner: elems })))
+      }
+      Expr::Nil => Ok(Value::Nil),
+      Expr::Closure {
+        params,
+        body,
+        return_type_hint,
+      } => Ok(Value::Callable(Callable::Closure(Closure {
+        params: params.clone(),
+        body: body.0.clone(),
+        captured_scope: scope.clone(),
+        return_type_hint: return_type_hint.clone(),
+      }))),
+    }
+  }
+
+  fn eval_assignment(
+    &self,
+    ident: &str,
+    value: Value,
+    scope: &Scope,
+    type_hint: Option<TypeName>,
+  ) -> Result<Value, String> {
+    if ident.is_empty() {
+      return Err("found empty ident in assignment; shouldn't be possible I think".to_owned());
+    }
+
+    if let Some(type_hint) = type_hint {
+      type_hint.validate_val(&value)?;
+    }
+
+    scope.insert(ident.to_owned(), value.clone());
+    Ok(Value::Nil)
+  }
+
+  fn eval_statement(&self, statement: &Statement, scope: &Scope) -> Result<Value, String> {
+    match statement {
+      Statement::Expr(expr) => self.eval_expr(expr, scope),
+      Statement::Assignment {
+        name,
+        expr,
+        type_hint,
+      } => self.eval_assignment(&name, self.eval_expr(expr, scope)?, scope, *type_hint),
+    }
+  }
+
   fn fold<'a>(
     &'a self,
     initial_val: Value,
-    fn_value: PartiallyAppliedFn,
+    callable: &Callable,
     iter: impl Iterator<Item = Result<Value, String>> + 'a,
   ) -> Result<Value, String> {
     let mut acc = initial_val;
     for (i, res) in iter.enumerate() {
       let value = res.map_err(|err| format!("Error seq value ix={i} in reduce: {err}"))?;
-      let mut args = fn_value.args.clone();
-      args.push(acc);
-      args.push(value);
       acc = self
-        .eval_fn_call(fn_value.name.as_str(), args, Default::default())
-        .map_err(|err| format!("Error calling fn `{}` in reduce: {err}", fn_value.name))?;
+        .invoke_callable(
+          callable,
+          vec![acc, value],
+          Default::default(),
+          &self.globals,
+        )
+        .map_err(|err| format!("Error invoking callable in reduce: {err}"))?;
     }
 
     Ok(acc)
   }
 
-  fn reduce<'a>(
-    &'a self,
-    fn_value: PartiallyAppliedFn,
-    seq: Box<dyn Sequence>,
-  ) -> Result<Value, String> {
+  fn reduce<'a>(&'a self, fn_value: &Callable, seq: Box<dyn Sequence>) -> Result<Value, String> {
     // TODO: fix clone
     let mut iter = seq.clone_box().consume(self);
     let Some(first_value_res) = iter.next() else {
@@ -362,327 +545,162 @@ impl EvalCtx {
     let first_value =
       first_value_res.map_err(|err| format!("Error evaluating initial value in reduce: {err}"))?;
 
-    self.fold(first_value, fn_value.clone(), iter)
+    self.fold(first_value, &fn_value, iter)
   }
 
   fn eval_fn_call(
     &self,
-    name: &str,
+    mut name: &str,
     args: Vec<Value>,
     kwargs: FxHashMap<String, Value>,
+    scope: &Scope,
   ) -> Result<Value, String> {
     let defs_opt = FN_SIGNATURE_DEFS.get(name);
+    let defs_opt = match defs_opt {
+      Some(defs) => Some(defs),
+      None => {
+        if let Some(alias) = FUNCTION_ALIASES.get(name) {
+          name = alias;
+          FN_SIGNATURE_DEFS.get(name)
+        } else {
+          None
+        }
+      }
+    };
     if let Some(defs) = defs_opt {
       let (def_ix, arg_refs) = match get_args(name, defs, &args, &kwargs)? {
         GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
         GetArgsOutput::PartiallyApplied => {
-          return Ok(Value::PartiallyAppliedFn(PartiallyAppliedFn {
-            name: name.to_owned(),
-            args,
-            kwargs,
-          }));
+          return Ok(Value::Callable(Callable::PartiallyAppliedFn(
+            PartiallyAppliedFn {
+              inner: Box::new(Callable::Builtin(name.to_owned())),
+              args,
+              kwargs,
+            },
+          )))
         }
       };
 
       return eval_builtin_fn(name, def_ix, &arg_refs, &args, &kwargs, self);
     }
 
-    // might be a partially applied function stored as a global
-    let Some(global) = self.globals.get(name) else {
+    // might be a callable stored as a global
+    let Some(global) = scope.get(name) else {
       return Err(format!("Undefined function: {name}"));
     };
 
-    let Value::PartiallyAppliedFn(PartiallyAppliedFn {
-      name: builtin_name,
-      args: global_args,
-      kwargs: global_kwargs,
-    }) = global
-    else {
-      return Err(format!("\"{name}\" is not a function"));
+    let Value::Callable(callable) = global else {
+      return Err(format!("\"{name}\" is not a callable"));
     };
 
-    // TODO: bad clones?
-    let mut combined_args = global_args.clone();
-    combined_args.extend(args);
-
-    let mut combined_kwargs = global_kwargs.clone();
-    for (key, value) in kwargs {
-      combined_kwargs.insert(key.clone(), value.clone());
-    }
-
-    match validate_fn_args(&builtin_name, &combined_args, &combined_kwargs) {
-      ValidateFnOutput::Valid => self.eval_fn_call(&builtin_name, combined_args, combined_kwargs),
-      ValidateFnOutput::PartiallyApplied => Ok(Value::PartiallyAppliedFn(PartiallyAppliedFn {
-        name: builtin_name.to_owned(),
-        args: combined_args,
-        kwargs: combined_kwargs,
-      })),
-      ValidateFnOutput::Invalid => Err(format!(
-        "Invalid arguments for function \"{builtin_name}\": args: {:?}, kwargs: {:?}",
-        combined_args, combined_kwargs
-      )),
-    }
+    self.invoke_callable(&callable, args, kwargs, scope)
   }
 
-  fn parse_fn_call<'a>(
+  fn invoke_callable(
     &self,
-    expr: pest::iterators::Pair<'a, Rule>,
-  ) -> Result<(&'a str, Vec<Value>, FxHashMap<String, Value>), String> {
-    let mut inner = expr.into_inner();
-    let func_name = inner
-      .next()
-      .ok_or("Expected function name in call expression")?;
-    if func_name.as_rule() != Rule::ident {
-      return Err(format!(
-        "Expected identifier for function name, found: {:?}",
-        func_name.as_rule()
-      ));
-    }
+    callable: &Callable,
+    args: Vec<Value>,
+    kwargs: FxHashMap<String, Value>,
+    scope: &Scope,
+  ) -> Result<Value, String> {
+    match callable {
+      Callable::Builtin(name) => self.eval_fn_call(name, args, kwargs, scope),
+      Callable::PartiallyAppliedFn(paf) => {
+        let mut combined_args = paf.args.clone();
+        combined_args.extend(args);
 
-    let func_name_str = func_name.as_str();
-    let mut args = Vec::new();
-    let mut kwargs = FxHashMap::default();
+        let mut combined_kwargs = paf.kwargs.clone();
+        for (key, value) in kwargs {
+          combined_kwargs.insert(key, value);
+        }
 
-    for arg in inner {
-      match arg.as_rule() {
-        Rule::arg => {
-          let child = arg
-            .into_inner()
-            .next()
-            .expect("All arg nodes must have a child node");
+        self.invoke_callable(&paf.inner, combined_args, combined_kwargs, scope)
+      }
+      Callable::Closure(closure) => {
+        let closure_scope = dbg!(closure.captured_scope.clone());
+        let mut pos_arg_ix = 0usize;
+        for arg in &closure.params {
+          if let Some(kwarg) = kwargs.get(arg) {
+            closure_scope.insert(arg.clone(), kwarg.clone());
+          } else if pos_arg_ix < args.len() {
+            closure_scope.insert(arg.clone(), args[pos_arg_ix].clone());
+            pos_arg_ix += 1;
+          } else {
+            return Err(format!("Missing required argument `{}` for closure", arg));
+          }
+        }
 
-          match child.as_rule() {
-            Rule::keyword_arg => {
-              let mut kw_inner = child.into_inner();
-              let name = kw_inner.next().ok_or("Expected keyword argument name")?;
-              if name.as_rule() != Rule::ident {
-                return Err(format!(
-                  "Expected identifier for keyword argument, found: {:?}",
-                  name.as_rule()
-                ));
-              }
-              let name_str = name.as_str().to_owned();
-
-              let value_expr = kw_inner
-                .next()
-                .ok_or("Expected value expression for keyword argument")?;
-              let value = self.eval_pair(value_expr)?;
-
-              kwargs.insert(name_str, value);
+        let mut out: Value = Value::Nil;
+        for stmt in &closure.body {
+          match stmt {
+            Statement::Expr(expr) => {
+              out = self.eval_expr(expr, &closure_scope)?;
             }
-            _ => {
-              let val = self.eval_pair(child)?;
-              args.push(val);
+            Statement::Assignment {
+              name,
+              expr,
+              type_hint,
+            } => {
+              self.eval_assignment(
+                name,
+                self.eval_expr(expr, &closure_scope)?,
+                &closure_scope,
+                *type_hint,
+              )?;
+              println!("{name}; {:?}", closure_scope);
             }
           }
         }
-        _ => {
+
+        if let Some(return_type_hint) = closure.return_type_hint {
+          return_type_hint.validate_val(&out)?;
+        }
+
+        Ok(out)
+      }
+      Callable::ComposedFn(ComposedFn { inner }) => {
+        let mut acc = args;
+        for callable in inner {
+          acc = vec![self.invoke_callable(callable, acc, Default::default(), scope)?];
+        }
+
+        if acc.len() != 1 {
           return Err(format!(
-            "Unexpected rule in function call expr: {:?}",
-            arg.as_rule()
-          ))
+            "Expected single value at end of composed fn invocation, found: {acc:?}"
+          ));
         }
+
+        Ok(acc.into_iter().next().unwrap())
       }
-    }
-
-    Ok((func_name_str, args, kwargs))
-  }
-
-  fn eval_expr(&self, expr: Pair<Rule>) -> Result<Value, String> {
-    if expr.as_rule() != Rule::expr {
-      return Err(format!(
-        "`parse_expr` can only handle `expr` rules, found: {:?}",
-        expr.as_rule()
-      ));
-    }
-
-    PRATT_PARSER
-      .map_primary(|primary| -> Result<Value, String> {
-        match primary.as_rule() {
-          Rule::term => self.eval_pair(primary),
-          _ => unimplemented!("Unexpected primary rule: {:?}", primary.as_rule()),
-        }
-      })
-      .map_prefix(|op, expr| match op.as_rule() {
-        Rule::neg_op => self.eval_fn_call("neg", vec![expr?], Default::default()),
-        Rule::pos_op => self.eval_fn_call("pos", vec![expr?], Default::default()),
-        Rule::negate_op => self.eval_fn_call("neg", vec![expr?], Default::default()),
-        _ => unreachable!("Unexpected prefix operator rule: {:?}", op.as_rule()),
-      })
-      .map_infix(|lhs, op, rhs| match op.as_rule() {
-        Rule::add_op => self.eval_fn_call("add", vec![lhs?, rhs?], Default::default()),
-        Rule::sub_op => self.eval_fn_call("sub", vec![lhs?, rhs?], Default::default()),
-        Rule::mul_op => self.eval_fn_call("mul", vec![lhs?, rhs?], Default::default()),
-        Rule::div_op => self.eval_fn_call("div", vec![lhs?, rhs?], Default::default()),
-        Rule::pipeline_op => {
-          let lhs = lhs?;
-          let rhs = rhs?;
-
-          let Some(paf) = rhs.as_fn() else {
-            return Err(format!(
-              "Pipeline operator requires a function on the right, found: {rhs:?}",
-            ));
-          };
-
-          let mut args = paf.args.clone();
-          args.push(lhs);
-          let kwargs = paf.kwargs.clone();
-
-          self.eval_fn_call(&paf.name, args, kwargs)
-        }
-        Rule::range_op => {
-          let lhs = lhs?;
-          let rhs = rhs?;
-
-          let start = lhs
-            .as_int()
-            .ok_or_else(|| format!("Range operator requires integer start, found: {lhs:?}",))?;
-          let end = rhs
-            .as_int()
-            .ok_or_else(|| format!("Range operator requires integer end, found: {rhs:?}",))?;
-
-          Ok(Value::Sequence(Box::new(IntRange { start, end })))
-        }
-        Rule::range_inclusive_op => {
-          let lhs = lhs?;
-          let rhs = rhs?;
-
-          let start = lhs
-            .as_int()
-            .ok_or_else(|| format!("Range operator requires integer start, found: {lhs:?}",))?;
-          let end = rhs
-            .as_int()
-            .ok_or_else(|| format!("Range operator requires integer end, found: {rhs:?}",))?;
-
-          Ok(Value::Sequence(Box::new(IntRange {
-            start,
-            end: end + 1,
-          })))
-        }
-        Rule::gte_op => self.eval_fn_call("gte", vec![lhs?, rhs?], Default::default()),
-        Rule::lte_op => self.eval_fn_call("lte", vec![lhs?, rhs?], Default::default()),
-        Rule::gt_op => self.eval_fn_call("gt", vec![lhs?, rhs?], Default::default()),
-        Rule::lt_op => self.eval_fn_call("lt", vec![lhs?, rhs?], Default::default()),
-        Rule::eq_op => self.eval_fn_call("eq", vec![lhs?, rhs?], Default::default()),
-        Rule::neq_op => self.eval_fn_call("neq", vec![lhs?, rhs?], Default::default()),
-        _ => unreachable!("Unexpected operator rule: {:?}", op.as_rule()),
-      })
-      .parse(expr.into_inner())
-  }
-
-  pub fn eval_pair(&self, pair: Pair<Rule>) -> Result<Value, String> {
-    match pair.as_rule() {
-      Rule::expr => self.eval_expr(pair),
-      Rule::assignment => {
-        let mut inner = pair.into_inner();
-        let ident = inner.next().ok_or("Expected identifier in assignment")?;
-        let value_expr = inner
-          .next()
-          .ok_or("Expected value expression in assignment")?;
-
-        if ident.as_rule() != Rule::ident {
-          return Err(format!("Expected identifier, found: {:?}", ident.as_rule()));
-        }
-
-        let val = self.eval_pair(value_expr)?;
-        self.globals.insert(ident.as_str().to_owned(), val);
-        Ok(Value::Nil)
-      }
-      Rule::func_call => {
-        let (func_name_str, args, kwargs) = self.parse_fn_call(pair)?;
-        self
-          .eval_fn_call(func_name_str, args, kwargs)
-          .map_err(|e| format!("Function call error: {}", e))
-      }
-      Rule::int => {
-        let int_str = pair.as_str();
-        int_str
-          .parse::<i64>()
-          .map(Value::Int)
-          .map_err(|_| format!("Invalid integer: {int_str}"))
-      }
-      Rule::float => {
-        let float_str = pair.as_str();
-        float_str
-          .parse::<f32>()
-          .map(Value::Float)
-          .map_err(|_| format!("Invalid float: {float_str}"))
-      }
-      Rule::ident => {
-        let ident_str = pair.as_str();
-        if ident_str.is_empty() {
-          return Err("Identifier cannot be empty".to_owned());
-        }
-
-        if let Some(value) = self.globals.get(ident_str) {
-          return Ok(value);
-        }
-
-        // look it up as a global function
-        if FN_SIGNATURE_DEFS.contains_key(ident_str) {
-          return Ok(Value::PartiallyAppliedFn(PartiallyAppliedFn {
-            name: ident_str.to_owned(),
-            args: Vec::new(),
-            kwargs: FxHashMap::default(),
-          }));
-        }
-
-        Err(format!("Undefined identifier: {ident_str}"))
-      }
-      Rule::term => self.eval_pair(pair.into_inner().next().unwrap()),
-      Rule::EOI | Rule::EOL => Ok(Value::Nil),
-      Rule::range_inclusive_literal_expr => {
-        let mut inner = pair.into_inner();
-        let start_expr = inner.next().ok_or("Expected start expression in range")?;
-        let end_expr = inner.next().ok_or("Expected end expression in range")?;
-
-        let start_value = self.eval_pair(start_expr)?;
-        let end_value = self.eval_pair(end_expr)?;
-
-        match (start_value, end_value) {
-          (Value::Int(start), Value::Int(end)) => Ok(Value::Sequence(Box::new(IntRange {
-            start,
-            end: end + 1,
-          }))),
-          _ => Err("Range must be defined by two integer values".to_owned()),
-        }
-      }
-      Rule::range_literal_expr => {
-        let mut inner = pair.into_inner();
-        let start_expr = inner.next().ok_or("Expected start expression in range")?;
-        let end_expr = inner.next().ok_or("Expected end expression in range")?;
-
-        let start_value = self.eval_pair(start_expr)?;
-        let end_value = self.eval_pair(end_expr)?;
-
-        match (start_value, end_value) {
-          (Value::Int(start), Value::Int(end)) => {
-            Ok(Value::Sequence(Box::new(IntRange { start, end })))
-          }
-          _ => Err("Range must be defined by two integer values".to_owned()),
-        }
-      }
-      other => unreachable!("Unexpected rule: {other:?}"),
     }
   }
 }
 
-pub fn parse_and_eval_program(src: &str) -> Result<EvalCtx, String> {
-  let pairs = GSParser::parse(Rule::program, src).map_err(|e| format!("Parsing error: {}", e))?;
+pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), String> {
+  let pairs = GSParser::parse(Rule::program, src).map_err(|err| format!("Syntax error: {err}"))?;
 
-  let ctx = EvalCtx::default();
-
-  for pair in pairs {
-    match pair.as_rule() {
-      Rule::program => {
-        for pair in pair.into_inner() {
-          let _val = ctx.eval_pair(pair)?;
-        }
-      }
-      _ => return Err(format!("Unexpected rule in program: {:?}", pair.as_rule())),
-    }
+  let Some(program) = pairs.into_iter().next() else {
+    return Err("No program found in input".to_owned());
+  };
+  if program.as_rule() != Rule::program {
+    return Err(format!(
+      "Expected top-level rule. Expected program, found: {:?}",
+      program.as_rule()
+    ));
   }
 
+  let ast = parse_program(program.clone())?;
+
+  for statement in ast.statements {
+    let _val = ctx.eval_statement(&statement, &ctx.globals)?;
+  }
+
+  Ok(())
+}
+
+pub fn parse_and_eval_program(src: &str) -> Result<EvalCtx, String> {
+  let ctx = EvalCtx::default();
+  parse_and_eval_program_with_ctx(src, &ctx)?;
   Ok(ctx)
 }
 
@@ -949,7 +967,7 @@ b = -vec3(1,2,3)
 #[test]
 fn test_filter() {
   let src = r#"
-is_even = compose(mod(b=2), eq(0))
+is_even = |x| x % 2 == 0
 seq = 0..10 | filter(is_even) | reduce(add)
 "#;
 
@@ -961,4 +979,122 @@ seq = 0..10 | filter(is_even) | reduce(add)
   let seq = &ctx.globals.get("seq").unwrap();
   let seq = seq.as_int().expect("Expected result to be an Int");
   assert_eq!(seq, 20); // 0 + 2 + 4 + 6 + 8
+}
+
+#[test]
+fn test_nested_closures() {
+  let src = r#"
+a = 5
+outer = |x| {
+  inner = |y| x + y + a
+  inner(2)
+}
+
+// `a` should have been captured at the time of closure creation, so modifying
+// the value won't affect the result
+a = 1000
+
+result = outer(3)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let result = &ctx.globals.get("result").unwrap();
+  let result = result.as_int().expect("Expected result to be an Int");
+  assert_eq!(result, 10);
+}
+
+#[test]
+fn test_multi_geometry_with_lambdas() {
+  let src = r#"
+positions = 0..10 | map(|x| vec3(x, 0, x))
+meshes = positions | map(|pos| box(0.5) | translate(pos))
+render(meshes)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let rendered_meshes = ctx.rendered_meshes.into_inner();
+  assert_eq!(rendered_meshes.len(), 10);
+
+  for i in 0..10 {
+    let mesh = &rendered_meshes[i];
+    let center =
+      mesh.vertices.values().map(|vtx| vtx.position).sum::<Vec3>() / mesh.vertices.len() as f32;
+    assert_eq!(center, Vec3::new(i as f32, 0.0, i as f32));
+  }
+}
+
+#[test]
+fn test_compose() {
+  let src = r#"
+a = |x| x + 1
+f = mul(2.5)
+
+composed = compose(a, f)
+result = composed(3)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let result = &ctx.globals.get("result").unwrap();
+  let result = result.as_float().expect("Expected result to be a Float");
+  assert_eq!(result, (3. + 1.) * 2.5);
+}
+
+#[test]
+fn test_array_literals() {
+  let src = r#"
+fns = [|x| x + 1, |x| x * 2, |x| x - 3]
+composed = fns | compose
+res = composed(3)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let result = &ctx.globals.get("res").unwrap();
+  let result = result.as_int().expect("Expected result to be an int");
+  assert_eq!(result, ((3 + 1) * 2) - 3);
+}
+
+#[test]
+fn test_mesh_bool_infix() {
+  let src = r#"
+a = box(1) | scale(2) | translate(0.5,0,0)
+b = box(1) | scale(2) | translate(-0.5,0,0)
+c = box(1) | translate(0, 0, 1)
+render((a & b) | c)
+"#;
+
+  parse_and_eval_program(src).unwrap();
+}
+
+#[test]
+fn test_type_hints() {
+  let correct_src = r#"
+a: int = 1
+b: float = 2.5
+c: float = b + a
+"#;
+
+  parse_and_eval_program(correct_src).unwrap();
+
+  let incorrect_src = r#"
+a: int = 1.0
+"#;
+
+  assert!(parse_and_eval_program(incorrect_src).is_err());
+
+  let correct_closure_src = r#"
+inc = |x|: float x + 1.0
+inc(1)
+"#;
+
+  parse_and_eval_program(correct_closure_src).unwrap();
+
+  let incorrect_closure_src = r#"
+inc = |x|: int x + 1.0
+inc(1.0)
+"#;
+
+  assert!(parse_and_eval_program(incorrect_closure_src).is_err());
 }
