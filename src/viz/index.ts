@@ -141,7 +141,10 @@ export class Viz {
    */
   private viewModeInterpolationState: ViewModeInterpolationState | null = null;
   private onRespawnCBs: (() => void)[] = [];
-  private inlineConsole = window.location.href.includes('localhost') ? new InlineConsole() : undefined;
+  private inlineConsole =
+    window.location.href.includes('localhost') && !window.location.href.includes('geoscript')
+      ? new InlineConsole()
+      : undefined;
   private customOnInstakillTerrainCollisionCb:
     | ((sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => void)
     | null = null;
@@ -497,6 +500,14 @@ export class Viz {
 
     if (!this.inlineConsole?.isOpen) {
       this.keyStates[evt.code] = true;
+    }
+
+    if (
+      evt.target instanceof HTMLInputElement ||
+      evt.target instanceof HTMLTextAreaElement ||
+      (evt.target instanceof HTMLElement && evt.target.getAttribute('role') === 'textbox')
+    ) {
+      return;
     }
 
     this.customKeyEventMap.get(evt.key.toLowerCase())?.();

@@ -32,7 +32,7 @@ expr {
   UnaryExpr { UnaryOp !unary expr } |
   BinaryExpr |
   RangeExpr { expr !range (".." | "..=") expr } |
-  CallExpr { Identifier !call "(" commaSep<expr> ")" } |
+  CallExpr { Identifier !call "(" commaSep<FunctionArg> ")" } |
   literal |
   Identifier |
   ArrayExpr { "[" commaSep1<expr>? "]" } |
@@ -40,13 +40,22 @@ expr {
   ParenthesizedExpr { "(" expr ")" }
 }
 
-ClosureArgs { commaSep<Identifier> }
+FunctionArg {
+  expr | Kwarg { Identifier "=" expr }
+}
+
+closureArg {
+  Identifier TypeHint?
+}
+
+ClosureArgs { commaSep<closureArg> }
 
 BinaryExpr {
   expr !add ("+" | "-") expr |
   expr !mul ("*" | "/" | "%") expr |
   expr !bitAnd "&" expr |
   expr !bitOr "|" expr |
+  expr !bitOr "->" expr |
   expr !compare CompareOp expr |
   expr !and "&&" expr |
   expr !or "||" expr
@@ -85,7 +94,7 @@ commaSep1<expr> { expr ("," expr?)* }
   "[" "]" "{" "}" "(" ")"
   ":" ","
   "=" ".." "..="
-  "&" "!"
+  "&" "!" "->"
 }
 
 @external propSource geoscriptHighlighting from "./highlight"

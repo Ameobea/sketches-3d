@@ -33,7 +33,6 @@
   },
   "type": "module",
   "dependencies": {
-    "@codemirror/lang-json": "^6.0.1",
     "@sentry/browser": "^8.37.1",
     "@tanstack/svelte-query": "^5.67.2",
     "cm6-theme-gruvbox-dark": "^0.2.0",

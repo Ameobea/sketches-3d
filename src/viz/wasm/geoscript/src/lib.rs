@@ -11,7 +11,7 @@ use pest_derive::Parser;
 use seq::EagerSeq;
 
 use crate::{
-  ast::TypeName,
+  ast::{ClosureArg, TypeName},
   builtins::{eval_builtin_fn, FN_SIGNATURE_DEFS, FUNCTION_ALIASES},
   seq::{IntRange, MapSeq},
 };
@@ -52,7 +52,8 @@ lazy_static::lazy_static! {
       Op::prefix(Rule::neg_op)
         | Op::prefix(Rule::pos_op)
         | Op::prefix(Rule::negate_op)
-    );
+    )
+    .op(Op::postfix(Rule::postfix));
 }
 
 pub trait Sequence: Debug {
@@ -86,7 +87,7 @@ impl Debug for PartiallyAppliedFn {
 #[derive(Clone)]
 pub struct Closure {
   /// Names of parameters for this closure in order
-  params: Vec<String>,
+  params: Vec<ClosureArg>,
   body: Vec<Statement>,
   /// Contains variables captured from the environment when the closure was created
   captured_scope: Scope,
@@ -445,7 +446,7 @@ impl EvalCtx {
           .map(|(k, v)| self.eval_expr(v, scope).map(|val| (k.clone(), val)))
           .collect::<Result<FxHashMap<_, _>, _>>()?;
         self
-          .eval_fn_call(&call.name, args, kwargs, scope)
+          .eval_fn_call(&call.name, args, kwargs, scope, false)
           .map_err(|err| format!("Error evaluating function call `{}`: {err}", call.name))
       }
       Expr::BinOp { op, lhs, rhs } => {
@@ -515,6 +516,7 @@ impl EvalCtx {
         captured_scope: scope.clone(),
         return_type_hint: return_type_hint.clone(),
       }))),
+      Expr::FieldAccess { obj, field } => self.eval_field_access(obj, field, scope),
     }
   }
 
@@ -588,7 +590,19 @@ impl EvalCtx {
     args: Vec<Value>,
     kwargs: FxHashMap<String, Value>,
     scope: &Scope,
+    builtins_only: bool,
   ) -> Result<Value, String> {
+    if !builtins_only {
+      // might be a callable stored as a global
+      if let Some(global) = scope.get(name) {
+        let Value::Callable(callable) = global else {
+          return Err(format!("\"{name}\" is not a callable; found: {global:?}"));
+        };
+
+        return self.invoke_callable(&callable, args, kwargs, scope);
+      }
+    }
+
     let defs_opt = FN_SIGNATURE_DEFS.get(name);
     let defs_opt = match defs_opt {
       Some(defs) => Some(defs),
@@ -618,16 +632,7 @@ impl EvalCtx {
       return eval_builtin_fn(name, def_ix, &arg_refs, &args, &kwargs, self);
     }
 
-    // might be a callable stored as a global
-    let Some(global) = scope.get(name) else {
-      return Err(format!("Undefined function: {name}"));
-    };
-
-    let Value::Callable(callable) = global else {
-      return Err(format!("\"{name}\" is not a callable"));
-    };
-
-    self.invoke_callable(&callable, args, kwargs, scope)
+    return Err(format!("Undefined function: {name}"));
   }
 
   fn invoke_callable(
@@ -638,7 +643,7 @@ impl EvalCtx {
     scope: &Scope,
   ) -> Result<Value, String> {
     match callable {
-      Callable::Builtin(name) => self.eval_fn_call(name, args, kwargs, scope),
+      Callable::Builtin(name) => self.eval_fn_call(name, args, kwargs, scope, true),
       Callable::PartiallyAppliedFn(paf) => {
         let mut combined_args = paf.args.clone();
         combined_args.extend(args);
@@ -651,18 +656,33 @@ impl EvalCtx {
         self.invoke_callable(&paf.inner, combined_args, combined_kwargs, scope)
       }
       Callable::Closure(closure) => {
+        println!("Invoking closure: {closure:?}");
         // TODO: should do some basic analysis to see which variables are actually needed and avoid
         // cloning the rest
         let closure_scope = closure.captured_scope.clone();
         let mut pos_arg_ix = 0usize;
         for arg in &closure.params {
-          if let Some(kwarg) = kwargs.get(arg) {
-            closure_scope.insert(arg.clone(), kwarg.clone());
+          if let Some(kwarg) = kwargs.get(&arg.name) {
+            if let Some(type_hint) = arg.type_hint {
+              type_hint
+                .validate_val(kwarg)
+                .map_err(|err| format!("Type error for closure kwarg `{}`: {err}", arg.name))?;
+            }
+            closure_scope.insert(arg.name.clone(), kwarg.clone());
           } else if pos_arg_ix < args.len() {
-            closure_scope.insert(arg.clone(), args[pos_arg_ix].clone());
+            let pos_arg = &args[pos_arg_ix];
+            if let Some(type_hint) = arg.type_hint {
+              type_hint
+                .validate_val(pos_arg)
+                .map_err(|err| format!("Type error for closure arg `{}`: {err}", arg.name))?;
+            }
+            closure_scope.insert(arg.name.clone(), pos_arg.clone());
             pos_arg_ix += 1;
           } else {
-            return Err(format!("Missing required argument `{}` for closure", arg));
+            return Err(format!(
+              "Missing required argument `{}` for closure",
+              arg.name
+            ));
           }
         }
 
@@ -683,7 +703,6 @@ impl EvalCtx {
                 &closure_scope,
                 *type_hint,
               )?;
-              println!("{name}; {:?}", closure_scope);
             }
           }
         }
@@ -708,6 +727,40 @@ impl EvalCtx {
 
         Ok(acc.into_iter().next().unwrap())
       }
+    }
+  }
+
+  fn eval_field_access(&self, obj: &Expr, field: &str, scope: &Scope) -> Result<Value, String> {
+    let obj_value = self.eval_expr(obj, scope)?;
+    match obj_value {
+      Value::Vec3(v3) => match field.len() {
+        1 => match field {
+          "x" => Ok(Value::Float(v3.x)),
+          "y" => Ok(Value::Float(v3.y)),
+          "z" => Ok(Value::Float(v3.z)),
+          _ => Err(format!("Unknown field `{field}` for Vec3")),
+        },
+        2 => Err(format!("No vec2 type currently")),
+        3 => {
+          let mut chars = field.chars();
+          let a = chars.next().unwrap();
+          let b = chars.next().unwrap();
+          let c = chars.next().unwrap();
+
+          let swiz = |c| match c {
+            'x' => Ok(v3.x),
+            'y' => Ok(v3.y),
+            'z' => Ok(v3.z),
+            _ => Err(format!("Unknown field `{c}` for Vec3")),
+          };
+
+          Ok(Value::Vec3(Vec3::new(swiz(a)?, swiz(b)?, swiz(c)?)))
+        }
+        _ => Err(format!("invalid swizzle; expected 1 or 3 chars")),
+      },
+      _ => Err(format!(
+        "field access not supported for type: {obj_value:?}"
+      )),
     }
   }
 }
@@ -1009,9 +1062,6 @@ seq = 0..10 | filter(is_even) | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let is_even = &ctx.globals.get("is_even").unwrap();
-  dbg!(is_even);
-
   let seq = &ctx.globals.get("seq").unwrap();
   let seq = seq.as_int().expect("Expected result to be an Int");
   assert_eq!(seq, 20); // 0 + 2 + 4 + 6 + 8
@@ -1136,7 +1186,7 @@ inc(1.0)
 }
 
 #[test]
-fn map_operator() {
+fn test_map_operator() {
   let src = r#"
 a = 0..5 | map(|x| x * 2) | reduce(add)
 b = 0..5 -> mul(2) | reduce(add)
@@ -1162,4 +1212,46 @@ c = 0..5 -> |x| { x * 2 } | reduce(add)
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {c:?}"));
   assert_eq!(b, c);
+}
+
+#[test]
+fn test_fn_arg_type_hint() {
+  let src_good = r#"
+add = |x: int, y: int| x + y
+result = add(1, 2)
+"#;
+
+  let ctx_good = parse_and_eval_program(src_good).unwrap();
+  let result_good = ctx_good.globals.get("result").unwrap();
+  let result_good = result_good.as_int().expect("Expected result to be an Int");
+  assert_eq!(result_good, 3);
+
+  let src_bad: &'static str = r#"
+add = |x: bool, y: bool| { x || y }
+result = add(1, 2)
+"#;
+
+  assert!(parse_and_eval_program(src_bad).is_err());
+}
+
+#[test]
+fn test_vec3_swizzle() {
+  let src = r#"
+a = vec3(1, 2, 3)
+b = a.zyx
+c = a.y
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let b = ctx.globals.get("b").unwrap();
+  let Value::Vec3(b) = b else {
+    panic!("Expected result to be a Vec3");
+  };
+  assert_eq!(b, Vec3::new(3.0, 2.0, 1.0));
+
+  let c = ctx.globals.get("c").unwrap();
+  let Value::Float(c) = c else {
+    panic!("Expected result to be a Float");
+  };
+  assert_eq!(c, 2.);
 }

@@ -127,8 +127,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("value", &[ArgType::Vec3]),
     ],
   ],
-  "abs" => &[], // TODO
-  "sqrt" => &[], // TODO
+  "abs" => &[
+    &[
+      ("value", &[ArgType::Int]),
+    ],
+    &[
+      ("value", &[ArgType::Float]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
+  "sqrt" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+  ],
   "add" => &[
     &[
       ("a", &[ArgType::Vec3]),
@@ -317,16 +331,25 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
     &[
       ("value", &[ArgType::Numeric]),
     ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ]
   ],
   "cos" => &[
     &[
       ("value", &[ArgType::Numeric]),
     ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ]
   ],
   "tan" => &[
     &[
       ("value", &[ArgType::Numeric]),
     ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ]
   ],
   "rad2deg" => &[
     &[
@@ -420,6 +443,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
   "join" => &[
     &[
       ("strings", &[ArgType::Sequence]),
+    ],
+  ],
+  // TODO
+  "convex_hull" => &[
+    &[
+      ("points", &[ArgType::Sequence]),
+    ],
+  ],
+  "warp" => &[
+    &[
+      ("fn", &[ArgType::Callable]),
+      ("mesh", &[ArgType::Mesh]),
     ],
   ],
 };
@@ -696,6 +731,32 @@ pub(crate) fn eval_builtin_fn(
       }
       _ => unimplemented!(),
     },
+    "abs" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(value.abs()))
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.abs()))
+      }
+      2 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.abs(),
+          value.y.abs(),
+          value.z.abs(),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "sqrt" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.sqrt()))
+      }
+      _ => unimplemented!(),
+    },
     "add" => match def_ix {
       0 => {
         // vec3 + vec3
@@ -733,6 +794,7 @@ pub(crate) fn eval_builtin_fn(
         ],
         Default::default(),
         &ctx.globals,
+        true,
       ),
       _ => unimplemented!(),
     },
@@ -773,6 +835,7 @@ pub(crate) fn eval_builtin_fn(
         ],
         Default::default(),
         &ctx.globals,
+        true,
       ),
       _ => unimplemented!(),
     },
@@ -815,6 +878,7 @@ pub(crate) fn eval_builtin_fn(
           ],
           Default::default(),
           &ctx.globals,
+          true,
         )
       }
       _ => unimplemented!(),
@@ -912,6 +976,14 @@ pub(crate) fn eval_builtin_fn(
         let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.sin()))
       }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.sin(),
+          value.y.sin(),
+          value.z.sin(),
+        )))
+      }
       _ => unimplemented!(),
     },
     "cos" => match def_ix {
@@ -919,12 +991,28 @@ pub(crate) fn eval_builtin_fn(
         let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.cos()))
       }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.cos(),
+          value.y.cos(),
+          value.z.cos(),
+        )))
+      }
       _ => unimplemented!(),
     },
     "tan" => match def_ix {
       0 => {
         let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.tan()))
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.tan(),
+          value.y.tan(),
+          value.z.tan(),
+        )))
       }
       _ => unimplemented!(),
     },
@@ -1060,6 +1148,31 @@ pub(crate) fn eval_builtin_fn(
       0 => {
         let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
         ctx.reduce(&Callable::Builtin("union".to_owned()), seq.clone_box())
+      }
+      _ => unimplemented!(),
+    },
+    "warp" => match def_ix {
+      0 => {
+        let warp_fn = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+
+        let mut new_mesh = mesh.clone();
+        for vtx in new_mesh.vertices.values_mut() {
+          let warped_pos = ctx
+            .invoke_callable(
+              warp_fn,
+              vec![Value::Vec3(vtx.position)],
+              Default::default(),
+              &ctx.globals,
+            )
+            .map_err(|err| format!("error calling warp cb: {err}"))?;
+          let warped_pos = warped_pos
+            .as_vec3()
+            .ok_or_else(|| format!("warp function must return Vec3, got: {:?}", warped_pos))?;
+          vtx.position = *warped_pos;
+        }
+
+        Ok(Value::Mesh(new_mesh))
       }
       _ => unimplemented!(),
     },

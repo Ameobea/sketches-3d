@@ -8,12 +8,13 @@ EOL                          = _{ WHITESPACE* ~ ("\n" | "\r\n") }
 assignment                   = { ident ~ type_hint? ~ "=" ~ expr }
 type_hint                    = { ":" ~ ident }
 
-expr                         = { prefix_op* ~ term ~ (operator ~ prefix_op* ~ term)* }
+expr                         = { prefix_op* ~ term ~ postfix* ~ (operator ~ prefix_op* ~ term ~ postfix*)* }
 
 // TODO: ternary would be cool at some point
 
 prefix_op                    = _{ neg_op | pos_op | negate_op }
 term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr | ident | literal | "(" ~ expr ~ ")" }
+postfix                      = { field_access_op ~ ident }
 
 // need these to work around ambiguity where a range expression starting with an
 // integer literal looks like a float
@@ -46,14 +47,16 @@ eq_op                        = { "==" }
 and_op                       = { "&&" }
 or_op                        = { "||" }
 bit_and_op                   = { "&" }
+field_access_op              = { "." }
 
 func_call                    = { ident ~ "(" ~ arg_list? ~ ")" }
 arg_list                     = _{ (arg ~ ("," ~ arg)*)? ~ ","? }
 arg                          = { keyword_arg | expr }
 keyword_arg                  = { ident ~ "=" ~ expr }
 
-closure                      = { "|" ~ fn_arg_list ~ "|" ~ type_hint? ~ closure_body }
-fn_arg_list                  = { (ident* ~ ("," ~ ident)*)}
+closure                      = { "|" ~ fn_def_arg_list ~ "|" ~ type_hint? ~ closure_body }
+fn_def_arg                   = { ident ~ type_hint? }
+fn_def_arg_list              = { (fn_def_arg* ~ ("," ~ fn_def_arg)*)}
 closure_body                 = _{ bracketed_closure_body | expr }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }
 

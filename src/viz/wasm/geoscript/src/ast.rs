@@ -6,7 +6,6 @@ use pest::iterators::Pair;
 
 use crate::{EvalCtx, IntRange, Rule, Value, PRATT_PARSER};
 
-#[derive(Debug)]
 pub struct Program {
   pub statements: Vec<Statement>,
 }
@@ -59,7 +58,7 @@ impl TypeName {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Statement {
   Assignment {
     name: String,
@@ -69,7 +68,13 @@ pub enum Statement {
   Expr(Expr),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+pub struct ClosureArg {
+  pub name: String,
+  pub type_hint: Option<TypeName>,
+}
+
+#[derive(Clone)]
 pub enum Expr {
   BinOp {
     op: BinOp,
@@ -85,9 +90,13 @@ pub enum Expr {
     end: Box<Expr>,
     inclusive: bool,
   },
+  FieldAccess {
+    obj: Box<Expr>,
+    field: String,
+  },
   Call(FunctionCall),
   Closure {
-    params: Vec<String>,
+    params: Vec<ClosureArg>,
     body: ClosureBody,
     return_type_hint: Option<TypeName>,
   },
@@ -99,10 +108,10 @@ pub enum Expr {
   Nil,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClosureBody(pub Vec<Statement>);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FunctionCall {
   pub name: String,
   pub args: Vec<Expr>,
@@ -151,23 +160,87 @@ fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, String
 impl BinOp {
   pub fn apply(&self, ctx: &EvalCtx, lhs: Value, rhs: Value) -> Result<Value, String> {
     match self {
-      BinOp::Add => ctx.eval_fn_call("add", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Sub => ctx.eval_fn_call("sub", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Mul => ctx.eval_fn_call("mul", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Div => ctx.eval_fn_call("div", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Mod => ctx.eval_fn_call("mod", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Gt => ctx.eval_fn_call("gt", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Lt => ctx.eval_fn_call("lt", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Gte => ctx.eval_fn_call("gte", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Lte => ctx.eval_fn_call("lte", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Eq => ctx.eval_fn_call("eq", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Neq => ctx.eval_fn_call("neq", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::And => ctx.eval_fn_call("and", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::Or => ctx.eval_fn_call("or", vec![lhs, rhs], Default::default(), &ctx.globals),
-      BinOp::BitAnd => {
-        ctx.eval_fn_call("bit_and", vec![lhs, rhs], Default::default(), &ctx.globals)
-      }
-      BinOp::BitOr => ctx.eval_fn_call("bit_or", vec![lhs, rhs], Default::default(), &ctx.globals),
+      BinOp::Add => ctx.eval_fn_call(
+        "add",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Sub => ctx.eval_fn_call(
+        "sub",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Mul => ctx.eval_fn_call(
+        "mul",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Div => ctx.eval_fn_call(
+        "div",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Mod => ctx.eval_fn_call(
+        "mod",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Gt => ctx.eval_fn_call("gt", vec![lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Lt => ctx.eval_fn_call("lt", vec![lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Gte => ctx.eval_fn_call(
+        "gte",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Lte => ctx.eval_fn_call(
+        "lte",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Eq => ctx.eval_fn_call("eq", vec![lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Neq => ctx.eval_fn_call(
+        "neq",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::And => ctx.eval_fn_call(
+        "and",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::Or => ctx.eval_fn_call("or", vec![lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::BitAnd => ctx.eval_fn_call(
+        "bit_and",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
+      BinOp::BitOr => ctx.eval_fn_call(
+        "bit_or",
+        vec![lhs, rhs],
+        Default::default(),
+        &ctx.globals,
+        true,
+      ),
       BinOp::Range => eval_range(lhs, rhs, false),
       BinOp::RangeInclusive => eval_range(lhs, rhs, true),
       BinOp::Pipeline => {
@@ -179,11 +252,23 @@ impl BinOp {
         }
 
         // maybe it's a bit-or
-        ctx.eval_fn_call("bit_or", vec![lhs, rhs], Default::default(), &ctx.globals)
+        ctx.eval_fn_call(
+          "bit_or",
+          vec![lhs, rhs],
+          Default::default(),
+          &ctx.globals,
+          true,
+        )
       }
       BinOp::Map => {
         // this operator acts the same as `lhs | map(rhs)`
-        ctx.eval_fn_call("map", vec![rhs, lhs], Default::default(), &ctx.globals)
+        ctx.eval_fn_call(
+          "map",
+          vec![rhs, lhs],
+          Default::default(),
+          &ctx.globals,
+          true,
+        )
       }
     }
   }
@@ -199,9 +284,9 @@ pub enum PrefixOp {
 impl PrefixOp {
   pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, String> {
     match self {
-      PrefixOp::Neg => ctx.eval_fn_call("neg", vec![val], Default::default(), &ctx.globals),
-      PrefixOp::Pos => ctx.eval_fn_call("pos", vec![val], Default::default(), &ctx.globals),
-      PrefixOp::Not => ctx.eval_fn_call("neg", vec![val], Default::default(), &ctx.globals),
+      PrefixOp::Neg => ctx.eval_fn_call("neg", vec![val], Default::default(), &ctx.globals, true),
+      PrefixOp::Pos => ctx.eval_fn_call("pos", vec![val], Default::default(), &ctx.globals, true),
+      PrefixOp::Not => ctx.eval_fn_call("not", vec![val], Default::default(), &ctx.globals, true),
     }
   }
 }
@@ -282,14 +367,26 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
       let args_list = inner.next().unwrap();
       let params = args_list
         .into_inner()
-        .map(|p| p.as_str().to_owned())
-        .collect_vec();
+        .map(|p| {
+          let mut inner = p.into_inner();
+          let name = inner.next().unwrap().as_str().to_owned();
+          let type_hint = if let Some(type_hint) = inner.next() {
+            Some(
+              TypeName::from_str(type_hint.into_inner().next().unwrap().as_str())
+                .map_err(|err| format!("Invalid type hint for closure arg {name}: {err}"))?,
+            )
+          } else {
+            None
+          };
+          Ok(ClosureArg { name, type_hint })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
 
       let mut next = inner.next().unwrap();
       let return_type_hint = if next.as_rule() == Rule::type_hint {
         let type_hint_str = next.into_inner().next().unwrap().as_str();
-        let return_type_hint =
-          TypeName::from_str(type_hint_str).map_err(|err| format!("Invalid type hint: {err}"))?;
+        let return_type_hint = TypeName::from_str(type_hint_str)
+          .map_err(|err| format!("Invalid type hint for closure return type: {err}"))?;
         next = inner.next().unwrap();
         Some(return_type_hint)
       } else {
@@ -391,6 +488,22 @@ pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, String> {
         rhs: Box::new(rhs?),
       })
     })
+    .map_postfix(|expr, op| {
+      let expr = expr?;
+
+      if op.as_rule() != Rule::postfix {
+        unreachable!("Expected postfix rule, found: {:?}", op.as_rule());
+      }
+
+      let mut inner = op.into_inner();
+      // skip the `.` token
+      inner.next().unwrap();
+      let field = inner.next().unwrap().as_str().to_owned();
+      Ok(Expr::FieldAccess {
+        obj: Box::new(expr),
+        field,
+      })
+    })
     .parse(expr.into_inner())
 }
 
@@ -403,7 +516,6 @@ fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, String> {
   }
 
   let mut inner = assignment.into_inner();
-  dbg!(&inner);
   let name = inner.next().unwrap().as_str().to_owned();
 
   let mut next = inner.next().unwrap();

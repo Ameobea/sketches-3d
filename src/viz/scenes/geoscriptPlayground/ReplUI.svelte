@@ -13,11 +13,10 @@
   import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
   import * as THREE from 'three';
   import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
-  import { json } from '@codemirror/lang-json';
   import { onMount } from 'svelte';
-  import { EditorState } from '@codemirror/state';
-  import { EditorView, keymap } from '@codemirror/view';
-  import { defaultKeymap } from '@codemirror/commands';
+  import { EditorState, Prec } from '@codemirror/state';
+  import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
+  import { defaultKeymap, indentWithTab } from '@codemirror/commands';
   import { basicSetup } from 'codemirror';
   import {
     foldNodeProp,
@@ -25,8 +24,9 @@
     indentNodeProp,
     LRLanguage,
     LanguageSupport,
+    syntaxTree,
   } from '@codemirror/language';
-  import { styleTags, tags as t } from '@lezer/highlight';
+  import { linter, type Diagnostic } from '@codemirror/lint';
 
   import { parser } from './parser/geoscript';
 
@@ -119,11 +119,6 @@
     }
 
     const code = editorView.state.doc.toString();
-    const tree = parser.parse(code);
-    let cursor = tree.cursor();
-    do {
-      console.log(`Node ${cursor.name} from ${cursor.from} to ${cursor.to}`);
-    } while (cursor.next());
 
     for (const mesh of renderedMeshes) {
       viz.scene.remove(mesh);
@@ -168,15 +163,25 @@
   };
 
   onMount(() => {
+    const syntaxErrorLinter = linter(view => {
+      let diagnostics: Diagnostic[] = [];
+      syntaxTree(view.state)
+        .cursor()
+        .iterate(({ type, from, to }) => {
+          if (type.isError) {
+            diagnostics.push({
+              from,
+              to,
+              severity: 'error',
+              message: 'Syntax error',
+            });
+          }
+        });
+      return diagnostics;
+    });
+
     const parserWithMetadata = parser.configure({
       props: [
-        styleTags({
-          identifier: t.variableName,
-          'CallExpr/identifier': t.function(t.variableName),
-          LineComment: t.lineComment,
-          Integer: t.integer,
-          Float: t.float,
-        }),
         indentNodeProp.add({
           Application: context => context.column(context.node.from) + context.unit,
         }),
@@ -193,14 +198,41 @@
       },
     });
 
+    const customKeymap: readonly KeyBinding[] = [
+      {
+        key: 'Ctrl-Enter',
+        run: () => {
+          run();
+          return true;
+        },
+      },
+      {
+        key: 'Ctrl-.',
+        run: () => {
+          centerView();
+          return true;
+        },
+      },
+      {
+        key: 'Ctrl-s',
+        run: () => {
+          if (editorView) {
+            localStorage.lastGeoscriptPlaygroundCode = editorView.state.doc.toString();
+          }
+          return true;
+        },
+      },
+    ];
+
     editorState = EditorState.create({
-      doc: localStorage.lastGeoscriptPlaygroundCode || '(box(8) + (box(8) | trans(4, 4, -4))) | render',
+      doc: localStorage.lastGeoscriptPlaygroundCode || 'box(8) + (box(8) + vec3(4, 4, -4)) | render',
       extensions: [
+        Prec.highest(keymap.of(customKeymap)),
         basicSetup,
         keymap.of(defaultKeymap),
         gruvboxDark,
         new LanguageSupport(geoscriptLang),
-        // json(),
+        syntaxErrorLinter,
       ],
     });
 
@@ -251,7 +283,7 @@
 
 <style lang="css">
   .root {
-    height: calc(max(250px, 10vh));
+    height: calc(max(250px, 25vh));
     width: 100%;
     position: absolute;
     bottom: 0;

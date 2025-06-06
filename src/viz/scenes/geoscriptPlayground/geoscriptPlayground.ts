@@ -102,7 +102,7 @@ export const processLoadedScene = async (
   viz.scene.add(axisHelper);
 
   const updateCanvasSize = () => {
-    const controlsHeight = Math.max(300, 0.25 * window.innerHeight);
+    const controlsHeight = Math.max(250, 0.25 * window.innerHeight);
     const canvasHeight = window.innerHeight - controlsHeight;
     viz.renderer.setSize(window.innerWidth, canvasHeight, true);
     viz.camera.aspect = window.innerWidth / canvasHeight;
@@ -125,7 +125,7 @@ export const processLoadedScene = async (
       target: new THREE.Vector3(0, 0, 0),
     },
     customControlsEntries: [
-      { key: '.', action: () => ctx?.centerView(), label: 'center view' },
+      // { key: '.', action: () => ctx?.centerView(), label: 'center view' },
       { key: 'w', action: () => ctx?.toggleWireframe(), label: 'toggle wireframe' },
     ],
   };
