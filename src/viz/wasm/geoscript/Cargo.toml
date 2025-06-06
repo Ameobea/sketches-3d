@@ -16,3 +16,4 @@ nalgebra = "0.33"
 mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }
 lazy_static = "1.5.0"
+tessellation = { path = "../tessellation" }

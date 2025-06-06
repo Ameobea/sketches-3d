@@ -1,5 +1,10 @@
+use std::sync::Arc;
+
 use fxhash::FxHashMap;
-use mesh::{linked_mesh::Vec3, LinkedMesh};
+use mesh::{
+  linked_mesh::{DisplacementNormalMethod, Vec3},
+  LinkedMesh,
+};
 
 use crate::{
   mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
@@ -457,10 +462,34 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("mesh", &[ArgType::Mesh]),
     ],
   ],
+  "tessellate" => &[
+    &[
+      ("mesh", &[ArgType::Mesh]),
+      ("target_edge_length", &[ArgType::Numeric]),
+    ],
+  ],
+  "len" => &[
+    &[
+      ("v", &[ArgType::Vec3]),
+    ],
+  ],
+  "distance" => &[
+    &[
+      ("a", &[ArgType::Vec3]),
+      ("b", &[ArgType::Vec3]),
+    ],
+  ],
 };
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
+  "v3" => "vec3",
+  "subdivide" => "tessellate",
+  "tess" => "tessellate",
+  "length" => "len",
+  "dist" => "distance",
+  "mag" => "len",
+  "magnitude" => "len",
 };
 
 enum BoolOp {
@@ -547,7 +576,9 @@ pub(crate) fn eval_builtin_fn(
         }
         _ => unimplemented!(),
       };
-      Ok(Value::Mesh(LinkedMesh::new_box(width, height, depth)))
+      Ok(Value::Mesh(Arc::new(LinkedMesh::new_box(
+        width, height, depth,
+      ))))
     }
     "translate" => {
       let (translation, mesh) = match def_ix {
@@ -568,7 +599,7 @@ pub(crate) fn eval_builtin_fn(
       };
 
       let mesh = mesh.as_mesh().unwrap();
-      let mut translated_mesh = mesh.clone();
+      let mut translated_mesh = (*mesh).clone();
 
       // TODO: use built-in transform instead of modifying vertices directly?
       for vtx in translated_mesh.vertices.values_mut() {
@@ -577,7 +608,7 @@ pub(crate) fn eval_builtin_fn(
         vtx.position.z += translation.z;
       }
 
-      Ok(Value::Mesh(translated_mesh))
+      Ok(Value::Mesh(Arc::new(translated_mesh)))
     }
     "scale" => {
       let (scale, mesh) = match def_ix {
@@ -611,17 +642,17 @@ pub(crate) fn eval_builtin_fn(
       };
 
       // TODO: make use of the mesh's transform rather than modifying vertices directly?
-      let mut mesh = mesh
+      let mesh = mesh
         .as_mesh()
-        .ok_or("Scale function requires a mesh argument")?
-        .clone();
+        .ok_or("Scale function requires a mesh argument")?;
+      let mut mesh = (*mesh).clone();
       for vtx in mesh.vertices.values_mut() {
         vtx.position.x *= scale.x;
         vtx.position.y *= scale.y;
         vtx.position.z *= scale.z;
       }
 
-      Ok(Value::Mesh(mesh))
+      Ok(Value::Mesh(Arc::new(mesh)))
     }
     "rot" => match def_ix {
       0 => {
@@ -631,13 +662,13 @@ pub(crate) fn eval_builtin_fn(
         let mesh = arg_refs[3].resolve(args, &kwargs).as_mesh().unwrap();
 
         // interpret as a euler angle in radians
-        let mut rotated_mesh = mesh.clone();
+        let mut rotated_mesh = (*mesh).clone();
         let rotation = nalgebra::UnitQuaternion::from_euler_angles(x, y, z);
         for vtx in rotated_mesh.vertices.values_mut() {
           vtx.position = rotation * vtx.position;
         }
 
-        Ok(Value::Mesh(rotated_mesh))
+        Ok(Value::Mesh(Arc::new(rotated_mesh)))
       }
       _ => unimplemented!(),
     },
@@ -1156,7 +1187,7 @@ pub(crate) fn eval_builtin_fn(
         let warp_fn = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
         let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
-        let mut new_mesh = mesh.clone();
+        let mut new_mesh = (*mesh).clone();
         for vtx in new_mesh.vertices.values_mut() {
           let warped_pos = ctx
             .invoke_callable(
@@ -1172,7 +1203,37 @@ pub(crate) fn eval_builtin_fn(
           vtx.position = *warped_pos;
         }
 
-        Ok(Value::Mesh(new_mesh))
+        Ok(Value::Mesh(Arc::new(new_mesh)))
+      }
+      _ => unimplemented!(),
+    },
+    "tessellate" => match def_ix {
+      0 => {
+        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+        let target_edge_length = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+
+        let mut mesh = (*mesh).clone();
+        tessellation::tessellate_mesh(
+          &mut mesh,
+          target_edge_length,
+          DisplacementNormalMethod::Interpolate,
+        );
+        Ok(Value::Mesh(Arc::new(mesh)))
+      }
+      _ => unimplemented!(),
+    },
+    "len" => match def_ix {
+      0 => {
+        let v = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Float(v.magnitude()))
+      }
+      _ => unimplemented!(),
+    },
+    "distance" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Float((*a - *b).magnitude()))
       }
       _ => unimplemented!(),
     },

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use geoscript::{parse_and_eval_program_with_ctx, EvalCtx};
 use mesh::OwnedIndexedMesh;
 use wasm_bindgen::prelude::*;
@@ -42,7 +44,19 @@ impl GeoscriptReplCtx {
   pub fn convert_rendered_meshes(&mut self) {
     self.output_meshes.clear();
     // TODO: what's another clone lol
-    for mut mesh in self.geo_ctx.rendered_meshes.meshes.lock().unwrap().clone() {
+    for mesh in self
+      .geo_ctx
+      .rendered_meshes
+      .meshes
+      .lock()
+      .unwrap()
+      .drain(..)
+    {
+      let mut mesh = Arc::unwrap_or_clone(mesh);
+      // let merged_count = mesh.merge_vertices_by_distance(0.0001);
+      // if merged_count > 0 {
+      //   ::log::info!("Merged {} vertices in mesh", merged_count);
+      // }
       mesh.mark_edge_sharpness(0.8);
       mesh.separate_vertices_and_compute_normals();
 

@@ -318,6 +318,7 @@ dependencies = [
  "pest_derive",
  "phf",
  "point_distribute",
+ "tessellation",
  "wasm-bindgen",
 ]
 

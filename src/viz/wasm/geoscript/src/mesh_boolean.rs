@@ -110,13 +110,15 @@ pub(crate) fn eval_mesh_boolean(
   ctx: &EvalCtx,
   op: MeshBooleanOp,
 ) -> Result<Value, String> {
+  use std::sync::Arc;
+
   let mut meshes_iter = match def_ix {
     0 => {
       let a = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
       let b = arg_refs[1].resolve(&args, &kwargs).as_mesh().unwrap();
 
-      let out_mesh = apply_boolean_op(&a, &b, op)?;
-      return Ok(Value::Mesh(out_mesh));
+      let out_mesh = apply_boolean_op(&*a, &*b, op)?;
+      return Ok(Value::Mesh(Arc::new(out_mesh)));
     }
     1 => {
       let sequence = arg_refs[0].resolve(&args, &kwargs).as_sequence().unwrap();
@@ -126,13 +128,13 @@ pub(crate) fn eval_mesh_boolean(
   };
 
   let Some(acc_res) = meshes_iter.next() else {
-    return Ok(Value::Mesh(LinkedMesh::new(0, 0, None)));
+    return Ok(Value::Mesh(Arc::new(LinkedMesh::new(0, 0, None))));
   };
   let acc = acc_res.map_err(|err| format!("Error evaluating mesh in boolean op: {err}"))?;
-  let mut acc = acc
+  let acc = acc
     .as_mesh()
-    .ok_or_else(|| format!("Non-mesh value produced in sequence passed to boolean op: {acc:?}"))?
-    .clone();
+    .ok_or_else(|| format!("Non-mesh value produced in sequence passed to boolean op: {acc:?}"))?;
+  let mut acc = (*acc).clone();
 
   for res in meshes_iter {
     let mesh = res.map_err(|err| format!("Error evaluating mesh in boolean op: {err}"))?;
@@ -143,7 +145,7 @@ pub(crate) fn eval_mesh_boolean(
     }
   }
 
-  Ok(Value::Mesh(acc))
+  Ok(Value::Mesh(Arc::new(acc)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

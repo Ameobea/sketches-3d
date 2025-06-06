@@ -1,4 +1,7 @@
-use std::{fmt::Debug, sync::Mutex};
+use std::{
+  fmt::Debug,
+  sync::{Arc, Mutex},
+};
 
 use ast::{parse_program, Expr, Statement};
 use fxhash::FxHashMap;
@@ -143,7 +146,7 @@ pub enum Value {
   Int(i64),
   Float(f32),
   Vec3(Vec3),
-  Mesh(LinkedMesh<()>),
+  Mesh(Arc<LinkedMesh<()>>),
   Callable(Callable),
   Sequence(Box<dyn Sequence>),
   Bool(bool),
@@ -174,9 +177,9 @@ impl Value {
     }
   }
 
-  fn as_mesh(&self) -> Option<&LinkedMesh<()>> {
+  fn as_mesh(&self) -> Option<Arc<LinkedMesh<()>>> {
     match self {
-      Value::Mesh(mesh) => Some(mesh),
+      Value::Mesh(mesh) => Some(Arc::clone(&mesh)),
       _ => None,
     }
   }
@@ -352,15 +355,15 @@ pub struct RenderedMeshes {
   // Using a mutex here to avoid making the whole `EvalCtx` require `&mut` when evaluating code.
   //
   // This thing is essentially "write-only", and the mutex should become a no-op in Wasm anyway.
-  pub meshes: Mutex<Vec<LinkedMesh<()>>>,
+  pub meshes: Mutex<Vec<Arc<LinkedMesh<()>>>>,
 }
 
 impl RenderedMeshes {
-  pub fn push(&self, mesh: LinkedMesh<()>) {
+  pub fn push(&self, mesh: Arc<LinkedMesh<()>>) {
     self.meshes.lock().unwrap().push(mesh);
   }
 
-  pub fn into_inner(self) -> Vec<LinkedMesh<()>> {
+  pub fn into_inner(self) -> Vec<Arc<LinkedMesh<()>>> {
     self.meshes.into_inner().unwrap()
   }
 

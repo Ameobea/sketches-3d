@@ -5,6 +5,7 @@ export const geoscriptHighlighting = styleTags({
   'CallExpr/Identifier': t.function(t.variableName),
   'ClosureArgs/Identifier': t.function(t.definition(t.variableName)),
   'TypeHint/Identifier': t.typeName,
+  'FieldAccessExpr/Identifier': t.propertyName,
   LineComment: t.lineComment,
   Integer: t.integer,
   Float: t.float,

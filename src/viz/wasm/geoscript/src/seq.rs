@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use point_distribute::MeshSurfaceSampler;
@@ -146,7 +148,7 @@ impl Sequence for EagerSeq {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PointDistributeSeq {
-  pub mesh: LinkedMesh<()>,
+  pub mesh: Arc<LinkedMesh<()>>,
   pub point_count: usize,
 }
 
@@ -160,7 +162,7 @@ impl Sequence for PointDistributeSeq {
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
     let mesh = self.mesh;
-    let sampler = MeshSurfaceSampler::new(&mesh);
+    let sampler = MeshSurfaceSampler::new(&*mesh);
 
     // TODO: not doing this the proper lazy way to avoid self-referential struct headaches
     Box::new(

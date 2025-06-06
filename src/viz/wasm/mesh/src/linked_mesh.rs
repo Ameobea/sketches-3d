@@ -262,11 +262,11 @@ impl NormalAcc {
       //   face.to_triangle(verts),
       //   face.is_degenerate(verts)
       // );
-      log::warn!(
-        "Face normal is NaN: {:?}; is_degen={}; face_key={face_key:?}",
-        face.to_triangle(verts),
-        face.is_degenerate(verts)
-      );
+      // log::warn!(
+      //   "Face normal is NaN: {:?}; is_degen={}; face_key={face_key:?}",
+      //   face.to_triangle(verts),
+      //   face.is_degenerate(verts)
+      // );
       return None;
     }
 

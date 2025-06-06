@@ -152,6 +152,11 @@
       }
 
       const mat = await matPromise;
+      // const mat = new THREE.MeshNormalMaterial({
+      //   flatShading: true,
+      //   side: THREE.DoubleSide,
+      //   wireframe: false,
+      // });
       const mesh = new THREE.Mesh(geometry, mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
