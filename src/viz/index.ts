@@ -27,6 +27,7 @@ import { rwritable, type TransparentWritable } from './util/TransparentWritable.
 import { buildEasingFn, EasingFnType } from './util/easingFns.ts';
 import type { Unsubscriber } from 'svelte/store';
 import { unmount } from 'svelte';
+import type { OrbitControls } from 'three/examples/jsm/Addons.js';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -56,6 +57,8 @@ const setupOrbitControls = async (
   (window as any).getView = () =>
     console.log({ pos: camera.position.toArray(), target: controls.target.toArray() });
   (window as any).recordPos = (window as any).getView;
+
+  return controls;
 };
 
 export const applyGraphicsSettings = (viz: Viz, graphics: Conf.GraphicsSettings) => {
@@ -111,6 +114,10 @@ export class Viz {
    */
   public spawnPos!: { pos: THREE.Vector3; rot: THREE.Vector3 };
   public controlState: ControlState = { cameraControlEnabled: true, movementEnabled: true };
+  /**
+   * Only set if view mode is 'orbit'
+   */
+  public orbitControls: OrbitControls | null = null;
 
   private resizeCbs: (() => void)[] = [];
   private onDestroyedCbs: (() => void)[] = [];
@@ -814,7 +821,7 @@ export const initViz = (
       const Ammo = await getAmmoJS();
       viz.fpCtx = new BulletPhysics({ viz, Ammo, initialSpawnPos });
     } else if (sceneConf.viewMode.type === 'orbit') {
-      await setupOrbitControls(
+      viz.orbitControls = await setupOrbitControls(
         viz.renderer.domElement,
         viz.camera,
         sceneConf.viewMode.pos,

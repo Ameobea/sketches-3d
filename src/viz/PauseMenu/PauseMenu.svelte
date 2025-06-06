@@ -174,6 +174,7 @@
           conf={controlsConf}
           onChange={onControlsConfChanged}
           customEntries={customControlsEntries}
+          {viz}
         />
         <button
           on:click={() => {
@@ -274,11 +275,11 @@
   }
 
   :global(
-      .menu-items-stack > div,
-      .menu-items-stack > button,
-      .menu-items-stack > input,
-      .menu-items-stack-item
-    ) {
+    .menu-items-stack > div,
+    .menu-items-stack > button,
+    .menu-items-stack > input,
+    .menu-items-stack-item
+  ) {
     height: 60px;
     font-size: 24px;
     padding: 10px;

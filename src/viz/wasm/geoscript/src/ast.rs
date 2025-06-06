@@ -36,7 +36,7 @@ impl FromStr for TypeName {
       "bool" => Ok(TypeName::Bool),
       "string" => Ok(TypeName::String),
       "seq" => Ok(TypeName::Seq),
-      "callable" => Ok(TypeName::Callable),
+      "fn" | "callable" => Ok(TypeName::Callable),
       "nil" => Ok(TypeName::Nil),
       _ => Err(format!("Unknown type name: {s}")),
     }
@@ -129,6 +129,7 @@ pub enum BinOp {
   Range,
   RangeInclusive,
   Pipeline,
+  Map,
 }
 
 fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, String> {
@@ -179,6 +180,10 @@ impl BinOp {
 
         // maybe it's a bit-or
         ctx.eval_fn_call("bit_or", vec![lhs, rhs], Default::default(), &ctx.globals)
+      }
+      BinOp::Map => {
+        // this operator acts the same as `lhs | map(rhs)`
+        ctx.eval_fn_call("map", vec![rhs, lhs], Default::default(), &ctx.globals)
       }
     }
   }
@@ -377,6 +382,7 @@ pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, String> {
         Rule::mod_op => BinOp::Mod,
         Rule::and_op | Rule::bit_and_op => BinOp::And,
         Rule::or_op => BinOp::Or,
+        Rule::map_op => BinOp::Map,
         _ => return Err(format!("Unhandled operator rule: {:?}", op.as_rule())),
       };
       Ok(Expr::BinOp {

@@ -9,6 +9,7 @@ const config = {
   resolve: {
     alias: {
       src: resolve('./src'),
+      '@codemirror/state': resolve(__dirname, './node_modules/@codemirror/state/dist/index.cjs'),
     },
   },
   server: {
@@ -20,6 +21,9 @@ const config = {
         rewrite: path => path.replace(/^\/api/, ''),
       },
     },
+  },
+  optimizeDeps: {
+    exclude: ['svelte-codemirror-editor', 'codemirror'],
   },
   build: {
     sourcemap: true,

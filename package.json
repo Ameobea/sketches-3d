@@ -33,8 +33,11 @@
   },
   "type": "module",
   "dependencies": {
+    "@codemirror/lang-json": "^6.0.1",
     "@sentry/browser": "^8.37.1",
     "@tanstack/svelte-query": "^5.67.2",
+    "cm6-theme-gruvbox-dark": "^0.2.0",
+    "codemirror": "^6.0.1",
     "comlink": "^4.4.1",
     "detect-gpu": "^5.0.55",
     "graphviz-builder": "^0.1.1",

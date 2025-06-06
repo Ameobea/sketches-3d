@@ -151,9 +151,9 @@ impl NoiseVariantParams {
           weights: weights.clone(),
         };
         for _ in 0..octaves {
-          noise.noise.push(OpenSimplexNoise::new(Some(unsafe {
-            std::mem::transmute(*seed)
-          })));
+          noise
+            .noise
+            .push(OpenSimplexNoise::new(Some(u64::cast_signed(*seed))));
         }
         NoiseSourceInner::OpenSimplex {
           noise,

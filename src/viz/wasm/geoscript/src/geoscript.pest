@@ -12,7 +12,7 @@ expr                         = { prefix_op* ~ term ~ (operator ~ prefix_op* ~ te
 
 // TODO: ternary would be cool at some point
 
-prefix_op                    = _{ neg_op | pos_op }
+prefix_op                    = _{ neg_op | pos_op | negate_op }
 term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr | ident | literal | "(" ~ expr ~ ")" }
 
 // need these to work around ambiguity where a range expression starting with an
@@ -20,7 +20,7 @@ term                         = { array_literal | closure | func_call | range_inc
 range_literal_expr           = { int ~ ".." ~ term }
 range_inclusive_literal_expr = { int ~ "..=" ~ term }
 
-operator                     = _{ range_inclusive_op | range_op | add_op | sub_op
+operator                     = _{ map_op | range_inclusive_op | range_op | add_op | sub_op
                                   | mul_op | div_op | mod_op | gte_op | lte_op | gt_op | lt_op
                                   | neq_op | eq_op | or_op | and_op | bit_and_op | pipeline_op }
 
@@ -31,6 +31,7 @@ negate_op                    = { "!" }
 range_op                     = { ".." }
 range_inclusive_op           = { "..=" }
 pipeline_op                  = { "|" }
+map_op                       = { "->" }
 add_op                       = { "+" }
 sub_op                       = { "-" }
 mul_op                       = { "*" }

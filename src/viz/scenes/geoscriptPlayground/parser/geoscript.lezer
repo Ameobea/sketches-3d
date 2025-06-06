@@ -1,0 +1,93 @@
+@precedence {
+  call
+  unary
+  mul @left
+  add @left
+  bitAnd @left
+  bitOr @left
+  compare @left
+  and @left
+  or @left
+  assign @right
+  range @left
+  statement
+}
+
+@skip { whitespace | LineComment }
+
+@top Program {
+  statement*
+}
+
+statement {
+  ExprStatement { expr } |
+  DeclarationStatement { Identifier TypeHint? "=" expr }
+}
+
+TypeHint { ":" Identifier }
+
+UnaryOp { "-" | "!" }
+
+expr {
+  UnaryExpr { UnaryOp !unary expr } |
+  BinaryExpr |
+  RangeExpr { expr !range (".." | "..=") expr } |
+  CallExpr { Identifier !call "(" commaSep<expr> ")" } |
+  literal |
+  Identifier |
+  ArrayExpr { "[" commaSep1<expr>? "]" } |
+  ClosureExpr { "|" ClosureArgs "|" TypeHint? ClosureBody } |
+  ParenthesizedExpr { "(" expr ")" }
+}
+
+ClosureArgs { commaSep<Identifier> }
+
+BinaryExpr {
+  expr !add ("+" | "-") expr |
+  expr !mul ("*" | "/" | "%") expr |
+  expr !bitAnd "&" expr |
+  expr !bitOr "|" expr |
+  expr !compare CompareOp expr |
+  expr !and "&&" expr |
+  expr !or "||" expr
+}
+
+ClosureBody {
+  expr | ("{" statement* "}" )
+}
+
+literal {
+  Integer | Float
+}
+
+commaSep<expr> { commaSep1<expr>? }
+
+commaSep1<expr> { expr ("," expr?)* }
+
+@tokens {
+  whitespace { $[ \t\r\n] }
+
+  CompareOp { "<" | ">" | ">=" | "<=" | "==" | "!=" }
+
+  Float { $[0-9]+ "." $[0-9] }
+  Integer { $[0-9]+ }
+
+  @precedence { Float, Integer }
+
+  LineComment[isolate] { "//" ![\n]* }
+
+  @precedence { LineComment, "/" }
+
+  Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+
+  @precedence { Identifier }
+
+  "[" "]" "{" "}" "(" ")"
+  ":" ","
+  "=" ".." "..="
+  "&" "!"
+}
+
+@external propSource geoscriptHighlighting from "./highlight"
+
+@detectDelim

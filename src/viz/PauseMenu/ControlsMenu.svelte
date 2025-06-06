@@ -2,10 +2,15 @@
   import type { Readable } from 'svelte/store';
   import type { CustomControlsEntry } from '../scenes';
   import type { ControlsSettings } from '../conf';
+  import type { Viz } from '..';
 
+  export let viz: Viz;
   export let customEntries: CustomControlsEntry[] = [];
   export let conf: Readable<ControlsSettings>;
   export let onChange: (newControlsConf: ControlsSettings) => void;
+
+  $: isFirstPerson = viz.viewMode && viz.viewMode.type === 'firstPerson';
+  $: dashEnabled = viz.sceneConf?.player?.dashConfig?.enable !== false;
 </script>
 
 <div style="display: flex; flex-direction: row; gap: 5px">
@@ -27,18 +32,22 @@
   </div>
 </div>
 
-<div class="control-mapping">
-  <div>Move</div>
-  <div>WASD</div>
-</div>
-<div class="control-mapping">
-  <div>Jump</div>
-  <div>Space</div>
-</div>
-<div class="control-mapping">
-  <div>Dash</div>
-  <div>Shift</div>
-</div>
+{#if isFirstPerson}
+  <div class="control-mapping">
+    <div>Move</div>
+    <div>WASD</div>
+  </div>
+  <div class="control-mapping">
+    <div>Jump</div>
+    <div>Space</div>
+  </div>
+  {#if dashEnabled}
+    <div class="control-mapping">
+      <div>Dash</div>
+      <div>Shift</div>
+    </div>
+  {/if}
+{/if}
 {#each customEntries as { key, label }}
   <div class="control-mapping">
     <div>{label}</div>

@@ -30,7 +30,7 @@ lazy_static::lazy_static! {
     .op(Op::infix(Rule::range_inclusive_op, Assoc::Left) | Op::infix(Rule::range_op, Assoc::Left))
     .op(Op::infix(Rule::or_op, Assoc::Left))
     .op(Op::infix(Rule::and_op, Assoc::Left))
-    .op(Op::infix(Rule::pipeline_op, Assoc::Left))
+    .op(Op::infix(Rule::pipeline_op, Assoc::Left) | Op::infix(Rule::map_op, Assoc::Left))
     .op(Op::infix(Rule::bit_and_op, Assoc::Left))
     .op(Op::infix(Rule::eq_op, Assoc::Left) | Op::infix(Rule::neq_op, Assoc::Left))
     .op(
@@ -83,7 +83,7 @@ impl Debug for PartiallyAppliedFn {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Closure {
   /// Names of parameters for this closure in order
   params: Vec<String>,
@@ -93,6 +93,20 @@ pub struct Closure {
   return_type_hint: Option<TypeName>,
 }
 
+impl Debug for Closure {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let return_type_hint_formatted = self
+      .return_type_hint
+      .map(|type_hint| format!(", return type hint: {type_hint:?}"))
+      .unwrap_or_default();
+    write!(
+      f,
+      "<closure with {} params{return_type_hint_formatted}>",
+      self.params.len(),
+    )
+  }
+}
+
 #[derive(Clone)]
 pub struct ComposedFn {
   pub inner: Vec<Callable>,
@@ -100,16 +114,27 @@ pub struct ComposedFn {
 
 impl Debug for ComposedFn {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "ComposedFn({} inner callables)", self.inner.len())
+    write!(f, "<composed fn of {} inner callables>", self.inner.len())
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Callable {
   Builtin(String),
   PartiallyAppliedFn(PartiallyAppliedFn),
   Closure(Closure),
   ComposedFn(ComposedFn),
+}
+
+impl Debug for Callable {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Callable::Builtin(name) => format!("<built-in fn \"{name}\">").fmt(f),
+      Callable::PartiallyAppliedFn(paf) => format!("{paf:?}").fmt(f),
+      Callable::Closure(closure) => format!("{closure:?}").fmt(f),
+      Callable::ComposedFn(composed) => format!("{composed:?}").fmt(f),
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -359,6 +384,15 @@ impl Clone for Scope {
 }
 
 impl Scope {
+  pub fn default_globals() -> Self {
+    let scope = Scope::default();
+
+    // TODO: should move these to a table or something
+    scope.insert("pi".to_owned(), Value::Float(std::f32::consts::PI));
+
+    scope
+  }
+
   pub fn insert(&self, key: String, value: Value) {
     self.vars.lock().unwrap().insert(key, value);
   }
@@ -384,7 +418,7 @@ pub struct EvalCtx {
 impl Default for EvalCtx {
   fn default() -> Self {
     EvalCtx {
-      globals: Scope::default(),
+      globals: Scope::default_globals(),
       rendered_meshes: RenderedMeshes::default(),
       log_fn: |msg| println!("{msg}"),
     }
@@ -617,7 +651,9 @@ impl EvalCtx {
         self.invoke_callable(&paf.inner, combined_args, combined_kwargs, scope)
       }
       Callable::Closure(closure) => {
-        let closure_scope = dbg!(closure.captured_scope.clone());
+        // TODO: should do some basic analysis to see which variables are actually needed and avoid
+        // cloning the rest
+        let closure_scope = closure.captured_scope.clone();
         let mut pos_arg_ix = 0usize;
         for arg in &closure.params {
           if let Some(kwarg) = kwargs.get(arg) {
@@ -1097,4 +1133,33 @@ inc(1.0)
 "#;
 
   assert!(parse_and_eval_program(incorrect_closure_src).is_err());
+}
+
+#[test]
+fn map_operator() {
+  let src = r#"
+a = 0..5 | map(|x| x * 2) | reduce(add)
+b = 0..5 -> mul(2) | reduce(add)
+c = 0..5 -> |x| { x * 2 } | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = &ctx.globals.get("a").unwrap();
+  let a = a
+    .as_int()
+    .unwrap_or_else(|| panic!("Expected result to be an Int; found: {a:?}"));
+  assert_eq!(a, 0 * 2 + 1 * 2 + 2 * 2 + 3 * 2 + 4 * 2);
+
+  let b = &ctx.globals.get("b").unwrap();
+  let b = b
+    .as_int()
+    .unwrap_or_else(|| panic!("Expected result to be an Int; found: {b:?}"));
+  assert_eq!(a, b);
+
+  let c = &ctx.globals.get("c").unwrap();
+  let c = c
+    .as_int()
+    .unwrap_or_else(|| panic!("Expected result to be an Int; found: {c:?}"));
+  assert_eq!(b, c);
 }

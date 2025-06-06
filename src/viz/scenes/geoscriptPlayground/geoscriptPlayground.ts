@@ -7,7 +7,7 @@ import type { SceneConfig } from '..';
 import { initManifoldWasm } from 'src/viz/wasmComp/manifold';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
-import ReplUi from './ReplUI.svelte';
+import ReplUi, { type ReplCtx } from './ReplUI.svelte';
 
 const locations = {
   spawn: {
@@ -16,11 +16,15 @@ const locations = {
   },
 };
 
-const initRepl = (viz: Viz, repl: typeof import('/home/casey/dream/src/viz/wasmComp/geoscript_repl')) => {
+const initRepl = (
+  viz: Viz,
+  repl: typeof import('src/viz/wasmComp/geoscript_repl'),
+  setReplCtx: (ctx: ReplCtx) => void
+) => {
   const ctxPtr = repl.geoscript_repl_init();
   const ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
-    props: { viz, ctxPtr, repl },
+    props: { viz, ctxPtr, repl, setReplCtx },
   });
 };
 
@@ -31,10 +35,10 @@ export const processLoadedScene = async (
 ): Promise<SceneConfig> => {
   const manifoldInitPromise = initManifoldWasm();
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
   viz.scene.add(ambientLight);
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 2.9);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 5);
   dirLight.position.set(-20, 50, 0);
   viz.scene.add(dirLight);
 
@@ -82,7 +86,7 @@ export const processLoadedScene = async (
           {
             [GraphicsQuality.Low]: 'Performance',
             [GraphicsQuality.Medium]: 'Low',
-            [GraphicsQuality.High]: 'High',
+            [GraphicsQuality.High]: 'Medium',
           }[vizConf.graphics.quality]
         );
       }
@@ -100,20 +104,29 @@ export const processLoadedScene = async (
   const updateCanvasSize = () => {
     const controlsHeight = Math.max(300, 0.25 * window.innerHeight);
     const canvasHeight = window.innerHeight - controlsHeight;
-    viz.renderer.setSize(window.innerWidth, canvasHeight);
+    viz.renderer.setSize(window.innerWidth, canvasHeight, true);
+    viz.camera.aspect = window.innerWidth / canvasHeight;
+    viz.camera.updateProjectionMatrix();
   };
   viz.registerResizeCb(updateCanvasSize);
   updateCanvasSize();
 
-  initRepl(viz, repl);
+  let ctx: ReplCtx | null = null;
+  initRepl(viz, repl, (newCtx: ReplCtx) => {
+    ctx = newCtx;
+  });
 
   return {
     locations,
     spawnLocation: 'spawn',
     viewMode: {
       type: 'orbit',
-      pos: new THREE.Vector3(190.16798130391035, 70.33263180077928, 59.63493635180146),
-      target: new THREE.Vector3(167.41573227055312, 37.46032347797772, -81.3361176559136),
+      pos: new THREE.Vector3(10, 10, 10),
+      target: new THREE.Vector3(0, 0, 0),
     },
+    customControlsEntries: [
+      { key: '.', action: () => ctx?.centerView(), label: 'center view' },
+      { key: 'w', action: () => ctx?.toggleWireframe(), label: 'toggle wireframe' },
+    ],
   };
 };

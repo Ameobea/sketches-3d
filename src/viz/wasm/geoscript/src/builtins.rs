@@ -149,6 +149,11 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
     &[
       ("a", &[ArgType::Mesh]),
       ("b", &[ArgType::Mesh]),
+    ],
+    // shorthand for translate
+    &[
+      ("mesh", &[ArgType::Mesh]),
+      ("offset", &[ArgType::Vec3]),
     ]
   ],
   "sub" => &[
@@ -171,6 +176,11 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
     &[
       ("a", &[ArgType::Mesh]),
       ("b", &[ArgType::Mesh]),
+    ],
+    // shorthands for translate
+    &[
+      ("mesh", &[ArgType::Mesh]),
+      ("offset", &[ArgType::Vec3]),
     ]
   ],
   "mul" => &[
@@ -194,6 +204,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("a", &[ArgType::Int]),
       ("b", &[ArgType::Int]),
     ],
+    // shorthands for scale
+    &[
+      ("mesh", &[ArgType::Mesh]),
+      ("factor", &[ArgType::Numeric]),
+    ],
+    &[
+      ("mesh", &[ArgType::Mesh]),
+      ("factor", &[ArgType::Vec3]),
+    ]
   ],
   "div" => &[
     &[
@@ -427,8 +446,8 @@ fn eval_numeric_bool_op(
 ) -> Result<Value, String> {
   match def_ix {
     0 => {
-      let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-      let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+      let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
       let result = match op {
         BoolOp::Gte => a >= b,
         BoolOp::Lte => a <= b,
@@ -440,8 +459,8 @@ fn eval_numeric_bool_op(
       Ok(Value::Bool(result))
     }
     1 => {
-      let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-      let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+      let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
       let result = match op {
         BoolOp::Gte => a >= b,
         BoolOp::Lte => a <= b,
@@ -469,13 +488,13 @@ pub(crate) fn eval_builtin_fn(
     "box" => {
       let (width, height, depth) = match def_ix {
         0 => {
-          let w = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-          let h = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
-          let d = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+          let w = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+          let h = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+          let d = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
           (w, h, d)
         }
         1 => {
-          let val = arg_refs[0].resolve(&args, &kwargs);
+          let val = arg_refs[0].resolve(args, &kwargs);
           match val {
             Value::Vec3(v3) => (v3.x, v3.y, v3.z),
             Value::Float(size) => (*size, *size, *size),
@@ -498,16 +517,16 @@ pub(crate) fn eval_builtin_fn(
     "translate" => {
       let (translation, mesh) = match def_ix {
         0 => {
-          let translation = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-          let mesh = arg_refs[1].resolve(&args, &kwargs);
+          let translation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+          let mesh = arg_refs[1].resolve(args, &kwargs);
           (*translation, mesh)
         }
         1 => {
-          let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-          let y = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
-          let z = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+          let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+          let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+          let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
           let translation = Vec3::new(x, y, z);
-          let mesh = arg_refs[3].resolve(&args, &kwargs);
+          let mesh = arg_refs[3].resolve(args, &kwargs);
           (translation, mesh)
         }
         _ => unimplemented!(),
@@ -528,13 +547,13 @@ pub(crate) fn eval_builtin_fn(
     "scale" => {
       let (scale, mesh) = match def_ix {
         0 => {
-          let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-          let y = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
-          let z = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
-          (Vec3::new(x, y, z), arg_refs[3].resolve(&args, &kwargs))
+          let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+          let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+          let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+          (Vec3::new(x, y, z), arg_refs[3].resolve(args, &kwargs))
         }
         1 => {
-          let val = arg_refs[0].resolve(&args, &kwargs);
+          let val = arg_refs[0].resolve(args, &kwargs);
           let scale = match val {
             Value::Vec3(scale) => *scale,
             Value::Float(scale) => Vec3::new(*scale, *scale, *scale),
@@ -550,7 +569,7 @@ pub(crate) fn eval_builtin_fn(
             }
           };
 
-          let mesh = arg_refs[1].resolve(&args, &kwargs);
+          let mesh = arg_refs[1].resolve(args, &kwargs);
           (scale, mesh)
         }
         _ => unimplemented!(),
@@ -571,10 +590,10 @@ pub(crate) fn eval_builtin_fn(
     }
     "rot" => match def_ix {
       0 => {
-        let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let y = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
-        let z = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
-        let mesh = arg_refs[3].resolve(&args, &kwargs).as_mesh().unwrap();
+        let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+        let mesh = arg_refs[3].resolve(args, &kwargs).as_mesh().unwrap();
 
         // interpret as a euler angle in radians
         let mut rotated_mesh = mesh.clone();
@@ -589,13 +608,13 @@ pub(crate) fn eval_builtin_fn(
     },
     "vec3" => match def_ix {
       0 => {
-        let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let y = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
-        let z = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+        let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Vec3(Vec3::new(x, y, z)))
       }
       1 => {
-        let x = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Vec3(Vec3::new(x, x, x)))
       }
       _ => unimplemented!(),
@@ -618,21 +637,21 @@ pub(crate) fn eval_builtin_fn(
       MeshBooleanOp::Intersection,
     ),
     "fold" => {
-      let initial_val = arg_refs[0].resolve(&args, &kwargs).clone();
-      let fn_value = arg_refs[1].resolve(&args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[2].resolve(&args, &kwargs).as_sequence().unwrap();
+      let initial_val = arg_refs[0].resolve(args, &kwargs).clone();
+      let fn_value = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
 
       ctx.fold(initial_val, fn_value, sequence.clone_box().consume(ctx))
     }
     "reduce" => {
-      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(&args, &kwargs).as_sequence().unwrap();
+      let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
 
       ctx.reduce(fn_value, sequence.clone_box())
     }
     "map" => {
-      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(&args, &kwargs).as_sequence().unwrap();
+      let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
 
       Ok(Value::Sequence(Box::new(MapSeq {
         cb: fn_value.clone(),
@@ -640,8 +659,8 @@ pub(crate) fn eval_builtin_fn(
       })))
     }
     "filter" => {
-      let fn_value = arg_refs[0].resolve(&args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(&args, &kwargs).as_sequence().unwrap();
+      let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
 
       Ok(Value::Sequence(Box::new(FilterSeq {
         cb: fn_value.clone(),
@@ -651,17 +670,17 @@ pub(crate) fn eval_builtin_fn(
     "neg" => match def_ix {
       0 => {
         // negate numeric value
-        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(-value))
       }
       1 => {
         // negate vec3
-        let value = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
         Ok(Value::Vec3(-*value))
       }
       2 => {
         // negate bool
-        let value = arg_refs[0].resolve(&args, &kwargs).as_bool().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
         Ok(Value::Bool(!value))
       }
       _ => unimplemented!(),
@@ -669,134 +688,164 @@ pub(crate) fn eval_builtin_fn(
     "pos" => match def_ix {
       0 => {
         // pass through numeric value
-        Ok(arg_refs[0].resolve(&args, &kwargs).clone())
+        Ok(arg_refs[0].resolve(args, &kwargs).clone())
       }
       1 => {
         // pass through vec3
-        Ok(arg_refs[0].resolve(&args, &kwargs).clone())
+        Ok(arg_refs[0].resolve(args, &kwargs).clone())
       }
       _ => unimplemented!(),
     },
     "add" => match def_ix {
       0 => {
         // vec3 + vec3
-        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
         Ok(Value::Vec3(*a + *b))
       }
       1 => {
         // float + float
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a + b))
       }
       2 => {
         // float + int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Float(a + b as f32))
       }
       3 => {
         // int + int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a + b))
       }
       4 => {
         // mesh + mesh
         eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union)
       }
+      5 => ctx.eval_fn_call(
+        "translate",
+        vec![
+          arg_refs[1].resolve(args, &kwargs).clone(),
+          arg_refs[0].resolve(args, &kwargs).clone(),
+        ],
+        Default::default(),
+        &ctx.globals,
+      ),
       _ => unimplemented!(),
     },
     "sub" => match def_ix {
       0 => {
         // vec3 - vec3
-        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
         Ok(Value::Vec3(*a - *b))
       }
       1 => {
         // float - float
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a - b))
       }
       2 => {
         // float - int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Float(a - b as f32))
       }
       3 => {
         // int - int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a - b))
       }
       4 => {
         // mesh - mesh
         eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Difference)
       }
+      5 => ctx.eval_fn_call(
+        "translate",
+        vec![
+          arg_refs[1].resolve(args, &kwargs).clone(),
+          arg_refs[0].resolve(args, &kwargs).clone(),
+        ],
+        Default::default(),
+        &ctx.globals,
+      ),
       _ => unimplemented!(),
     },
     "mul" => match def_ix {
       0 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
         Ok(Value::Vec3(Vec3::new(a.x * b.x, a.y * b.y, a.z * b.z)))
       }
       1 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Vec3(a * b))
       }
       2 => {
         // float * float
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a * b))
       }
       3 => {
         // float * int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Float(a * b as f32))
       }
       4 => {
         // int * int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a * b))
+      }
+      5 | 6 => {
+        // scale mesh by float
+        ctx.eval_fn_call(
+          "scale",
+          vec![
+            arg_refs[1].resolve(args, &kwargs).clone(),
+            arg_refs[0].resolve(args, &kwargs).clone(),
+          ],
+          Default::default(),
+          &ctx.globals,
+        )
       }
       _ => unimplemented!(),
     },
     "div" => match def_ix {
       0 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
         Ok(Value::Vec3(Vec3::new(a.x / b.x, a.y / b.y, a.z / b.z)))
       }
       1 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Vec3(a / b))
       }
       2 => {
         // float * float
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a / b))
       }
       3 => {
         // float * int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Float(a / b as f32))
       }
       4 => {
         // int * int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a / b))
       }
       _ => unimplemented!(),
@@ -804,14 +853,14 @@ pub(crate) fn eval_builtin_fn(
     "mod" => match def_ix {
       0 => {
         // int % int
-        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a % b))
       }
       1 => {
         // float % float
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a % b))
       }
       _ => unimplemented!(),
@@ -824,8 +873,8 @@ pub(crate) fn eval_builtin_fn(
     "neq" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Neq),
     "and" => match def_ix {
       0 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_bool().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_bool().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
         Ok(Value::Bool(a && b))
       }
       1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Intersection),
@@ -833,8 +882,8 @@ pub(crate) fn eval_builtin_fn(
     },
     "or" => match def_ix {
       0 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_bool().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_bool().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
         Ok(Value::Bool(a || b))
       }
       1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
@@ -842,8 +891,8 @@ pub(crate) fn eval_builtin_fn(
     },
     "bit_and" => match def_ix {
       0 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a & b))
       }
       1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Intersection),
@@ -851,8 +900,8 @@ pub(crate) fn eval_builtin_fn(
     },
     "bit_or" => match def_ix {
       0 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Int(a | b))
       }
       1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
@@ -860,50 +909,50 @@ pub(crate) fn eval_builtin_fn(
     },
     "sin" => match def_ix {
       0 => {
-        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.sin()))
       }
       _ => unimplemented!(),
     },
     "cos" => match def_ix {
       0 => {
-        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.cos()))
       }
       _ => unimplemented!(),
     },
     "tan" => match def_ix {
       0 => {
-        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.tan()))
       }
       _ => unimplemented!(),
     },
     "rad2deg" => match def_ix {
       0 => {
-        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.to_degrees()))
       }
       _ => unimplemented!(),
     },
     "deg2rad" => match def_ix {
       0 => {
-        let value = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(value.to_radians()))
       }
       _ => unimplemented!(),
     },
     "lerp" => match def_ix {
       0 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_vec3().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_vec3().unwrap();
-        let t = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        let t = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Vec3(a.lerp(b, t)))
       }
       1 => {
-        let a = arg_refs[0].resolve(&args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(&args, &kwargs).as_float().unwrap();
-        let t = arg_refs[2].resolve(&args, &kwargs).as_float().unwrap();
+        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        let t = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a + (b - a) * t))
       }
       _ => unimplemented!(),
@@ -925,13 +974,13 @@ pub(crate) fn eval_builtin_fn(
     }
     "render" => match def_ix {
       0 => {
-        let mesh = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
+        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
         ctx.rendered_meshes.push(mesh.clone());
         Ok(Value::Nil)
       }
       1 => {
         let sequence = arg_refs[0]
-          .resolve(&args, &kwargs)
+          .resolve(args, &kwargs)
           .as_sequence()
           .unwrap()
           .clone_box();
@@ -948,8 +997,8 @@ pub(crate) fn eval_builtin_fn(
       _ => unimplemented!(),
     },
     "point_distribute" => {
-      let mesh = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
-      let count = arg_refs[1].resolve(&args, &kwargs).as_int().unwrap();
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let count = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
 
       if count < 0 {
         return Err("negative point count is not valid for point_distribute".to_owned());
@@ -1009,7 +1058,7 @@ pub(crate) fn eval_builtin_fn(
     }
     "join" => match def_ix {
       0 => {
-        let seq = arg_refs[0].resolve(&args, &kwargs).as_sequence().unwrap();
+        let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
         ctx.reduce(&Callable::Builtin("union".to_owned()), seq.clone_box())
       }
       _ => unimplemented!(),
