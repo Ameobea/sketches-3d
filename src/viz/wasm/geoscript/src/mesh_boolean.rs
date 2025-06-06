@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use fxhash::FxHashMap;
 #[cfg(target_arch = "wasm32")]
 use mesh::LinkedMesh;
@@ -110,8 +112,6 @@ pub(crate) fn eval_mesh_boolean(
   ctx: &EvalCtx,
   op: MeshBooleanOp,
 ) -> Result<Value, String> {
-  use std::sync::Arc;
-
   let mut meshes_iter = match def_ix {
     0 => {
       let a = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
@@ -158,5 +158,5 @@ pub(crate) fn eval_mesh_boolean(
   _op: MeshBooleanOp,
 ) -> Result<Value, String> {
   // Err("mesh boolean ops are only supported in wasm".to_owned())
-  Ok(Value::Mesh(mesh::LinkedMesh::new(0, 0, None)))
+  Ok(Value::Mesh(Arc::new(mesh::LinkedMesh::new(0, 0, None))))
 }

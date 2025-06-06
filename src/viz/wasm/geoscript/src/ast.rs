@@ -160,83 +160,29 @@ fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, String
 impl BinOp {
   pub fn apply(&self, ctx: &EvalCtx, lhs: Value, rhs: Value) -> Result<Value, String> {
     match self {
-      BinOp::Add => ctx.eval_fn_call(
-        "add",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Sub => ctx.eval_fn_call(
-        "sub",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Mul => ctx.eval_fn_call(
-        "mul",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Div => ctx.eval_fn_call(
-        "div",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Mod => ctx.eval_fn_call(
-        "mod",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Gt => ctx.eval_fn_call("gt", vec![lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Lt => ctx.eval_fn_call("lt", vec![lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Gte => ctx.eval_fn_call(
-        "gte",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Lte => ctx.eval_fn_call(
-        "lte",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Eq => ctx.eval_fn_call("eq", vec![lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Neq => ctx.eval_fn_call(
-        "neq",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::And => ctx.eval_fn_call(
-        "and",
-        vec![lhs, rhs],
-        Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::Or => ctx.eval_fn_call("or", vec![lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Add => ctx.eval_fn_call("add", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Sub => ctx.eval_fn_call("sub", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Mul => ctx.eval_fn_call("mul", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Div => ctx.eval_fn_call("div", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Mod => ctx.eval_fn_call("mod", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Gt => ctx.eval_fn_call("gt", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Lt => ctx.eval_fn_call("lt", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Gte => ctx.eval_fn_call("gte", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Lte => ctx.eval_fn_call("lte", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Eq => ctx.eval_fn_call("eq", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Neq => ctx.eval_fn_call("neq", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::And => ctx.eval_fn_call("and", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Or => ctx.eval_fn_call("or", &[lhs, rhs], Default::default(), &ctx.globals, true),
       BinOp::BitAnd => ctx.eval_fn_call(
         "bit_and",
-        vec![lhs, rhs],
+        &[lhs, rhs],
         Default::default(),
         &ctx.globals,
         true,
       ),
       BinOp::BitOr => ctx.eval_fn_call(
         "bit_or",
-        vec![lhs, rhs],
+        &[lhs, rhs],
         Default::default(),
         &ctx.globals,
         true,
@@ -247,14 +193,14 @@ impl BinOp {
         // eval as a pipeline operator if the rhs is a callable
         if let Some(callable) = rhs.as_callable() {
           return ctx
-            .invoke_callable(callable, vec![lhs], Default::default(), &ctx.globals)
+            .invoke_callable(callable, &[lhs], Default::default(), &ctx.globals)
             .map_err(|err| format!("Error invoking callable in pipeline: {err}",));
         }
 
         // maybe it's a bit-or
         ctx.eval_fn_call(
           "bit_or",
-          vec![lhs, rhs],
+          &[lhs, rhs],
           Default::default(),
           &ctx.globals,
           true,
@@ -262,13 +208,7 @@ impl BinOp {
       }
       BinOp::Map => {
         // this operator acts the same as `lhs | map(rhs)`
-        ctx.eval_fn_call(
-          "map",
-          vec![rhs, lhs],
-          Default::default(),
-          &ctx.globals,
-          true,
-        )
+        ctx.eval_fn_call("map", &[rhs, lhs], Default::default(), &ctx.globals, true)
       }
     }
   }
@@ -284,9 +224,9 @@ pub enum PrefixOp {
 impl PrefixOp {
   pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, String> {
     match self {
-      PrefixOp::Neg => ctx.eval_fn_call("neg", vec![val], Default::default(), &ctx.globals, true),
-      PrefixOp::Pos => ctx.eval_fn_call("pos", vec![val], Default::default(), &ctx.globals, true),
-      PrefixOp::Not => ctx.eval_fn_call("not", vec![val], Default::default(), &ctx.globals, true),
+      PrefixOp::Neg => ctx.eval_fn_call("neg", &[val], Default::default(), &ctx.globals, true),
+      PrefixOp::Pos => ctx.eval_fn_call("pos", &[val], Default::default(), &ctx.globals, true),
+      PrefixOp::Not => ctx.eval_fn_call("not", &[val], Default::default(), &ctx.globals, true),
     }
   }
 }

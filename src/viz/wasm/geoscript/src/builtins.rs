@@ -549,6 +549,8 @@ pub(crate) fn eval_builtin_fn(
 ) -> Result<Value, String> {
   match name {
     "sphere" => todo!(),
+    // TODO: these should be merged in with the function signature defs to avoid double hashmap
+    // lookups
     "box" => {
       let (width, height, depth) = match def_ix {
         0 => {
@@ -819,7 +821,7 @@ pub(crate) fn eval_builtin_fn(
       }
       5 => ctx.eval_fn_call(
         "translate",
-        vec![
+        &[
           arg_refs[1].resolve(args, &kwargs).clone(),
           arg_refs[0].resolve(args, &kwargs).clone(),
         ],
@@ -860,7 +862,7 @@ pub(crate) fn eval_builtin_fn(
       }
       5 => ctx.eval_fn_call(
         "translate",
-        vec![
+        &[
           arg_refs[1].resolve(args, &kwargs).clone(),
           arg_refs[0].resolve(args, &kwargs).clone(),
         ],
@@ -903,7 +905,7 @@ pub(crate) fn eval_builtin_fn(
         // scale mesh by float
         ctx.eval_fn_call(
           "scale",
-          vec![
+          &[
             arg_refs[1].resolve(args, &kwargs).clone(),
             arg_refs[0].resolve(args, &kwargs).clone(),
           ],
@@ -1192,7 +1194,7 @@ pub(crate) fn eval_builtin_fn(
           let warped_pos = ctx
             .invoke_callable(
               warp_fn,
-              vec![Value::Vec3(vtx.position)],
+              &[Value::Vec3(vtx.position)],
               Default::default(),
               &ctx.globals,
             )

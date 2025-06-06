@@ -93,7 +93,7 @@ pub struct Closure {
   params: Vec<ClosureArg>,
   body: Vec<Statement>,
   /// Contains variables captured from the environment when the closure was created
-  captured_scope: Scope,
+  captured_scope: Arc<Scope>,
   return_type_hint: Option<TypeName>,
 }
 
@@ -375,14 +375,14 @@ impl RenderedMeshes {
 #[derive(Default, Debug)]
 pub struct Scope {
   vars: Mutex<FxHashMap<String, Value>>,
-  parent: Option<Box<Scope>>,
+  parent: Option<Arc<Scope>>,
 }
 
 impl Clone for Scope {
   fn clone(&self) -> Self {
     Scope {
       vars: Mutex::new(self.vars.lock().unwrap().clone()),
-      parent: self.parent.clone(),
+      parent: self.parent.as_ref().map(Arc::clone),
     }
   }
 }
@@ -407,9 +407,18 @@ impl Scope {
       return Some(val);
     }
 
-    // TODO: look up recursively in parent scopes
+    if let Some(parent) = &self.parent {
+      return parent.get(key);
+    }
 
     None
+  }
+
+  fn wrap(parent: &Arc<Scope>) -> Scope {
+    Scope {
+      vars: Mutex::new(FxHashMap::default()),
+      parent: Some(Arc::clone(parent)),
+    }
   }
 }
 
@@ -449,7 +458,7 @@ impl EvalCtx {
           .map(|(k, v)| self.eval_expr(v, scope).map(|val| (k.clone(), val)))
           .collect::<Result<FxHashMap<_, _>, _>>()?;
         self
-          .eval_fn_call(&call.name, args, kwargs, scope, false)
+          .eval_fn_call(&call.name, &args, kwargs, scope, false)
           .map_err(|err| format!("Error evaluating function call `{}`: {err}", call.name))
       }
       Expr::BinOp { op, lhs, rhs } => {
@@ -516,7 +525,9 @@ impl EvalCtx {
       } => Ok(Value::Callable(Callable::Closure(Closure {
         params: params.clone(),
         body: body.0.clone(),
-        captured_scope: scope.clone(),
+        // cloning the scope here makes the closure function like a rust `move` closure
+        // where all the values are cloned before being moved into the closure.
+        captured_scope: Arc::new(scope.clone()),
         return_type_hint: return_type_hint.clone(),
       }))),
       Expr::FieldAccess { obj, field } => self.eval_field_access(obj, field, scope),
@@ -563,12 +574,7 @@ impl EvalCtx {
     for (i, res) in iter.enumerate() {
       let value = res.map_err(|err| format!("Error seq value ix={i} in reduce: {err}"))?;
       acc = self
-        .invoke_callable(
-          callable,
-          vec![acc, value],
-          Default::default(),
-          &self.globals,
-        )
+        .invoke_callable(callable, &[acc, value], Default::default(), &self.globals)
         .map_err(|err| format!("Error invoking callable in reduce: {err}"))?;
     }
 
@@ -590,7 +596,7 @@ impl EvalCtx {
   fn eval_fn_call(
     &self,
     mut name: &str,
-    args: Vec<Value>,
+    args: &[Value],
     kwargs: FxHashMap<String, Value>,
     scope: &Scope,
     builtins_only: bool,
@@ -625,7 +631,7 @@ impl EvalCtx {
           return Ok(Value::Callable(Callable::PartiallyAppliedFn(
             PartiallyAppliedFn {
               inner: Box::new(Callable::Builtin(name.to_owned())),
-              args,
+              args: args.to_owned(),
               kwargs,
             },
           )))
@@ -641,7 +647,7 @@ impl EvalCtx {
   fn invoke_callable(
     &self,
     callable: &Callable,
-    args: Vec<Value>,
+    args: &[Value],
     kwargs: FxHashMap<String, Value>,
     scope: &Scope,
   ) -> Result<Value, String> {
@@ -649,20 +655,19 @@ impl EvalCtx {
       Callable::Builtin(name) => self.eval_fn_call(name, args, kwargs, scope, true),
       Callable::PartiallyAppliedFn(paf) => {
         let mut combined_args = paf.args.clone();
-        combined_args.extend(args);
+        combined_args.extend(args.iter().cloned());
 
         let mut combined_kwargs = paf.kwargs.clone();
         for (key, value) in kwargs {
           combined_kwargs.insert(key, value);
         }
 
-        self.invoke_callable(&paf.inner, combined_args, combined_kwargs, scope)
+        self.invoke_callable(&paf.inner, &combined_args, combined_kwargs, scope)
       }
       Callable::Closure(closure) => {
-        println!("Invoking closure: {closure:?}");
         // TODO: should do some basic analysis to see which variables are actually needed and avoid
         // cloning the rest
-        let closure_scope = closure.captured_scope.clone();
+        let closure_scope = Scope::wrap(&closure.captured_scope);
         let mut pos_arg_ix = 0usize;
         for arg in &closure.params {
           if let Some(kwarg) = kwargs.get(&arg.name) {
@@ -717,18 +722,14 @@ impl EvalCtx {
         Ok(out)
       }
       Callable::ComposedFn(ComposedFn { inner }) => {
-        let mut acc = args;
-        for callable in inner {
-          acc = vec![self.invoke_callable(callable, acc, Default::default(), scope)?];
+        let acc = args;
+        let mut iter = inner.iter();
+        let mut acc = self.invoke_callable(iter.next().unwrap(), acc, Default::default(), scope)?;
+        for callable in iter {
+          acc = self.invoke_callable(callable, &[acc], Default::default(), scope)?;
         }
 
-        if acc.len() != 1 {
-          return Err(format!(
-            "Expected single value at end of composed fn invocation, found: {acc:?}"
-          ));
-        }
-
-        Ok(acc.into_iter().next().unwrap())
+        Ok(acc)
       }
     }
   }

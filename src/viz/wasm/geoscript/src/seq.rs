@@ -77,7 +77,7 @@ impl Sequence for MapSeq {
     Box::new(inner.map(move |res| {
       match res {
         Ok(v) => ctx
-          .invoke_callable(&cb, vec![v], Default::default(), &ctx.globals)
+          .invoke_callable(&cb, &[v], Default::default(), &ctx.globals)
           .map_err(|err| format!("cb passed to map produced an error: {err}",)),
         Err(e) => Err(e),
       }
@@ -111,7 +111,7 @@ impl Sequence for FilterSeq {
         .map(move |res| match res {
           Ok(v) => {
             let flag = ctx
-              .invoke_callable(&cb, vec![v.clone()], Default::default(), &ctx.globals)
+              .invoke_callable(&cb, &[v.clone()], Default::default(), &ctx.globals)
               .map_err(|err| format!("cb passed to filter produced an error: {err}"))?;
             let Some(flag) = flag.as_bool() else {
               return Err(format!(
