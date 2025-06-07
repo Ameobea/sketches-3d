@@ -21,8 +21,8 @@
 }
 
 statement {
-  ExprStatement { expr } |
-  DeclarationStatement { Identifier TypeHint? "=" expr }
+  ExprStatement { expr ";"? } |
+  DeclarationStatement { Identifier TypeHint? "=" expr ";"? }
 }
 
 TypeHint { ":" Identifier }
@@ -71,9 +71,7 @@ ClosureBody {
   expr | ("{" statement* "}" )
 }
 
-literal {
-  Integer | Float
-}
+literal { Integer | Float }
 
 commaSep<expr> { commaSep1<expr>? }
 
@@ -84,7 +82,7 @@ commaSep1<expr> { expr ("," expr?)* }
 
   CompareOp { "<" | ">" | ">=" | "<=" | "==" | "!=" }
 
-  Float { $[0-9]+ "." $[0-9] }
+  Float { $[0-9]+ "." $[0-9]* }
   Integer { $[0-9]+ }
 
   @precedence { Float, Integer }
@@ -100,7 +98,7 @@ commaSep1<expr> { expr ("," expr?)* }
   "[" "]" "{" "}" "(" ")"
   ":" ","
   "=" ".." "..="
-  "&" "!" "->"
+  "&" "!" "->" ";"
 }
 
 @external propSource geoscriptHighlighting from "./highlight"

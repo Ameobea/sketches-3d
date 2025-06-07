@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
@@ -176,5 +176,30 @@ impl Sequence for PointDistributeSeq {
         .collect::<Vec<_>>()
         .into_iter(),
     )
+  }
+}
+
+/// Wrapper over an inner `Iterator` that produces `Value` items
+#[derive(Clone)]
+pub(crate) struct IteratorSeq<T: Iterator<Item = Result<Value, String>> + Clone + 'static> {
+  pub inner: T,
+}
+
+impl<T: Iterator<Item = Result<Value, String>> + Clone> Debug for IteratorSeq<T> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "IteratorSeq {{ ... }}")
+  }
+}
+
+impl<T: Iterator<Item = Result<Value, String>> + Clone + 'static> Sequence for IteratorSeq<T> {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(self.clone())
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    _ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+    Box::new(self.inner)
   }
 }

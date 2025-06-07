@@ -103,7 +103,7 @@ export const processLoadedScene = async (
 
   const updateCanvasSize = () => {
     const controlsHeight = Math.max(250, 0.25 * window.innerHeight);
-    const canvasHeight = window.innerHeight - controlsHeight;
+    const canvasHeight = Math.max(window.innerHeight - controlsHeight, 300);
     viz.renderer.setSize(window.innerWidth, canvasHeight, true);
     viz.camera.aspect = window.innerWidth / canvasHeight;
     viz.camera.updateProjectionMatrix();

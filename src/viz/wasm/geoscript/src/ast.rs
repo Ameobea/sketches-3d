@@ -295,11 +295,20 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
       let mut inner = expr.into_inner();
       let start = parse_node(inner.next().unwrap())?;
       let end = parse_node(inner.next().unwrap())?;
-      let inclusive = inner.next().is_some(); // check if there's an inclusive marker
       Ok(Expr::Range {
         start: Box::new(start),
         end: Box::new(end),
-        inclusive,
+        inclusive: false,
+      })
+    }
+    Rule::range_inclusive_literal_expr => {
+      let mut inner = expr.into_inner();
+      let start = parse_node(inner.next().unwrap())?;
+      let end = parse_node(inner.next().unwrap())?;
+      Ok(Expr::Range {
+        start: Box::new(start),
+        end: Box::new(end),
+        inclusive: true,
       })
     }
     Rule::closure => {

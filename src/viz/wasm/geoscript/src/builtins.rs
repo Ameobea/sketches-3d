@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{f32::consts::PI, sync::Arc};
 
 use fxhash::FxHashMap;
 use mesh::{
@@ -8,7 +8,7 @@ use mesh::{
 
 use crate::{
   mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
-  seq::{FilterSeq, PointDistributeSeq},
+  seq::{FilterSeq, IteratorSeq, PointDistributeSeq},
   ArgRef, ArgType, Callable, ComposedFn, EvalCtx, MapSeq, Value,
 };
 
@@ -464,8 +464,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
   ],
   "tessellate" => &[
     &[
-      ("mesh", &[ArgType::Mesh]),
       ("target_edge_length", &[ArgType::Numeric]),
+      ("mesh", &[ArgType::Mesh]),
     ],
   ],
   "len" => &[
@@ -479,6 +479,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("b", &[ArgType::Vec3]),
     ],
   ],
+  // cubic bezier curve
+  "bezier3d" => &[
+    &[
+      ("p0", &[ArgType::Vec3]),
+      ("p1", &[ArgType::Vec3]),
+      ("p2", &[ArgType::Vec3]),
+      ("p3", &[ArgType::Vec3]),
+      ("count", &[ArgType::Int]),
+    ],
+  ],
+  "extrude_pipe" => &[
+    &[
+      ("radius", &[ArgType::Numeric]),
+      ("resolution", &[ArgType::Int]),
+      ("path", &[ArgType::Sequence]),
+      ("close_ends", &[ArgType::Bool]),
+    ]
+  ],
+  "torus_knot_path" => &[
+    &[
+      ("radius", &[ArgType::Numeric]),
+      ("tube_radius", &[ArgType::Numeric]),
+      ("p", &[ArgType::Int]),
+      ("q", &[ArgType::Int]),
+      ("point_count", &[ArgType::Int]),
+    ]
+  ],
+  "torus_knot" => &[
+    &[
+      ("radius", &[ArgType::Numeric]),
+      ("tube_radius", &[ArgType::Numeric]),
+      ("p", &[ArgType::Int]),
+      ("q", &[ArgType::Int]),
+      ("point_count", &[ArgType::Int]),
+      ("tube_resolution", &[ArgType::Int]),
+    ]
+  ],
 };
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
@@ -490,6 +527,7 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "dist" => "distance",
   "mag" => "len",
   "magnitude" => "len",
+  "bezier" => "bezier3d",
 };
 
 enum BoolOp {
@@ -1211,8 +1249,8 @@ pub(crate) fn eval_builtin_fn(
     },
     "tessellate" => match def_ix {
       0 => {
-        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-        let target_edge_length = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        let target_edge_length = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
         let mut mesh = (*mesh).clone();
         tessellation::tessellate_mesh(
@@ -1238,6 +1276,242 @@ pub(crate) fn eval_builtin_fn(
         Ok(Value::Float((*a - *b).magnitude()))
       }
       _ => unimplemented!(),
+    },
+    "bezier3d" => match def_ix {
+      0 => {
+        let p0 = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let p1 = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        let p2 = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
+        let p3 = arg_refs[3].resolve(args, &kwargs).as_vec3().unwrap();
+        let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
+
+        fn bezier_curve_3d(
+          p0: Vec3,
+          p1: Vec3,
+          p2: Vec3,
+          p3: Vec3,
+          count: usize,
+        ) -> impl Iterator<Item = Result<Value, String>> + Clone + 'static {
+          (0..=count).map(move |i| {
+            let t = i as f32 / count as f32;
+            let u = 1.0 - t;
+            let tt = t * t;
+            let uu = u * u;
+            let uuu = uu * u;
+            let ttt = tt * t;
+
+            Ok(Value::Vec3(
+              uuu * p0 + 3.0 * uu * t * p1 + 3.0 * u * tt * p2 + ttt * p3,
+            ))
+          })
+        }
+
+        let curve = bezier_curve_3d(*p0, *p1, *p2, *p3, count);
+        Ok(Value::Sequence(Box::new(IteratorSeq { inner: curve })))
+      }
+
+      _ => unimplemented!(),
+    },
+    "extrude_pipe" => match def_ix {
+      0 => {
+        let radius = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let resolution = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+        let path = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
+        let close_ends = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+
+        if resolution < 3 {
+          return Err("`extrude_pipe` requires a resolution of at least 3".to_owned());
+        }
+
+        let points = path
+          .clone_box()
+          .consume(ctx)
+          .map(|res| match res {
+            Ok(Value::Vec3(v)) => Ok(v),
+            Ok(val) => Err(format!(
+              "Expected Vec3 in path seq passed to `extrude_pipe`, found: {val:?}"
+            )),
+            Err(err) => Err(err),
+          })
+          .collect::<Result<Vec<_>, _>>()?;
+
+        if points.len() < 2 {
+          return Err(format!(
+            "`extrude_pipe` requires at least two points in the path, found: {}",
+            points.len()
+          ));
+        }
+
+        // Tangents are the direction of the path at each point.  There's some special handling for
+        // the first and last points.
+        let mut tangents: Vec<Vec3> = Vec::with_capacity(points.len());
+        for i in 0..points.len() {
+          let dir = if i == points.len() - 1 {
+            points[i] - points[i - 1]
+          } else {
+            points[i + 1] - points[i]
+          };
+          tangents.push(dir.normalize());
+        }
+
+        // Rotation-minimizing frames are used to avoid twists or kinks in the mesh as it's
+        // generated along the path.
+        //
+        // Rather than using a fixed up vector, the normal is projected forward using the new
+        // tangent to minimize its rotation from the previous ring.
+
+        // an initial normal is picked using an arbitrary up vector.
+        let t0 = tangents[0];
+        let mut up = Vec3::new(0., 1., 0.);
+        // if the chosen up vector is nearly parallel to the tangent, a different one is picked to
+        // avoid numerical issues
+        if t0.dot(&up).abs() > 0.999 {
+          up = Vec3::new(1., 0., 0.);
+        }
+        let mut normal = t0.cross(&up).normalize();
+        // the "binormal" is a vector that's perpendicular to the plane defined by the tangent and
+        // normal.
+        let mut binormal = t0.cross(&normal).normalize();
+
+        let mut verts: Vec<Vec3> = Vec::with_capacity(points.len() * resolution);
+
+        let center0 = points[0];
+        for j in 0..resolution {
+          let theta = 2. * PI * (j as f32) / (resolution as f32);
+          let dir = normal * theta.cos() + binormal * theta.sin();
+          verts.push(center0 + dir * radius);
+        }
+
+        for i in 1..points.len() {
+          let ti = tangents[i];
+          // Project previous normal onto plane ⟂ tangentᵢ
+          let dot = ti.dot(&normal);
+          let mut proj = normal - ti * dot;
+          const EPSILON: f32 = 1e-6;
+          if proj.norm_squared() < EPSILON {
+            // the same check as before is done to avoid numerical issues if the projected normal is
+            // very close to 0
+            proj = ti.cross(&binormal);
+            if proj.norm_squared() < EPSILON {
+              // In the extremely degenerate case, pick any vector ⟂ tangentᵢ
+              let arbitrary = if ti.dot(&Vec3::new(0., 1., 0.)).abs() > 0.999 {
+                Vec3::new(1., 0., 0.)
+              } else {
+                Vec3::new(0., 1., 0.)
+              };
+              proj = ti.cross(&arbitrary);
+            }
+          }
+          normal = proj.normalize();
+          binormal = ti.cross(&normal).normalize();
+
+          let center = points[i];
+          for j in 0..resolution {
+            let theta = 2. * PI * (j as f32) / (resolution as f32);
+            let dir = normal * theta.cos() + binormal * theta.sin();
+            verts.push(center + dir * radius);
+          }
+        }
+
+        assert_eq!(verts.len(), points.len() * resolution);
+
+        // stitch the rings together with quads, two triangles per quad
+        let mut index_count = (points.len() - 1) * resolution * 3 * 2;
+        if close_ends {
+          // `n-2` triangles are needed to tessellate a convex polygon of `n` vertices/edges
+          let cap_triangles = resolution - 2;
+          index_count += cap_triangles * 3 * 2;
+        }
+        let mut indices: Vec<u32> = Vec::with_capacity(index_count);
+
+        for i in 0..(points.len() - 1) {
+          for j in 0..resolution {
+            let a = (i * resolution + j) as u32;
+            let b = (i * resolution + (j + 1) % resolution) as u32;
+            let c = ((i + 1) * resolution + j) as u32;
+            let d = ((i + 1) * resolution + (j + 1) % resolution) as u32;
+
+            indices.push(a);
+            indices.push(b);
+            indices.push(c);
+
+            indices.push(b);
+            indices.push(d);
+            indices.push(c);
+          }
+        }
+
+        if close_ends {
+          for (ix_offset, reverse_winding) in [
+            (0u32, true),
+            ((points.len() - 1) as u32 * resolution as u32, false),
+          ] {
+            // using a basic triangle fan to form the end caps
+            //
+            // 0,1,2
+            // 0,2,3
+            // ...
+            // 0,2n-2,2n-1
+            for vtx_ix in 1..(resolution - 1) {
+              let a = 0;
+              let b = vtx_ix as u32;
+              let c = (vtx_ix + 1) as u32;
+
+              if reverse_winding {
+                indices.push(ix_offset + c);
+                indices.push(ix_offset + b);
+                indices.push(ix_offset + a);
+              } else {
+                indices.push(ix_offset + a);
+                indices.push(ix_offset + b);
+                indices.push(ix_offset + c);
+              }
+            }
+          }
+        }
+
+        assert_eq!(indices.len(), index_count);
+
+        let mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
+        Ok(Value::Mesh(Arc::new(mesh)))
+      }
+      _ => unimplemented!(),
+    },
+    "torus_knot_path" => match def_ix {
+      0 => {
+        let radius = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let tube_radius = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        let p = arg_refs[2].resolve(args, &kwargs).as_int().unwrap() as usize;
+        let q = arg_refs[3].resolve(args, &kwargs).as_int().unwrap() as usize;
+        let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
+
+        pub fn sample_torus_knot(
+          p: usize,
+          q: usize,
+          radius: f32,
+          tube_radius: f32,
+          t: f32,
+        ) -> Vec3 {
+          let t = 2. * PI * t;
+          let p = p as f32;
+          let q = q as f32;
+          let qt = q * t;
+          let pt = p * t;
+          let radius = radius + tube_radius * qt.cos();
+          let x = radius * pt.cos();
+          let y = radius * pt.sin();
+          let z = tube_radius * qt.sin();
+          Vec3::new(x, y, z)
+        }
+
+        Ok(Value::Sequence(Box::new(IteratorSeq {
+          inner: (0..=count).map(move |i| {
+            let t = i as f32 / count as f32;
+            Ok(Value::Vec3(sample_torus_knot(p, q, radius, tube_radius, t)))
+          }),
+        })))
+      }
+      _ => unreachable!(),
     },
     _ => unimplemented!("Function `{name}` not yet implemented"),
   }

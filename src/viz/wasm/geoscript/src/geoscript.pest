@@ -2,7 +2,7 @@ WHITESPACE                   = _{ " " | "\t" | "\n" | "\r" }
 COMMENT                      = _{ "//" ~ (!"\n" ~ ANY)* }
 
 program                      = { SOI ~ statement* ~ EOI }
-statement                    = _{ (assignment | expr) ~ EOL* }
+statement                    = _{ (assignment | expr) ~ ";"? ~ EOL* }
 EOL                          = _{ WHITESPACE* ~ ("\n" | "\r\n") }
 
 assignment                   = { ident ~ type_hint? ~ "=" ~ expr }
