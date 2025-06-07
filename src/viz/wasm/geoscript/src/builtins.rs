@@ -291,6 +291,11 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("b", &[ArgType::Bool]),
     ],
   ],
+  "not" => &[
+    &[
+      ("value", &[ArgType::Bool]),
+    ],
+  ],
   "bit_and" => &[
     &[
       ("a", &[ArgType::Int]),
@@ -966,22 +971,24 @@ pub(crate) fn eval_builtin_fn(
         Ok(Value::Vec3(a / b))
       }
       2 => {
-        // float * float
+        // float / float
         let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(a / b))
       }
       3 => {
-        // float * int
+        // float / int
         let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
         Ok(Value::Float(a / b as f32))
       }
       4 => {
-        // int * int
+        // int / int
         let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
         let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
-        Ok(Value::Int(a / b))
+        // there's basically no reason to do real integer division, so just treating things as
+        // floats in this case makes so much more sense
+        Ok(Value::Float((a as f32) / (b as f32)))
       }
       _ => unimplemented!(),
     },
@@ -1022,6 +1029,13 @@ pub(crate) fn eval_builtin_fn(
         Ok(Value::Bool(a || b))
       }
       1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
+      _ => unimplemented!(),
+    },
+    "not" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
+        Ok(Value::Bool(!value))
+      }
       _ => unimplemented!(),
     },
     "bit_and" => match def_ix {

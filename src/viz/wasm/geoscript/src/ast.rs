@@ -373,6 +373,14 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
         .collect::<Result<Vec<_>, String>>()?;
       Ok(Expr::Array(elems))
     }
+    Rule::bool_literal => {
+      let bool_str = expr.as_str();
+      match bool_str {
+        "true" => Ok(Expr::Bool(true)),
+        "false" => Ok(Expr::Bool(false)),
+        _ => unreachable!("Unexpected boolean literal: {bool_str}, expected 'true' or 'false'"),
+      }
+    }
     _ => unimplemented!(
       "unimplemented node type for parse_node: {:?}",
       expr.as_rule()

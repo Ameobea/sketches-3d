@@ -1259,3 +1259,46 @@ c = a.y
   };
   assert_eq!(c, 2.);
 }
+
+#[test]
+fn test_bool_literals() {
+  let src = r#"
+a = true
+b = false
+c = a && b
+d = a || b
+e = !a
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let Value::Bool(a) = a else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(a);
+
+  let b = ctx.globals.get("b").unwrap();
+  let Value::Bool(b) = b else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(!b);
+
+  let c = ctx.globals.get("c").unwrap();
+  let Value::Bool(c) = c else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(!c);
+
+  let d = ctx.globals.get("d").unwrap();
+  let Value::Bool(d) = d else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(d);
+
+  let e = ctx.globals.get("e").unwrap();
+  let Value::Bool(e) = e else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(!e);
+}

@@ -9,6 +9,7 @@ export const geoscriptHighlighting = styleTags({
   LineComment: t.lineComment,
   Integer: t.integer,
   Float: t.float,
+  BoolLiteral: t.bool,
   '"+"': t.arithmeticOperator,
   '"-"': t.arithmeticOperator,
   '"/"': t.arithmeticOperator,

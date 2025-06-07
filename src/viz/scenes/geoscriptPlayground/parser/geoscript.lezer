@@ -71,21 +71,21 @@ ClosureBody {
   expr | ("{" statement* "}" )
 }
 
-literal { Integer | Float }
+literal { Float | Integer | BoolLiteral }
 
 commaSep<expr> { commaSep1<expr>? }
 
 commaSep1<expr> { expr ("," expr?)* }
+
+@external tokens literalTokens from "./tokens" { Float }
 
 @tokens {
   whitespace { $[ \t\r\n] }
 
   CompareOp { "<" | ">" | ">=" | "<=" | "==" | "!=" }
 
-  Float { $[0-9]+ "." $[0-9]* }
+  BoolLiteral { "true" | "false" }
   Integer { $[0-9]+ }
-
-  @precedence { Float, Integer }
 
   LineComment[isolate] { "//" ![\n]* }
 
@@ -93,7 +93,7 @@ commaSep1<expr> { expr ("," expr?)* }
 
   Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
 
-  @precedence { Identifier }
+  @precedence { BoolLiteral, Identifier }
 
   "[" "]" "{" "}" "(" ")"
   ":" ","

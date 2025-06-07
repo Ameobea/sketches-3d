@@ -13,7 +13,7 @@ expr                         = { prefix_op* ~ term ~ postfix* ~ (operator ~ pref
 // TODO: ternary would be cool at some point
 
 prefix_op                    = _{ neg_op | pos_op | negate_op }
-term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr | ident | literal | "(" ~ expr ~ ")" }
+term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr | literal | ident | "(" ~ expr ~ ")" }
 postfix                      = { field_access_op ~ ident }
 
 // need these to work around ambiguity where a range expression starting with an
@@ -62,7 +62,8 @@ bracketed_closure_body       = { "{" ~ statement* ~ "}" }
 
 array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
 
-literal                      = _{ float | int }
+bool_literal                 = { "true" | "false" }
+literal                      = _{ float | int | bool_literal }
 int                          = @{ ASCII_DIGIT+ }
 float                        = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
 
