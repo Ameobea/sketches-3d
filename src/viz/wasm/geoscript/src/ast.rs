@@ -4,7 +4,7 @@ use fxhash::FxHashMap;
 use itertools::Itertools;
 use pest::iterators::Pair;
 
-use crate::{EvalCtx, IntRange, Rule, Value, PRATT_PARSER};
+use crate::{ErrorStack, EvalCtx, IntRange, Rule, Value, PRATT_PARSER};
 
 pub struct Program {
   pub statements: Vec<Statement>,
@@ -43,7 +43,7 @@ impl FromStr for TypeName {
 }
 
 impl TypeName {
-  pub fn validate_val(&self, val: &Value) -> Result<(), String> {
+  pub fn validate_val(&self, val: &Value) -> Result<(), ErrorStack> {
     match (self, val) {
       (TypeName::Mesh, Value::Mesh(_)) => Ok(()),
       (TypeName::Int, Value::Int(_)) => Ok(()),
@@ -53,7 +53,9 @@ impl TypeName {
       (TypeName::Seq, Value::Sequence(_)) => Ok(()),
       (TypeName::Callable, Value::Callable(_)) => Ok(()),
       (TypeName::Nil, Value::Nil) => Ok(()),
-      _ => Err(format!("Value {val:?} does not match type {self:?}")),
+      _ => Err(ErrorStack::new(format!(
+        "Value {val:?} does not match type {self:?}"
+      ))),
     }
   }
 }
@@ -141,12 +143,16 @@ pub enum BinOp {
   Map,
 }
 
-fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, String> {
+fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, ErrorStack> {
   let Value::Int(start) = start else {
-    return Err(format!("Range start must be an integer, found: {start:?}",));
+    return Err(ErrorStack::new(format!(
+      "Range start must be an integer, found: {start:?}",
+    )));
   };
   let Value::Int(end) = end else {
-    return Err(format!("Range end must be an integer, found: {end:?}",));
+    return Err(ErrorStack::new(format!(
+      "Range end must be an integer, found: {end:?}",
+    )));
   };
 
   let mut range = IntRange { start, end };
@@ -158,7 +164,7 @@ fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, String
 }
 
 impl BinOp {
-  pub fn apply(&self, ctx: &EvalCtx, lhs: Value, rhs: Value) -> Result<Value, String> {
+  pub fn apply(&self, ctx: &EvalCtx, lhs: Value, rhs: Value) -> Result<Value, ErrorStack> {
     match self {
       BinOp::Add => ctx.eval_fn_call("add", &[lhs, rhs], Default::default(), &ctx.globals, true),
       BinOp::Sub => ctx.eval_fn_call("sub", &[lhs, rhs], Default::default(), &ctx.globals, true),
@@ -194,7 +200,7 @@ impl BinOp {
         if let Some(callable) = rhs.as_callable() {
           return ctx
             .invoke_callable(callable, &[lhs], Default::default(), &ctx.globals)
-            .map_err(|err| format!("Error invoking callable in pipeline: {err}",));
+            .map_err(|err| err.wrap("Error invoking callable in pipeline".to_owned()));
         }
 
         // maybe it's a bit-or
@@ -222,7 +228,7 @@ pub enum PrefixOp {
 }
 
 impl PrefixOp {
-  pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, String> {
+  pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, ErrorStack> {
     match self {
       PrefixOp::Neg => ctx.eval_fn_call("neg", &[val], Default::default(), &ctx.globals, true),
       PrefixOp::Pos => ctx.eval_fn_call("pos", &[val], Default::default(), &ctx.globals, true),
@@ -231,12 +237,12 @@ impl PrefixOp {
   }
 }
 
-fn parse_fn_call(func_call: Pair<Rule>) -> Result<Expr, String> {
+fn parse_fn_call(func_call: Pair<Rule>) -> Result<Expr, ErrorStack> {
   if func_call.as_rule() != Rule::func_call {
-    return Err(format!(
+    return Err(ErrorStack::new(format!(
       "`parse_func_call` can only handle `func_call` rules, found: {:?}",
       func_call.as_rule()
-    ));
+    )));
   }
 
   let mut inner = func_call.into_inner();
@@ -268,21 +274,21 @@ fn parse_fn_call(func_call: Pair<Rule>) -> Result<Expr, String> {
   Ok(Expr::Call(FunctionCall { name, args, kwargs }))
 }
 
-fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
+fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   match expr.as_rule() {
     Rule::int => {
       let int_str = expr.as_str();
       int_str
         .parse::<i64>()
         .map(Expr::Int)
-        .map_err(|_| format!("Invalid integer: {int_str}"))
+        .map_err(|_| ErrorStack::new(format!("Invalid integer: {int_str}")))
     }
     Rule::float => {
       let float_str = expr.as_str();
       float_str
         .parse::<f32>()
         .map(Expr::Float)
-        .map_err(|_| format!("Invalid float: {float_str}"))
+        .map_err(|_| ErrorStack::new(format!("Invalid float: {float_str}")))
     }
     Rule::ident => Ok(Expr::Ident(expr.as_str().to_owned())),
     Rule::term => {
@@ -321,21 +327,24 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
           let name = inner.next().unwrap().as_str().to_owned();
           let type_hint = if let Some(type_hint) = inner.next() {
             Some(
-              TypeName::from_str(type_hint.into_inner().next().unwrap().as_str())
-                .map_err(|err| format!("Invalid type hint for closure arg {name}: {err}"))?,
+              TypeName::from_str(type_hint.into_inner().next().unwrap().as_str()).map_err(
+                |err| {
+                  ErrorStack::new(err).wrap(format!("Invalid type hint for closure arg {name}"))
+                },
+              )?,
             )
           } else {
             None
           };
           Ok(ClosureArg { name, type_hint })
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, ErrorStack>>()?;
 
       let mut next = inner.next().unwrap();
       let return_type_hint = if next.as_rule() == Rule::type_hint {
         let type_hint_str = next.into_inner().next().unwrap().as_str();
         let return_type_hint = TypeName::from_str(type_hint_str)
-          .map_err(|err| format!("Invalid type hint for closure return type: {err}"))?;
+          .map_err(|err| ErrorStack::new(err).wrap("Invalid type hint for closure return type"))?;
         next = inner.next().unwrap();
         Some(return_type_hint)
       } else {
@@ -353,7 +362,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
             .into_inner()
             .map(parse_statement)
             .filter_map_ok(|s| s)
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, ErrorStack>>()?;
 
           ClosureBody(stmts)
         }
@@ -370,7 +379,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
       let elems = expr
         .into_inner()
         .map(parse_expr)
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, ErrorStack>>()?;
       Ok(Expr::Array(elems))
     }
     Rule::bool_literal => {
@@ -388,7 +397,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, String> {
   }
 }
 
-pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, String> {
+pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   if expr.as_rule() != Rule::expr {
     panic!(
       "`parse_expr` can only handle `expr` rules, found: {:?}",
@@ -397,7 +406,7 @@ pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, String> {
   }
 
   PRATT_PARSER
-    .map_primary(|primary| -> Result<Expr, String> {
+    .map_primary(|primary| -> Result<Expr, ErrorStack> {
       match primary.as_rule() {
         Rule::term => parse_node(primary),
         _ => unimplemented!("Unexpected primary rule: {:?}", primary.as_rule()),
@@ -437,7 +446,12 @@ pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, String> {
         Rule::and_op | Rule::bit_and_op => BinOp::And,
         Rule::or_op => BinOp::Or,
         Rule::map_op => BinOp::Map,
-        _ => return Err(format!("Unhandled operator rule: {:?}", op.as_rule())),
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Unhandled operator rule: {:?}",
+            op.as_rule()
+          )))
+        }
       };
       Ok(Expr::BinOp {
         op: bin_op,
@@ -464,12 +478,12 @@ pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, String> {
     .parse(expr.into_inner())
 }
 
-fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, String> {
+fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, ErrorStack> {
   if assignment.as_rule() != Rule::assignment {
-    return Err(format!(
+    return Err(ErrorStack::new(format!(
       "`parse_assignment` can only handle `assignment` rules, found: {:?}",
       assignment.as_rule()
-    ));
+    )));
   }
 
   let mut inner = assignment.into_inner();
@@ -477,7 +491,8 @@ fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, String> {
 
   let mut next = inner.next().unwrap();
   let type_hint = if next.as_rule() == Rule::type_hint {
-    let type_hint = TypeName::from_str(next.into_inner().next().unwrap().as_str())?;
+    let type_hint =
+      TypeName::from_str(next.into_inner().next().unwrap().as_str()).map_err(ErrorStack::new)?;
     next = inner.next().unwrap();
     Some(type_hint)
   } else {
@@ -493,7 +508,7 @@ fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, String> {
   })
 }
 
-fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, String> {
+fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, ErrorStack> {
   match stmt.as_rule() {
     Rule::assignment => parse_assignment(stmt).map(Some),
     Rule::expr => Ok(Some(Statement::Expr(parse_expr(stmt)?))),
@@ -502,19 +517,19 @@ fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, String> {
   }
 }
 
-pub fn parse_program(program: Pair<Rule>) -> Result<Program, String> {
+pub fn parse_program(program: Pair<Rule>) -> Result<Program, ErrorStack> {
   if program.as_rule() != Rule::program {
-    return Err(format!(
+    return Err(ErrorStack::new(format!(
       "`parse_program` can only handle `program` rules, found: {:?}",
       program.as_rule()
-    ));
+    )));
   }
 
   let statements = program
     .into_inner()
     .map(parse_statement)
     .filter_map_ok(|s| s)
-    .collect::<Result<Vec<_>, String>>()?;
+    .collect::<Result<Vec<_>, ErrorStack>>()?;
 
   Ok(Program { statements })
 }

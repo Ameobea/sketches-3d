@@ -1,15 +1,22 @@
-use std::{f32::consts::PI, sync::Arc};
+use std::sync::Arc;
 
 use fxhash::FxHashMap;
 use mesh::{
   linked_mesh::{DisplacementNormalMethod, Vec3},
   LinkedMesh,
 };
+use rand::Rng;
 
 use crate::{
-  mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
-  seq::{FilterSeq, IteratorSeq, PointDistributeSeq},
-  ArgRef, ArgType, Callable, ComposedFn, EvalCtx, MapSeq, Value,
+  mesh_ops::{
+    extrude_pipe,
+    mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
+    mesh_ops::{convex_hull_from_verts, simplify_mesh},
+  },
+  noise::fbm,
+  path_building::{build_torus_knot_path, cubic_bezier_3d_path},
+  seq::{FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq},
+  ArgRef, ArgType, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value,
 };
 
 // TODO: support optional arguments and default values
@@ -433,8 +440,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
   ],
   "point_distribute" => &[
     &[
-      ("mesh", &[ArgType::Mesh]),
       ("count", &[ArgType::Int]),
+      ("mesh", &[ArgType::Mesh]),
     ],
   ],
   "lerp" => &[
@@ -455,10 +462,12 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("strings", &[ArgType::Sequence]),
     ],
   ],
-  // TODO
   "convex_hull" => &[
     &[
       ("points", &[ArgType::Sequence]),
+    ],
+    &[
+      ("elems", &[ArgType::Sequence]),
     ],
   ],
   "warp" => &[
@@ -496,7 +505,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
   ],
   "extrude_pipe" => &[
     &[
-      ("radius", &[ArgType::Numeric]),
+      ("radius", &[ArgType::Numeric, ArgType::Callable]),
       ("resolution", &[ArgType::Int]),
       ("path", &[ArgType::Sequence]),
       ("close_ends", &[ArgType::Bool]),
@@ -519,6 +528,51 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("q", &[ArgType::Int]),
       ("point_count", &[ArgType::Int]),
       ("tube_resolution", &[ArgType::Int]),
+    ]
+  ],
+  "simplify" => &[
+    &[
+      ("tolerance", &[ArgType::Numeric]),
+      ("mesh", &[ArgType::Mesh]),
+    ]
+  ],
+  "verts" => &[
+    &[
+      ("mesh", &[ArgType::Mesh]),
+    ]
+  ],
+  "randf" => &[
+    &[],
+    &[
+      ("min", &[ArgType::Float]),
+      ("max", &[ArgType::Float]),
+    ],
+  ],
+  "randi" => &[
+    &[],
+    &[
+      ("min", &[ArgType::Int]),
+      ("max", &[ArgType::Int]),
+    ],
+  ],
+  "randv" => &[
+    &[],
+    &[
+      ("mins", &[ArgType::Vec3]),
+      ("maxs", &[ArgType::Vec3]),
+    ],
+  ],
+  "fbm" => &[
+    &[
+      ("seed", &[ArgType::Int]),
+      ("octaves", &[ArgType::Int]),
+      ("frequency", &[ArgType::Float]),
+      ("lacunarity", &[ArgType::Float]),
+      ("gain", &[ArgType::Float]),
+      ("pos", &[ArgType::Vec3]),
+    ],
+    &[
+      ("pos", &[ArgType::Vec3]),
     ]
   ],
 };
@@ -550,7 +604,7 @@ fn eval_numeric_bool_op(
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
   op: BoolOp,
-) -> Result<Value, String> {
+) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
@@ -589,7 +643,7 @@ pub(crate) fn eval_builtin_fn(
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
   ctx: &EvalCtx,
-) -> Result<Value, String> {
+) -> Result<Value, ErrorStack> {
   match name {
     "sphere" => todo!(),
     // TODO: these should be merged in with the function signature defs to avoid double hashmap
@@ -612,10 +666,9 @@ pub(crate) fn eval_builtin_fn(
               (size, size, size)
             }
             _ => {
-              return Err(format!(
-                "Invalid argument for box size: expected Vec3 or Float, found {:?}",
-                val
-              ))
+              return Err(ErrorStack::new(format!(
+                "Invalid argument for box size: expected Vec3 or Float, found {val:?}",
+              )))
             }
           }
         }
@@ -673,10 +726,9 @@ pub(crate) fn eval_builtin_fn(
               Vec3::new(scale, scale, scale)
             }
             _ => {
-              return Err(format!(
-                "Invalid argument for scale: expected Vec3 or Float, found {:?}",
-                val
-              ))
+              return Err(ErrorStack::new(format!(
+                "Invalid argument for scale: expected Vec3 or Float, found {val:?}",
+              )))
             }
           };
 
@@ -689,7 +741,7 @@ pub(crate) fn eval_builtin_fn(
       // TODO: make use of the mesh's transform rather than modifying vertices directly?
       let mesh = mesh
         .as_mesh()
-        .ok_or("Scale function requires a mesh argument")?;
+        .ok_or(ErrorStack::new("Scale function requires a mesh argument"))?;
       let mut mesh = (*mesh).clone();
       for vtx in mesh.vertices.values_mut() {
         vtx.position.x *= scale.x;
@@ -1158,11 +1210,13 @@ pub(crate) fn eval_builtin_fn(
           .unwrap()
           .clone_box();
         for res in sequence.consume(ctx) {
-          let mesh = res.map_err(|err| format!("Error evaluating mesh in render: {err}"))?;
+          let mesh = res.map_err(|err| err.wrap("Error evaluating mesh in render"))?;
           if let Value::Mesh(mesh) = mesh {
             ctx.rendered_meshes.push(mesh);
           } else {
-            return Err("Render function expects a sequence of meshes".to_owned());
+            return Err(ErrorStack::new(
+              "Render function expects a sequence of meshes",
+            ));
           }
         }
         Ok(Value::Nil)
@@ -1170,11 +1224,13 @@ pub(crate) fn eval_builtin_fn(
       _ => unimplemented!(),
     },
     "point_distribute" => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let count = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let count = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
       if count < 0 {
-        return Err("negative point count is not valid for point_distribute".to_owned());
+        return Err(ErrorStack::new(
+          "negative point count is not valid for point_distribute",
+        ));
       }
 
       let sampler_seq = PointDistributeSeq {
@@ -1185,30 +1241,32 @@ pub(crate) fn eval_builtin_fn(
     }
     "compose" => {
       if !kwargs.is_empty() {
-        return Err("compose function does not accept keyword arguments".to_owned());
+        return Err(ErrorStack::new(
+          "compose function does not accept keyword arguments",
+        ));
       }
 
       if args.is_empty() {
-        return Err("compose function requires at least one argument".to_owned());
+        return Err(ErrorStack::new(
+          "compose function requires at least one argument",
+        ));
       }
 
       let inner: Vec<Value> = if args.len() == 1 {
         if matches!(args[0], Value::Callable(_)) {
           return Ok(args[0].clone());
-        }
-
-        if let Some(seq) = args[0].as_sequence() {
+        } else if let Some(seq) = args[0].as_sequence() {
           // have to eagerly evaluate the sequence to get the inner callables
           seq
             .clone_box()
             .consume(ctx)
             .collect::<Result<Vec<_>, _>>()?
         } else {
-          return Err(format!(
+          return Err(ErrorStack::new(format!(
             "compose function requires a sequence or callable if a single arg is provided, found: \
              {:?}",
             args[0]
-          ));
+          )));
         }
       } else {
         args.to_owned()
@@ -1220,9 +1278,9 @@ pub(crate) fn eval_builtin_fn(
           if let Value::Callable(callable) = val {
             Ok(callable)
           } else {
-            Err(format!(
+            Err(ErrorStack::new(format!(
               "Non-callable found in sequence passed to compose, found: {val:?}"
-            ))
+            )))
           }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1241,19 +1299,35 @@ pub(crate) fn eval_builtin_fn(
         let warp_fn = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
         let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
+        let mut needs_displacement_normals_computed = false;
         let mut new_mesh = (*mesh).clone();
+        if let Some(v) = new_mesh.vertices.values().next() {
+          if v.displacement_normal.is_none() {
+            needs_displacement_normals_computed = true
+          }
+        }
+        if needs_displacement_normals_computed {
+          new_mesh.compute_vertex_displacement_normals();
+        }
+
         for vtx in new_mesh.vertices.values_mut() {
           let warped_pos = ctx
             .invoke_callable(
               warp_fn,
-              &[Value::Vec3(vtx.position)],
+              &[
+                Value::Vec3(vtx.position),
+                Value::Vec3(vtx.displacement_normal.unwrap_or(Vec3::zeros())),
+              ],
               Default::default(),
               &ctx.globals,
             )
-            .map_err(|err| format!("error calling warp cb: {err}"))?;
-          let warped_pos = warped_pos
-            .as_vec3()
-            .ok_or_else(|| format!("warp function must return Vec3, got: {:?}", warped_pos))?;
+            .map_err(|err| err.wrap("error calling warp cb"))?;
+          let warped_pos = warped_pos.as_vec3().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "warp function must return Vec3, got: {:?}",
+              warped_pos
+            ))
+          })?;
           vtx.position = *warped_pos;
         }
 
@@ -1293,200 +1367,63 @@ pub(crate) fn eval_builtin_fn(
     },
     "bezier3d" => match def_ix {
       0 => {
-        let p0 = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-        let p1 = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-        let p2 = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
-        let p3 = arg_refs[3].resolve(args, &kwargs).as_vec3().unwrap();
+        let p0 = *arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let p1 = *arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        let p2 = *arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
+        let p3 = *arg_refs[3].resolve(args, &kwargs).as_vec3().unwrap();
         let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
 
-        fn bezier_curve_3d(
-          p0: Vec3,
-          p1: Vec3,
-          p2: Vec3,
-          p3: Vec3,
-          count: usize,
-        ) -> impl Iterator<Item = Result<Value, String>> + Clone + 'static {
-          (0..=count).map(move |i| {
-            let t = i as f32 / count as f32;
-            let u = 1.0 - t;
-            let tt = t * t;
-            let uu = u * u;
-            let uuu = uu * u;
-            let ttt = tt * t;
-
-            Ok(Value::Vec3(
-              uuu * p0 + 3.0 * uu * t * p1 + 3.0 * u * tt * p2 + ttt * p3,
-            ))
-          })
-        }
-
-        let curve = bezier_curve_3d(*p0, *p1, *p2, *p3, count);
+        let curve = cubic_bezier_3d_path(p0, p1, p2, p3, count).map(|v| Ok(Value::Vec3(v)));
         Ok(Value::Sequence(Box::new(IteratorSeq { inner: curve })))
       }
-
       _ => unimplemented!(),
     },
     "extrude_pipe" => match def_ix {
       0 => {
-        let radius = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let radius = arg_refs[0].resolve(args, &kwargs);
         let resolution = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
         let path = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
         let close_ends = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
 
-        if resolution < 3 {
-          return Err("`extrude_pipe` requires a resolution of at least 3".to_owned());
-        }
+        let path = path.clone_box().consume(ctx).map(|res| match res {
+          Ok(Value::Vec3(v)) => Ok(v),
+          Ok(val) => Err(ErrorStack::new(format!(
+            "Expected Vec3 in path seq passed to `extrude_pipe`, found: {val:?}"
+          ))),
+          Err(err) => Err(err),
+        });
 
-        let points = path
-          .clone_box()
-          .consume(ctx)
-          .map(|res| match res {
-            Ok(Value::Vec3(v)) => Ok(v),
-            Ok(val) => Err(format!(
-              "Expected Vec3 in path seq passed to `extrude_pipe`, found: {val:?}"
-            )),
-            Err(err) => Err(err),
-          })
-          .collect::<Result<Vec<_>, _>>()?;
-
-        if points.len() < 2 {
-          return Err(format!(
-            "`extrude_pipe` requires at least two points in the path, found: {}",
-            points.len()
-          ));
-        }
-
-        // Tangents are the direction of the path at each point.  There's some special handling for
-        // the first and last points.
-        let mut tangents: Vec<Vec3> = Vec::with_capacity(points.len());
-        for i in 0..points.len() {
-          let dir = if i == points.len() - 1 {
-            points[i] - points[i - 1]
-          } else {
-            points[i + 1] - points[i]
-          };
-          tangents.push(dir.normalize());
-        }
-
-        // Rotation-minimizing frames are used to avoid twists or kinks in the mesh as it's
-        // generated along the path.
-        //
-        // Rather than using a fixed up vector, the normal is projected forward using the new
-        // tangent to minimize its rotation from the previous ring.
-
-        // an initial normal is picked using an arbitrary up vector.
-        let t0 = tangents[0];
-        let mut up = Vec3::new(0., 1., 0.);
-        // if the chosen up vector is nearly parallel to the tangent, a different one is picked to
-        // avoid numerical issues
-        if t0.dot(&up).abs() > 0.999 {
-          up = Vec3::new(1., 0., 0.);
-        }
-        let mut normal = t0.cross(&up).normalize();
-        // the "binormal" is a vector that's perpendicular to the plane defined by the tangent and
-        // normal.
-        let mut binormal = t0.cross(&normal).normalize();
-
-        let mut verts: Vec<Vec3> = Vec::with_capacity(points.len() * resolution);
-
-        let center0 = points[0];
-        for j in 0..resolution {
-          let theta = 2. * PI * (j as f32) / (resolution as f32);
-          let dir = normal * theta.cos() + binormal * theta.sin();
-          verts.push(center0 + dir * radius);
-        }
-
-        for i in 1..points.len() {
-          let ti = tangents[i];
-          // Project previous normal onto plane ⟂ tangentᵢ
-          let dot = ti.dot(&normal);
-          let mut proj = normal - ti * dot;
-          const EPSILON: f32 = 1e-6;
-          if proj.norm_squared() < EPSILON {
-            // the same check as before is done to avoid numerical issues if the projected normal is
-            // very close to 0
-            proj = ti.cross(&binormal);
-            if proj.norm_squared() < EPSILON {
-              // In the extremely degenerate case, pick any vector ⟂ tangentᵢ
-              let arbitrary = if ti.dot(&Vec3::new(0., 1., 0.)).abs() > 0.999 {
-                Vec3::new(1., 0., 0.)
-              } else {
-                Vec3::new(0., 1., 0.)
-              };
-              proj = ti.cross(&arbitrary);
-            }
+        let mesh = match radius {
+          _ if let Some(radius) = radius.as_float() => {
+            extrude_pipe(|_, _| Ok(radius), resolution, path, close_ends)?
           }
-          normal = proj.normalize();
-          binormal = ti.cross(&normal).normalize();
-
-          let center = points[i];
-          for j in 0..resolution {
-            let theta = 2. * PI * (j as f32) / (resolution as f32);
-            let dir = normal * theta.cos() + binormal * theta.sin();
-            verts.push(center + dir * radius);
-          }
-        }
-
-        assert_eq!(verts.len(), points.len() * resolution);
-
-        // stitch the rings together with quads, two triangles per quad
-        let mut index_count = (points.len() - 1) * resolution * 3 * 2;
-        if close_ends {
-          // `n-2` triangles are needed to tessellate a convex polygon of `n` vertices/edges
-          let cap_triangles = resolution - 2;
-          index_count += cap_triangles * 3 * 2;
-        }
-        let mut indices: Vec<u32> = Vec::with_capacity(index_count);
-
-        for i in 0..(points.len() - 1) {
-          for j in 0..resolution {
-            let a = (i * resolution + j) as u32;
-            let b = (i * resolution + (j + 1) % resolution) as u32;
-            let c = ((i + 1) * resolution + j) as u32;
-            let d = ((i + 1) * resolution + (j + 1) % resolution) as u32;
-
-            indices.push(a);
-            indices.push(b);
-            indices.push(c);
-
-            indices.push(b);
-            indices.push(d);
-            indices.push(c);
-          }
-        }
-
-        if close_ends {
-          for (ix_offset, reverse_winding) in [
-            (0u32, true),
-            ((points.len() - 1) as u32 * resolution as u32, false),
-          ] {
-            // using a basic triangle fan to form the end caps
-            //
-            // 0,1,2
-            // 0,2,3
-            // ...
-            // 0,2n-2,2n-1
-            for vtx_ix in 1..(resolution - 1) {
-              let a = 0;
-              let b = vtx_ix as u32;
-              let c = (vtx_ix + 1) as u32;
-
-              if reverse_winding {
-                indices.push(ix_offset + c);
-                indices.push(ix_offset + b);
-                indices.push(ix_offset + a);
-              } else {
-                indices.push(ix_offset + a);
-                indices.push(ix_offset + b);
-                indices.push(ix_offset + c);
+          _ if let Some(get_radius) = radius.as_callable() => {
+            let get_radius = |i: usize, pos: Vec3| -> Result<_, ErrorStack> {
+              let val = ctx
+                .invoke_callable(
+                  get_radius,
+                  &[Value::Int(i as i64), Value::Vec3(pos)],
+                  Default::default(),
+                  &ctx.globals,
+                )
+                .map_err(|err| err.wrap("Error calling radius cb in `extrude_pipe`"))?;
+              match val {
+                Value::Float(f) => Ok(f),
+                Value::Int(i) => Ok(i as f32),
+                _ => Err(ErrorStack::new(format!(
+                  "Expected Float or Int from radius cb in `extrude_pipe`, found: {val:?}"
+                ))),
               }
-            }
+            };
+            extrude_pipe(get_radius, resolution, path, close_ends)?
           }
-        }
-
-        assert_eq!(indices.len(), index_count);
-
-        let mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
+          _ => {
+            return Err(ErrorStack::new(format!(
+              "Invalid radius argument for `extrude_pipe`; expected Float, Int, or Callable, \
+               found: {radius:?}",
+            )))
+          }
+        };
         Ok(Value::Mesh(Arc::new(mesh)))
       }
       _ => unimplemented!(),
@@ -1499,34 +1436,108 @@ pub(crate) fn eval_builtin_fn(
         let q = arg_refs[3].resolve(args, &kwargs).as_int().unwrap() as usize;
         let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
 
-        pub fn sample_torus_knot(
-          p: usize,
-          q: usize,
-          radius: f32,
-          tube_radius: f32,
-          t: f32,
-        ) -> Vec3 {
-          let t = 2. * PI * t;
-          let p = p as f32;
-          let q = q as f32;
-          let qt = q * t;
-          let pt = p * t;
-          let radius = radius + tube_radius * qt.cos();
-          let x = radius * pt.cos();
-          let y = radius * pt.sin();
-          let z = tube_radius * qt.sin();
-          Vec3::new(x, y, z)
-        }
-
         Ok(Value::Sequence(Box::new(IteratorSeq {
-          inner: (0..=count).map(move |i| {
-            let t = i as f32 / count as f32;
-            Ok(Value::Vec3(sample_torus_knot(p, q, radius, tube_radius, t)))
-          }),
+          inner: build_torus_knot_path(radius, tube_radius, p, q, count)
+            .map(|v| Ok(Value::Vec3(v))),
         })))
       }
       _ => unreachable!(),
     },
-    _ => unimplemented!("Function `{name}` not yet implemented"),
+    "simplify" => match def_ix {
+      0 => {
+        let tolerance = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+
+        let out_mesh = simplify_mesh(&mesh, tolerance)
+          .map_err(|err| ErrorStack::new(err).wrap("Error in `simplify` function"))?;
+        Ok(Value::Mesh(Arc::new(out_mesh)))
+      }
+      _ => unimplemented!(),
+    },
+    "convex_hull" => match def_ix {
+      0 => {
+        let verts_seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+        let verts = verts_seq
+          .clone_box()
+          .consume(ctx)
+          .map(|res| match res {
+            Ok(Value::Vec3(v)) => Ok(v),
+            Ok(val) => Err(ErrorStack::new(format!(
+              "Expected Vec3 in sequence passed to `convex_hull`, found: {val:?}"
+            ))),
+            Err(err) => Err(err),
+          })
+          .collect::<Result<Vec<_>, _>>()?;
+        let out_mesh = convex_hull_from_verts(&verts)
+          .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
+        Ok(Value::Mesh(Arc::new(out_mesh)))
+      }
+      _ => unimplemented!(),
+    },
+    "verts" => match def_ix {
+      0 => {
+        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+        Ok(Value::Sequence(Box::new(MeshVertsSeq { mesh })))
+      }
+      _ => unimplemented!(),
+    },
+    "randf" => match def_ix {
+      0 => Ok(Value::Float(ctx.rng().gen())),
+      1 => {
+        let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(ctx.rng().gen_range(min..max)))
+      }
+      _ => unimplemented!(),
+    },
+    "randv" => match def_ix {
+      0 => Ok(Value::Vec3(Vec3::new(
+        ctx.rng().gen(),
+        ctx.rng().gen(),
+        ctx.rng().gen(),
+      ))),
+      1 => {
+        let min = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let max = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          ctx.rng().gen_range(min.x..max.x),
+          ctx.rng().gen_range(min.y..max.y),
+          ctx.rng().gen_range(min.z..max.z),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "fbm" => match def_ix {
+      0 => {
+        let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        if seed < 0 || seed > u32::MAX as i64 {
+          return Err(ErrorStack::new(format!(
+            "Seed for fbm must be in range [0, {}], found: {seed}",
+            u32::MAX
+          )));
+        }
+        let seed = seed as u32;
+        let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+        let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+        let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
+        let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+        let pos = arg_refs[4].resolve(args, &kwargs).as_vec3().unwrap();
+
+        Ok(Value::Float(fbm(
+          seed,
+          octaves,
+          frequency,
+          persistence,
+          lacunarity,
+          *pos,
+        )))
+      }
+      1 => {
+        let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Float(fbm(0, 4, 1., 0.5, 2., *pos)))
+      }
+      _ => unimplemented!(),
+    },
+    _ => unimplemented!("Builtin function `{name}` not yet implemented"),
   }
 }

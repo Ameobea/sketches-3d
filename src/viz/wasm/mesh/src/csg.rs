@@ -182,12 +182,6 @@ fn vtx_pos<T>(vtx_key: VertexKey, mesh: &LinkedMesh<T>) -> Vec3 {
   }
 }
 
-fn vtx_key_ix(vtx_key: VertexKey) -> u32 {
-  let k = vtx_key.data().as_ffi();
-  let [ix, _version]: [u32; 2] = unsafe { std::mem::transmute(k) };
-  ix
-}
-
 fn handle_split_faces(
   split_faces: &mut Vec<((FaceKey, FaceData), [FaceKey; 2])>,
   mesh: &mut LinkedMesh<FaceData>,

@@ -50,7 +50,7 @@
     loader,
     { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc, mapDisableDistance: null },
     {},
-    { useGeneratedUVs: true, useTriplanarMapping: false, tileBreaking: undefined }
+    { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
   );
 
   let codemirrorContainer: HTMLDivElement | null = $state(null);
@@ -119,6 +119,7 @@
     }
 
     const code = editorView.state.doc.toString();
+    beforeUnloadHandler();
 
     for (const mesh of renderedMeshes) {
       viz.scene.remove(mesh);
@@ -167,12 +168,19 @@
     renderedMeshes = newRenderedMeshes;
   };
 
+  const beforeUnloadHandler = () => {
+    if (editorView) {
+      localStorage.lastGeoscriptPlaygroundCode = editorView.state.doc.toString();
+    }
+  };
+
   onMount(() => {
     const syntaxErrorLinter = linter(view => {
       let diagnostics: Diagnostic[] = [];
       syntaxTree(view.state)
         .cursor()
         .iterate(({ type, from, to }) => {
+          // console.log(type.name, from, to);
           if (type.isError) {
             diagnostics.push({
               from,
@@ -250,11 +258,6 @@
 
     run().then(centerView);
 
-    const beforeUnloadHandler = () => {
-      if (editorView) {
-        localStorage.lastGeoscriptPlaygroundCode = editorView.state.doc.toString();
-      }
-    };
     window.addEventListener('beforeunload', beforeUnloadHandler);
 
     return () => {

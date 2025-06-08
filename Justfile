@@ -48,3 +48,6 @@ build-basalt:
 
 build-csg-sandbox:
   cd src/viz/wasm && just build-csg-sandbox
+
+build-geoscript:
+  cd src/viz/wasm && just build-geoscript

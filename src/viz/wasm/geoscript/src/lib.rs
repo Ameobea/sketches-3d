@@ -1,5 +1,9 @@
+#![feature(if_let_guard, impl_trait_in_bindings)]
+
+#[cfg(target_arch = "wasm32")]
+use std::cell::UnsafeCell;
 use std::{
-  fmt::Debug,
+  fmt::{Debug, Display},
   sync::{Arc, Mutex},
 };
 
@@ -11,6 +15,7 @@ use pest::{
   Parser,
 };
 use pest_derive::Parser;
+use rand_pcg::Pcg32;
 use seq::EagerSeq;
 
 use crate::{
@@ -21,7 +26,9 @@ use crate::{
 
 mod ast;
 mod builtins;
-pub mod mesh_boolean;
+pub mod mesh_ops;
+pub mod noise;
+pub mod path_building;
 mod seq;
 
 #[derive(Parser)]
@@ -59,13 +66,61 @@ lazy_static::lazy_static! {
     .op(Op::postfix(Rule::postfix));
 }
 
+pub struct ErrorStack {
+  pub errors: Vec<String>,
+}
+
+impl ErrorStack {
+  pub fn new(msg: impl Into<String>) -> Self {
+    ErrorStack {
+      errors: vec![msg.into()],
+    }
+  }
+
+  pub fn wrap(mut self, msg: impl Into<String>) -> Self {
+    self.errors.push(msg.into());
+    self
+  }
+}
+
+impl Display for ErrorStack {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let indent = "  ";
+    for (ix, err) in self.errors.iter().rev().enumerate() {
+      let mut lines = err.lines().peekable();
+      while let Some(line) = lines.next() {
+        for _ in 0..ix {
+          write!(f, "{indent}")?;
+        }
+
+        write!(f, "{line}")?;
+
+        if lines.peek().is_some() {
+          write!(f, "\n")?;
+        }
+      }
+
+      if ix < self.errors.len() - 1 {
+        write!(f, "\n")?;
+      }
+    }
+    Ok(())
+  }
+}
+
+impl Debug for ErrorStack {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{self}")
+  }
+}
+
 pub trait Sequence: Debug {
   fn clone_box(&self) -> Box<dyn Sequence>;
 
   fn consume<'a>(
     self: Box<Self>,
     ctx: &'a EvalCtx,
-  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a>;
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>;
 }
 
 #[derive(Clone)]
@@ -133,15 +188,14 @@ pub enum Callable {
 impl Debug for Callable {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Callable::Builtin(name) => format!("<built-in fn \"{name}\">").fmt(f),
-      Callable::PartiallyAppliedFn(paf) => format!("{paf:?}").fmt(f),
-      Callable::Closure(closure) => format!("{closure:?}").fmt(f),
-      Callable::ComposedFn(composed) => format!("{composed:?}").fmt(f),
+      Callable::Builtin(name) => Debug::fmt(&format!("<built-in fn \"{name}\">"), f),
+      Callable::PartiallyAppliedFn(paf) => Debug::fmt(&format!("{paf:?}"), f),
+      Callable::Closure(closure) => Debug::fmt(&format!("{closure:?}"), f),
+      Callable::ComposedFn(composed) => Debug::fmt(&format!("{composed:?}"), f),
     }
   }
 }
 
-#[derive(Debug)]
 pub enum Value {
   Int(i64),
   Float(f32),
@@ -164,6 +218,21 @@ impl Clone for Value {
       Value::Sequence(seq) => Value::Sequence(seq.clone_box()),
       Value::Bool(b) => Value::Bool(*b),
       Value::Nil => Value::Nil,
+    }
+  }
+}
+
+impl Debug for Value {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Value::Int(i) => write!(f, "Int({i})"),
+      Value::Float(fl) => write!(f, "Float({fl})"),
+      Value::Vec3(v3) => write!(f, "Vec3({}, {}, {})", v3.x, v3.y, v3.z),
+      Value::Mesh(mesh) => write!(f, "{mesh:?}"),
+      Value::Callable(callable) => write!(f, "{callable:?}"),
+      Value::Sequence(seq) => write!(f, "{seq:?}"),
+      Value::Bool(b) => write!(f, "Bool({b})"),
+      Value::Nil => write!(f, "Nil"),
     }
   }
 }
@@ -253,6 +322,20 @@ impl ArgType {
   pub fn any_valid(types: &[ArgType], arg: &Value) -> bool {
     types.iter().any(|t| t.is_valid(arg))
   }
+
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      ArgType::Int => "int",
+      ArgType::Float => "float",
+      ArgType::Numeric => "num",
+      ArgType::Vec3 => "vec3",
+      ArgType::Mesh => "mesh",
+      ArgType::Callable => "fn",
+      ArgType::Sequence => "seq",
+      ArgType::Bool => "bool",
+      ArgType::Any => "any",
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -279,12 +362,38 @@ enum GetArgsOutput {
   PartiallyApplied,
 }
 
+fn format_fn_signatures(arg_defs: &[&[(&'static str, &[ArgType])]]) -> String {
+  arg_defs
+    .iter()
+    .map(|def| {
+      if def.is_empty() {
+        return "  <no args>".to_owned();
+      }
+
+      let formatted_def = def
+        .iter()
+        .map(|(name, types)| {
+          let types_str = types
+            .iter()
+            .map(ArgType::as_str)
+            .collect::<Vec<_>>()
+            .join(" | ");
+          format!("{name}: {types_str}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+      format!("  {formatted_def}")
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
 fn get_args(
   fn_name: &str,
   arg_defs: &[&[(&'static str, &[ArgType])]],
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
-) -> Result<GetArgsOutput, String> {
+) -> Result<GetArgsOutput, ErrorStack> {
   // empty defs = any args are valid
   if arg_defs.is_empty() {
     return Ok(GetArgsOutput::Valid {
@@ -298,9 +407,10 @@ fn get_args(
       .iter()
       .any(|def| def.iter().any(|(name, _)| name == key))
     {
-      return Err(format!(
-        "kwarg `{key}` is not valid in any function signature",
-      ));
+      return Err(ErrorStack::new(format!(
+        "kwarg `{key}` is not valid in any function signature.\n\nAvailable signatures:\n{}",
+        format_fn_signatures(arg_defs)
+      )));
     }
   }
 
@@ -345,9 +455,11 @@ fn get_args(
     return Ok(GetArgsOutput::PartiallyApplied);
   }
 
-  Err(format!(
-    "No valid function signature found for `{fn_name}` with args: {args:?}, kwargs: {kwargs:?}",
-  ))
+  Err(ErrorStack::new(format!(
+    "No valid function signature found for `{fn_name}` with args: {args:?}, kwargs: \
+     {kwargs:?}\n\nAvailable signatures:\n{}",
+    format_fn_signatures(arg_defs)
+  )))
 }
 
 #[derive(Default)]
@@ -426,6 +538,8 @@ pub struct EvalCtx {
   pub globals: Scope,
   pub rendered_meshes: RenderedMeshes,
   pub log_fn: fn(&str),
+  #[cfg(target_arch = "wasm32")]
+  rng: UnsafeCell<Pcg32>,
 }
 
 impl Default for EvalCtx {
@@ -434,6 +548,8 @@ impl Default for EvalCtx {
       globals: Scope::default_globals(),
       rendered_meshes: RenderedMeshes::default(),
       log_fn: |msg| println!("{msg}"),
+      #[cfg(target_arch = "wasm32")]
+      rng: UnsafeCell::new(Pcg32::new(7718587666045340534, 17289744314186392832)),
     }
   }
 }
@@ -444,7 +560,17 @@ impl EvalCtx {
     self
   }
 
-  pub fn eval_expr(&self, expr: &Expr, scope: &Scope) -> Result<Value, String> {
+  #[cfg(target_arch = "wasm32")]
+  pub fn rng(&self) -> &'static mut Pcg32 {
+    unsafe { &mut *self.rng.get() }
+  }
+
+  #[cfg(not(target_arch = "wasm32"))]
+  pub fn rng(&self) -> &'static mut Pcg32 {
+    unimplemented!()
+  }
+
+  pub fn eval_expr(&self, expr: &Expr, scope: &Scope) -> Result<Value, ErrorStack> {
     match expr {
       Expr::Call(call) => {
         let args = call
@@ -459,18 +585,18 @@ impl EvalCtx {
           .collect::<Result<FxHashMap<_, _>, _>>()?;
         self
           .eval_fn_call(&call.name, &args, kwargs, scope, false)
-          .map_err(|err| format!("Error evaluating function call `{}`: {err}", call.name))
+          .map_err(|err| err.wrap(format!("Error evaluating function call `{}`", call.name)))
       }
       Expr::BinOp { op, lhs, rhs } => {
         let lhs = self.eval_expr(lhs, scope)?;
         let rhs = self.eval_expr(rhs, scope)?;
         op.apply(self, lhs, rhs)
-          .map_err(|err| format!("Error applying binary operator `{op:?}`: {err}"))
+          .map_err(|err| err.wrap(format!("Error applying binary operator `{op:?}`")))
       }
       Expr::PrefixOp { op, expr } => {
         let val = self.eval_expr(expr, scope)?;
         op.apply(self, val)
-          .map_err(|err| format!("Error applying prefix operator `{op:?}`: {err}"))
+          .map_err(|err| err.wrap(format!("Error applying prefix operator `{op:?}`")))
       }
       Expr::Range {
         start,
@@ -479,11 +605,15 @@ impl EvalCtx {
       } => {
         let start = self.eval_expr(start, scope)?;
         let Value::Int(start) = start else {
-          return Err(format!("Range start must be an integer, found: {start:?}"));
+          return Err(ErrorStack::new(format!(
+            "Range start must be an integer, found: {start:?}"
+          )));
         };
         let end = self.eval_expr(end, scope)?;
         let Value::Int(end) = end else {
-          return Err(format!("Range end must be an integer, found: {end:?}"));
+          return Err(ErrorStack::new(format!(
+            "Range end must be an integer, found: {end:?}"
+          )));
         };
 
         Ok(if *inclusive {
@@ -505,7 +635,7 @@ impl EvalCtx {
           return Ok(Value::Callable(Callable::Builtin(name.to_owned())));
         }
 
-        Err(format!("Variable not found: {name}"))
+        Err(ErrorStack::new(format!("Variable not found: {name}")))
       }
       Expr::Int(i) => Ok(Value::Int(*i)),
       Expr::Float(f) => Ok(Value::Float(*f)),
@@ -540,9 +670,11 @@ impl EvalCtx {
     value: Value,
     scope: &Scope,
     type_hint: Option<TypeName>,
-  ) -> Result<Value, String> {
+  ) -> Result<Value, ErrorStack> {
     if ident.is_empty() {
-      return Err("found empty ident in assignment; shouldn't be possible I think".to_owned());
+      return Err(ErrorStack::new(
+        "found empty ident in assignment; shouldn't be possible I think",
+      ));
     }
 
     if let Some(type_hint) = type_hint {
@@ -553,7 +685,7 @@ impl EvalCtx {
     Ok(Value::Nil)
   }
 
-  fn eval_statement(&self, statement: &Statement, scope: &Scope) -> Result<Value, String> {
+  fn eval_statement(&self, statement: &Statement, scope: &Scope) -> Result<Value, ErrorStack> {
     match statement {
       Statement::Expr(expr) => self.eval_expr(expr, scope),
       Statement::Assignment {
@@ -568,27 +700,31 @@ impl EvalCtx {
     &'a self,
     initial_val: Value,
     callable: &Callable,
-    iter: impl Iterator<Item = Result<Value, String>> + 'a,
-  ) -> Result<Value, String> {
+    iter: impl Iterator<Item = Result<Value, ErrorStack>> + 'a,
+  ) -> Result<Value, ErrorStack> {
     let mut acc = initial_val;
     for (i, res) in iter.enumerate() {
-      let value = res.map_err(|err| format!("Error seq value ix={i} in reduce: {err}"))?;
+      let value = res.map_err(|err| err.wrap(format!("Error seq value ix={i} in reduce")))?;
       acc = self
         .invoke_callable(callable, &[acc, value], Default::default(), &self.globals)
-        .map_err(|err| format!("Error invoking callable in reduce: {err}"))?;
+        .map_err(|err| err.wrap("Error invoking callable in reduce".to_owned()))?;
     }
 
     Ok(acc)
   }
 
-  fn reduce<'a>(&'a self, fn_value: &Callable, seq: Box<dyn Sequence>) -> Result<Value, String> {
+  fn reduce<'a>(
+    &'a self,
+    fn_value: &Callable,
+    seq: Box<dyn Sequence>,
+  ) -> Result<Value, ErrorStack> {
     // TODO: fix clone
     let mut iter = seq.clone_box().consume(self);
     let Some(first_value_res) = iter.next() else {
-      return Err("empty sequence passed to reduce".to_owned());
+      return Err(ErrorStack::new("empty sequence passed to reduce"));
     };
     let first_value =
-      first_value_res.map_err(|err| format!("Error evaluating initial value in reduce: {err}"))?;
+      first_value_res.map_err(|err| err.wrap("Error evaluating initial value in reduce"))?;
 
     self.fold(first_value, &fn_value, iter)
   }
@@ -600,12 +736,14 @@ impl EvalCtx {
     kwargs: FxHashMap<String, Value>,
     scope: &Scope,
     builtins_only: bool,
-  ) -> Result<Value, String> {
+  ) -> Result<Value, ErrorStack> {
     if !builtins_only {
       // might be a callable stored as a global
       if let Some(global) = scope.get(name) {
         let Value::Callable(callable) = global else {
-          return Err(format!("\"{name}\" is not a callable; found: {global:?}"));
+          return Err(ErrorStack::new(format!(
+            "\"{name}\" is not a callable; found: {global:?}"
+          )));
         };
 
         return self.invoke_callable(&callable, args, kwargs, scope);
@@ -641,7 +779,7 @@ impl EvalCtx {
       return eval_builtin_fn(name, def_ix, &arg_refs, &args, &kwargs, self);
     }
 
-    return Err(format!("Undefined function: {name}"));
+    return Err(ErrorStack::new(format!("Undefined function: {name}")));
   }
 
   fn invoke_callable(
@@ -650,7 +788,7 @@ impl EvalCtx {
     args: &[Value],
     kwargs: FxHashMap<String, Value>,
     scope: &Scope,
-  ) -> Result<Value, String> {
+  ) -> Result<Value, ErrorStack> {
     match callable {
       Callable::Builtin(name) => self.eval_fn_call(name, args, kwargs, scope, true),
       Callable::PartiallyAppliedFn(paf) => {
@@ -674,23 +812,23 @@ impl EvalCtx {
             if let Some(type_hint) = arg.type_hint {
               type_hint
                 .validate_val(kwarg)
-                .map_err(|err| format!("Type error for closure kwarg `{}`: {err}", arg.name))?;
+                .map_err(|err| err.wrap(format!("Type error for closure kwarg `{}`", arg.name)))?;
             }
             closure_scope.insert(arg.name.clone(), kwarg.clone());
           } else if pos_arg_ix < args.len() {
             let pos_arg = &args[pos_arg_ix];
             if let Some(type_hint) = arg.type_hint {
-              type_hint
-                .validate_val(pos_arg)
-                .map_err(|err| format!("Type error for closure arg `{}`: {err}", arg.name))?;
+              type_hint.validate_val(pos_arg).map_err(|err| {
+                err.wrap(format!("Type error for closure pos arg `{}`", arg.name))
+              })?;
             }
             closure_scope.insert(arg.name.clone(), pos_arg.clone());
             pos_arg_ix += 1;
           } else {
-            return Err(format!(
+            return Err(ErrorStack::new(format!(
               "Missing required argument `{}` for closure",
               arg.name
-            ));
+            )));
           }
         }
 
@@ -734,7 +872,7 @@ impl EvalCtx {
     }
   }
 
-  fn eval_field_access(&self, obj: &Expr, field: &str, scope: &Scope) -> Result<Value, String> {
+  fn eval_field_access(&self, obj: &Expr, field: &str, scope: &Scope) -> Result<Value, ErrorStack> {
     let obj_value = self.eval_expr(obj, scope)?;
     match obj_value {
       Value::Vec3(v3) => match field.len() {
@@ -742,9 +880,9 @@ impl EvalCtx {
           "x" => Ok(Value::Float(v3.x)),
           "y" => Ok(Value::Float(v3.y)),
           "z" => Ok(Value::Float(v3.z)),
-          _ => Err(format!("Unknown field `{field}` for Vec3")),
+          _ => Err(ErrorStack::new(format!("Unknown field `{field}` for Vec3"))),
         },
-        2 => Err(format!("No vec2 type currently")),
+        2 => Err(ErrorStack::new(format!("No vec2 type currently"))),
         3 => {
           let mut chars = field.chars();
           let a = chars.next().unwrap();
@@ -755,31 +893,34 @@ impl EvalCtx {
             'x' => Ok(v3.x),
             'y' => Ok(v3.y),
             'z' => Ok(v3.z),
-            _ => Err(format!("Unknown field `{c}` for Vec3")),
+            _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec3"))),
           };
 
           Ok(Value::Vec3(Vec3::new(swiz(a)?, swiz(b)?, swiz(c)?)))
         }
-        _ => Err(format!("invalid swizzle; expected 1 or 3 chars")),
+        _ => Err(ErrorStack::new(format!(
+          "invalid swizzle; expected 1 or 3 chars"
+        ))),
       },
-      _ => Err(format!(
+      _ => Err(ErrorStack::new(format!(
         "field access not supported for type: {obj_value:?}"
-      )),
+      ))),
     }
   }
 }
 
-pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), String> {
-  let pairs = GSParser::parse(Rule::program, src).map_err(|err| format!("Syntax error: {err}"))?;
+pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), ErrorStack> {
+  let pairs = GSParser::parse(Rule::program, src)
+    .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
 
   let Some(program) = pairs.into_iter().next() else {
-    return Err("No program found in input".to_owned());
+    return Err(ErrorStack::new("No program found in input"));
   };
   if program.as_rule() != Rule::program {
-    return Err(format!(
+    return Err(ErrorStack::new(format!(
       "Expected top-level rule. Expected program, found: {:?}",
       program.as_rule()
-    ));
+    )));
   }
 
   let ast = parse_program(program.clone())?;
@@ -791,7 +932,7 @@ pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), S
   Ok(())
 }
 
-pub fn parse_and_eval_program(src: &str) -> Result<EvalCtx, String> {
+pub fn parse_and_eval_program(src: &str) -> Result<EvalCtx, ErrorStack> {
   let ctx = EvalCtx::default();
   parse_and_eval_program_with_ctx(src, &ctx)?;
   Ok(ctx)

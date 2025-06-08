@@ -6,6 +6,7 @@ use mesh::LinkedMesh;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
+use crate::ErrorStack;
 use crate::{ArgRef, EvalCtx, Value};
 
 #[cfg(target_arch = "wasm32")]
@@ -111,13 +112,13 @@ pub(crate) fn eval_mesh_boolean(
   kwargs: &FxHashMap<String, Value>,
   ctx: &EvalCtx,
   op: MeshBooleanOp,
-) -> Result<Value, String> {
+) -> Result<Value, ErrorStack> {
   let mut meshes_iter = match def_ix {
     0 => {
       let a = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
       let b = arg_refs[1].resolve(&args, &kwargs).as_mesh().unwrap();
 
-      let out_mesh = apply_boolean_op(&*a, &*b, op)?;
+      let out_mesh = apply_boolean_op(&*a, &*b, op).map_err(ErrorStack::new)?;
       return Ok(Value::Mesh(Arc::new(out_mesh)));
     }
     1 => {
@@ -130,18 +131,22 @@ pub(crate) fn eval_mesh_boolean(
   let Some(acc_res) = meshes_iter.next() else {
     return Ok(Value::Mesh(Arc::new(LinkedMesh::new(0, 0, None))));
   };
-  let acc = acc_res.map_err(|err| format!("Error evaluating mesh in boolean op: {err}"))?;
-  let acc = acc
-    .as_mesh()
-    .ok_or_else(|| format!("Non-mesh value produced in sequence passed to boolean op: {acc:?}"))?;
+  let acc = acc_res.map_err(|err| err.wrap("Error evaluating mesh in boolean op"))?;
+  let acc = acc.as_mesh().ok_or_else(|| {
+    ErrorStack::new(format!(
+      "Non-mesh value produced in sequence passed to boolean op: {acc:?}"
+    ))
+  })?;
   let mut acc = (*acc).clone();
 
   for res in meshes_iter {
-    let mesh = res.map_err(|err| format!("Error evaluating mesh in boolean op: {err}"))?;
+    let mesh = res.map_err(|err| err.wrap("Error evaluating mesh in boolean op"))?;
     if let Value::Mesh(mesh) = mesh {
-      acc = apply_boolean_op(&acc, &mesh, op)?;
+      acc = apply_boolean_op(&acc, &mesh, op).map_err(ErrorStack::new)?;
     } else {
-      return Err("Mesh boolean operations require a sequence of meshes".to_owned());
+      return Err(ErrorStack::new(
+        "Mesh boolean operations require a sequence of meshes",
+      ));
     }
   }
 
@@ -156,7 +161,7 @@ pub(crate) fn eval_mesh_boolean(
   _kwargs: &FxHashMap<String, Value>,
   _ctx: &EvalCtx,
   _op: MeshBooleanOp,
-) -> Result<Value, String> {
+) -> Result<Value, ErrorStack> {
   // Err("mesh boolean ops are only supported in wasm".to_owned())
   Ok(Value::Mesh(Arc::new(mesh::LinkedMesh::new(0, 0, None))))
 }

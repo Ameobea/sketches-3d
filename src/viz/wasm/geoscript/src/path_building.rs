@@ -1,0 +1,52 @@
+use std::f32::consts::PI;
+
+use mesh::linked_mesh::Vec3;
+
+pub fn build_torus_knot_path(
+  radius: f32,
+  tube_radius: f32,
+  p: usize,
+  q: usize,
+  count: usize,
+) -> impl Iterator<Item = Vec3> + Clone {
+  pub fn sample_torus_knot(p: usize, q: usize, radius: f32, tube_radius: f32, t: f32) -> Vec3 {
+    let t = 2. * PI * t;
+    let p = p as f32;
+    let q = q as f32;
+    let qt = q * t;
+    let pt = p * t;
+    let radius = radius + tube_radius * qt.cos();
+    let x = radius * pt.cos();
+    let y = radius * pt.sin();
+    let z = tube_radius * qt.sin();
+    Vec3::new(x, y, z)
+  }
+
+  (0..=count).map(move |i| {
+    let t = i as f32 / count as f32;
+    sample_torus_knot(p, q, radius, tube_radius, t)
+  })
+}
+
+fn cubic_bezier_3d(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
+  let u = 1. - t;
+  let tt = t * t;
+  let uu = u * u;
+  let uuu = uu * u;
+  let ttt = tt * t;
+
+  uuu * p0 + 3. * uu * t * p1 + 3. * u * tt * p2 + ttt * p3
+}
+
+pub fn cubic_bezier_3d_path(
+  p0: Vec3,
+  p1: Vec3,
+  p2: Vec3,
+  p3: Vec3,
+  count: usize,
+) -> impl Iterator<Item = Vec3> + Clone + 'static {
+  (0..=count).map(move |i| {
+    let t = i as f32 / count as f32;
+    cubic_bezier_3d(p0, p1, p2, p3, t)
+  })
+}

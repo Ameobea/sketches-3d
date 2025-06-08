@@ -97,3 +97,6 @@ build-geoscript-repl:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
   # wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
   cp ./build/geoscript_repl* ../wasmComp
+
+build-geoscript:
+  just build-geoscript-repl

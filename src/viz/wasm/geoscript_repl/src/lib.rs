@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use geoscript::{parse_and_eval_program_with_ctx, EvalCtx};
+use geoscript::{parse_and_eval_program_with_ctx, ErrorStack, EvalCtx};
 use mesh::OwnedIndexedMesh;
 use wasm_bindgen::prelude::*;
 
@@ -26,7 +26,7 @@ fn maybe_init() {
 
 pub struct GeoscriptReplCtx {
   pub geo_ctx: EvalCtx,
-  pub last_result: Result<(), String>,
+  pub last_result: Result<(), ErrorStack>,
   pub output_meshes: Vec<OwnedIndexedMesh>,
 }
 
@@ -91,7 +91,7 @@ pub fn geoscript_repl_get_err(ctx: *mut GeoscriptReplCtx) -> String {
   let ctx = unsafe { &mut *ctx };
   match &ctx.last_result {
     Ok(_) => String::new(),
-    Err(err) => err.clone(),
+    Err(err) => format!("{err}"),
   }
 }
 

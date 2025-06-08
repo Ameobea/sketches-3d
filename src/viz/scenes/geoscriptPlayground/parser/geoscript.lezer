@@ -5,10 +5,10 @@
   mul @left
   add @left
   bitAnd @left
-  bitOr @left
   compare @left
   and @left
   or @left
+  bitOr @left
   assign @right
   range @left
   statement
@@ -21,67 +21,68 @@
 }
 
 statement {
-  ExprStatement { expr ";"? } |
-  DeclarationStatement { Identifier TypeHint? "=" expr ";"? }
+  ExprStatement { Expr ";"? } |
+  DeclarationStatement { Identifier TypeHint? "=" Expr ";"? }
 }
 
 TypeHint { ":" Identifier }
 
-UnaryOp { "-" | "!" }
+UnaryOp { "+" | "-" | "!" }
 
-expr {
-  UnaryExpr { UnaryOp !unary expr } |
+ClosureParamList {
+  Pipe commaSep<Parameter { Identifier TypeHint? }> Pipe
+}
+
+Expr {
+  UnaryExpr { UnaryOp !unary Expr } |
   BinaryExpr |
   FieldAccessExpr |
-  RangeExpr { expr !range (".." | "..=") expr } |
+  RangeExpr { Expr !range (".." | "..=") Expr } |
   CallExpr { Identifier !call "(" commaSep<FunctionArg> ")" } |
   literal |
   Identifier |
-  ArrayExpr { "[" commaSep1<expr>? "]" } |
-  ClosureExpr { "|" ClosureArgs "|" TypeHint? ClosureBody } |
-  ParenthesizedExpr { "(" expr ")" }
+  ArrayExpr { "[" commaSep1<Expr>? "]" } |
+  ClosureExpr { (LogicalOrOp TypeHint? ClosureBody) | (ClosureParamList TypeHint? ClosureBody) } |
+  ParenthesizedExpr { "(" Expr ")" }
 }
 
 FunctionArg {
-  expr | Kwarg { Identifier "=" expr }
+  Expr | Kwarg { Identifier "=" Expr }
 }
-
-closureArg {
-  Identifier TypeHint?
-}
-
-ClosureArgs { commaSep<closureArg> }
 
 BinaryExpr {
-  expr !add ("+" | "-") expr |
-  expr !mul ("*" | "/" | "%") expr |
-  expr !bitAnd "&" expr |
-  expr !bitOr "|" expr |
-  expr !bitOr "->" expr |
-  expr !compare CompareOp expr |
-  expr !and "&&" expr |
-  expr !or "||" expr
+  Expr !add ("+" | "-") Expr |
+  Expr !mul ("*" | "/" | "%") Expr |
+  Expr !bitAnd "&" Expr |
+  Expr !bitOr Pipe Expr |
+  Expr !bitOr "->" Expr |
+  Expr !compare CompareOp Expr |
+  Expr !and LogicalAndOp Expr |
+  Expr !or LogicalOrOp Expr
 }
 
 FieldAccessExpr {
-  expr !fieldAccess "." Identifier
+  Expr !fieldAccess "." Identifier
 }
 
 ClosureBody {
-  expr | ("{" statement* "}" )
+  Expr | ("{" statement* "}" )
 }
 
 literal { Float | Integer | BoolLiteral }
 
-commaSep<expr> { commaSep1<expr>? }
+commaSep<Expr> { commaSep1<Expr>? }
 
-commaSep1<expr> { expr ("," expr?)* }
+commaSep1<Expr> { Expr ("," Expr?)* }
 
 @external tokens literalTokens from "./tokens" { Float }
 
 @tokens {
   whitespace { $[ \t\r\n] }
 
+  Pipe { "|" }
+  LogicalAndOp { "&&" }
+  LogicalOrOp { "||" }
   CompareOp { "<" | ">" | ">=" | "<=" | "==" | "!=" }
 
   BoolLiteral { "true" | "false" }

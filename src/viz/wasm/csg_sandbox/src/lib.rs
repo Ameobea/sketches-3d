@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use geoscript::mesh_boolean::{apply_boolean, decode_manifold_output, MeshBooleanOp};
+use geoscript::mesh_ops::mesh_boolean::{apply_boolean, decode_manifold_output, MeshBooleanOp};
 use mesh::{csg::FaceData, linked_mesh::DisplacementNormalMethod, LinkedMesh, OwnedIndexedMesh};
 
 static mut DID_INIT: bool = false;

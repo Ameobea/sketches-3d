@@ -315,10 +315,13 @@ dependencies = [
  "log",
  "mesh",
  "nalgebra",
+ "noise",
  "pest",
  "pest_derive",
  "phf",
  "point_distribute",
+ "rand 0.8.5",
+ "rand_pcg",
  "tessellation",
  "wasm-bindgen",
 ]

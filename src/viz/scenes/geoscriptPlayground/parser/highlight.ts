@@ -3,7 +3,7 @@ import { styleTags, tags as t } from '@lezer/highlight';
 export const geoscriptHighlighting = styleTags({
   Identifier: t.variableName,
   'CallExpr/Identifier': t.function(t.variableName),
-  'ClosureArgs/Identifier': t.function(t.definition(t.variableName)),
+  'ClosureParamList/Identifier': t.function(t.definition(t.variableName)),
   'TypeHint/Identifier': t.typeName,
   'FieldAccessExpr/Identifier': t.propertyName,
   LineComment: t.lineComment,

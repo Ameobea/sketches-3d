@@ -4,7 +4,7 @@ use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use point_distribute::MeshSurfaceSampler;
 
-use crate::{Callable, EvalCtx, Sequence, Value};
+use crate::{Callable, ErrorStack, EvalCtx, Sequence, Value};
 
 #[derive(Clone, Debug)]
 pub(crate) struct IntRange {
@@ -18,7 +18,7 @@ pub(crate) struct IntRangeIter {
 }
 
 impl Iterator for IntRangeIter {
-  type Item = Result<Value, String>;
+  type Item = Result<Value, ErrorStack>;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.current < self.end {
@@ -32,7 +32,7 @@ impl Iterator for IntRangeIter {
 }
 
 impl IntoIterator for IntRange {
-  type Item = Result<Value, String>;
+  type Item = Result<Value, ErrorStack>;
   type IntoIter = IntRangeIter;
 
   fn into_iter(self) -> Self::IntoIter {
@@ -48,7 +48,10 @@ impl Sequence for IntRange {
     Box::new(self.clone())
   }
 
-  fn consume(self: Box<Self>, _ctx: &EvalCtx) -> Box<dyn Iterator<Item = Result<Value, String>>> {
+  fn consume(
+    self: Box<Self>,
+    _ctx: &EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>>> {
     Box::new(self.into_iter())
   }
 }
@@ -70,7 +73,7 @@ impl Sequence for MapSeq {
   fn consume<'a>(
     self: Box<Self>,
     ctx: &'a EvalCtx,
-  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let inner = self.inner.consume(ctx);
     // TODO: more clones here
     let cb = self.cb;
@@ -78,7 +81,7 @@ impl Sequence for MapSeq {
       match res {
         Ok(v) => ctx
           .invoke_callable(&cb, &[v], Default::default(), &ctx.globals)
-          .map_err(|err| format!("cb passed to map produced an error: {err}",)),
+          .map_err(|err| err.wrap("cb passed to map produced an error")),
         Err(e) => Err(e),
       }
     }))
@@ -102,7 +105,7 @@ impl Sequence for FilterSeq {
   fn consume<'a>(
     self: Box<Self>,
     ctx: &'a EvalCtx,
-  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let inner = self.inner.consume(ctx);
     let cb = self.cb;
 
@@ -112,12 +115,12 @@ impl Sequence for FilterSeq {
           Ok(v) => {
             let flag = ctx
               .invoke_callable(&cb, &[v.clone()], Default::default(), &ctx.globals)
-              .map_err(|err| format!("cb passed to filter produced an error: {err}"))?;
+              .map_err(|err| err.wrap("cb passed to filter produced an error"))?;
             let Some(flag) = flag.as_bool() else {
-              return Err(format!(
+              return Err(ErrorStack::new(format!(
                 "cb passed to filter produced value which could not be interpreted as a bool: \
                  {flag:?}"
-              ));
+              )));
             };
             Ok(if flag { Some(v) } else { None })
           }
@@ -141,7 +144,7 @@ impl Sequence for EagerSeq {
   fn consume<'a>(
     self: Box<Self>,
     _ctx: &'a EvalCtx,
-  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(self.inner.into_iter().map(Ok))
   }
 }
@@ -160,7 +163,7 @@ impl Sequence for PointDistributeSeq {
   fn consume<'a>(
     self: Box<Self>,
     _ctx: &'a EvalCtx,
-  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let mesh = self.mesh;
     let sampler = MeshSurfaceSampler::new(&*mesh);
 
@@ -181,17 +184,17 @@ impl Sequence for PointDistributeSeq {
 
 /// Wrapper over an inner `Iterator` that produces `Value` items
 #[derive(Clone)]
-pub(crate) struct IteratorSeq<T: Iterator<Item = Result<Value, String>> + Clone + 'static> {
+pub(crate) struct IteratorSeq<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> {
   pub inner: T,
 }
 
-impl<T: Iterator<Item = Result<Value, String>> + Clone> Debug for IteratorSeq<T> {
+impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone> Debug for IteratorSeq<T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "IteratorSeq {{ ... }}")
   }
 }
 
-impl<T: Iterator<Item = Result<Value, String>> + Clone + 'static> Sequence for IteratorSeq<T> {
+impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> Sequence for IteratorSeq<T> {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(self.clone())
   }
@@ -199,7 +202,58 @@ impl<T: Iterator<Item = Result<Value, String>> + Clone + 'static> Sequence for I
   fn consume<'a>(
     self: Box<Self>,
     _ctx: &'a EvalCtx,
-  ) -> Box<dyn Iterator<Item = Result<Value, String>> + 'a> {
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(self.inner)
+  }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MeshVertsSeq {
+  pub mesh: Arc<LinkedMesh<()>>,
+}
+
+pub(crate) struct MeshVertsIter {
+  #[allow(dead_code)]
+  mesh: Arc<LinkedMesh<()>>,
+  iter: Box<dyn Iterator<Item = Result<Value, ErrorStack>>>,
+}
+
+impl MeshVertsIter {
+  pub fn new(mesh: Arc<LinkedMesh<()>>) -> Self {
+    // safe because this reference will only live as long as the iterator, and by holding the `Arc`
+    // internally, we can ensure that it's not dropped while the iterator is still in use.
+    let static_mesh: &'static LinkedMesh<()> =
+      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&*mesh) };
+
+    let iter: impl Iterator<Item = _> + 'static = static_mesh
+      .vertices
+      .values()
+      .map(|vtx| Ok(Value::Vec3(vtx.position)));
+
+    Self {
+      mesh,
+      iter: Box::new(iter),
+    }
+  }
+}
+
+impl Iterator for MeshVertsIter {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    self.iter.next()
+  }
+}
+
+impl Sequence for MeshVertsSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(self.clone())
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    _ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    Box::new(MeshVertsIter::new(Arc::clone(&self.mesh)))
   }
 }
