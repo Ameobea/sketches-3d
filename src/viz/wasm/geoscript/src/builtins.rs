@@ -368,6 +368,64 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("value", &[ArgType::Vec3]),
     ]
   ],
+  "pow" => &[
+    &[
+      ("base", &[ArgType::Numeric]),
+      ("exponent", &[ArgType::Numeric]),
+    ],
+    &[
+      ("base", &[ArgType::Vec3]),
+      ("exponent", &[ArgType::Numeric]),
+    ],
+  ],
+  "trunc" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
+  "fract" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
+  "round" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
+  "ceil" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
+  "floor" => &[
+    &[
+      ("value", &[ArgType::Numeric]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
+  "fix_float" => &[
+    &[
+      ("value", &[ArgType::Float]),
+    ],
+    &[
+      ("value", &[ArgType::Vec3]),
+    ],
+  ],
   "rad2deg" => &[
     &[
       ("value", &[ArgType::Numeric]),
@@ -459,7 +517,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
   "compose" => &[],
   "join" => &[
     &[
-      ("strings", &[ArgType::Sequence]),
+      ("meshes", &[ArgType::Sequence]),
     ],
   ],
   "convex_hull" => &[
@@ -575,6 +633,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &
       ("pos", &[ArgType::Vec3]),
     ]
   ],
+  "icosphere" => &[
+    &[
+      ("radius", &[ArgType::Numeric]),
+      ("resolution", &[ArgType::Int]),
+    ]
+  ],
+  "uv_sphere" => &[
+    &[
+      ("radius", &[ArgType::Numeric]),
+      ("resolution", &[ArgType::Int]),
+    ]
+  ],
 };
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
@@ -587,6 +657,7 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "mag" => "len",
   "magnitude" => "len",
   "bezier" => "bezier3d",
+  "sphere" => "icosphere",
 };
 
 enum BoolOp {
@@ -678,6 +749,21 @@ pub(crate) fn eval_builtin_fn(
         width, height, depth,
       ))))
     }
+    "icosphere" => match def_ix {
+      0 => {
+        let radius = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let resolution = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+        if resolution < 0 {
+          return Err(ErrorStack::new("Resolution must be a non-negative integer"));
+        }
+
+        Ok(Value::Mesh(Arc::new(LinkedMesh::new_icosphere(
+          radius,
+          resolution as u32,
+        ))))
+      }
+      _ => unimplemented!(),
+    },
     "translate" => {
       let (translation, mesh) = match def_ix {
         0 => {
@@ -1149,6 +1235,117 @@ pub(crate) fn eval_builtin_fn(
           value.x.tan(),
           value.y.tan(),
           value.z.tan(),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "pow" => match def_ix {
+      0 => {
+        let base = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let exponent = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(base.powf(exponent)))
+      }
+      1 => {
+        let base = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let exponent = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          base.x.powf(exponent),
+          base.y.powf(exponent),
+          base.z.powf(exponent),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "trunc" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.trunc()))
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.trunc(),
+          value.y.trunc(),
+          value.z.trunc(),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "fract" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.fract()))
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.fract(),
+          value.y.fract(),
+          value.z.fract(),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "round" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.round()))
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.round(),
+          value.y.round(),
+          value.z.round(),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "ceil" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.ceil()))
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.ceil(),
+          value.y.ceil(),
+          value.z.ceil(),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "floor" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Float(value.floor()))
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          value.x.floor(),
+          value.y.floor(),
+          value.z.floor(),
+        )))
+      }
+      _ => unimplemented!(),
+    },
+    "fix_float" => match def_ix {
+      0 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        if value.is_normal() {
+          Ok(Value::Float(value))
+        } else {
+          Ok(Value::Float(0.))
+        }
+      }
+      1 => {
+        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          if value.x.is_normal() { value.x } else { 0. },
+          if value.y.is_normal() { value.y } else { 0. },
+          if value.z.is_normal() { value.z } else { 0. },
         )))
       }
       _ => unimplemented!(),

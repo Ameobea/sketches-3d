@@ -2011,6 +2011,113 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       None,
     )
   }
+
+  /// Generates an icosphere mesh with the given `radius` and number of recursive `subdivisions`.
+  pub fn new_icosphere(radius: f32, subdivisions: u32) -> Self {
+    // let t = (1. + 5.0_f32.sqrt()) / 2.;
+    // let mut vertices = vec![
+    //   Vec3::new(-1., t, 0.).normalize(),
+    //   Vec3::new(1., t, 0.).normalize(),
+    //   Vec3::new(-1., -t, 0.).normalize(),
+    //   Vec3::new(1., -t, 0.).normalize(),
+    //   Vec3::new(0., -1., t).normalize(),
+    //   Vec3::new(0., 1., t).normalize(),
+    //   Vec3::new(0., -1., -t).normalize(),
+    //   Vec3::new(0., 1., -t).normalize(),
+    //   Vec3::new(t, 0., -1.).normalize(),
+    //   Vec3::new(t, 0., 1.).normalize(),
+    //   Vec3::new(-t, 0., -1.).normalize(),
+    //   Vec3::new(-t, 0., 1.).normalize(),
+    // ];
+
+    // same as above but pre-computed::
+    let mut vertices = vec![
+      Vec3::new(-0.5257311, 0.8506508, 0.),
+      Vec3::new(0.5257311, 0.8506508, 0.),
+      Vec3::new(-0.5257311, -0.8506508, 0.),
+      Vec3::new(0.5257311, -0.8506508, 0.),
+      Vec3::new(0., -0.5257311, 0.8506508),
+      Vec3::new(0., 0.5257311, 0.8506508),
+      Vec3::new(0., -0.5257311, -0.8506508),
+      Vec3::new(0., 0.5257311, -0.8506508),
+      Vec3::new(0.8506508, 0., -0.5257311),
+      Vec3::new(0.8506508, 0., 0.5257311),
+      Vec3::new(-0.8506508, 0., -0.5257311),
+      Vec3::new(-0.8506508, 0., 0.5257311),
+    ];
+
+    let mut faces = vec![
+      [0, 11, 5],
+      [0, 5, 1],
+      [0, 1, 7],
+      [0, 7, 10],
+      [0, 10, 11],
+      [1, 5, 9],
+      [5, 11, 4],
+      [11, 10, 2],
+      [10, 7, 6],
+      [7, 1, 8],
+      [3, 9, 4],
+      [3, 4, 2],
+      [3, 2, 6],
+      [3, 6, 8],
+      [3, 8, 9],
+      [4, 9, 5],
+      [2, 4, 11],
+      [6, 2, 10],
+      [8, 6, 7],
+      [9, 8, 1],
+    ];
+
+    for _ in 0..subdivisions {
+      let mut new_faces = Vec::with_capacity(faces.len() * 4);
+      let mut midpoint_cache = FxHashMap::<(usize, usize), usize>::default();
+
+      let mut get_midpoint = |i1: usize, i2: usize| {
+        let key = if i1 < i2 { (i1, i2) } else { (i2, i1) };
+        if let Some(&idx) = midpoint_cache.get(&key) {
+          return idx;
+        }
+        let v1 = vertices[i1];
+        let v2 = vertices[i2];
+        let midpoint = ((v1 + v2) * 0.5).normalize();
+        let vtx_ix = vertices.len();
+        vertices.push(midpoint);
+        midpoint_cache.insert(key, vtx_ix);
+        vtx_ix
+      };
+
+      for &[i0, i1, i2] in &faces {
+        let a = get_midpoint(i0, i1);
+        let b = get_midpoint(i1, i2);
+        let c = get_midpoint(i2, i0);
+
+        new_faces.push([i0, a, c]);
+        new_faces.push([i1, b, a]);
+        new_faces.push([i2, c, b]);
+        new_faces.push([a, b, c]);
+      }
+
+      faces = new_faces;
+    }
+
+    for v in &mut vertices {
+      *v *= radius;
+    }
+
+    if std::mem::size_of::<usize>() == std::mem::size_of::<u32>() {
+      let indices: &[u32] =
+        unsafe { std::slice::from_raw_parts(faces.as_ptr() as *const u32, faces.len() * 3) };
+      return LinkedMesh::from_indexed_vertices(&vertices, indices, None, None);
+    }
+
+    let indices: Vec<u32> = faces
+      .into_iter()
+      .flat_map(|[i0, i1, i2]| [i0 as u32, i1 as u32, i2 as u32])
+      .collect();
+
+    LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
+  }
 }
 
 impl<T: Default> From<parry3d::shape::TriMesh> for LinkedMesh<T> {
