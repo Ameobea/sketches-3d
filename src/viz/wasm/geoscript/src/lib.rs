@@ -463,26 +463,29 @@ fn get_args(
 }
 
 #[derive(Default)]
-pub struct RenderedMeshes {
+pub struct AppendOnlyBuffer<T> {
   // Using a mutex here to avoid making the whole `EvalCtx` require `&mut` when evaluating code.
   //
   // This thing is essentially "write-only", and the mutex should become a no-op in Wasm anyway.
-  pub meshes: Mutex<Vec<Arc<LinkedMesh<()>>>>,
+  pub inner: Mutex<Vec<T>>,
 }
 
-impl RenderedMeshes {
-  pub fn push(&self, mesh: Arc<LinkedMesh<()>>) {
-    self.meshes.lock().unwrap().push(mesh);
+impl<T> AppendOnlyBuffer<T> {
+  pub fn push(&self, mesh: T) {
+    self.inner.lock().unwrap().push(mesh);
   }
 
-  pub fn into_inner(self) -> Vec<Arc<LinkedMesh<()>>> {
-    self.meshes.into_inner().unwrap()
+  pub fn into_inner(self) -> Vec<T> {
+    self.inner.into_inner().unwrap()
   }
 
   pub fn len(&self) -> usize {
-    self.meshes.lock().unwrap().len()
+    self.inner.lock().unwrap().len()
   }
 }
+
+type RenderedMeshes = AppendOnlyBuffer<Arc<LinkedMesh<()>>>;
+type RemderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
 #[derive(Default, Debug)]
 pub struct Scope {
@@ -537,6 +540,7 @@ impl Scope {
 pub struct EvalCtx {
   pub globals: Scope,
   pub rendered_meshes: RenderedMeshes,
+  pub rendered_paths: RemderedPaths,
   pub log_fn: fn(&str),
   #[cfg(target_arch = "wasm32")]
   rng: UnsafeCell<Pcg32>,
@@ -547,11 +551,18 @@ impl Default for EvalCtx {
     EvalCtx {
       globals: Scope::default_globals(),
       rendered_meshes: RenderedMeshes::default(),
+      rendered_paths: RemderedPaths::default(),
       log_fn: |msg| println!("{msg}"),
       #[cfg(target_arch = "wasm32")]
       rng: UnsafeCell::new(Pcg32::new(7718587666045340534, 17289744314186392832)),
     }
   }
+}
+
+pub enum ControlFlow<T> {
+  Continue(T),
+  Break(T),
+  Return(T),
 }
 
 impl EvalCtx {
@@ -570,32 +581,52 @@ impl EvalCtx {
     unimplemented!()
   }
 
-  pub fn eval_expr(&self, expr: &Expr, scope: &Scope) -> Result<Value, ErrorStack> {
+  pub fn eval_expr(&self, expr: &Expr, scope: &Scope) -> Result<ControlFlow<Value>, ErrorStack> {
     match expr {
       Expr::Call(call) => {
-        let args = call
-          .args
-          .iter()
-          .map(|a| self.eval_expr(a, scope))
-          .collect::<Result<Vec<_>, _>>()?;
-        let kwargs = call
-          .kwargs
-          .iter()
-          .map(|(k, v)| self.eval_expr(v, scope).map(|val| (k.clone(), val)))
-          .collect::<Result<FxHashMap<_, _>, _>>()?;
+        let mut args = Vec::with_capacity(call.args.len());
+        for arg in &call.args {
+          let val = match self.eval_expr(arg, scope)? {
+            ControlFlow::Continue(val) => val,
+            early_exit => return Ok(early_exit),
+          };
+          args.push(val);
+        }
+
+        let mut kwargs = FxHashMap::default();
+        for (k, v) in &call.kwargs {
+          let val = match self.eval_expr(v, scope)? {
+            ControlFlow::Continue(val) => val,
+            early_exit => return Ok(early_exit),
+          };
+          kwargs.insert(k.clone(), val);
+        }
+
         self
-          .eval_fn_call(&call.name, &args, kwargs, scope, false)
+          .eval_fn_call(&call.name, &args, &kwargs, scope, false)
+          .map(ControlFlow::Continue)
           .map_err(|err| err.wrap(format!("Error evaluating function call `{}`", call.name)))
       }
       Expr::BinOp { op, lhs, rhs } => {
-        let lhs = self.eval_expr(lhs, scope)?;
-        let rhs = self.eval_expr(rhs, scope)?;
+        let lhs = match self.eval_expr(lhs, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        let rhs = match self.eval_expr(rhs, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
         op.apply(self, lhs, rhs)
+          .map(ControlFlow::Continue)
           .map_err(|err| err.wrap(format!("Error applying binary operator `{op:?}`")))
       }
       Expr::PrefixOp { op, expr } => {
-        let val = self.eval_expr(expr, scope)?;
+        let val = match self.eval_expr(expr, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
         op.apply(self, val)
+          .map(ControlFlow::Continue)
           .map_err(|err| err.wrap(format!("Error applying prefix operator `{op:?}`")))
       }
       Expr::Range {
@@ -603,64 +634,151 @@ impl EvalCtx {
         end,
         inclusive,
       } => {
-        let start = self.eval_expr(start, scope)?;
+        let start = match self.eval_expr(start, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
         let Value::Int(start) = start else {
           return Err(ErrorStack::new(format!(
             "Range start must be an integer, found: {start:?}"
           )));
         };
-        let end = self.eval_expr(end, scope)?;
+        let end = match self.eval_expr(end, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
         let Value::Int(end) = end else {
           return Err(ErrorStack::new(format!(
             "Range end must be an integer, found: {end:?}"
           )));
         };
 
-        Ok(if *inclusive {
+        Ok(ControlFlow::Continue(if *inclusive {
           Value::Sequence(Box::new(IntRange {
             start,
             end: end + 1,
           }))
         } else {
           Value::Sequence(Box::new(IntRange { start, end }))
-        })
+        }))
       }
       Expr::Ident(name) => {
         if let Some(local) = scope.get(name) {
-          return Ok(local);
+          return Ok(ControlFlow::Continue(local));
         }
 
         // look it up as a builtin fn
         if FN_SIGNATURE_DEFS.contains_key(&name) {
-          return Ok(Value::Callable(Callable::Builtin(name.to_owned())));
+          return Ok(ControlFlow::Continue(Value::Callable(Callable::Builtin(
+            name.to_owned(),
+          ))));
         }
 
         Err(ErrorStack::new(format!("Variable not found: {name}")))
       }
-      Expr::Int(i) => Ok(Value::Int(*i)),
-      Expr::Float(f) => Ok(Value::Float(*f)),
-      Expr::Bool(b) => Ok(Value::Bool(*b)),
+      Expr::Int(i) => Ok(ControlFlow::Continue(Value::Int(*i))),
+      Expr::Float(f) => Ok(ControlFlow::Continue(Value::Float(*f))),
+      Expr::Bool(b) => Ok(ControlFlow::Continue(Value::Bool(*b))),
       Expr::Array(elems) => {
-        let elems = elems
-          .iter()
-          .map(|expr| self.eval_expr(expr, scope))
-          .collect::<Result<Vec<_>, _>>()?;
-        Ok(Value::Sequence(Box::new(EagerSeq { inner: elems })))
+        let mut evaluated = Vec::with_capacity(elems.len());
+        for elem in elems {
+          let val = match self.eval_expr(elem, scope)? {
+            ControlFlow::Continue(val) => val,
+            early_exit => return Ok(early_exit),
+          };
+          evaluated.push(val);
+        }
+        Ok(ControlFlow::Continue(Value::Sequence(Box::new(EagerSeq {
+          inner: evaluated,
+        }))))
       }
-      Expr::Nil => Ok(Value::Nil),
+      Expr::Nil => Ok(ControlFlow::Continue(Value::Nil)),
       Expr::Closure {
         params,
         body,
         return_type_hint,
-      } => Ok(Value::Callable(Callable::Closure(Closure {
-        params: params.clone(),
-        body: body.0.clone(),
-        // cloning the scope here makes the closure function like a rust `move` closure
-        // where all the values are cloned before being moved into the closure.
-        captured_scope: Arc::new(scope.clone()),
-        return_type_hint: return_type_hint.clone(),
-      }))),
-      Expr::FieldAccess { obj, field } => self.eval_field_access(obj, field, scope),
+      } => Ok(ControlFlow::Continue(Value::Callable(Callable::Closure(
+        Closure {
+          params: params.clone(),
+          body: body.0.clone(),
+          // cloning the scope here makes the closure function like a rust `move` closure
+          // where all the values are cloned before being moved into the closure.
+          captured_scope: Arc::new(scope.clone()),
+          return_type_hint: return_type_hint.clone(),
+        },
+      )))),
+      Expr::FieldAccess { lhs: obj, field } => {
+        let lhs = match self.eval_expr(obj, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        self
+          .eval_field_access(lhs, field)
+          .map(ControlFlow::Continue)
+      }
+      Expr::Conditional {
+        cond,
+        then,
+        else_if_exprs,
+        else_expr,
+      } => {
+        let cond = match self.eval_expr(cond, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        let Value::Bool(cond) = cond else {
+          return Err(ErrorStack::new(format!(
+            "Condition passed to if statement must be a boolean; found: {cond:?}"
+          )));
+        };
+        if cond {
+          return self.eval_expr(then, scope);
+        }
+        for (else_if_cond, else_if_body) in else_if_exprs {
+          let else_if_cond = match self.eval_expr(else_if_cond, scope)? {
+            ControlFlow::Continue(val) => val,
+            early_exit => return Ok(early_exit),
+          };
+          let Value::Bool(else_if_cond) = else_if_cond else {
+            return Err(ErrorStack::new(format!(
+              "Condition passed to else-if statement must be a boolean; found: {else_if_cond:?}"
+            )));
+          };
+          if else_if_cond {
+            return self.eval_expr(else_if_body, scope);
+          }
+        }
+        if let Some(else_expr) = else_expr {
+          return self.eval_expr(else_expr, scope);
+        }
+
+        Ok(ControlFlow::Continue(Value::Nil))
+      }
+      Expr::Block { statements } => {
+        // TODO: ideally, we'd avoid cloning the scope here and use the scope nesting functionality
+        // like closures.  However, adding in references to scopes creates incredibly lifetime
+        // headaches across the whole codebase very quickly and just isn't worth it rn
+        let block_scope = scope.clone();
+        let mut last_value = Value::Nil;
+
+        for statement in statements {
+          last_value = match self.eval_statement(statement, &block_scope)? {
+            ControlFlow::Continue(val) => val,
+            ControlFlow::Break(val) => {
+              last_value = val;
+              break;
+            }
+            ControlFlow::Return(val) => {
+              return Ok(ControlFlow::Return(val));
+            }
+          };
+          if let Statement::Assignment { .. } = statement {
+            last_value = Value::Nil;
+          }
+        }
+
+        Ok(ControlFlow::Continue(last_value))
+      }
     }
   }
 
@@ -685,14 +803,48 @@ impl EvalCtx {
     Ok(Value::Nil)
   }
 
-  fn eval_statement(&self, statement: &Statement, scope: &Scope) -> Result<Value, ErrorStack> {
+  fn eval_statement(
+    &self,
+    statement: &Statement,
+    scope: &Scope,
+  ) -> Result<ControlFlow<Value>, ErrorStack> {
     match statement {
       Statement::Expr(expr) => self.eval_expr(expr, scope),
       Statement::Assignment {
         name,
         expr,
         type_hint,
-      } => self.eval_assignment(&name, self.eval_expr(expr, scope)?, scope, *type_hint),
+      } => {
+        let val = match self.eval_expr(expr, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        self
+          .eval_assignment(&name, val, scope, *type_hint)
+          .map(ControlFlow::Continue)
+      }
+      Statement::Return { value } => {
+        let value = if let Some(value) = value {
+          match self.eval_expr(value, scope)? {
+            ControlFlow::Continue(val) => val,
+            early_exit => return Ok(early_exit),
+          }
+        } else {
+          Value::Nil
+        };
+        Ok(ControlFlow::Return(value))
+      }
+      Statement::Break { value } => {
+        let value = if let Some(value) = value {
+          match self.eval_expr(value, scope)? {
+            ControlFlow::Continue(val) => val,
+            early_exit => return Ok(early_exit),
+          }
+        } else {
+          Value::Nil
+        };
+        Ok(ControlFlow::Break(value))
+      }
     }
   }
 
@@ -706,7 +858,7 @@ impl EvalCtx {
     for (i, res) in iter.enumerate() {
       let value = res.map_err(|err| err.wrap(format!("Error seq value ix={i} in reduce")))?;
       acc = self
-        .invoke_callable(callable, &[acc, value], Default::default(), &self.globals)
+        .invoke_callable(callable, &[acc, value], &Default::default(), &self.globals)
         .map_err(|err| err.wrap("Error invoking callable in reduce".to_owned()))?;
     }
 
@@ -733,7 +885,7 @@ impl EvalCtx {
     &self,
     mut name: &str,
     args: &[Value],
-    kwargs: FxHashMap<String, Value>,
+    kwargs: &FxHashMap<String, Value>,
     scope: &Scope,
     builtins_only: bool,
   ) -> Result<Value, ErrorStack> {
@@ -770,7 +922,7 @@ impl EvalCtx {
             PartiallyAppliedFn {
               inner: Box::new(Callable::Builtin(name.to_owned())),
               args: args.to_owned(),
-              kwargs,
+              kwargs: kwargs.clone(),
             },
           )))
         }
@@ -786,7 +938,7 @@ impl EvalCtx {
     &self,
     callable: &Callable,
     args: &[Value],
-    kwargs: FxHashMap<String, Value>,
+    kwargs: &FxHashMap<String, Value>,
     scope: &Scope,
   ) -> Result<Value, ErrorStack> {
     match callable {
@@ -797,10 +949,10 @@ impl EvalCtx {
 
         let mut combined_kwargs = paf.kwargs.clone();
         for (key, value) in kwargs {
-          combined_kwargs.insert(key, value);
+          combined_kwargs.insert(key.clone(), value.clone());
         }
 
-        self.invoke_callable(&paf.inner, &combined_args, combined_kwargs, scope)
+        self.invoke_callable(&paf.inner, &combined_args, &combined_kwargs, scope)
       }
       Callable::Closure(closure) => {
         // TODO: should do some basic analysis to see which variables are actually needed and avoid
@@ -835,9 +987,18 @@ impl EvalCtx {
         let mut out: Value = Value::Nil;
         for stmt in &closure.body {
           match stmt {
-            Statement::Expr(expr) => {
-              out = self.eval_expr(expr, &closure_scope)?;
-            }
+            Statement::Expr(expr) => match self.eval_expr(expr, &closure_scope)? {
+              ControlFlow::Continue(val) => out = val,
+              ControlFlow::Return(val) => {
+                out = val;
+                break;
+              }
+              ControlFlow::Break(_) => {
+                return Err(ErrorStack::new(
+                  "`break` isn't valid at the top level of a closure",
+                ))
+              }
+            },
             Statement::Assignment {
               name,
               expr,
@@ -845,10 +1006,45 @@ impl EvalCtx {
             } => {
               self.eval_assignment(
                 name,
-                self.eval_expr(expr, &closure_scope)?,
+                match self.eval_expr(expr, &closure_scope)? {
+                  ControlFlow::Continue(val) => val,
+                  ControlFlow::Return(val) => {
+                    out = val;
+                    break;
+                  }
+                  ControlFlow::Break(_) => {
+                    return Err(ErrorStack::new(
+                      "`break` isn't valid at the top level of a closure",
+                    ))
+                  }
+                },
                 &closure_scope,
                 *type_hint,
               )?;
+            }
+            Statement::Return { value } => {
+              out = if let Some(value) = value {
+                match self.eval_expr(value, &closure_scope)? {
+                  ControlFlow::Continue(val) => val,
+                  ControlFlow::Return(val) => {
+                    out = val;
+                    break;
+                  }
+                  ControlFlow::Break(_) => {
+                    return Err(ErrorStack::new(
+                      "`break` isn't valid at the top level of a closure",
+                    ))
+                  }
+                }
+              } else {
+                Value::Nil
+              };
+              return Ok(out);
+            }
+            Statement::Break { .. } => {
+              return Err(ErrorStack::new(
+                "`break` isn't valid at the top level of a closure",
+              ));
             }
           }
         }
@@ -862,9 +1058,10 @@ impl EvalCtx {
       Callable::ComposedFn(ComposedFn { inner }) => {
         let acc = args;
         let mut iter = inner.iter();
-        let mut acc = self.invoke_callable(iter.next().unwrap(), acc, Default::default(), scope)?;
+        let mut acc =
+          self.invoke_callable(iter.next().unwrap(), acc, &Default::default(), scope)?;
         for callable in iter {
-          acc = self.invoke_callable(callable, &[acc], Default::default(), scope)?;
+          acc = self.invoke_callable(callable, &[acc], &Default::default(), scope)?;
         }
 
         Ok(acc)
@@ -872,9 +1069,8 @@ impl EvalCtx {
     }
   }
 
-  fn eval_field_access(&self, obj: &Expr, field: &str, scope: &Scope) -> Result<Value, ErrorStack> {
-    let obj_value = self.eval_expr(obj, scope)?;
-    match obj_value {
+  fn eval_field_access(&self, lhs: Value, field: &str) -> Result<Value, ErrorStack> {
+    match lhs {
       Value::Vec3(v3) => match field.len() {
         1 => match field {
           "x" => Ok(Value::Float(v3.x)),
@@ -903,7 +1099,7 @@ impl EvalCtx {
         ))),
       },
       _ => Err(ErrorStack::new(format!(
-        "field access not supported for type: {obj_value:?}"
+        "field access not supported for type: {lhs:?}"
       ))),
     }
   }
@@ -926,7 +1122,19 @@ pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), E
   let ast = parse_program(program.clone())?;
 
   for statement in ast.statements {
-    let _val = ctx.eval_statement(&statement, &ctx.globals)?;
+    let _val = match ctx.eval_statement(&statement, &ctx.globals)? {
+      ControlFlow::Continue(val) => val,
+      ControlFlow::Break(_) => {
+        return Err(ErrorStack::new(
+          "`break` outside of a function is not allowed",
+        ))
+      }
+      ControlFlow::Return(_) => {
+        return Err(ErrorStack::new(format!(
+          "`return` outside of a function is not allowed; found"
+        )));
+      }
+    };
   }
 
   Ok(())
@@ -1442,4 +1650,112 @@ e = !a
     panic!("Expected result to be a Bool");
   };
   assert!(!e);
+}
+
+#[test]
+fn test_take_while_skip() {
+  let src = r#"
+vals = [-100,-400,1,2,3,4,5,1];
+out = vals | skip(2) | take_while(|x| x < 4) | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out = ctx.globals.get("out").unwrap();
+  let out = out.as_int().expect("Expected result to be an Int");
+  assert_eq!(out, 1 + 2 + 3);
+}
+
+#[test]
+fn test_negative_ints() {
+  let src = r#"
+a = -1
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let a = ctx.globals.get("a").unwrap();
+  let a = a.as_int().expect("Expected result to be an Int");
+  assert_eq!(a, -1);
+}
+
+#[test]
+fn test_if_elseif_else_return() {
+  let src = r#"
+out = [1,2,3,4] -> |x| {
+  if x == 1 || x == 4 {
+    return 0;
+  } else if x == 2 {
+    return 100
+  } else {
+    return 200;
+  }
+  return -100
+} | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out = ctx.globals.get("out").unwrap();
+  let out = out
+    .as_int()
+    .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
+  assert_eq!(out, 0 + 100 + 200);
+}
+
+#[test]
+fn test_funny_return() {
+  let src = r#"
+fn = || {
+  x = 100
+  return {
+    x = 200
+    return 2
+    { 1 }
+  }
+}
+out = fn()
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out = ctx.globals.get("out").unwrap();
+  let out = out
+    .as_int()
+    .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
+  assert_eq!(out, 2);
+}
+
+#[test]
+fn test_invalid_return_outside_fn() {
+  let src = r#"
+a = if { return true} {1} else {2}
+"#;
+
+  assert!(parse_and_eval_program(src).is_err());
+}
+
+#[test]
+fn test_break_block() {
+  let src = r#"
+fn = |x| {
+  out = {
+    if x == 0 {
+      break 100
+      4 // never reached
+    } else {
+      x
+    }
+  }
+  out + 1
+}
+out = [0, 1, 2] -> fn | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out = ctx.globals.get("out").unwrap();
+  let out = out
+    .as_int()
+    .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
+  assert_eq!(out, (100 + 1) + (1 + 1) + (2 + 1));
 }

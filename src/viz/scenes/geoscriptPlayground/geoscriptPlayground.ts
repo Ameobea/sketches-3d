@@ -8,6 +8,7 @@ import { initManifoldWasm } from 'src/viz/wasmComp/manifold';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi, { type ReplCtx } from './ReplUI.svelte';
+import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 
 const locations = {
   spawn: {
@@ -16,15 +17,16 @@ const locations = {
   },
 };
 
-const initRepl = (
+const initRepl = async (
   viz: Viz,
   repl: typeof import('src/viz/wasmComp/geoscript_repl'),
-  setReplCtx: (ctx: ReplCtx) => void
+  setReplCtx: (ctx: ReplCtx) => void,
+  matPromise: Promise<THREE.Material>
 ) => {
   const ctxPtr = repl.geoscript_repl_init();
-  const ui = mount(ReplUi, {
+  const _ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
-    props: { viz, ctxPtr, repl, setReplCtx },
+    props: { viz, ctxPtr, repl, setReplCtx, baseMat: await matPromise },
   });
 };
 
@@ -33,6 +35,13 @@ export const processLoadedScene = async (
   _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
+  const loader = new THREE.ImageBitmapLoader();
+  const matPromise = buildGrayFossilRockMaterial(
+    loader,
+    { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc, mapDisableDistance: null },
+    {},
+    { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
+  );
   const manifoldInitPromise = initManifoldWasm();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
@@ -81,7 +90,7 @@ export const processLoadedScene = async (
         n8aoPass.configuration.intensity = 2;
         n8aoPass.configuration.aoRadius = 5;
         // \/ this breaks rendering and makes the background black if enabled
-        // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Medium;
+        n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Medium;
         n8aoPass.setQualityMode(
           {
             [GraphicsQuality.Low]: 'Performance',
@@ -112,9 +121,14 @@ export const processLoadedScene = async (
   updateCanvasSize();
 
   let ctx: ReplCtx | null = null;
-  initRepl(viz, repl, (newCtx: ReplCtx) => {
-    ctx = newCtx;
-  });
+  initRepl(
+    viz,
+    repl,
+    (newCtx: ReplCtx) => {
+      ctx = newCtx;
+    },
+    matPromise
+  );
 
   return {
     locations,
@@ -125,7 +139,7 @@ export const processLoadedScene = async (
       target: new THREE.Vector3(0, 0, 0),
     },
     customControlsEntries: [
-      // { key: '.', action: () => ctx?.centerView(), label: 'center view' },
+      { key: '.', action: () => ctx?.centerView(), label: 'center view' },
       { key: 'w', action: () => ctx?.toggleWireframe(), label: 'toggle wireframe' },
     ],
   };

@@ -114,16 +114,10 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
       distribution: Vec::new(),
     };
 
-    let total_faces = samp.mesh.face_count();
-    let mut face_weights = Vec::with_capacity(total_faces);
-
+    let mut cumulative_total = 0.;
     for tri in samp.mesh.iter_faces() {
-      face_weights.push(tri.area());
-    }
-
-    let mut cumulative_total = 0.0;
-    for i in 0..total_faces {
-      cumulative_total += face_weights[i];
+      let area = tri.area();
+      cumulative_total += area;
       samp.distribution.push(cumulative_total);
     }
 

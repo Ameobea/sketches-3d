@@ -18,15 +18,17 @@ obj = box(5, 13, 15)
 
 nicks = ball
   | point_distribute(count=40)
-  -> (|p| {
+  -> |p| {
         box(randf(1.2, 2.5), randf(1.2, 9.5), randf(1.2, 2.5))
           | rot(randf(), randf(), randf())
           | trans(p)
           | tess(target_edge_length=0.2)
           | warp(|v, norm| v + norm * (fbm(v*0.6) * 0.5 + 0.5))
-      })
-  | join
+     }
+  | join;
 
 (ball - nicks - obj)
+  | connected_components
+  | first
   | simplify(tolerance=0.05)
   | render

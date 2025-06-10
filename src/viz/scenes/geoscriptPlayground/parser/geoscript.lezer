@@ -11,6 +11,8 @@
   bitOr @left
   assign @right
   range @left
+  return @left
+  cond
   statement
 }
 
@@ -21,6 +23,7 @@
 }
 
 statement {
+  ReturnStatement { "return" !return Expr? ";"? } |
   ExprStatement { Expr ";"? } |
   DeclarationStatement { Identifier TypeHint? "=" Expr ";"? }
 }
@@ -42,9 +45,15 @@ Expr {
   literal |
   Identifier |
   ArrayExpr { "[" commaSep1<Expr>? "]" } |
-  ClosureExpr { (LogicalOrOp TypeHint? ClosureBody) | (ClosureParamList TypeHint? ClosureBody) } |
-  ParenthesizedExpr { "(" Expr ")" }
+  ClosureExpr { (LogicalOrOp TypeHint? Expr) | (ClosureParamList TypeHint? Expr) } |
+  ParenthesizedExpr { "(" Expr ")" } |
+  BlockExpr |
+  IfExpr { "if" !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
 }
+
+BlockExpr { "{" statement* "}" }
+ElseIfExpr { "else if" !cond BlockExpr }
+ElseExpr { "else" !cond BlockExpr }
 
 FunctionArg {
   Expr | Kwarg { Identifier "=" Expr }
@@ -63,10 +72,6 @@ BinaryExpr {
 
 FieldAccessExpr {
   Expr !fieldAccess "." Identifier
-}
-
-ClosureBody {
-  Expr | ("{" statement* "}" )
 }
 
 literal { Float | Integer | BoolLiteral }
@@ -94,7 +99,7 @@ commaSep1<Expr> { Expr ("," Expr?)* }
 
   Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
 
-  @precedence { BoolLiteral, Identifier }
+  @precedence { "return", "if", "else if", "else", BoolLiteral, Identifier }
 
   "[" "]" "{" "}" "(" ")"
   ":" ","

@@ -80,7 +80,7 @@ impl Sequence for MapSeq {
     Box::new(inner.map(move |res| {
       match res {
         Ok(v) => ctx
-          .invoke_callable(&cb, &[v], Default::default(), &ctx.globals)
+          .invoke_callable(&cb, &[v], &Default::default(), &ctx.globals)
           .map_err(|err| err.wrap("cb passed to map produced an error")),
         Err(e) => Err(e),
       }
@@ -111,10 +111,16 @@ impl Sequence for FilterSeq {
 
     Box::new(
       inner
-        .map(move |res| match res {
+        .enumerate()
+        .map(move |(i, res)| match res {
           Ok(v) => {
             let flag = ctx
-              .invoke_callable(&cb, &[v.clone()], Default::default(), &ctx.globals)
+              .invoke_callable(
+                &cb,
+                &[v.clone(), Value::Int(i as i64)],
+                &Default::default(),
+                &ctx.globals,
+              )
               .map_err(|err| err.wrap("cb passed to filter produced an error"))?;
             let Some(flag) = flag.as_bool() else {
               return Err(ErrorStack::new(format!(
@@ -155,6 +161,38 @@ pub(crate) struct PointDistributeSeq {
   pub point_count: usize,
 }
 
+pub(crate) struct PointDistributeIter {
+  #[allow(dead_code)]
+  mesh: Arc<LinkedMesh<()>>,
+  sampler: MeshSurfaceSampler<'static>,
+}
+
+impl PointDistributeIter {
+  pub fn new(mesh: Arc<LinkedMesh<()>>) -> Self {
+    // safe because this reference will only live as long as the iterator, and by holding the `Arc`
+    // internally, we can ensure that it's not dropped while the iterator is still in use.
+    let static_mesh: &'static LinkedMesh<()> =
+      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&*mesh) };
+
+    let sampler = MeshSurfaceSampler::new(static_mesh);
+
+    Self { mesh, sampler }
+  }
+}
+
+impl Iterator for PointDistributeIter {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    match self.sampler.sample() {
+      (pos, _normal) => {
+        let value = Value::Vec3(Vec3::new(pos.x, pos.y, pos.z));
+        Some(Ok(value))
+      }
+    }
+  }
+}
+
 impl Sequence for PointDistributeSeq {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(self.clone())
@@ -165,20 +203,8 @@ impl Sequence for PointDistributeSeq {
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let mesh = self.mesh;
-    let sampler = MeshSurfaceSampler::new(&*mesh);
 
-    // TODO: not doing this the proper lazy way to avoid self-referential struct headaches
-    Box::new(
-      (0..self.point_count)
-        .map(move |_| {
-          // TODO: If we ever need normals, we'll have to use a composite data type for the sequence
-          let (pos, _normal) = sampler.sample();
-          let value = Value::Vec3(Vec3::new(pos.x, pos.y, pos.z));
-          Ok(value)
-        })
-        .collect::<Vec<_>>()
-        .into_iter(),
-    )
+    Box::new(PointDistributeIter::new(mesh).take(self.point_count))
   }
 }
 
@@ -255,5 +281,143 @@ impl Sequence for MeshVertsSeq {
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(MeshVertsIter::new(Arc::clone(&self.mesh)))
+  }
+}
+
+pub(crate) struct TakeSeq {
+  pub inner: Box<dyn Sequence>,
+  pub count: usize,
+}
+
+impl Sequence for TakeSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(Self {
+      inner: self.inner.clone_box(),
+      count: self.count,
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    let inner = self.inner.consume(ctx);
+    Box::new(inner.take(self.count))
+  }
+}
+
+impl Debug for TakeSeq {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "TakeSeq {{ count: {}, inner: {:?} }}",
+      self.count, self.inner
+    )
+  }
+}
+
+pub(crate) struct SkipSeq {
+  pub inner: Box<dyn Sequence>,
+  pub count: usize,
+}
+
+impl Sequence for SkipSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(Self {
+      inner: self.inner.clone_box(),
+      count: self.count,
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    let inner = self.inner.consume(ctx);
+    Box::new(inner.skip(self.count))
+  }
+}
+
+impl Debug for SkipSeq {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "SkipSeq {{ count: {}, inner: {:?} }}",
+      self.count, self.inner
+    )
+  }
+}
+
+pub(crate) struct TakeWhileSeq {
+  pub inner: Box<dyn Sequence>,
+  pub cb: Callable,
+}
+
+pub(crate) struct TakeWhileIter<'a> {
+  inner: Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>,
+  cb: Callable,
+  ctx: &'a EvalCtx,
+}
+
+impl Iterator for TakeWhileIter<'_> {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    let Some(res) = self.inner.next() else {
+      return None;
+    };
+    let Ok(val) = res else {
+      return Some(res);
+    };
+
+    match self.ctx.invoke_callable(
+      &self.cb,
+      &[val.clone()],
+      &Default::default(),
+      &self.ctx.globals,
+    ) {
+      Ok(Value::Bool(flag)) => {
+        if flag {
+          Some(Ok(val))
+        } else {
+          None
+        }
+      }
+      Ok(other) => Some(Err(ErrorStack::new(format!(
+        "cb passed to take_while produced value which could not be interpreted as a bool; found: \
+         {other:?}"
+      )))),
+      Err(err) => Some(Err(err.wrap("cb passed to `take_while` produced an error"))),
+    }
+  }
+}
+
+impl Sequence for TakeWhileSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(Self {
+      inner: self.inner.clone_box(),
+      cb: self.cb.clone(),
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    Box::new(TakeWhileIter {
+      inner: self.inner.consume(ctx),
+      cb: self.cb,
+      ctx,
+    })
+  }
+}
+
+impl Debug for TakeWhileSeq {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "TakeWhileSeq {{ inner: {:?}, cb: {:?} }}",
+      self.inner, self.cb
+    )
   }
 }

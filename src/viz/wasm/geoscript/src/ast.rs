@@ -16,6 +16,7 @@ pub enum TypeName {
   Int,
   Float,
   Num,
+  Vec3,
   Bool,
   String,
   Seq,
@@ -32,6 +33,7 @@ impl FromStr for TypeName {
       "int" => Ok(TypeName::Int),
       "float" => Ok(TypeName::Float),
       "num" => Ok(TypeName::Num),
+      "vec3" => Ok(TypeName::Vec3),
       "bool" => Ok(TypeName::Bool),
       "string" => Ok(TypeName::String),
       "seq" => Ok(TypeName::Seq),
@@ -49,6 +51,7 @@ impl TypeName {
       (TypeName::Int, Value::Int(_)) => Ok(()),
       (TypeName::Float, Value::Float(_)) => Ok(()),
       (TypeName::Num, Value::Int(_) | Value::Float(_)) => Ok(()),
+      (TypeName::Vec3, Value::Vec3(_)) => Ok(()),
       (TypeName::Bool, Value::Bool(_)) => Ok(()),
       (TypeName::Seq, Value::Sequence(_)) => Ok(()),
       (TypeName::Callable, Value::Callable(_)) => Ok(()),
@@ -68,6 +71,12 @@ pub enum Statement {
     type_hint: Option<TypeName>,
   },
   Expr(Expr),
+  Return {
+    value: Option<Expr>,
+  },
+  Break {
+    value: Option<Expr>,
+  },
 }
 
 #[derive(Clone)]
@@ -93,7 +102,7 @@ pub enum Expr {
     inclusive: bool,
   },
   FieldAccess {
-    obj: Box<Expr>,
+    lhs: Box<Expr>,
     field: String,
   },
   Call(FunctionCall),
@@ -108,6 +117,16 @@ pub enum Expr {
   Bool(bool),
   Array(Vec<Expr>),
   Nil,
+  Conditional {
+    cond: Box<Expr>,
+    then: Box<Expr>,
+    /// (cond, expr)
+    else_if_exprs: Vec<(Expr, Expr)>,
+    else_expr: Option<Box<Expr>>,
+  },
+  Block {
+    statements: Vec<Statement>,
+  },
 }
 
 #[derive(Clone)]
@@ -166,30 +185,30 @@ fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, ErrorS
 impl BinOp {
   pub fn apply(&self, ctx: &EvalCtx, lhs: Value, rhs: Value) -> Result<Value, ErrorStack> {
     match self {
-      BinOp::Add => ctx.eval_fn_call("add", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Sub => ctx.eval_fn_call("sub", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Mul => ctx.eval_fn_call("mul", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Div => ctx.eval_fn_call("div", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Mod => ctx.eval_fn_call("mod", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Gt => ctx.eval_fn_call("gt", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Lt => ctx.eval_fn_call("lt", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Gte => ctx.eval_fn_call("gte", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Lte => ctx.eval_fn_call("lte", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Eq => ctx.eval_fn_call("eq", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Neq => ctx.eval_fn_call("neq", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::And => ctx.eval_fn_call("and", &[lhs, rhs], Default::default(), &ctx.globals, true),
-      BinOp::Or => ctx.eval_fn_call("or", &[lhs, rhs], Default::default(), &ctx.globals, true),
+      BinOp::Add => ctx.eval_fn_call("add", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Sub => ctx.eval_fn_call("sub", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Mul => ctx.eval_fn_call("mul", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Div => ctx.eval_fn_call("div", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Mod => ctx.eval_fn_call("mod", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Gt => ctx.eval_fn_call("gt", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Lt => ctx.eval_fn_call("lt", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Gte => ctx.eval_fn_call("gte", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Lte => ctx.eval_fn_call("lte", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Eq => ctx.eval_fn_call("eq", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Neq => ctx.eval_fn_call("neq", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::And => ctx.eval_fn_call("and", &[lhs, rhs], &Default::default(), &ctx.globals, true),
+      BinOp::Or => ctx.eval_fn_call("or", &[lhs, rhs], &Default::default(), &ctx.globals, true),
       BinOp::BitAnd => ctx.eval_fn_call(
         "bit_and",
         &[lhs, rhs],
-        Default::default(),
+        &Default::default(),
         &ctx.globals,
         true,
       ),
       BinOp::BitOr => ctx.eval_fn_call(
         "bit_or",
         &[lhs, rhs],
-        Default::default(),
+        &Default::default(),
         &ctx.globals,
         true,
       ),
@@ -199,7 +218,7 @@ impl BinOp {
         // eval as a pipeline operator if the rhs is a callable
         if let Some(callable) = rhs.as_callable() {
           return ctx
-            .invoke_callable(callable, &[lhs], Default::default(), &ctx.globals)
+            .invoke_callable(callable, &[lhs], &Default::default(), &ctx.globals)
             .map_err(|err| err.wrap("Error invoking callable in pipeline".to_owned()));
         }
 
@@ -207,14 +226,14 @@ impl BinOp {
         ctx.eval_fn_call(
           "bit_or",
           &[lhs, rhs],
-          Default::default(),
+          &Default::default(),
           &ctx.globals,
           true,
         )
       }
       BinOp::Map => {
         // this operator acts the same as `lhs | map(rhs)`
-        ctx.eval_fn_call("map", &[rhs, lhs], Default::default(), &ctx.globals, true)
+        ctx.eval_fn_call("map", &[rhs, lhs], &Default::default(), &ctx.globals, true)
       }
     }
   }
@@ -230,9 +249,9 @@ pub enum PrefixOp {
 impl PrefixOp {
   pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, ErrorStack> {
     match self {
-      PrefixOp::Neg => ctx.eval_fn_call("neg", &[val], Default::default(), &ctx.globals, true),
-      PrefixOp::Pos => ctx.eval_fn_call("pos", &[val], Default::default(), &ctx.globals, true),
-      PrefixOp::Not => ctx.eval_fn_call("not", &[val], Default::default(), &ctx.globals, true),
+      PrefixOp::Neg => ctx.eval_fn_call("neg", &[val], &Default::default(), &ctx.globals, true),
+      PrefixOp::Pos => ctx.eval_fn_call("pos", &[val], &Default::default(), &ctx.globals, true),
+      PrefixOp::Not => ctx.eval_fn_call("not", &[val], &Default::default(), &ctx.globals, true),
     }
   }
 }
@@ -390,6 +409,68 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         _ => unreachable!("Unexpected boolean literal: {bool_str}, expected 'true' or 'false'"),
       }
     }
+    Rule::if_expression => {
+      let mut inner = expr.into_inner();
+      let cond = parse_expr(inner.next().unwrap())?;
+      let then = parse_expr(inner.next().unwrap())?;
+      let (else_if_exprs, else_expr): (Vec<(Expr, Expr)>, Option<Expr>) = 'others: {
+        let Some(next) = inner.next() else {
+          break 'others (Vec::new(), None);
+        };
+        let mut else_if_exprs = Vec::new();
+
+        match next.as_rule() {
+          Rule::else_if_expr => {
+            let mut else_if_inner = next.into_inner();
+            let cond = parse_expr(else_if_inner.next().unwrap())?;
+            let then = parse_expr(else_if_inner.next().unwrap())?;
+            else_if_exprs.push((cond, then));
+          }
+          Rule::else_expr => {
+            let else_expr = parse_expr(next.into_inner().next().unwrap())?;
+            return Ok(Expr::Conditional {
+              cond: Box::new(cond),
+              then: Box::new(then),
+              else_if_exprs,
+              else_expr: Some(Box::new(else_expr)),
+            });
+          }
+          _ => unreachable!("Unexpected rule in if expression: {:?}", next.as_rule()),
+        }
+
+        loop {
+          let Some(next) = inner.next() else {
+            break 'others (else_if_exprs, None);
+          };
+          match next.as_rule() {
+            Rule::else_if_expr => {
+              let mut else_if_inner = next.into_inner();
+              let cond = parse_expr(else_if_inner.next().unwrap())?;
+              let then = parse_expr(else_if_inner.next().unwrap())?;
+              else_if_exprs.push((cond, then));
+            }
+            Rule::else_expr => {
+              let else_expr = parse_expr(next.into_inner().next().unwrap())?;
+              return Ok(Expr::Conditional {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                else_if_exprs,
+                else_expr: Some(Box::new(else_expr)),
+              });
+            }
+            _ => unreachable!("Unexpected rule in if expression: {:?}", next.as_rule()),
+          }
+        }
+      };
+
+      Ok(Expr::Conditional {
+        cond: Box::new(cond),
+        then: Box::new(then),
+        else_if_exprs,
+        else_expr: None,
+      })
+    }
+    Rule::block_expr => parse_block_expr(expr),
     _ => unimplemented!(
       "unimplemented node type for parse_node: {:?}",
       expr.as_rule()
@@ -397,7 +478,28 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   }
 }
 
+fn parse_block_expr(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
+  if expr.as_rule() != Rule::block_expr {
+    return Err(ErrorStack::new(format!(
+      "`parse_block_expr` can only handle `block_expr` rules, found: {:?}",
+      expr.as_rule()
+    )));
+  }
+
+  let statements = expr
+    .into_inner()
+    .map(parse_statement)
+    .filter_map_ok(|s| s)
+    .collect::<Result<Vec<_>, ErrorStack>>()?;
+
+  Ok(Expr::Block { statements })
+}
+
 pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
+  if expr.as_rule() == Rule::block_expr {
+    return parse_block_expr(expr);
+  }
+
   if expr.as_rule() != Rule::expr {
     panic!(
       "`parse_expr` can only handle `expr` rules, found: {:?}",
@@ -471,7 +573,7 @@ pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       inner.next().unwrap();
       let field = inner.next().unwrap().as_str().to_owned();
       Ok(Expr::FieldAccess {
-        obj: Box::new(expr),
+        lhs: Box::new(expr),
         field,
       })
     })
@@ -508,10 +610,48 @@ fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, ErrorStack> {
   })
 }
 
+fn parse_return_statement(return_stmt: Pair<Rule>) -> Result<Statement, ErrorStack> {
+  if return_stmt.as_rule() != Rule::return_statement {
+    return Err(ErrorStack::new(format!(
+      "`parse_return_statement` can only handle `return_statement` rules, found: {:?}",
+      return_stmt.as_rule()
+    )));
+  }
+
+  let mut inner = return_stmt.into_inner();
+  let value = if let Some(expr) = inner.next() {
+    Some(parse_expr(expr)?)
+  } else {
+    None
+  };
+
+  Ok(Statement::Return { value })
+}
+
+fn parse_break_statement(return_stmt: Pair<Rule>) -> Result<Statement, ErrorStack> {
+  if return_stmt.as_rule() != Rule::break_statement {
+    return Err(ErrorStack::new(format!(
+      "`parse_break_statement` can only handle `break_statement` rules, found: {:?}",
+      return_stmt.as_rule()
+    )));
+  }
+
+  let mut inner = return_stmt.into_inner();
+  let value = if let Some(expr) = inner.next() {
+    Some(parse_expr(expr)?)
+  } else {
+    None
+  };
+
+  Ok(Statement::Break { value })
+}
+
 fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, ErrorStack> {
   match stmt.as_rule() {
     Rule::assignment => parse_assignment(stmt).map(Some),
     Rule::expr => Ok(Some(Statement::Expr(parse_expr(stmt)?))),
+    Rule::return_statement => Ok(Some(parse_return_statement(stmt)?)),
+    Rule::break_statement => Ok(Some(parse_break_statement(stmt)?)),
     Rule::EOI => Ok(None),
     _ => unreachable!("Unexpected statement rule: {:?}", stmt.as_rule()),
   }

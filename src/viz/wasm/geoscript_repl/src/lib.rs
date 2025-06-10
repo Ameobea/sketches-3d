@@ -43,20 +43,13 @@ impl Default for GeoscriptReplCtx {
 impl GeoscriptReplCtx {
   pub fn convert_rendered_meshes(&mut self) {
     self.output_meshes.clear();
-    // TODO: what's another clone lol
-    for mesh in self
-      .geo_ctx
-      .rendered_meshes
-      .meshes
-      .lock()
-      .unwrap()
-      .drain(..)
-    {
+
+    for mesh in self.geo_ctx.rendered_meshes.inner.lock().unwrap().drain(..) {
       let mut mesh = Arc::unwrap_or_clone(mesh);
-      // let merged_count = mesh.merge_vertices_by_distance(0.0001);
-      // if merged_count > 0 {
-      //   ::log::info!("Merged {} vertices in mesh", merged_count);
-      // }
+      let merged_count = mesh.merge_vertices_by_distance(0.0001);
+      if merged_count > 0 {
+        ::log::info!("Merged {} vertices in mesh", merged_count);
+      }
       mesh.mark_edge_sharpness(0.8);
       mesh.separate_vertices_and_compute_normals();
 
@@ -129,4 +122,20 @@ pub fn geoscript_repl_get_rendered_mesh_normals(
   let ctx = unsafe { &*ctx };
   let mesh = &ctx.output_meshes[mesh_ix];
   mesh.shading_normals.as_ref().map(|normals| normals.clone())
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_path_count(ctx: *const GeoscriptReplCtx) -> usize {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_paths.len()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_path(ctx: *const GeoscriptReplCtx, path_ix: usize) -> Vec<f32> {
+  let ctx = unsafe { &*ctx };
+  let path = { ctx.geo_ctx.rendered_paths.inner.lock().unwrap()[path_ix].clone() };
+  let raw_path: Vec<f32> =
+    unsafe { std::slice::from_raw_parts(path.as_ptr() as *const f32, path.len() * 3).to_vec() };
+  std::mem::forget(path);
+  raw_path
 }

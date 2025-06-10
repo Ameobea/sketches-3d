@@ -4,13 +4,25 @@
     toggleWireframe: () => void;
   }
 
+  interface RunStats {
+    runtimeMs: number;
+    renderedMeshCount: number;
+    renderedPathCount: number;
+    totalVtxCount: number;
+    totalFaceCount: number;
+  }
+
   const DefaultCameraPos = new THREE.Vector3(10, 10, 10);
   const DefaultCameraTarget = new THREE.Vector3(0, 0, 0);
+
+  const IntFormatter = new Intl.NumberFormat(undefined, {
+    style: 'decimal',
+    maximumFractionDigits: 0,
+  });
 </script>
 
 <script lang="ts">
   import type { Viz } from 'src/viz';
-  import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
   import * as THREE from 'three';
   import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
   import { onMount } from 'svelte';
@@ -35,31 +47,40 @@
     repl,
     ctxPtr,
     setReplCtx,
+    baseMat,
   }: {
     viz: Viz;
     repl: typeof import('src/viz/wasmComp/geoscript_repl');
     ctxPtr: number;
     setReplCtx: (ctx: ReplCtx) => void;
+    baseMat: THREE.Material;
   } = $props();
 
   let err: string | null = $state(null);
-  let renderedMeshes: THREE.Mesh<THREE.BufferGeometry, THREE.Material>[] = $state([]);
-
-  const loader = new THREE.ImageBitmapLoader();
-  const matPromise = buildGrayFossilRockMaterial(
-    loader,
-    { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc, mapDisableDistance: null },
-    {},
-    { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
-  );
+  let runStats: RunStats | null = $state(null);
+  let renderedMeshes: (
+    | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
+    | THREE.Line<THREE.BufferGeometry, THREE.Material>
+  )[] = $state([]);
 
   let codemirrorContainer: HTMLDivElement | null = $state(null);
   let editorState = $state<EditorState | null>(null);
   let editorView: EditorView | null = $state(null);
-  let currentMaterial: THREE.Material | null = $state(null);
+  let activeMat: THREE.Material = $state(baseMat);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0x00ff00,
+    linewidth: 2,
+  });
+  const wireframeMat = new THREE.MeshBasicMaterial({
+    color: 0xdf00df,
+    wireframe: true,
+  });
 
   const computeCompositeBoundingBox = (
-    meshes: THREE.Mesh<THREE.BufferGeometry, THREE.Material>[]
+    meshes: (
+      | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
+      | THREE.Line<THREE.BufferGeometry, THREE.Material>
+    )[]
   ): THREE.Box3 => {
     const box = new THREE.Box3();
     for (const mesh of meshes) {
@@ -104,11 +125,15 @@
     viz.orbitControls!.update();
   };
 
-  const toggleWireframe = () => {
+  const toggleWireframe = async () => {
+    if (activeMat && activeMat instanceof THREE.MeshBasicMaterial) {
+      activeMat = baseMat;
+    } else {
+      activeMat = wireframeMat;
+    }
     for (const mesh of renderedMeshes) {
-      if (mesh.material && 'wireframe' in mesh.material) {
-        mesh.material.wireframe = !mesh.material.wireframe;
-        mesh.material.needsUpdate = true;
+      if (mesh instanceof THREE.Mesh) {
+        mesh.material = activeMat;
       }
     }
   };
@@ -128,6 +153,8 @@
     renderedMeshes = [];
 
     repl.geoscript_repl_reset(ctxPtr);
+    runStats = null;
+    const startTime = performance.now();
     try {
       repl.geoscript_repl_eval(ctxPtr, code);
     } catch (err) {
@@ -137,13 +164,27 @@
       return;
     }
     err = repl.geoscript_repl_get_err(ctxPtr) || null;
+    if (err) {
+      return;
+    }
 
-    const renderedMeshCount = repl.geoscript_repl_get_rendered_mesh_count(ctxPtr);
+    const localRunStats: RunStats = {
+      runtimeMs: performance.now() - startTime,
+      renderedMeshCount: 0,
+      renderedPathCount: 0,
+      totalVtxCount: 0,
+      totalFaceCount: 0,
+    };
+
+    localRunStats.renderedMeshCount = repl.geoscript_repl_get_rendered_mesh_count(ctxPtr);
     const newRenderedMeshes = [];
-    for (let i = 0; i < renderedMeshCount; i++) {
+    for (let i = 0; i < localRunStats.renderedMeshCount; i++) {
       const verts = repl.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, i);
       const indices = repl.geoscript_repl_get_rendered_mesh_indices(ctxPtr, i);
       const normals = repl.geoscript_repl_get_rendered_mesh_normals(ctxPtr, i);
+
+      localRunStats.totalVtxCount += verts.length / 3;
+      localRunStats.totalFaceCount += indices.length / 3;
 
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
@@ -152,20 +193,30 @@
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
 
-      const mat = await matPromise;
-      // const mat = new THREE.MeshNormalMaterial({
-      //   flatShading: true,
-      //   side: THREE.DoubleSide,
-      //   wireframe: false,
-      // });
-      const mesh = new THREE.Mesh(geometry, mat);
+      const mesh = new THREE.Mesh(geometry, activeMat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       viz.scene.add(mesh);
       newRenderedMeshes.push(mesh);
     }
 
+    localRunStats.renderedPathCount = repl.geoscript_get_rendered_path_count(ctxPtr);
+    for (let i = 0; i < localRunStats.renderedPathCount; i++) {
+      const pathVerts: Float32Array = repl.geoscript_get_rendered_path(ctxPtr, i);
+      localRunStats.totalVtxCount += pathVerts.length / 3;
+      localRunStats.totalFaceCount += pathVerts.length / 3 - 1;
+      const pathGeometry = new THREE.BufferGeometry();
+      pathGeometry.setAttribute('position', new THREE.BufferAttribute(pathVerts, 3));
+      const pathMaterial = lineMat;
+      const pathMesh = new THREE.Line(pathGeometry, pathMaterial);
+      pathMesh.castShadow = false;
+      pathMesh.receiveShadow = false;
+      viz.scene.add(pathMesh);
+      newRenderedMeshes.push(pathMesh);
+    }
+
     renderedMeshes = newRenderedMeshes;
+    runStats = localRunStats;
   };
 
   const beforeUnloadHandler = () => {
@@ -243,6 +294,7 @@
         Prec.highest(keymap.of(customKeymap)),
         basicSetup,
         keymap.of(defaultKeymap),
+        keymap.of([indentWithTab]),
         gruvboxDark,
         new LanguageSupport(geoscriptLang),
         syntaxErrorLinter,
@@ -286,6 +338,22 @@
     {#if err}
       <div class="error">{err}</div>
     {/if}
+    {#if runStats}
+      <div class="run-stats">
+        <span style="color: #12cc12">Program ran successfully</span>
+        <ul>
+          <li>Runtime: {runStats.runtimeMs.toFixed(2)} ms</li>
+          {#if runStats.renderedMeshCount > 0 || runStats.renderedPathCount === 0}
+            <li>Rendered Meshes: {IntFormatter.format(runStats.renderedMeshCount)}</li>
+          {/if}
+          {#if runStats.renderedPathCount > 0}
+            <li>Rendered Paths: {IntFormatter.format(runStats.renderedPathCount)}</li>
+          {/if}
+          <li>Total Vertices: {IntFormatter.format(runStats.totalVtxCount)}</li>
+          <li>Total Faces: {IntFormatter.format(runStats.totalFaceCount)}</li>
+        </ul>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -297,6 +365,9 @@
     bottom: 0;
     display: flex;
     flex-direction: row;
+    color: #efefef;
+    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-size: 15px;
   }
 
   .codemirror-wrapper {
@@ -336,6 +407,11 @@
     white-space: pre-wrap;
     overflow-wrap: break-word;
     font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+  }
+
+  .run-stats {
+    margin-top: 8px;
+    padding: 8px;
   }
 
   button {

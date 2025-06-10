@@ -2,7 +2,9 @@ WHITESPACE                   = _{ " " | "\t" | "\n" | "\r" }
 COMMENT                      = _{ "//" ~ (!"\n" ~ ANY)* }
 
 program                      = { SOI ~ statement* ~ EOI }
-statement                    = _{ (assignment | expr) ~ ";"? ~ EOL* }
+statement                    = _{ (return_statement | break_statement | assignment | expr) ~ ";"? ~ EOL* }
+return_statement             = { "return" ~ expr? ~ ";"? }
+break_statement              = { "break" ~ expr? ~ ";"? }
 EOL                          = _{ WHITESPACE* ~ ("\n" | "\r\n") }
 
 assignment                   = { ident ~ type_hint? ~ "=" ~ expr }
@@ -13,13 +15,19 @@ expr                         = { prefix_op* ~ term ~ postfix* ~ (operator ~ pref
 // TODO: ternary would be cool at some point
 
 prefix_op                    = _{ neg_op | pos_op | negate_op }
-term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr | literal | ident | "(" ~ expr ~ ")" }
+term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr
+                                 | block_expr | if_expression | literal | ident | "(" ~ expr ~ ")" }
 postfix                      = { field_access_op ~ ident }
 
 // need these to work around ambiguity where a range expression starting with an
 // integer literal looks like a float
 range_literal_expr           = { int ~ ".." ~ term }
 range_inclusive_literal_expr = { int ~ "..=" ~ term }
+
+if_expression                = { "if" ~ expr ~ block_expr ~ else_if_expr* ~ else_expr? }
+else_if_expr                 = { "else if" ~ expr ~ block_expr }
+else_expr                    = { "else" ~ block_expr }
+block_expr                   = { "{" ~ statement* ~ "}" }
 
 operator                     = _{ map_op | range_inclusive_op | range_op | add_op | sub_op
                                   | mul_op | div_op | mod_op | gte_op | lte_op | gt_op | lt_op

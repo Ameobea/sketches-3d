@@ -1,7 +1,7 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{f32::consts::PI, fmt::Debug, hash::Hash};
 
-use bitvec::{bitarr, slice::BitSlice};
-use fxhash::{FxHashMap, FxHashSet};
+use bitvec::{bitarr, slice::BitSlice, vec::BitVec};
+use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use nalgebra::{Matrix4, Vector3};
 use slotmap::{new_key_type, Key, SlotMap};
 use smallvec::SmallVec;
@@ -1967,6 +1967,39 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     face.data
   }
 
+  pub fn connected_components(&self) -> Vec<Vec<FaceKey>> {
+    let mut visited =
+      FxHashSet::with_capacity_and_hasher(self.faces.len(), FxBuildHasher::default());
+    let mut components = Vec::new();
+
+    for face_key in self.faces.keys() {
+      if visited.contains(&face_key) {
+        continue;
+      }
+
+      let mut component = Vec::new();
+      let mut stack = vec![face_key];
+
+      while let Some(cur_face_key) = stack.pop() {
+        if visited.insert(cur_face_key) {
+          component.push(cur_face_key);
+          let face = &self.faces[cur_face_key];
+          for &edge_key in &face.edges {
+            for &adj_face_key in &self.edges[edge_key].faces {
+              if !visited.contains(&adj_face_key) {
+                stack.push(adj_face_key);
+              }
+            }
+          }
+        }
+      }
+
+      components.push(component);
+    }
+
+    components
+  }
+
   /// Removes all degenerate faces from the mesh.
   pub fn cleanup_degenerate_triangles_cb(&mut self, mut cb: impl FnMut(FaceKey, FaceData) -> ()) {
     let all_face_keys = self.faces.keys().collect::<Vec<_>>();
@@ -2115,6 +2148,77 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       .into_iter()
       .flat_map(|[i0, i1, i2]| [i0 as u32, i1 as u32, i2 as u32])
       .collect();
+
+    LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
+  }
+
+  pub fn new_cylinder(
+    radius: f32,
+    height: f32,
+    radial_segments: usize,
+    height_segments: usize,
+  ) -> Self {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for h in 0..=height_segments {
+      let y = -height / 2. + (h as f32 / height_segments as f32) * height;
+      for r in 0..radial_segments {
+        let theta = (r as f32 / radial_segments as f32) * 2. * PI;
+        let x = radius * theta.cos();
+        let z = radius * theta.sin();
+        vertices.push(Vec3::new(x, y, z));
+      }
+    }
+
+    for h in 0..height_segments {
+      for r in 0..radial_segments {
+        let v0 = h * radial_segments + r;
+        let v1 = v0 + radial_segments;
+        let segment_ix = (r + 1) % radial_segments;
+        let v0_next = h * radial_segments + segment_ix;
+        let v1_next = v0_next + radial_segments;
+
+        indices.push(v0 as u32);
+        indices.push(v1 as u32);
+        indices.push(v0_next as u32);
+        indices.push(v1 as u32);
+        indices.push(v1_next as u32);
+        indices.push(v0_next as u32);
+      }
+    }
+
+    // to help reduce sliver triangles, add a center vertex at the top and bottom caps and fan out
+    // from that to fill them in
+    let bottom_center_ix = vertices.len() as u32;
+    vertices.push(Vec3::new(0., -height / 2., 0.));
+    let top_center_ix = vertices.len() as u32;
+    vertices.push(Vec3::new(0., height / 2., 0.));
+    //
+    // 0,1,2
+    // 0,2,3
+    // ...
+    // 0,2n-2,2n-1
+    for (middle_vtx_ix, reverse_winding, ix_offset) in [
+      (bottom_center_ix, false, 0usize),
+      (
+        top_center_ix,
+        true,
+        (height_segments * radial_segments) as usize,
+      ),
+    ] {
+      for i in 0..radial_segments {
+        if reverse_winding {
+          indices.push((ix_offset + ((i + 1) % radial_segments)) as u32);
+          indices.push((ix_offset + i) as u32);
+          indices.push(middle_vtx_ix);
+        } else {
+          indices.push(middle_vtx_ix);
+          indices.push((ix_offset + i) as u32);
+          indices.push((ix_offset + ((i + 1) % radial_segments)) as u32);
+        }
+      }
+    }
 
     LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
   }

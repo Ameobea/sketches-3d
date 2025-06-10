@@ -16,5 +16,7 @@ export const
   Integer = 28,
   BoolLiteral = 29,
   TypeHint = 34,
-  ClosureBody = 36,
-  ClosureParamList = 39
+  ClosureParamList = 36,
+  BlockExpr = 42,
+  ElseIfExpr = 44,
+  ElseExpr = 45
