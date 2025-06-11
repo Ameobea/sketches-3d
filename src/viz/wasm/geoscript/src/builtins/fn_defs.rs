@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
 use nanoserde::SerJson;

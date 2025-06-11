@@ -83,6 +83,7 @@ pub enum Statement {
 pub struct ClosureArg {
   pub name: String,
   pub type_hint: Option<TypeName>,
+  pub default_val: Option<Expr>,
 }
 
 #[derive(Clone)]
@@ -344,18 +345,37 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         .map(|p| {
           let mut inner = p.into_inner();
           let name = inner.next().unwrap().as_str().to_owned();
-          let type_hint = if let Some(type_hint) = inner.next() {
-            Some(
-              TypeName::from_str(type_hint.into_inner().next().unwrap().as_str()).map_err(
-                |err| {
+          let (type_hint, default_val) = if let Some(mut next) = inner.next() {
+            let mut type_hint = None;
+            let mut default_val = None;
+            if next.as_rule() == Rule::type_hint {
+              type_hint = Some(
+                TypeName::from_str(next.into_inner().next().unwrap().as_str()).map_err(|err| {
                   ErrorStack::new(err).wrap(format!("Invalid type hint for closure arg {name}"))
-                },
-              )?,
-            )
+                })?,
+              );
+              if let Some(next) = inner.next() {
+                if next.as_rule() == Rule::fn_arg_default_val {
+                  default_val = Some(parse_node(next.into_inner().next().unwrap())?);
+                } else {
+                  unreachable!()
+                }
+              }
+            } else if next.as_rule() == Rule::fn_arg_default_val {
+              default_val = Some(parse_node(next.into_inner().next().unwrap())?);
+            } else {
+              unreachable!()
+            }
+
+            (type_hint, default_val)
           } else {
-            None
+            (None, None)
           };
-          Ok(ClosureArg { name, type_hint })
+          Ok(ClosureArg {
+            name,
+            type_hint,
+            default_val,
+          })
         })
         .collect::<Result<Vec<_>, ErrorStack>>()?;
 

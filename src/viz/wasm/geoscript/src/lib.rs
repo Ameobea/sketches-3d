@@ -1034,10 +1034,32 @@ impl EvalCtx {
             closure_scope.insert(arg.name.clone(), pos_arg.clone());
             pos_arg_ix += 1;
           } else {
-            return Err(ErrorStack::new(format!(
-              "Missing required argument `{}` for closure",
-              arg.name
-            )));
+            if let Some(default_val) = &arg.default_val {
+              let default_val = self.eval_expr(default_val, &closure_scope)?;
+              let default_val = match default_val {
+                ControlFlow::Continue(val) => val,
+                ControlFlow::Return(_) => {
+                  return Err(ErrorStack::new(format!(
+                    "`return` isn't valid in arg default value expressions; found in default \
+                     value for arg `{}`",
+                    arg.name
+                  )))
+                }
+                ControlFlow::Break(_) => {
+                  return Err(ErrorStack::new(format!(
+                    "`break` isn't valid in arg default value expressions; found in default value \
+                     for arg `{}`",
+                    arg.name
+                  )));
+                }
+              };
+              closure_scope.insert(arg.name.clone(), default_val);
+            } else {
+              return Err(ErrorStack::new(format!(
+                "Missing required argument `{}` for closure",
+                arg.name
+              )));
+            }
           }
         }
 
@@ -1859,4 +1881,31 @@ x: mesh = [vec3(0), vec3(1)] | extrude_pipe(radius=0.5, resolution=3)
 "#;
 
   parse_and_eval_program(src).unwrap();
+}
+
+#[test]
+fn test_arg_default_values_syntax() {
+  let src = r#"
+fn = |x: int = 10| {
+  return x + 1
+}"#;
+
+  parse_and_eval_program(src).unwrap();
+}
+
+#[test]
+fn test_closure_def_with_optional_arg() {
+  let src = r#"
+pre = 400
+outer = |x: int = 100, y = pre, z:int={pre -100}, w: int = (1 - 1)| {
+  return x + y + z + w
+};
+result = outer(w=500, 3)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let result = ctx.globals.get("result").unwrap();
+  let result = result.as_int().expect("Expected result to be an Int");
+  assert_eq!(result, 3 + 400 + 300 + 500);
 }

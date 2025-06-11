@@ -32,8 +32,14 @@ TypeHint { ":" Identifier }
 
 UnaryOp { "+" | "-" | "!" }
 
+ParenthesizedExpr { "(" Expr ")" }
+CallExpr { Identifier !call "(" commaSep<FunctionArg> ")" }
+IfExpr { "if" !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
+
+FnArgDefaultValue { Identifier | literal | ParenthesizedExpr | CallExpr | BlockExpr | IfExpr }
+
 ClosureParamList {
-  Pipe commaSep<Parameter { Identifier TypeHint? }> Pipe
+  Pipe commaSep<Parameter { Identifier TypeHint? ("=" FnArgDefaultValue)? }> Pipe
 }
 
 Expr {
@@ -41,14 +47,14 @@ Expr {
   BinaryExpr |
   FieldAccessExpr |
   RangeExpr { Expr !range (".." | "..=") Expr } |
-  CallExpr { Identifier !call "(" commaSep<FunctionArg> ")" } |
+  CallExpr |
   literal |
   Identifier |
   ArrayExpr { "[" commaSep1<Expr>? "]" } |
   ClosureExpr { (LogicalOrOp TypeHint? Expr) | (ClosureParamList TypeHint? Expr) } |
-  ParenthesizedExpr { "(" Expr ")" } |
+  ParenthesizedExpr |
   BlockExpr |
-  IfExpr { "if" !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
+  IfExpr
 }
 
 BlockExpr { "{" statement* "}" }
