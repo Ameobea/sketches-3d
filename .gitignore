@@ -37,3 +37,4 @@ src/geodesics/geodesics.wasm
 src/geodesics/geodesics.js
 static/geodesics.wasm
 static/geodesics.js
+static/geoscript_repl_bg.wasm

@@ -6,6 +6,7 @@ copy-files:
   cp -r ./build2/* ../../../static
   cp -r ./geodesics/build/bin/* ../../../src/geodesics/
   cp -r ./geodesics/build/bin/* ../../../static/
+  cp ./build/geoscript_repl_bg.wasm ../../../static
 
 bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/bridge2.wasm --target web --remove-producers-section --out-dir ./build
@@ -97,6 +98,7 @@ build-geoscript-repl:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
   # wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-nontrapping-float-to-int --precompute-propagate --detect-features --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory --enable-nontrapping-float-to-int
   cp ./build/geoscript_repl* ../wasmComp
+  cp ./build/geoscript_repl_bg.wasm ../../../static
 
 build-geoscript:
   just build-geoscript-repl

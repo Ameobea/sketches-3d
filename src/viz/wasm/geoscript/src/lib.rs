@@ -10,6 +10,7 @@ use std::{
 use ast::{parse_program, Expr, Statement};
 use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
+use nanoserde::SerJson;
 use pest::{
   pratt_parser::{Assoc, Op, PrattParser},
   Parser,
@@ -20,7 +21,11 @@ use seq::EagerSeq;
 
 use crate::{
   ast::{ClosureArg, TypeName},
-  builtins::{eval_builtin_fn, FN_SIGNATURE_DEFS, FUNCTION_ALIASES},
+  builtins::{
+    eval_builtin_fn,
+    fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
+    FUNCTION_ALIASES,
+  },
   seq::{IntRange, MapSeq},
 };
 
@@ -30,6 +35,8 @@ pub mod mesh_ops;
 pub mod noise;
 pub mod path_building;
 mod seq;
+
+pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
 
 #[derive(Parser)]
 #[grammar = "src/geoscript.pest"]
@@ -291,7 +298,7 @@ impl Value {
   }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, SerJson)]
 enum ArgType {
   Int,
   Float,
@@ -301,6 +308,7 @@ enum ArgType {
   Callable,
   Sequence,
   Bool,
+  Nil,
   Any,
 }
 
@@ -315,6 +323,7 @@ impl ArgType {
       ArgType::Callable => matches!(arg, Value::Callable { .. }),
       ArgType::Sequence => matches!(arg, Value::Sequence(_)),
       ArgType::Bool => matches!(arg, Value::Bool(_)),
+      ArgType::Nil => matches!(arg, Value::Nil),
       ArgType::Any => true,
     }
   }
@@ -333,7 +342,24 @@ impl ArgType {
       ArgType::Callable => "fn",
       ArgType::Sequence => "seq",
       ArgType::Bool => "bool",
+      ArgType::Nil => "nil",
       ArgType::Any => "any",
+    }
+  }
+}
+
+enum UnrealizedArgRef {
+  Positional(usize),
+  Keyword(&'static str),
+  Default(fn() -> Value),
+}
+
+impl UnrealizedArgRef {
+  pub fn realize(self) -> ArgRef {
+    match self {
+      UnrealizedArgRef::Positional(ix) => ArgRef::Positional(ix),
+      UnrealizedArgRef::Keyword(name) => ArgRef::Keyword(name),
+      UnrealizedArgRef::Default(get_default) => ArgRef::Default(get_default()),
     }
   }
 }
@@ -342,13 +368,19 @@ impl ArgType {
 enum ArgRef {
   Positional(usize),
   Keyword(&'static str),
+  Default(Value),
 }
 
 impl ArgRef {
-  pub fn resolve<'a>(&self, args: &'a [Value], kwargs: &'a FxHashMap<String, Value>) -> &'a Value {
+  pub fn resolve<'a>(
+    &'a self,
+    args: &'a [Value],
+    kwargs: &'a FxHashMap<String, Value>,
+  ) -> &'a Value {
     match self {
       ArgRef::Positional(ix) => &args[*ix],
       ArgRef::Keyword(name) => kwargs.get(*name).expect("Keyword argument not found"),
+      ArgRef::Default(val) => val,
     }
   }
 }
@@ -362,23 +394,25 @@ enum GetArgsOutput {
   PartiallyApplied,
 }
 
-fn format_fn_signatures(arg_defs: &[&[(&'static str, &[ArgType])]]) -> String {
+fn format_fn_signatures(arg_defs: &[FnDef]) -> String {
   arg_defs
     .iter()
     .map(|def| {
-      if def.is_empty() {
+      if def.arg_defs.is_empty() {
         return "  <no args>".to_owned();
       }
 
       let formatted_def = def
+        .arg_defs
         .iter()
-        .map(|(name, types)| {
-          let types_str = types
+        .map(|arg_def| {
+          let types_str = arg_def
+            .valid_types
             .iter()
             .map(ArgType::as_str)
             .collect::<Vec<_>>()
             .join(" | ");
-          format!("{name}: {types_str}")
+          format!("{}: {types_str}", arg_def.name)
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -390,22 +424,27 @@ fn format_fn_signatures(arg_defs: &[&[(&'static str, &[ArgType])]]) -> String {
 
 fn get_args(
   fn_name: &str,
-  arg_defs: &[&[(&'static str, &[ArgType])]],
+  arg_defs: &[FnDef],
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
 ) -> Result<GetArgsOutput, ErrorStack> {
-  // empty defs = any args are valid
-  if arg_defs.is_empty() {
-    return Ok(GetArgsOutput::Valid {
-      def_ix: 0,
-      arg_refs: Vec::new(),
-    });
+  // if the name of the first arg is empty, then the function is considered fully dynamic and no
+  // type-checking/validation is performed
+  if let Some(def) = arg_defs.first() {
+    if let Some(def) = def.arg_defs.first() {
+      if def.name.is_empty() {
+        return Ok(GetArgsOutput::Valid {
+          def_ix: 0,
+          arg_refs: Vec::new(),
+        });
+      }
+    }
   }
 
   for key in kwargs.keys() {
     if !arg_defs
       .iter()
-      .any(|def| def.iter().any(|(name, _)| name == key))
+      .any(|def| def.arg_defs.iter().any(|arg| arg.name == key))
     {
       return Err(ErrorStack::new(format!(
         "kwarg `{key}` is not valid in any function signature.\n\nAvailable signatures:\n{}",
@@ -416,26 +455,37 @@ fn get_args(
 
   let mut valid_partial: bool = false;
   let any_args_provided = !args.is_empty() || !kwargs.is_empty();
-  'def: for (def_ix, &def) in arg_defs.iter().enumerate() {
+  'def: for (def_ix, def) in arg_defs.iter().enumerate() {
     let mut pos_arg_ix = 0;
-    let mut arg_refs = Vec::with_capacity(def.len());
-    for (name, types) in def {
+    let mut arg_refs: Vec<UnrealizedArgRef> = Vec::with_capacity(def.arg_defs.len());
+    'arg: for ArgDef {
+      default_value,
+      description: _,
+      name,
+      valid_types,
+    } in def.arg_defs
+    {
       let (arg, arg_ref) = if let Some(kwarg) = kwargs.get(*name) {
-        (kwarg, ArgRef::Keyword(*name))
+        (kwarg, UnrealizedArgRef::Keyword(*name))
       } else if pos_arg_ix < args.len() {
         let arg = &args[pos_arg_ix];
-        let arg_ref = ArgRef::Positional(pos_arg_ix);
+        let arg_ref = UnrealizedArgRef::Positional(pos_arg_ix);
         pos_arg_ix += 1;
         (arg, arg_ref)
       } else {
-        // If any required argument is missing, mark as partial if any args/kwargs were provided
-        if any_args_provided {
-          valid_partial = true;
+        if let DefaultValue::Optional(get_default) = default_value {
+          arg_refs.push(UnrealizedArgRef::Default(*get_default));
+          continue 'arg;
+        } else {
+          // If any required argument is missing, mark as partial if any args/kwargs were provided
+          if any_args_provided {
+            valid_partial = true;
+          }
+          continue 'def;
         }
-        continue 'def;
       };
 
-      if !ArgType::any_valid(types, arg) {
+      if !ArgType::any_valid(valid_types, arg) {
         continue 'def;
       }
 
@@ -443,12 +493,19 @@ fn get_args(
     }
 
     // if we have leftover positional args, not a valid call
-    if pos_arg_ix < args.len() {
-      continue 'def;
-    }
+    // if pos_arg_ix < args.len() {
+    //   continue 'def;
+    // }
 
     // valid args found for the whole def, so the function call is valid
-    return Ok(GetArgsOutput::Valid { def_ix, arg_refs });
+    let realized_arg_defs = arg_refs
+      .into_iter()
+      .map(UnrealizedArgRef::realize)
+      .collect();
+    return Ok(GetArgsOutput::Valid {
+      def_ix,
+      arg_refs: realized_arg_defs,
+    });
   }
 
   if valid_partial {
@@ -1218,8 +1275,25 @@ render(a)
 
 #[test]
 fn test_partial_application_with_only_kwargs() {
-  static ARGS: &[(&'static str, &[ArgType])] = &[("x", &[ArgType::Int]), ("y", &[ArgType::Int])];
-  let defs = &[ARGS];
+  static ARGS: &[ArgDef] = &[
+    ArgDef {
+      name: "x",
+      valid_types: &[ArgType::Int],
+      default_value: builtins::fn_defs::DefaultValue::Required,
+      description: "",
+    },
+    ArgDef {
+      name: "y",
+      valid_types: &[ArgType::Int],
+      default_value: builtins::fn_defs::DefaultValue::Required,
+      description: "",
+    },
+  ];
+  let defs = &[FnDef {
+    arg_defs: ARGS,
+    description: "",
+    return_type: &[ArgType::Any],
+  }];
   let args = Vec::new();
   let mut kwargs = FxHashMap::default();
   kwargs.insert("y".to_owned(), Value::Int(1));
@@ -1232,8 +1306,26 @@ fn test_partial_application_with_only_kwargs() {
 
 #[test]
 fn test_unknown_kwarg_returns_error() {
-  static ARGS: &[(&'static str, &[ArgType])] = &[("x", &[ArgType::Int]), ("y", &[ArgType::Int])];
-  let defs = &[ARGS];
+  static ARGS: &[ArgDef] = &[
+    ArgDef {
+      name: "x",
+      valid_types: &[ArgType::Int],
+      default_value: builtins::fn_defs::DefaultValue::Required,
+      description: "",
+    },
+    ArgDef {
+      name: "y",
+      valid_types: &[ArgType::Int],
+      default_value: builtins::fn_defs::DefaultValue::Required,
+      description: "",
+    },
+  ];
+  let defs = &[FnDef {
+    arg_defs: ARGS,
+    description: "",
+    return_type: &[ArgType::Any],
+  }];
+
   let args = Vec::new();
   let mut kwargs = FxHashMap::default();
   kwargs.insert("z".to_owned(), Value::Int(1));
@@ -1758,4 +1850,13 @@ out = [0, 1, 2] -> fn | reduce(add)
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
   assert_eq!(out, (100 + 1) + (1 + 1) + (2 + 1));
+}
+
+#[test]
+fn test_builtin_optional_arg() {
+  let src = r#"
+x: mesh = [vec3(0), vec3(1)] | extrude_pipe(radius=0.5, resolution=3)
+"#;
+
+  parse_and_eval_program(src).unwrap();
 }

@@ -4,5 +4,5 @@ spiral = |point_count, height_factor, radius, resolution| {
 }
 
 spiral(point_count=200, height_factor=0.2, radius = 5.5, resolution=2)
-  | extrude_pipe(radius=0.5, resolution=8, close_ends=1==1)
+  | extrude_pipe(radius=0.5, resolution=8, close_ends=true)
   | render

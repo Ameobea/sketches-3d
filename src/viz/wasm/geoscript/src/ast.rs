@@ -413,7 +413,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       let mut inner = expr.into_inner();
       let cond = parse_expr(inner.next().unwrap())?;
       let then = parse_expr(inner.next().unwrap())?;
-      let (else_if_exprs, else_expr): (Vec<(Expr, Expr)>, Option<Expr>) = 'others: {
+      let (else_if_exprs, else_expr): (Vec<(Expr, Expr)>, Option<_>) = 'others: {
         let Some(next) = inner.next() else {
           break 'others (Vec::new(), None);
         };
@@ -428,12 +428,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           }
           Rule::else_expr => {
             let else_expr = parse_expr(next.into_inner().next().unwrap())?;
-            return Ok(Expr::Conditional {
-              cond: Box::new(cond),
-              then: Box::new(then),
-              else_if_exprs,
-              else_expr: Some(Box::new(else_expr)),
-            });
+            break 'others (else_if_exprs, Some(Box::new(else_expr)));
           }
           _ => unreachable!("Unexpected rule in if expression: {:?}", next.as_rule()),
         }
@@ -467,7 +462,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         cond: Box::new(cond),
         then: Box::new(then),
         else_if_exprs,
-        else_expr: None,
+        else_expr,
       })
     }
     Rule::block_expr => parse_block_expr(expr),

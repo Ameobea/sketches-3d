@@ -139,3 +139,11 @@ pub fn geoscript_get_rendered_path(ctx: *const GeoscriptReplCtx, path_ix: usize)
   std::mem::forget(path);
   raw_path
 }
+
+// TODO: in a perfect world, this would live in a dedicated tiny lightweight wasm module, but I
+// don't care
+#[wasm_bindgen]
+pub fn geoscript_repl_get_serialized_builtin_fn_defs() -> String {
+  maybe_init();
+  geoscript::get_serialized_builtin_fn_defs()
+}

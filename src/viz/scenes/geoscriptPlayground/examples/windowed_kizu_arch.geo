@@ -40,9 +40,9 @@ path = |count: int|: seq {
       }
       | join
   )
-  + (path(18)
+  + (path(28)
       | skip(1)
-      | take(17)
+      | take(27)
       -> |pos| {
         dir = look_at(pos, center)
         box(1, 14, 2.3)

@@ -17,737 +17,10 @@ use crate::{
   noise::fbm,
   path_building::{build_torus_knot_path, cubic_bezier_3d_path},
   seq::{FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, SkipSeq, TakeSeq, TakeWhileSeq},
-  ArgRef, ArgType, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value,
+  ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value,
 };
 
-// TODO: support optional arguments and default values
-pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &[&[(&'static str, &[ArgType])]]> = phf::phf_map! {
-  "sphere" => &[
-    &[
-      ("radius", &[ArgType::Numeric])
-    ]
-    // TODO: optional args for origin and for resolution
-  ],
-  "box" => &[
-    &[
-      ("width", &[ArgType::Numeric]),
-      ("height", &[ArgType::Numeric]),
-      ("depth", &[ArgType::Numeric]),
-    ],
-    &[
-      ("size", &[ArgType::Vec3, ArgType::Numeric]),
-    ]
-    // TODO: optional args for origin and for resolution
-  ],
-  "translate" => &[
-    &[
-      ("translation", &[ArgType::Vec3]),
-      ("mesh", &[ArgType::Mesh])
-    ],
-    &[
-      ("x", &[ArgType::Numeric]),
-      ("y", &[ArgType::Numeric]),
-      ("z", &[ArgType::Numeric]),
-      ("mesh", &[ArgType::Mesh]),
-    ],
-  ],
-  "rot" => &[
-    &[
-      ("x", &[ArgType::Numeric]),
-      ("y", &[ArgType::Numeric]),
-      ("z", &[ArgType::Numeric]),
-      ("mesh", &[ArgType::Mesh]),
-    ],
-    &[
-      ("rotation", &[ArgType::Vec3]),
-      ("mesh", &[ArgType::Mesh]),
-    ],
-  ],
-  "look_at" => &[
-    &[
-      ("pos", &[ArgType::Vec3]),
-      ("target", &[ArgType::Vec3]),
-    ]
-  ],
-  "scale" => &[
-    &[
-      ("x", &[ArgType::Numeric]),
-      ("y", &[ArgType::Numeric]),
-      ("z", &[ArgType::Numeric]),
-      ("mesh", &[ArgType::Mesh]),
-    ],
-    &[
-      ("scale", &[ArgType::Vec3, ArgType::Numeric]),
-      ("mesh", &[ArgType::Mesh])
-    ]
-  ],
-  "vec3" => &[
-    &[
-      ("x", &[ArgType::Numeric]),
-      ("y", &[ArgType::Numeric]),
-      ("z", &[ArgType::Numeric]),
-    ],
-    &[
-      ("x", &[ArgType::Numeric])
-    ],
-  ],
-  "union" => &[
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-    &[
-      ("meshes", &[ArgType::Sequence]),
-    ]
-  ],
-  "difference" => &[
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-    &[
-      ("meshes", &[ArgType::Sequence]),
-    ]
-  ],
-  "intersect" => &[
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-    &[
-      ("meshes", &[ArgType::Sequence]),
-    ]
-  ],
-  "fold" => &[
-    &[
-      ("initial_val", &[ArgType::Any]),
-      ("fn", &[ArgType::Callable]),
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "reduce" => &[
-    &[
-      ("fn", &[ArgType::Callable]),
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "neg" => &[
-    &[
-      ("value", &[ArgType::Int]),
-    ],
-    &[
-      ("value", &[ArgType::Float]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-    &[
-      ("value", &[ArgType::Bool]),
-    ],
-  ],
-  "pos" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "abs" => &[
-    &[
-      ("value", &[ArgType::Int]),
-    ],
-    &[
-      ("value", &[ArgType::Float]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "sqrt" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-  ],
-  "add" => &[
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Float]),
-    ],
-    &[
-      ("a", &[ArgType::Float]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-    // shorthand for translate
-    &[
-      ("mesh", &[ArgType::Mesh]),
-      ("offset", &[ArgType::Vec3]),
-    ]
-  ],
-  "sub" => &[
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Float]),
-    ],
-    &[
-      ("a", &[ArgType::Float]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-    // shorthands for translate
-    &[
-      ("mesh", &[ArgType::Mesh]),
-      ("offset", &[ArgType::Vec3]),
-    ]
-  ],
-  "mul" => &[
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-    ],
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Numeric]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Float]),
-    ],
-    &[
-      ("a", &[ArgType::Float]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    // shorthands for scale
-    &[
-      ("mesh", &[ArgType::Mesh]),
-      ("factor", &[ArgType::Numeric]),
-    ],
-    &[
-      ("mesh", &[ArgType::Mesh]),
-      ("factor", &[ArgType::Vec3]),
-    ]
-  ],
-  "div" => &[
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-    ],
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Numeric]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Float]),
-    ],
-    &[
-      ("a", &[ArgType::Float]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-  ],
-  "mod" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Float]),
-      ("b", &[ArgType::Float]),
-    ],
-  ],
-  "max" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Float]),
-      ("b", &[ArgType::Float]),
-    ],
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-    ],
-  ],
-  "min" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Float]),
-      ("b", &[ArgType::Float]),
-    ],
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-    ],
-  ],
-  "float" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-  ],
-  "int" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-  ],
-  "and" => &[
-    &[
-      ("a", &[ArgType::Bool]),
-      ("b", &[ArgType::Bool]),
-    ],
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-  ],
-  "or" => &[
-    &[
-      ("a", &[ArgType::Bool]),
-      ("b", &[ArgType::Bool]),
-    ],
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-  ],
-  "xor" => &[
-    &[
-      ("a", &[ArgType::Bool]),
-      ("b", &[ArgType::Bool]),
-    ],
-  ],
-  "not" => &[
-    &[
-      ("value", &[ArgType::Bool]),
-    ],
-  ],
-  "bit_and" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-  ],
-  "bit_or" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Mesh]),
-      ("b", &[ArgType::Mesh]),
-    ],
-  ],
-  "map" => &[
-    &[
-      ("fn", &[ArgType::Callable]),
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "filter" => &[
-    &[
-      ("fn", &[ArgType::Callable]),
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "take" => &[
-    &[
-      ("count", &[ArgType::Int]),
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "skip" => &[
-    &[
-      ("count", &[ArgType::Int]),
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "take_while" => &[
-    &[
-      ("fn", &[ArgType::Callable]),
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "first" => &[
-    &[
-      ("sequence", &[ArgType::Sequence]),
-    ],
-  ],
-  "print" => &[],
-  "render" => &[
-    &[
-      ("mesh", &[ArgType::Mesh]),
-    ],
-    &[
-      ("meshes", &[ArgType::Sequence]),
-    ]
-  ],
-  "sin" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ]
-  ],
-  "cos" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ]
-  ],
-  "tan" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ]
-  ],
-  "pow" => &[
-    &[
-      ("base", &[ArgType::Numeric]),
-      ("exponent", &[ArgType::Numeric]),
-    ],
-    &[
-      ("base", &[ArgType::Vec3]),
-      ("exponent", &[ArgType::Numeric]),
-    ],
-  ],
-  "trunc" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "fract" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "round" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "ceil" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "floor" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "fix_float" => &[
-    &[
-      ("value", &[ArgType::Float]),
-    ],
-    &[
-      ("value", &[ArgType::Vec3]),
-    ],
-  ],
-  "rad2deg" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-  ],
-  "deg2rad" => &[
-    &[
-      ("value", &[ArgType::Numeric]),
-    ],
-  ],
-  "gte" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Numeric]),
-    ],
-  ],
-  "lte" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Numeric]),
-    ],
-  ],
-  "gt" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Numeric]),
-    ],
-  ],
-  "lt" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Numeric]),
-    ],
-  ],
-  "eq" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Numeric]),
-    ],
-  ],
-  "neq" => &[
-    &[
-      ("a", &[ArgType::Int]),
-      ("b", &[ArgType::Int]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Numeric]),
-    ],
-  ],
-  "point_distribute" => &[
-    &[
-      ("count", &[ArgType::Int]),
-      ("mesh", &[ArgType::Mesh]),
-    ],
-  ],
-  "lerp" => &[
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-      ("t", &[ArgType::Float]),
-    ],
-    &[
-      ("a", &[ArgType::Numeric]),
-      ("b", &[ArgType::Numeric]),
-      ("t", &[ArgType::Float]),
-    ],
-  ],
-  "compose" => &[],
-  "join" => &[
-    &[
-      ("meshes", &[ArgType::Sequence]),
-    ],
-  ],
-  "convex_hull" => &[
-    &[
-      ("points", &[ArgType::Sequence]),
-    ],
-    &[
-      ("elems", &[ArgType::Sequence]),
-    ],
-  ],
-  "warp" => &[
-    &[
-      ("fn", &[ArgType::Callable]),
-      ("mesh", &[ArgType::Mesh]),
-    ],
-  ],
-  "tessellate" => &[
-    &[
-      ("target_edge_length", &[ArgType::Numeric]),
-      ("mesh", &[ArgType::Mesh]),
-    ],
-  ],
-  "connected_components" => &[
-    &[
-      ("mesh", &[ArgType::Mesh]),
-    ],
-  ],
-  "len" => &[
-    &[
-      ("v", &[ArgType::Vec3]),
-    ],
-  ],
-  "distance" => &[
-    &[
-      ("a", &[ArgType::Vec3]),
-      ("b", &[ArgType::Vec3]),
-    ],
-  ],
-  "normalize" => &[
-    &[
-      ("v", &[ArgType::Vec3]),
-    ],
-  ],
-  // cubic bezier curve
-  "bezier3d" => &[
-    &[
-      ("p0", &[ArgType::Vec3]),
-      ("p1", &[ArgType::Vec3]),
-      ("p2", &[ArgType::Vec3]),
-      ("p3", &[ArgType::Vec3]),
-      ("count", &[ArgType::Int]),
-    ],
-  ],
-  "extrude_pipe" => &[
-    &[
-      ("radius", &[ArgType::Numeric, ArgType::Callable]),
-      ("resolution", &[ArgType::Int]),
-      ("path", &[ArgType::Sequence]),
-      ("close_ends", &[ArgType::Bool]),
-    ]
-  ],
-  "torus_knot_path" => &[
-    &[
-      ("radius", &[ArgType::Numeric]),
-      ("tube_radius", &[ArgType::Numeric]),
-      ("p", &[ArgType::Int]),
-      ("q", &[ArgType::Int]),
-      ("point_count", &[ArgType::Int]),
-    ]
-  ],
-  "torus_knot" => &[
-    &[
-      ("radius", &[ArgType::Numeric]),
-      ("tube_radius", &[ArgType::Numeric]),
-      ("p", &[ArgType::Int]),
-      ("q", &[ArgType::Int]),
-      ("point_count", &[ArgType::Int]),
-      ("tube_resolution", &[ArgType::Int]),
-    ]
-  ],
-  "simplify" => &[
-    &[
-      ("tolerance", &[ArgType::Numeric]),
-      ("mesh", &[ArgType::Mesh]),
-    ]
-  ],
-  "verts" => &[
-    &[
-      ("mesh", &[ArgType::Mesh]),
-    ]
-  ],
-  "randf" => &[
-    &[],
-    &[
-      ("min", &[ArgType::Float]),
-      ("max", &[ArgType::Float]),
-    ],
-  ],
-  "randi" => &[
-    &[],
-    &[
-      ("min", &[ArgType::Int]),
-      ("max", &[ArgType::Int]),
-    ],
-  ],
-  "randv" => &[
-    &[],
-    &[
-      ("mins", &[ArgType::Vec3]),
-      ("maxs", &[ArgType::Vec3]),
-    ],
-  ],
-  "fbm" => &[
-    &[
-      ("seed", &[ArgType::Int]),
-      ("octaves", &[ArgType::Int]),
-      ("frequency", &[ArgType::Float]),
-      ("lacunarity", &[ArgType::Float]),
-      ("gain", &[ArgType::Float]),
-      ("pos", &[ArgType::Vec3]),
-    ],
-    &[
-      ("pos", &[ArgType::Vec3]),
-    ]
-  ],
-  "icosphere" => &[
-    &[
-      ("radius", &[ArgType::Numeric]),
-      ("resolution", &[ArgType::Int]),
-    ]
-  ],
-  "cylinder" => &[
-    &[
-      ("radius", &[ArgType::Numeric]),
-      ("height", &[ArgType::Numeric]),
-      ("radial_segments", &[ArgType::Int]),
-      ("height_segments", &[ArgType::Int]),
-    ]
-  ],
-  "uv_sphere" => &[
-    &[
-      ("radius", &[ArgType::Numeric]),
-      ("resolution", &[ArgType::Int]),
-    ]
-  ],
-  "call" => &[
-    &[
-      ("fn", &[ArgType::Callable]),
-    ],
-    &[
-      ("fn", &[ArgType::Callable]),
-      ("args", &[ArgType::Sequence]),
-    ],
-  ],
-};
+pub(crate) mod fn_defs;
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
@@ -1955,6 +1228,48 @@ pub(crate) fn eval_builtin_fn(
         let path = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
         let close_ends = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
 
+        enum Twist<'a> {
+          Const(f32),
+          Dyn(&'a Callable),
+        }
+
+        let twist = match arg_refs[4].resolve(args, &kwargs) {
+          Value::Float(f) => Twist::Const(*f),
+          Value::Int(i) => Twist::Const(*i as f32),
+          Value::Callable(cb) => Twist::Dyn(cb),
+          _ => {
+            return Err(ErrorStack::new(format!(
+              "Invalid twist argument for `extrude_pipe`; expected Numeric or Callable, found: \
+               {:?}",
+              arg_refs[4].resolve(args, &kwargs)
+            )))
+          }
+        };
+
+        fn build_twist_or_radius_callable<'a>(
+          ctx: &'a EvalCtx,
+          get_twist: &'a Callable,
+          param_name: &'static str,
+        ) -> impl Fn(usize, Vec3) -> Result<f32, ErrorStack> + 'a {
+          move |i, pos| {
+            let out = ctx
+              .invoke_callable(
+                get_twist,
+                &[Value::Int(i as i64), Value::Vec3(pos)],
+                &Default::default(),
+                &ctx.globals,
+              )
+              .map_err(|err| {
+                err.wrap(format!("Error calling `{param_name}` cb in `extrude_pipe`"))
+              })?;
+            out.as_float().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected Float from `{param_name}` cb in `extrude_pipe`, found: {out:?}"
+              ))
+            })
+          }
+        }
+
         let path = path.clone_box().consume(ctx).map(|res| match res {
           Ok(Value::Vec3(v)) => Ok(v),
           Ok(val) => Err(ErrorStack::new(format!(
@@ -1965,27 +1280,34 @@ pub(crate) fn eval_builtin_fn(
 
         let mesh = match radius {
           _ if let Some(radius) = radius.as_float() => {
-            extrude_pipe(|_, _| Ok(radius), resolution, path, close_ends)?
+            let get_radius = |_, _| Ok(radius);
+            match twist {
+              Twist::Const(twist) => {
+                extrude_pipe(get_radius, resolution, path, close_ends, |_, _| Ok(twist))?
+              }
+              Twist::Dyn(get_twist) => extrude_pipe(
+                get_radius,
+                resolution,
+                path,
+                close_ends,
+                build_twist_or_radius_callable(ctx, get_twist, "twist"),
+              )?,
+            }
           }
           _ if let Some(get_radius) = radius.as_callable() => {
-            let get_radius = |i: usize, pos: Vec3| -> Result<_, ErrorStack> {
-              let val = ctx
-                .invoke_callable(
-                  get_radius,
-                  &[Value::Int(i as i64), Value::Vec3(pos)],
-                  &Default::default(),
-                  &ctx.globals,
-                )
-                .map_err(|err| err.wrap("Error calling radius cb in `extrude_pipe`"))?;
-              match val {
-                Value::Float(f) => Ok(f),
-                Value::Int(i) => Ok(i as f32),
-                _ => Err(ErrorStack::new(format!(
-                  "Expected Float or Int from radius cb in `extrude_pipe`, found: {val:?}"
-                ))),
+            let get_radius = build_twist_or_radius_callable(ctx, get_radius, "radius");
+            match twist {
+              Twist::Const(twist) => {
+                extrude_pipe(get_radius, resolution, path, close_ends, |_, _| Ok(twist))?
               }
-            };
-            extrude_pipe(get_radius, resolution, path, close_ends)?
+              Twist::Dyn(get_twist) => extrude_pipe(
+                get_radius,
+                resolution,
+                path,
+                close_ends,
+                build_twist_or_radius_callable(ctx, get_twist, "twist"),
+              )?,
+            }
           }
           _ => {
             return Err(ErrorStack::new(format!(

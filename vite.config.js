@@ -2,9 +2,9 @@ import { resolve } from 'path';
 import wasm from 'vite-plugin-wasm';
 
 import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
 
-/** @type {import('vite').UserConfig} */
-const config = {
+const config = defineConfig({
   plugins: [wasm(), sveltekit()],
   resolve: {
     alias: {
@@ -23,11 +23,11 @@ const config = {
     },
   },
   optimizeDeps: {
-    exclude: ['svelte-codemirror-editor', 'codemirror'],
+    exclude: ['codemirror'],
   },
   build: {
     sourcemap: true,
   },
-};
+});
 
 export default config;

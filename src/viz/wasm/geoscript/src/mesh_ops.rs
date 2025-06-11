@@ -12,6 +12,7 @@ pub fn extrude_pipe(
   resolution: usize,
   path: impl Iterator<Item = Result<Vec3, ErrorStack>>,
   close_ends: bool,
+  twist: impl Fn(usize, Vec3) -> Result<f32, ErrorStack>,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   if resolution < 3 {
     return Err(ErrorStack::new(
@@ -68,7 +69,7 @@ pub fn extrude_pipe(
 
   let center0 = points[0];
   for j in 0..resolution {
-    let theta = 2. * PI * (j as f32) / (resolution as f32);
+    let theta = 2. * PI * (j as f32) / (resolution as f32) + twist(0, center0)?;
     let dir = normal * theta.cos() + binormal * theta.sin();
     verts.push(center0 + dir * get_radius(0, center0)?);
   }
@@ -98,7 +99,7 @@ pub fn extrude_pipe(
 
     let center = points[i];
     for j in 0..resolution {
-      let theta = 2. * PI * (j as f32) / (resolution as f32);
+      let theta = 2. * PI * (j as f32) / (resolution as f32) + twist(i, center)?;
       let dir = normal * theta.cos() + binormal * theta.sin();
       verts.push(center + dir * get_radius(i, center)?);
     }

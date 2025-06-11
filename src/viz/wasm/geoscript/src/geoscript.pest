@@ -75,4 +75,4 @@ literal                      = _{ float | int | bool_literal }
 int                          = @{ ASCII_DIGIT+ }
 float                        = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
 
-ident                        = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+ident                        = @{ (ASCII_ALPHANUMERIC | "_")+ }
