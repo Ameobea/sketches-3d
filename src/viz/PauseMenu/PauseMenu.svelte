@@ -230,7 +230,7 @@
     height: 100%;
     background-color: rgba(0, 0, 0, 0.8);
     border: 1px solid #111;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     max-width: 1200px;
     width: 100%;
     color: #eee;

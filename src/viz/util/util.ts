@@ -177,3 +177,5 @@ export const detectIsMobile = () => {
   const noKeyboard = window.matchMedia('(hover: none)').matches;
   return noMouse && noKeyboard;
 };
+
+export const filterNils = <T>(arr: (T | null | undefined)[]): T[] => arr.filter((x): x is T => x != null);

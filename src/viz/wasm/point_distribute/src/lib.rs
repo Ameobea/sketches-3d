@@ -106,7 +106,7 @@ pub struct MeshSurfaceSampler<'a, T = ()> {
 }
 
 impl<'a, T> MeshSurfaceSampler<'a, T> {
-  pub fn new(mesh: impl Into<MeshImpl<'a, T>>) -> Self {
+  pub fn new(mesh: impl Into<MeshImpl<'a, T>>) -> Result<Self, &'static str> {
     maybe_init_rng();
 
     let mut samp = MeshSurfaceSampler {
@@ -121,7 +121,11 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
       samp.distribution.push(cumulative_total);
     }
 
-    samp
+    if cumulative_total == 0. {
+      return Err("MeshSurfaceSampler: mesh has no faces or all faces have zero area");
+    }
+
+    Ok(samp)
   }
 
   fn transform_matrix(&self) -> nalgebra::Matrix4<f32> {

@@ -17,7 +17,7 @@ expr                         = { prefix_op* ~ term ~ postfix* ~ (operator ~ pref
 prefix_op                    = _{ neg_op | pos_op | negate_op }
 parenthized_term             = _{ "(" ~ expr ~ ")" }
 term                         = { array_literal | closure | func_call | range_inclusive_literal_expr | range_literal_expr
-                                 | block_expr | if_expression | literal | ident | parenthized_term }
+                                 | block_expr | if_expression | literal | string_literal | ident | parenthized_term }
 postfix                      = { field_access_op ~ ident }
 
 // need these to work around ambiguity where a range expression starting with an
@@ -78,5 +78,14 @@ bool_literal                 = { "true" | "false" }
 literal                      = _{ float | int | bool_literal }
 int                          = @{ ASCII_DIGIT+ }
 float                        = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
+string_literal               = _{ single_quote_string_literal | double_quote_string_literal }
+single_quote_string_literal  = @{ "'" ~ single_quote_string_inner ~ "'" }
+escaped_single_quote         = @{ "\\'" }
+unescaped_apos_str_content   = { (!("'" | "\\") ~ ANY)* }
+single_quote_string_inner    = ${ unescaped_apos_str_content ~ (escaped_single_quote ~ single_quote_string_inner)? }
+double_quote_string_literal  = @{ "\"" ~ double_quote_string_inner ~ "\"" }
+escaped_double_quote         = @{ "\\\"" }
+unescaped_quote_str_content  = { (!("\"" | "\\") ~ ANY)* }
+double_quote_string_inner    = ${ unescaped_quote_str_content ~ (escaped_double_quote ~ double_quote_string_inner)? }
 
 ident                        = @{ (ASCII_ALPHA | "_")+ ~ (ASCII_ALPHANUMERIC | "_")* }

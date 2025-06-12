@@ -15,11 +15,12 @@
 </div>
 
 <style lang="css">
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
+
   .root {
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     display: flex;
     flex-direction: column;
-    background: #141414;
     border: 0;
     padding: 0;
   }
@@ -27,6 +28,7 @@
   :global(body) {
     margin: 0;
     padding: 0;
+    background: #141414;
   }
 
   .docs {
@@ -35,6 +37,6 @@
     max-width: 960px;
     margin: 16px auto;
     padding: 16px 8px 8px 8px;
-    background: #181a20;
+    background: #191818;
   }
 </style>

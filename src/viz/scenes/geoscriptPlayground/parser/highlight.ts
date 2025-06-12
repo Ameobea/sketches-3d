@@ -10,6 +10,7 @@ export const geoscriptHighlighting = styleTags({
   Integer: t.integer,
   Float: t.float,
   BoolLiteral: t.bool,
+  'StringLiteral/...': t.typeName, // default gruvbox theme makes strings white which I don't like
   '"+"': t.arithmeticOperator,
   '"-"': t.arithmeticOperator,
   '"/"': t.arithmeticOperator,

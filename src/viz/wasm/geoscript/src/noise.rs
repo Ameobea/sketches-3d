@@ -1,9 +1,11 @@
 use lazy_static::lazy_static;
 use mesh::linked_mesh::Vec3;
-use noise::PermutationTable;
+
+#[allow(deprecated)]
+type PermTable = noise::PermutationTable;
 
 lazy_static! {
-  static ref PERLIN_PERM_TABLE: PermutationTable = noise::PermutationTable::new(2882119348u32);
+  static ref PERLIN_PERM_TABLE: PermTable = PermTable::new(2882119348u32);
 }
 
 fn seed_offset(seed: u32) -> Vec3 {
@@ -21,6 +23,7 @@ fn seed_offset(seed: u32) -> Vec3 {
 pub fn perlin_noise(seed: u32, pos: Vec3) -> f32 {
   let pos = pos + seed_offset(seed);
 
+  #[allow(deprecated)]
   noise::perlin3(&PERLIN_PERM_TABLE, &[pos.x, pos.y, pos.z])
 }
 

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{collections::VecDeque, fmt::Debug, sync::Arc};
 
 use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
@@ -158,7 +158,7 @@ impl Sequence for EagerSeq {
 #[derive(Clone, Debug)]
 pub(crate) struct PointDistributeSeq {
   pub mesh: Arc<LinkedMesh<()>>,
-  pub point_count: usize,
+  pub point_count: Option<usize>,
 }
 
 pub(crate) struct PointDistributeIter {
@@ -168,15 +168,20 @@ pub(crate) struct PointDistributeIter {
 }
 
 impl PointDistributeIter {
-  pub fn new(mesh: Arc<LinkedMesh<()>>) -> Self {
+  pub fn new(mesh: Arc<LinkedMesh<()>>) -> Result<Self, ErrorStack> {
     // safe because this reference will only live as long as the iterator, and by holding the `Arc`
     // internally, we can ensure that it's not dropped while the iterator is still in use.
     let static_mesh: &'static LinkedMesh<()> =
       unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&*mesh) };
 
-    let sampler = MeshSurfaceSampler::new(static_mesh);
+    let sampler = MeshSurfaceSampler::new(static_mesh).map_err(|err| {
+      ErrorStack::wrap(
+        ErrorStack::new(err),
+        "Error creating point distribute sampler",
+      )
+    })?;
 
-    Self { mesh, sampler }
+    Ok(Self { mesh, sampler })
   }
 }
 
@@ -203,8 +208,16 @@ impl Sequence for PointDistributeSeq {
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let mesh = self.mesh;
+    let iter = match PointDistributeIter::new(mesh) {
+      Ok(iter) => iter,
+      Err(err) => return Box::new(std::iter::once(Err(err))),
+    };
 
-    Box::new(PointDistributeIter::new(mesh).take(self.point_count))
+    if let Some(point_count) = self.point_count {
+      Box::new(iter.take(point_count))
+    } else {
+      Box::new(iter)
+    }
   }
 }
 
@@ -384,8 +397,8 @@ impl Iterator for TakeWhileIter<'_> {
         }
       }
       Ok(other) => Some(Err(ErrorStack::new(format!(
-        "cb passed to take_while produced value which could not be interpreted as a bool; found: \
-         {other:?}"
+        "cb passed to `take_while` produced value which could not be interpreted as a bool; \
+         found: {other:?}"
       )))),
       Err(err) => Some(Err(err.wrap("cb passed to `take_while` produced an error"))),
     }
@@ -419,5 +432,152 @@ impl Debug for TakeWhileSeq {
       "TakeWhileSeq {{ inner: {:?}, cb: {:?} }}",
       self.inner, self.cb
     )
+  }
+}
+
+#[derive(Debug)]
+pub(crate) struct SkipWhileSeq {
+  pub inner: Box<dyn Sequence>,
+  pub cb: Callable,
+}
+
+pub(crate) struct SkipWhileIter<'a> {
+  inner: Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>,
+  cb: Callable,
+  ctx: &'a EvalCtx,
+}
+
+impl Iterator for SkipWhileIter<'_> {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    while let Some(res) = self.inner.next() {
+      let Ok(val) = res else {
+        return Some(res);
+      };
+
+      match self.ctx.invoke_callable(
+        &self.cb,
+        &[val.clone()],
+        &Default::default(),
+        &self.ctx.globals,
+      ) {
+        Ok(Value::Bool(flag)) => {
+          if flag {
+            continue;
+          } else {
+            return Some(Ok(val));
+          }
+        }
+        Ok(other) => {
+          return Some(Err(ErrorStack::new(format!(
+            "cb passed to `skip_while` produced value which could not be interpreted as a bool; \
+             found: {other:?}"
+          ))));
+        }
+        Err(err) => return Some(Err(err.wrap("cb passed to `skip_while` produced an error"))),
+      }
+    }
+    None
+  }
+}
+
+impl Sequence for SkipWhileSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(Self {
+      inner: self.inner.clone_box(),
+      cb: self.cb.clone(),
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    Box::new(SkipWhileIter {
+      inner: self.inner.consume(ctx),
+      cb: self.cb,
+      ctx,
+    })
+  }
+}
+
+#[derive(Debug)]
+pub(crate) struct ChainSeq {
+  pub inner: VecDeque<Box<dyn Sequence>>,
+}
+
+impl ChainSeq {
+  pub(crate) fn new(ctx: &EvalCtx, seqs: Box<dyn Sequence + 'static>) -> Result<Self, ErrorStack> {
+    let seqs = seqs
+      .consume(ctx)
+      .map(|res| match res {
+        Ok(Value::Sequence(seq)) => Ok(seq),
+        Ok(other) => Err(ErrorStack::new(format!(
+          "got non-seq value in seq passed to `chain`: {other:?}"
+        ))),
+        Err(err) => Err(err.wrap("error produced by seq of seqs passed to `chain`")),
+      })
+      .collect::<Result<VecDeque<_>, _>>()?;
+    Ok(Self { inner: seqs })
+  }
+}
+
+pub(crate) struct ChainIter<'a> {
+  ctx: &'a EvalCtx,
+  inner: VecDeque<Box<dyn Sequence>>,
+  cur: Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>,
+}
+
+impl<'a> ChainIter<'a> {
+  pub fn new(
+    ctx: &'a EvalCtx,
+    mut inner: VecDeque<Box<dyn Sequence>>,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    match inner.pop_front() {
+      Some(seq) => {
+        let iter = seq.consume(ctx);
+        Box::new(ChainIter {
+          ctx,
+          inner: inner,
+          cur: iter,
+        })
+      }
+      None => Box::new(std::iter::empty()),
+    }
+  }
+}
+
+impl<'a> Iterator for ChainIter<'a> {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    loop {
+      match self.cur.next() {
+        Some(res) => return Some(res),
+        None => {
+          if let Some(next_seq) = self.inner.pop_front() {
+            self.cur = next_seq.consume(self.ctx);
+          } else {
+            return None;
+          }
+        }
+      }
+    }
+  }
+}
+
+impl Sequence for ChainSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(Self {
+      inner: self.inner.iter().map(|s| s.clone_box()).collect(),
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    Box::new(ChainIter::new(ctx, self.inner))
   }
 }

@@ -55,7 +55,7 @@ pub fn compute_stalags(cave_mesh_vertices: &[f32], cave_mesh_normals: &[f32], tr
       );
     },
   };
-  let surface_samp = MeshSurfaceSampler::new(mesh);
+  let surface_samp = MeshSurfaceSampler::new(mesh).unwrap();
 
   // We want the stalags to generate in small pockets, so we filter the generated
   // samples using a noise function.

@@ -7,11 +7,12 @@ use std::{
   sync::{Arc, Mutex},
 };
 
-use ast::{parse_program, Expr, Statement};
+use ast::{optimize_ast, parse_program, Expr, FunctionCallTarget, Statement};
 use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nanoserde::SerJson;
 use pest::{
+  iterators::Pair,
   pratt_parser::{Assoc, Op, PrattParser},
   Parser,
 };
@@ -211,6 +212,7 @@ pub enum Value {
   Callable(Callable),
   Sequence(Box<dyn Sequence>),
   Bool(bool),
+  String(String),
   Nil,
 }
 
@@ -224,6 +226,7 @@ impl Clone for Value {
       Value::Callable(callable) => Value::Callable(callable.clone()),
       Value::Sequence(seq) => Value::Sequence(seq.clone_box()),
       Value::Bool(b) => Value::Bool(*b),
+      Value::String(s) => Value::String(s.clone()),
       Value::Nil => Value::Nil,
     }
   }
@@ -239,6 +242,7 @@ impl Debug for Value {
       Value::Callable(callable) => write!(f, "{callable:?}"),
       Value::Sequence(seq) => write!(f, "{seq:?}"),
       Value::Bool(b) => write!(f, "Bool({b})"),
+      Value::String(s) => write!(f, "String({s})"),
       Value::Nil => write!(f, "Nil"),
     }
   }
@@ -296,6 +300,21 @@ impl Value {
       _ => None,
     }
   }
+
+  fn is_nil(&self) -> bool {
+    matches!(self, Value::Nil)
+  }
+
+  fn as_str(&self) -> Option<&str> {
+    match self {
+      Value::String(s) => Some(s.as_str()),
+      _ => None,
+    }
+  }
+
+  fn into_literal_expr(&self) -> Expr {
+    Expr::Literal(self.clone())
+  }
 }
 
 #[derive(Clone, Copy, SerJson)]
@@ -308,6 +327,7 @@ enum ArgType {
   Callable,
   Sequence,
   Bool,
+  String,
   Nil,
   Any,
 }
@@ -323,6 +343,7 @@ impl ArgType {
       ArgType::Callable => matches!(arg, Value::Callable { .. }),
       ArgType::Sequence => matches!(arg, Value::Sequence(_)),
       ArgType::Bool => matches!(arg, Value::Bool(_)),
+      ArgType::String => matches!(arg, Value::String(_)),
       ArgType::Nil => matches!(arg, Value::Nil),
       ArgType::Any => true,
     }
@@ -342,6 +363,7 @@ impl ArgType {
       ArgType::Callable => "fn",
       ArgType::Sequence => "seq",
       ArgType::Bool => "bool",
+      ArgType::String => "str",
       ArgType::Nil => "nil",
       ArgType::Any => "any",
     }
@@ -465,6 +487,13 @@ fn get_args(
       valid_types,
     } in def.arg_defs
     {
+      // if a kwarg was passed which isn't defined in this function signature, skip
+      for kwarg_key in kwargs.keys() {
+        if def.arg_defs.iter().all(|def| def.name != *kwarg_key) {
+          continue 'def;
+        }
+      }
+
       let (arg, arg_ref) = if let Some(kwarg) = kwargs.get(*name) {
         (kwarg, UnrealizedArgRef::Keyword(*name))
       } else if pos_arg_ix < args.len() {
@@ -491,11 +520,6 @@ fn get_args(
 
       arg_refs.push(arg_ref);
     }
-
-    // if we have leftover positional args, not a valid call
-    // if pos_arg_ix < args.len() {
-    //   continue 'def;
-    // }
 
     // valid args found for the whole def, so the function call is valid
     let realized_arg_defs = arg_refs
@@ -603,6 +627,9 @@ pub struct EvalCtx {
   rng: UnsafeCell<Pcg32>,
 }
 
+unsafe impl Send for EvalCtx {}
+unsafe impl Sync for EvalCtx {}
+
 impl Default for EvalCtx {
   fn default() -> Self {
     EvalCtx {
@@ -659,10 +686,15 @@ impl EvalCtx {
           kwargs.insert(k.clone(), val);
         }
 
-        self
-          .eval_fn_call(&call.name, &args, &kwargs, scope, false)
-          .map(ControlFlow::Continue)
-          .map_err(|err| err.wrap(format!("Error evaluating function call `{}`", call.name)))
+        match &call.target {
+          FunctionCallTarget::Name(name) => self
+            .eval_fn_call(name, &args, &kwargs, scope, false)
+            .map_err(|err| err.wrap(format!("Error evaluating function call `{}`", name))),
+          FunctionCallTarget::Literal(callable) => self
+            .invoke_callable(callable, &args, &kwargs, scope)
+            .map_err(|err| err.wrap("Error invoking callable")),
+        }
+        .map(ControlFlow::Continue)
       }
       Expr::BinOp { op, lhs, rhs } => {
         let lhs = match self.eval_expr(lhs, scope)? {
@@ -719,24 +751,11 @@ impl EvalCtx {
           Value::Sequence(Box::new(IntRange { start, end }))
         }))
       }
-      Expr::Ident(name) => {
-        if let Some(local) = scope.get(name) {
-          return Ok(ControlFlow::Continue(local));
-        }
-
-        // look it up as a builtin fn
-        if FN_SIGNATURE_DEFS.contains_key(&name) {
-          return Ok(ControlFlow::Continue(Value::Callable(Callable::Builtin(
-            name.to_owned(),
-          ))));
-        }
-
-        Err(ErrorStack::new(format!("Variable not found: {name}")))
-      }
-      Expr::Int(i) => Ok(ControlFlow::Continue(Value::Int(*i))),
-      Expr::Float(f) => Ok(ControlFlow::Continue(Value::Float(*f))),
-      Expr::Bool(b) => Ok(ControlFlow::Continue(Value::Bool(*b))),
-      Expr::Array(elems) => {
+      Expr::Ident(name) => self
+        .eval_ident(name.as_str(), scope)
+        .map(ControlFlow::Continue),
+      Expr::Literal(val) => Ok(ControlFlow::Continue(val.clone())),
+      Expr::ArrayLiteral(elems) => {
         let mut evaluated = Vec::with_capacity(elems.len());
         for elem in elems {
           let val = match self.eval_expr(elem, scope)? {
@@ -749,7 +768,6 @@ impl EvalCtx {
           inner: evaluated,
         }))))
       }
-      Expr::Nil => Ok(ControlFlow::Continue(Value::Nil)),
       Expr::Closure {
         params,
         body,
@@ -913,7 +931,11 @@ impl EvalCtx {
   ) -> Result<Value, ErrorStack> {
     let mut acc = initial_val;
     for (i, res) in iter.enumerate() {
-      let value = res.map_err(|err| err.wrap(format!("Error seq value ix={i} in reduce")))?;
+      let value = res.map_err(|err| {
+        err.wrap(format!(
+          "Error produced when evaluating item ix={i} in seq passed to reduce"
+        ))
+      })?;
       acc = self
         .invoke_callable(callable, &[acc, value], &Default::default(), &self.globals)
         .map_err(|err| err.wrap("Error invoking callable in reduce".to_owned()))?;
@@ -991,6 +1013,19 @@ impl EvalCtx {
     return Err(ErrorStack::new(format!("Undefined function: {name}")));
   }
 
+  pub(crate) fn eval_ident(&self, name: &str, scope: &Scope) -> Result<Value, ErrorStack> {
+    if let Some(local) = scope.get(name) {
+      return Ok(local);
+    }
+
+    // look it up as a builtin fn
+    if FN_SIGNATURE_DEFS.contains_key(&name) {
+      return Ok(Value::Callable(Callable::Builtin(name.to_owned())));
+    }
+
+    Err(ErrorStack::new(format!("Variable `{name}` not defined",)))
+  }
+
   fn invoke_callable(
     &self,
     callable: &Callable,
@@ -1016,6 +1051,8 @@ impl EvalCtx {
         // cloning the rest
         let closure_scope = Scope::wrap(&closure.captured_scope);
         let mut pos_arg_ix = 0usize;
+        let mut any_args_valid = false;
+        let mut invalid_arg_ix = None;
         for arg in &closure.params {
           if let Some(kwarg) = kwargs.get(&arg.name) {
             if let Some(type_hint) = arg.type_hint {
@@ -1024,6 +1061,7 @@ impl EvalCtx {
                 .map_err(|err| err.wrap(format!("Type error for closure kwarg `{}`", arg.name)))?;
             }
             closure_scope.insert(arg.name.clone(), kwarg.clone());
+            any_args_valid = true;
           } else if pos_arg_ix < args.len() {
             let pos_arg = &args[pos_arg_ix];
             if let Some(type_hint) = arg.type_hint {
@@ -1032,6 +1070,7 @@ impl EvalCtx {
               })?;
             }
             closure_scope.insert(arg.name.clone(), pos_arg.clone());
+            any_args_valid = true;
             pos_arg_ix += 1;
           } else {
             if let Some(default_val) = &arg.default_val {
@@ -1055,11 +1094,28 @@ impl EvalCtx {
               };
               closure_scope.insert(arg.name.clone(), default_val);
             } else {
-              return Err(ErrorStack::new(format!(
-                "Missing required argument `{}` for closure",
-                arg.name
-              )));
+              if invalid_arg_ix.is_none() {
+                invalid_arg_ix = Some(pos_arg_ix);
+              }
             }
+          }
+        }
+
+        if let Some(invalid_arg_ix) = invalid_arg_ix {
+          let invalid_arg = &closure.params[invalid_arg_ix];
+          if any_args_valid {
+            return Ok(Value::Callable(Callable::PartiallyAppliedFn(
+              PartiallyAppliedFn {
+                inner: Box::new(Callable::Closure(closure.clone())),
+                args: args.to_owned(),
+                kwargs: kwargs.clone(),
+              },
+            )));
+          } else {
+            return Err(ErrorStack::new(format!(
+              "Missing required argument `{}` for closure",
+              invalid_arg.name
+            )));
           }
         }
 
@@ -1184,13 +1240,18 @@ impl EvalCtx {
   }
 }
 
-pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), ErrorStack> {
+pub(crate) fn parse_program_src(src: &str) -> Result<Pair<Rule>, ErrorStack> {
   let pairs = GSParser::parse(Rule::program, src)
     .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
-
   let Some(program) = pairs.into_iter().next() else {
     return Err(ErrorStack::new("No program found in input"));
   };
+  Ok(program)
+}
+
+pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), ErrorStack> {
+  let program = parse_program_src(src)?;
+
   if program.as_rule() != Rule::program {
     return Err(ErrorStack::new(format!(
       "Expected top-level rule. Expected program, found: {:?}",
@@ -1198,7 +1259,8 @@ pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), E
     )));
   }
 
-  let ast = parse_program(program.clone())?;
+  let mut ast = parse_program(program.clone())?;
+  optimize_ast(&mut ast)?;
 
   for statement in ast.statements {
     let _val = match ctx.eval_statement(&statement, &ctx.globals)? {
@@ -1707,6 +1769,7 @@ fn test_vec3_swizzle() {
 a = vec3(1, 2, 3)
 b = a.zyx
 c = a.y
+x = pi*2
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
@@ -1908,4 +1971,121 @@ result = outer(w=500, 3)
   let result = ctx.globals.get("result").unwrap();
   let result = result.as_int().expect("Expected result to be an Int");
   assert_eq!(result, 3 + 400 + 300 + 500);
+}
+
+#[test]
+fn test_example_programs() {
+  use std::fs;
+
+  // either slow examples or those which rely on non-dummy CSG that isn't available outside of wasm
+  let parse_only = &["deathstar"];
+
+  let examples_dir = "./examples";
+  let fnames = fs::read_dir(examples_dir)
+    .expect("Failed to read examples directory")
+    .map(|res| res.unwrap())
+    .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "geo"))
+    .map(|entry| entry.path());
+
+  // every example should parse and evaluate without errors
+  for path in fnames {
+    let src = fs::read_to_string(&path).expect("Failed to read example file");
+    let example_name = path.file_stem().unwrap().to_str().unwrap();
+    println!("Testing example: {example_name}");
+
+    if parse_only.contains(&example_name) {
+      match GSParser::parse(Rule::program, &src) {
+        Ok(_) => println!("Example {example_name} parsed successfully"),
+        Err(err) => panic!("Example {example_name} failed to parse with error: {err}"),
+      }
+      continue;
+    }
+
+    match parse_and_eval_program(&src) {
+      Ok(_) => println!("Example {example_name} passed"),
+      Err(err) => panic!("Example {example_name} failed with error: {err}"),
+    }
+  }
+}
+
+#[test]
+fn test_string_literals() {
+  let src = r#"
+c = "'as\"df'"
+a = "asdf"
+b = '"as"df"'
+d = 'as\'df'
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let (a, b, c, d) = (
+    ctx.globals.get("a").unwrap(),
+    ctx.globals.get("b").unwrap(),
+    ctx.globals.get("c").unwrap(),
+    ctx.globals.get("d").unwrap(),
+  );
+  let (a, b, c, d) = (
+    a.as_str().unwrap(),
+    b.as_str().unwrap(),
+    c.as_str().unwrap(),
+    d.as_str().unwrap(),
+  );
+  assert_eq!(a, "asdf");
+  assert_eq!(b, "\"as\"df\"");
+  assert_eq!(c, "'as\"df'");
+  assert_eq!(d, "as'df");
+}
+
+#[test]
+fn test_closure_partial_application() {
+  let src = r#"
+myadd = |a,b| a+b
+inc = myadd(1)
+out = inc(2)
+
+inc2 = myadd(b=1)
+inc2(2) | print
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out = ctx.globals.get("out").unwrap();
+  let out = out.as_int().expect("Expected result to be an Int");
+  assert_eq!(out, 3);
+}
+
+#[test]
+fn test_skip_while() {
+  let src = r#"
+out = [1,2,3,4,5] | skip_while(|x| x < 3) | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out = ctx.globals.get("out").unwrap();
+  let out = out.as_int().expect("Expected result to be an Int");
+  assert_eq!(out, 3 + 4 + 5);
+}
+
+#[test]
+fn test_chain() {
+  let src = r#"
+a = 0..=2
+b = [3,4,5]
+c = (0..=1 | take(2)) -> |x| x + 1
+chained = chain([a,b,c])
+out = chained | reduce(add)
+first = chained | first
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out = ctx.globals.get("out").unwrap();
+  let out = out.as_int().expect("Expected result to be an Int");
+  assert_eq!(out, 0 + 1 + 2 + 3 + 4 + 5 + 1 + 2);
+
+  let first = ctx.globals.get("first").unwrap();
+  let first = first.as_int().expect("Expected result to be an Int");
+  assert_eq!(first, 0, "Expected first element to be 0, found: {first}");
 }

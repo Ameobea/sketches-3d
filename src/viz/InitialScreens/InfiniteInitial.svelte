@@ -90,7 +90,7 @@
     height: 100%;
     background-color: rgba(0, 0, 0, 0.8);
     border: 1px solid #111;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     max-width: 1200px;
     width: 100%;
     color: #eee;
@@ -135,11 +135,11 @@
   }
 
   :global(
-      .menu-items-stack > div,
-      .menu-items-stack > button,
-      .menu-items-stack > input,
-      .menu-items-stack-item
-    ) {
+    .menu-items-stack > div,
+    .menu-items-stack > button,
+    .menu-items-stack > input,
+    .menu-items-stack-item
+  ) {
     height: 60px;
     font-size: 24px;
     padding: 10px;

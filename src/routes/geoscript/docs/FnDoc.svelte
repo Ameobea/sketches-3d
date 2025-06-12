@@ -63,16 +63,16 @@
 
 <style lang="css">
   .root {
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     display: block;
     color: #e0e0e0;
     padding: 4px 24px 16px 24px;
   }
 
   .fn-name {
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     font-size: 28px;
-    font-weight: bold;
+    font-weight: 600;
     margin-bottom: 18px;
     margin-top: 0;
     position: relative;
@@ -108,7 +108,7 @@
   }
 
   .sig-name {
-    font-weight: bold;
+    font-weight: 600;
     color: #b8bb26;
     margin-right: 2px;
   }
@@ -153,7 +153,7 @@
   }
 
   .args-title {
-    font-weight: bold;
+    font-weight: 600;
     margin-bottom: 0;
     color: #e0e0e0;
   }

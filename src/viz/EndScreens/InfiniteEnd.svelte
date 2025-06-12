@@ -3,47 +3,49 @@
   export let currentConfig: InfiniteConfig;
   export let time: number;
 </script>
+
 <div>
-<div class="time-display">
-  <div class="score">Challenge Completed</div>
-  {#if currentConfig.timerActive}
-    <div class="time">
-      <div>{(time / 1000).toFixed(3)}</div>
-      Seconds
-    </div>
-  {/if}
-</div>
-<div class="mod-display">
+  <div class="time-display">
+    <div class="score">Challenge Completed</div>
+    {#if currentConfig.timerActive}
+      <div class="time">
+        <div>{(time / 1000).toFixed(3)}</div>
+        Seconds
+      </div>
+    {/if}
+  </div>
+  <div class="mod-display">
     <div style="display: flex;flex-direction:column">
-        <table>
-            <thead>
-                <tr style="border-style:dashed;border: 5px 5px 0px 0px;border-color:white">
-                    <th>Mod</th>
-                    <th>Value</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Seed</td>
-                    <td>"{currentConfig.seed}"</td>
-                </tr>
-                <tr>
-                    <td>Active</td>
-                    <td>{currentConfig.activePathLength}</td>
-                </tr>
-                <tr>
-                    <td>Goal</td>
-                    <td>{currentConfig.goalLength}</td>
-                </tr>
-                <tr>
-                    <td>VaryGap</td>
-                    <td>{currentConfig.varyingGaps}</td>
-                </tr>
-            </tbody>
-        </table>
+      <table>
+        <thead>
+          <tr style="border-style:dashed;border: 5px 5px 0px 0px;border-color:white">
+            <th>Mod</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Seed</td>
+            <td>"{currentConfig.seed}"</td>
+          </tr>
+          <tr>
+            <td>Active</td>
+            <td>{currentConfig.activePathLength}</td>
+          </tr>
+          <tr>
+            <td>Goal</td>
+            <td>{currentConfig.goalLength}</td>
+          </tr>
+          <tr>
+            <td>VaryGap</td>
+            <td>{currentConfig.varyingGaps}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
+
 <style lang="css">
   .time-display {
     position: absolute;
@@ -55,7 +57,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     background-color: #000000aa;
     color: white;
     border: 1px solid #ffffff55;
@@ -73,7 +75,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     background-color: #000000aa;
     color: white;
     border: 1px solid #ffffff55;

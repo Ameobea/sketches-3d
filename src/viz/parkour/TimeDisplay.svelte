@@ -82,7 +82,7 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     background-color: #000000aa;
     color: white;
     border: 1px solid #ffffff55;

@@ -16,7 +16,10 @@ use crate::{
   },
   noise::fbm,
   path_building::{build_torus_knot_path, cubic_bezier_3d_path},
-  seq::{FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, SkipSeq, TakeSeq, TakeWhileSeq},
+  seq::{
+    ChainSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, SkipSeq, SkipWhileSeq,
+    TakeSeq, TakeWhileSeq,
+  },
   ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value,
 };
 
@@ -237,6 +240,19 @@ pub(crate) fn eval_builtin_fn(
     }
     "rot" => match def_ix {
       0 => {
+        let rotation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+
+        // interpret as a euler angle in radians
+        let mut rotated_mesh = (*mesh).clone();
+        let rotation = UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z);
+        for vtx in rotated_mesh.vertices.values_mut() {
+          vtx.position = rotation * vtx.position;
+        }
+
+        Ok(Value::Mesh(Arc::new(rotated_mesh)))
+      }
+      1 => {
         let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
@@ -245,19 +261,6 @@ pub(crate) fn eval_builtin_fn(
         // interpret as a euler angle in radians
         let mut rotated_mesh = (*mesh).clone();
         let rotation = UnitQuaternion::from_euler_angles(x, y, z);
-        for vtx in rotated_mesh.vertices.values_mut() {
-          vtx.position = rotation * vtx.position;
-        }
-
-        Ok(Value::Mesh(Arc::new(rotated_mesh)))
-      }
-      1 => {
-        let rotation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
-
-        // interpret as a euler angle in radians
-        let mut rotated_mesh = (*mesh).clone();
-        let rotation = UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z);
         for vtx in rotated_mesh.vertices.values_mut() {
           vtx.position = rotation * vtx.position;
         }
@@ -373,6 +376,28 @@ pub(crate) fn eval_builtin_fn(
           cb: fn_value.clone(),
           inner: sequence.clone_box(),
         })))
+      }
+      _ => unimplemented!(),
+    },
+    "skip_while" => match def_ix {
+      0 => {
+        let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+        let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+        Ok(Value::Sequence(Box::new(SkipWhileSeq {
+          cb: fn_value.clone(),
+          inner: sequence.clone_box(),
+        })))
+      }
+      _ => unimplemented!(),
+    },
+    "chain" => match def_ix {
+      0 => {
+        let seqs = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_sequence()
+          .unwrap()
+          .clone_box();
+        Ok(Value::Sequence(Box::new(ChainSeq::new(ctx, seqs)?)))
       }
       _ => unimplemented!(),
     },
@@ -1023,18 +1048,25 @@ pub(crate) fn eval_builtin_fn(
       _ => unimplemented!(),
     },
     "point_distribute" => {
-      let count = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let count = arg_refs[0].resolve(args, &kwargs);
+      let point_count = match count {
+        _ if let Some(count) = count.as_int() => {
+          if count < 0 {
+            return Err(ErrorStack::new(
+              "negative point count is not valid for point_distribute",
+            ));
+          }
 
-      if count < 0 {
-        return Err(ErrorStack::new(
-          "negative point count is not valid for point_distribute",
-        ));
-      }
+          Some(count as usize)
+        }
+        _ if count.is_nil() => None,
+        _ => unreachable!(),
+      };
+      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
       let sampler_seq = PointDistributeSeq {
         mesh: mesh.clone(),
-        point_count: count as usize,
+        point_count,
       };
       Ok(Value::Sequence(Box::new(sampler_seq)))
     }
@@ -1401,6 +1433,10 @@ pub(crate) fn eval_builtin_fn(
     },
     "fbm" => match def_ix {
       0 => {
+        let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        Ok(Value::Float(fbm(0, 4, 1., 0.5, 2., *pos)))
+      }
+      1 => {
         let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
         if seed < 0 || seed > u32::MAX as i64 {
           return Err(ErrorStack::new(format!(
@@ -1413,7 +1449,7 @@ pub(crate) fn eval_builtin_fn(
         let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
         let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
         let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-        let pos = arg_refs[4].resolve(args, &kwargs).as_vec3().unwrap();
+        let pos = arg_refs[5].resolve(args, &kwargs).as_vec3().unwrap();
 
         Ok(Value::Float(fbm(
           seed,
@@ -1423,10 +1459,6 @@ pub(crate) fn eval_builtin_fn(
           lacunarity,
           *pos,
         )))
-      }
-      1 => {
-        let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-        Ok(Value::Float(fbm(0, 4, 1., 0.5, 2., *pos)))
       }
       _ => unimplemented!(),
     },

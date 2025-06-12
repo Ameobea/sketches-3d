@@ -75,7 +75,7 @@
     width: 500px;
     display: flex;
     flex-direction: column;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     text-transform: uppercase;
     background-color: #000000aa;
     color: #eee;

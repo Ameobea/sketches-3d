@@ -16,7 +16,7 @@
     left: 20px;
     font-size: 30px;
     color: #fcfcfc;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     pointer-events: none;
     user-select: none;
   }

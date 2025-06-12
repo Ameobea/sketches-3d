@@ -24,23 +24,9 @@
 <script lang="ts">
   import type { Viz } from 'src/viz';
   import * as THREE from 'three';
-  import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
   import { onMount } from 'svelte';
-  import { EditorState, Prec } from '@codemirror/state';
-  import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
-  import { defaultKeymap, indentWithTab } from '@codemirror/commands';
-  import { basicSetup } from 'codemirror';
-  import {
-    foldNodeProp,
-    foldInside,
-    indentNodeProp,
-    LRLanguage,
-    LanguageSupport,
-    syntaxTree,
-  } from '@codemirror/language';
-  import { linter, type Diagnostic } from '@codemirror/lint';
-
-  import { parser } from './parser/geoscript';
+  import { EditorView, type KeyBinding } from '@codemirror/view';
+  import { buildEditor } from './editor';
 
   let {
     viz,
@@ -64,7 +50,6 @@
   )[] = $state([]);
 
   let codemirrorContainer: HTMLDivElement | null = $state(null);
-  let editorState = $state<EditorState | null>(null);
   let editorView: EditorView | null = $state(null);
   let activeMat: THREE.Material = $state(baseMat);
   const lineMat = new THREE.LineBasicMaterial({
@@ -139,11 +124,12 @@
   };
 
   const run = async () => {
-    if (!editorView || !editorState) {
+    if (!editorView) {
       return;
     }
 
     const code = editorView.state.doc.toString();
+
     beforeUnloadHandler();
 
     for (const mesh of renderedMeshes) {
@@ -226,42 +212,6 @@
   };
 
   onMount(() => {
-    const syntaxErrorLinter = linter(view => {
-      let diagnostics: Diagnostic[] = [];
-      syntaxTree(view.state)
-        .cursor()
-        .iterate(({ type, from, to }) => {
-          // console.log(type.name, from, to);
-          if (type.isError) {
-            diagnostics.push({
-              from,
-              to,
-              severity: 'error',
-              message: 'Syntax error',
-            });
-          }
-        });
-      return diagnostics;
-    });
-
-    const parserWithMetadata = parser.configure({
-      props: [
-        indentNodeProp.add({
-          Application: context => context.column(context.node.from) + context.unit,
-        }),
-        foldNodeProp.add({
-          Application: foldInside,
-        }),
-      ],
-    });
-
-    const geoscriptLang = LRLanguage.define({
-      parser: parserWithMetadata,
-      languageData: {
-        commentTokens: { line: '//' },
-      },
-    });
-
     const customKeymap: readonly KeyBinding[] = [
       {
         key: 'Ctrl-Enter',
@@ -288,27 +238,14 @@
       },
     ];
 
-    editorState = EditorState.create({
-      doc: localStorage.lastGeoscriptPlaygroundCode || 'box(8) + (box(8) + vec3(4, 4, -4)) | render',
-      extensions: [
-        Prec.highest(keymap.of(customKeymap)),
-        basicSetup,
-        keymap.of(defaultKeymap),
-        keymap.of([indentWithTab]),
-        gruvboxDark,
-        new LanguageSupport(geoscriptLang),
-        syntaxErrorLinter,
-      ],
+    const editor = buildEditor({
+      container: codemirrorContainer!,
+      customKeymap,
+      initialCode: localStorage.lastGeoscriptPlaygroundCode || 'box(8) + (box(8) + vec3(4, 4, -4)) | render',
     });
-
-    editorView = new EditorView({
-      state: editorState,
-      parent: codemirrorContainer!,
-    });
+    editorView = editor.editorView;
 
     setReplCtx({ centerView, toggleWireframe });
-
-    run().then(centerView);
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
 
@@ -358,6 +295,8 @@
 </div>
 
 <style lang="css">
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
+
   .root {
     height: calc(max(250px, 25vh));
     width: 100%;
@@ -366,7 +305,7 @@
     display: flex;
     flex-direction: row;
     color: #efefef;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     font-size: 15px;
   }
 
@@ -406,7 +345,7 @@
     max-height: 200px;
     white-space: pre-wrap;
     overflow-wrap: break-word;
-    font-family: 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
   }
 
   .run-stats {

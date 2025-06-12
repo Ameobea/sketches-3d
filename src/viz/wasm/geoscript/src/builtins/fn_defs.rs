@@ -1495,6 +1495,40 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Sequence],
     },
   ],
+  "skip_while" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "fn",
+          valid_types: &[ArgType::Callable],
+          default_value: DefaultValue::Required,
+          description: "Callable with signature `|x|: bool`"
+        },
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a new sequence with elements skipped from the start of the input sequence until the predicate function returns false.  \n\nThis is lazy and will not evaluate the function until the output sequence is consumed.",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
+  "chain"=> &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "sequences",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "Sequence of sequences to chain together"
+        },
+      ],
+      description: "Returns a new sequence that concatenates all input sequences.  \n\nThis is lazy and will not evaluate the sequences until the output sequence is consumed.",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
   "first" => &[
     FnDef {
       arg_defs: &[
@@ -2082,9 +2116,9 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       arg_defs: &[
         ArgDef {
           name: "count",
-          valid_types: &[ArgType::Int],
+          valid_types: &[ArgType::Int, ArgType::Nil],
           default_value: DefaultValue::Required,
-          description: ""
+          description: "The number of points to distribute across the mesh.  If `nil`, returns an infinite sequence."
         },
         ArgDef {
           name: "mesh",
@@ -2466,16 +2500,16 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     FnDef {
       arg_defs: &[
         ArgDef {
-          name: "mesh",
-          valid_types: &[ArgType::Mesh],
-          default_value: DefaultValue::Required,
-          description: ""
-        },
-        ArgDef {
           name: "tolerance",
           valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Optional(|| Value::Float(0.01)),
           description: "The maximum distance between the original and simplified meshes.  0.01 is a good starting point."
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
         },
       ],
       description: "Simplifies a mesh, reducing the number of vertices.  Maintains manifold-ness.",
@@ -2550,33 +2584,45 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     FnDef {
       arg_defs: &[
         ArgDef {
+          name: "pos",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Generates a fractal Brownian motion (FBM) value at a given position using default parameters",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
           name: "seed",
           valid_types: &[ArgType::Int],
-          default_value: DefaultValue::Required,
+          default_value: DefaultValue::Optional(|| Value::Int(0)),
           description: ""
         },
         ArgDef {
           name: "octaves",
           valid_types: &[ArgType::Int],
-          default_value: DefaultValue::Required,
+          default_value: DefaultValue::Optional(|| Value::Int(4)),
           description: ""
         },
         ArgDef {
           name: "frequency",
-          valid_types: &[ArgType::Float],
-          default_value: DefaultValue::Required,
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Optional(|| Value::Float(1.)),
           description: ""
         },
         ArgDef {
           name: "lacunarity",
-          valid_types: &[ArgType::Float],
-          default_value: DefaultValue::Required,
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Optional(|| Value::Float(2.)),
           description: ""
         },
         ArgDef {
           name: "persistence",
-          valid_types: &[ArgType::Float],
-          default_value: DefaultValue::Required,
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Optional(|| Value::Float(0.5)),
           description: ""
         },
         ArgDef {
@@ -2587,18 +2633,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Samples fractional brownian noise at a given position using the specified parameters",
-      return_type: &[ArgType::Float],
-    },
-    FnDef {
-      arg_defs: &[
-        ArgDef {
-          name: "pos",
-          valid_types: &[ArgType::Vec3],
-          default_value: DefaultValue::Required,
-          description: ""
-        },
-      ],
-      description: "Generates a fractal Brownian motion (FBM) value at a given position using default parameters",
       return_type: &[ArgType::Float],
     },
   ],
