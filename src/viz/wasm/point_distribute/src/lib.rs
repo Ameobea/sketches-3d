@@ -41,9 +41,11 @@ impl<'a, T> MeshImpl<'a, T> {
         let c = mesh.vertices[3 * i + 2];
         Triangle::new(a, b, c)
       })),
-      MeshImpl::LinkedMesh { mesh, .. } => {
-        Box::new(mesh.faces.values().map(|f| f.to_triangle(&mesh.vertices)))
-      }
+      MeshImpl::LinkedMesh { mesh, face_keys } => Box::new(
+        face_keys
+          .iter()
+          .map(move |&face_key| mesh.faces[face_key].to_triangle(&mesh.vertices)),
+      ),
     }
   }
 
@@ -94,7 +96,14 @@ impl<'a> From<Mesh<'a>> for MeshImpl<'a> {
 
 impl<'a, T> From<&'a LinkedMesh<T>> for MeshImpl<'a, T> {
   fn from(mesh: &'a LinkedMesh<T>) -> Self {
-    let face_keys: Vec<FaceKey> = mesh.faces.keys().collect();
+    let face_keys: Vec<FaceKey> = mesh
+      .faces
+      .keys()
+      .filter(|k| {
+        let area = mesh.faces[*k].area(&mesh.vertices);
+        (!area.is_nan()) && area > 0.
+      })
+      .collect();
     MeshImpl::LinkedMesh { mesh, face_keys }
   }
 }

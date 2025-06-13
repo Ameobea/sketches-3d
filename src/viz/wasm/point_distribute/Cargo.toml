@@ -11,5 +11,6 @@ crate-type = ["cdylib", "rlib"]
 nalgebra = "0.33"
 common = { path = "../common" }
 mesh = { path = "../mesh" }
+log = "0.4"
 
 [features]

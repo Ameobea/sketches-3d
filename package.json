@@ -30,6 +30,8 @@
     "svelte": "^5.33.19",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
+    "vite-plugin-cross-origin-isolation": "^0.1.6",
+    "vite-plugin-devtools-json": "^0.2.0",
     "vite-plugin-wasm": "^3.4.1"
   },
   "type": "module",

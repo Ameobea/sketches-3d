@@ -2207,20 +2207,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Callable],
     },
   ],
-  "join" => &[
-    FnDef {
-      arg_defs: &[
-        ArgDef {
-          name: "meshes",
-          valid_types: &[ArgType::Sequence],
-          default_value: DefaultValue::Required,
-          description: ""
-        },
-      ],
-      description: "Joins a sequence of meshes into a single mesh.  Shorthand for `reduce(union)`",
-      return_type: &[ArgType::Mesh],
-    },
-  ],
   "convex_hull" => &[
     FnDef {
       arg_defs: &[

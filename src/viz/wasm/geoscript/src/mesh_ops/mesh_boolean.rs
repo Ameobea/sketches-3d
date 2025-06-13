@@ -7,19 +7,31 @@ use mesh::LinkedMesh;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::ErrorStack;
+#[cfg(target_arch = "wasm32")]
+use crate::MeshHandle;
 use crate::{ArgRef, EvalCtx, Value};
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "src/viz/wasmComp/manifold")]
 extern "C" {
-  pub fn apply_boolean(
-    a_verts: &[f32],
-    a_indices: &[u32],
-    b_verts: &[f32],
-    b_indices: &[u32],
-    op: u8,
-  ) -> Vec<u8>;
+  pub fn apply_boolean(a_handle: usize, b_handle: usize, op: u8, handle_only: bool) -> Vec<u8>;
+  pub fn create_manifold(vertices: &[f32], indices: &[u32]) -> usize;
+  fn drop_mesh_handle(handle: usize);
+  pub fn drop_all_mesh_handles();
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn create_manifold(_vertices: &[f32], _indices: &[u32]) -> usize {
+  0
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn drop_manifold_mesh_handle(handle: usize) {
+  drop_mesh_handle(handle);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn drop_manifold_mesh_handle(_handle: usize) {}
 
 #[repr(u8)]
 #[derive(Clone, Copy)]
@@ -30,7 +42,8 @@ pub enum MeshBooleanOp {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn decode_manifold_output(encoded_output: &[u8]) -> (&[f32], &[u32]) {
+pub fn decode_manifold_output(encoded_output: &[u8]) -> (usize, &[f32], &[u32]) {
+  // - 1 u32: manifold handle
   // - 1 u32: vtxCount
   // - 1 u32: triCount
   // - (vtxCount * 3 * f32): vertex positions (x, y, z)
@@ -56,52 +69,36 @@ pub fn decode_manifold_output(encoded_output: &[u8]) -> (&[f32], &[u32]) {
 
   let vtx_count = u32_view[0] as usize;
   let tri_count = u32_view[1] as usize;
-  let verts = &f32_view[2..(2 + vtx_count * 3)];
-  let indices = &u32_view[(2 + vtx_count * 3) as usize..(2 + vtx_count * 3 + tri_count * 3)];
+  let manifold_handle = u32_view[2] as usize;
+  let verts = &f32_view[3..(3 + vtx_count * 3)];
+  let indices = &u32_view[(3 + vtx_count * 3) as usize..(3 + vtx_count * 3 + tri_count * 3)];
 
-  (verts, indices)
+  (manifold_handle, verts, indices)
 }
 
 #[cfg(target_arch = "wasm32")]
 fn apply_boolean_op(
-  a: &LinkedMesh<()>,
-  b: &LinkedMesh<()>,
+  a: &MeshHandle,
+  b: &MeshHandle,
   op: MeshBooleanOp,
-) -> Result<LinkedMesh<()>, String> {
+  handle_only: bool,
+) -> Result<MeshHandle, String> {
+  use std::cell::Cell;
+
   use mesh::LinkedMesh;
 
-  let a_exported = a.to_raw_indexed(false, false, true);
-  let b_exported = b.to_raw_indexed(false, false, true);
+  let a_handle = a.get_or_create_handle();
+  let b_handle = b.get_or_create_handle();
 
-  assert!(std::mem::size_of::<u32>() == std::mem::size_of::<usize>());
-  let mesh0_exported_indices = unsafe {
-    std::slice::from_raw_parts(
-      a_exported.indices.as_ptr() as *const u32,
-      a_exported.indices.len(),
-    )
-  };
-  let mesh1_exported_indices = unsafe {
-    std::slice::from_raw_parts(
-      b_exported.indices.as_ptr() as *const u32,
-      b_exported.indices.len(),
-    )
-  };
+  let encoded_output = apply_boolean(a_handle, b_handle, op as u8, handle_only);
 
-  let encoded_output = apply_boolean(
-    &a_exported.vertices,
-    mesh0_exported_indices,
-    &b_exported.vertices,
-    mesh1_exported_indices,
-    op as u8,
-  );
+  let (manifold_handle, out_verts, out_indices) = decode_manifold_output(&encoded_output);
 
-  let (out_verts, out_indices) = decode_manifold_output(&encoded_output);
-  Ok(LinkedMesh::from_raw_indexed(
-    out_verts,
-    out_indices,
-    None,
-    None,
-  ))
+  let mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
+  Ok(MeshHandle {
+    mesh,
+    manifold_handle: Cell::new(manifold_handle),
+  })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -118,7 +115,7 @@ pub(crate) fn eval_mesh_boolean(
       let a = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
       let b = arg_refs[1].resolve(&args, &kwargs).as_mesh().unwrap();
 
-      let out_mesh = apply_boolean_op(&*a, &*b, op).map_err(ErrorStack::new)?;
+      let out_mesh = apply_boolean_op(&*a, &*b, op, false).map_err(ErrorStack::new)?;
       return Ok(Value::Mesh(Arc::new(out_mesh)));
     }
     1 => {
@@ -129,28 +126,30 @@ pub(crate) fn eval_mesh_boolean(
   };
 
   let Some(acc_res) = meshes_iter.next() else {
-    return Ok(Value::Mesh(Arc::new(LinkedMesh::new(0, 0, None))));
+    return Ok(Value::Mesh(Arc::new(LinkedMesh::new(0, 0, None).into())));
   };
   let acc = acc_res.map_err(|err| err.wrap("Error evaluating mesh in boolean op"))?;
-  let acc = acc.as_mesh().ok_or_else(|| {
+  let mut acc = acc.as_mesh().ok_or_else(|| {
     ErrorStack::new(format!(
       "Non-mesh value produced in sequence passed to boolean op: {acc:?}"
     ))
   })?;
-  let mut acc = (*acc).clone();
 
-  for res in meshes_iter {
-    let mesh = res.map_err(|err| err.wrap("Error evaluating mesh in boolean op"))?;
+  let mut meshes_iter = meshes_iter.peekable();
+  while let Some(res) = meshes_iter.next() {
+    let mesh = res
+      .map_err(|err| err.wrap("Error produced from iterator passed to mesh boolean function"))?;
     if let Value::Mesh(mesh) = mesh {
-      acc = apply_boolean_op(&acc, &mesh, op).map_err(ErrorStack::new)?;
+      let handle_only = meshes_iter.peek().is_some();
+      acc = Arc::new(apply_boolean_op(&*acc, &*mesh, op, handle_only).map_err(ErrorStack::new)?);
     } else {
       return Err(ErrorStack::new(
-        "Mesh boolean operations require a sequence of meshes",
+        "Non-mesh value produced in sequence passed to boolean op",
       ));
     }
   }
 
-  Ok(Value::Mesh(Arc::new(acc)))
+  Ok(Value::Mesh(acc))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -163,5 +162,7 @@ pub(crate) fn eval_mesh_boolean(
   _op: MeshBooleanOp,
 ) -> Result<Value, ErrorStack> {
   // Err("mesh boolean ops are only supported in wasm".to_owned())
-  Ok(Value::Mesh(Arc::new(mesh::LinkedMesh::new(0, 0, None))))
+  Ok(Value::Mesh(Arc::new(
+    mesh::LinkedMesh::new(0, 0, None).into(),
+  )))
 }

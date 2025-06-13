@@ -54,6 +54,9 @@ export const buildEditor = ({ container, customKeymap, initialCode = '' }: Build
 
   const geoscriptLang = LRLanguage.define({
     parser: parserWithMetadata,
+    languageData: {
+      commentTokens: { line: '//' },
+    },
   });
 
   const extensions: Extension = filterNils([

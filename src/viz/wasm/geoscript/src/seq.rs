@@ -4,7 +4,7 @@ use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use point_distribute::MeshSurfaceSampler;
 
-use crate::{Callable, ErrorStack, EvalCtx, Sequence, Value};
+use crate::{Callable, ErrorStack, EvalCtx, MeshHandle, Sequence, Value};
 
 #[derive(Clone, Debug)]
 pub(crate) struct IntRange {
@@ -157,22 +157,22 @@ impl Sequence for EagerSeq {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PointDistributeSeq {
-  pub mesh: Arc<LinkedMesh<()>>,
+  pub mesh: Arc<MeshHandle>,
   pub point_count: Option<usize>,
 }
 
 pub(crate) struct PointDistributeIter {
   #[allow(dead_code)]
-  mesh: Arc<LinkedMesh<()>>,
+  mesh: Arc<MeshHandle>,
   sampler: MeshSurfaceSampler<'static>,
 }
 
 impl PointDistributeIter {
-  pub fn new(mesh: Arc<LinkedMesh<()>>) -> Result<Self, ErrorStack> {
+  pub fn new(mesh: Arc<MeshHandle>) -> Result<Self, ErrorStack> {
     // safe because this reference will only live as long as the iterator, and by holding the `Arc`
     // internally, we can ensure that it's not dropped while the iterator is still in use.
     let static_mesh: &'static LinkedMesh<()> =
-      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&*mesh) };
+      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&(*mesh).mesh) };
 
     let sampler = MeshSurfaceSampler::new(static_mesh).map_err(|err| {
       ErrorStack::wrap(
@@ -248,21 +248,21 @@ impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> Sequence f
 
 #[derive(Clone, Debug)]
 pub(crate) struct MeshVertsSeq {
-  pub mesh: Arc<LinkedMesh<()>>,
+  pub mesh: Arc<MeshHandle>,
 }
 
 pub(crate) struct MeshVertsIter {
   #[allow(dead_code)]
-  mesh: Arc<LinkedMesh<()>>,
+  mesh: Arc<MeshHandle>,
   iter: Box<dyn Iterator<Item = Result<Value, ErrorStack>>>,
 }
 
 impl MeshVertsIter {
-  pub fn new(mesh: Arc<LinkedMesh<()>>) -> Self {
+  pub fn new(mesh: Arc<MeshHandle>) -> Self {
     // safe because this reference will only live as long as the iterator, and by holding the `Arc`
     // internally, we can ensure that it's not dropped while the iterator is still in use.
     let static_mesh: &'static LinkedMesh<()> =
-      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&*mesh) };
+      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&(*mesh).mesh) };
 
     let iter: impl Iterator<Item = _> + 'static = static_mesh
       .vertices

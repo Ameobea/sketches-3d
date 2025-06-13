@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { N8AOPostPass } from 'n8ao';
 import { mount } from 'svelte';
+import * as Comlink from 'comlink';
 
 import type { Viz } from 'src/viz';
 import type { SceneConfig } from '..';
-import { initManifoldWasm } from 'src/viz/wasmComp/manifold';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi, { type ReplCtx } from './ReplUI.svelte';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
+import type { GeoscriptWorkerMethods } from 'src/viz/wasmComp/geoscriptWorker.worker';
 
 const locations = {
   spawn: {
@@ -19,14 +20,15 @@ const locations = {
 
 const initRepl = async (
   viz: Viz,
-  repl: typeof import('src/viz/wasmComp/geoscript_repl'),
+  geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>,
   setReplCtx: (ctx: ReplCtx) => void,
   matPromise: Promise<THREE.Material>
 ) => {
-  const ctxPtr = repl.geoscript_repl_init();
+  const ctxPtr = await geoscriptWorker.init();
+
   const _ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
-    props: { viz, ctxPtr, repl, setReplCtx, baseMat: await matPromise },
+    props: { viz, ctxPtr, geoscriptWorker, setReplCtx, baseMat: await matPromise },
   });
 };
 
@@ -42,7 +44,8 @@ export const processLoadedScene = async (
     {},
     { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
   );
-  const manifoldInitPromise = initManifoldWasm();
+  const workerP = import('src/viz/wasmComp/geoscriptWorker.worker?worker');
+  const geoscriptWorkerP = workerP.then(worker => Comlink.wrap<GeoscriptWorkerMethods>(new worker.default()));
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
   viz.scene.add(ambientLight);
@@ -65,14 +68,6 @@ export const processLoadedScene = async (
   dirLight.shadow.camera.right = 380;
   dirLight.shadow.camera.top = 94;
   dirLight.shadow.camera.bottom = -140;
-
-  const [repl] = await Promise.all([
-    import('../../wasmComp/geoscript_repl').then(async engine => {
-      await engine.default();
-      return engine;
-    }),
-    manifoldInitPromise,
-  ]);
 
   configureDefaultPostprocessingPipeline(
     viz,
@@ -123,7 +118,7 @@ export const processLoadedScene = async (
   let ctx: ReplCtx | null = null;
   initRepl(
     viz,
-    repl,
+    await geoscriptWorkerP,
     (newCtx: ReplCtx) => {
       ctx = newCtx;
     },

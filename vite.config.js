@@ -3,9 +3,11 @@ import wasm from 'vite-plugin-wasm';
 
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import devtoolsJson from 'vite-plugin-devtools-json';
+import crossOriginIsolation from 'vite-plugin-cross-origin-isolation';
 
 const config = defineConfig({
-  plugins: [wasm(), sveltekit()],
+  plugins: [wasm(), sveltekit(), devtoolsJson(), crossOriginIsolation()],
   resolve: {
     alias: {
       src: resolve('./src'),

@@ -26,17 +26,20 @@
   import * as THREE from 'three';
   import { onMount } from 'svelte';
   import { EditorView, type KeyBinding } from '@codemirror/view';
+  import type * as Comlink from 'comlink';
+
+  import type { GeoscriptWorkerMethods } from 'src/viz/wasmComp/geoscriptWorker.worker';
   import { buildEditor } from './editor';
 
   let {
     viz,
-    repl,
+    geoscriptWorker: repl,
     ctxPtr,
     setReplCtx,
     baseMat,
   }: {
     viz: Viz;
-    repl: typeof import('src/viz/wasmComp/geoscript_repl');
+    geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>;
     ctxPtr: number;
     setReplCtx: (ctx: ReplCtx) => void;
     baseMat: THREE.Material;
@@ -138,18 +141,18 @@
     }
     renderedMeshes = [];
 
-    repl.geoscript_repl_reset(ctxPtr);
+    await repl.reset(ctxPtr);
     runStats = null;
     const startTime = performance.now();
     try {
-      repl.geoscript_repl_eval(ctxPtr, code);
+      await repl.eval(ctxPtr, code);
     } catch (err) {
       console.error('Error evaluating code:', err);
       // TODO: this set isn't working for some reason
       err = `Error evaluating code: ${err}`;
       return;
     }
-    err = repl.geoscript_repl_get_err(ctxPtr) || null;
+    err = (await repl.getErr(ctxPtr)) || null;
     if (err) {
       return;
     }
@@ -162,12 +165,10 @@
       totalFaceCount: 0,
     };
 
-    localRunStats.renderedMeshCount = repl.geoscript_repl_get_rendered_mesh_count(ctxPtr);
+    localRunStats.renderedMeshCount = await repl.getRenderedMeshCount(ctxPtr);
     const newRenderedMeshes = [];
     for (let i = 0; i < localRunStats.renderedMeshCount; i++) {
-      const verts = repl.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, i);
-      const indices = repl.geoscript_repl_get_rendered_mesh_indices(ctxPtr, i);
-      const normals = repl.geoscript_repl_get_rendered_mesh_normals(ctxPtr, i);
+      const { verts, indices, normals } = await repl.getRenderedMesh(ctxPtr, i);
 
       localRunStats.totalVtxCount += verts.length / 3;
       localRunStats.totalFaceCount += indices.length / 3;
@@ -186,9 +187,9 @@
       newRenderedMeshes.push(mesh);
     }
 
-    localRunStats.renderedPathCount = repl.geoscript_get_rendered_path_count(ctxPtr);
+    localRunStats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
     for (let i = 0; i < localRunStats.renderedPathCount; i++) {
-      const pathVerts: Float32Array = repl.geoscript_get_rendered_path(ctxPtr, i);
+      const pathVerts: Float32Array = await repl.getRenderedPathVerts(ctxPtr, i);
       localRunStats.totalVtxCount += pathVerts.length / 3;
       localRunStats.totalFaceCount += pathVerts.length / 3 - 1;
       const pathGeometry = new THREE.BufferGeometry();

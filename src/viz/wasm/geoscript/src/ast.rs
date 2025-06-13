@@ -5,7 +5,9 @@ use itertools::Itertools;
 use pest::iterators::Pair;
 
 use crate::{
-  Callable, Closure, EagerSeq, ErrorStack, EvalCtx, IntRange, Rule, Scope, Value,
+  build_no_fn_def_found_err,
+  builtins::{add_impl, div_impl, fn_defs::FnDef, mul_impl, sub_impl},
+  get_binop_def_ix, Callable, Closure, EagerSeq, ErrorStack, EvalCtx, IntRange, Rule, Scope, Value,
   FN_SIGNATURE_DEFS, FUNCTION_ALIASES, PRATT_PARSER,
 };
 
@@ -388,36 +390,48 @@ fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, ErrorS
   Ok(Value::Sequence(Box::new(range)))
 }
 
+// TODO: should do more efficient version of this
+lazy_static::lazy_static! {
+  static ref ADD_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["add"];
+  static ref SUB_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["sub"];
+  static ref MUL_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["mul"];
+  static ref DIV_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["div"];
+}
+
 impl BinOp {
   pub fn apply(&self, ctx: &EvalCtx, lhs: Value, rhs: Value) -> Result<Value, ErrorStack> {
     match self {
-      BinOp::Add => ctx.eval_fn_call("add", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Sub => ctx.eval_fn_call("sub", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Mul => ctx.eval_fn_call("mul", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Div => ctx.eval_fn_call("div", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Mod => ctx.eval_fn_call("mod", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Gt => ctx.eval_fn_call("gt", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Lt => ctx.eval_fn_call("lt", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Gte => ctx.eval_fn_call("gte", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Lte => ctx.eval_fn_call("lte", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Eq => ctx.eval_fn_call("eq", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Neq => ctx.eval_fn_call("neq", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::And => ctx.eval_fn_call("and", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::Or => ctx.eval_fn_call("or", &[lhs, rhs], &Default::default(), &ctx.globals, true),
-      BinOp::BitAnd => ctx.eval_fn_call(
-        "bit_and",
-        &[lhs, rhs],
-        &Default::default(),
-        &ctx.globals,
-        true,
-      ),
-      BinOp::BitOr => ctx.eval_fn_call(
-        "bit_or",
-        &[lhs, rhs],
-        &Default::default(),
-        &ctx.globals,
-        true,
-      ),
+      BinOp::Add => {
+        let def_ix = get_binop_def_ix("add", &*ADD_ARG_DEFS, &lhs, &rhs)?;
+        add_impl(ctx, def_ix, &lhs, &rhs)
+      }
+      BinOp::Sub => {
+        let def_ix = get_binop_def_ix("sub", &*SUB_ARG_DEFS, &lhs, &rhs)?;
+        sub_impl(ctx, def_ix, &lhs, &rhs)
+      }
+      BinOp::Mul => {
+        let def_ix = get_binop_def_ix("mul", &*MUL_ARG_DEFS, &lhs, &rhs)?;
+        mul_impl(ctx, def_ix, &lhs, &rhs)
+      }
+      BinOp::Div => {
+        let def_ix = get_binop_def_ix("div", &*DIV_ARG_DEFS, &lhs, &rhs)?;
+        div_impl(def_ix, &lhs, &rhs)
+      }
+      BinOp::Mod => ctx.eval_fn_call::<true>("mod", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Gt => ctx.eval_fn_call::<true>("gt", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Lt => ctx.eval_fn_call::<true>("lt", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Gte => ctx.eval_fn_call::<true>("gte", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Lte => ctx.eval_fn_call::<true>("lte", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Eq => ctx.eval_fn_call::<true>("eq", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Neq => ctx.eval_fn_call::<true>("neq", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::And => ctx.eval_fn_call::<true>("and", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Or => ctx.eval_fn_call::<true>("or", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::BitAnd => {
+        ctx.eval_fn_call::<true>("bit_and", &[lhs, rhs], &Default::default(), &ctx.globals)
+      }
+      BinOp::BitOr => {
+        ctx.eval_fn_call::<true>("bit_or", &[lhs, rhs], &Default::default(), &ctx.globals)
+      }
       BinOp::Range => eval_range(lhs, rhs, false),
       BinOp::RangeInclusive => eval_range(lhs, rhs, true),
       BinOp::Pipeline => {
@@ -429,17 +443,11 @@ impl BinOp {
         }
 
         // maybe it's a bit-or
-        ctx.eval_fn_call(
-          "bit_or",
-          &[lhs, rhs],
-          &Default::default(),
-          &ctx.globals,
-          true,
-        )
+        ctx.eval_fn_call::<true>("bit_or", &[lhs, rhs], &Default::default(), &ctx.globals)
       }
       BinOp::Map => {
         // this operator acts the same as `lhs | map(rhs)`
-        ctx.eval_fn_call("map", &[rhs, lhs], &Default::default(), &ctx.globals, true)
+        ctx.eval_fn_call::<true>("map", &[rhs, lhs], &Default::default(), &ctx.globals)
       }
     }
   }
@@ -455,9 +463,9 @@ pub enum PrefixOp {
 impl PrefixOp {
   pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, ErrorStack> {
     match self {
-      PrefixOp::Neg => ctx.eval_fn_call("neg", &[val], &Default::default(), &ctx.globals, true),
-      PrefixOp::Pos => ctx.eval_fn_call("pos", &[val], &Default::default(), &ctx.globals, true),
-      PrefixOp::Not => ctx.eval_fn_call("not", &[val], &Default::default(), &ctx.globals, true),
+      PrefixOp::Neg => ctx.eval_fn_call::<true>("neg", &[val], &Default::default(), &ctx.globals),
+      PrefixOp::Pos => ctx.eval_fn_call::<true>("pos", &[val], &Default::default(), &ctx.globals),
+      PrefixOp::Not => ctx.eval_fn_call::<true>("not", &[val], &Default::default(), &ctx.globals),
     }
   }
 }
@@ -1135,12 +1143,11 @@ fn fold_constants<'a>(
             }
             return Ok(());
           } else {
-            let evaled = CONST_EVAL_CTX.eval_fn_call(
+            let evaled = CONST_EVAL_CTX.eval_fn_call::<true>(
               name,
               &arg_vals,
               &kwarg_vals,
               &CONST_EVAL_CTX.globals,
-              true,
             )?;
             *expr = evaled.into_literal_expr();
             Ok(())
@@ -1278,11 +1285,9 @@ fn fold_constants<'a>(
       }
 
       if captures_dyn {
-        println!("Block captures dynamic variables, skipping constant folding");
         return Ok(());
       }
 
-      println!("eagerly evaling block expr");
       let evaled = CONST_EVAL_CTX.eval_expr(expr, &CONST_EVAL_CTX.globals)?;
       match evaled {
         crate::ControlFlow::Continue(val) | crate::ControlFlow::Break(val) => {

@@ -3,6 +3,7 @@
 #[cfg(target_arch = "wasm32")]
 use std::cell::UnsafeCell;
 use std::{
+  cell::Cell,
   fmt::{Debug, Display},
   sync::{Arc, Mutex},
 };
@@ -19,6 +20,7 @@ use pest::{
 use pest_derive::Parser;
 use rand_pcg::Pcg32;
 use seq::EagerSeq;
+use smallvec::SmallVec;
 
 use crate::{
   ast::{ClosureArg, TypeName},
@@ -27,7 +29,8 @@ use crate::{
     fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
     FUNCTION_ALIASES,
   },
-  seq::{IntRange, MapSeq},
+  mesh_ops::mesh_boolean::{create_manifold, drop_manifold_mesh_handle},
+  seq::{ChainSeq, IntRange, MapSeq},
 };
 
 mod ast;
@@ -204,11 +207,71 @@ impl Debug for Callable {
   }
 }
 
+pub struct MeshHandle {
+  pub mesh: LinkedMesh<()>,
+  pub manifold_handle: Cell<usize>,
+}
+
+impl MeshHandle {
+  #[cfg(target_arch = "wasm32")]
+  fn get_or_create_handle(&self) -> usize {
+    match self.manifold_handle.get() {
+      0 => {
+        let raw_mesh = self.mesh.to_raw_indexed(false, false, true);
+        assert!(std::mem::size_of::<u32>() == std::mem::size_of::<usize>());
+        let indices = unsafe {
+          std::slice::from_raw_parts(
+            raw_mesh.indices.as_ptr() as *const u32,
+            raw_mesh.indices.len(),
+          )
+        };
+        let verts = &raw_mesh.vertices;
+
+        let handle = create_manifold(verts, indices);
+        self.manifold_handle.set(handle);
+        handle
+      }
+      handle => handle,
+    }
+  }
+}
+
+impl From<LinkedMesh<()>> for MeshHandle {
+  fn from(mesh: LinkedMesh<()>) -> Self {
+    MeshHandle {
+      mesh,
+      manifold_handle: Cell::new(0),
+    }
+  }
+}
+
+impl Debug for MeshHandle {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "LinkedMesh {{ vertices: {}, faces: {}, edges: {}, manifold_handle: {:?} }}",
+      self.mesh.vertices.len(),
+      self.mesh.faces.len(),
+      self.mesh.edges.len(),
+      self.manifold_handle
+    )
+  }
+}
+
+impl Drop for MeshHandle {
+  fn drop(&mut self) {
+    let handle = self.manifold_handle.get();
+    if handle != 0 {
+      drop_manifold_mesh_handle(handle);
+    }
+  }
+}
+
 pub enum Value {
   Int(i64),
   Float(f32),
   Vec3(Vec3),
-  Mesh(Arc<LinkedMesh<()>>),
+  Mesh(Arc<MeshHandle>),
   Callable(Callable),
   Sequence(Box<dyn Sequence>),
   Bool(bool),
@@ -257,7 +320,7 @@ impl Value {
     }
   }
 
-  fn as_mesh(&self) -> Option<Arc<LinkedMesh<()>>> {
+  fn as_mesh(&self) -> Option<Arc<MeshHandle>> {
     match self {
       Value::Mesh(mesh) => Some(Arc::clone(&mesh)),
       _ => None,
@@ -444,15 +507,28 @@ fn format_fn_signatures(arg_defs: &[FnDef]) -> String {
     .join("\n")
 }
 
+pub(crate) fn build_no_fn_def_found_err(
+  fn_name: &str,
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+  defs: &[FnDef],
+) -> ErrorStack {
+  ErrorStack::new(format!(
+    "No valid function signature found for `{fn_name}` with args: {args:?}, kwargs: \
+     {kwargs:?}\n\nAvailable signatures:\n{}",
+    format_fn_signatures(defs)
+  ))
+}
+
 fn get_args(
   fn_name: &str,
-  arg_defs: &[FnDef],
+  defs: &[FnDef],
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
 ) -> Result<GetArgsOutput, ErrorStack> {
   // if the name of the first arg is empty, then the function is considered fully dynamic and no
   // type-checking/validation is performed
-  if let Some(def) = arg_defs.first() {
+  if let Some(def) = defs.first() {
     if let Some(def) = def.arg_defs.first() {
       if def.name.is_empty() {
         return Ok(GetArgsOutput::Valid {
@@ -464,22 +540,23 @@ fn get_args(
   }
 
   for key in kwargs.keys() {
-    if !arg_defs
+    if !defs
       .iter()
       .any(|def| def.arg_defs.iter().any(|arg| arg.name == key))
     {
       return Err(ErrorStack::new(format!(
         "kwarg `{key}` is not valid in any function signature.\n\nAvailable signatures:\n{}",
-        format_fn_signatures(arg_defs)
+        format_fn_signatures(defs)
       )));
     }
   }
 
+  let mut arg_refs: SmallVec<[UnrealizedArgRef; 8]> = SmallVec::new();
   let mut valid_partial: bool = false;
   let any_args_provided = !args.is_empty() || !kwargs.is_empty();
-  'def: for (def_ix, def) in arg_defs.iter().enumerate() {
+  'def: for (def_ix, def) in defs.iter().enumerate() {
     let mut pos_arg_ix = 0;
-    let mut arg_refs: Vec<UnrealizedArgRef> = Vec::with_capacity(def.arg_defs.len());
+    arg_refs.clear();
     'arg: for ArgDef {
       default_value,
       description: _,
@@ -536,19 +613,48 @@ fn get_args(
     return Ok(GetArgsOutput::PartiallyApplied);
   }
 
-  Err(ErrorStack::new(format!(
-    "No valid function signature found for `{fn_name}` with args: {args:?}, kwargs: \
-     {kwargs:?}\n\nAvailable signatures:\n{}",
-    format_fn_signatures(arg_defs)
-  )))
+  Err(build_no_fn_def_found_err(fn_name, args, kwargs, defs))
 }
 
-#[derive(Default)]
+// Specialized version of `get_args` for more efficient binary operator lookup.  Assumes that each
+// def in `defs` has exactly two args.
+fn get_binop_def_ix(
+  name: &str,
+  defs: &[FnDef],
+  lhs: &Value,
+  rhs: &Value,
+) -> Result<usize, ErrorStack> {
+  for (def_ix, def) in defs.iter().enumerate() {
+    let lhs_def = &def.arg_defs[0];
+    let rhs_def = &def.arg_defs[1];
+    if ArgType::any_valid(&lhs_def.valid_types, lhs)
+      && ArgType::any_valid(&rhs_def.valid_types, rhs)
+    {
+      return Ok(def_ix);
+    }
+  }
+
+  return Err(build_no_fn_def_found_err(
+    name,
+    &[lhs.clone(), rhs.clone()],
+    &Default::default(),
+    FN_SIGNATURE_DEFS[name],
+  ));
+}
+
 pub struct AppendOnlyBuffer<T> {
   // Using a mutex here to avoid making the whole `EvalCtx` require `&mut` when evaluating code.
   //
   // This thing is essentially "write-only", and the mutex should become a no-op in Wasm anyway.
   pub inner: Mutex<Vec<T>>,
+}
+
+impl<T> Default for AppendOnlyBuffer<T> {
+  fn default() -> Self {
+    AppendOnlyBuffer {
+      inner: Mutex::new(Vec::new()),
+    }
+  }
 }
 
 impl<T> AppendOnlyBuffer<T> {
@@ -565,7 +671,7 @@ impl<T> AppendOnlyBuffer<T> {
   }
 }
 
-type RenderedMeshes = AppendOnlyBuffer<Arc<LinkedMesh<()>>>;
+type RenderedMeshes = AppendOnlyBuffer<Arc<MeshHandle>>;
 type RemderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
 #[derive(Default, Debug)]
@@ -688,7 +794,7 @@ impl EvalCtx {
 
         match &call.target {
           FunctionCallTarget::Name(name) => self
-            .eval_fn_call(name, &args, &kwargs, scope, false)
+            .eval_fn_call::<false>(name, &args, &kwargs, scope)
             .map_err(|err| err.wrap(format!("Error evaluating function call `{}`", name))),
           FunctionCallTarget::Literal(callable) => self
             .invoke_callable(callable, &args, &kwargs, scope)
@@ -927,9 +1033,34 @@ impl EvalCtx {
     &'a self,
     initial_val: Value,
     callable: &Callable,
-    iter: impl Iterator<Item = Result<Value, ErrorStack>> + 'a,
+    seq: Box<dyn Sequence>,
   ) -> Result<Value, ErrorStack> {
+    // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
+    // of encoding/decoding intermediate meshes
+    if let Callable::Builtin(name) = callable {
+      if matches!(name.as_str(), "union" | "difference" | "intersect") {
+        let combined_iter = ChainSeq::new(
+          self,
+          Box::new(EagerSeq {
+            inner: vec![initial_val, Value::Sequence(seq)],
+          }),
+        )
+        .map_err(|err| {
+          err.wrap("Internal error creating chained sequence when folding mesh boolean op")
+        })?;
+        return self
+          .eval_fn_call::<true>(
+            name,
+            &[Value::Sequence(Box::new(combined_iter))],
+            &Default::default(),
+            &self.globals,
+          )
+          .map_err(|err| err.wrap("Error invoking mesh boolean op in fold"));
+      }
+    }
+
     let mut acc = initial_val;
+    let iter = seq.consume(self);
     for (i, res) in iter.enumerate() {
       let value = res.map_err(|err| {
         err.wrap(format!(
@@ -949,24 +1080,47 @@ impl EvalCtx {
     fn_value: &Callable,
     seq: Box<dyn Sequence>,
   ) -> Result<Value, ErrorStack> {
-    // TODO: fix clone
+    // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
+    // of encoding/decoding intermediate meshes
+    if let Callable::Builtin(name) = fn_value {
+      if matches!(name.as_str(), "union" | "difference" | "intersect") {
+        return self
+          .eval_fn_call::<true>(
+            name,
+            &[Value::Sequence(seq)],
+            &Default::default(),
+            &self.globals,
+          )
+          .map_err(|err| err.wrap("Error invoking mesh boolean op in reduce"));
+      }
+    }
+
     let mut iter = seq.clone_box().consume(self);
     let Some(first_value_res) = iter.next() else {
       return Err(ErrorStack::new("empty sequence passed to reduce"));
     };
-    let first_value =
-      first_value_res.map_err(|err| err.wrap("Error evaluating initial value in reduce"))?;
 
-    self.fold(first_value, &fn_value, iter)
+    let mut acc =
+      first_value_res.map_err(|err| err.wrap("Error evaluating initial value in reduce"))?;
+    for (i, res) in iter.enumerate() {
+      let value = res.map_err(|err| {
+        err.wrap(format!(
+          "Error produced when evaluating item ix={i} in seq passed to reduce"
+        ))
+      })?;
+      acc = self
+        .invoke_callable(fn_value, &[acc, value], &Default::default(), &self.globals)
+        .map_err(|err| err.wrap("Error invoking callable in reduce".to_owned()))?;
+    }
+    Ok(acc)
   }
 
-  fn eval_fn_call(
+  fn eval_fn_call<const builtins_only: bool>(
     &self,
     mut name: &str,
     args: &[Value],
     kwargs: &FxHashMap<String, Value>,
     scope: &Scope,
-    builtins_only: bool,
   ) -> Result<Value, ErrorStack> {
     if !builtins_only {
       // might be a callable stored as a global
@@ -1034,7 +1188,7 @@ impl EvalCtx {
     scope: &Scope,
   ) -> Result<Value, ErrorStack> {
     match callable {
-      Callable::Builtin(name) => self.eval_fn_call(name, args, kwargs, scope, true),
+      Callable::Builtin(name) => self.eval_fn_call::<true>(name, args, kwargs, scope),
       Callable::PartiallyAppliedFn(paf) => {
         let mut combined_args = paf.args.clone();
         combined_args.extend(args.iter().cloned());
@@ -1325,8 +1479,8 @@ c | render
   let rendered_meshes = result.unwrap().rendered_meshes.into_inner();
   assert_eq!(rendered_meshes.len(), 1);
   let mesh = &rendered_meshes[0];
-  assert_eq!(mesh.vertices.len(), 8);
-  for vtx in mesh.vertices.values() {
+  assert_eq!(mesh.mesh.vertices.len(), 8);
+  for vtx in mesh.mesh.vertices.values() {
     assert_eq!(vtx.position.x.abs(), 2.0);
     assert_eq!(vtx.position.y.abs(), 4.0);
     assert_eq!(vtx.position.z.abs(), 2.0);
@@ -1349,8 +1503,8 @@ render(a)
     .into_inner();
   assert_eq!(rendered_meshes.len(), 1);
   let mesh = &rendered_meshes[0];
-  assert_eq!(mesh.vertices.len(), 8);
-  for vtx in mesh.vertices.values() {
+  assert_eq!(mesh.mesh.vertices.len(), 8);
+  for vtx in mesh.mesh.vertices.values() {
     assert_eq!(vtx.position.x.abs(), 1. / 2.);
     assert_eq!(vtx.position.y.abs(), 2. / 2.);
     assert_eq!(vtx.position.z.abs(), 3. / 2.);
@@ -1633,8 +1787,13 @@ render(meshes)
 
   for i in 0..10 {
     let mesh = &rendered_meshes[i];
-    let center =
-      mesh.vertices.values().map(|vtx| vtx.position).sum::<Vec3>() / mesh.vertices.len() as f32;
+    let center = mesh
+      .mesh
+      .vertices
+      .values()
+      .map(|vtx| vtx.position)
+      .sum::<Vec3>()
+      / mesh.mesh.vertices.len() as f32;
     assert_eq!(center, Vec3::new(i as f32, 0.0, i as f32));
   }
 }

@@ -13,17 +13,17 @@ ball = ball
 obj = box(5, 13, 15)
   | rot(-0.4, 0.2, -0.9)
   | trans(-7, -5, 4)
-  | tess(target_edge_length=0.1)
+  | tess(target_edge_length=0.5)
   | warp(|v, norm| v + norm * (fbm(v*0.25) * 0.5 + 0.5) * 3)
 
 nicks = ball
   | point_distribute(count=40)
   -> |p| {
-        box(randf(1.2, 2.5), randf(1.2, 9.5), randf(1.2, 2.5))
-          | rot(randf(), randf(), randf())
+        box(randf(1.2, 5.5), randf(1.2, 9.5), randf(1.2, 2.5))
+          | rot(randf(-pi, pi), randf(-pi, pi), randf(-pi, pi))
           | trans(p)
           | tess(target_edge_length=0.2)
-          | warp(|v, norm| v + norm * (fbm(v*0.6) * 0.5 + 0.5))
+          | warp(|v, norm| v + norm * (fbm(v*0.6) * 0.5 + 0.5) * 2.)
      }
   | join;
 

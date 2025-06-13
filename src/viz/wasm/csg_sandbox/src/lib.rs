@@ -1,6 +1,8 @@
 use wasm_bindgen::prelude::*;
 
-use geoscript::mesh_ops::mesh_boolean::{apply_boolean, decode_manifold_output, MeshBooleanOp};
+use geoscript::mesh_ops::mesh_boolean::{
+  apply_boolean, create_manifold, decode_manifold_output, drop_manifold_mesh_handle, MeshBooleanOp,
+};
 use mesh::{csg::FaceData, linked_mesh::DisplacementNormalMethod, LinkedMesh, OwnedIndexedMesh};
 
 static mut DID_INIT: bool = false;
@@ -106,14 +108,19 @@ pub fn csg_sandbox_init(
     )
   };
 
+  let mesh0_handle = create_manifold(&mesh0_exported.vertices, &mesh0_exported_indices);
+  let mesh1_handle = create_manifold(&mesh1_exported.vertices, &mesh1_exported_indices);
+
   let encoded_output = apply_boolean(
-    &mesh0_exported.vertices,
-    &mesh0_exported_indices,
-    &mesh1_exported.vertices,
-    &mesh1_exported_indices,
+    mesh0_handle,
+    mesh1_handle,
     MeshBooleanOp::Difference as u8,
+    false,
   );
-  let (out_verts, out_indices) = decode_manifold_output(&encoded_output);
+  drop_manifold_mesh_handle(mesh0_handle);
+  drop_manifold_mesh_handle(mesh1_handle);
+  let (manifold_handle, out_verts, out_indices) = decode_manifold_output(&encoded_output);
+  drop_manifold_mesh_handle(manifold_handle);
   let mut mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(&out_verts, &out_indices, None, None);
   mesh
     .check_is_manifold::<true>()

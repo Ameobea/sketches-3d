@@ -323,6 +323,7 @@ dependencies = [
  "point_distribute",
  "rand 0.8.5",
  "rand_pcg",
+ "smallvec",
  "tessellation",
  "wasm-bindgen",
 ]
@@ -787,6 +788,7 @@ name = "point_distribute"
 version = "0.1.0"
 dependencies = [
  "common",
+ "log",
  "mesh",
  "nalgebra",
 ]
