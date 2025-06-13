@@ -1,4 +1,4 @@
-#![feature(if_let_guard, impl_trait_in_bindings)]
+#![feature(if_let_guard, impl_trait_in_bindings, adt_const_params)]
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::UnsafeCell;
@@ -27,9 +27,11 @@ use crate::{
   builtins::{
     eval_builtin_fn,
     fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
-    FUNCTION_ALIASES,
+    resolve_builtin_impl, FUNCTION_ALIASES,
   },
-  mesh_ops::mesh_boolean::{create_manifold, drop_manifold_mesh_handle},
+  mesh_ops::mesh_boolean::{
+    create_manifold, drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp,
+  },
   seq::{ChainSeq, IntRange, MapSeq},
 };
 
@@ -179,7 +181,7 @@ impl Debug for Closure {
 
 #[derive(Clone)]
 pub struct ComposedFn {
-  pub inner: Vec<Callable>,
+  pub inner: Vec<Arc<Callable>>,
 }
 
 impl Debug for ComposedFn {
@@ -190,7 +192,17 @@ impl Debug for ComposedFn {
 
 #[derive(Clone)]
 pub enum Callable {
-  Builtin(String),
+  Builtin {
+    name: String,
+    fn_impl: fn(
+      usize,
+      &[ArgRef],
+      &[Value],
+      &FxHashMap<String, Value>,
+      &EvalCtx,
+    ) -> Result<Value, ErrorStack>,
+    fn_signature_defs: &'static [FnDef],
+  },
   PartiallyAppliedFn(PartiallyAppliedFn),
   Closure(Closure),
   ComposedFn(ComposedFn),
@@ -199,7 +211,7 @@ pub enum Callable {
 impl Debug for Callable {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Callable::Builtin(name) => Debug::fmt(&format!("<built-in fn \"{name}\">"), f),
+      Callable::Builtin { name, .. } => Debug::fmt(&format!("<built-in fn \"{name}\">"), f),
       Callable::PartiallyAppliedFn(paf) => Debug::fmt(&format!("{paf:?}"), f),
       Callable::Closure(closure) => Debug::fmt(&format!("{closure:?}"), f),
       Callable::ComposedFn(composed) => Debug::fmt(&format!("{composed:?}"), f),
@@ -272,7 +284,7 @@ pub enum Value {
   Float(f32),
   Vec3(Vec3),
   Mesh(Arc<MeshHandle>),
-  Callable(Callable),
+  Callable(Arc<Callable>),
   Sequence(Box<dyn Sequence>),
   Bool(bool),
   String(String),
@@ -450,7 +462,7 @@ impl UnrealizedArgRef {
 }
 
 #[derive(Debug)]
-enum ArgRef {
+pub enum ArgRef {
   Positional(usize),
   Keyword(&'static str),
   Default(Value),
@@ -878,15 +890,15 @@ impl EvalCtx {
         params,
         body,
         return_type_hint,
-      } => Ok(ControlFlow::Continue(Value::Callable(Callable::Closure(
-        Closure {
+      } => Ok(ControlFlow::Continue(Value::Callable(Arc::new(
+        Callable::Closure(Closure {
           params: params.clone(),
           body: body.0.clone(),
           // cloning the scope here makes the closure function like a rust `move` closure
           // where all the values are cloned before being moved into the closure.
           captured_scope: Arc::new(scope.clone()),
           return_type_hint: return_type_hint.clone(),
-        },
+        }),
       )))),
       Expr::FieldAccess { lhs: obj, field } => {
         let lhs = match self.eval_expr(obj, scope)? {
@@ -1037,7 +1049,7 @@ impl EvalCtx {
   ) -> Result<Value, ErrorStack> {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
-    if let Callable::Builtin(name) = callable {
+    if let Callable::Builtin { name, .. } = callable {
       if matches!(name.as_str(), "union" | "difference" | "intersect") {
         let combined_iter = ChainSeq::new(
           self,
@@ -1048,14 +1060,15 @@ impl EvalCtx {
         .map_err(|err| {
           err.wrap("Internal error creating chained sequence when folding mesh boolean op")
         })?;
-        return self
-          .eval_fn_call::<true>(
-            name,
-            &[Value::Sequence(Box::new(combined_iter))],
-            &Default::default(),
-            &self.globals,
-          )
-          .map_err(|err| err.wrap("Error invoking mesh boolean op in fold"));
+        return eval_mesh_boolean(
+          1,
+          &[ArgRef::Positional(0), ArgRef::Positional(1)],
+          &[Value::Sequence(Box::new(combined_iter))],
+          &Default::default(),
+          self,
+          MeshBooleanOp::from_str(name),
+        )
+        .map_err(|err| err.wrap("Error invoking mesh boolean op in `fold`"));
       }
     }
 
@@ -1082,16 +1095,17 @@ impl EvalCtx {
   ) -> Result<Value, ErrorStack> {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
-    if let Callable::Builtin(name) = fn_value {
+    if let Callable::Builtin { name, .. } = fn_value {
       if matches!(name.as_str(), "union" | "difference" | "intersect") {
-        return self
-          .eval_fn_call::<true>(
-            name,
-            &[Value::Sequence(seq)],
-            &Default::default(),
-            &self.globals,
-          )
-          .map_err(|err| err.wrap("Error invoking mesh boolean op in reduce"));
+        return eval_mesh_boolean(
+          1,
+          &[ArgRef::Positional(0), ArgRef::Positional(1)],
+          &[Value::Sequence(seq)],
+          &Default::default(),
+          self,
+          MeshBooleanOp::from_str(name),
+        )
+        .map_err(|err| err.wrap("Error invoking mesh boolean op in `reduce`"));
       }
     }
 
@@ -1115,14 +1129,16 @@ impl EvalCtx {
     Ok(acc)
   }
 
-  fn eval_fn_call<const builtins_only: bool>(
+  // TODO: This `BUILTINS_ONLY` should go away and internal builtin calls should be resolved more
+  // efficiently
+  fn eval_fn_call<const BUILTINS_ONLY: bool>(
     &self,
     mut name: &str,
     args: &[Value],
     kwargs: &FxHashMap<String, Value>,
     scope: &Scope,
   ) -> Result<Value, ErrorStack> {
-    if !builtins_only {
+    if !BUILTINS_ONLY {
       // might be a callable stored as a global
       if let Some(global) = scope.get(name) {
         let Value::Callable(callable) = global else {
@@ -1151,13 +1167,17 @@ impl EvalCtx {
       let (def_ix, arg_refs) = match get_args(name, defs, &args, &kwargs)? {
         GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
         GetArgsOutput::PartiallyApplied => {
-          return Ok(Value::Callable(Callable::PartiallyAppliedFn(
+          return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
             PartiallyAppliedFn {
-              inner: Box::new(Callable::Builtin(name.to_owned())),
+              inner: Box::new(Callable::Builtin {
+                name: name.to_owned(),
+                fn_impl: resolve_builtin_impl(name),
+                fn_signature_defs: &FN_SIGNATURE_DEFS[name],
+              }),
               args: args.to_owned(),
               kwargs: kwargs.clone(),
             },
-          )))
+          ))))
         }
       };
 
@@ -1174,7 +1194,11 @@ impl EvalCtx {
 
     // look it up as a builtin fn
     if FN_SIGNATURE_DEFS.contains_key(&name) {
-      return Ok(Value::Callable(Callable::Builtin(name.to_owned())));
+      return Ok(Value::Callable(Arc::new(Callable::Builtin {
+        name: name.to_owned(),
+        fn_impl: resolve_builtin_impl(name),
+        fn_signature_defs: &FN_SIGNATURE_DEFS[name],
+      })));
     }
 
     Err(ErrorStack::new(format!("Variable `{name}` not defined",)))
@@ -1188,7 +1212,27 @@ impl EvalCtx {
     scope: &Scope,
   ) -> Result<Value, ErrorStack> {
     match callable {
-      Callable::Builtin(name) => self.eval_fn_call::<true>(name, args, kwargs, scope),
+      Callable::Builtin {
+        name,
+        fn_impl,
+        fn_signature_defs,
+      } => {
+        let arg_refs = get_args(name, fn_signature_defs, args, kwargs)?;
+        let (def_ix, arg_refs) = match arg_refs {
+          GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
+          GetArgsOutput::PartiallyApplied => {
+            return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
+              PartiallyAppliedFn {
+                inner: Box::new(callable.clone()),
+                args: args.to_owned(),
+                kwargs: kwargs.clone(),
+              },
+            ))))
+          }
+        };
+        fn_impl(def_ix, &arg_refs, args, kwargs, self)
+          .map_err(|err| err.wrap(format!("Error invoking builtin function `{name}`")))
+      }
       Callable::PartiallyAppliedFn(paf) => {
         let mut combined_args = paf.args.clone();
         combined_args.extend(args.iter().cloned());
@@ -1258,13 +1302,13 @@ impl EvalCtx {
         if let Some(invalid_arg_ix) = invalid_arg_ix {
           let invalid_arg = &closure.params[invalid_arg_ix];
           if any_args_valid {
-            return Ok(Value::Callable(Callable::PartiallyAppliedFn(
+            return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
               PartiallyAppliedFn {
                 inner: Box::new(Callable::Closure(closure.clone())),
                 args: args.to_owned(),
                 kwargs: kwargs.clone(),
               },
-            )));
+            ))));
           } else {
             return Err(ErrorStack::new(format!(
               "Missing required argument `{}` for closure",

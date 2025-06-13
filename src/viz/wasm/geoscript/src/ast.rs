@@ -5,10 +5,11 @@ use itertools::Itertools;
 use pest::iterators::Pair;
 
 use crate::{
-  build_no_fn_def_found_err,
-  builtins::{add_impl, div_impl, fn_defs::FnDef, mul_impl, sub_impl},
-  get_binop_def_ix, Callable, Closure, EagerSeq, ErrorStack, EvalCtx, IntRange, Rule, Scope, Value,
-  FN_SIGNATURE_DEFS, FUNCTION_ALIASES, PRATT_PARSER,
+  builtins::{
+    add_impl, div_impl, fn_defs::FnDef, mod_impl, mul_impl, numeric_bool_op_impl, sub_impl, BoolOp,
+  },
+  get_binop_def_ix, resolve_builtin_impl, Callable, Closure, EagerSeq, ErrorStack, EvalCtx,
+  IntRange, Rule, Scope, Value, FN_SIGNATURE_DEFS, FUNCTION_ALIASES, PRATT_PARSER,
 };
 
 #[derive(Debug)]
@@ -198,6 +199,10 @@ impl Expr {
           captures_dyn |= kwarg.inline_const_captures(local_scope);
         }
 
+        if captures_dyn {
+          return true;
+        }
+
         let name = match target {
           FunctionCallTarget::Name(name) => name,
           FunctionCallTarget::Literal(_) => {
@@ -205,10 +210,6 @@ impl Expr {
             return false;
           }
         };
-
-        if captures_dyn {
-          return true;
-        }
 
         if let Some(Some(val)) = local_scope.get(name) {
           match val {
@@ -325,6 +326,7 @@ impl ClosureBody {
     let mut references_dyn_captures = false;
     for stmt in &mut self.0 {
       if stmt.inline_const_captures(closure_scope) {
+        println!("stmt references dyn captures: {stmt:?}");
         references_dyn_captures = true;
       }
     }
@@ -337,7 +339,7 @@ impl ClosureBody {
 pub enum FunctionCallTarget {
   // TODO: we should aim to phase out name and resolve callables during const eval
   Name(String),
-  Literal(Callable),
+  Literal(Arc<Callable>),
 }
 
 #[derive(Clone, Debug)]
@@ -396,6 +398,13 @@ lazy_static::lazy_static! {
   static ref SUB_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["sub"];
   static ref MUL_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["mul"];
   static ref DIV_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["div"];
+  static ref MOD_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["mod"];
+  static ref GT_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["gt"];
+  static ref LT_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["lt"];
+  static ref GTE_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["gte"];
+  static ref LTE_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["lte"];
+  static ref EQ_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["eq"];
+  static ref NEQ_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["neq"];
 }
 
 impl BinOp {
@@ -417,13 +426,34 @@ impl BinOp {
         let def_ix = get_binop_def_ix("div", &*DIV_ARG_DEFS, &lhs, &rhs)?;
         div_impl(def_ix, &lhs, &rhs)
       }
-      BinOp::Mod => ctx.eval_fn_call::<true>("mod", &[lhs, rhs], &Default::default(), &ctx.globals),
-      BinOp::Gt => ctx.eval_fn_call::<true>("gt", &[lhs, rhs], &Default::default(), &ctx.globals),
-      BinOp::Lt => ctx.eval_fn_call::<true>("lt", &[lhs, rhs], &Default::default(), &ctx.globals),
-      BinOp::Gte => ctx.eval_fn_call::<true>("gte", &[lhs, rhs], &Default::default(), &ctx.globals),
-      BinOp::Lte => ctx.eval_fn_call::<true>("lte", &[lhs, rhs], &Default::default(), &ctx.globals),
-      BinOp::Eq => ctx.eval_fn_call::<true>("eq", &[lhs, rhs], &Default::default(), &ctx.globals),
-      BinOp::Neq => ctx.eval_fn_call::<true>("neq", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::Mod => {
+        let def_ix = get_binop_def_ix("mod", &*MOD_ARG_DEFS, &lhs, &rhs)?;
+        mod_impl(def_ix, &lhs, &rhs)
+      }
+      BinOp::Gt => {
+        let def_ix = get_binop_def_ix("gt", &*GT_ARG_DEFS, &lhs, &rhs)?;
+        numeric_bool_op_impl::<{ BoolOp::Gt }>(def_ix, &lhs, &rhs)
+      }
+      BinOp::Lt => {
+        let def_ix = get_binop_def_ix("lt", &*LT_ARG_DEFS, &lhs, &rhs)?;
+        numeric_bool_op_impl::<{ BoolOp::Lt }>(def_ix, &lhs, &rhs)
+      }
+      BinOp::Gte => {
+        let def_ix = get_binop_def_ix("gte", &*GTE_ARG_DEFS, &lhs, &rhs)?;
+        numeric_bool_op_impl::<{ BoolOp::Gte }>(def_ix, &lhs, &rhs)
+      }
+      BinOp::Lte => {
+        let def_ix = get_binop_def_ix("lte", &*LTE_ARG_DEFS, &lhs, &rhs)?;
+        numeric_bool_op_impl::<{ BoolOp::Lte }>(def_ix, &lhs, &rhs)
+      }
+      BinOp::Eq => {
+        let def_ix = get_binop_def_ix("eq", &*EQ_ARG_DEFS, &lhs, &rhs)?;
+        numeric_bool_op_impl::<{ BoolOp::Eq }>(def_ix, &lhs, &rhs)
+      }
+      BinOp::Neq => {
+        let def_ix = get_binop_def_ix("neq", &*NEQ_ARG_DEFS, &lhs, &rhs)?;
+        numeric_bool_op_impl::<{ BoolOp::Neq }>(def_ix, &lhs, &rhs)
+      }
       BinOp::And => ctx.eval_fn_call::<true>("and", &[lhs, rhs], &Default::default(), &ctx.globals),
       BinOp::Or => ctx.eval_fn_call::<true>("or", &[lhs, rhs], &Default::default(), &ctx.globals),
       BinOp::BitAnd => {
@@ -1035,9 +1065,11 @@ fn fold_constants<'a>(
       };
 
       if matches!(op, BinOp::Pipeline) {
-        if let Value::Callable(Callable::Builtin(name)) = &rhs_val {
-          if matches!(name.as_str(), "print" | "render" | "call") {
-            return Ok(());
+        if let Value::Callable(callable) = &rhs_val {
+          if let Callable::Builtin { name, .. } = &**callable {
+            if matches!(name.as_str(), "print" | "render" | "call") {
+              return Ok(());
+            }
           }
         }
       }
@@ -1097,8 +1129,52 @@ fn fold_constants<'a>(
 
       // avoid evaluating side-effectful functions in constant context
       if let FunctionCallTarget::Name(name) = target {
-        if matches!(name.as_str(), "print" | "render" | "call") {
+        let is_side_effectful = matches!(name.as_str(), "print" | "render" | "call");
+        if is_side_effectful {
           return Ok(());
+        }
+      }
+
+      // if the function call target is a name, resolve the callable referenced to make calling it
+      // more efficient if it's called repeatedly later on
+      if let FunctionCallTarget::Name(name) = target {
+        if let Some(val) = local_scope.get(name) {
+          match val {
+            Some(val) => match val {
+              Value::Callable(callable) => {
+                *target = FunctionCallTarget::Literal(callable.clone());
+              }
+              other => {
+                return Err(ErrorStack::new(format!(
+                  "Tried to call non-callable value in constant folding: {name} = {other:?}",
+                )))
+              }
+            },
+            // calling a closure argument or dynamic captured variable
+            None => (),
+          }
+        } else {
+          // try to resolve it as a builtin
+          let defs = match FN_SIGNATURE_DEFS.get(name) {
+            Some(defs) => *defs,
+            None => match FUNCTION_ALIASES.get(name) {
+              Some(alias) => FN_SIGNATURE_DEFS.get(alias).unwrap_or_else(|| {
+                panic!("Alias {name} points to unknown function {alias}");
+              }),
+              None => {
+                return Err(ErrorStack::new(format!(
+                  "Variable or function not found in constant folding: {name}",
+                )))
+              }
+            },
+          };
+          let fn_impl = resolve_builtin_impl(name);
+          let name = name.clone();
+          *target = FunctionCallTarget::Literal(Arc::new(Callable::Builtin {
+            name,
+            fn_impl,
+            fn_signature_defs: defs,
+          }));
         }
       }
 
@@ -1196,13 +1272,14 @@ fn fold_constants<'a>(
       if body.inline_const_captures(&mut closure_scope) {
         return Ok(());
       }
+      println!("Folding closure with const body: {body:?}");
 
-      *expr = Expr::Literal(Value::Callable(Callable::Closure(Closure {
+      *expr = Expr::Literal(Value::Callable(Arc::new(Callable::Closure(Closure {
         params: params.clone(),
         body: body.0.clone(),
         captured_scope: Arc::new(Scope::default()),
         return_type_hint: return_type_hint.clone(),
-      })));
+      }))));
 
       Ok(())
     }
@@ -1222,7 +1299,20 @@ fn fold_constants<'a>(
       }
 
       if FN_SIGNATURE_DEFS.contains_key(id) || FUNCTION_ALIASES.contains_key(id) {
-        *expr = Expr::Literal(Value::Callable(Callable::Builtin(id.to_owned())));
+        let fn_signature_defs = match FN_SIGNATURE_DEFS.get(id) {
+          Some(defs) => *defs,
+          None => match FUNCTION_ALIASES.get(id) {
+            Some(alias) => FN_SIGNATURE_DEFS.get(alias).unwrap_or_else(|| {
+              panic!("Alias {id} points to unknown function {alias}");
+            }),
+            None => unreachable!(),
+          },
+        };
+        *expr = Expr::Literal(Value::Callable(Arc::new(Callable::Builtin {
+          name: id.to_owned(),
+          fn_impl: resolve_builtin_impl(id),
+          fn_signature_defs,
+        })));
         return Ok(());
       }
 

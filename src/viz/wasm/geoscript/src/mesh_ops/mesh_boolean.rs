@@ -41,6 +41,17 @@ pub enum MeshBooleanOp {
   Difference = 2,
 }
 
+impl MeshBooleanOp {
+  pub(crate) fn from_str(name: &str) -> Self {
+    match name {
+      "union" => MeshBooleanOp::Union,
+      "intersect" => MeshBooleanOp::Intersection,
+      "difference" => MeshBooleanOp::Difference,
+      _ => panic!("Unknown mesh boolean operation: {name}"),
+    }
+  }
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn decode_manifold_output(encoded_output: &[u8]) -> (usize, &[f32], &[u32]) {
   // - 1 u32: manifold handle

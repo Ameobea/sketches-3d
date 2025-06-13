@@ -1,3 +1,4 @@
+use std::marker::ConstParamTy;
 use std::{cmp::Reverse, sync::Arc};
 
 use fxhash::FxHashMap;
@@ -40,13 +41,50 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "join" => "union",
 };
 
-enum BoolOp {
+#[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum BoolOp {
   Gte,
   Lte,
   Gt,
   Lt,
   Eq,
   Neq,
+}
+
+pub(crate) fn numeric_bool_op_impl<const OP: BoolOp>(
+  def_ix: usize,
+  a: &Value,
+  b: &Value,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let a = a.as_int().unwrap();
+      let b = b.as_int().unwrap();
+      let result = match OP {
+        BoolOp::Gte => a >= b,
+        BoolOp::Lte => a <= b,
+        BoolOp::Gt => a > b,
+        BoolOp::Lt => a < b,
+        BoolOp::Eq => a == b,
+        BoolOp::Neq => a != b,
+      };
+      Ok(Value::Bool(result))
+    }
+    1 => {
+      let a = a.as_float().unwrap();
+      let b = b.as_float().unwrap();
+      let result = match OP {
+        BoolOp::Gte => a >= b,
+        BoolOp::Lte => a <= b,
+        BoolOp::Gt => a > b,
+        BoolOp::Lt => a < b,
+        BoolOp::Eq => a == b,
+        BoolOp::Neq => a != b,
+      };
+      Ok(Value::Bool(result))
+    }
+    _ => unimplemented!(),
+  }
 }
 
 fn eval_numeric_bool_op(
@@ -276,6 +314,25 @@ pub(crate) fn div_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
   }
 }
 
+pub(crate) fn mod_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      // int % int
+      let a = lhs.as_int().unwrap();
+      let b = rhs.as_int().unwrap();
+      Ok(Value::Int(a % b))
+    }
+    1 => {
+      // float % float
+      let a = lhs.as_float().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Float(a % b))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+#[inline(always)]
 pub(crate) fn eval_builtin_fn(
   name: &str,
   def_ix: usize,
@@ -285,8 +342,6 @@ pub(crate) fn eval_builtin_fn(
   ctx: &EvalCtx,
 ) -> Result<Value, ErrorStack> {
   match name {
-    // TODO: these should be merged in with the function signature defs to avoid double hashmap
-    // lookups
     "box" => {
       let (width, height, depth) = match def_ix {
         0 => {
@@ -683,21 +738,11 @@ pub(crate) fn eval_builtin_fn(
       let rhs = arg_refs[1].resolve(args, &kwargs);
       div_impl(def_ix, lhs, rhs)
     }
-    "mod" => match def_ix {
-      0 => {
-        // int % int
-        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
-        Ok(Value::Int(a % b))
-      }
-      1 => {
-        // float % float
-        let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-        let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-        Ok(Value::Float(a % b))
-      }
-      _ => unimplemented!(),
-    },
+    "mod" => {
+      let lhs = arg_refs[0].resolve(args, &kwargs);
+      let rhs = arg_refs[1].resolve(args, &kwargs);
+      mod_impl(def_ix, lhs, rhs)
+    }
     "max" => match def_ix {
       0 => {
         // int, int
@@ -1168,7 +1213,9 @@ pub(crate) fn eval_builtin_fn(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-      Ok(Value::Callable(Callable::ComposedFn(ComposedFn { inner })))
+      Ok(Value::Callable(Arc::new(Callable::ComposedFn(
+        ComposedFn { inner },
+      ))))
     }
     "warp" => match def_ix {
       0 => {
@@ -1525,5 +1572,135 @@ pub(crate) fn eval_builtin_fn(
       _ => unimplemented!(),
     },
     _ => unimplemented!("Builtin function `{name}` not yet implemented"),
+  }
+}
+
+// macro that creates a closure that calls `eval_builtin_fn` with a hard-coded name.  This is
+// kind of a way of emulating const generics for `&'static str`, which isn't currenlty supported in
+// Rust.
+macro_rules! define_builtin_fn {
+  ($name:expr) => {{
+    fn specialized_builtin_fn_impl(
+      def_ix: usize,
+      arg_refs: &[ArgRef],
+      args: &[Value],
+      kwargs: &FxHashMap<String, Value>,
+      ctx: &EvalCtx,
+    ) -> Result<Value, ErrorStack> {
+      eval_builtin_fn($name, def_ix, arg_refs, args, kwargs, ctx)
+    }
+
+    specialized_builtin_fn_impl
+  }};
+}
+
+pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
+  &'static str,
+  fn(
+    def_ix: usize,
+    arg_refs: &[ArgRef],
+    args: &[Value],
+    kwargs: &FxHashMap<String, Value>,
+    ctx: &EvalCtx,
+  ) -> Result<Value, ErrorStack>,
+> = phf::phf_map! {
+  "box" => define_builtin_fn!("box"),
+  "icosphere" => define_builtin_fn!("icosphere"),
+  "cylinder" => define_builtin_fn!("cylinder"),
+  "sphere" => define_builtin_fn!("sphere"),
+  "translate" => define_builtin_fn!("translate"),
+  "scale" => define_builtin_fn!("scale"),
+  "rot" => define_builtin_fn!("rot"),
+  "look_at" => define_builtin_fn!("look_at"),
+  "vec3" => define_builtin_fn!("vec3"),
+  "union" => define_builtin_fn!("union"),
+  "difference" => define_builtin_fn!("difference"),
+  "intersect" => define_builtin_fn!("intersect"),
+  "fold" => define_builtin_fn!("fold"),
+  "reduce" => define_builtin_fn!("reduce"),
+  "map" => define_builtin_fn!("map"),
+  "filter" => define_builtin_fn!("filter"),
+  "take" => define_builtin_fn!("take"),
+  "skip" => define_builtin_fn!("skip"),
+  "take_while" => define_builtin_fn!("take_while"),
+  "skip_while" => define_builtin_fn!("skip_while"),
+  "chain" => define_builtin_fn!("chain"),
+  "first" => define_builtin_fn!("first"),
+  "neg" => define_builtin_fn!("neg"),
+  "pos" => define_builtin_fn!("pos"),
+  "abs" => define_builtin_fn!("abs"),
+  "sqrt" => define_builtin_fn!("sqrt"),
+  "add" => define_builtin_fn!("add"),
+  "sub" => define_builtin_fn!("sub"),
+  "mul" => define_builtin_fn!("mul"),
+  "div" => define_builtin_fn!("div"),
+  "mod" => define_builtin_fn!("mod"),
+  "max" => define_builtin_fn!("max"),
+  "min" => define_builtin_fn!("min"),
+  "float" => define_builtin_fn!("float"),
+  "int" => define_builtin_fn!("int"),
+  "gte" => define_builtin_fn!("gte"),
+  "lte" => define_builtin_fn!("lte"),
+  "gt" => define_builtin_fn!("gt"),
+  "lt" => define_builtin_fn!("lt"),
+  "eq" => define_builtin_fn!("eq"),
+  "neq" => define_builtin_fn!("neq"),
+  "and" => define_builtin_fn!("and"),
+  "or" => define_builtin_fn!("or"),
+  "not" => define_builtin_fn!("not"),
+  "bit_and" => define_builtin_fn!("bit_and"),
+  "bit_or" => define_builtin_fn!("bit_or"),
+  "sin" => define_builtin_fn!("sin"),
+  "cos" => define_builtin_fn!("cos"),
+  "tan" => define_builtin_fn!("tan"),
+  "pow" => define_builtin_fn!("pow"),
+  "trunc" => define_builtin_fn!("trunc"),
+  "fract" => define_builtin_fn!("fract"),
+  "round" => define_builtin_fn!("round"),
+  "ceil" => define_builtin_fn!("ceil"),
+  "floor" => define_builtin_fn!("floor"),
+  "fix_float" => define_builtin_fn!("fix_float"),
+  "rad2deg" => define_builtin_fn!("rad2deg"),
+  "deg2rad" => define_builtin_fn!("deg2rad"),
+  "lerp" => define_builtin_fn!("lerp"),
+  "print" => define_builtin_fn!("print"),
+  "render" => define_builtin_fn!("render"),
+  "point_distribute" => define_builtin_fn!("point_distribute"),
+  "compose" => define_builtin_fn!("compose"),
+  "warp" => define_builtin_fn!("warp"),
+  "tessellate" => define_builtin_fn!("tessellate"),
+  "connected_components" => define_builtin_fn!("connected_components"),
+  "len" => define_builtin_fn!("len"),
+  "distance" => define_builtin_fn!("distance"),
+  "normalize" => define_builtin_fn!("normalize"),
+  "bezier3d" => define_builtin_fn!("bezier3d"),
+  "extrude_pipe" => define_builtin_fn!("extrude_pipe"),
+  "torus_knot_path" => define_builtin_fn!("torus_knot_path"),
+  "simplify" => define_builtin_fn!("simplify"),
+  "convex_hull" => define_builtin_fn!("convex_hull"),
+  "verts" => define_builtin_fn!("verts"),
+  "randf" => define_builtin_fn!("randf"),
+  "randv" => define_builtin_fn!("randv"),
+  "fbm" => define_builtin_fn!("fbm"),
+  "call" => define_builtin_fn!("call"),
+};
+
+pub(crate) fn resolve_builtin_impl(
+  name: &str,
+) -> fn(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+  ctx: &EvalCtx,
+) -> Result<Value, ErrorStack> {
+  match BUILTIN_FN_IMPLS.get(name) {
+    Some(f) => *f,
+    None => match FUNCTION_ALIASES.get(name) {
+      Some(&real_name) => *BUILTIN_FN_IMPLS.get(real_name).unwrap_or_else(|| {
+        panic!("Alias `{name}` maps to builtin function `{real_name}`, but no such function exists")
+      }),
+      None => panic!("No builtin function named `{name}` found"),
+    },
   }
 }
