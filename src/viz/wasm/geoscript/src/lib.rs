@@ -29,9 +29,7 @@ use crate::{
     fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
-  mesh_ops::mesh_boolean::{
-    create_manifold, drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp,
-  },
+  mesh_ops::mesh_boolean::{drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp},
   seq::{ChainSeq, IntRange, MapSeq},
 };
 
@@ -191,6 +189,12 @@ impl Debug for ComposedFn {
 }
 
 #[derive(Clone)]
+pub struct PreResolvedSignature {
+  arg_refs: Vec<ArgRef>,
+  def_ix: usize,
+}
+
+#[derive(Clone)]
 pub enum Callable {
   Builtin {
     name: String,
@@ -201,6 +205,8 @@ pub enum Callable {
       &FxHashMap<String, Value>,
       &EvalCtx,
     ) -> Result<Value, ErrorStack>,
+    /// This will be set in the case that a single signature can be resolved in advance
+    pre_resolved_signature: Option<PreResolvedSignature>,
     fn_signature_defs: &'static [FnDef],
   },
   PartiallyAppliedFn(PartiallyAppliedFn),
@@ -211,7 +217,23 @@ pub enum Callable {
 impl Debug for Callable {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Callable::Builtin { name, .. } => Debug::fmt(&format!("<built-in fn \"{name}\">"), f),
+      Callable::Builtin {
+        name,
+        pre_resolved_signature,
+        ..
+      } => Debug::fmt(
+        &format!(
+          "<built-in fn \"{name}\"{}>",
+          match pre_resolved_signature {
+            Some(PreResolvedSignature {
+              arg_refs: _,
+              def_ix,
+            }) => format!(" with signature {def_ix}"),
+            None => String::new(),
+          }
+        ),
+        f,
+      ),
       Callable::PartiallyAppliedFn(paf) => Debug::fmt(&format!("{paf:?}"), f),
       Callable::Closure(closure) => Debug::fmt(&format!("{closure:?}"), f),
       Callable::ComposedFn(composed) => Debug::fmt(&format!("{composed:?}"), f),
@@ -239,7 +261,7 @@ impl MeshHandle {
         };
         let verts = &raw_mesh.vertices;
 
-        let handle = create_manifold(verts, indices);
+        let handle = mesh_ops::mesh_boolean::create_manifold(verts, indices);
         self.manifold_handle.set(handle);
         handle
       }
@@ -390,10 +412,24 @@ impl Value {
   fn into_literal_expr(&self) -> Expr {
     Expr::Literal(self.clone())
   }
+
+  fn get_type(&self) -> ArgType {
+    match self {
+      Value::Int(_) => ArgType::Int,
+      Value::Float(_) => ArgType::Float,
+      Value::Vec3(_) => ArgType::Vec3,
+      Value::Mesh(_) => ArgType::Mesh,
+      Value::Callable(_) => ArgType::Callable,
+      Value::Sequence(_) => ArgType::Sequence,
+      Value::Bool(_) => ArgType::Bool,
+      Value::String(_) => ArgType::String,
+      Value::Nil => ArgType::Nil,
+    }
+  }
 }
 
-#[derive(Clone, Copy, SerJson)]
-enum ArgType {
+#[derive(Clone, Copy, Debug, PartialEq, SerJson)]
+pub enum ArgType {
   Int,
   Float,
   Numeric,
@@ -443,6 +479,32 @@ impl ArgType {
       ArgType::Any => "any",
     }
   }
+
+  // TODO: this is a hack and limits the kind of type inference we can do.  Should use a fully
+  // symbolic function signature resolution method instead of re-using `get_args`
+  fn build_example_val(&self) -> Option<Value> {
+    match self {
+      ArgType::Int => Some(Value::Int(0)),
+      ArgType::Float => Some(Value::Float(0.)),
+      ArgType::Numeric => None,
+      ArgType::Vec3 => Some(Value::Vec3(Vec3::new(0., 0., 0.))),
+      ArgType::Mesh => Some(Value::Mesh(Arc::new(MeshHandle {
+        mesh: LinkedMesh::new(0, 0, None),
+        manifold_handle: Cell::new(0),
+      }))),
+      ArgType::Callable => Some(Value::Callable(Arc::new(Callable::Builtin {
+        name: String::new(),
+        fn_impl: |_, _, _, _, _| panic!("example callable should never be called"),
+        pre_resolved_signature: None,
+        fn_signature_defs: &[],
+      }))),
+      ArgType::Sequence => Some(Value::Sequence(Box::new(EagerSeq { inner: Vec::new() }))),
+      ArgType::Bool => Some(Value::Bool(false)),
+      ArgType::String => Some(Value::String(String::new())),
+      ArgType::Nil => Some(Value::Nil),
+      ArgType::Any => None,
+    }
+  }
 }
 
 enum UnrealizedArgRef {
@@ -461,7 +523,7 @@ impl UnrealizedArgRef {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ArgRef {
   Positional(usize),
   Keyword(&'static str),
@@ -628,8 +690,8 @@ fn get_args(
   Err(build_no_fn_def_found_err(fn_name, args, kwargs, defs))
 }
 
-// Specialized version of `get_args` for more efficient binary operator lookup.  Assumes that each
-// def in `defs` has exactly two args.
+/// Specialized version of `get_args` for more efficient binary operator lookup.  Assumes that each
+/// def in `defs` has exactly two args.
 fn get_binop_def_ix(
   name: &str,
   defs: &[FnDef],
@@ -643,6 +705,34 @@ fn get_binop_def_ix(
       && ArgType::any_valid(&rhs_def.valid_types, rhs)
     {
       return Ok(def_ix);
+    }
+  }
+
+  return Err(build_no_fn_def_found_err(
+    name,
+    &[lhs.clone(), rhs.clone()],
+    &Default::default(),
+    FN_SIGNATURE_DEFS[name],
+  ));
+}
+
+/// Specialized version of `get_args` for more efficient binary operator lookup.  Assumes that each
+/// def in `defs` has exactly two args.
+///
+/// Returns `(def_ix, return_types)`
+fn get_binop_return_ty(
+  name: &str,
+  defs: &[FnDef],
+  lhs: &Value,
+  rhs: &Value,
+) -> Result<&'static [ArgType], ErrorStack> {
+  for def in defs {
+    let lhs_def = &def.arg_defs[0];
+    let rhs_def = &def.arg_defs[1];
+    if ArgType::any_valid(&lhs_def.valid_types, lhs)
+      && ArgType::any_valid(&rhs_def.valid_types, rhs)
+    {
+      return Ok(&def.return_type);
     }
   }
 
@@ -1173,6 +1263,7 @@ impl EvalCtx {
                 name: name.to_owned(),
                 fn_impl: resolve_builtin_impl(name),
                 fn_signature_defs: &FN_SIGNATURE_DEFS[name],
+                pre_resolved_signature: None,
               }),
               args: args.to_owned(),
               kwargs: kwargs.clone(),
@@ -1198,6 +1289,7 @@ impl EvalCtx {
         name: name.to_owned(),
         fn_impl: resolve_builtin_impl(name),
         fn_signature_defs: &FN_SIGNATURE_DEFS[name],
+        pre_resolved_signature: None,
       })));
     }
 
@@ -1216,23 +1308,29 @@ impl EvalCtx {
         name,
         fn_impl,
         fn_signature_defs,
-      } => {
-        let arg_refs = get_args(name, fn_signature_defs, args, kwargs)?;
-        let (def_ix, arg_refs) = match arg_refs {
-          GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
-          GetArgsOutput::PartiallyApplied => {
-            return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
-              PartiallyAppliedFn {
-                inner: Box::new(callable.clone()),
-                args: args.to_owned(),
-                kwargs: kwargs.clone(),
-              },
-            ))))
-          }
-        };
-        fn_impl(def_ix, &arg_refs, args, kwargs, self)
-          .map_err(|err| err.wrap(format!("Error invoking builtin function `{name}`")))
+        pre_resolved_signature,
+      } => match pre_resolved_signature {
+        Some(PreResolvedSignature { arg_refs, def_ix }) => {
+          fn_impl(*def_ix, arg_refs, args, kwargs, self)
+        }
+        None => {
+          let arg_refs = get_args(name, fn_signature_defs, args, kwargs)?;
+          let (def_ix, arg_refs) = match arg_refs {
+            GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
+            GetArgsOutput::PartiallyApplied => {
+              return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
+                PartiallyAppliedFn {
+                  inner: Box::new(callable.clone()),
+                  args: args.to_owned(),
+                  kwargs: kwargs.clone(),
+                },
+              ))))
+            }
+          };
+          fn_impl(def_ix, &arg_refs, args, kwargs, self)
+        }
       }
+      .map_err(|err| err.wrap(format!("Error invoking builtin function `{name}`"))),
       Callable::PartiallyAppliedFn(paf) => {
         let mut combined_args = paf.args.clone();
         combined_args.extend(args.iter().cloned());
@@ -1459,6 +1557,7 @@ pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), E
 
   let mut ast = parse_program(program.clone())?;
   optimize_ast(&mut ast)?;
+  // log::info!("{ast:?}");
 
   for statement in ast.statements {
     let _val = match ctx.eval_statement(&statement, &ctx.globals)? {

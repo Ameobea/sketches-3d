@@ -8,8 +8,9 @@ use crate::{
   builtins::{
     add_impl, div_impl, fn_defs::FnDef, mod_impl, mul_impl, numeric_bool_op_impl, sub_impl, BoolOp,
   },
-  get_binop_def_ix, resolve_builtin_impl, Callable, Closure, EagerSeq, ErrorStack, EvalCtx,
-  IntRange, Rule, Scope, Value, FN_SIGNATURE_DEFS, FUNCTION_ALIASES, PRATT_PARSER,
+  get_args, get_binop_def_ix, get_binop_return_ty, resolve_builtin_impl, ArgType, Callable,
+  Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput, IntRange, PreResolvedSignature, Rule,
+  Scope, Value, FN_SIGNATURE_DEFS, FUNCTION_ALIASES, PRATT_PARSER,
 };
 
 #[derive(Debug)]
@@ -29,6 +30,23 @@ pub enum TypeName {
   Seq,
   Callable,
   Nil,
+}
+
+impl Into<ArgType> for TypeName {
+  fn into(self) -> ArgType {
+    match self {
+      TypeName::Mesh => ArgType::Mesh,
+      TypeName::Int => ArgType::Int,
+      TypeName::Float => ArgType::Float,
+      TypeName::Num => ArgType::Numeric,
+      TypeName::Vec3 => ArgType::Vec3,
+      TypeName::Bool => ArgType::Bool,
+      TypeName::String => ArgType::String,
+      TypeName::Seq => ArgType::Sequence,
+      TypeName::Callable => ArgType::Callable,
+      TypeName::Nil => ArgType::Nil,
+    }
+  }
 }
 
 impl FromStr for TypeName {
@@ -170,6 +188,94 @@ impl Expr {
       Expr::BinOp { op: _, lhs, rhs } => {
         let mut captures_dyn = lhs.inline_const_captures(local_scope);
         captures_dyn |= rhs.inline_const_captures(local_scope);
+
+        // \/ this works but is slower than just eval'ing binop AST nodes.  This is probably because
+        // we have to do allocation for the arguments which outweighs dynamic type resolution
+
+        // // lower this binop into a pre-resolved builtin call if we can statically determine the
+        // // types of both of its args
+        // let Some(lhs_ty) = pre_resolve_expr_type(local_scope, lhs) else {
+        //   return captures_dyn;
+        // };
+        // let Some(lhs_example_val) = lhs_ty.build_example_val() else {
+        //   return captures_dyn;
+        // };
+        // let Some(rhs_ty) = pre_resolve_expr_type(local_scope, rhs) else {
+        //   return captures_dyn;
+        // };
+        // let Some(rhs_example_val) = rhs_ty.build_example_val() else {
+        //   return captures_dyn;
+        // };
+
+        // let (swap_order, builtin_name) = match op {
+        //   BinOp::Add => (false, "add"),
+        //   BinOp::Sub => (false, "sub"),
+        //   BinOp::Mul => (false, "mul"),
+        //   BinOp::Div => (false, "div"),
+        //   BinOp::Mod => (false, "mod"),
+        //   BinOp::Gt => (false, "gt"),
+        //   BinOp::Lt => (false, "lt"),
+        //   BinOp::Gte => (false, "gte"),
+        //   BinOp::Lte => (false, "lte"),
+        //   BinOp::Eq => (false, "eq"),
+        //   BinOp::Neq => (false, "neq"),
+        //   BinOp::And => (false, "and"),
+        //   BinOp::Or => (false, "or"),
+        //   BinOp::BitAnd => (false, "bit_and"),
+        //   BinOp::Range => {
+        //     *self = Expr::Range {
+        //       start: lhs.clone(),
+        //       end: rhs.clone(),
+        //       inclusive: false,
+        //     };
+        //     return captures_dyn;
+        //   }
+        //   BinOp::RangeInclusive => {
+        //     *self = Expr::Range {
+        //       start: lhs.clone(),
+        //       end: rhs.clone(),
+        //       inclusive: true,
+        //     };
+        //     return captures_dyn;
+        //   }
+        //   BinOp::Pipeline => return captures_dyn,
+        //   BinOp::Map => (true, "map"),
+        // };
+        // let defs = FN_SIGNATURE_DEFS
+        //   .get(builtin_name)
+        //   .expect("Builtin function not found");
+
+        // let example_args = if swap_order {
+        //   &[rhs_example_val, lhs_example_val]
+        // } else {
+        //   &[lhs_example_val, rhs_example_val]
+        // };
+        // let Ok(resolved_sig) = get_args(builtin_name, defs, example_args, &Default::default())
+        // else {
+        //   return captures_dyn;
+        // };
+        // let pre_resolved_signature = match resolved_sig {
+        //   GetArgsOutput::Valid { def_ix, arg_refs } => {
+        //     Some(PreResolvedSignature { arg_refs, def_ix })
+        //   }
+        //   GetArgsOutput::PartiallyApplied => None,
+        // };
+
+        // *self = Expr::Call(FunctionCall {
+        //   target: FunctionCallTarget::Literal(Arc::new(Callable::Builtin {
+        //     name: builtin_name.to_owned(),
+        //     fn_impl: resolve_builtin_impl(builtin_name),
+        //     pre_resolved_signature,
+        //     fn_signature_defs: FN_SIGNATURE_DEFS[builtin_name],
+        //   })),
+        //   args: if swap_order {
+        //     vec![(**rhs).clone(), (**lhs).clone()]
+        //   } else {
+        //     vec![(**lhs).clone(), (**rhs).clone()]
+        //   },
+        //   kwargs: FxHashMap::default(),
+        // });
+
         captures_dyn
       }
       Expr::PrefixOp { op: _, expr } => expr.inline_const_captures(local_scope),
@@ -211,16 +317,13 @@ impl Expr {
           }
         };
 
-        if let Some(Some(val)) = local_scope.get(name) {
+        if let Some(TrackedValueRef::Const(val)) = local_scope.get(name) {
           match val {
             Value::Callable(callable) => {
               *target = FunctionCallTarget::Literal(callable.clone());
               false
             }
-            _ => {
-              log::warn!("`{name}` is not a callable; pretty sure this will be a runtime error");
-              false
-            }
+            _ => false,
           }
         } else {
           if FN_SIGNATURE_DEFS.contains_key(name) || FUNCTION_ALIASES.contains_key(name) {
@@ -229,7 +332,6 @@ impl Expr {
             }
             false
           } else {
-            log::warn!("couldn't const-resolve callable `{name}`; not sure what this case means");
             true
           }
         }
@@ -249,38 +351,27 @@ impl Expr {
 
         let mut closure_scope = ScopeTracker::wrap(local_scope);
         for param in params.iter() {
-          closure_scope.set(param.name.clone(), None);
+          closure_scope.set(param.name.clone(), TrackedValue::Arg(param.clone()));
         }
 
         captures_dyn || body.inline_const_captures(&mut closure_scope)
       }
       Expr::Ident(id) => match local_scope.vars.get(id) {
-        Some(Some(resolved)) => {
+        Some(TrackedValue::Const(resolved)) => {
           *self = Expr::Literal(resolved.clone());
           false
         }
-        Some(None) => false,
+        Some(TrackedValue::Arg(_)) => false,
         None => match local_scope.parent {
           Some(parent) => match parent.get(id) {
-            Some(Some(resolved)) => {
+            Some(TrackedValueRef::Const(resolved)) => {
               *self = Expr::Literal(resolved.clone());
               false
             }
-            Some(None) => true,
-            None => {
-              log::warn!(
-                "[1] Reference to undefined ident `{id}`; pretty sure this will be a runtime \
-                 error. local_scope={local_scope:?}",
-              );
-              true
-            }
+            Some(TrackedValueRef::Arg(_)) => true,
+            None => true,
           },
-          None => {
-            log::warn!(
-              "[2] Reference to undefined ident `{id}`; pretty sure this will be a runtime error"
-            );
-            true
-          }
+          None => true,
         },
       },
       Expr::ArrayLiteral(exprs) => exprs
@@ -326,7 +417,6 @@ impl ClosureBody {
     let mut references_dyn_captures = false;
     for stmt in &mut self.0 {
       if stmt.inline_const_captures(closure_scope) {
-        println!("stmt references dyn captures: {stmt:?}");
         references_dyn_captures = true;
       }
     }
@@ -365,7 +455,6 @@ pub enum BinOp {
   And,
   Or,
   BitAnd,
-  BitOr,
   Range,
   RangeInclusive,
   Pipeline,
@@ -458,9 +547,6 @@ impl BinOp {
       BinOp::Or => ctx.eval_fn_call::<true>("or", &[lhs, rhs], &Default::default(), &ctx.globals),
       BinOp::BitAnd => {
         ctx.eval_fn_call::<true>("bit_and", &[lhs, rhs], &Default::default(), &ctx.globals)
-      }
-      BinOp::BitOr => {
-        ctx.eval_fn_call::<true>("bit_or", &[lhs, rhs], &Default::default(), &ctx.globals)
       }
       BinOp::Range => eval_range(lhs, rhs, false),
       BinOp::RangeInclusive => eval_range(lhs, rhs, true),
@@ -1022,9 +1108,32 @@ lazy_static::lazy_static! {
   };
 }
 
+#[derive(Debug)]
+enum TrackedValue {
+  /// Value is const-available and has already been evaluated
+  Const(Value),
+  /// Value is a closure argument and isn't available during const eval
+  Arg(ClosureArg),
+}
+
+impl TrackedValue {
+  pub fn as_ref<'a>(&'a self) -> TrackedValueRef<'a> {
+    match self {
+      TrackedValue::Const(val) => TrackedValueRef::Const(val),
+      TrackedValue::Arg(arg) => TrackedValueRef::Arg(arg),
+    }
+  }
+}
+
+#[derive(Debug)]
+enum TrackedValueRef<'a> {
+  Const(&'a Value),
+  Arg(&'a ClosureArg),
+}
+
 #[derive(Default, Debug)]
 struct ScopeTracker<'a> {
-  vars: FxHashMap<String, Option<Value>>,
+  vars: FxHashMap<String, TrackedValue>,
   parent: Option<&'a ScopeTracker<'a>>,
 }
 
@@ -1036,7 +1145,7 @@ impl<'a> ScopeTracker<'a> {
     }
   }
 
-  pub fn get<'b>(&'b self, name: &str) -> Option<Option<&'b Value>> {
+  pub fn get<'b>(&'b self, name: &str) -> Option<TrackedValueRef<'b>> {
     if let Some(val) = self.vars.get(name) {
       return Some(val.as_ref());
     }
@@ -1046,8 +1155,264 @@ impl<'a> ScopeTracker<'a> {
     None
   }
 
-  pub fn set(&mut self, name: String, value: Option<Value>) {
+  pub fn set(&mut self, name: String, value: TrackedValue) {
     self.vars.insert(name, value);
+  }
+}
+
+fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<ArgType> {
+  match arg {
+    Expr::Literal(v) => Some(v.get_type()),
+    Expr::Ident(id) => match scope_tracker.get(id) {
+      Some(TrackedValueRef::Const(val)) => Some(val.get_type()),
+      Some(TrackedValueRef::Arg(arg)) => {
+        if let Some(type_hint) = &arg.type_hint {
+          Some((*type_hint).into())
+        } else {
+          return None;
+        }
+      }
+      None => {
+        // error will happen later
+        return None;
+      }
+    },
+    Expr::BinOp { op, lhs, rhs } => {
+      let builtin_name = match op {
+        BinOp::Add => "add",
+        BinOp::Sub => "sub",
+        BinOp::Mul => "mul",
+        BinOp::Div => "div",
+        BinOp::Mod => "mod",
+        BinOp::Gt => "gt",
+        BinOp::Lt => "lt",
+        BinOp::Gte => "gte",
+        BinOp::Lte => "lte",
+        BinOp::Eq => "eq",
+        BinOp::Neq => "neq",
+        BinOp::And => "and",
+        BinOp::Or => "or",
+        BinOp::BitAnd => "bit_and",
+        BinOp::Range => return Some(ArgType::Sequence),
+        BinOp::RangeInclusive => return Some(ArgType::Sequence),
+        BinOp::Pipeline => {
+          let rhs_ty = pre_resolve_expr_type(scope_tracker, rhs)?;
+          match rhs_ty {
+            ArgType::Mesh => return Some(ArgType::Mesh),
+            _ => (),
+          }
+
+          match &**rhs {
+            Expr::Literal(Value::Callable(callable)) => match &**callable {
+              Callable::Builtin {
+                name: _,
+                fn_impl: _,
+                pre_resolved_signature,
+                fn_signature_defs,
+              } => match pre_resolved_signature {
+                Some(sig) => {
+                  let return_ty = fn_signature_defs[sig.def_ix].return_type;
+                  if return_ty.len() == 1 {
+                    return Some(return_ty[0]);
+                  } else {
+                    return None;
+                  }
+                }
+                None => {
+                  return None;
+                }
+              },
+              Callable::PartiallyAppliedFn(_) => {
+                // TODO: should eventually be able to resolve this
+                return None;
+              }
+              Callable::Closure(Closure {
+                return_type_hint, ..
+              }) => match return_type_hint {
+                Some(ty) => return Some((*ty).into()),
+                None => return None,
+              },
+              Callable::ComposedFn(_) => return None,
+            },
+            _ => return None,
+          }
+        }
+        BinOp::Map => return Some(ArgType::Sequence),
+      };
+      let builtin_arg_defs = FN_SIGNATURE_DEFS[builtin_name];
+
+      let lhs_ty = pre_resolve_expr_type(scope_tracker, lhs)?;
+      let rhs_ty = pre_resolve_expr_type(scope_tracker, rhs)?;
+      let return_tys = get_binop_return_ty(
+        builtin_name,
+        builtin_arg_defs,
+        &lhs_ty.build_example_val()?,
+        &rhs_ty.build_example_val()?,
+      )
+      .ok()?;
+      match return_tys.len() {
+        0 => return None,
+        1 => (),
+        _ => return None,
+      }
+      match &return_tys[0] {
+        ArgType::Any => None,
+        ty => Some(*ty),
+      }
+    }
+    Expr::PrefixOp { op, expr } => {
+      let builtin_name = match op {
+        PrefixOp::Neg => "neg",
+        PrefixOp::Pos => "pos",
+        PrefixOp::Not => "not",
+      };
+      let arg_ty = pre_resolve_expr_type(scope_tracker, expr)?;
+      let example_val = arg_ty.build_example_val()?;
+      let retval = match CONST_EVAL_CTX.eval_fn_call::<true>(
+        builtin_name,
+        &[example_val],
+        &Default::default(),
+        &CONST_EVAL_CTX.globals,
+      ) {
+        Ok(out) => out,
+        Err(_) => return None,
+      };
+      match retval.get_type() {
+        ArgType::Any => unreachable!(),
+        other => Some(other),
+      }
+    }
+    Expr::Range { .. } => Some(ArgType::Sequence),
+    Expr::FieldAccess { lhs, field } => {
+      let lhs_ty = pre_resolve_expr_type(scope_tracker, lhs)?;
+      let lhs_val = lhs_ty.build_example_val()?;
+      let field_val = match CONST_EVAL_CTX.eval_field_access(lhs_val, field) {
+        Ok(out) => out,
+        Err(err) => {
+          log::error!(
+            "Got error when evaluating field access with example values; lhs={lhs:?}, \
+             field={field:?}, err={err}"
+          );
+          return None;
+        }
+      };
+      let field_ty = field_val.get_type();
+      if field_ty == ArgType::Any {
+        return None;
+      }
+      Some(field_ty)
+    }
+    Expr::Call(FunctionCall {
+      target,
+      args,
+      kwargs,
+    }) => match target {
+      FunctionCallTarget::Name(_) => None,
+      FunctionCallTarget::Literal(callable) => match &**callable {
+        Callable::Builtin {
+          name,
+          pre_resolved_signature,
+          fn_signature_defs,
+          ..
+        } => {
+          let return_ty = if let Some(sig) = pre_resolved_signature {
+            fn_signature_defs[sig.def_ix].return_type
+          } else {
+            match maybe_pre_resolve_bulitin_call_signature(scope_tracker, name, args, kwargs) {
+              Ok(Some(sig)) => fn_signature_defs[sig.def_ix].return_type,
+              Ok(None) => return None,
+              Err(_) => return None,
+            }
+          };
+          match return_ty.len() {
+            0 => None,
+            1 => {
+              if return_ty[0] != ArgType::Any {
+                Some(return_ty[0])
+              } else {
+                None
+              }
+            }
+            _ => None,
+          }
+        }
+        Callable::PartiallyAppliedFn(_) => None,
+        Callable::Closure(closure) => closure.return_type_hint.map(Into::into),
+        Callable::ComposedFn(_) => None,
+      },
+    },
+    Expr::Closure { .. } => Some(ArgType::Callable),
+    Expr::ArrayLiteral(_) => Some(ArgType::Sequence),
+    Expr::Conditional { .. } => None,
+    Expr::Block { .. } => None,
+  }
+}
+
+fn maybe_pre_resolve_bulitin_call_signature(
+  scope_tracker: &ScopeTracker,
+  name: &str,
+  args: &[Expr],
+  kwargs: &FxHashMap<String, Expr>,
+) -> Result<Option<PreResolvedSignature>, ErrorStack> {
+  let mut arg_tys: Vec<ArgType> = Vec::with_capacity(args.len());
+  for arg in args {
+    let Some(ty) = pre_resolve_expr_type(scope_tracker, arg) else {
+      println!("Unable to pre-resolve arg: {arg:?}");
+      return Ok(None);
+    };
+    arg_tys.push(ty);
+  }
+
+  let mut kwarg_tys: FxHashMap<String, ArgType> =
+    FxHashMap::with_capacity_and_hasher(kwargs.len(), Default::default());
+  for (name, expr) in kwargs {
+    let Some(ty) = pre_resolve_expr_type(scope_tracker, expr) else {
+      println!("Unable to pre-resolve kwarg: {name} = {expr:?}");
+      return Ok(None);
+    };
+    kwarg_tys.insert(name.clone(), ty);
+  }
+
+  // in order to re-use `get_args` code, we create fake args and kwargs of the types we're expecting
+  let Ok(args) = arg_tys
+    .into_iter()
+    .map(|ty| Ok(ty.build_example_val().ok_or(())?))
+    .collect::<Result<Vec<Value>, ()>>()
+  else {
+    return Ok(None);
+  };
+  let Ok(kwargs) = kwarg_tys
+    .into_iter()
+    .map(|(name, ty)| Ok((name, ty.build_example_val().ok_or(())?)))
+    .collect::<Result<FxHashMap<_, Value>, ()>>()
+  else {
+    return Ok(None);
+  };
+
+  let defs = match FN_SIGNATURE_DEFS.get(name) {
+    Some(defs) => *defs,
+    None => match FUNCTION_ALIASES.get(name) {
+      Some(alias) => FN_SIGNATURE_DEFS.get(alias).unwrap_or_else(|| {
+        panic!("Alias {name} points to unknown function {alias}");
+      }),
+      None => {
+        return Err(ErrorStack::new(format!(
+          "Variable or function not found in constant folding: {name}",
+        )))
+      }
+    },
+  };
+
+  let resolved_sig = get_args(name, defs, &args, &kwargs)?;
+  match resolved_sig {
+    GetArgsOutput::Valid { def_ix, arg_refs } => {
+      Ok(Some(PreResolvedSignature { def_ix, arg_refs }))
+    }
+    GetArgsOutput::PartiallyApplied => {
+      // TODO: I'm not sure what to do here
+      println!("PAF in pre-resolve; name={name}, args={args:?}, kwargs={kwargs:?}");
+      Ok(None)
+    }
   }
 }
 
@@ -1140,7 +1505,7 @@ fn fold_constants<'a>(
       if let FunctionCallTarget::Name(name) = target {
         if let Some(val) = local_scope.get(name) {
           match val {
-            Some(val) => match val {
+            TrackedValueRef::Const(val) => match val {
               Value::Callable(callable) => {
                 *target = FunctionCallTarget::Literal(callable.clone());
               }
@@ -1151,7 +1516,7 @@ fn fold_constants<'a>(
               }
             },
             // calling a closure argument or dynamic captured variable
-            None => (),
+            TrackedValueRef::Arg(_) => (),
           }
         } else {
           // try to resolve it as a builtin
@@ -1170,10 +1535,13 @@ fn fold_constants<'a>(
           };
           let fn_impl = resolve_builtin_impl(name);
           let name = name.clone();
+          let pre_resolved_signature =
+            maybe_pre_resolve_bulitin_call_signature(local_scope, &name, &args, &kwargs)?;
           *target = FunctionCallTarget::Literal(Arc::new(Callable::Builtin {
             name,
             fn_impl,
             fn_signature_defs: defs,
+            pre_resolved_signature,
           }));
         }
       }
@@ -1199,7 +1567,7 @@ fn fold_constants<'a>(
         FunctionCallTarget::Name(name) => {
           if let Some(val) = local_scope.get(name) {
             match val {
-              Some(val) => match val {
+              TrackedValueRef::Const(val) => match val {
                 Value::Callable(callable) => {
                   let evaled = CONST_EVAL_CTX.invoke_callable(
                     callable,
@@ -1215,7 +1583,7 @@ fn fold_constants<'a>(
                   )))
                 }
               },
-              None => (),
+              TrackedValueRef::Arg(_) => (),
             }
             return Ok(());
           } else {
@@ -1254,7 +1622,7 @@ fn fold_constants<'a>(
 
       let mut closure_scope = ScopeTracker::wrap(local_scope);
       for param in params.iter() {
-        closure_scope.set(param.name.clone(), None);
+        closure_scope.set(param.name.clone(), TrackedValue::Arg(param.clone()));
       }
 
       for stmt in &mut body.0 {
@@ -1272,7 +1640,6 @@ fn fold_constants<'a>(
       if body.inline_const_captures(&mut closure_scope) {
         return Ok(());
       }
-      println!("Folding closure with const body: {body:?}");
 
       *expr = Expr::Literal(Value::Callable(Arc::new(Callable::Closure(Closure {
         params: params.clone(),
@@ -1285,7 +1652,7 @@ fn fold_constants<'a>(
     }
     Expr::Ident(id) => {
       if let Some(val) = local_scope.get(id) {
-        if let Some(val) = val {
+        if let TrackedValueRef::Const(val) = val {
           *expr = val.clone().into_literal_expr();
           return Ok(());
         } else {
@@ -1312,6 +1679,7 @@ fn fold_constants<'a>(
           name: id.to_owned(),
           fn_impl: resolve_builtin_impl(id),
           fn_signature_defs,
+          pre_resolved_signature: None,
         })));
         return Ok(());
       }
@@ -1414,7 +1782,17 @@ fn optimize_statement<'a>(
       type_hint: _,
     } => {
       optimize_expr(local_scope, expr)?;
-      local_scope.set(name.clone(), expr.as_literal().clone());
+      local_scope.set(
+        name.clone(),
+        match expr.as_literal() {
+          Some(val) => TrackedValue::Const(val),
+          None => TrackedValue::Arg(ClosureArg {
+            name: name.clone(),
+            type_hint: None,
+            default_val: None,
+          }),
+        },
+      );
       Ok(())
     }
     Statement::Return { value } => {
@@ -1574,4 +1952,56 @@ fn test_block_const_folding() {
   let Expr::Literal(Value::Int(3)) = expr else {
     panic!("Expected constant folding to produce 3, found: {expr:?}");
   };
+}
+
+#[test]
+fn test_pre_resolve_builtin_signature() {
+  let code = r#"
+cb = |x: int| add(x+1, 1)
+y = cb(2)
+"#;
+
+  let pairs = crate::parse_program_src(code).unwrap();
+  let mut ast = parse_program(pairs).unwrap();
+  optimize_ast(&mut ast).unwrap();
+
+  let st1 = ast.statements[0].clone();
+  let closure_body = match st1 {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal(Value::Callable(callable)) => match &*callable {
+        Callable::Closure(closure) => closure.body.clone(),
+        _ => unreachable!(),
+      },
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let call_target = match &closure_body[0] {
+    Statement::Expr(expr) => match expr {
+      Expr::Call(FunctionCall {
+        target: FunctionCallTarget::Literal(target),
+        ..
+      }) => target,
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let pre_resolved_sig = match &**call_target {
+    Callable::Builtin {
+      pre_resolved_signature,
+      ..
+    } => pre_resolved_signature,
+    _ => unreachable!(),
+  };
+  let pre_resolved_sig = pre_resolved_sig.as_ref().unwrap();
+  assert_eq!(pre_resolved_sig.def_ix, 3);
+  assert_eq!(pre_resolved_sig.arg_refs.len(), 2);
+  assert!(matches!(
+    &pre_resolved_sig.arg_refs[0],
+    crate::ArgRef::Positional(0)
+  ));
+  assert!(matches!(
+    &pre_resolved_sig.arg_refs[1],
+    crate::ArgRef::Positional(1)
+  ));
 }

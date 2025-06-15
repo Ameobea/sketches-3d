@@ -588,7 +588,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Square Root",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
   ],
   "add" => &[
@@ -626,7 +626,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "a + b",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -736,7 +736,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "a -b",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -864,7 +864,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "a * b",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -992,7 +992,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "a / b",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1594,7 +1594,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Returns the sine of a numeric value",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1620,7 +1620,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Cosine",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1646,7 +1646,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Tangent",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1662,6 +1662,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     },
   ],
   "pow" => &[
+    // TODO: should split into int and float versions
     FnDef {
       arg_defs: &[
         ArgDef {
@@ -1710,7 +1711,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Truncates a numeric value to its integer part",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1736,7 +1737,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Returns the fractional part of a numeric value",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1762,7 +1763,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Rounds a numeric value to the nearest integer",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1788,7 +1789,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Rounds a numeric value up to the nearest integer",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1814,7 +1815,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Rounds a numeric value down to the nearest integer",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
     FnDef {
       arg_defs: &[
@@ -1866,7 +1867,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Converts radians to degrees",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
   ],
   "deg2rad" => &[
@@ -1880,7 +1881,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Converts degrees to radians",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
   ],
   "gte" => &[
@@ -2178,7 +2179,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Linearly interpolates between two numeric values `a` and `b` by a factor `t`",
-      return_type: &[ArgType::Numeric],
+      return_type: &[ArgType::Float],
     },
   ],
   "compose" => &[
@@ -2706,6 +2707,26 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Any],
     },
   ],
+  "mesh" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "verts",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "Sequence of Vec3 vertices, pointed into by `faces`"
+        },
+        ArgDef {
+          name: "indices",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "A flag sequence of integer indices corresponding to triangles.  Must have `length % 3 == 0`"
+        },
+      ],
+      description: "Creates a mesh from a sequence of vertices and indices",
+      return_type: &[ArgType::Mesh],
+    },
+  ]
 };
 
 pub fn serialize_fn_defs() -> String {

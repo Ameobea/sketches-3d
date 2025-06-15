@@ -46,6 +46,7 @@
   } = $props();
 
   let err: string | null = $state(null);
+  let isRunning: boolean = $state(false);
   let runStats: RunStats | null = $state(null);
   let renderedMeshes: (
     | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
@@ -127,7 +128,7 @@
   };
 
   const run = async () => {
-    if (!editorView) {
+    if (!editorView || isRunning) {
       return;
     }
 
@@ -135,6 +136,7 @@
 
     beforeUnloadHandler();
 
+    isRunning = true;
     for (const mesh of renderedMeshes) {
       viz.scene.remove(mesh);
       mesh.geometry.dispose();
@@ -150,10 +152,12 @@
       console.error('Error evaluating code:', err);
       // TODO: this set isn't working for some reason
       err = `Error evaluating code: ${err}`;
+      isRunning = false;
       return;
     }
     err = (await repl.getErr(ctxPtr)) || null;
     if (err) {
+      isRunning = false;
       return;
     }
 
@@ -204,6 +208,7 @@
 
     renderedMeshes = newRenderedMeshes;
     runStats = localRunStats;
+    isRunning = false;
   };
 
   const beforeUnloadHandler = () => {
@@ -272,7 +277,9 @@
     style="display: flex; flex: 1; background: #222;"
   ></div>
   <div class="controls">
-    <button onclick={run}>run</button>
+    <button disabled={isRunning} onclick={run}>
+      {#if isRunning}running...{:else}run{/if}
+    </button>
     {#if err}
       <div class="error">{err}</div>
     {/if}
@@ -362,5 +369,11 @@
     padding: 8px 12px;
     cursor: pointer;
     font-size: 14px;
+  }
+
+  button:disabled {
+    background: #444;
+    color: #aaa;
+    cursor: default;
   }
 </style>

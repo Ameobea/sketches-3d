@@ -1571,6 +1571,69 @@ pub(crate) fn eval_builtin_fn(
       }
       _ => unimplemented!(),
     },
+    "mesh" => match def_ix {
+      0 => {
+        let verts = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_sequence()
+          .unwrap()
+          .clone_box();
+        let indices = arg_refs[1]
+          .resolve(args, &kwargs)
+          .as_sequence()
+          .unwrap()
+          .clone_box();
+
+        let verts: Vec<Vec3> = verts
+          .consume(ctx)
+          .map(|v| -> Result<Vec3, ErrorStack> {
+            v?.as_vec3().copied().ok_or_else(|| {
+              ErrorStack::new(
+                "`verts` sequence produced invalid value in call to `mesh`.  Expected Vec3, \
+                 found: {v:?}",
+              )
+            })
+          })
+          .collect::<Result<_, _>>()?;
+        let indices: Vec<u32> = indices
+          .consume(ctx)
+          .enumerate()
+          .map(|(ix, v)| -> Result<u32, ErrorStack> {
+            let i = v?.as_int().ok_or_else(|| {
+              ErrorStack::new(
+                "`indices` sequence produced invalid value in call to `mesh`.  Expected usize, \
+                 found: {v:?}",
+              )
+            })?;
+            if i < 0 {
+              return Err(ErrorStack::new(format!(
+                "Found negative vtx ix in element {ix} of `indices` sequence passed to `mesh`: {i}",
+              )));
+            } else if i >= verts.len() as i64 {
+              return Err(ErrorStack::new(format!(
+                "Found vtx ix {i} in element {ix} of `indices` sequence passed to `mesh`, but \
+                 there are only {} vertices in the `verts` sequence",
+                verts.len()
+              )));
+            }
+
+            Ok(i as u32)
+          })
+          .collect::<Result<_, _>>()?;
+
+        if indices.len() % 3 != 0 {
+          return Err(ErrorStack::new(format!(
+            "Indices sequence passed to `mesh` must have a length that is a multiple of 3 as each \
+             set of 3 indices defines a face; found: {}",
+            indices.len()
+          )));
+        }
+
+        let mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
+        Ok(Value::Mesh(Arc::new(mesh.into())))
+      }
+      _ => unimplemented!(),
+    },
     _ => unimplemented!("Builtin function `{name}` not yet implemented"),
   }
 }
@@ -1683,6 +1746,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "randv" => define_builtin_fn!("randv"),
   "fbm" => define_builtin_fn!("fbm"),
   "call" => define_builtin_fn!("call"),
+  "mesh" => define_builtin_fn!("mesh"),
 };
 
 pub(crate) fn resolve_builtin_impl(
