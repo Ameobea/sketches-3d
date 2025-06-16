@@ -327,7 +327,10 @@ impl Expr {
           }
         } else {
           if FN_SIGNATURE_DEFS.contains_key(name) || FUNCTION_ALIASES.contains_key(name) {
-            if matches!(name.as_str(), "print" | "render" | "call") {
+            if matches!(
+              name.as_str(),
+              "print" | "render" | "call" | "randv" | "randf" | "randi"
+            ) {
               return true;
             }
             false
@@ -1100,14 +1103,6 @@ pub fn parse_program(program: Pair<Rule>) -> Result<Program, ErrorStack> {
   Ok(Program { statements })
 }
 
-lazy_static::lazy_static! {
-  static ref CONST_EVAL_CTX: EvalCtx = {
-    let mut ctx = EvalCtx::default();
-    ctx = ctx.set_log_fn(|_| panic!("shouldn't be logging in constant eval context"));
-    ctx
-  };
-}
-
 #[derive(Debug)]
 enum TrackedValue {
   /// Value is const-available and has already been evaluated
@@ -1160,7 +1155,11 @@ impl<'a> ScopeTracker<'a> {
   }
 }
 
-fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<ArgType> {
+fn pre_resolve_expr_type(
+  ctx: &EvalCtx,
+  scope_tracker: &ScopeTracker,
+  arg: &Expr,
+) -> Option<ArgType> {
   match arg {
     Expr::Literal(v) => Some(v.get_type()),
     Expr::Ident(id) => match scope_tracker.get(id) {
@@ -1196,7 +1195,7 @@ fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<Arg
         BinOp::Range => return Some(ArgType::Sequence),
         BinOp::RangeInclusive => return Some(ArgType::Sequence),
         BinOp::Pipeline => {
-          let rhs_ty = pre_resolve_expr_type(scope_tracker, rhs)?;
+          let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
           match rhs_ty {
             ArgType::Mesh => return Some(ArgType::Mesh),
             _ => (),
@@ -1241,8 +1240,8 @@ fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<Arg
       };
       let builtin_arg_defs = FN_SIGNATURE_DEFS[builtin_name];
 
-      let lhs_ty = pre_resolve_expr_type(scope_tracker, lhs)?;
-      let rhs_ty = pre_resolve_expr_type(scope_tracker, rhs)?;
+      let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
+      let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
       let return_tys = get_binop_return_ty(
         builtin_name,
         builtin_arg_defs,
@@ -1266,13 +1265,13 @@ fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<Arg
         PrefixOp::Pos => "pos",
         PrefixOp::Not => "not",
       };
-      let arg_ty = pre_resolve_expr_type(scope_tracker, expr)?;
+      let arg_ty = pre_resolve_expr_type(ctx, scope_tracker, expr)?;
       let example_val = arg_ty.build_example_val()?;
-      let retval = match CONST_EVAL_CTX.eval_fn_call::<true>(
+      let retval = match ctx.eval_fn_call::<true>(
         builtin_name,
         &[example_val],
         &Default::default(),
-        &CONST_EVAL_CTX.globals,
+        &ctx.globals,
       ) {
         Ok(out) => out,
         Err(_) => return None,
@@ -1284,9 +1283,9 @@ fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<Arg
     }
     Expr::Range { .. } => Some(ArgType::Sequence),
     Expr::FieldAccess { lhs, field } => {
-      let lhs_ty = pre_resolve_expr_type(scope_tracker, lhs)?;
+      let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
       let lhs_val = lhs_ty.build_example_val()?;
-      let field_val = match CONST_EVAL_CTX.eval_field_access(lhs_val, field) {
+      let field_val = match ctx.eval_field_access(lhs_val, field) {
         Ok(out) => out,
         Err(err) => {
           log::error!(
@@ -1318,7 +1317,7 @@ fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<Arg
           let return_ty = if let Some(sig) = pre_resolved_signature {
             fn_signature_defs[sig.def_ix].return_type
           } else {
-            match maybe_pre_resolve_bulitin_call_signature(scope_tracker, name, args, kwargs) {
+            match maybe_pre_resolve_bulitin_call_signature(ctx, scope_tracker, name, args, kwargs) {
               Ok(Some(sig)) => fn_signature_defs[sig.def_ix].return_type,
               Ok(None) => return None,
               Err(_) => return None,
@@ -1349,6 +1348,7 @@ fn pre_resolve_expr_type(scope_tracker: &ScopeTracker, arg: &Expr) -> Option<Arg
 }
 
 fn maybe_pre_resolve_bulitin_call_signature(
+  ctx: &EvalCtx,
   scope_tracker: &ScopeTracker,
   name: &str,
   args: &[Expr],
@@ -1356,8 +1356,7 @@ fn maybe_pre_resolve_bulitin_call_signature(
 ) -> Result<Option<PreResolvedSignature>, ErrorStack> {
   let mut arg_tys: Vec<ArgType> = Vec::with_capacity(args.len());
   for arg in args {
-    let Some(ty) = pre_resolve_expr_type(scope_tracker, arg) else {
-      println!("Unable to pre-resolve arg: {arg:?}");
+    let Some(ty) = pre_resolve_expr_type(ctx, scope_tracker, arg) else {
       return Ok(None);
     };
     arg_tys.push(ty);
@@ -1366,8 +1365,7 @@ fn maybe_pre_resolve_bulitin_call_signature(
   let mut kwarg_tys: FxHashMap<String, ArgType> =
     FxHashMap::with_capacity_and_hasher(kwargs.len(), Default::default());
   for (name, expr) in kwargs {
-    let Some(ty) = pre_resolve_expr_type(scope_tracker, expr) else {
-      println!("Unable to pre-resolve kwarg: {name} = {expr:?}");
+    let Some(ty) = pre_resolve_expr_type(ctx, scope_tracker, expr) else {
       return Ok(None);
     };
     kwarg_tys.insert(name.clone(), ty);
@@ -1408,22 +1406,19 @@ fn maybe_pre_resolve_bulitin_call_signature(
     GetArgsOutput::Valid { def_ix, arg_refs } => {
       Ok(Some(PreResolvedSignature { def_ix, arg_refs }))
     }
-    GetArgsOutput::PartiallyApplied => {
-      // TODO: I'm not sure what to do here
-      println!("PAF in pre-resolve; name={name}, args={args:?}, kwargs={kwargs:?}");
-      Ok(None)
-    }
+    GetArgsOutput::PartiallyApplied => Ok(None),
   }
 }
 
 fn fold_constants<'a>(
+  ctx: &EvalCtx,
   local_scope: &'a mut ScopeTracker,
   expr: &mut Expr,
 ) -> Result<(), ErrorStack> {
   match expr {
     Expr::BinOp { op, lhs, rhs } => {
-      optimize_expr(local_scope, lhs)?;
-      optimize_expr(local_scope, rhs)?;
+      optimize_expr(ctx, local_scope, lhs)?;
+      optimize_expr(ctx, local_scope, rhs)?;
 
       let (Some(lhs_val), Some(rhs_val)) = (lhs.as_literal(), rhs.as_literal()) else {
         return Ok(());
@@ -1432,24 +1427,27 @@ fn fold_constants<'a>(
       if matches!(op, BinOp::Pipeline) {
         if let Value::Callable(callable) = &rhs_val {
           if let Callable::Builtin { name, .. } = &**callable {
-            if matches!(name.as_str(), "print" | "render" | "call") {
+            if matches!(
+              name.as_str(),
+              "print" | "render" | "call" | "randv" | "randf" | "randi"
+            ) {
               return Ok(());
             }
           }
         }
       }
 
-      let val = op.apply(&CONST_EVAL_CTX, lhs_val, rhs_val)?;
+      let val = op.apply(&ctx, lhs_val, rhs_val)?;
       *expr = val.into_literal_expr();
       Ok(())
     }
     Expr::PrefixOp { op, expr: inner } => {
-      optimize_expr(local_scope, inner)?;
+      optimize_expr(ctx, local_scope, inner)?;
 
       let Some(val) = inner.as_literal() else {
         return Ok(());
       };
-      let val = op.apply(&CONST_EVAL_CTX, val)?;
+      let val = op.apply(&ctx, val)?;
       *expr = val.into_literal_expr();
       Ok(())
     }
@@ -1458,8 +1456,8 @@ fn fold_constants<'a>(
       end,
       inclusive,
     } => {
-      optimize_expr(local_scope, start)?;
-      optimize_expr(local_scope, end)?;
+      optimize_expr(ctx, local_scope, start)?;
+      optimize_expr(ctx, local_scope, end)?;
 
       let (Some(start_val), Some(end_val)) = (start.as_literal(), end.as_literal()) else {
         return Ok(());
@@ -1469,13 +1467,13 @@ fn fold_constants<'a>(
       Ok(())
     }
     Expr::FieldAccess { lhs, field } => {
-      optimize_expr(local_scope, lhs)?;
+      optimize_expr(ctx, local_scope, lhs)?;
 
       let Some(lhs_val) = lhs.as_literal() else {
         return Ok(());
       };
 
-      let val = CONST_EVAL_CTX.eval_field_access(lhs_val, field)?;
+      let val = ctx.eval_field_access(lhs_val, field)?;
       *expr = val.into_literal_expr();
 
       Ok(())
@@ -1486,15 +1484,18 @@ fn fold_constants<'a>(
       kwargs,
     }) => {
       for arg in args.iter_mut() {
-        optimize_expr(local_scope, arg)?;
+        optimize_expr(ctx, local_scope, arg)?;
       }
       for (_, expr) in kwargs.iter_mut() {
-        optimize_expr(local_scope, expr)?;
+        optimize_expr(ctx, local_scope, expr)?;
       }
 
       // avoid evaluating side-effectful functions in constant context
       if let FunctionCallTarget::Name(name) = target {
-        let is_side_effectful = matches!(name.as_str(), "print" | "render" | "call");
+        let is_side_effectful = matches!(
+          name.as_str(),
+          "print" | "render" | "call" | "randv" | "randf" | "randi"
+        );
         if is_side_effectful {
           return Ok(());
         }
@@ -1536,7 +1537,7 @@ fn fold_constants<'a>(
           let fn_impl = resolve_builtin_impl(name);
           let name = name.clone();
           let pre_resolved_signature =
-            maybe_pre_resolve_bulitin_call_signature(local_scope, &name, &args, &kwargs)?;
+            maybe_pre_resolve_bulitin_call_signature(ctx, local_scope, &name, &args, &kwargs)?;
           *target = FunctionCallTarget::Literal(Arc::new(Callable::Builtin {
             name,
             fn_impl,
@@ -1569,12 +1570,8 @@ fn fold_constants<'a>(
             match val {
               TrackedValueRef::Const(val) => match val {
                 Value::Callable(callable) => {
-                  let evaled = CONST_EVAL_CTX.invoke_callable(
-                    callable,
-                    &arg_vals,
-                    &kwarg_vals,
-                    &CONST_EVAL_CTX.globals,
-                  )?;
+                  let evaled =
+                    ctx.invoke_callable(callable, &arg_vals, &kwarg_vals, &ctx.globals)?;
                   *expr = evaled.into_literal_expr();
                 }
                 other => {
@@ -1587,23 +1584,13 @@ fn fold_constants<'a>(
             }
             return Ok(());
           } else {
-            let evaled = CONST_EVAL_CTX.eval_fn_call::<true>(
-              name,
-              &arg_vals,
-              &kwarg_vals,
-              &CONST_EVAL_CTX.globals,
-            )?;
+            let evaled = ctx.eval_fn_call::<true>(name, &arg_vals, &kwarg_vals, &ctx.globals)?;
             *expr = evaled.into_literal_expr();
             Ok(())
           }
         }
         FunctionCallTarget::Literal(callable) => {
-          let evaled = CONST_EVAL_CTX.invoke_callable(
-            callable,
-            &arg_vals,
-            &kwarg_vals,
-            &CONST_EVAL_CTX.globals,
-          )?;
+          let evaled = ctx.invoke_callable(callable, &arg_vals, &kwarg_vals, &ctx.globals)?;
           *expr = evaled.into_literal_expr();
           Ok(())
         }
@@ -1616,7 +1603,7 @@ fn fold_constants<'a>(
     } => {
       for param in params.iter_mut() {
         if let Some(default_val) = &mut param.default_val {
-          optimize_expr(local_scope, default_val)?;
+          optimize_expr(ctx, local_scope, default_val)?;
         }
       }
 
@@ -1626,7 +1613,7 @@ fn fold_constants<'a>(
       }
 
       for stmt in &mut body.0 {
-        optimize_statement(&mut closure_scope, stmt)?;
+        optimize_statement(ctx, &mut closure_scope, stmt)?;
       }
 
       for param in params.iter() {
@@ -1660,7 +1647,7 @@ fn fold_constants<'a>(
         }
       }
 
-      if let Some(val) = CONST_EVAL_CTX.globals.get(id) {
+      if let Some(val) = ctx.globals.get(id) {
         *expr = val.clone().into_literal_expr();
         return Ok(());
       }
@@ -1691,7 +1678,7 @@ fn fold_constants<'a>(
     Expr::Literal(_) => Ok(()),
     Expr::ArrayLiteral(exprs) => {
       for inner in exprs.iter_mut() {
-        optimize_expr(local_scope, inner)?;
+        optimize_expr(ctx, local_scope, inner)?;
       }
 
       // if all elements are literals, can fold into an `EagerSeq`
@@ -1711,20 +1698,20 @@ fn fold_constants<'a>(
       else_if_exprs,
       else_expr,
     } => {
-      optimize_expr(local_scope, cond)?;
-      optimize_expr(local_scope, then)?;
+      optimize_expr(ctx, local_scope, cond)?;
+      optimize_expr(ctx, local_scope, then)?;
       for (cond, inner) in else_if_exprs {
-        optimize_expr(local_scope, cond)?;
-        optimize_expr(local_scope, inner)?;
+        optimize_expr(ctx, local_scope, cond)?;
+        optimize_expr(ctx, local_scope, inner)?;
       }
       if let Some(else_expr) = else_expr {
-        optimize_expr(local_scope, else_expr)?;
+        optimize_expr(ctx, local_scope, else_expr)?;
       }
       Ok(())
     }
     Expr::Block { statements } => {
       for stmt in statements.iter_mut() {
-        optimize_statement(local_scope, stmt)?;
+        optimize_statement(ctx, local_scope, stmt)?;
       }
 
       // the `inline_const_captures` checks were built for closure bodies, so they think everything
@@ -1746,7 +1733,7 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
-      let evaled = CONST_EVAL_CTX.eval_expr(expr, &CONST_EVAL_CTX.globals)?;
+      let evaled = ctx.eval_expr(expr, &ctx.globals)?;
       match evaled {
         crate::ControlFlow::Continue(val) | crate::ControlFlow::Break(val) => {
           *expr = Expr::Literal(val)
@@ -1766,22 +1753,27 @@ fn fold_constants<'a>(
   }
 }
 
-fn optimize_expr<'a>(local_scope: &'a mut ScopeTracker, expr: &mut Expr) -> Result<(), ErrorStack> {
-  fold_constants(local_scope, expr)
+fn optimize_expr<'a>(
+  ctx: &EvalCtx,
+  local_scope: &'a mut ScopeTracker,
+  expr: &mut Expr,
+) -> Result<(), ErrorStack> {
+  fold_constants(ctx, local_scope, expr)
 }
 
 fn optimize_statement<'a>(
+  ctx: &EvalCtx,
   local_scope: &'a mut ScopeTracker,
   stmt: &mut Statement,
 ) -> Result<(), ErrorStack> {
   match stmt {
-    Statement::Expr(expr) => optimize_expr(local_scope, expr),
+    Statement::Expr(expr) => optimize_expr(ctx, local_scope, expr),
     Statement::Assignment {
       name,
       expr,
       type_hint: _,
     } => {
-      optimize_expr(local_scope, expr)?;
+      optimize_expr(ctx, local_scope, expr)?;
       local_scope.set(
         name.clone(),
         match expr.as_literal() {
@@ -1797,23 +1789,23 @@ fn optimize_statement<'a>(
     }
     Statement::Return { value } => {
       if let Some(expr) = value {
-        optimize_expr(local_scope, expr)?
+        optimize_expr(ctx, local_scope, expr)?
       }
       Ok(())
     }
     Statement::Break { value } => {
       if let Some(expr) = value {
-        optimize_expr(local_scope, expr)?
+        optimize_expr(ctx, local_scope, expr)?
       }
       Ok(())
     }
   }
 }
 
-pub fn optimize_ast(ast: &mut Program) -> Result<(), ErrorStack> {
+pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
   let mut local_scope = ScopeTracker::default();
   for stmt in &mut ast.statements {
-    optimize_statement(&mut local_scope, stmt)?;
+    optimize_statement(&ctx, &mut local_scope, stmt)?;
   }
   Ok(())
 }
@@ -1826,7 +1818,8 @@ fn test_basic_constant_folding() {
     rhs: Box::new(Expr::Literal(Value::Int(3))),
   };
   let mut local_scope = ScopeTracker::default();
-  optimize_expr(&mut local_scope, &mut expr).unwrap();
+  let ctx = EvalCtx::default();
+  optimize_expr(&ctx, &mut local_scope, &mut expr).unwrap();
   let Expr::Literal(Value::Int(5)) = expr else {
     panic!("Expected constant folding to produce 5");
   };
@@ -1838,7 +1831,7 @@ fn test_vec3_const_folding() {
 
   let pairs = crate::parse_program_src(code).unwrap();
   let mut ast = parse_program(pairs).unwrap();
-  optimize_ast(&mut ast).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
   let val = match &ast.statements[0] {
     Statement::Expr(expr) => expr.as_literal().unwrap(),
     _ => unreachable!(),
@@ -1862,7 +1855,7 @@ fn | call | print
 
   let pairs = crate::parse_program_src(code).unwrap();
   let mut ast = parse_program(pairs).unwrap();
-  optimize_ast(&mut ast).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 }
 
 #[test]
@@ -1874,7 +1867,7 @@ y = fn(2)
 
   let pairs = crate::parse_program_src(code).unwrap();
   let mut ast = parse_program(pairs).unwrap();
-  optimize_ast(&mut ast).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let Statement::Assignment { name, expr, .. } = &ast.statements[1] else {
     panic!("Expected second statement to be an assignment");
@@ -1895,7 +1888,7 @@ y = fn(2, a)
 
   let pairs = crate::parse_program_src(code).unwrap();
   let mut ast = parse_program(pairs).unwrap();
-  optimize_ast(&mut ast).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
     panic!("Expected second statement to be an assignment");
@@ -1919,7 +1912,7 @@ x = [
 
   let pairs = crate::parse_program_src(code).unwrap();
   let mut ast = parse_program(pairs).unwrap();
-  optimize_ast(&mut ast).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   // the whole thing should get const-eval'd to a mesh at the AST level
   let Statement::Assignment { expr, .. } = &ast.statements[1] else {
@@ -1944,7 +1937,7 @@ fn test_block_const_folding() {
 
   let pairs = crate::parse_program_src(code).unwrap();
   let mut ast = parse_program(pairs).unwrap();
-  optimize_ast(&mut ast).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let Statement::Expr(expr) = &ast.statements[0] else {
     panic!("Expected first statement to be an expression");
@@ -1963,7 +1956,7 @@ y = cb(2)
 
   let pairs = crate::parse_program_src(code).unwrap();
   let mut ast = parse_program(pairs).unwrap();
-  optimize_ast(&mut ast).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let st1 = ast.statements[0].clone();
   let closure_body = match st1 {

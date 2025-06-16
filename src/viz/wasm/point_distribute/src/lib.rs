@@ -1,6 +1,7 @@
-use common::{maybe_init_rng, random};
 use mesh::{linked_mesh::FaceKey, LinkedMesh, Mesh, Triangle};
 use nalgebra::{Point3, Vector3};
+use rand::{Rng, SeedableRng};
+use rand_pcg::Pcg32;
 
 pub enum MeshImpl<'a, T = ()> {
   Mesh(Mesh<'a>),
@@ -112,15 +113,23 @@ impl<'a, T> From<&'a LinkedMesh<T>> for MeshImpl<'a, T> {
 pub struct MeshSurfaceSampler<'a, T = ()> {
   mesh: MeshImpl<'a, T>,
   distribution: Vec<f32>,
+  rng: Option<Pcg32>,
 }
 
 impl<'a, T> MeshSurfaceSampler<'a, T> {
-  pub fn new(mesh: impl Into<MeshImpl<'a, T>>) -> Result<Self, &'static str> {
-    maybe_init_rng();
-
+  /// If `rng_seed` is `None`, the shared global RNG from `common` will be used
+  pub fn new(
+    mesh: impl Into<MeshImpl<'a, T>>,
+    rng_seed: Option<u64>,
+  ) -> Result<Self, &'static str> {
     let mut samp = MeshSurfaceSampler {
       mesh: mesh.into(),
       distribution: Vec::new(),
+      rng: rng_seed.map(|seed| {
+        rand_pcg::Pcg32::from_seed(unsafe {
+          std::mem::transmute([seed ^ 89538u64, seed ^ 382173857842u64])
+        })
+      }),
     };
 
     let mut cumulative_total = 0.;
@@ -145,14 +154,23 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
   }
 
   /// Returns `(position, normal)`.
-  pub fn sample(&self) -> (Point3<f32>, Vector3<f32>) {
+  pub fn sample(&mut self) -> (Point3<f32>, Vector3<f32>) {
     let face_index = self.sample_face_index();
     self.sample_face(face_index)
   }
 
-  pub fn sample_face_index(&self) -> usize {
+  fn rand(&mut self) -> &mut Pcg32 {
+    if let Some(rng) = &mut self.rng {
+      rng
+    } else {
+      common::rng()
+    }
+  }
+
+  pub fn sample_face_index(&mut self) -> usize {
+    let rand: f32 = self.rand().gen();
     let cumulative_total = *self.distribution.last().expect("distribution is empty");
-    self.binary_search(random() * cumulative_total)
+    self.binary_search(rand * cumulative_total)
   }
 
   pub fn binary_search(&self, x: f32) -> usize {
@@ -174,18 +192,18 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
   }
 
   /// Returns `(position, normal)`.
-  pub fn sample_face(&self, face_index: usize) -> (Point3<f32>, Vector3<f32>) {
-    let mut u = random();
-    let mut v = random();
-    if u + v > 1.0 {
-      u = 1.0 - u;
-      v = 1.0 - v;
+  pub fn sample_face(&mut self, face_index: usize) -> (Point3<f32>, Vector3<f32>) {
+    let mut u = self.rand().gen();
+    let mut v = self.rand().gen();
+    if u + v > 1. {
+      u = 1. - u;
+      v = 1. - v;
     }
 
     let tri = self.mesh.get_face(face_index);
 
     let position: Point3<f32> =
-      (tri.a.scale(u) + tri.b.scale(v) + tri.c.scale(1.0 - (u + v))).into();
+      (tri.a.scale(u) + tri.b.scale(v) + tri.c.scale(1. - (u + v))).into();
     let transform = self.transform_matrix();
     let transformed_position = transform.transform_point(&position);
 

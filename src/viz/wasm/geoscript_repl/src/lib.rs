@@ -45,8 +45,9 @@ impl GeoscriptReplCtx {
   pub fn convert_rendered_meshes(&mut self) {
     self.output_meshes.clear();
 
-    for mesh in self.geo_ctx.rendered_meshes.inner.lock().unwrap().drain(..) {
-      let mut mesh = mesh.mesh.clone();
+    for mesh_handle in self.geo_ctx.rendered_meshes.inner.lock().unwrap().drain(..) {
+      let mut mesh = (*mesh_handle.mesh).clone();
+
       let merged_count = mesh.merge_vertices_by_distance(0.0001);
       if merged_count > 0 {
         ::log::info!("Merged {} vertices in mesh", merged_count);
@@ -54,7 +55,8 @@ impl GeoscriptReplCtx {
       mesh.mark_edge_sharpness(0.8);
       mesh.separate_vertices_and_compute_normals();
 
-      let owned_mesh = mesh.to_raw_indexed(true, false, false);
+      let mut owned_mesh = mesh.to_raw_indexed(true, false, false);
+      owned_mesh.transform = Some(*mesh_handle.transform);
       self.output_meshes.push(owned_mesh);
     }
   }
@@ -94,6 +96,16 @@ pub fn geoscript_repl_get_err(ctx: *mut GeoscriptReplCtx) -> String {
 pub fn geoscript_repl_get_rendered_mesh_count(ctx: *const GeoscriptReplCtx) -> usize {
   let ctx = unsafe { &*ctx };
   ctx.output_meshes.len()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_transform(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+) -> Vec<f32> {
+  let ctx = unsafe { &*ctx };
+  let mesh = &ctx.output_meshes[mesh_ix];
+  mesh.transform.unwrap().as_slice().to_owned()
 }
 
 #[wasm_bindgen]

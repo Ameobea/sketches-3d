@@ -16,11 +16,11 @@ path = |count: int|: seq {
         // TODO: These windows are crooked
         dir = look_at(pos, center - vec3(0, 4, 0))
         window = box(5, 3.2, 5) | rot(vec3(-0.2, -dir.y, 0));
-        (window + pos + vec3(0, 0.8, 0)) + norm*1
+        (window + (pos + vec3(0, 0.8, 0))) + norm
       }
       | join
     )
-  + (path(28)
+  | (path(28)
       | skip(1)
       | take(27)
       | filter(|pos, i| i % 2 == 0)
@@ -36,11 +36,11 @@ path = |count: int|: seq {
             v - vec3(0, 0, pow(-v.y * 0.2, 2.4)*4)
           })
           | rot(vec3(-0.1, -dir.y, 0))
-        (pillar + vec3(0, -0.1, 0) + pos) + norm*2.5
+        (pillar + (vec3(0, -0.1, 0) + pos)) + norm*2.5
       }
       | join
   )
-  + (path(28)
+  | (path(28)
       | skip(1)
       | take(27)
       -> |pos| {
@@ -51,11 +51,11 @@ path = |count: int|: seq {
       }
       | join
   )
-  + (cyl(radius=10, height=4, radial_segments=80, height_segments=1)
+  | (cyl(radius=10, height=4, radial_segments=80, height_segments=1)
     | scale(3, 1, 2.2)
     | trans(30, 0, -2)
   )
-  + (cyl(radius=10, height=14, radial_segments=80, height_segments=1)
+  | (cyl(radius=10, height=14, radial_segments=80, height_segments=1)
     | scale(3, 1, 2.2)
     | trans(30, -9, 0)
     | warp(|v| {

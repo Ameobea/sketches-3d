@@ -1,5 +1,6 @@
-import ManifoldModule, { type Manifold, type ManifoldToplevel, type Vec3 } from 'manifold-3d';
+import ManifoldModule, { type Manifold, type ManifoldToplevel, type Mat4, type Vec3 } from 'manifold-3d';
 import manifoldWasURL from 'manifold-3d/manifold.wasm?url';
+import * as THREE from 'three';
 
 // import ManifoldModule from './manifoldComp/manifold';
 // import type { Manifold, ManifoldToplevel, Vec3 } from 'manifold-3d';
@@ -59,8 +60,54 @@ const encodeManifoldMesh = (manifold: Manifold, handleOnly: boolean) => {
   }
 
   const outMesh = manifold.getMesh();
-  const outVerts = outMesh.vertProperties;
+  const outVerts = outMesh.vertProperties.slice();
   const outIndices = outMesh.triVerts;
+  // let v3 = new THREE.Vector3();
+  // console.log(outMesh.runOriginalID);
+  // console.log(outMesh.runIndex, outMesh.numRun);
+  // console.log(outMesh.triVerts);
+  // console.log(outMesh.runTransform);
+  // if (outMesh.mergeFromVert.length > 0 || outMesh.mergeToVert.length > 0) {
+  //   throw new Error('unimplemented');
+  // }
+  // const transform = new THREE.Matrix4();
+  // for (let runIx = 0; runIx < outMesh.numRun; runIx += 1) {
+  //   const start = outMesh.runIndex[runIx];
+  //   const end = outMesh.runIndex[runIx + 1];
+
+  //   const rawTransform = outMesh.transform(runIx);
+
+  //   transform.set(
+  //     rawTransform[0],
+  //     rawTransform[4],
+  //     rawTransform[8],
+  //     rawTransform[12],
+  //     rawTransform[1],
+  //     rawTransform[5],
+  //     rawTransform[9],
+  //     rawTransform[13],
+  //     rawTransform[2],
+  //     rawTransform[6],
+  //     rawTransform[10],
+  //     rawTransform[14],
+  //     0,
+  //     0,
+  //     0,
+  //     1
+  //   );
+
+  //   for (let vtxIx = start; vtxIx < end; vtxIx += 3) {
+  //     v3.set(
+  //       outMesh.vertProperties[outIndices[vtxIx]],
+  //       outMesh.vertProperties[outIndices[vtxIx + 1]],
+  //       outMesh.vertProperties[outIndices[vtxIx + 2]]
+  //     );
+  //     // v3 = v3.applyMatrix4(transform);
+  //     outVerts[outIndices[vtxIx]] = v3.x;
+  //     outVerts[outIndices[vtxIx + 1]] = v3.y;
+  //     outVerts[outIndices[vtxIx + 2]] = v3.z;
+  //   }
+  // }
 
   const vtxCount = outVerts.length / 3;
   const triangleCount = outIndices.length / 3;
@@ -102,7 +149,9 @@ export const create_manifold = (verts: Float32Array, indices: Uint32Array): numb
 
 export const apply_boolean = (
   aHandle: number,
+  aTransform: Float32Array,
   bHandle: number,
+  bTransform: Float32Array,
   op: BooleanOperation,
   handleOnly: boolean
 ): Uint8Array => {
@@ -112,11 +161,11 @@ export const apply_boolean = (
 
   const { Manifold } = ManifoldWasm;
 
-  const a = MeshHandles.get(aHandle);
+  const a = MeshHandles.get(aHandle)?.transform([...aTransform] as Mat4);
   if (!a) {
     throw new Error(`No mesh found for handle ${aHandle}`);
   }
-  const b = MeshHandles.get(bHandle);
+  const b = MeshHandles.get(bHandle)?.transform([...bTransform] as Mat4);
   if (!b) {
     throw new Error(`No mesh found for handle ${bHandle}`);
   }
@@ -141,7 +190,13 @@ export const apply_boolean = (
   // based on:
   // https://github.com/elalish/manifold/blob/d013ddec3284ff706772953f46354e7a1b9f2f46/bindings/wasm/examples/three.ts#L123
 
-  return encodeManifoldMesh(outManifold, handleOnly);
+  const encoded = encodeManifoldMesh(outManifold, handleOnly);
+
+  // calling `transform` creates a new manifold, so we can delete these
+  a.delete();
+  b.delete();
+
+  return encoded;
 };
 
 export const simplify = (handle: number, tolerance: number) => {

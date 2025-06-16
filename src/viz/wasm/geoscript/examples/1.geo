@@ -7,8 +7,8 @@ rings = 1..8
   | tess(target_edge_length=1)
 
 all: mesh = rings
-  + (rings | rot(pi/2,0,0))
-  + (rings | rot(0,0,pi/2))
+  | (rings | rot(pi/2,0,0))
+  | (rings | rot(0,0,pi/2))
 
 all = all - box(12)
 

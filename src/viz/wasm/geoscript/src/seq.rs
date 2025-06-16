@@ -1,7 +1,8 @@
-use std::{collections::VecDeque, fmt::Debug, sync::Arc};
+use std::{collections::VecDeque, fmt::Debug};
 
 use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
+use nalgebra::Matrix4;
 use point_distribute::MeshSurfaceSampler;
 
 use crate::{Callable, ErrorStack, EvalCtx, MeshHandle, Sequence, Value};
@@ -157,42 +158,79 @@ impl Sequence for EagerSeq {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PointDistributeSeq {
-  pub mesh: Arc<MeshHandle>,
+  pub mesh: MeshHandle,
+  pub seed: u64,
   pub point_count: Option<usize>,
+  pub cb: Option<Callable>,
+  pub world_space: bool,
 }
 
-pub(crate) struct PointDistributeIter {
+pub(crate) struct PointDistributeIter<'a> {
+  ctx: &'a EvalCtx,
   #[allow(dead_code)]
-  mesh: Arc<MeshHandle>,
+  mesh: MeshHandle,
+  inverse_transposed_transform: Matrix4<f32>,
   sampler: MeshSurfaceSampler<'static>,
+  cb: Option<Callable>,
+  world_space: bool,
 }
 
-impl PointDistributeIter {
-  pub fn new(mesh: Arc<MeshHandle>) -> Result<Self, ErrorStack> {
+impl<'a> PointDistributeIter<'a> {
+  pub fn new(
+    ctx: &'a EvalCtx,
+    mesh: MeshHandle,
+    seed: u64,
+    cb: Option<Callable>,
+    world_space: bool,
+  ) -> Result<Self, ErrorStack> {
     // safe because this reference will only live as long as the iterator, and by holding the `Arc`
     // internally, we can ensure that it's not dropped while the iterator is still in use.
     let static_mesh: &'static LinkedMesh<()> =
-      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&(*mesh).mesh) };
+      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&mesh.mesh) };
 
-    let sampler = MeshSurfaceSampler::new(static_mesh).map_err(|err| {
+    let sampler = MeshSurfaceSampler::new(static_mesh, Some(seed)).map_err(|err| {
       ErrorStack::wrap(
         ErrorStack::new(err),
         "Error creating point distribute sampler",
       )
     })?;
 
-    Ok(Self { mesh, sampler })
+    Ok(Self {
+      ctx,
+      inverse_transposed_transform: mesh.transform.try_inverse().unwrap().transpose(),
+      mesh,
+      sampler,
+      cb,
+      world_space,
+    })
   }
 }
 
-impl Iterator for PointDistributeIter {
+impl<'a> Iterator for PointDistributeIter<'a> {
   type Item = Result<Value, ErrorStack>;
 
   fn next(&mut self) -> Option<Self::Item> {
     match self.sampler.sample() {
-      (pos, _normal) => {
+      (pos, mut normal) => {
+        let mut pos = Vec3::new(pos.x, pos.y, pos.z);
+        if self.world_space {
+          pos = (*self.mesh.transform * pos.push(1.)).xyz();
+          normal = (self.inverse_transposed_transform * normal.push(0.))
+            .xyz()
+            .normalize();
+        }
         let value = Value::Vec3(Vec3::new(pos.x, pos.y, pos.z));
-        Some(Ok(value))
+        if let Some(cb) = &self.cb {
+          let mapped = self.ctx.invoke_callable(
+            cb,
+            &[value, Value::Vec3(normal)],
+            &Default::default(),
+            &self.ctx.globals,
+          );
+          Some(mapped)
+        } else {
+          Some(Ok(value))
+        }
       }
     }
   }
@@ -205,12 +243,16 @@ impl Sequence for PointDistributeSeq {
 
   fn consume<'a>(
     self: Box<Self>,
-    _ctx: &'a EvalCtx,
+    ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let mesh = self.mesh;
-    let iter = match PointDistributeIter::new(mesh) {
+    let iter = match PointDistributeIter::new(ctx, mesh, self.seed, self.cb, self.world_space) {
       Ok(iter) => iter,
-      Err(err) => return Box::new(std::iter::once(Err(err))),
+      Err(err) => {
+        return Box::new(std::iter::once(Err(
+          err.wrap("Error creating point distribute iterator"),
+        )))
+      }
     };
 
     if let Some(point_count) = self.point_count {
@@ -248,21 +290,21 @@ impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> Sequence f
 
 #[derive(Clone, Debug)]
 pub(crate) struct MeshVertsSeq {
-  pub mesh: Arc<MeshHandle>,
+  pub mesh: MeshHandle,
 }
 
 pub(crate) struct MeshVertsIter {
   #[allow(dead_code)]
-  mesh: Arc<MeshHandle>,
+  mesh: MeshHandle,
   iter: Box<dyn Iterator<Item = Result<Value, ErrorStack>>>,
 }
 
 impl MeshVertsIter {
-  pub fn new(mesh: Arc<MeshHandle>) -> Self {
+  pub fn new(mesh: MeshHandle) -> Self {
     // safe because this reference will only live as long as the iterator, and by holding the `Arc`
     // internally, we can ensure that it's not dropped while the iterator is still in use.
     let static_mesh: &'static LinkedMesh<()> =
-      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&(*mesh).mesh) };
+      unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&*mesh.mesh) };
 
     let iter: impl Iterator<Item = _> + 'static = static_mesh
       .vertices
@@ -293,7 +335,7 @@ impl Sequence for MeshVertsSeq {
     self: Box<Self>,
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    Box::new(MeshVertsIter::new(Arc::clone(&self.mesh)))
+    Box::new(MeshVertsIter::new(self.mesh))
   }
 }
 

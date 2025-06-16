@@ -231,6 +231,30 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "TODO: this is currently broken",
       return_type: &[ArgType::Vec3],
     },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "target",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "up",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
+          description: ""
+        },
+      ],
+      description: "Orients a mesh to look at a target point.  This replaces any currently applied rotation.",
+      return_type: &[ArgType::Vec3],
+    }
   ],
   "scale" => &[
     FnDef {
@@ -283,6 +307,20 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Mesh],
     },
   ],
+  "apply_transforms" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Applies rotation, translation, and scale transforms to the vertices of a mesh, resetting the transforms to identity",
+      return_type: &[ArgType::Mesh],
+    },
+  ],
   "vec3" => &[
     FnDef {
       arg_defs: &[
@@ -319,6 +357,20 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       ],
       description: "Creates a Vec3 with all components set to `value`",
       return_type: &[ArgType::Vec3],
+    },
+  ],
+  "join" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "meshes",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Combines a sequence of meshes into one mesh containing all geometry from the inputs.\n\nThis does NOT perform a boolean union; for that, use the `union` function or the `|` operator to create a union over a sequence of meshes.",
+      return_type: &[ArgType::Mesh],
     },
   ],
   "union" => &[
@@ -461,6 +513,46 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       ],
       description: "Same as `fold` but with the first element of the sequence as the initial value",
       return_type: &[ArgType::Any],
+    },
+  ],
+  "any" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "cb",
+          valid_types: &[ArgType::Callable],
+          default_value: DefaultValue::Required,
+          description: "Callable with signature `|x|: bool`"
+        },
+      ],
+      description: "Returns true if any element of the sequence makes the callback return true",
+      return_type: &[ArgType::Bool],
+    },
+  ],
+  "all" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "cb",
+          valid_types: &[ArgType::Callable],
+          default_value: DefaultValue::Required,
+          description: "Callable with signature `|x|: bool`"
+        },
+      ],
+      description: "Returns true if all elements of the sequence make the callback return true",
+      return_type: &[ArgType::Bool],
     },
   ],
   "neg" => &[
@@ -679,7 +771,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           description: ""
         },
       ],
-      description: "Returns a boolean union of two meshes",
+      description: "Combines two meshes into one mesh containing all geometry from both inputs.\n\nThis does NOT perform a boolean union; for that, use the `union` function, the `|` operator, or the `join` function to create a union over a sequence of meshes.",
       return_type: &[ArgType::Mesh],
     },
     FnDef {
@@ -2127,8 +2219,26 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           default_value: DefaultValue::Required,
           description: ""
         },
+        ArgDef {
+          name: "seed",
+          valid_types: &[ArgType::Int],
+          default_value: DefaultValue::Optional(|| Value::Int(0)),
+          description: ""
+        },
+        ArgDef {
+          name: "cb",
+          valid_types: &[ArgType::Callable, ArgType::Nil],
+          default_value: DefaultValue::Optional(|| Value::Nil),
+          description: "Optional callable with signature `|point: vec3, normal: vec3|: any`.  If provided, this function will be called for each generated point and normal and whatever it returns will be included in the output sequence instead of the point."
+        },
+        ArgDef {
+          name: "world_space",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(true)),
+          description: "If true, points and normals will be returned in world space.  If false, they will be returned in the local space of the mesh."
+        }
       ],
-      description: "Distributes a specified number of points uniformly across the surface of a mesh returned as a sequence.  \n\nThis is lazy; the points will not be generated until the sequence is consumed.",
+      description: "Distributes a specified number of points uniformly across the surface of a mesh returned as a sequence.  If `cb` is Nil or not provided, a sequence of vec3 positions will be returned.  If `cb` is provided, the sequence will consist of the return values from calling `cb(pos, normal)` for each sampled point.\n\nThis is lazy; the points will not be generated until the sequence is consumed.",
       return_type: &[ArgType::Sequence],
     },
   ],
@@ -2519,11 +2629,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
   ],
   "randf" => &[
     FnDef {
-      arg_defs: &[],
-      description: "Returns a random float between 0. and 1.",
-      return_type: &[ArgType::Float],
-    },
-    FnDef {
       arg_defs: &[
         ArgDef {
           name: "min",
@@ -2541,13 +2646,13 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Returns a random float between `min` and `max`",
       return_type: &[ArgType::Float],
     },
-  ],
-  "randi" => &[
     FnDef {
       arg_defs: &[],
-      description: "Returns a random integer between 0 and 2^31 - 1",
-      return_type: &[ArgType::Int],
+      description: "Returns a random float between 0. and 1.",
+      return_type: &[ArgType::Float],
     },
+  ],
+  "randi" => &[
     FnDef {
       arg_defs: &[
         ArgDef {
@@ -2565,6 +2670,54 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       ],
       description: "Returns a random integer between `min` and `max` (inclusive)",
       return_type: &[ArgType::Int],
+    },
+    FnDef {
+      arg_defs: &[],
+      description: "Returns a random integer.  Any 64-bit integer is equally possible, positive or negative.",
+      return_type: &[ArgType::Int],
+    },
+  ],
+  "randv" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "min",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "max",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a random Vec3 where each component is between the corresponding components of `min` and `max`",
+      return_type: &[ArgType::Vec3],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "min",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "max",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a random Vec3 where each component is between `min` and `max`",
+      return_type: &[ArgType::Vec3],
+    },
+    FnDef {
+      arg_defs: &[],
+      description: "Returns a random Vec3 where each component is between 0. and 1.",
+      return_type: &[ArgType::Vec3],
     },
   ],
   "fbm" => &[

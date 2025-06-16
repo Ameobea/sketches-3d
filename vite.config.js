@@ -29,6 +29,10 @@ const config = defineConfig({
   },
   build: {
     sourcemap: true,
+    target: 'esnext',
+  },
+  worker: {
+    format: 'es',
   },
 });
 

@@ -14,7 +14,14 @@ use crate::{ArgRef, EvalCtx, Value};
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "src/viz/wasmComp/manifold")]
 extern "C" {
-  pub fn apply_boolean(a_handle: usize, b_handle: usize, op: u8, handle_only: bool) -> Vec<u8>;
+  pub fn apply_boolean(
+    a_handle: usize,
+    a_transform: &[f32],
+    b_handle: usize,
+    b_transform: &[f32],
+    op: u8,
+    handle_only: bool,
+  ) -> Vec<u8>;
   pub fn create_manifold(vertices: &[f32], indices: &[u32]) -> usize;
   fn drop_mesh_handle(handle: usize);
   pub fn drop_all_mesh_handles();
@@ -94,21 +101,37 @@ fn apply_boolean_op(
   op: MeshBooleanOp,
   handle_only: bool,
 ) -> Result<MeshHandle, String> {
-  use std::cell::Cell;
-
   use mesh::LinkedMesh;
+  use nalgebra::Matrix4;
+
+  use crate::ManifoldHandle;
 
   let a_handle = a.get_or_create_handle();
   let b_handle = b.get_or_create_handle();
 
-  let encoded_output = apply_boolean(a_handle, b_handle, op as u8, handle_only);
+  // manifold expects transforms as column-major 4x4 matrices
+  // let a_transform_transposed = a.transform.transpose();
+  // let b_transform_transposed = b.transform.transpose();
+
+  let a_transform_transposed = *a.transform;
+  let b_transform_transposed = *b.transform;
+
+  let encoded_output = apply_boolean(
+    a_handle,
+    &a_transform_transposed.as_slice(),
+    b_handle,
+    &b_transform_transposed.as_slice(),
+    op as u8,
+    handle_only,
+  );
 
   let (manifold_handle, out_verts, out_indices) = decode_manifold_output(&encoded_output);
 
   let mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
-    mesh,
-    manifold_handle: Cell::new(manifold_handle),
+    mesh: Arc::new(mesh),
+    transform: Box::new(Matrix4::identity()),
+    manifold_handle: Arc::new(ManifoldHandle::new(manifold_handle)),
   })
 }
 
@@ -127,7 +150,7 @@ pub(crate) fn eval_mesh_boolean(
       let b = arg_refs[1].resolve(&args, &kwargs).as_mesh().unwrap();
 
       let out_mesh = apply_boolean_op(&*a, &*b, op, false).map_err(ErrorStack::new)?;
-      return Ok(Value::Mesh(Arc::new(out_mesh)));
+      return Ok(Value::Mesh(out_mesh));
     }
     1 => {
       let sequence = arg_refs[0].resolve(&args, &kwargs).as_sequence().unwrap();
@@ -137,14 +160,19 @@ pub(crate) fn eval_mesh_boolean(
   };
 
   let Some(acc_res) = meshes_iter.next() else {
-    return Ok(Value::Mesh(Arc::new(LinkedMesh::new(0, 0, None).into())));
+    return Ok(Value::Mesh(MeshHandle::new(Arc::new(LinkedMesh::new(
+      0, 0, None,
+    )))));
   };
   let acc = acc_res.map_err(|err| err.wrap("Error evaluating mesh in boolean op"))?;
-  let mut acc = acc.as_mesh().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "Non-mesh value produced in sequence passed to boolean op: {acc:?}"
-    ))
-  })?;
+  let mut acc = acc
+    .as_mesh()
+    .ok_or_else(|| {
+      ErrorStack::new(format!(
+        "Non-mesh value produced in sequence passed to boolean op: {acc:?}"
+      ))
+    })?
+    .clone();
 
   let mut meshes_iter = meshes_iter.peekable();
   while let Some(res) = meshes_iter.next() {
@@ -152,7 +180,7 @@ pub(crate) fn eval_mesh_boolean(
       .map_err(|err| err.wrap("Error produced from iterator passed to mesh boolean function"))?;
     if let Value::Mesh(mesh) = mesh {
       let handle_only = meshes_iter.peek().is_some();
-      acc = Arc::new(apply_boolean_op(&*acc, &*mesh, op, handle_only).map_err(ErrorStack::new)?);
+      acc = apply_boolean_op(&acc, &mesh, op, handle_only).map_err(ErrorStack::new)?;
     } else {
       return Err(ErrorStack::new(
         "Non-mesh value produced in sequence passed to boolean op",
@@ -173,7 +201,7 @@ pub(crate) fn eval_mesh_boolean(
   _op: MeshBooleanOp,
 ) -> Result<Value, ErrorStack> {
   // Err("mesh boolean ops are only supported in wasm".to_owned())
-  Ok(Value::Mesh(Arc::new(
+  Ok(Value::Mesh(crate::MeshHandle::new(Arc::new(
     mesh::LinkedMesh::new(0, 0, None).into(),
-  )))
+  ))))
 }

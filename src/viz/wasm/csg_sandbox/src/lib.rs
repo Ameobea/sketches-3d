@@ -1,3 +1,4 @@
+use nalgebra::Matrix4;
 use wasm_bindgen::prelude::*;
 
 use geoscript::mesh_ops::mesh_boolean::{
@@ -111,9 +112,13 @@ pub fn csg_sandbox_init(
   let mesh0_handle = create_manifold(&mesh0_exported.vertices, &mesh0_exported_indices);
   let mesh1_handle = create_manifold(&mesh1_exported.vertices, &mesh1_exported_indices);
 
+  let identity_transform = Matrix4::identity();
+  let identity_transform = identity_transform.as_slice();
   let encoded_output = apply_boolean(
     mesh0_handle,
+    identity_transform,
     mesh1_handle,
+    identity_transform,
     MeshBooleanOp::Difference as u8,
     false,
   );

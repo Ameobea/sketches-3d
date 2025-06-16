@@ -172,7 +172,7 @@
     localRunStats.renderedMeshCount = await repl.getRenderedMeshCount(ctxPtr);
     const newRenderedMeshes = [];
     for (let i = 0; i < localRunStats.renderedMeshCount; i++) {
-      const { verts, indices, normals } = await repl.getRenderedMesh(ctxPtr, i);
+      const { transform, verts, indices, normals } = await repl.getRenderedMesh(ctxPtr, i);
 
       localRunStats.totalVtxCount += verts.length / 3;
       localRunStats.totalFaceCount += indices.length / 3;
@@ -185,6 +185,7 @@
       }
 
       const mesh = new THREE.Mesh(geometry, activeMat);
+      mesh.applyMatrix4(new THREE.Matrix4().fromArray(transform));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       viz.scene.add(mesh);

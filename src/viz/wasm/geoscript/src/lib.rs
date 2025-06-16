@@ -11,6 +11,7 @@ use std::{
 use ast::{optimize_ast, parse_program, Expr, FunctionCallTarget, Statement};
 use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
+use nalgebra::Matrix4;
 use nanoserde::SerJson;
 use pest::{
   iterators::Pair,
@@ -241,9 +242,27 @@ impl Debug for Callable {
   }
 }
 
+pub struct ManifoldHandle(Cell<usize>);
+
+impl ManifoldHandle {
+  pub fn new(handle: usize) -> Self {
+    Self(Cell::new(handle))
+  }
+
+  pub fn get(&self) -> usize {
+    self.0.get()
+  }
+
+  pub fn set(&self, handle: usize) {
+    self.0.set(handle);
+  }
+}
+
+#[derive(Clone)]
 pub struct MeshHandle {
-  pub mesh: LinkedMesh<()>,
-  pub manifold_handle: Cell<usize>,
+  pub mesh: Arc<LinkedMesh<()>>,
+  pub transform: Box<Matrix4<f32>>,
+  pub manifold_handle: Arc<ManifoldHandle>,
 }
 
 impl MeshHandle {
@@ -268,13 +287,12 @@ impl MeshHandle {
       handle => handle,
     }
   }
-}
 
-impl From<LinkedMesh<()>> for MeshHandle {
-  fn from(mesh: LinkedMesh<()>) -> Self {
-    MeshHandle {
+  fn new(mesh: Arc<LinkedMesh<()>>) -> Self {
+    Self {
       mesh,
-      manifold_handle: Cell::new(0),
+      transform: Box::new(Matrix4::identity()),
+      manifold_handle: Arc::new(ManifoldHandle::new(0)),
     }
   }
 }
@@ -287,14 +305,14 @@ impl Debug for MeshHandle {
       self.mesh.vertices.len(),
       self.mesh.faces.len(),
       self.mesh.edges.len(),
-      self.manifold_handle
+      self.manifold_handle.get()
     )
   }
 }
 
-impl Drop for MeshHandle {
+impl Drop for ManifoldHandle {
   fn drop(&mut self) {
-    let handle = self.manifold_handle.get();
+    let handle = self.0.get();
     if handle != 0 {
       drop_manifold_mesh_handle(handle);
     }
@@ -305,7 +323,7 @@ pub enum Value {
   Int(i64),
   Float(f32),
   Vec3(Vec3),
-  Mesh(Arc<MeshHandle>),
+  Mesh(MeshHandle),
   Callable(Arc<Callable>),
   Sequence(Box<dyn Sequence>),
   Bool(bool),
@@ -354,9 +372,9 @@ impl Value {
     }
   }
 
-  fn as_mesh(&self) -> Option<Arc<MeshHandle>> {
+  fn as_mesh(&self) -> Option<&MeshHandle> {
     match self {
-      Value::Mesh(mesh) => Some(Arc::clone(&mesh)),
+      Value::Mesh(mesh) => Some(&mesh),
       _ => None,
     }
   }
@@ -488,10 +506,11 @@ impl ArgType {
       ArgType::Float => Some(Value::Float(0.)),
       ArgType::Numeric => None,
       ArgType::Vec3 => Some(Value::Vec3(Vec3::new(0., 0., 0.))),
-      ArgType::Mesh => Some(Value::Mesh(Arc::new(MeshHandle {
-        mesh: LinkedMesh::new(0, 0, None),
-        manifold_handle: Cell::new(0),
-      }))),
+      ArgType::Mesh => Some(Value::Mesh(MeshHandle {
+        mesh: Arc::new(LinkedMesh::new(0, 0, None)),
+        transform: Box::new(Matrix4::identity()),
+        manifold_handle: Arc::new(ManifoldHandle::new(0)),
+      })),
       ArgType::Callable => Some(Value::Callable(Arc::new(Callable::Builtin {
         name: String::new(),
         fn_impl: |_, _, _, _, _| panic!("example callable should never be called"),
@@ -773,7 +792,7 @@ impl<T> AppendOnlyBuffer<T> {
   }
 }
 
-type RenderedMeshes = AppendOnlyBuffer<Arc<MeshHandle>>;
+type RenderedMeshes = AppendOnlyBuffer<MeshHandle>;
 type RemderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
 #[derive(Default, Debug)]
@@ -1556,7 +1575,7 @@ pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), E
   }
 
   let mut ast = parse_program(program.clone())?;
-  optimize_ast(&mut ast)?;
+  optimize_ast(ctx, &mut ast)?;
   // log::info!("{ast:?}");
 
   for statement in ast.statements {
@@ -1624,9 +1643,10 @@ c | render
   let mesh = &rendered_meshes[0];
   assert_eq!(mesh.mesh.vertices.len(), 8);
   for vtx in mesh.mesh.vertices.values() {
-    assert_eq!(vtx.position.x.abs(), 2.0);
-    assert_eq!(vtx.position.y.abs(), 4.0);
-    assert_eq!(vtx.position.z.abs(), 2.0);
+    let pos = ((*mesh.transform) * vtx.position.push(1.)).xyz();
+    assert_eq!(pos.x.abs(), 2.0);
+    assert_eq!(pos.y.abs(), 4.0);
+    assert_eq!(pos.z.abs(), 2.0);
   }
 }
 
@@ -1648,9 +1668,10 @@ render(a)
   let mesh = &rendered_meshes[0];
   assert_eq!(mesh.mesh.vertices.len(), 8);
   for vtx in mesh.mesh.vertices.values() {
-    assert_eq!(vtx.position.x.abs(), 1. / 2.);
-    assert_eq!(vtx.position.y.abs(), 2. / 2.);
-    assert_eq!(vtx.position.z.abs(), 3. / 2.);
+    let pos = ((*mesh.transform) * vtx.position.push(1.)).xyz();
+    assert_eq!(pos.x.abs(), 1. / 2.);
+    assert_eq!(pos.y.abs(), 2. / 2.);
+    assert_eq!(pos.z.abs(), 3. / 2.);
   }
 }
 
@@ -1934,10 +1955,17 @@ render(meshes)
       .mesh
       .vertices
       .values()
-      .map(|vtx| vtx.position)
+      .map(|vtx| {
+        println!("xform: {:?}", mesh.transform);
+        let pt = vtx.position.push(1.);
+        let transformed = (*mesh.transform) * pt;
+        let transformed = transformed.xyz();
+        println!("{:?} -> {:?}", vtx.position, transformed);
+        transformed
+      })
       .sum::<Vec3>()
       / mesh.mesh.vertices.len() as f32;
-    assert_eq!(center, Vec3::new(i as f32, 0.0, i as f32));
+    assert_eq!(center, Vec3::new(i as f32, 0., i as f32));
   }
 }
 

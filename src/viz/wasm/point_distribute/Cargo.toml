@@ -12,5 +12,7 @@ nalgebra = "0.33"
 common = { path = "../common" }
 mesh = { path = "../mesh" }
 log = "0.4"
+rand_pcg = "0.3"
+rand = { version = "0.8", default-features = false, features = ["nightly"] }
 
 [features]

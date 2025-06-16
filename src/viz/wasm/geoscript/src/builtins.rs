@@ -6,7 +6,7 @@ use mesh::{
   linked_mesh::{DisplacementNormalMethod, FaceKey, Vec3, Vertex, VertexKey},
   LinkedMesh,
 };
-use nalgebra::UnitQuaternion;
+use nalgebra::{Matrix3, Matrix4, Rotation3, UnitQuaternion};
 use rand::Rng;
 
 use crate::{
@@ -23,6 +23,7 @@ use crate::{
   },
   ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value,
 };
+use crate::{ManifoldHandle, MeshHandle};
 
 pub(crate) mod fn_defs;
 
@@ -38,7 +39,6 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "bezier" => "bezier3d",
   "sphere" => "icosphere",
   "cyl" => "cylinder",
-  "join" => "union",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -157,15 +157,39 @@ pub(crate) fn add_impl(
       Ok(Value::Int(a + b))
     }
     4 => {
-      // mesh + mesh
-      eval_mesh_boolean(
-        0,
-        &[ArgRef::Positional(0), ArgRef::Positional(1)],
-        &[lhs.clone(), rhs.clone()],
-        &Default::default(),
-        ctx,
-        MeshBooleanOp::Union,
-      )
+      // combine meshes w/o boolean operation
+      let lhs = lhs.as_mesh().unwrap();
+      let rhs = rhs.as_mesh().unwrap();
+
+      let mut combined = (*lhs.mesh).clone();
+      let mut new_vtx_key_by_old: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
+      for face in rhs.mesh.faces.values() {
+        let new_vtx_keys = std::array::from_fn(|i| {
+          let old_vtx_key = face.vertices[i];
+          *new_vtx_key_by_old.entry(old_vtx_key).or_insert_with(|| {
+            let old_vtx = &rhs.mesh.vertices[old_vtx_key];
+
+            // transform from rhs local space -> world space -> lhs local space
+            let transformed_pos =
+              lhs.transform.try_inverse().unwrap() * (*rhs.transform) * old_vtx.position.push(1.);
+
+            let new_vtx_key = combined.vertices.insert(Vertex {
+              position: transformed_pos.xyz(),
+              displacement_normal: old_vtx.displacement_normal,
+              shading_normal: old_vtx.shading_normal,
+              edges: Vec::new(),
+            });
+            new_vtx_key
+          })
+        });
+        combined.add_face(new_vtx_keys, ());
+      }
+
+      Ok(Value::Mesh(MeshHandle {
+        mesh: Arc::new(combined),
+        transform: Box::new(*lhs.transform),
+        manifold_handle: Arc::new(ManifoldHandle::new(0)),
+      }))
     }
     5 => ctx.eval_fn_call::<true>(
       "translate",
@@ -368,9 +392,9 @@ pub(crate) fn eval_builtin_fn(
         }
         _ => unimplemented!(),
       };
-      Ok(Value::Mesh(Arc::new(
-        LinkedMesh::new_box(width, height, depth).into(),
-      )))
+      Ok(Value::Mesh(MeshHandle::new(Arc::new(LinkedMesh::new_box(
+        width, height, depth,
+      )))))
     }
     "icosphere" => match def_ix {
       0 => {
@@ -380,9 +404,9 @@ pub(crate) fn eval_builtin_fn(
           return Err(ErrorStack::new("Resolution must be a non-negative integer"));
         }
 
-        Ok(Value::Mesh(Arc::new(
-          LinkedMesh::new_icosphere(radius, resolution as u32).into(),
-        )))
+        Ok(Value::Mesh(MeshHandle::new(Arc::new(
+          LinkedMesh::new_icosphere(radius, resolution as u32),
+        ))))
       }
       _ => unimplemented!(),
     },
@@ -399,15 +423,14 @@ pub(crate) fn eval_builtin_fn(
           return Err(ErrorStack::new("`height_segments` must be >= 1"));
         }
 
-        Ok(Value::Mesh(Arc::new(
+        Ok(Value::Mesh(MeshHandle::new(Arc::new(
           LinkedMesh::new_cylinder(
             radius,
             height,
             radial_segments as usize,
             height_segments as usize,
-          )
-          .into(),
-        )))
+          ),
+        ))))
       }
       _ => unimplemented!(),
     },
@@ -429,17 +452,15 @@ pub(crate) fn eval_builtin_fn(
         _ => unimplemented!(),
       };
 
-      let mesh = mesh.as_mesh().unwrap();
-      let mut translated_mesh = mesh.mesh.clone();
+      let mut mesh = mesh.as_mesh().unwrap().clone();
+      let before_transform = *mesh.transform;
+      mesh.transform.append_translation_mut(&translation);
+      println!(
+        "translate: before = {before_transform:?}, translation = {translation:?}, after = {:?}",
+        *mesh.transform
+      );
 
-      // TODO: use built-in transform instead of modifying vertices directly?
-      for vtx in translated_mesh.vertices.values_mut() {
-        vtx.position.x += translation.x;
-        vtx.position.y += translation.y;
-        vtx.position.z += translation.z;
-      }
-
-      Ok(Value::Mesh(Arc::new(translated_mesh.into())))
+      Ok(Value::Mesh(mesh))
     }
     "scale" => {
       let (scale, mesh) = match def_ix {
@@ -471,61 +492,119 @@ pub(crate) fn eval_builtin_fn(
         _ => unimplemented!(),
       };
 
-      // TODO: make use of the mesh's transform rather than modifying vertices directly?
-      let mesh = mesh
-        .as_mesh()
-        .ok_or(ErrorStack::new("Scale function requires a mesh argument"))?;
-      let mut mesh = mesh.mesh.clone();
-      for vtx in mesh.vertices.values_mut() {
-        vtx.position.x *= scale.x;
-        vtx.position.y *= scale.y;
-        vtx.position.z *= scale.z;
-      }
+      let mut mesh = mesh.as_mesh().unwrap().clone();
+      mesh.transform.m11 *= scale.x;
+      mesh.transform.m22 *= scale.y;
+      mesh.transform.m33 *= scale.z;
 
-      Ok(Value::Mesh(Arc::new(mesh.into())))
+      Ok(Value::Mesh(mesh.into()))
     }
-    "rot" => match def_ix {
-      0 => {
-        let rotation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+    "rot" => {
+      let (mesh, rotation) = match def_ix {
+        0 => {
+          let rotation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+          let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
-        // interpret as a euler angle in radians
-        let mut rotated_mesh = mesh.mesh.clone();
-        let rotation = UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z);
-        for vtx in rotated_mesh.vertices.values_mut() {
-          vtx.position = rotation * vtx.position;
+          (
+            mesh,
+            UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
+          )
         }
+        1 => {
+          let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+          let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+          let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+          let mesh = arg_refs[3].resolve(args, &kwargs).as_mesh().unwrap();
 
-        Ok(Value::Mesh(Arc::new(rotated_mesh.into())))
+          (mesh, UnitQuaternion::from_euler_angles(x, y, z))
+        }
+        _ => unimplemented!(),
+      };
+
+      // apply rotation by translating to origin, rotating, then translating back
+      let mut rotated_mesh = mesh.clone();
+      let back: Matrix4<f32> = Matrix4::new_translation(&mesh.transform.column(3).xyz());
+      let to_origin: Matrix4<f32> = Matrix4::new_translation(&-mesh.transform.column(3).xyz());
+      *rotated_mesh.transform =
+        back * rotation.to_homogeneous() * to_origin * (*rotated_mesh.transform);
+
+      Ok(Value::Mesh(rotated_mesh))
+    }
+
+    "look_at" => match def_ix {
+      // TODO: I'm pretty sure this isn't working like I was expecting it to
+      0 => {
+        let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let target = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+
+        let dir = target - *pos;
+        let up = Vec3::new(0., 1., 0.);
+        let rot = UnitQuaternion::look_at_rh(&dir, &up);
+        let (x, y, z) = rot.euler_angles();
+        Ok(Value::Vec3(Vec3::new(x, y, z)))
       }
       1 => {
-        let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-        let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-        let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-        let mesh = arg_refs[3].resolve(args, &kwargs).as_mesh().unwrap();
+        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+        let target = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        let up = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
 
-        // interpret as a euler angle in radians
-        let mut rotated_mesh = mesh.mesh.clone();
-        let rotation = UnitQuaternion::from_euler_angles(x, y, z);
-        for vtx in rotated_mesh.vertices.values_mut() {
-          vtx.position = rotation * vtx.position;
-        }
+        let mut mesh = mesh.clone();
 
-        Ok(Value::Mesh(Arc::new(rotated_mesh.into())))
+        // extract translation
+        let translation = mesh.transform.column(3).xyz();
+
+        // extract current scale
+        let basis3 = mesh.transform.fixed_view::<3, 3>(0, 0).clone_owned();
+        let scale_x = basis3.column(0).norm();
+        let scale_y = basis3.column(1).norm();
+        let scale_z = basis3.column(2).norm();
+
+        let dir = (target - translation).normalize();
+
+        let rotation = Rotation3::rotation_between(&up, &dir).ok_or_else(|| {
+          ErrorStack::new(format!(
+            "Error computing rotation; degenerate direction or parallel to up? dir={dir:?}, \
+             up={up:?}"
+          ))
+        })?;
+
+        let rot_mat = rotation
+          .to_homogeneous()
+          .fixed_view::<3, 3>(0, 0)
+          .clone_owned();
+        let new_rs = Matrix3::from_columns(&[
+          rot_mat.column(0) * scale_x,
+          rot_mat.column(1) * scale_y,
+          rot_mat.column(2) * scale_z,
+        ]);
+
+        mesh
+          .transform
+          .fixed_view_mut::<3, 3>(0, 0)
+          .copy_from(&new_rs);
+        mesh.transform[(0, 3)] = translation.x;
+        mesh.transform[(1, 3)] = translation.y;
+        mesh.transform[(2, 3)] = translation.z;
+
+        Ok(Value::Mesh(mesh))
       }
       _ => unimplemented!(),
     },
-    // TODO: I'm pretty sure this isn't working like I was expecting it to
-    "look_at" => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let target = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-
-      let dir = target - *pos;
-      let up = Vec3::new(0., 1., 0.);
-      let rot = UnitQuaternion::look_at_rh(&dir, &up);
-      let (x, y, z) = rot.euler_angles();
-      Ok(Value::Vec3(Vec3::new(x, y, z)))
-    }
+    "apply_transforms" => match def_ix {
+      0 => {
+        let mesh = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_mesh()
+          .unwrap()
+          .clone();
+        let mut new_mesh = (*mesh.mesh).clone();
+        for vtx in new_mesh.vertices.values_mut() {
+          vtx.position = (*mesh.transform * vtx.position.push(1.)).xyz();
+        }
+        Ok(Value::Mesh(MeshHandle::new(Arc::new(new_mesh))))
+      }
+      _ => unimplemented!(),
+    },
     "vec3" => match def_ix {
       0 => {
         let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
@@ -536,6 +615,75 @@ pub(crate) fn eval_builtin_fn(
       1 => {
         let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Vec3(Vec3::new(x, x, x)))
+      }
+      _ => unimplemented!(),
+    },
+    "join" => match def_ix {
+      0 => {
+        let mut iter = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_sequence()
+          .unwrap()
+          .clone_box()
+          .consume(ctx);
+
+        let Some(first) = iter.next() else {
+          return Ok(Value::Mesh(MeshHandle::new(Arc::new(LinkedMesh::new(
+            0, 0, None,
+          )))));
+        };
+        let base = match first? {
+          Value::Mesh(m) => m,
+          other => {
+            return Err(ErrorStack::new(format!(
+              "Non-mesh value produced in sequence passed to join: {other:?}"
+            )))
+          }
+        };
+
+        let out_transform = *base.transform;
+        let out_transform_inv = out_transform.try_inverse().unwrap();
+        let mut combined = (*base.mesh).clone();
+
+        for val in iter {
+          let rhs = match val? {
+            Value::Mesh(m) => m,
+            other => {
+              return Err(ErrorStack::new(format!(
+                "Non-mesh value produced in sequence passed to join: {other:?}"
+              )))
+            }
+          };
+
+          let mut new_vtx_key_by_old: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
+          for face in rhs.mesh.faces.values() {
+            let new_vtx_keys = std::array::from_fn(|i| {
+              let old_vtx_key = face.vertices[i];
+              *new_vtx_key_by_old.entry(old_vtx_key).or_insert_with(|| {
+                let old_vtx = &rhs.mesh.vertices[old_vtx_key];
+
+                // transform from rhs local space -> world space -> lhs local space
+                let transformed_pos =
+                  out_transform_inv * (*rhs.transform) * old_vtx.position.push(1.);
+
+                let new_vtx_key = combined.vertices.insert(Vertex {
+                  position: transformed_pos.xyz(),
+                  displacement_normal: old_vtx.displacement_normal,
+                  shading_normal: old_vtx.shading_normal,
+                  edges: Vec::new(),
+                });
+                new_vtx_key
+              })
+            });
+            combined.add_face(new_vtx_keys, ());
+          }
+        }
+
+        Ok(Value::Mesh(MeshHandle {
+          mesh: Arc::new(combined),
+          transform: Box::new(out_transform),
+          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+        }))
       }
       _ => unimplemented!(),
     },
@@ -655,6 +803,60 @@ pub(crate) fn eval_builtin_fn(
           Some(res) => res,
           None => Ok(Value::Nil),
         }
+      }
+      _ => unimplemented!(),
+    },
+    "any" => match def_ix {
+      0 => {
+        let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+        let cb = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
+        let iter = sequence.clone_box().consume(ctx);
+        for (i, res) in iter.enumerate() {
+          let val = res?;
+          let val = ctx
+            .invoke_callable(cb, &[val], &Default::default(), &ctx.globals)
+            .map_err(|err| err.wrap("error calling user-provided callback passed to `any`"))?;
+          match val {
+            Value::Bool(b) => {
+              if b {
+                return Ok(Value::Bool(true));
+              }
+            }
+            other => {
+              return Err(ErrorStack::new(format!(
+                "Non-bool value produced at index {i} by cb passed to `any`: {other:?}"
+              )));
+            }
+          }
+        }
+        Ok(Value::Bool(false))
+      }
+      _ => unimplemented!(),
+    },
+    "all" => match def_ix {
+      0 => {
+        let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+        let cb = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
+        let iter = sequence.clone_box().consume(ctx);
+        for (i, res) in iter.enumerate() {
+          let val = res?;
+          let val = ctx
+            .invoke_callable(cb, &[val], &Default::default(), &ctx.globals)
+            .map_err(|err| err.wrap("error calling user-provided callback passed to `all`"))?;
+          match val {
+            Value::Bool(b) => {
+              if !b {
+                return Ok(Value::Bool(false));
+              }
+            }
+            other => {
+              return Err(ErrorStack::new(format!(
+                "Non-bool value produced at index {i} by cb passed to `all`: {other:?}"
+              )));
+            }
+          }
+        }
+        Ok(Value::Bool(true))
       }
       _ => unimplemented!(),
     },
@@ -1064,7 +1266,7 @@ pub(crate) fn eval_builtin_fn(
     "render" => match def_ix {
       0 => {
         let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-        ctx.rendered_meshes.push(mesh);
+        ctx.rendered_meshes.push(mesh.clone());
         Ok(Value::Nil)
       }
       1 => {
@@ -1160,10 +1362,16 @@ pub(crate) fn eval_builtin_fn(
         _ => unreachable!(),
       };
       let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let seed = arg_refs[2].resolve(args, &kwargs).as_int().unwrap().abs() as u64;
+      let cb = arg_refs[3].resolve(args, &kwargs).as_callable().cloned();
+      let world_space = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
 
       let sampler_seq = PointDistributeSeq {
         mesh: mesh.clone(),
         point_count,
+        seed,
+        cb,
+        world_space,
       };
       Ok(Value::Sequence(Box::new(sampler_seq)))
     }
@@ -1223,7 +1431,7 @@ pub(crate) fn eval_builtin_fn(
         let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
         let mut needs_displacement_normals_computed = false;
-        let mut new_mesh = mesh.mesh.clone();
+        let mut new_mesh = (*mesh.mesh).clone();
         if let Some(v) = new_mesh.vertices.values().next() {
           if v.displacement_normal.is_none() {
             needs_displacement_normals_computed = true
@@ -1254,7 +1462,11 @@ pub(crate) fn eval_builtin_fn(
           vtx.position = *warped_pos;
         }
 
-        Ok(Value::Mesh(Arc::new(new_mesh.into())))
+        Ok(Value::Mesh(MeshHandle {
+          mesh: Arc::new(new_mesh),
+          transform: mesh.transform.clone(),
+          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+        }))
       }
       _ => unimplemented!(),
     },
@@ -1265,20 +1477,30 @@ pub(crate) fn eval_builtin_fn(
           return Err(ErrorStack::new("`target_edge_length` must be > 0"));
         }
         let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+        let transform = mesh.transform.clone();
 
-        let mut mesh = mesh.mesh.clone();
+        let mut mesh = (*mesh.mesh).clone();
         tessellation::tessellate_mesh(
           &mut mesh,
           target_edge_length,
           DisplacementNormalMethod::Interpolate,
         );
-        Ok(Value::Mesh(Arc::new(mesh.into())))
+        Ok(Value::Mesh(MeshHandle {
+          mesh: Arc::new(mesh),
+          transform: transform,
+          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+        }))
       }
       _ => unimplemented!(),
     },
     "connected_components" => match def_ix {
       0 => {
-        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+        let mesh = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_mesh()
+          .unwrap()
+          .clone();
+        let transform = *mesh.transform.clone();
         let mut components: Vec<Vec<FaceKey>> = mesh.mesh.connected_components();
         components.sort_unstable_by_key(|c| Reverse(c.len()));
         Ok(Value::Sequence(Box::new(IteratorSeq {
@@ -1304,7 +1526,11 @@ pub(crate) fn eval_builtin_fn(
               let vtx2 = map_vtx(&mut sub_mesh, face.vertices[2]);
               sub_mesh.add_face([vtx0, vtx1, vtx2], ());
             }
-            Ok(Value::Mesh(Arc::new(sub_mesh.into())))
+            Ok(Value::Mesh(MeshHandle {
+              mesh: Arc::new(sub_mesh),
+              transform: Box::new(transform),
+              manifold_handle: Arc::new(ManifoldHandle::new(0)),
+            }))
           }),
         })))
       }
@@ -1440,7 +1666,11 @@ pub(crate) fn eval_builtin_fn(
             )))
           }
         };
-        Ok(Value::Mesh(Arc::new(mesh.into())))
+        Ok(Value::Mesh(MeshHandle {
+          mesh: Arc::new(mesh),
+          transform: Box::new(Matrix4::identity()),
+          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+        }))
       }
       _ => unimplemented!(),
     },
@@ -1466,7 +1696,7 @@ pub(crate) fn eval_builtin_fn(
 
         let out_mesh_handle = simplify_mesh(&mesh, tolerance)
           .map_err(|err| ErrorStack::new(err).wrap("Error in `simplify` function"))?;
-        Ok(Value::Mesh(Arc::new(out_mesh_handle)))
+        Ok(Value::Mesh(out_mesh_handle))
       }
       _ => unimplemented!(),
     },
@@ -1486,41 +1716,64 @@ pub(crate) fn eval_builtin_fn(
           .collect::<Result<Vec<_>, _>>()?;
         let out_mesh = convex_hull_from_verts(&verts)
           .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
-        Ok(Value::Mesh(Arc::new(out_mesh)))
+        Ok(Value::Mesh(out_mesh))
       }
       _ => unimplemented!(),
     },
     "verts" => match def_ix {
       0 => {
-        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+        let mesh = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_mesh()
+          .unwrap()
+          .clone();
         Ok(Value::Sequence(Box::new(MeshVertsSeq { mesh })))
       }
       _ => unimplemented!(),
     },
     "randf" => match def_ix {
-      0 => Ok(Value::Float(ctx.rng().gen())),
-      1 => {
+      0 => {
         let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
         let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
         Ok(Value::Float(ctx.rng().gen_range(min..max)))
       }
+      1 => Ok(Value::Float(ctx.rng().gen())),
       _ => unimplemented!(),
     },
     "randv" => match def_ix {
-      0 => Ok(Value::Vec3(Vec3::new(
-        ctx.rng().gen(),
-        ctx.rng().gen(),
-        ctx.rng().gen(),
-      ))),
-      1 => {
+      0 => {
         let min = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
         let max = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        log::info!("min: {min:?}, max: {max:?}");
         Ok(Value::Vec3(Vec3::new(
           ctx.rng().gen_range(min.x..max.x),
           ctx.rng().gen_range(min.y..max.y),
           ctx.rng().gen_range(min.z..max.z),
         )))
       }
+      1 => {
+        let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+        Ok(Value::Vec3(Vec3::new(
+          ctx.rng().gen_range(min..max),
+          ctx.rng().gen_range(min..max),
+          ctx.rng().gen_range(min..max),
+        )))
+      }
+      2 => Ok(Value::Vec3(Vec3::new(
+        ctx.rng().gen(),
+        ctx.rng().gen(),
+        ctx.rng().gen(),
+      ))),
+      _ => unimplemented!(),
+    },
+    "randi" => match def_ix {
+      0 => {
+        let min = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+        let max = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+        Ok(Value::Int(ctx.rng().gen_range(min..max)))
+      }
+      1 => Ok(Value::Int(ctx.rng().gen())),
       _ => unimplemented!(),
     },
     "fbm" => match def_ix {
@@ -1630,7 +1883,11 @@ pub(crate) fn eval_builtin_fn(
         }
 
         let mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
-        Ok(Value::Mesh(Arc::new(mesh.into())))
+        Ok(Value::Mesh(MeshHandle {
+          mesh: Arc::new(mesh),
+          transform: Box::new(Matrix4::identity()),
+          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+        }))
       }
       _ => unimplemented!(),
     },
@@ -1675,7 +1932,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "scale" => define_builtin_fn!("scale"),
   "rot" => define_builtin_fn!("rot"),
   "look_at" => define_builtin_fn!("look_at"),
+  "apply_transforms" => define_builtin_fn!("apply_transforms"),
   "vec3" => define_builtin_fn!("vec3"),
+  "join" => define_builtin_fn!("join"),
   "union" => define_builtin_fn!("union"),
   "difference" => define_builtin_fn!("difference"),
   "intersect" => define_builtin_fn!("intersect"),
@@ -1689,6 +1948,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "skip_while" => define_builtin_fn!("skip_while"),
   "chain" => define_builtin_fn!("chain"),
   "first" => define_builtin_fn!("first"),
+  "any" => define_builtin_fn!("any"),
+  "all" => define_builtin_fn!("all"),
   "neg" => define_builtin_fn!("neg"),
   "pos" => define_builtin_fn!("pos"),
   "abs" => define_builtin_fn!("abs"),
@@ -1744,6 +2005,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "verts" => define_builtin_fn!("verts"),
   "randf" => define_builtin_fn!("randf"),
   "randv" => define_builtin_fn!("randv"),
+  "randi" => define_builtin_fn!("randi"),
   "fbm" => define_builtin_fn!("fbm"),
   "call" => define_builtin_fn!("call"),
   "mesh" => define_builtin_fn!("mesh"),

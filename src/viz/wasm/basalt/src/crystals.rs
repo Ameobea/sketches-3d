@@ -68,7 +68,7 @@ pub(crate) fn generate_crystals(pillars_mesh: &LinkedMesh) -> Vec<BatchMesh> {
 
   let mesh = pillars_mesh.to_owned_mesh(None);
   let mesh: Mesh = (&mesh).into();
-  let samp = MeshSurfaceSampler::new(mesh).unwrap();
+  let mut samp = MeshSurfaceSampler::new(mesh, None).unwrap();
 
   let mut rng = rng();
   let noise: Fbm<f32> = Fbm::new().set_octaves(2).set_seed(3993393993);

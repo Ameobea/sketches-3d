@@ -188,6 +188,7 @@ dependencies = [
  "geoscript",
  "log",
  "mesh",
+ "nalgebra",
  "noise",
  "tessellation",
  "wasm-bindgen",
@@ -791,6 +792,8 @@ dependencies = [
  "log",
  "mesh",
  "nalgebra",
+ "rand 0.8.5",
+ "rand_pcg",
 ]
 
 [[package]]
