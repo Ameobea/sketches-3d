@@ -54,6 +54,7 @@ pub fn tessellate_mesh_cb<T: Default>(
         continue;
       }
 
+      let mut has_bad_edge = false;
       let longest_edge_key = face
         .edges
         .iter()
@@ -61,10 +62,15 @@ pub fn tessellate_mesh_cb<T: Default>(
         .max_by_key(|&edge_key| {
           let edge = &mesh.edges[edge_key];
           let length = edge.length(&mesh.vertices);
+          if length.is_nan() || length.is_infinite() {
+            has_bad_edge = true;
+          }
           FloatOrd(length)
         })
         .unwrap();
-      edges_needing_split.push(longest_edge_key);
+      if !has_bad_edge {
+        edges_needing_split.push(longest_edge_key);
+      }
     }
 
     if edges_needing_split.is_empty() {
@@ -100,6 +106,9 @@ pub fn tessellate_mesh<T: Default>(
 ) {
   let should_split_edge = |mesh: &LinkedMesh<T>, edge: &Edge| -> bool {
     let length = edge.length(&mesh.vertices);
+    if length.is_nan() || length.is_infinite() {
+      return false;
+    }
     let split_length = length / 2.;
     // if the post-split length would be closer to the target length than the
     // current length, then we need to split this edge

@@ -1861,7 +1861,7 @@ pub(crate) fn eval_builtin_fn(
         let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
 
         let out_mesh_handle = simplify_mesh(&mesh, tolerance)
-          .map_err(|err| ErrorStack::new(err).wrap("Error in `simplify` function"))?;
+          .map_err(|err| err.wrap("Error in `simplify` function"))?;
         Ok(Value::Mesh(Arc::new(out_mesh_handle)))
       }
       _ => unimplemented!(),

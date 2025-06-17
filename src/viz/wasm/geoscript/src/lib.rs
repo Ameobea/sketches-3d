@@ -27,6 +27,8 @@ use rand_pcg::Pcg32;
 use seq::EagerSeq;
 use smallvec::SmallVec;
 
+#[cfg(target_arch = "wasm32")]
+use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
   ast::{ClosureArg, TypeName},
   builtins::{
@@ -275,7 +277,7 @@ pub struct MeshHandle {
 
 impl MeshHandle {
   #[cfg(target_arch = "wasm32")]
-  fn get_or_create_handle(&self) -> usize {
+  fn get_or_create_handle(&self) -> Result<usize, ErrorStack> {
     match self.manifold_handle.get() {
       0 => {
         let raw_mesh = self.mesh.to_raw_indexed(false, false, true);
@@ -289,10 +291,15 @@ impl MeshHandle {
         let verts = &raw_mesh.vertices;
 
         let handle = mesh_ops::mesh_boolean::create_manifold(verts, indices);
+        if handle < 0 {
+          let err = get_last_manifold_err();
+          return Err(ErrorStack::new(err).wrap("Error creating manifold mesh"));
+        }
+        let handle = handle as usize;
         self.manifold_handle.set(handle);
-        handle
+        Ok(handle)
       }
-      handle => handle,
+      handle => Ok(handle),
     }
   }
 
@@ -931,6 +938,10 @@ pub enum ControlFlow<T> {
   Return(T),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+static mut THREAD_RNG: Pcg32 =
+  unsafe { std::mem::transmute((7718587666045340534u64, 17289744314186392832u64)) };
+
 impl EvalCtx {
   pub fn set_log_fn(mut self, log: fn(&str)) -> EvalCtx {
     self.log_fn = log;
@@ -944,7 +955,7 @@ impl EvalCtx {
 
   #[cfg(not(target_arch = "wasm32"))]
   pub fn rng(&self) -> &'static mut Pcg32 {
-    unimplemented!()
+    unsafe { &mut *std::ptr::addr_of_mut!(THREAD_RNG) }
   }
 
   pub fn eval_expr(&self, expr: &Expr, scope: &Scope) -> Result<ControlFlow<Value>, ErrorStack> {

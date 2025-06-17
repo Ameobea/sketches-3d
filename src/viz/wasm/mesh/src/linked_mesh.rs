@@ -2082,18 +2082,25 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     };
     std::mem::forget(vertices);
 
-    assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
-    assert_eq!(indices.len() % 3, 0);
-    indices.shrink_to_fit();
-    assert_eq!(indices.capacity() % 3, 0);
-    let arr_indices = unsafe {
-      Vec::from_raw_parts(
-        indices.as_ptr() as *mut [u32; 3],
-        indices.len() / 3,
-        indices.capacity() / 3,
-      )
+    let arr_indices = if std::mem::size_of::<usize>() == std::mem::size_of::<u32>() {
+      assert_eq!(indices.len() % 3, 0);
+      indices.shrink_to_fit();
+      assert_eq!(indices.capacity() % 3, 0);
+      let arr_indices = unsafe {
+        Vec::from_raw_parts(
+          indices.as_ptr() as *mut [u32; 3],
+          indices.len() / 3,
+          indices.capacity() / 3,
+        )
+      };
+      std::mem::forget(indices);
+      arr_indices
+    } else {
+      indices
+        .array_chunks::<3>()
+        .map(|[a, b, c]| [*a as u32, *b as u32, *c as u32])
+        .collect()
     };
-    std::mem::forget(indices);
 
     TriMesh::new(point_vertices, arr_indices)
   }

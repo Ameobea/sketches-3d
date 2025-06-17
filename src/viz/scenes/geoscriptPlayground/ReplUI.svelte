@@ -146,6 +146,7 @@
     await repl.reset(ctxPtr);
     runStats = null;
     const startTime = performance.now();
+    localStorage.lastGeoscriptRunCompleted = 'false';
     try {
       await repl.eval(ctxPtr, code);
     } catch (err) {
@@ -154,6 +155,8 @@
       err = `Error evaluating code: ${err}`;
       isRunning = false;
       return;
+    } finally {
+      localStorage.lastGeoscriptRunCompleted = 'true';
     }
     err = (await repl.getErr(ctxPtr)) || null;
     if (err) {
@@ -255,6 +258,12 @@
     setReplCtx({ centerView, toggleWireframe });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
+
+    // if the user closed the tab while the last run was in progress, avoid eagerly running it again in
+    // case there was an infinite loop or something
+    if (localStorage.lastGeoscriptRunCompleted !== 'false') {
+      run();
+    }
 
     return () => {
       if (editorView) {

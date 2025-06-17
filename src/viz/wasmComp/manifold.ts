@@ -135,16 +135,33 @@ const encodeManifoldMesh = (manifold: Manifold, handleOnly: boolean) => {
   return new Uint8Array(buffer);
 };
 
+let lastErr = '';
+
+export const get_last_err = (): string => lastErr;
+
 export const create_manifold = (verts: Float32Array, indices: Uint32Array): number => {
   if (!ManifoldWasm) {
     throw new Error('Manifold Wasm not initialized');
   }
 
   const { Manifold, Mesh } = ManifoldWasm;
-  const manifold = new Manifold(new Mesh({ numProp: 3, triVerts: indices, vertProperties: verts }));
-  const handle = getNewHandle();
-  MeshHandles.set(handle, manifold);
-  return handle;
+  try {
+    const manifold = new Manifold(new Mesh({ numProp: 3, triVerts: indices, vertProperties: verts }));
+    const handle = getNewHandle();
+    MeshHandles.set(handle, manifold);
+    return handle;
+  } catch (err) {
+    if (err instanceof Error) {
+      if (err.name === 'ManifoldError') {
+        lastErr = `The mesh passed to an operation requiring manifold input was not manifold.\n\nManifold meshes are closed/watertight, have no edges shared by more than two faces, have consistent triangle winding orders, and have no NaN/infinite vertices.\n\nDetails: ${err.message}`;
+      } else {
+        lastErr = `Unexpected error converting mesh to manifold representation: ${err.message}`;
+      }
+    } else {
+      lastErr = `Unknown error: ${err}`;
+    }
+    return -1;
+  }
 };
 
 export const apply_boolean = (

@@ -20,9 +20,15 @@ interface BuildEditorArgs {
   container: HTMLElement;
   customKeymap?: readonly KeyBinding[];
   initialCode?: string;
+  readonly?: boolean;
 }
 
-export const buildEditor = ({ container, customKeymap, initialCode = '' }: BuildEditorArgs) => {
+export const buildEditor = ({
+  container,
+  customKeymap,
+  initialCode = '',
+  readonly = false,
+}: BuildEditorArgs) => {
   const syntaxErrorLinter = linter(view => {
     const diagnostics: Diagnostic[] = [];
     syntaxTree(view.state)
@@ -67,6 +73,7 @@ export const buildEditor = ({ container, customKeymap, initialCode = '' }: Build
     gruvboxDark,
     new LanguageSupport(geoscriptLang),
     syntaxErrorLinter,
+    readonly ? EditorState.readOnly.of(true) : null,
   ]);
 
   const editorState = EditorState.create({

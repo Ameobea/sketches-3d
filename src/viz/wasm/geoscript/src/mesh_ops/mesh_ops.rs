@@ -3,6 +3,7 @@ use mesh::LinkedMesh;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
+use crate::ErrorStack;
 use crate::MeshHandle;
 
 #[cfg(target_arch = "wasm32")]
@@ -13,7 +14,7 @@ extern "C" {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, String> {
+pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, ErrorStack> {
   use std::{cell::RefCell, sync::Arc};
 
   use nalgebra::Matrix4;
@@ -21,10 +22,12 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, St
   use crate::ManifoldHandle;
 
   if tolerance <= 0. {
-    return Err("Tolerance must be greater than zero".to_owned());
+    return Err(ErrorStack::new(
+      "Invalid `tolerance` passed to `simplify`; must be greater than zero",
+    ));
   }
 
-  let encoded_output = simplify(mesh.get_or_create_handle(), tolerance);
+  let encoded_output = simplify(mesh.get_or_create_handle()?, tolerance);
 
   let (manifold_handle, out_verts, out_indices) =
     crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded_output);
@@ -39,8 +42,8 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, St
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn simplify_mesh(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, String> {
-  Ok(mesh.clone(false, false))
+pub fn simplify_mesh(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, ErrorStack> {
+  Ok(mesh.clone(false, false, false))
 }
 
 #[cfg(target_arch = "wasm32")]

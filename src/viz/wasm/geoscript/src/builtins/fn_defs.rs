@@ -598,7 +598,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           name: "value",
           valid_types: &[ArgType::Bool],
           default_value: DefaultValue::Required,
-          description: "Boolean to negate (logical NOT)"
+          description: ""
         },
       ],
       description: "Inverts a boolean (logical NOT)",

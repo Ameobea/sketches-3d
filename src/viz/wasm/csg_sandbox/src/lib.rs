@@ -109,8 +109,8 @@ pub fn csg_sandbox_init(
     )
   };
 
-  let mesh0_handle = create_manifold(&mesh0_exported.vertices, &mesh0_exported_indices);
-  let mesh1_handle = create_manifold(&mesh1_exported.vertices, &mesh1_exported_indices);
+  let mesh0_handle = create_manifold(&mesh0_exported.vertices, &mesh0_exported_indices) as usize;
+  let mesh1_handle = create_manifold(&mesh1_exported.vertices, &mesh1_exported_indices) as usize;
 
   let identity_transform = Matrix4::identity();
   let identity_transform = identity_transform.as_slice();

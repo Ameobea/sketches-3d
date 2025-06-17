@@ -22,9 +22,20 @@ extern "C" {
     op: u8,
     handle_only: bool,
   ) -> Vec<u8>;
-  pub fn create_manifold(vertices: &[f32], indices: &[u32]) -> usize;
+  pub fn create_manifold(vertices: &[f32], indices: &[u32]) -> isize;
   fn drop_mesh_handle(handle: usize);
   pub fn drop_all_mesh_handles();
+  fn get_last_err() -> String;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn get_last_manifold_err() -> String {
+  get_last_err()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_last_manifold_err() -> String {
+  String::new()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -100,7 +111,7 @@ fn apply_boolean_op(
   b: &MeshHandle,
   op: MeshBooleanOp,
   handle_only: bool,
-) -> Result<MeshHandle, String> {
+) -> Result<MeshHandle, ErrorStack> {
   use std::cell::RefCell;
 
   use mesh::LinkedMesh;
@@ -108,8 +119,12 @@ fn apply_boolean_op(
 
   use crate::ManifoldHandle;
 
-  let a_handle = a.get_or_create_handle();
-  let b_handle = b.get_or_create_handle();
+  let a_handle = a
+    .get_or_create_handle()
+    .map_err(|err| err.wrap("Error applying boolean op"))?;
+  let b_handle = b
+    .get_or_create_handle()
+    .map_err(|err| err.wrap("Error applying boolean op"))?;
 
   let encoded_output = apply_boolean(
     a_handle,
@@ -146,7 +161,7 @@ pub(crate) fn eval_mesh_boolean(
       let a = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
       let b = arg_refs[1].resolve(&args, &kwargs).as_mesh().unwrap();
 
-      let out_mesh = apply_boolean_op(&*a, &*b, op, false).map_err(ErrorStack::new)?;
+      let out_mesh = apply_boolean_op(&*a, &*b, op, false)?;
       return Ok(Value::Mesh(Arc::new(out_mesh)));
     }
     1 => {
@@ -177,7 +192,7 @@ pub(crate) fn eval_mesh_boolean(
       .map_err(|err| err.wrap("Error produced from iterator passed to mesh boolean function"))?;
     if let Value::Mesh(mesh) = mesh {
       let handle_only = meshes_iter.peek().is_some();
-      acc = apply_boolean_op(&acc, &mesh, op, handle_only).map_err(ErrorStack::new)?;
+      acc = apply_boolean_op(&acc, &mesh, op, handle_only)?;
     } else {
       return Err(ErrorStack::new(
         "Non-mesh value produced in sequence passed to boolean op",

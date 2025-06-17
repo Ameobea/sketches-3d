@@ -13,6 +13,7 @@
       container: codemirrorContainer!,
       customKeymap: [],
       initialCode: quickstartCode,
+      readonly: true,
     });
     editorView = editor.editorView;
   });
