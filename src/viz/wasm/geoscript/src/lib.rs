@@ -3,7 +3,7 @@
 #[cfg(target_arch = "wasm32")]
 use std::cell::UnsafeCell;
 use std::{
-  cell::Cell,
+  cell::{Cell, RefCell},
   fmt::{Debug, Display},
   sync::{Arc, Mutex},
 };
@@ -13,6 +13,10 @@ use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::Matrix4;
 use nanoserde::SerJson;
+use parry3d::{
+  bounding_volume::Aabb,
+  shape::{TriMesh, TriMeshBuilderError},
+};
 use pest::{
   iterators::Pair,
   pratt_parser::{Assoc, Op, PrattParser},
@@ -258,11 +262,15 @@ impl ManifoldHandle {
   }
 }
 
-#[derive(Clone)]
 pub struct MeshHandle {
   pub mesh: Arc<LinkedMesh<()>>,
-  pub transform: Box<Matrix4<f32>>,
+  pub transform: Matrix4<f32>,
   pub manifold_handle: Arc<ManifoldHandle>,
+  /// AABB of the mesh in world space.  Computed as needed.
+  pub aabb: RefCell<Option<Aabb>>,
+  /// parry3d trimesh representation of the mesh, if set.  Computed as needed - used for
+  /// intersection tests and other operations.
+  pub trimesh: RefCell<Option<Arc<TriMesh>>>,
 }
 
 impl MeshHandle {
@@ -288,11 +296,55 @@ impl MeshHandle {
     }
   }
 
+  fn get_or_compute_aabb(&self) -> Aabb {
+    if let Some(aabb) = self.aabb.borrow().as_ref() {
+      return aabb.clone();
+    }
+
+    let aabb = self.mesh.compute_aabb(&self.transform);
+    *self.aabb.borrow_mut() = Some(aabb.clone());
+    aabb
+  }
+
+  fn get_or_create_trimesh(&self) -> Result<Arc<TriMesh>, TriMeshBuilderError> {
+    if let Some(trimesh) = self.trimesh.borrow().as_ref() {
+      return Ok(Arc::clone(trimesh));
+    }
+
+    let trimesh = Arc::new(self.mesh.build_trimesh(&self.transform)?);
+    *self.trimesh.borrow_mut() = Some(Arc::clone(&trimesh));
+    Ok(trimesh)
+  }
+
   fn new(mesh: Arc<LinkedMesh<()>>) -> Self {
     Self {
       mesh,
-      transform: Box::new(Matrix4::identity()),
+      transform: Matrix4::identity(),
       manifold_handle: Arc::new(ManifoldHandle::new(0)),
+      aabb: RefCell::new(None),
+      trimesh: RefCell::new(None),
+    }
+  }
+
+  fn clone(&self, retain_manifold_handle: bool, retain_aabb: bool, retain_trimesh: bool) -> Self {
+    Self {
+      mesh: Arc::clone(&self.mesh),
+      transform: self.transform,
+      manifold_handle: if retain_manifold_handle {
+        Arc::clone(&self.manifold_handle)
+      } else {
+        Arc::new(ManifoldHandle::new(0))
+      },
+      aabb: if retain_aabb {
+        self.aabb.clone()
+      } else {
+        RefCell::new(None)
+      },
+      trimesh: if retain_trimesh {
+        self.trimesh.clone()
+      } else {
+        RefCell::new(None)
+      },
     }
   }
 }
@@ -323,7 +375,7 @@ pub enum Value {
   Int(i64),
   Float(f32),
   Vec3(Vec3),
-  Mesh(MeshHandle),
+  Mesh(Arc<MeshHandle>),
   Callable(Arc<Callable>),
   Sequence(Box<dyn Sequence>),
   Bool(bool),
@@ -337,7 +389,7 @@ impl Clone for Value {
       Value::Int(i) => Value::Int(*i),
       Value::Float(f) => Value::Float(*f),
       Value::Vec3(v3) => Value::Vec3(*v3),
-      Value::Mesh(mesh) => Value::Mesh(mesh.clone()),
+      Value::Mesh(mesh) => Value::Mesh(Arc::clone(mesh)),
       Value::Callable(callable) => Value::Callable(callable.clone()),
       Value::Sequence(seq) => Value::Sequence(seq.clone_box()),
       Value::Bool(b) => Value::Bool(*b),
@@ -506,11 +558,13 @@ impl ArgType {
       ArgType::Float => Some(Value::Float(0.)),
       ArgType::Numeric => None,
       ArgType::Vec3 => Some(Value::Vec3(Vec3::new(0., 0., 0.))),
-      ArgType::Mesh => Some(Value::Mesh(MeshHandle {
+      ArgType::Mesh => Some(Value::Mesh(Arc::new(MeshHandle {
         mesh: Arc::new(LinkedMesh::new(0, 0, None)),
-        transform: Box::new(Matrix4::identity()),
+        transform: Matrix4::identity(),
         manifold_handle: Arc::new(ManifoldHandle::new(0)),
-      })),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+      }))),
       ArgType::Callable => Some(Value::Callable(Arc::new(Callable::Builtin {
         name: String::new(),
         fn_impl: |_, _, _, _, _| panic!("example callable should never be called"),
@@ -764,35 +818,36 @@ fn get_binop_return_ty(
 }
 
 pub struct AppendOnlyBuffer<T> {
-  // Using a mutex here to avoid making the whole `EvalCtx` require `&mut` when evaluating code.
+  // Using a `RefCell` here to avoid making the whole `EvalCtx` require `&mut` when evaluating
+  // code.
   //
-  // This thing is essentially "write-only", and the mutex should become a no-op in Wasm anyway.
-  pub inner: Mutex<Vec<T>>,
+  // This thing is essentially "write-only" and this path is pretty cold, so it's fine imo.
+  pub inner: RefCell<Vec<T>>,
 }
 
 impl<T> Default for AppendOnlyBuffer<T> {
   fn default() -> Self {
     AppendOnlyBuffer {
-      inner: Mutex::new(Vec::new()),
+      inner: RefCell::new(Vec::new()),
     }
   }
 }
 
 impl<T> AppendOnlyBuffer<T> {
   pub fn push(&self, mesh: T) {
-    self.inner.lock().unwrap().push(mesh);
+    self.inner.borrow_mut().push(mesh);
   }
 
   pub fn into_inner(self) -> Vec<T> {
-    self.inner.into_inner().unwrap()
+    self.inner.into_inner()
   }
 
   pub fn len(&self) -> usize {
-    self.inner.lock().unwrap().len()
+    self.inner.borrow().len()
   }
 }
 
-type RenderedMeshes = AppendOnlyBuffer<MeshHandle>;
+type RenderedMeshes = AppendOnlyBuffer<Arc<MeshHandle>>;
 type RemderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
 #[derive(Default, Debug)]
@@ -1643,7 +1698,7 @@ c | render
   let mesh = &rendered_meshes[0];
   assert_eq!(mesh.mesh.vertices.len(), 8);
   for vtx in mesh.mesh.vertices.values() {
-    let pos = ((*mesh.transform) * vtx.position.push(1.)).xyz();
+    let pos = (mesh.transform * vtx.position.push(1.)).xyz();
     assert_eq!(pos.x.abs(), 2.0);
     assert_eq!(pos.y.abs(), 4.0);
     assert_eq!(pos.z.abs(), 2.0);
@@ -1668,7 +1723,7 @@ render(a)
   let mesh = &rendered_meshes[0];
   assert_eq!(mesh.mesh.vertices.len(), 8);
   for vtx in mesh.mesh.vertices.values() {
-    let pos = ((*mesh.transform) * vtx.position.push(1.)).xyz();
+    let pos = (mesh.transform * vtx.position.push(1.)).xyz();
     assert_eq!(pos.x.abs(), 1. / 2.);
     assert_eq!(pos.y.abs(), 2. / 2.);
     assert_eq!(pos.z.abs(), 3. / 2.);
@@ -1958,7 +2013,7 @@ render(meshes)
       .map(|vtx| {
         println!("xform: {:?}", mesh.transform);
         let pt = vtx.position.push(1.);
-        let transformed = (*mesh.transform) * pt;
+        let transformed = mesh.transform * pt;
         let transformed = transformed.xyz();
         println!("{:?} -> {:?}", vtx.position, transformed);
         transformed

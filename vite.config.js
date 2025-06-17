@@ -11,7 +11,7 @@ const config = defineConfig({
   resolve: {
     alias: {
       src: resolve('./src'),
-      '@codemirror/state': resolve(__dirname, './node_modules/@codemirror/state/dist/index.cjs'),
+      // '@codemirror/state': resolve(__dirname, './node_modules/@codemirror/state/dist/index.cjs'),
     },
   },
   server: {

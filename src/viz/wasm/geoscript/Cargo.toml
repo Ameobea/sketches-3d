@@ -18,6 +18,7 @@ rand_pcg = "0.3"
 noise = "0.4"
 nanoserde = { version = "0.2", default-features = false, features = ["std", "json"], git = "https://github.com/ameobea/nanoserde", branch = "all-fixes" }
 smallvec = "1.13"
+parry3d = "0.21"
 
 mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }

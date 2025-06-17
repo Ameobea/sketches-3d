@@ -1,8 +1,13 @@
 use std::{f32::consts::PI, fmt::Debug, hash::Hash};
 
-use bitvec::{bitarr, slice::BitSlice, vec::BitVec};
+use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use nalgebra::{Matrix4, Vector3};
+use parry3d::{
+  bounding_volume::Aabb,
+  math::Point,
+  shape::{TriMesh, TriMeshBuilderError},
+};
 use slotmap::{new_key_type, Key, SlotMap};
 use smallvec::SmallVec;
 
@@ -2016,6 +2021,83 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     self.cleanup_degenerate_triangles_cb(|_, _| {});
   }
 
+  pub fn is_empty(&self) -> bool {
+    self.vertices.is_empty()
+  }
+
+  pub fn compute_aabb(&self, transform: &Matrix4<f32>) -> Aabb {
+    if self.vertices.is_empty() {
+      return Aabb::new_invalid();
+    }
+
+    let mut mins = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
+    let mut maxs = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
+
+    for vtx in self.vertices.values() {
+      let transformed_pos = (transform * vtx.position.push(1.)).xyz();
+      mins = Vec3::new(
+        mins.x.min(transformed_pos.x),
+        mins.y.min(transformed_pos.y),
+        mins.z.min(transformed_pos.z),
+      );
+      maxs = Vec3::new(
+        maxs.x.max(transformed_pos.x),
+        maxs.y.max(transformed_pos.y),
+        maxs.z.max(transformed_pos.z),
+      );
+    }
+
+    Aabb::new(
+      Point::new(mins.x, mins.y, mins.z),
+      Point::new(maxs.x, maxs.y, maxs.z),
+    )
+  }
+
+  pub fn build_trimesh(&self, transform: &Matrix4<f32>) -> Result<TriMesh, TriMeshBuilderError> {
+    let OwnedIndexedMesh {
+      mut vertices,
+      mut indices,
+      ..
+    } = self.to_raw_indexed(false, false, true);
+
+    vertices.shrink_to_fit();
+    assert_eq!(vertices.len() % 3, 0,);
+    assert_eq!(vertices.capacity() % 3, 0);
+
+    {
+      let vec3_view = unsafe {
+        std::slice::from_raw_parts_mut(vertices.as_ptr() as *mut Vec3, vertices.len() / 3)
+      };
+      for v in vec3_view.iter_mut() {
+        *v = (transform * v.push(1.)).xyz();
+      }
+    }
+
+    let point_vertices = unsafe {
+      Vec::from_raw_parts(
+        vertices.as_ptr() as *mut Point<f32>,
+        vertices.len() / 3,
+        vertices.capacity() / 3,
+      )
+    };
+    std::mem::forget(vertices);
+
+    assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
+    assert_eq!(indices.len() % 3, 0);
+    indices.shrink_to_fit();
+    assert_eq!(indices.capacity() % 3, 0);
+    let arr_indices = unsafe {
+      Vec::from_raw_parts(
+        indices.as_ptr() as *mut [u32; 3],
+        indices.len() / 3,
+        indices.capacity() / 3,
+      )
+    };
+    std::mem::forget(indices);
+
+    TriMesh::new(point_vertices, arr_indices)
+  }
+
   pub fn new_box(width: f32, height: f32, depth: f32) -> Self {
     let half_width = width / 2.;
     let half_height = height / 2.;
@@ -2224,8 +2306,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 }
 
-impl<T: Default> From<parry3d::shape::TriMesh> for LinkedMesh<T> {
-  fn from(trimesh: parry3d::shape::TriMesh) -> Self {
+impl<T: Default> From<TriMesh> for LinkedMesh<T> {
+  fn from(trimesh: TriMesh) -> Self {
     let mut mesh: LinkedMesh<T> =
       LinkedMesh::new(trimesh.vertices().len(), trimesh.indices().len(), None);
     let mut vtx_keys = Vec::with_capacity(trimesh.vertices().len());

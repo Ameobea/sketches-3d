@@ -12,6 +12,7 @@
   assign @right
   range @left
   return @left
+  break @left
   cond
   statement
 }
@@ -23,7 +24,8 @@
 }
 
 statement {
-  ReturnStatement { "return" !return Expr? ";"? } |
+  ReturnStatement { Return !return Expr? ";"? } |
+  BreakStatement { Break !break Expr? ";"? } |
   ExprStatement { Expr ";"? } |
   DeclarationStatement { Identifier TypeHint? "=" Expr ";"? }
 }
@@ -34,7 +36,7 @@ UnaryOp { "+" | "-" | "!" }
 
 ParenthesizedExpr { "(" Expr ")" }
 CallExpr { Identifier !call "(" commaSep<FunctionArg> ")" }
-IfExpr { "if" !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
+IfExpr { If !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
 
 FnArgDefaultValue { Identifier | literal | ParenthesizedExpr | CallExpr | BlockExpr | IfExpr }
 
@@ -58,8 +60,8 @@ Expr {
 }
 
 BlockExpr { "{" statement* "}" }
-ElseIfExpr { "else if" !cond BlockExpr }
-ElseExpr { "else" !cond BlockExpr }
+ElseIfExpr { ElseIf !cond BlockExpr }
+ElseExpr { Else !cond BlockExpr }
 
 FunctionArg {
   Expr | Kwarg { Identifier "=" Expr }
@@ -80,7 +82,7 @@ FieldAccessExpr {
   Expr !fieldAccess "." Identifier
 }
 
-literal { Float | Integer | BoolLiteral | StringLiteral }
+literal { Float | Integer | BoolLiteral | NilLiteral | StringLiteral }
 
 StringLiteral[isolate] { SingleQuoteStringLiteral | DoubleQuoteStringLiteral }
 
@@ -107,6 +109,7 @@ commaSep1<Expr> { Expr ("," Expr?)* }
   CompareOp { "<" | ">" | ">=" | "<=" | "==" | "!=" }
 
   BoolLiteral { "true" | "false" }
+  NilLiteral { "nil" }
   Integer { $[0-9]+ }
 
   LineComment[isolate] { "//" ![\n]* }
@@ -115,7 +118,12 @@ commaSep1<Expr> { Expr ("," Expr?)* }
 
   Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
 
-  @precedence { "return", "if", "else if", "else", BoolLiteral, Identifier }
+  If { "if" }
+  ElseIf { "else if" }
+  Else { "else" }
+  Return { "return" }
+  Break { "break" }
+  @precedence { Return, Break, If, ElseIf, Else, BoolLiteral, NilLiteral, Identifier }
 
   doubleQuoteStringContent { !["\\\n]+ }
   singleQuoteStringContent { !['\\\n]+ }

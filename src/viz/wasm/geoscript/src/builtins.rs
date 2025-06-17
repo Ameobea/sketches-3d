@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::marker::ConstParamTy;
 use std::{cmp::Reverse, sync::Arc};
 
@@ -6,7 +7,10 @@ use mesh::{
   linked_mesh::{DisplacementNormalMethod, FaceKey, Vec3, Vertex, VertexKey},
   LinkedMesh,
 };
-use nalgebra::{Matrix3, Matrix4, Rotation3, UnitQuaternion};
+use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, UnitQuaternion};
+use parry3d::bounding_volume::Aabb;
+use parry3d::math::{Isometry, Point};
+use parry3d::query::Ray;
 use rand::Rng;
 
 use crate::{
@@ -47,8 +51,6 @@ pub(crate) enum BoolOp {
   Lte,
   Gt,
   Lt,
-  Eq,
-  Neq,
 }
 
 pub(crate) fn numeric_bool_op_impl<const OP: BoolOp>(
@@ -65,8 +67,6 @@ pub(crate) fn numeric_bool_op_impl<const OP: BoolOp>(
         BoolOp::Lte => a <= b,
         BoolOp::Gt => a > b,
         BoolOp::Lt => a < b,
-        BoolOp::Eq => a == b,
-        BoolOp::Neq => a != b,
       };
       Ok(Value::Bool(result))
     }
@@ -78,8 +78,6 @@ pub(crate) fn numeric_bool_op_impl<const OP: BoolOp>(
         BoolOp::Lte => a <= b,
         BoolOp::Gt => a > b,
         BoolOp::Lt => a < b,
-        BoolOp::Eq => a == b,
-        BoolOp::Neq => a != b,
       };
       Ok(Value::Bool(result))
     }
@@ -103,8 +101,6 @@ fn eval_numeric_bool_op(
         BoolOp::Lte => a <= b,
         BoolOp::Gt => a > b,
         BoolOp::Lt => a < b,
-        BoolOp::Eq => a == b,
-        BoolOp::Neq => a != b,
       };
       Ok(Value::Bool(result))
     }
@@ -116,8 +112,6 @@ fn eval_numeric_bool_op(
         BoolOp::Lte => a <= b,
         BoolOp::Gt => a > b,
         BoolOp::Lt => a < b,
-        BoolOp::Eq => a == b,
-        BoolOp::Neq => a != b,
       };
       Ok(Value::Bool(result))
     }
@@ -171,7 +165,7 @@ pub(crate) fn add_impl(
 
             // transform from rhs local space -> world space -> lhs local space
             let transformed_pos =
-              lhs.transform.try_inverse().unwrap() * (*rhs.transform) * old_vtx.position.push(1.);
+              lhs.transform.try_inverse().unwrap() * rhs.transform * old_vtx.position.push(1.);
 
             let new_vtx_key = combined.vertices.insert(Vertex {
               position: transformed_pos.xyz(),
@@ -185,11 +179,29 @@ pub(crate) fn add_impl(
         combined.add_face(new_vtx_keys, ());
       }
 
-      Ok(Value::Mesh(MeshHandle {
+      let maybe_combined_aabb = match (&*lhs.aabb.borrow(), &*rhs.aabb.borrow()) {
+        (Some(lhs_aabb), Some(rhs_aabb)) => Some(Aabb {
+          mins: Point3::new(
+            lhs_aabb.mins.x.min(rhs_aabb.mins.x),
+            lhs_aabb.mins.y.min(rhs_aabb.mins.y),
+            lhs_aabb.mins.z.min(rhs_aabb.mins.z),
+          ),
+          maxs: Point3::new(
+            lhs_aabb.maxs.x.max(rhs_aabb.maxs.x),
+            lhs_aabb.maxs.y.max(rhs_aabb.maxs.y),
+            lhs_aabb.maxs.z.max(rhs_aabb.maxs.z),
+          ),
+        }),
+        _ => None,
+      };
+
+      Ok(Value::Mesh(Arc::new(MeshHandle {
         mesh: Arc::new(combined),
-        transform: Box::new(*lhs.transform),
+        transform: lhs.transform,
         manifold_handle: Arc::new(ManifoldHandle::new(0)),
-      }))
+        aabb: RefCell::new(maybe_combined_aabb),
+        trimesh: RefCell::new(None),
+      })))
     }
     5 => ctx.eval_fn_call::<true>(
       "translate",
@@ -356,6 +368,80 @@ pub(crate) fn mod_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
   }
 }
 
+pub(crate) fn eq_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
+  match def_ix {
+    // int == int
+    0 => {
+      let a = lhs.as_int().unwrap();
+      let b = rhs.as_int().unwrap();
+      Ok(Value::Bool(a == b))
+    }
+    // float == float
+    1 => {
+      let a = lhs.as_float().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Bool(a == b))
+    }
+    // either one of a or b is nil
+    2 | 3 => {
+      let a_is_nil = lhs.is_nil();
+      let b_is_nil = rhs.is_nil();
+
+      Ok(Value::Bool(a_is_nil && b_is_nil))
+    }
+    // a and b are both bools
+    4 => {
+      let a = lhs.as_bool().unwrap();
+      let b = rhs.as_bool().unwrap();
+      Ok(Value::Bool(a == b))
+    }
+    // a and b are both strings
+    5 => {
+      let a = lhs.as_str().unwrap();
+      let b = rhs.as_str().unwrap();
+      Ok(Value::Bool(a == b))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn neq_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
+  match def_ix {
+    // int != int
+    0 => {
+      let a = lhs.as_int().unwrap();
+      let b = rhs.as_int().unwrap();
+      Ok(Value::Bool(a == b))
+    }
+    // float != float
+    1 => {
+      let a = lhs.as_float().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Bool(a == b))
+    }
+    // either one of a or b is nil
+    2 | 3 => {
+      let a_is_nil = lhs.is_nil();
+      let b_is_nil = rhs.is_nil();
+
+      Ok(Value::Bool(!(a_is_nil && b_is_nil)))
+    }
+    // a and b are both bools
+    4 => {
+      let a = lhs.as_bool().unwrap();
+      let b = rhs.as_bool().unwrap();
+      Ok(Value::Bool(a != b))
+    }
+    // a and b are both strings
+    5 => {
+      let a = lhs.as_str().unwrap();
+      let b = rhs.as_str().unwrap();
+      Ok(Value::Bool(a != b))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 #[inline(always)]
 pub(crate) fn eval_builtin_fn(
   name: &str,
@@ -392,8 +478,8 @@ pub(crate) fn eval_builtin_fn(
         }
         _ => unimplemented!(),
       };
-      Ok(Value::Mesh(MeshHandle::new(Arc::new(LinkedMesh::new_box(
-        width, height, depth,
+      Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
+        LinkedMesh::new_box(width, height, depth),
       )))))
     }
     "icosphere" => match def_ix {
@@ -404,9 +490,9 @@ pub(crate) fn eval_builtin_fn(
           return Err(ErrorStack::new("Resolution must be a non-negative integer"));
         }
 
-        Ok(Value::Mesh(MeshHandle::new(Arc::new(
+        Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
           LinkedMesh::new_icosphere(radius, resolution as u32),
-        ))))
+        )))))
       }
       _ => unimplemented!(),
     },
@@ -423,14 +509,14 @@ pub(crate) fn eval_builtin_fn(
           return Err(ErrorStack::new("`height_segments` must be >= 1"));
         }
 
-        Ok(Value::Mesh(MeshHandle::new(Arc::new(
+        Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
           LinkedMesh::new_cylinder(
             radius,
             height,
             radial_segments as usize,
             height_segments as usize,
           ),
-        ))))
+        )))))
       }
       _ => unimplemented!(),
     },
@@ -452,7 +538,7 @@ pub(crate) fn eval_builtin_fn(
         _ => unimplemented!(),
       };
 
-      let mut mesh = mesh.as_mesh().unwrap().clone();
+      let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
       let before_transform = *mesh.transform;
       mesh.transform.append_translation_mut(&translation);
       println!(
@@ -460,7 +546,7 @@ pub(crate) fn eval_builtin_fn(
         *mesh.transform
       );
 
-      Ok(Value::Mesh(mesh))
+      Ok(Value::Mesh(Arc::new(mesh)))
     }
     "scale" => {
       let (scale, mesh) = match def_ix {
@@ -492,7 +578,7 @@ pub(crate) fn eval_builtin_fn(
         _ => unimplemented!(),
       };
 
-      let mut mesh = mesh.as_mesh().unwrap().clone();
+      let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
       mesh.transform.m11 *= scale.x;
       mesh.transform.m22 *= scale.y;
       mesh.transform.m33 *= scale.z;
@@ -522,13 +608,13 @@ pub(crate) fn eval_builtin_fn(
       };
 
       // apply rotation by translating to origin, rotating, then translating back
-      let mut rotated_mesh = mesh.clone();
+      let mut rotated_mesh = mesh.clone(true, false, false);
       let back: Matrix4<f32> = Matrix4::new_translation(&mesh.transform.column(3).xyz());
       let to_origin: Matrix4<f32> = Matrix4::new_translation(&-mesh.transform.column(3).xyz());
-      *rotated_mesh.transform =
-        back * rotation.to_homogeneous() * to_origin * (*rotated_mesh.transform);
+      rotated_mesh.transform =
+        back * rotation.to_homogeneous() * to_origin * rotated_mesh.transform;
 
-      Ok(Value::Mesh(rotated_mesh))
+      Ok(Value::Mesh(Arc::new(rotated_mesh)))
     }
 
     "look_at" => match def_ix {
@@ -548,7 +634,7 @@ pub(crate) fn eval_builtin_fn(
         let target = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
         let up = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
 
-        let mut mesh = mesh.clone();
+        let mut mesh = mesh.clone(true, false, false);
 
         // extract translation
         let translation = mesh.transform.column(3).xyz();
@@ -586,22 +672,18 @@ pub(crate) fn eval_builtin_fn(
         mesh.transform[(1, 3)] = translation.y;
         mesh.transform[(2, 3)] = translation.z;
 
-        Ok(Value::Mesh(mesh))
+        Ok(Value::Mesh(Arc::new(mesh)))
       }
       _ => unimplemented!(),
     },
     "apply_transforms" => match def_ix {
       0 => {
-        let mesh = arg_refs[0]
-          .resolve(args, &kwargs)
-          .as_mesh()
-          .unwrap()
-          .clone();
+        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
         let mut new_mesh = (*mesh.mesh).clone();
         for vtx in new_mesh.vertices.values_mut() {
-          vtx.position = (*mesh.transform * vtx.position.push(1.)).xyz();
+          vtx.position = (mesh.transform * vtx.position.push(1.)).xyz();
         }
-        Ok(Value::Mesh(MeshHandle::new(Arc::new(new_mesh))))
+        Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(new_mesh)))))
       }
       _ => unimplemented!(),
     },
@@ -628,8 +710,8 @@ pub(crate) fn eval_builtin_fn(
           .consume(ctx);
 
         let Some(first) = iter.next() else {
-          return Ok(Value::Mesh(MeshHandle::new(Arc::new(LinkedMesh::new(
-            0, 0, None,
+          return Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
+            LinkedMesh::new(0, 0, None),
           )))));
         };
         let base = match first? {
@@ -641,7 +723,7 @@ pub(crate) fn eval_builtin_fn(
           }
         };
 
-        let out_transform = *base.transform;
+        let out_transform = base.transform;
         let out_transform_inv = out_transform.try_inverse().unwrap();
         let mut combined = (*base.mesh).clone();
 
@@ -663,8 +745,7 @@ pub(crate) fn eval_builtin_fn(
                 let old_vtx = &rhs.mesh.vertices[old_vtx_key];
 
                 // transform from rhs local space -> world space -> lhs local space
-                let transformed_pos =
-                  out_transform_inv * (*rhs.transform) * old_vtx.position.push(1.);
+                let transformed_pos = out_transform_inv * rhs.transform * old_vtx.position.push(1.);
 
                 let new_vtx_key = combined.vertices.insert(Vertex {
                   position: transformed_pos.xyz(),
@@ -679,11 +760,13 @@ pub(crate) fn eval_builtin_fn(
           }
         }
 
-        Ok(Value::Mesh(MeshHandle {
+        Ok(Value::Mesh(Arc::new(MeshHandle {
           mesh: Arc::new(combined),
-          transform: Box::new(out_transform),
+          transform: out_transform,
           manifold_handle: Arc::new(ManifoldHandle::new(0)),
-        }))
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
       }
       _ => unimplemented!(),
     },
@@ -1018,8 +1101,16 @@ pub(crate) fn eval_builtin_fn(
     "lte" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Lte),
     "gt" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Gt),
     "lt" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Lt),
-    "eq" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Eq),
-    "neq" => eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Neq),
+    "eq" => {
+      let lhs = arg_refs[0].resolve(args, &kwargs);
+      let rhs = arg_refs[1].resolve(args, &kwargs);
+      eq_impl(def_ix, lhs, rhs)
+    }
+    "neq" => {
+      let lhs = arg_refs[0].resolve(args, &kwargs);
+      let rhs = arg_refs[1].resolve(args, &kwargs);
+      neq_impl(def_ix, lhs, rhs)
+    }
     "and" => match def_ix {
       0 => {
         let a = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
@@ -1265,8 +1356,15 @@ pub(crate) fn eval_builtin_fn(
     }
     "render" => match def_ix {
       0 => {
-        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-        ctx.rendered_meshes.push(mesh.clone());
+        let mesh = match arg_refs[0].resolve(args, &kwargs) {
+          Value::Mesh(m) => m,
+          other => {
+            return Err(ErrorStack::new(format!(
+              "Invalid type passed to `render`; expected a `Mesh`, found: {other:?}",
+            )))
+          }
+        };
+        ctx.rendered_meshes.push(Arc::clone(mesh));
         Ok(Value::Nil)
       }
       1 => {
@@ -1367,7 +1465,7 @@ pub(crate) fn eval_builtin_fn(
       let world_space = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
 
       let sampler_seq = PointDistributeSeq {
-        mesh: mesh.clone(),
+        mesh: mesh.clone(false, false, true),
         point_count,
         seed,
         cb,
@@ -1462,11 +1560,13 @@ pub(crate) fn eval_builtin_fn(
           vtx.position = *warped_pos;
         }
 
-        Ok(Value::Mesh(MeshHandle {
+        Ok(Value::Mesh(Arc::new(MeshHandle {
           mesh: Arc::new(new_mesh),
           transform: mesh.transform.clone(),
           manifold_handle: Arc::new(ManifoldHandle::new(0)),
-        }))
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
       }
       _ => unimplemented!(),
     },
@@ -1485,23 +1585,85 @@ pub(crate) fn eval_builtin_fn(
           target_edge_length,
           DisplacementNormalMethod::Interpolate,
         );
-        Ok(Value::Mesh(MeshHandle {
+        Ok(Value::Mesh(Arc::new(MeshHandle {
           mesh: Arc::new(mesh),
           transform: transform,
           manifold_handle: Arc::new(ManifoldHandle::new(0)),
-        }))
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
+      }
+      _ => unimplemented!(),
+    },
+    "intersects" => match def_ix {
+      0 => {
+        let a = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+        let b = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+
+        if a.mesh.is_empty() || b.mesh.is_empty() {
+          return Ok(Value::Bool(false));
+        }
+
+        let a_aabb = a.get_or_compute_aabb();
+        let b_aabb = b.get_or_compute_aabb();
+
+        if a_aabb.intersection(&b_aabb).is_none() {
+          return Ok(Value::Bool(false));
+        }
+
+        let a_trimesh = a.get_or_create_trimesh().map_err(|err| {
+          ErrorStack::new(format!(
+            "Error creating trimesh for mesh `a` in `intersects`: {err}"
+          ))
+        })?;
+        let b_trimesh = b.get_or_create_trimesh().map_err(|err| {
+          ErrorStack::new(format!(
+            "Error creating trimesh for mesh `b` in `intersects`: {err}"
+          ))
+        })?;
+
+        let result = parry3d::query::intersection_test(
+          &Isometry::default(),
+          &*a_trimesh,
+          &Isometry::default(),
+          &*b_trimesh,
+        )
+        .unwrap();
+
+        Ok(Value::Bool(result))
+      }
+      _ => unimplemented!(),
+    },
+    "intersects_ray" => match def_ix {
+      0 => {
+        let ray_origin = *arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let ray_direction = *arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+        let mesh = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
+        let max_distance = arg_refs[3].resolve(args, &kwargs).as_float();
+
+        let trimesh = mesh
+          .get_or_create_trimesh()
+          .map_err(|err| ErrorStack::new(format!("Error creating trimesh for raycast: {err}")))?;
+
+        let has_hit = parry3d::query::RayCast::intersects_ray(
+          &*trimesh,
+          &Isometry::default(),
+          &Ray {
+            dir: ray_direction,
+            origin: Point::new(ray_origin.x, ray_origin.y, ray_origin.z),
+          },
+          max_distance.unwrap_or(f32::INFINITY),
+        );
+        Ok(Value::Bool(has_hit))
       }
       _ => unimplemented!(),
     },
     "connected_components" => match def_ix {
       0 => {
-        let mesh = arg_refs[0]
-          .resolve(args, &kwargs)
-          .as_mesh()
-          .unwrap()
-          .clone();
-        let transform = *mesh.transform.clone();
-        let mut components: Vec<Vec<FaceKey>> = mesh.mesh.connected_components();
+        let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+        let transform = mesh.transform.clone();
+        let mesh = Arc::clone(&mesh.mesh);
+        let mut components: Vec<Vec<FaceKey>> = mesh.connected_components();
         components.sort_unstable_by_key(|c| Reverse(c.len()));
         Ok(Value::Sequence(Box::new(IteratorSeq {
           inner: components.into_iter().map(move |c| {
@@ -1511,7 +1673,7 @@ pub(crate) fn eval_builtin_fn(
             let mut map_vtx = |sub_mesh: &mut LinkedMesh<()>, vkey: VertexKey| {
               *sub_vkey_by_old_vkey.entry(vkey).or_insert_with(|| {
                 sub_mesh.vertices.insert(Vertex {
-                  position: mesh.mesh.vertices[vkey].position,
+                  position: mesh.vertices[vkey].position,
                   shading_normal: None,
                   displacement_normal: None,
                   edges: Vec::new(),
@@ -1520,17 +1682,19 @@ pub(crate) fn eval_builtin_fn(
             };
 
             for face_key in c {
-              let face = &mesh.mesh.faces[face_key];
+              let face = &mesh.faces[face_key];
               let vtx0 = map_vtx(&mut sub_mesh, face.vertices[0]);
               let vtx1 = map_vtx(&mut sub_mesh, face.vertices[1]);
               let vtx2 = map_vtx(&mut sub_mesh, face.vertices[2]);
               sub_mesh.add_face([vtx0, vtx1, vtx2], ());
             }
-            Ok(Value::Mesh(MeshHandle {
+            Ok(Value::Mesh(Arc::new(MeshHandle {
               mesh: Arc::new(sub_mesh),
-              transform: Box::new(transform),
+              transform,
               manifold_handle: Arc::new(ManifoldHandle::new(0)),
-            }))
+              aabb: RefCell::new(None),
+              trimesh: RefCell::new(None),
+            })))
           }),
         })))
       }
@@ -1666,11 +1830,13 @@ pub(crate) fn eval_builtin_fn(
             )))
           }
         };
-        Ok(Value::Mesh(MeshHandle {
+        Ok(Value::Mesh(Arc::new(MeshHandle {
           mesh: Arc::new(mesh),
-          transform: Box::new(Matrix4::identity()),
+          transform: Matrix4::identity(),
           manifold_handle: Arc::new(ManifoldHandle::new(0)),
-        }))
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
       }
       _ => unimplemented!(),
     },
@@ -1696,7 +1862,7 @@ pub(crate) fn eval_builtin_fn(
 
         let out_mesh_handle = simplify_mesh(&mesh, tolerance)
           .map_err(|err| ErrorStack::new(err).wrap("Error in `simplify` function"))?;
-        Ok(Value::Mesh(out_mesh_handle))
+        Ok(Value::Mesh(Arc::new(out_mesh_handle)))
       }
       _ => unimplemented!(),
     },
@@ -1716,7 +1882,7 @@ pub(crate) fn eval_builtin_fn(
           .collect::<Result<Vec<_>, _>>()?;
         let out_mesh = convex_hull_from_verts(&verts)
           .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
-        Ok(Value::Mesh(out_mesh))
+        Ok(Value::Mesh(Arc::new(out_mesh)))
       }
       _ => unimplemented!(),
     },
@@ -1726,7 +1892,7 @@ pub(crate) fn eval_builtin_fn(
           .resolve(args, &kwargs)
           .as_mesh()
           .unwrap()
-          .clone();
+          .clone(false, false, true);
         Ok(Value::Sequence(Box::new(MeshVertsSeq { mesh })))
       }
       _ => unimplemented!(),
@@ -1883,11 +2049,13 @@ pub(crate) fn eval_builtin_fn(
         }
 
         let mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
-        Ok(Value::Mesh(MeshHandle {
+        Ok(Value::Mesh(Arc::new(MeshHandle {
           mesh: Arc::new(mesh),
-          transform: Box::new(Matrix4::identity()),
+          transform: Matrix4::identity(),
           manifold_handle: Arc::new(ManifoldHandle::new(0)),
-        }))
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
       }
       _ => unimplemented!(),
     },
@@ -1994,6 +2162,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "warp" => define_builtin_fn!("warp"),
   "tessellate" => define_builtin_fn!("tessellate"),
   "connected_components" => define_builtin_fn!("connected_components"),
+  "intersects" => define_builtin_fn!("intersects"),
+  "intersects_ray" => define_builtin_fn!("intersects_ray"),
   "len" => define_builtin_fn!("len"),
   "distance" => define_builtin_fn!("distance"),
   "normalize" => define_builtin_fn!("normalize"),

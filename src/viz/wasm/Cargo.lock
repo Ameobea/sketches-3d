@@ -318,6 +318,7 @@ dependencies = [
  "nalgebra",
  "nanoserde 0.2.1",
  "noise",
+ "parry3d",
  "pest",
  "pest_derive",
  "phf",

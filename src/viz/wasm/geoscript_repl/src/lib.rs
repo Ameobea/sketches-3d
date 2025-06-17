@@ -45,7 +45,7 @@ impl GeoscriptReplCtx {
   pub fn convert_rendered_meshes(&mut self) {
     self.output_meshes.clear();
 
-    for mesh_handle in self.geo_ctx.rendered_meshes.inner.lock().unwrap().drain(..) {
+    for mesh_handle in self.geo_ctx.rendered_meshes.inner.borrow_mut().drain(..) {
       let mut mesh = (*mesh_handle.mesh).clone();
 
       let merged_count = mesh.merge_vertices_by_distance(0.0001);
@@ -56,7 +56,7 @@ impl GeoscriptReplCtx {
       mesh.separate_vertices_and_compute_normals();
 
       let mut owned_mesh = mesh.to_raw_indexed(true, false, false);
-      owned_mesh.transform = Some(*mesh_handle.transform);
+      owned_mesh.transform = Some(mesh_handle.transform);
       self.output_meshes.push(owned_mesh);
     }
   }
@@ -147,7 +147,7 @@ pub fn geoscript_get_rendered_path_count(ctx: *const GeoscriptReplCtx) -> usize 
 #[wasm_bindgen]
 pub fn geoscript_get_rendered_path(ctx: *const GeoscriptReplCtx, path_ix: usize) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  let path = { ctx.geo_ctx.rendered_paths.inner.lock().unwrap()[path_ix].clone() };
+  let path = { ctx.geo_ctx.rendered_paths.inner.borrow()[path_ix].clone() };
   let raw_path: Vec<f32> =
     unsafe { std::slice::from_raw_parts(path.as_ptr() as *const f32, path.len() * 3).to_vec() };
   std::mem::forget(path);

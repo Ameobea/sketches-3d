@@ -156,13 +156,25 @@ impl Sequence for EagerSeq {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct PointDistributeSeq {
   pub mesh: MeshHandle,
   pub seed: u64,
   pub point_count: Option<usize>,
   pub cb: Option<Callable>,
   pub world_space: bool,
+}
+
+impl Clone for PointDistributeSeq {
+  fn clone(&self) -> Self {
+    Self {
+      mesh: self.mesh.clone(false, false, false),
+      seed: self.seed,
+      point_count: self.point_count,
+      cb: self.cb.clone(),
+      world_space: self.world_space,
+    }
+  }
 }
 
 pub(crate) struct PointDistributeIter<'a> {
@@ -214,7 +226,7 @@ impl<'a> Iterator for PointDistributeIter<'a> {
       (pos, mut normal) => {
         let mut pos = Vec3::new(pos.x, pos.y, pos.z);
         if self.world_space {
-          pos = (*self.mesh.transform * pos.push(1.)).xyz();
+          pos = (self.mesh.transform * pos.push(1.)).xyz();
           normal = (self.inverse_transposed_transform * normal.push(0.))
             .xyz()
             .normalize();
@@ -288,9 +300,17 @@ impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> Sequence f
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct MeshVertsSeq {
   pub mesh: MeshHandle,
+}
+
+impl Clone for MeshVertsSeq {
+  fn clone(&self) -> Self {
+    Self {
+      mesh: self.mesh.clone(false, false, false),
+    }
+  }
 }
 
 pub(crate) struct MeshVertsIter {

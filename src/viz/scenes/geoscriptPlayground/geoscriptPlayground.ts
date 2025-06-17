@@ -72,8 +72,11 @@ export const processLoadedScene = async (
   configureDefaultPostprocessingPipeline(
     viz,
     vizConf.graphics.quality,
-    (composer, viz, quality) => {
-      if (vizConf.graphics.quality > GraphicsQuality.Low) {
+    (composer, viz, _quality) => {
+      if (
+        vizConf.graphics.quality > GraphicsQuality.Low &&
+        (window.innerWidth > 800 || window.innerHeight > 600)
+      ) {
         const n8aoPass = new N8AOPostPass(
           viz.scene,
           viz.camera,

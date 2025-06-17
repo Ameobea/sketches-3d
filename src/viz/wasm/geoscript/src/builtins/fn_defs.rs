@@ -2165,6 +2165,78 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "`a == b`",
       return_type: &[ArgType::Bool],
     },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Nil],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Any],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a == b`",
+      return_type: &[ArgType::Bool],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Any],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Nil],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a == b`",
+      return_type: &[ArgType::Bool],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a == b`",
+      return_type: &[ArgType::Bool],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::String],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::String],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a == b`",
+      return_type: &[ArgType::Bool],
+    },
   ],
   "neq" => &[
     FnDef {
@@ -2196,6 +2268,78 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         ArgDef {
           name: "b",
           valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a != b`",
+      return_type: &[ArgType::Bool],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Nil],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Any],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a != b`",
+      return_type: &[ArgType::Bool],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Any],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Nil],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a != b`",
+      return_type: &[ArgType::Bool],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`a != b`",
+      return_type: &[ArgType::Bool],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::String],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::String],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -2384,6 +2528,58 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       ],
       description: "Splits a mesh into its connected components, returning a sequence of meshes where each mesh is a connected component of the input mesh.  The sequence of connected components is sorted by vertex count from highest to lowest.\n\nThis is NOT lazy; the connected components are computed at the time this function is called.",
       return_type: &[ArgType::Sequence],
+    },
+  ],
+  "intersects" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns true if the two meshes intersect, false otherwise",
+      return_type: &[ArgType::Bool],
+    },
+  ],
+  "intersects_ray" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "ray_origin",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "ray_direction",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "max_distance",
+          valid_types: &[ArgType::Float, ArgType::Nil],
+          default_value: DefaultValue::Optional(|| Value::Nil),
+          description: "Max distance to check for intersection (`nil` considers intersections at any distance).  If the intersection occurs at a distance greater than this, `false` will be returned."
+        },
+      ],
+      description: "Casts a ray from `ray_origin` in `ray_direction` and checks if it intersects `mesh` within `max_distance` (or any distance if `max_distance` is `nil`)",
+      return_type: &[ArgType::Bool],
     },
   ],
   "len" => &[

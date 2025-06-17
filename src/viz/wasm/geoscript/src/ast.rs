@@ -6,7 +6,8 @@ use pest::iterators::Pair;
 
 use crate::{
   builtins::{
-    add_impl, div_impl, fn_defs::FnDef, mod_impl, mul_impl, numeric_bool_op_impl, sub_impl, BoolOp,
+    add_impl, div_impl, eq_impl, fn_defs::FnDef, mod_impl, mul_impl, neq_impl,
+    numeric_bool_op_impl, sub_impl, BoolOp,
   },
   get_args, get_binop_def_ix, get_binop_return_ty, resolve_builtin_impl, ArgType, Callable,
   Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput, IntRange, PreResolvedSignature, Rule,
@@ -540,11 +541,11 @@ impl BinOp {
       }
       BinOp::Eq => {
         let def_ix = get_binop_def_ix("eq", &*EQ_ARG_DEFS, &lhs, &rhs)?;
-        numeric_bool_op_impl::<{ BoolOp::Eq }>(def_ix, &lhs, &rhs)
+        eq_impl(def_ix, &lhs, &rhs)
       }
       BinOp::Neq => {
         let def_ix = get_binop_def_ix("neq", &*NEQ_ARG_DEFS, &lhs, &rhs)?;
-        numeric_bool_op_impl::<{ BoolOp::Neq }>(def_ix, &lhs, &rhs)
+        neq_impl(def_ix, &lhs, &rhs)
       }
       BinOp::And => ctx.eval_fn_call::<true>("and", &[lhs, rhs], &Default::default(), &ctx.globals),
       BinOp::Or => ctx.eval_fn_call::<true>("or", &[lhs, rhs], &Default::default(), &ctx.globals),
@@ -765,6 +766,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         _ => unreachable!("Unexpected boolean literal: {bool_str}, expected 'true' or 'false'"),
       }
     }
+    Rule::nil_literal => Ok(Expr::Literal(Value::Nil)),
     Rule::if_expression => {
       let mut inner = expr.into_inner();
       let cond = parse_expr(inner.next().unwrap())?;

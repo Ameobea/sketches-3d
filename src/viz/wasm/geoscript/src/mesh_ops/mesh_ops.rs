@@ -14,7 +14,7 @@ extern "C" {
 
 #[cfg(target_arch = "wasm32")]
 pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, String> {
-  use std::sync::Arc;
+  use std::{cell::RefCell, sync::Arc};
 
   use nalgebra::Matrix4;
 
@@ -31,19 +31,21 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, St
   let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
     mesh: Arc::new(out_mesh),
-    transform: Box::new(Matrix4::identity()),
+    transform: Matrix4::identity(),
     manifold_handle: Arc::new(ManifoldHandle::new(manifold_handle)),
+    aabb: RefCell::new(None),
+    trimesh: RefCell::new(None),
   })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn simplify_mesh(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, String> {
-  Ok(mesh.clone())
+  Ok(mesh.clone(false, false))
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
-  use std::sync::Arc;
+  use std::{cell::RefCell, sync::Arc};
 
   use nalgebra::Matrix4;
 
@@ -58,8 +60,10 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
   let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
     mesh: Arc::new(out_mesh),
-    transform: Box::new(Matrix4::identity()),
+    transform: Matrix4::identity(),
     manifold_handle: Arc::new(ManifoldHandle::new(manifold_handle)),
+    aabb: RefCell::new(None),
+    trimesh: RefCell::new(None),
   })
 }
 
