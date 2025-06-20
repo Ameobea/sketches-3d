@@ -1,11 +1,12 @@
-#![feature(if_let_guard, impl_trait_in_bindings, adt_const_params)]
+#![feature(if_let_guard, impl_trait_in_bindings, adt_const_params, thread_local)]
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::UnsafeCell;
 use std::{
   cell::{Cell, RefCell},
   fmt::{Debug, Display},
-  sync::{Arc, Mutex},
+  rc::Rc,
+  sync::Mutex,
 };
 
 use ast::{optimize_ast, parse_program, Expr, FunctionCallTarget, Statement};
@@ -36,12 +37,14 @@ use crate::{
     fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
+  lights::{AmbientLight, Light},
   mesh_ops::mesh_boolean::{drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp},
   seq::{ChainSeq, IntRange, MapSeq},
 };
 
 mod ast;
 mod builtins;
+pub mod lights;
 pub mod mesh_ops;
 pub mod noise;
 pub mod path_building;
@@ -166,7 +169,7 @@ pub struct Closure {
   params: Vec<ClosureArg>,
   body: Vec<Statement>,
   /// Contains variables captured from the environment when the closure was created
-  captured_scope: Arc<Scope>,
+  captured_scope: Rc<Scope>,
   return_type_hint: Option<TypeName>,
 }
 
@@ -186,7 +189,7 @@ impl Debug for Closure {
 
 #[derive(Clone)]
 pub struct ComposedFn {
-  pub inner: Vec<Arc<Callable>>,
+  pub inner: Vec<Rc<Callable>>,
 }
 
 impl Debug for ComposedFn {
@@ -265,14 +268,14 @@ impl ManifoldHandle {
 }
 
 pub struct MeshHandle {
-  pub mesh: Arc<LinkedMesh<()>>,
+  pub mesh: Rc<LinkedMesh<()>>,
   pub transform: Matrix4<f32>,
-  pub manifold_handle: Arc<ManifoldHandle>,
+  pub manifold_handle: Rc<ManifoldHandle>,
   /// AABB of the mesh in world space.  Computed as needed.
   pub aabb: RefCell<Option<Aabb>>,
   /// parry3d trimesh representation of the mesh, if set.  Computed as needed - used for
   /// intersection tests and other operations.
-  pub trimesh: RefCell<Option<Arc<TriMesh>>>,
+  pub trimesh: RefCell<Option<Rc<TriMesh>>>,
 }
 
 impl MeshHandle {
@@ -313,21 +316,21 @@ impl MeshHandle {
     aabb
   }
 
-  fn get_or_create_trimesh(&self) -> Result<Arc<TriMesh>, TriMeshBuilderError> {
+  fn get_or_create_trimesh(&self) -> Result<Rc<TriMesh>, TriMeshBuilderError> {
     if let Some(trimesh) = self.trimesh.borrow().as_ref() {
-      return Ok(Arc::clone(trimesh));
+      return Ok(Rc::clone(trimesh));
     }
 
-    let trimesh = Arc::new(self.mesh.build_trimesh(&self.transform)?);
-    *self.trimesh.borrow_mut() = Some(Arc::clone(&trimesh));
+    let trimesh = Rc::new(self.mesh.build_trimesh(&self.transform)?);
+    *self.trimesh.borrow_mut() = Some(Rc::clone(&trimesh));
     Ok(trimesh)
   }
 
-  fn new(mesh: Arc<LinkedMesh<()>>) -> Self {
+  fn new(mesh: Rc<LinkedMesh<()>>) -> Self {
     Self {
       mesh,
       transform: Matrix4::identity(),
-      manifold_handle: Arc::new(ManifoldHandle::new(0)),
+      manifold_handle: Rc::new(ManifoldHandle::new(0)),
       aabb: RefCell::new(None),
       trimesh: RefCell::new(None),
     }
@@ -335,12 +338,12 @@ impl MeshHandle {
 
   fn clone(&self, retain_manifold_handle: bool, retain_aabb: bool, retain_trimesh: bool) -> Self {
     Self {
-      mesh: Arc::clone(&self.mesh),
+      mesh: Rc::clone(&self.mesh),
       transform: self.transform,
       manifold_handle: if retain_manifold_handle {
-        Arc::clone(&self.manifold_handle)
+        Rc::clone(&self.manifold_handle)
       } else {
-        Arc::new(ManifoldHandle::new(0))
+        Rc::new(ManifoldHandle::new(0))
       },
       aabb: if retain_aabb {
         self.aabb.clone()
@@ -382,9 +385,11 @@ pub enum Value {
   Int(i64),
   Float(f32),
   Vec3(Vec3),
-  Mesh(Arc<MeshHandle>),
-  Callable(Arc<Callable>),
+  Mesh(Rc<MeshHandle>),
+  Light(Box<Light>),
+  Callable(Rc<Callable>),
   Sequence(Box<dyn Sequence>),
+  Map(Box<FxHashMap<String, Value>>),
   Bool(bool),
   String(String),
   Nil,
@@ -396,9 +401,11 @@ impl Clone for Value {
       Value::Int(i) => Value::Int(*i),
       Value::Float(f) => Value::Float(*f),
       Value::Vec3(v3) => Value::Vec3(*v3),
-      Value::Mesh(mesh) => Value::Mesh(Arc::clone(mesh)),
+      Value::Mesh(mesh) => Value::Mesh(Rc::clone(mesh)),
+      Value::Light(light) => Value::Light(light.clone()),
       Value::Callable(callable) => Value::Callable(callable.clone()),
       Value::Sequence(seq) => Value::Sequence(seq.clone_box()),
+      Value::Map(map) => Value::Map(map.clone()),
       Value::Bool(b) => Value::Bool(*b),
       Value::String(s) => Value::String(s.clone()),
       Value::Nil => Value::Nil,
@@ -413,8 +420,10 @@ impl Debug for Value {
       Value::Float(fl) => write!(f, "Float({fl})"),
       Value::Vec3(v3) => write!(f, "Vec3({}, {}, {})", v3.x, v3.y, v3.z),
       Value::Mesh(mesh) => write!(f, "{mesh:?}"),
+      Value::Light(light) => write!(f, "{light:?}"),
       Value::Callable(callable) => write!(f, "{callable:?}"),
       Value::Sequence(seq) => write!(f, "{seq:?}"),
+      Value::Map(map) => write!(f, "{map:?}"),
       Value::Bool(b) => write!(f, "Bool({b})"),
       Value::String(s) => write!(f, "String({s})"),
       Value::Nil => write!(f, "Nil"),
@@ -438,9 +447,23 @@ impl Value {
     }
   }
 
+  fn as_light(&self) -> Option<&Light> {
+    match self {
+      Value::Light(light) => Some(light.as_ref()),
+      _ => None,
+    }
+  }
+
   fn as_sequence(&self) -> Option<&dyn Sequence> {
     match self {
       Value::Sequence(seq) => Some(seq.as_ref()),
+      _ => None,
+    }
+  }
+
+  fn as_map(&self) -> Option<&FxHashMap<String, Value>> {
+    match self {
+      Value::Map(map) => Some(map.as_ref()),
       _ => None,
     }
   }
@@ -496,8 +519,10 @@ impl Value {
       Value::Float(_) => ArgType::Float,
       Value::Vec3(_) => ArgType::Vec3,
       Value::Mesh(_) => ArgType::Mesh,
+      Value::Light(_) => ArgType::Light,
       Value::Callable(_) => ArgType::Callable,
       Value::Sequence(_) => ArgType::Sequence,
+      Value::Map(_) => ArgType::Map,
       Value::Bool(_) => ArgType::Bool,
       Value::String(_) => ArgType::String,
       Value::Nil => ArgType::Nil,
@@ -512,8 +537,10 @@ pub enum ArgType {
   Numeric,
   Vec3,
   Mesh,
+  Light,
   Callable,
   Sequence,
+  Map,
   Bool,
   String,
   Nil,
@@ -528,8 +555,10 @@ impl ArgType {
       ArgType::Numeric => matches!(arg, Value::Int(_) | Value::Float(_)),
       ArgType::Vec3 => matches!(arg, Value::Vec3(_)),
       ArgType::Mesh => matches!(arg, Value::Mesh(_)),
+      ArgType::Light => matches!(arg, Value::Light(_)),
       ArgType::Callable => matches!(arg, Value::Callable { .. }),
       ArgType::Sequence => matches!(arg, Value::Sequence(_)),
+      ArgType::Map => matches!(arg, Value::Map(_)),
       ArgType::Bool => matches!(arg, Value::Bool(_)),
       ArgType::String => matches!(arg, Value::String(_)),
       ArgType::Nil => matches!(arg, Value::Nil),
@@ -548,8 +577,10 @@ impl ArgType {
       ArgType::Numeric => "num",
       ArgType::Vec3 => "vec3",
       ArgType::Mesh => "mesh",
+      ArgType::Light => "light",
       ArgType::Callable => "fn",
       ArgType::Sequence => "seq",
+      ArgType::Map => "map",
       ArgType::Bool => "bool",
       ArgType::String => "str",
       ArgType::Nil => "nil",
@@ -565,20 +596,24 @@ impl ArgType {
       ArgType::Float => Some(Value::Float(0.)),
       ArgType::Numeric => None,
       ArgType::Vec3 => Some(Value::Vec3(Vec3::new(0., 0., 0.))),
-      ArgType::Mesh => Some(Value::Mesh(Arc::new(MeshHandle {
-        mesh: Arc::new(LinkedMesh::new(0, 0, None)),
+      ArgType::Mesh => Some(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(LinkedMesh::new(0, 0, None)),
         transform: Matrix4::identity(),
-        manifold_handle: Arc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
       }))),
-      ArgType::Callable => Some(Value::Callable(Arc::new(Callable::Builtin {
+      ArgType::Light => Some(Value::Light(Box::new(Light::Ambient(
+        AmbientLight::default(),
+      )))),
+      ArgType::Callable => Some(Value::Callable(Rc::new(Callable::Builtin {
         name: String::new(),
         fn_impl: |_, _, _, _, _| panic!("example callable should never be called"),
         pre_resolved_signature: None,
         fn_signature_defs: &[],
       }))),
       ArgType::Sequence => Some(Value::Sequence(Box::new(EagerSeq { inner: Vec::new() }))),
+      ArgType::Map => Some(Value::Map(Box::new(FxHashMap::default()))),
       ArgType::Bool => Some(Value::Bool(false)),
       ArgType::String => Some(Value::String(String::new())),
       ArgType::Nil => Some(Value::Nil),
@@ -854,20 +889,21 @@ impl<T> AppendOnlyBuffer<T> {
   }
 }
 
-type RenderedMeshes = AppendOnlyBuffer<Arc<MeshHandle>>;
-type RemderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
+type RenderedMeshes = AppendOnlyBuffer<Rc<MeshHandle>>;
+type RenderedLights = AppendOnlyBuffer<Light>;
+type RenderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
 #[derive(Default, Debug)]
 pub struct Scope {
   vars: Mutex<FxHashMap<String, Value>>,
-  parent: Option<Arc<Scope>>,
+  parent: Option<Rc<Scope>>,
 }
 
 impl Clone for Scope {
   fn clone(&self) -> Self {
     Scope {
       vars: Mutex::new(self.vars.lock().unwrap().clone()),
-      parent: self.parent.as_ref().map(Arc::clone),
+      parent: self.parent.as_ref().map(Rc::clone),
     }
   }
 }
@@ -899,10 +935,10 @@ impl Scope {
     None
   }
 
-  fn wrap(parent: &Arc<Scope>) -> Scope {
+  fn wrap(parent: &Rc<Scope>) -> Scope {
     Scope {
       vars: Mutex::new(FxHashMap::default()),
-      parent: Some(Arc::clone(parent)),
+      parent: Some(Rc::clone(parent)),
     }
   }
 }
@@ -910,7 +946,8 @@ impl Scope {
 pub struct EvalCtx {
   pub globals: Scope,
   pub rendered_meshes: RenderedMeshes,
-  pub rendered_paths: RemderedPaths,
+  pub rendered_lights: RenderedLights,
+  pub rendered_paths: RenderedPaths,
   pub log_fn: fn(&str),
   #[cfg(target_arch = "wasm32")]
   rng: UnsafeCell<Pcg32>,
@@ -924,7 +961,8 @@ impl Default for EvalCtx {
     EvalCtx {
       globals: Scope::default_globals(),
       rendered_meshes: RenderedMeshes::default(),
-      rendered_paths: RemderedPaths::default(),
+      rendered_lights: RenderedLights::default(),
+      rendered_paths: RenderedPaths::default(),
       log_fn: |msg| println!("{msg}"),
       #[cfg(target_arch = "wasm32")]
       rng: UnsafeCell::new(Pcg32::new(7718587666045340534, 17289744314186392832)),
@@ -939,6 +977,7 @@ pub enum ControlFlow<T> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[thread_local]
 static mut THREAD_RNG: Pcg32 =
   unsafe { std::mem::transmute((7718587666045340534u64, 17289744314186392832u64)) };
 
@@ -1061,22 +1100,46 @@ impl EvalCtx {
           inner: evaluated,
         }))))
       }
+      Expr::MapLiteral(map) => {
+        let mut evaluated = Box::new(FxHashMap::default());
+        for (key, value) in map {
+          let val = match self.eval_expr(value, scope)? {
+            ControlFlow::Continue(val) => val,
+            early_exit => return Ok(early_exit),
+          };
+          evaluated.insert(key.clone(), val);
+        }
+        Ok(ControlFlow::Continue(Value::Map(evaluated)))
+      }
       Expr::Closure {
         params,
         body,
         return_type_hint,
-      } => Ok(ControlFlow::Continue(Value::Callable(Arc::new(
+      } => Ok(ControlFlow::Continue(Value::Callable(Rc::new(
         Callable::Closure(Closure {
           params: params.clone(),
           body: body.0.clone(),
           // cloning the scope here makes the closure function like a rust `move` closure
           // where all the values are cloned before being moved into the closure.
-          captured_scope: Arc::new(scope.clone()),
+          captured_scope: Rc::new(scope.clone()),
           return_type_hint: return_type_hint.clone(),
         }),
       )))),
-      Expr::FieldAccess { lhs: obj, field } => {
+      Expr::StaticFieldAccess { lhs: obj, field } => {
         let lhs = match self.eval_expr(obj, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        self
+          .eval_static_field_access(lhs, field)
+          .map(ControlFlow::Continue)
+      }
+      Expr::FieldAccess { lhs, field } => {
+        let lhs = match self.eval_expr(lhs, scope)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        let field = match self.eval_expr(field, scope)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1342,7 +1405,7 @@ impl EvalCtx {
       let (def_ix, arg_refs) = match get_args(name, defs, &args, &kwargs)? {
         GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
         GetArgsOutput::PartiallyApplied => {
-          return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
+          return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
             PartiallyAppliedFn {
               inner: Box::new(Callable::Builtin {
                 name: name.to_owned(),
@@ -1370,7 +1433,7 @@ impl EvalCtx {
 
     // look it up as a builtin fn
     if FN_SIGNATURE_DEFS.contains_key(&name) {
-      return Ok(Value::Callable(Arc::new(Callable::Builtin {
+      return Ok(Value::Callable(Rc::new(Callable::Builtin {
         name: name.to_owned(),
         fn_impl: resolve_builtin_impl(name),
         fn_signature_defs: &FN_SIGNATURE_DEFS[name],
@@ -1403,7 +1466,7 @@ impl EvalCtx {
           let (def_ix, arg_refs) = match arg_refs {
             GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
             GetArgsOutput::PartiallyApplied => {
-              return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
+              return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
                 PartiallyAppliedFn {
                   inner: Box::new(callable.clone()),
                   args: args.to_owned(),
@@ -1485,7 +1548,7 @@ impl EvalCtx {
         if let Some(invalid_arg_ix) = invalid_arg_ix {
           let invalid_arg = &closure.params[invalid_arg_ix];
           if any_args_valid {
-            return Ok(Value::Callable(Arc::new(Callable::PartiallyAppliedFn(
+            return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
               PartiallyAppliedFn {
                 inner: Box::new(Callable::Closure(closure.clone())),
                 args: args.to_owned(),
@@ -1585,7 +1648,7 @@ impl EvalCtx {
     }
   }
 
-  fn eval_field_access(&self, lhs: Value, field: &str) -> Result<Value, ErrorStack> {
+  fn eval_static_field_access(&self, lhs: Value, field: &str) -> Result<Value, ErrorStack> {
     match lhs {
       Value::Vec3(v3) => match field.len() {
         1 => match field {
@@ -1614,8 +1677,40 @@ impl EvalCtx {
           "invalid swizzle; expected 1 or 3 chars"
         ))),
       },
+      Value::Map(map) => Ok(if let Some(val) = map.get(field) {
+        val.clone()
+      } else {
+        Value::Nil
+      }),
       _ => Err(ErrorStack::new(format!(
         "field access not supported for type: {lhs:?}"
+      ))),
+    }
+  }
+
+  fn eval_field_access(&self, lhs: Value, field: Value) -> Result<Value, ErrorStack> {
+    match field {
+      Value::String(s) => self.eval_static_field_access(lhs, &s),
+      Value::Int(i) => match lhs {
+        Value::Vec3(v3) => match i {
+          0 => Ok(Value::Float(v3.x)),
+          1 => Ok(Value::Float(v3.y)),
+          2 => Ok(Value::Float(v3.z)),
+          _ => Err(ErrorStack::new(format!("Index {i} out of bounds for Vec3"))),
+        },
+        Value::Map(map) => Ok(if let Some(val) = map.get(&i.to_string()) {
+          val.clone()
+        } else {
+          Value::Nil
+        }),
+        _ => Err(ErrorStack::new(format!(
+          "field access not supported for type: {lhs:?}"
+        ))),
+      },
+      other => Err(ErrorStack::new(format!(
+        "field access not supported for {:?}[{:?}]",
+        lhs.get_type(),
+        other.get_type()
       ))),
     }
   }
@@ -2484,4 +2579,68 @@ first = chained | first
   let first = ctx.globals.get("first").unwrap();
   let first = first.as_int().expect("Expected result to be an Int");
   assert_eq!(first, 0, "Expected first element to be 0, found: {first}");
+}
+
+#[test]
+fn test_map_literal_parsing() {
+  let src = r#"
+a = { x: 1, "y+": 1+4, z: 3 }
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let Value::Map(a) = a else {
+    panic!("Expected result to be a Map");
+  };
+  assert_eq!(a.len(), 3);
+  assert_eq!(a.get("x").unwrap().as_int(), Some(1));
+  assert_eq!(a.get("y+").unwrap().as_int(), Some(5));
+  assert_eq!(a.get("z").unwrap().as_int(), Some(3));
+}
+
+#[test]
+fn test_map_field_access() {
+  let src = r#"
+map = {x:1}
+x = map.x
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.globals.get("x").unwrap();
+  let x = x.as_int().expect("Expected result to be an Int");
+  assert_eq!(x, 1);
+}
+
+#[test]
+fn test_dynamic_map_access() {
+  let src = r#"
+map = {x:1, y:2, z:3}
+x = map["x"]
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.globals.get("x").unwrap();
+  let x = x.as_int().expect("Expected result to be an Int");
+  assert_eq!(x, 1);
+}
+
+#[test]
+fn test_hex_int_literal_parsing() {
+  let src = r#"
+a = 0x1234
+b = 0x001
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let a = a.as_int().expect("Expected result to be an Int");
+  assert_eq!(a, 0x1234);
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().expect("Expected result to be an Int");
+  assert_eq!(b, 0x001);
 }

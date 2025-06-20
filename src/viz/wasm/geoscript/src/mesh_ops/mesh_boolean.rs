@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use fxhash::FxHashMap;
 #[cfg(target_arch = "wasm32")]
@@ -106,7 +106,7 @@ pub fn decode_manifold_output(encoded_output: &[u8]) -> (usize, &[f32], &[u32]) 
 }
 
 #[cfg(target_arch = "wasm32")]
-fn apply_boolean_op(
+fn apply_mesh_boolean_op(
   a: &MeshHandle,
   b: &MeshHandle,
   op: MeshBooleanOp,
@@ -121,10 +121,10 @@ fn apply_boolean_op(
 
   let a_handle = a
     .get_or_create_handle()
-    .map_err(|err| err.wrap("Error applying boolean op"))?;
+    .map_err(|err| err.wrap("Error applying mesh boolean op"))?;
   let b_handle = b
     .get_or_create_handle()
-    .map_err(|err| err.wrap("Error applying boolean op"))?;
+    .map_err(|err| err.wrap("Error applying mesh boolean op"))?;
 
   let encoded_output = apply_boolean(
     a_handle,
@@ -139,9 +139,9 @@ fn apply_boolean_op(
 
   let mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
-    mesh: Arc::new(mesh),
+    mesh: Rc::new(mesh),
     transform: Matrix4::identity(),
-    manifold_handle: Arc::new(ManifoldHandle::new(manifold_handle)),
+    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
   })
@@ -156,13 +156,15 @@ pub(crate) fn eval_mesh_boolean(
   ctx: &EvalCtx,
   op: MeshBooleanOp,
 ) -> Result<Value, ErrorStack> {
+  use std::rc::Rc;
+
   let mut meshes_iter = match def_ix {
     0 => {
       let a = arg_refs[0].resolve(&args, &kwargs).as_mesh().unwrap();
       let b = arg_refs[1].resolve(&args, &kwargs).as_mesh().unwrap();
 
-      let out_mesh = apply_boolean_op(&*a, &*b, op, false)?;
-      return Ok(Value::Mesh(Arc::new(out_mesh)));
+      let out_mesh = apply_mesh_boolean_op(&*a, &*b, op, false)?;
+      return Ok(Value::Mesh(Rc::new(out_mesh)));
     }
     1 => {
       let sequence = arg_refs[0].resolve(&args, &kwargs).as_sequence().unwrap();
@@ -172,7 +174,9 @@ pub(crate) fn eval_mesh_boolean(
   };
 
   let Some(acc_res) = meshes_iter.next() else {
-    return Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
+    use std::rc::Rc;
+
+    return Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
       LinkedMesh::new(0, 0, None),
     )))));
   };
@@ -192,7 +196,7 @@ pub(crate) fn eval_mesh_boolean(
       .map_err(|err| err.wrap("Error produced from iterator passed to mesh boolean function"))?;
     if let Value::Mesh(mesh) = mesh {
       let handle_only = meshes_iter.peek().is_some();
-      acc = apply_boolean_op(&acc, &mesh, op, handle_only)?;
+      acc = apply_mesh_boolean_op(&acc, &mesh, op, handle_only)?;
     } else {
       return Err(ErrorStack::new(
         "Non-mesh value produced in sequence passed to boolean op",
@@ -200,7 +204,7 @@ pub(crate) fn eval_mesh_boolean(
     }
   }
 
-  Ok(Value::Mesh(Arc::new(acc)))
+  Ok(Value::Mesh(Rc::new(acc)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -213,7 +217,7 @@ pub(crate) fn eval_mesh_boolean(
   _op: MeshBooleanOp,
 ) -> Result<Value, ErrorStack> {
   // Err("mesh boolean ops are only supported in wasm".to_owned())
-  Ok(Value::Mesh(Arc::new(crate::MeshHandle::new(Arc::new(
+  Ok(Value::Mesh(Rc::new(crate::MeshHandle::new(Rc::new(
     mesh::LinkedMesh::new(0, 0, None).into(),
   )))))
 }

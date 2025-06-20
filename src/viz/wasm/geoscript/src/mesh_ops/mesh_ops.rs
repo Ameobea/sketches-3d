@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use mesh::linked_mesh::Vec3;
 use mesh::LinkedMesh;
 #[cfg(target_arch = "wasm32")]
@@ -15,7 +17,7 @@ extern "C" {
 
 #[cfg(target_arch = "wasm32")]
 pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, ErrorStack> {
-  use std::{cell::RefCell, sync::Arc};
+  use std::cell::RefCell;
 
   use nalgebra::Matrix4;
 
@@ -33,9 +35,9 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, Er
     crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded_output);
   let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
-    mesh: Arc::new(out_mesh),
+    mesh: Rc::new(out_mesh),
     transform: Matrix4::identity(),
-    manifold_handle: Arc::new(ManifoldHandle::new(manifold_handle)),
+    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
   })
@@ -48,7 +50,7 @@ pub fn simplify_mesh(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, E
 
 #[cfg(target_arch = "wasm32")]
 pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
-  use std::{cell::RefCell, sync::Arc};
+  use std::cell::RefCell;
 
   use nalgebra::Matrix4;
 
@@ -62,9 +64,9 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
 
   let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
-    mesh: Arc::new(out_mesh),
+    mesh: Rc::new(out_mesh),
     transform: Matrix4::identity(),
-    manifold_handle: Arc::new(ManifoldHandle::new(manifold_handle)),
+    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
   })
@@ -72,7 +74,5 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn convex_hull_from_verts(_verts: &[Vec3]) -> Result<MeshHandle, String> {
-  Ok(MeshHandle::new(std::sync::Arc::new(LinkedMesh::new(
-    0, 0, None,
-  ))))
+  Ok(MeshHandle::new(Rc::new(LinkedMesh::new(0, 0, None))))
 }

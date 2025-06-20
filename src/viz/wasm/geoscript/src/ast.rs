@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{rc::Rc, str::FromStr};
 
 use fxhash::FxHashMap;
 use itertools::Itertools;
@@ -151,9 +151,13 @@ pub enum Expr {
     end: Box<Expr>,
     inclusive: bool,
   },
-  FieldAccess {
+  StaticFieldAccess {
     lhs: Box<Expr>,
     field: String,
+  },
+  FieldAccess {
+    lhs: Box<Expr>,
+    field: Box<Expr>,
   },
   Call(FunctionCall),
   Closure {
@@ -163,6 +167,7 @@ pub enum Expr {
   },
   Ident(String),
   ArrayLiteral(Vec<Expr>),
+  MapLiteral(FxHashMap<String, Expr>),
   Literal(Value),
   Conditional {
     cond: Box<Expr>,
@@ -263,7 +268,7 @@ impl Expr {
         // };
 
         // *self = Expr::Call(FunctionCall {
-        //   target: FunctionCallTarget::Literal(Arc::new(Callable::Builtin {
+        //   target: FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
         //     name: builtin_name.to_owned(),
         //     fn_impl: resolve_builtin_impl(builtin_name),
         //     pre_resolved_signature,
@@ -289,7 +294,12 @@ impl Expr {
         captures_dyn |= end.inline_const_captures(local_scope);
         captures_dyn
       }
-      Expr::FieldAccess { lhs, field: _ } => lhs.inline_const_captures(local_scope),
+      Expr::StaticFieldAccess { lhs, field: _ } => lhs.inline_const_captures(local_scope),
+      Expr::FieldAccess { lhs, field } => {
+        let mut captures_dyn = lhs.inline_const_captures(local_scope);
+        captures_dyn |= field.inline_const_captures(local_scope);
+        captures_dyn
+      }
       Expr::Call(FunctionCall {
         target,
         args,
@@ -381,6 +391,9 @@ impl Expr {
       Expr::ArrayLiteral(exprs) => exprs
         .iter_mut()
         .any(|expr| expr.inline_const_captures(local_scope)),
+      Expr::MapLiteral(map) => map
+        .values_mut()
+        .any(|expr| expr.inline_const_captures(local_scope)),
       Expr::Literal(_) => false,
       Expr::Conditional {
         cond,
@@ -433,7 +446,7 @@ impl ClosureBody {
 pub enum FunctionCallTarget {
   // TODO: we should aim to phase out name and resolve callables during const eval
   Name(String),
-  Literal(Arc<Callable>),
+  Literal(Rc<Callable>),
 }
 
 #[derive(Clone, Debug)]
@@ -640,6 +653,12 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         .map(|i| Expr::Literal(Value::Int(i)))
         .map_err(|_| ErrorStack::new(format!("Invalid integer: {int_str}")))
     }
+    Rule::hex_int => {
+      let hex_str = expr.as_str();
+      i64::from_str_radix(&hex_str[2..], 16)
+        .map(|i| Expr::Literal(Value::Int(i)))
+        .map_err(|_| ErrorStack::new(format!("Invalid hex integer: {hex_str}")))
+    }
     Rule::float => {
       let float_str = expr.as_str();
       float_str
@@ -839,6 +858,30 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       let s = parse_single_quote_string_inner(inner)?;
       Ok(Expr::Literal(Value::String(s)))
     }
+    Rule::map_literal => {
+      let entries = expr.into_inner();
+      let mut map = FxHashMap::default();
+      for entry in entries {
+        assert_eq!(entry.as_rule(), Rule::map_entry);
+        let mut inner = entry.into_inner();
+        let key = inner.next().unwrap();
+        let key = match key.as_rule() {
+          Rule::double_quote_string_literal => {
+            parse_double_quote_string_inner(key.into_inner().next().unwrap())?
+          }
+          Rule::single_quote_string_literal => {
+            parse_single_quote_string_inner(key.into_inner().next().unwrap())?
+          }
+          Rule::ident => key.as_str().to_owned(),
+          _ => unreachable!("Unexpected key rule in map literal: {:?}", key.as_rule()),
+        };
+        let value = inner.next().unwrap();
+        let value_expr = parse_expr(value)?;
+        map.insert(key, value_expr);
+      }
+
+      Ok(Expr::MapLiteral(map))
+    }
     Rule::block_expr => parse_block_expr(expr),
     _ => unimplemented!(
       "unimplemented node type for parse_node: {:?}",
@@ -999,14 +1042,24 @@ pub fn parse_expr(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         unreachable!("Expected postfix rule, found: {:?}", op.as_rule());
       }
 
-      let mut inner = op.into_inner();
-      // skip the `.` token
-      inner.next().unwrap();
-      let field = inner.next().unwrap().as_str().to_owned();
-      Ok(Expr::FieldAccess {
-        lhs: Box::new(expr),
-        field,
-      })
+      let inner = op.into_inner().next().unwrap();
+      match inner.as_rule() {
+        Rule::static_field_access => {
+          let field = inner.into_inner().next().unwrap().as_str().to_owned();
+          Ok(Expr::StaticFieldAccess {
+            lhs: Box::new(expr),
+            field,
+          })
+        }
+        Rule::field_access => {
+          let index_expr = parse_expr(inner.into_inner().next().unwrap())?;
+          Ok(Expr::FieldAccess {
+            lhs: Box::new(expr),
+            field: Box::new(index_expr),
+          })
+        }
+        other => unreachable!("Unexpected postfix rule: {other:?} in expression: {expr:?}",),
+      }
     })
     .parse(expr.into_inner())
 }
@@ -1284,10 +1337,10 @@ fn pre_resolve_expr_type(
       }
     }
     Expr::Range { .. } => Some(ArgType::Sequence),
-    Expr::FieldAccess { lhs, field } => {
+    Expr::StaticFieldAccess { lhs, field } => {
       let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
       let lhs_val = lhs_ty.build_example_val()?;
-      let field_val = match ctx.eval_field_access(lhs_val, field) {
+      let out_val = match ctx.eval_static_field_access(lhs_val, field) {
         Ok(out) => out,
         Err(err) => {
           log::error!(
@@ -1297,11 +1350,32 @@ fn pre_resolve_expr_type(
           return None;
         }
       };
-      let field_ty = field_val.get_type();
-      if field_ty == ArgType::Any {
+      let out_ty = out_val.get_type();
+      if out_ty == ArgType::Any {
         return None;
       }
-      Some(field_ty)
+      Some(out_ty)
+    }
+    Expr::FieldAccess { lhs, field } => {
+      let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
+      let lhs_val = lhs_ty.build_example_val()?;
+      let field_ty = pre_resolve_expr_type(ctx, scope_tracker, field)?;
+      let field_val = field_ty.build_example_val()?;
+      let out_val = match ctx.eval_field_access(lhs_val, field_val) {
+        Ok(out) => out,
+        Err(err) => {
+          log::error!(
+            "Got error when evaluating array access with example values; lhs={lhs:?}, \
+             field={field:?}, err={err}"
+          );
+          return None;
+        }
+      };
+      let out_ty = out_val.get_type();
+      if out_ty == ArgType::Any {
+        return None;
+      }
+      Some(out_ty)
     }
     Expr::Call(FunctionCall {
       target,
@@ -1344,6 +1418,7 @@ fn pre_resolve_expr_type(
     },
     Expr::Closure { .. } => Some(ArgType::Callable),
     Expr::ArrayLiteral(_) => Some(ArgType::Sequence),
+    Expr::MapLiteral(_) => Some(ArgType::Map),
     Expr::Conditional { .. } => None,
     Expr::Block { .. } => None,
   }
@@ -1468,14 +1543,27 @@ fn fold_constants<'a>(
       *expr = val.into_literal_expr();
       Ok(())
     }
-    Expr::FieldAccess { lhs, field } => {
+    Expr::StaticFieldAccess { lhs, field } => {
       optimize_expr(ctx, local_scope, lhs)?;
 
       let Some(lhs_val) = lhs.as_literal() else {
         return Ok(());
       };
 
-      let val = ctx.eval_field_access(lhs_val, field)?;
+      let val = ctx.eval_static_field_access(lhs_val, field)?;
+      *expr = val.into_literal_expr();
+
+      Ok(())
+    }
+    Expr::FieldAccess { lhs, field } => {
+      optimize_expr(ctx, local_scope, lhs)?;
+      optimize_expr(ctx, local_scope, field)?;
+
+      let (Some(lhs_val), Some(field_val)) = (lhs.as_literal(), field.as_literal()) else {
+        return Ok(());
+      };
+
+      let val = ctx.eval_field_access(lhs_val, field_val)?;
       *expr = val.into_literal_expr();
 
       Ok(())
@@ -1540,7 +1628,7 @@ fn fold_constants<'a>(
           let name = name.clone();
           let pre_resolved_signature =
             maybe_pre_resolve_bulitin_call_signature(ctx, local_scope, &name, &args, &kwargs)?;
-          *target = FunctionCallTarget::Literal(Arc::new(Callable::Builtin {
+          *target = FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
             name,
             fn_impl,
             fn_signature_defs: defs,
@@ -1630,10 +1718,10 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
-      *expr = Expr::Literal(Value::Callable(Arc::new(Callable::Closure(Closure {
+      *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Closure(Closure {
         params: params.clone(),
         body: body.0.clone(),
-        captured_scope: Arc::new(Scope::default()),
+        captured_scope: Rc::new(Scope::default()),
         return_type_hint: return_type_hint.clone(),
       }))));
 
@@ -1664,7 +1752,7 @@ fn fold_constants<'a>(
             None => unreachable!(),
           },
         };
-        *expr = Expr::Literal(Value::Callable(Arc::new(Callable::Builtin {
+        *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Builtin {
           name: id.to_owned(),
           fn_impl: resolve_builtin_impl(id),
           fn_signature_defs,
@@ -1690,6 +1778,22 @@ fn fold_constants<'a>(
           .map(|e| e.as_literal().unwrap().clone())
           .collect::<Vec<_>>();
         *expr = Expr::Literal(Value::Sequence(Box::new(EagerSeq { inner: values })));
+      }
+
+      Ok(())
+    }
+    Expr::MapLiteral(map) => {
+      for value in map.values_mut() {
+        optimize_expr(ctx, local_scope, value)?;
+      }
+
+      // if all values are literals, can fold into a `Map`
+      if map.values().all(|e| e.as_literal().is_some()) {
+        let values = map
+          .iter()
+          .map(|(k, v)| (k.clone(), v.as_literal().unwrap().clone()))
+          .collect::<FxHashMap<_, _>>();
+        *expr = Expr::Literal(Value::Map(Box::new(values)));
       }
 
       Ok(())

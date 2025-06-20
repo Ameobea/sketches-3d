@@ -2,7 +2,7 @@ use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
 use nanoserde::SerJson;
 
-use crate::{ArgType, Value};
+use crate::{lights::DirectionalLight, ArgType, Value};
 
 pub enum DefaultValue {
   Required,
@@ -1280,10 +1280,10 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           name: "value",
           valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
-          description: "Numeric value to convert to float"
+          description: ""
         },
       ],
-      description: "Converts a numeric value to a float",
+      description: "Converts a value to a float",
       return_type: &[ArgType::Float],
     },
   ],
@@ -1292,12 +1292,12 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       arg_defs: &[
         ArgDef {
           name: "value",
-          valid_types: &[ArgType::Numeric],
+          valid_types: &[ArgType::Numeric, ArgType::String],
           default_value: DefaultValue::Required,
-          description: "Numeric value to convert to int"
+          description: ""
         },
       ],
-      description: "Converts a numeric value to an int",
+      description: "Converts a value to an int",
       return_type: &[ArgType::Int],
     },
   ],
@@ -1656,7 +1656,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           name: "mesh",
           valid_types: &[ArgType::Mesh],
           default_value: DefaultValue::Required,
-          description: "Mesh to render"
+          description: ""
         },
       ],
       description: "Renders a mesh to the scene",
@@ -1665,10 +1665,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     FnDef {
       arg_defs: &[
         ArgDef {
+          name: "light",
+          valid_types: &[ArgType::Light],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Renders a light to the scene",
+      return_type: &[ArgType::Nil],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
           name: "meshes",
           valid_types: &[ArgType::Sequence],
           default_value: DefaultValue::Required,
-          description: "Sequence of meshes to render"
+          description: "Either:\n - `Seq<Mesh | Light | Seq<Vec3>>` of objects to render to the scene, or\n - `Seq<Vec3>` of points representing a path to render",
         },
       ],
       description: "Renders a sequence of meshes to the scene.  Each mesh will be rendered separately.",
@@ -3075,6 +3087,90 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Creates a mesh from a sequence of vertices and indices",
       return_type: &[ArgType::Mesh],
     },
+  ],
+  "dir_light" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "target",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Optional(|| Value::Vec3(DirectionalLight::default().target)),
+          description: "Target point that the light is pointing at.  If the light as at the same position as the target, it will point down towards negative Y"
+        },
+        ArgDef {
+          name: "color",
+          valid_types: &[ArgType::Int, ArgType::Vec3],
+          default_value: DefaultValue::Optional(|| Value::Int(DirectionalLight::default().color as i64)),
+          description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+        },
+        ArgDef {
+          name: "intensity",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Optional(|| Value::Float(DirectionalLight::default().intensity)),
+          description: ""
+        },
+        ArgDef {
+          name: "cast_shadow",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(DirectionalLight::default().cast_shadow)),
+          description: ""
+        },
+        ArgDef {
+          name: "shadow_map_size",
+          valid_types: &[ArgType::Map, ArgType::Int],
+          default_value: DefaultValue::Optional(|| {
+            let shadow_map_size = DirectionalLight::default().shadow_map_size;
+            Value::Map(Box::new(FxHashMap::from_iter([
+              ("width".to_string(), Value::Int(shadow_map_size.width as i64)),
+              ("height".to_string(), Value::Int(shadow_map_size.height as i64)),
+            ].into_iter())))
+          }),
+          description: "Size of the shadow map.  Allowed keys: `width`, `height`. OR, a single integer value that will be used for both width and height."
+        },
+        ArgDef {
+          name: "shadow_map_radius",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Optional(|| Value::Float(DirectionalLight::default().shadow_map_radius)),
+          description: "Radius for shadow map filtering"
+        },
+        ArgDef {
+          name: "shadow_map_blur_samples",
+          valid_types: &[ArgType::Int],
+          default_value: DefaultValue::Optional(|| Value::Int(DirectionalLight::default().shadow_map_blur_samples as i64)),
+          description: "Number of samples for shadow map blur"
+        },
+        ArgDef {
+          name: "shadow_map_type",
+          valid_types: &[ArgType::String],
+          default_value: DefaultValue::Optional(|| Value::String(DirectionalLight::default().shadow_map_type.to_str().to_owned())),
+          description: "Allowed values: `vsm`"
+        },
+        ArgDef {
+          name: "shadow_map_bias",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Optional(|| Value::Float(DirectionalLight::default().shadow_map_bias)),
+          description: ""
+        },
+        ArgDef {
+          name: "shadow_camera",
+          valid_types: &[ArgType::Map],
+          default_value: DefaultValue::Optional(|| {
+            let shadow_camera = DirectionalLight::default().shadow_camera;
+            Value::Map(Box::new(FxHashMap::from_iter([
+              ("near".to_string(), Value::Float(shadow_camera.near)),
+              ("far".to_string(), Value::Float(shadow_camera.far)),
+              ("left".to_string(), Value::Float(shadow_camera.left)),
+              ("right".to_string(), Value::Float(shadow_camera.right)),
+              ("top".to_string(), Value::Float(shadow_camera.top)),
+              ("bottom".to_string(), Value::Float(shadow_camera.bottom)),
+            ].into_iter())))
+          }),
+          description: "Camera parameters for the shadow map.  Allowed keys: `near`, `far`, `left`, `right`, `top`, `bottom`"
+        },
+      ],
+      description: "Creates a directional light.\n\nNote: This will not do anything until it is added to the scene via `render`",
+      return_type: &[ArgType::Light],
+    }
   ]
 };
 

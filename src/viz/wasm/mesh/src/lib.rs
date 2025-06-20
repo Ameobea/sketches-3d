@@ -1,6 +1,6 @@
 #![feature(array_chunks, iter_array_chunks)]
 
-use fxhash::FxHashMap;
+use fxhash::{FxBuildHasher, FxHashMap};
 use linked_mesh::{Mat4, Vec3, Vertex, VertexKey};
 use nalgebra::Vector3;
 
@@ -139,7 +139,7 @@ impl OwnedIndexedMeshBuilder {
   ) -> Self {
     OwnedIndexedMeshBuilder {
       cur_vert_ix: 0,
-      seen_vtx_keys: FxHashMap::default(),
+      seen_vtx_keys: FxHashMap::with_capacity_and_hasher(vtx_count, FxBuildHasher::default()),
       mesh: OwnedIndexedMesh {
         vertices: Vec::with_capacity(vtx_count * 3),
         shading_normals: if include_shading_normals {

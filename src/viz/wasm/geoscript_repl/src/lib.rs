@@ -21,6 +21,11 @@ fn maybe_init() {
     DID_INIT = true;
   }
 
+  assert_eq!(
+    std::mem::size_of::<geoscript::Value>(),
+    16,
+    "would like to keep this 16 bytes"
+  );
   console_error_panic_hook::set_once();
   wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
 }

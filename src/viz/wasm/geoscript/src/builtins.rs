@@ -1,6 +1,8 @@
+use paste::paste;
 use std::cell::RefCell;
+use std::cmp::Reverse;
 use std::marker::ConstParamTy;
-use std::{cmp::Reverse, sync::Arc};
+use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use mesh::{
@@ -14,6 +16,7 @@ use parry3d::query::Ray;
 use rand::Rng;
 
 use crate::{
+  lights::{DirectionalLight, Light},
   mesh_ops::{
     extrude_pipe,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
@@ -195,10 +198,10 @@ pub(crate) fn add_impl(
         _ => None,
       };
 
-      Ok(Value::Mesh(Arc::new(MeshHandle {
-        mesh: Arc::new(combined),
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(combined),
         transform: lhs.transform,
-        manifold_handle: Arc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(maybe_combined_aabb),
         trimesh: RefCell::new(None),
       })))
@@ -478,7 +481,7 @@ pub(crate) fn eval_builtin_fn(
         }
         _ => unimplemented!(),
       };
-      Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
+      Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
         LinkedMesh::new_box(width, height, depth),
       )))))
     }
@@ -490,7 +493,7 @@ pub(crate) fn eval_builtin_fn(
           return Err(ErrorStack::new("Resolution must be a non-negative integer"));
         }
 
-        Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
+        Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
           LinkedMesh::new_icosphere(radius, resolution as u32),
         )))))
       }
@@ -509,7 +512,7 @@ pub(crate) fn eval_builtin_fn(
           return Err(ErrorStack::new("`height_segments` must be >= 1"));
         }
 
-        Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
+        Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
           LinkedMesh::new_cylinder(
             radius,
             height,
@@ -539,14 +542,9 @@ pub(crate) fn eval_builtin_fn(
       };
 
       let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
-      let before_transform = *mesh.transform;
       mesh.transform.append_translation_mut(&translation);
-      println!(
-        "translate: before = {before_transform:?}, translation = {translation:?}, after = {:?}",
-        *mesh.transform
-      );
 
-      Ok(Value::Mesh(Arc::new(mesh)))
+      Ok(Value::Mesh(Rc::new(mesh)))
     }
     "scale" => {
       let (scale, mesh) = match def_ix {
@@ -614,7 +612,7 @@ pub(crate) fn eval_builtin_fn(
       rotated_mesh.transform =
         back * rotation.to_homogeneous() * to_origin * rotated_mesh.transform;
 
-      Ok(Value::Mesh(Arc::new(rotated_mesh)))
+      Ok(Value::Mesh(Rc::new(rotated_mesh)))
     }
 
     "look_at" => match def_ix {
@@ -672,7 +670,7 @@ pub(crate) fn eval_builtin_fn(
         mesh.transform[(1, 3)] = translation.y;
         mesh.transform[(2, 3)] = translation.z;
 
-        Ok(Value::Mesh(Arc::new(mesh)))
+        Ok(Value::Mesh(Rc::new(mesh)))
       }
       _ => unimplemented!(),
     },
@@ -683,7 +681,7 @@ pub(crate) fn eval_builtin_fn(
         for vtx in new_mesh.vertices.values_mut() {
           vtx.position = (mesh.transform * vtx.position.push(1.)).xyz();
         }
-        Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(new_mesh)))))
+        Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(new_mesh)))))
       }
       _ => unimplemented!(),
     },
@@ -710,7 +708,7 @@ pub(crate) fn eval_builtin_fn(
           .consume(ctx);
 
         let Some(first) = iter.next() else {
-          return Ok(Value::Mesh(Arc::new(MeshHandle::new(Arc::new(
+          return Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
             LinkedMesh::new(0, 0, None),
           )))));
         };
@@ -760,10 +758,10 @@ pub(crate) fn eval_builtin_fn(
           }
         }
 
-        Ok(Value::Mesh(Arc::new(MeshHandle {
-          mesh: Arc::new(combined),
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(combined),
           transform: out_transform,
-          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
           aabb: RefCell::new(None),
           trimesh: RefCell::new(None),
         })))
@@ -1080,7 +1078,15 @@ pub(crate) fn eval_builtin_fn(
     },
     "float" => match def_ix {
       0 => {
-        let val = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+        let val = arg_refs[0].resolve(args, &kwargs);
+        let val = match val {
+          _ if let Some(float) = val.as_float() => float,
+          _ if let Some(int) = val.as_int() => int as f32,
+          Value::String(s) => s
+            .parse::<f32>()
+            .map_err(|_| ErrorStack::new(format!("Failed to parse string as float: {s}")))?,
+          _ => unreachable!(),
+        };
         Ok(Value::Float(val))
       }
       _ => unimplemented!(),
@@ -1091,6 +1097,9 @@ pub(crate) fn eval_builtin_fn(
         let val = match val {
           _ if let Some(int) = val.as_int() => int,
           _ if let Some(float) = val.as_float() => float as i64,
+          Value::String(s) => s
+            .parse::<i64>()
+            .map_err(|_| ErrorStack::new(format!("Failed to parse string as int: {s}")))?,
           _ => unreachable!(),
         };
         Ok(Value::Int(val))
@@ -1356,18 +1365,18 @@ pub(crate) fn eval_builtin_fn(
     }
     "render" => match def_ix {
       0 => {
-        let mesh = match arg_refs[0].resolve(args, &kwargs) {
-          Value::Mesh(m) => m,
-          other => {
-            return Err(ErrorStack::new(format!(
-              "Invalid type passed to `render`; expected a `Mesh`, found: {other:?}",
-            )))
-          }
+        let Value::Mesh(mesh) = arg_refs[0].resolve(args, &kwargs) else {
+          unreachable!()
         };
-        ctx.rendered_meshes.push(Arc::clone(mesh));
+        ctx.rendered_meshes.push(Rc::clone(mesh));
         Ok(Value::Nil)
       }
       1 => {
+        let light = arg_refs[0].resolve(args, &kwargs).as_light().unwrap();
+        ctx.rendered_lights.push(light.clone());
+        Ok(Value::Nil)
+      }
+      2 => {
         // This is expected to be a `seq<Vec3> | seq<Mesh | seq<Vec3>>`
         let sequence = arg_refs[0]
           .resolve(args, &kwargs)
@@ -1519,9 +1528,9 @@ pub(crate) fn eval_builtin_fn(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-      Ok(Value::Callable(Arc::new(Callable::ComposedFn(
-        ComposedFn { inner },
-      ))))
+      Ok(Value::Callable(Rc::new(Callable::ComposedFn(ComposedFn {
+        inner,
+      }))))
     }
     "warp" => match def_ix {
       0 => {
@@ -1560,10 +1569,10 @@ pub(crate) fn eval_builtin_fn(
           vtx.position = *warped_pos;
         }
 
-        Ok(Value::Mesh(Arc::new(MeshHandle {
-          mesh: Arc::new(new_mesh),
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(new_mesh),
           transform: mesh.transform.clone(),
-          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
           aabb: RefCell::new(None),
           trimesh: RefCell::new(None),
         })))
@@ -1585,10 +1594,10 @@ pub(crate) fn eval_builtin_fn(
           target_edge_length,
           DisplacementNormalMethod::Interpolate,
         );
-        Ok(Value::Mesh(Arc::new(MeshHandle {
-          mesh: Arc::new(mesh),
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(mesh),
           transform: transform,
-          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
           aabb: RefCell::new(None),
           trimesh: RefCell::new(None),
         })))
@@ -1662,7 +1671,7 @@ pub(crate) fn eval_builtin_fn(
       0 => {
         let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
         let transform = mesh.transform.clone();
-        let mesh = Arc::clone(&mesh.mesh);
+        let mesh = Rc::clone(&mesh.mesh);
         let mut components: Vec<Vec<FaceKey>> = mesh.connected_components();
         components.sort_unstable_by_key(|c| Reverse(c.len()));
         Ok(Value::Sequence(Box::new(IteratorSeq {
@@ -1688,10 +1697,10 @@ pub(crate) fn eval_builtin_fn(
               let vtx2 = map_vtx(&mut sub_mesh, face.vertices[2]);
               sub_mesh.add_face([vtx0, vtx1, vtx2], ());
             }
-            Ok(Value::Mesh(Arc::new(MeshHandle {
-              mesh: Arc::new(sub_mesh),
+            Ok(Value::Mesh(Rc::new(MeshHandle {
+              mesh: Rc::new(sub_mesh),
               transform,
-              manifold_handle: Arc::new(ManifoldHandle::new(0)),
+              manifold_handle: Rc::new(ManifoldHandle::new(0)),
               aabb: RefCell::new(None),
               trimesh: RefCell::new(None),
             })))
@@ -1830,10 +1839,10 @@ pub(crate) fn eval_builtin_fn(
             )))
           }
         };
-        Ok(Value::Mesh(Arc::new(MeshHandle {
-          mesh: Arc::new(mesh),
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(mesh),
           transform: Matrix4::identity(),
-          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
           aabb: RefCell::new(None),
           trimesh: RefCell::new(None),
         })))
@@ -1862,7 +1871,7 @@ pub(crate) fn eval_builtin_fn(
 
         let out_mesh_handle = simplify_mesh(&mesh, tolerance)
           .map_err(|err| err.wrap("Error in `simplify` function"))?;
-        Ok(Value::Mesh(Arc::new(out_mesh_handle)))
+        Ok(Value::Mesh(Rc::new(out_mesh_handle)))
       }
       _ => unimplemented!(),
     },
@@ -1882,7 +1891,7 @@ pub(crate) fn eval_builtin_fn(
           .collect::<Result<Vec<_>, _>>()?;
         let out_mesh = convex_hull_from_verts(&verts)
           .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
-        Ok(Value::Mesh(Arc::new(out_mesh)))
+        Ok(Value::Mesh(Rc::new(out_mesh)))
       }
       _ => unimplemented!(),
     },
@@ -1910,7 +1919,6 @@ pub(crate) fn eval_builtin_fn(
       0 => {
         let min = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
         let max = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-        log::info!("min: {min:?}, max: {max:?}");
         Ok(Value::Vec3(Vec3::new(
           ctx.rng().gen_range(min.x..max.x),
           ctx.rng().gen_range(min.y..max.y),
@@ -2049,13 +2057,60 @@ pub(crate) fn eval_builtin_fn(
         }
 
         let mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
-        Ok(Value::Mesh(Arc::new(MeshHandle {
-          mesh: Arc::new(mesh),
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(mesh),
           transform: Matrix4::identity(),
-          manifold_handle: Arc::new(ManifoldHandle::new(0)),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
           aabb: RefCell::new(None),
           trimesh: RefCell::new(None),
         })))
+      }
+      _ => unimplemented!(),
+    },
+    "dir_light" => match def_ix {
+      0 => {
+        let target = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let color = arg_refs[1].resolve(args, &kwargs); // vec3 or int
+        let intensity = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+        let cast_shadow = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+        let shadow_map_size = arg_refs[4].resolve(args, &kwargs); // map or int
+        let shadow_map_radius = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
+        let shadow_map_blur_samples = arg_refs[6].resolve(args, &kwargs).as_int().unwrap() as usize;
+        let shadow_map_type = arg_refs[7].resolve(args, &kwargs).as_str().unwrap();
+        let shadow_map_bias = arg_refs[8].resolve(args, &kwargs).as_float().unwrap();
+        let shadow_camera = arg_refs[9].resolve(args, &kwargs).as_map().unwrap();
+        let light = DirectionalLight::new(
+          target,
+          color,
+          intensity,
+          cast_shadow,
+          shadow_map_size,
+          shadow_map_radius,
+          shadow_map_blur_samples,
+          shadow_map_type,
+          shadow_map_bias,
+          shadow_camera,
+        )
+        .map_err(|err| ErrorStack::new(format!("Error creating directional light: {err}")))?;
+        Ok(Value::Light(Box::new(Light::Directional(light))))
+      }
+      _ => unimplemented!(),
+    },
+    "ambient_light" => match def_ix {
+      0 => {
+        todo!()
+      }
+      _ => unimplemented!(),
+    },
+    "point_light" => match def_ix {
+      0 => {
+        todo!()
+      }
+      _ => unimplemented!(),
+    },
+    "spot_light" => match def_ix {
+      0 => {
+        todo!()
       }
       _ => unimplemented!(),
     },
@@ -2067,19 +2122,21 @@ pub(crate) fn eval_builtin_fn(
 // kind of a way of emulating const generics for `&'static str`, which isn't currenlty supported in
 // Rust.
 macro_rules! define_builtin_fn {
-  ($name:expr) => {{
-    fn specialized_builtin_fn_impl(
-      def_ix: usize,
-      arg_refs: &[ArgRef],
-      args: &[Value],
-      kwargs: &FxHashMap<String, Value>,
-      ctx: &EvalCtx,
-    ) -> Result<Value, ErrorStack> {
-      eval_builtin_fn($name, def_ix, arg_refs, args, kwargs, ctx)
-    }
+  ($name:ident) => {
+    paste! {{
+      fn [<builtin_ $name _impl>] (
+        def_ix: usize,
+        arg_refs: &[ArgRef],
+        args: &[Value],
+        kwargs: &FxHashMap<String, Value>,
+        ctx: &EvalCtx,
+      ) -> Result<Value, ErrorStack> {
+        eval_builtin_fn(stringify!($name), def_ix, arg_refs, args, kwargs, ctx)
+      }
 
-    specialized_builtin_fn_impl
-  }};
+      [<builtin_ $name _impl>]
+    }}
+  };
 }
 
 pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
@@ -2092,93 +2149,97 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     ctx: &EvalCtx,
   ) -> Result<Value, ErrorStack>,
 > = phf::phf_map! {
-  "box" => define_builtin_fn!("box"),
-  "icosphere" => define_builtin_fn!("icosphere"),
-  "cylinder" => define_builtin_fn!("cylinder"),
-  "sphere" => define_builtin_fn!("sphere"),
-  "translate" => define_builtin_fn!("translate"),
-  "scale" => define_builtin_fn!("scale"),
-  "rot" => define_builtin_fn!("rot"),
-  "look_at" => define_builtin_fn!("look_at"),
-  "apply_transforms" => define_builtin_fn!("apply_transforms"),
-  "vec3" => define_builtin_fn!("vec3"),
-  "join" => define_builtin_fn!("join"),
-  "union" => define_builtin_fn!("union"),
-  "difference" => define_builtin_fn!("difference"),
-  "intersect" => define_builtin_fn!("intersect"),
-  "fold" => define_builtin_fn!("fold"),
-  "reduce" => define_builtin_fn!("reduce"),
-  "map" => define_builtin_fn!("map"),
-  "filter" => define_builtin_fn!("filter"),
-  "take" => define_builtin_fn!("take"),
-  "skip" => define_builtin_fn!("skip"),
-  "take_while" => define_builtin_fn!("take_while"),
-  "skip_while" => define_builtin_fn!("skip_while"),
-  "chain" => define_builtin_fn!("chain"),
-  "first" => define_builtin_fn!("first"),
-  "any" => define_builtin_fn!("any"),
-  "all" => define_builtin_fn!("all"),
-  "neg" => define_builtin_fn!("neg"),
-  "pos" => define_builtin_fn!("pos"),
-  "abs" => define_builtin_fn!("abs"),
-  "sqrt" => define_builtin_fn!("sqrt"),
-  "add" => define_builtin_fn!("add"),
-  "sub" => define_builtin_fn!("sub"),
-  "mul" => define_builtin_fn!("mul"),
-  "div" => define_builtin_fn!("div"),
-  "mod" => define_builtin_fn!("mod"),
-  "max" => define_builtin_fn!("max"),
-  "min" => define_builtin_fn!("min"),
-  "float" => define_builtin_fn!("float"),
-  "int" => define_builtin_fn!("int"),
-  "gte" => define_builtin_fn!("gte"),
-  "lte" => define_builtin_fn!("lte"),
-  "gt" => define_builtin_fn!("gt"),
-  "lt" => define_builtin_fn!("lt"),
-  "eq" => define_builtin_fn!("eq"),
-  "neq" => define_builtin_fn!("neq"),
-  "and" => define_builtin_fn!("and"),
-  "or" => define_builtin_fn!("or"),
-  "not" => define_builtin_fn!("not"),
-  "bit_and" => define_builtin_fn!("bit_and"),
-  "bit_or" => define_builtin_fn!("bit_or"),
-  "sin" => define_builtin_fn!("sin"),
-  "cos" => define_builtin_fn!("cos"),
-  "tan" => define_builtin_fn!("tan"),
-  "pow" => define_builtin_fn!("pow"),
-  "trunc" => define_builtin_fn!("trunc"),
-  "fract" => define_builtin_fn!("fract"),
-  "round" => define_builtin_fn!("round"),
-  "ceil" => define_builtin_fn!("ceil"),
-  "floor" => define_builtin_fn!("floor"),
-  "fix_float" => define_builtin_fn!("fix_float"),
-  "rad2deg" => define_builtin_fn!("rad2deg"),
-  "deg2rad" => define_builtin_fn!("deg2rad"),
-  "lerp" => define_builtin_fn!("lerp"),
-  "print" => define_builtin_fn!("print"),
-  "render" => define_builtin_fn!("render"),
-  "point_distribute" => define_builtin_fn!("point_distribute"),
-  "compose" => define_builtin_fn!("compose"),
-  "warp" => define_builtin_fn!("warp"),
-  "tessellate" => define_builtin_fn!("tessellate"),
-  "connected_components" => define_builtin_fn!("connected_components"),
-  "intersects" => define_builtin_fn!("intersects"),
-  "intersects_ray" => define_builtin_fn!("intersects_ray"),
-  "len" => define_builtin_fn!("len"),
-  "distance" => define_builtin_fn!("distance"),
-  "normalize" => define_builtin_fn!("normalize"),
-  "bezier3d" => define_builtin_fn!("bezier3d"),
-  "extrude_pipe" => define_builtin_fn!("extrude_pipe"),
-  "torus_knot_path" => define_builtin_fn!("torus_knot_path"),
-  "simplify" => define_builtin_fn!("simplify"),
-  "convex_hull" => define_builtin_fn!("convex_hull"),
-  "verts" => define_builtin_fn!("verts"),
-  "randf" => define_builtin_fn!("randf"),
-  "randv" => define_builtin_fn!("randv"),
-  "randi" => define_builtin_fn!("randi"),
-  "fbm" => define_builtin_fn!("fbm"),
-  "call" => define_builtin_fn!("call"),
-  "mesh" => define_builtin_fn!("mesh"),
+  "box" => define_builtin_fn!(box),
+  "icosphere" => define_builtin_fn!(icosphere),
+  "cylinder" => define_builtin_fn!(cylinder),
+  "sphere" => define_builtin_fn!(sphere),
+  "translate" => define_builtin_fn!(translate),
+  "scale" => define_builtin_fn!(scale),
+  "rot" => define_builtin_fn!(rot),
+  "look_at" => define_builtin_fn!(look_at),
+  "apply_transforms" => define_builtin_fn!(apply_transforms),
+  "vec3" => define_builtin_fn!(vec3),
+  "join" => define_builtin_fn!(join),
+  "union" => define_builtin_fn!(union),
+  "difference" => define_builtin_fn!(difference),
+  "intersect" => define_builtin_fn!(intersect),
+  "fold" => define_builtin_fn!(fold),
+  "reduce" => define_builtin_fn!(reduce),
+  "map" => define_builtin_fn!(map),
+  "filter" => define_builtin_fn!(filter),
+  "take" => define_builtin_fn!(take),
+  "skip" => define_builtin_fn!(skip),
+  "take_while" => define_builtin_fn!(take_while),
+  "skip_while" => define_builtin_fn!(skip_while),
+  "chain" => define_builtin_fn!(chain),
+  "first" => define_builtin_fn!(first),
+  "any" => define_builtin_fn!(any),
+  "all" => define_builtin_fn!(all),
+  "neg" => define_builtin_fn!(neg),
+  "pos" => define_builtin_fn!(pos),
+  "abs" => define_builtin_fn!(abs),
+  "sqrt" => define_builtin_fn!(sqrt),
+  "add" => define_builtin_fn!(add),
+  "sub" => define_builtin_fn!(sub),
+  "mul" => define_builtin_fn!(mul),
+  "div" => define_builtin_fn!(div),
+  "mod" => define_builtin_fn!(mod),
+  "max" => define_builtin_fn!(max),
+  "min" => define_builtin_fn!(min),
+  "float" => define_builtin_fn!(float),
+  "int" => define_builtin_fn!(int),
+  "gte" => define_builtin_fn!(gte),
+  "lte" => define_builtin_fn!(lte),
+  "gt" => define_builtin_fn!(gt),
+  "lt" => define_builtin_fn!(lt),
+  "eq" => define_builtin_fn!(eq),
+  "neq" => define_builtin_fn!(neq),
+  "and" => define_builtin_fn!(and),
+  "or" => define_builtin_fn!(or),
+  "not" => define_builtin_fn!(not),
+  "bit_and" => define_builtin_fn!(bit_and),
+  "bit_or" => define_builtin_fn!(bit_or),
+  "sin" => define_builtin_fn!(sin),
+  "cos" => define_builtin_fn!(cos),
+  "tan" => define_builtin_fn!(tan),
+  "pow" => define_builtin_fn!(pow),
+  "trunc" => define_builtin_fn!(trunc),
+  "fract" => define_builtin_fn!(fract),
+  "round" => define_builtin_fn!(round),
+  "ceil" => define_builtin_fn!(ceil),
+  "floor" => define_builtin_fn!(floor),
+  "fix_float" => define_builtin_fn!(fix_float),
+  "rad2deg" => define_builtin_fn!(rad2deg),
+  "deg2rad" => define_builtin_fn!(deg2rad),
+  "lerp" => define_builtin_fn!(lerp),
+  "print" => define_builtin_fn!(print),
+  "render" => define_builtin_fn!(render),
+  "point_distribute" => define_builtin_fn!(point_distribute),
+  "compose" => define_builtin_fn!(compose),
+  "warp" => define_builtin_fn!(warp),
+  "tessellate" => define_builtin_fn!(tessellate),
+  "connected_components" => define_builtin_fn!(connected_components),
+  "intersects" => define_builtin_fn!(intersects),
+  "intersects_ray" => define_builtin_fn!(intersects_ray),
+  "len" => define_builtin_fn!(len),
+  "distance" => define_builtin_fn!(distance),
+  "normalize" => define_builtin_fn!(normalize),
+  "bezier3d" => define_builtin_fn!(bezier3d),
+  "extrude_pipe" => define_builtin_fn!(extrude_pipe),
+  "torus_knot_path" => define_builtin_fn!(torus_knot_path),
+  "simplify" => define_builtin_fn!(simplify),
+  "convex_hull" => define_builtin_fn!(convex_hull),
+  "verts" => define_builtin_fn!(verts),
+  "randf" => define_builtin_fn!(randf),
+  "randv" => define_builtin_fn!(randv),
+  "randi" => define_builtin_fn!(randi),
+  "fbm" => define_builtin_fn!(fbm),
+  "call" => define_builtin_fn!(call),
+  "mesh" => define_builtin_fn!(mesh),
+  "dir_light" => define_builtin_fn!(dir_light),
+  "ambient_light" => define_builtin_fn!(ambient_light),
+  "point_light" => define_builtin_fn!(point_light),
+  "spot_light" => define_builtin_fn!(spot_light),
 };
 
 pub(crate) fn resolve_builtin_impl(

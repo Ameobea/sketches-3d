@@ -47,19 +47,21 @@ ClosureParamList {
 Expr {
   UnaryExpr { UnaryOp !unary Expr } |
   BinaryExpr |
+  StaticFieldAccessExpr |
   FieldAccessExpr |
   RangeExpr { Expr !range (".." | "..=") Expr } |
   CallExpr |
   literal |
   Identifier |
   ArrayExpr { "[" commaSep1<Expr>? "]" } |
+  MapExpr { "{" mapLiteralEntryList? "}" ~maybeblock } |
   ClosureExpr { (LogicalOrOp TypeHint? Expr) | (ClosureParamList TypeHint? Expr) } |
   ParenthesizedExpr |
   BlockExpr |
   IfExpr
 }
 
-BlockExpr { "{" statement* "}" }
+BlockExpr { "{" ~maybeblock statement* "}" ~maybeblock }
 ElseIfExpr { ElseIf !cond BlockExpr }
 ElseExpr { Else !cond BlockExpr }
 
@@ -78,11 +80,15 @@ BinaryExpr {
   Expr !or LogicalOrOp Expr
 }
 
-FieldAccessExpr {
+StaticFieldAccessExpr {
   Expr !fieldAccess "." Identifier
 }
 
-literal { Float | Integer | BoolLiteral | NilLiteral | StringLiteral }
+FieldAccessExpr {
+  Expr !fieldAccess "[" Expr "]"
+}
+
+literal { Float | HexInteger | Integer | BoolLiteral | NilLiteral | StringLiteral }
 
 StringLiteral[isolate] { SingleQuoteStringLiteral | DoubleQuoteStringLiteral }
 
@@ -98,6 +104,9 @@ commaSep<Expr> { commaSep1<Expr>? }
 
 commaSep1<Expr> { Expr ("," Expr?)* }
 
+MapEntry { (Identifier | StringLiteral) ":" Expr }
+mapLiteralEntryList { MapEntry ("," MapEntry)* }
+
 @external tokens literalTokens from "./tokens" { Float }
 
 @tokens {
@@ -111,6 +120,9 @@ commaSep1<Expr> { Expr ("," Expr?)* }
   BoolLiteral { "true" | "false" }
   NilLiteral { "nil" }
   Integer { $[0-9]+ }
+  HexInteger { "0x" $[0-9a-fA-F_]+ }
+
+  @precedence { HexInteger, Integer }
 
   LineComment[isolate] { "//" ![\n]* }
 
