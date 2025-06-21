@@ -3,6 +3,7 @@ use geoscript::{
   EvalCtx,
 };
 use mesh::OwnedIndexedMesh;
+use nanoserde::SerJson;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -75,9 +76,9 @@ pub fn geoscript_repl_init() -> *mut GeoscriptReplCtx {
 }
 
 #[wasm_bindgen]
-pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, src: &str) {
+pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, src: String, include_prelude: bool) {
   let ctx = unsafe { &mut *ctx };
-  ctx.last_result = parse_and_eval_program_with_ctx(src, &ctx.geo_ctx);
+  ctx.last_result = parse_and_eval_program_with_ctx(src, &ctx.geo_ctx, include_prelude);
   ctx.convert_rendered_meshes();
 }
 
@@ -157,6 +158,19 @@ pub fn geoscript_get_rendered_path(ctx: *const GeoscriptReplCtx, path_ix: usize)
     unsafe { std::slice::from_raw_parts(path.as_ptr() as *const f32, path.len() * 3).to_vec() };
   std::mem::forget(path);
   raw_path
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_light_count(ctx: *const GeoscriptReplCtx) -> usize {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_lights.len()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_light(ctx: *const GeoscriptReplCtx, light_ix: usize) -> String {
+  let ctx = unsafe { &*ctx };
+  let light = &ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix];
+  SerJson::serialize_json(light)
 }
 
 // TODO: in a perfect world, this would live in a dedicated tiny lightweight wasm module, but I

@@ -2,7 +2,10 @@ use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
 use nanoserde::SerJson;
 
-use crate::{lights::DirectionalLight, ArgType, Value};
+use crate::{
+  lights::{AmbientLight, DirectionalLight},
+  ArgType, Value,
+};
 
 pub enum DefaultValue {
   Required,
@@ -152,13 +155,13 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           description: ""
         },
         ArgDef {
-          name: "mesh",
-          valid_types: &[ArgType::Mesh],
+          name: "object",
+          valid_types: &[ArgType::Mesh, ArgType::Light],
           default_value: DefaultValue::Required,
           description: ""
         },
       ],
-      description: "Translates a mesh",
+      description: "Translates a mesh or light",
       return_type: &[ArgType::Mesh],
     },
   ],
@@ -3171,7 +3174,27 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Creates a directional light.\n\nNote: This will not do anything until it is added to the scene via `render`",
       return_type: &[ArgType::Light],
     }
-  ]
+  ],
+  "ambient_light" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "color",
+          valid_types: &[ArgType::Int, ArgType::Vec3],
+          default_value: DefaultValue::Optional(|| Value::Int(AmbientLight::default().color as i64)),
+          description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+        },
+        ArgDef {
+          name: "intensity",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Optional(|| Value::Float(AmbientLight::default().intensity)),
+          description: ""
+        },
+      ],
+      description: "Creates an ambient light.\n\nNote: This will not do anything until it is added to the scene via `render`",
+      return_type: &[ArgType::Light],
+    }
+  ],
 };
 
 pub fn serialize_fn_defs() -> String {

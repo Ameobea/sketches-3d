@@ -10,6 +10,7 @@ import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi, { type ReplCtx } from './ReplUI.svelte';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 import type { GeoscriptWorkerMethods } from 'src/viz/wasmComp/geoscriptWorker.worker';
+import GeoscriptWorker from 'src/viz/wasmComp/geoscriptWorker.worker?worker';
 
 const locations = {
   spawn: {
@@ -32,11 +33,7 @@ const initRepl = async (
   });
 };
 
-export const processLoadedScene = async (
-  viz: Viz,
-  _loadedWorld: THREE.Group,
-  vizConf: VizConfig
-): Promise<SceneConfig> => {
+export const processLoadedScene = (viz: Viz, _loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
   const loader = new THREE.ImageBitmapLoader();
   const matPromise = buildGrayFossilRockMaterial(
     loader,
@@ -44,30 +41,7 @@ export const processLoadedScene = async (
     {},
     { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
   );
-  const workerP = import('src/viz/wasmComp/geoscriptWorker.worker?worker');
-  const geoscriptWorkerP = workerP.then(worker => Comlink.wrap<GeoscriptWorkerMethods>(new worker.default()));
-
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.8);
-  viz.scene.add(ambientLight);
-
-  const dirLight = new THREE.DirectionalLight(0xffffff, 5);
-  dirLight.position.set(-20, 50, 0);
-  viz.scene.add(dirLight);
-
-  dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 2048 * 2;
-  dirLight.shadow.mapSize.height = 2048 * 2;
-  dirLight.shadow.radius = 4;
-  dirLight.shadow.blurSamples = 16;
-  viz.renderer.shadowMap.type = THREE.VSMShadowMap;
-  dirLight.shadow.bias = -0.0001;
-
-  dirLight.shadow.camera.near = 8;
-  dirLight.shadow.camera.far = 300;
-  dirLight.shadow.camera.left = -300;
-  dirLight.shadow.camera.right = 380;
-  dirLight.shadow.camera.top = 94;
-  dirLight.shadow.camera.bottom = -140;
+  const geoscriptWorker = Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker());
 
   configureDefaultPostprocessingPipeline(
     viz,
@@ -121,7 +95,7 @@ export const processLoadedScene = async (
   let ctx: ReplCtx | null = null;
   initRepl(
     viz,
-    await geoscriptWorkerP,
+    geoscriptWorker,
     (newCtx: ReplCtx) => {
       ctx = newCtx;
     },

@@ -8,6 +8,7 @@
     runtimeMs: number;
     renderedMeshCount: number;
     renderedPathCount: number;
+    renderedLightCount: number;
     totalVtxCount: number;
     totalFaceCount: number;
   }
@@ -30,6 +31,7 @@
 
   import type { GeoscriptWorkerMethods } from 'src/viz/wasmComp/geoscriptWorker.worker';
   import { buildEditor } from './editor';
+  import { buildAndAddLight } from './lights';
 
   let {
     viz,
@@ -48,9 +50,11 @@
   let err: string | null = $state(null);
   let isRunning: boolean = $state(false);
   let runStats: RunStats | null = $state(null);
-  let renderedMeshes: (
+  const includePrelude = true;
+  let renderedObjects: (
     | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
     | THREE.Line<THREE.BufferGeometry, THREE.Material>
+    | THREE.Light
   )[] = $state([]);
 
   let codemirrorContainer: HTMLDivElement | null = $state(null);
@@ -66,16 +70,21 @@
   });
 
   const computeCompositeBoundingBox = (
-    meshes: (
+    objects: (
       | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
       | THREE.Line<THREE.BufferGeometry, THREE.Material>
+      | THREE.Light
     )[]
   ): THREE.Box3 => {
     const box = new THREE.Box3();
-    for (const mesh of meshes) {
-      mesh.geometry.computeBoundingBox();
-      const meshBox = mesh.geometry.boundingBox;
-      if (meshBox) box.union(meshBox.applyMatrix4(mesh.matrixWorld));
+    for (const obj of objects) {
+      if (!(obj instanceof THREE.Mesh || obj instanceof THREE.Line)) {
+        continue;
+      }
+
+      obj.geometry.computeBoundingBox();
+      const meshBox = obj.geometry.boundingBox;
+      if (meshBox) box.union(meshBox.applyMatrix4(obj.matrixWorld));
     }
     return box;
   };
@@ -89,7 +98,7 @@
       await new Promise(resolve => setTimeout(resolve, 10));
     }
 
-    if (!renderedMeshes.length) {
+    if (!renderedObjects.length) {
       viz.camera.position.copy(DefaultCameraPos);
       viz.orbitControls!.target.copy(DefaultCameraTarget);
       viz.camera.lookAt(DefaultCameraTarget);
@@ -97,7 +106,7 @@
       return;
     }
 
-    const compositeBbox = computeCompositeBoundingBox(renderedMeshes);
+    const compositeBbox = computeCompositeBoundingBox(renderedObjects);
     const center = new THREE.Vector3();
     compositeBbox.getCenter(center);
     const size = new THREE.Vector3();
@@ -120,9 +129,9 @@
     } else {
       activeMat = wireframeMat;
     }
-    for (const mesh of renderedMeshes) {
-      if (mesh instanceof THREE.Mesh) {
-        mesh.material = activeMat;
+    for (const obj of renderedObjects) {
+      if (obj instanceof THREE.Mesh) {
+        obj.material = activeMat;
       }
     }
   };
@@ -137,18 +146,20 @@
     beforeUnloadHandler();
 
     isRunning = true;
-    for (const mesh of renderedMeshes) {
-      viz.scene.remove(mesh);
-      mesh.geometry.dispose();
+    for (const obj of renderedObjects) {
+      viz.scene.remove(obj);
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+        obj.geometry.dispose();
+      }
     }
-    renderedMeshes = [];
+    renderedObjects = [];
 
     await repl.reset(ctxPtr);
     runStats = null;
     const startTime = performance.now();
     localStorage.lastGeoscriptRunCompleted = 'false';
     try {
-      await repl.eval(ctxPtr, code);
+      await repl.eval(ctxPtr, code, includePrelude);
     } catch (err) {
       console.error('Error evaluating code:', err);
       // TODO: this set isn't working for some reason
@@ -168,13 +179,14 @@
       runtimeMs: performance.now() - startTime,
       renderedMeshCount: 0,
       renderedPathCount: 0,
+      renderedLightCount: 0,
       totalVtxCount: 0,
       totalFaceCount: 0,
     };
 
     localRunStats.renderedMeshCount = await repl.getRenderedMeshCount(ctxPtr);
     const newRenderedMeshes = [];
-    for (let i = 0; i < localRunStats.renderedMeshCount; i++) {
+    for (let i = 0; i < localRunStats.renderedMeshCount; i += 1) {
       const { transform, verts, indices, normals } = await repl.getRenderedMesh(ctxPtr, i);
 
       localRunStats.totalVtxCount += verts.length / 3;
@@ -196,7 +208,7 @@
     }
 
     localRunStats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
-    for (let i = 0; i < localRunStats.renderedPathCount; i++) {
+    for (let i = 0; i < localRunStats.renderedPathCount; i += 1) {
       const pathVerts: Float32Array = await repl.getRenderedPathVerts(ctxPtr, i);
       localRunStats.totalVtxCount += pathVerts.length / 3;
       localRunStats.totalFaceCount += pathVerts.length / 3 - 1;
@@ -210,7 +222,14 @@
       newRenderedMeshes.push(pathMesh);
     }
 
-    renderedMeshes = newRenderedMeshes;
+    localRunStats.renderedLightCount = await repl.getRenderedLightCount(ctxPtr);
+    for (let i = 0; i < localRunStats.renderedLightCount; i += 1) {
+      const light = await repl.getRenderedLight(ctxPtr, i);
+      const builtLight = buildAndAddLight(viz, light);
+      renderedObjects.push(builtLight);
+    }
+
+    renderedObjects = newRenderedMeshes;
     runStats = localRunStats;
     isRunning = false;
   };
@@ -270,9 +289,11 @@
         localStorage.lastGeoscriptPlaygroundCode = editorView.state.doc.toString();
         editorView.destroy();
       }
-      for (const mesh of renderedMeshes) {
+      for (const mesh of renderedObjects) {
         viz.scene.remove(mesh);
-        mesh.geometry.dispose();
+        if (mesh instanceof THREE.Mesh || mesh instanceof THREE.Line) {
+          mesh.geometry.dispose();
+        }
       }
 
       window.removeEventListener('beforeunload', beforeUnloadHandler);

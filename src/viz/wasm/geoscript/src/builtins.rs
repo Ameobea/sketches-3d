@@ -16,7 +16,7 @@ use parry3d::query::Ray;
 use rand::Rng;
 
 use crate::{
-  lights::{DirectionalLight, Light},
+  lights::{AmbientLight, DirectionalLight, Light},
   mesh_ops::{
     extrude_pipe,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
@@ -122,12 +122,7 @@ fn eval_numeric_bool_op(
   }
 }
 
-pub(crate) fn add_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  lhs: &Value,
-  rhs: &Value,
-) -> Result<Value, ErrorStack> {
+pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       // vec3 + vec3
@@ -206,11 +201,11 @@ pub(crate) fn add_impl(
         trimesh: RefCell::new(None),
       })))
     }
-    5 => ctx.eval_fn_call::<true>(
-      "translate",
-      &[rhs.clone(), lhs.clone()],
+    5 => translate_impl(
+      0,
+      &[ArgRef::Positional(1), ArgRef::Positional(0)],
+      &[lhs.clone(), rhs.clone()],
       &Default::default(),
-      &ctx.globals,
     ),
     _ => unimplemented!(),
   }
@@ -251,29 +246,24 @@ pub(crate) fn sub_impl(
       // mesh - mesh
       eval_mesh_boolean(
         0,
-        &[ArgRef::Positional(0), ArgRef::Positional(1)],
+        &[ArgRef::Positional(1), ArgRef::Positional(1)],
         &[lhs.clone(), rhs.clone()],
         &Default::default(),
         ctx,
         MeshBooleanOp::Difference,
       )
     }
-    5 => ctx.eval_fn_call::<true>(
-      "translate",
-      &[Value::Vec3(-rhs.as_vec3().unwrap()), lhs.clone()],
+    5 => translate_impl(
+      0,
+      &[ArgRef::Positional(1), ArgRef::Positional(0)],
+      &[lhs.clone(), Value::Vec3(-rhs.as_vec3().unwrap())],
       &Default::default(),
-      &ctx.globals,
     ),
     _ => unimplemented!(),
   }
 }
 
-pub(crate) fn mul_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  lhs: &Value,
-  rhs: &Value,
-) -> Result<Value, ErrorStack> {
+pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       // vec3 * vec3
@@ -305,11 +295,12 @@ pub(crate) fn mul_impl(
       let b = rhs.as_int().unwrap();
       Ok(Value::Int(a * b))
     }
-    5 | 6 => ctx.eval_fn_call::<true>(
-      "scale",
-      &[rhs.clone(), lhs.clone()],
+    // mesh * num, mesh * vec3
+    5 | 6 => scale_impl(
+      1,
+      &[ArgRef::Positional(1), ArgRef::Positional(0)],
+      &[lhs.clone(), rhs.clone()],
       &Default::default(),
-      &ctx.globals,
     ),
     _ => unimplemented!(),
   }
@@ -445,6 +436,249 @@ pub(crate) fn neq_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
   }
 }
 
+pub(crate) fn and_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  lhs: &Value,
+  rhs: &Value,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let a = lhs.as_bool().unwrap();
+      let b = rhs.as_bool().unwrap();
+      Ok(Value::Bool(a && b))
+    }
+    1 => eval_mesh_boolean(
+      0,
+      &[ArgRef::Positional(0), ArgRef::Positional(1)],
+      &[lhs.clone(), rhs.clone()],
+      &Default::default(),
+      ctx,
+      MeshBooleanOp::Intersection,
+    ),
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn or_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  lhs: &Value,
+  rhs: &Value,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let a = lhs.as_bool().unwrap();
+      let b = rhs.as_bool().unwrap();
+      Ok(Value::Bool(a || b))
+    }
+    1 => eval_mesh_boolean(
+      0,
+      &[ArgRef::Positional(0), ArgRef::Positional(1)],
+      &[lhs.clone(), rhs.clone()],
+      &Default::default(),
+      ctx,
+      MeshBooleanOp::Union,
+    ),
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn bit_and_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  lhs: &Value,
+  rhs: &Value,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let a = lhs.as_int().unwrap();
+      let b = rhs.as_int().unwrap();
+      Ok(Value::Int(a & b))
+    }
+    1 => eval_mesh_boolean(
+      0,
+      &[ArgRef::Positional(0), ArgRef::Positional(1)],
+      &[lhs.clone(), rhs.clone()],
+      &Default::default(),
+      ctx,
+      MeshBooleanOp::Intersection,
+    ),
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn bit_or_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  lhs: &Value,
+  rhs: &Value,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let a = lhs.as_int().unwrap();
+      let b = rhs.as_int().unwrap();
+      Ok(Value::Int(a | b))
+    }
+    1 => eval_mesh_boolean(
+      0,
+      &[ArgRef::Positional(0), ArgRef::Positional(1)],
+      &[lhs.clone(), rhs.clone()],
+      &Default::default(),
+      ctx,
+      MeshBooleanOp::Union,
+    ),
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn map_impl(def_ix: usize, fn_value: &Value, seq: &Value) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let fn_value = fn_value.as_callable().unwrap();
+      let seq = seq.as_sequence().unwrap();
+
+      Ok(Value::Sequence(Box::new(MapSeq {
+        cb: fn_value.clone(),
+        inner: seq.clone_box(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn neg_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      // negate int
+      let value = val.as_int().unwrap();
+      Ok(Value::Int(-value))
+    }
+    1 => {
+      // negate float
+      let value = val.as_float().unwrap();
+      Ok(Value::Float(-value))
+    }
+    2 => {
+      // negate vec3
+      let value = val.as_vec3().unwrap();
+      Ok(Value::Vec3(-*value))
+    }
+    3 => {
+      // negate bool
+      let value = val.as_bool().unwrap();
+      Ok(Value::Bool(!value))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn pos_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      // pass through numeric value
+      Ok(val.clone())
+    }
+    1 => {
+      // pass through vec3
+      Ok(val.clone())
+    }
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn not_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = val.as_bool().unwrap();
+      Ok(Value::Bool(!value))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+pub(crate) fn translate_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  let (translation, obj) = match def_ix {
+    0 => {
+      let translation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let obj = arg_refs[1].resolve(args, &kwargs);
+      (*translation, obj)
+    }
+    1 => {
+      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let translation = Vec3::new(x, y, z);
+      let obj = arg_refs[3].resolve(args, &kwargs);
+      (translation, obj)
+    }
+    _ => unimplemented!(),
+  };
+
+  match obj {
+    Value::Mesh(mesh) => {
+      let mut mesh = (**mesh).clone(true, false, false);
+      mesh.transform.append_translation_mut(&translation);
+
+      Ok(Value::Mesh(Rc::new(mesh)))
+    }
+    Value::Light(light) => {
+      let mut light = (**light).clone();
+      light.transform_mut().append_translation_mut(&translation);
+      Ok(Value::Light(Box::new(light)))
+    }
+    _ => unreachable!(),
+  }
+}
+
+pub(crate) fn scale_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  let (scale, mesh) = match def_ix {
+    0 => {
+      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      (Vec3::new(x, y, z), arg_refs[3].resolve(args, &kwargs))
+    }
+    1 => {
+      let val = arg_refs[0].resolve(args, &kwargs);
+      let scale = match val {
+        Value::Vec3(scale) => *scale,
+        Value::Float(scale) => Vec3::new(*scale, *scale, *scale),
+        Value::Int(scale) => {
+          let scale = *scale as f32;
+          Vec3::new(scale, scale, scale)
+        }
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid argument for scale: expected Vec3 or Float, found {val:?}",
+          )))
+        }
+      };
+
+      let mesh = arg_refs[1].resolve(args, &kwargs);
+      (scale, mesh)
+    }
+    _ => unimplemented!(),
+  };
+
+  let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
+  mesh.transform.m11 *= scale.x;
+  mesh.transform.m22 *= scale.y;
+  mesh.transform.m33 *= scale.z;
+
+  Ok(Value::Mesh(mesh.into()))
+}
+
 #[inline(always)]
 pub(crate) fn eval_builtin_fn(
   name: &str,
@@ -523,66 +757,8 @@ pub(crate) fn eval_builtin_fn(
       }
       _ => unimplemented!(),
     },
-    "translate" => {
-      let (translation, mesh) = match def_ix {
-        0 => {
-          let translation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-          let mesh = arg_refs[1].resolve(args, &kwargs);
-          (*translation, mesh)
-        }
-        1 => {
-          let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-          let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-          let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-          let translation = Vec3::new(x, y, z);
-          let mesh = arg_refs[3].resolve(args, &kwargs);
-          (translation, mesh)
-        }
-        _ => unimplemented!(),
-      };
-
-      let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
-      mesh.transform.append_translation_mut(&translation);
-
-      Ok(Value::Mesh(Rc::new(mesh)))
-    }
-    "scale" => {
-      let (scale, mesh) = match def_ix {
-        0 => {
-          let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-          let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-          let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-          (Vec3::new(x, y, z), arg_refs[3].resolve(args, &kwargs))
-        }
-        1 => {
-          let val = arg_refs[0].resolve(args, &kwargs);
-          let scale = match val {
-            Value::Vec3(scale) => *scale,
-            Value::Float(scale) => Vec3::new(*scale, *scale, *scale),
-            Value::Int(scale) => {
-              let scale = *scale as f32;
-              Vec3::new(scale, scale, scale)
-            }
-            _ => {
-              return Err(ErrorStack::new(format!(
-                "Invalid argument for scale: expected Vec3 or Float, found {val:?}",
-              )))
-            }
-          };
-
-          let mesh = arg_refs[1].resolve(args, &kwargs);
-          (scale, mesh)
-        }
-        _ => unimplemented!(),
-      };
-
-      let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
-      mesh.transform.m11 *= scale.x;
-      mesh.transform.m22 *= scale.y;
-      mesh.transform.m33 *= scale.z;
-
-      Ok(Value::Mesh(mesh.into()))
-    }
+    "translate" => translate_impl(def_ix, arg_refs, args, kwargs),
+    "scale" => scale_impl(def_ix, arg_refs, args, kwargs),
     "rot" => {
       let (mesh, rotation) = match def_ix {
         0 => {
@@ -794,18 +970,15 @@ pub(crate) fn eval_builtin_fn(
     }
     "reduce" => {
       let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let seq = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
 
-      ctx.reduce(fn_value, sequence.clone_box())
+      ctx.reduce(fn_value, seq.clone_box())
     }
     "map" => {
-      let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let fn_value = arg_refs[0].resolve(args, &kwargs);
+      let seq = arg_refs[1].resolve(args, &kwargs);
 
-      Ok(Value::Sequence(Box::new(MapSeq {
-        cb: fn_value.clone(),
-        inner: sequence.clone_box(),
-      })))
+      map_impl(def_ix, fn_value, seq)
     }
     "filter" => match def_ix {
       0 => {
@@ -941,40 +1114,14 @@ pub(crate) fn eval_builtin_fn(
       }
       _ => unimplemented!(),
     },
-    "neg" => match def_ix {
-      0 => {
-        // negate int
-        let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-        Ok(Value::Int(-value))
-      }
-      1 => {
-        // negate float
-        let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-        Ok(Value::Float(-value))
-      }
-      2 => {
-        // negate vec3
-        let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-        Ok(Value::Vec3(-*value))
-      }
-      3 => {
-        // negate bool
-        let value = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
-        Ok(Value::Bool(!value))
-      }
-      _ => unimplemented!(),
-    },
-    "pos" => match def_ix {
-      0 => {
-        // pass through numeric value
-        Ok(arg_refs[0].resolve(args, &kwargs).clone())
-      }
-      1 => {
-        // pass through vec3
-        Ok(arg_refs[0].resolve(args, &kwargs).clone())
-      }
-      _ => unimplemented!(),
-    },
+    "neg" => {
+      let val = arg_refs[0].resolve(args, &kwargs);
+      neg_impl(def_ix, val)
+    }
+    "pos" => {
+      let val = arg_refs[0].resolve(args, &kwargs);
+      pos_impl(def_ix, val)
+    }
     "abs" => match def_ix {
       0 => {
         let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
@@ -1004,7 +1151,7 @@ pub(crate) fn eval_builtin_fn(
     "add" => {
       let lhs = arg_refs[0].resolve(args, &kwargs);
       let rhs = arg_refs[1].resolve(args, &kwargs);
-      add_impl(ctx, def_ix, lhs, rhs)
+      add_impl(def_ix, lhs, rhs)
     }
     "sub" => {
       let lhs = arg_refs[0].resolve(args, &kwargs);
@@ -1014,7 +1161,7 @@ pub(crate) fn eval_builtin_fn(
     "mul" => {
       let lhs = arg_refs[0].resolve(args, &kwargs);
       let rhs = arg_refs[1].resolve(args, &kwargs);
-      mul_impl(ctx, def_ix, lhs, rhs)
+      mul_impl(def_ix, lhs, rhs)
     }
     "div" => {
       let lhs = arg_refs[0].resolve(args, &kwargs);
@@ -1120,49 +1267,30 @@ pub(crate) fn eval_builtin_fn(
       let rhs = arg_refs[1].resolve(args, &kwargs);
       neq_impl(def_ix, lhs, rhs)
     }
-    "and" => match def_ix {
-      0 => {
-        let a = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
-        let b = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
-        Ok(Value::Bool(a && b))
-      }
-      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Intersection),
-      _ => unimplemented!(),
-    },
-    "or" => match def_ix {
-      0 => {
-        let a = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
-        let b = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
-        Ok(Value::Bool(a || b))
-      }
-      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
-      _ => unimplemented!(),
-    },
-    "not" => match def_ix {
-      0 => {
-        let value = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
-        Ok(Value::Bool(!value))
-      }
-      _ => unimplemented!(),
-    },
-    "bit_and" => match def_ix {
-      0 => {
-        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
-        Ok(Value::Int(a & b))
-      }
-      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Intersection),
-      _ => unimplemented!(),
-    },
-    "bit_or" => match def_ix {
-      0 => {
-        let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-        let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
-        Ok(Value::Int(a | b))
-      }
-      1 => eval_mesh_boolean(0, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union),
-      _ => unimplemented!(),
-    },
+    "and" => {
+      let lhs = arg_refs[0].resolve(args, &kwargs);
+      let rhs = arg_refs[1].resolve(args, &kwargs);
+      and_impl(ctx, def_ix, lhs, rhs)
+    }
+    "or" => {
+      let lhs = arg_refs[0].resolve(args, &kwargs);
+      let rhs = arg_refs[1].resolve(args, &kwargs);
+      or_impl(ctx, def_ix, lhs, rhs)
+    }
+    "not" => {
+      let val = arg_refs[0].resolve(args, &kwargs);
+      not_impl(def_ix, val)
+    }
+    "bit_and" => {
+      let lhs = arg_refs[0].resolve(args, &kwargs);
+      let rhs = arg_refs[1].resolve(args, &kwargs);
+      bit_and_impl(ctx, def_ix, lhs, rhs)
+    }
+    "bit_or" => {
+      let lhs = arg_refs[0].resolve(args, &kwargs);
+      let rhs = arg_refs[1].resolve(args, &kwargs);
+      bit_or_impl(ctx, def_ix, lhs, rhs)
+    }
     "sin" => match def_ix {
       0 => {
         let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
@@ -2098,7 +2226,12 @@ pub(crate) fn eval_builtin_fn(
     },
     "ambient_light" => match def_ix {
       0 => {
-        todo!()
+        let color = arg_refs[0].resolve(args, &kwargs); // vec3 or int
+        let intensity = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+
+        let light = AmbientLight::new(color, intensity)
+          .map_err(|err| ErrorStack::new(format!("Error creating ambient light: {err}")))?;
+        Ok(Value::Light(Box::new(Light::Ambient(light))))
       }
       _ => unimplemented!(),
     },

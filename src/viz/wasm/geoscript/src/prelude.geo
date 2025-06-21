@@ -14,4 +14,4 @@ dir_light(
   | trans(-20, 50, 0)
   | render
 
-set_default_material("gray_fossil_rock")
+// set_default_material("gray_fossil_rock")

@@ -1,6 +1,7 @@
 import * as Comlink from 'comlink';
 
 import { initManifoldWasm } from './manifold';
+import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 
 const getGeoscript = () =>
   import('src/viz/wasmComp/geoscript_repl').then(async engine => {
@@ -31,11 +32,11 @@ const methods = {
     }
     return Geoscript.geoscript_repl_reset(ctxPtr);
   },
-  eval: (ctxPtr: number, code: string) => {
+  eval: (ctxPtr: number, code: string, includePrelude: boolean) => {
     if (!Geoscript) {
       throw new Error('Geoscript not initialized');
     }
-    Geoscript.geoscript_repl_eval(ctxPtr, code);
+    Geoscript.geoscript_repl_eval(ctxPtr, code, includePrelude);
   },
   getErr: (ctxPtr: number) => {
     if (!Geoscript) {
@@ -76,6 +77,19 @@ const methods = {
     }
     const verts = Geoscript.geoscript_get_rendered_path(ctxPtr, pathIx);
     return Comlink.transfer(verts, [verts.buffer]);
+  },
+  getRenderedLightCount: (ctxPtr: number) => {
+    if (!Geoscript) {
+      throw new Error('Geoscript not initialized');
+    }
+    return Geoscript.geoscript_get_rendered_light_count(ctxPtr);
+  },
+  getRenderedLight: (ctxPtr: number, lightIx: number): Light => {
+    if (!Geoscript) {
+      throw new Error('Geoscript not initialized');
+    }
+    const light = JSON.parse(Geoscript.geoscript_get_rendered_light(ctxPtr, lightIx));
+    return Comlink.transfer(light, []);
   },
 };
 

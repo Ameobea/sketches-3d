@@ -2,13 +2,75 @@ use std::str::FromStr;
 
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
+use nalgebra::Matrix4;
+use nanoserde::SerJson;
 
 use crate::{ErrorStack, Value};
 
-#[derive(Debug, Clone)]
+fn parse_color_value(color: &Value) -> Result<u32, ErrorStack> {
+  match color {
+    Value::Int(i) => {
+      if *i < 0 {
+        return Err(ErrorStack::new("Color value cannot be negative"));
+      }
+
+      Ok(*i as u32)
+    }
+    Value::Vec3(v) => {
+      if v.x < 0. || v.y < 0. || v.z < 0. {
+        return Err(ErrorStack::new("Color vector values should all be [0, 1]"));
+      }
+
+      let r = (v.x * 255.).clamp(0., 255.) as u32;
+      let g = (v.y * 255.).clamp(0., 255.) as u32;
+      let b = (v.z * 255.).clamp(0., 255.) as u32;
+      Ok((r << 16) | (g << 8) | b)
+    }
+    _ => Err(ErrorStack::new("Invalid color value, expected int or vec3")),
+  }
+}
+
+#[derive(SerJson)]
+struct SerializableVec3(Vec<f32>);
+
+impl From<&Vec3> for SerializableVec3 {
+  fn from(vec: &Vec3) -> Self {
+    Self(vec.as_slice().to_vec())
+  }
+}
+
+#[derive(SerJson)]
+struct SerializableMat4(Vec<f32>);
+
+impl From<&Matrix4<f32>> for SerializableMat4 {
+  fn from(mat: &Matrix4<f32>) -> Self {
+    Self(mat.as_slice().to_vec())
+  }
+}
+
+#[derive(Debug, Clone, SerJson)]
 pub struct AmbientLight {
   pub color: u32,
   pub intensity: f32,
+  #[nserde(proxy = "SerializableMat4")]
+  pub transform: Matrix4<f32>,
+}
+
+impl AmbientLight {
+  pub(crate) fn new(color: &Value, intensity: f32) -> Result<Self, ErrorStack> {
+    let color = parse_color_value(color)?;
+    if intensity < 0. {
+      return Err(ErrorStack::new(
+        "Ambient light intensity cannot be negative",
+      ));
+    }
+
+    Ok(Self {
+      color,
+      intensity,
+      transform: Matrix4::identity(),
+    })
+  }
 }
 
 impl Default for AmbientLight {
@@ -16,11 +78,12 @@ impl Default for AmbientLight {
     Self {
       color: 0xffffff,
       intensity: 1.8,
+      transform: Matrix4::identity(),
     }
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SerJson)]
 pub struct ShadowMapSize {
   pub width: u32,
   pub height: u32,
@@ -68,7 +131,7 @@ impl Default for ShadowMapSize {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SerJson)]
 pub struct ShadowCamera {
   pub near: f32,
   pub far: f32,
@@ -138,7 +201,7 @@ impl Default for ShadowCamera {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SerJson)]
 pub enum ShadowMapType {
   Vsm,
 }
@@ -162,8 +225,9 @@ impl ShadowMapType {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SerJson)]
 pub struct DirectionalLight {
+  #[nserde(proxy = "SerializableVec3")]
   pub target: Vec3,
   pub color: u32,
   pub intensity: f32,
@@ -174,6 +238,8 @@ pub struct DirectionalLight {
   pub shadow_map_type: ShadowMapType,
   pub shadow_map_bias: f32,
   pub shadow_camera: ShadowCamera,
+  #[nserde(proxy = "SerializableMat4")]
+  pub transform: Matrix4<f32>,
 }
 
 impl DirectionalLight {
@@ -189,27 +255,7 @@ impl DirectionalLight {
     shadow_map_bias: f32,
     shadow_camera: &FxHashMap<String, Value>,
   ) -> Result<Self, ErrorStack> {
-    let color = match color {
-      Value::Int(i) => {
-        if *i < 0 {
-          return Err(ErrorStack::new("Color value cannot be negative"));
-        } else {
-          *i as u32
-        }
-      }
-      Value::Vec3(v) => {
-        if v.x < 0. || v.y < 0. || v.z < 0. {
-          return Err(ErrorStack::new("Color vector values should all be [0, 1]"));
-        }
-        let r = (v.x * 255.).clamp(0., 255.) as u32;
-        let g = (v.y * 255.).clamp(0., 255.) as u32;
-        let b = (v.z * 255.).clamp(0., 255.) as u32;
-        (r << 16) | (g << 8) | b
-      }
-      _ => {
-        return Err(ErrorStack::new("Invalid color value, expected int or vec3"));
-      }
-    };
+    let color = parse_color_value(color)?;
 
     let shadow_map_size = match shadow_map_size {
       Value::Map(map) => ShadowMapSize::from_map(map)?,
@@ -234,6 +280,7 @@ impl DirectionalLight {
       shadow_map_type: ShadowMapType::from_str(shadow_map_type)?,
       shadow_map_bias,
       shadow_camera,
+      transform: Matrix4::identity(),
     })
   }
 }
@@ -251,16 +298,29 @@ impl Default for DirectionalLight {
       shadow_map_type: ShadowMapType::Vsm,
       shadow_map_bias: -0.0001,
       shadow_camera: ShadowCamera::default(),
+      transform: Matrix4::identity(),
     }
   }
 }
 
-#[derive(Debug, Clone)]
-pub struct PointLight {}
+#[derive(Debug, Clone, SerJson)]
+pub struct PointLight {
+  #[nserde(proxy = "SerializableMat4")]
+  pub transform: Matrix4<f32>,
+}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, SerJson)]
 pub enum Light {
   Ambient(AmbientLight),
   Directional(DirectionalLight),
   Point(PointLight),
+}
+impl Light {
+  pub(crate) fn transform_mut(&mut self) -> &mut Matrix4<f32> {
+    match self {
+      Light::Ambient(a) => &mut a.transform,
+      Light::Directional(d) => &mut d.transform,
+      Light::Point(p) => &mut p.transform,
+    }
+  }
 }

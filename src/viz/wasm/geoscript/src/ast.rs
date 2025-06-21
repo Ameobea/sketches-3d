@@ -6,12 +6,14 @@ use pest::iterators::Pair;
 
 use crate::{
   builtins::{
-    add_impl, div_impl, eq_impl, fn_defs::FnDef, mod_impl, mul_impl, neq_impl,
-    numeric_bool_op_impl, sub_impl, BoolOp,
+    add_impl, and_impl, bit_and_impl, bit_or_impl, div_impl, eq_impl, fn_defs::FnDef, map_impl,
+    mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl, pos_impl,
+    sub_impl, BoolOp,
   },
-  get_args, get_binop_def_ix, get_binop_return_ty, resolve_builtin_impl, ArgType, Callable,
-  Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput, IntRange, PreResolvedSignature, Rule,
-  Scope, Value, FN_SIGNATURE_DEFS, FUNCTION_ALIASES, PRATT_PARSER,
+  get_args, get_binop_def_ix, get_binop_return_ty, get_unop_def_ix, get_unop_return_ty,
+  resolve_builtin_impl, ArgType, Callable, Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput,
+  IntRange, PreResolvedSignature, Rule, Scope, Value, FN_SIGNATURE_DEFS, FUNCTION_ALIASES,
+  PRATT_PARSER,
 };
 
 #[derive(Debug)]
@@ -194,94 +196,6 @@ impl Expr {
       Expr::BinOp { op: _, lhs, rhs } => {
         let mut captures_dyn = lhs.inline_const_captures(local_scope);
         captures_dyn |= rhs.inline_const_captures(local_scope);
-
-        // \/ this works but is slower than just eval'ing binop AST nodes.  This is probably because
-        // we have to do allocation for the arguments which outweighs dynamic type resolution
-
-        // // lower this binop into a pre-resolved builtin call if we can statically determine the
-        // // types of both of its args
-        // let Some(lhs_ty) = pre_resolve_expr_type(local_scope, lhs) else {
-        //   return captures_dyn;
-        // };
-        // let Some(lhs_example_val) = lhs_ty.build_example_val() else {
-        //   return captures_dyn;
-        // };
-        // let Some(rhs_ty) = pre_resolve_expr_type(local_scope, rhs) else {
-        //   return captures_dyn;
-        // };
-        // let Some(rhs_example_val) = rhs_ty.build_example_val() else {
-        //   return captures_dyn;
-        // };
-
-        // let (swap_order, builtin_name) = match op {
-        //   BinOp::Add => (false, "add"),
-        //   BinOp::Sub => (false, "sub"),
-        //   BinOp::Mul => (false, "mul"),
-        //   BinOp::Div => (false, "div"),
-        //   BinOp::Mod => (false, "mod"),
-        //   BinOp::Gt => (false, "gt"),
-        //   BinOp::Lt => (false, "lt"),
-        //   BinOp::Gte => (false, "gte"),
-        //   BinOp::Lte => (false, "lte"),
-        //   BinOp::Eq => (false, "eq"),
-        //   BinOp::Neq => (false, "neq"),
-        //   BinOp::And => (false, "and"),
-        //   BinOp::Or => (false, "or"),
-        //   BinOp::BitAnd => (false, "bit_and"),
-        //   BinOp::Range => {
-        //     *self = Expr::Range {
-        //       start: lhs.clone(),
-        //       end: rhs.clone(),
-        //       inclusive: false,
-        //     };
-        //     return captures_dyn;
-        //   }
-        //   BinOp::RangeInclusive => {
-        //     *self = Expr::Range {
-        //       start: lhs.clone(),
-        //       end: rhs.clone(),
-        //       inclusive: true,
-        //     };
-        //     return captures_dyn;
-        //   }
-        //   BinOp::Pipeline => return captures_dyn,
-        //   BinOp::Map => (true, "map"),
-        // };
-        // let defs = FN_SIGNATURE_DEFS
-        //   .get(builtin_name)
-        //   .expect("Builtin function not found");
-
-        // let example_args = if swap_order {
-        //   &[rhs_example_val, lhs_example_val]
-        // } else {
-        //   &[lhs_example_val, rhs_example_val]
-        // };
-        // let Ok(resolved_sig) = get_args(builtin_name, defs, example_args, &Default::default())
-        // else {
-        //   return captures_dyn;
-        // };
-        // let pre_resolved_signature = match resolved_sig {
-        //   GetArgsOutput::Valid { def_ix, arg_refs } => {
-        //     Some(PreResolvedSignature { arg_refs, def_ix })
-        //   }
-        //   GetArgsOutput::PartiallyApplied => None,
-        // };
-
-        // *self = Expr::Call(FunctionCall {
-        //   target: FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
-        //     name: builtin_name.to_owned(),
-        //     fn_impl: resolve_builtin_impl(builtin_name),
-        //     pre_resolved_signature,
-        //     fn_signature_defs: FN_SIGNATURE_DEFS[builtin_name],
-        //   })),
-        //   args: if swap_order {
-        //     vec![(**rhs).clone(), (**lhs).clone()]
-        //   } else {
-        //     vec![(**lhs).clone(), (**rhs).clone()]
-        //   },
-        //   kwargs: FxHashMap::default(),
-        // });
-
         captures_dyn
       }
       Expr::PrefixOp { op: _, expr } => expr.inline_const_captures(local_scope),
@@ -518,7 +432,7 @@ impl BinOp {
     match self {
       BinOp::Add => {
         let def_ix = get_binop_def_ix("add", &*ADD_ARG_DEFS, &lhs, &rhs)?;
-        add_impl(ctx, def_ix, &lhs, &rhs)
+        add_impl(def_ix, &lhs, &rhs)
       }
       BinOp::Sub => {
         let def_ix = get_binop_def_ix("sub", &*SUB_ARG_DEFS, &lhs, &rhs)?;
@@ -526,7 +440,7 @@ impl BinOp {
       }
       BinOp::Mul => {
         let def_ix = get_binop_def_ix("mul", &*MUL_ARG_DEFS, &lhs, &rhs)?;
-        mul_impl(ctx, def_ix, &lhs, &rhs)
+        mul_impl(def_ix, &lhs, &rhs)
       }
       BinOp::Div => {
         let def_ix = get_binop_def_ix("div", &*DIV_ARG_DEFS, &lhs, &rhs)?;
@@ -560,10 +474,17 @@ impl BinOp {
         let def_ix = get_binop_def_ix("neq", &*NEQ_ARG_DEFS, &lhs, &rhs)?;
         neq_impl(def_ix, &lhs, &rhs)
       }
-      BinOp::And => ctx.eval_fn_call::<true>("and", &[lhs, rhs], &Default::default(), &ctx.globals),
-      BinOp::Or => ctx.eval_fn_call::<true>("or", &[lhs, rhs], &Default::default(), &ctx.globals),
+      BinOp::And => {
+        let def_ix = get_binop_def_ix("and", &FN_SIGNATURE_DEFS["and"], &lhs, &rhs)?;
+        and_impl(ctx, def_ix, &lhs, &rhs)
+      }
+      BinOp::Or => {
+        let def_ix = get_binop_def_ix("or", &FN_SIGNATURE_DEFS["or"], &lhs, &rhs)?;
+        or_impl(ctx, def_ix, &lhs, &rhs)
+      }
       BinOp::BitAnd => {
-        ctx.eval_fn_call::<true>("bit_and", &[lhs, rhs], &Default::default(), &ctx.globals)
+        let def_ix = get_binop_def_ix("bit_and", &FN_SIGNATURE_DEFS["bit_and"], &lhs, &rhs)?;
+        bit_and_impl(ctx, def_ix, &lhs, &rhs)
       }
       BinOp::Range => eval_range(lhs, rhs, false),
       BinOp::RangeInclusive => eval_range(lhs, rhs, true),
@@ -576,11 +497,13 @@ impl BinOp {
         }
 
         // maybe it's a bit-or
-        ctx.eval_fn_call::<true>("bit_or", &[lhs, rhs], &Default::default(), &ctx.globals)
+        let def_ix = get_binop_def_ix("bit_or", &FN_SIGNATURE_DEFS["bit_or"], &lhs, &rhs)?;
+        bit_or_impl(ctx, def_ix, &lhs, &rhs)
       }
       BinOp::Map => {
         // this operator acts the same as `lhs | map(rhs)`
-        ctx.eval_fn_call::<true>("map", &[rhs, lhs], &Default::default(), &ctx.globals)
+        let def_ix = get_binop_def_ix("map", &FN_SIGNATURE_DEFS["map"], &rhs, &lhs)?;
+        map_impl(def_ix, &rhs, &lhs)
       }
     }
   }
@@ -594,11 +517,20 @@ pub enum PrefixOp {
 }
 
 impl PrefixOp {
-  pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, ErrorStack> {
+  pub fn apply(&self, val: Value) -> Result<Value, ErrorStack> {
     match self {
-      PrefixOp::Neg => ctx.eval_fn_call::<true>("neg", &[val], &Default::default(), &ctx.globals),
-      PrefixOp::Pos => ctx.eval_fn_call::<true>("pos", &[val], &Default::default(), &ctx.globals),
-      PrefixOp::Not => ctx.eval_fn_call::<true>("not", &[val], &Default::default(), &ctx.globals),
+      PrefixOp::Neg => {
+        let def_ix = get_unop_def_ix("neg", &FN_SIGNATURE_DEFS["neg"], &val)?;
+        neg_impl(def_ix, &val)
+      }
+      PrefixOp::Pos => {
+        let def_ix = get_unop_def_ix("pos", &FN_SIGNATURE_DEFS["pos"], &val)?;
+        pos_impl(def_ix, &val)
+      }
+      PrefixOp::Not => {
+        let def_ix = get_unop_def_ix("not", &FN_SIGNATURE_DEFS["not"], &val)?;
+        not_impl(def_ix, &val)
+      }
     }
   }
 }
@@ -1315,25 +1247,26 @@ fn pre_resolve_expr_type(
       }
     }
     Expr::PrefixOp { op, expr } => {
-      let builtin_name = match op {
-        PrefixOp::Neg => "neg",
-        PrefixOp::Pos => "pos",
-        PrefixOp::Not => "not",
-      };
       let arg_ty = pre_resolve_expr_type(ctx, scope_tracker, expr)?;
       let example_val = arg_ty.build_example_val()?;
-      let retval = match ctx.eval_fn_call::<true>(
-        builtin_name,
-        &[example_val],
-        &Default::default(),
-        &ctx.globals,
-      ) {
-        Ok(out) => out,
-        Err(_) => return None,
+      let return_ty_res = match op {
+        PrefixOp::Neg => get_unop_return_ty("neg", &FN_SIGNATURE_DEFS["neg"], &example_val),
+        PrefixOp::Pos => get_unop_return_ty("pos", &FN_SIGNATURE_DEFS["pos"], &example_val),
+        PrefixOp::Not => get_unop_return_ty("not", &FN_SIGNATURE_DEFS["not"], &example_val),
       };
-      match retval.get_type() {
-        ArgType::Any => unreachable!(),
-        other => Some(other),
+      match return_ty_res {
+        Ok(return_tys) => {
+          if return_tys.len() == 1 {
+            if return_tys[0] == ArgType::Any {
+              None
+            } else {
+              Some(return_tys[0])
+            }
+          } else {
+            None
+          }
+        }
+        Err(_) => None,
       }
     }
     Expr::Range { .. } => Some(ArgType::Sequence),
@@ -1524,7 +1457,7 @@ fn fold_constants<'a>(
       let Some(val) = inner.as_literal() else {
         return Ok(());
       };
-      let val = op.apply(&ctx, val)?;
+      let val = op.apply(val)?;
       *expr = val.into_literal_expr();
       Ok(())
     }
@@ -1580,17 +1513,6 @@ fn fold_constants<'a>(
         optimize_expr(ctx, local_scope, expr)?;
       }
 
-      // avoid evaluating side-effectful functions in constant context
-      if let FunctionCallTarget::Name(name) = target {
-        let is_side_effectful = matches!(
-          name.as_str(),
-          "print" | "render" | "call" | "randv" | "randf" | "randi"
-        );
-        if is_side_effectful {
-          return Ok(());
-        }
-      }
-
       // if the function call target is a name, resolve the callable referenced to make calling it
       // more efficient if it's called repeatedly later on
       if let FunctionCallTarget::Name(name) = target {
@@ -1637,6 +1559,17 @@ fn fold_constants<'a>(
         }
       }
 
+      // avoid evaluating side-effectful functions in constant context
+      if let FunctionCallTarget::Name(name) = target {
+        let is_side_effectful = matches!(
+          name.as_str(),
+          "print" | "render" | "call" | "randv" | "randf" | "randi"
+        );
+        if is_side_effectful {
+          return Ok(());
+        }
+      }
+
       let arg_vals = match args
         .iter()
         .map(|arg| arg.as_literal().ok_or(()))
@@ -1674,9 +1607,10 @@ fn fold_constants<'a>(
             }
             return Ok(());
           } else {
-            let evaled = ctx.eval_fn_call::<true>(name, &arg_vals, &kwarg_vals, &ctx.globals)?;
-            *expr = evaled.into_literal_expr();
-            Ok(())
+            unreachable!(
+              "If this was a builtin, it would have been resolved earlier.  If it was undefined, \
+               the error would have been raised earlier."
+            );
           }
         }
         FunctionCallTarget::Literal(callable) => {

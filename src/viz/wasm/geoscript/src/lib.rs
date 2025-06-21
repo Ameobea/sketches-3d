@@ -33,7 +33,6 @@ use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
   ast::{ClosureArg, TypeName},
   builtins::{
-    eval_builtin_fn,
     fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
@@ -51,6 +50,8 @@ pub mod path_building;
 mod seq;
 
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
+
+const PRELUDE: &str = include_str!("prelude.geo");
 
 #[derive(Parser)]
 #[grammar = "src/geoscript.pest"]
@@ -859,6 +860,46 @@ fn get_binop_return_ty(
   ));
 }
 
+/// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
+/// def in `defs` has exactly one arg.
+fn get_unop_def_ix(name: &str, defs: &[FnDef], arg: &Value) -> Result<usize, ErrorStack> {
+  for (def_ix, def) in defs.iter().enumerate() {
+    let arg_def = &def.arg_defs[0];
+    if ArgType::any_valid(&arg_def.valid_types, arg) {
+      return Ok(def_ix);
+    }
+  }
+
+  return Err(build_no_fn_def_found_err(
+    name,
+    &[arg.clone()],
+    &Default::default(),
+    FN_SIGNATURE_DEFS[name],
+  ));
+}
+
+/// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
+/// def in `defs` has exactly one arg.
+fn get_unop_return_ty(
+  name: &str,
+  defs: &[FnDef],
+  arg: &Value,
+) -> Result<&'static [ArgType], ErrorStack> {
+  for def in defs {
+    let arg_def = &def.arg_defs[0];
+    if ArgType::any_valid(&arg_def.valid_types, arg) {
+      return Ok(&def.return_type);
+    }
+  }
+
+  return Err(build_no_fn_def_found_err(
+    name,
+    &[arg.clone()],
+    &Default::default(),
+    FN_SIGNATURE_DEFS[name],
+  ));
+}
+
 pub struct AppendOnlyBuffer<T> {
   // Using a `RefCell` here to avoid making the whole `EvalCtx` require `&mut` when evaluating
   // code.
@@ -1019,9 +1060,24 @@ impl EvalCtx {
         }
 
         match &call.target {
-          FunctionCallTarget::Name(name) => self
-            .eval_fn_call::<false>(name, &args, &kwargs, scope)
-            .map_err(|err| err.wrap(format!("Error evaluating function call `{}`", name))),
+          FunctionCallTarget::Name(name) => {
+            if let Some(global) = scope.get(name) {
+              let Value::Callable(callable) = global else {
+                return Err(ErrorStack::new(format!(
+                  "\"{name}\" is not a callable; found: {global:?}"
+                )));
+              };
+
+              return self
+                .invoke_callable(&callable, &args, &kwargs, scope)
+                .map_err(|err| err.wrap(format!("Error invoking callable `{name}`")))
+                .map(ControlFlow::Continue);
+            } else {
+              return Err(ErrorStack::new(format!(
+                "No variable found with name `{name}`"
+              )));
+            }
+          }
           FunctionCallTarget::Literal(callable) => self
             .invoke_callable(callable, &args, &kwargs, scope)
             .map_err(|err| err.wrap("Error invoking callable")),
@@ -1046,7 +1102,7 @@ impl EvalCtx {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        op.apply(self, val)
+        op.apply(val)
           .map(ControlFlow::Continue)
           .map_err(|err| err.wrap(format!("Error applying prefix operator `{op:?}`")))
       }
@@ -1367,65 +1423,6 @@ impl EvalCtx {
     Ok(acc)
   }
 
-  // TODO: This `BUILTINS_ONLY` should go away and internal builtin calls should be resolved more
-  // efficiently
-  fn eval_fn_call<const BUILTINS_ONLY: bool>(
-    &self,
-    mut name: &str,
-    args: &[Value],
-    kwargs: &FxHashMap<String, Value>,
-    scope: &Scope,
-  ) -> Result<Value, ErrorStack> {
-    if !BUILTINS_ONLY {
-      // might be a callable stored as a global
-      if let Some(global) = scope.get(name) {
-        let Value::Callable(callable) = global else {
-          return Err(ErrorStack::new(format!(
-            "\"{name}\" is not a callable; found: {global:?}"
-          )));
-        };
-
-        return self.invoke_callable(&callable, args, kwargs, scope);
-      }
-    }
-
-    let defs_opt = FN_SIGNATURE_DEFS.get(name);
-    let defs_opt = match defs_opt {
-      Some(defs) => Some(defs),
-      None => {
-        if let Some(alias) = FUNCTION_ALIASES.get(name) {
-          name = alias;
-          FN_SIGNATURE_DEFS.get(name)
-        } else {
-          None
-        }
-      }
-    };
-    if let Some(defs) = defs_opt {
-      let (def_ix, arg_refs) = match get_args(name, defs, &args, &kwargs)? {
-        GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
-        GetArgsOutput::PartiallyApplied => {
-          return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
-            PartiallyAppliedFn {
-              inner: Box::new(Callable::Builtin {
-                name: name.to_owned(),
-                fn_impl: resolve_builtin_impl(name),
-                fn_signature_defs: &FN_SIGNATURE_DEFS[name],
-                pre_resolved_signature: None,
-              }),
-              args: args.to_owned(),
-              kwargs: kwargs.clone(),
-            },
-          ))))
-        }
-      };
-
-      return eval_builtin_fn(name, def_ix, &arg_refs, &args, &kwargs, self);
-    }
-
-    return Err(ErrorStack::new(format!("Undefined function: {name}")));
-  }
-
   pub(crate) fn eval_ident(&self, name: &str, scope: &Scope) -> Result<Value, ErrorStack> {
     if let Some(local) = scope.get(name) {
       return Ok(local);
@@ -1725,8 +1722,17 @@ pub(crate) fn parse_program_src(src: &str) -> Result<Pair<Rule>, ErrorStack> {
   Ok(program)
 }
 
-pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), ErrorStack> {
-  let program = parse_program_src(src)?;
+pub fn parse_and_eval_program_with_ctx(
+  src: String,
+  ctx: &EvalCtx,
+  include_prelude: bool,
+) -> Result<(), ErrorStack> {
+  let src = if include_prelude {
+    format!("{}\n{src}", PRELUDE)
+  } else {
+    src
+  };
+  let program = parse_program_src(&src)?;
 
   if program.as_rule() != Rule::program {
     return Err(ErrorStack::new(format!(
@@ -1758,9 +1764,9 @@ pub fn parse_and_eval_program_with_ctx(src: &str, ctx: &EvalCtx) -> Result<(), E
   Ok(())
 }
 
-pub fn parse_and_eval_program(src: &str) -> Result<EvalCtx, ErrorStack> {
+pub fn parse_and_eval_program(src: impl Into<String>) -> Result<EvalCtx, ErrorStack> {
   let ctx = EvalCtx::default();
-  parse_and_eval_program_with_ctx(src, &ctx)?;
+  parse_and_eval_program_with_ctx(src.into(), &ctx, false)?;
   Ok(ctx)
 }
 
@@ -2643,4 +2649,31 @@ b = 0x001
   let b = ctx.globals.get("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 0x001);
+}
+
+#[test]
+fn test_prelude() {
+  let src = PRELUDE;
+  parse_and_eval_program(src).unwrap();
+}
+
+#[test]
+fn test_call_callback() {
+  let src = r#"
+fn = |cb| cb(123)
+fn2 = |cb| cb | call(args=[123])
+
+out1 = fn(|x| x + 1)
+out2 = fn2(|x| x + 2)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let out1 = ctx.globals.get("out1").unwrap();
+  let out1 = out1.as_int().expect("Expected result to be an Int");
+  assert_eq!(out1, 124);
+
+  let out2 = ctx.globals.get("out2").unwrap();
+  let out2 = out2.as_int().expect("Expected result to be an Int");
+  assert_eq!(out2, 125);
 }
