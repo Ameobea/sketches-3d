@@ -226,7 +226,7 @@
     for (let i = 0; i < localRunStats.renderedLightCount; i += 1) {
       const light = await repl.getRenderedLight(ctxPtr, i);
       const builtLight = buildAndAddLight(viz, light);
-      renderedObjects.push(builtLight);
+      newRenderedMeshes.push(builtLight);
     }
 
     renderedObjects = newRenderedMeshes;

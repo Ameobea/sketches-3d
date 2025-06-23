@@ -252,6 +252,22 @@ impl Debug for Callable {
   }
 }
 
+impl Callable {
+  pub fn is_side_effectful(&self) -> bool {
+    match self {
+      Callable::Builtin { name, .. } => {
+        matches!(
+          name.as_str(),
+          "print" | "render" | "call" | "randv" | "randf" | "randi"
+        )
+      }
+      Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
+      Callable::Closure(_) => false,
+      Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_side_effectful()),
+    }
+  }
+}
+
 pub struct ManifoldHandle(Cell<usize>);
 
 impl ManifoldHandle {

@@ -250,18 +250,16 @@ impl Expr {
             }
             _ => false,
           }
+        } else if FN_SIGNATURE_DEFS.contains_key(name) || FUNCTION_ALIASES.contains_key(name) {
+          let callable = Callable::Builtin {
+            name: name.clone(),
+            fn_impl: |_, _, _, _, _| unreachable!(),
+            fn_signature_defs: &[],
+            pre_resolved_signature: None,
+          };
+          callable.is_side_effectful()
         } else {
-          if FN_SIGNATURE_DEFS.contains_key(name) || FUNCTION_ALIASES.contains_key(name) {
-            if matches!(
-              name.as_str(),
-              "print" | "render" | "call" | "randv" | "randf" | "randi"
-            ) {
-              return true;
-            }
-            false
-          } else {
-            true
-          }
+          true
         }
       }
       Expr::Closure {
@@ -1436,13 +1434,8 @@ fn fold_constants<'a>(
 
       if matches!(op, BinOp::Pipeline) {
         if let Value::Callable(callable) = &rhs_val {
-          if let Callable::Builtin { name, .. } = &**callable {
-            if matches!(
-              name.as_str(),
-              "print" | "render" | "call" | "randv" | "randf" | "randi"
-            ) {
-              return Ok(());
-            }
+          if callable.is_side_effectful() {
+            return Ok(());
           }
         }
       }
@@ -1559,17 +1552,6 @@ fn fold_constants<'a>(
         }
       }
 
-      // avoid evaluating side-effectful functions in constant context
-      if let FunctionCallTarget::Name(name) = target {
-        let is_side_effectful = matches!(
-          name.as_str(),
-          "print" | "render" | "call" | "randv" | "randf" | "randi"
-        );
-        if is_side_effectful {
-          return Ok(());
-        }
-      }
-
       let arg_vals = match args
         .iter()
         .map(|arg| arg.as_literal().ok_or(()))
@@ -1593,9 +1575,11 @@ fn fold_constants<'a>(
             match val {
               TrackedValueRef::Const(val) => match val {
                 Value::Callable(callable) => {
-                  let evaled =
-                    ctx.invoke_callable(callable, &arg_vals, &kwarg_vals, &ctx.globals)?;
-                  *expr = evaled.into_literal_expr();
+                  if !callable.is_side_effectful() {
+                    let evaled =
+                      ctx.invoke_callable(callable, &arg_vals, &kwarg_vals, &ctx.globals)?;
+                    *expr = evaled.into_literal_expr();
+                  }
                 }
                 other => {
                   return Err(ErrorStack::new(format!(
@@ -1614,8 +1598,10 @@ fn fold_constants<'a>(
           }
         }
         FunctionCallTarget::Literal(callable) => {
-          let evaled = ctx.invoke_callable(callable, &arg_vals, &kwarg_vals, &ctx.globals)?;
-          *expr = evaled.into_literal_expr();
+          if !callable.is_side_effectful() {
+            let evaled = ctx.invoke_callable(callable, &arg_vals, &kwarg_vals, &ctx.globals)?;
+            *expr = evaled.into_literal_expr();
+          }
           Ok(())
         }
       }
