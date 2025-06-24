@@ -18,7 +18,9 @@ use rand::Rng;
 use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
   mesh_ops::{
+    extrude::extrude,
     extrude_pipe,
+    fan_fill::fan_fill,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
     mesh_ops::{convex_hull_from_verts, simplify_mesh},
     stitch_contours::stitch_contours,
@@ -1993,6 +1995,24 @@ pub(crate) fn eval_builtin_fn(
       }
       _ => unreachable!(),
     },
+    "extrude" => match def_ix {
+      0 => {
+        let up = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+        let mut out_mesh = (*mesh.mesh).clone();
+
+        extrude(&mut out_mesh, *up);
+
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(out_mesh),
+          transform: mesh.transform.clone(),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
+      }
+      _ => unimplemented!(),
+    },
     "stitch_contours" => match def_ix {
       0 => {
         let mut contours = arg_refs[0]
@@ -2024,6 +2044,42 @@ pub(crate) fn eval_builtin_fn(
 
         let mesh = stitch_contours(&mut contours, flipped, closed, cap_start, cap_end)
           .map_err(|err| err.wrap("Error in `stitch_contours`"))?;
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(mesh),
+          transform: Matrix4::identity(),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
+      }
+      _ => unimplemented!(),
+    },
+    "fan_fill" => match def_ix {
+      0 => {
+        let path = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_sequence()
+          .unwrap()
+          .clone_box()
+          .consume(ctx)
+          .map(|res| match res {
+            Ok(Value::Vec3(v)) => Ok(v),
+            Ok(val) => Err(ErrorStack::new(format!(
+              "Expected Vec3 in sequence passed to `fan_fill`, found: {val:?}"
+            ))),
+            Err(err) => Err(err),
+          })
+          .collect::<Result<Vec<_>, _>>()?;
+        let closed = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
+        let flipped = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
+        let center = match arg_refs[3].resolve(args, &kwargs) {
+          Value::Vec3(v) => Some(*v),
+          Value::Nil => None,
+          _ => None,
+        };
+
+        let mesh = fan_fill(&path, closed, flipped, center)
+          .map_err(|err| err.wrap("Error in `fan_fill`"))?;
         Ok(Value::Mesh(Rc::new(MeshHandle {
           mesh: Rc::new(mesh),
           transform: Matrix4::identity(),
@@ -2402,7 +2458,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "bezier3d" => define_builtin_fn!(bezier3d),
   "extrude_pipe" => define_builtin_fn!(extrude_pipe),
   "torus_knot_path" => define_builtin_fn!(torus_knot_path),
+  "extrude" => define_builtin_fn!(extrude),
   "stitch_contours" => define_builtin_fn!(stitch_contours),
+  "fan_fill" => define_builtin_fn!(fan_fill),
   "simplify" => define_builtin_fn!(simplify),
   "convex_hull" => define_builtin_fn!(convex_hull),
   "verts" => define_builtin_fn!(verts),

@@ -2804,6 +2804,26 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Mesh],
     },
   ],
+  "extrude" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "up",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: "Direction to extrude the mesh.  Vertices will be displaced by this amount."
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        }
+      ],
+      description: "Extrudes a mesh in the direction of `up` by displacing each vertex along that direction.  This is designed to be used with 2D meshes; using it on meshes with volume or thickness will probably not work.",
+      return_type: &[ArgType::Mesh],
+    }
+  ],
   "stitch_contours" => &[
     FnDef {
       arg_defs: &[
@@ -2847,6 +2867,38 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Stitches together a sequence of contours into a single mesh.  The contours should be closed loops.",
       return_type: &[ArgType::Mesh],
     },
+  ],
+  "fan_fill" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "path",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "A sequence of Vec3 points representing the path to fill"
+        },
+        ArgDef {
+          name: "closed",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(true)),
+          description: "If true, the path will be treated as closed - connecting the last point to the first."
+        },
+        ArgDef {
+          name: "flipped",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(false)),
+          description: "If true, the winding order of the triangles generated will be flipped - inverting the inside/outside of the generated mesh."
+        },
+        ArgDef {
+          name: "center",
+          valid_types: &[ArgType::Vec3, ArgType::Nil],
+          default_value: DefaultValue::Optional(|| Value::Nil),
+          description: "If provided, the center point for the fan will be placed at this position.  Otherwise, the center will be computed as the average of the points in the path."
+        }
+      ],
+      description: "Builds a fan of triangles from a sequence of points, filling the area inside them.  One triangle will be built for each pair of adjacent points in the path, connecting them to the center point.",
+      return_type: &[ArgType::Mesh],
+    }
   ],
   "simplify" => &[
     FnDef {
