@@ -21,6 +21,7 @@ use crate::{
     extrude_pipe,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
     mesh_ops::{convex_hull_from_verts, simplify_mesh},
+    stitch_contours::stitch_contours,
   },
   noise::fbm,
   path_building::{build_torus_knot_path, cubic_bezier_3d_path},
@@ -246,7 +247,7 @@ pub(crate) fn sub_impl(
       // mesh - mesh
       eval_mesh_boolean(
         0,
-        &[ArgRef::Positional(1), ArgRef::Positional(1)],
+        &[ArgRef::Positional(0), ArgRef::Positional(1)],
         &[lhs.clone(), rhs.clone()],
         &Default::default(),
         ctx,
@@ -1992,6 +1993,47 @@ pub(crate) fn eval_builtin_fn(
       }
       _ => unreachable!(),
     },
+    "stitch_contours" => match def_ix {
+      0 => {
+        let mut contours = arg_refs[0]
+          .resolve(args, &kwargs)
+          .as_sequence()
+          .unwrap()
+          .clone_box()
+          .consume(ctx)
+          .enumerate()
+          .map(|(contour_ix, res)| match res {
+            Ok(Value::Sequence(seq)) => Ok(seq.consume(ctx)),
+            Ok(val) => Err(ErrorStack::new(format!(
+              "Expected sequence of sequences in `stitch_contours`, found: {val:?} at contour \
+               index {contour_ix}",
+            ))),
+            Err(err) => Err(err.wrap(format!(
+              "Error evaluating contour sequence at index {contour_ix} in `stitch_contours`",
+            ))),
+          })
+          .collect::<Result<Vec<_>, _>>()?;
+        let flipped = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
+        let closed = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
+        let cap_start = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+        let cap_end = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
+        let cap_ends = arg_refs[5].resolve(args, &kwargs).as_bool().unwrap();
+
+        let cap_start = cap_ends || cap_start;
+        let cap_end = cap_ends || cap_end;
+
+        let mesh = stitch_contours(&mut contours, flipped, closed, cap_start, cap_end)
+          .map_err(|err| err.wrap("Error in `stitch_contours`"))?;
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(mesh),
+          transform: Matrix4::identity(),
+          manifold_handle: Rc::new(ManifoldHandle::new(0)),
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+        })))
+      }
+      _ => unimplemented!(),
+    },
     "simplify" => match def_ix {
       0 => {
         let tolerance = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
@@ -2360,6 +2402,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "bezier3d" => define_builtin_fn!(bezier3d),
   "extrude_pipe" => define_builtin_fn!(extrude_pipe),
   "torus_knot_path" => define_builtin_fn!(torus_knot_path),
+  "stitch_contours" => define_builtin_fn!(stitch_contours),
   "simplify" => define_builtin_fn!(simplify),
   "convex_hull" => define_builtin_fn!(convex_hull),
   "verts" => define_builtin_fn!(verts),

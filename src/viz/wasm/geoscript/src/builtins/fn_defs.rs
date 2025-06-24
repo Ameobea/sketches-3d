@@ -2804,6 +2804,50 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Mesh],
     },
   ],
+  "stitch_contours" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "contours",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "A `Seq<Seq<Vec3>>`, where each inner sequence contains points representing a contour that will be stitched together into a mesh"
+        },
+        ArgDef {
+          name: "flipped",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(false)),
+          description: "If true, the winding order of the triangles generated will be flipped - inverting the inside/outside of the generated mesh."
+        },
+        ArgDef {
+          name: "closed",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(true)),
+          description: "If true, the contours will be stitched together as closed loops - connecting the last point to the first for each one."
+        },
+        ArgDef {
+          name: "cap_start",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(false)),
+          description: "If true, a triangle fan will be created to cap the first contour"
+        },
+        ArgDef {
+          name: "cap_end",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(false)),
+          description: "If true, a triangle fan will be created to cap the last contour"
+        },
+        ArgDef {
+          name: "cap_ends",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(false)),
+          description: "shorthand for `cap_start=true, cap_end=true`"
+        }
+      ],
+      description: "Stitches together a sequence of contours into a single mesh.  The contours should be closed loops.",
+      return_type: &[ArgType::Mesh],
+    },
+  ],
   "simplify" => &[
     FnDef {
       arg_defs: &[

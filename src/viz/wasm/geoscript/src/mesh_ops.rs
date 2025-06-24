@@ -6,6 +6,7 @@ use crate::ErrorStack;
 
 pub mod mesh_boolean;
 pub mod mesh_ops;
+pub mod stitch_contours;
 
 pub fn extrude_pipe(
   get_radius: impl Fn(usize, Vec3) -> Result<f32, ErrorStack>,
