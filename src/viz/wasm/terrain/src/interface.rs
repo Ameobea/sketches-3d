@@ -45,6 +45,7 @@ pub extern "C" fn create_terrain_gen_ctx() -> *mut TerrainGenCtx {
   Box::into_raw(Box::new(TerrainGenCtx { noise_params: None }))
 }
 
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn malloc(size: usize) -> *mut u8 {
   let mut v: Vec<u8> = Vec::with_capacity(size);
@@ -56,6 +57,7 @@ pub extern "C" fn malloc(size: usize) -> *mut u8 {
   ptr
 }
 
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn free(ptr: *mut u8, size: usize) {
   drop(unsafe { Vec::from_raw_parts(ptr, size, size) });

@@ -1729,7 +1729,7 @@ impl EvalCtx {
   }
 }
 
-pub(crate) fn parse_program_src(src: &str) -> Result<Pair<Rule>, ErrorStack> {
+pub(crate) fn parse_program_src<'a>(src: &'a str) -> Result<Pair<'a, Rule>, ErrorStack> {
   let pairs = GSParser::parse(Rule::program, src)
     .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
   let Some(program) = pairs.into_iter().next() else {
@@ -2692,4 +2692,23 @@ out2 = fn2(|x| x + 2)
   let out2 = ctx.globals.get("out2").unwrap();
   let out2 = out2.as_int().expect("Expected result to be an Int");
   assert_eq!(out2, 125);
+}
+
+#[test]
+fn test_mesh_map_warp_shorthand() {
+  let src = r#"
+a = box(1)
+b = a -> |v: vec3, norm: vec3|: vec3 vec3(0)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let b = ctx.globals.get("b").unwrap();
+  let Value::Mesh(b) = b else {
+    panic!("Expected result to be a Mesh");
+  };
+  assert_eq!(b.mesh.vertices.len(), 8);
+  for vtx in b.mesh.vertices.values() {
+    assert_eq!(vtx.position, Vec3::new(0., 0., 0.));
+  }
 }

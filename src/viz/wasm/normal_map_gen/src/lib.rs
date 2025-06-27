@@ -146,6 +146,7 @@ fn magnitude(v: [f32; 3]) -> f32 {
   (v[0] + v[1] + v[2]) / 3.0
 }
 
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn malloc(size: usize) -> *mut u8 {
   let mut v = Vec::with_capacity(size);
@@ -154,6 +155,7 @@ pub extern "C" fn malloc(size: usize) -> *mut u8 {
   ptr
 }
 
+#[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn free(ptr: *mut u8) {
   unsafe {

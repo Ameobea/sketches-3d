@@ -1509,6 +1509,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Applies a function to each element of a sequence and returns a new sequence.  \n\nThis is lazy and will not evaluate the function until the output sequence is consumed.",
       return_type: &[ArgType::Sequence],
     },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "fn",
+          valid_types: &[ArgType::Callable],
+          default_value: DefaultValue::Required,
+          description: "Callable with signature `|vtx: Vec3, normal: Vec3|: Vec3` that will be invoked for each vertex in the new mesh, returning a new position for that vertex"
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Applies a function to each vertex in a mesh and returns a new mesh with the transformed vertices.",
+      return_type: &[ArgType::Mesh],
+    }
   ],
   "filter" => &[
     FnDef {

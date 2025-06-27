@@ -501,7 +501,7 @@ impl BinOp {
       BinOp::Map => {
         // this operator acts the same as `lhs | map(rhs)`
         let def_ix = get_binop_def_ix("map", &FN_SIGNATURE_DEFS["map"], &rhs, &lhs)?;
-        map_impl(def_ix, &rhs, &lhs)
+        map_impl(ctx, def_ix, &rhs, &lhs)
       }
     }
   }
