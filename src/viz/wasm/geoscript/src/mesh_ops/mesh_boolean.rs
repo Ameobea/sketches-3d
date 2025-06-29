@@ -12,7 +12,7 @@ use crate::MeshHandle;
 use crate::{ArgRef, EvalCtx, Value};
 
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(module = "src/viz/wasmComp/manifold")]
+#[wasm_bindgen(module = "src/geoscript/manifold")]
 extern "C" {
   pub fn apply_boolean(
     a_handle: usize,

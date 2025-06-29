@@ -5,5 +5,13 @@
     "**/bower_components": true,
     "**/*.code-search": true,
     "src/viz/wasm/geodesics/deps/**": true
+  },
+  "files.associations": {
+    "*.jsx": "javascript",
+    "*.hbs": "html",
+    "deque": "cpp",
+    "list": "cpp",
+    "vector": "cpp",
+    "ranges": "cpp"
   }
 }

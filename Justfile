@@ -51,3 +51,6 @@ build-csg-sandbox:
 
 build-geoscript:
   cd src/viz/wasm && just build-geoscript
+
+build-geodesics:
+  cd src/viz/wasm && just build-geodesics

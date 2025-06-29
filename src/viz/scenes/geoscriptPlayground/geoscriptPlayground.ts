@@ -9,8 +9,8 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi, { type ReplCtx } from './ReplUI.svelte';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
-import type { GeoscriptWorkerMethods } from 'src/viz/wasmComp/geoscriptWorker.worker';
-import GeoscriptWorker from 'src/viz/wasmComp/geoscriptWorker.worker?worker';
+import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
+import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
 
 const locations = {
   spawn: {

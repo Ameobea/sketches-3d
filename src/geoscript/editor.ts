@@ -14,13 +14,14 @@ import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
 
 import { parser } from './parser/geoscript';
 import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
-import { filterNils } from '../../util/util';
+import { filterNils } from '../viz/util/util';
 
 interface BuildEditorArgs {
   container: HTMLElement;
   customKeymap?: readonly KeyBinding[];
   initialCode?: string;
   readonly?: boolean;
+  lineNumbers?: boolean;
 }
 
 export const buildEditor = ({

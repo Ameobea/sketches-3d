@@ -832,12 +832,14 @@ export const initViz = (
       const Ammo = await getAmmoJS();
       viz.fpCtx = new BulletPhysics({ viz, Ammo, initialSpawnPos });
     } else if (sceneConf.viewMode.type === 'orbit') {
-      viz.orbitControls = await setupOrbitControls(
+      setupOrbitControls(
         viz.renderer.domElement,
         viz.camera,
         sceneConf.viewMode.pos,
         sceneConf.viewMode.target
-      );
+      ).then(controls => {
+        viz.orbitControls = controls;
+      });
     }
 
     viz.scene.add(scene);

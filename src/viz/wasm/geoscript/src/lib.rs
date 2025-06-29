@@ -9,17 +9,17 @@ use std::{
   sync::Mutex,
 };
 
-use ast::{optimize_ast, parse_program, Expr, FunctionCallTarget, Statement};
+use ast::{Expr, FunctionCallTarget, Statement};
 use fxhash::FxHashMap;
+use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
-use nalgebra::Matrix4;
+use nalgebra::{Matrix4, Vector2};
 use nanoserde::SerJson;
 use parry3d::{
   bounding_volume::Aabb,
   shape::{TriMesh, TriMeshBuilderError},
 };
 use pest::{
-  iterators::Pair,
   pratt_parser::{Assoc, Op, PrattParser},
   Parser,
 };
@@ -31,7 +31,7 @@ use smallvec::SmallVec;
 #[cfg(target_arch = "wasm32")]
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
-  ast::{ClosureArg, TypeName},
+  ast::{parse_statement, ClosureArg, TypeName},
   builtins::{
     fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
@@ -49,6 +49,7 @@ pub mod noise;
 pub mod path_building;
 mod seq;
 
+pub use self::ast::{optimize_ast, traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
 
 const PRELUDE: &str = include_str!("prelude.geo");
@@ -398,9 +399,12 @@ impl Drop for ManifoldHandle {
   }
 }
 
+pub type Vec2 = Vector2<f32>;
+
 pub enum Value {
   Int(i64),
   Float(f32),
+  Vec2(Vec2),
   Vec3(Vec3),
   Mesh(Rc<MeshHandle>),
   Light(Box<Light>),
@@ -417,6 +421,7 @@ impl Clone for Value {
     match self {
       Value::Int(i) => Value::Int(*i),
       Value::Float(f) => Value::Float(*f),
+      Value::Vec2(v2) => Value::Vec2(*v2),
       Value::Vec3(v3) => Value::Vec3(*v3),
       Value::Mesh(mesh) => Value::Mesh(Rc::clone(mesh)),
       Value::Light(light) => Value::Light(light.clone()),
@@ -435,6 +440,7 @@ impl Debug for Value {
     match self {
       Value::Int(i) => write!(f, "Int({i})"),
       Value::Float(fl) => write!(f, "Float({fl})"),
+      Value::Vec2(v2) => write!(f, "Vec2({}, {})", v2.x, v2.y),
       Value::Vec3(v3) => write!(f, "Vec3({}, {}, {})", v3.x, v3.y, v3.z),
       Value::Mesh(mesh) => write!(f, "{mesh:?}"),
       Value::Light(light) => write!(f, "{light:?}"),
@@ -534,6 +540,7 @@ impl Value {
     match self {
       Value::Int(_) => ArgType::Int,
       Value::Float(_) => ArgType::Float,
+      Value::Vec2(_) => ArgType::Vec2,
       Value::Vec3(_) => ArgType::Vec3,
       Value::Mesh(_) => ArgType::Mesh,
       Value::Light(_) => ArgType::Light,
@@ -552,6 +559,7 @@ pub enum ArgType {
   Int,
   Float,
   Numeric,
+  Vec2,
   Vec3,
   Mesh,
   Light,
@@ -570,6 +578,7 @@ impl ArgType {
       ArgType::Int => matches!(arg, Value::Int(_)),
       ArgType::Float => matches!(arg, Value::Float(_)),
       ArgType::Numeric => matches!(arg, Value::Int(_) | Value::Float(_)),
+      ArgType::Vec2 => matches!(arg, Value::Vec2(_)),
       ArgType::Vec3 => matches!(arg, Value::Vec3(_)),
       ArgType::Mesh => matches!(arg, Value::Mesh(_)),
       ArgType::Light => matches!(arg, Value::Light(_)),
@@ -592,6 +601,7 @@ impl ArgType {
       ArgType::Int => "int",
       ArgType::Float => "float",
       ArgType::Numeric => "num",
+      ArgType::Vec2 => "vec2",
       ArgType::Vec3 => "vec3",
       ArgType::Mesh => "mesh",
       ArgType::Light => "light",
@@ -612,6 +622,7 @@ impl ArgType {
       ArgType::Int => Some(Value::Int(0)),
       ArgType::Float => Some(Value::Float(0.)),
       ArgType::Numeric => None,
+      ArgType::Vec2 => Some(Value::Vec2(Vec2::new(0., 0.))),
       ArgType::Vec3 => Some(Value::Vec3(Vec3::new(0., 0., 0.))),
       ArgType::Mesh => Some(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(LinkedMesh::new(0, 0, None)),
@@ -1261,7 +1272,7 @@ impl EvalCtx {
         // TODO: ideally, we'd avoid cloning the scope here and use the scope nesting functionality
         // like closures.  However, adding in references to scopes creates incredibly lifetime
         // headaches across the whole codebase very quickly and just isn't worth it rn
-        let block_scope = scope.clone();
+        let block_scope = Scope::wrap(&Rc::new(scope.clone()));
         let mut last_value = Value::Nil;
 
         for statement in statements {
@@ -1272,11 +1283,25 @@ impl EvalCtx {
               break;
             }
             ControlFlow::Return(val) => {
+              for (key, val) in block_scope.vars.into_inner().unwrap() {
+                let exists = scope.get(&key).is_some();
+                if exists {
+                  scope.insert(key, val);
+                }
+              }
+
               return Ok(ControlFlow::Return(val));
             }
           };
           if let Statement::Assignment { .. } = statement {
             last_value = Value::Nil;
+          }
+        }
+
+        for (key, val) in block_scope.vars.into_inner().unwrap() {
+          let exists = scope.get(&key).is_some();
+          if exists {
+            scope.insert(key, val);
           }
         }
 
@@ -1729,39 +1754,43 @@ impl EvalCtx {
   }
 }
 
-pub(crate) fn parse_program_src<'a>(src: &'a str) -> Result<Pair<'a, Rule>, ErrorStack> {
+pub(crate) fn parse_program_src<'a>(src: &'a str) -> Result<Program, ErrorStack> {
   let pairs = GSParser::parse(Rule::program, src)
     .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
   let Some(program) = pairs.into_iter().next() else {
     return Err(ErrorStack::new("No program found in input"));
   };
-  Ok(program)
+
+  if program.as_rule() != Rule::program {
+    return Err(ErrorStack::new(format!(
+      "`parse_program` can only handle `program` rules, found: {:?}",
+      program.as_rule()
+    )));
+  }
+
+  let statements = program
+    .into_inner()
+    .map(parse_statement)
+    .filter_map_ok(|s| s)
+    .collect::<Result<Vec<_>, ErrorStack>>()?;
+
+  Ok(Program { statements })
 }
 
-pub fn parse_and_eval_program_with_ctx(
+pub fn parse_program_maybe_with_prelude(
   src: String,
-  ctx: &EvalCtx,
   include_prelude: bool,
-) -> Result<(), ErrorStack> {
+) -> Result<Program, ErrorStack> {
   let src = if include_prelude {
     format!("{}\n{src}", PRELUDE)
   } else {
     src
   };
-  let program = parse_program_src(&src)?;
+  parse_program_src(&src)
+}
 
-  if program.as_rule() != Rule::program {
-    return Err(ErrorStack::new(format!(
-      "Expected top-level rule. Expected program, found: {:?}",
-      program.as_rule()
-    )));
-  }
-
-  let mut ast = parse_program(program.clone())?;
-  optimize_ast(ctx, &mut ast)?;
-  // log::info!("{ast:?}");
-
-  for statement in ast.statements {
+pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
+  for statement in &ast.statements {
     let _val = match ctx.eval_statement(&statement, &ctx.globals)? {
       ControlFlow::Continue(val) => val,
       ControlFlow::Break(_) => {
@@ -1776,6 +1805,21 @@ pub fn parse_and_eval_program_with_ctx(
       }
     };
   }
+
+  Ok(())
+}
+
+pub fn parse_and_eval_program_with_ctx(
+  src: String,
+  ctx: &EvalCtx,
+  include_prelude: bool,
+) -> Result<(), ErrorStack> {
+  let mut ast = parse_program_maybe_with_prelude(src, include_prelude)
+    .map_err(|err| err.wrap("Error parsing program"))?;
+
+  optimize_ast(ctx, &mut ast)?;
+
+  eval_program_with_ctx(ctx, &ast).map_err(|err| err.wrap("Error evaluating program"))?;
 
   Ok(())
 }
@@ -2711,4 +2755,77 @@ b = a -> |v: vec3, norm: vec3|: vec3 vec3(0)
   for vtx in b.mesh.vertices.values() {
     assert_eq!(vtx.position, Vec3::new(0., 0., 0.));
   }
+}
+
+#[test]
+fn test_block_assignment_scoping() {
+  let src = r#"
+x = 0
+{
+  x = 1
+}
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = dbg!(ctx.globals).get("x").unwrap();
+  let x = x.as_int().expect("Expected result to be an Int");
+  assert_eq!(x, 1);
+}
+
+#[test]
+fn test_assign_to_arg() {
+  let src = r#"
+f = |x: int| {
+  if x < 0 {
+    x = 0
+  }
+  return x + 1
+}
+
+a = f(-1)
+b = f(2)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let a = a.as_int().expect("Expected result to be an Int");
+  assert_eq!(a, 0 + 1);
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().expect("Expected result to be an Int");
+  assert_eq!(b, 2 + 1);
+}
+
+#[test]
+fn test_multi_conditional_const_eval() {
+  let src = r#"
+f = |x: int| {
+  y = 1
+  if x == 0 {
+    y = 0
+  }
+  if y == 1 {
+    return true
+  }
+  return false
+}
+a = f(0)
+b = f(1)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let Value::Bool(a) = a else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(!a, "Expected a to be false");
+
+  let b = ctx.globals.get("b").unwrap();
+  let Value::Bool(b) = b else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(b, "Expected b to be true");
 }

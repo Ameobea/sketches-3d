@@ -29,8 +29,8 @@
   import { EditorView, type KeyBinding } from '@codemirror/view';
   import type * as Comlink from 'comlink';
 
-  import type { GeoscriptWorkerMethods } from 'src/viz/wasmComp/geoscriptWorker.worker';
-  import { buildEditor } from './editor';
+  import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
+  import { buildEditor } from '../../../geoscript/editor';
   import { buildAndAddLight } from './lights';
 
   let {

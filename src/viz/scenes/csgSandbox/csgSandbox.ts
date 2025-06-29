@@ -5,7 +5,7 @@ import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
-import { initManifoldWasm } from 'src/viz/wasmComp/manifold';
+import { initManifoldWasm } from 'src/geoscript/manifold';
 
 export const processLoadedScene = async (
   viz: Viz,

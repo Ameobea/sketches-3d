@@ -2,24 +2,32 @@ import * as Comlink from 'comlink';
 
 import { initManifoldWasm } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
-
-const getGeoscript = () =>
-  import('src/viz/wasmComp/geoscript_repl').then(async engine => {
-    await engine.default();
-    return engine;
-  });
-
-let Geoscript: typeof import('src/viz/wasmComp/geoscript_repl');
+import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
+import { initGeodesics } from './geodesics';
 
 const initGeoscript = async () => {
-  if (Geoscript) {
-    return Geoscript;
-  }
-  Geoscript = await getGeoscript();
+  await Geoscript.default();
   return Geoscript;
 };
 
 const filterNils = <T>(arr: (T | null | undefined)[]): T[] => arr.filter((x): x is T => x != null);
+
+interface GeoscriptAsyncDeps {
+  geodesics: boolean;
+}
+
+const initAsyncDeps = (deps: GeoscriptAsyncDeps) => {
+  const promises: Promise<void>[] = [];
+  if (deps.geodesics) {
+    promises.push(initGeodesics());
+  }
+
+  if (!promises.length) {
+    return null;
+  }
+
+  return Promise.all(promises);
+};
 
 const methods = {
   init: async () => {
@@ -27,34 +35,29 @@ const methods = {
     return repl.geoscript_repl_init();
   },
   reset: (ctxPtr: number) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
     return Geoscript.geoscript_repl_reset(ctxPtr);
   },
-  eval: (ctxPtr: number, code: string, includePrelude: boolean) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
+  eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
+    Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
+    if (Geoscript.geoscript_repl_has_err(ctxPtr)) {
+      return;
     }
-    Geoscript.geoscript_repl_eval(ctxPtr, code, includePrelude);
+
+    const deps: GeoscriptAsyncDeps = JSON.parse(Geoscript.geoscript_repl_get_async_dependencies(ctxPtr));
+    const depsPromise = initAsyncDeps(deps);
+    if (depsPromise) {
+      await depsPromise;
+    }
+
+    Geoscript.geoscript_repl_eval(ctxPtr);
   },
   getErr: (ctxPtr: number) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
     return Geoscript.geoscript_repl_get_err(ctxPtr);
   },
   getRenderedMeshCount: (ctxPtr: number) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
     return Geoscript.geoscript_repl_get_rendered_mesh_count(ctxPtr);
   },
   getRenderedMesh: (ctxPtr: number, meshIx: number) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
-
     const transform = Geoscript.geoscript_repl_get_rendered_mesh_transform(ctxPtr, meshIx);
     const verts = Geoscript.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, meshIx);
     const indices = Geoscript.geoscript_repl_get_rendered_mesh_indices(ctxPtr, meshIx);
@@ -66,28 +69,16 @@ const methods = {
     );
   },
   getRenderedPathCount: (ctxPtr: number) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
     return Geoscript.geoscript_get_rendered_path_count(ctxPtr);
   },
   getRenderedPathVerts: (ctxPtr: number, pathIx: number) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
     const verts = Geoscript.geoscript_get_rendered_path(ctxPtr, pathIx);
     return Comlink.transfer(verts, [verts.buffer]);
   },
   getRenderedLightCount: (ctxPtr: number) => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
     return Geoscript.geoscript_get_rendered_light_count(ctxPtr);
   },
   getRenderedLight: (ctxPtr: number, lightIx: number): Light => {
-    if (!Geoscript) {
-      throw new Error('Geoscript not initialized');
-    }
     const light = JSON.parse(Geoscript.geoscript_get_rendered_light(ctxPtr, lightIx));
     return Comlink.transfer(light, []);
   },

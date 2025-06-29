@@ -12,11 +12,16 @@ using namespace geometrycentral;
 #include <cmath>
 #include <iostream>
 #include <queue>
+#include <algorithm>
+#include <stdexcept>
+#include <tuple>
+#include <vector>
+#include <limits>
 
 std::tuple<
   std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh>,
   std::unique_ptr<geometrycentral::surface::VertexPositionGeometry>>
-loadMesh(std::vector<uint32_t> indices, std::vector<float> positions) {
+loadMesh(const std::vector<uint32_t>& indices, const std::vector<float>& positions) {
   if (indices.size() % 3 != 0) {
     throw std::invalid_argument("indicesLength must be a multiple of 3");
   }
@@ -47,12 +52,10 @@ loadMesh(std::vector<uint32_t> indices, std::vector<float> positions) {
   return geometrycentral::surface::makeManifoldSurfaceMeshAndGeometry(vMat, fMat);
 }
 
-class ComputeGeodesicsOutput {
-public:
+struct ComputeGeodesicsOutput {
   std::vector<float> projectedPositions;
 
-  ComputeGeodesicsOutput(uint32_t pointCount) {
-    projectedPositions = std::vector<float>();
+  explicit ComputeGeodesicsOutput(uint32_t pointCount) {
     projectedPositions.reserve(pointCount * 3);
   }
 };
@@ -62,13 +65,11 @@ public:
  */
 double
 normalizeAngle(double angle) {
-  while (angle < -PI) {
+  angle = fmod(angle + PI, 2. * PI);
+  if (angle < 0.0) {
     angle += 2.0 * PI;
   }
-  while (angle >= PI) {
-    angle -= 2.0 * PI;
-  }
-  return angle;
+  return angle - PI;
 }
 
 /**
@@ -115,59 +116,44 @@ computeAngleAndDistance(
   return std::make_tuple(angle, distance);
 }
 
-class WalkCoordOutput {
-public:
+struct WalkCoordOutput {
+  std::vector<surface::SurfacePoint> pathPoints;
   surface::SurfacePoint pathEndpoint;
-  float cartX;
-  float cartY;
-  float cartZ;
   double incomingTangentSpaceAngle;
   double incoming2DAngle;
 
   WalkCoordOutput(
-    float cartX,
-    float cartY,
-    float cartZ,
-    surface::SurfacePoint pathEndpoint,
+    std::vector<surface::SurfacePoint> pathPoints,
+    const surface::SurfacePoint& pathEndpoint,
     double incomingTangentSpaceAngle,
     double incoming2DAngle
-  ) {
-    this->cartX = cartX;
-    this->cartY = cartY;
-    this->cartZ = cartZ;
-    this->pathEndpoint = pathEndpoint;
-    this->incomingTangentSpaceAngle = incomingTangentSpaceAngle;
-    this->incoming2DAngle = incoming2DAngle;
-  }
+  ) : pathPoints(std::move(pathPoints)),
+      pathEndpoint(pathEndpoint),
+      incomingTangentSpaceAngle(incomingTangentSpaceAngle),
+      incoming2DAngle(incoming2DAngle) {}
 };
 
 std::tuple<float, float, float>
-getSurfacePointCoords(surface::VertexPositionGeometry& targetGeometry, surface::SurfacePoint surfacePoint) {
+getSurfacePointCoords(surface::VertexPositionGeometry& targetGeometry, const surface::SurfacePoint& surfacePoint) {
   if (surfacePoint.type == surface::SurfacePointType::Face) {
     // location inside that face, as barycentric coordinates (numbered according to the iteration order of vertices
     // about the face)
     auto coords = surfacePoint.faceCoords;
-    size_t faceIx = surfacePoint.face.getIndex();
     auto face = surfacePoint.face;
 
-    auto i = 0;
-    surface::Vertex v0, v1, v2;
+    std::vector<surface::Vertex> face_vertices;
+    face_vertices.reserve(3);
     for (auto v : face.adjacentVertices()) {
-      if (i == 0) {
-        v0 = v;
-      } else if (i == 1) {
-        v1 = v;
-      } else if (i == 2) {
-        v2 = v;
-      } else {
-        throw std::invalid_argument("face has more than 3 vertices");
-      }
-      i += 1;
+      face_vertices.push_back(v);
     }
 
-    Vector3& v0Pos = targetGeometry.inputVertexPositions[v0];
-    Vector3& v1Pos = targetGeometry.inputVertexPositions[v1];
-    Vector3& v2Pos = targetGeometry.inputVertexPositions[v2];
+    if (face_vertices.size() != 3) {
+      throw std::invalid_argument("face has more than 3 vertices");
+    }
+
+    Vector3& v0Pos = targetGeometry.inputVertexPositions[face_vertices[0]];
+    Vector3& v1Pos = targetGeometry.inputVertexPositions[face_vertices[1]];
+    Vector3& v2Pos = targetGeometry.inputVertexPositions[face_vertices[2]];
 
     // cartesian coordinates of the point in the triangle
     float cartX = coords.x * v0Pos.x + coords.y * v1Pos.x + coords.z * v2Pos.x;
@@ -176,8 +162,8 @@ getSurfacePointCoords(surface::VertexPositionGeometry& targetGeometry, surface::
 
     return std::make_tuple(cartX, cartY, cartZ);
   } else if (surfacePoint.type == surface::SurfacePointType::Vertex) {
-    surface::Vertex& vertex = surfacePoint.vertex;
-    Vector3& coords = targetGeometry.inputVertexPositions[vertex];
+    const surface::Vertex& vertex = surfacePoint.vertex;
+    const Vector3& coords = targetGeometry.inputVertexPositions[vertex];
     return std::make_tuple(coords.x, coords.y, coords.z);
   } else if (surfacePoint.type == surface::SurfacePointType::Edge) {
     // throw std::invalid_argument("path endpoint is an edge at index " + std::to_string(surfacePoint.edge.getIndex()));
@@ -204,7 +190,7 @@ walkCoord(
   float x,
   float y,
   surface::VertexPositionGeometry& targetGeometry,
-  surface::SurfacePoint startSurfacePoint,
+  const surface::SurfacePoint& startSurfacePoint,
   float startX,
   float startY,
   double incomingTangentSpaceAngle,
@@ -215,17 +201,18 @@ walkCoord(
   std::tie(angle, distance) = computeAngleAndDistance(x, y, startX, startY, incomingTangentSpaceAngle, incoming2DAngle);
 
   if (distance == 0.) {
-    float cartX, cartY, cartZ;
-    std::tie(cartX, cartY, cartZ) = getSurfacePointCoords(targetGeometry, startSurfacePoint);
-    return WalkCoordOutput(cartX, cartY, cartZ, startSurfacePoint, incomingTangentSpaceAngle, incoming2DAngle);
+    return WalkCoordOutput(
+      { startSurfacePoint },
+      startSurfacePoint,
+      incomingTangentSpaceAngle,
+      incoming2DAngle
+    );
   }
 
   Vector2 traceVec = distance * Vector2::fromAngle(angle);
-  auto traceRes = traceGeodesic(targetGeometry, startSurfacePoint, traceVec);
+  auto traceRes = traceGeodesic(targetGeometry, startSurfacePoint, traceVec, traceOptions);
 
   surface::SurfacePoint pathEndpoint = traceRes.endPoint;
-  float cartX, cartY, cartZ;
-  std::tie(cartX, cartY, cartZ) = getSurfacePointCoords(targetGeometry, pathEndpoint);
 
   // if (traceRes.hitBoundary) {
   //   throw std::invalid_argument("hit boundary at index " + std::to_string(traceRes.hitBoundaryIndex));
@@ -234,7 +221,7 @@ walkCoord(
   Vector2 endDir = traceRes.endingDir;
   double newIncomingTangentSpaceAngle = atan2(endDir.y, endDir.x);
   double newIncoming2DAngle = atan2(y - startY, x - startX);
-  return WalkCoordOutput(cartX, cartY, cartZ, pathEndpoint, newIncomingTangentSpaceAngle, newIncoming2DAngle);
+  return WalkCoordOutput(std::move(traceRes.pathPoints), pathEndpoint, newIncomingTangentSpaceAngle, newIncoming2DAngle);
 }
 
 using Graph = std::vector<std::vector<uint32_t>>;
@@ -242,6 +229,9 @@ using Graph = std::vector<std::vector<uint32_t>>;
 Graph
 buildGraph(const std::vector<uint32_t>& indicesToWalk) {
   Graph graph;
+  if (indicesToWalk.empty()) {
+    return graph;
+  }
   auto maxVertexIdx = *std::max_element(indicesToWalk.begin(), indicesToWalk.end());
   graph.resize(maxVertexIdx + 1);
 
@@ -269,8 +259,7 @@ buildGraph(const std::vector<uint32_t>& indicesToWalk) {
 
 const uint32_t INVALID_VERTEX_IX = 4294967295;
 
-class BFSQueueEntry {
-public:
+struct BFSQueueEntry {
   uint32_t vertexIdx;
   surface::SurfacePoint surfacePoint;
   float x;
@@ -280,112 +269,136 @@ public:
 
   BFSQueueEntry(
     uint32_t vertexIdx,
-    surface::SurfacePoint surfacePoint,
+    const surface::SurfacePoint& surfacePoint,
     float x,
     float y,
     double incomingTangentSpaceAngle,
     double incoming2DAngle
-  ) {
-    this->vertexIdx = vertexIdx;
-    this->surfacePoint = surfacePoint;
-    this->x = x;
-    this->y = y;
-    this->incomingTangentSpaceAngle = incomingTangentSpaceAngle;
-    this->incoming2DAngle = incoming2DAngle;
-  }
+  ) : vertexIdx(vertexIdx),
+      surfacePoint(surfacePoint),
+      x(x),
+      y(y),
+      incomingTangentSpaceAngle(incomingTangentSpaceAngle),
+      incoming2DAngle(incoming2DAngle) {}
 
-  // default constructor
-  BFSQueueEntry() { this->vertexIdx = INVALID_VERTEX_IX; }
+  // default constructor for vector resizing
+  BFSQueueEntry() : vertexIdx(INVALID_VERTEX_IX) {}
 };
 
-#include <cmath>
-#include <limits>
-#include <unordered_map>
-#include <vector>
-
-class GridPoint {
-public:
-  float x, y;
-  uint32_t data;
-
-  GridPoint(float x, float y, uint32_t data)
-    : x(x)
-    , y(y)
-    , data(data) {}
-
-  float distance(const GridPoint& other) const {
-    float dx = x - other.x;
-    float dy = y - other.y;
-    return std::sqrt(dx * dx + dy * dy);
-  }
-};
-
-class Grid {
+class KDTree {
 private:
-  std::unordered_map<int, std::unordered_map<int, std::vector<GridPoint>>> grid;
-  float bucketSize;
+  struct Point {
+    float x, y;
+    uint32_t data;
+  };
 
-  int getBucketIndex(float coordinate) const { return static_cast<int>(std::floor(coordinate / bucketSize)); }
+  struct Node {
+    Point pt;
+    Node *left = nullptr;
+    Node *right = nullptr;
+  };
 
-public:
-  Grid(float bucketSize)
-    : bucketSize(bucketSize) {}
+  std::vector<Point> points_copy;
+  std::vector<Node> node_pool;
+  size_t next_node_idx = 0;
+  Node* root = nullptr;
 
-  void addPoint(float x, float y, uint32_t data) {
-    int bx = getBucketIndex(x);
-    int by = getBucketIndex(y);
-    grid[bx][by].emplace_back(x, y, data);
+  Node* newNode(const Point& pt) {
+    if (next_node_idx >= node_pool.size()) {
+      throw std::runtime_error("KDTree node pool exhausted");
+    }
+    Node* node = &node_pool[next_node_idx++];
+    node->pt = pt;
+    node->left = nullptr;
+    node->right = nullptr;
+    return node;
   }
 
-  uint32_t findClosestPoint(float x, float y) {
-    int bx = getBucketIndex(x);
-    int by = getBucketIndex(y);
-
-    float minDistance = std::numeric_limits<float>::max();
-    uint32_t closestData;
-    bool pointFound = false;
-
-    for (int radius = 1; radius <= 16 && !pointFound; ++radius) {
-      int startX = bx - radius;
-      int endX = bx + radius;
-      int startY = by - radius;
-      int endY = by + radius;
-
-      for (int i = startX; i <= endX; ++i) {
-        for (int j = startY; j <= endY; ++j) {
-          if (i < startX + radius && i > endX - radius && j < startY + radius && j > endY - radius) {
-            // Skip the inner buckets which have already been checked
-            continue;
-          }
-
-          for (const GridPoint& point : grid[i][j]) {
-            float dist = point.distance(GridPoint(x, y, 0));
-            if (dist < minDistance) {
-              minDistance = dist;
-              closestData = point.data;
-              pointFound = true;
-            }
-          }
-        }
-      }
+  Node* build(typename std::vector<Point>::iterator begin, typename std::vector<Point>::iterator end, int depth) {
+    if (begin >= end) {
+      return nullptr;
     }
 
-    if (!pointFound) {
+    int axis = depth % 2;
+    size_t len = std::distance(begin, end);
+    auto mid = begin + len / 2;
+
+    std::nth_element(begin, mid, end, [axis](const Point& a, const Point& b) {
+      return axis == 0 ? a.x < b.x : a.y < b.y;
+    });
+
+    Node* node = newNode(*mid);
+    node->left = build(begin, mid, depth + 1);
+    node->right = build(mid + 1, end, depth + 1);
+    return node;
+  }
+
+  void findClosest(Node* node, const Point& target, Point& best, float& min_dist_sq, int depth) const {
+    if (!node) {
+      return;
+    }
+
+    float dx_node = target.x - node->pt.x;
+    float dy_node = target.y - node->pt.y;
+    float d_sq = dx_node * dx_node + dy_node * dy_node;
+
+    if (d_sq < min_dist_sq) {
+      min_dist_sq = d_sq;
+      best = node->pt;
+    }
+
+    int axis = depth % 2;
+    float delta = axis == 0 ? dx_node : dy_node;
+
+    Node *near_child = delta < 0 ? node->left : node->right;
+    Node *far_child = delta < 0 ? node->right : node->left;
+
+    findClosest(near_child, target, best, min_dist_sq, depth + 1);
+
+    if (delta * delta < min_dist_sq) {
+      findClosest(far_child, target, best, min_dist_sq, depth + 1);
+    }
+  }
+
+public:
+  explicit KDTree(const std::vector<std::tuple<float, float, uint32_t>>& initial_points) {
+    if (initial_points.empty()) {
+      return;
+    }
+
+    points_copy.reserve(initial_points.size());
+    for(const auto& [x, y, data] : initial_points) {
+      points_copy.push_back({x, y, data});
+    }
+
+    node_pool.resize(points_copy.size());
+    next_node_idx = 0;
+    root = build(points_copy.begin(), points_copy.end(), 0);
+  }
+
+  uint32_t findClosestPoint(float x, float y) const {
+    if (!root) {
       throw std::runtime_error("No point found within the search radius");
     }
 
-    return closestData;
+    Point target = {x, y, 0};
+    Point best = root->pt;
+    float dx_root = target.x - root->pt.x;
+    float dy_root = target.y - root->pt.y;
+    float min_dist_sq = dx_root * dx_root + dy_root * dy_root;
+
+    findClosest(root, target, best, min_dist_sq, 0);
+    return best.data;
   }
 };
 
 ComputeGeodesicsOutput
 computeGeodesics(
-  std::vector<uint32_t> targetMeshIndices,
-  std::vector<float> targetMeshPositions,
-  std::vector<float> coordsToWalk,
-  std::vector<uint32_t> indicesToWalk,
-  float midpointX,
-  float midpointY
+  const std::vector<uint32_t>& targetMeshIndices,
+  const std::vector<float>& targetMeshPositions,
+  const std::vector<float>& coordsToWalk,
+  const std::vector<uint32_t>& indicesToWalk,
+  bool fullPath
 ) {
   std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh> targetMesh;
   std::unique_ptr<geometrycentral::surface::VertexPositionGeometry> targetGeometry;
@@ -396,15 +409,17 @@ computeGeodesics(
 
   surface::TraceOptions traceOptions;
   traceOptions.errorOnProblem = true;
-  traceOptions.includePath = false;
+  traceOptions.includePath = fullPath;
 
   uint32_t coordCount = coordsToWalk.size() / 2;
-  ComputeGeodesicsOutput output = ComputeGeodesicsOutput(coordCount);
-  output.projectedPositions.resize(coordCount * 3);
+  ComputeGeodesicsOutput output(coordCount);
+  if (!fullPath) {
+    output.projectedPositions.resize(coordCount * 3);
+  }
 
   Graph graph = buildGraph(indicesToWalk);
 
-  Grid processedCoordsGrid(5.);
+  std::vector<std::tuple<float, float, uint32_t>> processedCoords;
 
   // Start BFS from the first vertex
   std::queue<BFSQueueEntry> bfsQueue;
@@ -416,8 +431,8 @@ computeGeodesics(
 
   while (true) {
     while (!bfsQueue.empty()) {
-      uint32_t curVertexIdx = bfsQueue.front().vertexIdx;
-      if (visited[curVertexIdx].vertexIdx != INVALID_VERTEX_IX) {
+      uint32_t inVtxIx = bfsQueue.front().vertexIdx;
+      if (visited[inVtxIx].vertexIdx != INVALID_VERTEX_IX) {
         bfsQueue.pop();
         continue;
       }
@@ -428,22 +443,36 @@ computeGeodesics(
 
       float startX = entry.x;
       float startY = entry.y;
-      float x = coordsToWalk[curVertexIdx * 2 + 0];
-      float y = coordsToWalk[curVertexIdx * 2 + 1];
+      float x = coordsToWalk[inVtxIx * 2 + 0];
+      float y = coordsToWalk[inVtxIx * 2 + 1];
 
       WalkCoordOutput walkOutput = walkCoord(
         x, y, *targetGeometry, startSurfacePoint, startX, startY, entry.incomingTangentSpaceAngle,
         entry.incoming2DAngle, traceOptions
       );
-      output.projectedPositions[curVertexIdx * 3 + 0] = walkOutput.cartX;
-      output.projectedPositions[curVertexIdx * 3 + 1] = walkOutput.cartY;
-      output.projectedPositions[curVertexIdx * 3 + 2] = walkOutput.cartZ;
-      auto endpoint = walkOutput.pathEndpoint;
-      visited[curVertexIdx] =
-        BFSQueueEntry(curVertexIdx, endpoint, x, y, walkOutput.incomingTangentSpaceAngle, walkOutput.incoming2DAngle);
-      processedCoordsGrid.addPoint(x, y, curVertexIdx);
 
-      for (auto neighbor : graph[curVertexIdx]) {
+      if (fullPath) {
+        for (const auto& pathPoint : walkOutput.pathPoints) {
+          float cartX, cartY, cartZ;
+          std::tie(cartX, cartY, cartZ) = getSurfacePointCoords(*targetGeometry, pathPoint);
+          output.projectedPositions.push_back(cartX);
+          output.projectedPositions.push_back(cartY);
+          output.projectedPositions.push_back(cartZ);
+        }
+      } else {
+        float cartX, cartY, cartZ;
+        std::tie(cartX, cartY, cartZ) = getSurfacePointCoords(*targetGeometry, walkOutput.pathEndpoint);
+        output.projectedPositions[inVtxIx * 3 + 0] = cartX;
+        output.projectedPositions[inVtxIx * 3 + 1] = cartY;
+        output.projectedPositions[inVtxIx * 3 + 2] = cartZ;
+      }
+
+      auto endpoint = walkOutput.pathEndpoint;
+      visited[inVtxIx] =
+        BFSQueueEntry(inVtxIx, endpoint, x, y, walkOutput.incomingTangentSpaceAngle, walkOutput.incoming2DAngle);
+      processedCoords.emplace_back(x, y, inVtxIx);
+
+      for (auto neighbor : graph[inVtxIx]) {
         if (visited[neighbor].vertexIdx != INVALID_VERTEX_IX) {
           continue;
         }
@@ -453,7 +482,7 @@ computeGeodesics(
       }
     }
 
-    // TODO: use a better method to find closest unvisited vertex
+    // Find the closest unvisited vertex
     uint32_t unvisitedVertexIx = INVALID_VERTEX_IX;
     for (uint32_t i = 0; i < coordCount; i += 1) {
       if (visited[i].vertexIdx == INVALID_VERTEX_IX) {
@@ -469,7 +498,8 @@ computeGeodesics(
     auto unvisitedX = coordsToWalk[unvisitedVertexIx * 2 + 0];
     auto unvisitedY = coordsToWalk[unvisitedVertexIx * 2 + 1];
 
-    uint32_t closestVertexIx = processedCoordsGrid.findClosestPoint(unvisitedX, unvisitedY);
+    KDTree processedCoordsTree(processedCoords);
+    uint32_t closestVertexIx = processedCoordsTree.findClosestPoint(unvisitedX, unvisitedY);
 
     if (closestVertexIx == INVALID_VERTEX_IX) {
       throw std::invalid_argument("no closest vertex found");

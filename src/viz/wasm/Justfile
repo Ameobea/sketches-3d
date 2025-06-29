@@ -59,19 +59,21 @@ build-geodesics:
   set -e
 
   cd ./geodesics
-  echo "fetch submodules if ./deps/geometry-central/README.md doesn't exist" > /dev/null
   if [ ! -f ./deps/geometry-central/README.md ]; then
     echo "fetching submodules"
     git submodule update --init --recursive
   fi
 
-  echo "need to do full build with CMake if ./build/CMakeCache.txt doesn't exist" > /dev/null
   if [ ! -f ./build/CMakeCache.txt ]; then
     echo "doing full build with CMake"
     just build-all
   else
     just build
   fi
+
+  cd ..
+  cp -r ./geodesics/build/bin/* ../../../src/geodesics/
+  cp -r ./geodesics/build/bin/* ../../../static/
 
 debug:
   cargo build --target wasm32-unknown-unknown --workspace

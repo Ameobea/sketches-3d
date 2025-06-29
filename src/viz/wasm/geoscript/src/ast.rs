@@ -334,6 +334,86 @@ impl Expr {
         .any(|stmt| stmt.inline_const_captures(local_scope)),
     }
   }
+
+  fn traverse(&self, cb: &mut impl FnMut(&Self)) {
+    fn traverse_stmt(stmt: &Statement, cb: &mut impl FnMut(&Expr)) {
+      match stmt {
+        Statement::Assignment { expr, .. } => expr.traverse(cb),
+        Statement::Expr(expr) => expr.traverse(cb),
+        Statement::Return { value } => {
+          if let Some(expr) = value {
+            expr.traverse(cb);
+          }
+        }
+        Statement::Break { value } => {
+          if let Some(expr) = value {
+            expr.traverse(cb);
+          }
+        }
+      }
+    }
+
+    match self {
+      Expr::BinOp { lhs, rhs, .. } => {
+        cb(self);
+        lhs.traverse(cb);
+        rhs.traverse(cb);
+      }
+      Expr::PrefixOp { expr, .. } => {
+        cb(self);
+        expr.traverse(cb);
+      }
+      Expr::Range { start, end, .. } => {
+        cb(self);
+        start.traverse(cb);
+        end.traverse(cb);
+      }
+      Expr::StaticFieldAccess { lhs, .. } => {
+        cb(self);
+        lhs.traverse(cb);
+      }
+      Expr::FieldAccess { lhs, field } => {
+        cb(self);
+        lhs.traverse(cb);
+        field.traverse(cb);
+      }
+      Expr::Call(call) => {
+        cb(self);
+        call.args.iter().for_each(|arg| arg.traverse(cb));
+        call.kwargs.values().for_each(|kwarg| kwarg.traverse(cb));
+      }
+      Expr::Closure { body, .. } => {
+        cb(self);
+        body.0.iter().for_each(|stmt| traverse_stmt(stmt, cb));
+      }
+      Expr::Ident(_) | Expr::Literal(_) | Expr::ArrayLiteral(_) | Expr::MapLiteral(_) => {
+        cb(self);
+      }
+      Expr::Conditional {
+        cond,
+        then,
+        else_if_exprs,
+        else_expr,
+      } => {
+        cb(self);
+        cond.traverse(cb);
+        then.traverse(cb);
+        for (cond, expr) in else_if_exprs {
+          cond.traverse(cb);
+          expr.traverse(cb);
+        }
+        if let Some(else_expr) = else_expr {
+          else_expr.traverse(cb);
+        }
+      }
+      Expr::Block { statements } => {
+        cb(self);
+        for stmt in statements {
+          traverse_stmt(stmt, cb);
+        }
+      }
+    }
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -1060,7 +1140,7 @@ fn parse_break_statement(return_stmt: Pair<Rule>) -> Result<Statement, ErrorStac
   Ok(Statement::Break { value })
 }
 
-fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, ErrorStack> {
+pub(crate) fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, ErrorStack> {
   match stmt.as_rule() {
     Rule::assignment => parse_assignment(stmt).map(Some),
     Rule::expr => Ok(Some(Statement::Expr(parse_expr(stmt)?))),
@@ -1069,23 +1149,6 @@ fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, ErrorStack> {
     Rule::EOI => Ok(None),
     _ => unreachable!("Unexpected statement rule: {:?}", stmt.as_rule()),
   }
-}
-
-pub fn parse_program(program: Pair<Rule>) -> Result<Program, ErrorStack> {
-  if program.as_rule() != Rule::program {
-    return Err(ErrorStack::new(format!(
-      "`parse_program` can only handle `program` rules, found: {:?}",
-      program.as_rule()
-    )));
-  }
-
-  let statements = program
-    .into_inner()
-    .map(parse_statement)
-    .filter_map_ok(|s| s)
-    .collect::<Result<Vec<_>, ErrorStack>>()?;
-
-  Ok(Program { statements })
 }
 
 #[derive(Debug)]
@@ -1724,22 +1787,64 @@ fn fold_constants<'a>(
       else_if_exprs,
       else_expr,
     } => {
+      // TODO: check if conditions are const and elide the whole conditional if they are
+
+      /// If there's an assignment performend to a variable in the parent scope from within one of
+      /// the conditional blocks, we can no longer depend on knowing the value of that variable
+      /// going forward.
+      fn deconstify_parent_scope<'a>(
+        parent_scope: &mut ScopeTracker,
+        conditional_scope_var_names: impl Iterator<Item = &'a str>,
+      ) {
+        for name in conditional_scope_var_names {
+          if let Some(val) = parent_scope.get(name) {
+            if let TrackedValueRef::Const(_) = val {
+              parent_scope.set(
+                name.to_owned(),
+                TrackedValue::Arg(ClosureArg {
+                  name: name.to_owned(),
+                  type_hint: None,
+                  default_val: None,
+                }),
+              );
+            }
+          }
+        }
+      }
+
       optimize_expr(ctx, local_scope, cond)?;
-      optimize_expr(ctx, local_scope, then)?;
+      let mut then_scope = ScopeTracker::wrap(local_scope);
+      optimize_expr(ctx, &mut then_scope, then)?;
+      let ScopeTracker {
+        vars: then_scope_var_names,
+        ..
+      } = &then_scope;
+      deconstify_parent_scope(local_scope, then_scope_var_names.keys().map(String::as_str));
       for (cond, inner) in else_if_exprs {
         optimize_expr(ctx, local_scope, cond)?;
-        optimize_expr(ctx, local_scope, inner)?;
+        let mut else_if_scope = ScopeTracker::wrap(&*local_scope);
+        optimize_expr(ctx, &mut else_if_scope, inner)?;
+        let ScopeTracker {
+          vars: else_if_scope_var_names,
+          ..
+        } = &else_if_scope;
+        deconstify_parent_scope(
+          local_scope,
+          else_if_scope_var_names.keys().map(String::as_str),
+        );
       }
       if let Some(else_expr) = else_expr {
-        optimize_expr(ctx, local_scope, else_expr)?;
+        let mut else_scope = ScopeTracker::wrap(local_scope);
+        optimize_expr(ctx, &mut else_scope, else_expr)?;
+        let ScopeTracker {
+          vars: else_scope_var_names,
+          ..
+        } = &else_scope;
+        deconstify_parent_scope(local_scope, else_scope_var_names.keys().map(String::as_str));
       }
       Ok(())
     }
     Expr::Block { statements } => {
-      for stmt in statements.iter_mut() {
-        optimize_statement(ctx, local_scope, stmt)?;
-      }
-
       // the `inline_const_captures` checks were built for closure bodies, so they think everything
       // is OK is a local at the most inner scope level is declared but not const-available - those
       // correspond to closure args.
@@ -1747,12 +1852,24 @@ fn fold_constants<'a>(
       // For the case of a block inside of a closure, we can get around this by adding one level of
       // fake nesting to the scope
 
-      let mut local_scope = ScopeTracker::wrap(local_scope);
+      let mut block_scope = ScopeTracker::wrap(&*local_scope);
+
+      for stmt in statements.iter_mut() {
+        optimize_statement(ctx, &mut block_scope, stmt)?;
+      }
 
       // can const-fold the block if all inner statements are const
       let mut captures_dyn = false;
       for stmt in statements {
-        captures_dyn |= stmt.inline_const_captures(&mut local_scope);
+        captures_dyn |= stmt.inline_const_captures(&mut block_scope);
+      }
+
+      for (key, val) in block_scope.vars {
+        let is_set: bool = local_scope.get(&key).is_some();
+        if is_set {
+          local_scope.vars.insert(key, val);
+          captures_dyn = true;
+        }
       }
 
       if captures_dyn {
@@ -1836,6 +1953,36 @@ pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> 
   Ok(())
 }
 
+/// This doesn't disambiguate between builtin fn calls and calling user-defined functions.
+pub fn traverse_fn_calls(program: &Program, mut cb: impl FnMut(&str)) {
+  let mut cb = move |expr: &Expr| {
+    if let Expr::Call(FunctionCall {
+      target: FunctionCallTarget::Name(name),
+      ..
+    }) = expr
+    {
+      cb(name)
+    }
+  };
+
+  for stmt in &program.statements {
+    match stmt {
+      Statement::Expr(expr) => expr.traverse(&mut cb),
+      Statement::Assignment { expr, .. } => expr.traverse(&mut cb),
+      Statement::Return { value } => {
+        if let Some(expr) = value {
+          expr.traverse(&mut cb);
+        }
+      }
+      Statement::Break { value } => {
+        if let Some(expr) = value {
+          expr.traverse(&mut cb);
+        }
+      }
+    }
+  }
+}
+
 #[test]
 fn test_basic_constant_folding() {
   let mut expr = Expr::BinOp {
@@ -1855,8 +2002,7 @@ fn test_basic_constant_folding() {
 fn test_vec3_const_folding() {
   let code = "vec3(1+2, 2, 3*1+0+1).zyx";
 
-  let pairs = crate::parse_program_src(code).unwrap();
-  let mut ast = parse_program(pairs).unwrap();
+  let mut ast = crate::parse_program_src(code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
   let val = match &ast.statements[0] {
     Statement::Expr(expr) => expr.as_literal().unwrap(),
@@ -1879,8 +2025,7 @@ print(fn())
 fn | call | print
 "#;
 
-  let pairs = crate::parse_program_src(code).unwrap();
-  let mut ast = parse_program(pairs).unwrap();
+  let mut ast = crate::parse_program_src(code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 }
 
@@ -1891,8 +2036,7 @@ fn = |x| x + 1
 y = fn(2)
 "#;
 
-  let pairs = crate::parse_program_src(code).unwrap();
-  let mut ast = parse_program(pairs).unwrap();
+  let mut ast = crate::parse_program_src(code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let Statement::Assignment { name, expr, .. } = &ast.statements[1] else {
@@ -1912,8 +2056,7 @@ fn = |x| x + a
 y = fn(2, a)
 "#;
 
-  let pairs = crate::parse_program_src(code).unwrap();
-  let mut ast = parse_program(pairs).unwrap();
+  let mut ast = crate::parse_program_src(code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
@@ -1936,8 +2079,7 @@ x = [
 ] | join
 "#;
 
-  let pairs = crate::parse_program_src(code).unwrap();
-  let mut ast = parse_program(pairs).unwrap();
+  let mut ast = crate::parse_program_src(code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   // the whole thing should get const-eval'd to a mesh at the AST level
@@ -1961,8 +2103,7 @@ fn test_block_const_folding() {
 }
 "#;
 
-  let pairs = crate::parse_program_src(code).unwrap();
-  let mut ast = parse_program(pairs).unwrap();
+  let mut ast = crate::parse_program_src(code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let Statement::Expr(expr) = &ast.statements[0] else {
@@ -1980,8 +2121,7 @@ cb = |x: int| add(x+1, 1)
 y = cb(2)
 "#;
 
-  let pairs = crate::parse_program_src(code).unwrap();
-  let mut ast = parse_program(pairs).unwrap();
+  let mut ast = crate::parse_program_src(code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
   let st1 = ast.statements[0].clone();

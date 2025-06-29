@@ -9,10 +9,37 @@ use crate::ErrorStack;
 use crate::MeshHandle;
 
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(module = "src/viz/wasmComp/manifold")]
+#[wasm_bindgen(module = "src/geoscript/manifold")]
 extern "C" {
   pub fn simplify(handle: usize, tolerance: f32) -> Vec<u8>;
   pub fn convex_hull(verts: &[f32]) -> Vec<u8>;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(module = "src/geoscript/geodesics")]
+extern "C" {
+  pub fn trace_geodesic_path(
+    mesh_verts: &[f32],
+    mesh_indices: &[u32],
+    path: &[f32],
+    full_path: bool,
+  ) -> Vec<f32>;
+  pub fn get_geodesic_error() -> String;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn trace_geodesic_path(
+  _mesh_verts: &[f32],
+  _mesh_indices: &[u32],
+  _path: &[f32],
+  _full_path: bool,
+) -> Vec<f32> {
+  Vec::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_geodesic_error() -> String {
+  String::new()
 }
 
 #[cfg(target_arch = "wasm32")]

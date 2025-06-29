@@ -38,8 +38,7 @@ export class RuneGenCtx {
     targetMeshIndices: Uint32Array | Uint16Array,
     targetMeshVertices: Float32Array,
     pointsToProject: Float32Array,
-    indices: Uint32Array | Uint16Array,
-    midpoint: [number, number]
+    indices: Uint32Array | Uint16Array
   ): Float32Array => {
     const HEAPF32 = () => this.geodesics.HEAPF32 as Float32Array;
     const HEAPU32 = () => this.geodesics.HEAPU32 as Uint32Array;
@@ -74,8 +73,7 @@ export class RuneGenCtx {
       vec_f32(targetMeshVertices),
       vec_f32(pointsToProject),
       vec_uint32(indices),
-      midpoint[0],
-      midpoint[1]
+      false // fullPath
     );
     return from_vec_f32(computed.projectedPositions).slice();
   };
@@ -112,8 +110,7 @@ export class RuneGenCtx {
       targetMeshIndices,
       targetMeshVertices,
       vertices,
-      indices,
-      [0, 0]
+      indices
     );
 
     const ctxPtr3D = this.engine.extrude_3d_mesh_along_normals(indices, projectedVertices);

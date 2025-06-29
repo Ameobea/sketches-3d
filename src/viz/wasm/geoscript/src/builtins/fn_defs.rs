@@ -324,6 +324,38 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Mesh],
     },
   ],
+  "vec2" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "x",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "y",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Creates a Vec2 given x, y",
+      return_type: &[ArgType::Vec2],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Creates a Vec2 with both components set to `value`",
+      return_type: &[ArgType::Vec2],
+    },
+  ],
   "vec3" => &[
     FnDef {
       arg_defs: &[
@@ -2729,6 +2761,12 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           description: "Whether to close the ends of the pipe with triangle fans"
         },
         ArgDef {
+          name: "connect_ends",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(false)),
+          description: "Whether the pipe should be a closed loop, connecting the last point back to the first.  If true, the first and last points of the path will be connected with triangles."
+        },
+        ArgDef {
           name: "twist",
           valid_types: &[ArgType::Numeric, ArgType::Callable],
           default_value: DefaultValue::Optional(|| Value::Float(0.)),
@@ -2884,6 +2922,38 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       ],
       description: "Stitches together a sequence of contours into a single mesh.  The contours should be closed loops.",
       return_type: &[ArgType::Mesh],
+    },
+  ],
+  "trace_geodesic_path" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "path",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "A sequence of `Vec2` points representing the path to trace along the surface of the mesh"
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "world_space",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(true)),
+          description: "If true, points will be returned in world space.  If false, they will be returned in the local space of the mesh."
+        },
+        ArgDef {
+          name: "full_path",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(true)),
+          description: "This controls behavior when the path crosses between faces in the mesh.  If true, intermediate points will be included in the output for whenever the path hits an edge.  This can result in the output sequence having more elements than the input sequence, and it will ensure that all generated edges in the output path lie on the surface of the mesh."
+        }
+      ],
+      description: "Traces a geodesic path across the surface of a mesh, following a sequence of 2D points.  The mesh must be manifold.",
+      return_type: &[ArgType::Sequence],
     },
   ],
   "fan_fill" => &[

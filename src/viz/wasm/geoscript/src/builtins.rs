@@ -7,7 +7,7 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 use mesh::{
   linked_mesh::{DisplacementNormalMethod, FaceKey, Vec3, Vertex, VertexKey},
-  LinkedMesh,
+  LinkedMesh, OwnedIndexedMesh,
 };
 use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, UnitQuaternion};
 use parry3d::bounding_volume::Aabb;
@@ -19,10 +19,10 @@ use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
   mesh_ops::{
     extrude::extrude,
-    extrude_pipe,
+    extrude_pipe::{extrude_pipe, EndMode},
     fan_fill::fan_fill,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
-    mesh_ops::{convex_hull_from_verts, simplify_mesh},
+    mesh_ops::{convex_hull_from_verts, get_geodesic_error, simplify_mesh, trace_geodesic_path},
     stitch_contours::stitch_contours,
   },
   noise::fbm,
@@ -31,7 +31,7 @@ use crate::{
     ChainSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, SkipSeq, SkipWhileSeq,
     TakeSeq, TakeWhileSeq,
   },
-  ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value,
+  ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
 use crate::{ManifoldHandle, MeshHandle};
 
@@ -39,6 +39,7 @@ pub(crate) mod fn_defs;
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
+  "v2" => "vec2",
   "v3" => "vec3",
   "subdivide" => "tessellate",
   "tess" => "tessellate",
@@ -1211,6 +1212,80 @@ fn stitch_contours_impl(
   }
 }
 
+fn trace_geodesic_path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let path = arg_refs[0]
+        .resolve(args, &kwargs)
+        .as_sequence()
+        .unwrap()
+        .clone_box()
+        .consume(ctx);
+      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let world_space = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
+      let full_path = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+
+      let path = path
+        .map(|res| match res {
+          Ok(Value::Vec2(v)) => Ok(v),
+          Ok(val) => Err(ErrorStack::new(format!(
+            "Expected Vec2 in sequence passed to `trace_geodesic_path`, found: {val:?}"
+          ))),
+          Err(err) => Err(err),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+      let path_slice: &[f32] =
+        unsafe { std::slice::from_raw_parts(path.as_ptr() as *const f32, path.len() * 2) };
+
+      let OwnedIndexedMesh {
+        vertices, indices, ..
+      } = mesh.mesh.to_raw_indexed(false, false, true);
+      let mut out_points = if std::mem::size_of::<usize>() == std::mem::size_of::<u32>() {
+        let indices = unsafe { std::mem::transmute::<Vec<usize>, Vec<u32>>(indices) };
+        trace_geodesic_path(&vertices, &indices, path_slice, full_path)
+      } else {
+        let indices: Vec<u32> = indices.iter().map(|&ix| ix as u32).collect();
+        trace_geodesic_path(&vertices, &indices, path_slice, full_path)
+      };
+
+      if out_points.len() == 1 {
+        let err = get_geodesic_error();
+        return Err(ErrorStack::new(err).wrap("Error calling geodesic path tracing kernel"));
+      }
+
+      assert_eq!(out_points.len() % 3, 0);
+      if out_points.capacity() % 3 != 0 {
+        out_points.shrink_to_fit();
+      }
+      let mut out_points_v3: Vec<Vec3> = unsafe {
+        Vec::from_raw_parts(
+          out_points.as_ptr() as *mut Vec3,
+          out_points.len() / 3,
+          out_points.capacity() / 3,
+        )
+      };
+      std::mem::forget(out_points);
+
+      if world_space {
+        for vtx in &mut out_points_v3 {
+          *vtx = (mesh.transform * vtx.push(1.)).xyz();
+        }
+      }
+
+      Ok(Value::Sequence(Box::new(IteratorSeq {
+        inner: out_points_v3.into_iter().map(|v| Ok(Value::Vec3(v))),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn extrude_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -1272,13 +1347,14 @@ fn extrude_pipe_impl(
       let resolution = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
       let path = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
       let close_ends = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+      let connect_ends = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
 
       enum Twist<'a> {
         Const(f32),
         Dyn(&'a Callable),
       }
 
-      let twist = match arg_refs[4].resolve(args, &kwargs) {
+      let twist = match arg_refs[5].resolve(args, &kwargs) {
         Value::Float(f) => Twist::Const(*f),
         Value::Int(i) => Twist::Const(*i as f32),
         Value::Callable(cb) => Twist::Dyn(cb),
@@ -1322,18 +1398,26 @@ fn extrude_pipe_impl(
         Err(err) => Err(err),
       });
 
+      let end_mode = if connect_ends {
+        EndMode::Connect
+      } else if close_ends {
+        EndMode::Close
+      } else {
+        EndMode::Open
+      };
+
       let mesh = match radius {
         _ if let Some(radius) = radius.as_float() => {
           let get_radius = |_, _| Ok(radius);
           match twist {
             Twist::Const(twist) => {
-              extrude_pipe(get_radius, resolution, path, close_ends, |_, _| Ok(twist))?
+              extrude_pipe(get_radius, resolution, path, end_mode, |_, _| Ok(twist))?
             }
             Twist::Dyn(get_twist) => extrude_pipe(
               get_radius,
               resolution,
               path,
-              close_ends,
+              end_mode,
               build_twist_or_radius_callable(ctx, get_twist, "twist"),
             )?,
           }
@@ -1342,13 +1426,13 @@ fn extrude_pipe_impl(
           let get_radius = build_twist_or_radius_callable(ctx, get_radius, "radius");
           match twist {
             Twist::Const(twist) => {
-              extrude_pipe(get_radius, resolution, path, close_ends, |_, _| Ok(twist))?
+              extrude_pipe(get_radius, resolution, path, end_mode, |_, _| Ok(twist))?
             }
             Twist::Dyn(get_twist) => extrude_pipe(
               get_radius,
               resolution,
               path,
-              close_ends,
+              end_mode,
               build_twist_or_radius_callable(ctx, get_twist, "twist"),
             )?,
           }
@@ -2326,6 +2410,26 @@ fn apply_transforms_impl(
   }
 }
 
+fn vec2_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Vec2(Vec2::new(x, y)))
+    }
+    1 => {
+      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Vec2(Vec2::new(x, x)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn vec3_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -2842,6 +2946,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, _ctx| {
     apply_transforms_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "vec2" => builtin_fn!(vec2, |def_ix, arg_refs, args, kwargs, _ctx| {
+    vec2_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "vec3" => builtin_fn!(vec3, |def_ix, arg_refs, args, kwargs, _ctx| {
     vec3_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -3100,6 +3207,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "stitch_contours" => builtin_fn!(stitch_contours, |def_ix, arg_refs, args, kwargs, ctx| {
     stitch_contours_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "trace_geodesic_path" => builtin_fn!(trace_geodesic_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_geodesic_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "fan_fill" => builtin_fn!(fan_fill, |def_ix, arg_refs, args, kwargs, ctx| {
     fan_fill_impl(ctx, def_ix, arg_refs, args, kwargs)

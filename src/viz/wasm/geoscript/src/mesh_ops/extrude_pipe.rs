@@ -4,17 +4,17 @@ use mesh::{linked_mesh::Vec3, LinkedMesh};
 
 use crate::ErrorStack;
 
-pub mod extrude;
-pub mod fan_fill;
-pub mod mesh_boolean;
-pub mod mesh_ops;
-pub mod stitch_contours;
+pub enum EndMode {
+  Open,
+  Close,
+  Connect,
+}
 
 pub fn extrude_pipe(
   get_radius: impl Fn(usize, Vec3) -> Result<f32, ErrorStack>,
   resolution: usize,
   path: impl Iterator<Item = Result<Vec3, ErrorStack>>,
-  close_ends: bool,
+  end_mode: EndMode,
   twist: impl Fn(usize, Vec3) -> Result<f32, ErrorStack>,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   if resolution < 3 {
@@ -112,10 +112,17 @@ pub fn extrude_pipe(
 
   // stitch the rings together with quads, two triangles per quad
   let mut index_count = (points.len() - 1) * resolution * 3 * 2;
-  if close_ends {
-    // `n-2` triangles are needed to tessellate a convex polygon of `n` vertices/edges
-    let cap_triangles = resolution - 2;
-    index_count += cap_triangles * 3 * 2;
+  match end_mode {
+    EndMode::Close => {
+      // `n-2` triangles are needed to tessellate a convex polygon of `n` vertices/edges
+      let cap_triangles = resolution - 2;
+      index_count += cap_triangles * 3 * 2;
+    }
+    EndMode::Connect => {
+      // Add one more ring connection (last to first)
+      index_count += resolution * 3 * 2;
+    }
+    EndMode::Open => {}
   }
   let mut indices: Vec<u32> = Vec::with_capacity(index_count);
 
@@ -136,36 +143,50 @@ pub fn extrude_pipe(
     }
   }
 
-  if close_ends {
-    for (ix_offset, reverse_winding) in [
-      (0u32, true),
-      ((points.len() - 1) as u32 * resolution as u32, false),
-    ] {
-      // using a basic triangle fan to form the end caps
-      //
-      // 0,1,2
-      // 0,2,3
-      // ...
-      // 0,2n-2,2n-1
-      for vtx_ix in 1..(resolution - 1) {
-        let a = 0;
-        let b = vtx_ix as u32;
-        let c = (vtx_ix + 1) as u32;
+  match end_mode {
+    EndMode::Close => {
+      for (ix_offset, reverse_winding) in [
+        (0u32, true),
+        ((points.len() - 1) as u32 * resolution as u32, false),
+      ] {
+        // using a basic triangle fan to form the end caps
+        for vtx_ix in 1..(resolution - 1) {
+          let a = 0;
+          let b = vtx_ix as u32;
+          let c = (vtx_ix + 1) as u32;
 
-        if reverse_winding {
-          indices.push(ix_offset + c);
-          indices.push(ix_offset + b);
-          indices.push(ix_offset + a);
-        } else {
-          indices.push(ix_offset + a);
-          indices.push(ix_offset + b);
-          indices.push(ix_offset + c);
+          if reverse_winding {
+            indices.push(ix_offset + c);
+            indices.push(ix_offset + b);
+            indices.push(ix_offset + a);
+          } else {
+            indices.push(ix_offset + a);
+            indices.push(ix_offset + b);
+            indices.push(ix_offset + c);
+          }
         }
       }
     }
-  }
+    EndMode::Connect => {
+      // Connect last ring to first ring
+      let last = points.len() - 1;
+      for j in 0..resolution {
+        let a = (last * resolution + j) as u32;
+        let b = (last * resolution + (j + 1) % resolution) as u32;
+        let c = (0 * resolution + j) as u32;
+        let d = (0 * resolution + (j + 1) % resolution) as u32;
 
-  // TODO: support mode that creates a closed loop
+        indices.push(a);
+        indices.push(b);
+        indices.push(c);
+
+        indices.push(b);
+        indices.push(d);
+        indices.push(c);
+      }
+    }
+    EndMode::Open => {}
+  }
 
   assert_eq!(indices.len(), index_count);
 

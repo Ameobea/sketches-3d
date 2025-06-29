@@ -9,8 +9,6 @@ node_modules
 *.blend1
 src/viz/wasmComp/*
 !src/viz/wasmComp/.gitkeep
-!src/viz/wasmComp/manifold.ts
-!src/viz/wasmComp/geoscriptWorker.worker.ts
 static/*.bin
 static/*.gltf
 static/*.glb
