@@ -498,6 +498,13 @@ impl Value {
     }
   }
 
+  fn as_vec2(&self) -> Option<&Vec2> {
+    match self {
+      Value::Vec2(v2) => Some(v2),
+      _ => None,
+    }
+  }
+
   fn as_vec3(&self) -> Option<&Vec3> {
     match self {
       Value::Vec3(v3) => Some(v3),
@@ -1688,6 +1695,29 @@ impl EvalCtx {
 
   fn eval_static_field_access(&self, lhs: Value, field: &str) -> Result<Value, ErrorStack> {
     match lhs {
+      Value::Vec2(v2) => match field.len() {
+        1 => match field {
+          "x" => Ok(Value::Float(v2.x)),
+          "y" => Ok(Value::Float(v2.y)),
+          _ => Err(ErrorStack::new(format!("Unknown field `{field}` for Vec2"))),
+        },
+        2 => {
+          let mut chars = field.chars();
+          let a = chars.next().unwrap();
+          let b = chars.next().unwrap();
+
+          let swiz = |c| match c {
+            'x' => Ok(v2.x),
+            'y' => Ok(v2.y),
+            _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec2"))),
+          };
+
+          Ok(Value::Vec2(Vec2::new(swiz(a)?, swiz(b)?)))
+        }
+        _ => Err(ErrorStack::new(format!(
+          "invalid swizzle; expected 1 or 2 chars"
+        ))),
+      },
       Value::Vec3(v3) => match field.len() {
         1 => match field {
           "x" => Ok(Value::Float(v3.x)),
@@ -1730,6 +1760,11 @@ impl EvalCtx {
     match field {
       Value::String(s) => self.eval_static_field_access(lhs, &s),
       Value::Int(i) => match lhs {
+        Value::Vec2(v2) => match i {
+          0 => Ok(Value::Float(v2.x)),
+          1 => Ok(Value::Float(v2.y)),
+          _ => Err(ErrorStack::new(format!("Index {i} out of bounds for Vec2"))),
+        },
         Value::Vec3(v3) => match i {
           0 => Ok(Value::Float(v3.x)),
           1 => Ok(Value::Float(v3.y)),

@@ -554,16 +554,16 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     FnDef {
       arg_defs: &[
         ArgDef {
-          name: "sequence",
-          valid_types: &[ArgType::Sequence],
-          default_value: DefaultValue::Required,
-          description: ""
-        },
-        ArgDef {
           name: "cb",
           valid_types: &[ArgType::Callable],
           default_value: DefaultValue::Required,
           description: "Callable with signature `|x|: bool`"
+        },
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
         },
       ],
       description: "Returns true if any element of the sequence makes the callback return true",
@@ -574,20 +574,40 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     FnDef {
       arg_defs: &[
         ArgDef {
-          name: "sequence",
-          valid_types: &[ArgType::Sequence],
-          default_value: DefaultValue::Required,
-          description: ""
-        },
-        ArgDef {
           name: "cb",
           valid_types: &[ArgType::Callable],
           default_value: DefaultValue::Required,
           description: "Callable with signature `|x|: bool`"
         },
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
       ],
       description: "Returns true if all elements of the sequence make the callback return true",
       return_type: &[ArgType::Bool],
+    },
+  ],
+  "for_each" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "cb",
+          valid_types: &[ArgType::Callable],
+          default_value: DefaultValue::Required,
+          description: "Callable with signature `|x|`"
+        },
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Applies the callback to each element of the sequence, returning `nil`",
+      return_type: &[ArgType::Nil],
     },
   ],
   "neg" => &[
@@ -1065,6 +1085,42 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Scales `mesh` by `factor` along each axis",
       return_type: &[ArgType::Mesh],
     },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Vec2],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Vec2],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the component-wise product of two Vec2 values",
+      return_type: &[ArgType::Vec2],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Vec2],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Multiplied each element of a Vec2 by a scalar",
+      return_type: &[ArgType::Vec2],
+    },
   ],
   "div" => &[
     FnDef {
@@ -1225,7 +1281,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
         ArgDef {
           name: "b",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -1281,7 +1337,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
         ArgDef {
           name: "b",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -1686,6 +1742,20 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       ],
       description: "Returns the first element of a sequence, or `Nil` if the sequence is empty.  \n\nThis is lazy and will not evaluate the sequence until the output is consumed.",
       return_type: &[ArgType::Any],
+    },
+  ],
+  "reverse" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a new sequence with the elements in reverse order.  \n\nThis is NOT lazy and will evaluate the entire sequence immediately and collect all of its elements into memory.",
+      return_type: &[ArgType::Sequence],
     },
   ],
   "print" => &[
@@ -2501,6 +2571,32 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Float],
     },
   ],
+  "smoothstep" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "edge0",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "edge1",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "x",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Works the same as `smoothstep` in GLSL.  It returns 0 if `x < edge0`, 1 if `x > edge1`, and a smooth Hermite interpolation between 0 and 1 for values of `x` between `edge0` and `edge1`.",
+      return_type: &[ArgType::Float],
+    },
+  ],
   "compose" => &[
     FnDef {
       arg_defs: &[
@@ -2660,6 +2756,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Returns the length/magnitude of a Vec3",
       return_type: &[ArgType::Float],
     },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "v",
+          valid_types: &[ArgType::Vec2],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the length/magnitude of a Vec2",
+      return_type: &[ArgType::Float],
+    },
   ],
   "distance" => &[
     FnDef {
@@ -2678,6 +2786,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "`sqrt((a.x - b.x)^2 + (a.y - b.y)^2 + (a.z - b.z)^2)`",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "a",
+          valid_types: &[ArgType::Vec2],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "b",
+          valid_types: &[ArgType::Vec2],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "`sqrt((a.x - b.x)^2 + (a.y - b.y)^2`",
       return_type: &[ArgType::Float],
     },
   ],
@@ -2931,7 +3057,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           name: "path",
           valid_types: &[ArgType::Sequence],
           default_value: DefaultValue::Required,
-          description: "A sequence of `Vec2` points representing the path to trace along the surface of the mesh"
+          description: "A sequence of `Vec2` points representing movements to take across the surface of the mesh relative to the current position.  For example, a sequence of `[vec2(0, 1), vec2(1, 0)]` would move 1 unit up and then 1 unit right."
         },
         ArgDef {
           name: "mesh",
@@ -2950,7 +3076,19 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           valid_types: &[ArgType::Bool],
           default_value: DefaultValue::Optional(|| Value::Bool(true)),
           description: "This controls behavior when the path crosses between faces in the mesh.  If true, intermediate points will be included in the output for whenever the path hits an edge.  This can result in the output sequence having more elements than the input sequence, and it will ensure that all generated edges in the output path lie on the surface of the mesh."
-        }
+        },
+        ArgDef {
+          name: "start_pos_local_space",
+          valid_types: &[ArgType::Vec3, ArgType::Nil],
+          default_value: DefaultValue::Optional(|| Value::Nil),
+          description: "If provided, the starting position for the path will be snapped to the surface of the mesh at this position.  If `nil`, the walk will start at an arbitrary point on the mesh surface."
+        },
+        ArgDef {
+          name: "up_dir_world_space",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
+          description: "When the walk starts, it will be oriented such that the positive Y axis of the local tangent space is aligned as closely as possible with this up direction at the starting position.  Another way of saying this is that it lets you set what direction is north when first starting the walk on the mesh's surface."
+        },
       ],
       description: "Traces a geodesic path across the surface of a mesh, following a sequence of 2D points.  The mesh must be manifold.",
       return_type: &[ArgType::Sequence],

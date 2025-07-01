@@ -306,6 +306,18 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       &[lhs.clone(), rhs.clone()],
       &Default::default(),
     ),
+    // vec2 * vec2
+    7 => {
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(a.x * b.x, a.y * b.y)))
+    }
+    // vec2 * float
+    8 => {
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec2(a * b))
+    }
     _ => unimplemented!(),
   }
 }
@@ -1230,6 +1242,12 @@ fn trace_geodesic_path_impl(
       let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
       let world_space = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
       let full_path = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+      let start_pos_local_space = arg_refs[4].resolve(args, &kwargs).as_vec3();
+      let start_pos_local_space = start_pos_local_space
+        .map(|v| v.as_slice())
+        .unwrap_or_default();
+      let up_dir_world_space = arg_refs[5].resolve(args, &kwargs).as_vec3();
+      let up_dir_world_space = up_dir_world_space.map(|v| v.as_slice()).unwrap_or_default();
 
       let path = path
         .map(|res| match res {
@@ -1248,10 +1266,24 @@ fn trace_geodesic_path_impl(
       } = mesh.mesh.to_raw_indexed(false, false, true);
       let mut out_points = if std::mem::size_of::<usize>() == std::mem::size_of::<u32>() {
         let indices = unsafe { std::mem::transmute::<Vec<usize>, Vec<u32>>(indices) };
-        trace_geodesic_path(&vertices, &indices, path_slice, full_path)
+        trace_geodesic_path(
+          &vertices,
+          &indices,
+          path_slice,
+          full_path,
+          start_pos_local_space,
+          up_dir_world_space,
+        )
       } else {
         let indices: Vec<u32> = indices.iter().map(|&ix| ix as u32).collect();
-        trace_geodesic_path(&vertices, &indices, path_slice, full_path)
+        trace_geodesic_path(
+          &vertices,
+          &indices,
+          path_slice,
+          full_path,
+          start_pos_local_space,
+          up_dir_world_space,
+        )
       };
 
       if out_points.len() == 1 {
@@ -1504,6 +1536,11 @@ fn distance_impl(
       let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
       Ok(Value::Float((*a - *b).magnitude()))
     }
+    1 => {
+      let a = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let b = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Float((*a - *b).magnitude()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -1517,6 +1554,10 @@ fn len_impl(
   match def_ix {
     0 => {
       let v = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Float(v.magnitude()))
+    }
+    1 => {
+      let v = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
       Ok(Value::Float(v.magnitude()))
     }
     _ => unimplemented!(),
@@ -1923,6 +1964,24 @@ fn lerp_impl(
       let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
       let t = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
       Ok(Value::Float(a + (b - a) * t))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn smoothstep_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let edge0 = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let edge1 = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let t = ((x - edge0) / (edge1 - edge0)).clamp(0., 1.);
+      Ok(Value::Float(t * t * (3. - 2. * t)))
     }
     _ => unimplemented!(),
   }
@@ -2668,7 +2727,7 @@ fn first_impl(
   }
 }
 
-fn any_impl(
+fn reverse_impl(
   ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -2678,7 +2737,29 @@ fn any_impl(
   match def_ix {
     0 => {
       let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      let cb = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
+      let vals: Vec<Value> = sequence
+        .clone_box()
+        .consume(ctx)
+        .collect::<Result<Vec<_>, _>>()?;
+      Ok(Value::Sequence(Box::new(IteratorSeq {
+        inner: vals.into_iter().rev().map(Ok),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn any_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
       let iter = sequence.clone_box().consume(ctx);
       for (i, res) in iter.enumerate() {
         let val = res?;
@@ -2713,8 +2794,8 @@ fn all_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      let cb = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
+      let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
       let iter = sequence.clone_box().consume(ctx);
       for (i, res) in iter.enumerate() {
         let val = res?;
@@ -2735,6 +2816,30 @@ fn all_impl(
         }
       }
       Ok(Value::Bool(true))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn for_each_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let iter = sequence.clone_box().consume(ctx);
+      for res in iter {
+        let val = res?;
+        ctx
+          .invoke_callable(cb, &[val], &Default::default(), &ctx.globals)
+          .map_err(|err| err.wrap("error calling user-provided callback passed to `for_each`"))?;
+      }
+      Ok(Value::Nil)
     }
     _ => unimplemented!(),
   }
@@ -3015,11 +3120,17 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "first" => builtin_fn!(first, |def_ix, arg_refs, args, kwargs, ctx| {
     first_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "reverse" => builtin_fn!(reverse, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
+    reverse_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "any" => builtin_fn!(any, |def_ix, arg_refs, args, kwargs, ctx| {
     any_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "all" => builtin_fn!(all, |def_ix, arg_refs, args, kwargs, ctx| {
     all_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "for_each" => builtin_fn!(for_each, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
+    for_each_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "neg" => builtin_fn!(neg, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let val = arg_refs[0].resolve(args, kwargs);
@@ -3156,6 +3267,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "lerp" => builtin_fn!(lerp, |def_ix, arg_refs, args, kwargs, _ctx| {
     lerp_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "smoothstep" => builtin_fn!(smoothstep, |def_ix, arg_refs, args, kwargs, _ctx| {
+    smoothstep_impl(def_ix, arg_refs, args, kwargs)
   }),
   "print" => builtin_fn!(print, |_def_ix, _arg_refs, args, kwargs, ctx| {
     print_impl(ctx, args, kwargs)

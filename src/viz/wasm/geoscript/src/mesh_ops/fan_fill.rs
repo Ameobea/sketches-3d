@@ -12,6 +12,9 @@ pub fn fan_fill(
   center: Option<Vec3>,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   let mut mesh = LinkedMesh::new(0, 0, None);
+  if path.is_empty() {
+    return Ok(mesh);
+  }
 
   let center = center.unwrap_or_else(|| {
     path.iter().fold(Vec3::new(0., 0., 0.), |acc, v| acc + *v) / path.len() as f32
@@ -47,15 +50,6 @@ pub fn fan_fill(
   }
 
   if closed {
-    log::info!(
-      "Adding closing triangle: {:?}; {:?}",
-      [start_vtx_key, vtx0_key, center_vtx_key],
-      [
-        mesh.vertices[start_vtx_key].position,
-        mesh.vertices[vtx0_key].position,
-        mesh.vertices[center_vtx_key].position
-      ]
-    );
     let tri = if flipped {
       [start_vtx_key, vtx0_key, center_vtx_key]
     } else {

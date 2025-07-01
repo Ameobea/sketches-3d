@@ -73,7 +73,9 @@ export class RuneGenCtx {
       vec_f32(targetMeshVertices),
       vec_f32(pointsToProject),
       vec_uint32(indices),
-      false // fullPath
+      false, // fullPath
+      vec_f32(new Float32Array(0)), // startPosWorld
+      vec_f32(new Float32Array(0)) // startDirectionWorld
     );
     return from_vec_f32(computed.projectedPositions).slice();
   };

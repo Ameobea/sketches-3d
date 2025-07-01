@@ -1047,13 +1047,25 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       visited_faces.clear();
       visited_edges.clear();
 
-      // Find an edge of the face that contains this vertex
+      // Find an edge of the face that contains this vertex.  Prefer starting on an edge with only
+      // one indicent face if one can be found so that we don't start in the middle of a non-closed
+      // fan, but then pick any edge if the fan is closed as we'll end up walking all the way around
       let start_edge_key = start_face
         .edges
         .iter()
-        .find(|&&e| self.edges[e].vertices.contains(&vtx_key))
+        .find(|e| {
+          let edge = &self.edges[**e];
+          edge.vertices.contains(&vtx_key) && edge.faces.len() == 1
+        })
         .copied()
-        .unwrap();
+        .unwrap_or_else(|| {
+          start_face
+            .edges
+            .iter()
+            .find(|&&e| self.edges[e].vertices.contains(&vtx_key))
+            .copied()
+            .unwrap()
+        });
       let mut cur_face_key = start_face_key;
       let mut cur_edge_key = start_edge_key;
       let mut full_fan = false;
@@ -1070,11 +1082,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
             self.edges[edge_key].vertices.contains(&vtx_key) && edge_key != cur_edge_key
           })
           .copied();
-        if next_edge_key.is_none() {
-          break;
-        }
 
-        let next_edge_key = next_edge_key.unwrap();
+        let Some(next_edge_key) = next_edge_key else {
+          // reached a border edge
+          break;
+        };
+
         // Find the other face (besides cur_face_key) that shares this edge and contains the vertex
         let edge = &self.edges[next_edge_key];
         let Some(&next_face_key) = edge.faces.iter().find(|&&face_key| {

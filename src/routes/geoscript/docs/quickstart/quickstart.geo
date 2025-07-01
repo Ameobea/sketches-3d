@@ -6,10 +6,6 @@
 a = 1
 b = a + 3
 
-// Geoscript is a functional-style langhage. Variables are immutable, but you can create
-// new ones with the same name like in Rust
-b = 0
-
 // Statements can optionally end with a semicolon
 c = b - 1;
 
@@ -27,6 +23,12 @@ my_int: int = -3
 //
 // Numbers are automatically cast as needed for basic arithmetic operations
 x: num = 1 + 3.0
+
+// there are built-in `vec2` and `vec3` types which hold floats:
+v0 = vec2(0, 1)
+v1 = vec3(3) // same as `vec3(3, 3, 3)`
+// they support GLSL-style swizzles
+v2 = v1.zyx
 
 // Functions are defined by creating closures using a similar syntax to Rust.
 // They return the value of their last expression.
@@ -146,7 +148,7 @@ warped_sphere = icosphere(radius=10, resolution=4)
     pos + norm*3
   })
 
-// There's also a shorthand for warp using the map operator like
+// There's also a shorthand for warp using the map operator:
 // `mesh -> warp_fn`
 
 // The `simplify` function optimizes meshes by removing edges to a specified tolerance.

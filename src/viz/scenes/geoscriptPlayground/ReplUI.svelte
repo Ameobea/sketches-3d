@@ -2,6 +2,7 @@
   export interface ReplCtx {
     centerView: () => void;
     toggleWireframe: () => void;
+    toggleNormalMat: () => void;
   }
 
   interface RunStats {
@@ -68,6 +69,7 @@
     color: 0xdf00df,
     wireframe: true,
   });
+  const normalMat = new THREE.MeshNormalMaterial();
 
   const computeCompositeBoundingBox = (
     objects: (
@@ -123,11 +125,24 @@
     viz.orbitControls!.update();
   };
 
-  const toggleWireframe = async () => {
+  const toggleWireframe = () => {
     if (activeMat && activeMat instanceof THREE.MeshBasicMaterial) {
       activeMat = baseMat;
     } else {
       activeMat = wireframeMat;
+    }
+    for (const obj of renderedObjects) {
+      if (obj instanceof THREE.Mesh) {
+        obj.material = activeMat;
+      }
+    }
+  };
+
+  const toggleNormalMat = () => {
+    if (activeMat && activeMat instanceof THREE.MeshNormalMaterial) {
+      activeMat = baseMat;
+    } else {
+      activeMat = normalMat;
     }
     for (const obj of renderedObjects) {
       if (obj instanceof THREE.Mesh) {
@@ -274,7 +289,7 @@
     });
     editorView = editor.editorView;
 
-    setReplCtx({ centerView, toggleWireframe });
+    setReplCtx({ centerView, toggleWireframe, toggleNormalMat });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
 

@@ -1,4 +1,5 @@
 #include <emscripten/bind.h>
+#include <emscripten/val.h>
 
 using namespace emscripten;
 
@@ -66,8 +67,8 @@ struct ComputeGeodesicsOutput {
 double
 normalizeAngle(double angle) {
   angle = fmod(angle + PI, 2. * PI);
-  if (angle < 0.0) {
-    angle += 2.0 * PI;
+  if (angle < 0.) {
+    angle += 2. * PI;
   }
   return angle - PI;
 }
@@ -392,20 +393,185 @@ public:
   }
 };
 
+using namespace geometrycentral::surface;
+
+// From "Real-Time Collision Detection": http://realtimecollisiondetection.net
+std::tuple<Vector3, Vector3>
+closestPointOnTriangle(const Vector3& p, const Vector3& a, const Vector3& b, const Vector3& c) {
+  Vector3 ab = b - a;
+  Vector3 ac = c - a;
+  Vector3 ap = p - a;
+  double d1 = dot(ab, ap);
+  double d2 = dot(ac, ap);
+  if (d1 <= 0. && d2 <= 0.) return { a, { 1., 0., 0. } };
+
+  Vector3 bp = p - b;
+  double d3 = dot(ab, bp);
+  double d4 = dot(ac, bp);
+  if (d3 >= 0. && d4 <= d3) return { b, { 0., 1., 0. } };
+
+  double vc = d1 * d4 - d3 * d2;
+  if (vc <= 0. && d1 >= 0. && d3 <= 0.) {
+    double v = d1 / (d1 - d3);
+    return { a + v * ab, { 1. - v, v, 0. } };
+  }
+
+  Vector3 cp = p - c;
+  double d5 = dot(ab, cp);
+  double d6 = dot(ac, cp);
+  if (d6 >= 0. && d5 <= d6) return { c, { 0., 0., 1. } };
+
+  double vb = d5 * d2 - d1 * d6;
+  if (vb <= 0. && d2 >= 0. && d6 <= 0.) {
+    double w = d2 / (d2 - d6);
+    return { a + w * ac, { 1. - w, 0., w } };
+  }
+
+  double va = d3 * d6 - d5 * d4;
+  if (va <= 0. && (d4 - d3) >= 0. && (d5 - d6) >= 0.) {
+    double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+    return { b + w * (c - b), { 0., 1. - w, w } };
+  }
+
+  double denom = 1. / (va + vb + vc);
+  double v = vb * denom;
+  double w = vc * denom;
+  return { a + ab * v + ac * w, { 1. - v - w, v, w } };
+}
+
+Edge
+edgeBetween(Vertex v1, Vertex v2) {
+  for (const Halfedge& he : v1.outgoingHalfedges()) {
+    if (he.tipVertex() == v2) {
+      return he.edge();
+    }
+  }
+  for (const Halfedge& he : v1.incomingHalfedges()) {
+    if (he.tailVertex() == v2) {
+      return he.edge();
+    }
+  }
+  throw std::runtime_error("Could not find edge between vertices");
+}
+
+SurfacePoint
+findClosestPointOnMesh(
+  const Vector3& queryPoint,
+  ManifoldSurfaceMesh& mesh,
+  VertexPositionGeometry& geometry
+) {
+  double min_dist_sq = std::numeric_limits<double>::max();
+  SurfacePoint best_sp;
+
+  for (Face f : mesh.faces()) {
+    std::vector<Vertex> face_vertices;
+    face_vertices.reserve(3);
+    for (auto v : f.adjacentVertices()) {
+      face_vertices.push_back(v);
+    }
+
+    if (face_vertices.size() != 3) {
+      continue;
+    }
+
+    Vector3 p0 = geometry.inputVertexPositions[face_vertices[0]];
+    Vector3 p1 = geometry.inputVertexPositions[face_vertices[1]];
+    Vector3 p2 = geometry.inputVertexPositions[face_vertices[2]];
+
+    auto [closest_pt, bary_coords] = closestPointOnTriangle(queryPoint, p0, p1, p2);
+
+    double dist_sq = (queryPoint - closest_pt).norm2();
+
+    if (dist_sq < min_dist_sq) {
+      min_dist_sq = dist_sq;
+
+      const double epsilon = 1e-8;
+      if (bary_coords.x > 1. - epsilon) {
+        best_sp = SurfacePoint(face_vertices[0]);
+      } else if (bary_coords.y > 1. - epsilon) {
+        best_sp = SurfacePoint(face_vertices[1]);
+      } else if (bary_coords.z > 1. - epsilon) {
+        best_sp = SurfacePoint(face_vertices[2]);
+      } else if (std::abs(bary_coords.z) < epsilon) {
+        Edge e = edgeBetween(face_vertices[0], face_vertices[1]);
+        double t = (e.firstVertex() == face_vertices[0]) ? bary_coords.y : 1. - bary_coords.y;
+        best_sp = SurfacePoint(e, t);
+      } else if (std::abs(bary_coords.y) < epsilon) {
+        Edge e = edgeBetween(face_vertices[0], face_vertices[2]);
+        double t = (e.firstVertex() == face_vertices[0]) ? bary_coords.z : 1. - bary_coords.z;
+        best_sp = SurfacePoint(e, t);
+      } else if (std::abs(bary_coords.x) < epsilon) {
+        Edge e = edgeBetween(face_vertices[1], face_vertices[2]);
+        double t = (e.firstVertex() == face_vertices[1]) ? bary_coords.z : 1. - bary_coords.z;
+        best_sp = SurfacePoint(e, t);
+      } else {
+        best_sp = SurfacePoint(f, { bary_coords.x, bary_coords.y, bary_coords.z });
+      }
+    }
+  }
+  return best_sp;
+}
+
 ComputeGeodesicsOutput
 computeGeodesics(
   const std::vector<uint32_t>& targetMeshIndices,
   const std::vector<float>& targetMeshPositions,
   const std::vector<float>& coordsToWalk,
   const std::vector<uint32_t>& indicesToWalk,
-  bool fullPath
+  bool fullPath,
+  const std::vector<float>& startPointWorld,
+  const std::vector<float>& upDirectionWorld
 ) {
   std::unique_ptr<geometrycentral::surface::ManifoldSurfaceMesh> targetMesh;
   std::unique_ptr<geometrycentral::surface::VertexPositionGeometry> targetGeometry;
   std::tie(targetMesh, targetGeometry) = loadMesh(targetMeshIndices, targetMeshPositions);
 
-  auto startFace = targetMesh->face(0);
-  auto origSurfacePoint = geometrycentral::surface::SurfacePoint(startFace, Vector3{ 0.3, 0.3, 0.4 });
+  surface::SurfacePoint origSurfacePoint;
+  if (!startPointWorld.empty()) {
+    if (startPointWorld.size() != 3) {
+      throw std::invalid_argument("startPointWorld must have 3 elements");
+    }
+    Vector3 start_p = {startPointWorld[0], startPointWorld[1], startPointWorld[2]};
+    origSurfacePoint = findClosestPointOnMesh(start_p, *targetMesh, *targetGeometry);
+  } else {
+    auto startFace = targetMesh->face(0);
+    origSurfacePoint = geometrycentral::surface::SurfacePoint(startFace, Vector3{ 0.3, 0.3, 0.4 });
+  }
+
+  double initialAngle = 0.;
+  if (!upDirectionWorld.empty()) {
+    if (upDirectionWorld.size() != 3) {
+      throw std::invalid_argument("upDirectionWorld must have 3 elements");
+    }
+    Vector3 up_dir_world = {upDirectionWorld[0], upDirectionWorld[1], upDirectionWorld[2]};
+    up_dir_world = up_dir_world.normalize();
+    // fix any nans in the up direction
+    if (std::isnan(up_dir_world.x) || std::isnan(up_dir_world.y) || std::isnan(up_dir_world.z)) {
+      up_dir_world = Vector3 { 0., 1., 0. };
+    }
+
+    origSurfacePoint = origSurfacePoint.inSomeFace();
+    auto startFace = origSurfacePoint.face;
+
+    targetGeometry->requireFaceTangentBasis();
+    Vector3 normal = targetGeometry->faceNormals[startFace];
+    // if the normal and up direction are almost parallel, perturb it slightly to avoid nans
+    if (std::abs(dot(normal, up_dir_world)) > 0.9999) {
+      // perturb the up direction slightly
+      Vector3 perturbation = Vector3::constant(1.).normalize();
+      up_dir_world = (up_dir_world + perturbation * 1e-6).normalize();
+    }
+    Vector3 proj_dir = up_dir_world - dot(up_dir_world, normal) * normal;
+    proj_dir = proj_dir.normalize();
+
+    const auto& tangent_basis = targetGeometry->faceTangentBasis[startFace];
+    const Vector3& tangent_basis_x = tangent_basis[0];
+    const Vector3& tangent_basis_y = tangent_basis[1];
+    initialAngle = atan2(dot(proj_dir, tangent_basis_y), dot(proj_dir, tangent_basis_x));
+    if (std::isnan(initialAngle)) {
+      initialAngle = 0.;
+    }
+  }
 
   surface::TraceOptions traceOptions;
   traceOptions.errorOnProblem = true;
@@ -425,10 +591,11 @@ computeGeodesics(
   std::queue<BFSQueueEntry> bfsQueue;
   std::vector<BFSQueueEntry> visited;
   visited.resize(coordCount);
-  float startX = 0.001;
-  float startY = 0.001;
-  bfsQueue.push({ 0, origSurfacePoint, startX, startY, 0., 0. });
+  bfsQueue.push({ 0, origSurfacePoint, 0., 0., initialAngle, PI / 2. });
 
+  float lastCartX = std::numeric_limits<float>::max();
+  float lastCartY = std::numeric_limits<float>::max();
+  float lastCartZ = std::numeric_limits<float>::max();
   while (true) {
     while (!bfsQueue.empty()) {
       uint32_t inVtxIx = bfsQueue.front().vertexIdx;
@@ -455,9 +622,17 @@ computeGeodesics(
         for (const auto& pathPoint : walkOutput.pathPoints) {
           float cartX, cartY, cartZ;
           std::tie(cartX, cartY, cartZ) = getSurfacePointCoords(*targetGeometry, pathPoint);
+          if (std::abs(cartX - lastCartX) < 1e-6 && std::abs(cartY - lastCartY) < 1e-6 &&
+              std::abs(cartZ - lastCartZ) < 1e-6) {
+            continue;
+          }
           output.projectedPositions.push_back(cartX);
           output.projectedPositions.push_back(cartY);
           output.projectedPositions.push_back(cartZ);
+
+          lastCartX = cartX;
+          lastCartY = cartY;
+          lastCartZ = cartZ;
         }
       } else {
         float cartX, cartY, cartZ;

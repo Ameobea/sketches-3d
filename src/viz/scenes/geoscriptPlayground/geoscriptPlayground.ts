@@ -113,6 +113,7 @@ export const processLoadedScene = (viz: Viz, _loadedWorld: THREE.Group, vizConf:
     customControlsEntries: [
       { key: '.', action: () => ctx?.centerView(), label: 'center view' },
       { key: 'w', action: () => ctx?.toggleWireframe(), label: 'toggle wireframe' },
+      { key: 'n', action: () => ctx?.toggleNormalMat(), label: 'toggle normal material' },
     ],
   };
 };

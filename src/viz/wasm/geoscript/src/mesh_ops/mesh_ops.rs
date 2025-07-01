@@ -23,6 +23,8 @@ extern "C" {
     mesh_indices: &[u32],
     path: &[f32],
     full_path: bool,
+    start_pos_local_space: &[f32],
+    up_dir_world_space: &[f32],
   ) -> Vec<f32>;
   pub fn get_geodesic_error() -> String;
 }
@@ -33,6 +35,8 @@ pub fn trace_geodesic_path(
   _mesh_indices: &[u32],
   _path: &[f32],
   _full_path: bool,
+  _start_pos_local_space: &[f32],
+  _up_dir_world_space: &[f32],
 ) -> Vec<f32> {
   Vec::new()
 }

@@ -41,7 +41,9 @@
       indices,
       vertices,
       vec_f32([0, 0, 0.4, 0.4, -0.9, -0.9, 240, -39032]),
-      false // fullPath
+      false, // fullPath
+      vec_f32(new Float32Array(0)), // startPosWorld
+      vec_f32(new Float32Array(0)) // startDirectionWorld
     );
     console.log(computed, from_vec_f32(computed.projectedNormals), from_vec_f32(computed.projectedPositions));
   };

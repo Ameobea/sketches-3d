@@ -17,8 +17,7 @@ fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKe
   let mut new_vtx_key_by_old = FxHashMap::default();
   for &face_key in faces {
     let new_vtx_keys = {
-      let orig = mesh.faces[face_key].vertices;
-      [orig[2], orig[1], orig[0]].map(|vtx_key| {
+      mesh.faces[face_key].vertices.map(|vtx_key| {
         *new_vtx_key_by_old.entry(vtx_key).or_insert_with(|| {
           mesh.vertices.insert(Vertex {
             position: mesh.vertices[vtx_key].position + up,
@@ -30,65 +29,37 @@ fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKe
       })
     };
     mesh.add_face(new_vtx_keys, ());
+
+    // flip the winding order of the original faces to create the bottom of the extrusion
+    let old_face = &mut mesh.faces[face_key];
+    old_face.vertices.reverse();
   }
 
-  let mut visited = FxHashSet::default();
-  for &start in &border_edges {
-    for start in mesh.edges[start].vertices {
-      if visited.contains(&start) {
-        continue;
-      }
-      visited.insert(start);
-      let mut cur = start;
+  // let mut visited = FxHashSet::default();
+  for &border_edge in &border_edges {
+    // figure out canonical direction for extrusion using faces from the pre-extruded mesh
+    let edge = &mesh.edges[border_edge];
+    let face0 = &mesh.faces[edge.faces[0]];
+    let is_backwards = if face0.vertices[0] == edge.vertices[0] {
+      face0.vertices[2] == edge.vertices[1]
+    } else if face0.vertices[1] == edge.vertices[0] {
+      face0.vertices[0] == edge.vertices[1]
+    } else if face0.vertices[2] == edge.vertices[0] {
+      face0.vertices[1] == edge.vertices[1]
+    } else {
+      unreachable!()
+    };
+    let (v0, v1) = if is_backwards {
+      (edge.vertices[1], edge.vertices[0])
+    } else {
+      (edge.vertices[0], edge.vertices[1])
+    };
 
-      // Walk until we loop or hit a dead end (shouldn't happen for a proper border loop)
-      while let Some(next) = mesh.vertices[cur]
-        .edges
-        .iter()
-        .filter(|&edge_key| border_edges.contains(edge_key))
-        .find_map(|&edge_key| {
-          let edge = &mesh.edges[edge_key];
-          let pair_vtx_key = if edge.vertices[0] == cur {
-            edge.vertices[1]
-          } else {
-            edge.vertices[0]
-          };
-
-          if pair_vtx_key == start && cur != start {
-            return Some(start);
-          } else if visited.contains(&pair_vtx_key) {
-            return None;
-          }
-
-          let face = &mesh.faces[edge.faces[0]];
-          let is_backwards = if face.vertices[0] == cur {
-            face.vertices[2] == pair_vtx_key
-          } else if face.vertices[1] == cur {
-            face.vertices[0] == pair_vtx_key
-          } else if face.vertices[2] == cur {
-            face.vertices[1] == pair_vtx_key
-          } else {
-            unreachable!()
-          };
-
-          if is_backwards {
-            return None;
-          }
-
-          Some(pair_vtx_key)
-        })
-      {
-        let v0 = cur;
-        let v1 = next;
-        let nv0 = new_vtx_key_by_old[&v0];
-        let nv1 = new_vtx_key_by_old[&v1];
-        mesh.add_face([nv1, v1, v0], ());
-        mesh.add_face([nv0, nv1, v0], ());
-
-        visited.insert(next);
-        cur = next;
-      }
-    }
+    // join the two border edges with two triangles
+    let nv0 = new_vtx_key_by_old[&v0];
+    let nv1 = new_vtx_key_by_old[&v1];
+    mesh.add_face([nv1, v1, v0], ());
+    mesh.add_face([nv0, nv1, v0], ());
   }
 }
 
@@ -97,4 +68,36 @@ pub fn extrude(mesh: &mut LinkedMesh<()>, up: Vec3) {
   for faces in components {
     extrude_single_component(mesh, up, &faces);
   }
+}
+
+#[test]
+fn test_extrude_issue() {
+  let verts = &[
+    0.012867972,
+    1.0,
+    0.08357865,
+    -0.19497475,
+    1.0,
+    0.087867975,
+    -0.05355338,
+    1.0,
+    -0.05355338,
+    0.0,
+    1.0,
+    0.0,
+    0.3,
+    1.0,
+    0.3,
+  ];
+  let indices = &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1];
+
+  let mut mesh = LinkedMesh::from_raw_indexed(verts, indices, None, None);
+  dbg!(&mesh.faces);
+  dbg!(&mesh.vertices.iter().collect::<Vec<_>>());
+  mesh
+    .check_is_manifold::<false>()
+    .expect("not manifold before extrude");
+
+  extrude(&mut mesh, Vec3::new(0., 1., 0.));
+  mesh.check_is_manifold::<true>().expect("not two-manifold");
 }
