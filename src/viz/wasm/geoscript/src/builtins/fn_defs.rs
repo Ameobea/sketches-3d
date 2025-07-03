@@ -310,6 +310,20 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Mesh],
     },
   ],
+  "origin_to_geometry" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Moves the mesh so that its origin is at the center of its geometry (averge of all its vertices), returning a new mesh.\n\nThis will actually modify the vertex positions and preserve any existing transforms.",
+      return_type: &[ArgType::Mesh],
+    },
+  ],
   "apply_transforms" => &[
     FnDef {
       arg_defs: &[
@@ -1361,6 +1375,80 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Component-wise minimum of two Vec3s",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
+  "clamp" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "min",
+          valid_types: &[ArgType::Int],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "max",
+          valid_types: &[ArgType::Int],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Int],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Clamps a value between min and max",
+      return_type: &[ArgType::Int],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "min",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "max",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Float],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Clamps a value between min and max",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "min",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "max",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Clamps each component of a Vec3 between min and max",
       return_type: &[ArgType::Vec3],
     },
   ],
@@ -2593,7 +2681,33 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           description: ""
         },
       ],
-      description: "Works the same as `smoothstep` in GLSL.  It returns 0 if `x < edge0`, 1 if `x > edge1`, and a smooth Hermite interpolation between 0 and 1 for values of `x` between `edge0` and `edge1`.",
+      description: "Works the same as `smoothstep` in GLSL.\n\nIt returns 0 if `x < edge0`, 1 if `x > edge1`, and a smooth Hermite interpolation between 0 and 1 for values of `x` between `edge0` and `edge1`.",
+      return_type: &[ArgType::Float],
+    },
+  ],
+  "linearstep" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "edge0",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "edge1",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "x",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Same as `smoothstep` but with simple linear interpolation instead of Hermite interpolation.\n\nIt returns 0 if `x < edge0`, 1 if `x > edge1`, and a linear interpolation between 0 and 1 for values of `x` between `edge0` and `edge1`.",
       return_type: &[ArgType::Float],
     },
   ],
@@ -2856,6 +2970,38 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Generates a sequence of `count` evenly-spaced points along a cubic Bezier curve defined by four control points",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
+  "superellipse_path" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "width",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "height",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "n",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: "Exponent that controls the shape of the superellipse.  A value of 2 produces an ellipse, higher values produce more rectangular shapes, and lower values produce diamond and star-like shapes."
+        },
+        ArgDef {
+          name: "point_count",
+          valid_types: &[ArgType::Int],
+          default_value: DefaultValue::Required,
+          description: "Number of points to generate along the path"
+        },
+      ],
+      description: "Generates a sequence of points defining a superellipse, or rounded rectangle.  Returns a sequence of `point_count` `Vec2` points",
       return_type: &[ArgType::Sequence],
     },
   ],
@@ -3353,7 +3499,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         ArgDef {
           name: "height_segments",
           valid_types: &[ArgType::Int],
-          default_value: DefaultValue::Required,
+          default_value: DefaultValue::Optional(|| Value::Int(1)),
           description: ""
         },
       ],

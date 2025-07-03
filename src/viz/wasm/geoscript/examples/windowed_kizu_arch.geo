@@ -51,18 +51,11 @@ path = |count: int|: seq {
       }
       | join
   )
-  | (cyl(radius=10, height=4, radial_segments=80, height_segments=1)
-    | scale(3, 1, 2.2)
-    | trans(30, 0, -2)
-  )
-  | (cyl(radius=10, height=14, radial_segments=80, height_segments=1)
-    | scale(3, 1, 2.2)
-    | trans(30, -9, 0)
-    | warp(|v| {
-       dist = abs(v.x - 30);
-       dist = max(dist, 8.) - 8;
-       v + vec3(0, 0, -dist * 0.1)
-    })
-  )
+  | {
+    path = path(20) | skip(1) | take(19);
+    [path, path -> sub(b=v3(0,15,0))]
+      | stitch_contours(closed=false, flipped=true)
+      | extrude(up=v3(0,0,-3))
+  }
   | simplify(tolerance=0.04)
   | render

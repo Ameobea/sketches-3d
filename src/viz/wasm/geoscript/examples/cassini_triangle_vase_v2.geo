@@ -36,11 +36,7 @@ contours = 0..num_contours -> |i| {
       -pow(-r_cubed, 1/3)
     }
 
-    // Convert from polar to Cartesian coordinates
-    x = r * cos(theta)
-    z = r * sin(theta)
-
-    vec3(x, y, z)
+    vec3(cos(theta) * r, y, sin(theta) * r)
   }
 }
 

@@ -2,6 +2,8 @@ use std::f32::consts::PI;
 
 use mesh::linked_mesh::Vec3;
 
+use crate::Vec2;
+
 pub fn build_torus_knot_path(
   radius: f32,
   tube_radius: f32,
@@ -48,5 +50,26 @@ pub fn cubic_bezier_3d_path(
   (0..=count).map(move |i| {
     let t = i as f32 / count as f32;
     cubic_bezier_3d(p0, p1, p2, p3, t)
+  })
+}
+
+pub fn get_superellipse_point(t: f32, width: f32, height: f32, n: f32) -> (f32, f32) {
+  let (sin_theta, cos_theta) = (t * 2. * PI).sin_cos();
+  let pow = 2. / n;
+  let x = (width / 2.) * cos_theta.signum() * cos_theta.abs().powf(pow);
+  let y = (height / 2.) * sin_theta.signum() * sin_theta.abs().powf(pow);
+  (x, y)
+}
+
+pub fn superellipse_path(
+  width: f32,
+  height: f32,
+  n: f32,
+  count: usize,
+) -> impl Iterator<Item = Vec2> + Clone + 'static {
+  (0..=count).map(move |i| {
+    let t = i as f32 / count as f32;
+    let (x, y) = get_superellipse_point(t, width, height, n);
+    Vec2::new(x, y)
   })
 }

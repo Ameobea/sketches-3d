@@ -50,8 +50,6 @@ pub fn get_geodesic_error() -> String {
 pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, ErrorStack> {
   use std::cell::RefCell;
 
-  use nalgebra::Matrix4;
-
   use crate::ManifoldHandle;
 
   if tolerance <= 0. {
@@ -67,7 +65,7 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, Er
   let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
     mesh: Rc::new(out_mesh),
-    transform: Matrix4::identity(),
+    transform: mesh.transform,
     manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),

@@ -276,6 +276,10 @@ impl ManifoldHandle {
     Self(Cell::new(handle))
   }
 
+  pub fn new_empty() -> Self {
+    Self(Cell::new(0))
+  }
+
   pub fn get(&self) -> usize {
     self.0.get()
   }

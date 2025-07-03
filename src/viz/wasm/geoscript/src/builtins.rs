@@ -26,7 +26,7 @@ use crate::{
     stitch_contours::stitch_contours,
   },
   noise::fbm,
-  path_building::{build_torus_knot_path, cubic_bezier_3d_path},
+  path_building::{build_torus_knot_path, cubic_bezier_3d_path, superellipse_path},
   seq::{
     ChainSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, SkipSeq, SkipWhileSeq,
     TakeSeq, TakeWhileSeq,
@@ -50,6 +50,10 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "bezier" => "bezier3d",
   "sphere" => "icosphere",
   "cyl" => "cylinder",
+  "superellipse" => "superellipse_path",
+  "rounded_rectangle" => "superellipse_path",
+  "rounded_rect" => "superellipse_path",
+  "mix" => "lerp",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -1509,6 +1513,26 @@ fn bezier3d_impl(
   }
 }
 
+fn superellipse_path_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let width = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let height = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let n = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let point_count = arg_refs[3].resolve(args, &kwargs).as_int().unwrap() as usize;
+
+      let curve = superellipse_path(width, height, n, point_count).map(|v| Ok(Value::Vec2(v)));
+      Ok(Value::Sequence(Box::new(IteratorSeq { inner: curve })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn normalize_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -1987,6 +2011,24 @@ fn smoothstep_impl(
   }
 }
 
+fn linearstep_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let edge0 = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let edge1 = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let t = ((x - edge0) / (edge1 - edge0)).clamp(0., 1.);
+      Ok(Value::Float(t))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn deg2rad_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -2445,6 +2487,37 @@ fn look_at_impl(
       mesh.transform[(2, 3)] = translation.z;
 
       Ok(Value::Mesh(Rc::new(mesh)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn origin_to_geometry_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let mut new_mesh = (*mesh.mesh).clone();
+      let center = mesh
+        .mesh
+        .vertices
+        .values()
+        .fold(Vec3::zeros(), |acc, vtx| acc + vtx.position)
+        / new_mesh.vertices.len() as f32;
+      for vtx in new_mesh.vertices.values_mut() {
+        vtx.position -= center;
+      }
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        aabb: RefCell::new(None),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        trimesh: RefCell::new(None),
+        transform: mesh.transform,
+        mesh: Rc::new(new_mesh),
+      })))
     }
     _ => unimplemented!(),
   }
@@ -2953,6 +3026,42 @@ fn min_impl(
   }
 }
 
+fn clamp_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      // int, int, int
+      let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let min = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let max = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
+      Ok(Value::Int(value.clamp(min, max)))
+    }
+    1 => {
+      // float, float, float
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let min = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let max = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.clamp(min, max)))
+    }
+    2 => {
+      // vec3, float, float
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let min = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let max = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.clamp(min, max),
+        value.y.clamp(min, max),
+        value.z.clamp(min, max),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn float_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -3047,6 +3156,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "look_at" => builtin_fn!(look_at, |def_ix, arg_refs, args, kwargs, _ctx| {
     look_at_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "origin_to_geometry" => builtin_fn!(origin_to_geometry, |def_ix, arg_refs, args, kwargs, _ctx| {
+    origin_to_geometry_impl(def_ix, arg_refs, args, kwargs)
   }),
   "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, _ctx| {
     apply_transforms_impl(def_ix, arg_refs, args, kwargs)
@@ -3177,6 +3289,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "min" => builtin_fn!(min, |def_ix, arg_refs, args, kwargs, _ctx| {
     min_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "clamp" => builtin_fn!(clamp, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    clamp_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "float" => builtin_fn!(float, |def_ix, arg_refs, args, kwargs, _ctx| {
     float_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -3271,6 +3386,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "smoothstep" => builtin_fn!(smoothstep, |def_ix, arg_refs, args, kwargs, _ctx| {
     smoothstep_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "linearstep" => builtin_fn!(linearstep, |def_ix, arg_refs, args, kwargs, _ctx| {
+    linearstep_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "print" => builtin_fn!(print, |_def_ix, _arg_refs, args, kwargs, ctx| {
     print_impl(ctx, args, kwargs)
   }),
@@ -3309,6 +3427,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "bezier3d" => builtin_fn!(bezier3d, |def_ix, arg_refs, args, kwargs, _ctx| {
     bezier3d_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "superellipse_path" => builtin_fn!(superellipse_path, |def_ix, arg_refs, args, kwargs, _ctx| {
+    superellipse_path_impl(def_ix, arg_refs, args, kwargs)
   }),
   "extrude_pipe" => builtin_fn!(extrude_pipe, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_pipe_impl(ctx, def_ix, arg_refs, args, kwargs)
