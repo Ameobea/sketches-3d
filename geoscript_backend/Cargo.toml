@@ -1,0 +1,19 @@
+[package]
+name = "geoscript_backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+foundations = { version = "4.4", default-features = false, features = ["settings", "metrics", "telemetry-server", "testing", "jemalloc", "tokio-runtime-metrics", "memory-profiling", "cli"] }
+axum = { version = "0.8", features = ["tower-log"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+tokio = { version = "1.36", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+pin-project = "1.1.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_path_to_error = "0.1"
+serde_default_utils = "0.3"
+uuid = { version = "1", features = ["serde"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }

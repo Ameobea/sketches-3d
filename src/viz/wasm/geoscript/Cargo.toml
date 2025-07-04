@@ -25,3 +25,4 @@ point_distribute = { path = "../point_distribute" }
 lazy_static = "1.5.0"
 tessellation = { path = "../tessellation" }
 paste = "1.0.15"
+strum = { version = "0.27", features = ["derive"] }

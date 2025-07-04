@@ -4,6 +4,7 @@ use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
 use nalgebra::Matrix4;
 use nanoserde::SerJson;
+use strum::IntoEnumIterator;
 
 use crate::{ErrorStack, Value};
 
@@ -201,7 +202,7 @@ impl Default for ShadowCamera {
   }
 }
 
-#[derive(Debug, Clone, SerJson)]
+#[derive(Debug, Clone, Copy, SerJson, strum::EnumIter)]
 pub enum ShadowMapType {
   Vsm,
 }
@@ -212,13 +213,16 @@ impl FromStr for ShadowMapType {
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
       "vsm" => Ok(ShadowMapType::Vsm),
-      _ => Err(ErrorStack::new("Invalid shadow map type")),
+      _ => Err(ErrorStack::new(format!(
+        "Invalid shadow map type; must be one of: {:?}",
+        Self::iter().map(|s| s.to_str()).collect::<Vec<_>>()
+      ))),
     }
   }
 }
 
 impl ShadowMapType {
-  pub fn to_str(&self) -> &str {
+  pub fn to_str(&self) -> &'static str {
     match self {
       ShadowMapType::Vsm => "vsm",
     }
@@ -315,6 +319,7 @@ pub enum Light {
   Directional(DirectionalLight),
   Point(PointLight),
 }
+
 impl Light {
   pub(crate) fn transform_mut(&mut self) -> &mut Matrix4<f32> {
     match self {

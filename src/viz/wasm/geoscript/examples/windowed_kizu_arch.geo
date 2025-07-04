@@ -13,10 +13,8 @@ path = |count: int|: seq {
       | take(13)
       -> |pos: vec3| {
         norm = normalize(pos - center)
-        // TODO: These windows are crooked
-        dir = look_at(pos, center - vec3(0, 4, 0))
-        window = box(5, 3.2, 5) | rot(vec3(-0.2, -dir.y, 0));
-        (window + (pos + vec3(0, 0.8, 0))) + norm
+        window = box(5, 3.2, 5) | trans(pos + norm)
+        window | look_at(target=center, up=v3(0, 0, -1)) | trans(0, 0.8, 0)
       }
       | join
     )
@@ -52,8 +50,8 @@ path = |count: int|: seq {
       | join
   )
   | {
-    path = path(20) | skip(1) | take(19);
-    [path, path -> sub(b=v3(0,15,0))]
+    pts = path(20) | skip(1) | take(19);
+    [pts -> sub(b=v3(0,4,0)), pts -> sub(b=v3(0,15,0))]
       | stitch_contours(closed=false, flipped=true)
       | extrude(up=v3(0,0,-3))
   }

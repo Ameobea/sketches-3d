@@ -1,0 +1,7 @@
+target
+config.yml
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.env
