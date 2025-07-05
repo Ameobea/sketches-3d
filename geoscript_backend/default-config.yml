@@ -25,7 +25,7 @@ telemetry:
     # Enables telemetry server
     enabled: true
     # Telemetry server address.
-    addr: "127.0.0.1:0"
+    addr: "127.0.0.1:5811"
 # Port that the HTTP server will listen on.
 port: 5810
 sql:

@@ -14,5 +14,6 @@ pub struct ServerSettings {
   /// Port that the HTTP server will listen on.
   #[serde(default = "default_u16::<5810>")]
   pub port: u16,
+
   pub sql: SqlSettings,
 }

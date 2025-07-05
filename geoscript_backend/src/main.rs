@@ -8,11 +8,13 @@ use foundations::{
 use server::start_server;
 use settings::ServerSettings;
 
-use crate::db::init_db_pool;
+use crate::{auth::cleanup_expired_sessions, db::init_db_pool};
 
 #[macro_use]
 extern crate tracing;
 
+pub mod auth;
+pub mod compositions;
 pub mod db;
 pub mod metrics;
 pub mod routes;
@@ -22,8 +24,6 @@ pub mod settings;
 async fn start() -> BootstrapResult<()> {
   let service_info = foundations::service_info!();
 
-  // Parse command line arguments. Add additional command line option that allows checking
-  // the config without running the server.
   let cli = Cli::<ServerSettings>::new(&service_info, vec![
     Arg::new("dry-run")
       .long("dry-run")
@@ -31,13 +31,11 @@ async fn start() -> BootstrapResult<()> {
       .help("Validate or generate config without running the server"),
   ])?;
 
-  // Exit if we just want to check the config.
   if cli.arg_matches.get_flag("dry-run") || cli.arg_matches.get_one::<String>("generate").is_some()
   {
     return Ok(());
   }
 
-  // Initialize telemetry with the settings obtained from the config.
   let tele_serv_fut = telemetry::init(TelemetryConfig {
     custom_server_routes: Vec::new(),
     service_info: &service_info,
@@ -49,6 +47,15 @@ async fn start() -> BootstrapResult<()> {
   }
 
   init_db_pool(&cli.settings.sql.db_url).await?;
+
+  tokio::task::spawn(async move {
+    loop {
+      if let Err(err) = cleanup_expired_sessions(&db::get_db_pool()).await {
+        error!("Failed to clean up expired sessions: {err:?}");
+      }
+      tokio::time::sleep(Duration::from_secs(600)).await;
+    }
+  });
 
   start_server(&cli.settings).await?;
 
@@ -70,7 +77,6 @@ fn main() -> BootstrapResult<()> {
     loop {
       record_runtime_metrics_sample();
 
-      // record metrics roughly twice a second
       tokio::time::sleep(Duration::from_millis(500)).await;
     }
   });

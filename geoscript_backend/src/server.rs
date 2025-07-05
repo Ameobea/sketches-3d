@@ -1,4 +1,5 @@
 use std::{
+  future::Future,
   marker::PhantomData,
   pin::Pin,
   task::{Context, Poll},
@@ -9,9 +10,9 @@ use axum::{
   handler::Handler,
   http::StatusCode,
   response::{IntoResponse, Response},
-  Router,
 };
 use foundations::BootstrapResult;
+use tower_cookies::CookieManagerLayer;
 use tower_http::{
   cors,
   trace::{DefaultMakeSpan, DefaultOnResponse},
@@ -21,14 +22,14 @@ use tracing::Level;
 use crate::{metrics::geoscript, routes, settings::ServerSettings};
 
 #[derive(Clone)]
-struct InstrumentedHandler<H, S> {
+pub(crate) struct InstrumentedHandler<H, S> {
   pub endpoint_name: &'static str,
   pub handler: H,
   pub state: PhantomData<S>,
 }
 
 #[pin_project::pin_project]
-struct InstrumentedHandlerFuture<F> {
+pub(crate) struct InstrumentedHandlerFuture<F> {
   #[pin]
   inner: F,
   endpoint_name: &'static str,
@@ -38,8 +39,6 @@ impl<F: Unpin + Future<Output = Response>> Future for InstrumentedHandlerFuture<
   type Output = Response;
 
   fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-    geoscript::requests_total(self.endpoint_name).inc();
-
     let endpoint_name = self.endpoint_name;
     let this = self.project();
     let inner = this.inner;
@@ -47,6 +46,8 @@ impl<F: Unpin + Future<Output = Response>> Future for InstrumentedHandlerFuture<
 
     match inner_poll {
       Poll::Ready(res) => {
+        geoscript::requests_total(endpoint_name).inc();
+
         if res.status().is_success() {
           geoscript::requests_success_total(endpoint_name).inc();
         } else {
@@ -75,7 +76,11 @@ where
   }
 }
 
-fn instrument_handler<T: 'static, H: Handler<T, S> + 'static, S: Clone + Send + 'static>(
+pub(crate) fn instrument_handler<
+  T: 'static,
+  H: Handler<T, S> + 'static,
+  S: Clone + Send + 'static,
+>(
   endpoint_name: &'static str,
   handler: H,
 ) -> InstrumentedHandler<H, S> {
@@ -92,14 +97,24 @@ pub struct APIError {
   pub message: String,
 }
 
+impl APIError {
+  pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
+    APIError {
+      status,
+      message: message.into(),
+    }
+  }
+}
+
 impl IntoResponse for APIError {
   fn into_response(self) -> Response { (self.status, self.message).into_response() }
 }
 
 pub async fn start_server(settings: &ServerSettings) -> BootstrapResult<()> {
-  let mut router = Router::new(); //TODO
+  let mut router = routes::app_routes();
 
   router = router
+    .layer(CookieManagerLayer::new())
     .layer(
       tower_http::cors::CorsLayer::new()
         .allow_origin(cors::AllowOrigin::list([
@@ -117,7 +132,7 @@ pub async fn start_server(settings: &ServerSettings) -> BootstrapResult<()> {
     );
 
   let addr = format!("0.0.0.0:{}", settings.port);
-  info!("Server is listening on http://{}", addr);
+  info!("Server is listening on http://{addr}");
   let listener = tokio::net::TcpListener::bind(addr).await?;
   axum::serve(listener, router).await?;
   Ok(())
