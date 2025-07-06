@@ -123,7 +123,23 @@ pub async fn login(
 
 pub async fn me(Extension(user): Extension<User>) -> Json<User> { Json(user) }
 
-pub async fn logout(cookies: Cookies, State(pool): State<SqlitePool>) -> Result<(), APIError> {
+pub async fn get_user(
+  State(pool): State<SqlitePool>,
+  axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Json<User>, APIError> {
+  let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ?")
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|_| APIError::new(StatusCode::NOT_FOUND, "User not found."))?;
+
+  Ok(Json(user))
+}
+
+pub async fn logout(
+  cookies: Cookies,
+  State(pool): State<SqlitePool>,
+) -> Result<Json<()>, APIError> {
   let session_cookie = cookies
     .get("session_id")
     .ok_or_else(|| APIError::new(StatusCode::UNAUTHORIZED, "Not logged in."))?;
@@ -141,7 +157,7 @@ pub async fn logout(cookies: Cookies, State(pool): State<SqlitePool>) -> Result<
 
   cookies.remove(Cookie::from("session_id"));
 
-  Ok(())
+  Ok(Json(()))
 }
 
 async fn create_session(pool: &SqlitePool, user_id: i64) -> Result<String, APIError> {

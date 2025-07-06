@@ -113,7 +113,7 @@ export const processLoadedScene = async (
     updateTerrain();
   };
 
-  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
+  configureDefaultPostprocessingPipeline({ viz, quality: vizConf.graphics.quality });
 
   return {
     locations: {

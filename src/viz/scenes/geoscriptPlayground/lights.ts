@@ -41,7 +41,7 @@ enum LightType {
   Directional,
 }
 
-export const buildAndAddLight = (viz: Viz, light: Light): THREE.Light => {
+export const buildAndAddLight = (viz: Viz, light: Light, renderMode: boolean): THREE.Light => {
   let lightType: LightType;
   if ('Ambient' in light) {
     lightType = LightType.Ambient;
@@ -62,7 +62,13 @@ export const buildAndAddLight = (viz: Viz, light: Light): THREE.Light => {
       const dirLight = (light as Extract<Light, { Directional: any }>).Directional[0];
       const directionalLight = new THREE.DirectionalLight(dirLight.color, dirLight.intensity);
       directionalLight.castShadow = dirLight.cast_shadow;
-      directionalLight.shadow.mapSize.set(dirLight.shadow_map_size.width, dirLight.shadow_map_size.height);
+      let mapWidth = dirLight.shadow_map_size.width;
+      let mapHeight = dirLight.shadow_map_size.height;
+      if (renderMode) {
+        mapWidth = Math.min(512, mapWidth);
+        mapHeight = Math.min(512, mapHeight);
+      }
+      directionalLight.shadow.mapSize.set(mapWidth, mapHeight);
       directionalLight.shadow.radius = dirLight.shadow_map_radius;
       directionalLight.shadow.blurSamples = dirLight.shadow_map_blur_samples;
       directionalLight.shadow.bias = dirLight.shadow_map_bias;

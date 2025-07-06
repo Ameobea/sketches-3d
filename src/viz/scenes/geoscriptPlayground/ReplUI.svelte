@@ -33,6 +33,8 @@
   import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
   import { buildEditor } from '../../../geoscript/editor';
   import { buildAndAddLight } from './lights';
+  import type { Composition, CompositionVersion } from 'src/geoscript/geoscriptAPIClient';
+  import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground';
 
   let {
     viz,
@@ -40,13 +42,28 @@
     ctxPtr,
     setReplCtx,
     baseMat,
+    userData,
   }: {
     viz: Viz;
     geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>;
     ctxPtr: number;
     setReplCtx: (ctx: ReplCtx) => void;
     baseMat: THREE.Material;
+    userData?: GeoscriptPlaygroundUserData;
   } = $props();
+
+  let initComposition = $derived(userData?.initialComposition);
+  let renderMode = $derived(userData?.renderMode ?? false);
+
+  let localStorageKeySuffix = $derived(
+    (() => {
+      if (!initComposition) {
+        return '';
+      }
+
+      return `-${initComposition.comp.id}-${initComposition.version.id}`;
+    })()
+  );
 
   let err: string | null = $state(null);
   let isRunning: boolean = $state(false);
@@ -172,7 +189,7 @@
     await repl.reset(ctxPtr);
     runStats = null;
     const startTime = performance.now();
-    localStorage.lastGeoscriptRunCompleted = 'false';
+    localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] = 'false';
     try {
       await repl.eval(ctxPtr, code, includePrelude);
     } catch (err) {
@@ -182,7 +199,7 @@
       isRunning = false;
       return;
     } finally {
-      localStorage.lastGeoscriptRunCompleted = 'true';
+      localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] = 'true';
     }
     err = (await repl.getErr(ctxPtr)) || null;
     if (err) {
@@ -240,7 +257,7 @@
     localRunStats.renderedLightCount = await repl.getRenderedLightCount(ctxPtr);
     for (let i = 0; i < localRunStats.renderedLightCount; i += 1) {
       const light = await repl.getRenderedLight(ctxPtr, i);
-      const builtLight = buildAndAddLight(viz, light);
+      const builtLight = buildAndAddLight(viz, light, userData?.renderMode ?? false);
       newRenderedMeshes.push(builtLight);
     }
 
@@ -251,11 +268,18 @@
 
   const beforeUnloadHandler = () => {
     if (editorView) {
-      localStorage.lastGeoscriptPlaygroundCode = editorView.state.doc.toString();
+      localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView.state.doc.toString();
     }
   };
 
   onMount(() => {
+    if (userData?.renderMode) {
+      const stats = document.getElementById('viz-stats');
+      if (stats) {
+        stats.style.display = 'none';
+      }
+    }
+
     const customKeymap: readonly KeyBinding[] = [
       {
         key: 'Ctrl-Enter',
@@ -275,7 +299,8 @@
         key: 'Ctrl-s',
         run: () => {
           if (editorView) {
-            localStorage.lastGeoscriptPlaygroundCode = editorView.state.doc.toString();
+            localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] =
+              editorView.state.doc.toString();
           }
           return true;
         },
@@ -285,7 +310,10 @@
     const editor = buildEditor({
       container: codemirrorContainer!,
       customKeymap,
-      initialCode: localStorage.lastGeoscriptPlaygroundCode || 'box(8) + (box(8) + vec3(4, 4, -4)) | render',
+      initialCode:
+        localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] ||
+        initComposition?.version.source_code ||
+        'box(8) + (box(8) + vec3(4, 4, -4)) | render',
     });
     editorView = editor.editorView;
 
@@ -295,13 +323,13 @@
 
     // if the user closed the tab while the last run was in progress, avoid eagerly running it again in
     // case there was an infinite loop or something
-    if (localStorage.lastGeoscriptRunCompleted !== 'false') {
+    if (localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] !== 'false') {
       run();
     }
 
     return () => {
       if (editorView) {
-        localStorage.lastGeoscriptPlaygroundCode = editorView.state.doc.toString();
+        localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView.state.doc.toString();
         editorView.destroy();
       }
       for (const mesh of renderedObjects) {
@@ -316,7 +344,7 @@
   });
 </script>
 
-<div class="root">
+<div class="root" style={userData?.renderMode ? 'visibility: hidden; height: 0;' : ''}>
   <div
     bind:this={codemirrorContainer}
     class="codemirror-wrapper"

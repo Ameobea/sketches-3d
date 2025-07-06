@@ -15,6 +15,7 @@ import { GraphicsQuality } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { CustomShaderMaterial } from '../shaders/customShader';
 import { SSRCompositorPass } from '../shaders/ssr/compositor/SSRCompositorPass';
+import { filterNils } from '../util/util';
 
 const populateShadowMap = (viz: Viz, autoUpdateShadowMap: boolean) => {
   const shadows: THREE.DirectionalLightShadow[] = [];
@@ -267,15 +268,25 @@ interface ExtraPostprocessingParams {
   toneMappingExposure?: number;
 }
 
-export const configureDefaultPostprocessingPipeline = (
-  viz: Viz,
-  quality: GraphicsQuality,
-  addMiddlePasses?: (composer: EffectComposer, viz: Viz, quality: GraphicsQuality) => void,
-  onFirstRender?: () => void,
-  extraParams: Partial<ExtraPostprocessingParams> = {},
-  postEffects?: Effect[],
-  autoUpdateShadowMap = false
-) => {
+interface ConfigureDefaultPostprocessingPipelineParams {
+  viz: Viz;
+  quality: GraphicsQuality;
+  addMiddlePasses?: (composer: EffectComposer, viz: Viz, quality: GraphicsQuality) => void;
+  extraParams?: Partial<ExtraPostprocessingParams>;
+  postEffects?: Effect[];
+  autoUpdateShadowMap?: boolean;
+  enableAntiAliasing?: boolean;
+}
+
+export const configureDefaultPostprocessingPipeline = ({
+  viz,
+  quality,
+  addMiddlePasses,
+  extraParams = {},
+  postEffects,
+  autoUpdateShadowMap = false,
+  enableAntiAliasing = true,
+}: ConfigureDefaultPostprocessingPipelineParams) => {
   const effectComposer = new CustomEffectComposer(viz, {
     multisampling: 0,
     frameBufferType: THREE.HalfFloatType,
@@ -296,15 +307,20 @@ export const configureDefaultPostprocessingPipeline = (
 
   addMiddlePasses?.(effectComposer, viz, quality);
 
-  const smaaEffect = new SMAAEffect({
-    preset: {
-      [GraphicsQuality.Low]: SMAAPreset.LOW,
-      [GraphicsQuality.Medium]: SMAAPreset.MEDIUM,
-      [GraphicsQuality.High]: SMAAPreset.HIGH,
-    }[quality],
-  });
-  const fxPass = new EffectPass(viz.camera, ...[smaaEffect, ...(postEffects ?? [])]);
-  effectComposer.addPass(fxPass);
+  const smaaEffect = enableAntiAliasing
+    ? new SMAAEffect({
+        preset: {
+          [GraphicsQuality.Low]: SMAAPreset.LOW,
+          [GraphicsQuality.Medium]: SMAAPreset.MEDIUM,
+          [GraphicsQuality.High]: SMAAPreset.HIGH,
+        }[quality],
+      })
+    : null;
+  const fx = filterNils([smaaEffect, ...(postEffects ?? [])]);
+  if (fx.length) {
+    const fxPass = new EffectPass(viz.camera, ...fx);
+    effectComposer.addPass(fxPass);
+  }
 
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
   if (extraParams.toneMappingExposure) {

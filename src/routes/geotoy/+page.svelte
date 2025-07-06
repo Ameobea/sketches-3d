@@ -6,7 +6,7 @@
 </script>
 
 <div class="root">
-  <FrontPage featuredCompositions={data.featuredCompositions} />
+  <FrontPage featuredCompositions={data.featuredCompositions} me={data.me} />
 </div>
 
 <style lang="css">

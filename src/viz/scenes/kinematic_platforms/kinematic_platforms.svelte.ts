@@ -202,15 +202,14 @@ export const processLoadedScene = async (
   viz.collisionWorldLoadedCbs.push(() => void initLevel(viz));
 
   // initPylonsPostprocessing(viz, vizConf);
-  configureDefaultPostprocessingPipeline(
+  configureDefaultPostprocessingPipeline({
     viz,
-    vizConf.graphics.quality,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    true
-  );
+    quality: vizConf.graphics.quality,
+    addMiddlePasses: undefined,
+    extraParams: undefined,
+    postEffects: undefined,
+    autoUpdateShadowMap: true,
+  });
 
   const viewMode: NonNullable<SceneConfig['viewMode']> = {
     type: 'top-down',

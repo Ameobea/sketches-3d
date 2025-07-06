@@ -214,28 +214,32 @@ export const processLoadedScene = async (
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
 
-  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality, (composer, viz, quality) => {
-    if (vizConf.graphics.quality > GraphicsQuality.Low) {
-      const n8aoPass = new N8AOPostPass(
-        viz.scene,
-        viz.camera,
-        viz.renderer.domElement.width,
-        viz.renderer.domElement.height
-      );
-      composer.addPass(n8aoPass);
-      n8aoPass.gammaCorrection = false;
-      n8aoPass.configuration.intensity = 2;
-      n8aoPass.configuration.aoRadius = 5;
-      // \/ this breaks rendering and makes the background black if enabled
-      // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
-      n8aoPass.setQualityMode(
-        {
-          [GraphicsQuality.Low]: 'Performance',
-          [GraphicsQuality.Medium]: 'Low',
-          [GraphicsQuality.High]: 'Medium',
-        }[vizConf.graphics.quality]
-      );
-    }
+  configureDefaultPostprocessingPipeline({
+    viz,
+    quality: vizConf.graphics.quality,
+    addMiddlePasses: (composer, viz, quality) => {
+      if (vizConf.graphics.quality > GraphicsQuality.Low) {
+        const n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        composer.addPass(n8aoPass);
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.configuration.intensity = 2;
+        n8aoPass.configuration.aoRadius = 5;
+        // \/ this breaks rendering and makes the background black if enabled
+        // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Performance',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'Medium',
+          }[vizConf.graphics.quality]
+        );
+      }
+    },
   });
 
   return {

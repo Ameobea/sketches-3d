@@ -333,10 +333,10 @@ return vec4(outColor, 1.);
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
 
-  configureDefaultPostprocessingPipeline(
+  configureDefaultPostprocessingPipeline({
     viz,
-    vizConf.graphics.quality,
-    (composer, viz, quality) => {
+    quality: vizConf.graphics.quality,
+    addMiddlePasses: (composer, viz, quality) => {
       if (vizConf.graphics.quality > GraphicsQuality.Low) {
         const n8aoPass = new N8AOPostPass(
           viz.scene,
@@ -390,16 +390,15 @@ return vec4(outColor, 1.);
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
     },
-    undefined,
-    { toneMappingExposure: 1.48 },
-    (() => {
+    extraParams: { toneMappingExposure: 1.48 },
+    postEffects: (() => {
       const toneMappingEffect = new ToneMappingEffect({
         mode: ToneMappingMode.LINEAR,
       });
 
       return [toneMappingEffect];
-    })()
-  );
+    })(),
+  });
 
   return {
     spawnLocation: 'spawn',

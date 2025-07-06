@@ -1,5 +1,5 @@
 use crate::{
-  auth::{auth_middleware, login, logout, me, register},
+  auth::{auth_middleware, get_user, login, logout, me, register},
   db::get_db_pool,
   server::instrument_handler,
 };
@@ -20,6 +20,7 @@ pub fn auth_routes() -> Router {
   Router::new()
     .route("/register", post(instrument_handler("register", register)))
     .route("/login", post(instrument_handler("login", login)))
+    .route("/user/{id}", get(instrument_handler("get_user", get_user)))
     .merge(protected_routes)
     .with_state(get_db_pool().clone())
 }

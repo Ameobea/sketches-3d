@@ -11,6 +11,7 @@ import ReplUi, { type ReplCtx } from './ReplUI.svelte';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
 import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
+import type { Composition, CompositionVersion } from 'src/geoscript/geoscriptAPIClient';
 
 const locations = {
   spawn: {
@@ -23,17 +24,28 @@ const initRepl = async (
   viz: Viz,
   geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>,
   setReplCtx: (ctx: ReplCtx) => void,
-  matPromise: Promise<THREE.Material>
+  matPromise: Promise<THREE.Material>,
+  userData: GeoscriptPlaygroundUserData | undefined = undefined
 ) => {
   const ctxPtr = await geoscriptWorker.init();
 
   const _ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
-    props: { viz, ctxPtr, geoscriptWorker, setReplCtx, baseMat: await matPromise },
+    props: { viz, ctxPtr, geoscriptWorker, setReplCtx, baseMat: await matPromise, userData },
   });
 };
 
-export const processLoadedScene = (viz: Viz, _loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
+export interface GeoscriptPlaygroundUserData {
+  initialComposition: { comp: Composition; version: CompositionVersion } | null;
+  renderMode?: boolean;
+}
+
+export const processLoadedScene = (
+  viz: Viz,
+  _loadedWorld: THREE.Group,
+  vizConf: VizConfig,
+  userData: GeoscriptPlaygroundUserData | undefined = undefined
+): SceneConfig => {
   const loader = new THREE.ImageBitmapLoader();
   const matPromise = buildGrayFossilRockMaterial(
     loader,
@@ -43,46 +55,53 @@ export const processLoadedScene = (viz: Viz, _loadedWorld: THREE.Group, vizConf:
   );
   const geoscriptWorker = Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker());
 
-  configureDefaultPostprocessingPipeline(
-    viz,
-    vizConf.graphics.quality,
-    (composer, viz, _quality) => {
-      if (
-        vizConf.graphics.quality > GraphicsQuality.Low &&
-        (window.innerWidth > 800 || window.innerHeight > 600)
-      ) {
-        const n8aoPass = new N8AOPostPass(
-          viz.scene,
-          viz.camera,
-          viz.renderer.domElement.width,
-          viz.renderer.domElement.height
-        );
-        composer.addPass(n8aoPass);
-        n8aoPass.gammaCorrection = false;
-        n8aoPass.configuration.intensity = 2;
-        n8aoPass.configuration.aoRadius = 5;
-        // \/ this breaks rendering and makes the background black if enabled
-        n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Medium;
-        n8aoPass.setQualityMode(
-          {
-            [GraphicsQuality.Low]: 'Performance',
-            [GraphicsQuality.Medium]: 'Low',
-            [GraphicsQuality.High]: 'Medium',
-          }[vizConf.graphics.quality]
-        );
-      }
-    },
-    undefined,
-    undefined,
-    undefined,
-    true
-  );
+  const quality = vizConf.graphics.quality;
 
-  const axisHelper = new THREE.AxesHelper(100);
-  axisHelper.position.set(0, 0, 0);
-  viz.scene.add(axisHelper);
+  if (!userData?.renderMode) {
+    configureDefaultPostprocessingPipeline({
+      viz,
+      quality,
+      addMiddlePasses: (composer, viz, _quality) => {
+        if (quality > GraphicsQuality.Low && window.innerWidth > 800) {
+          const n8aoPass = new N8AOPostPass(
+            viz.scene,
+            viz.camera,
+            viz.renderer.domElement.width,
+            viz.renderer.domElement.height
+          );
+          composer.addPass(n8aoPass);
+          n8aoPass.gammaCorrection = false;
+          n8aoPass.configuration.intensity = 2;
+          n8aoPass.configuration.aoRadius = 5;
+          // \/ this breaks rendering and makes the background black if enabled
+          n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
+          n8aoPass.setQualityMode(
+            {
+              [GraphicsQuality.Low]: 'Performance',
+              [GraphicsQuality.Medium]: 'Low',
+              [GraphicsQuality.High]: 'Medium',
+            }[quality]
+          );
+        }
+      },
+      extraParams: undefined,
+      postEffects: undefined,
+      autoUpdateShadowMap: !userData?.renderMode,
+      enableAntiAliasing: !userData?.renderMode,
+    });
+  }
+
+  if (!userData?.renderMode) {
+    const axisHelper = new THREE.AxesHelper(100);
+    axisHelper.position.set(0, 0, 0);
+    viz.scene.add(axisHelper);
+  }
 
   const updateCanvasSize = () => {
+    if (userData?.renderMode) {
+      return;
+    }
+
     const controlsHeight = Math.max(250, 0.25 * window.innerHeight);
     const canvasHeight = Math.max(window.innerHeight - controlsHeight, 300);
     viz.renderer.setSize(window.innerWidth, canvasHeight, true);
@@ -99,7 +118,8 @@ export const processLoadedScene = (viz: Viz, _loadedWorld: THREE.Group, vizConf:
     (newCtx: ReplCtx) => {
       ctx = newCtx;
     },
-    matPromise
+    matPromise,
+    userData
   );
 
   return {

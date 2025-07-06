@@ -30,6 +30,7 @@ pub struct CompositionVersion {
   pub composition_id: i64,
   pub source_code: String,
   pub created_at: DateTime<Utc>,
+  pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,7 +111,13 @@ pub async fn create_composition(
     )
   })?;
 
-  get_composition(State(pool), Path(id), Extension(Some(user))).await
+  get_composition(
+    State(pool),
+    Path(id),
+    Extension(Some(user)),
+    Query(AdminTokenQuery { admin_token: None }),
+  )
+  .await
 }
 
 pub async fn create_composition_version(
@@ -177,11 +184,15 @@ pub async fn fork_composition(
   .bind(composition_id)
   .fetch_one(&pool)
   .await
-  .map_err(|err| {
-    APIError::new(
+  .map_err(|err| match err {
+    sqlx::Error::RowNotFound => APIError::new(
       StatusCode::NOT_FOUND,
-      format!("Original composition not found: {err}"),
-    )
+      "Original composition not found or you do not have permission to access it",
+    ),
+    _ => APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to fetch original composition: {err}"),
+    ),
   })?;
 
   let latest_version = sqlx::query_as::<_, CompositionVersion>(
@@ -268,10 +279,20 @@ pub async fn get_composition(
   State(pool): State<SqlitePool>,
   Path(composition_id): Path<i64>,
   Extension(user_opt): Extension<Option<User>>,
+  Query(AdminTokenQuery { admin_token }): Query<AdminTokenQuery>,
 ) -> Result<Json<Composition>, APIError> {
   fn not_found() -> APIError {
-    APIError::new(StatusCode::NOT_FOUND, "Composition not found".to_owned())
+    APIError::new(
+      StatusCode::NOT_FOUND,
+      "Composition not found or you do not have permission to access it",
+    )
   }
+
+  let is_admin = if let Some(token) = admin_token {
+    token == crate::server::settings().admin_token
+  } else {
+    false
+  };
 
   let composition = sqlx::query_as::<_, Composition>(
     "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
@@ -282,7 +303,7 @@ pub async fn get_composition(
   .await
   .map_err(|_| not_found())?;
 
-  if composition.is_shared {
+  if composition.is_shared || is_admin {
     return Ok(Json(composition));
   }
 
@@ -290,7 +311,7 @@ pub async fn get_composition(
     return Err(not_found());
   };
 
-  if user.id != composition.author_id {
+  if user.id != composition.author_id && !is_admin {
     return Err(not_found());
   }
 
@@ -301,12 +322,14 @@ pub async fn list_composition_versions(
   State(pool): State<SqlitePool>,
   Path(composition_id): Path<i64>,
   Extension(user_opt): Extension<Option<User>>,
+  Query(AdminTokenQuery { admin_token }): Query<AdminTokenQuery>,
 ) -> Result<Json<Vec<i64>>, APIError> {
   // makes sure that the user has access to the composition
   let _ = get_composition(
     State(pool.clone()),
     Path(composition_id),
     Extension(user_opt),
+    Query(AdminTokenQuery { admin_token }),
   )
   .await?;
 
@@ -327,16 +350,23 @@ pub async fn list_composition_versions(
   Ok(Json(versions))
 }
 
+#[derive(Deserialize)]
+pub struct AdminTokenQuery {
+  admin_token: Option<String>,
+}
+
 pub async fn get_composition_latest(
   State(pool): State<SqlitePool>,
   Path(composition_id): Path<i64>,
   Extension(user_opt): Extension<Option<User>>,
+  Query(AdminTokenQuery { admin_token }): Query<AdminTokenQuery>,
 ) -> Result<Json<CompositionVersion>, APIError> {
   // makes sure that the user has access to the composition
   let _ = get_composition(
     State(pool.clone()),
     Path(composition_id),
     Extension(user_opt),
+    Query(AdminTokenQuery { admin_token }),
   )
   .await?;
 
@@ -360,12 +390,14 @@ pub async fn get_composition_version(
   State(pool): State<SqlitePool>,
   Path((composition_id, version)): Path<(i64, i64)>,
   Extension(user_opt): Extension<Option<User>>,
+  Query(AdminTokenQuery { admin_token }): Query<AdminTokenQuery>,
 ) -> Result<Json<CompositionVersion>, APIError> {
   // makes sure that the user has access to the composition
   let _ = get_composition(
     State(pool.clone()),
     Path(composition_id),
     Extension(user_opt),
+    Query(AdminTokenQuery { admin_token }),
   )
   .await?;
 

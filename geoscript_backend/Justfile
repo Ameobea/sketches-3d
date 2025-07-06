@@ -22,4 +22,4 @@ build-and-deploy:
   just docker-build
   docker save ameo/geoscript-backend:latest | bzip2 > /tmp/geoscript-backend.tar.bz2
   scp /tmp/geoscript-backend.tar.bz2 debian@ameo.dev:/tmp/geoscript-backend.tar.bz2
-  ssh debian@ameo.dev -t 'cat /tmp/geoscript-backend.tar.bz2 | bunzip2 | docker load && docker kill geoscript-backend && docker container rm geoscript-backend && docker run   --name geoscript-backend   --restart=always   -d   --net host   -v /opt/conf/dream/geoscript-backend.yml:/opt/conf.yml   -e RUST_LOG=info   ameo/geoscript-backend:latest   /usr/local/bin/geoscript-backend --config /opt/conf.yml && rm /tmp/geoscript-backend.tar.bz2'
+  ssh debian@ameo.dev -t 'cat /tmp/geoscript-backend.tar.bz2 | bunzip2 | docker load && docker kill geoscript-backend && docker container rm geoscript-backend && docker run   --name geoscript-backend   --restart=always   -d   --net host   -v /opt/conf/dream/geoscript-backend.yml:/opt/conf.yml -v /opt/dream/geoscript_backend.sqlite3:/opt/geoscript_backend.sqlite3  -e RUST_LOG=info   ameo/geoscript-backend:latest   /usr/local/bin/geoscript_backend --config /opt/conf.yml && rm /tmp/geoscript-backend.tar.bz2'

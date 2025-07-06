@@ -2,6 +2,7 @@ use std::{
   future::Future,
   marker::PhantomData,
   pin::Pin,
+  sync::OnceLock,
   task::{Context, Poll},
 };
 
@@ -110,7 +111,17 @@ impl IntoResponse for APIError {
   fn into_response(self) -> Response { (self.status, self.message).into_response() }
 }
 
+static SETTINGS: OnceLock<ServerSettings> = OnceLock::new();
+
+pub fn settings() -> &'static ServerSettings {
+  SETTINGS
+    .get()
+    .expect("Server settings have not been initialized")
+}
+
 pub async fn start_server(settings: &ServerSettings) -> BootstrapResult<()> {
+  SETTINGS.set(settings.clone()).unwrap();
+
   let mut router = routes::app_routes();
 
   router = router
@@ -121,9 +132,25 @@ pub async fn start_server(settings: &ServerSettings) -> BootstrapResult<()> {
           "http://localhost:4800".parse().unwrap(),
           "https://3d.ameo.design".parse().unwrap(),
         ]))
-        // .allow_credentials(true)
-        .allow_headers(cors::Any)
-        .allow_methods(cors::Any),
+        .allow_credentials(true)
+        .allow_headers(cors::AllowHeaders::list([
+          axum::http::header::CONTENT_TYPE,
+          axum::http::header::AUTHORIZATION,
+          axum::http::header::ACCEPT,
+          axum::http::header::ORIGIN,
+          axum::http::header::COOKIE,
+        ]))
+        .allow_methods(cors::AllowMethods::list([
+          axum::http::Method::GET,
+          axum::http::Method::POST,
+          axum::http::Method::PATCH,
+          axum::http::Method::DELETE,
+          axum::http::Method::OPTIONS,
+          axum::http::Method::PUT,
+          axum::http::Method::HEAD,
+          axum::http::Method::TRACE,
+          axum::http::Method::CONNECT,
+        ])),
     )
     .layer(
       tower_http::trace::TraceLayer::new_for_http()

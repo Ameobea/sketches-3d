@@ -163,10 +163,6 @@ export class Viz {
 
     this.setupCameraAndRenderer(sceneDef);
 
-    const stats = new Stats.default();
-    stats.dom.style.position = 'absolute';
-    stats.dom.style.top = '0px';
-
     this.registerBeforeRenderCb(() => {
       for (const { mesh, baseMat, replacementMat, distance } of this.distanceSwapEntries) {
         const distanceToCamera = this.camera.position.distanceTo(mesh.position);
@@ -215,6 +211,7 @@ export class Viz {
     this.stats = new Stats.default();
     this.stats.dom.style.position = 'absolute';
     this.stats.dom.style.top = '0px';
+    this.stats.dom.id = 'viz-stats';
 
     // backwards compat
     if (sceneDef.legacyLights) {
@@ -718,6 +715,7 @@ interface InitVizArgs {
   popUpCalled: TransparentWritable<PopupScreenFocus>;
   sceneName?: string;
   vizCb: (viz: Viz, vizConfig: TransparentWritable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
+  userData?: any;
 }
 
 /**
@@ -729,7 +727,7 @@ interface InitVizArgs {
  */
 export const initViz = (
   container: HTMLElement,
-  { paused, popUpCalled, sceneName: providedSceneName = Conf.DefaultSceneName, vizCb }: InitVizArgs
+  { paused, popUpCalled, sceneName: providedSceneName = Conf.DefaultSceneName, vizCb, userData }: InitVizArgs
 ) => {
   initSentry();
 
@@ -767,7 +765,7 @@ export const initViz = (
     setDefaultDistanceAmpParams(null);
     const sceneConf = {
       ...buildDefaultSceneConfig(),
-      ...((await sceneLoader(viz, scene, vizConfig.current)) ?? {}),
+      ...((await sceneLoader(viz, scene, vizConfig.current, userData)) ?? {}),
     };
     viz.sceneConf = sceneConf;
     const rawSpawnPos = sceneConf.locations[sceneConf.spawnLocation];

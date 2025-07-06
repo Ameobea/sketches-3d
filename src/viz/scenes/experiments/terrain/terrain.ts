@@ -37,7 +37,7 @@ export const processLoadedScene = async (
   viz.scene.add(terrain);
   viz.registerBeforeRenderCb(() => terrain.update());
 
-  configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
+  configureDefaultPostprocessingPipeline({ viz, quality: vizConfig.graphics.quality });
 
   return {
     viewMode: {

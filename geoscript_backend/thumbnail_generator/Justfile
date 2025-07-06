@@ -1,0 +1,5 @@
+docker-build:
+  docker build -t geoscript-thumbnail-renderer .
+
+docker-run:
+  docker run --name geoscript-thumbnail-renderer -d --net host --restart=always geoscript-thumbnail-renderer:latest

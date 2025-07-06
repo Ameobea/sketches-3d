@@ -1,3 +1,5 @@
+#![feature(once_cell_try)]
+
 use std::time::Duration;
 
 use foundations::{
@@ -17,6 +19,7 @@ pub mod auth;
 pub mod compositions;
 pub mod db;
 pub mod metrics;
+pub mod render_thumbnail;
 pub mod routes;
 pub mod server;
 pub mod settings;
@@ -42,15 +45,15 @@ async fn start() -> BootstrapResult<()> {
     settings: &cli.settings.telemetry,
   })?;
   if let Some(tele_serv_addr) = tele_serv_fut.server_addr() {
-    info!("Telemetry server is listening on http://{}", tele_serv_addr);
+    info!("Telemetry server is listening on http://{tele_serv_addr}");
     tokio::task::spawn(tele_serv_fut);
   }
 
-  init_db_pool(&cli.settings.sql.db_url).await?;
+  let pool = init_db_pool(&cli.settings.sql.db_url).await?;
 
   tokio::task::spawn(async move {
     loop {
-      if let Err(err) = cleanup_expired_sessions(&db::get_db_pool()).await {
+      if let Err(err) = cleanup_expired_sessions(&pool).await {
         error!("Failed to clean up expired sessions: {err:?}");
       }
       tokio::time::sleep(Duration::from_secs(600)).await;

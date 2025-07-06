@@ -109,7 +109,7 @@ export const processLoadedScene = async (
   };
   viz.registerBeforeRenderCb(beforeRenderCb);
 
-  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
+  configureDefaultPostprocessingPipeline({ viz, quality: vizConf.graphics.quality });
 
   return {
     spawnLocation: 'spawn',

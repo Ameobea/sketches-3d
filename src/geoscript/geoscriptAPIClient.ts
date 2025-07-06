@@ -45,6 +45,18 @@ export interface CreateCompositionVersion {
   source_code: string;
 }
 
+export class APIError extends Error {
+  public status: number;
+  public message: string;
+
+  constructor(status: number, message: string) {
+    super(`API error: ${status} ${message}`);
+    this.status = status;
+    this.message = message;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 const apiFetch = async <T>(
   path: string,
   options: RequestInit = {},
@@ -60,8 +72,18 @@ const apiFetch = async <T>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`API error: ${res.status} ${text}`);
+    throw new APIError(res.status, text || 'Unknown error');
   }
+
+  if (res.status === 204) {
+    return undefined as unknown as T;
+  }
+
+  const contentType = res.headers.get('Content-Type');
+  if (contentType && contentType !== 'application/json') {
+    return res.text() as unknown as T;
+  }
+
   return res.json();
 };
 
@@ -79,7 +101,11 @@ export const login = (data: Login): Promise<User> =>
 
 export const logout = (): Promise<void> => apiFetch<void>('/users/logout', { method: 'POST' });
 
-export const me = (): Promise<User> => apiFetch<User>('/users/me');
+export const me = (fetch: typeof globalThis.fetch = globalThis.fetch, sessionID?: string): Promise<User> =>
+  apiFetch<User>('/users/me', sessionID ? { headers: { session_id: sessionID } } : {}, fetch);
+
+export const getUser = (id: number, fetch: typeof globalThis.fetch = globalThis.fetch): Promise<User> =>
+  apiFetch<User>(`/users/user/${id}`, {}, fetch);
 
 export const createComposition = (data: CreateComposition): Promise<Composition> =>
   apiFetch<Composition>('/compositions/', {
@@ -110,8 +136,17 @@ export const listPublicCompositions = (
 
 export const listMyCompositions = (): Promise<Composition[]> => apiFetch<Composition[]>('/compositions/my');
 
-export const getComposition = (id: number): Promise<Composition> =>
-  apiFetch<Composition>(`/compositions/${id}`);
+export const getComposition = (
+  id: number,
+  fetch: typeof globalThis.fetch = globalThis.fetch,
+  sessionID?: string,
+  adminToken?: string
+): Promise<Composition> =>
+  apiFetch<Composition>(
+    `/compositions/${id}${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
+    sessionID ? { headers: { session_id: sessionID } } : {},
+    fetch
+  );
 
 export interface UpdateCompositionPatch {
   title?: string;
@@ -144,11 +179,30 @@ export const forkComposition = (id: number): Promise<Composition> =>
 export const listCompositionVersions = (id: number): Promise<number[]> =>
   apiFetch<number[]>(`/compositions/${id}/versions`);
 
-export const getCompositionLatest = (id: number): Promise<CompositionVersion> =>
-  apiFetch<CompositionVersion>(`/compositions/${id}/latest`);
+export const getCompositionLatest = (
+  id: number,
+  fetch: typeof globalThis.fetch = globalThis.fetch,
+  sessionID?: string,
+  adminToken?: string
+): Promise<CompositionVersion> =>
+  apiFetch<CompositionVersion>(
+    `/compositions/${id}/latest${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
+    sessionID ? { headers: { session_id: sessionID } } : {},
+    fetch
+  );
 
-export const getCompositionVersion = (id: number, version: number): Promise<CompositionVersion> =>
-  apiFetch<CompositionVersion>(`/compositions/${id}/version/${version}`);
+export const getCompositionVersion = (
+  id: number,
+  version: number,
+  fetch: typeof globalThis.fetch = globalThis.fetch,
+  sessionID?: string,
+  adminToken?: string
+): Promise<CompositionVersion> =>
+  apiFetch<CompositionVersion>(
+    `/compositions/${id}/version/${version}${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
+    sessionID ? { headers: { session_id: sessionID } } : {},
+    fetch
+  );
 
 export const deleteComposition = (id: number): Promise<void> =>
   apiFetch<void>(`/compositions/${id}`, { method: 'DELETE' });

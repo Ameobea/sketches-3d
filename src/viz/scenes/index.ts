@@ -163,7 +163,12 @@ export interface SceneDef {
    */
   sceneName: string | null;
   sceneLoader: () => Promise<
-    (viz: Viz, loadedWorld: THREE.Group, config: VizConfig) => SceneConfig | Promise<SceneConfig>
+    (
+      viz: Viz,
+      loadedWorld: THREE.Group,
+      config: VizConfig,
+      userData?: any
+    ) => SceneConfig | Promise<SceneConfig>
   >;
   metadata: SvelteSEOProps;
   gltfName?: string | null;

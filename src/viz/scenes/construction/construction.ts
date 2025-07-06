@@ -16,7 +16,7 @@ export const processLoadedScene = async (
   viz.camera.far = 500;
   viz.camera.updateProjectionMatrix();
 
-  configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
+  configureDefaultPostprocessingPipeline({ viz, quality: vizConfig.graphics.quality });
 
   return {
     viewMode: { type: 'firstPerson' },

@@ -1,0 +1,4 @@
+node_modules
+backend
+geoscript_backend
+src/viz/wasm/target

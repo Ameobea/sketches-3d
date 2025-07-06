@@ -15,7 +15,7 @@
     "@eslint/eslintrc": "^3.3.1",
     "@eslint/js": "^9.18.0",
     "@ianvs/prettier-plugin-sort-imports": "^4.4.2",
-    "@sveltejs/adapter-static": "^3.0.8",
+    "@sveltejs/adapter-node": "^5.2.12",
     "@sveltejs/kit": "^2.16.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tanstack/svelte-query": "^5.67.2",

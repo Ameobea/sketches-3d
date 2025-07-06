@@ -6,10 +6,10 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 export const initPylonsPostprocessing = (viz: Viz, vizConf: VizConfig, autoUpdateShadowMap = false) => {
-  configureDefaultPostprocessingPipeline(
+  configureDefaultPostprocessingPipeline({
     viz,
-    vizConf.graphics.quality,
-    (composer, viz, quality) => {
+    quality: vizConf.graphics.quality,
+    addMiddlePasses: (composer, viz, quality) => {
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -140,
         fogMaxY: -5,
@@ -41,9 +41,8 @@ export const initPylonsPostprocessing = (viz: Viz, vizConf: VizConfig, autoUpdat
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
     },
-    undefined,
-    undefined,
-    undefined,
-    autoUpdateShadowMap
-  );
+    extraParams: undefined,
+    postEffects: undefined,
+    autoUpdateShadowMap,
+  });
 };

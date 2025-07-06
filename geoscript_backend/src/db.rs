@@ -1,17 +1,17 @@
-use std::sync::OnceLock;
+use tokio::sync::OnceCell;
 
 use sqlx::SqlitePool;
 
-static DB_POOL: OnceLock<SqlitePool> = OnceLock::new();
+static DB_POOL: OnceCell<SqlitePool> = OnceCell::const_new();
 
-pub async fn init_db_pool(db_url: &str) -> Result<(), sqlx::Error> {
-  if DB_POOL.get().is_some() {
-    return Ok(());
-  }
-
-  let pool = SqlitePool::connect(db_url).await?;
-  let _ = DB_POOL.set(pool);
-  Ok(())
+pub async fn init_db_pool(db_url: &str) -> Result<&'static SqlitePool, sqlx::Error> {
+  DB_POOL
+    .get_or_try_init(move || async move {
+      let pool = SqlitePool::connect(db_url).await?;
+      sqlx::migrate!("./migrations").run(&pool).await?;
+      Ok(pool)
+    })
+    .await
 }
 
 pub fn get_db_pool() -> &'static SqlitePool {

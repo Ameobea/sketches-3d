@@ -35,11 +35,16 @@ sync:
 preview:
   bun run preview --host 0.0.0.0 --port 4800
 
-deploy:
-  phost update 3d patch build
+docker-build:
+  docker build -t dream:latest .
 
 build-and-deploy:
-  just build && just deploy
+  #!/bin/bash
+
+  just docker-build
+  docker save dream:latest | bzip2 > /tmp/dream.tar.bz2
+  scp /tmp/dream.tar.bz2 debian@ameo.dev:/tmp/dream.tar.bz2
+  ssh debian@ameo.dev -t "cat /tmp/dream.tar.bz2 | bunzip2 | docker load && docker kill dream && docker container rm dream && docker run -d --name dream --restart always --net host -e PORT=5814 dream:latest && rm /tmp/dream.tar.bz2" && rm /tmp/dream.tar.bz2
 
 # ---
 

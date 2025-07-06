@@ -63,7 +63,7 @@ export const processLoadedScene = async (
     fpCtx.addTriMesh(platform);
   });
 
-  configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
+  configureDefaultPostprocessingPipeline({ viz, quality: vizConf.graphics.quality });
 
   return {
     spawnLocation: 'spawn',

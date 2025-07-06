@@ -315,10 +315,10 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   totem0.material = totemMat;
   totem1.material = totemMat;
 
-  configureDefaultPostprocessingPipeline(
+  configureDefaultPostprocessingPipeline({
     viz,
-    vizConf.graphics.quality,
-    (composer, viz, quality) => {
+    quality: vizConf.graphics.quality,
+    addMiddlePasses: (composer, viz, quality) => {
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -90,
         fogMaxY: -40,
@@ -385,11 +385,10 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
       composer.addPass(bloomPass);
     },
-    undefined,
-    {
+    extraParams: {
       toneMappingExposure: 1.3,
     },
-    (() => {
+    postEffects: (() => {
       const toneMappingEffect = new ToneMappingEffect({
         mode: ToneMappingMode.LINEAR,
       });
@@ -397,8 +396,8 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       // return [];
       return [toneMappingEffect];
     })(),
-    true
-  );
+    autoUpdateShadowMap: true,
+  });
 
   const locations = {
     spawn: {

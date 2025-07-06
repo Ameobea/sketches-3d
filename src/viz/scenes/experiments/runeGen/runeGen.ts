@@ -124,7 +124,7 @@ export const processLoadedScene = async (
   viz.camera.near = 10;
   initAsync(viz, loadedWorld);
 
-  configureDefaultPostprocessingPipeline(viz, vizConfig.graphics.quality);
+  configureDefaultPostprocessingPipeline({ viz, quality: vizConfig.graphics.quality });
 
   return {
     viewMode: {

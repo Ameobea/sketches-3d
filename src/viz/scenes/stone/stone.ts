@@ -596,10 +596,10 @@ export const processLoadedScene = async (
   viz.renderer.shadowMap.needsUpdate = false;
   sun.shadow.needsUpdate = false;
 
-  configureDefaultPostprocessingPipeline(
+  configureDefaultPostprocessingPipeline({
     viz,
-    vizConf.graphics.quality,
-    (composer, viz, quality) => {
+    quality: vizConf.graphics.quality,
+    addMiddlePasses: (composer, viz, quality) => {
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -50,
         fogMaxY: -4,
@@ -651,9 +651,8 @@ export const processLoadedScene = async (
       selectiveBloomEffect.selection.set([...monolithLightBeams, ...totems, ...doorLights, exitPortal]);
       composer.addPass(new EffectPass(viz.camera, selectiveBloomEffect));
     },
-    undefined,
-    { toneMappingExposure: 1.3 }
-  );
+    extraParams: { toneMappingExposure: 1.3 },
+  });
 
   return {
     viewMode: { type: 'firstPerson' },

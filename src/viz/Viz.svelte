@@ -1,6 +1,6 @@
 <script lang="ts">
   import SvelteSeo from 'svelte-seo';
-  import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
+  import { QueryClientProvider } from '@tanstack/svelte-query';
   import { writable, type Writable } from 'svelte/store';
 
   import { initViz, type Viz } from '.';
@@ -15,6 +15,7 @@
   import { rwritable } from './util/TransparentWritable';
 
   export let sceneName: string;
+  export let userData: any = undefined;
 
   // svelte-ignore reactive_declaration_non_reactive_property
   $: sceneDef = ScenesByName[sceneName];
@@ -43,7 +44,7 @@
   {/if}
 
   <!-- svelte-ignore element_invalid_self_closing_tag -->
-  <div use:initViz={{ paused, popUpCalled, sceneName, vizCb }} id="viz-container" />
+  <div use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData }} id="viz-container" />
   {#if $paused && viz}
     {#if $popUpCalled.type === 'pause'}
       <PauseMenu ctx={{ onResume }} {viz} {sceneConfig} liveConfig={liveVizConfig} />
