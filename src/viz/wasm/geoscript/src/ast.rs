@@ -1466,7 +1466,7 @@ fn maybe_pre_resolve_bulitin_call_signature(
       }),
       None => {
         return Err(ErrorStack::new(format!(
-          "Variable or function not found in constant folding: {name}",
+          "Variable or function not found: {name}",
         )))
       }
     },
@@ -1580,7 +1580,7 @@ fn fold_constants<'a>(
               }
               other => {
                 return Err(ErrorStack::new(format!(
-                  "Tried to call non-callable value in constant folding: {name} = {other:?}",
+                  "Tried to call non-callable value: {name} = {other:?}",
                 )))
               }
             },
@@ -1597,7 +1597,7 @@ fn fold_constants<'a>(
               }),
               None => {
                 return Err(ErrorStack::new(format!(
-                  "Variable or function not found in constant folding: {name}",
+                  "Variable or function not found: {name}",
                 )))
               }
             },
@@ -1646,7 +1646,7 @@ fn fold_constants<'a>(
                 }
                 other => {
                   return Err(ErrorStack::new(format!(
-                    "Tried to call non-callable value in constant folding: {name} = {other:?}",
+                    "Tried to call non-callable value: {name} = {other:?}",
                   )))
                 }
               },
@@ -1745,7 +1745,7 @@ fn fold_constants<'a>(
       }
 
       Err(ErrorStack::new(format!(
-        "Variable or function not found in constant folding: {id}"
+        "Variable or function not found: {id}"
       )))
     }
     Expr::Literal(_) => Ok(()),

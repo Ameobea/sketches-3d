@@ -17,20 +17,25 @@
   });
 </script>
 
-<div class="root">
-  <p>
-    Geoscript is a DSL for procedural 3D geometry generation + manipulation. It's a functional-inspired
-    language designed to have a concise and convenient syntax with pieces from Rust, Python, TypeScript, and
-    F#.
-  </p>
-  <div class="codemirror-container" bind:this={codemirrorContainer}></div>
+<div class="wrapper">
+  <div class="root">
+    <p>
+      Geoscript is a DSL for procedural 3D geometry generation + manipulation. It's a functional-inspired
+      language designed to have a concise and convenient syntax and influences from Rust, Python, TypeScript,
+      and F#.
+    </p>
+    <div class="codemirror-container" bind:this={codemirrorContainer}></div>
+  </div>
 </div>
 
 <style lang="css">
+  :global(html) {
+    overflow-y: auto;
+  }
+
   :global(body) {
     margin: 0;
     padding: 0;
-    background-color: #282828;
   }
 
   :global(.cm-gutters) {
@@ -39,6 +44,11 @@
 
   :global(.cm-editor) {
     background: #202020 !important;
+  }
+
+  .wrapper {
+    background-color: #141414;
+    min-height: 100vh;
   }
 
   .root {

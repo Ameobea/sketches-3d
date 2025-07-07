@@ -1,33 +1,7 @@
-<script lang="ts" module>
-  export interface ReplCtx {
-    centerView: () => void;
-    toggleWireframe: () => void;
-    toggleNormalMat: () => void;
-    getLastRunOutcome: () => { type: 'ok'; stats: RunStats } | { type: 'err'; err: string | null } | null;
-  }
-
-  interface RunStats {
-    runtimeMs: number;
-    renderedMeshCount: number;
-    renderedPathCount: number;
-    renderedLightCount: number;
-    totalVtxCount: number;
-    totalFaceCount: number;
-  }
-
-  const DefaultCameraPos = new THREE.Vector3(10, 10, 10);
-  const DefaultCameraTarget = new THREE.Vector3(0, 0, 0);
-
-  const IntFormatter = new Intl.NumberFormat(undefined, {
-    style: 'decimal',
-    maximumFractionDigits: 0,
-  });
-</script>
-
 <script lang="ts">
   import type { Viz } from 'src/viz';
   import * as THREE from 'three';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { EditorView, type KeyBinding } from '@codemirror/view';
   import type * as Comlink from 'comlink';
 
@@ -36,6 +10,10 @@
   import { buildAndAddLight } from './lights';
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
   import SaveControls from './SaveControls.svelte';
+  import { goto } from '$app/navigation';
+  import { DefaultCameraPos, DefaultCameraTarget, IntFormatter, type ReplCtx, type RunStats } from './types';
+  import ReplOutput from './ReplOutput.svelte';
+  import ReplControls from './ReplControls.svelte';
 
   let {
     viz,
@@ -52,8 +30,25 @@
     setReplCtx: (ctx: ReplCtx) => void;
     baseMat: THREE.Material;
     userData?: GeoscriptPlaygroundUserData;
-    onHeightChange: (height: number) => void;
+    onHeightChange: (height: number, isCollapsed: boolean) => void;
   } = $props();
+
+  let innerWidth = $state(window.innerWidth);
+  let isEditorCollapsed = $state(
+    (() => {
+      const raw = localStorage.getItem('geoscriptEditorCollapsed');
+      return typeof raw === 'string' ? raw === 'true' : innerWidth < 768;
+    })()
+  );
+  $effect(() => {
+    localStorage.setItem('geoscriptEditorCollapsed', isEditorCollapsed ? 'true' : 'false');
+  });
+  $effect(() => {
+    if (innerWidth >= 768 && isEditorCollapsed) {
+      isEditorCollapsed = false;
+      onHeightChange(height, isEditorCollapsed);
+    }
+  });
 
   let height = $state(
     Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
@@ -65,7 +60,7 @@
     const handleMousemove = (e: MouseEvent) => {
       const newHeight = Math.min(window.innerHeight * 0.9, Math.max(100, window.innerHeight - e.clientY));
       height = newHeight;
-      onHeightChange(newHeight);
+      onHeightChange(height, isEditorCollapsed);
     };
 
     const handleMouseup = () => {
@@ -99,8 +94,96 @@
     | THREE.Light
   )[] = $state([]);
 
-  let codemirrorContainer: HTMLDivElement | null = $state(null);
-  let editorView: EditorView | null = $state(null);
+  let codemirrorContainer = $state<HTMLDivElement | null>(null);
+  let editorView = $state<EditorView | null>(null);
+
+  let lastSavedSrc = $state<string | null>(null);
+  const DefaultCode = 'box(8) | (box(8) + vec3(4, 4, -4)) | render';
+  const initialCode = $derived<string>(
+    localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] ||
+      (typeof lastSavedSrc === 'string' ? lastSavedSrc : initComposition?.version.source_code) ||
+      DefaultCode
+  );
+
+  let didFirstRun = $state(false);
+  $effect(() => {
+    if (didFirstRun) {
+      return;
+    }
+    didFirstRun = true;
+
+    // if the user closed the tab while the last run was in progress, avoid eagerly running it again in
+    // case there was an infinite loop or something
+    if (localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] !== 'false') {
+      run(initialCode);
+    }
+  });
+
+  const beforeUnloadHandler = () => {
+    localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView
+      ? editorView.state.doc.toString()
+      : lastSrc;
+  };
+
+  let lastSrc = $state(initialCode);
+  const setupEditor = () => {
+    if (!codemirrorContainer) {
+      if (editorView) {
+        beforeUnloadHandler();
+        lastSrc = editorView.state.doc.toString();
+        localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView.state.doc.toString();
+        editorView.destroy();
+        editorView = null;
+      }
+      return;
+    }
+
+    if (editorView) {
+      return;
+    }
+
+    const customKeymap: readonly KeyBinding[] = [
+      {
+        key: 'Ctrl-Enter',
+        run: () => {
+          if (!editorView) {
+            return true;
+          }
+          run();
+          return true;
+        },
+      },
+      {
+        key: 'Ctrl-.',
+        run: () => {
+          centerView();
+          return true;
+        },
+      },
+      {
+        key: 'Ctrl-s',
+        run: () => {
+          if (editorView) {
+            localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] =
+              editorView.state.doc.toString();
+          }
+          return true;
+        },
+      },
+    ];
+
+    const editor = buildEditor({
+      container: codemirrorContainer,
+      customKeymap,
+      initialCode,
+    });
+    editorView = editor.editorView;
+  };
+
+  onDestroy(() => setupEditor());
+
+  $effect(setupEditor);
+
   let activeMat: THREE.Material = $state(baseMat);
   const lineMat = new THREE.LineBasicMaterial({
     color: 0x00ff00,
@@ -230,12 +313,17 @@
     })()
   );
 
-  const run = async () => {
-    if (!editorView || isRunning) {
+  const run = async (code?: string) => {
+    if (isRunning) {
       return;
     }
 
-    const code = editorView.state.doc.toString();
+    if (typeof code !== 'string') {
+      if (!editorView) {
+        return;
+      }
+      code = editorView.state.doc.toString();
+    }
 
     beforeUnloadHandler();
 
@@ -328,10 +416,9 @@
     isRunning = false;
   };
 
-  const beforeUnloadHandler = () => {
-    if (editorView) {
-      localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView.state.doc.toString();
-    }
+  const toggleEditorCollapsed = () => {
+    isEditorCollapsed = !isEditorCollapsed;
+    onHeightChange(height, isEditorCollapsed);
   };
 
   onMount(() => {
@@ -358,58 +445,11 @@
       viz.orbitControls.update();
     }
 
-    const customKeymap: readonly KeyBinding[] = [
-      {
-        key: 'Ctrl-Enter',
-        run: () => {
-          run();
-          return true;
-        },
-      },
-      {
-        key: 'Ctrl-.',
-        run: () => {
-          centerView();
-          return true;
-        },
-      },
-      {
-        key: 'Ctrl-s',
-        run: () => {
-          if (editorView) {
-            localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] =
-              editorView.state.doc.toString();
-          }
-          return true;
-        },
-      },
-    ];
-
-    const editor = buildEditor({
-      container: codemirrorContainer!,
-      customKeymap,
-      initialCode:
-        localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] ||
-        initComposition?.version.source_code ||
-        'box(8) + (box(8) + vec3(4, 4, -4)) | render',
-    });
-    editorView = editor.editorView;
-
     setReplCtx({ centerView, toggleWireframe, toggleNormalMat, getLastRunOutcome: () => lastRunOutcome });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
 
-    // if the user closed the tab while the last run was in progress, avoid eagerly running it again in
-    // case there was an infinite loop or something
-    if (localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] !== 'false') {
-      run();
-    }
-
     return () => {
-      if (editorView) {
-        localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView.state.doc.toString();
-        editorView.destroy();
-      }
       for (const mesh of renderedObjects) {
         viz.scene.remove(mesh);
         if (mesh instanceof THREE.Mesh || mesh instanceof THREE.Line) {
@@ -420,58 +460,62 @@
       window.removeEventListener('beforeunload', beforeUnloadHandler);
     };
   });
+
+  const goHome = () => {
+    beforeUnloadHandler();
+
+    const curCode = editorView?.state.doc.toString() || lastSrc;
+    const dirty = curCode !== initialCode && curCode !== DefaultCode;
+    if (dirty) {
+      if (!confirm('You have unsaved changes. Really leave page?')) {
+        return;
+      }
+    }
+
+    goto('/geotoy');
+  };
 </script>
 
-<div
-  class="root"
-  style={`
-    ${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''}
-    height: ${height}px;
-  `}
->
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div class="dragger" role="separator" aria-orientation="horizontal" onmousedown={handleMousedown}></div>
-  <div
-    bind:this={codemirrorContainer}
-    class="codemirror-wrapper"
-    style="display: flex; flex: 1; background: #222;"
-  ></div>
-  <div class="controls">
-    <div class="output">
-      <button disabled={isRunning} onclick={run}>
-        {#if isRunning}running...{:else}run{/if}
-      </button>
-      {#if err}
-        <div class="error">{err}</div>
-      {/if}
-      {#if runStats}
-        <div class="run-stats">
-          <span style="color: #12cc12">Program ran successfully</span>
-          <ul>
-            <li>Runtime: {runStats.runtimeMs.toFixed(2)} ms</li>
-            {#if runStats.renderedMeshCount > 0 || runStats.renderedPathCount === 0}
-              <li>Rendered Meshes: {IntFormatter.format(runStats.renderedMeshCount)}</li>
-            {/if}
-            {#if runStats.renderedPathCount > 0}
-              <li>Rendered Paths: {IntFormatter.format(runStats.renderedPathCount)}</li>
-            {/if}
-            <li>Total Vertices: {IntFormatter.format(runStats.totalVtxCount)}</li>
-            <li>Total Faces: {IntFormatter.format(runStats.totalFaceCount)}</li>
-          </ul>
-        </div>
-      {/if}
-    </div>
-    {#if userData?.initialComposition && userData.me}
-      <SaveControls
-        comp={userData.initialComposition.comp}
-        version={userData.initialComposition.version}
-        me={userData.me}
-        getCurrentCode={() => editorView?.state.doc.toString() || ''}
-        {viz}
-      />
-    {/if}
+<svelte:window bind:innerWidth />
+
+{#if isEditorCollapsed}
+  <div class="root collapsed" style:height="36px">
+    <ReplControls {isRunning} {isEditorCollapsed} {run} {toggleEditorCollapsed} {goHome} />
   </div>
-</div>
+{:else}
+  <div
+    class="root"
+    style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} height: ${height}px;`}
+  >
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="dragger" role="separator" aria-orientation="horizontal" onmousedown={handleMousedown}></div>
+    <div class="editor-container">
+      <div
+        bind:this={codemirrorContainer}
+        class="codemirror-wrapper"
+        style="flex: 1; background: #222;"
+      ></div>
+      <div class="controls">
+        <div class="output">
+          <ReplControls {isRunning} {isEditorCollapsed} {run} {toggleEditorCollapsed} {goHome} />
+          <ReplOutput {err} {runStats} />
+        </div>
+        {#if userData?.initialComposition && userData.me}
+          <SaveControls
+            comp={userData.initialComposition.comp}
+            version={userData.initialComposition.version}
+            me={userData.me}
+            getCurrentCode={() => editorView?.state.doc.toString() || ''}
+            {viz}
+            onSave={(src: string) => {
+              lastSavedSrc = src;
+            }}
+          />
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style lang="css">
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
@@ -481,7 +525,7 @@
     position: absolute;
     bottom: 0;
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     color: #efefef;
     font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     font-size: 15px;
@@ -496,11 +540,19 @@
     cursor: ns-resize;
   }
 
+  .editor-container {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    min-height: 0;
+  }
+
   .output {
     display: flex;
     flex-direction: column;
     flex: 1;
     padding: 8px;
+    overflow-y: auto;
   }
 
   .codemirror-wrapper {
@@ -525,41 +577,23 @@
     flex-direction: column;
     min-width: 200px;
     flex: 0.4;
-
     border-top: 1px solid #444;
-  }
-
-  .error {
-    color: red;
-    background: #222;
-    padding: 16px 8px;
-    margin-top: 8px;
     overflow-y: auto;
-    overflow-x: hidden;
-    max-height: 200px;
-    white-space: pre-wrap;
-    overflow-wrap: break-word;
-    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
   }
 
-  .run-stats {
-    margin-top: 8px;
-    padding: 8px;
-  }
+  @media (max-width: 768px) {
+    .editor-container {
+      flex-direction: column;
+    }
 
-  button {
-    background: #333;
-    color: #f0f0f0;
-    border: 1px solid #888;
-    border-radius: 0;
-    padding: 8px 12px;
-    cursor: pointer;
-    font-size: 14px;
-  }
+    .codemirror-wrapper {
+      flex: 1;
+    }
 
-  button:disabled {
-    background: #444;
-    color: #aaa;
-    cursor: default;
+    .controls {
+      flex: 1;
+      border-top: none;
+      border-left: 1px solid #444;
+    }
   }
 </style>

@@ -7,11 +7,12 @@ import type { Viz } from 'src/viz';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
-import ReplUi, { type ReplCtx } from './ReplUI.svelte';
+import ReplUi from './ReplUI.svelte';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
 import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
+import type { ReplCtx } from './types';
 
 const locations = {
   spawn: {
@@ -26,7 +27,7 @@ const initRepl = async (
   setReplCtx: (ctx: ReplCtx) => void,
   matPromise: Promise<THREE.Material>,
   userData: GeoscriptPlaygroundUserData | undefined = undefined,
-  onHeightChange: (height: number) => void
+  onHeightChange: (height: number, isCollapsed: boolean) => void
 ) => {
   const ctxPtr = await geoscriptWorker.init();
 
@@ -123,13 +124,15 @@ export const processLoadedScene = (
   let controlsHeight = $state(
     Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
   );
+  let isEditorCollapsed = $state(window.innerWidth < 768);
 
   const updateCanvasSize = () => {
     if (userData?.renderMode) {
       return;
     }
 
-    const canvasHeight = Math.max(window.innerHeight - controlsHeight, 300);
+    const newHeight = isEditorCollapsed ? 36 : controlsHeight;
+    const canvasHeight = Math.max(window.innerHeight - newHeight, 0);
     viz.renderer.setSize(window.innerWidth, canvasHeight, true);
     if (viz.camera.isPerspectiveCamera) {
       viz.camera.aspect = window.innerWidth / canvasHeight;
@@ -147,8 +150,9 @@ export const processLoadedScene = (
     },
     matPromise,
     userData,
-    (newHeight: number) => {
+    (newHeight: number, newIsCollapsed: boolean) => {
       controlsHeight = newHeight;
+      isEditorCollapsed = newIsCollapsed;
       localStorage.setItem('geoscript-repl-height', String(newHeight));
       updateCanvasSize();
     }

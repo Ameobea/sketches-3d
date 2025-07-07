@@ -22,6 +22,9 @@
 
         try {
           await (mode === 'login' ? login : register)({ username, password });
+          if (mode === 'register') {
+            await login({ username, password });
+          }
         } catch (error) {
           loginError = error instanceof Error ? error.message : `unknown error: ${error}`;
           return;

@@ -56,7 +56,8 @@ const setupOrbitControls = async (
 
   (window as any).getView = () =>
     console.log({ pos: camera.position.toArray(), target: controls.target.toArray() });
-  (window as any).recordPos = (window as any).getView;
+  (window as any).recordPos = () =>
+    JSON.stringify({ pos: camera.position.toArray(), target: controls.target.toArray() });
 
   return controls;
 };
@@ -804,11 +805,16 @@ export const initViz = (
 
     const initialSpawnPos = (window as any).lastPos
       ? (() => {
-          const lastPos = JSON.parse((window as any).lastPos);
-          return {
-            pos: new THREE.Vector3(lastPos.pos[0], lastPos.pos[1], lastPos.pos[2]),
-            rot: new THREE.Vector3(lastPos.rot[0], lastPos.rot[1], lastPos.rot[2]),
-          };
+          try {
+            const lastPos = JSON.parse((window as any).lastPos);
+            return {
+              pos: new THREE.Vector3(lastPos.pos[0], lastPos.pos[1], lastPos.pos[2]),
+              rot: new THREE.Vector3(lastPos.rot[0], lastPos.rot[1], lastPos.rot[2]),
+            };
+          } catch (_err) {
+            console.warn('Failed to parse lastPos', (window as any).lastPos);
+            return viz.spawnPos;
+          }
         })()
       : viz.spawnPos;
 

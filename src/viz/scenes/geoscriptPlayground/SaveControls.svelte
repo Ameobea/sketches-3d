@@ -17,8 +17,15 @@
     version,
     me,
     getCurrentCode,
-  }: { viz: Viz; comp: Composition; version: CompositionVersion; me: User; getCurrentCode: () => string } =
-    $props();
+    onSave,
+  }: {
+    viz: Viz;
+    comp: Composition;
+    version: CompositionVersion;
+    me: User;
+    getCurrentCode: () => string;
+    onSave: (savedSrc: string) => void;
+  } = $props();
 
   let status = $state<
     { type: 'ok'; msg: string; seq: number } | { type: 'error'; msg: string } | { type: 'loading' } | null
@@ -50,6 +57,7 @@
       };
 
       await createCompositionVersion(comp.id, { source_code: code, metadata });
+      onSave(code);
 
       status = { type: 'ok', msg: 'Changes saved successfully!', seq };
       setTimeout(() => {
@@ -87,7 +95,7 @@
     flex-direction: column;
     flex: 0;
     border-top: 1px solid #333;
-    padding: 4px 4px;
+    padding: 8px;
   }
 
   .status {

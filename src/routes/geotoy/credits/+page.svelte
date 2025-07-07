@@ -2,7 +2,10 @@
 </script>
 
 <div class="root">
-  <h2>Credits + Acknowledgements</h2>
+  <h2>
+    Geoscript/Geotoy <br />
+    Credits + Acknowledgements
+  </h2>
   <ul>
     <li>
       Geotoy is largely inspired by the venerable <a target="_blank" href="https://shadertoy.com">
@@ -41,11 +44,28 @@
       project, used for all the rendering in Geotoy
     </li>
   </ul>
+
+  <div style="text-align: center; margin-top: 2em; font-size: 0.9em; color: #888">
+    <a href="/geotoy">back to home</a>
+  </div>
 </div>
 
 <style lang="css">
   .root {
     display: flex;
     flex-direction: column;
+    height: 100vh;
+    padding: 16px;
+  }
+
+  @media (max-width: 600px) {
+    ul {
+      padding-inline-start: 20px;
+    }
+
+    h2 {
+      font-size: 22px;
+      font-weight: bold;
+    }
   }
 </style>
