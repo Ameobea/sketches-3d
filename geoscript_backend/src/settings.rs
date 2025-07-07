@@ -7,6 +7,15 @@ pub struct SqlSettings {
 }
 
 #[settings]
+pub struct ObjectStorageSettings {
+  pub endpoint: String,
+  pub bucket_name: String,
+  pub access_key: String,
+  pub secret_access_key: String,
+  pub public_endpoint: String,
+}
+
+#[settings]
 pub struct ServerSettings {
   /// Telemetry settings.
   pub telemetry: TelemetrySettings,
@@ -17,4 +26,6 @@ pub struct ServerSettings {
   pub admin_token: String,
 
   pub sql: SqlSettings,
+
+  pub object_storage: ObjectStorageSettings,
 }

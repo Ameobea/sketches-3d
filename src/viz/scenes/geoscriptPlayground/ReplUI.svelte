@@ -3,6 +3,7 @@
     centerView: () => void;
     toggleWireframe: () => void;
     toggleNormalMat: () => void;
+    getLastRunOutcome: () => { type: 'ok'; stats: RunStats } | { type: 'err'; err: string | null } | null;
   }
 
   interface RunStats {
@@ -33,8 +34,8 @@
   import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
   import { buildEditor } from '../../../geoscript/editor';
   import { buildAndAddLight } from './lights';
-  import type { Composition, CompositionVersion } from 'src/geoscript/geoscriptAPIClient';
-  import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground';
+  import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
+  import SaveControls from './SaveControls.svelte';
 
   let {
     viz,
@@ -43,6 +44,7 @@
     setReplCtx,
     baseMat,
     userData,
+    onHeightChange,
   }: {
     viz: Viz;
     geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>;
@@ -50,10 +52,32 @@
     setReplCtx: (ctx: ReplCtx) => void;
     baseMat: THREE.Material;
     userData?: GeoscriptPlaygroundUserData;
+    onHeightChange: (height: number) => void;
   } = $props();
 
+  let height = $state(
+    Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
+  );
+
+  const handleMousedown = (e: MouseEvent) => {
+    e.preventDefault();
+
+    const handleMousemove = (e: MouseEvent) => {
+      const newHeight = Math.min(window.innerHeight * 0.9, Math.max(100, window.innerHeight - e.clientY));
+      height = newHeight;
+      onHeightChange(newHeight);
+    };
+
+    const handleMouseup = () => {
+      window.removeEventListener('mousemove', handleMousemove);
+      window.removeEventListener('mouseup', handleMouseup);
+    };
+
+    window.addEventListener('mousemove', handleMousemove);
+    window.addEventListener('mouseup', handleMouseup);
+  };
+
   let initComposition = $derived(userData?.initialComposition);
-  let renderMode = $derived(userData?.renderMode ?? false);
 
   let localStorageKeySuffix = $derived(
     (() => {
@@ -126,17 +150,43 @@
     }
 
     const compositeBbox = computeCompositeBoundingBox(renderedObjects);
-    const center = new THREE.Vector3();
-    compositeBbox.getCenter(center);
-    const size = new THREE.Vector3();
-    compositeBbox.getSize(size);
+    const boundingSphere = new THREE.Sphere();
+    compositeBbox.getBoundingSphere(boundingSphere);
+    const center = boundingSphere.center;
+    const radius = boundingSphere.radius;
 
     // try to keep the same look direction
     const lookDir = new THREE.Vector3();
-    lookDir.copy(viz.orbitControls!.target).sub(viz.camera.position).normalize();
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const distance = maxDim * 1.2 + 1;
-    viz.camera.position.copy(center).sub(lookDir.multiplyScalar(distance));
+    lookDir.copy(viz.camera.position).sub(viz.orbitControls!.target);
+
+    if (lookDir.lengthSq() === 0) {
+      // If camera and target are at the same spot, use a default direction
+      lookDir.set(1, 1, 1);
+    }
+    lookDir.normalize();
+
+    const camera = viz.camera as THREE.PerspectiveCamera;
+    let distance;
+
+    if (!camera.isPerspectiveCamera) {
+      console.warn('centerView only works with PerspectiveCamera, falling back to old method');
+      const size = new THREE.Vector3();
+      compositeBbox.getSize(size);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      distance = maxDim * 1.2 + 1;
+    } else {
+      const vfov = THREE.MathUtils.degToRad(camera.fov);
+      const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+      const fov = Math.min(vfov, hfov);
+
+      // Compute distance to fit bounding sphere in view.
+      distance = radius / Math.sin(fov / 2);
+
+      // Add a little padding so the object is not touching the screen edge
+      distance *= 1.1;
+    }
+
+    viz.camera.position.copy(center).add(lookDir.multiplyScalar(distance));
     viz.orbitControls!.target.copy(center);
     viz.camera.lookAt(center);
     viz.orbitControls!.update();
@@ -167,6 +217,18 @@
       }
     }
   };
+
+  let lastRunOutcome = $derived(
+    (() => {
+      if (err) {
+        return { type: 'err' as const, err };
+      }
+      if (runStats) {
+        return { type: 'ok' as const, stats: runStats };
+      }
+      return null;
+    })()
+  );
 
   const run = async () => {
     if (!editorView || isRunning) {
@@ -280,6 +342,22 @@
       }
     }
 
+    const view = userData?.initialComposition?.version?.metadata?.view;
+    if (view && viz && viz.camera && viz.orbitControls) {
+      viz.camera.position.set(...view.cameraPosition);
+      viz.orbitControls.target.set(...view.target);
+      if ('fov' in viz.camera && view.fov !== undefined) {
+        viz.camera.fov = view.fov;
+        viz.camera.updateProjectionMatrix();
+      }
+      if ('zoom' in viz.camera && view.zoom !== undefined) {
+        viz.camera.zoom = view.zoom;
+        viz.camera.updateProjectionMatrix();
+      }
+      viz.camera.lookAt(viz.orbitControls.target);
+      viz.orbitControls.update();
+    }
+
     const customKeymap: readonly KeyBinding[] = [
       {
         key: 'Ctrl-Enter',
@@ -317,7 +395,7 @@
     });
     editorView = editor.editorView;
 
-    setReplCtx({ centerView, toggleWireframe, toggleNormalMat });
+    setReplCtx({ centerView, toggleWireframe, toggleNormalMat, getLastRunOutcome: () => lastRunOutcome });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
 
@@ -344,34 +422,53 @@
   });
 </script>
 
-<div class="root" style={userData?.renderMode ? 'visibility: hidden; height: 0;' : ''}>
+<div
+  class="root"
+  style={`
+    ${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''}
+    height: ${height}px;
+  `}
+>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div class="dragger" role="separator" aria-orientation="horizontal" onmousedown={handleMousedown}></div>
   <div
     bind:this={codemirrorContainer}
     class="codemirror-wrapper"
     style="display: flex; flex: 1; background: #222;"
   ></div>
   <div class="controls">
-    <button disabled={isRunning} onclick={run}>
-      {#if isRunning}running...{:else}run{/if}
-    </button>
-    {#if err}
-      <div class="error">{err}</div>
-    {/if}
-    {#if runStats}
-      <div class="run-stats">
-        <span style="color: #12cc12">Program ran successfully</span>
-        <ul>
-          <li>Runtime: {runStats.runtimeMs.toFixed(2)} ms</li>
-          {#if runStats.renderedMeshCount > 0 || runStats.renderedPathCount === 0}
-            <li>Rendered Meshes: {IntFormatter.format(runStats.renderedMeshCount)}</li>
-          {/if}
-          {#if runStats.renderedPathCount > 0}
-            <li>Rendered Paths: {IntFormatter.format(runStats.renderedPathCount)}</li>
-          {/if}
-          <li>Total Vertices: {IntFormatter.format(runStats.totalVtxCount)}</li>
-          <li>Total Faces: {IntFormatter.format(runStats.totalFaceCount)}</li>
-        </ul>
-      </div>
+    <div class="output">
+      <button disabled={isRunning} onclick={run}>
+        {#if isRunning}running...{:else}run{/if}
+      </button>
+      {#if err}
+        <div class="error">{err}</div>
+      {/if}
+      {#if runStats}
+        <div class="run-stats">
+          <span style="color: #12cc12">Program ran successfully</span>
+          <ul>
+            <li>Runtime: {runStats.runtimeMs.toFixed(2)} ms</li>
+            {#if runStats.renderedMeshCount > 0 || runStats.renderedPathCount === 0}
+              <li>Rendered Meshes: {IntFormatter.format(runStats.renderedMeshCount)}</li>
+            {/if}
+            {#if runStats.renderedPathCount > 0}
+              <li>Rendered Paths: {IntFormatter.format(runStats.renderedPathCount)}</li>
+            {/if}
+            <li>Total Vertices: {IntFormatter.format(runStats.totalVtxCount)}</li>
+            <li>Total Faces: {IntFormatter.format(runStats.totalFaceCount)}</li>
+          </ul>
+        </div>
+      {/if}
+    </div>
+    {#if userData?.initialComposition && userData.me}
+      <SaveControls
+        comp={userData.initialComposition.comp}
+        version={userData.initialComposition.version}
+        me={userData.me}
+        getCurrentCode={() => editorView?.state.doc.toString() || ''}
+        {viz}
+      />
     {/if}
   </div>
 </div>
@@ -380,7 +477,6 @@
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
 
   .root {
-    height: calc(max(250px, 25vh));
     width: 100%;
     position: absolute;
     bottom: 0;
@@ -389,6 +485,22 @@
     color: #efefef;
     font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     font-size: 15px;
+  }
+
+  .dragger {
+    width: 100%;
+    height: 5px;
+    position: absolute;
+    top: -2px;
+    left: 0;
+    cursor: ns-resize;
+  }
+
+  .output {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    padding: 8px;
   }
 
   .codemirror-wrapper {
@@ -413,7 +525,7 @@
     flex-direction: column;
     min-width: 200px;
     flex: 0.4;
-    padding: 8px;
+
     border-top: 1px solid #444;
   }
 

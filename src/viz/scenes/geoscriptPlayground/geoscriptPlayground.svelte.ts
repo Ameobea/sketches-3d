@@ -11,7 +11,7 @@ import ReplUi, { type ReplCtx } from './ReplUI.svelte';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
 import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
-import type { Composition, CompositionVersion } from 'src/geoscript/geoscriptAPIClient';
+import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
 
 const locations = {
   spawn: {
@@ -25,19 +25,29 @@ const initRepl = async (
   geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>,
   setReplCtx: (ctx: ReplCtx) => void,
   matPromise: Promise<THREE.Material>,
-  userData: GeoscriptPlaygroundUserData | undefined = undefined
+  userData: GeoscriptPlaygroundUserData | undefined = undefined,
+  onHeightChange: (height: number) => void
 ) => {
   const ctxPtr = await geoscriptWorker.init();
 
   const _ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
-    props: { viz, ctxPtr, geoscriptWorker, setReplCtx, baseMat: await matPromise, userData },
+    props: {
+      viz,
+      ctxPtr,
+      geoscriptWorker,
+      setReplCtx,
+      baseMat: await matPromise,
+      userData,
+      onHeightChange,
+    },
   });
 };
 
 export interface GeoscriptPlaygroundUserData {
   initialComposition: { comp: Composition; version: CompositionVersion } | null;
   renderMode?: boolean;
+  me?: User | null | undefined;
 }
 
 export const processLoadedScene = (
@@ -57,7 +67,20 @@ export const processLoadedScene = (
 
   const quality = vizConf.graphics.quality;
 
-  if (!userData?.renderMode) {
+  let ctx = $state<ReplCtx | null>(null);
+
+  if (userData?.renderMode) {
+    let didRender = false;
+    viz.setRenderOverride(() => {
+      if (!ctx?.getLastRunOutcome() || didRender) {
+        return;
+      }
+
+      viz.renderer.render(viz.scene, viz.camera);
+      didRender = true;
+      (window as any).onRenderReady?.();
+    });
+  } else {
     configureDefaultPostprocessingPipeline({
       viz,
       quality,
@@ -97,21 +120,25 @@ export const processLoadedScene = (
     viz.scene.add(axisHelper);
   }
 
+  let controlsHeight = $state(
+    Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
+  );
+
   const updateCanvasSize = () => {
     if (userData?.renderMode) {
       return;
     }
 
-    const controlsHeight = Math.max(250, 0.25 * window.innerHeight);
     const canvasHeight = Math.max(window.innerHeight - controlsHeight, 300);
     viz.renderer.setSize(window.innerWidth, canvasHeight, true);
-    viz.camera.aspect = window.innerWidth / canvasHeight;
+    if (viz.camera.isPerspectiveCamera) {
+      viz.camera.aspect = window.innerWidth / canvasHeight;
+    }
     viz.camera.updateProjectionMatrix();
   };
   viz.registerResizeCb(updateCanvasSize);
   updateCanvasSize();
 
-  let ctx: ReplCtx | null = null;
   initRepl(
     viz,
     geoscriptWorker,
@@ -119,7 +146,12 @@ export const processLoadedScene = (
       ctx = newCtx;
     },
     matPromise,
-    userData
+    userData,
+    (newHeight: number) => {
+      controlsHeight = newHeight;
+      localStorage.setItem('geoscript-repl-height', String(newHeight));
+      updateCanvasSize();
+    }
   );
 
   return {

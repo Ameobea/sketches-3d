@@ -1,4 +1,4 @@
-import { me, type User } from 'src/geoscript/geoscriptAPIClient';
+import { me, type User } from 'src/geoscript/geotoyAPIClient';
 
 import type { LayoutServerLoad } from './$types';
 

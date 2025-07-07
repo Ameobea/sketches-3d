@@ -1,11 +1,11 @@
-use crate::auth::User;
+use crate::{auth::User, render_thumbnail::render_thumbnail};
 use axum::{
-  Json,
   extract::{Extension, Path, Query, State},
+  Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Arguments, FromRow, Row, SqlitePool, sqlite::SqliteArguments};
+use sqlx::{sqlite::SqliteArguments, Arguments, FromRow, Row, SqlitePool};
 
 use crate::server::APIError;
 use axum::http::StatusCode;
@@ -31,6 +31,7 @@ pub struct CompositionVersion {
   pub source_code: String,
   pub created_at: DateTime<Utc>,
   pub thumbnail_url: Option<String>,
+  pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,11 +39,13 @@ pub struct CreateComposition {
   pub title: String,
   pub description: String,
   pub source_code: String,
+  pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCompositionVersion {
   pub source_code: String,
+  pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,17 +95,28 @@ pub async fn create_composition(
     )
   })?;
 
-  sqlx::query("INSERT INTO composition_versions (composition_id, source_code) VALUES (?, ?)")
-    .bind(id)
-    .bind(&payload.source_code)
-    .execute(&mut *tx)
-    .await
-    .map_err(|err| {
-      APIError::new(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Failed to insert composition version: {err}"),
-      )
-    })?;
+  let version_id = sqlx::query(
+    "INSERT INTO composition_versions (composition_id, source_code, metadata) VALUES (?, ?, ?) \
+     RETURNING id",
+  )
+  .bind(id)
+  .bind(&payload.source_code)
+  .bind(&payload.metadata)
+  .fetch_one(&mut *tx)
+  .await
+  .map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to insert composition version: {err}"),
+    )
+  })?
+  .try_get("id")
+  .map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to get inserted composition version id: {err}"),
+    )
+  })?;
 
   tx.commit().await.map_err(|err| {
     APIError::new(
@@ -110,6 +124,8 @@ pub async fn create_composition(
       format!("Failed to commit transaction: {err}"),
     )
   })?;
+
+  render_thumbnail(pool.clone(), id, version_id);
 
   get_composition(
     State(pool),
@@ -126,8 +142,8 @@ pub async fn create_composition_version(
   Path(composition_id): Path<i64>,
   Json(payload): Json<CreateCompositionVersion>,
 ) -> Result<Json<CompositionVersion>, APIError> {
-  let _composition =
-    sqlx::query_as::<_, Composition>("SELECT * FROM compositions WHERE id = ? AND author_id = ?")
+  let _comp_id: i64 =
+    sqlx::query_scalar("SELECT id FROM compositions WHERE id = ? AND author_id = ?")
       .bind(composition_id)
       .bind(user.id)
       .fetch_one(&pool)
@@ -135,19 +151,21 @@ pub async fn create_composition_version(
       .map_err(|err| match err {
         sqlx::Error::RowNotFound => APIError::new(
           StatusCode::NOT_FOUND,
-          "Composition not found or you do not have permission to modify it".to_owned(),
+          "Composition not found or you do not have permission to modify it",
         ),
         _ => APIError::new(
           StatusCode::INTERNAL_SERVER_ERROR,
-          format!("Failed to fetch composition: {err}"),
+          format!("Failed to check composition ownership: {err}"),
         ),
       })?;
 
   let version = sqlx::query_as::<_, CompositionVersion>(
-    "INSERT INTO composition_versions (composition_id, source_code) VALUES (?, ?) RETURNING *",
+    "INSERT INTO composition_versions (composition_id, source_code, metadata) VALUES (?, ?, ?) \
+     RETURNING *",
   )
   .bind(composition_id)
   .bind(payload.source_code)
+  .bind(payload.metadata)
   .fetch_one(&pool)
   .await
   .map_err(|err| {
@@ -168,6 +186,8 @@ pub async fn create_composition_version(
         format!("Failed to update composition timestamp: {err}"),
       )
     })?;
+
+  render_thumbnail(pool, composition_id, version.id);
 
   Ok(Json(version))
 }
@@ -239,17 +259,26 @@ pub async fn fork_composition(
     )
   })?;
 
-  sqlx::query("INSERT INTO composition_versions (composition_id, source_code) VALUES (?, ?)")
-    .bind(forked_composition_id)
-    .bind(&latest_version.source_code)
-    .execute(&mut *tx)
-    .await
-    .map_err(|err| {
-      APIError::new(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Failed to insert forked composition version: {err}"),
-      )
-    })?;
+  let version_id = sqlx::query(
+    "INSERT INTO composition_versions (composition_id, source_code) VALUES (?, ?) RETURNING id",
+  )
+  .bind(forked_composition_id)
+  .bind(&latest_version.source_code)
+  .fetch_one(&mut *tx)
+  .await
+  .map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to insert forked composition version: {err}"),
+    )
+  })?
+  .try_get::<i64, _>("id")
+  .map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to get forked composition version id: {err}"),
+    )
+  })?;
 
   let forked_composition = sqlx::query_as::<_, Composition>(
     "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
@@ -271,6 +300,8 @@ pub async fn fork_composition(
       format!("Failed to commit transaction: {err}"),
     )
   })?;
+
+  render_thumbnail(pool, forked_composition_id, version_id);
 
   Ok(Json(forked_composition))
 }
@@ -445,24 +476,62 @@ pub struct ListPublicCompositionsQuery {
   count: Option<usize>,
 }
 
+#[derive(Serialize)]
+pub struct PublicComposition {
+  pub comp: Composition,
+  pub latest: CompositionVersion,
+}
+
 pub async fn list_public_compositions(
   State(pool): State<SqlitePool>,
   Query(ListPublicCompositionsQuery {
     featured_only,
     count,
   }): Query<ListPublicCompositionsQuery>,
-) -> Result<Json<Vec<Composition>>, APIError> {
-  let query = format!(
-    "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
-     u.id WHERE c.is_shared = 1 {} ORDER BY c.updated_at DESC LIMIT ?",
+) -> Result<Json<Vec<PublicComposition>>, APIError> {
+  #[derive(Debug, FromRow)]
+  struct PublicCompositionRow {
+    #[sqlx(flatten)]
+    comp: Composition,
+    latest_id: i64,
+    latest_composition_id: i64,
+    latest_source_code: String,
+    latest_created_at: DateTime<Utc>,
+    latest_thumbnail_url: Option<String>,
+    latest_metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
+  }
+
+  let query_str = format!(
+    "
+SELECT
+  c.*,
+  u.username as author_username,
+  cv.id as latest_id,
+  cv.composition_id as latest_composition_id,
+  cv.source_code as latest_source_code,
+  cv.created_at as latest_created_at,
+  cv.thumbnail_url as latest_thumbnail_url,
+  cv.metadata as latest_metadata
+FROM compositions c
+JOIN users u ON c.author_id = u.id
+JOIN (
+  SELECT
+    *,
+    ROW_NUMBER() OVER(PARTITION BY composition_id ORDER BY created_at DESC) as rn
+  FROM composition_versions
+) cv ON c.id = cv.composition_id AND cv.rn = 1
+WHERE c.is_shared = 1 {}
+ORDER BY c.updated_at DESC
+LIMIT ?
+",
     if featured_only.unwrap_or(false) {
       "AND c.is_featured = 1"
     } else {
       ""
-    },
+    }
   );
 
-  let compositions = sqlx::query_as::<_, Composition>(&query)
+  let rows = sqlx::query_as::<_, PublicCompositionRow>(&query_str)
     .bind(count.unwrap_or(100).min(100) as i64)
     .fetch_all(&pool)
     .await
@@ -473,7 +542,25 @@ pub async fn list_public_compositions(
       )
     })?;
 
-  Ok(Json(compositions))
+  let result = rows
+    .into_iter()
+    .map(|row| {
+      let latest = CompositionVersion {
+        id: row.latest_id,
+        composition_id: row.latest_composition_id,
+        source_code: row.latest_source_code,
+        created_at: row.latest_created_at,
+        thumbnail_url: row.latest_thumbnail_url,
+        metadata: row.latest_metadata,
+      };
+      PublicComposition {
+        comp: row.comp,
+        latest,
+      }
+    })
+    .collect();
+
+  Ok(Json(result))
 }
 
 pub async fn update_composition(

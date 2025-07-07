@@ -41,6 +41,7 @@ docker-build:
 build-and-deploy:
   #!/bin/bash
 
+  just build
   just docker-build
   docker save dream:latest | bzip2 > /tmp/dream.tar.bz2
   scp /tmp/dream.tar.bz2 debian@ameo.dev:/tmp/dream.tar.bz2

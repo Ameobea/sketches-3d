@@ -16,6 +16,7 @@ const locations = {
     pos: [80.12519073486328, 23.87233543395996, 178.36131286621094] as [number, number, number],
     rot: [-0.31479632679489683, 28.273999999999052, 0] as [number, number, number],
   },
+  // TARGET: 406, 41, 409
 };
 
 const loadTextures = async () => {

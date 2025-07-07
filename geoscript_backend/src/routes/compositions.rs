@@ -9,8 +9,9 @@ use crate::{
   server::instrument_handler,
 };
 use axum::{
-  Router, middleware,
+  middleware,
   routing::{delete, get, patch, post},
+  Router,
 };
 
 pub fn compositions_routes() -> Router {
@@ -34,6 +35,13 @@ pub fn compositions_routes() -> Router {
     .route(
       "/{id}/fork",
       post(instrument_handler("fork_composition", fork_composition)),
+    )
+    .route(
+      "/{id}/versions",
+      post(instrument_handler(
+        "create_composition_version",
+        create_composition_version,
+      )),
     )
     .route_layer(middleware::from_fn_with_state(
       db_pool.clone(),
@@ -82,13 +90,6 @@ pub fn compositions_routes() -> Router {
     .route(
       "/{id}",
       delete(instrument_handler("delete_composition", delete_composition)),
-    )
-    .route(
-      "/{id}/versions",
-      post(instrument_handler(
-        "create_composition_version",
-        create_composition_version,
-      )),
     )
     .merge(protected_routes)
     .merge(maybe_authed_routes)

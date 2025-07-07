@@ -17,7 +17,7 @@ FROM debian:12.11-slim
 RUN apt-get update && apt-get install -y libssl-dev ca-certificates && update-ca-certificates
 
 COPY --from=builder \
-  /target/release/dream-backend \
+  /target/release/geoscript_backend \
   /usr/local/bin/
 WORKDIR /root
-CMD /usr/local/bin/dream-backend
+CMD /usr/local/bin/geoscript_backend

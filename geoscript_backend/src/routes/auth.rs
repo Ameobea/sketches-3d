@@ -4,8 +4,9 @@ use crate::{
   server::instrument_handler,
 };
 use axum::{
-  Router, middleware,
+  middleware,
   routing::{get, post},
+  Router,
 };
 
 pub fn auth_routes() -> Router {

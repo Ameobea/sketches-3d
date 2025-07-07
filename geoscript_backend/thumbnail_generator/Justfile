@@ -3,3 +3,11 @@ docker-build:
 
 docker-run:
   docker run --name geoscript-thumbnail-renderer -d --net host --restart=always geoscript-thumbnail-renderer:latest
+
+build-and-deploy:
+  #!/bin/bash
+
+  just docker-build
+  docker save geoscript-thumbnail-renderer:latest | bzip2 > /tmp/geoscript-thumbnail-renderer.tar.bz2
+  scp /tmp/geoscript-thumbnail-renderer.tar.bz2 debian@ameo.dev:/tmp/geoscript-thumbnail-renderer.tar.bz2
+  ssh debian@ameo.dev -t 'cat /tmp/geoscript-thumbnail-renderer.tar.bz2 | bunzip2 | docker load && docker kill geoscript-thumbnail-renderer && docker container rm geoscript-thumbnail-renderer && docker run   --name geoscript-thumbnail-renderer   --restart=always   -d   --net host geoscript-thumbnail-renderer:latest && rm /tmp/geoscript-thumbnail-renderer.tar.bz2'

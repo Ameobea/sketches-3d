@@ -1,11 +1,14 @@
+use crate::object_storage::upload_object;
 use sqlx::SqlitePool;
+use uuid::Uuid;
 
 /// Spawns a background task to render a thumbnail for the given composition version, upload it to
 /// cloud storage, and save the thumbnail URL in the DB.
-pub fn render_thumbnail(pool: &'static SqlitePool, composition_id: i64, version_id: i64) {
+pub fn render_thumbnail(pool: SqlitePool, composition_id: i64, version_id: i64) {
   tokio::spawn(async move {
+    info!("Rendering thumbnail for composition_id={composition_id}, version_id={version_id} ...");
     let url = format!(
-      "http://localhost:5812/render/4?admin_token={}&version_id={version_id}",
+      "http://localhost:5812/render/{composition_id}?admin_token={}&version_id={version_id}",
       crate::server::settings().admin_token
     );
 
@@ -36,8 +39,18 @@ pub fn render_thumbnail(pool: &'static SqlitePool, composition_id: i64, version_
       },
     };
 
-    // TODO: upload to cloud storage
-    let thumbnail_url = "TEMP.png".to_owned();
+    let thumbnail_url = match upload_object(
+      &format!("thumbnails/{}.avif", Uuid::new_v4()),
+      thumbnail_image,
+    )
+    .await
+    {
+      Ok(url) => url,
+      Err(err) => {
+        error!("Failed to upload thumbnail to cloud storage: {err}");
+        return;
+      },
+    };
 
     let res = sqlx::query(
       "UPDATE composition_versions SET thumbnail_url = ? WHERE id = ? AND composition_id = ?",
@@ -45,7 +58,7 @@ pub fn render_thumbnail(pool: &'static SqlitePool, composition_id: i64, version_
     .bind(&thumbnail_url)
     .bind(version_id)
     .bind(composition_id)
-    .execute(pool)
+    .execute(&pool)
     .await;
     if let Err(err) = res {
       error!("Failed to save thumbnail URL to DB: {err}");

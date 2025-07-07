@@ -1,4 +1,4 @@
-use foundations::telemetry::metrics::{Counter, metrics};
+use foundations::telemetry::metrics::{metrics, Counter};
 
 #[metrics]
 pub mod geoscript {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { login, register } from 'src/geoscript/geoscriptAPIClient';
+  import { login, register } from 'src/geoscript/geotoyAPIClient';
 
   export let mode: 'login' | 'register';
 

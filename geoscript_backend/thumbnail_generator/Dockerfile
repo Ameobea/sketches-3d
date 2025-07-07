@@ -5,6 +5,11 @@ FROM ghcr.io/puppeteer/puppeteer:24.11.2
 # We will set the working directory inside the user's home.
 WORKDIR /home/pptruser/app
 
+# Install dependencies for sharp
+USER root
+RUN apt-get update && apt-get install -y libvips-dev
+USER pptruser
+
 # Copy the package.json and install dependencies.
 # npm will use the browser provided by the image instead of downloading a new one.
 COPY package.json .

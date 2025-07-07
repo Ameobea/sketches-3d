@@ -1,37 +1,67 @@
 <script lang="ts">
-  import { logout, type Composition, type User } from 'src/geoscript/geoscriptAPIClient';
+  import {
+    logout,
+    type Composition,
+    type CompositionVersion,
+    type User,
+  } from 'src/geoscript/geotoyAPIClient';
+  import { getProxiedThumbnailURL } from './utils';
 
   export let me: User | null;
-  export let featuredCompositions: Composition[];
+  export let featuredCompositions: { comp: Composition; latest: CompositionVersion }[];
 </script>
 
-<header class="header">
-  <h1 class="title">geotoy</h1>
-  <div class="login-register">
-    {#if me}
-      <span>logged in as {me.username}</span>
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_missing_attribute -->
-      <a
-        style="cursor: pointer;"
-        onclick={() => logout().then(() => window.location.reload())}
-        role="button"
-        tabindex="0"
-      >
-        logout
-      </a>
-    {:else}
-      <a href="/geotoy/login">login/register</a>
-    {/if}
-  </div>
-</header>
 <div class="root">
+  <header class="header">
+    <h1 class="title">geotoy</h1>
+    <div class="login-register">
+      {#if me}
+        <span>logged in as {me.username}</span>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_missing_attribute -->
+        <a
+          style="cursor: pointer;"
+          onclick={() => logout().then(() => window.location.reload())}
+          role="button"
+          tabindex="0"
+        >
+          logout
+        </a>
+      {:else}
+        <a href="/geotoy/login">login/register</a>
+      {/if}
+    </div>
+  </header>
+
   {#each featuredCompositions as composition}
     <div class="composition-tile">
-      <div class="composition-title"><a href={`/geotoy/edit/${composition.id}`}>{composition.title}</a></div>
-      <div class="composition-description">{composition.description}</div>
-      <div>
-        author: <a href={`/geotoy/user/${composition.author_id}`}>{composition.author_username}</a>
+      <div class="composition-title">
+        <a href={`/geotoy/edit/${composition.comp.id}`}>{composition.comp.title}</a>
+      </div>
+      {#if composition.latest.thumbnail_url}
+        <a href={`/geotoy/edit/${composition.comp.id}`}>
+          <img
+            src={getProxiedThumbnailURL(composition.latest.thumbnail_url)}
+            alt={composition.comp.description}
+            class="composition-thumbnail"
+          />
+        </a>
+      {:else}
+        <div
+          class="composition-thumbnail"
+          style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 8px; background: #222 repeating-linear-gradient(-45deg, transparent, transparent 20px, #181818 20px, #181818 40px);"
+        >
+          <div>Thumbnail generating or not available</div>
+          <div style="font-size: 16px; margin-top: 4px;">
+            <a href={`/geotoy/edit/${composition.comp.id}`}>Open</a>
+          </div>
+          <div style="color: #bbb; font-size: 14px; margin-top: 4px; font-style: italic;">
+            {composition.comp.description}
+          </div>
+        </div>
+      {/if}
+      <div class="composition-author">
+        author: <a href={`/geotoy/user/${composition.comp.author_id}`}>{composition.comp.author_username}</a>
       </div>
     </div>
   {/each}
@@ -45,6 +75,16 @@
 </div>
 
 <style lang="css">
+  .root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 0 8px 8px 8px;
+    box-sizing: border-box;
+  }
+
   .header {
     display: flex;
     align-items: center;
@@ -63,16 +103,6 @@
     text-align: center;
   }
 
-  .root {
-    min-height: calc(100vh - 38px);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 8px;
-    box-sizing: border-box;
-  }
-
   .login-register {
     display: flex;
     flex-direction: column;
@@ -86,7 +116,7 @@
 
   .composition-tile {
     border: 1px solid #ccc;
-    padding: 16px;
+    padding: 0px 2px 8px 2px;
     display: flex;
     flex-direction: column;
     max-width: 400px;
@@ -95,12 +125,22 @@
       font-weight: bold;
       font-size: 24px;
       text-align: center;
-      margin-bottom: 16px;
+      margin-bottom: 4px;
     }
 
-    .composition-description {
+    .composition-thumbnail {
+      width: 392px;
+      height: 392px;
+      border: 1px solid #444;
+      margin-bottom: 2px;
+      aspect-ratio: 1;
+      object-fit: cover;
+      display: block;
+    }
+
+    .composition-author {
+      margin-bottom: -5px;
       font-size: 14px;
-      margin-bottom: 8px;
     }
 
     a {

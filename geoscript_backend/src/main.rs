@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use foundations::{
-  BootstrapResult,
   cli::{Arg, ArgAction, Cli},
-  telemetry::{self, TelemetryConfig, tokio_runtime_metrics::record_runtime_metrics_sample},
+  telemetry::{self, tokio_runtime_metrics::record_runtime_metrics_sample, TelemetryConfig},
+  BootstrapResult,
 };
 use server::start_server;
 use settings::ServerSettings;
@@ -19,6 +19,7 @@ pub mod auth;
 pub mod compositions;
 pub mod db;
 pub mod metrics;
+pub mod object_storage;
 pub mod render_thumbnail;
 pub mod routes;
 pub mod server;
@@ -27,12 +28,10 @@ pub mod settings;
 async fn start() -> BootstrapResult<()> {
   let service_info = foundations::service_info!();
 
-  let cli = Cli::<ServerSettings>::new(&service_info, vec![
-    Arg::new("dry-run")
-      .long("dry-run")
-      .action(ArgAction::SetTrue)
-      .help("Validate or generate config without running the server"),
-  ])?;
+  let cli = Cli::<ServerSettings>::new(&service_info, vec![Arg::new("dry-run")
+    .long("dry-run")
+    .action(ArgAction::SetTrue)
+    .help("Validate or generate config without running the server")])?;
 
   if cli.arg_matches.get_flag("dry-run") || cli.arg_matches.get_one::<String>("generate").is_some()
   {

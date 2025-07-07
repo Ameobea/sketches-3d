@@ -5,7 +5,7 @@ ADD . /app
 WORKDIR /app
 
 RUN yarn
-RUN VITE_API_BASE_URL="https://3d.ameo.design" yarn run build
+RUN yarn run build
 
 FROM node:20.9-slim
 

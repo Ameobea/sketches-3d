@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 
-import { APIError, getUser, type User } from 'src/geoscript/geoscriptAPIClient';
+import { APIError, getUser, type User } from 'src/geoscript/geotoyAPIClient';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, params }): Promise<{ user: User }> => {

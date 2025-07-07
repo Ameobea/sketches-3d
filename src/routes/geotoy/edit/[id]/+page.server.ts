@@ -5,7 +5,7 @@ import {
   getCompositionVersion,
   type Composition,
   type CompositionVersion,
-} from 'src/geoscript/geoscriptAPIClient';
+} from 'src/geoscript/geotoyAPIClient';
 
 import type { PageServerLoad } from './$types';
 import { error } from '@sveltejs/kit';
@@ -15,20 +15,27 @@ export const load: PageServerLoad = async ({
   params,
   cookies,
   url,
-}): Promise<{ comp: Composition; latest: CompositionVersion }> => {
+}): Promise<{ comp: Composition; version: CompositionVersion }> => {
   const id = parseInt(params.id, 10);
   if (isNaN(id)) {
     throw new Error('Invalid composition ID');
   }
 
-  const versionID = url.searchParams.get('version_id');
-  const adminToken = url.searchParams.get('admin_token');
+  const versionIDRaw = url.searchParams.get('version_id');
+  let versionID: number | undefined;
+  if (typeof versionIDRaw == 'string' && versionIDRaw.length > 0) {
+    versionID = parseInt(versionIDRaw, 10);
+    if (isNaN(versionID)) {
+      error(400, 'Invalid version ID');
+    }
+  }
+  const adminToken = url.searchParams.get('admin_token') ?? undefined;
 
   const sessionID = cookies.get('session_id');
   const [comp, version] = await Promise.allSettled([
     getComposition(id, fetch, sessionID, adminToken),
-    versionID
-      ? getCompositionVersion(id, +versionID, fetch, sessionID, adminToken)
+    typeof versionID === 'number'
+      ? getCompositionVersion(id, versionID, fetch, sessionID, adminToken)
       : getCompositionLatest(id, fetch, sessionID, adminToken),
   ]);
 
@@ -47,5 +54,5 @@ export const load: PageServerLoad = async ({
     }
   }
 
-  return { comp: comp.value, latest: latest.value };
+  return { comp: comp.value, version: version.value };
 };

@@ -460,7 +460,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
   geoscript: {
     sceneName: null,
     sceneLoader: () =>
-      import('./geoscriptPlayground/geoscriptPlayground.ts').then(mod => mod.processLoadedScene),
+      import('./geoscriptPlayground/geoscriptPlayground.svelte.ts').then(mod => mod.processLoadedScene),
     gltfName: null,
     legacyLights: false,
     metadata: { title: 'geoscript ' },

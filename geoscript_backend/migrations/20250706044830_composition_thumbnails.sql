@@ -1,1 +1,1 @@
-ALTER TABLE composition_versions ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
+ALTER TABLE composition_versions ADD COLUMN thumbnail_url TEXT;

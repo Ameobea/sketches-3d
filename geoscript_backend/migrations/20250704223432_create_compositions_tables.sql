@@ -25,8 +25,11 @@ CREATE TABLE composition_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   composition_id INTEGER NOT NULL,
   source_code TEXT NOT NULL,
+  metadata JSON NOT NULL DEFAULT '{}',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (composition_id) REFERENCES compositions(id) ON DELETE CASCADE
+  FOREIGN KEY (composition_id) REFERENCES compositions(id) ON DELETE CASCADE,
+  CHECK (LENGTH(source_code) <= 500000),
+  CHECK (LENGTH(metadata) <= 500000)
 );
 
 CREATE INDEX idx_composition_versions_composition_id ON composition_versions(composition_id);

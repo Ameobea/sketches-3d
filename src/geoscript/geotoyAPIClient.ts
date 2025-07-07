@@ -1,4 +1,6 @@
-const BASE_URL = 'http://localhost:5810';
+export const GEOTOY_API_BASE_URL = import.meta.env.VITE_GEOSCRIPT_API_URL || 'http://localhost:5810';
+
+const INTERNAL_PROXY_GEOTOY_API_BASE_URL = '/geotoy_api';
 
 export interface User {
   id: number;
@@ -28,21 +30,34 @@ export interface Composition {
   is_featured: boolean;
 }
 
+export interface CompositionVersionMetadata {
+  view: {
+    cameraPosition: [number, number, number];
+    target: [number, number, number];
+    fov?: number; // for PerspectiveCamera
+    zoom?: number; // for OrthographicCamera
+  };
+}
+
 export interface CompositionVersion {
   id: number;
   composition_id: number;
   source_code: string;
   created_at: string;
+  metadata: CompositionVersionMetadata;
+  thumbnail_url?: string | null;
 }
 
 export interface CreateComposition {
   title: string;
   description: string;
   source_code: string;
+  metadata: CompositionVersionMetadata;
 }
 
 export interface CreateCompositionVersion {
   source_code: string;
+  metadata: CompositionVersionMetadata;
 }
 
 export class APIError extends Error {
@@ -62,7 +77,7 @@ const apiFetch = async <T>(
   options: RequestInit = {},
   fetch: typeof globalThis.fetch = globalThis.fetch
 ): Promise<T> => {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${INTERNAL_PROXY_GEOTOY_API_BASE_URL}${path}`, {
     ...options,
     credentials: 'include',
     headers: {
@@ -122,7 +137,7 @@ export const listPublicCompositions = (
     count?: number;
   },
   fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<Composition[]> => {
+): Promise<{ comp: Composition; latest: CompositionVersion }[]> => {
   const params = new URLSearchParams();
   if (featuredOnly) {
     params.set('featured_only', 'true');
@@ -131,7 +146,11 @@ export const listPublicCompositions = (
     params.set('count', count.toString());
   }
 
-  return apiFetch<Composition[]>(`/compositions?${params.toString()}`, undefined, fetch);
+  return apiFetch<{ comp: Composition; latest: CompositionVersion }[]>(
+    `/compositions?${params.toString()}`,
+    undefined,
+    fetch
+  );
 };
 
 export const listMyCompositions = (): Promise<Composition[]> => apiFetch<Composition[]>('/compositions/my');

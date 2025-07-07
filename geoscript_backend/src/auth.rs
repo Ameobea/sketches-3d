@@ -1,18 +1,18 @@
 use argon2::{
+  password_hash::{PasswordHasher, PasswordVerifier, SaltString},
   Argon2,
-  password_hash::{PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
 use axum::{
-  Json,
   body::Body,
   extract::{Extension, State},
   http::{Request, StatusCode},
   middleware::Next,
   response::Response,
+  Json,
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{Duration, Utc};
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 use tower_cookies::{Cookie, Cookies};
