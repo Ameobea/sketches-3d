@@ -1251,13 +1251,13 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       arg_defs: &[
         ArgDef {
           name: "a",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
         ArgDef {
           name: "b",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -1289,7 +1289,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       arg_defs: &[
         ArgDef {
           name: "a",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -1345,7 +1345,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       arg_defs: &[
         ArgDef {
           name: "a",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -2150,7 +2150,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       arg_defs: &[
         ArgDef {
           name: "value",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -2626,7 +2626,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
         ArgDef {
           name: "t",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -2650,7 +2650,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
         ArgDef {
           name: "t",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -3311,13 +3311,13 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       arg_defs: &[
         ArgDef {
           name: "min",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
         ArgDef {
           name: "max",
-          valid_types: &[ArgType::Float],
+          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },

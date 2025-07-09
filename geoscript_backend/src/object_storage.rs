@@ -1,37 +1,45 @@
-use std::sync::{Arc, OnceLock};
+use bytes::Bytes;
+use reqwest::StatusCode;
 
-use object_store::{aws::AmazonS3Builder, path::Path, ObjectStore, PutPayload};
+use crate::server::APIError;
 
-static OBJECT_STORE: OnceLock<Arc<dyn ObjectStore>> = OnceLock::new();
+pub async fn upload_file(path: &str, content: Bytes) -> Result<String, APIError> {
+  let settings = crate::server::settings();
+  let client = reqwest::Client::new();
+  let url = format!(
+    "https://storage.bunnycdn.com/{}/{path}",
+    settings.bunny_storage.storage_zone_name
+  );
 
-fn get_object_store() -> &'static Arc<dyn ObjectStore> {
-  OBJECT_STORE.get_or_init(|| {
-    let settings = &crate::server::settings().object_storage;
-    let object_store = AmazonS3Builder::new()
-      .with_access_key_id(&settings.access_key)
-      .with_secret_access_key(&settings.secret_access_key)
-      .with_endpoint(&settings.endpoint)
-      .with_region("auto")
-      .with_bucket_name(&settings.bucket_name)
-      .build()
-      .map(|s3| Arc::new(s3) as Arc<dyn ObjectStore + 'static>)
-      .expect("Failed to build object store");
-    object_store
-  })
-}
+  let res = client
+    .put(&url)
+    .header("AccessKey", &settings.bunny_storage.access_key)
+    .header("content-type", "application/octet-stream")
+    .body(content)
+    .send()
+    .await
+    .map_err(|err| {
+      error!("Error uploading to bunny storage: {err}");
+      APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to upload file")
+    })?;
 
-/// Uploads an object to cloud storage. Returns the public URL of the object.
-pub async fn upload_object(
-  key: &str,
-  data: impl Into<PutPayload>,
-) -> Result<String, object_store::Error> {
-  let store = get_object_store();
-  let path = Path::from(key);
-  store.put(&path, data.into()).await?;
-  let settings = &crate::server::settings().object_storage;
+  if !res.status().is_success() {
+    error!(
+      "Error uploading to bunny storage: {}; {}",
+      res.status(),
+      res
+        .text()
+        .await
+        .unwrap_or_else(|_| "<failed to get body>".to_string())
+    );
+    return Err(APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      "Failed to upload file",
+    ));
+  }
 
-  let url = format!("{}/{key}", settings.public_endpoint);
-
-  info!("Uploaded object to {url}");
-  Ok(url)
+  Ok(format!(
+    "{}/{}",
+    settings.bunny_storage.public_endpoint, path
+  ))
 }

@@ -1,0 +1,9 @@
+html {
+  overflow-y: auto;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #0d0d0d;
+}

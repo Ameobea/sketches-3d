@@ -14,6 +14,7 @@
   import { DefaultCameraPos, DefaultCameraTarget, IntFormatter, type ReplCtx, type RunStats } from './types';
   import ReplOutput from './ReplOutput.svelte';
   import ReplControls from './ReplControls.svelte';
+  import ExportModal from './ExportModal.svelte';
 
   let {
     viz,
@@ -53,6 +54,10 @@
   let height = $state(
     Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
   );
+
+  onMount(() => {
+    onHeightChange(height, isEditorCollapsed);
+  });
 
   const handleMousedown = (e: MouseEvent) => {
     e.preventDefault();
@@ -421,6 +426,11 @@
     onHeightChange(height, isEditorCollapsed);
   };
 
+  let exportDialog = $state<HTMLDialogElement | null>(null);
+  const onExport = () => {
+    exportDialog?.showModal();
+  };
+
   onMount(() => {
     if (userData?.renderMode) {
       const stats = document.getElementById('viz-stats');
@@ -478,9 +488,14 @@
 
 <svelte:window bind:innerWidth />
 
+<ExportModal bind:dialog={exportDialog} {renderedObjects} />
+
 {#if isEditorCollapsed}
-  <div class="root collapsed" style:height="36px">
-    <ReplControls {isRunning} {isEditorCollapsed} {run} {toggleEditorCollapsed} {goHome} />
+  <div
+    class="root collapsed"
+    style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} height: 36px;`}
+  >
+    <ReplControls {isRunning} {isEditorCollapsed} {run} {toggleEditorCollapsed} {goHome} {err} {onExport} />
   </div>
 {:else}
   <div
@@ -497,20 +512,35 @@
       ></div>
       <div class="controls">
         <div class="output">
-          <ReplControls {isRunning} {isEditorCollapsed} {run} {toggleEditorCollapsed} {goHome} />
+          <ReplControls
+            {isRunning}
+            {isEditorCollapsed}
+            {run}
+            {toggleEditorCollapsed}
+            {goHome}
+            {err}
+            {onExport}
+          />
           <ReplOutput {err} {runStats} />
         </div>
-        {#if userData?.initialComposition && userData.me}
+        {#if userData?.me && (!userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id)}
           <SaveControls
-            comp={userData.initialComposition.comp}
-            version={userData.initialComposition.version}
-            me={userData.me}
+            comp={userData.initialComposition?.comp}
             getCurrentCode={() => editorView?.state.doc.toString() || ''}
             {viz}
             onSave={(src: string) => {
               lastSavedSrc = src;
             }}
           />
+        {:else if userData?.me}
+          <div class="not-logged-in" style="border-top: 1px solid #333">
+            <span style="color: #ddd">you must be logged in to save/share compositions</span>
+            <div>
+              <a href="/geotoy/login">log in</a>
+              /
+              <a href="/geotoy/register">register</a>
+            </div>
+          </div>
         {/if}
       </div>
     </div>
@@ -553,6 +583,7 @@
     flex: 1;
     padding: 8px;
     overflow-y: auto;
+    min-height: 80px;
   }
 
   .codemirror-wrapper {
@@ -572,6 +603,10 @@
     box-sizing: border-box;
   }
 
+  :global(.cm-content) {
+    padding-top: 0 !important;
+  }
+
   .controls {
     display: flex;
     flex-direction: column;
@@ -581,9 +616,18 @@
     overflow-y: auto;
   }
 
+  .not-logged-in {
+    font-size: 13px;
+    padding: 8px;
+  }
+
   @media (max-width: 768px) {
     .editor-container {
       flex-direction: column;
+    }
+
+    .output {
+      padding: 4px;
     }
 
     .codemirror-wrapper {
@@ -594,6 +638,11 @@
       flex: 1;
       border-top: none;
       border-left: 1px solid #444;
+    }
+
+    .not-logged-in {
+      font-size: 12px;
+      padding: 4px;
     }
   }
 </style>

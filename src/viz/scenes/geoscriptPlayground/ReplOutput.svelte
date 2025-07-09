@@ -10,7 +10,7 @@
 {/if}
 {#if runStats}
   <div class="run-stats">
-    <span style="color: #12cc12">Program ran successfully</span>
+    <span class="ran-successfully" style="color: #12cc12">Program ran successfully</span>
     <ul>
       <li>Runtime: {runStats.runtimeMs.toFixed(2)} ms</li>
       {#if runStats.renderedMeshCount > 0 || runStats.renderedPathCount === 0}
@@ -42,5 +42,42 @@
   .run-stats {
     margin-top: 8px;
     padding: 8px;
+  }
+
+  .ran-successfully {
+    font-size: 16px;
+  }
+
+  li {
+    font-size: 15px;
+    line-height: 1.4;
+  }
+
+  /* reduce the indentation of the list items */
+  ul {
+    padding-left: 24px;
+    margin-top: 4px;
+  }
+
+  @media (max-width: 600px) {
+    .error {
+      font-size: 12px;
+      padding: 4px 4px;
+      max-height: 150px;
+      margin-top: 4px;
+    }
+
+    .run-stats {
+      padding: 2px 0;
+      margin-top: -2px;
+
+      .ran-successfully {
+        font-size: 12px;
+      }
+
+      ul {
+        display: none;
+      }
+    }
   }
 </style>

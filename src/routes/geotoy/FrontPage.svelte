@@ -5,7 +5,6 @@
     type CompositionVersion,
     type User,
   } from 'src/geoscript/geotoyAPIClient';
-  import { getProxiedThumbnailURL } from './utils';
 
   export let me: User | null;
   export let featuredCompositions: { comp: Composition; latest: CompositionVersion }[];
@@ -19,7 +18,7 @@
 
 <div class="root">
   <header class="header">
-    <h1 class="title"><a href="/geotoy">geotoy</a></h1>
+    <h1 class="title">geotoy</h1>
 
     <div class="desktop-nav">
       <a href="/geotoy/edit">new</a>
@@ -88,9 +87,10 @@
         {#if composition.latest.thumbnail_url}
           <a href={`/geotoy/edit/${composition.comp.id}`}>
             <img
-              src={getProxiedThumbnailURL(composition.latest.thumbnail_url)}
+              src={composition.latest.thumbnail_url}
               alt={composition.comp.description}
               class="composition-thumbnail"
+              crossorigin="anonymous"
             />
           </a>
         {:else}
@@ -143,11 +143,12 @@
     z-index: 10;
     gap: 16px;
     border-bottom: 1px solid #282828;
+    margin-left: -8px;
+    margin-right: -8px;
   }
 
-  .title a {
-    text-decoration: none;
-    color: inherit;
+  .title {
+    margin-top: -2px;
   }
 
   .desktop-nav {
@@ -167,6 +168,7 @@
     cursor: pointer;
     padding: 0;
     z-index: 11;
+    margin-right: 2px;
   }
 
   .hamburger .bar {
@@ -224,13 +226,9 @@
     box-sizing: border-box;
   }
 
-  .composition-tile a {
-    text-decoration: none;
-  }
-
   .composition-title {
-    font-weight: bold;
-    font-size: 24px;
+    font-weight: 400;
+    font-size: 20px;
     text-align: center;
     margin-bottom: 4px;
   }
@@ -246,7 +244,7 @@
   }
 
   .composition-author {
-    margin-bottom: -5px;
+    margin-bottom: -2px;
     font-size: 14px;
   }
 

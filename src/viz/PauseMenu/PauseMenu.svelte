@@ -24,7 +24,7 @@
   import type { SceneConfig } from '../scenes';
   import GameplayMenu from './GameplayMenu.svelte';
   import LoginMenu from './LoginMenu.svelte';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { goto } from '$app/navigation';
 
   let activeMenu = Menu.Main;
@@ -79,7 +79,7 @@
         >
           Resume
         </button>
-        {#if !$page.url.pathname.includes('nexus')}
+        {#if !page.url.pathname.includes('nexus')}
           <button
             on:click={() => {
               ctx.onResume();

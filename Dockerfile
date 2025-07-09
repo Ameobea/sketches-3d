@@ -14,4 +14,4 @@ COPY --from=builder /app/build build/
 COPY --from=builder /app/node_modules node_modules/
 COPY package.json .
 
-CMD node ./build/index.js
+CMD ORIGIN="http://127.0.0.1:5814" node ./build/index.js

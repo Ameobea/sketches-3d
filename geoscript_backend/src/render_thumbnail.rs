@@ -1,4 +1,9 @@
-use crate::object_storage::upload_object;
+use std::time::Instant;
+
+use crate::{
+  metrics::geoscript::{thumbnail_render_time, thumbnail_upload_time},
+  object_storage::upload_file,
+};
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
@@ -12,6 +17,7 @@ pub fn render_thumbnail(pool: SqlitePool, composition_id: i64, version_id: i64) 
       crate::server::settings().admin_token
     );
 
+    let start = Instant::now();
     let res = reqwest::get(&url).await;
     let res = match res {
       Ok(res) => res,
@@ -38,8 +44,10 @@ pub fn render_thumbnail(pool: SqlitePool, composition_id: i64, version_id: i64) 
         return;
       },
     };
+    thumbnail_render_time().observe(start.elapsed().as_nanos() as u64);
 
-    let thumbnail_url = match upload_object(
+    let start = Instant::now();
+    let thumbnail_url = match upload_file(
       &format!("thumbnails/{}.avif", Uuid::new_v4()),
       thumbnail_image,
     )
@@ -47,10 +55,11 @@ pub fn render_thumbnail(pool: SqlitePool, composition_id: i64, version_id: i64) 
     {
       Ok(url) => url,
       Err(err) => {
-        error!("Failed to upload thumbnail to cloud storage: {err}");
+        error!("Failed to upload thumbnail to cloud storage: {err:?}");
         return;
       },
     };
+    thumbnail_upload_time().observe(start.elapsed().as_nanos() as u64);
 
     let res = sqlx::query(
       "UPDATE composition_versions SET thumbnail_url = ? WHERE id = ? AND composition_id = ?",

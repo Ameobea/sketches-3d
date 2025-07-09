@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PageData } from './$types';
   import FnDoc from './FnDoc.svelte';
+  import './docs.css';
 
   let { data }: { data: PageData } = $props();
   let entries = $derived(Object.entries(data.builtinFnDefs).sort(([a], [b]) => a.localeCompare(b)));
@@ -23,12 +24,6 @@
     flex-direction: column;
     border: 0;
     padding: 0;
-  }
-
-  :global(body) {
-    margin: 0;
-    padding: 0;
-    background: #141414;
   }
 
   .docs {

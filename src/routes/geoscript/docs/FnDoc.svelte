@@ -17,7 +17,7 @@
         {#each sig.arg_defs as arg, j}
           <span class="arg">
             <span class="arg-name">{arg.name || '...'}</span>
-            <span>{': '}</span>
+            {#if arg.name}<span>{': '}</span>{/if}
             <span class="arg-types">{arg.valid_types.join(' | ')}</span>
             {#if arg.default_value !== 'Required'}
               <span class="arg-default">{arg.default_value.Optional[0]}</span>
@@ -45,12 +45,18 @@
             {#each sig.arg_defs as arg}
               <li>
                 <div class="arg-def">
-                  <span class="arg-name">{arg.name}</span>
-                  <span class="arg-types">({arg.valid_types.join(' | ')})</span>
-                  {#if arg.default_value !== 'Required'}
-                    <span class="arg-default" style="margin-left: -8px">{arg.default_value.Optional[0]}</span>
+                  {#if arg.name}
+                    <span class="arg-name">{arg.name}</span>
+                    <span class="arg-types" style="margin-left: -9px">: {arg.valid_types.join(' | ')}</span>
+                    {#if arg.default_value !== 'Required'}
+                      <span class="arg-default" style="margin-left: -8px">
+                        {arg.default_value.Optional[0]}
+                      </span>
+                    {/if}
+                    {#if arg.description}<span class="arg-desc">- {arg.description}</span>{/if}
+                  {:else}
+                    <span class="arg-name">...</span>
                   {/if}
-                  {#if arg.description}<span class="arg-desc">- {arg.description}</span>{/if}
                 </div>
               </li>
             {/each}

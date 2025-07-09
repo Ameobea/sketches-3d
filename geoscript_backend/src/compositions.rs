@@ -39,13 +39,23 @@ pub struct CreateComposition {
   pub title: String,
   pub description: String,
   pub source_code: String,
+  pub is_shared: bool,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct CreateCompositionVersion {
   pub source_code: String,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl<'a> From<&'a CompositionVersion> for CreateCompositionVersion {
+  fn from(other: &'a CompositionVersion) -> Self {
+    Self {
+      source_code: other.source_code.clone(),
+      metadata: other.metadata.clone(),
+    }
+  }
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,11 +84,13 @@ pub async fn create_composition(
   })?;
 
   let id: i64 = sqlx::query(
-    "INSERT INTO compositions (author_id, title, description) VALUES (?, ?, ?) RETURNING id",
+    "INSERT INTO compositions (author_id, title, description, is_shared) VALUES (?, ?, ?, ?) \
+     RETURNING id",
   )
   .bind(user.id)
   .bind(&payload.title)
   .bind(&payload.description)
+  .bind(payload.is_shared as i32)
   .fetch_one(&mut *tx)
   .await
   .map_err(|err| {
@@ -159,13 +171,33 @@ pub async fn create_composition_version(
         ),
       })?;
 
+  let latest_version = sqlx::query_as::<_, CompositionVersion>(
+    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY created_at DESC LIMIT 1",
+  )
+  .bind(composition_id)
+  .fetch_optional(&pool)
+  .await
+  .map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to fetch latest composition version: {err}"),
+    )
+  })?;
+
+  if let Some(latest) = latest_version {
+    if CreateCompositionVersion::from(&latest) == payload {
+      // avoid creating a new version if nothing has changed
+      return Ok(Json(latest));
+    }
+  }
+
   let version = sqlx::query_as::<_, CompositionVersion>(
     "INSERT INTO composition_versions (composition_id, source_code, metadata) VALUES (?, ?, ?) \
      RETURNING *",
   )
   .bind(composition_id)
-  .bind(payload.source_code)
-  .bind(payload.metadata)
+  .bind(&payload.source_code)
+  .bind(&payload.metadata)
   .fetch_one(&pool)
   .await
   .map_err(|err| {
@@ -608,22 +640,33 @@ pub async fn update_composition(
   }
 
   let set_clause = set_clauses.join(", ");
-  let query =
-    format!("UPDATE compositions SET {set_clause} WHERE id = ? AND author_id = ? RETURNING *");
+  let query = format!("UPDATE compositions SET {set_clause} WHERE id = ? AND author_id = ?;");
   args.add(composition_id).unwrap();
   args.add(user.id).unwrap();
-
-  let updated = sqlx::query_as_with::<_, Composition, _>(&query, args)
-    .fetch_one(&pool)
+  let result = sqlx::query_with(&query, args)
+    .execute(&pool)
     .await
     .map_err(|err| {
       APIError::new(
-        StatusCode::NOT_FOUND,
+        StatusCode::INTERNAL_SERVER_ERROR,
         format!("Failed to update composition: {err}"),
       )
     })?;
 
-  Ok(Json(updated))
+  if result.rows_affected() == 0 {
+    return Err(APIError::new(
+      StatusCode::NOT_FOUND,
+      "Composition not found or you do not have permission to modify it".to_owned(),
+    ));
+  }
+
+  get_composition(
+    State(pool.clone()),
+    Path(composition_id),
+    Extension(Some(user.clone())),
+    Query(AdminTokenQuery { admin_token: None }),
+  )
+  .await
 }
 
 pub async fn delete_composition(

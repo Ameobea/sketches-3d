@@ -46,6 +46,10 @@
     background: #202020 !important;
   }
 
+  :global(.cm-content) {
+    padding-top: 0 !important;
+  }
+
   .wrapper {
     background-color: #141414;
     min-height: 100vh;

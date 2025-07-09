@@ -133,4 +133,21 @@
     margin-top: 12px;
     margin-bottom: 0;
   }
+
+  @media (max-width: 600px) {
+    .login-container {
+      width: 98%;
+      box-sizing: border-box;
+    }
+
+    .form-label {
+      min-width: 120px;
+      font-size: 12px;
+    }
+
+    .form-input {
+      flex: 1 1 120px;
+      max-width: 150px;
+    }
+  }
 </style>

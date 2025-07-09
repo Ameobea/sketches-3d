@@ -179,3 +179,16 @@ export const detectIsMobile = () => {
 };
 
 export const filterNils = <T>(arr: (T | null | undefined)[]): T[] => arr.filter((x): x is T => x != null);
+
+export const download = (blob: Blob, filename: string) => {
+  const link = document.createElement('a');
+  link.style.display = 'none';
+  document.body.appendChild(link);
+
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+
+  URL.revokeObjectURL(link.href);
+  document.body.removeChild(link);
+};

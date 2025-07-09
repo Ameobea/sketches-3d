@@ -52,6 +52,7 @@ export interface CreateComposition {
   title: string;
   description: string;
   source_code: string;
+  is_shared: boolean;
   metadata: CompositionVersionMetadata;
 }
 

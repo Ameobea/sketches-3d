@@ -18,6 +18,11 @@ body {
   box-sizing: border-box;
 }
 
+body,
+html {
+  overflow-y: auto !important;
+}
+
 h1 {
   font-size: 28px;
   line-height: 1;
@@ -49,7 +54,6 @@ input[type='number'] {
 a {
   color: #7ecfff;
   text-decoration: underline;
-  transition: color 0.2s;
 }
 
 a:hover {
@@ -81,4 +85,37 @@ button:disabled {
   background: #444;
   color: #aaa;
   cursor: default;
+}
+
+input[type='checkbox'] {
+  justify-self: start;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #1a1a1a;
+  border: 1px solid #444;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  position: relative;
+  margin: 0;
+}
+
+input[type='checkbox']:hover {
+  border-color: #777;
+}
+
+input[type='checkbox']:checked {
+  border-color: #eee;
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 3px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }

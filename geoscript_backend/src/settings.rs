@@ -16,6 +16,13 @@ pub struct ObjectStorageSettings {
 }
 
 #[settings]
+pub struct BunnyStorageSettings {
+  pub access_key: String,
+  pub storage_zone_name: String,
+  pub public_endpoint: String,
+}
+
+#[settings]
 pub struct ServerSettings {
   /// Telemetry settings.
   pub telemetry: TelemetrySettings,
@@ -28,4 +35,5 @@ pub struct ServerSettings {
   pub sql: SqlSettings,
 
   pub object_storage: ObjectStorageSettings,
+  pub bunny_storage: BunnyStorageSettings,
 }
