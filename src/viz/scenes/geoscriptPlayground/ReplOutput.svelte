@@ -45,7 +45,7 @@
   }
 
   .ran-successfully {
-    font-size: 16px;
+    font-size: 15px;
   }
 
   li {
@@ -53,10 +53,9 @@
     line-height: 1.4;
   }
 
-  /* reduce the indentation of the list items */
   ul {
     padding-left: 24px;
-    margin-top: 4px;
+    margin-top: 16px;
   }
 
   @media (max-width: 600px) {

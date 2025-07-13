@@ -291,6 +291,7 @@ export class BulletPhysics {
   };
 
   private installMouseInputHandlers = () => {
+    const handlerID = Math.random();
     if (window.location?.href.includes('localhost')) {
       document.body.addEventListener('mousedown', evt => {
         if (evt.button === 3) {
@@ -312,6 +313,10 @@ export class BulletPhysics {
       cameraEulerScratch.setFromQuaternion(this.viz.camera.quaternion, 'YXZ');
 
       const mouseSensitivity = this.viz.vizConfig.current.controls.mouseSensitivity;
+      // sometimes some freak shit happens where large mouse movements get reported twice ... ...
+      if (Math.abs(evt.movementX) > 100 || Math.abs(evt.movementY) > 100) {
+        console.warn(evt.movementX, evt.movementY, handlerID);
+      }
       cameraEulerScratch.y -= evt.movementX * mouseSensitivity * 0.001;
       cameraEulerScratch.x -= evt.movementY * mouseSensitivity * 0.001;
 

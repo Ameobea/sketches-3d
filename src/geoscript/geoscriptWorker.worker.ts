@@ -4,6 +4,7 @@ import { initManifoldWasm } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 import { initGeodesics } from './geodesics';
+import type { MaterialDefinitions } from './materials';
 
 const initGeoscript = async () => {
   await Geoscript.default();
@@ -62,9 +63,10 @@ const methods = {
     const verts = Geoscript.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, meshIx);
     const indices = Geoscript.geoscript_repl_get_rendered_mesh_indices(ctxPtr, meshIx);
     const normals = Geoscript.geoscript_repl_get_rendered_mesh_normals(ctxPtr, meshIx);
+    const material = Geoscript.geoscript_repl_get_rendered_mesh_material(ctxPtr, meshIx);
 
     return Comlink.transfer(
-      { verts, indices, normals, transform },
+      { verts, indices, normals, transform, material },
       filterNils([verts.buffer, indices.buffer, normals?.buffer])
     );
   },
@@ -81,6 +83,10 @@ const methods = {
   getRenderedLight: (ctxPtr: number, lightIx: number): Light => {
     const light = JSON.parse(Geoscript.geoscript_get_rendered_light(ctxPtr, lightIx));
     return Comlink.transfer(light, []);
+  },
+  setMaterials: (ctxPtr: number, defaultMaterialID: string | null, availableMaterials: string[]) => {
+    Geoscript.geoscript_set_default_material(ctxPtr, defaultMaterialID ?? undefined);
+    Geoscript.geoscript_set_materials(ctxPtr, availableMaterials);
   },
 };
 

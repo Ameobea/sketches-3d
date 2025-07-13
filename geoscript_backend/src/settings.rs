@@ -31,6 +31,8 @@ pub struct ServerSettings {
   #[serde(default = "default_u16::<5810>")]
   pub port: u16,
   pub admin_token: String,
+  #[serde(default = "default_usize::<524288000>")]
+  pub max_body_size_bytes: usize,
 
   pub sql: SqlSettings,
 

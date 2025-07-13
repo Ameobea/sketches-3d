@@ -11,17 +11,24 @@
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
   import SaveControls from './SaveControls.svelte';
   import { goto } from '$app/navigation';
-  import { DefaultCameraPos, DefaultCameraTarget, IntFormatter, type ReplCtx, type RunStats } from './types';
+  import { DefaultCameraPos, DefaultCameraTarget, type ReplCtx, type RunStats } from './types';
   import ReplOutput from './ReplOutput.svelte';
   import ReplControls from './ReplControls.svelte';
   import ExportModal from './ExportModal.svelte';
+  import {
+    buildDefaultMaterialDefinitions,
+    buildMaterial,
+    type MaterialDefinitions,
+  } from 'src/geoscript/materials';
+  import MaterialEditor from './materialEditor/MaterialEditor.svelte';
+  import { getMultipleTextures, type TextureID } from 'src/geoscript/geotoyAPIClient';
+  import { Textures } from './materialEditor/state.svelte';
 
   let {
     viz,
     geoscriptWorker: repl,
     ctxPtr,
     setReplCtx,
-    baseMat,
     userData,
     onHeightChange,
   }: {
@@ -29,7 +36,6 @@
     geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>;
     ctxPtr: number;
     setReplCtx: (ctx: ReplCtx) => void;
-    baseMat: THREE.Material;
     userData?: GeoscriptPlaygroundUserData;
     onHeightChange: (height: number, isCollapsed: boolean) => void;
   } = $props();
@@ -128,8 +134,11 @@
     localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView
       ? editorView.state.doc.toString()
       : lastSrc;
+    localStorage[`geoscriptPlaygroundMaterials${localStorageKeySuffix}`] =
+      JSON.stringify(materialDefinitions);
   };
 
+  // svelte-ignore state_referenced_locally
   let lastSrc = $state(initialCode);
   const setupEditor = () => {
     if (!codemirrorContainer) {
@@ -189,10 +198,14 @@
 
   $effect(setupEditor);
 
-  let activeMat: THREE.Material = $state(baseMat);
+  let materialOverride = $state<'wireframe' | 'normal' | null>(null);
   const lineMat = new THREE.LineBasicMaterial({
     color: 0x00ff00,
     linewidth: 2,
+  });
+  const hiddenMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
+  const fallbackMat = new THREE.MeshBasicMaterial({
+    color: 0x888888,
   });
   const wireframeMat = new THREE.MeshBasicMaterial({
     color: 0xdf00df,
@@ -281,30 +294,141 @@
   };
 
   const toggleWireframe = () => {
-    if (activeMat && activeMat instanceof THREE.MeshBasicMaterial) {
-      activeMat = baseMat;
-    } else {
-      activeMat = wireframeMat;
-    }
+    materialOverride = materialOverride === 'wireframe' ? null : 'wireframe';
     for (const obj of renderedObjects) {
       if (obj instanceof THREE.Mesh) {
-        obj.material = activeMat;
+        const mat =
+          materialOverride === 'wireframe'
+            ? wireframeMat
+            : (customMaterials[obj.userData.materialID]?.resolved ?? hiddenMat);
+        obj.material = mat;
       }
     }
   };
 
   const toggleNormalMat = () => {
-    if (activeMat && activeMat instanceof THREE.MeshNormalMaterial) {
-      activeMat = baseMat;
-    } else {
-      activeMat = normalMat;
-    }
+    materialOverride = materialOverride === 'normal' ? null : 'normal';
     for (const obj of renderedObjects) {
       if (obj instanceof THREE.Mesh) {
-        obj.material = activeMat;
+        const mat =
+          materialOverride === 'normal'
+            ? normalMat
+            : (customMaterials[obj.userData.materialID]?.resolved ?? hiddenMat);
+        obj.material = mat;
       }
     }
   };
+
+  let materialEditorOpen = $state(false);
+  const initialMatDefs = ((): MaterialDefinitions => {
+    if (userData?.initialComposition?.version?.metadata?.materials) {
+      return userData.initialComposition.version.metadata.materials;
+    }
+
+    const matDefs = localStorage[`geoscriptPlaygroundMaterials${localStorageKeySuffix}`];
+    if (typeof matDefs === 'string') {
+      try {
+        return JSON.parse(matDefs);
+      } catch (err) {
+        console.warn('Error parsing saved material definitions:', err);
+      }
+    }
+
+    return buildDefaultMaterialDefinitions();
+  })();
+  let materialDefinitions = $state<MaterialDefinitions>(initialMatDefs);
+
+  onMount(() => {
+    const referencedTextureIDs: TextureID[] = [];
+    for (const mat of Object.values(materialDefinitions.materials)) {
+      if (mat.type === 'basic') {
+        continue;
+      }
+
+      if (mat.map) {
+        referencedTextureIDs.push(mat.map);
+      }
+      if (mat.normalMap) {
+        referencedTextureIDs.push(mat.normalMap);
+      }
+      if (mat.roughnessMap) {
+        referencedTextureIDs.push(mat.roughnessMap);
+      }
+    }
+
+    if (referencedTextureIDs.length > 0) {
+      const adminToken = new URLSearchParams(window.location.search).get('admin_token') ?? undefined;
+      getMultipleTextures(referencedTextureIDs, undefined, adminToken).then(textures => {
+        const allTextures = { ...Textures.textures };
+        for (const texture of textures) {
+          allTextures[texture.id] = texture;
+        }
+        Textures.textures = allTextures;
+      });
+    }
+  });
+
+  $effect(() => {
+    // TODO: only do this if these have changed
+    repl.setMaterials(
+      ctxPtr,
+      materialDefinitions.defaultMaterialID,
+      Object.values(materialDefinitions.materials).map(mat => mat.name)
+    );
+  });
+
+  const loader = new THREE.ImageBitmapLoader();
+  let customMaterials: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
+    $derived.by(() => {
+      const builtMats: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
+        {};
+      // TODO: needs hashing to avoid re-building materials that haven't changed
+      // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
+      for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
+        const matP = buildMaterial(loader, def, id);
+        const entry: { promise: Promise<THREE.Material>; resolved: THREE.Material | null } = {
+          promise: matP,
+          resolved: null,
+        };
+        matP.then(mat => {
+          entry.resolved = mat;
+        });
+        builtMats[id] = entry;
+      }
+      return builtMats;
+    });
+  let customMaterialsByName: Record<
+    string,
+    { promise: Promise<THREE.Material>; resolved: THREE.Material | null }
+  > = $derived.by(() => {
+    const matsByName: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
+      {};
+    for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
+      matsByName[def.name] = customMaterials[id];
+    }
+    return matsByName;
+  });
+
+  $effect(() => {
+    for (const obj of renderedObjects) {
+      if (!(obj instanceof THREE.Mesh)) {
+        continue;
+      }
+
+      for (const [id, matEntry] of Object.entries(customMaterials)) {
+        if (obj.material.name === id) {
+          if (matEntry.resolved) {
+            obj.material = matEntry.resolved;
+          } else {
+            matEntry.promise.then(mat => {
+              obj.material = mat;
+            });
+          }
+          break;
+        }
+      }
+    }
+  });
 
   let lastRunOutcome = $derived(
     (() => {
@@ -372,9 +496,19 @@
     };
 
     localRunStats.renderedMeshCount = await repl.getRenderedMeshCount(ctxPtr);
-    const newRenderedMeshes = [];
+    const newRenderedMeshes: (
+      | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
+      | THREE.Line<THREE.BufferGeometry, THREE.Material>
+      | THREE.Light
+    )[] = [];
     for (let i = 0; i < localRunStats.renderedMeshCount; i += 1) {
-      const { transform, verts, indices, normals } = await repl.getRenderedMesh(ctxPtr, i);
+      const {
+        transform,
+        verts,
+        indices,
+        normals,
+        material: materialName,
+      } = await repl.getRenderedMesh(ctxPtr, i);
 
       localRunStats.totalVtxCount += verts.length / 3;
       localRunStats.totalFaceCount += indices.length / 3;
@@ -386,7 +520,31 @@
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
 
-      const mesh = new THREE.Mesh(geometry, activeMat);
+      const matEntry = (() => {
+        if (!materialName) {
+          return { resolved: fallbackMat, promise: null };
+        }
+
+        const matEntry = customMaterialsByName[materialName];
+        console.log({ customMaterialsByName, materialName, matEntry });
+        if (!matEntry) {
+          console.warn(`mesh referenced undefined material: "${materialName}"`);
+          return { resolved: fallbackMat, promise: null };
+        }
+
+        return matEntry;
+      })();
+
+      const mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material> = new THREE.Mesh(
+        geometry,
+        matEntry.resolved ?? hiddenMat
+      );
+      mesh.userData.materialID = materialName;
+      if (!matEntry.resolved && matEntry.promise) {
+        matEntry.promise.then(mat => {
+          mesh.material = mat;
+        });
+      }
       mesh.applyMatrix4(new THREE.Matrix4().fromArray(transform));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -455,7 +613,13 @@
       viz.orbitControls.update();
     }
 
-    setReplCtx({ centerView, toggleWireframe, toggleNormalMat, getLastRunOutcome: () => lastRunOutcome });
+    setReplCtx({
+      centerView,
+      toggleWireframe,
+      toggleNormalMat,
+      getLastRunOutcome: () => lastRunOutcome,
+      getAreAllMaterialsLoaded: () => Object.values(customMaterials).every(mat => mat.resolved),
+    });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
 
@@ -489,13 +653,23 @@
 <svelte:window bind:innerWidth />
 
 <ExportModal bind:dialog={exportDialog} {renderedObjects} />
+<MaterialEditor bind:isOpen={materialEditorOpen} bind:materials={materialDefinitions} />
 
 {#if isEditorCollapsed}
   <div
     class="root collapsed"
     style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} height: 36px;`}
   >
-    <ReplControls {isRunning} {isEditorCollapsed} {run} {toggleEditorCollapsed} {goHome} {err} {onExport} />
+    <ReplControls
+      {isRunning}
+      {isEditorCollapsed}
+      {run}
+      {toggleEditorCollapsed}
+      {goHome}
+      {err}
+      {onExport}
+      toggleMaterialEditorOpen={() => (materialEditorOpen = true)}
+    />
   </div>
 {:else}
   <div
@@ -520,6 +694,9 @@
             {goHome}
             {err}
             {onExport}
+            toggleMaterialEditorOpen={() => {
+              materialEditorOpen = !materialEditorOpen;
+            }}
           />
           <ReplOutput {err} {runStats} />
         </div>
@@ -527,6 +704,7 @@
           <SaveControls
             comp={userData.initialComposition?.comp}
             getCurrentCode={() => editorView?.state.doc.toString() || ''}
+            materials={materialDefinitions}
             {viz}
             onSave={(src: string) => {
               lastSavedSrc = src;

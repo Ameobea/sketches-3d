@@ -1,6 +1,6 @@
 #![feature(once_cell_try)]
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use foundations::{
   cli::{Arg, ArgAction, Cli},
@@ -24,6 +24,7 @@ pub mod render_thumbnail;
 pub mod routes;
 pub mod server;
 pub mod settings;
+pub mod textures;
 
 async fn start() -> BootstrapResult<()> {
   let service_info = foundations::service_info!();
@@ -72,10 +73,18 @@ fn main() -> BootstrapResult<()> {
     .build()?;
 
   let handle = rt.handle();
-  foundations::telemetry::tokio_runtime_metrics::register_runtime(None, None, handle);
+  foundations::telemetry::tokio_runtime_metrics::register_runtime(
+    Some(Arc::from("geotoy")),
+    None,
+    handle,
+  );
   info!("Registered tokio runtime metrics");
 
   rt.spawn(async move {
+    // if we record metrics before configuring the metrics in `start()`, it will cause the name
+    // configuration to be lost and make the names `undefined`.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     loop {
       record_runtime_metrics_sample();
 

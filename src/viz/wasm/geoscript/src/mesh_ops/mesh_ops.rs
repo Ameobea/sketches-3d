@@ -69,6 +69,7 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, Er
     manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
+    material: mesh.material.clone(),
   })
 }
 
@@ -98,6 +99,7 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
     manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
+    material: None,
   })
 }
 

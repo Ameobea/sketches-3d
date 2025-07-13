@@ -337,6 +337,7 @@ name = "geoscript_repl"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "fxhash",
  "geoscript",
  "log",
  "mesh",

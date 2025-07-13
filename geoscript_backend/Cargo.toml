@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-foundations = { version = "4.4", default-features = false, features = ["settings", "metrics", "telemetry-server", "testing", "jemalloc", "tokio-runtime-metrics", "memory-profiling", "cli"] }
+foundations = { version = "4.5", default-features = false, features = ["settings", "metrics", "telemetry-server", "testing", "jemalloc", "tokio-runtime-metrics", "memory-profiling", "cli"] }
 axum = { version = "0.8", features = ["tower-log"] }
+axum-extra = { version = "0.10", features = ["query"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 tokio = { version = "1.36", features = ["full"] }
 tracing = "0.1"
@@ -25,3 +26,4 @@ tower-cookies = "0.11"
 async-trait = "0.1"
 reqwest = "0.12"
 bytes = "1.10.1"
+url = { version = "2", features = ["serde"] }

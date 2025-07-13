@@ -1,6 +1,9 @@
+use std::rc::Rc;
+
+use fxhash::FxHashMap;
 use geoscript::{
-  eval_program_with_ctx, mesh_ops::mesh_boolean::drop_all_mesh_handles, optimize_ast,
-  parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program,
+  eval_program_with_ctx, materials::Material, mesh_ops::mesh_boolean::drop_all_mesh_handles,
+  optimize_ast, parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program,
 };
 use mesh::OwnedIndexedMesh;
 use nanoserde::SerJson;
@@ -31,11 +34,16 @@ fn maybe_init() {
   wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
 }
 
+pub struct OutputMesh {
+  pub mesh: OwnedIndexedMesh,
+  pub material: Option<String>,
+}
+
 pub struct GeoscriptReplCtx {
   pub geo_ctx: EvalCtx,
   pub last_program: Result<Program, ErrorStack>,
   pub last_result: Result<(), ErrorStack>,
-  pub output_meshes: Vec<OwnedIndexedMesh>,
+  pub output_meshes: Vec<OutputMesh>,
 }
 
 impl Default for GeoscriptReplCtx {
@@ -65,7 +73,15 @@ impl GeoscriptReplCtx {
 
       let mut owned_mesh = mesh.to_raw_indexed(true, false, false);
       owned_mesh.transform = Some(mesh_handle.transform);
-      self.output_meshes.push(owned_mesh);
+      self.output_meshes.push(OutputMesh {
+        mesh: owned_mesh,
+        material: match &mesh_handle.material {
+          Some(mat) => match &**mat {
+            geoscript::materials::Material::External(name) => Some(name.clone()),
+          },
+          None => None,
+        },
+      });
     }
   }
 }
@@ -130,7 +146,13 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
 #[wasm_bindgen]
 pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   let ctx = unsafe { &mut *ctx };
+  let materials = std::mem::take(&mut ctx.geo_ctx.materials);
+  let textures = std::mem::take(&mut ctx.geo_ctx.textures);
+  let default_material = std::mem::take(&mut ctx.geo_ctx.default_material);
   *ctx = GeoscriptReplCtx::default();
+  ctx.geo_ctx.materials = materials;
+  ctx.geo_ctx.textures = textures;
+  ctx.geo_ctx.default_material = default_material;
   drop_all_mesh_handles();
 }
 
@@ -175,7 +197,7 @@ pub fn geoscript_repl_get_rendered_mesh_transform(
 ) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
   let mesh = &ctx.output_meshes[mesh_ix];
-  mesh.transform.unwrap().as_slice().to_owned()
+  mesh.mesh.transform.unwrap().as_slice().to_owned()
 }
 
 #[wasm_bindgen]
@@ -185,7 +207,7 @@ pub fn geoscript_repl_get_rendered_mesh_vertices(
 ) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
   let mesh = &ctx.output_meshes[mesh_ix];
-  mesh.vertices.clone()
+  mesh.mesh.vertices.clone()
 }
 
 #[wasm_bindgen]
@@ -195,7 +217,7 @@ pub fn geoscript_repl_get_rendered_mesh_indices(
 ) -> Vec<usize> {
   let ctx = unsafe { &*ctx };
   let mesh = &ctx.output_meshes[mesh_ix];
-  mesh.indices.clone()
+  mesh.mesh.indices.clone()
 }
 
 #[wasm_bindgen]
@@ -205,7 +227,29 @@ pub fn geoscript_repl_get_rendered_mesh_normals(
 ) -> Option<Vec<f32>> {
   let ctx = unsafe { &*ctx };
   let mesh = &ctx.output_meshes[mesh_ix];
-  mesh.shading_normals.as_ref().map(|normals| normals.clone())
+  mesh
+    .mesh
+    .shading_normals
+    .as_ref()
+    .map(|normals| normals.clone())
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_material(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  let mesh = &ctx.output_meshes[mesh_ix];
+  mesh
+    .material
+    .clone()
+    .unwrap_or_else(|| match &*ctx.geo_ctx.default_material.borrow() {
+      Some(mat) => match &**mat {
+        geoscript::materials::Material::External(name) => name.clone(),
+      },
+      None => String::new(),
+    })
 }
 
 #[wasm_bindgen]
@@ -235,6 +279,32 @@ pub fn geoscript_get_rendered_light(ctx: *const GeoscriptReplCtx, light_ix: usiz
   let ctx = unsafe { &*ctx };
   let light = &ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix];
   SerJson::serialize_json(light)
+}
+
+#[wasm_bindgen]
+pub fn geoscript_set_default_material(ctx: *mut GeoscriptReplCtx, material_name: Option<String>) {
+  let ctx = unsafe { &mut *ctx };
+  ctx.geo_ctx.default_material.replace(
+    material_name
+      .map(|material_name| Rc::new(geoscript::materials::Material::External(material_name))),
+  );
+}
+
+#[wasm_bindgen]
+pub fn geoscript_set_materials(
+  ctx: *mut GeoscriptReplCtx,
+  materials: Vec<String>,
+) -> Result<(), String> {
+  let ctx = unsafe { &mut *ctx };
+  let mut new_materials: FxHashMap<String, Rc<Material>> = FxHashMap::default();
+  for material in materials {
+    new_materials.insert(
+      material.clone(),
+      Rc::new(geoscript::materials::Material::External(material)),
+    );
+  }
+  ctx.geo_ctx.materials = new_materials;
+  Ok(())
 }
 
 // TODO: in a perfect world, this would live in a dedicated tiny lightweight wasm module, but I

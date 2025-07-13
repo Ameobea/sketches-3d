@@ -121,6 +121,60 @@ app.get('/render/:id', async (req, res) => {
   }
 });
 
+const imageBodyParser = express.raw({ type: 'image/*', limit: '100mb' });
+
+app.post('/thumbnail', imageBodyParser, async (req, res) => {
+  if (!req.body || !Buffer.isBuffer(req.body)) {
+    return res
+      .status(400)
+      .send('Invalid image payload. Make sure to set Content-Type to an image type (e.g. image/png).');
+  }
+
+  if (Buffer.byteLength(req.body) === 0) {
+    return res
+      .status(400)
+      .send(
+        'Invalid or empty image payload. Make sure to set Content-Type to an image type (e.g. image/png).'
+      );
+  }
+
+  try {
+    const imageBuffer = await sharp(req.body)
+      .resize(256, 256, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .avif({ quality: 70, effort: 5 })
+      .toBuffer();
+
+    res.set('Content-Type', 'image/avif');
+    res.send(imageBuffer);
+  } catch (error) {
+    console.error('Error processing image for thumbnail:', error);
+    res.status(500).send('Error generating thumbnail');
+  }
+});
+
+app.post('/convert-to-avif', imageBodyParser, async (req, res) => {
+  if (Buffer.byteLength(req.body) === 0) {
+    return res
+      .status(400)
+      .send(
+        'Invalid or empty image payload. Make sure to set Content-Type to an image type (e.g. image/png).'
+      );
+  }
+
+  try {
+    const avifBuffer = await sharp(req.body).avif({ quality: 85, effort: 7 }).toBuffer();
+
+    res.set('Content-Type', 'image/avif');
+    res.send(avifBuffer);
+  } catch (error) {
+    console.error('Error converting image to AVIF:', error);
+    res.status(500).send('Error converting image');
+  }
+});
+
 app.listen(port, () => {
   console.log(`Screenshot service listening at http://localhost:${port}`);
 });

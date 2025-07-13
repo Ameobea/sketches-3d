@@ -207,6 +207,7 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(maybe_combined_aabb),
         trimesh: RefCell::new(None),
+        material: lhs.material.clone(),
       })))
     }
     5 => translate_impl(
@@ -630,6 +631,7 @@ pub(crate) fn warp_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: mesh.material.clone(),
       })))
     }
     _ => unimplemented!(),
@@ -852,6 +854,50 @@ fn dir_light_impl(
   }
 }
 
+fn set_material_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let material = arg_refs[0]
+        .resolve(args, &kwargs)
+        .as_material(ctx)
+        .unwrap()?;
+      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+
+      let mut mesh_handle = mesh.clone(true, true, true);
+      mesh_handle.material = Some(material.clone());
+
+      Ok(Value::Mesh(Rc::new(mesh_handle)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn set_default_material_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let material = arg_refs[0]
+        .resolve(args, &kwargs)
+        .as_material(ctx)
+        .unwrap()?;
+      ctx.default_material.replace(Some(material.clone()));
+      Ok(Value::Nil)
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn mesh_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -924,6 +970,7 @@ fn mesh_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: None,
       })))
     }
     _ => unimplemented!(),
@@ -1172,6 +1219,7 @@ fn fan_fill_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: None,
       })))
     }
     _ => unimplemented!(),
@@ -1222,6 +1270,7 @@ fn stitch_contours_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: None,
       })))
     }
     _ => unimplemented!(),
@@ -1342,6 +1391,7 @@ fn extrude_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: mesh.material.clone(),
       })))
     }
     _ => unimplemented!(),
@@ -1486,6 +1536,7 @@ fn extrude_pipe_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: None,
       })))
     }
     _ => unimplemented!(),
@@ -1675,11 +1726,12 @@ fn connected_components_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let transform = mesh.transform.clone();
-      let mesh = Rc::clone(&mesh.mesh);
+      let mesh_handle = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let transform = mesh_handle.transform.clone();
+      let mesh = Rc::clone(&mesh_handle.mesh);
       let mut components: Vec<Vec<FaceKey>> = mesh.connected_components();
       components.sort_unstable_by_key(|c| Reverse(c.len()));
+      let material = mesh_handle.material.clone();
       Ok(Value::Sequence(Box::new(IteratorSeq {
         inner: components.into_iter().map(move |c| {
           let mut sub_vkey_by_old_vkey: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
@@ -1709,6 +1761,7 @@ fn connected_components_impl(
             manifold_handle: Rc::new(ManifoldHandle::new(0)),
             aabb: RefCell::new(None),
             trimesh: RefCell::new(None),
+            material: material.clone(),
           })))
         }),
       })))
@@ -1729,10 +1782,10 @@ fn tessellate_impl(
       if target_edge_length <= 0. {
         return Err(ErrorStack::new("`target_edge_length` must be > 0"));
       }
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
-      let transform = mesh.transform.clone();
+      let mesh_handle = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let transform = mesh_handle.transform.clone();
 
-      let mut mesh = (*mesh.mesh).clone();
+      let mut mesh = (*mesh_handle.mesh).clone();
       tessellation::tessellate_mesh(
         &mut mesh,
         target_edge_length,
@@ -1744,6 +1797,7 @@ fn tessellate_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: mesh_handle.material.clone(),
       })))
     }
     _ => unimplemented!(),
@@ -2517,6 +2571,7 @@ fn origin_to_geometry_impl(
         trimesh: RefCell::new(None),
         transform: mesh.transform,
         mesh: Rc::new(new_mesh),
+        material: mesh.material.clone(),
       })))
     }
     _ => unimplemented!(),
@@ -2656,6 +2711,7 @@ fn join_impl(
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: base.material.clone(),
       })))
     }
     _ => unimplemented!(),
@@ -3487,6 +3543,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "spot_light" => builtin_fn!(spot_light, |def_ix, arg_refs, args, kwargs, _ctx| {
     spot_light_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "set_material" => builtin_fn!(set_material, |def_ix, arg_refs, args, kwargs, ctx| {
+    set_material_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "set_default_material" => builtin_fn!(set_default_material, |def_ix, arg_refs, args, kwargs, ctx| {
+    set_default_material_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
 };
 

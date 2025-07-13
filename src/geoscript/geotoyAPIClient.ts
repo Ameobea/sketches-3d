@@ -1,3 +1,5 @@
+import type { MaterialDefinitions } from './materials';
+
 export const GEOTOY_API_BASE_URL = import.meta.env.VITE_GEOSCRIPT_API_URL || 'http://localhost:5810';
 
 const INTERNAL_PROXY_GEOTOY_API_BASE_URL = '/geotoy_api';
@@ -34,9 +36,10 @@ export interface CompositionVersionMetadata {
   view: {
     cameraPosition: [number, number, number];
     target: [number, number, number];
-    fov?: number; // for PerspectiveCamera
-    zoom?: number; // for OrthographicCamera
+    fov?: number; // for `PerspectiveCamera`
+    zoom?: number; // for `OrthographicCamera`
   };
+  materials?: MaterialDefinitions;
 }
 
 export interface CompositionVersion {
@@ -76,7 +79,8 @@ export class APIError extends Error {
 const apiFetch = async <T>(
   path: string,
   options: RequestInit = {},
-  fetch: typeof globalThis.fetch = globalThis.fetch
+  fetch: typeof globalThis.fetch = globalThis.fetch,
+  binary = false
 ): Promise<T> => {
   const res = await fetch(`${INTERNAL_PROXY_GEOTOY_API_BASE_URL}${path}`, {
     ...options,
@@ -93,6 +97,11 @@ const apiFetch = async <T>(
 
   if (res.status === 204) {
     return undefined as unknown as T;
+  }
+
+  if (binary) {
+    const arrayBuffer = await res.arrayBuffer();
+    return new Uint8Array(arrayBuffer) as unknown as T;
   }
 
   const contentType = res.headers.get('Content-Type');
@@ -226,3 +235,62 @@ export const getCompositionVersion = (
 
 export const deleteComposition = (id: number): Promise<void> =>
   apiFetch<void>(`/compositions/${id}`, { method: 'DELETE' });
+
+export type TextureID = number;
+
+export interface Texture {
+  id: TextureID;
+  name: string;
+  thumbnailUrl: string;
+  url: string;
+  ownerId: number;
+  ownerName: string;
+  createdAt: string;
+}
+
+export const listTextures = (fetch: typeof globalThis.fetch = globalThis.fetch): Promise<Texture[]> =>
+  apiFetch<Texture[]>('/textures', {}, fetch);
+
+export const getTexture = (
+  id: TextureID,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<Texture> => apiFetch<Texture>(`/textures/${id}`, {}, fetch);
+
+export const createTexture = (
+  name: string,
+  file: File, // TODO: should also allow providing a URL
+  is_shared: boolean,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<Texture> => {
+  const searchParams = new URLSearchParams();
+  searchParams.set('name', name);
+  searchParams.set('is_shared', is_shared.toString());
+
+  return apiFetch<Texture>(
+    '/textures',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        file,
+        is_shared,
+      }),
+    },
+    fetch,
+    true
+  );
+};
+
+export const getMultipleTextures = (
+  ids: TextureID[],
+  fetch: typeof globalThis.fetch = globalThis.fetch,
+  adminToken?: string
+): Promise<Texture[]> => {
+  const searchParams = new URLSearchParams();
+  for (const id of ids) {
+    searchParams.append('id', id.toString());
+  }
+  if (adminToken) {
+    searchParams.set('admin_token', adminToken);
+  }
+  return apiFetch<Texture[]>(`/textures/multiple?${searchParams.toString()}`, {}, fetch);
+};

@@ -5,6 +5,7 @@ export interface ReplCtx {
   toggleWireframe: () => void;
   toggleNormalMat: () => void;
   getLastRunOutcome: () => { type: 'ok'; stats: RunStats } | { type: 'err'; err: string | null } | null;
+  getAreAllMaterialsLoaded: () => boolean;
 }
 
 export interface RunStats {

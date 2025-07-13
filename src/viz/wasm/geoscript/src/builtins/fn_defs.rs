@@ -3663,6 +3663,40 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Light],
     }
   ],
+  "set_material" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "material",
+          valid_types: &[ArgType::Material],
+          default_value: DefaultValue::Required,
+          description: "Can be either a `Material` value or a string specifying the name of an externally defined material"
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Sets the material for a mesh",
+      return_type: &[ArgType::Nil],
+    }
+  ],
+  "set_default_material" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "material",
+          valid_types: &[ArgType::Material],
+          default_value: DefaultValue::Required,
+          description: "Can be either a `Material` value or a string specifying the name of an externally defined material"
+        },
+      ],
+      description: "Sets the default material for all meshes that do not have a specific material set",
+      return_type: &[ArgType::Nil],
+    }
+  ],
 };
 
 pub fn serialize_fn_defs() -> String {

@@ -43,7 +43,8 @@
   }
 
   :global(.cm-editor) {
-    background: #202020 !important;
+    background: #1a1a1a !important;
+    background-color: #1a1a1a !important;
   }
 
   :global(.cm-content) {

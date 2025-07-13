@@ -7,7 +7,7 @@ use std::{
 };
 
 use axum::{
-  extract::Request,
+  extract::{DefaultBodyLimit, Request},
   handler::Handler,
   http::StatusCode,
   response::{IntoResponse, Response},
@@ -152,6 +152,7 @@ pub async fn start_server(settings: &ServerSettings) -> BootstrapResult<()> {
           axum::http::Method::CONNECT,
         ])),
     )
+    .layer(DefaultBodyLimit::max(settings.max_body_size_bytes))
     .layer(
       tower_http::trace::TraceLayer::new_for_http()
         .make_span_with(DefaultMakeSpan::new().level(Level::INFO))

@@ -144,6 +144,7 @@ fn apply_mesh_boolean_op(
     manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
+    material: None,
   })
 }
 

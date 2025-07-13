@@ -8,6 +8,7 @@
     type Composition,
     type CompositionVersionMetadata,
   } from 'src/geoscript/geotoyAPIClient';
+  import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
   import { OrthographicCamera, PerspectiveCamera } from 'three';
   import type { OrbitControls } from 'three/examples/jsm/Addons.js';
@@ -15,11 +16,13 @@
   let {
     viz,
     comp,
+    materials,
     getCurrentCode,
     onSave,
   }: {
     viz: Viz;
     comp: Composition | undefined | null;
+    materials: MaterialDefinitions;
     getCurrentCode: () => string;
     onSave: (savedSrc: string) => void;
   } = $props();
@@ -51,6 +54,7 @@
     }
     const metadata: CompositionVersionMetadata = {
       view,
+      materials,
     };
 
     return { type: 'ok', metadata };

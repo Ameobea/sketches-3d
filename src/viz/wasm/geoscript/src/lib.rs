@@ -10,7 +10,7 @@ use std::{
 };
 
 use ast::{Expr, FunctionCallTarget, Statement};
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::{Matrix4, Vector2};
@@ -37,6 +37,7 @@ use crate::{
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
   lights::{AmbientLight, Light},
+  materials::Material,
   mesh_ops::mesh_boolean::{drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp},
   seq::{ChainSeq, IntRange, MapSeq},
 };
@@ -44,6 +45,7 @@ use crate::{
 mod ast;
 mod builtins;
 pub mod lights;
+pub mod materials;
 pub mod mesh_ops;
 pub mod noise;
 pub mod path_building;
@@ -298,6 +300,7 @@ pub struct MeshHandle {
   /// parry3d trimesh representation of the mesh, if set.  Computed as needed - used for
   /// intersection tests and other operations.
   pub trimesh: RefCell<Option<Rc<TriMesh>>>,
+  pub material: Option<Rc<Material>>,
 }
 
 impl MeshHandle {
@@ -355,6 +358,7 @@ impl MeshHandle {
       manifold_handle: Rc::new(ManifoldHandle::new(0)),
       aabb: RefCell::new(None),
       trimesh: RefCell::new(None),
+      material: None,
     }
   }
 
@@ -377,6 +381,7 @@ impl MeshHandle {
       } else {
         RefCell::new(None)
       },
+      material: self.material.clone(),
     }
   }
 }
@@ -417,6 +422,7 @@ pub enum Value {
   Map(Box<FxHashMap<String, Value>>),
   Bool(bool),
   String(String),
+  Material(Rc<Material>),
   Nil,
 }
 
@@ -434,6 +440,7 @@ impl Clone for Value {
       Value::Map(map) => Value::Map(map.clone()),
       Value::Bool(b) => Value::Bool(*b),
       Value::String(s) => Value::String(s.clone()),
+      Value::Material(material) => Value::Material(Rc::clone(material)),
       Value::Nil => Value::Nil,
     }
   }
@@ -453,6 +460,7 @@ impl Debug for Value {
       Value::Map(map) => write!(f, "{map:?}"),
       Value::Bool(b) => write!(f, "Bool({b})"),
       Value::String(s) => write!(f, "String({s})"),
+      Value::Material(material) => write!(f, "Material({material:?})"),
       Value::Nil => write!(f, "Nil"),
     }
   }
@@ -543,6 +551,20 @@ impl Value {
     }
   }
 
+  fn as_material(&self, ctx: &EvalCtx) -> Option<Result<Rc<Material>, ErrorStack>> {
+    match self {
+      Value::Material(mat) => Some(Ok(Rc::clone(mat))),
+      Value::String(s) => match ctx.materials.get(s) {
+        Some(mat) => Some(Ok(Rc::clone(mat))),
+        None => Some(Err(ErrorStack::new(format!(
+          "Material not found: \"{s}\"\n\nAvailable materials: {:?}",
+          ctx.materials.keys().collect_vec()
+        )))),
+      },
+      _ => None,
+    }
+  }
+
   fn into_literal_expr(&self) -> Expr {
     Expr::Literal(self.clone())
   }
@@ -560,6 +582,7 @@ impl Value {
       Value::Map(_) => ArgType::Map,
       Value::Bool(_) => ArgType::Bool,
       Value::String(_) => ArgType::String,
+      Value::Material(_) => ArgType::Material,
       Value::Nil => ArgType::Nil,
     }
   }
@@ -579,6 +602,7 @@ pub enum ArgType {
   Map,
   Bool,
   String,
+  Material,
   Nil,
   Any,
 }
@@ -598,6 +622,7 @@ impl ArgType {
       ArgType::Map => matches!(arg, Value::Map(_)),
       ArgType::Bool => matches!(arg, Value::Bool(_)),
       ArgType::String => matches!(arg, Value::String(_)),
+      ArgType::Material => matches!(arg, Value::Material(_) | Value::String(_)),
       ArgType::Nil => matches!(arg, Value::Nil),
       ArgType::Any => true,
     }
@@ -621,6 +646,7 @@ impl ArgType {
       ArgType::Map => "map",
       ArgType::Bool => "bool",
       ArgType::String => "str",
+      ArgType::Material => "material",
       ArgType::Nil => "nil",
       ArgType::Any => "any",
     }
@@ -641,6 +667,7 @@ impl ArgType {
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
+        material: None,
       }))),
       ArgType::Light => Some(Value::Light(Box::new(Light::Ambient(
         AmbientLight::default(),
@@ -655,6 +682,7 @@ impl ArgType {
       ArgType::Map => Some(Value::Map(Box::new(FxHashMap::default()))),
       ArgType::Bool => Some(Value::Bool(false)),
       ArgType::String => Some(Value::String(String::new())),
+      ArgType::Material => Some(Value::Material(Rc::new(Material::default()))),
       ArgType::Nil => Some(Value::Nil),
       ArgType::Any => None,
     }
@@ -1030,6 +1058,9 @@ pub struct EvalCtx {
   pub log_fn: fn(&str),
   #[cfg(target_arch = "wasm32")]
   rng: UnsafeCell<Pcg32>,
+  pub materials: FxHashMap<String, Rc<Material>>,
+  pub textures: FxHashSet<String>,
+  pub default_material: RefCell<Option<Rc<Material>>>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1045,6 +1076,9 @@ impl Default for EvalCtx {
       log_fn: |msg| println!("{msg}"),
       #[cfg(target_arch = "wasm32")]
       rng: UnsafeCell::new(Pcg32::new(7718587666045340534, 17289744314186392832)),
+      materials: FxHashMap::default(),
+      textures: FxHashSet::default(),
+      default_material: RefCell::new(None),
     }
   }
 }

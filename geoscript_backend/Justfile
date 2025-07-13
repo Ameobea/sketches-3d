@@ -7,6 +7,9 @@ generate-default-config:
 docker-build:
   docker build --network host -t ameo/geoscript-backend:latest .
 
+test:
+  RUSTFLAGS="--cfg tokio_unstable --cfg foundations_unstable" RUST_LOG=debug cargo test
+
 run:
   RUSTFLAGS="--cfg tokio_unstable --cfg foundations_unstable" RUST_LOG=debug cargo run -- --config=config.yml
 

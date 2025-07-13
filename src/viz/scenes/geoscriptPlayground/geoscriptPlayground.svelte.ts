@@ -8,7 +8,6 @@ import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi from './ReplUI.svelte';
-import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
 import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
@@ -25,7 +24,6 @@ const initRepl = async (
   viz: Viz,
   geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>,
   setReplCtx: (ctx: ReplCtx) => void,
-  matPromise: Promise<THREE.Material>,
   userData: GeoscriptPlaygroundUserData | undefined = undefined,
   onHeightChange: (height: number, isCollapsed: boolean) => void
 ) => {
@@ -38,7 +36,6 @@ const initRepl = async (
       ctxPtr,
       geoscriptWorker,
       setReplCtx,
-      baseMat: await matPromise,
       userData,
       onHeightChange,
     },
@@ -57,13 +54,6 @@ export const processLoadedScene = (
   vizConf: VizConfig,
   userData: GeoscriptPlaygroundUserData | undefined = undefined
 ): SceneConfig => {
-  const loader = new THREE.ImageBitmapLoader();
-  const matPromise = buildGrayFossilRockMaterial(
-    loader,
-    { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc, mapDisableDistance: null },
-    {},
-    { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
-  );
   const geoscriptWorker = Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker());
 
   const quality = vizConf.graphics.quality;
@@ -73,7 +63,7 @@ export const processLoadedScene = (
   if (userData?.renderMode) {
     let didRender = false;
     viz.setRenderOverride(() => {
-      if (!ctx?.getLastRunOutcome() || didRender) {
+      if (!ctx?.getLastRunOutcome() || didRender || !ctx?.getAreAllMaterialsLoaded()) {
         return;
       }
 
@@ -148,7 +138,6 @@ export const processLoadedScene = (
     (newCtx: ReplCtx) => {
       ctx = newCtx;
     },
-    matPromise,
     userData,
     (newHeight: number, newIsCollapsed: boolean) => {
       controlsHeight = newHeight;

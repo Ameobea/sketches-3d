@@ -15,9 +15,12 @@
 <svelte:window on:click={handleClickOutside} />
 
 <div class="actions-menu-container">
-  <button on:click={toggleMenu} class="menu-button">☰</button>
+  <button onclick={toggleMenu} class="menu-button">☰</button>
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
   {#if showMenu}
-    <div class="menu">
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="menu" onclick={toggleMenu}>
       <slot />
     </div>
   {/if}

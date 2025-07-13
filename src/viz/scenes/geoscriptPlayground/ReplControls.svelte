@@ -9,6 +9,7 @@
     goHome,
     err,
     onExport,
+    toggleMaterialEditorOpen,
   }: {
     isRunning: boolean;
     isEditorCollapsed?: boolean;
@@ -17,6 +18,7 @@
     goHome: () => void;
     err: string | null;
     onExport: () => void;
+    toggleMaterialEditorOpen: () => void;
   } = $props();
 </script>
 
@@ -39,6 +41,7 @@
       home
     </button>
     <ActionsMenu>
+      <button onclick={toggleMaterialEditorOpen}>edit materials</button>
       <button onclick={onExport}>export scene</button>
     </ActionsMenu>
   </div>
