@@ -9,7 +9,9 @@
     goHome,
     err,
     onExport,
+    clearLocalChanges,
     toggleMaterialEditorOpen,
+    isDirty,
   }: {
     isRunning: boolean;
     isEditorCollapsed?: boolean;
@@ -18,7 +20,9 @@
     goHome: () => void;
     err: string | null;
     onExport: () => void;
+    clearLocalChanges: () => void;
     toggleMaterialEditorOpen: () => void;
+    isDirty: boolean;
   } = $props();
 </script>
 
@@ -26,6 +30,9 @@
   <button class={{ collapsed: isEditorCollapsed }} disabled={isRunning} onclick={run}>
     {#if isRunning}running...{:else}run{/if}
   </button>
+  {#if isDirty}
+    <span class="dirty" title="unsaved changes">*</span>
+  {/if}
   <button
     class={['show-code-btn', isEditorCollapsed ? 'collapsed' : undefined]}
     onclick={toggleEditorCollapsed}
@@ -43,6 +50,7 @@
     <ActionsMenu>
       <button onclick={toggleMaterialEditorOpen}>edit materials</button>
       <button onclick={onExport}>export scene</button>
+      <button onclick={clearLocalChanges}>clear local changes</button>
       <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>
       <button onclick={() => void window.open('https://github.com/Ameobea/sketches-3d/issues/new', '_blank')}>
         report bug
@@ -59,7 +67,8 @@
   :global(.menu button) {
     width: 100%;
     text-align: left;
-    padding: 8px 12px;
+    padding: 6px 8px;
+    font-size: 14px;
   }
 
   button.collapsed {
@@ -71,6 +80,13 @@
     display: flex;
     gap: 0px;
     align-items: center;
+  }
+
+  .dirty {
+    color: red;
+    font-size: 12px;
+    margin-left: 8px;
+    line-height: 0;
   }
 
   .error {

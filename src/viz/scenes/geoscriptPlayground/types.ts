@@ -6,6 +6,9 @@ export interface ReplCtx {
   toggleNormalMat: () => void;
   getLastRunOutcome: () => { type: 'ok'; stats: RunStats } | { type: 'err'; err: string | null } | null;
   getAreAllMaterialsLoaded: () => boolean;
+  run: () => void;
+  snapView: (axis: 'x' | 'y' | 'z') => void;
+  orbit: (axis: 'vertical' | 'horizontal', angle: number) => void;
 }
 
 export interface RunStats {
@@ -19,6 +22,8 @@ export interface RunStats {
 
 export const DefaultCameraPos = new THREE.Vector3(10, 10, 10);
 export const DefaultCameraTarget = new THREE.Vector3(0, 0, 0);
+export const DefaultCameraFOV = 60;
+export const DefaultCameraZoom = 1;
 
 export const IntFormatter = new Intl.NumberFormat(undefined, {
   style: 'decimal',

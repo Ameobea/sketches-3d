@@ -1,12 +1,13 @@
 <script lang="ts">
   import { createQuery } from '@tanstack/svelte-query';
-  import { API, getUser, refetchUser, setUserLoggedOut } from 'src/api/client';
+  import type { AuthAPI } from './AuthAPI';
 
   export let onBack: () => void;
+  export let API: AuthAPI;
 
   $: curUser = createQuery({
     queryKey: ['user'],
-    queryFn: () => getUser(),
+    queryFn: () => API.getPlayer(),
     refetchInterval: 25 * 60 * 1000,
   });
 
@@ -19,7 +20,7 @@
     password = '';
     passwordConfirm = '';
 
-    setUserLoggedOut();
+    API.setUserLoggedOut?.();
     $curUser.refetch();
   };
 
@@ -50,7 +51,7 @@
         await API.login({ playerLogin: { username: username.toLowerCase(), password } });
       }
 
-      refetchUser();
+      API.refetchUser();
       $curUser.refetch();
 
       username = '';

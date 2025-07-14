@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Viz } from 'src/viz';
   import * as THREE from 'three';
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { EditorView, type KeyBinding } from '@codemirror/view';
   import type * as Comlink from 'comlink';
 
@@ -16,13 +16,30 @@
   import ReplControls from './ReplControls.svelte';
   import ExportModal from './ExportModal.svelte';
   import {
-    buildDefaultMaterialDefinitions,
     buildMaterial,
+    FallbackMat,
+    HiddenMat,
+    LineMat,
+    NormalMat,
+    WireframeMat,
     type MaterialDefinitions,
   } from 'src/geoscript/materials';
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
-  import { getMultipleTextures, type TextureID } from 'src/geoscript/geotoyAPIClient';
+  import {
+    getMultipleTextures,
+    type CompositionVersionMetadata,
+    type TextureID,
+  } from 'src/geoscript/geotoyAPIClient';
   import { Textures } from './materialEditor/state.svelte';
+  import {
+    clearSavedState,
+    getIsDirty,
+    getServerState,
+    getView,
+    loadState,
+    saveState,
+    setLastRunWasSuccessful,
+  } from './persistence';
 
   let {
     viz,
@@ -39,6 +56,15 @@
     userData?: GeoscriptPlaygroundUserData;
     onHeightChange: (height: number, isCollapsed: boolean) => void;
   } = $props();
+
+  const {
+    code: initialCode,
+    materials: initialMatDefs,
+    lastRunWasSuccessful,
+    view: initialView,
+  } = loadState(userData);
+
+  let isDirty = $state(getIsDirty(userData));
 
   let innerWidth = $state(window.innerWidth);
   let isEditorCollapsed = $state(
@@ -83,18 +109,6 @@
     window.addEventListener('mouseup', handleMouseup);
   };
 
-  let initComposition = $derived(userData?.initialComposition);
-
-  let localStorageKeySuffix = $derived(
-    (() => {
-      if (!initComposition) {
-        return '';
-      }
-
-      return `-${initComposition.comp.id}-${initComposition.version.id}`;
-    })()
-  );
-
   let err: string | null = $state(null);
   let isRunning: boolean = $state(false);
   let runStats: RunStats | null = $state(null);
@@ -108,14 +122,6 @@
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
 
-  let lastSavedSrc = $state<string | null>(null);
-  const DefaultCode = 'box(8) | (box(8) + vec3(4, 4, -4)) | render';
-  const initialCode = $derived<string>(
-    localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] ||
-      (typeof lastSavedSrc === 'string' ? lastSavedSrc : initComposition?.version.source_code) ||
-      DefaultCode
-  );
-
   let didFirstRun = $state(false);
   $effect(() => {
     if (didFirstRun) {
@@ -125,27 +131,28 @@
 
     // if the user closed the tab while the last run was in progress, avoid eagerly running it again in
     // case there was an infinite loop or something
-    if (localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] !== 'false') {
+    if (lastRunWasSuccessful) {
       run(initialCode);
     }
   });
 
   const beforeUnloadHandler = () => {
-    localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView
-      ? editorView.state.doc.toString()
-      : lastSrc;
-    localStorage[`geoscriptPlaygroundMaterials${localStorageKeySuffix}`] =
-      JSON.stringify(materialDefinitions);
+    if (editorView) {
+      saveState(
+        {
+          code: editorView.state.doc.toString(),
+          materials: materialDefinitions,
+          view: getView(viz),
+        },
+        userData
+      );
+    }
   };
 
-  // svelte-ignore state_referenced_locally
-  let lastSrc = $state(initialCode);
   const setupEditor = () => {
     if (!codemirrorContainer) {
       if (editorView) {
         beforeUnloadHandler();
-        lastSrc = editorView.state.doc.toString();
-        localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] = editorView.state.doc.toString();
         editorView.destroy();
         editorView = null;
       }
@@ -178,8 +185,14 @@
         key: 'Ctrl-s',
         run: () => {
           if (editorView) {
-            localStorage[`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`] =
-              editorView.state.doc.toString();
+            saveState(
+              {
+                code: editorView.state.doc.toString(),
+                materials: materialDefinitions,
+                view: getView(viz),
+              },
+              userData
+            );
           }
           return true;
         },
@@ -190,28 +203,23 @@
       container: codemirrorContainer,
       customKeymap,
       initialCode,
+      onDocChange: () => {
+        isDirty = true;
+      },
     });
     editorView = editor.editorView;
   };
 
-  onDestroy(() => setupEditor());
+  onDestroy(() => {
+    if (editorView) {
+      beforeUnloadHandler();
+      editorView.destroy();
+    }
+  });
 
   $effect(setupEditor);
 
   let materialOverride = $state<'wireframe' | 'normal' | null>(null);
-  const lineMat = new THREE.LineBasicMaterial({
-    color: 0x00ff00,
-    linewidth: 2,
-  });
-  const hiddenMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
-  const fallbackMat = new THREE.MeshBasicMaterial({
-    color: 0x888888,
-  });
-  const wireframeMat = new THREE.MeshBasicMaterial({
-    color: 0xdf00df,
-    wireframe: true,
-  });
-  const normalMat = new THREE.MeshNormalMaterial();
 
   const computeCompositeBoundingBox = (
     objects: (
@@ -234,10 +242,6 @@
   };
 
   const centerView = async () => {
-    if (!viz) {
-      return;
-    }
-
     while (!viz.orbitControls) {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
@@ -261,7 +265,6 @@
     lookDir.copy(viz.camera.position).sub(viz.orbitControls!.target);
 
     if (lookDir.lengthSq() === 0) {
-      // If camera and target are at the same spot, use a default direction
       lookDir.set(1, 1, 1);
     }
     lookDir.normalize();
@@ -280,7 +283,7 @@
       const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
       const fov = Math.min(vfov, hfov);
 
-      // Compute distance to fit bounding sphere in view.
+      // Compute distance to fit bounding sphere in view
       distance = radius / Math.sin(fov / 2);
 
       // Add a little padding so the object is not touching the screen edge
@@ -293,14 +296,78 @@
     viz.orbitControls!.update();
   };
 
+  const snapView = (axis: 'x' | 'y' | 'z') => {
+    if (!viz.orbitControls) {
+      return;
+    }
+
+    const distance = viz.camera.position.distanceTo(viz.orbitControls.target);
+
+    const newPosition = new THREE.Vector3();
+    if (axis === 'x') {
+      const flip = viz.camera.up.y === 1 && viz.camera.position.x > 0;
+      const direction = flip ? -1 : 1;
+      newPosition.set(distance * direction, 0, 0);
+      viz.camera.up.set(0, 1, 0);
+    } else if (axis === 'y') {
+      const flip = viz.camera.up.z === -1 && viz.camera.position.y > 0;
+      const direction = flip ? -1 : 1;
+      newPosition.set(0, distance * direction, 0);
+      viz.camera.up.set(0, 0, -1);
+    } else if (axis === 'z') {
+      const flip = viz.camera.up.y === 1 && viz.camera.position.z > 0;
+      const direction = flip ? -1 : 1;
+      newPosition.set(0, 0, distance * direction);
+      viz.camera.up.set(0, 1, 0);
+    } else {
+      axis satisfies never;
+      return;
+    }
+
+    viz.camera.position.copy(viz.orbitControls.target).add(newPosition);
+    viz.orbitControls.update();
+  };
+
+  const orbit = (axis: 'vertical' | 'horizontal', angle: number) => {
+    if (!viz.orbitControls) {
+      return;
+    }
+
+    const camera = viz.camera;
+    const target = viz.orbitControls.target;
+
+    const offset = new THREE.Vector3().subVectors(camera.position, target);
+    const s = new THREE.Spherical().setFromVector3(offset);
+
+    if (axis === 'horizontal') {
+      s.theta += angle;
+
+      const minAz = viz.orbitControls.minAzimuthAngle ?? -Infinity;
+      const maxAz = viz.orbitControls.maxAzimuthAngle ?? Infinity;
+      s.theta = Math.max(minAz, Math.min(maxAz, s.theta));
+    } else {
+      s.phi += angle;
+
+      const minPol = viz.orbitControls.minPolarAngle ?? 0;
+      const maxPol = viz.orbitControls.maxPolarAngle ?? Math.PI;
+      s.phi = Math.max(minPol, Math.min(maxPol, s.phi));
+    }
+
+    offset.setFromSpherical(s);
+    camera.position.copy(target).add(offset);
+    camera.lookAt(target);
+
+    viz.orbitControls.update();
+  };
+
   const toggleWireframe = () => {
     materialOverride = materialOverride === 'wireframe' ? null : 'wireframe';
     for (const obj of renderedObjects) {
       if (obj instanceof THREE.Mesh) {
         const mat =
           materialOverride === 'wireframe'
-            ? wireframeMat
-            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? hiddenMat);
+            ? WireframeMat
+            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? HiddenMat);
         obj.material = mat;
       }
     }
@@ -312,30 +379,14 @@
       if (obj instanceof THREE.Mesh) {
         const mat =
           materialOverride === 'normal'
-            ? normalMat
-            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? hiddenMat);
+            ? NormalMat
+            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? HiddenMat);
         obj.material = mat;
       }
     }
   };
 
   let materialEditorOpen = $state(false);
-  const initialMatDefs = ((): MaterialDefinitions => {
-    if (userData?.initialComposition?.version?.metadata?.materials) {
-      return userData.initialComposition.version.metadata.materials;
-    }
-
-    const matDefs = localStorage[`geoscriptPlaygroundMaterials${localStorageKeySuffix}`];
-    if (typeof matDefs === 'string') {
-      try {
-        return JSON.parse(matDefs);
-      } catch (err) {
-        console.warn('Error parsing saved material definitions:', err);
-      }
-    }
-
-    return buildDefaultMaterialDefinitions();
-  })();
   let materialDefinitions = $state<MaterialDefinitions>(initialMatDefs);
 
   onMount(() => {
@@ -382,21 +433,39 @@
     $derived.by(() => {
       const builtMats: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
         {};
+
       // TODO: needs hashing to avoid re-building materials that haven't changed
       // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
       for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
         const matP = buildMaterial(loader, def, id);
         const entry: { promise: Promise<THREE.Material>; resolved: THREE.Material | null } = {
-          promise: matP,
-          resolved: null,
+          promise: matP instanceof Promise ? matP : Promise.resolve(matP),
+          resolved: matP instanceof Promise ? null : matP,
         };
-        matP.then(mat => {
-          entry.resolved = mat;
-        });
+        if (matP instanceof Promise) {
+          matP.then(mat => {
+            entry.resolved = mat;
+          });
+        }
         builtMats[id] = entry;
       }
       return builtMats;
     });
+
+  let didInitMats = false;
+  $effect(() => {
+    // force dependency
+    if ($state.snapshot(materialDefinitions)) {
+      if (!didInitMats) {
+        didInitMats = true;
+      } else {
+        isDirty = true;
+      }
+    } else {
+      throw new Error('unreachable');
+    }
+  });
+
   let customMaterialsByName: Record<
     string,
     { promise: Promise<THREE.Material>; resolved: THREE.Material | null }
@@ -468,7 +537,7 @@
     await repl.reset(ctxPtr);
     runStats = null;
     const startTime = performance.now();
-    localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] = 'false';
+    setLastRunWasSuccessful(false, userData);
     try {
       await repl.eval(ctxPtr, code, includePrelude);
     } catch (err) {
@@ -478,7 +547,7 @@
       isRunning = false;
       return;
     } finally {
-      localStorage[`lastGeoscriptRunCompleted${localStorageKeySuffix}`] = 'true';
+      setLastRunWasSuccessful(true, userData);
     }
     err = (await repl.getErr(ctxPtr)) || null;
     if (err) {
@@ -522,13 +591,13 @@
 
       const matEntry = (() => {
         if (!materialName) {
-          return { resolved: fallbackMat, promise: null };
+          return { resolved: FallbackMat, promise: null };
         }
 
         const matEntry = customMaterialsByName[materialName];
         if (!matEntry) {
           console.warn(`mesh referenced undefined material: "${materialName}"`);
-          return { resolved: fallbackMat, promise: null };
+          return { resolved: FallbackMat, promise: null };
         }
 
         return matEntry;
@@ -536,7 +605,7 @@
 
       const mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material> = new THREE.Mesh(
         geometry,
-        matEntry.resolved ?? hiddenMat
+        matEntry.resolved ?? HiddenMat
       );
       mesh.userData.materialName = materialName;
       if (!matEntry.resolved && matEntry.promise) {
@@ -558,7 +627,7 @@
       localRunStats.totalFaceCount += pathVerts.length / 3 - 1;
       const pathGeometry = new THREE.BufferGeometry();
       pathGeometry.setAttribute('position', new THREE.BufferAttribute(pathVerts, 3));
-      const pathMaterial = lineMat;
+      const pathMaterial = LineMat;
       const pathMesh = new THREE.Line(pathGeometry, pathMaterial);
       pathMesh.castShadow = false;
       pathMesh.receiveShadow = false;
@@ -588,6 +657,57 @@
     exportDialog?.showModal();
   };
 
+  const setView = async (view: CompositionVersionMetadata['view']) => {
+    while (!viz.orbitControls) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+
+    viz.camera.position.set(...view.cameraPosition);
+    viz.orbitControls.target.set(...view.target);
+    if ('fov' in viz.camera && view.fov !== undefined) {
+      viz.camera.fov = view.fov;
+      viz.camera.updateProjectionMatrix();
+    }
+    if ('zoom' in viz.camera && view.zoom !== undefined) {
+      viz.camera.zoom = view.zoom;
+      viz.camera.updateProjectionMatrix();
+    }
+    viz.camera.lookAt(viz.orbitControls.target);
+    viz.orbitControls.update();
+  };
+
+  const clearLocalChanges = () => {
+    if (isDirty && !confirm('Really clear local changes?')) {
+      return;
+    }
+
+    clearSavedState(userData);
+
+    const serverState = getServerState(userData);
+
+    if (editorView) {
+      editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: serverState.code },
+      });
+    }
+    didInitMats = false;
+    materialDefinitions = serverState.materials;
+    setView(serverState.view);
+
+    run(serverState.code);
+
+    saveState(
+      {
+        code: serverState.code,
+        materials: serverState.materials,
+        view: serverState.view,
+      },
+      userData
+    );
+
+    isDirty = false;
+  };
+
   onMount(() => {
     if (userData?.renderMode) {
       const stats = document.getElementById('viz-stats');
@@ -596,21 +716,7 @@
       }
     }
 
-    const view = userData?.initialComposition?.version?.metadata?.view;
-    if (view && viz && viz.camera && viz.orbitControls) {
-      viz.camera.position.set(...view.cameraPosition);
-      viz.orbitControls.target.set(...view.target);
-      if ('fov' in viz.camera && view.fov !== undefined) {
-        viz.camera.fov = view.fov;
-        viz.camera.updateProjectionMatrix();
-      }
-      if ('zoom' in viz.camera && view.zoom !== undefined) {
-        viz.camera.zoom = view.zoom;
-        viz.camera.updateProjectionMatrix();
-      }
-      viz.camera.lookAt(viz.orbitControls.target);
-      viz.orbitControls.update();
-    }
+    setTimeout(() => setView(initialView));
 
     setReplCtx({
       centerView,
@@ -618,6 +724,9 @@
       toggleNormalMat,
       getLastRunOutcome: () => lastRunOutcome,
       getAreAllMaterialsLoaded: () => Object.values(customMaterials).every(mat => mat.resolved),
+      run,
+      snapView,
+      orbit,
     });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
@@ -637,9 +746,7 @@
   const goHome = () => {
     beforeUnloadHandler();
 
-    const curCode = editorView?.state.doc.toString() || lastSrc;
-    const dirty = curCode !== initialCode && curCode !== DefaultCode;
-    if (dirty) {
+    if (isDirty) {
       if (!confirm('You have unsaved changes. Really leave page?')) {
         return;
       }
@@ -667,6 +774,8 @@
       {goHome}
       {err}
       {onExport}
+      {clearLocalChanges}
+      {isDirty}
       toggleMaterialEditorOpen={() => (materialEditorOpen = true)}
     />
   </div>
@@ -693,6 +802,8 @@
             {goHome}
             {err}
             {onExport}
+            {clearLocalChanges}
+            {isDirty}
             toggleMaterialEditorOpen={() => {
               materialEditorOpen = !materialEditorOpen;
             }}
@@ -705,11 +816,19 @@
             getCurrentCode={() => editorView?.state.doc.toString() || ''}
             materials={materialDefinitions}
             {viz}
-            onSave={(src: string) => {
-              lastSavedSrc = src;
+            onSave={() => {
+              isDirty = false;
+              saveState(
+                {
+                  code: editorView?.state.doc.toString() || '',
+                  materials: materialDefinitions,
+                  view: getView(viz),
+                },
+                userData
+              );
             }}
           />
-        {:else if userData?.me}
+        {:else if !userData?.me}
           <div class="not-logged-in" style="border-top: 1px solid #333">
             <span style="color: #ddd">you must be logged in to save/share compositions</span>
             <div>

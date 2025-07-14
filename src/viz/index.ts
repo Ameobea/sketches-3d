@@ -508,7 +508,9 @@ export class Viz {
       return;
     }
 
-    this.customKeyEventMap.get(evt.key.toLowerCase())?.();
+    const key = `${evt.ctrlKey ? 'ctrl+' : ''}${evt.key.toLowerCase()}`;
+
+    this.customKeyEventMap.get(key)?.();
   };
 
   private handleKeyUp = (evt: KeyboardEvent) => {

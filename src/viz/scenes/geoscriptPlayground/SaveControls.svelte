@@ -24,7 +24,7 @@
     comp: Composition | undefined | null;
     materials: MaterialDefinitions;
     getCurrentCode: () => string;
-    onSave: (savedSrc: string) => void;
+    onSave?: (savedSrc: string) => void;
   } = $props();
 
   let title = $state(comp?.title || '');
@@ -80,7 +80,7 @@
           is_shared: isShared,
         }),
       ]);
-      onSave(code);
+      onSave?.(code);
       return { type: 'ok' };
     } catch (error) {
       console.error('Error saving changes:', error);

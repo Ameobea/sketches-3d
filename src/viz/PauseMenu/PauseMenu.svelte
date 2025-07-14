@@ -26,6 +26,9 @@
   import LoginMenu from './LoginMenu.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  import { API, refetchUser, setUserLoggedOut } from 'src/api/client';
+  import type { AuthAPI } from './AuthAPI';
+  import { APIError, login, logout, me, register } from 'src/geoscript/geotoyAPIClient';
 
   let activeMenu = Menu.Main;
 
@@ -55,6 +58,44 @@
   };
 
   const commit = () => saveNewConfig($liveConfig);
+
+  $: isGeotoy = page.url.pathname.includes('geotoy');
+
+  const getGeotoyPlayer = async () => {
+    try {
+      const player = await me();
+      return player;
+    } catch (error) {
+      if (error instanceof APIError && error.status === 401) {
+        return null;
+      } else {
+        throw error;
+      }
+    }
+  };
+
+  const geotoyAPI: AuthAPI = {
+    createPlayer: async ({ playerLogin: { username, password } }) => {
+      await register({ username, password });
+    },
+    login: async ({ playerLogin: { username, password } }) => {
+      await login({ username, password });
+    },
+    logOutPlayer: async () => {
+      await logout();
+    },
+    getPlayer: getGeotoyPlayer,
+    refetchUser: getGeotoyPlayer,
+  };
+
+  const parkourAPI: AuthAPI = {
+    createPlayer: req => API.createPlayer(req),
+    login: req => API.login(req),
+    logOutPlayer: () => API.logOutPlayer(),
+    getPlayer: () => API.getPlayer(),
+    refetchUser,
+    setUserLoggedOut,
+  };
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -79,7 +120,7 @@
         >
           Resume
         </button>
-        {#if !page.url.pathname.includes('nexus')}
+        {#if !page.url.pathname.includes('nexus') && !isGeotoy}
           <button
             on:click={() => {
               ctx.onResume();
@@ -100,38 +141,40 @@
         >
           Graphics
         </button>
-        <button
-          on:click={() => {
-            activeMenu = Menu.Gameplay;
-          }}
-        >
-          Gameplay
-        </button>
-        <div class="slider-input">
-          <label for="global-volume-slider">Global Volume</label>
-          <input
-            type="range"
-            id="global-volume-slider"
-            name="volume"
-            min="0"
-            max="1"
-            step="0.01"
-            value={$audioConf.globalVolume}
-            on:input={evt => {
-              onAudioConfChanged({
-                ...$audioConf,
-                globalVolume: +evt.currentTarget.value,
-              });
+        {#if !isGeotoy}
+          <button
+            on:click={() => {
+              activeMenu = Menu.Gameplay;
             }}
-          />
-        </div>
-        <button
-          on:click={() => {
-            activeMenu = Menu.Audio;
-          }}
-        >
-          Audio
-        </button>
+          >
+            Gameplay
+          </button>
+          <div class="slider-input">
+            <label for="global-volume-slider">Global Volume</label>
+            <input
+              type="range"
+              id="global-volume-slider"
+              name="volume"
+              min="0"
+              max="1"
+              step="0.01"
+              value={$audioConf.globalVolume}
+              on:input={evt => {
+                onAudioConfChanged({
+                  ...$audioConf,
+                  globalVolume: +evt.currentTarget.value,
+                });
+              }}
+            />
+          </div>
+          <button
+            on:click={() => {
+              activeMenu = Menu.Audio;
+            }}
+          >
+            Audio
+          </button>
+        {/if}
         <button
           on:click={() => {
             activeMenu = Menu.Controls;
@@ -197,6 +240,7 @@
           onBack={() => {
             activeMenu = Menu.Main;
           }}
+          API={isGeotoy ? geotoyAPI : parkourAPI}
         />
       {/if}
     </div>

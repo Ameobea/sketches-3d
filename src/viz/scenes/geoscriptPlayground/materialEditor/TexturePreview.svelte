@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Texture } from './textureStore';
+  import type { Texture } from 'src/geoscript/geotoyAPIClient';
 
   export let texture: Texture | undefined = undefined;
   export let onclick: () => void = () => {};
@@ -7,7 +7,7 @@
 
 <button class="texture-preview" on:click={onclick}>
   {#if texture}
-    <img src={texture.thumbnailUrl} alt={texture.name} crossorigin="anonymous" />
+    <img src={texture.thumbnailUrl} alt={texture.name} crossorigin="anonymous" title={texture.name} />
   {:else}
     <div class="none">-</div>
   {/if}

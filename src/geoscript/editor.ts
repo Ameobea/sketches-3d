@@ -22,6 +22,7 @@ interface BuildEditorArgs {
   initialCode?: string;
   readonly?: boolean;
   lineNumbers?: boolean;
+  onDocChange?: () => void;
 }
 
 export const buildEditor = ({
@@ -29,6 +30,7 @@ export const buildEditor = ({
   customKeymap,
   initialCode = '',
   readonly = false,
+  onDocChange,
 }: BuildEditorArgs) => {
   const syntaxErrorLinter = linter(view => {
     const diagnostics: Diagnostic[] = [];
@@ -67,6 +69,13 @@ export const buildEditor = ({
   });
 
   const extensions: Extension = filterNils([
+    onDocChange
+      ? EditorView.updateListener.of(update => {
+          if (update.docChanged) {
+            onDocChange();
+          }
+        })
+      : null,
     customKeymap ? Prec.highest(keymap.of(customKeymap)) : null,
     basicSetup,
     keymap.of(defaultKeymap),
@@ -75,6 +84,7 @@ export const buildEditor = ({
     new LanguageSupport(geoscriptLang),
     syntaxErrorLinter,
     readonly ? EditorState.readOnly.of(true) : null,
+    EditorState.allowMultipleSelections.of(true),
   ]);
 
   const editorState = EditorState.create({

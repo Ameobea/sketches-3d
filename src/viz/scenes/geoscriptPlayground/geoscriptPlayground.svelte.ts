@@ -12,6 +12,7 @@ import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worke
 import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
 import type { ReplCtx } from './types';
+import { buildGeotoyKeymap } from './keymap';
 
 const locations = {
   spawn: {
@@ -142,7 +143,7 @@ export const processLoadedScene = (
     (newHeight: number, newIsCollapsed: boolean) => {
       controlsHeight = newHeight;
       isEditorCollapsed = newIsCollapsed;
-      localStorage.setItem('geoscript-repl-height', String(newHeight));
+      localStorage.setItem('geoscript-repl-height', `${newHeight}`);
       updateCanvasSize();
     }
   );
@@ -155,10 +156,6 @@ export const processLoadedScene = (
       pos: new THREE.Vector3(10, 10, 10),
       target: new THREE.Vector3(0, 0, 0),
     },
-    customControlsEntries: [
-      { key: '.', action: () => ctx?.centerView(), label: 'center view' },
-      { key: 'w', action: () => ctx?.toggleWireframe(), label: 'toggle wireframe' },
-      { key: 'n', action: () => ctx?.toggleNormalMat(), label: 'toggle normal material' },
-    ],
+    customControlsEntries: buildGeotoyKeymap(() => ctx),
   };
 };
