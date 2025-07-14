@@ -23,6 +23,8 @@ body {
 body,
 html {
   overflow-y: auto !important;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 h1 {

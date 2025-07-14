@@ -10,6 +10,7 @@
     err,
     onExport,
     clearLocalChanges,
+    toggleAxisHelpers,
     toggleMaterialEditorOpen,
     isDirty,
   }: {
@@ -21,6 +22,7 @@
     err: string | null;
     onExport: () => void;
     clearLocalChanges: () => void;
+    toggleAxisHelpers: () => void;
     toggleMaterialEditorOpen: () => void;
     isDirty: boolean;
   } = $props();
@@ -30,9 +32,6 @@
   <button class={{ collapsed: isEditorCollapsed }} disabled={isRunning} onclick={run}>
     {#if isRunning}running...{:else}run{/if}
   </button>
-  {#if isDirty}
-    <span class="dirty" title="unsaved changes">*</span>
-  {/if}
   <button
     class={['show-code-btn', isEditorCollapsed ? 'collapsed' : undefined]}
     onclick={toggleEditorCollapsed}
@@ -40,6 +39,9 @@
   >
     {#if isEditorCollapsed}show editor{:else}hide editor{/if}
   </button>
+  {#if isDirty && !err}
+    <span class="dirty" title="unsaved changes">*</span>
+  {/if}
   {#if isEditorCollapsed && err}
     <div class="error">error; open editor for details</div>
   {/if}
@@ -47,15 +49,20 @@
     <button class={['home-button', isEditorCollapsed ? 'collapsed' : undefined]} onclick={goHome}>
       home
     </button>
-    <ActionsMenu>
-      <button onclick={toggleMaterialEditorOpen}>edit materials</button>
-      <button onclick={onExport}>export scene</button>
-      <button onclick={clearLocalChanges}>clear local changes</button>
-      <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>
-      <button onclick={() => void window.open('https://github.com/Ameobea/sketches-3d/issues/new', '_blank')}>
-        report bug
-      </button>
-    </ActionsMenu>
+    {#if !isEditorCollapsed}
+      <ActionsMenu>
+        <button onclick={toggleMaterialEditorOpen}>edit materials</button>
+        <button onclick={onExport}>export scene</button>
+        <button onclick={clearLocalChanges}>clear local changes</button>
+        <button onclick={toggleAxisHelpers}>toggle axis helpers</button>
+        <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>
+        <button
+          onclick={() => void window.open('https://github.com/Ameobea/sketches-3d/issues/new', '_blank')}
+        >
+          report bug
+        </button>
+      </ActionsMenu>
+    {/if}
   </div>
 </div>
 
@@ -86,6 +93,7 @@
     color: red;
     font-size: 12px;
     margin-left: 8px;
+    margin-right: 8px;
     line-height: 0;
   }
 
@@ -115,6 +123,15 @@
 
     .collapsed {
       max-height: 40px;
+    }
+
+    :global(.menu button) {
+      font-size: 12px;
+      padding: 3px 6px;
+    }
+
+    .run-controls:not(.collapsed) button:first-child {
+      min-width: 80px;
     }
   }
 

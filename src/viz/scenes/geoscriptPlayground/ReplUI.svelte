@@ -86,6 +86,7 @@
   let height = $state(
     Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
   );
+  let lastCode = initialCode;
 
   onMount(() => {
     onHeightChange(height, isEditorCollapsed);
@@ -202,7 +203,7 @@
     const editor = buildEditor({
       container: codemirrorContainer,
       customKeymap,
-      initialCode,
+      initialCode: lastCode,
       onDocChange: () => {
         isDirty = true;
       },
@@ -517,10 +518,11 @@
     }
 
     if (typeof code !== 'string') {
-      if (!editorView) {
-        return;
+      if (editorView) {
+        code = editorView.state.doc.toString();
+      } else {
+        code = lastCode;
       }
-      code = editorView.state.doc.toString();
     }
 
     beforeUnloadHandler();
@@ -648,8 +650,32 @@
   };
 
   const toggleEditorCollapsed = () => {
+    if (editorView) {
+      lastCode = editorView.state.doc.toString();
+      saveState(
+        {
+          code: lastCode,
+          materials: materialDefinitions,
+          view: getView(viz),
+        },
+        userData
+      );
+    }
     isEditorCollapsed = !isEditorCollapsed;
     onHeightChange(height, isEditorCollapsed);
+  };
+
+  const toggleAxisHelpers = () => {
+    const helper = viz.scene.children.find(obj => obj instanceof THREE.AxesHelper);
+    if (helper) {
+      viz.scene.remove(helper);
+      localStorage['geoscript-axis-helpers'] = 'false';
+    } else {
+      const axisHelper = new THREE.AxesHelper(100);
+      axisHelper.position.set(0, 0, 0);
+      viz.scene.add(axisHelper);
+      localStorage['geoscript-axis-helpers'] = 'true';
+    }
   };
 
   let exportDialog = $state<HTMLDialogElement | null>(null);
@@ -775,6 +801,7 @@
       {err}
       {onExport}
       {clearLocalChanges}
+      {toggleAxisHelpers}
       {isDirty}
       toggleMaterialEditorOpen={() => (materialEditorOpen = true)}
     />
@@ -803,6 +830,7 @@
             {err}
             {onExport}
             {clearLocalChanges}
+            {toggleAxisHelpers}
             {isDirty}
             toggleMaterialEditorOpen={() => {
               materialEditorOpen = !materialEditorOpen;
@@ -849,6 +877,8 @@
   .root {
     width: 100%;
     position: absolute;
+    max-width: 100vw;
+    overflow-x: hidden;
     bottom: 0;
     display: flex;
     flex-direction: column;
@@ -939,6 +969,10 @@
     .not-logged-in {
       font-size: 12px;
       padding: 4px;
+    }
+
+    .output {
+      overflow-x: hidden;
     }
   }
 </style>

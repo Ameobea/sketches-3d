@@ -57,7 +57,9 @@
   $effect(() => {
     if (dialogElement && dragHandleElement) {
       dragCbs?.destroy();
-      dragCbs = makeDraggable(dialogElement, dragHandleElement, 340, 340);
+      if (window.innerWidth > 600) {
+        dragCbs = makeDraggable(dialogElement, dragHandleElement, 340, 340);
+      }
     }
   });
 
@@ -163,8 +165,8 @@
     background: #222;
     color: #f0f0f0;
     border: 1px solid #888;
-    width: 80%;
-    max-width: 600px;
+    width: 600px;
+    max-width: calc(min(600px, 100vw));
     min-height: 400px;
     max-height: calc(min(50vh, 600px));
     z-index: 100;

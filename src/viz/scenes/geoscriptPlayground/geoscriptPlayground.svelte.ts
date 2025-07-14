@@ -106,7 +106,7 @@ export const processLoadedScene = (
     });
   }
 
-  if (!userData?.renderMode) {
+  if (!userData?.renderMode && localStorage.getItem('geoscript-axis-helpers') !== 'false') {
     const axisHelper = new THREE.AxesHelper(100);
     axisHelper.position.set(0, 0, 0);
     viz.scene.add(axisHelper);
