@@ -43,7 +43,7 @@
 
   .menu {
     position: absolute;
-    top: 100%;
+    top: calc(100% + 4px);
     right: 0;
     background: #222;
     border: 1px solid #444;

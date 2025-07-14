@@ -86,7 +86,7 @@ const apiFetch = async <T>(
     ...options,
     credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
+      ...(binary ? {} : { 'Content-Type': 'application/json' }),
       ...(options.headers || {}),
     },
   });
@@ -258,7 +258,7 @@ export const getTexture = (
 
 export const createTexture = (
   name: string,
-  file: File, // TODO: should also allow providing a URL
+  file: File,
   is_shared: boolean,
   fetch: typeof globalThis.fetch = globalThis.fetch
 ): Promise<Texture> => {
@@ -267,16 +267,32 @@ export const createTexture = (
   searchParams.set('is_shared', is_shared.toString());
 
   return apiFetch<Texture>(
-    '/textures',
+    `/textures?${searchParams.toString()}`,
     {
       method: 'POST',
-      body: JSON.stringify({
-        file,
-        is_shared,
-      }),
+      body: file,
     },
-    fetch,
-    true
+    fetch
+  );
+};
+
+export const createTextureFromURL = (
+  name: string,
+  url: string,
+  is_shared: boolean,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<Texture> => {
+  const searchParams = new URLSearchParams();
+  searchParams.set('name', name);
+  searchParams.set('is_shared', is_shared.toString());
+
+  return apiFetch<Texture>(
+    `/textures/from_url?${searchParams.toString()}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    },
+    fetch
   );
 };
 

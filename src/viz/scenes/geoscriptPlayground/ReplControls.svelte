@@ -43,6 +43,10 @@
     <ActionsMenu>
       <button onclick={toggleMaterialEditorOpen}>edit materials</button>
       <button onclick={onExport}>export scene</button>
+      <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>
+      <button onclick={() => void window.open('https://github.com/Ameobea/sketches-3d/issues/new', '_blank')}>
+        report bug
+      </button>
     </ActionsMenu>
   </div>
 </div>

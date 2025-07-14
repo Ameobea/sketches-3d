@@ -48,7 +48,7 @@ export const buildTriplanarDefsFragment = ({
   // Adjusted version that works for normal maps
   //
   // Adapted from this code:
-  // https://github.com/bgolus/Normal-Mapping-for-a-Triplanar-Shader/blob/master/TriplanarGPUGems3.shader#L62
+  // https://github.com/bgolus/Normal-Mapping-for-a-Triplanar-Shader/blob/a3571bf5f6e857e85c2f37875e79568282277de8/TriplanarGPUGems3.shader#L62
   //
   // Also see:
   // https://bgolus.medium.com/normal-mapping-for-a-triplanar-shader-10bf39dca05a
@@ -79,21 +79,30 @@ export const buildTriplanarDefsFragment = ({
 
     vec3 axisSign = sign(normal);
 
-    vec3 normalX = vec3(0., tnormalX.yx);
-    vec3 normalY = vec3(tnormalY.x, 0., tnormalY.y);
-    vec3 normalZ = vec3(tnormalZ.xy, 0.);
+    vec2 tnormalX_xy = (texture2D(map, pos.yz * uvScale).xy * 2. - 1.) * normalScale;
+    vec2 tnormalY_xy = (texture2D(map, pos.zx * uvScale).xy * 2. - 1.) * normalScale;
+    vec2 tnormalZ_xy = (texture2D(map, pos.xy * uvScale).xy * 2. - 1.) * normalScale;
 
-    normalX *= axisSign.x;
-    normalY *= axisSign.y;
-    normalZ *= -axisSign.z;
+    // correct for back-side projection by flipping the x-component of the tangent-space normal
+    tnormalX_xy.x *= axisSign.x;
+    tnormalY_xy.x *= axisSign.y;
+    // tnormalZ_xy.x *= -axisSign.z;
+    tnormalZ_xy.x *= axisSign.z;
 
+    // swizzle tangent-space normals to world-space perturbation vectors
+    vec3 normalX = vec3(0.0, tnormalX_xy.y, tnormalX_xy.x);
+    vec3 normalY = vec3(tnormalY_xy.x, 0.0, tnormalY_xy.y);
+    vec3 normalZ = vec3(tnormalZ_xy.x, tnormalZ_xy.y, 0.0);
+
+    // blend the perturbation vectors and add to the base geometric normal
     vec3 worldNormal = normalize(
       normalX * weights.x +
       normalY * weights.y +
       normalZ * weights.z +
       normal
     );
-    return vec4(worldNormal, 1.);
+
+    return vec4(worldNormal, 1.0);
   }
 
   vec4 triplanarTextureFixContrast(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {

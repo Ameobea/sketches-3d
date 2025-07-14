@@ -1,91 +1,188 @@
 <script lang="ts">
-  import { uploadTexture, type Texture } from './textureStore';
+  import { createTexture, createTextureFromURL, type Texture, APIError } from 'src/geoscript/geotoyAPIClient';
+  import { Textures } from './state.svelte';
 
-  export let onupload = (texture: Texture) => {};
+  let {
+    onclose = () => {},
+    onupload = (texture: Texture) => {},
+  }: {
+    onclose: () => void;
+    onupload: (texture: Texture) => void;
+  } = $props();
 
-  let fileInput: HTMLInputElement | null;
+  let uploadMethod: 'file' | 'url' = $state('file');
+  let name = $state('');
+  let isShared = $state(false);
+  let fileInput = $state<HTMLInputElement | null>(null);
   let urlInput = $state('');
-  let isUploading = $state(false);
+  let status = $state<
+    { type: 'ok'; msg: string } | { type: 'error'; msg: string } | { type: 'loading' } | null
+  >(null);
 
-  const handleFileSelect = async (e: Event) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (file) {
-      isUploading = true;
-      const newTexture = await uploadTexture(file);
-      onupload(newTexture);
-      isUploading = false;
+  const handleSubmit = async () => {
+    status = { type: 'loading' };
+    try {
+      let texture: Texture;
+      if (uploadMethod === 'file') {
+        if (!fileInput?.files?.length) {
+          status = { type: 'error', msg: 'no file selected' };
+          return;
+        }
+        texture = await createTexture(name, fileInput.files[0], isShared);
+      } else {
+        if (!urlInput) {
+          status = { type: 'error', msg: 'no URL provided' };
+          return;
+        }
+        texture = await createTextureFromURL(name, urlInput, isShared);
+      }
+      Textures.textures[texture.id] = texture;
+      onupload(texture);
+      status = { type: 'ok', msg: 'texture uploaded!' };
+    } catch (e) {
+      if (e instanceof APIError) {
+        status = { type: 'error', msg: e.message };
+      } else {
+        status = { type: 'error', msg: 'an unknown error occurred' };
+      }
     }
   };
-
-  const handleUrlUpload = async () => {
-    if (urlInput) {
-      isUploading = true;
-      const newTexture = await uploadTexture(urlInput);
-      onupload(newTexture);
-      isUploading = false;
-      urlInput = '';
-    }
-  };
-
 </script>
 
-<div class="texture-uploader">
-  <h3>upload new texture</h3>
+<div>
+  <div class="texture-uploader">
+    <div class="header">upload new texture</div>
+    <div class="content">
+      <div class="instructions">
+        <ul>
+          <li>most common image formats are accepted</li>
+          <li>
+            seamless/tileable texture are <i>highly</i>
+            recommended
+          </li>
+          <li>textures should be square and ideally a power of two for best performance</li>
+        </ul>
+      </div>
+      <div class="form-grid">
+        <label for="name-input">name</label>
+        <input id="name-input" type="text" bind:value={name} />
 
-  <div class="upload-option">
-    <label for="file-upload">from file</label>
-    <input id="file-upload" type="file" accept="image/*" on:change={handleFileSelect} bind:this={fileInput} />
-  </div>
+        <label for="is-shared-checkbox">public</label>
+        <input id="is-shared-checkbox" type="checkbox" bind:checked={isShared} />
 
-  <div class="or-divider">or</div>
+        <label>method</label>
+        <div class="toggle-group">
+          <button class:selected={uploadMethod === 'file'} onclick={() => (uploadMethod = 'file')}>
+            file
+          </button>
+          <button class:selected={uploadMethod === 'url'} onclick={() => (uploadMethod = 'url')}>url</button>
+        </div>
 
-  <div class="upload-option">
-    <label for="url-upload">from url</label>
-    <input id="url-upload" type="text" placeholder="https://..." bind:value={urlInput} />
-    <button on:click={handleUrlUpload} disabled={!urlInput || isUploading}>upload</button>
-  </div>
-
-  {#if isUploading}
-    <div class="loading-overlay">
-      uploading...
+        {#if uploadMethod === 'file'}
+          <label for="file-input">file</label>
+          <input id="file-input" type="file" bind:this={fileInput} />
+        {:else}
+          <label for="url-input">url</label>
+          <input id="url-input" type="text" bind:value={urlInput} />
+        {/if}
+      </div>
     </div>
-  {/if}
+    <div class="buttons">
+      <div class="status-container">
+        {#if status && (status.type === 'ok' || status.type === 'error')}
+          <div class="status {status.type}">
+            {status.msg}
+          </div>
+        {/if}
+      </div>
+      <button class="footer-button" onclick={onclose}>cancel</button>
+      <button class="footer-button" onclick={handleSubmit} disabled={status?.type === 'loading'}>
+        {#if status?.type === 'loading'}loading...{:else}submit{/if}
+      </button>
+    </div>
+  </div>
 </div>
 
 <style>
   .texture-uploader {
-    padding: 16px;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    height: 100%;
+    background: #2a2a2a;
+  }
+  .header {
+    padding: 8px;
+    border-bottom: 1px solid #444;
+    font-weight: bold;
+  }
+  .content {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    padding: 12px;
+    flex-grow: 1;
+    overflow-y: auto;
   }
-  h3 {
-      font-size: 14px;
-      margin: 0 0 8px 0;
-      text-align: center;
+  .instructions {
+    font-size: 12px;
+    color: #aaa;
   }
-  .upload-option {
-    display: flex;
-    flex-direction: column;
+  .instructions ul {
+    padding-left: 20px;
+    margin: 4px 0 0;
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
     gap: 8px;
+    align-items: center;
   }
   label {
-      font-size: 12px;
+    font-size: 12px;
+    text-align: right;
   }
-  .or-divider {
-      text-align: center;
-      color: #888;
-      margin: 8px 0;
+  input[type='text'],
+  input[type='file'] {
+    background-color: #1a1a1a;
+    color: #eee;
+    border: 1px solid #444;
+    padding: 4px 6px;
+    font-size: 12px;
+    font-family: inherit;
   }
-  .loading-overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+  .toggle-group {
+    display: flex;
+  }
+  .toggle-group button {
+    background: #333;
+    border: 1px solid #555;
+    color: #eee;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .toggle-group button.selected {
+    background: #444;
+    border-color: #777;
+  }
+  .buttons {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px;
+    border-top: 1px solid #444;
+    gap: 8px;
+    align-items: center;
+  }
+  .status-container {
+    flex-grow: 1;
+  }
+  .status {
+    font-size: 12px;
+  }
+  .status.ok {
+    color: #12cc12;
+  }
+  .status.error {
+    color: red;
   }
 </style>

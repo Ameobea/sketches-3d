@@ -171,7 +171,7 @@ app.post('/convert-to-avif', imageBodyParser, async (req, res) => {
     res.send(avifBuffer);
   } catch (error) {
     console.error('Error converting image to AVIF:', error);
-    res.status(500).send('Error converting image');
+    res.status(500).send(`Error converting image to AVIF: ${error.message}`);
   }
 });
 

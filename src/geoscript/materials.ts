@@ -30,6 +30,9 @@ export interface PhysicalMaterialDef {
   clearcoat: number;
   clearcoatRoughness: number;
   iridescence: number;
+  sheen?: number;
+  sheenColor?: RGBColor;
+  sheenRoughness?: number;
   normalScale: number;
   uvScale: { x: number; y: number };
   map?: TextureID;
@@ -102,6 +105,11 @@ export const buildMaterial = async (
         clearcoat: def.clearcoat,
         clearcoatRoughness: def.clearcoatRoughness,
         iridescence: def.iridescence,
+        sheen: def.sheen ?? 0,
+        sheenColor: def.sheenColor
+          ? new THREE.Color(def.sheenColor.r, def.sheenColor.g, def.sheenColor.b)
+          : new THREE.Color(0x000000),
+        sheenRoughness: def.sheenRoughness ?? 1,
         normalScale: def.normalScale,
         uvTransform: new THREE.Matrix3().scale(def.uvScale.x, def.uvScale.y),
         map,
@@ -136,6 +144,9 @@ export const buildDefaultMaterial = (name: string): MaterialDef => ({
   clearcoat: 0,
   clearcoatRoughness: 0,
   iridescence: 0,
+  sheen: 0,
+  sheenColor: new THREE.Color(0x000000),
+  sheenRoughness: 1,
   normalScale: 1,
   uvScale: { x: 0.13, y: 0.13 },
   mapDisableDistance: null,

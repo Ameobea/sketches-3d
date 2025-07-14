@@ -108,6 +108,9 @@ export interface CustomShaderProps {
   clearcoat?: number;
   clearcoatRoughness?: number;
   iridescence?: number;
+  sheen?: number;
+  sheenColor?: THREE.Color | number;
+  sheenRoughness?: number;
   color?: number | THREE.Color;
   normalScale?: number;
   map?: THREE.Texture;
@@ -228,6 +231,9 @@ export const buildCustomShaderArgs = (
     clearcoat = 0,
     clearcoatRoughness = 0,
     iridescence = 0,
+    sheen = 0,
+    sheenColor = new THREE.Color(0xffffff),
+    sheenRoughness = 0,
     color = new THREE.Color(0xffffff),
     transmission = 0,
     ior = 1.5,
@@ -314,6 +320,16 @@ export const buildCustomShaderArgs = (
   uniforms.iridescenceThicknessMinimum = { type: 'f', value: 100 };
   uniforms.iridescenceThicknessMaximum = { type: 'f', value: 400 };
   uniforms.iridescenceThicknessMapTransform = { type: 'mat3', value: new THREE.Matrix3() };
+  if (sheen !== 0) {
+    uniforms.sheenColor = {
+      type: 'c',
+      value: (() => {
+        const col = typeof sheenColor === 'number' ? new THREE.Color(sheenColor) : sheenColor;
+        return col.multiplyScalar(sheen);
+      })(),
+    };
+    uniforms.sheenRoughness = { type: 'f', value: sheenRoughness };
+  }
   uniforms.transmission = { type: 'f', value: transmission };
   uniforms.transmissionMap = { type: 't', value: transmissionMap };
   uniforms.transmissionSamplerSize = { type: 'v2', value: new THREE.Vector2() };
@@ -1091,7 +1107,7 @@ void main() {
 		// https://drive.google.com/file/d/1T0D1VSyR4AllqIJTQAraEIzjlb5h4FKH/view?usp=sharing
 		float sheenEnergyComp = 1.0 - 0.157 * max3( material.sheenColor );
 
-		outgoingLight = outgoingLight * sheenEnergyComp + sheenSpecular;
+		outgoingLight = outgoingLight * sheenEnergyComp + sheenSpecularDirect + sheenSpecularIndirect;
 	#endif
 
 	#ifdef USE_CLEARCOAT
@@ -1220,6 +1236,10 @@ export const buildCustomShader = (
 
   if (props.iridescence) {
     mat.defines.USE_IRIDESCENCE = '1';
+  }
+
+  if (props.sheen) {
+    mat.defines.USE_SHEEN = '1';
   }
 
   if (props.reflection) {

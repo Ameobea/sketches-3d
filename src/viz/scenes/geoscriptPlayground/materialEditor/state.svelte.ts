@@ -1,4 +1,4 @@
-import type { Texture } from './textureStore';
+import type { Texture } from 'src/geoscript/geotoyAPIClient';
 
 class TextureStore {
   public textures = $state<Record<string, Texture>>({});

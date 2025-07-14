@@ -5,6 +5,7 @@
   import MaterialPropertiesEditor from './MaterialPropertiesEditor.svelte';
   import { buildDefaultMaterial, type MaterialDefinitions, type MaterialID } from 'src/geoscript/materials';
   import TexturePicker from './TexturePicker.svelte';
+  import TextureUploader from './TextureUploader.svelte';
 
   let {
     isOpen = $bindable(),
@@ -19,7 +20,14 @@
 
   let view = $state<
     | { type: 'properties' }
-    | { type: 'texture_picker'; field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' }
+    | {
+        type: 'texture_picker';
+        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap';
+      }
+    | {
+        type: 'texture_uploader';
+        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap';
+      }
   >({ type: 'properties' });
 
   let selectedMaterialID: MaterialID | null = $state(null);
@@ -110,9 +118,32 @@
           />
         {:else if view.type === 'texture_picker'}
           {#if materials.materials[selectedMaterialID].type === 'physical'}
+            {@const field = view.field}
             <TexturePicker
               bind:selectedTextureId={materials.materials[selectedMaterialID][view.field]}
               onclose={() => {
+                view = { type: 'properties' };
+              }}
+              onupload={() => {
+                view = { type: 'texture_uploader', field };
+              }}
+            />
+          {/if}
+        {:else if view.type === 'texture_uploader'}
+          {#if materials.materials[selectedMaterialID].type === 'physical'}
+            {@const field = view.field}
+            <TextureUploader
+              onclose={() => {
+                view = { type: 'texture_picker', field };
+              }}
+              onupload={texture => {
+                if (selectedMaterialID === null) {
+                  return;
+                }
+
+                if (materials.materials[selectedMaterialID].type === 'physical') {
+                  materials.materials[selectedMaterialID][field] = texture.id;
+                }
                 view = { type: 'properties' };
               }}
             />
@@ -231,12 +262,15 @@
   }
 
   .add-material {
-    width: 100%;
-    margin-top: 8px;
+    width: calc(100%+12px);
+    margin-top: 6px;
+    margin-bottom: -6px;
+    margin-left: -6px;
+    margin-right: -6px;
     background: #333;
     border: 1px solid #555;
     color: #f0f0f0;
-    padding: 8px;
+    padding: 10px 9px 9px 9px;
     cursor: pointer;
   }
 

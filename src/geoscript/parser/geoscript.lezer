@@ -62,8 +62,8 @@ Expr {
 }
 
 BlockExpr { "{" ~maybeblock statement* "}" ~maybeblock }
-ElseIfExpr { ElseIf !cond BlockExpr }
-ElseExpr { Else !cond BlockExpr }
+ElseIfExpr { ElseIf !cond Expr BlockExpr }
+ElseExpr { Else BlockExpr }
 
 FunctionArg {
   Expr | Kwarg { Identifier "=" Expr }

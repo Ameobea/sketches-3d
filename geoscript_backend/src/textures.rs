@@ -190,22 +190,16 @@ pub async fn get_multiple_textures(
   Ok(Json(textures?))
 }
 
-#[derive(Deserialize)]
-pub struct CreateTextureQuery {
-  name: String,
+async fn create_texture_inner(
+  pool: SqlitePool,
+  client: &reqwest::Client,
+  user: User,
+  name: &str,
+  texture_data: Bytes,
   is_shared: Option<bool>,
-}
-
-pub async fn create_texture(
-  State(pool): State<SqlitePool>,
-  Query(CreateTextureQuery { name, is_shared }): Query<CreateTextureQuery>,
-  Extension(user): Extension<User>,
-  body: Bytes,
 ) -> Result<Json<Texture>, APIError> {
-  let client = reqwest::Client::new();
-
   let client_clone = client.clone();
-  let body_clone = body.clone();
+  let body_clone = texture_data.clone();
   let (thumbnail_res, avif_res) = tokio::try_join!(
     async move {
       let res = client_clone
@@ -246,7 +240,7 @@ pub async fn create_texture(
       let res = client
         .post("http://localhost:5812/convert-to-avif")
         .header("Content-Type", "image/png")
-        .body(body)
+        .body(texture_data)
         .send()
         .await
         .map_err(|err| {
@@ -314,4 +308,70 @@ pub async fn create_texture(
   })?;
 
   get_texture(State(pool), Path(texture_id), Extension(Some(user))).await
+}
+
+#[derive(Deserialize)]
+pub struct CreateTextureQuery {
+  name: String,
+  is_shared: Option<bool>,
+}
+
+pub async fn create_texture(
+  State(pool): State<SqlitePool>,
+  Query(CreateTextureQuery { name, is_shared }): Query<CreateTextureQuery>,
+  Extension(user): Extension<User>,
+  body: Bytes,
+) -> Result<Json<Texture>, APIError> {
+  let client = reqwest::Client::new();
+
+  create_texture_inner(pool, &client, user, &name, body, is_shared).await
+}
+
+#[derive(Deserialize)]
+pub struct CreateTextureFromURLBody {
+  url: String,
+}
+
+pub async fn create_texture_from_url(
+  State(pool): State<SqlitePool>,
+  Query(CreateTextureQuery { name, is_shared }): Query<CreateTextureQuery>,
+  Extension(user): Extension<User>,
+  Json(CreateTextureFromURLBody { url }): Json<CreateTextureFromURLBody>,
+) -> Result<Json<Texture>, APIError> {
+  let client = reqwest::Client::new();
+
+  let res = client
+    .get(&url)
+    .timeout(std::time::Duration::from_secs(30))
+    .send()
+    .await
+    .map_err(|err| {
+      error!("Error fetching texture from URL: {err}");
+      APIError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Failed to fetch texture from URL: {err}"),
+      )
+    })?;
+
+  let status = res.status();
+  if !status.is_success() {
+    let error_body = res
+      .text()
+      .await
+      .unwrap_or_else(|err| format!("Error reading response body: {err}"));
+    error!("Error fetching texture from URL: {status}; {error_body}");
+    return Err(APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to fetch texture from URL: {status}; {error_body}"),
+    ));
+  }
+  let texture_data = res.bytes().await.map_err(|err| {
+    error!("Failed to read texture response: {err}");
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to read texture response: {err}"),
+    )
+  })?;
+
+  create_texture_inner(pool, &client, user, &name, texture_data, is_shared).await
 }

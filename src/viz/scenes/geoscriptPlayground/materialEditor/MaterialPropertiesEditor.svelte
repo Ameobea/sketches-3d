@@ -66,7 +66,7 @@
       />
     </FormField>
     <FormField label="normal scale">
-      <input type="range" min="0" max="2" step="0.01" bind:value={material.normalScale} />
+      <input type="range" min="0" max="5" step="0.01" bind:value={material.normalScale} />
       <span>{material.normalScale?.toFixed(2)}</span>
     </FormField>
     <FormField label="uv scale" help="The scale of the texture coordinates.">
@@ -96,6 +96,17 @@
           <FormField label="iridescence">
             <input type="range" min="0" max="1" step="0.01" bind:value={material.iridescence} />
             <span>{material.iridescence?.toFixed(2)}</span>
+          </FormField>
+          <FormField label="sheen">
+            <input type="range" min="0" max="1" step="0.01" bind:value={material.sheen} />
+            <span>{material.sheen?.toFixed(2)}</span>
+          </FormField>
+          <FormField label="sheen color">
+            <ColorPicker bind:color={material.sheenColor} />
+          </FormField>
+          <FormField label="sheen roughness">
+            <input type="range" min="0" max="1" step="0.01" bind:value={material.sheenRoughness} />
+            <span>{material.sheenRoughness?.toFixed(2)}</span>
           </FormField>
         </div>
       {/if}

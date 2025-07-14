@@ -8,7 +8,7 @@ use crate::{
   auth::{auth_middleware, maybe_auth_middleware},
   db::get_db_pool,
   server::instrument_handler,
-  textures::{create_texture, get_multiple_textures, list_textures},
+  textures::{create_texture, create_texture_from_url, get_multiple_textures, list_textures},
 };
 
 pub fn texture_routes() -> Router {
@@ -32,6 +32,13 @@ pub fn texture_routes() -> Router {
     .route(
       "/",
       post(instrument_handler("create_texture", create_texture)),
+    )
+    .route(
+      "/from_url",
+      post(instrument_handler(
+        "create_texture_from_url",
+        create_texture_from_url,
+      )),
     )
     .route_layer(middleware::from_fn_with_state(
       db_pool.clone(),

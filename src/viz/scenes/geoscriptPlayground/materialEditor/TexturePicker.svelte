@@ -5,9 +5,11 @@
   let {
     selectedTextureId = $bindable(),
     onclose = () => {},
+    onupload = () => {},
   }: {
     selectedTextureId: TextureID | null | undefined;
     onclose: () => void;
+    onupload: () => void;
   } = $props();
 
   const origSelectedTextureId = selectedTextureId;
@@ -105,6 +107,8 @@
       </div>
     </div>
     <div class="buttons">
+      <button class="footer-button" onclick={onupload}>upload new</button>
+      <div style="flex-grow: 1"></div>
       <button
         class="footer-button"
         onclick={() => {

@@ -300,7 +300,7 @@
         const mat =
           materialOverride === 'wireframe'
             ? wireframeMat
-            : (customMaterials[obj.userData.materialID]?.resolved ?? hiddenMat);
+            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? hiddenMat);
         obj.material = mat;
       }
     }
@@ -313,7 +313,7 @@
         const mat =
           materialOverride === 'normal'
             ? normalMat
-            : (customMaterials[obj.userData.materialID]?.resolved ?? hiddenMat);
+            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? hiddenMat);
         obj.material = mat;
       }
     }
@@ -526,7 +526,6 @@
         }
 
         const matEntry = customMaterialsByName[materialName];
-        console.log({ customMaterialsByName, materialName, matEntry });
         if (!matEntry) {
           console.warn(`mesh referenced undefined material: "${materialName}"`);
           return { resolved: fallbackMat, promise: null };
@@ -539,7 +538,7 @@
         geometry,
         matEntry.resolved ?? hiddenMat
       );
-      mesh.userData.materialID = materialName;
+      mesh.userData.materialName = materialName;
       if (!matEntry.resolved && matEntry.promise) {
         matEntry.promise.then(mat => {
           mesh.material = mat;

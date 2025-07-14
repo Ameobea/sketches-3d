@@ -34,7 +34,8 @@ v2 = v1.zyx
 // They return the value of their last expression.
 add_one = |x| x + 1
 
-// Arg types, return types, and curly brackets are all optional
+// Arg types, return types, and curly brackets are all optional, but they may be needed
+// in some cases to disambiguate syntax.
 add_two = |x: int| { x + 2 }
 add_three = |x: int|: int x + 3;
 
@@ -51,6 +52,12 @@ times_two = |x| x * 2
 plus_one = |x| x + 1
 six = 1 | times_two | plus_one | times_two
 
+// All operators have equivalent named built-in functions
+//
+// The full reference for all built-ins can be found here:
+// https://3d.ameo.design/geoscript/docs
+four = mul(2, 2)
+
 // Functions are auto-curried if at least one argument is provided and the full set of provided
 // arguments match at least one defined function signature
 add_three: fn = add(3)
@@ -63,8 +70,8 @@ three = if 1 == 2 { 0 } else if 1 > 0 { 3 } else { -100 }
 // SEQUENCES //
 ///////////////
 
-// All sequences are lazy - if they're eager internally.  They work similarly to iterators
-// in Rust; they do nothing until they're consumed.
+// All sequences are lazy.  They work similarly to iterators in Rust; they do nothing until
+// they're consumed.
 
 // There are range operators like in Rust
 exclusive_range = 0..10
@@ -72,12 +79,10 @@ inclusive_range = 0..=5
 
 // They can be used with built-in iterator combinators:
 two_three_four: seq = 0..10 | skip(2) | take(3)
-
-// All operators have equivalent named built-in functions
-//
-// The full reference for all built-ins can be found here:
-// https://3d.ameo.design/geoscript/docs
 nine = two_three_four | reduce(add)
+
+// array literals also exist:
+vals: seq = [1, "foo", 3.0]
 
 // There's a built-in `->` operator which is a shorthand for `x | map(fn)`.  The following two
 // statements are equivalent:
@@ -160,3 +165,7 @@ warped_sphere
 
 // See the docs for the full list of available functions:
 // https://3d.ameo.design/geoscript/docs
+
+// You can also browse + play with the source code for any of the public compositions on
+// the geotoy homepage:
+// https://3d.ameo.design/geotoy
