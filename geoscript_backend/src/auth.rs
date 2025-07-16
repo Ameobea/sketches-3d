@@ -168,7 +168,7 @@ async fn create_session(pool: &SqlitePool, user_id: i64) -> Result<String, APIEr
   sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")
     .bind(&session_id)
     .bind(user_id)
-    .bind(Utc::now() + Duration::days(7))
+    .bind(Utc::now() + Duration::days(365))
     .execute(pool)
     .await
     .map_err(|_| {

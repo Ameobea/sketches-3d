@@ -287,6 +287,8 @@ impl Expr {
           *self = Expr::Literal(resolved.clone());
           false
         }
+        // an arg in the local scope means it's an actual argument rather than a capture or
+        // something from an outer scope
         Some(TrackedValue::Arg(_)) => false,
         None => match local_scope.parent {
           Some(parent) => match parent.get(id) {
@@ -1151,7 +1153,7 @@ pub(crate) fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, Err
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum TrackedValue {
   /// Value is const-available and has already been evaluated
   Const(Value),
@@ -1685,6 +1687,15 @@ fn fold_constants<'a>(
         closure_scope.set(param.name.clone(), TrackedValue::Arg(param.clone()));
       }
 
+      // We use this scope for const capture checking/inlining to avoid situations where the closure
+      // assigns a local variable with the same name as a non-const captured variable, shadowing it.
+      //
+      // This would hide the capture and cause incorrect behavior.
+      let mut local_scope_with_args = ScopeTracker {
+        vars: closure_scope.vars.clone(),
+        parent: Some(local_scope),
+      };
+
       for stmt in &mut body.0 {
         optimize_statement(ctx, &mut closure_scope, stmt)?;
       }
@@ -1697,7 +1708,7 @@ fn fold_constants<'a>(
         }
       }
 
-      if body.inline_const_captures(&mut closure_scope) {
+      if body.inline_const_captures(&mut local_scope_with_args) {
         return Ok(());
       }
 
@@ -1822,7 +1833,7 @@ fn fold_constants<'a>(
       deconstify_parent_scope(local_scope, then_scope_var_names.keys().map(String::as_str));
       for (cond, inner) in else_if_exprs {
         optimize_expr(ctx, local_scope, cond)?;
-        let mut else_if_scope = ScopeTracker::wrap(&*local_scope);
+        let mut else_if_scope = ScopeTracker::wrap(local_scope);
         optimize_expr(ctx, &mut else_if_scope, inner)?;
         let ScopeTracker {
           vars: else_if_scope_var_names,
@@ -2090,6 +2101,31 @@ x = [
     matches!(expr, Expr::Literal(Value::Mesh(_))),
     "Expected constant folding to produce a mesh, found: {expr:?}"
   );
+}
+
+#[test]
+fn test_basic_const_closure_eval_4() {
+  let code = r#"
+x = 1
+fn = |a| {
+  foo = 1
+  bar = 1
+  baz = || x + 1
+  return a + x + foo + bar + baz()
+}
+y = fn(2)
+"#;
+
+  let mut ast = crate::parse_program_src(code).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+
+  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+    panic!("Expected second statement to be an assignment");
+  };
+  assert_eq!(name, "y");
+  let Expr::Literal(Value::Int(7)) = expr else {
+    panic!("Expected constant folding to produce 7, found: {expr:?}");
+  };
 }
 
 #[test]

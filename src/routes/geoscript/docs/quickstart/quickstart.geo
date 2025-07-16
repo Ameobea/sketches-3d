@@ -105,6 +105,12 @@ my_mesh = my_mesh
   | scale(2)
   | trans(0, 10, -10)
 
+// Meshes can be assigned different materials, referencing names defined in Geotoy's
+// material editor
+my_mesh
+  | set_material('gray_fossil_rock')
+  | render
+
 // There are many built-in functions to generating and manipulating meshes.  Some of the most
 // useful are mesh boolean operations.
 //

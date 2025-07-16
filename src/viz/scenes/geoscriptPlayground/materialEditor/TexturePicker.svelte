@@ -190,11 +190,11 @@
     font-size: 12px;
   }
   .preview-pane {
-    flex: 1;
+    flex: 0.75;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 8px;
+    padding: 4px;
   }
   .preview-pane img {
     max-width: 100%;

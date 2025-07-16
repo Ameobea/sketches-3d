@@ -894,6 +894,7 @@
     top: -2px;
     left: 0;
     cursor: ns-resize;
+    z-index: 2;
   }
 
   .editor-container {

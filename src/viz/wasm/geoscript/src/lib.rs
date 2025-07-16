@@ -2130,8 +2130,8 @@ d = d | sum
 #[test]
 fn test_lerp() {
   let src = r#"
-a = lerp(vec3(0,0,0), vec3(1,1,1), 0.5)
-b = 0.5 | lerp(0.0, 1)
+a = lerp(0.5, vec3(0,0,0), vec3(1,1,1))
+b = 0.5 | lerp(a=0.0, b=1)
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
@@ -2787,7 +2787,12 @@ b = 0x001
 #[test]
 fn test_prelude() {
   let src = PRELUDE;
-  parse_and_eval_program(src).unwrap();
+  let mut ctx = EvalCtx::default();
+  ctx.materials.insert(
+    "gray_fossil_rock".to_owned(),
+    Rc::new(Material::External("gray_fossil_rock".to_owned())),
+  );
+  parse_and_eval_program_with_ctx(src.to_owned(), &ctx, false).unwrap();
 }
 
 #[test]
@@ -2901,4 +2906,95 @@ b = f(1)
     panic!("Expected result to be a Bool");
   };
   assert!(b, "Expected b to be true");
+}
+
+#[test]
+fn test_mutate_non_const_global() {
+  let src = r#"
+x = randi(0,0)
+sum = 0..2
+  -> || {
+    // this sets a closure-local variable `x` to 1 every time it's called since
+    // variables from outer scopes can't be mutated from within closures.
+    x = x + 1
+    x
+  }
+  | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let sum = ctx.globals.get("sum").unwrap();
+  let sum = sum.as_int().expect("Expected result to be an int");
+  assert_eq!(sum, 2);
+}
+
+#[test]
+fn test_scan() {
+  let src = r#"
+cumsum = scan(0, add)
+a = 0..5 | cumsum
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let Value::Sequence(a) = a else {
+    panic!("Expected result to be a Seq");
+  };
+  let a = a.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
+  assert_eq!(a.len(), 5);
+  assert_eq!(a[0].as_int(), Some(0));
+  assert_eq!(a[1].as_int(), Some(1));
+  assert_eq!(a[2].as_int(), Some(3));
+  assert_eq!(a[3].as_int(), Some(6));
+  assert_eq!(a[4].as_int(), Some(10));
+}
+
+#[test]
+fn test_scan_with_ix() {
+  let src = r#"
+cumsum = scan(0, |x, y, ix| x + y + ix)
+a = 0..3 | cumsum
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let Value::Sequence(a) = a else {
+    panic!("Expected result to be a Seq");
+  };
+  let a = a.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
+  assert_eq!(a.len(), 3);
+  assert_eq!(a[0].as_int(), Some(0 + 0 + 0));
+  assert_eq!(a[1].as_int(), Some(0 + 1 + 1));
+  assert_eq!(a[2].as_int(), Some(2 + 2 + 2));
+}
+
+#[test]
+fn test_map_with_ix() {
+  let src = r#"
+a = 0..5 | map(|x, ix| x + ix)
+b = a | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().expect("Expected result to be an Int");
+  assert_eq!(b, 0 + 1 + 2 + 3 + 4 + 0 + 1 + 2 + 3 + 4);
+}
+
+#[test]
+fn test_filter_with_ix() {
+  let src = r#"
+a = 0..10 | filter(|x, ix| x % 2 == 0 && ix < 7)
+b = a | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().expect("Expected result to be an Int");
+  assert_eq!(b, 0 + 2 + 4 + 6);
 }

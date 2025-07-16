@@ -28,8 +28,8 @@ use crate::{
   noise::fbm,
   path_building::{build_torus_knot_path, cubic_bezier_3d_path, superellipse_path},
   seq::{
-    ChainSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, SkipSeq, SkipWhileSeq,
-    TakeSeq, TakeWhileSeq,
+    ChainSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, ScanSeq, SkipSeq,
+    SkipWhileSeq, TakeSeq, TakeWhileSeq,
   },
   ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
@@ -1053,6 +1053,15 @@ fn randi_impl(
     0 => {
       let min = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
       let max = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+
+      if max < min {
+        return Err(ErrorStack::new(format!(
+          "Invalid range for rand_int: min ({min}) must be less than or equal to max ({max})"
+        )));
+      } else if min == max {
+        return Ok(Value::Int(min));
+      }
+
       Ok(Value::Int(ctx.rng().gen_range(min..max)))
     }
     1 => Ok(Value::Int(ctx.rng().gen())),
@@ -2032,15 +2041,15 @@ fn lerp_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-      let t = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let t = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let a = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      let b = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(a.lerp(b, t)))
     }
     1 => {
-      let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let t = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let t = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let a = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let b = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
       Ok(Value::Float(a + (b - a) * t))
     }
     _ => unimplemented!(),
@@ -2738,6 +2747,27 @@ fn filter_impl(
   }
 }
 
+fn scan_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let init = arg_refs[0].resolve(args, &kwargs);
+      let fn_value = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
+      let sequence = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
+      Ok(Value::Sequence(Box::new(ScanSeq {
+        acc: init.clone(),
+        cb: fn_value.clone(),
+        inner: sequence.clone_box(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn take_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -3269,6 +3299,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "filter" => builtin_fn!(filter, |def_ix, arg_refs, args, kwargs, _ctx| {
     filter_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "scan" => builtin_fn!(scan, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    scan_impl(def_ix, arg_refs, args, kwargs)
   }),
   "take" => builtin_fn!(take, |def_ix, arg_refs, args, kwargs, _ctx| {
     take_impl(def_ix, arg_refs, args, kwargs)

@@ -63,4 +63,10 @@
   :global(.control input[type='range']) {
     flex-grow: 1;
   }
+
+  @media (max-width: 600px) {
+    .form-field {
+      grid-template-columns: 80px 1fr;
+    }
+  }
 </style>

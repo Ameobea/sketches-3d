@@ -78,38 +78,40 @@
       <button class="close-button" onclick={() => (isOpen = false)}>×</button>
     </div>
     <div class="content">
-      <div class="sidebar">
-        <div class="material-list">
-          {#each Object.entries(materials.materials) as [id, material] (id)}
-            <div class="material-item" class:selected={selectedMaterialID === id}>
-              <button
-                class="select-button"
-                onclick={() => {
-                  console.log({ selectedMaterialID, id });
-                  selectedMaterialID = id;
-                }}
-              >
-                {material.name}
-              </button>
-              <button
-                class="delete"
-                onclick={() => {
-                  const newMaterials = { ...materials.materials };
-                  delete newMaterials[id];
-                  materials.materials = newMaterials;
+      {#if view.type === 'properties'}
+        <div class="sidebar">
+          <div class="material-list">
+            {#each Object.entries(materials.materials) as [id, material] (id)}
+              <div class="material-item" class:selected={selectedMaterialID === id}>
+                <button
+                  class="select-button"
+                  onclick={() => {
+                    console.log({ selectedMaterialID, id });
+                    selectedMaterialID = id;
+                  }}
+                >
+                  {material.name}
+                </button>
+                <button
+                  class="delete"
+                  onclick={() => {
+                    const newMaterials = { ...materials.materials };
+                    delete newMaterials[id];
+                    materials.materials = newMaterials;
 
-                  if (selectedMaterialID === id) {
-                    selectedMaterialID = null;
-                  }
-                }}
-              >
-                ×
-              </button>
-            </div>
-          {/each}
+                    if (selectedMaterialID === id) {
+                      selectedMaterialID = null;
+                    }
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            {/each}
+          </div>
+          <button class="add-material" onclick={addMaterial}>add material</button>
         </div>
-        <button class="add-material" onclick={addMaterial}>add material</button>
-      </div>
+      {/if}
       {#if selectedMaterialID !== null}
         {#if view.type === 'properties'}
           <MaterialPropertiesEditor
@@ -207,10 +209,10 @@
   }
 
   .sidebar {
-    width: 200px;
-    min-width: 200px;
-    max-width: 200px;
-    padding: 6px;
+    width: 180px;
+    min-width: 180px;
+    max-width: 180px;
+    padding: 4px;
     display: flex;
     flex-direction: column;
   }
@@ -257,6 +259,7 @@
     cursor: pointer;
     padding: 0 4px;
     flex: 0;
+    line-height: 24px;
   }
 
   .material-list .delete:hover {
@@ -266,9 +269,9 @@
   .add-material {
     width: calc(100%+12px);
     margin-top: 6px;
-    margin-bottom: -6px;
-    margin-left: -6px;
-    margin-right: -6px;
+    margin-bottom: -4px;
+    margin-left: -4px;
+    margin-right: -4px;
     background: #333;
     border: 1px solid #555;
     color: #f0f0f0;

@@ -620,7 +620,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           description: ""
         },
       ],
-      description: "Applies the callback to each element of the sequence, returning `nil`",
+      description: "Applies the callback to each element of the sequence, returning `nil`.  This is useful for running side effects.",
       return_type: &[ArgType::Nil],
     },
   ],
@@ -1673,7 +1673,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           name: "fn",
           valid_types: &[ArgType::Callable],
           default_value: DefaultValue::Required,
-          description: "Callable with signature `|x|: y`"
+          description: "Callable with signature `|x: T, ix: int|: y`"
         },
         ArgDef {
           name: "sequence",
@@ -1711,7 +1711,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           name: "fn",
           valid_types: &[ArgType::Callable],
           default_value: DefaultValue::Required,
-          description: "Callable with signature `|x|: bool`"
+          description: "Callable with signature `|x: T, ix: int|: bool`"
         },
         ArgDef {
           name: "sequence",
@@ -1721,6 +1721,32 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Filters a sequence using a predicate function.  \n\nThis is lazy and will not evaluate the function until the output sequence is consumed.",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
+  "scan" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "initial",
+          valid_types: &[ArgType::Any],
+          default_value: DefaultValue::Required,
+          description: "Initial value to seed the state with.  This value will NOT be included in the output sequence."
+        },
+        ArgDef {
+          name: "fn",
+          valid_types: &[ArgType::Callable],
+          default_value: DefaultValue::Required,
+          description: "Callable with signature `|acc, x, ix|: acc`"
+        },
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "Sequence to scan"
+        },
+      ],
+      description: "Applies a function cumulatively to the elements of a sequence, returning a new sequence of intermediate results.  Similar to the `Iterator::scan` function from Rust, but with a little less freedom in the way it can be used.\n\nThis is lazy and will not evaluate the function until the output sequence is consumed.\n\nNOTE: This function may be subject to change in the future.  It would be much better for it to return a tuple to allow de-coupling output sequence values from the retained state.",
       return_type: &[ArgType::Sequence],
     },
   ],
@@ -1828,7 +1854,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
           description: "Sequence to get the first element from"
         },
       ],
-      description: "Returns the first element of a sequence, or `Nil` if the sequence is empty.  \n\nThis is lazy and will not evaluate the sequence until the output is consumed.",
+      description: "Returns the first element of a sequence, or `Nil` if the sequence is empty.",
       return_type: &[ArgType::Any],
     },
   ],
@@ -2613,6 +2639,12 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     FnDef {
       arg_defs: &[
         ArgDef {
+          name: "t",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
           name: "a",
           valid_types: &[ArgType::Vec3],
           default_value: DefaultValue::Required,
@@ -2621,12 +2653,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         ArgDef {
           name: "b",
           valid_types: &[ArgType::Vec3],
-          default_value: DefaultValue::Required,
-          description: ""
-        },
-        ArgDef {
-          name: "t",
-          valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""
         },
@@ -2637,6 +2663,12 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
     FnDef {
       arg_defs: &[
         ArgDef {
+          name: "t",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
           name: "a",
           valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
@@ -2644,12 +2676,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
         ArgDef {
           name: "b",
-          valid_types: &[ArgType::Numeric],
-          default_value: DefaultValue::Required,
-          description: ""
-        },
-        ArgDef {
-          name: "t",
           valid_types: &[ArgType::Numeric],
           default_value: DefaultValue::Required,
           description: ""

@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt::Debug};
+use std::{collections::VecDeque, fmt::Debug, iter::Enumerate};
 
 use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
@@ -75,13 +75,18 @@ impl Sequence for MapSeq {
     self: Box<Self>,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    let inner = self.inner.consume(ctx);
+    let inner = self.inner.consume(ctx).enumerate();
     // TODO: more clones here
     let cb = self.cb;
-    Box::new(inner.map(move |res| {
+    Box::new(inner.map(move |(i, res)| {
       match res {
         Ok(v) => ctx
-          .invoke_callable(&cb, &[v], &Default::default(), &ctx.globals)
+          .invoke_callable(
+            &cb,
+            &[v, Value::Int(i as i64)],
+            &Default::default(),
+            &ctx.globals,
+          )
           .map_err(|err| err.wrap("cb passed to map produced an error")),
         Err(e) => Err(e),
       }
@@ -135,6 +140,69 @@ impl Sequence for FilterSeq {
         })
         .filter_map_ok(|opt| opt),
     )
+  }
+}
+
+#[derive(Debug)]
+pub(crate) struct ScanSeq {
+  pub acc: Value,
+  pub inner: Box<dyn Sequence>,
+  pub cb: Callable,
+}
+
+pub(crate) struct ScanIter<'a> {
+  acc: Value,
+  inner: Enumerate<Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>>,
+  cb: Callable,
+  ctx: &'a EvalCtx,
+}
+
+impl<'a> Iterator for ScanIter<'a> {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    if let Some(res) = self.inner.next() {
+      match res {
+        (ix, Ok(v)) => {
+          let args = &[self.acc.clone(), v, Value::Int(ix as i64)];
+          match self
+            .ctx
+            .invoke_callable(&self.cb, args, &Default::default(), &self.ctx.globals)
+          {
+            Ok(new_acc) => {
+              self.acc = new_acc;
+              Some(Ok(self.acc.clone()))
+            }
+            Err(err) => Some(Err(err.wrap("cb passed to scan produced an error"))),
+          }
+        }
+        (_ix, Err(e)) => Some(Err(e)),
+      }
+    } else {
+      None
+    }
+  }
+}
+
+impl Sequence for ScanSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(Self {
+      acc: self.acc.clone(),
+      inner: self.inner.clone_box(),
+      cb: self.cb.clone(),
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    Box::new(ScanIter {
+      acc: self.acc,
+      inner: self.inner.consume(ctx).enumerate(),
+      cb: self.cb,
+      ctx,
+    })
   }
 }
 

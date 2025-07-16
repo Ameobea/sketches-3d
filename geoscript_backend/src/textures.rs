@@ -197,6 +197,7 @@ async fn create_texture_inner(
   name: &str,
   texture_data: Bytes,
   is_shared: Option<bool>,
+  source_url: Option<String>,
 ) -> Result<Json<Texture>, APIError> {
   let client_clone = client.clone();
   let body_clone = texture_data.clone();
@@ -287,8 +288,8 @@ async fn create_texture_inner(
 
   let texture_id = sqlx::query_scalar::<_, i64>(
     r#"
-    INSERT INTO textures (name, thumbnail_url, url, owner_id, is_shared)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO textures (name, thumbnail_url, url, owner_id, is_shared, source_url)
+    VALUES (?, ?, ?, ?, ?, ?)
     RETURNING id
     "#,
   )
@@ -297,6 +298,7 @@ async fn create_texture_inner(
   .bind(&texture_url)
   .bind(user.id)
   .bind(is_shared.unwrap_or(false))
+  .bind(source_url)
   .fetch_one(&pool)
   .await
   .map_err(|err| {
@@ -324,7 +326,7 @@ pub async fn create_texture(
 ) -> Result<Json<Texture>, APIError> {
   let client = reqwest::Client::new();
 
-  create_texture_inner(pool, &client, user, &name, body, is_shared).await
+  create_texture_inner(pool, &client, user, &name, body, is_shared, None).await
 }
 
 #[derive(Deserialize)]
@@ -373,5 +375,14 @@ pub async fn create_texture_from_url(
     )
   })?;
 
-  create_texture_inner(pool, &client, user, &name, texture_data, is_shared).await
+  create_texture_inner(
+    pool,
+    &client,
+    user,
+    &name,
+    texture_data,
+    is_shared,
+    Some(url),
+  )
+  .await
 }
