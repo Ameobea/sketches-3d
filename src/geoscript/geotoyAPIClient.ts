@@ -142,9 +142,11 @@ export const listPublicCompositions = (
   {
     featuredOnly,
     count = 20,
+    includeCode = false,
   }: {
     featuredOnly?: boolean;
     count?: number;
+    includeCode?: boolean;
   },
   fetch: typeof globalThis.fetch = globalThis.fetch
 ): Promise<{ comp: Composition; latest: CompositionVersion }[]> => {
@@ -155,6 +157,7 @@ export const listPublicCompositions = (
   if (count) {
     params.set('count', count.toString());
   }
+  params.set('include_code', includeCode.toString());
 
   return apiFetch<{ comp: Composition; latest: CompositionVersion }[]>(
     `/compositions?${params.toString()}`,

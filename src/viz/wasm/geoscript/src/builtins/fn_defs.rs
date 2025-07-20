@@ -5,7 +5,7 @@ use nanoserde::SerJson;
 use crate::{
   lights::{AmbientLight, DirectionalLight},
   seq::EagerSeq,
-  ArgType, Value,
+  ArgType, Value, Vec2,
 };
 
 pub enum DefaultValue {
@@ -3621,6 +3621,32 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Generates a cylinder mesh",
+      return_type: &[ArgType::Mesh],
+    },
+  ],
+  "grid" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "size",
+          valid_types: &[ArgType::Vec2, ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: "Size of the grid along the X and Z axes (providing a number will set the same size for both axes).  The grid is centered at the origin, so a size of `vec2(1, 1)` will produce a grid that extends from -0.5 to +0.5 along both axes."
+        },
+        ArgDef {
+          name: "divisions",
+          valid_types: &[ArgType::Vec2, ArgType::Int],
+          default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(1., 1.))),
+          description: "Number of subdivisions along each axis.  If an integer is provided, it will be used for both axes."
+        },
+        ArgDef {
+          name: "flipped",
+          valid_types: &[ArgType::Bool],
+          default_value: DefaultValue::Optional(|| Value::Bool(false)),
+          description: "If true, the winding order of the triangles will be flipped - making the front side face downwards (negative Y)."
+        }
+      ],
+      description: "Generates a flat grid mesh in the XZ plane centered at the origin with the specified size and number of subdivisions.",
       return_type: &[ArgType::Mesh],
     },
   ],

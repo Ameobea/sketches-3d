@@ -1,7 +1,5 @@
 <script lang="ts">
   import './docs.css';
-
-  export const prerender = true;
 </script>
 
 <div class="root">

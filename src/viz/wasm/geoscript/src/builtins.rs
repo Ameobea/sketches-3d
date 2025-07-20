@@ -2581,6 +2581,51 @@ fn cylinder_impl(
   }
 }
 
+fn grid_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let size = match arg_refs[0].resolve(args, &kwargs) {
+        _ if let Some(v) = arg_refs[0].resolve(args, &kwargs).as_vec2() => *v,
+        _ if let Some(f) = arg_refs[0].resolve(args, &kwargs).as_float() => Vec2::new(f, f),
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid type for grid size: expected Vec2 or Float, found {other:?}",
+          )))
+        }
+      };
+      let divisions = match arg_refs[1].resolve(args, &kwargs) {
+        _ if let Some(v) = arg_refs[1].resolve(args, &kwargs).as_vec2() => {
+          if v.x < 1. || v.y < 1. {
+            return Err(ErrorStack::new("Grid divisions must be >= 1"));
+          }
+          (v.x as usize, v.y as usize)
+        }
+        _ if let Some(i) = arg_refs[1].resolve(args, &kwargs).as_int() => {
+          if i < 1 {
+            return Err(ErrorStack::new("Grid divisions must be >= 1"));
+          }
+          (i as usize, i as usize)
+        }
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid type for grid divisions: expected Vec2 or Int, found {other:?}",
+          )))
+        }
+      };
+      let flipped = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
+
+      let mesh = LinkedMesh::new_grid(size.x, size.y, divisions.0, divisions.1, flipped);
+      Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(mesh)))))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn rot_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -3386,6 +3431,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "cylinder" => builtin_fn!(cylinder, |def_ix, arg_refs, args, kwargs, _ctx| {
     cylinder_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "grid" => builtin_fn!(grid, |def_ix, arg_refs, args, kwargs, _ctx| {
+    grid_impl(def_ix, arg_refs, args, kwargs)
   }),
   "translate" => builtin_fn!(translate, |def_ix, arg_refs, args, kwargs, _ctx| {
     translate_impl(def_ix, arg_refs, args, kwargs)

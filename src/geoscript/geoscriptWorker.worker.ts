@@ -4,7 +4,6 @@ import { initManifoldWasm } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 import { initGeodesics } from './geodesics';
-import type { MaterialDefinitions } from './materials';
 
 const initGeoscript = async () => {
   await Geoscript.default();

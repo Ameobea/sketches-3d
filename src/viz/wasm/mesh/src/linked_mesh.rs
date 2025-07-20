@@ -2453,6 +2453,63 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
     LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
   }
+
+  /// Generates a flat grid mesh in the XZ plane centered at the origin with the specified size and
+  /// number of subdivisions.
+  pub fn new_grid(
+    size_x: f32,
+    size_z: f32,
+    subdivisions_x: usize,
+    subdivisions_z: usize,
+    flipped: bool,
+  ) -> Self {
+    let half_size_x = size_x / 2.;
+    let half_size_z = size_z / 2.;
+
+    let step_x = size_x / subdivisions_x as f32;
+    let step_z = size_z / subdivisions_z as f32;
+
+    let mut vertices = Vec::with_capacity((subdivisions_x + 1) * (subdivisions_z + 1));
+    for z in 0..=subdivisions_z {
+      for x in 0..=subdivisions_x {
+        vertices.push(Vec3::new(
+          -half_size_x + x as f32 * step_x,
+          0.,
+          -half_size_z + z as f32 * step_z,
+        ));
+      }
+    }
+
+    let mut indices = Vec::with_capacity(subdivisions_x * subdivisions_z * 6);
+    for z in 0..subdivisions_z {
+      for x in 0..subdivisions_x {
+        let v0 = z * (subdivisions_x + 1) + x;
+        let v1 = v0 + 1;
+        let v2 = v0 + (subdivisions_x + 1);
+        let v3 = v2 + 1;
+
+        if flipped {
+          indices.push(v0 as u32);
+          indices.push(v1 as u32);
+          indices.push(v2 as u32);
+
+          indices.push(v1 as u32);
+          indices.push(v3 as u32);
+          indices.push(v2 as u32);
+        } else {
+          indices.push(v0 as u32);
+          indices.push(v2 as u32);
+          indices.push(v1 as u32);
+
+          indices.push(v1 as u32);
+          indices.push(v2 as u32);
+          indices.push(v3 as u32);
+        }
+      }
+    }
+
+    LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
+  }
 }
 
 impl<T: Default> From<TriMesh> for LinkedMesh<T> {

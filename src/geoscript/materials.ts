@@ -236,9 +236,9 @@ export const buildDefaultMaterial = (name: string): MaterialDef => ({
 
 export const buildDefaultMaterialDefinitions = (): MaterialDefinitions => ({
   materials: {
-    gray_fossil_rock: buildDefaultMaterial('gray_fossil_rock'),
+    default: buildDefaultMaterial('default'),
   },
-  defaultMaterialID: 'gray_fossil_rock',
+  defaultMaterialID: 'default',
 });
 
 export const LineMat = new THREE.LineBasicMaterial({

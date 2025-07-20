@@ -2815,8 +2815,8 @@ fn test_prelude() {
   let src = PRELUDE;
   let mut ctx = EvalCtx::default();
   ctx.materials.insert(
-    "gray_fossil_rock".to_owned(),
-    Rc::new(Material::External("gray_fossil_rock".to_owned())),
+    "default".to_owned(),
+    Rc::new(Material::External("default".to_owned())),
   );
   parse_and_eval_program_with_ctx(src.to_owned(), &ctx, false).unwrap();
 }

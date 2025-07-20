@@ -14,6 +14,9 @@ export const load: PageServerLoad = async ({
     latest: CompositionVersion;
   }[];
 }> => {
-  const featuredCompositions = await listPublicCompositions({ featuredOnly: true, count: 20 }, fetch);
+  const featuredCompositions = await listPublicCompositions(
+    { featuredOnly: true, count: 20, includeCode: false },
+    fetch
+  );
   return { featuredCompositions };
 };

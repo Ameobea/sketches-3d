@@ -108,7 +108,7 @@ my_mesh = my_mesh
 // Meshes can be assigned different materials, referencing names defined in Geotoy's
 // material editor
 my_mesh
-  | set_material('gray_fossil_rock')
+  | set_material('default')
   | render
 
 // There are many built-in functions to generating and manipulating meshes.  Some of the most

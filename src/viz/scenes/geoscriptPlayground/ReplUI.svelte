@@ -234,7 +234,6 @@
         allTextures[texture.id] = texture;
       }
       Textures.textures = allTextures;
-      console.log({ allTextures });
     });
   };
 
@@ -313,36 +312,31 @@
     viz.orbitControls!.update();
   };
 
+  const AXES = {
+    x: new THREE.Vector3(1, 0, 0),
+    y: new THREE.Vector3(0, 1, 0),
+    z: new THREE.Vector3(0, 0, 1),
+  } as const;
+
   const snapView = (axis: 'x' | 'y' | 'z') => {
     if (!viz.orbitControls) {
       return;
     }
 
-    const distance = viz.camera.position.distanceTo(viz.orbitControls.target);
+    const axisVec = AXES[axis];
+    const viewDir = new THREE.Vector3().subVectors(viz.orbitControls.target, viz.camera.position).normalize();
+    const dot = viewDir.dot(axisVec);
 
-    const newPosition = new THREE.Vector3();
-    if (axis === 'x') {
-      const flip = viz.camera.up.y === 1 && viz.camera.position.x > 0;
-      const direction = flip ? -1 : 1;
-      newPosition.set(distance * direction, 0, 0);
-      viz.camera.up.set(0, 1, 0);
-    } else if (axis === 'y') {
-      const flip = viz.camera.up.z === -1 && viz.camera.position.y > 0;
-      const direction = flip ? -1 : 1;
-      newPosition.set(0, distance * direction, 0);
-      viz.camera.up.set(0, 0, -1);
-    } else if (axis === 'z') {
-      const flip = viz.camera.up.y === 1 && viz.camera.position.z > 0;
-      const direction = flip ? -1 : 1;
-      newPosition.set(0, 0, distance * direction);
-      viz.camera.up.set(0, 1, 0);
-    } else {
-      axis satisfies never;
-      return;
+    let sideSign: 1 | -1 = 1;
+    console.log(Math.abs(Math.abs(dot) - 1), dot);
+    if (Math.abs(Math.abs(dot) - 1) < 1e-3) {
+      sideSign = dot < 0 ? -1 : 1;
     }
 
-    viz.camera.position.copy(viz.orbitControls.target).add(newPosition);
-    viz.orbitControls.update();
+    const distance = viz.camera.position.distanceTo(viz.orbitControls.target);
+
+    viz.camera.position.copy(viz.orbitControls.target).addScaledVector(axisVec, distance * sideSign);
+    viz.camera.lookAt(viz.orbitControls.target);
   };
 
   const orbit = (axis: 'vertical' | 'horizontal', angle: number) => {

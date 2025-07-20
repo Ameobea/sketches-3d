@@ -1,11 +1,11 @@
 use crate::{auth::User, render_thumbnail::render_thumbnail};
 use axum::{
-  extract::{Extension, Path, Query, State},
   Json,
+  extract::{Extension, Path, Query, State},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteArguments, Arguments, FromRow, Row, SqlitePool};
+use sqlx::{Arguments, FromRow, Row, SqlitePool, sqlite::SqliteArguments};
 
 use crate::server::APIError;
 use axum::http::StatusCode;
@@ -506,6 +506,7 @@ pub async fn list_my_compositions(
 pub struct ListPublicCompositionsQuery {
   featured_only: Option<bool>,
   count: Option<usize>,
+  pub include_code: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -519,8 +520,11 @@ pub async fn list_public_compositions(
   Query(ListPublicCompositionsQuery {
     featured_only,
     count,
+    include_code,
   }): Query<ListPublicCompositionsQuery>,
 ) -> Result<Json<Vec<PublicComposition>>, APIError> {
+  let include_code = include_code.unwrap_or(false);
+
   #[derive(Debug, FromRow)]
   struct PublicCompositionRow {
     #[sqlx(flatten)]
@@ -540,7 +544,7 @@ SELECT
   u.username as author_username,
   cv.id as latest_id,
   cv.composition_id as latest_composition_id,
-  cv.source_code as latest_source_code,
+  {},
   cv.created_at as latest_created_at,
   cv.thumbnail_url as latest_thumbnail_url,
   cv.metadata as latest_metadata
@@ -556,6 +560,11 @@ WHERE c.is_shared = 1 {}
 ORDER BY c.updated_at DESC
 LIMIT ?
 ",
+    if include_code {
+      "cv.source_code as latest_source_code"
+    } else {
+      "'' as latest_source_code"
+    },
     if featured_only.unwrap_or(false) {
       "AND c.is_featured = 1"
     } else {
