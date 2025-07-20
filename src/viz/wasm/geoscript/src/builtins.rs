@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use mesh::{
-  linked_mesh::{DisplacementNormalMethod, FaceKey, Vec3, Vertex, VertexKey},
+  linked_mesh::{DisplacementNormalMethod, FaceKey, Plane, Vec3, Vertex, VertexKey},
   LinkedMesh, OwnedIndexedMesh,
 };
 use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, UnitQuaternion};
@@ -22,16 +22,19 @@ use crate::{
     extrude_pipe::{extrude_pipe, EndMode},
     fan_fill::fan_fill,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
-    mesh_ops::{convex_hull_from_verts, get_geodesic_error, simplify_mesh, trace_geodesic_path},
+    mesh_ops::{
+      convex_hull_from_verts, get_geodesic_error, simplify_mesh, split_mesh_by_plane,
+      trace_geodesic_path,
+    },
     stitch_contours::stitch_contours,
   },
   noise::fbm,
   path_building::{build_torus_knot_path, cubic_bezier_3d_path, superellipse_path},
   seq::{
-    ChainSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, ScanSeq, SkipSeq,
+    ChainSeq, EagerSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, ScanSeq, SkipSeq,
     SkipWhileSeq, TakeSeq, TakeWhileSeq,
   },
-  ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
+  seq_as_eager, ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
 use crate::{ManifoldHandle, MeshHandle};
 
@@ -1813,6 +1816,134 @@ fn tessellate_impl(
   }
 }
 
+fn subdivide_by_plane_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  fn unhandled_transform_error() -> ErrorStack {
+    ErrorStack::new(
+      "subdivide_by_plane does not currently support meshes with transforms.  Either apply before \
+       transforming or use `apply_transforms` to bake the transforms into the mesh vertex \
+       positions.",
+    )
+  }
+
+  match def_ix {
+    0 => {
+      let plane_normal = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let plane_offset = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let mesh_handle = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
+
+      // TODO: handle transform
+      if mesh_handle.transform != Matrix4::identity() {
+        return Err(unhandled_transform_error());
+      }
+
+      let mut mesh = (*mesh_handle.mesh).clone();
+      mesh.subdivide_by_plane(&Plane {
+        normal: plane_normal.normalize(),
+        w: plane_offset,
+      });
+
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: mesh_handle.transform.clone(),
+        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: mesh_handle.material.clone(),
+      })))
+    }
+    1 => {
+      let mesh_handle = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
+      let plane_normals = arg_refs[0]
+        .resolve(args, &kwargs)
+        .as_sequence()
+        .unwrap()
+        .clone_box()
+        .consume(&EvalCtx::default())
+        .map(|res| match res {
+          Ok(Value::Vec3(v)) => Ok(v),
+          Ok(val) => Err(ErrorStack::new(format!(
+            "Expected Vec3 in sequence passed to `subdivide_by_plane`, found: {val:?}"
+          ))),
+          Err(err) => Err(err),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+      let plane_offsets = arg_refs[1]
+        .resolve(args, &kwargs)
+        .as_sequence()
+        .unwrap()
+        .clone_box()
+        .consume(&EvalCtx::default())
+        .map(|res| match res {
+          Ok(Value::Float(f)) => Ok(f),
+          Ok(Value::Int(i)) => Ok(i as f32),
+          Ok(val) => Err(ErrorStack::new(format!(
+            "Expected Float in sequence passed to `subdivide_by_plane`, found: {val:?}"
+          ))),
+          Err(err) => Err(err),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+      if plane_normals.len() != plane_offsets.len() {
+        return Err(ErrorStack::new(format!(
+          "Expected same number of normals and offsets in sequence passed to `subdivide_by_plane`,
+           found {} normals and {} offsets",
+          plane_normals.len(),
+          plane_offsets.len()
+        )));
+      }
+
+      // TODO: handle transform
+      if mesh_handle.transform != Matrix4::identity() {
+        return Err(unhandled_transform_error());
+      }
+
+      let mut mesh = (*mesh_handle.mesh).clone();
+      for (normal, offset) in plane_normals.iter().zip(plane_offsets.iter()) {
+        mesh.subdivide_by_plane(&Plane {
+          normal: normal.normalize(),
+          w: *offset,
+        });
+      }
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: mesh_handle.transform.clone(),
+        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: mesh_handle.material.clone(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn split_by_plane_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let plane_normal = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let plane_offset = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let mesh_handle = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
+
+      let (a, b) = split_mesh_by_plane(mesh_handle, *plane_normal, plane_offset)
+        .map_err(|err| ErrorStack::new(format!("Error in `split_by_plane`: {err}")))?;
+
+      Ok(Value::Sequence(Box::new(EagerSeq {
+        inner: vec![Value::Mesh(Rc::new(a)), Value::Mesh(Rc::new(b))],
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn compose_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -2908,6 +3039,31 @@ fn reverse_impl(
   }
 }
 
+fn collect_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      match seq_as_eager(seq) {
+        Some(_) => Ok(Value::Sequence(seq.clone_box())),
+        None => {
+          let iter = seq.clone_box().consume(ctx);
+          let collected = iter
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.wrap("error produced during `collect`"))?;
+          Ok(Value::Sequence(Box::new(EagerSeq { inner: collected })))
+        }
+      }
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn any_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -3324,6 +3480,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "reverse" => builtin_fn!(reverse, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     reverse_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "collect" => builtin_fn!(collect, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
+    collect_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "any" => builtin_fn!(any, |def_ix, arg_refs, args, kwargs, ctx| {
     any_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
@@ -3495,6 +3654,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "tessellate" => builtin_fn!(tessellate, |def_ix, arg_refs, args, kwargs, _ctx| {
     tessellate_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "subdivide_by_plane" => builtin_fn!(subdivide_by_plane, |def_ix, arg_refs, args, kwargs, _ctx| {
+    subdivide_by_plane_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "split_by_plane" => builtin_fn!(split_by_plane, |def_ix, arg_refs, args, kwargs, _ctx| {
+    split_by_plane_impl(def_ix, arg_refs, args, kwargs)
   }),
   "connected_components" => builtin_fn!(connected_components, |def_ix, arg_refs, args, kwargs, _ctx| {
     connected_components_impl(def_ix, arg_refs, args, kwargs)

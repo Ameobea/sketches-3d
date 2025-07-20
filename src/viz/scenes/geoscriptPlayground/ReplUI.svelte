@@ -1,10 +1,10 @@
 <script lang="ts">
-  import type { Viz } from 'src/viz';
   import * as THREE from 'three';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { EditorView, type KeyBinding } from '@codemirror/view';
   import type * as Comlink from 'comlink';
 
+  import type { Viz } from 'src/viz';
   import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
   import { buildEditor } from '../../../geoscript/editor';
   import { buildAndAddLight } from './lights';
@@ -222,6 +222,22 @@
 
   let materialOverride = $state<'wireframe' | 'normal' | null>(null);
 
+  const fetchAndSetTextures = async (textureIDs: TextureID[]) => {
+    if (textureIDs.length === 0) {
+      return;
+    }
+
+    const adminToken = new URLSearchParams(window.location.search).get('admin_token') ?? undefined;
+    await getMultipleTextures(textureIDs, undefined, adminToken).then(textures => {
+      const allTextures = { ...Textures.textures };
+      for (const texture of textures) {
+        allTextures[texture.id] = texture;
+      }
+      Textures.textures = allTextures;
+      console.log({ allTextures });
+    });
+  };
+
   const computeCompositeBoundingBox = (
     objects: (
       | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
@@ -409,14 +425,7 @@
     }
 
     if (referencedTextureIDs.length > 0) {
-      const adminToken = new URLSearchParams(window.location.search).get('admin_token') ?? undefined;
-      getMultipleTextures(referencedTextureIDs, undefined, adminToken).then(textures => {
-        const allTextures = { ...Textures.textures };
-        for (const texture of textures) {
-          allTextures[texture.id] = texture;
-        }
-        Textures.textures = allTextures;
-      });
+      fetchAndSetTextures(referencedTextureIDs);
     }
   });
 
@@ -566,6 +575,16 @@
       totalFaceCount: 0,
     };
 
+    const overrideMat = (() => {
+      if (materialOverride === 'wireframe') {
+        return WireframeMat;
+      }
+      if (materialOverride === 'normal') {
+        return NormalMat;
+      }
+      return null;
+    })();
+
     localRunStats.renderedMeshCount = await repl.getRenderedMeshCount(ctxPtr);
     const newRenderedMeshes: (
       | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
@@ -607,7 +626,7 @@
 
       const mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material> = new THREE.Mesh(
         geometry,
-        matEntry.resolved ?? HiddenMat
+        overrideMat ? overrideMat : (matEntry.resolved ?? HiddenMat)
       );
       mesh.userData.materialName = materialName;
       if (!matEntry.resolved && matEntry.promise) {
@@ -717,7 +736,29 @@
       });
     }
     didInitMats = false;
+
     materialDefinitions = serverState.materials;
+    const missingTextureIDs = Object.values(materialDefinitions.materials).flatMap(mat => {
+      if (mat.type === 'basic') {
+        return [];
+      }
+      const referencedTextureIDs: TextureID[] = [];
+      if (mat.map) {
+        referencedTextureIDs.push(mat.map);
+      }
+      if (mat.normalMap) {
+        referencedTextureIDs.push(mat.normalMap);
+      }
+      if (mat.roughnessMap) {
+        referencedTextureIDs.push(mat.roughnessMap);
+      }
+      return referencedTextureIDs;
+    });
+    fetchAndSetTextures(missingTextureIDs).then(() => {
+      didInitMats = false;
+      materialDefinitions = { ...serverState.materials };
+    });
+
     setView(serverState.view);
 
     run(serverState.code);

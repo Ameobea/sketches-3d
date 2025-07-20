@@ -7,14 +7,72 @@ import {
   LRLanguage,
   LanguageSupport,
   syntaxTree,
+  type Language,
+  continuedIndent,
+  delimitedIndent,
 } from '@codemirror/language';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { EditorState, Prec, type Extension } from '@codemirror/state';
+import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
 import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
 
-import { parser } from './parser/geoscript';
-import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
+import { parser as geoscriptParser } from './parser/geoscript';
 import { filterNils } from '../viz/util/util';
+import { parser as glslParser } from 'lezer-glsl';
+
+const buildGeoscriptLanguage = (): { language: Language } => {
+  const parserWithMetadata = geoscriptParser.configure({
+    props: [
+      indentNodeProp.add({
+        Application: context => context.column(context.node.from) + context.unit,
+      }),
+      foldNodeProp.add({
+        Application: foldInside,
+      }),
+    ],
+  });
+
+  const geoscriptLang = LRLanguage.define({
+    parser: parserWithMetadata,
+    languageData: {
+      commentTokens: { line: '//' },
+    },
+  });
+
+  return { language: geoscriptLang };
+};
+
+export const buildGLSLLanguage = (): LanguageSupport => {
+  const glslLanguage = LRLanguage.define({
+    name: 'glsl',
+    parser: glslParser.configure({
+      props: [
+        indentNodeProp.add({
+          IfStatement: continuedIndent({ except: /^\s*({|else\b)/ }),
+          CaseStatement: context => context.baseIndent + context.unit,
+          BlockComment: () => null,
+          CompoundStatement: delimitedIndent({ closing: '}' }),
+          Statement: continuedIndent({ except: /^{/ }),
+        }),
+        foldNodeProp.add({
+          'StructDeclarationList CompoundStatement': foldInside,
+          BlockComment(tree) {
+            return { from: tree.from + 2, to: tree.to - 2 };
+          },
+        }),
+      ],
+    }),
+    languageData: {
+      commentTokens: { line: '//', block: { open: '/*', close: '*/' } },
+      indentOnInput: /^\s*(?:case |default:|\{|\})$/,
+      closeBrackets: {
+        stringPrefixes: ['L', 'u', 'U', 'u8', 'LR', 'UR', 'uR', 'u8R', 'R'],
+      },
+    },
+  });
+
+  return new LanguageSupport(glslLanguage);
+};
 
 interface BuildEditorArgs {
   container: HTMLElement;
@@ -23,6 +81,7 @@ interface BuildEditorArgs {
   readonly?: boolean;
   lineNumbers?: boolean;
   onDocChange?: () => void;
+  buildLanguage?: () => { language: Language } | LanguageSupport;
 }
 
 export const buildEditor = ({
@@ -31,7 +90,13 @@ export const buildEditor = ({
   initialCode = '',
   readonly = false,
   onDocChange,
+  buildLanguage = buildGeoscriptLanguage,
 }: BuildEditorArgs) => {
+  const lang = buildLanguage();
+  const languageSupport = !!(lang as any).support
+    ? (lang as LanguageSupport)
+    : new LanguageSupport(lang.language);
+
   const syntaxErrorLinter = linter(view => {
     const diagnostics: Diagnostic[] = [];
     syntaxTree(view.state)
@@ -50,24 +115,6 @@ export const buildEditor = ({
     return diagnostics;
   });
 
-  const parserWithMetadata = parser.configure({
-    props: [
-      indentNodeProp.add({
-        Application: context => context.column(context.node.from) + context.unit,
-      }),
-      foldNodeProp.add({
-        Application: foldInside,
-      }),
-    ],
-  });
-
-  const geoscriptLang = LRLanguage.define({
-    parser: parserWithMetadata,
-    languageData: {
-      commentTokens: { line: '//' },
-    },
-  });
-
   const extensions: Extension = filterNils([
     onDocChange
       ? EditorView.updateListener.of(update => {
@@ -81,7 +128,7 @@ export const buildEditor = ({
     keymap.of(defaultKeymap),
     keymap.of([indentWithTab]),
     gruvboxDark,
-    new LanguageSupport(geoscriptLang),
+    languageSupport,
     syntaxErrorLinter,
     readonly ? EditorState.readOnly.of(true) : null,
     EditorState.allowMultipleSelections.of(true),

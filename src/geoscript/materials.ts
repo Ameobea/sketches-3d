@@ -13,10 +13,13 @@ export interface BasicMaterialDef {
   type: 'basic';
   name: string;
   color: RGBColor;
+  shaders?: {
+    color?: string;
+  };
 }
 
 import { Textures } from 'src/viz/scenes/geoscriptPlayground/materialEditor/state.svelte';
-import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { buildCustomShader, type CustomShaderShaders } from 'src/viz/shaders/customShader';
 import { loadTexture } from 'src/viz/textureLoading';
 import * as THREE from 'three';
 import type { TextureID } from './geotoyAPIClient';
@@ -48,6 +51,12 @@ export interface PhysicalMaterialDef {
     falloffEndDistance: number;
     exponent?: number;
     ampFactor: number;
+  };
+  shaders?: {
+    color?: string;
+    roughness?: string;
+    metalness?: string;
+    iridescence?: string;
   };
 }
 
@@ -88,8 +97,26 @@ const buildPhysicalShader = (
   map: THREE.Texture | undefined,
   normalMap: THREE.Texture | undefined,
   roughnessMap: THREE.Texture | undefined
-) =>
-  buildCustomShader(
+) => {
+  const defaultShaders = buildDefaultShaders();
+  const customShaders: Partial<CustomShaderShaders> = {};
+
+  if (def.shaders) {
+    if (def.shaders.color && def.shaders.color !== defaultShaders.color) {
+      customShaders.colorShader = def.shaders.color;
+    }
+    if (def.shaders.roughness && def.shaders.roughness !== defaultShaders.roughness) {
+      customShaders.roughnessShader = def.shaders.roughness;
+    }
+    if (def.shaders.metalness && def.shaders.metalness !== defaultShaders.metalness) {
+      customShaders.metalnessShader = def.shaders.metalness;
+    }
+    if (def.shaders.iridescence && def.shaders.iridescence !== defaultShaders.iridescence) {
+      customShaders.iridescenceShader = def.shaders.iridescence;
+    }
+  }
+
+  return buildCustomShader(
     {
       name: id,
       color: new THREE.Color(def.color.r, def.color.g, def.color.b),
@@ -114,9 +141,10 @@ const buildPhysicalShader = (
       ambientLightScale: def.ambientLightScale,
       ambientDistanceAmp: def.ambientDistanceAmp,
     },
-    {}, // TODO: eventually want to support custom shaders
+    customShaders,
     { useTriplanarMapping: true, tileBreaking: undefined, useGeneratedUVs: false }
   );
+};
 
 export const buildMaterial = (
   loader: THREE.ImageBitmapLoader,
@@ -156,6 +184,21 @@ export const buildMaterial = (
   }
 };
 
+export const buildDefaultShaders = (): NonNullable<PhysicalMaterialDef['shaders']> => ({
+  color: `vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+  return vec4(baseColor, 1.0);
+}`,
+  roughness: `float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
+  return baseRoughness;
+}`,
+  metalness: `float getCustomMetalness(vec3 pos, vec3 normal, float baseMetalness, float curTimeSeconds, SceneCtx ctx) {
+  return baseMetalness;
+}`,
+  iridescence: `float getCustomIridescence(vec3 pos, vec3 normal, float baseIridescence, float curTimeSeconds, SceneCtx ctx) {
+  return baseIridescence;
+}`,
+});
+
 export interface MaterialDefinitions {
   materials: Record<MaterialID, MaterialDef>;
   defaultMaterialID: MaterialID | null;
@@ -182,6 +225,13 @@ export const buildDefaultMaterial = (name: string): MaterialDef => ({
   map: 1,
   normalMap: 2,
   roughnessMap: undefined,
+  ambientLightScale: 1,
+  shaders: {
+    color: undefined,
+    roughness: undefined,
+    metalness: undefined,
+    iridescence: undefined,
+  },
 });
 
 export const buildDefaultMaterialDefinitions = (): MaterialDefinitions => ({

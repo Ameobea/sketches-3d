@@ -3,6 +3,7 @@
 #[cfg(target_arch = "wasm32")]
 use std::cell::UnsafeCell;
 use std::{
+  any::Any,
   cell::{Cell, RefCell},
   fmt::{Debug, Display},
   rc::Rc,
@@ -139,13 +140,18 @@ impl Debug for ErrorStack {
   }
 }
 
-pub trait Sequence: Debug {
+pub trait Sequence: Any + Debug {
   fn clone_box(&self) -> Box<dyn Sequence>;
 
   fn consume<'a>(
     self: Box<Self>,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>;
+}
+
+pub(crate) fn seq_as_eager<'a>(seq: &'a dyn Sequence) -> Option<&'a EagerSeq> {
+  let seq: &dyn Any = &*seq;
+  seq.downcast_ref::<EagerSeq>()
 }
 
 #[derive(Clone)]
@@ -1814,6 +1820,26 @@ impl EvalCtx {
         } else {
           Value::Nil
         }),
+        Value::Sequence(seq) => {
+          if i < 0 {
+            return Err(ErrorStack::new(format!(
+              "negative index {i} not supported for sequences"
+            )));
+          }
+
+          let Some(eager_seq) = seq_as_eager(&*seq) else {
+            return Err(ErrorStack::new(
+              "sequence is not eager and must be realized with `collect` before indexing",
+            ));
+          };
+
+          eager_seq.inner.get(i as usize).cloned().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Index {i} out of bounds for sequence; len={}",
+              eager_seq.inner.len()
+            ))
+          })
+        }
         _ => Err(ErrorStack::new(format!(
           "field access not supported for type: {lhs:?}"
         ))),
@@ -2997,4 +3023,52 @@ b = a | reduce(add)
   let b = ctx.globals.get("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 0 + 2 + 4 + 6);
+}
+
+#[test]
+fn test_seq_indexing() {
+  let src = r#"
+a = 0..10 | collect
+b = a[2]
+c = ([1,2,3])[1]
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().expect("Expected result to be an Int");
+  assert_eq!(b, 2);
+
+  let c = ctx.globals.get("c").unwrap();
+  let c = c.as_int().expect("Expected result to be an Int");
+  assert_eq!(c, 2);
+}
+
+#[test]
+fn test_seq_as_eager() {
+  let seq: Box<dyn Sequence + 'static> = Box::new(EagerSeq {
+    inner: vec![Value::Int(1)],
+  });
+  let eager = seq_as_eager(&*seq).unwrap();
+  let inner = &eager.inner;
+  assert_eq!(inner.len(), 1);
+  assert_eq!(inner[0].as_int(), Some(1));
+}
+
+#[test]
+fn test_seq_out_of_bounds_indexing_error() {
+  let src = r#"
+a = [1,2,3]
+b = a[100]
+"#;
+
+  let result = parse_and_eval_program(src);
+  assert!(result.is_err(), "Expected out of bounds indexing error");
+  if let Err(err) = result {
+    assert!(
+      err.to_string().contains("out of bounds"),
+      "Unexpected error: {}",
+      err
+    );
+  }
 }

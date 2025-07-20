@@ -13,6 +13,15 @@ use crate::MeshHandle;
 extern "C" {
   pub fn simplify(handle: usize, tolerance: f32) -> Vec<u8>;
   pub fn convex_hull(verts: &[f32]) -> Vec<u8>;
+  pub fn split_by_plane(
+    handle: usize,
+    transform: &[f32],
+    plane_normal_x: f32,
+    plane_normal_y: f32,
+    plane_normal_z: f32,
+    plane_offset: f32,
+  );
+  pub fn get_split_output(split_ix: usize) -> Vec<u8>;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -106,4 +115,58 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn convex_hull_from_verts(_verts: &[Vec3]) -> Result<MeshHandle, String> {
   Ok(MeshHandle::new(Rc::new(LinkedMesh::new(0, 0, None))))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn split_mesh_by_plane(
+  mesh: &MeshHandle,
+  plane_normal: Vec3,
+  plane_offset: f32,
+) -> Result<(MeshHandle, MeshHandle), ErrorStack> {
+  use crate::ManifoldHandle;
+
+  let handle = mesh.get_or_create_handle()?;
+  split_by_plane(
+    handle,
+    mesh.transform.as_slice(),
+    plane_normal.x,
+    plane_normal.y,
+    plane_normal.z,
+    plane_offset,
+  );
+
+  let a = get_split_output(0);
+  let (manifold_handle, out_verts, out_indices) =
+    crate::mesh_ops::mesh_boolean::decode_manifold_output(&a);
+  let a = MeshHandle {
+    mesh: Rc::new(LinkedMesh::from_raw_indexed(
+      out_verts,
+      out_indices,
+      None,
+      None,
+    )),
+    transform: mesh.transform,
+    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
+    aabb: mesh.aabb.clone(),
+    trimesh: mesh.trimesh.clone(),
+    material: mesh.material.clone(),
+  };
+  let b = get_split_output(1);
+  let (manifold_handle, out_verts, out_indices) =
+    crate::mesh_ops::mesh_boolean::decode_manifold_output(&b);
+  let b = MeshHandle {
+    mesh: Rc::new(LinkedMesh::from_raw_indexed(
+      out_verts,
+      out_indices,
+      None,
+      None,
+    )),
+    transform: mesh.transform,
+    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
+    aabb: mesh.aabb.clone(),
+    trimesh: mesh.trimesh.clone(),
+    material: mesh.material.clone(),
+  };
+
+  Ok((a, b))
 }

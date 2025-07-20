@@ -245,3 +245,43 @@ export const convex_hull = (verts: Float32Array) => {
 
   return encodeManifoldMesh(manifold, false);
 };
+
+let splitOutput: [Uint8Array, Uint8Array] = [new Uint8Array(), new Uint8Array()];
+
+export const split_by_plane = (
+  handle: number,
+  transform: Float32Array,
+  planeNormalX: number,
+  planeNormalY: number,
+  planeNormalZ: number,
+  planeOffset: number
+) => {
+  if (!ManifoldWasm) {
+    throw new Error('Manifold Wasm not initialized');
+  }
+
+  const mesh = MeshHandles.get(handle)?.transform([...transform] as Mat4);
+  if (!mesh) {
+    throw new Error(`No mesh found for handle ${handle}`);
+  }
+
+  const [a, b] = mesh.splitByPlane([planeNormalX, planeNormalY, planeNormalZ], planeOffset);
+
+  const aEncoded = encodeManifoldMesh(a, false);
+  const bEncoded = encodeManifoldMesh(b, false);
+
+  // calling `transform` creates a new manifold, so we can delete the original
+  mesh.delete();
+
+  splitOutput = [aEncoded, bEncoded];
+};
+
+export const get_split_output = (i: number): Uint8Array => {
+  if (i === 0) {
+    return splitOutput[0];
+  } else if (i === 1) {
+    return splitOutput[1];
+  } else {
+    throw new Error('split produces exactly two outputs; split ix must be 0 or 1');
+  }
+};

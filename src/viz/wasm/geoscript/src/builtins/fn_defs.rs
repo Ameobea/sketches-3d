@@ -4,6 +4,7 @@ use nanoserde::SerJson;
 
 use crate::{
   lights::{AmbientLight, DirectionalLight},
+  seq::EagerSeq,
   ArgType, Value,
 };
 
@@ -1872,6 +1873,20 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Sequence],
     },
   ],
+  "collect" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Makes the sequence eager, collecting all elements into memory.  This will allow the sequence to indexed with `[]`.",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
   "print" => &[
     FnDef {
       arg_defs: &[
@@ -2817,6 +2832,82 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Mesh],
     },
   ],
+  "subdivide_by_plane" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "plane_normal",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: "Normal vector of the plane to cut the mesh with"
+        },
+        ArgDef {
+          name: "plane_offset",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: "Offset of the plane from the origin along the plane normal"
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Subdivides a mesh by a plane, splitting all edges and faces that intersect the plane.",
+      return_type: &[ArgType::Sequence],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "plane_normals",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "Sequence of normal vectors of the planes to cut the mesh with"
+        },
+        ArgDef {
+          name: "plane_offsets",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: "Sequence of offsets of the planes from the origin along the plane normals"
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Subdivides a mesh by a sequence of planes, splitting all edges and faces that intersect any of the planes.  This is more efficient than repeatedly subdividing by a single plane multiple times.",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
+  "split_by_plane" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "plane_normal",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: "Normal vector of the plane to cut the mesh with"
+        },
+        ArgDef {
+          name: "plane_offset",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: "Offset of the plane from the origin along the plane normal"
+        },
+        ArgDef {
+          name: "mesh",
+          valid_types: &[ArgType::Mesh],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Splits a mesh by a plane, returning a sequence containing two meshes: the part in front of the plane and the part behind the plane.",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
   "connected_components" => &[
     FnDef {
       arg_defs: &[
@@ -3571,13 +3662,13 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         ArgDef {
           name: "verts",
           valid_types: &[ArgType::Sequence],
-          default_value: DefaultValue::Required,
+          default_value: DefaultValue::Optional(|| Value::Sequence(Box::new(EagerSeq { inner:Vec::new() }))),
           description: "Sequence of Vec3 vertices, pointed into by `faces`"
         },
         ArgDef {
           name: "indices",
           valid_types: &[ArgType::Sequence],
-          default_value: DefaultValue::Required,
+          default_value: DefaultValue::Optional(|| Value::Sequence(Box::new(EagerSeq { inner:Vec::new() }))),
           description: "A flag sequence of integer indices corresponding to triangles.  Must have `length % 3 == 0`"
         },
       ],

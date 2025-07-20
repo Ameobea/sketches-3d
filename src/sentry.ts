@@ -16,7 +16,7 @@ export const initSentry = () => {
   sentryInitialized = true;
 
   Sentry.init({
-    dsn: 'https://e71a66fc87db4733bc42b675e6f9bc78@sentry.ameo.design/14',
+    dsn: 'https://a437a29a32360db705c1fac14a714c70@sentry.ameo.design/15',
     integrations: [
       Sentry.browserTracingIntegration(),
       Sentry.captureConsoleIntegration({ levels: ['warn', 'error'] }),

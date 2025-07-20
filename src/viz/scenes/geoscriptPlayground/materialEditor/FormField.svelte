@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
-  let { label, help, children }: { label: string; help?: string; children: Snippet } = $props();
+  let { label, help, children }: { label?: string; help?: string; children: Snippet } = $props();
 </script>
 
 <div class="form-field">

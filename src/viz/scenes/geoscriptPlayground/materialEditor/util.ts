@@ -3,7 +3,7 @@ export const makeDraggable = (
   handle: HTMLElement,
   initialX = window.innerWidth / 2,
   initialY = window.innerHeight / 2
-): { destroy: () => void } => {
+): { destroy: () => void; checkBounds: () => void } => {
   let x = initialX;
   let y = initialY;
   let isDragging = false;
@@ -31,6 +31,33 @@ export const makeDraggable = (
     window.addEventListener('mouseup', onMouseUp);
   };
 
+  const checkBounds = () => {
+    const rect = node.getBoundingClientRect();
+
+    let newX = x;
+    let newY = y;
+
+    if (rect.left < 0) {
+      newX = rect.width / 2;
+    }
+    if (rect.top < 0) {
+      newY = rect.height / 2;
+    }
+    if (rect.right > window.innerWidth) {
+      newX = window.innerWidth - rect.width / 2;
+    }
+    if (rect.bottom > window.innerHeight) {
+      newY = window.innerHeight - rect.height / 2;
+    }
+
+    if (newX !== x || newY !== y) {
+      x = newX;
+      y = newY;
+      node.style.left = `${x}px`;
+      node.style.top = `${y}px`;
+    }
+  };
+
   handle.addEventListener('mousedown', onMouseDown);
 
   node.style.position = 'absolute';
@@ -44,6 +71,7 @@ export const makeDraggable = (
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     },
+    checkBounds,
   };
 };
 

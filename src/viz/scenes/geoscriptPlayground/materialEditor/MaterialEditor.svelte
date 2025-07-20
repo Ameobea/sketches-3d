@@ -3,9 +3,16 @@
   import { makeDraggable, uuidv4 } from './util';
 
   import MaterialPropertiesEditor from './MaterialPropertiesEditor.svelte';
-  import { buildDefaultMaterial, type MaterialDefinitions, type MaterialID } from 'src/geoscript/materials';
+  import {
+    type BasicMaterialDef,
+    buildDefaultMaterial,
+    type MaterialDefinitions,
+    type MaterialID,
+    type PhysicalMaterialDef,
+  } from 'src/geoscript/materials';
   import TexturePicker from './TexturePicker.svelte';
   import TextureUploader from './TextureUploader.svelte';
+  import ShaderEditor from './ShaderEditor.svelte';
 
   let {
     isOpen = $bindable(),
@@ -28,6 +35,7 @@
         type: 'texture_uploader';
         field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap';
       }
+    | { type: 'shader_editor' }
   >({ type: 'properties' });
 
   let selectedMaterialID: MaterialID | null = $state(null);
@@ -52,14 +60,21 @@
 
   let dragCbs: {
     destroy: () => void;
+    checkBounds: () => void;
   } | null = null;
 
   $effect(() => {
     if (dialogElement && dragHandleElement) {
       dragCbs?.destroy();
       if (window.innerWidth > 600) {
-        dragCbs = makeDraggable(dialogElement, dragHandleElement, 340, 340);
+        dragCbs = makeDraggable(dialogElement, dragHandleElement);
       }
+    }
+  });
+
+  $effect(() => {
+    if (view.type === 'shader_editor') {
+      dragCbs?.checkBounds();
     }
   });
 
@@ -72,7 +87,11 @@
 </script>
 
 {#if isOpen}
-  <div class="material-editor-dialog" bind:this={dialogElement}>
+  <div
+    class="material-editor-dialog"
+    class:shader-editor-open={view.type === 'shader_editor'}
+    bind:this={dialogElement}
+  >
     <div class="drag-handle" bind:this={dragHandleElement}>
       <span>materials</span>
       <button class="close-button" onclick={() => (isOpen = false)}>×</button>
@@ -119,6 +138,9 @@
             onpicktexture={fieldName => {
               view = { type: 'texture_picker', field: fieldName };
             }}
+            oneditshaders={() => {
+              view = { type: 'shader_editor' };
+            }}
           />
         {:else if view.type === 'texture_picker'}
           {#if materials.materials[selectedMaterialID].type === 'physical'}
@@ -152,6 +174,25 @@
               }}
             />
           {/if}
+        {:else if view.type === 'shader_editor'}
+          {@const state =
+            materials.materials[selectedMaterialID].type === 'physical'
+              ? {
+                  type: 'physical' as const,
+                  shaders: (materials.materials[selectedMaterialID] as PhysicalMaterialDef).shaders,
+                }
+              : {
+                  type: 'basic' as const,
+                  shaders: (materials.materials[selectedMaterialID] as BasicMaterialDef).shaders,
+                }}
+          {@const onchange = (newState: typeof state) => {
+            if (selectedMaterialID === null) {
+              return;
+            }
+
+            materials.materials[selectedMaterialID].shaders = newState.shaders;
+          }}
+          <ShaderEditor {state} {onchange} onclose={() => (view = { type: 'properties' })} />
         {/if}
       {/if}
     </div>
@@ -174,6 +215,17 @@
     z-index: 100;
     display: flex;
     flex-direction: column;
+  }
+
+  .shader-editor-open {
+    width: 80vw;
+    height: 80vh;
+    max-width: 1200px;
+    max-height: 900px;
+
+    .content {
+      max-height: calc(100% - 70px) !important;
+    }
   }
 
   .drag-handle {

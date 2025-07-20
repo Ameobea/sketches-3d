@@ -8,9 +8,11 @@
   let {
     material = $bindable(),
     onpicktexture,
+    oneditshaders,
   }: {
     material: MaterialDef;
     onpicktexture: (name: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap') => void;
+    oneditshaders: () => void;
   } = $props();
   let showAdvanced = $state(false);
 </script>
@@ -73,6 +75,9 @@
       <input type="number" step="0.1" bind:value={material.uvScale.x} style="width: 80px" />
       <input type="number" step="0.1" bind:value={material.uvScale.y} style="width: 80px" />
     </FormField>
+    <div style="display: flex; padding-left: 8px">
+      <button class="edit-shaders" onclick={oneditshaders}>edit shaders</button>
+    </div>
 
     <div class="advanced-options">
       <button
@@ -142,5 +147,20 @@
   .advanced-content {
     padding-left: 16px;
     font-size: 12px;
+  }
+
+  .edit-shaders {
+    background: #333;
+    border: 1px solid #555;
+    color: #f0f0f0;
+    padding: 2px 2px 3px 4px;
+    cursor: pointer;
+    margin-bottom: 16px;
+    width: 180px;
+    font-size: 12px;
+  }
+
+  .edit-shaders:hover {
+    background: #3d3d3d;
   }
 </style>

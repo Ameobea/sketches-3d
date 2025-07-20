@@ -1,5 +1,6 @@
 use std::{f32::consts::PI, fmt::Debug, hash::Hash};
 
+use arrayvec::ArrayVec;
 use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use nalgebra::{Matrix4, Vector3};
@@ -379,6 +380,43 @@ impl EdgeSplitPos {
       pos: 0.5,
       start_vtx_key: VertexKey::null(),
     }
+  }
+}
+
+const EPSILON: f32 = 1e-5;
+
+#[derive(Clone, Debug)]
+pub struct Plane {
+  pub normal: Vec3,
+  pub w: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PolygonClass {
+  Coplanar = 0,
+  Front = 1,
+  Back = 2,
+  Spanning = 3,
+}
+
+impl From<u8> for PolygonClass {
+  fn from(val: u8) -> Self {
+    match val {
+      0 => PolygonClass::Coplanar,
+      1 => PolygonClass::Front,
+      2 => PolygonClass::Back,
+      3 => PolygonClass::Spanning,
+      _ => panic!("Invalid PolygonClass value"),
+    }
+  }
+}
+
+impl std::ops::BitOr for PolygonClass {
+  type Output = Self;
+
+  fn bitor(self, rhs: Self) -> Self::Output {
+    let out = self as u8 | rhs as u8;
+    out.into()
   }
 }
 
@@ -2036,6 +2074,97 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
   pub fn is_empty(&self) -> bool {
     self.vertices.is_empty()
+  }
+
+  pub fn subdivide_by_plane(&mut self, plane: &Plane) {
+    let face_keys: Vec<FaceKey> = self.faces.keys().collect();
+
+    for face_key in face_keys {
+      if !self.faces.contains_key(face_key) {
+        continue;
+      }
+
+      let face = &self.faces[face_key];
+      let mut polygon_type = PolygonClass::Coplanar;
+      let mut types = [PolygonClass::Coplanar; 3];
+      let mut dists = [0.; 3];
+
+      for (i, &v_key) in face.vertices.iter().enumerate() {
+        let dist = plane.normal.dot(&self.vertices[v_key].position) - plane.w;
+        dists[i] = dist;
+        types[i] = if dist < -EPSILON {
+          PolygonClass::Back
+        } else if dist > EPSILON {
+          PolygonClass::Front
+        } else {
+          PolygonClass::Coplanar
+        };
+        polygon_type = polygon_type | types[i];
+      }
+
+      if polygon_type == PolygonClass::Spanning {
+        let mut f: ArrayVec<VertexKey, 4> = ArrayVec::new();
+        let mut b: ArrayVec<VertexKey, 4> = ArrayVec::new();
+        let face_verts = self.faces[face_key].vertices;
+
+        for i in 0..3 {
+          let j = (i + 1) % 3;
+          let ti = types[i];
+          let tj = types[j];
+          let vi_key = face_verts[i];
+          let vj_key = face_verts[j];
+
+          if ti != PolygonClass::Back {
+            f.push(vi_key);
+          }
+          if ti != PolygonClass::Front {
+            b.push(vi_key);
+          }
+
+          if (ti | tj) == PolygonClass::Spanning {
+            let t = dists[i] / (dists[i] - dists[j]);
+            let v_i = &self.vertices[vi_key];
+            let v_j = &self.vertices[vj_key];
+            let new_v_pos = v_i.position.lerp(&v_j.position, t);
+
+            let shading_normal = match (v_i.shading_normal, v_j.shading_normal) {
+              (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+              _ => None,
+            };
+            let displacement_normal = match (v_i.displacement_normal, v_j.displacement_normal) {
+              (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+              _ => None,
+            };
+
+            let new_v_key = self.vertices.insert(Vertex {
+              position: new_v_pos,
+              shading_normal,
+              displacement_normal,
+              edges: Vec::new(),
+            });
+
+            f.push(new_v_key);
+            b.push(new_v_key);
+          }
+        }
+
+        self.remove_face(face_key);
+
+        if f.len() >= 3 {
+          self.add_face([f[0], f[1], f[2]], Default::default());
+          if f.len() == 4 {
+            self.add_face([f[0], f[2], f[3]], Default::default());
+          }
+        }
+
+        if b.len() >= 3 {
+          self.add_face([b[0], b[1], b[2]], Default::default());
+          if b.len() == 4 {
+            self.add_face([b[0], b[2], b[3]], Default::default());
+          }
+        }
+      }
+    }
   }
 
   pub fn compute_aabb(&self, transform: &Matrix4<f32>) -> Aabb {
