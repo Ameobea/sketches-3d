@@ -304,6 +304,12 @@ pub fn geoscript_set_materials(
     );
   }
   ctx.geo_ctx.materials = new_materials;
+  if ctx.geo_ctx.materials.len() == 1 {
+    ctx
+      .geo_ctx
+      .default_material
+      .replace(ctx.geo_ctx.materials.values().next().cloned());
+  }
   Ok(())
 }
 

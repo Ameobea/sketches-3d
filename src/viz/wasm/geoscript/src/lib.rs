@@ -3072,3 +3072,25 @@ b = a[100]
     );
   }
 }
+
+#[test]
+fn test_flatten() {
+  let src = r#"
+a = [[1, 2], [3, 4], [5], 6, [7, 8]]
+b = a | flatten
+c = b | reduce(add)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let c = ctx.globals.get("c").unwrap();
+  let c = c.as_int().expect("Expected result to be an Int");
+  assert_eq!(c, 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8);
+
+  let b = ctx.globals.get("b").unwrap();
+  let Value::Sequence(b) = b else {
+    panic!("Expected result to be a Seq");
+  };
+  let b = b.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
+  assert_eq!(b.len(), 8);
+}

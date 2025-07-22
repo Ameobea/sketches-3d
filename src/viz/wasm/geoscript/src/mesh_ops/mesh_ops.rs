@@ -170,3 +170,14 @@ pub fn split_mesh_by_plane(
 
   Ok((a, b))
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn split_mesh_by_plane(
+  _mesh: &MeshHandle,
+  _plane_normal: Vec3,
+  _plane_offset: f32,
+) -> Result<(MeshHandle, MeshHandle), ErrorStack> {
+  Err(ErrorStack::new(
+    "Mesh splitting by plane is not supported outside of wasm.",
+  ))
+}

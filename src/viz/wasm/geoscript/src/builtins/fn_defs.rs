@@ -625,6 +625,20 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Nil],
     },
   ],
+  "flatten" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "sequence",
+          valid_types: &[ArgType::Sequence],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Flattens a sequence of sequences into a single sequence.  Any non-sequence elements are passed through unchanged.\n\nNote that only a single level of flattening is performed.",
+      return_type: &[ArgType::Sequence],
+    },
+  ],
   "neg" => &[
     FnDef {
       arg_defs: &[
@@ -862,6 +876,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       description: "Translates the given mesh by a Vec3 offset",
       return_type: &[ArgType::Mesh],
     },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "vec",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "num",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Adds a numeric value to each component of a Vec3",
+      return_type: &[ArgType::Vec3],
+    },
   ],
   "sub" => &[
     FnDef {
@@ -971,6 +1003,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       ],
       description: "Translates the mesh by (`-offset`)",
       return_type: &[ArgType::Mesh],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "vec",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+        ArgDef {
+          name: "num",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Subtracts a numeric value from each component of a Vec3",
+      return_type: &[ArgType::Vec3],
     },
   ],
   "mul" => &[
@@ -2017,6 +2067,84 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
       return_type: &[ArgType::Vec3],
     },
   ],
+  "sinh" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the hyperbolic sine of a numeric value",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a Vec3 with the hyperbolic sine of each component",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
+  "cosh" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the hyperbolic cosine of a numeric value",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a Vec3 with the hyperbolic cosine of each component",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
+  "tanh" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the hyperbolic tangent of a numeric value",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a Vec3 with the hyperbolic tangent of each component",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
   "pow" => &[
     // TODO: should split into int and float versions
     FnDef {
@@ -2053,6 +2181,110 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, &'static [FnDef]> = 
         },
       ],
       description: "Returns a Vec3 with each component raised to the power of `exponent`",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
+  "exp" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the exponential of a numeric value",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a Vec3 with the exponential of each component",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
+  "log10" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the base-10 logarithm of a numeric value",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a Vec3 with the base-10 logarithm of each component",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
+  "log2" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the base-2 logarithm of a numeric value",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a Vec3 with the base-2 logarithm of each component",
+      return_type: &[ArgType::Vec3],
+    },
+  ],
+  "ln" => &[
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Numeric],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns the natural logarithm of a numeric value",
+      return_type: &[ArgType::Float],
+    },
+    FnDef {
+      arg_defs: &[
+        ArgDef {
+          name: "value",
+          valid_types: &[ArgType::Vec3],
+          default_value: DefaultValue::Required,
+          description: ""
+        },
+      ],
+      description: "Returns a Vec3 with the natural logarithm of each component",
       return_type: &[ArgType::Vec3],
     },
   ],

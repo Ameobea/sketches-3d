@@ -86,8 +86,8 @@ vals: seq = [1, "foo", 3.0]
 
 // There's a built-in `->` operator which is a shorthand for `x | map(fn)`.  The following two
 // statements are equivalent:
-two_four_six = 0..8 | map(mul(2))
-two_four_six = 0..8 -> mul(2)
+two_four_six = 1..=3 | map(mul(2))
+two_four_six = 1..=3 -> mul(2)
 
 ////////////
 // MESHES //

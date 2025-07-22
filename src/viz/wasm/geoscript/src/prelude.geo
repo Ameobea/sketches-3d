@@ -14,4 +14,4 @@ dir_light(
   | trans(-20, 50, 0)
   | render
 
-set_default_material("default")
+// set_default_material("default")

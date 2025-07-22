@@ -206,6 +206,60 @@ impl Sequence for ScanSeq {
   }
 }
 
+#[derive(Debug)]
+pub(crate) struct FlattenSeq {
+  pub inner: Box<dyn Sequence>,
+}
+
+pub(crate) struct FlattenIter<'a> {
+  inner: Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>,
+  cur_sub_iter: Option<Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>>,
+  ctx: &'a EvalCtx,
+}
+
+impl<'a> Iterator for FlattenIter<'a> {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    if let Some(sub_iter) = &mut self.cur_sub_iter {
+      if let Some(res) = sub_iter.next() {
+        return Some(res);
+      } else {
+        self.cur_sub_iter = None;
+      }
+    }
+
+    match self.inner.next() {
+      Some(Ok(Value::Sequence(seq))) => {
+        self.cur_sub_iter = Some(seq.consume(self.ctx));
+        self.next()
+      }
+      Some(Ok(other)) => Some(Ok(other)),
+      Some(Err(err)) => Some(Err(err.wrap("error produced by inner sequence in flatten"))),
+      None => None,
+    }
+  }
+}
+
+impl Sequence for FlattenSeq {
+  fn clone_box(&self) -> Box<dyn Sequence> {
+    Box::new(FlattenSeq {
+      inner: self.inner.clone_box(),
+    })
+  }
+
+  fn consume<'a>(
+    self: Box<Self>,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    Box::new(FlattenIter {
+      inner: self.inner.consume(ctx),
+      cur_sub_iter: None,
+      ctx,
+    })
+  }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct EagerSeq {
   pub inner: Vec<Value>,

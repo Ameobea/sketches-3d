@@ -33,7 +33,7 @@
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_missing_attribute -->
           <a
-            style="cursor: pointer; font-size: 12px; margin-left: 8px; margin-right: -8px;"
+            style="cursor: pointer; font-size: 12px; margin-left: 8px; margin-right: -4px;"
             on:click={() => logout().then(() => window.location.reload())}
             role="button"
             tabindex="0"

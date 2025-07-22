@@ -143,7 +143,9 @@ export class Viz {
   private viewModeInterpolationState: ViewModeInterpolationState | null = null;
   private onRespawnCBs: (() => void)[] = [];
   private inlineConsole =
-    window.location.href.includes('localhost') && !window.location.href.includes('geoscript')
+    window.location.href.includes('localhost') &&
+    !window.location.href.includes('geoscript') &&
+    !window.location.href.includes('geotoy')
       ? new InlineConsole()
       : undefined;
   private customOnInstakillTerrainCollisionCb:

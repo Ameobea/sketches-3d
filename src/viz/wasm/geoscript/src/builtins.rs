@@ -31,8 +31,8 @@ use crate::{
   noise::fbm,
   path_building::{build_torus_knot_path, cubic_bezier_3d_path, superellipse_path},
   seq::{
-    ChainSeq, EagerSeq, FilterSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq, ScanSeq, SkipSeq,
-    SkipWhileSeq, TakeSeq, TakeWhileSeq,
+    ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq,
+    ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
   },
   seq_as_eager, ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
@@ -219,6 +219,12 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       &[lhs.clone(), rhs.clone()],
       &Default::default(),
     ),
+    // vec3 + float
+    6 => {
+      let a = lhs.as_vec3().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec3(a + Vec3::new(b, b, b)))
+    }
     _ => unimplemented!(),
   }
 }
@@ -271,6 +277,12 @@ pub(crate) fn sub_impl(
       &[lhs.clone(), Value::Vec3(-rhs.as_vec3().unwrap())],
       &Default::default(),
     ),
+    // vec3 - float
+    6 => {
+      let a = lhs.as_vec3().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec3(a - Vec3::new(b, b, b)))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2420,6 +2432,98 @@ fn pow_impl(
   }
 }
 
+fn exp_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.exp()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.exp(),
+        value.y.exp(),
+        value.z.exp(),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn log10_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.log10()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.log10(),
+        value.y.log10(),
+        value.z.log10(),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn log2_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.log2()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.log2(),
+        value.y.log2(),
+        value.z.log2(),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn ln_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.ln()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.ln(),
+        value.y.ln(),
+        value.z.ln(),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn tan_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -2483,6 +2587,75 @@ fn sin_impl(
         value.x.sin(),
         value.y.sin(),
         value.z.sin(),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn sinh_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.sinh()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.sinh(),
+        value.y.sinh(),
+        value.z.sinh(),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn cosh_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.cosh()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.cosh(),
+        value.y.cosh(),
+        value.z.cosh(),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn tanh_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.tanh()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.tanh(),
+        value.y.tanh(),
+        value.z.tanh(),
       )))
     }
     _ => unimplemented!(),
@@ -3205,6 +3378,23 @@ fn for_each_impl(
   }
 }
 
+fn flatten_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      Ok(Value::Sequence(Box::new(FlattenSeq {
+        inner: seq.clone_box(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn abs_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -3540,6 +3730,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "for_each" => builtin_fn!(for_each, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     for_each_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "flatten" => builtin_fn!(flatten, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    flatten_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "neg" => builtin_fn!(neg, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let val = arg_refs[0].resolve(args, kwargs);
     neg_impl(def_ix, val)
@@ -3649,8 +3842,29 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "tan" => builtin_fn!(tan, |def_ix, arg_refs, args, kwargs, _ctx| {
     tan_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "sinh" => builtin_fn!(sinh, |def_ix, arg_refs, args, kwargs, _ctx| {
+    sinh_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "cosh" => builtin_fn!(cosh, |def_ix, arg_refs, args, kwargs, _ctx| {
+    cosh_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "tanh" => builtin_fn!(tanh, |def_ix, arg_refs, args, kwargs, _ctx| {
+    tanh_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "pow" => builtin_fn!(pow, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     pow_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "exp" => builtin_fn!(exp, |def_ix, arg_refs, args, kwargs, _ctx| {
+    exp_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "log10" => builtin_fn!(log, |def_ix, arg_refs, args, kwargs, _ctx| {
+    log10_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "log2" => builtin_fn!(log2, |def_ix, arg_refs, args, kwargs, _ctx| {
+    log2_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "ln" => builtin_fn!(ln, |def_ix, arg_refs, args, kwargs, _ctx| {
+    ln_impl(def_ix, arg_refs, args, kwargs)
   }),
   "trunc" => builtin_fn!(trunc, |def_ix, arg_refs, args, kwargs, _ctx| {
     trunc_impl(def_ix, arg_refs, args, kwargs)

@@ -273,8 +273,15 @@
     const compositeBbox = computeCompositeBoundingBox(renderedObjects);
     const boundingSphere = new THREE.Sphere();
     compositeBbox.getBoundingSphere(boundingSphere);
-    const center = boundingSphere.center;
-    const radius = boundingSphere.radius;
+    let center = boundingSphere.center;
+    let radius = boundingSphere.radius;
+
+    if (Number.isNaN(center.x) || Number.isNaN(center.y) || Number.isNaN(center.z)) {
+      center = new THREE.Vector3(0, 0, 0);
+    }
+    if (radius <= 0 || Number.isNaN(radius)) {
+      radius = 1;
+    }
 
     // try to keep the same look direction
     const lookDir = new THREE.Vector3();
