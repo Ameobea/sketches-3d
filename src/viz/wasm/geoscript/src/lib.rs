@@ -34,7 +34,7 @@ use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
   ast::{parse_statement, ClosureArg, TypeName},
   builtins::{
-    fn_defs::{ArgDef, DefaultValue, FnDef, FN_SIGNATURE_DEFS},
+    fn_defs::{ArgDef, DefaultValue, FnSignature, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
   lights::{AmbientLight, Light},
@@ -227,7 +227,7 @@ pub enum Callable {
     ) -> Result<Value, ErrorStack>,
     /// This will be set in the case that a single signature can be resolved in advance
     pre_resolved_signature: Option<PreResolvedSignature>,
-    fn_signature_defs: &'static [FnDef],
+    fn_signature_defs: &'static [FnSignature],
   },
   PartiallyAppliedFn(PartiallyAppliedFn),
   Closure(Closure),
@@ -741,7 +741,7 @@ enum GetArgsOutput {
   PartiallyApplied,
 }
 
-fn format_fn_signatures(arg_defs: &[FnDef]) -> String {
+fn format_fn_signatures(arg_defs: &[FnSignature]) -> String {
   arg_defs
     .iter()
     .map(|def| {
@@ -773,7 +773,7 @@ pub(crate) fn build_no_fn_def_found_err(
   fn_name: &str,
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
-  defs: &[FnDef],
+  defs: &[FnSignature],
 ) -> ErrorStack {
   ErrorStack::new(format!(
     "No valid function signature found for `{fn_name}` with args: {args:?}, kwargs: \
@@ -784,7 +784,7 @@ pub(crate) fn build_no_fn_def_found_err(
 
 fn get_args(
   fn_name: &str,
-  defs: &[FnDef],
+  defs: &[FnSignature],
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
 ) -> Result<GetArgsOutput, ErrorStack> {
@@ -882,7 +882,7 @@ fn get_args(
 /// def in `defs` has exactly two args.
 fn get_binop_def_ix(
   name: &str,
-  defs: &[FnDef],
+  defs: &[FnSignature],
   lhs: &Value,
   rhs: &Value,
 ) -> Result<usize, ErrorStack> {
@@ -900,7 +900,7 @@ fn get_binop_def_ix(
     name,
     &[lhs.clone(), rhs.clone()],
     &Default::default(),
-    FN_SIGNATURE_DEFS[name],
+    FN_SIGNATURE_DEFS[name].signatures,
   ));
 }
 
@@ -910,7 +910,7 @@ fn get_binop_def_ix(
 /// Returns `(def_ix, return_types)`
 fn get_binop_return_ty(
   name: &str,
-  defs: &[FnDef],
+  defs: &[FnSignature],
   lhs: &Value,
   rhs: &Value,
 ) -> Result<&'static [ArgType], ErrorStack> {
@@ -928,13 +928,13 @@ fn get_binop_return_ty(
     name,
     &[lhs.clone(), rhs.clone()],
     &Default::default(),
-    FN_SIGNATURE_DEFS[name],
+    FN_SIGNATURE_DEFS[name].signatures,
   ));
 }
 
 /// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
 /// def in `defs` has exactly one arg.
-fn get_unop_def_ix(name: &str, defs: &[FnDef], arg: &Value) -> Result<usize, ErrorStack> {
+fn get_unop_def_ix(name: &str, defs: &[FnSignature], arg: &Value) -> Result<usize, ErrorStack> {
   for (def_ix, def) in defs.iter().enumerate() {
     let arg_def = &def.arg_defs[0];
     if ArgType::any_valid(&arg_def.valid_types, arg) {
@@ -946,7 +946,7 @@ fn get_unop_def_ix(name: &str, defs: &[FnDef], arg: &Value) -> Result<usize, Err
     name,
     &[arg.clone()],
     &Default::default(),
-    FN_SIGNATURE_DEFS[name],
+    FN_SIGNATURE_DEFS[name].signatures,
   ));
 }
 
@@ -954,7 +954,7 @@ fn get_unop_def_ix(name: &str, defs: &[FnDef], arg: &Value) -> Result<usize, Err
 /// def in `defs` has exactly one arg.
 fn get_unop_return_ty(
   name: &str,
-  defs: &[FnDef],
+  defs: &[FnSignature],
   arg: &Value,
 ) -> Result<&'static [ArgType], ErrorStack> {
   for def in defs {
@@ -968,7 +968,7 @@ fn get_unop_return_ty(
     name,
     &[arg.clone()],
     &Default::default(),
-    FN_SIGNATURE_DEFS[name],
+    FN_SIGNATURE_DEFS[name].signatures,
   ));
 }
 
@@ -1525,7 +1525,7 @@ impl EvalCtx {
       return Ok(Value::Callable(Rc::new(Callable::Builtin {
         name: name.to_owned(),
         fn_impl: resolve_builtin_impl(name),
-        fn_signature_defs: &FN_SIGNATURE_DEFS[name],
+        fn_signature_defs: &FN_SIGNATURE_DEFS[name].signatures,
         pre_resolved_signature: None,
       })));
     }
@@ -2017,7 +2017,7 @@ fn test_partial_application_with_only_kwargs() {
       description: "",
     },
   ];
-  let defs = &[FnDef {
+  let defs = &[FnSignature {
     arg_defs: ARGS,
     description: "",
     return_type: &[ArgType::Any],
@@ -2048,7 +2048,7 @@ fn test_unknown_kwarg_returns_error() {
       description: "",
     },
   ];
-  let defs = &[FnDef {
+  let defs = &[FnSignature {
     arg_defs: ARGS,
     description: "",
     return_type: &[ArgType::Any],

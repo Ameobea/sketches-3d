@@ -41,6 +41,7 @@
     "codemirror": "^6.0.1",
     "comlink": "^4.4.2",
     "detect-gpu": "^5.0.70",
+    "fuzzysort": "^3.1.0",
     "graphviz-builder": "^0.1.1",
     "lezer-glsl": "^0.6.0",
     "manifold-3d": "^3.1.1",

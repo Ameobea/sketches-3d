@@ -6,9 +6,9 @@ use pest::iterators::Pair;
 
 use crate::{
   builtins::{
-    add_impl, and_impl, bit_and_impl, bit_or_impl, div_impl, eq_impl, fn_defs::FnDef, map_impl,
-    mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl, pos_impl,
-    sub_impl, BoolOp,
+    add_impl, and_impl, bit_and_impl, bit_or_impl, div_impl, eq_impl, fn_defs::FnSignature,
+    map_impl, mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl,
+    pos_impl, sub_impl, BoolOp,
   },
   get_args, get_binop_def_ix, get_binop_return_ty, get_unop_def_ix, get_unop_return_ty,
   resolve_builtin_impl, ArgType, Callable, Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput,
@@ -494,17 +494,17 @@ fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, ErrorS
 
 // TODO: should do more efficient version of this
 lazy_static::lazy_static! {
-  static ref ADD_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["add"];
-  static ref SUB_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["sub"];
-  static ref MUL_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["mul"];
-  static ref DIV_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["div"];
-  static ref MOD_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["mod"];
-  static ref GT_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["gt"];
-  static ref LT_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["lt"];
-  static ref GTE_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["gte"];
-  static ref LTE_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["lte"];
-  static ref EQ_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["eq"];
-  static ref NEQ_ARG_DEFS: &'static [FnDef] = &FN_SIGNATURE_DEFS["neq"];
+  static ref ADD_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["add"].signatures;
+  static ref SUB_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["sub"].signatures;
+  static ref MUL_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["mul"].signatures;
+  static ref DIV_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["div"].signatures;
+  static ref MOD_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["mod"].signatures;
+  static ref GT_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["gt"].signatures;
+  static ref LT_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["lt"].signatures;
+  static ref GTE_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["gte"].signatures;
+  static ref LTE_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["lte"].signatures;
+  static ref EQ_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["eq"].signatures;
+  static ref NEQ_ARG_DEFS: &'static [FnSignature] = &FN_SIGNATURE_DEFS["neq"].signatures;
 }
 
 impl BinOp {
@@ -555,15 +555,20 @@ impl BinOp {
         neq_impl(def_ix, &lhs, &rhs)
       }
       BinOp::And => {
-        let def_ix = get_binop_def_ix("and", &FN_SIGNATURE_DEFS["and"], &lhs, &rhs)?;
+        let def_ix = get_binop_def_ix("and", &FN_SIGNATURE_DEFS["and"].signatures, &lhs, &rhs)?;
         and_impl(ctx, def_ix, &lhs, &rhs)
       }
       BinOp::Or => {
-        let def_ix = get_binop_def_ix("or", &FN_SIGNATURE_DEFS["or"], &lhs, &rhs)?;
+        let def_ix = get_binop_def_ix("or", &FN_SIGNATURE_DEFS["or"].signatures, &lhs, &rhs)?;
         or_impl(ctx, def_ix, &lhs, &rhs)
       }
       BinOp::BitAnd => {
-        let def_ix = get_binop_def_ix("bit_and", &FN_SIGNATURE_DEFS["bit_and"], &lhs, &rhs)?;
+        let def_ix = get_binop_def_ix(
+          "bit_and",
+          &FN_SIGNATURE_DEFS["bit_and"].signatures,
+          &lhs,
+          &rhs,
+        )?;
         bit_and_impl(ctx, def_ix, &lhs, &rhs)
       }
       BinOp::Range => eval_range(lhs, rhs, false),
@@ -577,12 +582,17 @@ impl BinOp {
         }
 
         // maybe it's a bit-or
-        let def_ix = get_binop_def_ix("bit_or", &FN_SIGNATURE_DEFS["bit_or"], &lhs, &rhs)?;
+        let def_ix = get_binop_def_ix(
+          "bit_or",
+          &FN_SIGNATURE_DEFS["bit_or"].signatures,
+          &lhs,
+          &rhs,
+        )?;
         bit_or_impl(ctx, def_ix, &lhs, &rhs)
       }
       BinOp::Map => {
         // this operator acts the same as `lhs | map(rhs)`
-        let def_ix = get_binop_def_ix("map", &FN_SIGNATURE_DEFS["map"], &rhs, &lhs)?;
+        let def_ix = get_binop_def_ix("map", &FN_SIGNATURE_DEFS["map"].signatures, &rhs, &lhs)?;
         map_impl(ctx, def_ix, &rhs, &lhs)
       }
     }
@@ -600,15 +610,15 @@ impl PrefixOp {
   pub fn apply(&self, val: Value) -> Result<Value, ErrorStack> {
     match self {
       PrefixOp::Neg => {
-        let def_ix = get_unop_def_ix("neg", &FN_SIGNATURE_DEFS["neg"], &val)?;
+        let def_ix = get_unop_def_ix("neg", &FN_SIGNATURE_DEFS["neg"].signatures, &val)?;
         neg_impl(def_ix, &val)
       }
       PrefixOp::Pos => {
-        let def_ix = get_unop_def_ix("pos", &FN_SIGNATURE_DEFS["pos"], &val)?;
+        let def_ix = get_unop_def_ix("pos", &FN_SIGNATURE_DEFS["pos"].signatures, &val)?;
         pos_impl(def_ix, &val)
       }
       PrefixOp::Not => {
-        let def_ix = get_unop_def_ix("not", &FN_SIGNATURE_DEFS["not"], &val)?;
+        let def_ix = get_unop_def_ix("not", &FN_SIGNATURE_DEFS["not"].signatures, &val)?;
         not_impl(def_ix, &val)
       }
     }
@@ -1288,7 +1298,7 @@ fn pre_resolve_expr_type(
         }
         BinOp::Map => return Some(ArgType::Sequence),
       };
-      let builtin_arg_defs = FN_SIGNATURE_DEFS[builtin_name];
+      let builtin_arg_defs = FN_SIGNATURE_DEFS[builtin_name].signatures;
 
       let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
       let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
@@ -1313,9 +1323,15 @@ fn pre_resolve_expr_type(
       let arg_ty = pre_resolve_expr_type(ctx, scope_tracker, expr)?;
       let example_val = arg_ty.build_example_val()?;
       let return_ty_res = match op {
-        PrefixOp::Neg => get_unop_return_ty("neg", &FN_SIGNATURE_DEFS["neg"], &example_val),
-        PrefixOp::Pos => get_unop_return_ty("pos", &FN_SIGNATURE_DEFS["pos"], &example_val),
-        PrefixOp::Not => get_unop_return_ty("not", &FN_SIGNATURE_DEFS["not"], &example_val),
+        PrefixOp::Neg => {
+          get_unop_return_ty("neg", &FN_SIGNATURE_DEFS["neg"].signatures, &example_val)
+        }
+        PrefixOp::Pos => {
+          get_unop_return_ty("pos", &FN_SIGNATURE_DEFS["pos"].signatures, &example_val)
+        }
+        PrefixOp::Not => {
+          get_unop_return_ty("not", &FN_SIGNATURE_DEFS["not"].signatures, &example_val)
+        }
       };
       match return_ty_res {
         Ok(return_tys) => {
@@ -1460,12 +1476,17 @@ fn maybe_pre_resolve_bulitin_call_signature(
     return Ok(None);
   };
 
-  let defs = match FN_SIGNATURE_DEFS.get(name) {
-    Some(defs) => *defs,
+  let sigs = match FN_SIGNATURE_DEFS.get(name) {
+    Some(defs) => &defs.signatures,
     None => match FUNCTION_ALIASES.get(name) {
-      Some(alias) => FN_SIGNATURE_DEFS.get(alias).unwrap_or_else(|| {
-        panic!("Alias {name} points to unknown function {alias}");
-      }),
+      Some(alias) => {
+        &FN_SIGNATURE_DEFS
+          .get(alias)
+          .unwrap_or_else(|| {
+            panic!("Alias {name} points to unknown function {alias}");
+          })
+          .signatures
+      }
       None => {
         return Err(ErrorStack::new(format!(
           "Variable or function not found: {name}",
@@ -1474,7 +1495,7 @@ fn maybe_pre_resolve_bulitin_call_signature(
     },
   };
 
-  let resolved_sig = get_args(name, defs, &args, &kwargs)?;
+  let resolved_sig = get_args(name, sigs, &args, &kwargs)?;
   match resolved_sig {
     GetArgsOutput::Valid { def_ix, arg_refs } => {
       Ok(Some(PreResolvedSignature { def_ix, arg_refs }))
@@ -1592,11 +1613,16 @@ fn fold_constants<'a>(
         } else {
           // try to resolve it as a builtin
           let defs = match FN_SIGNATURE_DEFS.get(name) {
-            Some(defs) => *defs,
+            Some(defs) => &defs.signatures,
             None => match FUNCTION_ALIASES.get(name) {
-              Some(alias) => FN_SIGNATURE_DEFS.get(alias).unwrap_or_else(|| {
-                panic!("Alias {name} points to unknown function {alias}");
-              }),
+              Some(alias) => {
+                &FN_SIGNATURE_DEFS
+                  .get(alias)
+                  .unwrap_or_else(|| {
+                    panic!("Alias {name} points to unknown function {alias}");
+                  })
+                  .signatures
+              }
               None => {
                 return Err(ErrorStack::new(format!(
                   "Variable or function not found: {name}",
@@ -1738,11 +1764,16 @@ fn fold_constants<'a>(
 
       if FN_SIGNATURE_DEFS.contains_key(id) || FUNCTION_ALIASES.contains_key(id) {
         let fn_signature_defs = match FN_SIGNATURE_DEFS.get(id) {
-          Some(defs) => *defs,
+          Some(defs) => &defs.signatures,
           None => match FUNCTION_ALIASES.get(id) {
-            Some(alias) => FN_SIGNATURE_DEFS.get(alias).unwrap_or_else(|| {
-              panic!("Alias {id} points to unknown function {alias}");
-            }),
+            Some(alias) => {
+              FN_SIGNATURE_DEFS
+                .get(alias)
+                .unwrap_or_else(|| {
+                  panic!("Alias {id} points to unknown function {alias}");
+                })
+                .signatures
+            }
             None => unreachable!(),
           },
         };

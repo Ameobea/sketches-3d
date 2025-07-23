@@ -1,4 +1,4 @@
-export interface BuiltinFnDef {
+export interface BuiltinFnSignature {
   arg_defs: ArgDef[];
   description: string;
   return_type: string[];
@@ -11,4 +11,9 @@ export interface ArgDef {
   description: string;
 }
 
-export type BuiltinFnDefs = Record<string, BuiltinFnDef[]>;
+export interface BuiltinFnDef {
+  module: string;
+  signatures: BuiltinFnSignature[];
+}
+
+export type BuiltinFnDefs = Record<string, BuiltinFnDef>;

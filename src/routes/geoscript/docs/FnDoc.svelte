@@ -2,14 +2,14 @@
   import type { BuiltinFnDef } from './types';
 
   export let name: string;
-  export let signatures: BuiltinFnDef[];
+  export let def: BuiltinFnDef;
 </script>
 
 <div class="root">
   <h3 class="fn-name" id={name}>
     <a href={`#${name}`} class="anchor-link" aria-label="Link to this function">{name}</a>
   </h3>
-  {#each signatures as sig, i}
+  {#each def.signatures as sig, i}
     <div class="fn-signature">
       <div class="signature-line">
         <span class="sig-name">{name}</span>
@@ -82,6 +82,7 @@
     margin-bottom: 18px;
     margin-top: 0;
     position: relative;
+    scroll-margin-top: 70px;
   }
 
   .anchor-link {
@@ -91,6 +92,7 @@
 
   .fn-name:hover .anchor-link {
     opacity: 1;
+    color: #cfcfcf;
   }
 
   .fn-signature {
@@ -140,6 +142,13 @@
     color: #fabd2f;
   }
 
+  .arg-name,
+  .arg-types,
+  .return-type {
+    overflow-wrap: break-word;
+    white-space: nowrap;
+  }
+
   .sig-description {
     margin-bottom: 8px;
     color: #b8b8d0;
@@ -166,6 +175,7 @@
 
   .arg-desc {
     color: #bbbbbb;
+    font-size: 15.4px;
   }
 
   .arg-default::before {
@@ -173,5 +183,34 @@
     color: #fe8019;
     margin: 0 4px 4px;
     font-style: normal;
+  }
+
+  @media (max-width: 600px) {
+    .root {
+      padding: 4px 12px 8px 12px;
+    }
+
+    .fn-signature {
+      margin-left: 8px;
+      margin-bottom: 8px;
+      padding: 6px 8px;
+    }
+
+    .fn-name {
+      font-size: 24px;
+      scroll-margin-top: 110px;
+    }
+
+    .signature-line {
+      font-size: 14px;
+    }
+
+    .arg-description {
+      font-size: 14px;
+    }
+
+    .sig-description {
+      font-size: 14px;
+    }
   }
 </style>
