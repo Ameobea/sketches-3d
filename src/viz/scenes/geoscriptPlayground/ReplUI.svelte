@@ -40,6 +40,8 @@
     saveState,
     setLastRunWasSuccessful,
   } from './persistence';
+  import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
+  import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
 
   let {
     viz,
@@ -439,29 +441,70 @@
     );
   });
 
-  const loader = new THREE.ImageBitmapLoader();
-  let customMaterials: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
-    $derived.by(() => {
-      const builtMats: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
-        {};
+  interface MatEntry {
+    promise: Promise<THREE.Material>;
+    resolved: THREE.Material | null;
+    beforeRenderCb?: (curTimeSeconds: number) => void;
+  }
 
-      // TODO: needs hashing to avoid re-building materials that haven't changed
-      // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
-      for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
-        const matP = buildMaterial(loader, def, id);
-        const entry: { promise: Promise<THREE.Material>; resolved: THREE.Material | null } = {
-          promise: matP instanceof Promise ? matP : Promise.resolve(matP),
-          resolved: matP instanceof Promise ? null : matP,
-        };
-        if (matP instanceof Promise) {
-          matP.then(mat => {
-            entry.resolved = mat;
-          });
+  const loader = new THREE.ImageBitmapLoader();
+  let customMaterials: Record<string, MatEntry> = $derived.by(() => {
+    const builtMats: Record<string, MatEntry> = {};
+
+    // TODO: needs hashing to avoid re-building materials that haven't changed
+    // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
+    for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
+      const matMaybeP = buildMaterial(loader, def, id);
+      const entry: MatEntry = {
+        promise: matMaybeP instanceof Promise ? matMaybeP : Promise.resolve(matMaybeP),
+        resolved: matMaybeP instanceof Promise ? null : matMaybeP,
+      };
+
+      const maybeRegisterBeforeRenderCb = (mat: THREE.Material) => {
+        if (
+          !(mat instanceof CustomShaderMaterial || mat instanceof CustomBasicShaderMaterial) ||
+          !def.shaders
+        ) {
+          return;
         }
-        builtMats[id] = entry;
+
+        if (
+          def.shaders.color ||
+          (def.type === 'physical' &&
+            (def.shaders.iridescence || def.shaders.metalness || def.shaders.roughness))
+        ) {
+          const beforeRenderCb = (curTimeSeconds: number) => mat.setCurTimeSeconds(curTimeSeconds);
+          viz.registerBeforeRenderCb(beforeRenderCb);
+          entry.beforeRenderCb = beforeRenderCb;
+        }
+      };
+
+      if (matMaybeP instanceof Promise) {
+        matMaybeP.then(mat => {
+          maybeRegisterBeforeRenderCb(mat);
+          entry.resolved = mat;
+        });
+      } else {
+        maybeRegisterBeforeRenderCb(matMaybeP);
       }
-      return builtMats;
-    });
+      builtMats[id] = entry;
+    }
+    return builtMats;
+  });
+
+  // avoid a ton of before render callbacks from being stuck around, which also prevents
+  // old materials from being garbage collected
+  $effect(() => {
+    const customMatVals = Object.values(customMaterials);
+    return () => {
+      for (const matEntry of customMatVals) {
+        if (matEntry.beforeRenderCb) {
+          console.log('cleaning up cb');
+          viz.unregisterBeforeRenderCb(matEntry.beforeRenderCb);
+        }
+      }
+    };
+  });
 
   let didInitMats = false;
   $effect(() => {

@@ -80,9 +80,10 @@ const apiFetch = async <T>(
   path: string,
   options: RequestInit = {},
   fetch: typeof globalThis.fetch = globalThis.fetch,
-  binary = false
+  binary = false,
+  baseUrl = INTERNAL_PROXY_GEOTOY_API_BASE_URL
 ): Promise<T> => {
-  const res = await fetch(`${INTERNAL_PROXY_GEOTOY_API_BASE_URL}${path}`, {
+  const res = await fetch(`${baseUrl}${path}`, {
     ...options,
     credentials: 'include',
     headers: {
@@ -172,12 +173,15 @@ export const getComposition = (
   id: number,
   fetch: typeof globalThis.fetch = globalThis.fetch,
   sessionID?: string,
-  adminToken?: string
+  adminToken?: string,
+  baseURL?: string
 ): Promise<Composition> =>
   apiFetch<Composition>(
     `/compositions/${id}${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
     sessionID ? { headers: { session_id: sessionID } } : {},
-    fetch
+    fetch,
+    undefined,
+    baseURL
   );
 
 export interface UpdateCompositionPatch {
@@ -215,12 +219,15 @@ export const getCompositionLatest = (
   id: number,
   fetch: typeof globalThis.fetch = globalThis.fetch,
   sessionID?: string,
-  adminToken?: string
+  adminToken?: string,
+  baseUrl?: string
 ): Promise<CompositionVersion> =>
   apiFetch<CompositionVersion>(
     `/compositions/${id}/latest${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
     sessionID ? { headers: { session_id: sessionID } } : {},
-    fetch
+    fetch,
+    undefined,
+    baseUrl
   );
 
 export const getCompositionVersion = (
@@ -228,12 +235,15 @@ export const getCompositionVersion = (
   version: number,
   fetch: typeof globalThis.fetch = globalThis.fetch,
   sessionID?: string,
-  adminToken?: string
+  adminToken?: string,
+  baseUrl?: string
 ): Promise<CompositionVersion> =>
   apiFetch<CompositionVersion>(
     `/compositions/${id}/version/${version}${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
     sessionID ? { headers: { session_id: sessionID } } : {},
-    fetch
+    fetch,
+    undefined,
+    baseUrl
   );
 
 export const deleteComposition = (id: number): Promise<void> =>

@@ -1378,7 +1378,7 @@ impl EvalCtx {
       type_hint.validate_val(&value)?;
     }
 
-    scope.insert(ident.to_owned(), value.clone());
+    scope.insert(ident.to_owned(), value);
     Ok(Value::Nil)
   }
 
@@ -1672,23 +1672,19 @@ impl EvalCtx {
               expr,
               type_hint,
             } => {
-              self.eval_assignment(
-                name,
-                match self.eval_expr(expr, &closure_scope)? {
-                  ControlFlow::Continue(val) => val,
-                  ControlFlow::Return(val) => {
-                    out = val;
-                    break;
-                  }
-                  ControlFlow::Break(_) => {
-                    return Err(ErrorStack::new(
-                      "`break` isn't valid at the top level of a closure",
-                    ))
-                  }
-                },
-                &closure_scope,
-                *type_hint,
-              )?;
+              let val = match self.eval_expr(expr, &closure_scope)? {
+                ControlFlow::Continue(val) => val,
+                ControlFlow::Return(val) => {
+                  out = val;
+                  break;
+                }
+                ControlFlow::Break(_) => {
+                  return Err(ErrorStack::new(
+                    "`break` isn't valid at the top level of a closure",
+                  ))
+                }
+              };
+              self.eval_assignment(name, val, &closure_scope, *type_hint)?;
             }
             Statement::Return { value } => {
               out = if let Some(value) = value {
@@ -2872,7 +2868,7 @@ x = 0
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = dbg!(ctx.globals).get("x").unwrap();
+  let x = ctx.globals.get("x").unwrap();
   let x = x.as_int().expect("Expected result to be an Int");
   assert_eq!(x, 1);
 }
@@ -3093,4 +3089,86 @@ c = b | reduce(add)
   };
   let b = b.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
   assert_eq!(b.len(), 8);
+}
+
+#[test]
+fn test_shadow_global_in_closure_repro() {
+  let src = r#"
+resolution = 2
+radius = 10
+
+contours = 1..=2 -> |y_ix| {
+  radius = radius + sin(y_ix * 1.2) * 1000
+  radius
+}
+
+a = contours | first
+b = contours | skip(1) | first
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let a = a.as_float().expect("Expected result to be a Float");
+  assert!(a != 10., "Expected a to not be 10, found: {}", a);
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_float().expect("Expected result to be a Float");
+  assert!(b != 10., "Expected b to not be 10, found: {}", b);
+
+  let seq = match ctx.globals.get("contours") {
+    Some(Value::Sequence(seq)) => seq,
+    other => panic!("Expected contours to be a seq, found: {other:?}"),
+  };
+  let seq: &dyn Any = &*seq;
+  let MapSeq { inner: _, cb }: &MapSeq = seq.downcast_ref::<MapSeq>().unwrap();
+  let closure = match cb {
+    Callable::Closure(closure) => closure,
+    _ => unreachable!(),
+  };
+  let body = &closure.body;
+  let assignment_rhs = match body.first().unwrap() {
+    Statement::Assignment { expr, .. } => expr,
+    _ => unreachable!(),
+  };
+  // the const radius should be inlined
+  let lhs = match assignment_rhs {
+    Expr::BinOp { lhs, .. } => &**lhs,
+    _ => unreachable!(),
+  };
+  assert!(matches!(lhs, Expr::Literal(Value::Int(10))));
+
+  // the `radius` returned at the end should not be inlined since its value depends on the closure
+  // argument
+  match body.last().unwrap() {
+    Statement::Expr(expr) => match expr {
+      Expr::Ident(ident) => {
+        assert_eq!(ident, "radius");
+      }
+      _ => panic!("Expected last expression to be an ident, found: {expr:?}"),
+    },
+    _ => unreachable!(),
+  }
+}
+
+#[test]
+fn test_shadow_global_in_closure_repro_2() {
+  let src = r#"
+radius = 10
+
+contours = 1..2 -> |y_ix| {
+  1..2 -> |i| {
+    radius = radius + y_ix * 1
+    radius
+  }
+}
+
+x = contours | first | first
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.globals.get("x").unwrap();
+  let x = x.as_float().expect("Expected result to be a Float");
+  assert_eq!(x, 10. + 1. * 1.);
 }

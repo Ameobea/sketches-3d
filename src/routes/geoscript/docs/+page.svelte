@@ -1,9 +1,10 @@
 <script lang="ts">
+  import fuzzysort from 'fuzzysort';
+
   import type { PageData } from './$types';
   import FnDoc from './FnDoc.svelte';
   import './docs.css';
   import type { BuiltinFnDef } from './types';
-  import fuzzysort from 'fuzzysort';
 
   let { data }: { data: PageData } = $props();
 
@@ -213,6 +214,8 @@
     border-top: none;
     max-height: 400px;
     overflow-y: auto;
+    margin-left: -70px;
+    margin-right: 50px;
   }
 
   .search-result-item {
@@ -279,6 +282,11 @@
       max-width: calc(100% - 28px);
       margin-left: auto;
       margin-right: auto;
+    }
+
+    .search-results {
+      margin-left: unset;
+      margin-right: unset;
     }
 
     .toc {

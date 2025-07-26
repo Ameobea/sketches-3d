@@ -1,8 +1,8 @@
 use paste::paste;
-use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::marker::ConstParamTy;
 use std::rc::Rc;
+use std::{cell::RefCell, fmt::Display};
 
 use fxhash::FxHashMap;
 use mesh::{
@@ -15,6 +15,7 @@ use parry3d::math::{Isometry, Point};
 use parry3d::query::Ray;
 use rand::Rng;
 
+use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
   mesh_ops::{
@@ -988,6 +989,14 @@ fn mesh_impl(
         material: None,
       })))
     }
+    1 => Ok(Value::Mesh(Rc::new(MeshHandle {
+      mesh: Rc::new(LinkedMesh::default()),
+      transform: Matrix4::identity(),
+      manifold_handle: Rc::new(ManifoldHandle::new(0)),
+      aabb: RefCell::new(None),
+      trimesh: RefCell::new(None),
+      material: None,
+    }))),
     _ => unimplemented!(),
   }
 }
@@ -1091,10 +1100,21 @@ fn randv_impl(
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
 ) -> Result<Value, ErrorStack> {
+  fn invalid_bounds_err(min: impl Display, max: impl Display) -> ErrorStack {
+    ErrorStack::new(format!(
+      "Invalid range for rand_vec3: min ({min}) must be less than or equal to max ({max})"
+    ))
+  }
+
   match def_ix {
     0 => {
       let min = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
       let max = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      if min == max {
+        return Ok(Value::Vec3(*min));
+      } else if min.x > max.x || min.y > max.y || min.z > max.z {
+        return Err(invalid_bounds_err(min, max));
+      }
       Ok(Value::Vec3(Vec3::new(
         ctx.rng().gen_range(min.x..max.x),
         ctx.rng().gen_range(min.y..max.y),
@@ -1104,6 +1124,11 @@ fn randv_impl(
     1 => {
       let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
       let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      if min > max {
+        return Err(invalid_bounds_err(min, max));
+      } else if min == max {
+        return Ok(Value::Vec3(Vec3::new(min, min, min)));
+      }
       Ok(Value::Vec3(Vec3::new(
         ctx.rng().gen_range(min..max),
         ctx.rng().gen_range(min..max),
@@ -1438,6 +1463,33 @@ fn torus_knot_path_impl(
 
       Ok(Value::Sequence(Box::new(IteratorSeq {
         inner: build_torus_knot_path(radius, tube_radius, p, q, count).map(|v| Ok(Value::Vec3(v))),
+      })))
+    }
+    _ => unreachable!(),
+  }
+}
+
+fn lissajous_knot_path_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let amp = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let freq = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      let phase = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
+      let count = arg_refs[3].resolve(args, &kwargs).as_int().unwrap();
+      if count < 1 {
+        return Err(ErrorStack::new(format!(
+          "Invalid count for lissajous knot path: {count}; must be >= 1"
+        )));
+      }
+
+      Ok(Value::Sequence(Box::new(IteratorSeq {
+        inner: build_lissajous_knot_path(*amp, *freq, *phase, count as usize)
+          .map(|v| Ok(Value::Vec3(v))),
       })))
     }
     _ => unreachable!(),
@@ -3952,6 +4004,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "torus_knot_path" => builtin_fn!(torus_knot_path, |def_ix, arg_refs, args, kwargs, _ctx| {
     torus_knot_path_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "lissajous_knot_path" => builtin_fn!(lissajous_knot_path, |def_ix, arg_refs, args, kwargs, _ctx| {
+    lissajous_knot_path_impl(def_ix, arg_refs, args, kwargs)
   }),
   "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, _ctx| {
     extrude_impl(def_ix, arg_refs, args, kwargs)

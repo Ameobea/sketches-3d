@@ -17,9 +17,6 @@ const config = {
   },
   viteOptions: {
     experimental: {
-      inspector: {
-        holdMode: true,
-      },
       prebundleSvelteLibraries: true,
     },
   },

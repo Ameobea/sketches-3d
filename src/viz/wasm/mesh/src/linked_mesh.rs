@@ -1026,9 +1026,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     face.vertices[vtx_key_ix_to_alter] = new_vtx_key;
   }
 
-  /// Returns `true` when the mesh is a single connected component.  This check assumes that the
-  /// mesh consists of a single connected component.  If there are islands or disconnected parts,
-  /// this may produce incorrect results.
+  /// This check assumes that the mesh consists of a single connected component.  If there are
+  /// islands or disconnected parts, this may produce incorrect results.
   ///
   /// If `TWO_MANIFOLD` is `true`, additionally enforces that every edge is shared by *exactly* two
   /// faces, meaning that the mesh is watertight and forms a continuous surface.

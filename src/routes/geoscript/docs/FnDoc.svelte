@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Example from './Example.svelte';
   import type { BuiltinFnDef } from './types';
 
   export let name: string;
@@ -9,6 +10,9 @@
   <h3 class="fn-name" id={name}>
     <a href={`#${name}`} class="anchor-link" aria-label="Link to this function">{name}</a>
   </h3>
+  {#each def.examples as example}
+    <Example {example} />
+  {/each}
   {#each def.signatures as sig, i}
     <div class="fn-signature">
       <div class="signature-line">
@@ -205,7 +209,7 @@
       font-size: 14px;
     }
 
-    .arg-description {
+    .arg-desc {
       font-size: 14px;
     }
 

@@ -290,13 +290,16 @@ impl Expr {
         // an arg in the local scope means it's an actual argument rather than a capture or
         // something from an outer scope
         Some(TrackedValue::Arg(_)) => false,
+        Some(TrackedValue::Dyn) => true,
         None => match local_scope.parent {
           Some(parent) => match parent.get(id) {
             Some(TrackedValueRef::Const(resolved)) => {
               *self = Expr::Literal(resolved.clone());
               false
             }
+            // arg in the parent scope is dyn
             Some(TrackedValueRef::Arg(_)) => true,
+            Some(TrackedValueRef::Dyn) => true,
             None => true,
           },
           None => true,
@@ -316,6 +319,7 @@ impl Expr {
         else_expr,
       } => {
         if cond.inline_const_captures(local_scope) {
+          // TODO: should we really be early returning here?
           return true;
         }
         if then.inline_const_captures(local_scope) {
@@ -429,6 +433,37 @@ impl ClosureBody {
     for stmt in &mut self.0 {
       if stmt.inline_const_captures(closure_scope) {
         references_dyn_captures = true;
+      }
+      if let Statement::Assignment {
+        name,
+        expr,
+        type_hint: _,
+      } = stmt
+      {
+        // if this variable has already been de-constified in the scope, we avoid overwriting it
+        let is_deconstified = match closure_scope.get(name) {
+          Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn) => true,
+          Some(TrackedValueRef::Const(_)) => false,
+          None => false,
+        };
+
+        if !is_deconstified {
+          let tracked_val = match expr.as_literal() {
+            Some(literal) => TrackedValue::Const(literal),
+            None => {
+              let dyn_type = get_dyn_type(expr, closure_scope);
+              match dyn_type {
+                DynType::Arg => TrackedValue::Arg(ClosureArg {
+                  name: name.clone(),
+                  type_hint: None,
+                  default_val: None,
+                }),
+                DynType::Const | DynType::Dyn => TrackedValue::Dyn,
+              }
+            }
+          };
+          closure_scope.set(name.clone(), tracked_val);
+        }
       }
     }
 
@@ -1169,6 +1204,8 @@ enum TrackedValue {
   Const(Value),
   /// Value is a closure argument and isn't available during const eval
   Arg(ClosureArg),
+  /// Value is a non-const variable, either directly from or derived from an enclosing scope
+  Dyn,
 }
 
 impl TrackedValue {
@@ -1176,6 +1213,7 @@ impl TrackedValue {
     match self {
       TrackedValue::Const(val) => TrackedValueRef::Const(val),
       TrackedValue::Arg(arg) => TrackedValueRef::Arg(arg),
+      TrackedValue::Dyn => TrackedValueRef::Dyn,
     }
   }
 }
@@ -1184,6 +1222,7 @@ impl TrackedValue {
 enum TrackedValueRef<'a> {
   Const(&'a Value),
   Arg(&'a ClosureArg),
+  Dyn,
 }
 
 #[derive(Default, Debug)]
@@ -1231,6 +1270,7 @@ fn pre_resolve_expr_type(
           return None;
         }
       }
+      Some(TrackedValueRef::Dyn) => None,
       None => {
         // error will happen later
         return None;
@@ -1609,6 +1649,7 @@ fn fold_constants<'a>(
             },
             // calling a closure argument or dynamic captured variable
             TrackedValueRef::Arg(_) => (),
+            TrackedValueRef::Dyn => (),
           }
         } else {
           // try to resolve it as a builtin
@@ -1679,6 +1720,7 @@ fn fold_constants<'a>(
                 }
               },
               TrackedValueRef::Arg(_) => (),
+              TrackedValueRef::Dyn => (),
             }
             return Ok(());
           } else {
@@ -1724,6 +1766,18 @@ fn fold_constants<'a>(
 
       for stmt in &mut body.0 {
         optimize_statement(ctx, &mut closure_scope, stmt)?;
+      }
+
+      for (name, val) in closure_scope.vars.iter() {
+        match val {
+          TrackedValue::Dyn => {
+            local_scope_with_args.set(name.clone(), TrackedValue::Dyn);
+          }
+          TrackedValue::Arg(arg) => {
+            local_scope_with_args.set(name.clone(), TrackedValue::Arg(arg.clone()));
+          }
+          TrackedValue::Const(_) => (),
+        }
       }
 
       for param in params.iter() {
@@ -1946,6 +2000,167 @@ fn optimize_expr<'a>(
   fold_constants(ctx, local_scope, expr)
 }
 
+/// This helps differentiate between "true" dyn values (like the output from `randi()`, for example)
+/// and dynamic values that depend only on constants and closure arguments.
+///
+/// This allows closures to be differentiated between those that are completely const and depend on
+/// no non-const external values and those that can be const eval'd but depend on args.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum DynType {
+  Const,
+  Arg,
+  Dyn,
+}
+
+impl std::ops::BitOr for DynType {
+  type Output = Self;
+
+  fn bitor(self, rhs: Self) -> Self::Output {
+    if self == DynType::Dyn || rhs == DynType::Dyn {
+      DynType::Dyn
+    } else if self == DynType::Arg || rhs == DynType::Arg {
+      DynType::Arg
+    } else {
+      DynType::Const
+    }
+  }
+}
+
+fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
+  match expr {
+    Expr::BinOp { op: _, lhs, rhs } => {
+      let lhs_type = get_dyn_type(lhs, local_scope);
+      let rhs_type = get_dyn_type(rhs, local_scope);
+      lhs_type | rhs_type
+    }
+    Expr::PrefixOp { op: _, expr } => get_dyn_type(expr, local_scope),
+    Expr::Range {
+      start,
+      end,
+      inclusive: _,
+    } => {
+      let start_type = get_dyn_type(start, local_scope);
+      let end_type = get_dyn_type(end, local_scope);
+      start_type | end_type
+    }
+    Expr::StaticFieldAccess { lhs, field: _ } => get_dyn_type(lhs, local_scope),
+    Expr::FieldAccess { lhs, field } => {
+      get_dyn_type(lhs, local_scope) | get_dyn_type(field, local_scope)
+    }
+    Expr::Call(FunctionCall {
+      target: _,
+      args,
+      kwargs,
+    }) => {
+      let mut dyn_type = DynType::Const;
+      for arg in args {
+        dyn_type = dyn_type | get_dyn_type(arg, local_scope);
+      }
+      for kwarg in kwargs.values() {
+        dyn_type = dyn_type | get_dyn_type(kwarg, local_scope);
+      }
+
+      dyn_type
+    }
+    Expr::Closure {
+      params,
+      body,
+      return_type_hint: _,
+    } => {
+      let mut dyn_type = DynType::Const;
+      for param in params {
+        if let Some(default_val) = &param.default_val {
+          dyn_type = dyn_type | get_dyn_type(default_val, local_scope);
+        } else {
+          dyn_type = dyn_type | DynType::Arg;
+        }
+      }
+      for stmt in &body.0 {
+        match stmt {
+          Statement::Expr(expr) => {
+            dyn_type = dyn_type | get_dyn_type(expr, local_scope);
+          }
+          Statement::Assignment { expr, .. } => {
+            dyn_type = dyn_type | get_dyn_type(expr, local_scope);
+          }
+          Statement::Return { value } => {
+            if let Some(value) = value {
+              dyn_type = dyn_type | get_dyn_type(value, local_scope);
+            }
+          }
+          Statement::Break { value } => {
+            if let Some(value) = value {
+              dyn_type = dyn_type | get_dyn_type(value, local_scope);
+            }
+          }
+        }
+      }
+      dyn_type
+    }
+    Expr::Ident(name) => match local_scope.vars.get(name) {
+      Some(TrackedValue::Const(_)) => DynType::Const,
+      Some(TrackedValue::Arg(_)) => DynType::Arg,
+      Some(TrackedValue::Dyn) => DynType::Dyn,
+      None => match local_scope.parent {
+        Some(parent) => match parent.get(name) {
+          Some(TrackedValueRef::Const(_)) => DynType::Const,
+          // closure args from the parent scope aren't part of the pure scope of the current
+          // closure, so we have to treat them as true dyn
+          Some(TrackedValueRef::Arg(_)) => DynType::Dyn,
+          Some(TrackedValueRef::Dyn) => DynType::Dyn,
+          None => DynType::Dyn,
+        },
+        None => DynType::Dyn,
+      },
+    },
+    Expr::ArrayLiteral(exprs) => exprs.iter().fold(DynType::Const, |acc, expr| {
+      acc | get_dyn_type(expr, local_scope)
+    }),
+    Expr::MapLiteral(map) => map.values().fold(DynType::Const, |acc, expr| {
+      acc | get_dyn_type(expr, local_scope)
+    }),
+    Expr::Literal(_) => DynType::Const,
+    Expr::Conditional {
+      cond,
+      then,
+      else_if_exprs,
+      else_expr,
+    } => {
+      let mut dyn_type = get_dyn_type(cond, local_scope);
+      dyn_type = dyn_type | get_dyn_type(then, local_scope);
+      for (cond, inner) in else_if_exprs {
+        dyn_type = dyn_type | get_dyn_type(cond, local_scope);
+        dyn_type = dyn_type | get_dyn_type(inner, local_scope);
+      }
+      if let Some(else_expr) = else_expr {
+        dyn_type = dyn_type | get_dyn_type(else_expr, local_scope);
+      }
+      dyn_type
+    }
+    Expr::Block { statements } => statements.iter().fold(DynType::Const, |acc, stmt| {
+      let dyn_type = match stmt {
+        Statement::Expr(expr) => get_dyn_type(expr, local_scope),
+        Statement::Assignment { expr, .. } => get_dyn_type(expr, local_scope),
+        Statement::Return { value } => {
+          if let Some(value) = value {
+            get_dyn_type(value, local_scope)
+          } else {
+            DynType::Const
+          }
+        }
+        Statement::Break { value } => {
+          if let Some(value) = value {
+            get_dyn_type(value, local_scope)
+          } else {
+            DynType::Const
+          }
+        }
+      };
+      acc | dyn_type
+    }),
+  }
+}
+
 fn optimize_statement<'a>(
   ctx: &EvalCtx,
   local_scope: &'a mut ScopeTracker,
@@ -1963,11 +2178,17 @@ fn optimize_statement<'a>(
         name.clone(),
         match expr.as_literal() {
           Some(val) => TrackedValue::Const(val),
-          None => TrackedValue::Arg(ClosureArg {
-            name: name.clone(),
-            type_hint: None,
-            default_val: None,
-          }),
+          None => {
+            let dyn_type = get_dyn_type(&expr, local_scope);
+            match dyn_type {
+              DynType::Arg => TrackedValue::Arg(ClosureArg {
+                name: name.clone(),
+                type_hint: None,
+                default_val: None,
+              }),
+              DynType::Const | DynType::Dyn => TrackedValue::Dyn,
+            }
+          }
         },
       );
       Ok(())
@@ -2230,4 +2451,27 @@ y = cb(2)
     &pre_resolved_sig.arg_refs[1],
     crate::ArgRef::Positional(1)
   ));
+}
+
+#[test]
+fn test_const_eval_with_local_shadowing() {
+  let src = r#"
+x = 1
+fn = |a| {
+  x = x + a
+  x
+}
+y = fn(2)
+"#;
+
+  let mut ast = crate::parse_program_src(src).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+
+  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+    panic!("Expected second statement to be an assignment");
+  };
+  assert_eq!(name, "y");
+  let Expr::Literal(Value::Int(3)) = expr else {
+    panic!("Expected constant folding to produce 3, found: {expr:?}");
+  };
 }

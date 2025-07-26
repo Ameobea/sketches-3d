@@ -1,10 +1,11 @@
+use std::f32::consts::PI;
+
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
 use nanoserde::SerJson;
 
 use crate::{
   lights::{AmbientLight, DirectionalLight},
-  seq::EagerSeq,
   ArgType, Value, Vec2,
 };
 
@@ -50,14 +51,21 @@ impl From<&ArgDef> for SerializableArgDef {
   }
 }
 
+#[derive(Clone, SerJson)]
+pub struct FnExample {
+  pub composition_id: usize,
+}
+
 pub struct FnDef {
   pub module: &'static str,
+  pub examples: &'static [FnExample],
   pub signatures: &'static [FnSignature],
 }
 
 #[derive(SerJson)]
 pub struct SerializableFnDef {
   pub module: &'static str,
+  pub examples: &'static [FnExample],
   pub signatures: Vec<SerializableFnSignature>,
 }
 
@@ -65,6 +73,7 @@ impl SerializableFnDef {
   pub fn new(def: &FnDef) -> Self {
     Self {
       module: def.module,
+      examples: def.examples,
       signatures: SerializableFnSignature::new(def.signatures),
     }
   }
@@ -99,6 +108,7 @@ impl SerializableFnSignature {
 pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_map! {
   "box" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -141,6 +151,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "translate" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 33 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -194,6 +205,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "rot" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -247,6 +259,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "look_at" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -287,13 +300,14 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           },
         ],
-        description: "Orients a mesh to look at a target point.  This replaces any currently applied rotation.",
+        description: "Orients a mesh to look at a target point.  This replaces any currently applied rotation.\n\nThere's a good chance this implementation is broken too...",
         return_type: &[ArgType::Vec3],
       }
     ],
   },
   "scale" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -348,6 +362,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "origin_to_geometry" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -365,6 +380,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "apply_transforms" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -382,6 +398,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "vec2" => FnDef {
     module: "core",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -417,6 +434,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "vec3" => FnDef {
     module: "core",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -458,6 +476,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "join" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 31 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -475,6 +494,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "union" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -510,6 +530,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "difference" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 26 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -545,6 +566,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "intersect" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 25 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -580,6 +602,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "fold" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -609,6 +632,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "reduce" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -632,6 +656,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "any" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -655,6 +680,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "all" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -678,6 +704,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "for_each" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -701,6 +728,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "flatten" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -718,6 +746,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "neg" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -771,6 +800,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "pos" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -800,6 +830,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "abs" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -841,6 +872,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "sqrt" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -858,6 +890,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "add" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -989,6 +1022,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "sub" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1077,7 +1111,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: "Mesh to subtract"
           },
         ],
-        description: "Returns the boolean difference of two meshes (`a - b`)",
+        description: "Returns the boolean difference of two meshes (`a - b`).  This is equivalent to the `difference` function.",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -1120,6 +1154,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "mul" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1287,6 +1322,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "div" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1382,6 +1418,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "mod" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1423,6 +1460,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "max" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1482,6 +1520,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "min" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1541,6 +1580,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "clamp" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1618,6 +1658,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "float" => FnDef {
     module: "core",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1635,6 +1676,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "int" => FnDef {
     module: "core",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1652,6 +1694,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "and" => FnDef {
     module: "logic",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1693,6 +1736,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "or" => FnDef {
     module: "logic",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1734,6 +1778,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "xor" => FnDef {
     module: "logic",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1757,6 +1802,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "not" => FnDef {
     module: "logic",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1774,6 +1820,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "bit_and" => FnDef {
     module: "bits",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1815,6 +1862,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "bit_or" => FnDef {
     module: "bits",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1856,6 +1904,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "map" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1897,6 +1946,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "filter" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1920,6 +1970,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "scan" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1949,6 +2000,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "take" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1972,6 +2024,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "skip" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -1995,6 +2048,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "take_while" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2018,6 +2072,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "skip_while" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2041,6 +2096,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "chain"=> FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2058,6 +2114,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "first" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2075,6 +2132,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "reverse" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2092,6 +2150,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "collect" => FnDef {
     module: "seq",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2109,6 +2168,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "print" => FnDef {
     module: "core",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2126,6 +2186,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "render" => FnDef {
     module: "core",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2167,6 +2228,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "sin" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2196,6 +2258,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "cos" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2225,6 +2288,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "tan" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2254,6 +2318,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "sinh" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2283,6 +2348,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "cosh" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2312,6 +2378,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "tanh" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2341,6 +2408,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "pow" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       // TODO: should split into int and float versions
       FnSignature {
@@ -2383,6 +2451,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "exp" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2412,6 +2481,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "log10" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2441,6 +2511,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "log2" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2470,6 +2541,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "ln" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2499,6 +2571,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "trunc" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2528,6 +2601,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "fract" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2557,6 +2631,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "round" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2586,6 +2661,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "ceil" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2615,6 +2691,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "floor" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2644,6 +2721,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "fix_float" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2673,6 +2751,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "rad2deg" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2690,6 +2769,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "deg2rad" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2707,6 +2787,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "gte" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2748,6 +2829,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "lte" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2789,6 +2871,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "gt" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2830,6 +2913,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "lt" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2871,6 +2955,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "eq" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -2984,6 +3069,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "neq" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3097,6 +3183,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "point_distribute" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 28 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3138,6 +3225,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "lerp" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3191,6 +3279,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "smoothstep" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3220,6 +3309,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "linearstep" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3249,6 +3339,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "compose" => FnDef {
     module: "fn",
+    examples: &[FnExample { composition_id: 34 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3278,6 +3369,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "convex_hull" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 23 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3295,6 +3387,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "warp" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 24 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3318,6 +3411,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "tessellate" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3341,6 +3435,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "subdivide_by_plane" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3394,6 +3489,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "split_by_plane" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 29 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3423,6 +3519,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "connected_components" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3440,6 +3537,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "intersects" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3463,6 +3561,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "intersects_ray" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 36 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3498,6 +3597,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "len" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3528,6 +3628,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "distance" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3569,6 +3670,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "normalize" => FnDef {
     module: "math",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3586,6 +3688,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "bezier3d" => FnDef {
     module: "path",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3627,6 +3730,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "superellipse_path" => FnDef {
     module: "path",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3662,6 +3766,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "extrude_pipe" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 8 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3710,6 +3815,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "torus_knot_path" => FnDef {
     module: "path",
+    examples: &[FnExample { composition_id: 13 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3749,55 +3855,45 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       },
     ],
   },
-  "torus_knot" => FnDef {
-    module: "mesh",
+  "lissajous_knot_path" => FnDef {
+    module: "path",
+    examples: &[FnExample { composition_id: 35 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
           ArgDef {
-            name: "radius",
-            valid_types: &[ArgType::Numeric],
-            default_value: DefaultValue::Required,
-            description: ""
+            name: "amp",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(1., 1., 1.))),
+            description: "Amplitude of the Lissajous curve in each axis"
           },
           ArgDef {
-            name: "tube_radius",
-            valid_types: &[ArgType::Numeric],
-            default_value: DefaultValue::Required,
-            description: ""
+            name: "freq",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(3., 5., 7.))),
+            description: "Frequency of the Lissajous curve in each axis.  These should be \"pairwise-coprime\" integers, meaning that the ratio of any two frequencies should not be reducible to a simpler fraction."
           },
           ArgDef {
-            name: "p",
+            name: "phase",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., PI / 2., PI / 5.))),
+            description: "Phase offset of the Lissajous curve in each axis"
+          },
+          ArgDef {
+            name: "count",
             valid_types: &[ArgType::Int],
             default_value: DefaultValue::Required,
-            description: "Number of times the knot wraps around the torus in the longitudinal direction"
-          },
-          ArgDef {
-            name: "q",
-            valid_types: &[ArgType::Int],
-            default_value: DefaultValue::Required,
-            description: "Number of times the knot wraps around the torus in the meridional direction"
-          },
-          ArgDef {
-            name: "point_count",
-            valid_types: &[ArgType::Int],
-            default_value: DefaultValue::Required,
-            description: "Number of points to generate along the path"
-          },
-          ArgDef {
-            name: "tube_resolution",
-            valid_types: &[ArgType::Int],
-            default_value: DefaultValue::Required,
-            description: "Number of segments to use for the tube's circular cross-section"
+            description: "Number of points to sample along the path"
           },
         ],
-        description: "Generates a torus knot mesh with a specified radius, tube radius, and number of twists.",
-        return_type: &[ArgType::Mesh],
-      },
-    ],
+        description: "Generates a sequence of points defining a Lissajous knot path",
+        return_type: &[ArgType::Sequence],
+      }
+    ]
   },
   "extrude" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3821,6 +3917,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "stitch_contours" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 22 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3868,6 +3965,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "trace_geodesic_path" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3915,6 +4013,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "fan_fill" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 27 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3950,6 +4049,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "simplify" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3973,6 +4073,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "verts" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3990,6 +4091,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "randf" => FnDef {
     module: "rand",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4018,6 +4120,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "randi" => FnDef {
     module: "rand",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4046,6 +4149,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "randv" => FnDef {
     module: "rand",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4092,6 +4196,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "fbm" => FnDef {
     module: "rand",
+    examples: &[FnExample { composition_id: 5 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4151,6 +4256,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "icosphere" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4174,6 +4280,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "cylinder" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4209,6 +4316,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "grid" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4238,6 +4346,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "call" => FnDef {
     module: "fn",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4273,29 +4382,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "mesh" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 32 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
           ArgDef {
             name: "verts",
             valid_types: &[ArgType::Sequence],
-            default_value: DefaultValue::Optional(|| Value::Sequence(Box::new(EagerSeq { inner:Vec::new() }))),
+            default_value: DefaultValue::Required,
             description: "Sequence of Vec3 vertices, pointed into by `faces`"
           },
           ArgDef {
             name: "indices",
             valid_types: &[ArgType::Sequence],
-            default_value: DefaultValue::Optional(|| Value::Sequence(Box::new(EagerSeq { inner:Vec::new() }))),
+            default_value: DefaultValue::Required,
             description: "A flag sequence of integer indices corresponding to triangles.  Must have `length % 3 == 0`"
           },
         ],
         description: "Creates a mesh from a sequence of vertices and indices",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[],
+        description: "Creates an empty mesh with no vertices or indices.  This can be useful as the initial value for `fold` or and other situations like that.",
+        return_type: &[ArgType::Mesh],
+      }
     ],
   },
   "dir_light" => FnDef {
     module: "light",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4383,6 +4499,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "ambient_light" => FnDef {
     module: "light",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4406,6 +4523,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "set_material" => FnDef {
     module: "mesh",
+    examples: &[FnExample { composition_id: 30 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4429,6 +4547,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "set_default_material" => FnDef {
     module: "mesh",
+    examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[

@@ -30,6 +30,29 @@ pub fn build_torus_knot_path(
   })
 }
 
+pub fn build_lissajous_knot_path(
+  amp: Vec3,
+  freq: Vec3,
+  phase: Vec3,
+  count: usize,
+) -> impl Iterator<Item = Vec3> + Clone {
+  #[inline(always)]
+  fn sample_lissajous(amp: Vec3, freq: Vec3, phase: Vec3, t: f32) -> Vec3 {
+    let t = 2. * PI * t;
+
+    Vec3::new(
+      amp.x * (freq[0] * t + phase.x).sin(),
+      amp.y * (freq[1] * t + phase.y).sin(),
+      amp.z * (freq[2] * t + phase.z).sin(),
+    )
+  }
+
+  (0..count).map(move |i| {
+    let t = i as f32 / count as f32;
+    sample_lissajous(amp, freq, phase, t)
+  })
+}
+
 fn cubic_bezier_3d(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
   let u = 1. - t;
   let tt = t * t;
