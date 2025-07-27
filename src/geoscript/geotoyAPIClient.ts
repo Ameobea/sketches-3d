@@ -139,18 +139,25 @@ export const createComposition = (data: CreateComposition): Promise<Composition>
     body: JSON.stringify(data),
   });
 
+export interface CompositionAndVersion {
+  comp: Composition;
+  latest: CompositionVersion;
+}
+
 export const listPublicCompositions = (
   {
     featuredOnly,
     count = 20,
     includeCode = false,
+    userID,
   }: {
     featuredOnly?: boolean;
     count?: number;
     includeCode?: boolean;
+    userID?: number;
   },
   fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<{ comp: Composition; latest: CompositionVersion }[]> => {
+): Promise<CompositionAndVersion[]> => {
   const params = new URLSearchParams();
   if (featuredOnly) {
     params.set('featured_only', 'true');
@@ -159,15 +166,18 @@ export const listPublicCompositions = (
     params.set('count', count.toString());
   }
   params.set('include_code', includeCode.toString());
+  if (userID) {
+    params.set('user_id', userID.toString());
+  }
 
-  return apiFetch<{ comp: Composition; latest: CompositionVersion }[]>(
-    `/compositions?${params.toString()}`,
-    undefined,
-    fetch
-  );
+  return apiFetch<CompositionAndVersion[]>(`/compositions?${params.toString()}`, undefined, fetch);
 };
 
-export const listMyCompositions = (): Promise<Composition[]> => apiFetch<Composition[]>('/compositions/my');
+export const listMyCompositions = (
+  sessionID: string,
+  fetch?: typeof globalThis.fetch
+): Promise<CompositionAndVersion[]> =>
+  apiFetch<CompositionAndVersion[]>('/compositions/my', { headers: { session_id: sessionID } }, fetch);
 
 export const getComposition = (
   id: number,

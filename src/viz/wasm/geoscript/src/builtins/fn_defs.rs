@@ -4346,7 +4346,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "utah_teapot" => FnDef {
     module: "mesh",
-    examples: &[],
+    examples: &[FnExample { composition_id: 37 }],
     signatures: &[
       FnSignature {
         arg_defs: &[],
@@ -4357,7 +4357,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "stanford_bunny" => FnDef {
     module: "mesh",
-    examples: &[],
+    examples: &[FnExample { composition_id: 38 }],
     signatures: &[
       FnSignature {
         arg_defs: &[],

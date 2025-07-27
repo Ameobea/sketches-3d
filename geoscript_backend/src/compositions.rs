@@ -1,11 +1,11 @@
 use crate::{auth::User, render_thumbnail::render_thumbnail};
 use axum::{
-  Json,
   extract::{Extension, Path, Query, State},
+  Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{Arguments, FromRow, Row, SqlitePool, sqlite::SqliteArguments};
+use sqlx::{sqlite::SqliteArguments, Arguments, FromRow, Row, SqlitePool};
 
 use crate::server::APIError;
 use axum::http::StatusCode;
@@ -481,50 +481,14 @@ pub async fn get_composition_version(
   Ok(Json(version))
 }
 
-pub async fn list_my_compositions(
-  State(pool): State<SqlitePool>,
-  Extension(user): Extension<User>,
-) -> Result<Json<Vec<Composition>>, APIError> {
-  let compositions = sqlx::query_as::<_, Composition>(
-    "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
-     u.id WHERE c.author_id = ? ORDER BY c.updated_at DESC",
-  )
-  .bind(user.id)
-  .fetch_all(&pool)
-  .await
-  .map_err(|err| {
-    APIError::new(
-      StatusCode::INTERNAL_SERVER_ERROR,
-      format!("Failed to list compositions: {err}"),
-    )
-  })?;
-
-  Ok(Json(compositions))
-}
-
-#[derive(Deserialize)]
-pub struct ListPublicCompositionsQuery {
-  featured_only: Option<bool>,
-  count: Option<usize>,
-  pub include_code: Option<bool>,
-}
-
-#[derive(Serialize)]
-pub struct PublicComposition {
-  pub comp: Composition,
-  pub latest: CompositionVersion,
-}
-
-pub async fn list_public_compositions(
-  State(pool): State<SqlitePool>,
-  Query(ListPublicCompositionsQuery {
-    featured_only,
-    count,
-    include_code,
-  }): Query<ListPublicCompositionsQuery>,
-) -> Result<Json<Vec<PublicComposition>>, APIError> {
-  let include_code = include_code.unwrap_or(false);
-
+async fn list_compositions(
+  pool: &SqlitePool,
+  author_id: Option<i64>,
+  is_shared: Option<bool>,
+  is_featured: Option<bool>,
+  limit: Option<i64>,
+  include_code: bool,
+) -> Result<Vec<PublicComposition>, APIError> {
   #[derive(Debug, FromRow)]
   struct PublicCompositionRow {
     #[sqlx(flatten)]
@@ -536,6 +500,23 @@ pub async fn list_public_compositions(
     latest_thumbnail_url: Option<String>,
     latest_metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
   }
+
+  let mut where_conditions = Vec::new();
+  if let Some(author_id) = author_id {
+    where_conditions.push(format!("c.author_id = {author_id}"));
+  }
+  if let Some(is_shared) = is_shared {
+    where_conditions.push(format!("c.is_shared = {}", is_shared as i32));
+  }
+  if is_featured.unwrap_or(false) {
+    where_conditions.push("c.is_featured = 1".to_string());
+  }
+
+  let where_clause = if where_conditions.is_empty() {
+    "".to_string()
+  } else {
+    format!("WHERE {}", where_conditions.join(" AND "))
+  };
 
   let query_str = format!(
     "
@@ -556,32 +537,28 @@ JOIN (
     ROW_NUMBER() OVER(PARTITION BY composition_id ORDER BY created_at DESC) as rn
   FROM composition_versions
 ) cv ON c.id = cv.composition_id AND cv.rn = 1
-WHERE c.is_shared = 1 {}
+{where_clause}
 ORDER BY c.updated_at DESC
-LIMIT ?
-",
+{}",
     if include_code {
       "cv.source_code as latest_source_code"
     } else {
       "'' as latest_source_code"
     },
-    if featured_only.unwrap_or(false) {
-      "AND c.is_featured = 1"
-    } else {
-      ""
-    }
+    if limit.is_some() { "LIMIT ?" } else { "" }
   );
 
-  let rows = sqlx::query_as::<_, PublicCompositionRow>(&query_str)
-    .bind(count.unwrap_or(100).min(100) as i64)
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| {
-      APIError::new(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Failed to list public compositions: {err}"),
-      )
-    })?;
+  let mut query = sqlx::query_as::<_, PublicCompositionRow>(&query_str);
+  if let Some(limit) = limit {
+    query = query.bind(limit);
+  }
+
+  let rows = query.fetch_all(pool).await.map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to list compositions: {err}"),
+    )
+  })?;
 
   let result = rows
     .into_iter()
@@ -601,6 +578,63 @@ LIMIT ?
     })
     .collect();
 
+  Ok(result)
+}
+
+#[derive(Deserialize)]
+pub struct ListMyCompositionsQuery {
+  pub include_code: Option<bool>,
+}
+
+pub async fn list_my_compositions(
+  State(pool): State<SqlitePool>,
+  Extension(user): Extension<User>,
+  Query(query): Query<ListMyCompositionsQuery>,
+) -> Result<Json<Vec<PublicComposition>>, APIError> {
+  let result = list_compositions(
+    &pool,
+    Some(user.id),
+    None,
+    None,
+    None,
+    query.include_code.unwrap_or(false),
+  )
+  .await?;
+  Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+pub struct ListPublicCompositionsQuery {
+  featured_only: Option<bool>,
+  count: Option<usize>,
+  pub include_code: Option<bool>,
+  pub user_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct PublicComposition {
+  pub comp: Composition,
+  pub latest: CompositionVersion,
+}
+
+pub async fn list_public_compositions(
+  State(pool): State<SqlitePool>,
+  Query(ListPublicCompositionsQuery {
+    featured_only,
+    count,
+    include_code,
+    user_id,
+  }): Query<ListPublicCompositionsQuery>,
+) -> Result<Json<Vec<PublicComposition>>, APIError> {
+  let result = list_compositions(
+    &pool,
+    user_id,
+    Some(true),
+    featured_only,
+    Some(count.unwrap_or(100).min(100) as i64),
+    include_code.unwrap_or(false),
+  )
+  .await?;
   Ok(Json(result))
 }
 
