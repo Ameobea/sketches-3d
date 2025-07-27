@@ -1735,56 +1735,56 @@ impl EvalCtx {
 
   fn eval_static_field_access(&self, lhs: Value, field: &str) -> Result<Value, ErrorStack> {
     match lhs {
-      Value::Vec2(v2) => match field.len() {
-        1 => match field {
-          "x" => Ok(Value::Float(v2.x)),
-          "y" => Ok(Value::Float(v2.y)),
-          _ => Err(ErrorStack::new(format!("Unknown field `{field}` for Vec2"))),
-        },
-        2 => {
-          let mut chars = field.chars();
-          let a = chars.next().unwrap();
-          let b = chars.next().unwrap();
+      Value::Vec2(v2) => {
+        let swiz = |c| match c {
+          'x' => Ok(v2.x),
+          'y' => Ok(v2.y),
+          _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec2"))),
+        };
 
-          let swiz = |c| match c {
-            'x' => Ok(v2.x),
-            'y' => Ok(v2.y),
-            _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec2"))),
-          };
+        match field.chars().count() {
+          1 => swiz(field.chars().next().unwrap()).map(Value::Float),
+          2 => {
+            let mut chars = field.chars();
+            let a = chars.next().unwrap();
+            let b = chars.next().unwrap();
 
-          Ok(Value::Vec2(Vec2::new(swiz(a)?, swiz(b)?)))
+            Ok(Value::Vec2(Vec2::new(swiz(a)?, swiz(b)?)))
+          }
+          _ => Err(ErrorStack::new(format!(
+            "invalid swizzle; expected 1 or 2 chars"
+          ))),
         }
-        _ => Err(ErrorStack::new(format!(
-          "invalid swizzle; expected 1 or 2 chars"
-        ))),
-      },
-      Value::Vec3(v3) => match field.len() {
-        1 => match field {
-          "x" => Ok(Value::Float(v3.x)),
-          "y" => Ok(Value::Float(v3.y)),
-          "z" => Ok(Value::Float(v3.z)),
-          _ => Err(ErrorStack::new(format!("Unknown field `{field}` for Vec3"))),
-        },
-        2 => Err(ErrorStack::new(format!("No vec2 type currently"))),
-        3 => {
-          let mut chars = field.chars();
-          let a = chars.next().unwrap();
-          let b = chars.next().unwrap();
-          let c = chars.next().unwrap();
+      }
+      Value::Vec3(v3) => {
+        let swiz = |c| match c {
+          'x' => Ok(v3.x),
+          'y' => Ok(v3.y),
+          'z' => Ok(v3.z),
+          _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec3"))),
+        };
+        match field.chars().count() {
+          1 => swiz(field.chars().next().unwrap()).map(Value::Float),
+          2 => {
+            let mut chars = field.chars();
+            let a = chars.next().unwrap();
+            let b = chars.next().unwrap();
 
-          let swiz = |c| match c {
-            'x' => Ok(v3.x),
-            'y' => Ok(v3.y),
-            'z' => Ok(v3.z),
-            _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec3"))),
-          };
+            Ok(Value::Vec2(Vec2::new(swiz(a)?, swiz(b)?)))
+          }
+          3 => {
+            let mut chars = field.chars();
+            let a = chars.next().unwrap();
+            let b = chars.next().unwrap();
+            let c = chars.next().unwrap();
 
-          Ok(Value::Vec3(Vec3::new(swiz(a)?, swiz(b)?, swiz(c)?)))
+            Ok(Value::Vec3(Vec3::new(swiz(a)?, swiz(b)?, swiz(c)?)))
+          }
+          _ => Err(ErrorStack::new(format!(
+            "invalid swizzle; expected 1 to 3 chars"
+          ))),
         }
-        _ => Err(ErrorStack::new(format!(
-          "invalid swizzle; expected 1 or 3 chars"
-        ))),
-      },
+      }
       Value::Map(map) => Ok(if let Some(val) = map.get(field) {
         val.clone()
       } else {

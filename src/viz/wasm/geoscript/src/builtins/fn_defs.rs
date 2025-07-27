@@ -4344,6 +4344,39 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       },
     ],
   },
+  "utah_teapot" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[],
+        description: "Generates a Utah teapot mesh, a well-known 3D model often used in computer graphics as a test object.\n\nNote that the teapot is NOT manifold, so it cannot be used with functions that require a manifold mesh such as mesh boolean ops, `trace_geodesic_path`, and others.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "stanford_bunny" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[],
+        description: "Generates a Stanford bunny mesh, a well-known 3D model often used in computer graphics as a test object.\n\nThis mesh IS manifold, so it can be used with functions that require a manifold mesh such as mesh boolean ops, `trace_geodesic_path`, and others.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  // "suzanne" => FnDef {
+  //   module: "mesh",
+  //   examples: &[],
+  //   signatures: &[
+  //     FnSignature {
+  //       arg_defs: &[],
+  //       description: "Generates a Suzanne mesh, a 3D model from Blender often used as a test or placeholder object.\n\nThis mesh is NOT manifold, so it cannot be used with functions that require a manifold mesh such as mesh boolean ops, `trace_geodesic_path`, and others.",
+  //       return_type: &[ArgType::Mesh],
+  //     },
+  //   ],
+  // },
   "call" => FnDef {
     module: "fn",
     examples: &[],

@@ -409,7 +409,7 @@ impl Plane {
 
         handle_split_faces(split_faces, mesh, nodes);
 
-        if let Some(plane_node_key) = plane_node_key {
+        if let Some(_plane_node_key) = plane_node_key {
           // weld_polygons(&split_vertices, plane_node_key, mesh, nodes);
         }
       }
@@ -463,6 +463,7 @@ impl Polygon {
     self.user_data_mut(mesh).node_key = node_key;
   }
 
+  #[cfg(feature = "broken-csg-welding")]
   fn vtx2(&self, ix0: usize, ix1: usize, mesh: &LinkedMesh<FaceData>) -> [VertexKey; 2] {
     let face = if cfg!(feature = "unsafe_indexing") {
       unsafe { mesh.faces.get_unchecked(self.key) }
@@ -493,6 +494,7 @@ impl Polygon {
   }
 }
 
+#[cfg(feature = "broken-csg-welding")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Intersection {
   NoIntersection,
@@ -508,6 +510,7 @@ enum Intersection {
   },
 }
 
+#[cfg(feature = "broken-csg-welding")]
 fn cartesian_vector_to_barycentric(vert_coords: &[Vec3; 3], face_vec: Vec3) -> Vec3 {
   let v0 = vert_coords[1] - vert_coords[0];
   let v1 = vert_coords[2] - vert_coords[0];
@@ -527,6 +530,7 @@ fn cartesian_vector_to_barycentric(vert_coords: &[Vec3; 3], face_vec: Vec3) -> V
   Vec3::new(u, v, w)
 }
 
+#[cfg(feature = "broken-csg-welding")]
 #[test]
 fn barycentric_correctness() {
   let tri = [
@@ -539,6 +543,7 @@ fn barycentric_correctness() {
   assert_eq!(bary, Vec3::new(0., 0.5, 0.5));
 }
 
+#[cfg(feature = "broken-csg-welding")]
 #[test]
 fn barycentric_on_edge() {
   let tri = [
@@ -552,6 +557,7 @@ fn barycentric_on_edge() {
 }
 
 /// Determines if a point is inside a triangle in 3D space using barycentric coordinates.
+#[cfg(feature = "broken-csg-welding")]
 fn triangle_contains_point(vert_coords: &[Vec3; 3], p: Vec3, epsilon: f32) -> Intersection {
   let barycentric = cartesian_vector_to_barycentric(vert_coords, p);
 
@@ -590,6 +596,7 @@ fn triangle_contains_point(vert_coords: &[Vec3; 3], p: Vec3, epsilon: f32) -> In
   Intersection::WithinCenter
 }
 
+#[cfg(feature = "broken-csg-welding")]
 #[test]
 fn contains_point_on_edge() {
   let tri = [
@@ -618,6 +625,7 @@ fn contains_point_on_edge() {
   );
 }
 
+#[cfg(feature = "broken-csg-welding")]
 #[test]
 fn contains_point_on_vertex() {
   let tri = [
@@ -634,6 +642,7 @@ fn contains_point_on_vertex() {
   assert_eq!(res, Intersection::OnVertex { vtx_ix: 1 });
 }
 
+#[cfg(feature = "broken-csg-welding")]
 fn weld_polygon_at_interior<'a>(
   vtx: VertexKey,
   poly: &Polygon,
@@ -660,6 +669,7 @@ fn weld_polygon_at_interior<'a>(
 }
 
 /// `edge_pos` is the interpolation factor between the two vertices that the point is on
+#[cfg(feature = "broken-csg-welding")]
 fn weld_polygon_on_edge<'a>(
   out_temp_node_key: NodeKey,
   poly: Polygon,
@@ -722,6 +732,7 @@ fn weld_polygon_on_edge<'a>(
 
 /// Checks if `poly` contains `vtx`.  If it does, the polygon is split into three
 /// polygons and the new polygons are returned.  If it doesn't, `None` is returned.
+#[cfg(feature = "broken-csg-welding")]
 fn maybe_weld_polygon(
   vtx: VertexKey,
   out_tmp_key: NodeKey,
@@ -748,6 +759,7 @@ fn maybe_weld_polygon(
   }
 }
 
+#[cfg(feature = "broken-csg-welding")]
 fn weld_polygons(
   split_vertices: &[VertexKey],
   plane_node_key: NodeKey,

@@ -12,7 +12,14 @@ use parry3d::{
 use slotmap::{new_key_type, Key, SlotMap};
 use smallvec::SmallVec;
 
-use crate::{OwnedIndexedMesh, OwnedIndexedMeshBuilder, OwnedMesh, Triangle};
+use crate::{
+  models::{
+    stanford_bunny::{STANFORD_BUNNY_INDICES, STANFORD_BUNNY_VERTICES},
+    suzanne::{SUZANNE_INDICES, SUZANNE_VERTICES},
+    utah_teapot::{UTAH_TEAPOT_INDICES, UTAH_TEAPOT_VERTICES},
+  },
+  OwnedIndexedMesh, OwnedIndexedMeshBuilder, OwnedMesh, Triangle,
+};
 
 pub type Vec3 = Vector3<f32>;
 pub type Mat4 = Matrix4<f32>;
@@ -2508,6 +2515,42 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
 
     LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
+  }
+
+  pub fn new_utah_teapot() -> Self {
+    let verts = unsafe {
+      std::slice::from_raw_parts(
+        UTAH_TEAPOT_VERTICES.as_ptr() as *const Vec3,
+        UTAH_TEAPOT_VERTICES.len(),
+      )
+    };
+    let indices = UTAH_TEAPOT_INDICES;
+
+    Self::from_indexed_vertices(verts, indices, None, None)
+  }
+
+  pub fn new_stanford_bunny() -> Self {
+    let verts = unsafe {
+      std::slice::from_raw_parts(
+        STANFORD_BUNNY_VERTICES.as_ptr() as *const Vec3,
+        STANFORD_BUNNY_VERTICES.len(),
+      )
+    };
+    let indices = STANFORD_BUNNY_INDICES;
+
+    Self::from_indexed_vertices(verts, indices, None, None)
+  }
+
+  pub fn new_suzanne() -> Self {
+    let verts = unsafe {
+      std::slice::from_raw_parts(
+        SUZANNE_VERTICES.as_ptr() as *const Vec3,
+        SUZANNE_VERTICES.len(),
+      )
+    };
+    let indices = SUZANNE_INDICES;
+
+    Self::from_indexed_vertices(verts, indices, None, None)
   }
 }
 

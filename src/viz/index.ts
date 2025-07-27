@@ -28,6 +28,7 @@ import { buildEasingFn, EasingFnType } from './util/easingFns.ts';
 import type { Unsubscriber } from 'svelte/store';
 import { unmount } from 'svelte';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';
+import { LoadOrbitControls } from './preloadCache';
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
@@ -46,7 +47,7 @@ const setupOrbitControls = async (
   pos: THREE.Vector3,
   target: THREE.Vector3
 ) => {
-  const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
+  const { OrbitControls } = await LoadOrbitControls.get();
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.1;
@@ -464,7 +465,6 @@ export class Viz {
       !document.pointerLockElement &&
       this.didManuallyLockPointer
     ) {
-      console.log('Requesting pointer lock');
       try {
         await document.body.requestPointerLock({ unadjustedMovement: true });
       } catch (err) {
@@ -721,6 +721,7 @@ interface InitVizArgs {
   sceneName?: string;
   vizCb: (viz: Viz, vizConfig: TransparentWritable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
   userData?: any;
+  sceneDefOverride?: SceneDef;
 }
 
 /**
@@ -732,11 +733,18 @@ interface InitVizArgs {
  */
 export const initViz = (
   container: HTMLElement,
-  { paused, popUpCalled, sceneName: providedSceneName = Conf.DefaultSceneName, vizCb, userData }: InitVizArgs
+  {
+    paused,
+    popUpCalled,
+    sceneName: providedSceneName = Conf.DefaultSceneName,
+    vizCb,
+    userData,
+    sceneDefOverride,
+  }: InitVizArgs
 ) => {
   initSentry();
 
-  const sceneDef = ScenesByName[providedSceneName];
+  const sceneDef = sceneDefOverride ?? ScenesByName[providedSceneName];
   if (!sceneDef) {
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
@@ -935,7 +943,7 @@ export const initViz = (
       }
     });
 
-    viz.animate();
+    setTimeout(() => viz.animate(), 0);
   };
 
   if (gltfName) {

@@ -21,6 +21,7 @@ parry3d = "0.21"
 # disables slotmap's checks for invalid keys
 unsafe_indexing = []
 earcut = ["earcutr"]
+broken-csg-welding = []
 
 # enable this is you're very brave
 # default = ["unsafe_indexing"]

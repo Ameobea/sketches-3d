@@ -58,6 +58,9 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "rounded_rectangle" => "superellipse_path",
   "rounded_rect" => "superellipse_path",
   "mix" => "lerp",
+  "teapot" => "utah_teapot",
+  "bunny" => "stanford_bunny",
+  // "monkey" => "suzanne",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -2851,6 +2854,33 @@ fn grid_impl(
   }
 }
 
+fn utah_teapot_impl(def_ix: usize) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
+      LinkedMesh::new_utah_teapot(),
+    ))))),
+    _ => unimplemented!(),
+  }
+}
+
+fn stanford_bunny_impl(def_ix: usize) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
+      LinkedMesh::new_stanford_bunny(),
+    ))))),
+    _ => unimplemented!(),
+  }
+}
+
+// fn suzanne_impl(def_ix: usize) -> Result<Value, ErrorStack> {
+//   match def_ix {
+//     0 => Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
+//       LinkedMesh::new_suzanne(),
+//     ))))),
+//     _ => unimplemented!(),
+//   }
+// }
+
 fn rot_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -3677,6 +3707,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "grid" => builtin_fn!(grid, |def_ix, arg_refs, args, kwargs, _ctx| {
     grid_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "utah_teapot" => builtin_fn!(utah_teapot, |def_ix, _arg_refs, _args, _kwargs, _ctx| {
+    utah_teapot_impl(def_ix)
+  }),
+  "stanford_bunny" => builtin_fn!(stanford_bunny, |def_ix, _arg_refs, _args, _kwargs, _ctx| {
+    stanford_bunny_impl(def_ix)
+  }),
+  // "suzanne" => builtin_fn!(suzanne, |def_ix, _arg_refs, _args, _kwargs, _ctx| {
+  //   suzanne_impl(def_ix)
+  // }),
   "translate" => builtin_fn!(translate, |def_ix, arg_refs, args, kwargs, _ctx| {
     translate_impl(def_ix, arg_refs, args, kwargs)
   }),

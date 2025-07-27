@@ -7,7 +7,7 @@
   import '../index.css';
   import type { PopupScreenFocus } from './util/util.ts';
   import PauseMenu from './PauseMenu/PauseMenu.svelte';
-  import { type SceneConfig, ScenesByName } from './scenes';
+  import { type SceneConfig, type SceneDef, ScenesByName } from './scenes';
   import DashChargeUI from './UI/DashChargeUI.svelte';
   import { loadVizConfig, type VizConfig } from './conf';
   import { queryClient } from './queryClient';
@@ -16,9 +16,10 @@
 
   export let sceneName: string;
   export let userData: any = undefined;
+  export let sceneDefOverride: SceneDef | undefined = undefined;
 
   // svelte-ignore reactive_declaration_non_reactive_property
-  $: sceneDef = ScenesByName[sceneName];
+  $: sceneDef = sceneDefOverride ?? ScenesByName[sceneName];
   $: metadata = sceneDef.metadata;
 
   const paused = rwritable(false);
@@ -44,7 +45,10 @@
   {/if}
 
   <!-- svelte-ignore element_invalid_self_closing_tag -->
-  <div use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData }} id="viz-container" />
+  <div
+    use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData, sceneDefOverride }}
+    id="viz-container"
+  />
   {#if $paused && viz}
     {#if $popUpCalled.type === 'pause'}
       <PauseMenu ctx={{ onResume }} {viz} {sceneConfig} liveConfig={liveVizConfig} />

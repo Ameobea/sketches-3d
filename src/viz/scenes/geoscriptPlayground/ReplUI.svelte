@@ -46,14 +46,12 @@
   let {
     viz,
     geoscriptWorker: repl,
-    ctxPtr,
     setReplCtx,
     userData,
     onHeightChange,
   }: {
     viz: Viz;
     geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>;
-    ctxPtr: number;
     setReplCtx: (ctx: ReplCtx) => void;
     userData?: GeoscriptPlaygroundUserData;
     onHeightChange: (height: number, isCollapsed: boolean) => void;
@@ -65,6 +63,8 @@
     lastRunWasSuccessful,
     view: initialView,
   } = loadState(userData);
+
+  let ctxPtr = $state<number | null>(null);
 
   let isDirty = $state(getIsDirty(userData));
 
@@ -92,6 +92,10 @@
 
   onMount(() => {
     onHeightChange(height, isEditorCollapsed);
+
+    repl.init().then(ptr => {
+      ctxPtr = ptr;
+    });
   });
 
   const handleMousedown = (e: MouseEvent) => {
@@ -127,6 +131,10 @@
 
   let didFirstRun = $state(false);
   $effect(() => {
+    if (ctxPtr === null) {
+      return;
+    }
+
     if (didFirstRun) {
       return;
     }
@@ -337,7 +345,6 @@
     const dot = viewDir.dot(axisVec);
 
     let sideSign: 1 | -1 = 1;
-    console.log(Math.abs(Math.abs(dot) - 1), dot);
     if (Math.abs(Math.abs(dot) - 1) < 1e-3) {
       sideSign = dot < 0 ? -1 : 1;
     }
@@ -433,6 +440,10 @@
   });
 
   $effect(() => {
+    if (ctxPtr === null) {
+      return;
+    }
+
     // TODO: only do this if these have changed
     repl.setMaterials(
       ctxPtr,
@@ -499,7 +510,6 @@
     return () => {
       for (const matEntry of customMatVals) {
         if (matEntry.beforeRenderCb) {
-          console.log('cleaning up cb');
           viz.unregisterBeforeRenderCb(matEntry.beforeRenderCb);
         }
       }
@@ -566,7 +576,7 @@
   );
 
   const run = async (code?: string) => {
-    if (isRunning) {
+    if (isRunning || ctxPtr === null) {
       return;
     }
 

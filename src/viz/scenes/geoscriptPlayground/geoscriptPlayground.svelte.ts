@@ -21,20 +21,17 @@ const locations = {
   },
 };
 
-const initRepl = async (
+const initRepl = (
   viz: Viz,
   geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>,
   setReplCtx: (ctx: ReplCtx) => void,
   userData: GeoscriptPlaygroundUserData | undefined = undefined,
   onHeightChange: (height: number, isCollapsed: boolean) => void
 ) => {
-  const ctxPtr = await geoscriptWorker.init();
-
   const _ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
     props: {
       viz,
-      ctxPtr,
       geoscriptWorker,
       setReplCtx,
       userData,
@@ -44,6 +41,7 @@ const initRepl = async (
 };
 
 export interface GeoscriptPlaygroundUserData {
+  geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods> | null;
   initialComposition: { comp: Composition; version: CompositionVersion } | null;
   renderMode?: boolean;
   me?: User | null | undefined;
@@ -55,7 +53,8 @@ export const processLoadedScene = (
   vizConf: VizConfig,
   userData: GeoscriptPlaygroundUserData | undefined = undefined
 ): SceneConfig => {
-  const geoscriptWorker = Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker());
+  const geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods> =
+    userData?.geoscriptWorker ?? Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker());
 
   const quality = vizConf.graphics.quality;
 

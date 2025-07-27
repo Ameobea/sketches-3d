@@ -4,7 +4,7 @@ const NONE = Symbol('none');
 
 export class AsyncOnce<T, Args extends any[] = []> {
   private retry: boolean | { attempts?: number; delayMs?: number };
-  private getter: (...args: Args) => Promise<T>;
+  public getter: (...args: Args) => Promise<T>;
   public pending: Promise<T> | null = null;
   private res: typeof NONE | T = NONE;
 

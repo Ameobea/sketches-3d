@@ -1234,7 +1234,7 @@ export const buildCustomShader = (
     mat.defines.USE_CLEARCOAT = '1';
   }
 
-  if (props.iridescence) {
+  if (props.iridescence || shaders?.iridescenceShader) {
     mat.defines.USE_IRIDESCENCE = '1';
   }
 

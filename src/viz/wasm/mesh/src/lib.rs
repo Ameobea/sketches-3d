@@ -8,6 +8,7 @@ pub mod linked_mesh;
 pub use linked_mesh::LinkedMesh;
 
 pub mod csg;
+pub mod models;
 
 #[derive(Clone, Debug)]
 pub struct Triangle {

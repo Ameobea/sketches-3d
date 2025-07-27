@@ -157,18 +157,15 @@ export const buildDefaultSceneConfig = () => ({
   viewMode: { type: 'firstPerson' as const },
 });
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface SceneDef {
   /**
    * The name of the scene in the Blender file to load
    */
   sceneName: string | null;
-  sceneLoader: () => Promise<
-    (
-      viz: Viz,
-      loadedWorld: THREE.Group,
-      config: VizConfig,
-      userData?: any
-    ) => SceneConfig | Promise<SceneConfig>
+  sceneLoader: () => MaybePromise<
+    (viz: Viz, loadedWorld: THREE.Group, config: VizConfig, userData?: any) => MaybePromise<SceneConfig>
   >;
   metadata: SvelteSEOProps;
   gltfName?: string | null;

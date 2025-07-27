@@ -1,5 +1,5 @@
 import ManifoldModule, { type Manifold, type ManifoldToplevel, type Mat4, type Vec3 } from 'manifold-3d';
-import manifoldWasURL from 'manifold-3d/manifold.wasm?url';
+import manifoldWasmURL from 'manifold-3d/manifold.wasm?url';
 
 // import ManifoldModule from './manifoldComp/manifold';
 // import type { Manifold, ManifoldToplevel, Vec3 } from 'manifold-3d';
@@ -12,7 +12,7 @@ export const initManifoldWasm = async () => {
     return ManifoldWasm;
   }
 
-  ManifoldWasm = await ManifoldModule({ locateFile: () => manifoldWasURL });
+  ManifoldWasm = await ManifoldModule({ locateFile: () => manifoldWasmURL });
   ManifoldWasm.setup();
   return ManifoldWasm;
 };
