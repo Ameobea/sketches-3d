@@ -26,12 +26,14 @@ export interface BuiltinFnDef {
   module: string;
   signatures: BuiltinFnSignature[];
   examples: PopulatedFnExample[];
+  aliases: string[];
 }
 
 export interface UnpopulatedBuiltinFnDef {
   module: string;
   signatures: BuiltinFnSignature[];
   examples: FnExample[];
+  aliases: string[];
 }
 
 export type UnpopulatedBuiltinFnDefs = Record<string, UnpopulatedBuiltinFnDef>;

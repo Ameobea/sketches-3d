@@ -5,6 +5,7 @@ use mesh::linked_mesh::Vec3;
 use nanoserde::SerJson;
 
 use crate::{
+  builtins::FUNCTION_ALIASES,
   lights::{AmbientLight, DirectionalLight},
   ArgType, Value, Vec2,
 };
@@ -67,14 +68,27 @@ pub struct SerializableFnDef {
   pub module: &'static str,
   pub examples: &'static [FnExample],
   pub signatures: Vec<SerializableFnSignature>,
+  pub aliases: Vec<&'static str>,
 }
 
 impl SerializableFnDef {
-  pub fn new(def: &FnDef) -> Self {
+  pub fn new(name: &str, def: &FnDef) -> Self {
     Self {
       module: def.module,
       examples: def.examples,
       signatures: SerializableFnSignature::new(def.signatures),
+      aliases: FUNCTION_ALIASES
+        .entries()
+        .filter_map(
+          |(&alias, &fn_name)| {
+            if fn_name == name {
+              Some(alias)
+            } else {
+              None
+            }
+          },
+        )
+        .collect(),
     }
   }
 }
@@ -1970,7 +1984,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "scan" => FnDef {
     module: "seq",
-    examples: &[],
+    examples: &[FnExample { composition_id: 40 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4601,7 +4615,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
 pub fn serialize_fn_defs() -> String {
   let serializable_defs: FxHashMap<&'static str, SerializableFnDef> = FN_SIGNATURE_DEFS
     .entries()
-    .map(|(name, def)| (*name, SerializableFnDef::new(def)))
+    .map(|(name, def)| (*name, SerializableFnDef::new(name, def)))
     .collect();
   SerJson::serialize_json(&serializable_defs)
 }

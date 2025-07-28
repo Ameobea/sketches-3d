@@ -10,6 +10,12 @@
   <h3 class="fn-name" id={name}>
     <a href={`#${name}`} class="anchor-link" aria-label="Link to this function">{name}</a>
   </h3>
+  {#if def.aliases.length > 0}
+    <div class="fn-aliases">
+      {def.aliases.length === 1 ? 'alias' : 'aliases'}:
+      <span class="fn-alias">{def.aliases.join(', ')}</span>
+    </div>
+  {/if}
   {#each def.examples as example}
     <Example {example} />
   {/each}
@@ -97,6 +103,19 @@
   .fn-name:hover .anchor-link {
     opacity: 1;
     color: #cfcfcf;
+  }
+
+  .fn-aliases {
+    font-size: 15.4px;
+    color: #b8b8d0;
+    margin-bottom: 16px;
+    font-style: italic;
+    margin-top: -15px;
+
+    .fn-alias {
+      font-style: normal;
+      font-weight: 600;
+    }
   }
 
   .fn-signature {
@@ -192,6 +211,11 @@
   @media (max-width: 600px) {
     .root {
       padding: 4px 12px 8px 12px;
+    }
+
+    .fn-aliases {
+      font-size: 14px;
+      margin-bottom: 8px;
     }
 
     .fn-signature {
