@@ -27,6 +27,7 @@
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
   import {
     getMultipleTextures,
+    unwrapUVs,
     type CompositionVersionMetadata,
     type TextureID,
   } from 'src/geoscript/geotoyAPIClient';
@@ -458,6 +459,9 @@
     beforeRenderCb?: (curTimeSeconds: number) => void;
   }
 
+  // TODO: Make configurable
+  const generateUVs = (window as any).GENERATE_UVS || localStorage.getItem('FORCE_GENERATE_UVS') === 'true';
+
   const loader = new THREE.ImageBitmapLoader();
   let customMaterials: Record<string, MatEntry> = $derived.by(() => {
     const builtMats: Record<string, MatEntry> = {};
@@ -465,7 +469,7 @@
     // TODO: needs hashing to avoid re-building materials that haven't changed
     // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
     for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
-      const matMaybeP = buildMaterial(loader, def, id);
+      const matMaybeP = buildMaterial(loader, def, id, !generateUVs);
       const entry: MatEntry = {
         promise: matMaybeP instanceof Promise ? matMaybeP : Promise.resolve(matMaybeP),
         resolved: matMaybeP instanceof Promise ? null : matMaybeP,
@@ -693,6 +697,19 @@
       mesh.receiveShadow = true;
       viz.scene.add(mesh);
       newRenderedMeshes.push(mesh);
+
+      // TODO: should cache this to avoid re-computing UVs for meshes that haven't changed
+      // TODO: should maybe have a batch endpoint for this
+      if (generateUVs) {
+        unwrapUVs(verts, indices).then(({ uvs, verts, indices }) => {
+          mesh.geometry.dispose();
+          mesh.geometry = new THREE.BufferGeometry();
+          mesh.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+          mesh.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+          mesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+          mesh.geometry.computeVertexNormals();
+        });
+      }
     }
 
     localRunStats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);

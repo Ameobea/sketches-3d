@@ -96,7 +96,8 @@ const buildPhysicalShader = (
   id: MaterialID,
   map: THREE.Texture | undefined,
   normalMap: THREE.Texture | undefined,
-  roughnessMap: THREE.Texture | undefined
+  roughnessMap: THREE.Texture | undefined,
+  useTriplanarMapping: boolean
 ) => {
   const defaultShaders = buildDefaultShaders();
   const customShaders: Partial<CustomShaderShaders> = {};
@@ -142,14 +143,15 @@ const buildPhysicalShader = (
       ambientDistanceAmp: def.ambientDistanceAmp,
     },
     customShaders,
-    { useTriplanarMapping: true, tileBreaking: undefined, useGeneratedUVs: false }
+    { useTriplanarMapping, tileBreaking: undefined, useGeneratedUVs: false }
   );
 };
 
 export const buildMaterial = (
   loader: THREE.ImageBitmapLoader,
   def: MaterialDef,
-  id: MaterialID
+  id: MaterialID,
+  useTriplanarMapping: boolean
 ): Promise<THREE.Material> | THREE.Material => {
   if (def.type === 'basic') {
     return new THREE.MeshBasicMaterial({
@@ -172,11 +174,11 @@ export const buildMaterial = (
       !(normalMapP instanceof Promise) &&
       !(roughnessMapP instanceof Promise)
     ) {
-      return buildPhysicalShader(def, id, mapP, normalMapP, roughnessMapP);
+      return buildPhysicalShader(def, id, mapP, normalMapP, roughnessMapP, useTriplanarMapping);
     }
 
     return Promise.all([mapP, normalMapP, roughnessMapP] as const).then(([map, normalMap, roughnessMap]) =>
-      buildPhysicalShader(def, id, map, normalMap, roughnessMap)
+      buildPhysicalShader(def, id, map, normalMap, roughnessMap, useTriplanarMapping)
     );
   } else {
     def satisfies never;

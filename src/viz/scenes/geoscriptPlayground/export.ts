@@ -55,7 +55,7 @@ export const exportGLTF = async (
   exporter.parse(
     sceneToExport,
     result => {
-      const output = JSON.stringify(result, null, 2);
+      const output = result instanceof ArrayBuffer ? new Uint8Array(result) : JSON.stringify(result, null, 2);
       const blob = new Blob([output], { type: 'text/plain' });
       download(blob, `scene.${binary ? 'glb' : 'gltf'}`);
     },
