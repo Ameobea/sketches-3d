@@ -22,6 +22,18 @@ const config = defineConfig({
         rewrite: path => path.replace(/^\/api/, ''),
       },
     },
+    watch: {
+      ignored: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/build/**',
+        'src/viz/wasm/**',
+        'backend/**',
+        '**/.svelte-kit/**',
+        '**/.git/**',
+        'geoscript_backend/**',
+      ],
+    },
   },
   optimizeDeps: {
     exclude: ['codemirror'],

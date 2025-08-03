@@ -9,10 +9,12 @@
     material = $bindable(),
     onpicktexture,
     oneditshaders,
+    rerun,
   }: {
     material: MaterialDef;
     onpicktexture: (name: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap') => void;
     oneditshaders: () => void;
+    rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
   } = $props();
   let showAdvanced = $state(false);
 </script>
@@ -75,6 +77,62 @@
       <input type="number" step="0.1" bind:value={material.uvScale.x} style="width: 80px" />
       <input type="number" step="0.1" bind:value={material.uvScale.y} style="width: 80px" />
     </FormField>
+    <FormField
+      label="texture mapping"
+      help="Controls how textures are mapped to the mesh's surface.  Triplanar mapping works great for many uses, but generating UVs can be useful for exporting to other tools where native triplanar mapping is not available."
+    >
+      <div class="toggle-group">
+        <button
+          class:selected={!material.textureMapping || material.textureMapping?.type === 'triplanar'}
+          onclick={() => (material.textureMapping = { type: 'triplanar' })}
+        >
+          triplanar
+        </button>
+        <button
+          class:selected={material.textureMapping?.type === 'uv'}
+          onclick={() => {
+            if (material.textureMapping?.type !== 'uv') {
+              material.textureMapping = { type: 'uv', numCones: 1, flattenToDisk: false };
+              rerun(true);
+            }
+          }}
+        >
+          uv
+        </button>
+      </div>
+    </FormField>
+    {#if material.textureMapping?.type === 'uv'}
+      <FormField
+        label="num cones"
+        help="The number of singularities in the boundary-first-flattening algorithm. Larger values give the unwrapping algorithm a greater degree of freedom to reduce distortion at the cost of increasing discontinuities."
+      >
+        <input
+          type="number"
+          min="0"
+          step="1"
+          bind:value={material.textureMapping.numCones}
+          oninput={() => rerun(false)}
+          style="width: 80px"
+        />
+      </FormField>
+      <FormField label="flatten to disk" help="If true, the UVs will be flattened to a disk shape.">
+        <input
+          type="checkbox"
+          bind:checked={material.textureMapping.flattenToDisk}
+          oninput={() => rerun(false)}
+        />
+      </FormField>
+      <FormField
+        label="map to sphere"
+        help="If true, the UVs will be mapped to a sphere.  This can useful for meshes with spherical topology and will likely have no effect if meshes are not closed and topologically watertight.  It also has no effect if the number of cones is >= 3."
+      >
+        <input
+          type="checkbox"
+          bind:checked={material.textureMapping.mapToSphere}
+          oninput={() => rerun(false)}
+        />
+      </FormField>
+    {/if}
     <div style="display: flex; padding-left: 8px">
       <button class="edit-shaders" onclick={oneditshaders}>edit shaders</button>
     </div>
@@ -162,5 +220,27 @@
 
   .edit-shaders:hover {
     background: #3d3d3d;
+  }
+
+  .toggle-group {
+    display: flex;
+  }
+
+  .toggle-group button {
+    background: #333;
+    border: 1px solid #555;
+    color: #f0f0f0;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .toggle-group button.selected {
+    background: #555;
+    border-color: #777;
+  }
+
+  .toggle-group button:not(:last-child) {
+    border-right: none;
   }
 </style>

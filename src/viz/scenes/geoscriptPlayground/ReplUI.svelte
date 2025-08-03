@@ -27,7 +27,6 @@
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
   import {
     getMultipleTextures,
-    unwrapUVs,
     type CompositionVersionMetadata,
     type TextureID,
   } from 'src/geoscript/geotoyAPIClient';
@@ -43,6 +42,7 @@
   } from './persistence';
   import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
   import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
+  import { getIsUVUnwrapLoaded, initUVUnwrap, unwrapUVs } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
 
   let {
     viz,
@@ -459,9 +459,6 @@
     beforeRenderCb?: (curTimeSeconds: number) => void;
   }
 
-  // TODO: Make configurable
-  const generateUVs = (window as any).GENERATE_UVS || localStorage.getItem('FORCE_GENERATE_UVS') === 'true';
-
   const loader = new THREE.ImageBitmapLoader();
   let customMaterials: Record<string, MatEntry> = $derived.by(() => {
     const builtMats: Record<string, MatEntry> = {};
@@ -469,7 +466,7 @@
     // TODO: needs hashing to avoid re-building materials that haven't changed
     // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
     for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
-      const matMaybeP = buildMaterial(loader, def, id, !generateUVs);
+      const matMaybeP = buildMaterial(loader, def, id);
       const entry: MatEntry = {
         promise: matMaybeP instanceof Promise ? matMaybeP : Promise.resolve(matMaybeP),
         resolved: matMaybeP instanceof Promise ? null : matMaybeP,
@@ -584,6 +581,14 @@
       return;
     }
 
+    let uvUnwrapInitP: Promise<void> | true | null = null;
+    const generateUVs = Object.values(materialDefinitions.materials).some(
+      mat => mat.textureMapping?.type === 'uv'
+    );
+    if (generateUVs) {
+      uvUnwrapInitP = initUVUnwrap();
+    }
+
     if (typeof code !== 'string') {
       if (editorView) {
         code = editorView.state.doc.toString();
@@ -609,10 +614,9 @@
     setLastRunWasSuccessful(false, userData);
     try {
       await repl.eval(ctxPtr, code, includePrelude);
-    } catch (err) {
+    } catch (evalErr) {
       console.error('Error evaluating code:', err);
-      // TODO: this set isn't working for some reason
-      err = `Error evaluating code: ${err}`;
+      err = `Error evaluating code: ${evalErr}`;
       isRunning = false;
       return;
     } finally {
@@ -650,13 +654,53 @@
       | THREE.Light
     )[] = [];
     for (let i = 0; i < localRunStats.renderedMeshCount; i += 1) {
-      const {
+      let {
         transform,
         verts,
         indices,
         normals,
         material: materialName,
       } = await repl.getRenderedMesh(ctxPtr, i);
+      let uvs: Float32Array | null = null;
+      const matDef = materialDefinitions.materials[materialName];
+      const uvUnwrapParams = (() => {
+        if (!!overrideMat || matDef.textureMapping?.type !== 'uv') {
+          return null;
+        }
+
+        return {
+          nCones: matDef.textureMapping.numCones,
+          flattenToDisk: matDef.textureMapping.flattenToDisk,
+          mapToSphere: matDef.textureMapping.mapToSphere,
+        };
+      })();
+
+      if (uvUnwrapParams) {
+        if (uvUnwrapInitP instanceof Promise) {
+          await uvUnwrapInitP;
+        }
+
+        try {
+          const unwrapRes = unwrapUVs(
+            verts,
+            indices,
+            uvUnwrapParams.nCones,
+            uvUnwrapParams.flattenToDisk,
+            uvUnwrapParams.mapToSphere
+          );
+          if (unwrapRes.type === 'error') {
+            throw new Error(unwrapRes.message);
+          }
+
+          const { uvs: unwrappedUVs, verts: unwrappedVerts, indices: unwrappedIndices } = unwrapRes.out;
+          uvs = unwrappedUVs;
+          verts = unwrappedVerts;
+          indices = unwrappedIndices;
+        } catch (unwrapErr) {
+          err = `Error unwrapping UVs: ${unwrapErr}`;
+          return;
+        }
+      }
 
       localRunStats.totalVtxCount += verts.length / 3;
       localRunStats.totalFaceCount += indices.length / 3;
@@ -666,6 +710,10 @@
       geometry.setIndex(new THREE.BufferAttribute(indices, 1));
       if (normals) {
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+      }
+      if (uvs) {
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+        geometry.computeVertexNormals();
       }
 
       const matEntry = (() => {
@@ -700,16 +748,16 @@
 
       // TODO: should cache this to avoid re-computing UVs for meshes that haven't changed
       // TODO: should maybe have a batch endpoint for this
-      if (generateUVs) {
-        unwrapUVs(verts, indices).then(({ uvs, verts, indices }) => {
-          mesh.geometry.dispose();
-          mesh.geometry = new THREE.BufferGeometry();
-          mesh.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-          mesh.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-          mesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-          mesh.geometry.computeVertexNormals();
-        });
-      }
+      // if (generateUVs) {
+      //   unwrapUVs(verts, indices).then(({ uvs, verts, indices }) => {
+      //     mesh.geometry.dispose();
+      //     mesh.geometry = new THREE.BufferGeometry();
+      //     mesh.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      //     mesh.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      //     mesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+      //     mesh.geometry.computeVertexNormals();
+      //   });
+      // }
     }
 
     localRunStats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
@@ -737,6 +785,13 @@
     renderedObjects = newRenderedMeshes;
     runStats = localRunStats;
     isRunning = false;
+  };
+
+  const rerun = (onlyIfUVUnwrapperNotLoaded: boolean) => {
+    if (onlyIfUVUnwrapperNotLoaded && getIsUVUnwrapLoaded()) {
+      return;
+    }
+    run(editorView?.state.doc.toString() ?? lastCode);
   };
 
   const toggleEditorCollapsed = () => {
@@ -897,7 +952,7 @@
 <svelte:window bind:innerWidth />
 
 <ExportModal bind:dialog={exportDialog} {renderedObjects} />
-<MaterialEditor bind:isOpen={materialEditorOpen} bind:materials={materialDefinitions} />
+<MaterialEditor bind:isOpen={materialEditorOpen} bind:materials={materialDefinitions} {rerun} />
 
 {#if isEditorCollapsed}
   <div

@@ -17,9 +17,11 @@
   let {
     isOpen = $bindable(),
     materials = $bindable(),
+    rerun,
   }: {
     isOpen: boolean;
     materials: MaterialDefinitions;
+    rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
   } = $props();
 
   let dialogElement = $state<HTMLDivElement | null>(null);
@@ -131,7 +133,7 @@
           <button class="add-material" onclick={addMaterial}>add material</button>
         </div>
       {/if}
-      {#if selectedMaterialID !== null}
+      {#if selectedMaterialID !== null && !!materials.materials[selectedMaterialID]}
         {#if view.type === 'properties'}
           <MaterialPropertiesEditor
             bind:material={materials.materials[selectedMaterialID]}
@@ -141,6 +143,7 @@
             oneditshaders={() => {
               view = { type: 'shader_editor' };
             }}
+            {rerun}
           />
         {:else if view.type === 'texture_picker'}
           {#if materials.materials[selectedMaterialID].type === 'physical'}

@@ -9,6 +9,10 @@ export interface RGBColor {
   b: number;
 }
 
+export type TextureMapping =
+  | { type: 'triplanar' }
+  | { type: 'uv'; numCones: number; flattenToDisk: boolean; mapToSphere: boolean };
+
 export interface BasicMaterialDef {
   type: 'basic';
   name: string;
@@ -16,6 +20,7 @@ export interface BasicMaterialDef {
   shaders?: {
     color?: string;
   };
+  textureMapping?: TextureMapping;
 }
 
 import { Textures } from 'src/viz/scenes/geoscriptPlayground/materialEditor/state.svelte';
@@ -58,6 +63,7 @@ export interface PhysicalMaterialDef {
     metalness?: string;
     iridescence?: string;
   };
+  textureMapping?: TextureMapping;
 }
 
 export type MaterialDef = BasicMaterialDef | PhysicalMaterialDef;
@@ -150,9 +156,10 @@ const buildPhysicalShader = (
 export const buildMaterial = (
   loader: THREE.ImageBitmapLoader,
   def: MaterialDef,
-  id: MaterialID,
-  useTriplanarMapping: boolean
+  id: MaterialID
 ): Promise<THREE.Material> | THREE.Material => {
+  const textureMappingType = def.textureMapping?.type;
+  const useTriplanarMapping = textureMappingType === 'triplanar' || textureMappingType === undefined;
   if (def.type === 'basic') {
     return new THREE.MeshBasicMaterial({
       name: id,

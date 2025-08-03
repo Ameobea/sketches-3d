@@ -12,6 +12,6 @@ dir_light(
   shadow_camera={near: 8, far: 300, left: -300, right: 380, top: 94, bottom: -140},
 )
   | trans(-20, 50, 0)
-  | render
+  | render;
 
-// set_default_material("default")
+// set_default_material("default");
