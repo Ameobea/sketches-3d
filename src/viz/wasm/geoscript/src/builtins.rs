@@ -15,6 +15,7 @@ use parry3d::math::{Isometry, Point};
 use parry3d::query::Ray;
 use rand::Rng;
 
+use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
@@ -1531,10 +1532,9 @@ fn extrude_pipe_impl(
         }
       };
 
-      fn build_twist_or_radius_callable<'a>(
+      fn build_twist_callable<'a>(
         ctx: &'a EvalCtx,
         get_twist: &'a Callable,
-        param_name: &'static str,
       ) -> impl Fn(usize, Vec3) -> Result<f32, ErrorStack> + 'a {
         move |i, pos| {
           let out = ctx
@@ -1545,13 +1545,59 @@ fn extrude_pipe_impl(
               &ctx.globals,
             )
             .map_err(|err| {
-              err.wrap(format!("Error calling `{param_name}` cb in `extrude_pipe`"))
+              err.wrap(format!(
+                "Error calling user-provided cb passed to `twist` arg in `extrude_pipe`"
+              ))
             })?;
           out.as_float().ok_or_else(|| {
             ErrorStack::new(format!(
-              "Expected Float from `{param_name}` cb in `extrude_pipe`, found: {out:?}"
+              "Expected Float from user-provided cb passed to `twist` arg in `extrude_pipe`, \
+               found: {out:?}"
             ))
           })
+        }
+      }
+
+      fn build_radius_callable<'a>(
+        ctx: &'a EvalCtx,
+        get_radius: &'a Callable,
+      ) -> impl Fn(usize, Vec3) -> Result<PipeRadius, ErrorStack> + 'a {
+        move |i, pos| {
+          let radius_for_ring = ctx
+            .invoke_callable(
+              get_radius,
+              &[Value::Int(i as i64), Value::Vec3(pos)],
+              &Default::default(),
+              &ctx.globals,
+            )
+            .map_err(|err| {
+              err.wrap(format!(
+                "Error calling user-provided cb passed to `radius` arg in `extrude_pipe`"
+              ))
+            })?;
+
+          if let Some(radius) = radius_for_ring.as_float() {
+            return Ok(PipeRadius::constant(radius));
+          } else if let Some(seq) = radius_for_ring.as_sequence() {
+            let radii: Vec<f32> = seq
+              .clone_box()
+              .consume(ctx)
+              .map(|res| match res {
+                Ok(val) if let Some(f) = val.as_float() => Ok(f),
+                Ok(val) => Err(ErrorStack::new(format!(
+                  "Expected Int/Float in sequence returned from user-provided cb passed to \
+                   `radius` arg in `extrude_pipe`, found: {val:?}"
+                ))),
+                Err(err) => Err(err),
+              })
+              .collect::<Result<_, _>>()?;
+            Ok(PipeRadius::Explicit(radii))
+          } else {
+            Err(ErrorStack::new(format!(
+              "Expected Num or Sequence from user-provided cb passed to `radius` arg in \
+               `extrude_pipe`, found: {radius_for_ring:?}"
+            )))
+          }
         }
       }
 
@@ -1573,7 +1619,7 @@ fn extrude_pipe_impl(
 
       let mesh = match radius {
         _ if let Some(radius) = radius.as_float() => {
-          let get_radius = |_, _| Ok(radius);
+          let get_radius = |_, _| Ok(PipeRadius::Constant(radius));
           match twist {
             Twist::Const(twist) => {
               extrude_pipe(get_radius, resolution, path, end_mode, |_, _| Ok(twist))?
@@ -1583,12 +1629,12 @@ fn extrude_pipe_impl(
               resolution,
               path,
               end_mode,
-              build_twist_or_radius_callable(ctx, get_twist, "twist"),
+              build_twist_callable(ctx, get_twist),
             )?,
           }
         }
         _ if let Some(get_radius) = radius.as_callable() => {
-          let get_radius = build_twist_or_radius_callable(ctx, get_radius, "radius");
+          let get_radius = build_radius_callable(ctx, get_radius);
           match twist {
             Twist::Const(twist) => {
               extrude_pipe(get_radius, resolution, path, end_mode, |_, _| Ok(twist))?
@@ -1598,7 +1644,7 @@ fn extrude_pipe_impl(
               resolution,
               path,
               end_mode,
-              build_twist_or_radius_callable(ctx, get_twist, "twist"),
+              build_twist_callable(ctx, get_twist),
             )?,
           }
         }

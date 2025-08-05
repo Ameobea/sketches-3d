@@ -1,4 +1,10 @@
-#![feature(if_let_guard, impl_trait_in_bindings, adt_const_params, thread_local)]
+#![feature(
+  if_let_guard,
+  impl_trait_in_bindings,
+  adt_const_params,
+  thread_local,
+  impl_trait_in_fn_trait_return
+)]
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::UnsafeCell;

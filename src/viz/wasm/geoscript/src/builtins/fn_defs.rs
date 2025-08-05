@@ -3780,7 +3780,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "extrude_pipe" => FnDef {
     module: "mesh",
-    examples: &[FnExample { composition_id: 8 }],
+    examples: &[FnExample { composition_id: 8 }, FnExample { composition_id: 41 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -3788,7 +3788,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             name: "radius",
             valid_types: &[ArgType::Numeric, ArgType::Callable],
             default_value: DefaultValue::Required,
-            description: "Radius of the pipe or a callable with signature `|point_ix: int, path_point: vec3|: float` that returns the radius at each point along the path"
+            description: "Radius of the pipe or a callable with signature `|point_ix: int, path_point: vec3|: float | seq` that returns the radius at each point along the path.  If a sequence is returned by the callback, its length must match the resolution and it should contain the distance of each point along the ring from the pipe's center."
           },
           ArgDef {
             name: "resolution",

@@ -10,8 +10,51 @@ pub enum EndMode {
   Connect,
 }
 
+pub enum PipeRadius {
+  /// All points in the ring are equidistant from the center, approximating a circle.
+  Constant(f32),
+  /// The distance of each point in the ring from the center is defined explicitly ahead of time
+  Explicit(Vec<f32>),
+}
+
+impl PipeRadius {
+  pub fn constant(radius: f32) -> Self {
+    PipeRadius::Constant(radius)
+  }
+
+  fn validate(&self, resolution: usize, ring_ix: usize) -> Result<(), ErrorStack> {
+    match self {
+      Self::Constant(_) => Ok(()),
+      Self::Explicit(radii) => {
+        if radii.len() != resolution {
+          return Err(ErrorStack::new(format!(
+            "Invalid radius count returned from user-provided callback for ring index={ring_ix}; \
+             expected {resolution} radii, found {}",
+            radii.len()
+          )));
+        }
+
+        Ok(())
+      }
+    }
+  }
+
+  fn get(&self, index: usize) -> f32 {
+    match self {
+      Self::Constant(radius) => *radius,
+      Self::Explicit(radii) => radii.get(index).copied().unwrap_or_else(|| {
+        panic!(
+          "We should have already validated user-defined radii seq len.  Tried to get index \
+           {index} with len={}",
+          radii.len()
+        )
+      }),
+    }
+  }
+}
+
 pub fn extrude_pipe(
-  get_radius: impl Fn(usize, Vec3) -> Result<f32, ErrorStack>,
+  get_radius: impl Fn(usize, Vec3) -> Result<PipeRadius, ErrorStack>,
   resolution: usize,
   path: impl Iterator<Item = Result<Vec3, ErrorStack>>,
   end_mode: EndMode,
@@ -23,7 +66,6 @@ pub fn extrude_pipe(
     ));
   }
 
-  // TODO: shouldn't need to collect here
   let points = path.collect::<Result<Vec<_>, _>>()?;
 
   if points.len() < 2 {
@@ -68,13 +110,21 @@ pub fn extrude_pipe(
   // normal.
   let mut binormal = t0.cross(&normal).normalize();
 
-  let mut verts: Vec<Vec3> = Vec::with_capacity(points.len() * resolution);
+  let extra_cap_vtx_count = match end_mode {
+    EndMode::Close => 0,
+    // one vtx as added at the center of each end to serve as the center of the triangle fan
+    EndMode::Connect => 2,
+    EndMode::Open => 0,
+  };
+  let mut verts: Vec<Vec3> = Vec::with_capacity(points.len() * resolution + extra_cap_vtx_count);
 
   let center0 = points[0];
+  let radii = get_radius(0, center0)?;
+  radii.validate(resolution, 0)?;
   for j in 0..resolution {
     let theta = 2. * PI * (j as f32) / (resolution as f32) + twist(0, center0)?;
     let dir = normal * theta.cos() + binormal * theta.sin();
-    verts.push(center0 + dir * get_radius(0, center0)?);
+    verts.push(center0 + dir * radii.get(j));
   }
 
   for i in 1..points.len() {
@@ -101,10 +151,12 @@ pub fn extrude_pipe(
     binormal = ti.cross(&normal).normalize();
 
     let center = points[i];
+    let radii = get_radius(i, center)?;
+    radii.validate(resolution, i)?;
     for j in 0..resolution {
       let theta = 2. * PI * (j as f32) / (resolution as f32) + twist(i, center)?;
       let dir = normal * theta.cos() + binormal * theta.sin();
-      verts.push(center + dir * get_radius(i, center)?);
+      verts.push(center + dir * radii.get(j));
     }
   }
 
@@ -114,8 +166,9 @@ pub fn extrude_pipe(
   let mut index_count = (points.len() - 1) * resolution * 3 * 2;
   match end_mode {
     EndMode::Close => {
-      // `n-2` triangles are needed to tessellate a convex polygon of `n` vertices/edges
-      let cap_triangles = resolution - 2;
+      // `n` triangles are needed to tessellate a convex polygon of `n` vertices/edges by filling
+      // to a center vertex.
+      let cap_triangles = resolution;
       index_count += cap_triangles * 3 * 2;
     }
     EndMode::Connect => {
@@ -149,20 +202,27 @@ pub fn extrude_pipe(
         (0u32, true),
         ((points.len() - 1) as u32 * resolution as u32, false),
       ] {
-        // using a basic triangle fan to form the end caps
-        for vtx_ix in 1..(resolution - 1) {
-          let a = 0;
-          let b = vtx_ix as u32;
-          let c = (vtx_ix + 1) as u32;
+        // using a basic triangle fan out from an added center vtx to form the end caps
+        let center_vtx_ix = verts.len();
+        let center = verts[(ix_offset as usize)..(ix_offset as usize + resolution)]
+          .iter()
+          .fold(Vec3::new(0., 0., 0.), |acc, v| acc + *v)
+          / (resolution as f32);
+        verts.push(center);
+
+        for vtx_ix in 0..resolution {
+          let a = center_vtx_ix as u32;
+          let b = ix_offset + (vtx_ix as u32);
+          let c = ix_offset + (((vtx_ix + 1) % resolution) as u32);
 
           if reverse_winding {
-            indices.push(ix_offset + c);
-            indices.push(ix_offset + b);
-            indices.push(ix_offset + a);
+            indices.push(c);
+            indices.push(b);
+            indices.push(a);
           } else {
-            indices.push(ix_offset + a);
-            indices.push(ix_offset + b);
-            indices.push(ix_offset + c);
+            indices.push(a);
+            indices.push(b);
+            indices.push(c);
           }
         }
       }
