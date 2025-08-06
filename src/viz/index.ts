@@ -815,26 +815,26 @@ export const initViz = (
     viz.sfxManager.setConfig(mergeDeep(buildDefaultSfxConfig(), sceneConf.sfx ?? {}));
     viz.sfxManager.setVizConfig(vizConfig);
 
-    const initialSpawnPos = (window as any).lastPos
-      ? (() => {
-          try {
-            const lastPos = JSON.parse((window as any).lastPos);
-            return {
-              pos: new THREE.Vector3(lastPos.pos[0], lastPos.pos[1], lastPos.pos[2]),
-              rot: new THREE.Vector3(lastPos.rot[0], lastPos.rot[1], lastPos.rot[2]),
-            };
-          } catch (_err) {
-            console.warn('Failed to parse lastPos', (window as any).lastPos);
-            return viz.spawnPos;
-          }
-        })()
-      : viz.spawnPos;
-
     viz.registerAfterRenderCb((curTimeSeconds, tDiffSeconds) =>
       viz.sfxManager.tick(tDiffSeconds, curTimeSeconds)
     );
 
     if (sceneConf.viewMode.type === 'firstPerson' || sceneConf.viewMode.type === 'top-down') {
+      const initialSpawnPos = (window as any).lastPos
+        ? (() => {
+            try {
+              const lastPos = JSON.parse((window as any).lastPos);
+              return {
+                pos: new THREE.Vector3(lastPos.pos[0], lastPos.pos[1], lastPos.pos[2]),
+                rot: new THREE.Vector3(lastPos.rot[0], lastPos.rot[1], lastPos.rot[2]),
+              };
+            } catch (err) {
+              console.warn('Failed to parse lastPos', (window as any).lastPos, err);
+              return viz.spawnPos;
+            }
+          })()
+        : viz.spawnPos;
+
       if (sceneConf.viewMode.type === 'firstPerson') {
         viz.camera.rotation.setFromVector3(initialSpawnPos.rot, 'YXZ');
       } else if (sceneConf.viewMode.type === 'top-down') {

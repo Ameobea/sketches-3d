@@ -158,6 +158,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
   formData.append('normalize', 'true');
   // TODO: Configurable
   formData.append('cones', '2');
+  // TODO: Should pipe some timings for this to the geotoy backend so it can be graphed
   const bffResponse = await fetch(BFF_SERVICE_URL, {
     method: 'POST',
     body: formData,

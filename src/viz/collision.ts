@@ -314,9 +314,9 @@ export class BulletPhysics {
 
       const mouseSensitivity = this.viz.vizConfig.current.controls.mouseSensitivity;
       // sometimes some freak shit happens where large mouse movements get reported twice ... ...
-      if (Math.abs(evt.movementX) > 100 || Math.abs(evt.movementY) > 100) {
-        console.warn(evt.movementX, evt.movementY, handlerID);
-      }
+      // if (Math.abs(evt.movementX) > 100 || Math.abs(evt.movementY) > 100) {
+      //   console.warn(evt.movementX, evt.movementY, handlerID);
+      // }
       cameraEulerScratch.y -= evt.movementX * mouseSensitivity * 0.001;
       cameraEulerScratch.x -= evt.movementY * mouseSensitivity * 0.001;
 

@@ -22,6 +22,7 @@
     LineMat,
     NormalMat,
     WireframeMat,
+    type MaterialDef,
     type MaterialDefinitions,
   } from 'src/geoscript/materials';
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
@@ -531,16 +532,24 @@
     }
   });
 
-  let customMaterialsByName: Record<
-    string,
-    { promise: Promise<THREE.Material>; resolved: THREE.Material | null }
-  > = $derived.by(() => {
+  let {
+    customMaterialsByName,
+    matDefsByName,
+  }: {
+    customMaterialsByName: Record<
+      string,
+      { promise: Promise<THREE.Material>; resolved: THREE.Material | null }
+    >;
+    matDefsByName: Record<string, MaterialDef>;
+  } = $derived.by(() => {
     const matsByName: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
       {};
+    const matDefsByName: Record<string, MaterialDef> = {};
     for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
       matsByName[def.name] = customMaterials[id];
+      matDefsByName[def.name] = def;
     }
-    return matsByName;
+    return { customMaterialsByName: matsByName, matDefsByName };
   });
 
   $effect(() => {
@@ -662,9 +671,9 @@
         material: materialName,
       } = await repl.getRenderedMesh(ctxPtr, i);
       let uvs: Float32Array | null = null;
-      const matDef = materialDefinitions.materials[materialName];
+      const matDef = matDefsByName[materialName];
       const uvUnwrapParams = (() => {
-        if (!!overrideMat || matDef.textureMapping?.type !== 'uv') {
+        if (!!overrideMat || matDef?.textureMapping?.type !== 'uv') {
           return null;
         }
 
