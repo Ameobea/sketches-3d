@@ -244,11 +244,12 @@
     border: 1px solid #888;
     width: 600px;
     max-width: calc(min(600px, 100vw));
-    min-height: 400px;
+    min-height: calc(max(20vh, 400px) + 30px);
     max-height: calc(min(50vh, 600px));
     z-index: 100;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
   .shader-editor-open {
