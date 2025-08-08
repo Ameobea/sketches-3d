@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { makeDraggable, uuidv4 } from './util';
+  import type * as Comlink from 'comlink';
+  import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
 
   import MaterialPropertiesEditor from './MaterialPropertiesEditor.svelte';
   import {
@@ -13,15 +14,21 @@
   import TexturePicker from './TexturePicker.svelte';
   import TextureUploader from './TextureUploader.svelte';
   import ShaderEditor from './ShaderEditor.svelte';
+  import { makeDraggable, uuidv4 } from './util';
+  import UvViewer from './UVViewer.svelte';
 
   let {
     isOpen = $bindable(),
     materials = $bindable(),
     rerun,
+    repl,
+    ctxPtr,
   }: {
     isOpen: boolean;
     materials: MaterialDefinitions;
-    rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
+    rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => Promise<void>;
+    repl: Comlink.Remote<GeoscriptWorkerMethods>;
+    ctxPtr: number | null;
   } = $props();
 
   let dialogElement = $state<HTMLDivElement | null>(null);
@@ -38,6 +45,7 @@
         field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap';
       }
     | { type: 'shader_editor' }
+    | { type: 'uv_viewer' }
   >({ type: 'properties' });
 
   let selectedMaterialID: MaterialID | null = $state(null);
@@ -107,7 +115,6 @@
                 <button
                   class="select-button"
                   onclick={() => {
-                    console.log({ selectedMaterialID, id });
                     selectedMaterialID = id;
                   }}
                 >
@@ -142,6 +149,9 @@
             }}
             oneditshaders={() => {
               view = { type: 'shader_editor' };
+            }}
+            onviewuvmappings={() => {
+              view = { type: 'uv_viewer' };
             }}
             {rerun}
           />
@@ -195,7 +205,28 @@
 
             materials.materials[selectedMaterialID].shaders = newState.shaders;
           }}
-          <ShaderEditor {state} {onchange} onclose={() => (view = { type: 'properties' })} />
+          <ShaderEditor
+            {state}
+            {onchange}
+            onclose={() => {
+              view = { type: 'properties' };
+            }}
+          />
+        {:else if ctxPtr !== null && view.type === 'uv_viewer'}
+          {#if materials.materials[selectedMaterialID]?.type === 'physical' && materials.materials[selectedMaterialID].textureMapping?.type === 'uv'}
+            <UvViewer
+              onclose={() => {
+                view = { type: 'properties' };
+              }}
+              {repl}
+              {ctxPtr}
+              matDef={materials.materials[selectedMaterialID] as PhysicalMaterialDef}
+              {rerun}
+            />
+          {:else}
+            <p>active material missing or not UV mapped</p>
+            <button>close</button>
+          {/if}
         {/if}
       {/if}
     </div>

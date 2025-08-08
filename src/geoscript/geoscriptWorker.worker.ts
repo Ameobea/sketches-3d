@@ -57,6 +57,9 @@ const methods = {
   getRenderedMeshCount: (ctxPtr: number) => {
     return Geoscript.geoscript_repl_get_rendered_mesh_count(ctxPtr);
   },
+  getRenderedMeshIndicesWithMaterial: (ctxPtr: number, materialId: string) => {
+    return Geoscript.geoscript_repl_get_rendered_mesh_indices_with_material(ctxPtr, materialId);
+  },
   getRenderedMesh: (ctxPtr: number, meshIx: number) => {
     const transform = Geoscript.geoscript_repl_get_rendered_mesh_transform(ctxPtr, meshIx);
     const verts = Geoscript.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, meshIx);

@@ -796,11 +796,11 @@
     isRunning = false;
   };
 
-  const rerun = (onlyIfUVUnwrapperNotLoaded: boolean) => {
+  const rerun = async (onlyIfUVUnwrapperNotLoaded: boolean): Promise<void> => {
     if (onlyIfUVUnwrapperNotLoaded && getIsUVUnwrapLoaded()) {
       return;
     }
-    run(editorView?.state.doc.toString() ?? lastCode);
+    return run(editorView?.state.doc.toString() ?? lastCode);
   };
 
   const toggleEditorCollapsed = () => {
@@ -961,7 +961,13 @@
 <svelte:window bind:innerWidth />
 
 <ExportModal bind:dialog={exportDialog} {renderedObjects} />
-<MaterialEditor bind:isOpen={materialEditorOpen} bind:materials={materialDefinitions} {rerun} />
+<MaterialEditor
+  bind:isOpen={materialEditorOpen}
+  bind:materials={materialDefinitions}
+  {rerun}
+  {repl}
+  {ctxPtr}
+/>
 
 {#if isEditorCollapsed}
   <div

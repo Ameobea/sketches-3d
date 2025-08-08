@@ -19,22 +19,13 @@ export const initUVUnwrap = (): Promise<void> | true => {
 
 export const getIsUVUnwrapLoaded = (): boolean => UVUnwrapWasm.isSome();
 
-export const unwrapUVs = (
+const unwrapInner = (
   verts: Float32Array,
   indices: Uint32Array,
   nCones: number,
   flattenToDisk: boolean,
   mapToSphere: boolean
-):
-  | {
-      type: 'ok';
-      out: {
-        uvs: Float32Array;
-        verts: Float32Array;
-        indices: Uint32Array;
-      };
-    }
-  | { type: 'error'; message: string } => {
+) => {
   if (!UVUnwrapWasm.isSome()) {
     throw new Error('UVUnwrapWasm not initialized');
   }
@@ -62,6 +53,44 @@ export const unwrapUVs = (
   const vec_uint32 = (vals: number[] | Uint32Array | Uint16Array) =>
     vec_generic(UVUnwrap.vector$uint32_t$, HEAPU32, vals);
 
+  const vec_verts = vec_f32(verts);
+  const vec_indices = vec_uint32(indices);
+
+  const output = UVUnwrap.unwrapUVs(vec_indices, vec_verts, nCones, flattenToDisk, mapToSphere);
+
+  return {
+    output,
+    vec_verts,
+    vec_indices,
+    HEAPF32,
+    HEAPU32,
+  };
+};
+
+export const unwrapUVs = (
+  verts: Float32Array,
+  indices: Uint32Array,
+  nCones: number,
+  flattenToDisk: boolean,
+  mapToSphere: boolean
+):
+  | {
+      type: 'ok';
+      out: {
+        uvs: Float32Array;
+        verts: Float32Array;
+        indices: Uint32Array;
+      };
+    }
+  | { type: 'error'; message: string } => {
+  const { output, vec_verts, vec_indices, HEAPF32, HEAPU32 } = unwrapInner(
+    verts,
+    indices,
+    nCones,
+    flattenToDisk,
+    mapToSphere
+  );
+
   const from_vec_f32 = (vec: any): Float32Array => {
     const length = vec.size();
     const ptr = vec.data();
@@ -74,10 +103,6 @@ export const unwrapUVs = (
     return HEAPU32().subarray(ptr / 4, ptr / 4 + length);
   };
 
-  const vec_verts = vec_f32(verts);
-  const vec_indices = vec_uint32(indices);
-
-  const output = UVUnwrap.unwrapUVs(vec_indices, vec_verts, nCones, flattenToDisk, mapToSphere);
   const error = output.error;
   if (error) {
     console.error('UV Unwrap error:', error);
@@ -101,5 +126,34 @@ export const unwrapUVs = (
       verts: unwrappedVerts,
       indices: unwrappedIndices,
     },
+  };
+};
+
+export const buildUVUnwrapDistortionSVG = (
+  verts: Float32Array,
+  indices: Uint32Array,
+  nCones: number,
+  flattenToDisk: boolean,
+  mapToSphere: boolean
+): { type: 'ok'; out: string } | { type: 'error'; message: string } => {
+  const { output, vec_verts, vec_indices } = unwrapInner(verts, indices, nCones, flattenToDisk, mapToSphere);
+
+  const error = output.error;
+  if (error) {
+    console.error('UV Unwrap error:', error);
+    vec_verts.delete();
+    vec_indices.delete();
+    output.delete();
+    return { type: 'error', message: error };
+  }
+
+  const svg = output.getDistortionSvg();
+  vec_verts.delete();
+  vec_indices.delete();
+  output.delete();
+
+  return {
+    type: 'ok',
+    out: svg,
   };
 };

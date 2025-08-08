@@ -4,16 +4,19 @@
   import ColorPicker from './ColorPicker.svelte';
   import TexturePreview from './TexturePreview.svelte';
   import { Textures } from './state.svelte';
+  import UvPropertiesEditor from './UVPropertiesEditor.svelte';
 
   let {
     material = $bindable(),
     onpicktexture,
     oneditshaders,
+    onviewuvmappings,
     rerun,
   }: {
     material: MaterialDef;
     onpicktexture: (name: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap') => void;
     oneditshaders: () => void;
+    onviewuvmappings: () => void;
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
   } = $props();
   let showAdvanced = $state(false);
@@ -102,36 +105,12 @@
       </div>
     </FormField>
     {#if material.textureMapping?.type === 'uv'}
-      <FormField
-        label="num cones"
-        help="The number of singularities in the boundary-first-flattening algorithm. Larger values give the unwrapping algorithm a greater degree of freedom to reduce distortion at the cost of increasing discontinuities."
-      >
-        <input
-          type="number"
-          min="0"
-          step="1"
-          bind:value={material.textureMapping.numCones}
-          oninput={() => rerun(false)}
-          style="width: 80px"
-        />
-      </FormField>
-      <FormField label="flatten to disk" help="If true, the UVs will be flattened to a disk shape.">
-        <input
-          type="checkbox"
-          bind:checked={material.textureMapping.flattenToDisk}
-          oninput={() => rerun(false)}
-        />
-      </FormField>
-      <FormField
-        label="map to sphere"
-        help="If true, the UVs will be mapped to a sphere.  This can useful for meshes with spherical topology and will likely have no effect if meshes are not closed and topologically watertight.  It also has no effect if the number of cones is >= 3."
-      >
-        <input
-          type="checkbox"
-          bind:checked={material.textureMapping.mapToSphere}
-          oninput={() => rerun(false)}
-        />
-      </FormField>
+      <UvPropertiesEditor {material} {rerun} />
+      <div style="display: flex; padding-left: 8px">
+        <button class="edit-shaders" onclick={onviewuvmappings} style="width:240px">
+          view generated uv mappings
+        </button>
+      </div>
     {/if}
     <div style="display: flex; padding-left: 8px">
       <button class="edit-shaders" onclick={oneditshaders}>edit shaders</button>

@@ -191,6 +191,40 @@ pub fn geoscript_repl_get_rendered_mesh_count(ctx: *const GeoscriptReplCtx) -> u
 }
 
 #[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_indices_with_material(
+  ctx: *const GeoscriptReplCtx,
+  mat_name: &str,
+) -> Vec<usize> {
+  let ctx = unsafe { &*ctx };
+  ctx
+    .output_meshes
+    .iter()
+    .enumerate()
+    .filter_map(|(ix, mesh)| match &mesh.material {
+      Some(name) => {
+        if name == mat_name {
+          Some(ix)
+        } else {
+          None
+        }
+      }
+      None => match &*ctx.geo_ctx.default_material.borrow() {
+        Some(mat) => match &**mat {
+          geoscript::materials::Material::External(name) => {
+            if name == mat_name {
+              Some(ix)
+            } else {
+              None
+            }
+          }
+        },
+        None => None,
+      },
+    })
+    .collect()
+}
+
+#[wasm_bindgen]
 pub fn geoscript_repl_get_rendered_mesh_transform(
   ctx: *const GeoscriptReplCtx,
   mesh_ix: usize,
