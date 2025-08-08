@@ -11,9 +11,9 @@ use crate::{
     pos_impl, sub_impl, BoolOp,
   },
   get_args, get_binop_def_ix, get_binop_return_ty, get_unop_def_ix, get_unop_return_ty,
-  resolve_builtin_impl, ArgType, Callable, Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput,
-  IntRange, PreResolvedSignature, Rule, Scope, Value, FN_SIGNATURE_DEFS, FUNCTION_ALIASES,
-  PRATT_PARSER,
+  resolve_builtin_impl, ArgType, Callable, CapturedScope, Closure, EagerSeq, ErrorStack, EvalCtx,
+  GetArgsOutput, IntRange, PreResolvedSignature, Rule, Scope, Value, FN_SIGNATURE_DEFS,
+  FUNCTION_ALIASES, PRATT_PARSER,
 };
 
 #[derive(Debug)]
@@ -83,6 +83,7 @@ impl TypeName {
       (TypeName::Bool, Value::Bool(_)) => Ok(()),
       (TypeName::Seq, Value::Sequence(_)) => Ok(()),
       (TypeName::Callable, Value::Callable(_)) => Ok(()),
+      (TypeName::String, Value::String(_)) => Ok(()),
       (TypeName::Nil, Value::Nil) => Ok(()),
       _ => Err(ErrorStack::new(format!(
         "Value {val:?} does not match type {self:?}"
@@ -236,10 +237,7 @@ impl Expr {
 
         let name = match target {
           FunctionCallTarget::Name(name) => name,
-          FunctionCallTarget::Literal(_) => {
-            // if the target is a literal callable, we can const-eval it
-            return false;
-          }
+          FunctionCallTarget::Literal(callable) => return callable.is_side_effectful(),
         };
 
         if let Some(TrackedValueRef::Const(val)) = local_scope.get(name) {
@@ -1239,6 +1237,16 @@ impl<'a> ScopeTracker<'a> {
     }
   }
 
+  pub fn has<'b>(&'b self, name: &str) -> bool {
+    if self.vars.contains_key(name) {
+      return true;
+    }
+    if let Some(parent) = self.parent {
+      return parent.has(name);
+    }
+    false
+  }
+
   pub fn get<'b>(&'b self, name: &str) -> Option<TrackedValueRef<'b>> {
     if let Some(val) = self.vars.get(name) {
       return Some(val.as_ref());
@@ -1667,7 +1675,7 @@ fn fold_constants<'a>(
               None => {
                 return Err(ErrorStack::new(format!(
                   "Variable or function not found: {name}",
-                )))
+                )));
               }
             },
           };
@@ -1795,7 +1803,7 @@ fn fold_constants<'a>(
       *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Closure(Closure {
         params: params.clone(),
         body: body.0.clone(),
-        captured_scope: Rc::new(Scope::default()),
+        captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
         return_type_hint: return_type_hint.clone(),
       }))));
 
@@ -1972,7 +1980,7 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
-      let evaled = ctx.eval_expr(expr, &ctx.globals)?;
+      let evaled = ctx.eval_expr(expr, &ctx.globals, None)?;
       match evaled {
         crate::ControlFlow::Continue(val) | crate::ControlFlow::Break(val) => {
           *expr = Expr::Literal(val)
@@ -2173,7 +2181,14 @@ fn optimize_statement<'a>(
       expr,
       type_hint: _,
     } => {
+      // insert a placeholder for the variable in the local scope to support recursive calls
+      // unless we're assigning to an existing variable
+      if !local_scope.has(name) {
+        local_scope.set(name.clone(), TrackedValue::Dyn);
+      }
+
       optimize_expr(ctx, local_scope, expr)?;
+
       local_scope.set(
         name.clone(),
         match expr.as_literal() {

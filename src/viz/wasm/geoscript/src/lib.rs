@@ -12,7 +12,7 @@ use std::{
   any::Any,
   cell::{Cell, RefCell},
   fmt::{Debug, Display},
-  rc::Rc,
+  rc::{self, Rc},
   sync::Mutex,
 };
 
@@ -98,6 +98,7 @@ lazy_static::lazy_static! {
     .op(Op::postfix(Rule::postfix));
 }
 
+#[derive(Clone)]
 pub struct ErrorStack {
   pub errors: Vec<String>,
 }
@@ -180,12 +181,27 @@ impl Debug for PartiallyAppliedFn {
 }
 
 #[derive(Clone)]
+enum CapturedScope {
+  Strong(Rc<Scope>),
+  Weak(rc::Weak<Scope>),
+}
+
+impl CapturedScope {
+  fn upgrade(&self) -> Option<Rc<Scope>> {
+    match self {
+      CapturedScope::Strong(scope) => Some(Rc::clone(scope)),
+      CapturedScope::Weak(weak) => weak.upgrade(),
+    }
+  }
+}
+
+#[derive(Clone)]
 pub struct Closure {
   /// Names of parameters for this closure in order
   params: Vec<ClosureArg>,
   body: Vec<Statement>,
   /// Contains variables captured from the environment when the closure was created
-  captured_scope: Rc<Scope>,
+  captured_scope: CapturedScope,
   return_type_hint: Option<TypeName>,
 }
 
@@ -273,7 +289,7 @@ impl Callable {
       Callable::Builtin { name, .. } => {
         matches!(
           name.as_str(),
-          "print" | "render" | "call" | "randv" | "randf" | "randi"
+          "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
@@ -1122,12 +1138,17 @@ impl EvalCtx {
     unsafe { &mut *std::ptr::addr_of_mut!(THREAD_RNG) }
   }
 
-  pub fn eval_expr(&self, expr: &Expr, scope: &Scope) -> Result<ControlFlow<Value>, ErrorStack> {
+  pub fn eval_expr(
+    &self,
+    expr: &Expr,
+    scope: &Scope,
+    binding_name: Option<&str>,
+  ) -> Result<ControlFlow<Value>, ErrorStack> {
     match expr {
       Expr::Call(call) => {
         let mut args = Vec::with_capacity(call.args.len());
         for arg in &call.args {
-          let val = match self.eval_expr(arg, scope)? {
+          let val = match self.eval_expr(arg, scope, None)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           };
@@ -1136,7 +1157,7 @@ impl EvalCtx {
 
         let mut kwargs = FxHashMap::default();
         for (k, v) in &call.kwargs {
-          let val = match self.eval_expr(v, scope)? {
+          let val = match self.eval_expr(v, scope, None)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           };
@@ -1169,11 +1190,11 @@ impl EvalCtx {
         .map(ControlFlow::Continue)
       }
       Expr::BinOp { op, lhs, rhs } => {
-        let lhs = match self.eval_expr(lhs, scope)? {
+        let lhs = match self.eval_expr(lhs, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        let rhs = match self.eval_expr(rhs, scope)? {
+        let rhs = match self.eval_expr(rhs, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1182,7 +1203,7 @@ impl EvalCtx {
           .map_err(|err| err.wrap(format!("Error applying binary operator `{op:?}`")))
       }
       Expr::PrefixOp { op, expr } => {
-        let val = match self.eval_expr(expr, scope)? {
+        let val = match self.eval_expr(expr, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1195,7 +1216,7 @@ impl EvalCtx {
         end,
         inclusive,
       } => {
-        let start = match self.eval_expr(start, scope)? {
+        let start = match self.eval_expr(start, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1204,7 +1225,7 @@ impl EvalCtx {
             "Range start must be an integer, found: {start:?}"
           )));
         };
-        let end = match self.eval_expr(end, scope)? {
+        let end = match self.eval_expr(end, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1230,7 +1251,7 @@ impl EvalCtx {
       Expr::ArrayLiteral(elems) => {
         let mut evaluated = Vec::with_capacity(elems.len());
         for elem in elems {
-          let val = match self.eval_expr(elem, scope)? {
+          let val = match self.eval_expr(elem, scope, None)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           };
@@ -1243,7 +1264,7 @@ impl EvalCtx {
       Expr::MapLiteral(map) => {
         let mut evaluated = Box::new(FxHashMap::default());
         for (key, value) in map {
-          let val = match self.eval_expr(value, scope)? {
+          let val = match self.eval_expr(value, scope, None)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           };
@@ -1255,18 +1276,60 @@ impl EvalCtx {
         params,
         body,
         return_type_hint,
-      } => Ok(ControlFlow::Continue(Value::Callable(Rc::new(
-        Callable::Closure(Closure {
-          params: params.clone(),
-          body: body.0.clone(),
-          // cloning the scope here makes the closure function like a rust `move` closure
-          // where all the values are cloned before being moved into the closure.
-          captured_scope: Rc::new(scope.clone()),
-          return_type_hint: return_type_hint.clone(),
-        }),
-      )))),
+      } => {
+        // cloning the scope here makes the closure function like a rust `move` closure
+        // where all the values are cloned before being moved into the closure.
+        let captured_scope = Rc::new(scope.clone());
+
+        if let Some(binding_name) = binding_name {
+          // add the closure itself to the scope to support recursive calls
+          captured_scope.insert(
+            binding_name.to_owned(),
+            Value::Callable(Rc::new(Callable::Closure(Closure {
+              params: params.clone(),
+              body: body.0.clone(),
+              // this is going to be immediately overwritten
+              captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
+              return_type_hint: return_type_hint.clone(),
+            }))),
+          );
+
+          let captured_scope_clone = Rc::downgrade(&captured_scope);
+          match captured_scope
+            .vars
+            .lock()
+            .unwrap()
+            .get_mut(binding_name)
+            .unwrap()
+          {
+            Value::Callable(callable) => {
+              let callable =
+                Rc::get_mut(callable).expect("Should only be one reference to this Rc");
+              let Callable::Closure(closure) = callable else {
+                unreachable!();
+              };
+              // writing this as a weak reference prevents a reference cycle:
+              //
+              // closure -> captured_scope -> closure_clone
+              //                   ^---------------------┘
+              //                           ^ this one is weak
+              closure.captured_scope = CapturedScope::Weak(captured_scope_clone);
+            }
+            _ => unreachable!(),
+          };
+        }
+
+        Ok(ControlFlow::Continue(Value::Callable(Rc::new(
+          Callable::Closure(Closure {
+            params: params.clone(),
+            body: body.0.clone(),
+            captured_scope: CapturedScope::Strong(captured_scope),
+            return_type_hint: return_type_hint.clone(),
+          }),
+        ))))
+      }
       Expr::StaticFieldAccess { lhs: obj, field } => {
-        let lhs = match self.eval_expr(obj, scope)? {
+        let lhs = match self.eval_expr(obj, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1275,11 +1338,11 @@ impl EvalCtx {
           .map(ControlFlow::Continue)
       }
       Expr::FieldAccess { lhs, field } => {
-        let lhs = match self.eval_expr(lhs, scope)? {
+        let lhs = match self.eval_expr(lhs, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        let field = match self.eval_expr(field, scope)? {
+        let field = match self.eval_expr(field, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1293,7 +1356,7 @@ impl EvalCtx {
         else_if_exprs,
         else_expr,
       } => {
-        let cond = match self.eval_expr(cond, scope)? {
+        let cond = match self.eval_expr(cond, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1303,10 +1366,10 @@ impl EvalCtx {
           )));
         };
         if cond {
-          return self.eval_expr(then, scope);
+          return self.eval_expr(then, scope, None);
         }
         for (else_if_cond, else_if_body) in else_if_exprs {
-          let else_if_cond = match self.eval_expr(else_if_cond, scope)? {
+          let else_if_cond = match self.eval_expr(else_if_cond, scope, None)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           };
@@ -1316,11 +1379,11 @@ impl EvalCtx {
             )));
           };
           if else_if_cond {
-            return self.eval_expr(else_if_body, scope);
+            return self.eval_expr(else_if_body, scope, None);
           }
         }
         if let Some(else_expr) = else_expr {
-          return self.eval_expr(else_expr, scope);
+          return self.eval_expr(else_expr, scope, None);
         }
 
         Ok(ControlFlow::Continue(Value::Nil))
@@ -1394,13 +1457,13 @@ impl EvalCtx {
     scope: &Scope,
   ) -> Result<ControlFlow<Value>, ErrorStack> {
     match statement {
-      Statement::Expr(expr) => self.eval_expr(expr, scope),
+      Statement::Expr(expr) => self.eval_expr(expr, scope, None),
       Statement::Assignment {
         name,
         expr,
         type_hint,
       } => {
-        let val = match self.eval_expr(expr, scope)? {
+        let val = match self.eval_expr(expr, scope, Some(name.as_str()))? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -1410,7 +1473,7 @@ impl EvalCtx {
       }
       Statement::Return { value } => {
         let value = if let Some(value) = value {
-          match self.eval_expr(value, scope)? {
+          match self.eval_expr(value, scope, None)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           }
@@ -1421,7 +1484,7 @@ impl EvalCtx {
       }
       Statement::Break { value } => {
         let value = if let Some(value) = value {
-          match self.eval_expr(value, scope)? {
+          match self.eval_expr(value, scope, None)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           }
@@ -1588,7 +1651,7 @@ impl EvalCtx {
       Callable::Closure(closure) => {
         // TODO: should do some basic analysis to see which variables are actually needed and avoid
         // cloning the rest
-        let closure_scope = Scope::wrap(&closure.captured_scope);
+        let closure_scope = Scope::wrap(&closure.captured_scope.upgrade().unwrap());
         let mut pos_arg_ix = 0usize;
         let mut any_args_valid = false;
         let mut invalid_arg_ix = None;
@@ -1613,7 +1676,7 @@ impl EvalCtx {
             pos_arg_ix += 1;
           } else {
             if let Some(default_val) = &arg.default_val {
-              let default_val = self.eval_expr(default_val, &closure_scope)?;
+              let default_val = self.eval_expr(default_val, &closure_scope, None)?;
               let default_val = match default_val {
                 ControlFlow::Continue(val) => val,
                 ControlFlow::Return(_) => {
@@ -1661,7 +1724,7 @@ impl EvalCtx {
         let mut out: Value = Value::Nil;
         for stmt in &closure.body {
           match stmt {
-            Statement::Expr(expr) => match self.eval_expr(expr, &closure_scope)? {
+            Statement::Expr(expr) => match self.eval_expr(expr, &closure_scope, None)? {
               ControlFlow::Continue(val) => out = val,
               ControlFlow::Return(val) => {
                 out = val;
@@ -1678,7 +1741,7 @@ impl EvalCtx {
               expr,
               type_hint,
             } => {
-              let val = match self.eval_expr(expr, &closure_scope)? {
+              let val = match self.eval_expr(expr, &closure_scope, Some(name.as_str()))? {
                 ControlFlow::Continue(val) => val,
                 ControlFlow::Return(val) => {
                   out = val;
@@ -1694,7 +1757,7 @@ impl EvalCtx {
             }
             Statement::Return { value } => {
               out = if let Some(value) = value {
-                match self.eval_expr(value, &closure_scope)? {
+                match self.eval_expr(value, &closure_scope, None)? {
                   ControlFlow::Continue(val) => val,
                   ControlFlow::Return(val) => {
                     out = val;
@@ -1919,6 +1982,7 @@ pub fn parse_and_eval_program_with_ctx(
     .map_err(|err| err.wrap("Error parsing program"))?;
 
   optimize_ast(ctx, &mut ast)?;
+  dbg!(&ast);
 
   eval_program_with_ctx(ctx, &ast).map_err(|err| err.wrap("Error evaluating program"))?;
 
@@ -3177,4 +3241,99 @@ x = contours | first | first
   let x = ctx.globals.get("x").unwrap();
   let x = x.as_float().expect("Expected result to be a Float");
   assert_eq!(x, 10. + 1. * 1.);
+}
+
+#[test]
+fn test_assert_non_const() {
+  let src = r#"
+fn = |cond: bool| {
+  if cond {
+    assert(false)
+  }
+}
+
+fn(false)
+"#;
+  parse_and_eval_program(src).unwrap();
+}
+
+#[test]
+fn test_string_join() {
+  let src = r#"
+x = ["a", "b", "c"] | join(", ")
+y = ["1", "2"] | join("")
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.globals.get("x").unwrap();
+  let x = x.as_str().expect("Expected result to be a String");
+  assert_eq!(x, "a, b, c");
+
+  let y = ctx.globals.get("y").unwrap();
+  let y = y.as_str().expect("Expected result to be a String");
+  assert_eq!(y, "12");
+}
+
+#[test]
+fn test_recursive_call() {
+  let src = r#"
+fn = |x: int| {
+  if x <= 0 {
+    return 1
+  } else {
+    fn(x - 1) + 1
+  }
+}
+
+x = fn(5)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.globals.get("x").unwrap();
+  let x = x.as_int().expect("Expected result to be an Int");
+  assert_eq!(x, 6);
+}
+
+#[test]
+fn test_closure_scope_reference_counting() {
+  let closure = Expr::Closure {
+    params: vec![],
+    body: crate::ast::ClosureBody(vec![Statement::Expr(Expr::Literal(Value::Int(1)))]),
+    return_type_hint: None,
+  };
+  let ctx = EvalCtx::default();
+  let out = ctx.eval_expr(&closure, &ctx.globals, Some("name")).unwrap();
+  let callable = match out {
+    ControlFlow::Continue(Value::Callable(callable)) => callable,
+    _ => unreachable!(),
+  };
+  let callable = Rc::try_unwrap(callable).unwrap();
+  let Callable::Closure(closure) = callable else {
+    unreachable!();
+  };
+  let CapturedScope::Strong(captured_scope) = closure.captured_scope else {
+    unreachable!();
+  };
+  // this should be the only place it's strongly referenced, so when the closure is dropped the
+  // captured scope (which actually contains it) should also be dropped.
+  assert_eq!(Rc::strong_count(&captured_scope), 1,);
+
+  // the captured scope recursively refers to the closure to support recursive calls
+  let cloned_closure = captured_scope.get("name").unwrap();
+  let cloned_closure = cloned_closure.as_callable().unwrap();
+  let Callable::Closure(cloned_closure) = cloned_closure else {
+    unreachable!();
+  };
+
+  let CapturedScope::Weak(weak_captured_scope) = &cloned_closure.captured_scope else {
+    unreachable!();
+  };
+  assert_eq!(weak_captured_scope.strong_count(), 1);
+
+  // ensure that this weak reference actually points to the same captured scope
+  let _ = Rc::try_unwrap(captured_scope).unwrap();
+
+  assert_eq!(weak_captured_scope.strong_count(), 0);
 }

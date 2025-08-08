@@ -1746,6 +1746,7 @@ fn distance_impl(
 }
 
 fn len_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -1759,6 +1760,96 @@ fn len_impl(
     1 => {
       let v = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
       Ok(Value::Float(v.magnitude()))
+    }
+    2 => {
+      let v = arg_refs[0].resolve(args, &kwargs).as_str().unwrap();
+      Ok(Value::Int(v.chars().count() as i64))
+    }
+    3 => {
+      let v = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      if let Some(eager) = seq_as_eager(v) {
+        Ok(Value::Int(eager.inner.len() as i64))
+      } else {
+        let iter = v.clone_box().consume(ctx);
+        let mut len = 0;
+        for res in iter {
+          match res {
+            Ok(_) => len += 1,
+            Err(err) => return Err(err.wrap("Error evaluating sequence in `len` function")),
+          }
+        }
+        Ok(Value::Int(len as i64))
+      }
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn chars_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let s = arg_refs[0]
+        .resolve(args, &kwargs)
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+      #[derive(Clone)]
+      struct OwnedChars {
+        // struct fields are dropped in the order they're declared
+        iter: std::str::Chars<'static>,
+        #[allow(dead_code)]
+        s: Rc<String>,
+      }
+
+      impl OwnedChars {
+        fn new(s: String) -> Self {
+          let s = Rc::new(s);
+          // this is safe because the static reference is guaranteed to live as long as the `Rc`
+          let iter = unsafe { std::mem::transmute::<&str, &'static str>(&*s) }.chars();
+          OwnedChars { s, iter }
+        }
+      }
+
+      impl Iterator for OwnedChars {
+        type Item = char;
+
+        fn next(&mut self) -> Option<Self::Item> {
+          self.iter.next()
+        }
+      }
+
+      let iter = OwnedChars::new(s);
+
+      Ok(Value::Sequence(Box::new(IteratorSeq {
+        inner: iter.map(|c| Ok(Value::String(c.to_string()))),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn assert_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let condition = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
+      let msg = arg_refs[1].resolve(args, &kwargs).as_str().unwrap();
+
+      if !condition {
+        return Err(ErrorStack::new(msg.to_owned()));
+      }
+
+      Ok(Value::Nil)
     }
     _ => unimplemented!(),
   }
@@ -3124,6 +3215,96 @@ fn vec3_impl(
   }
 }
 
+fn join_meshes(
+  iter: &mut impl Iterator<Item = Result<Value, ErrorStack>>,
+) -> Result<Value, ErrorStack> {
+  let Some(first) = iter.next() else {
+    return Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
+      LinkedMesh::new(0, 0, None),
+    )))));
+  };
+  let base = match first? {
+    Value::Mesh(m) => m,
+    other => {
+      return Err(ErrorStack::new(format!(
+        "Non-mesh value produced in sequence passed to join: {other:?}"
+      )))
+    }
+  };
+
+  let out_transform = base.transform;
+  let out_transform_inv = out_transform.try_inverse().unwrap();
+  let mut combined = (*base.mesh).clone();
+
+  for val in iter {
+    let rhs = match val? {
+      Value::Mesh(m) => m,
+      other => {
+        return Err(ErrorStack::new(format!(
+          "Non-mesh value produced in sequence passed to join: {other:?}"
+        )))
+      }
+    };
+
+    let mut new_vtx_key_by_old: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
+    for face in rhs.mesh.faces.values() {
+      let new_vtx_keys = std::array::from_fn(|i| {
+        let old_vtx_key = face.vertices[i];
+        *new_vtx_key_by_old.entry(old_vtx_key).or_insert_with(|| {
+          let old_vtx = &rhs.mesh.vertices[old_vtx_key];
+
+          // transform from rhs local space -> world space -> lhs local space
+          let transformed_pos = out_transform_inv * rhs.transform * old_vtx.position.push(1.);
+
+          let new_vtx_key = combined.vertices.insert(Vertex {
+            position: transformed_pos.xyz(),
+            displacement_normal: old_vtx.displacement_normal,
+            shading_normal: old_vtx.shading_normal,
+            edges: Vec::new(),
+          });
+          new_vtx_key
+        })
+      });
+      combined.add_face(new_vtx_keys, ());
+    }
+  }
+
+  Ok(Value::Mesh(Rc::new(MeshHandle {
+    mesh: Rc::new(combined),
+    transform: out_transform,
+    manifold_handle: Rc::new(ManifoldHandle::new(0)),
+    aabb: RefCell::new(None),
+    trimesh: RefCell::new(None),
+    material: base.material.clone(),
+  })))
+}
+
+fn join_strings(
+  iter: &mut impl Iterator<Item = Result<Value, ErrorStack>>,
+  separator: &str,
+) -> Result<Value, ErrorStack> {
+  let mut out = String::new();
+  let mut is_first = true;
+  while let Some(res) = iter.next() {
+    match res {
+      Ok(Value::String(s)) => {
+        if !is_first {
+          out.push_str(separator);
+        }
+        out.push_str(&s);
+        is_first = false;
+      }
+      Ok(other) => {
+        return Err(ErrorStack::new(format!(
+          "Non-string value produced in sequence passed to join: {other:?}"
+        )))
+      }
+      Err(e) => return Err(e.wrap("Error in sequence passed to join")),
+    }
+  }
+  Ok(Value::String(out))
+}
+
 fn join_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -3138,67 +3319,17 @@ fn join_impl(
         .as_sequence()
         .unwrap()
         .clone_box()
-        .consume(ctx);
+        .consume(ctx)
+        .peekable();
 
-      let Some(first) = iter.next() else {
-        return Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
-          LinkedMesh::new(0, 0, None),
-        )))));
-      };
-      let base = match first? {
-        Value::Mesh(m) => m,
-        other => {
-          return Err(ErrorStack::new(format!(
-            "Non-mesh value produced in sequence passed to join: {other:?}"
-          )))
-        }
-      };
+      join_meshes(&mut iter)
+    }
+    1 => {
+      let separator = arg_refs[0].resolve(args, &kwargs).as_str().unwrap();
+      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let mut iter = sequence.clone_box().consume(ctx).peekable();
 
-      let out_transform = base.transform;
-      let out_transform_inv = out_transform.try_inverse().unwrap();
-      let mut combined = (*base.mesh).clone();
-
-      for val in iter {
-        let rhs = match val? {
-          Value::Mesh(m) => m,
-          other => {
-            return Err(ErrorStack::new(format!(
-              "Non-mesh value produced in sequence passed to join: {other:?}"
-            )))
-          }
-        };
-
-        let mut new_vtx_key_by_old: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
-        for face in rhs.mesh.faces.values() {
-          let new_vtx_keys = std::array::from_fn(|i| {
-            let old_vtx_key = face.vertices[i];
-            *new_vtx_key_by_old.entry(old_vtx_key).or_insert_with(|| {
-              let old_vtx = &rhs.mesh.vertices[old_vtx_key];
-
-              // transform from rhs local space -> world space -> lhs local space
-              let transformed_pos = out_transform_inv * rhs.transform * old_vtx.position.push(1.);
-
-              let new_vtx_key = combined.vertices.insert(Vertex {
-                position: transformed_pos.xyz(),
-                displacement_normal: old_vtx.displacement_normal,
-                shading_normal: old_vtx.shading_normal,
-                edges: Vec::new(),
-              });
-              new_vtx_key
-            })
-          });
-          combined.add_face(new_vtx_keys, ());
-        }
-      }
-
-      Ok(Value::Mesh(Rc::new(MeshHandle {
-        mesh: Rc::new(combined),
-        transform: out_transform,
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
-        aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
-        material: base.material.clone(),
-      })))
+      join_strings(&mut iter, separator)
     }
     _ => unimplemented!(),
   }
@@ -4069,8 +4200,14 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "intersects_ray" => builtin_fn!(intersects_ray, |def_ix, arg_refs, args, kwargs, _ctx| {
     intersects_ray_impl(def_ix, arg_refs, args, kwargs)
   }),
-  "len" => builtin_fn!(len, |def_ix, arg_refs, args, kwargs, _ctx| {
-    len_impl(def_ix, arg_refs, args, kwargs)
+  "len" => builtin_fn!(len, |def_ix, arg_refs, args, kwargs, ctx| {
+    len_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "chars" => builtin_fn!(chars, |def_ix, arg_refs, args, kwargs, _ctx| {
+    chars_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "assert" => builtin_fn!(assert, |def_ix, arg_refs, args, kwargs, _ctx| {
+    assert_impl(def_ix, arg_refs, args, kwargs)
   }),
   "distance" => builtin_fn!(distance, |def_ix, arg_refs, args, kwargs, _ctx| {
     distance_impl(def_ix, arg_refs, args, kwargs)

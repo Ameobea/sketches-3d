@@ -489,6 +489,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
     ],
   },
   "join" => FnDef {
+    // TODO: would be nice to add this to multiple modules depending on signature
     module: "mesh",
     examples: &[FnExample { composition_id: 31 }],
     signatures: &[
@@ -504,6 +505,25 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Combines a sequence of meshes into one mesh containing all geometry from the inputs.\n\nThis does NOT perform a boolean union; for that, use the `union` function or the `|` operator to create a union over a sequence of meshes.",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "separator",
+            valid_types: &[ArgType::String],
+            // this needs to stay required in order to allow the signatures to be disambiguated
+            default_value: DefaultValue::Required,
+            description: "String to insert between each mesh"
+          },
+          ArgDef {
+            name: "strings",
+            valid_types: &[ArgType::Sequence],
+            default_value: DefaultValue::Required,
+            description: "Sequence of strings to join"
+          },
+        ],
+        description: "Joins a sequence of strings into a single string, inserting the `separator` between each element",
+        return_type: &[ArgType::String],
+      }
     ],
   },
   "union" => FnDef {
@@ -3610,7 +3630,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
     ],
   },
   "len" => FnDef {
-    module: "math",
+    module: "core",
     examples: &[],
     signatures: &[
       FnSignature {
@@ -3637,7 +3657,72 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Returns the length/magnitude of a Vec2",
         return_type: &[ArgType::Float],
       },
-      // TODO: len for sequences
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "v",
+            valid_types: &[ArgType::String],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the number of unicode characters in a string",
+        return_type: &[ArgType::Int],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "v",
+            valid_types: &[ArgType::Sequence],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the number of elements in a sequence.  Calling this with an infinite sequence will result in the program hanging or crashing.",
+        return_type: &[ArgType::Int],
+      }
+    ],
+  },
+  "chars" => FnDef {
+    module: "str",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "s",
+            valid_types: &[ArgType::String],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a sequence of the unicode characters in a string",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "assert" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "condition",
+            valid_types: &[ArgType::Bool],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "message",
+            valid_types: &[ArgType::String],
+            default_value: DefaultValue::Optional(|| Value::String("Assertion failed".to_string())),
+            description: "Optional message to include in the error if the assertion fails"
+          },
+        ],
+        description: "Raises an error if `condition` is false, optionally including `message` in the error",
+        return_type: &[ArgType::Nil],
+      },
     ],
   },
   "distance" => FnDef {
