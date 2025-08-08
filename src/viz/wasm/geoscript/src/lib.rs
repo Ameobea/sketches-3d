@@ -1982,7 +1982,6 @@ pub fn parse_and_eval_program_with_ctx(
     .map_err(|err| err.wrap("Error parsing program"))?;
 
   optimize_ast(ctx, &mut ast)?;
-  dbg!(&ast);
 
   eval_program_with_ctx(ctx, &ast).map_err(|err| err.wrap("Error evaluating program"))?;
 
