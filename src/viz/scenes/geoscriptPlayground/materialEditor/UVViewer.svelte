@@ -35,7 +35,6 @@
     try {
       // check to see if meshes have been removed
       meshIndices = await repl.getRenderedMeshIndicesWithMaterial(ctxPtr, matDef.name);
-      console.log({ meshIndices, name: matDef.name });
       if (meshIndices.length === 0) {
         selectedMeshIx = null;
         return;

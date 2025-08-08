@@ -717,12 +717,12 @@
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
       geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-      if (normals) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      }
+
       if (uvs) {
         geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
         geometry.computeVertexNormals();
+      } else if (normals) {
+        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
 
       const matEntry = (() => {

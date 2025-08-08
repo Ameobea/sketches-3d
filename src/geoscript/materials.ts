@@ -85,7 +85,7 @@ const maybeLoadTexture = (
 
   const mapDef = Textures.textures[textureId];
   if (!mapDef) {
-    console.warn(`Tried to load undefined texture: ${textureId}`);
+    // console.warn(`Tried to load undefined texture: ${textureId}`);
     return undefined;
   }
 
