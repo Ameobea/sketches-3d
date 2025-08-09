@@ -70,7 +70,7 @@ closure                      = { "|" ~ fn_def_arg_list ~ "|" ~ type_hint? ~ clos
 fn_def_arg                   = { ident ~ type_hint? ~ ("=" ~ fn_arg_default_val)? }
 // limiting the things that can be used as an arg default value to prevent the syntax
 // from spiraling out of control and avoiding horrific edge cases like `|x: int = 1 | 1| 1 || 1`
-fn_arg_default_val           = { literal | ident | parenthized_term | func_call | block_expr | if_expression }
+fn_arg_default_val           = { literal | array_literal | map_literal | ident | parenthized_term | func_call | block_expr | if_expression }
 fn_def_arg_list              = { (fn_def_arg* ~ ("," ~ fn_def_arg)*)}
 closure_body                 = _{ bracketed_closure_body | expr }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }

@@ -23,6 +23,8 @@ export const
   StringLiteral = 36,
   SingleQuoteStringLiteral = 37,
   DoubleQuoteStringLiteral = 38,
+  ArrayExpr = 39,
+  MapExpr = 42,
   MapEntry = 43,
   TypeHint = 46,
   ClosureParamList = 47,

@@ -3525,9 +3525,10 @@ fn collect_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let val = arg_refs[0].resolve(args, &kwargs);
+      let seq = val.as_sequence().unwrap();
       match seq_as_eager(seq) {
-        Some(_) => Ok(Value::Sequence(seq.clone_box())),
+        Some(_) => Ok(val.clone()),
         None => {
           let iter = seq.clone_box().consume(ctx);
           let collected = iter
