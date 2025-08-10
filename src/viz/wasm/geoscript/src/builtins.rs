@@ -597,7 +597,7 @@ pub(crate) fn map_impl(
       let fn_value = fn_value.as_callable().unwrap();
       let seq = seq.as_sequence().unwrap();
 
-      Ok(Value::Sequence(Box::new(MapSeq {
+      Ok(Value::Sequence(Rc::new(MapSeq {
         cb: fn_value.clone(),
         inner: seq.clone_box(),
       })))
@@ -1191,7 +1191,7 @@ fn verts_impl(
         .as_mesh()
         .unwrap()
         .clone(false, false, true);
-      Ok(Value::Sequence(Box::new(MeshVertsSeq { mesh })))
+      Ok(Value::Sequence(Rc::new(MeshVertsSeq { mesh })))
     }
     _ => unimplemented!(),
   }
@@ -1308,7 +1308,7 @@ fn stitch_contours_impl(
         .consume(ctx)
         .enumerate()
         .map(|(contour_ix, res)| match res {
-          Ok(Value::Sequence(seq)) => Ok(seq.consume(ctx)),
+          Ok(Value::Sequence(seq)) => Ok(seq.clone_box().consume(ctx)),
           Ok(val) => Err(ErrorStack::new(format!(
             "Expected sequence of sequences in `stitch_contours`, found: {val:?} at contour index \
              {contour_ix}",
@@ -1428,7 +1428,7 @@ fn trace_geodesic_path_impl(
         }
       }
 
-      Ok(Value::Sequence(Box::new(IteratorSeq {
+      Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: out_points_v3.into_iter().map(|v| Ok(Value::Vec3(v))),
       })))
     }
@@ -1477,7 +1477,7 @@ fn torus_knot_path_impl(
       let q = arg_refs[3].resolve(args, &kwargs).as_int().unwrap() as usize;
       let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
 
-      Ok(Value::Sequence(Box::new(IteratorSeq {
+      Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: build_torus_knot_path(radius, tube_radius, p, q, count).map(|v| Ok(Value::Vec3(v))),
       })))
     }
@@ -1503,7 +1503,7 @@ fn lissajous_knot_path_impl(
         )));
       }
 
-      Ok(Value::Sequence(Box::new(IteratorSeq {
+      Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: build_lissajous_knot_path(*amp, *freq, *phase, count as usize)
           .map(|v| Ok(Value::Vec3(v))),
       })))
@@ -1695,7 +1695,7 @@ fn bezier3d_impl(
       let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
 
       let curve = cubic_bezier_3d_path(p0, p1, p2, p3, count).map(|v| Ok(Value::Vec3(v)));
-      Ok(Value::Sequence(Box::new(IteratorSeq { inner: curve })))
+      Ok(Value::Sequence(Rc::new(IteratorSeq { inner: curve })))
     }
     _ => unimplemented!(),
   }
@@ -1715,7 +1715,7 @@ fn superellipse_path_impl(
       let point_count = arg_refs[3].resolve(args, &kwargs).as_int().unwrap() as usize;
 
       let curve = superellipse_path(width, height, n, point_count).map(|v| Ok(Value::Vec2(v)));
-      Ok(Value::Sequence(Box::new(IteratorSeq { inner: curve })))
+      Ok(Value::Sequence(Rc::new(IteratorSeq { inner: curve })))
     }
     _ => unimplemented!(),
   }
@@ -1779,7 +1779,7 @@ fn len_impl(
     }
     3 => {
       let v = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      if let Some(eager) = seq_as_eager(v) {
+      if let Some(eager) = seq_as_eager(&*v) {
         Ok(Value::Int(eager.inner.len() as i64))
       } else {
         let iter = v.clone_box().consume(ctx);
@@ -1838,7 +1838,7 @@ fn chars_impl(
 
       let iter = OwnedChars::new(s);
 
-      Ok(Value::Sequence(Box::new(IteratorSeq {
+      Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: iter.map(|c| Ok(Value::String(c.to_string()))),
       })))
     }
@@ -1960,7 +1960,7 @@ fn connected_components_impl(
       let mut components: Vec<Vec<FaceKey>> = mesh.connected_components();
       components.sort_unstable_by_key(|c| Reverse(c.len()));
       let material = mesh_handle.material.clone();
-      Ok(Value::Sequence(Box::new(IteratorSeq {
+      Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: components.into_iter().map(move |c| {
           let mut sub_vkey_by_old_vkey: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
           let mut sub_mesh = LinkedMesh::new(0, c.len(), None);
@@ -2152,7 +2152,7 @@ fn split_by_plane_impl(
       let (a, b) = split_mesh_by_plane(mesh_handle, *plane_normal, plane_offset)
         .map_err(|err| ErrorStack::new(format!("Error in `split_by_plane`: {err}")))?;
 
-      Ok(Value::Sequence(Box::new(EagerSeq {
+      Ok(Value::Sequence(Rc::new(EagerSeq {
         inner: vec![Value::Mesh(Rc::new(a)), Value::Mesh(Rc::new(b))],
       })))
     }
@@ -2255,7 +2255,7 @@ fn point_distribute_impl(
         cb,
         world_space,
       };
-      Ok(Value::Sequence(Box::new(sampler_seq)))
+      Ok(Value::Sequence(Rc::new(sampler_seq)))
     }
     _ => unimplemented!(),
   }
@@ -2318,7 +2318,7 @@ fn render_impl(
             ctx.rendered_meshes.push(mesh);
           }
           Ok(Value::Sequence(inner_seq)) => {
-            let iter = inner_seq.consume(ctx);
+            let iter = inner_seq.clone_box().consume(ctx);
             render_path(ctx, iter)?;
           }
           other => {
@@ -3358,7 +3358,7 @@ fn filter_impl(
       let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
 
-      Ok(Value::Sequence(Box::new(FilterSeq {
+      Ok(Value::Sequence(Rc::new(FilterSeq {
         cb: fn_value.clone(),
         inner: sequence.clone_box(),
       })))
@@ -3378,7 +3378,7 @@ fn scan_impl(
       let init = arg_refs[0].resolve(args, &kwargs);
       let fn_value = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
-      Ok(Value::Sequence(Box::new(ScanSeq {
+      Ok(Value::Sequence(Rc::new(ScanSeq {
         acc: init.clone(),
         cb: fn_value.clone(),
         inner: sequence.clone_box(),
@@ -3399,7 +3399,7 @@ fn take_impl(
       let count = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
       let count = if count < 0 { 0 } else { count as usize };
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      Ok(Value::Sequence(Box::new(TakeSeq {
+      Ok(Value::Sequence(Rc::new(TakeSeq {
         count,
         inner: sequence.clone_box(),
       })))
@@ -3419,7 +3419,7 @@ fn skip_impl(
       let count = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
       let count = if count < 0 { 0 } else { count as usize };
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      Ok(Value::Sequence(Box::new(SkipSeq {
+      Ok(Value::Sequence(Rc::new(SkipSeq {
         count,
         inner: sequence.clone_box(),
       })))
@@ -3438,7 +3438,7 @@ fn take_while_impl(
     0 => {
       let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      Ok(Value::Sequence(Box::new(TakeWhileSeq {
+      Ok(Value::Sequence(Rc::new(TakeWhileSeq {
         cb: fn_value.clone(),
         inner: sequence.clone_box(),
       })))
@@ -3457,7 +3457,7 @@ fn skip_while_impl(
     0 => {
       let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      Ok(Value::Sequence(Box::new(SkipWhileSeq {
+      Ok(Value::Sequence(Rc::new(SkipWhileSeq {
         cb: fn_value.clone(),
         inner: sequence.clone_box(),
       })))
@@ -3480,7 +3480,7 @@ fn chain_impl(
         .as_sequence()
         .unwrap()
         .clone_box();
-      Ok(Value::Sequence(Box::new(ChainSeq::new(ctx, seqs)?)))
+      Ok(Value::Sequence(Rc::new(ChainSeq::new(ctx, &*seqs)?)))
     }
     _ => unimplemented!(),
   }
@@ -3520,7 +3520,7 @@ fn reverse_impl(
         .clone_box()
         .consume(ctx)
         .collect::<Result<Vec<_>, _>>()?;
-      Ok(Value::Sequence(Box::new(IteratorSeq {
+      Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: vals.into_iter().rev().map(Ok),
       })))
     }
@@ -3539,14 +3539,14 @@ fn collect_impl(
     0 => {
       let val = arg_refs[0].resolve(args, &kwargs);
       let seq = val.as_sequence().unwrap();
-      match seq_as_eager(seq) {
+      match seq_as_eager(&*seq) {
         Some(_) => Ok(val.clone()),
         None => {
           let iter = seq.clone_box().consume(ctx);
           let collected = iter
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.wrap("error produced during `collect`"))?;
-          Ok(Value::Sequence(Box::new(EagerSeq { inner: collected })))
+          Ok(Value::Sequence(Rc::new(EagerSeq { inner: collected })))
         }
       }
     }
@@ -3659,7 +3659,7 @@ fn flatten_impl(
   match def_ix {
     0 => {
       let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      Ok(Value::Sequence(Box::new(FlattenSeq {
+      Ok(Value::Sequence(Rc::new(FlattenSeq {
         inner: seq.clone_box(),
       })))
     }
@@ -3960,12 +3960,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let initial_val = arg_refs[0].resolve(args, kwargs).clone();
     let fn_value = arg_refs[1].resolve(args, kwargs).as_callable().unwrap();
     let sequence = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
-    ctx.fold(initial_val, fn_value, sequence.clone_box())
+    ctx.fold(initial_val, fn_value, sequence.clone_box().into())
   }),
   "reduce" => builtin_fn!(reduce, |_def_ix, arg_refs: &[ArgRef], args, kwargs, ctx: &EvalCtx| {
     let fn_value = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
     let seq = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
-    ctx.reduce(fn_value, seq.clone_box())
+    ctx.reduce(fn_value, seq.clone_box().into())
   }),
   "map" => builtin_fn!(map, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     let fn_value = arg_refs[0].resolve(args, kwargs);

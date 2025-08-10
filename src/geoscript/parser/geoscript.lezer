@@ -95,12 +95,13 @@ literal { Float | HexInteger | Integer | BoolLiteral | NilLiteral | StringLitera
 
 StringLiteral[isolate] { SingleQuoteStringLiteral | DoubleQuoteStringLiteral }
 
+escapedBackslash { "\\\\" }
 escapedDoubleQuote { "\\\"" }
 escapedSingleQuote { "\\'" }
 
 @skip {} {
-  DoubleQuoteStringLiteral[isolate] { '"' (escapedDoubleQuote | doubleQuoteStringContent)* '"' }
-  SingleQuoteStringLiteral[isolate] { "'" (escapedSingleQuote | singleQuoteStringContent)* "'" }
+  DoubleQuoteStringLiteral[isolate] { '"' (escapedBackslash | escapedDoubleQuote | doubleQuoteStringContent)* '"' }
+  SingleQuoteStringLiteral[isolate] { "'" (escapedBackslash | escapedSingleQuote | singleQuoteStringContent)* "'" }
 }
 
 commaSep<Expr> { commaSep1<Expr>? }

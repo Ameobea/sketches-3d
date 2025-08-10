@@ -528,7 +528,7 @@ fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, ErrorS
     range.end += 1;
   }
 
-  Ok(Value::Sequence(Box::new(range)))
+  Ok(Value::Sequence(Rc::new(range)))
 }
 
 // TODO: should do more efficient version of this
@@ -969,6 +969,9 @@ fn parse_double_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStac
       Rule::escaped_double_quote => {
         acc.push('"');
       }
+      Rule::escaped_backslash => {
+        acc.push('\\');
+      }
       Rule::double_quote_string_inner => {
         acc.push_str(parse_double_quote_string_inner(inner)?.as_str());
       }
@@ -999,6 +1002,9 @@ fn parse_single_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStac
       }
       Rule::escaped_single_quote => {
         acc.push('\'');
+      }
+      Rule::escaped_backslash => {
+        acc.push('\\');
       }
       Rule::single_quote_string_inner => {
         acc.push_str(parse_single_quote_string_inner(inner)?.as_str());
@@ -1870,7 +1876,7 @@ fn fold_constants<'a>(
           .iter()
           .map(|e| e.as_literal().unwrap().clone())
           .collect::<Vec<_>>();
-        *expr = Expr::Literal(Value::Sequence(Box::new(EagerSeq { inner: values })));
+        *expr = Expr::Literal(Value::Sequence(Rc::new(EagerSeq { inner: values })));
       }
 
       Ok(())
@@ -1886,7 +1892,7 @@ fn fold_constants<'a>(
           .iter()
           .map(|(k, v)| (k.clone(), v.as_literal().unwrap().clone()))
           .collect::<FxHashMap<_, _>>();
-        *expr = Expr::Literal(Value::Map(Box::new(values)));
+        *expr = Expr::Literal(Value::Map(Rc::new(values)));
       }
 
       Ok(())

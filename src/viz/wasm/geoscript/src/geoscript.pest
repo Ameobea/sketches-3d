@@ -90,10 +90,11 @@ string_literal               = _{ single_quote_string_literal | double_quote_str
 single_quote_string_literal  = @{ "'" ~ single_quote_string_inner ~ "'" }
 escaped_single_quote         = @{ "\\'" }
 unescaped_apos_str_content   = { (!("'" | "\\") ~ ANY)* }
-single_quote_string_inner    = ${ unescaped_apos_str_content ~ (escaped_single_quote ~ single_quote_string_inner)? }
+escaped_backslash            = @{ "\\\\" }
+single_quote_string_inner    = ${ unescaped_apos_str_content ~ ((escaped_single_quote | escaped_backslash) ~ single_quote_string_inner)? }
 double_quote_string_literal  = @{ "\"" ~ double_quote_string_inner ~ "\"" }
 escaped_double_quote         = @{ "\\\"" }
 unescaped_quote_str_content  = { (!("\"" | "\\") ~ ANY)* }
-double_quote_string_inner    = ${ unescaped_quote_str_content ~ (escaped_double_quote ~ double_quote_string_inner)? }
+double_quote_string_inner    = ${ unescaped_quote_str_content ~ ((escaped_double_quote | escaped_backslash) ~ double_quote_string_inner)? }
 
 ident                        = @{ (ASCII_ALPHA | "_")+ ~ (ASCII_ALPHANUMERIC | "_")* }

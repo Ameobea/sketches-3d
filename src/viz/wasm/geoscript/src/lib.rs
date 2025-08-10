@@ -446,8 +446,8 @@ pub enum Value {
   Mesh(Rc<MeshHandle>),
   Light(Box<Light>),
   Callable(Rc<Callable>),
-  Sequence(Box<dyn Sequence>),
-  Map(Box<FxHashMap<String, Value>>),
+  Sequence(Rc<dyn Sequence>),
+  Map(Rc<FxHashMap<String, Value>>),
   Bool(bool),
   String(String),
   Material(Rc<Material>),
@@ -464,7 +464,7 @@ impl Clone for Value {
       Value::Mesh(mesh) => Value::Mesh(Rc::clone(mesh)),
       Value::Light(light) => Value::Light(light.clone()),
       Value::Callable(callable) => Value::Callable(callable.clone()),
-      Value::Sequence(seq) => Value::Sequence(seq.clone_box()),
+      Value::Sequence(seq) => Value::Sequence(Rc::clone(seq)),
       Value::Map(map) => Value::Map(map.clone()),
       Value::Bool(b) => Value::Bool(*b),
       Value::String(s) => Value::String(s.clone()),
@@ -517,9 +517,9 @@ impl Value {
     }
   }
 
-  fn as_sequence(&self) -> Option<&dyn Sequence> {
+  fn as_sequence(&self) -> Option<Rc<dyn Sequence>> {
     match self {
-      Value::Sequence(seq) => Some(seq.as_ref()),
+      Value::Sequence(seq) => Some(Rc::clone(seq)),
       _ => None,
     }
   }
@@ -706,8 +706,8 @@ impl ArgType {
         pre_resolved_signature: None,
         fn_signature_defs: &[],
       }))),
-      ArgType::Sequence => Some(Value::Sequence(Box::new(EagerSeq { inner: Vec::new() }))),
-      ArgType::Map => Some(Value::Map(Box::new(FxHashMap::default()))),
+      ArgType::Sequence => Some(Value::Sequence(Rc::new(EagerSeq { inner: Vec::new() }))),
+      ArgType::Map => Some(Value::Map(Rc::new(FxHashMap::default()))),
       ArgType::Bool => Some(Value::Bool(false)),
       ArgType::String => Some(Value::String(String::new())),
       ArgType::Material => Some(Value::Material(Rc::new(Material::default()))),
@@ -1236,12 +1236,12 @@ impl EvalCtx {
         };
 
         Ok(ControlFlow::Continue(if *inclusive {
-          Value::Sequence(Box::new(IntRange {
+          Value::Sequence(Rc::new(IntRange {
             start,
             end: end + 1,
           }))
         } else {
-          Value::Sequence(Box::new(IntRange { start, end }))
+          Value::Sequence(Rc::new(IntRange { start, end }))
         }))
       }
       Expr::Ident(name) => self
@@ -1257,12 +1257,12 @@ impl EvalCtx {
           };
           evaluated.push(val);
         }
-        Ok(ControlFlow::Continue(Value::Sequence(Box::new(EagerSeq {
+        Ok(ControlFlow::Continue(Value::Sequence(Rc::new(EagerSeq {
           inner: evaluated,
         }))))
       }
       Expr::MapLiteral(map) => {
-        let mut evaluated = Box::new(FxHashMap::default());
+        let mut evaluated = FxHashMap::default();
         for (key, value) in map {
           let val = match self.eval_expr(value, scope, None)? {
             ControlFlow::Continue(val) => val,
@@ -1270,7 +1270,7 @@ impl EvalCtx {
           };
           evaluated.insert(key.clone(), val);
         }
-        Ok(ControlFlow::Continue(Value::Map(evaluated)))
+        Ok(ControlFlow::Continue(Value::Map(Rc::new(evaluated))))
       }
       Expr::Closure {
         params,
@@ -1500,7 +1500,7 @@ impl EvalCtx {
     &'a self,
     initial_val: Value,
     callable: &Callable,
-    seq: Box<dyn Sequence>,
+    seq: Rc<dyn Sequence>,
   ) -> Result<Value, ErrorStack> {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
@@ -1508,9 +1508,9 @@ impl EvalCtx {
       if matches!(name.as_str(), "union" | "difference" | "intersect") {
         let combined_iter = ChainSeq::new(
           self,
-          Box::new(EagerSeq {
+          &EagerSeq {
             inner: vec![initial_val, Value::Sequence(seq)],
-          }),
+          },
         )
         .map_err(|err| {
           err.wrap("Internal error creating chained sequence when folding mesh boolean op")
@@ -1518,7 +1518,7 @@ impl EvalCtx {
         return eval_mesh_boolean(
           1,
           &[ArgRef::Positional(0), ArgRef::Positional(1)],
-          &[Value::Sequence(Box::new(combined_iter))],
+          &[Value::Sequence(Rc::new(combined_iter))],
           &Default::default(),
           self,
           MeshBooleanOp::from_str(name),
@@ -1528,7 +1528,7 @@ impl EvalCtx {
     }
 
     let mut acc = initial_val;
-    let iter = seq.consume(self);
+    let iter = seq.clone_box().consume(self);
     for (i, res) in iter.enumerate() {
       let value = res.map_err(|err| {
         err.wrap(format!(
@@ -1543,11 +1543,7 @@ impl EvalCtx {
     Ok(acc)
   }
 
-  fn reduce<'a>(
-    &'a self,
-    fn_value: &Callable,
-    seq: Box<dyn Sequence>,
-  ) -> Result<Value, ErrorStack> {
+  fn reduce<'a>(&'a self, fn_value: &Callable, seq: Rc<dyn Sequence>) -> Result<Value, ErrorStack> {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
     if let Callable::Builtin { name, .. } = fn_value {
@@ -3033,7 +3029,11 @@ a = 0..5 | cumsum
   let Value::Sequence(a) = a else {
     panic!("Expected result to be a Seq");
   };
-  let a = a.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
+  let a = a
+    .clone_box()
+    .consume(&ctx)
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
   assert_eq!(a.len(), 5);
   assert_eq!(a[0].as_int(), Some(0));
   assert_eq!(a[1].as_int(), Some(1));
@@ -3055,7 +3055,11 @@ a = 0..3 | cumsum
   let Value::Sequence(a) = a else {
     panic!("Expected result to be a Seq");
   };
-  let a = a.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
+  let a = a
+    .clone_box()
+    .consume(&ctx)
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
   assert_eq!(a.len(), 3);
   assert_eq!(a[0].as_int(), Some(0 + 0 + 0));
   assert_eq!(a[1].as_int(), Some(0 + 1 + 1));
@@ -3156,7 +3160,11 @@ c = b | reduce(add)
   let Value::Sequence(b) = b else {
     panic!("Expected result to be a Seq");
   };
-  let b = b.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
+  let b = b
+    .clone_box()
+    .consume(&ctx)
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
   assert_eq!(b.len(), 8);
 }
 

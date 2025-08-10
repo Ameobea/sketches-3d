@@ -91,6 +91,7 @@
     margin: 0 auto;
     padding: 16px;
     height: 100vh;
+    margin-bottom: 24px;
     font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
   }
 
@@ -208,7 +209,6 @@
 
   .back-link {
     margin-top: 32px;
-    margin-bottom: 16px;
     text-align: center;
   }
 

@@ -224,8 +224,16 @@
               {rerun}
             />
           {:else}
-            <p>active material missing or not UV mapped</p>
-            <button>close</button>
+            <div style="display: flex; flex-direction: column; flex: 1; max-width: 400px; margin: auto;">
+              <p>active material missing or not UV mapped</p>
+              <button
+                onclick={() => {
+                  view = { type: 'properties' };
+                }}
+              >
+                close
+              </button>
+            </div>
           {/if}
         {/if}
       {/if}

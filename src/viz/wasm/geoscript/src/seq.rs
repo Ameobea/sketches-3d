@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt::Debug, iter::Enumerate};
+use std::{collections::VecDeque, fmt::Debug, iter::Enumerate, rc::Rc};
 
 use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
@@ -231,7 +231,7 @@ impl<'a> Iterator for FlattenIter<'a> {
 
     match self.inner.next() {
       Some(Ok(Value::Sequence(seq))) => {
-        self.cur_sub_iter = Some(seq.consume(self.ctx));
+        self.cur_sub_iter = Some(seq.clone_box().consume(self.ctx));
         self.next()
       }
       Some(Ok(other)) => Some(Ok(other)),
@@ -688,12 +688,13 @@ impl Sequence for SkipWhileSeq {
 
 #[derive(Debug)]
 pub(crate) struct ChainSeq {
-  pub inner: VecDeque<Box<dyn Sequence>>,
+  pub inner: VecDeque<Rc<dyn Sequence>>,
 }
 
 impl ChainSeq {
-  pub(crate) fn new(ctx: &EvalCtx, seqs: Box<dyn Sequence + 'static>) -> Result<Self, ErrorStack> {
+  pub(crate) fn new(ctx: &EvalCtx, seqs: &dyn Sequence) -> Result<Self, ErrorStack> {
     let seqs = seqs
+      .clone_box()
       .consume(ctx)
       .map(|res| match res {
         Ok(Value::Sequence(seq)) => Ok(seq),
@@ -709,18 +710,18 @@ impl ChainSeq {
 
 pub(crate) struct ChainIter<'a> {
   ctx: &'a EvalCtx,
-  inner: VecDeque<Box<dyn Sequence>>,
+  inner: VecDeque<Rc<dyn Sequence>>,
   cur: Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>,
 }
 
 impl<'a> ChainIter<'a> {
   pub fn new(
     ctx: &'a EvalCtx,
-    mut inner: VecDeque<Box<dyn Sequence>>,
+    mut inner: VecDeque<Rc<dyn Sequence>>,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     match inner.pop_front() {
       Some(seq) => {
-        let iter = seq.consume(ctx);
+        let iter = seq.clone_box().consume(ctx);
         Box::new(ChainIter {
           ctx,
           inner: inner,
@@ -741,7 +742,7 @@ impl<'a> Iterator for ChainIter<'a> {
         Some(res) => return Some(res),
         None => {
           if let Some(next_seq) = self.inner.pop_front() {
-            self.cur = next_seq.consume(self.ctx);
+            self.cur = next_seq.clone_box().consume(self.ctx);
           } else {
             return None;
           }
@@ -754,7 +755,7 @@ impl<'a> Iterator for ChainIter<'a> {
 impl Sequence for ChainSeq {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(Self {
-      inner: self.inner.iter().map(|s| s.clone_box()).collect(),
+      inner: self.inner.iter().map(|s| s.clone_box().into()).collect(),
     })
   }
 

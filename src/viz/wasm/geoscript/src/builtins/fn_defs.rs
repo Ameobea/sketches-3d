@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{f32::consts::PI, rc::Rc};
 
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
@@ -4612,7 +4612,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             valid_types: &[ArgType::Map, ArgType::Int],
             default_value: DefaultValue::Optional(|| {
               let shadow_map_size = DirectionalLight::default().shadow_map_size;
-              Value::Map(Box::new(FxHashMap::from_iter([
+              Value::Map(Rc::new(FxHashMap::from_iter([
                 ("width".to_string(), Value::Int(shadow_map_size.width as i64)),
                 ("height".to_string(), Value::Int(shadow_map_size.height as i64)),
               ].into_iter())))
@@ -4648,7 +4648,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             valid_types: &[ArgType::Map],
             default_value: DefaultValue::Optional(|| {
               let shadow_camera = DirectionalLight::default().shadow_camera;
-              Value::Map(Box::new(FxHashMap::from_iter([
+              Value::Map(Rc::new(FxHashMap::from_iter([
                 ("near".to_string(), Value::Float(shadow_camera.near)),
                 ("far".to_string(), Value::Float(shadow_camera.far)),
                 ("left".to_string(), Value::Float(shadow_camera.left)),
