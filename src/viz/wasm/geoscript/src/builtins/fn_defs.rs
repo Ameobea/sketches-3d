@@ -1052,6 +1052,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Adds a numeric value to each component of a Vec3",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds two Vec2s component-wise",
+        return_type: &[ArgType::Vec2],
+      }
     ],
   },
   "sub" => FnDef {
@@ -1183,6 +1201,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Subtracts a numeric value from each component of a Vec3",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Subtracts two Vec2s component-wise",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },

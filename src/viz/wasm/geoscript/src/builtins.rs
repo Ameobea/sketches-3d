@@ -230,6 +230,12 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let b = rhs.as_float().unwrap();
       Ok(Value::Vec3(a + Vec3::new(b, b, b)))
     }
+    // vec2 + vec2
+    7 => {
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(a.x + b.x, a.y + b.y)))
+    }
     _ => unimplemented!(),
   }
 }
@@ -287,6 +293,12 @@ pub(crate) fn sub_impl(
       let a = lhs.as_vec3().unwrap();
       let b = rhs.as_float().unwrap();
       Ok(Value::Vec3(a - Vec3::new(b, b, b)))
+    }
+    // vec2 - vec2
+    7 => {
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_vec2().unwrap();
+      Ok(Value::Vec2(a - b))
     }
     _ => unimplemented!(),
   }
