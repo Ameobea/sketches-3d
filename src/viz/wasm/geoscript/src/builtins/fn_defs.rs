@@ -410,6 +410,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       },
     ],
   },
+  "flip_normals" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            valid_types: &[ArgType::Mesh],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Flips the normals of a mesh, returning a new mesh with inverted normals.  This actually flips the winding order of the mesh's triangles under the hood and re-computes normals based off that.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "vec2" => FnDef {
     module: "core",
     examples: &[],
@@ -3453,6 +3471,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Computes the convex hull of a sequence of points, returning a mesh representing the convex hull",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            valid_types: &[ArgType::Mesh],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Computes the convex hull of a mesh, returning a mesh representing the convex hull.\n\nThis will apply all transforms on the mesh, and the returned mesh will have an identity transform.",
+        return_type: &[ArgType::Mesh],
+      },
     ],
   },
   "warp" => FnDef {
@@ -3582,7 +3612,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           },
         ],
-        description: "Splits a mesh by a plane, returning a sequence containing two meshes: the part in front of the plane and the part behind the plane.",
+        description: "Splits a mesh by a plane, returning a sequence containing two meshes: the part in front of the plane and the part behind the plane.\n\nThis will apply all transforms on the mesh, and the returned meshes will have an identity transform.",
         return_type: &[ArgType::Sequence],
       },
     ],
@@ -4218,6 +4248,12 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "world_space",
+            valid_types: &[ArgType::Bool],
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the vertices will be returned in world space coordinates.  If false, they will be returned in the local space of the mesh."
+          }
         ],
         description: "Returns a sequence of all vertices in a mesh in an arbitrary order",
         return_type: &[ArgType::Sequence],

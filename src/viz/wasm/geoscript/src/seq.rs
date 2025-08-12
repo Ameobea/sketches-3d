@@ -423,11 +423,11 @@ impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> Sequence f
 }
 
 #[derive(Debug)]
-pub(crate) struct MeshVertsSeq {
+pub(crate) struct MeshVertsSeq<const WORLD_SPACE: bool> {
   pub mesh: MeshHandle,
 }
 
-impl Clone for MeshVertsSeq {
+impl<const WORLD_SPACE: bool> Clone for MeshVertsSeq<WORLD_SPACE> {
   fn clone(&self) -> Self {
     Self {
       mesh: self.mesh.clone(false, false, false),
@@ -435,23 +435,26 @@ impl Clone for MeshVertsSeq {
   }
 }
 
-pub(crate) struct MeshVertsIter {
+pub(crate) struct MeshVertsIter<const WORLD_SPACE: bool> {
   #[allow(dead_code)]
   mesh: MeshHandle,
   iter: Box<dyn Iterator<Item = Result<Value, ErrorStack>>>,
 }
 
-impl MeshVertsIter {
+impl<const WORLD_SPACE: bool> MeshVertsIter<WORLD_SPACE> {
   pub fn new(mesh: MeshHandle) -> Self {
     // safe because this reference will only live as long as the iterator, and by holding the `Arc`
     // internally, we can ensure that it's not dropped while the iterator is still in use.
     let static_mesh: &'static LinkedMesh<()> =
       unsafe { std::mem::transmute::<&LinkedMesh<()>, &'static LinkedMesh<()>>(&*mesh.mesh) };
 
-    let iter: impl Iterator<Item = _> + 'static = static_mesh
-      .vertices
-      .values()
-      .map(|vtx| Ok(Value::Vec3(vtx.position)));
+    let iter: impl Iterator<Item = _> + 'static = static_mesh.vertices.values().map(move |vtx| {
+      let mut pos = vtx.position;
+      if WORLD_SPACE {
+        pos = (mesh.transform * pos.push(1.)).xyz();
+      }
+      Ok(Value::Vec3(pos))
+    });
 
     Self {
       mesh,
@@ -460,7 +463,7 @@ impl MeshVertsIter {
   }
 }
 
-impl Iterator for MeshVertsIter {
+impl<const WORLD_SPACE: bool> Iterator for MeshVertsIter<WORLD_SPACE> {
   type Item = Result<Value, ErrorStack>;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -468,7 +471,7 @@ impl Iterator for MeshVertsIter {
   }
 }
 
-impl Sequence for MeshVertsSeq {
+impl<const WORLD_SPACE: bool> Sequence for MeshVertsSeq<WORLD_SPACE> {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(self.clone())
   }
@@ -477,7 +480,7 @@ impl Sequence for MeshVertsSeq {
     self: Box<Self>,
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    Box::new(MeshVertsIter::new(self.mesh))
+    Box::new(MeshVertsIter::<WORLD_SPACE>::new(self.mesh))
   }
 }
 

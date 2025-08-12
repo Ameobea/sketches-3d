@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+#[cfg(target_arch = "wasm32")]
+use mesh::linked_mesh::Mat4;
 use mesh::linked_mesh::Vec3;
 use mesh::LinkedMesh;
 #[cfg(target_arch = "wasm32")]
@@ -91,8 +93,6 @@ pub fn simplify_mesh(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, E
 pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
   use std::cell::RefCell;
 
-  use nalgebra::Matrix4;
-
   use crate::ManifoldHandle;
 
   let verts = unsafe { std::slice::from_raw_parts(verts.as_ptr() as *const f32, verts.len() * 3) };
@@ -104,7 +104,7 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
   let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
   Ok(MeshHandle {
     mesh: Rc::new(out_mesh),
-    transform: Matrix4::identity(),
+    transform: Mat4::identity(),
     manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
@@ -145,7 +145,7 @@ pub fn split_mesh_by_plane(
       None,
       None,
     )),
-    transform: mesh.transform,
+    transform: Mat4::identity(),
     manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: mesh.aabb.clone(),
     trimesh: mesh.trimesh.clone(),
@@ -161,7 +161,7 @@ pub fn split_mesh_by_plane(
       None,
       None,
     )),
-    transform: mesh.transform,
+    transform: Mat4::identity(),
     manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
     aabb: mesh.aabb.clone(),
     trimesh: mesh.trimesh.clone(),

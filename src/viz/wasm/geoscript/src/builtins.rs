@@ -38,7 +38,7 @@ use crate::{
   },
   seq_as_eager, ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
-use crate::{ManifoldHandle, MeshHandle};
+use crate::{ManifoldHandle, MeshHandle, Sequence};
 
 pub(crate) mod fn_defs;
 
@@ -1191,7 +1191,14 @@ fn verts_impl(
         .as_mesh()
         .unwrap()
         .clone(false, false, true);
-      Ok(Value::Sequence(Rc::new(MeshVertsSeq { mesh })))
+      let world_space = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
+
+      let seq: Rc<dyn Sequence> = if world_space {
+        Rc::new(MeshVertsSeq::<true> { mesh })
+      } else {
+        Rc::new(MeshVertsSeq::<false> { mesh })
+      };
+      Ok(Value::Sequence(seq))
     }
     _ => unimplemented!(),
   }
@@ -1218,6 +1225,18 @@ fn convex_hull_impl(
           Err(err) => Err(err),
         })
         .collect::<Result<Vec<_>, _>>()?;
+      let out_mesh = convex_hull_from_verts(&verts)
+        .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
+      Ok(Value::Mesh(Rc::new(out_mesh)))
+    }
+    1 => {
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let verts = mesh
+        .mesh
+        .vertices
+        .values()
+        .map(|v| (mesh.transform * v.position.push(1.)).xyz())
+        .collect::<Vec<_>>();
       let out_mesh = convex_hull_from_verts(&verts)
         .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
       Ok(Value::Mesh(Rc::new(out_mesh)))
@@ -3186,6 +3205,30 @@ fn apply_transforms_impl(
   }
 }
 
+fn flip_normals_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let mut new_mesh = (*mesh.mesh).clone();
+      new_mesh.flip_normals();
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        aabb: mesh.aabb.clone(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        trimesh: RefCell::new(None),
+        transform: mesh.transform,
+        mesh: Rc::new(new_mesh),
+        material: mesh.material.clone(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn vec2_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -3923,6 +3966,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, _ctx| {
     apply_transforms_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "flip_normals" => builtin_fn!(flip_normals, |def_ix, arg_refs, args, kwargs, _ctx| {
+    flip_normals_impl(def_ix, arg_refs, args, kwargs)
   }),
   "vec2" => builtin_fn!(vec2, |def_ix, arg_refs, args, kwargs, _ctx| {
     vec2_impl(def_ix, arg_refs, args, kwargs)
