@@ -26,8 +26,8 @@ postfix                      = { static_field_access | field_access }
 
 // need these to work around ambiguity where a range expression starting with an
 // integer literal looks like a float
-range_literal_expr           = { int ~ ".." ~ term }
-range_inclusive_literal_expr = { int ~ "..=" ~ term }
+range_literal_expr           = { int ~ ".." ~ term? }
+range_inclusive_literal_expr = { int ~ "..=" ~ term? }
 
 if_expression                = { "if" ~ expr ~ block_expr ~ else_if_expr* ~ else_expr? }
 else_if_expr                 = { "else if" ~ expr ~ block_expr }
@@ -78,7 +78,7 @@ bracketed_closure_body       = { "{" ~ statement* ~ "}" }
 array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
 map_entry                    = { (ident | string_literal) ~ ":" ~ expr }
 map_entry_list               = _{ map_entry ~ ("," ~ map_entry)* }
-map_literal                  = { "{" ~ map_entry_list* ~ "}" }
+map_literal                  = { "{" ~ (map_entry_list ~ ","?)? ~ "}" }
 
 bool_literal                 = { "true" | "false" }
 nil_literal                  = { "nil" }

@@ -52,7 +52,7 @@ Expr {
   BinaryExpr |
   StaticFieldAccessExpr |
   FieldAccessExpr |
-  RangeExpr { Expr !range (".." | "..=") Expr } |
+  RangeExpr { Expr !range (".." | "..=") Expr? } |
   CallExpr |
   literal |
   Identifier |
@@ -109,7 +109,7 @@ commaSep<Expr> { commaSep1<Expr>? }
 commaSep1<Expr> { Expr ("," Expr?)* }
 
 MapEntry { (Identifier | StringLiteral) ":" Expr }
-mapLiteralEntryList { MapEntry ("," MapEntry)* }
+mapLiteralEntryList { MapEntry ("," MapEntry)* ","? }
 
 @external tokens literalTokens from "./tokens" { Float }
 

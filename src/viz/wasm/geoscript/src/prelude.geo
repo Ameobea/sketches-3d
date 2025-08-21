@@ -15,3 +15,5 @@ dir_light(
   | render;
 
 // set_default_material("default");
+
+set_rng_seed(1822215726251595)

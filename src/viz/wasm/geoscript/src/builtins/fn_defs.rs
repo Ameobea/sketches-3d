@@ -682,6 +682,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       },
     ],
   },
+  "fold_while" => FnDef {
+    module: "seq",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "initial_val",
+            valid_types: &[ArgType::Any],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "fn",
+            valid_types: &[ArgType::Callable],
+            default_value: DefaultValue::Required,
+            description: "Callable with signature `|acc, x|: acc | nil`.  If this callback returns `nil`, the final state of the accumulator passed into that iteration will be returned."
+          },
+          ArgDef {
+            name: "sequence",
+            valid_types: &[ArgType::Sequence],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Same as `fold` but with the option early-exiting.  If the provided callback returns `nil`, the final state of the accumulator passed into that iteration will be returned.",
+        return_type: &[ArgType::Any],
+      },
+    ],
+  },
   "reduce" => FnDef {
     module: "seq",
     examples: &[],
@@ -2210,12 +2240,54 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             name: "sequence",
             valid_types: &[ArgType::Sequence],
             default_value: DefaultValue::Required,
-            description: "Sequence to get the first element from"
+            description: ""
           },
         ],
         description: "Returns the first element of a sequence, or `Nil` if the sequence is empty.",
         return_type: &[ArgType::Any],
       },
+    ],
+  },
+  "last" => FnDef {
+    module: "seq",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "sequence",
+            valid_types: &[ArgType::Sequence],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the last element of a sequence, or `Nil` if the sequence is empty.",
+        return_type: &[ArgType::Any],
+      },
+    ],
+  },
+  "append" => FnDef {
+    module: "seq",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "val",
+            valid_types: &[ArgType::Any],
+            default_value: DefaultValue::Required,
+            description: "The value to add to the end of the sequence"
+          },
+          ArgDef {
+            name: "seq",
+            valid_types: &[ArgType::Sequence],
+            default_value: DefaultValue::Required,
+            description: "The sequence to which the value should be added"
+          }
+        ],
+        description: "Appends a value to the end of a sequence, returning a new sequence.  The old sequence is left unchanged.\n\nIf the sequence is not eager (as produced by the `collect` function, an array literal, or similar), it will be collected into memory before this happens.\n\nNote that this isn't very efficient and requires collecting and/or cloning the underlying sequence.  It's better to keep things lazy and use sequences and sequence combinators where possible.",
+        return_type: &[ArgType::Sequence]
+      }
     ],
   },
   "reverse" => FnDef {
@@ -4767,6 +4839,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       }
     ],
   },
+  "set_rng_seed" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Required,
+            description: ""
+          }
+        ],
+        description: "Sets the seed for the shared pRNG used by functions like `randi`, `randf`, etc.\n\nThis will reset the state of the RNG, so it will always return the same value the next time it's used after this is called.",
+        return_type: &[ArgType::Nil],
+      }
+    ]
+  }
 };
 
 pub fn serialize_fn_defs() -> String {

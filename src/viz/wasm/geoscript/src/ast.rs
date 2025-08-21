@@ -157,7 +157,7 @@ pub enum Expr {
   },
   Range {
     start: Box<Expr>,
-    end: Box<Expr>,
+    end: Option<Box<Expr>>,
     inclusive: bool,
   },
   StaticFieldAccess {
@@ -212,7 +212,9 @@ impl Expr {
         inclusive: _,
       } => {
         let mut captures_dyn = start.inline_const_captures(local_scope);
-        captures_dyn |= end.inline_const_captures(local_scope);
+        if let Some(end) = end {
+          captures_dyn |= end.inline_const_captures(local_scope);
+        }
         captures_dyn
       }
       Expr::StaticFieldAccess { lhs, field: _ } => lhs.inline_const_captures(local_scope),
@@ -376,7 +378,9 @@ impl Expr {
       Expr::Range { start, end, .. } => {
         cb(self);
         start.traverse(cb);
-        end.traverse(cb);
+        if let Some(end) = end {
+          end.traverse(cb);
+        }
       }
       Expr::StaticFieldAccess { lhs, .. } => {
         cb(self);
@@ -511,24 +515,28 @@ pub enum BinOp {
   Map,
 }
 
-fn eval_range(start: Value, end: Value, inclusive: bool) -> Result<Value, ErrorStack> {
+fn eval_range(start: Value, end: Option<Value>, inclusive: bool) -> Result<Value, ErrorStack> {
   let Value::Int(start) = start else {
     return Err(ErrorStack::new(format!(
       "Range start must be an integer, found: {start:?}",
     )));
   };
-  let Value::Int(end) = end else {
-    return Err(ErrorStack::new(format!(
-      "Range end must be an integer, found: {end:?}",
-    )));
+  let end = match end {
+    Some(end) => {
+      let Value::Int(mut end) = end else {
+        return Err(ErrorStack::new(format!(
+          "Range end must be an integer, found: {end:?}",
+        )));
+      };
+      if inclusive {
+        end += 1;
+      }
+      Some(end)
+    }
+    None => None,
   };
 
-  let mut range = IntRange { start, end };
-  if inclusive {
-    range.end += 1;
-  }
-
-  Ok(Value::Sequence(Rc::new(range)))
+  Ok(Value::Sequence(Rc::new(IntRange { start, end })))
 }
 
 // TODO: should do more efficient version of this
@@ -610,8 +618,8 @@ impl BinOp {
         )?;
         bit_and_impl(ctx, def_ix, &lhs, &rhs)
       }
-      BinOp::Range => eval_range(lhs, rhs, false),
-      BinOp::RangeInclusive => eval_range(lhs, rhs, true),
+      BinOp::Range => eval_range(lhs, Some(rhs), false),
+      BinOp::RangeInclusive => eval_range(lhs, Some(rhs), true),
       BinOp::Pipeline => {
         // eval as a pipeline operator if the rhs is a callable
         if let Some(callable) = rhs.as_callable() {
@@ -737,20 +745,26 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
     Rule::range_literal_expr => {
       let mut inner = expr.into_inner();
       let start = parse_node(inner.next().unwrap())?;
-      let end = parse_node(inner.next().unwrap())?;
+      let end = match inner.next() {
+        Some(end) => Some(Box::new(parse_node(end)?)),
+        None => None,
+      };
       Ok(Expr::Range {
         start: Box::new(start),
-        end: Box::new(end),
+        end,
         inclusive: false,
       })
     }
     Rule::range_inclusive_literal_expr => {
       let mut inner = expr.into_inner();
       let start = parse_node(inner.next().unwrap())?;
-      let end = parse_node(inner.next().unwrap())?;
+      let end = match inner.next() {
+        Some(end) => Some(Box::new(parse_node(end)?)),
+        None => None,
+      };
       Ok(Expr::Range {
         start: Box::new(start),
-        end: Box::new(end),
+        end,
         inclusive: true,
       })
     }
@@ -1606,12 +1620,20 @@ fn fold_constants<'a>(
       inclusive,
     } => {
       optimize_expr(ctx, local_scope, start)?;
-      optimize_expr(ctx, local_scope, end)?;
+      if let Some(end) = end {
+        optimize_expr(ctx, local_scope, end)?;
+      }
 
-      let (Some(start_val), Some(end_val)) = (start.as_literal(), end.as_literal()) else {
+      let (Some(start_val), Some(end_val_opt)) = (
+        start.as_literal(),
+        match end {
+          Some(end) => end.as_literal().map(Some),
+          None => Some(None),
+        },
+      ) else {
         return Ok(());
       };
-      let val = eval_range(start_val, end_val, *inclusive)?;
+      let val = eval_range(start_val, end_val_opt, *inclusive)?;
       *expr = val.into_literal_expr();
       Ok(())
     }
@@ -2060,8 +2082,12 @@ fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
       inclusive: _,
     } => {
       let start_type = get_dyn_type(start, local_scope);
-      let end_type = get_dyn_type(end, local_scope);
-      start_type | end_type
+      if let Some(end) = end.as_ref() {
+        let end_type = get_dyn_type(end, local_scope);
+        start_type | end_type
+      } else {
+        start_type
+      }
     }
     Expr::StaticFieldAccess { lhs, field: _ } => get_dyn_type(lhs, local_scope),
     Expr::FieldAccess { lhs, field } => {

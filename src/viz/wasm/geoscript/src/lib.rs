@@ -3,7 +3,8 @@
   impl_trait_in_bindings,
   adt_const_params,
   thread_local,
-  impl_trait_in_fn_trait_return
+  impl_trait_in_fn_trait_return,
+  unsafe_cell_access
 )]
 
 #[cfg(target_arch = "wasm32")]
@@ -1225,24 +1226,31 @@ impl EvalCtx {
             "Range start must be an integer, found: {start:?}"
           )));
         };
-        let end = match self.eval_expr(end, scope, None)? {
-          ControlFlow::Continue(val) => val,
-          early_exit => return Ok(early_exit),
-        };
-        let Value::Int(end) = end else {
-          return Err(ErrorStack::new(format!(
-            "Range end must be an integer, found: {end:?}"
-          )));
+        let end = match end {
+          Some(end) => {
+            let end = match self.eval_expr(end, scope, None)? {
+              ControlFlow::Continue(val) => val,
+              early_exit => return Ok(early_exit),
+            };
+            let Value::Int(mut end) = end else {
+              return Err(ErrorStack::new(format!(
+                "Range end must be an integer, found: {end:?}"
+              )));
+            };
+
+            if *inclusive {
+              end += 1;
+            }
+
+            Some(end)
+          }
+          None => None,
         };
 
-        Ok(ControlFlow::Continue(if *inclusive {
-          Value::Sequence(Rc::new(IntRange {
-            start,
-            end: end + 1,
-          }))
-        } else {
-          Value::Sequence(Rc::new(IntRange { start, end }))
-        }))
+        Ok(ControlFlow::Continue(Value::Sequence(Rc::new(IntRange {
+          start,
+          end,
+        }))))
       }
       Expr::Ident(name) => self
         .eval_ident(name.as_str(), scope)
@@ -3343,4 +3351,26 @@ fn test_closure_scope_reference_counting() {
   let _ = Rc::try_unwrap(captured_scope).unwrap();
 
   assert_eq!(weak_captured_scope.strong_count(), 0);
+}
+
+#[test]
+fn test_append() {
+  let src = r#"
+arr = chain([[1], [2]])
+arr = arr | append(3)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let arr = ctx.globals.get("arr").unwrap();
+  let arr = arr.as_sequence().unwrap();
+  let eager = seq_as_eager(&*arr).unwrap();
+  assert_eq!(
+    eager
+      .inner
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect::<Vec<_>>(),
+    vec![1, 2, 3]
+  );
 }

@@ -10,7 +10,7 @@ use crate::{Callable, ErrorStack, EvalCtx, MeshHandle, Sequence, Value};
 #[derive(Clone, Debug)]
 pub(crate) struct IntRange {
   pub start: i64,
-  pub end: i64,
+  pub end: Option<i64>,
 }
 
 pub(crate) struct IntRangeIter {
@@ -39,7 +39,7 @@ impl IntoIterator for IntRange {
   fn into_iter(self) -> Self::IntoIter {
     IntRangeIter {
       current: self.start,
-      end: self.end,
+      end: self.end.unwrap_or(i64::MAX),
     }
   }
 }

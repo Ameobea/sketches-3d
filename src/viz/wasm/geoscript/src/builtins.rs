@@ -1,4 +1,6 @@
 use paste::paste;
+#[cfg(target_arch = "wasm32")]
+use rand_pcg::Pcg32;
 use std::cmp::Reverse;
 use std::marker::ConstParamTy;
 use std::rc::Rc;
@@ -14,6 +16,8 @@ use parry3d::bounding_volume::Aabb;
 use parry3d::math::{Isometry, Point};
 use parry3d::query::Ray;
 use rand::Rng;
+#[cfg(target_arch = "wasm32")]
+use rand::{RngCore, SeedableRng};
 
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::path_building::build_lissajous_knot_path;
@@ -62,6 +66,7 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "teapot" => "utah_teapot",
   "bunny" => "stanford_bunny",
   // "monkey" => "suzanne",
+  "push" => "append",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -614,6 +619,40 @@ pub(crate) fn map_impl(
   }
 }
 
+fn fold_while_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let init = arg_refs[0].resolve(args, &kwargs);
+      let cb = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
+      let seq = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
+
+      let mut acc = init.clone();
+      for next in seq.clone_box().consume(ctx) {
+        let next = next.map_err(|err| {
+          err.wrap("Error produced while consuming sequence passed to `fold_while`")
+        })?;
+        let out = ctx
+          .invoke_callable(cb, &[acc.clone(), next], &Default::default(), &ctx.globals)
+          .map_err(|err| err.wrap("Error in user-provided callback to `fold_while`"))?;
+        if out.is_nil() {
+          return Ok(acc);
+        } else {
+          acc = out;
+        }
+      }
+
+      Ok(acc)
+    }
+    _ => unimplemented!(),
+  }
+}
+
 pub(crate) fn warp_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -928,6 +967,45 @@ fn set_default_material_impl(
     }
     _ => unimplemented!(),
   }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn set_rng_seed_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      unsafe {
+        ctx
+          .rng
+          .replace(Pcg32::from_seed(std::mem::transmute((seed, seed))));
+      };
+
+      // pump the rng a few times because sometimes that seems to be necessary to get good results
+      let _ = ctx.rng().next_u64();
+      let _ = ctx.rng().next_u64();
+      let _ = ctx.rng().next_u64();
+
+      Ok(Value::Nil)
+    }
+    _ => unimplemented!(),
+  }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_rng_seed_impl(
+  _ctx: &EvalCtx,
+  _def_ix: usize,
+  _arg_refs: &[ArgRef],
+  _args: &[Value],
+  _kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  Ok(Value::Nil)
 }
 
 fn mesh_impl(
@@ -3439,9 +3517,9 @@ fn take_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let count = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let count = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       let count = if count < 0 { 0 } else { count as usize };
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(TakeSeq {
         count,
         inner: sequence.clone_box(),
@@ -3459,9 +3537,9 @@ fn skip_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let count = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let count = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       let count = if count < 0 { 0 } else { count as usize };
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(SkipSeq {
         count,
         inner: sequence.clone_box(),
@@ -3538,12 +3616,65 @@ fn first_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       let mut iter = sequence.clone_box().consume(ctx);
       match iter.next() {
         Some(res) => res,
         None => Ok(Value::Nil),
       }
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn last_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
+      if let Some(eager) = seq_as_eager(&*seq) {
+        return Ok(eager.inner.last().cloned().unwrap_or(Value::Nil));
+      }
+
+      let iter = seq.clone_box().consume(ctx);
+      match iter.last() {
+        Some(res) => res,
+        None => Ok(Value::Nil),
+      }
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn append_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let val = arg_refs[0].resolve(args, kwargs);
+      let seq = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
+
+      let mut eager_seq = match seq_as_eager(&*seq) {
+        Some(eager) => eager.clone(),
+        None => {
+          let iter = seq.clone_box().consume(ctx);
+          let collected = iter
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.wrap("error produced during `collect`"))?;
+          EagerSeq { inner: collected }
+        }
+      };
+      eager_seq.inner.push(val.clone());
+      Ok(Value::Sequence(Rc::new(eager_seq)))
     }
     _ => unimplemented!(),
   }
@@ -4008,6 +4139,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let sequence = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
     ctx.fold(initial_val, fn_value, sequence.clone_box().into())
   }),
+  "fold_while" => builtin_fn!(fold, |def_ix, arg_refs, args, kwargs, ctx| {
+    fold_while_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "reduce" => builtin_fn!(reduce, |_def_ix, arg_refs: &[ArgRef], args, kwargs, ctx: &EvalCtx| {
     let fn_value = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
     let seq = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
@@ -4041,6 +4175,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "first" => builtin_fn!(first, |def_ix, arg_refs, args, kwargs, ctx| {
     first_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "last" => builtin_fn!(first, |def_ix, arg_refs, args, kwargs, ctx| {
+    last_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "append" => builtin_fn!(first, |def_ix, arg_refs, args, kwargs, ctx| {
+    append_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "reverse" => builtin_fn!(reverse, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     reverse_impl(ctx, def_ix, arg_refs, args, kwargs)
@@ -4346,6 +4486,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "set_default_material" => builtin_fn!(set_default_material, |def_ix, arg_refs, args, kwargs, ctx| {
     set_default_material_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "set_rng_seed" => builtin_fn!(set_rng_seed, |def_ix, arg_refs, args, kwargs, ctx| {
+    set_rng_seed_impl(ctx, def_ix, arg_refs, args, kwargs)
+  })
 };
 
 pub(crate) fn resolve_builtin_impl(
