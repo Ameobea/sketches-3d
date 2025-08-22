@@ -145,6 +145,32 @@ pub struct ClosureArg {
 }
 
 #[derive(Clone, Debug)]
+pub enum MapLiteralEntry {
+  KeyValue { key: String, value: Expr },
+  Splat { expr: Expr },
+}
+
+impl MapLiteralEntry {
+  fn inline_const_captures(&mut self, local_scope: &mut ScopeTracker<'_>) -> bool {
+    match self {
+      MapLiteralEntry::KeyValue { key: _, value } => value.inline_const_captures(local_scope),
+      MapLiteralEntry::Splat { expr } => expr.inline_const_captures(local_scope),
+    }
+  }
+
+  fn expr(&self) -> &Expr {
+    match self {
+      MapLiteralEntry::KeyValue { key: _, value } => value,
+      MapLiteralEntry::Splat { expr } => expr,
+    }
+  }
+
+  fn is_literal(&self) -> bool {
+    self.expr().is_literal()
+  }
+}
+
+#[derive(Clone, Debug)]
 pub enum Expr {
   BinOp {
     op: BinOp,
@@ -176,7 +202,9 @@ pub enum Expr {
   },
   Ident(String),
   ArrayLiteral(Vec<Expr>),
-  MapLiteral(FxHashMap<String, Expr>),
+  MapLiteral {
+    entries: Vec<MapLiteralEntry>,
+  },
   Literal(Value),
   Conditional {
     cond: Box<Expr>,
@@ -195,6 +223,13 @@ impl Expr {
     match self {
       Expr::Literal(val) => Some(val.clone()),
       _ => None,
+    }
+  }
+
+  pub fn is_literal(&self) -> bool {
+    match self {
+      Expr::Literal(_) => true,
+      _ => false,
     }
   }
 
@@ -314,8 +349,8 @@ impl Expr {
       Expr::ArrayLiteral(exprs) => exprs
         .iter_mut()
         .any(|expr| expr.inline_const_captures(local_scope)),
-      Expr::MapLiteral(map) => map
-        .values_mut()
+      Expr::MapLiteral { entries } => entries
+        .iter_mut()
         .any(|expr| expr.inline_const_captures(local_scope)),
       Expr::Literal(_) => false,
       Expr::Conditional {
@@ -400,8 +435,17 @@ impl Expr {
         cb(self);
         body.0.iter().for_each(|stmt| traverse_stmt(stmt, cb));
       }
-      Expr::Ident(_) | Expr::Literal(_) | Expr::ArrayLiteral(_) | Expr::MapLiteral(_) => {
+      Expr::Ident(_) | Expr::Literal(_) | Expr::ArrayLiteral(_) => {
         cb(self);
+      }
+      Expr::MapLiteral { entries } => {
+        cb(self);
+        for entry in entries {
+          match entry {
+            MapLiteralEntry::KeyValue { key: _, value } => value.traverse(cb),
+            MapLiteralEntry::Splat { expr } => expr.traverse(cb),
+          }
+        }
       }
       Expr::Conditional {
         cond,
@@ -935,27 +979,41 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
     }
     Rule::map_literal => {
       let entries = expr.into_inner();
-      let mut map = FxHashMap::default();
+      let mut out_entries = Vec::with_capacity(entries.len());
       for entry in entries {
-        assert_eq!(entry.as_rule(), Rule::map_entry);
-        let mut inner = entry.into_inner();
-        let key = inner.next().unwrap();
-        let key = match key.as_rule() {
-          Rule::double_quote_string_literal => {
-            parse_double_quote_string_inner(key.into_inner().next().unwrap())?
+        match entry.as_rule() {
+          Rule::map_kv => {
+            let mut inner = entry.into_inner();
+            let key = inner.next().unwrap();
+            let key = match key.as_rule() {
+              Rule::double_quote_string_literal => {
+                parse_double_quote_string_inner(key.into_inner().next().unwrap())?
+              }
+              Rule::single_quote_string_literal => {
+                parse_single_quote_string_inner(key.into_inner().next().unwrap())?
+              }
+              Rule::ident => key.as_str().to_owned(),
+              _ => unreachable!("Unexpected key rule in map literal: {:?}", key.as_rule()),
+            };
+            let value = inner.next().unwrap();
+            let value_expr = parse_expr(value)?;
+            out_entries.push(MapLiteralEntry::KeyValue {
+              key,
+              value: value_expr,
+            });
           }
-          Rule::single_quote_string_literal => {
-            parse_single_quote_string_inner(key.into_inner().next().unwrap())?
+          Rule::map_splat => {
+            let inner = entry.into_inner().next().unwrap();
+            let expr = parse_expr(inner)?;
+            out_entries.push(MapLiteralEntry::Splat { expr });
           }
-          Rule::ident => key.as_str().to_owned(),
-          _ => unreachable!("Unexpected key rule in map literal: {:?}", key.as_rule()),
-        };
-        let value = inner.next().unwrap();
-        let value_expr = parse_expr(value)?;
-        map.insert(key, value_expr);
+          _ => panic!("Unexpected rule inside map literal: {:?}", entry.as_rule()),
+        }
       }
 
-      Ok(Expr::MapLiteral(map))
+      Ok(Expr::MapLiteral {
+        entries: out_entries,
+      })
     }
     Rule::block_expr => parse_block_expr(expr),
     _ => unimplemented!(
@@ -1504,7 +1562,7 @@ fn pre_resolve_expr_type(
     },
     Expr::Closure { .. } => Some(ArgType::Callable),
     Expr::ArrayLiteral(_) => Some(ArgType::Sequence),
-    Expr::MapLiteral(_) => Some(ArgType::Map),
+    Expr::MapLiteral { .. } => Some(ArgType::Map),
     Expr::Conditional { .. } => None,
     Expr::Block { .. } => None,
   }
@@ -1893,7 +1951,7 @@ fn fold_constants<'a>(
       }
 
       // if all elements are literals, can fold into an `EagerSeq`
-      if exprs.iter().all(|e| e.as_literal().is_some()) {
+      if exprs.iter().all(|e| e.is_literal()) {
         let values = exprs
           .iter()
           .map(|e| e.as_literal().unwrap().clone())
@@ -1903,18 +1961,45 @@ fn fold_constants<'a>(
 
       Ok(())
     }
-    Expr::MapLiteral(map) => {
-      for value in map.values_mut() {
-        optimize_expr(ctx, local_scope, value)?;
+    Expr::MapLiteral { entries } => {
+      for value in entries.iter_mut() {
+        match value {
+          MapLiteralEntry::KeyValue { key: _, value } => {
+            optimize_expr(ctx, local_scope, value)?;
+          }
+          MapLiteralEntry::Splat { expr } => {
+            optimize_expr(ctx, local_scope, expr)?;
+          }
+        }
       }
 
       // if all values are literals, can fold into a `Map`
-      if map.values().all(|e| e.as_literal().is_some()) {
-        let values = map
-          .iter()
-          .map(|(k, v)| (k.clone(), v.as_literal().unwrap().clone()))
-          .collect::<FxHashMap<_, _>>();
-        *expr = Expr::Literal(Value::Map(Rc::new(values)));
+      if entries.iter().all(|e| e.is_literal()) {
+        let mut map = FxHashMap::default();
+        for entry in entries {
+          match entry {
+            MapLiteralEntry::KeyValue { key, value } => {
+              map.insert(key.clone(), value.as_literal().unwrap());
+            }
+            MapLiteralEntry::Splat { expr } => {
+              let literal = expr.as_literal().unwrap();
+              let splat = match literal.as_map() {
+                Some(map) => map,
+                None => {
+                  return Err(ErrorStack::new(format!(
+                    "Tried to splat value of type {:?} into map; expected a map.",
+                    literal.get_type()
+                  )))
+                }
+              };
+              for (key, val) in splat {
+                map.insert(key.clone(), val.clone());
+              }
+            }
+          }
+        }
+
+        *expr = Expr::Literal(Value::Map(Rc::new(map)));
       }
 
       Ok(())
@@ -2162,8 +2247,8 @@ fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
     Expr::ArrayLiteral(exprs) => exprs.iter().fold(DynType::Const, |acc, expr| {
       acc | get_dyn_type(expr, local_scope)
     }),
-    Expr::MapLiteral(map) => map.values().fold(DynType::Const, |acc, expr| {
-      acc | get_dyn_type(expr, local_scope)
+    Expr::MapLiteral { entries } => entries.iter().fold(DynType::Const, |acc, entry| {
+      acc | get_dyn_type(entry.expr(), local_scope)
     }),
     Expr::Literal(_) => DynType::Const,
     Expr::Conditional {

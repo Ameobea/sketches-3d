@@ -39,7 +39,7 @@ use smallvec::SmallVec;
 #[cfg(target_arch = "wasm32")]
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
-  ast::{parse_statement, ClosureArg, TypeName},
+  ast::{parse_statement, ClosureArg, MapLiteralEntry, TypeName},
   builtins::{
     fn_defs::{ArgDef, DefaultValue, FnSignature, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
@@ -1269,14 +1269,33 @@ impl EvalCtx {
           inner: evaluated,
         }))))
       }
-      Expr::MapLiteral(map) => {
+      Expr::MapLiteral { entries } => {
         let mut evaluated = FxHashMap::default();
-        for (key, value) in map {
-          let val = match self.eval_expr(value, scope, None)? {
-            ControlFlow::Continue(val) => val,
-            early_exit => return Ok(early_exit),
-          };
-          evaluated.insert(key.clone(), val);
+        for entry in entries {
+          match entry {
+            MapLiteralEntry::KeyValue { key, value } => {
+              let val = match self.eval_expr(value, scope, None)? {
+                ControlFlow::Continue(val) => val,
+                early_exit => return Ok(early_exit),
+              };
+              evaluated.insert(key.clone(), val);
+            }
+            MapLiteralEntry::Splat { expr: splat } => {
+              let splat = match self.eval_expr(splat, scope, None)? {
+                ControlFlow::Continue(val) => val,
+                early_exit => return Ok(early_exit),
+              };
+              let Value::Map(splat) = splat else {
+                return Err(ErrorStack::new(format!(
+                  "Tried to splat value of type {:?} into map; expected a map.",
+                  splat.get_type()
+                )));
+              };
+              for (key, val) in &*splat {
+                evaluated.insert(key.clone(), val.clone());
+              }
+            }
+          }
         }
         Ok(ControlFlow::Continue(Value::Map(Rc::new(evaluated))))
       }
@@ -3373,4 +3392,41 @@ arr = arr | append(3)
       .collect::<Vec<_>>(),
     vec![1, 2, 3]
   );
+}
+
+#[test]
+fn test_map_splat() {
+  let src = r#"
+x = {a: 1}
+y = {b: 2}
+z = {*x, c: 3, *y}
+
+w = {*x, a: 4}
+v = {b: 1, *y}
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let z = ctx.globals.get("z").unwrap();
+  let Value::Map(z) = z else {
+    panic!("Expected result to be a Map");
+  };
+  assert_eq!(z.len(), 3);
+  assert_eq!(z.get("a").unwrap().as_int(), Some(1));
+  assert_eq!(z.get("b").unwrap().as_int(), Some(2));
+  assert_eq!(z.get("c").unwrap().as_int(), Some(3));
+
+  let w = ctx.globals.get("w").unwrap();
+  let Value::Map(w) = w else {
+    panic!("Expected result to be a Map");
+  };
+  assert_eq!(w.len(), 1);
+  assert_eq!(w.get("a").unwrap().as_int(), Some(4));
+
+  let v = ctx.globals.get("v").unwrap();
+  let Value::Map(v) = v else {
+    panic!("Expected result to be a Map");
+  };
+  assert_eq!(v.len(), 1);
+  assert_eq!(v.get("b").unwrap().as_int(), Some(2));
 }

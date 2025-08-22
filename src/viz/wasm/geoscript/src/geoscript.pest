@@ -76,7 +76,9 @@ closure_body                 = _{ bracketed_closure_body | expr }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }
 
 array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
-map_entry                    = { (ident | string_literal) ~ ":" ~ expr }
+map_kv                       = { (ident | string_literal) ~ ":" ~ expr }
+map_splat                    = { "*" ~ expr }
+map_entry                    = _{ map_kv | map_splat }
 map_entry_list               = _{ map_entry ~ ("," ~ map_entry)* }
 map_literal                  = { "{" ~ (map_entry_list ~ ","?)? ~ "}" }
 

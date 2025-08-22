@@ -108,7 +108,9 @@ commaSep<Expr> { commaSep1<Expr>? }
 
 commaSep1<Expr> { Expr ("," Expr?)* }
 
-MapEntry { (Identifier | StringLiteral) ":" Expr }
+MapKV { (Identifier | StringLiteral) ":" Expr }
+MapSplat { "*" Expr }
+MapEntry { MapKV | MapSplat }
 mapLiteralEntryList { MapEntry ("," MapEntry)* ","? }
 
 @external tokens literalTokens from "./tokens" { Float }
