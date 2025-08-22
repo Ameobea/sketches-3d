@@ -241,6 +241,18 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let b = rhs.as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(a.x + b.x, a.y + b.y)))
     }
+    // vec2 + num
+    8 => {
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec2(a + Vec2::new(b, b)))
+    }
+    // string + string
+    9 => {
+      let a = lhs.as_str().unwrap();
+      let b = rhs.as_str().unwrap();
+      Ok(Value::String(format!("{a}{b}")))
+    }
     _ => unimplemented!(),
   }
 }
@@ -304,6 +316,12 @@ pub(crate) fn sub_impl(
       let a = lhs.as_vec2().unwrap();
       let b = rhs.as_vec2().unwrap();
       Ok(Value::Vec2(a - b))
+    }
+    // vec2 - num
+    8 => {
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec2(a - Vec2::new(b, b)))
     }
     _ => unimplemented!(),
   }
@@ -397,6 +415,18 @@ pub(crate) fn div_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       // there's basically no reason to do real integer division, so just treating things as
       // floats in this case makes so much more sense
       Ok(Value::Float((a as f32) / (b as f32)))
+    }
+    5 => {
+      // vec2 / vec2
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(a.x / b.x, a.y / b.y)))
+    }
+    6 => {
+      // vec2 / float
+      let a = lhs.as_vec2().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec2(a / b))
     }
     _ => unimplemented!(),
   }
@@ -731,6 +761,11 @@ pub(crate) fn neg_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> 
       let value = val.as_bool().unwrap();
       Ok(Value::Bool(!value))
     }
+    4 => {
+      // negate vec2
+      let value = val.as_vec2().unwrap();
+      Ok(Value::Vec2(-*value))
+    }
     _ => unimplemented!(),
   }
 }
@@ -743,6 +778,10 @@ pub(crate) fn pos_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> 
     }
     1 => {
       // pass through vec3
+      Ok(val.clone())
+    }
+    2 => {
+      // pass through vec2
       Ok(val.clone())
     }
     _ => unimplemented!(),
@@ -2589,6 +2628,13 @@ fn fix_float_impl(
         if value.z.is_normal() { value.z } else { 0. },
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(
+        if value.x.is_normal() { value.x } else { 0. },
+        if value.y.is_normal() { value.y } else { 0. },
+      )))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2611,6 +2657,10 @@ fn round_impl(
         value.y.round(),
         value.z.round(),
       )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.round(), value.y.round())))
     }
     _ => unimplemented!(),
   }
@@ -2635,6 +2685,10 @@ fn floor_impl(
         value.z.floor(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.floor(), value.y.floor())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2657,6 +2711,10 @@ fn ceil_impl(
         value.y.ceil(),
         value.z.ceil(),
       )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.ceil(), value.y.ceil())))
     }
     _ => unimplemented!(),
   }
@@ -2681,6 +2739,10 @@ fn fract_impl(
         value.z.fract(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.fract(), value.y.fract())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2703,6 +2765,10 @@ fn trunc_impl(
         value.y.trunc(),
         value.z.trunc(),
       )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.trunc(), value.y.trunc())))
     }
     _ => unimplemented!(),
   }
@@ -2729,6 +2795,14 @@ fn pow_impl(
         base.z.powf(exponent),
       )))
     }
+    2 => {
+      let base = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let exponent = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Vec2(Vec2::new(
+        base.x.powf(exponent),
+        base.y.powf(exponent),
+      )))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2751,6 +2825,10 @@ fn exp_impl(
         value.y.exp(),
         value.z.exp(),
       )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.exp(), value.y.exp())))
     }
     _ => unimplemented!(),
   }
@@ -2775,6 +2853,10 @@ fn log10_impl(
         value.z.log10(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.log10(), value.y.log10())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2797,6 +2879,10 @@ fn log2_impl(
         value.y.log2(),
         value.z.log2(),
       )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.log2(), value.y.log2())))
     }
     _ => unimplemented!(),
   }
@@ -2821,6 +2907,10 @@ fn ln_impl(
         value.z.ln(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.ln(), value.y.ln())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2844,6 +2934,10 @@ fn tan_impl(
         value.z.tan(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.tan(), value.y.tan())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2866,6 +2960,10 @@ fn cos_impl(
         value.y.cos(),
         value.z.cos(),
       )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.cos(), value.y.cos())))
     }
     _ => unimplemented!(),
   }
@@ -2913,6 +3011,10 @@ fn sinh_impl(
         value.z.sinh(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.sinh(), value.y.sinh())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2936,6 +3038,10 @@ fn cosh_impl(
         value.z.cosh(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.cosh(), value.y.cosh())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2958,6 +3064,10 @@ fn tanh_impl(
         value.y.tanh(),
         value.z.tanh(),
       )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.tanh(), value.y.tanh())))
     }
     _ => unimplemented!(),
   }
@@ -2988,7 +3098,7 @@ fn box_impl(
           }
           _ => {
             return Err(ErrorStack::new(format!(
-              "Invalid argument for box size: expected Vec3 or Float, found {val:?}",
+              "Invalid argument for box size: expected Vec3, Int, or Float; found: {val:?}",
             )))
           }
         }
@@ -3864,6 +3974,10 @@ fn abs_impl(
         value.z.abs(),
       )))
     }
+    3 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.abs(), value.y.abs())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -3878,6 +3992,18 @@ fn sqrt_impl(
     0 => {
       let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
       Ok(Value::Float(value.sqrt()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.sqrt(),
+        value.y.sqrt(),
+        value.z.sqrt(),
+      )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.sqrt(), value.y.sqrt())))
     }
     _ => unimplemented!(),
   }
@@ -3912,6 +4038,12 @@ fn max_impl(
         a.z.max(b.z),
       )))
     }
+    3 => {
+      // vec2, vec2
+      let a = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let b = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(a.x.max(b.x), a.y.max(b.y))))
+    }
     _ => unimplemented!(),
   }
 }
@@ -3945,6 +4077,12 @@ fn min_impl(
         a.z.min(b.z),
       )))
     }
+    3 => {
+      // vec2, vec2
+      let a = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let b = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(a.x.min(b.x), a.y.min(b.y))))
+    }
     _ => unimplemented!(),
   }
 }
@@ -3958,27 +4096,37 @@ fn clamp_impl(
   match def_ix {
     0 => {
       // int, int, int
-      let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-      let min = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
-      let max = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
+      let min = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let max = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let value = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
       Ok(Value::Int(value.clamp(min, max)))
     }
     1 => {
       // float, float, float
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let min = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let max = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
       Ok(Value::Float(value.clamp(min, max)))
     }
     2 => {
-      // vec3, float, float
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let min = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let max = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      // float, float, vec3
+      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.clamp(min, max),
         value.y.clamp(min, max),
         value.z.clamp(min, max),
+      )))
+    }
+    3 => {
+      // float, float, vec2
+      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[2].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(
+        value.x.clamp(min, max),
+        value.y.clamp(min, max),
       )))
     }
     _ => unimplemented!(),

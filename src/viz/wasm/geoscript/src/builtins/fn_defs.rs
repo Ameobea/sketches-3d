@@ -878,6 +878,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Inverts a boolean (logical NOT)",
         return_type: &[ArgType::Bool],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Negates each component of a Vec2",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "pos" => FnDef {
@@ -907,6 +919,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Passes through the input unchanged (implementation detail of the unary `+` operator)",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Passes through the input unchanged (implementation detail of the unary `+` operator)",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -950,6 +974,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Component-wise absolute value of a Vec3",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise absolute value of a Vec2",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "sqrt" => FnDef {
@@ -967,6 +1003,30 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Square Root",
         return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise square root of a Vec3",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise square root of a Vec2",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -1061,7 +1121,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           },
         ],
-        description: "Combines two meshes into one mesh containing all geometry from both inputs.\n\nThis does NOT perform a boolean union; for that, use the `union` function, the `|` operator, or the `join` function to create a union over a sequence of meshes.",
+        description: "Combines two meshes into one mesh containing all geometry from both inputs.\n\nThis does NOT perform a boolean union; for that, use the `union` function or the `|` operator.",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -1117,7 +1177,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Adds two Vec2s component-wise",
         return_type: &[ArgType::Vec2],
-      }
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a numeric value to each component of a Vec2",
+        return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::String],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::String],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Concatenates two strings",
+        return_type: &[ArgType::String],
+      },
     ],
   },
   "sub" => FnDef {
@@ -1266,6 +1362,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
           },
         ],
         description: "Subtracts two Vec2s component-wise",
+        return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Subtracts a numeric value from each component of a Vec2",
         return_type: &[ArgType::Vec2],
       },
     ],
@@ -1532,6 +1646,42 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "a / b",
         return_type: &[ArgType::Int],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the component-wise division of two `Vec2`s",
+        return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Divides each component of a Vec2 by a scalar",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "mod" => FnDef {
@@ -1634,6 +1784,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Component-wise maximum of two Vec3s",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise maximum of two Vec2s",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "min" => FnDef {
@@ -1694,6 +1862,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Component-wise minimum of two Vec3s",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise minimum of two Vec2s",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "clamp" => FnDef {
@@ -1752,13 +1938,13 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Vec3],
+            valid_types: &[ArgType::Numeric],
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Vec3],
+            valid_types: &[ArgType::Numeric],
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1772,6 +1958,30 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Clamps each component of a Vec3 between min and max",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "min",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Clamps each component of a Vec2 between min and max",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "float" => FnDef {
@@ -1782,7 +1992,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            valid_types: &[ArgType::Numeric, ArgType::String],
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2381,7 +2591,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: "Either:\n - `Seq<Mesh | Light | Seq<Vec3>>` of objects to render to the scene, or\n - `Seq<Vec3>` of points representing a path to render",
           },
         ],
-        description: "Renders a sequence of entities to the scene.  The sequence can contain a heterogeneous mix of meshes, lights, or paths.  Each entity will be rendered separately.",
+        description: "Renders a sequence of entities to the scene.  The sequence can contain a heterogeneous mix of meshes, lights, and paths (`Seq<Vec3>`).  Each entity will be rendered separately.",
         return_type: &[ArgType::Nil],
       },
     ],
@@ -2441,8 +2651,20 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           },
         ],
-        description: "Returns the cosine of each component of a Vec3",
+        description: "Returns a Vec3 with the cosine of each component",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the cosine of each component",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -2474,6 +2696,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Returns the tangent of each component of a Vec3",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the tangent of each component",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "sinh" => FnDef {
@@ -2503,6 +2737,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Returns a Vec3 with the hyperbolic sine of each component",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the hyperbolic sine of each component",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -2534,6 +2780,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Returns a Vec3 with the hyperbolic cosine of each component",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the hyperbolic cosine of each component",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "tanh" => FnDef {
@@ -2564,6 +2822,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Returns a Vec3 with the hyperbolic tangent of each component",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the hyperbolic tangent of each component",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "pow" => FnDef {
@@ -2588,6 +2858,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "`Returns `base` raised to the power of `exponent``",
         return_type: &[ArgType::Numeric],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "base",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "exponent",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec3 with each component raised to the power of `exponent`",
+        return_type: &[ArgType::Vec3],
       },
       FnSignature {
         arg_defs: &[
@@ -2637,6 +2925,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Returns a Vec3 with the exponential of each component",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the exponential of each component",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "log10" => FnDef {
@@ -2666,6 +2966,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Returns a Vec3 with the base-10 logarithm of each component",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the base-10 logarithm of each component",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -2697,6 +3009,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Returns a Vec3 with the base-2 logarithm of each component",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the base-2 logarithm of each component",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "ln" => FnDef {
@@ -2726,6 +3050,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Returns a Vec3 with the natural logarithm of each component",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the natural logarithm of each component",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -2757,6 +3093,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Truncates each component of a Vec3 to its integer part",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Truncates each component of a Vec2 to its integer part",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "fract" => FnDef {
@@ -2786,6 +3134,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Returns a Vec3 with the fractional part of each component",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the fractional part of each component",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -2817,6 +3177,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Rounds each component of a Vec3 to the nearest integer",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rounds each component of a Vec2 to the nearest integer",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "ceil" => FnDef {
@@ -2846,6 +3218,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Rounds each component of a Vec3 up to the nearest integer",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rounds each component of a Vec2 up to the nearest integer",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -2877,6 +3261,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Rounds each component of a Vec3 down to the nearest integer",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rounds each component of a Vec2 down to the nearest integer",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "fix_float" => FnDef {
@@ -2906,6 +3302,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "For each component of the Vec3, if it is NaN, non-infinite, or subnormal, returns 0.0.  Otherwise, returns the component unchanged.",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: "Vec2 value to fix"
+          },
+        ],
+        description: "For each component of the Vec2, if it is NaN, non-infinite, or subnormal, returns 0.0.  Otherwise, returns the component unchanged.",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
@@ -3816,7 +4224,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           },
         ],
-        description: "Returns the number of elements in a sequence.  Calling this with an infinite sequence will result in the program hanging or crashing.",
+        description: "Returns the number of elements in a sequence.  This will fully evaluate the sequence.  Calling this with an infinite sequence will result in the program hanging or crashing.",
         return_type: &[ArgType::Int],
       }
     ],
@@ -4840,7 +5248,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
     ],
   },
   "set_rng_seed" => FnDef {
-    module: "core",
+    module: "rand",
     examples: &[],
     signatures: &[
       FnSignature {
@@ -4852,7 +5260,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           }
         ],
-        description: "Sets the seed for the shared pRNG used by functions like `randi`, `randf`, etc.\n\nThis will reset the state of the RNG, so it will always return the same value the next time it's used after this is called.",
+        description: "Sets the seed for the shared PRNG used by functions like `randi`, `randf`, etc.\n\nThis will reset the state of the RNG, so it will always return the same value the next time it's used after this is called.",
         return_type: &[ArgType::Nil],
       }
     ]

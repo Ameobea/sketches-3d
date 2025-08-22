@@ -16,4 +16,4 @@ dir_light(
 
 // set_default_material("default");
 
-set_rng_seed(1822215726251595)
+// set_rng_seed(1822215726251595)
