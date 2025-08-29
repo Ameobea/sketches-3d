@@ -177,12 +177,12 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            valid_types: &[ArgType::Mesh, ArgType::Light],
             default_value: DefaultValue::Required,
             description: ""
           },
         ],
-        description: "Translates a mesh",
+        description: "Translates a mesh or light",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -2017,6 +2017,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Converts a value to an int",
         return_type: &[ArgType::Int],
+      },
+    ],
+  },
+  "str" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Any],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Converts a value to a string.\n\nFor simple types like numbers and booleans, this performs the basic conversion as you'd expect.  For more complicated or internal types like meshes, lights, sequences, etc., the format is not defined and may change at a later time.",
+        return_type: &[ArgType::String],
       },
     ],
   },
@@ -4099,7 +4117,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "connected_components" => FnDef {
     module: "mesh",
-    examples: &[],
+    examples: &[FnExample { composition_id: 51 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4610,7 +4628,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "trace_geodesic_path" => FnDef {
     module: "mesh",
-    examples: &[],
+    examples: &[FnExample { composition_id: 49 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4651,7 +4669,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: "When the walk starts, it will be oriented such that the positive Y axis of the local tangent space is aligned as closely as possible with this up direction at the starting position.  Another way of saying this is that it lets you set what direction is north when first starting the walk on the mesh's surface."
           },
         ],
-        description: "Traces a geodesic path across the surface of a mesh, following a sequence of 2D points.  The mesh must be manifold.",
+        description: "Traces a geodesic path across the surface of a mesh, following a sequence of 2D points.  The mesh must be manifold.\n\nReturns a `Seq<Vec3>` of points on the surface of the mesh that were visited during the walk.",
         return_type: &[ArgType::Sequence],
       },
     ],
@@ -5095,7 +5113,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "dir_light" => FnDef {
     module: "light",
-    examples: &[],
+    examples: &[FnExample { composition_id: 50 }],
     signatures: &[
       FnSignature {
         arg_defs: &[

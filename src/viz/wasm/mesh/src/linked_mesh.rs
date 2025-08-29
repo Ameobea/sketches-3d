@@ -660,6 +660,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     mut cb: impl FnMut(FaceKey, FaceData) -> (),
   ) -> usize {
     // simple spatial hashing
+    // TODO: this seems trash and should be re-written to use a proper r-tree or similar
     let buckets_per_dim = 32;
     let mut buckets: FxHashMap<usize, Vec<_>> = FxHashMap::default();
 

@@ -67,6 +67,8 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "bunny" => "stanford_bunny",
   // "monkey" => "suzanne",
   "push" => "append",
+  "randv3" => "randv",
+  "string" => "str",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -4179,6 +4181,36 @@ fn int_impl(
   }
 }
 
+fn str_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let val = arg_refs[0].resolve(args, &kwargs);
+      let s = match val {
+        Value::Int(i) => format!("{i}"),
+        Value::Float(f) => format!("{f}"),
+        Value::Vec2(v) => format!("vec2({}, {})", v.x, v.y),
+        Value::Vec3(v) => format!("vec3({}, {}, {})", v.x, v.y, v.z),
+        Value::Mesh(mesh_handle) => format!("{:?}", mesh_handle.mesh),
+        Value::Light(light) => format!("{light:?}"),
+        Value::Callable(callable) => format!("{callable:?}"),
+        Value::Sequence(sequence) => format!("{sequence:?}"),
+        Value::Map(hash_map) => format!("{hash_map:?}"),
+        Value::Bool(b) => format!("{b}"),
+        Value::String(s) => s.clone(),
+        Value::Material(material) => format!("{material:?}"),
+        Value::Nil => String::from("nil"),
+      };
+      Ok(Value::String(s))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 macro_rules! builtin_fn {
   ($name:ident, $impl:expr) => {
     paste! {{
@@ -4401,6 +4433,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "int" => builtin_fn!(int, |def_ix, arg_refs, args, kwargs, _ctx| {
     int_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "str" => builtin_fn!(str, |def_ix, arg_refs, args, kwargs, _ctx| {
+    str_impl(def_ix, arg_refs, args, kwargs)
   }),
   "gte" => builtin_fn!(gte, |def_ix, arg_refs, args, kwargs, _ctx| {
     eval_numeric_bool_op(def_ix, arg_refs, args, kwargs, BoolOp::Gte)

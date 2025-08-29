@@ -35,6 +35,8 @@ pub enum TypeName {
   Seq,
   Callable,
   Nil,
+  Material,
+  Light,
 }
 
 impl Into<ArgType> for TypeName {
@@ -52,6 +54,8 @@ impl Into<ArgType> for TypeName {
       TypeName::Seq => ArgType::Sequence,
       TypeName::Callable => ArgType::Callable,
       TypeName::Nil => ArgType::Nil,
+      TypeName::Material => ArgType::Material,
+      TypeName::Light => ArgType::Light,
     }
   }
 }
@@ -73,6 +77,8 @@ impl FromStr for TypeName {
       "seq" | "sequence" => Ok(TypeName::Seq),
       "fn" | "callable" => Ok(TypeName::Callable),
       "nil" => Ok(TypeName::Nil),
+      "mat" => Ok(TypeName::Material),
+      "light" => Ok(TypeName::Light),
       _ => Err(format!("Unknown type name: {s}")),
     }
   }
@@ -91,6 +97,8 @@ impl TypeName {
       (TypeName::Callable, Value::Callable(_)) => Ok(()),
       (TypeName::String, Value::String(_)) => Ok(()),
       (TypeName::Nil, Value::Nil) => Ok(()),
+      (TypeName::Material, Value::Material(_)) => Ok(()),
+      (TypeName::Light, Value::Light(_)) => Ok(()),
       _ => Err(ErrorStack::new(format!(
         "Value {val:?} does not match type {self:?}"
       ))),
