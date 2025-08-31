@@ -1498,6 +1498,18 @@ impl EvalCtx {
           .eval_assignment(&name, val, scope, *type_hint)
           .map(ControlFlow::Continue)
       }
+      Statement::DestructureAssignment { lhs, rhs } => {
+        let rhs = match self.eval_expr(rhs, scope, None)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        for res in lhs.iter_assignments(self, rhs) {
+          let (lhs, rhs) =
+            res.map_err(|err| err.wrap("Error evaluating destructure assignment".to_owned()))?;
+          self.eval_assignment(&lhs, rhs, scope, None)?;
+        }
+        Ok(ControlFlow::Continue(Value::Nil))
+      }
       Statement::Return { value } => {
         let value = if let Some(value) = value {
           match self.eval_expr(value, scope, None)? {
@@ -1625,6 +1637,172 @@ impl EvalCtx {
     Err(ErrorStack::new(format!("Variable `{name}` not defined",)))
   }
 
+  fn invoke_closure(
+    &self,
+    closure: &Closure,
+    args: &[Value],
+    kwargs: &FxHashMap<String, Value>,
+    scope: &Scope,
+  ) -> Result<Value, ErrorStack> {
+    // TODO: should do some basic analysis to see which variables are actually needed and avoid
+    // cloning the rest
+    let closure_scope = Scope::wrap(&closure.captured_scope.upgrade().unwrap());
+    let mut pos_arg_ix = 0usize;
+    let mut any_args_valid = false;
+    let mut invalid_arg_ix = None;
+    for arg in &closure.params {
+      if let Some(kwarg) = kwargs.get(&arg.name) {
+        if let Some(type_hint) = arg.type_hint {
+          type_hint
+            .validate_val(kwarg)
+            .map_err(|err| err.wrap(format!("Type error for closure kwarg `{}`", arg.name)))?;
+        }
+        closure_scope.insert(arg.name.clone(), kwarg.clone());
+        any_args_valid = true;
+      } else if pos_arg_ix < args.len() {
+        let pos_arg = &args[pos_arg_ix];
+        if let Some(type_hint) = arg.type_hint {
+          type_hint
+            .validate_val(pos_arg)
+            .map_err(|err| err.wrap(format!("Type error for closure pos arg `{}`", arg.name)))?;
+        }
+        closure_scope.insert(arg.name.clone(), pos_arg.clone());
+        any_args_valid = true;
+        pos_arg_ix += 1;
+      } else {
+        if let Some(default_val) = &arg.default_val {
+          let default_val = self.eval_expr(default_val, &closure_scope, None)?;
+          let default_val = match default_val {
+            ControlFlow::Continue(val) => val,
+            ControlFlow::Return(_) => {
+              return Err(ErrorStack::new(format!(
+                "`return` isn't valid in arg default value expressions; found in default value \
+                 for arg `{}`",
+                arg.name
+              )))
+            }
+            ControlFlow::Break(_) => {
+              return Err(ErrorStack::new(format!(
+                "`break` isn't valid in arg default value expressions; found in default value for \
+                 arg `{}`",
+                arg.name
+              )));
+            }
+          };
+          closure_scope.insert(arg.name.clone(), default_val);
+        } else {
+          if invalid_arg_ix.is_none() {
+            invalid_arg_ix = Some(pos_arg_ix);
+          }
+        }
+      }
+    }
+
+    if let Some(invalid_arg_ix) = invalid_arg_ix {
+      let invalid_arg = &closure.params[invalid_arg_ix];
+      if any_args_valid {
+        return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
+          PartiallyAppliedFn {
+            inner: Box::new(Callable::Closure(closure.clone())),
+            args: args.to_owned(),
+            kwargs: kwargs.clone(),
+          },
+        ))));
+      } else {
+        return Err(ErrorStack::new(format!(
+          "Missing required argument `{}` for closure",
+          invalid_arg.name
+        )));
+      }
+    }
+
+    let mut out: Value = Value::Nil;
+    for stmt in &closure.body {
+      match stmt {
+        Statement::Expr(expr) => match self.eval_expr(expr, &closure_scope, None)? {
+          ControlFlow::Continue(val) => out = val,
+          ControlFlow::Return(val) => {
+            out = val;
+            break;
+          }
+          ControlFlow::Break(_) => {
+            return Err(ErrorStack::new(
+              "`break` isn't valid at the top level of a closure",
+            ))
+          }
+        },
+        Statement::Assignment {
+          name,
+          expr,
+          type_hint,
+        } => {
+          let val = match self.eval_expr(expr, &closure_scope, Some(name.as_str()))? {
+            ControlFlow::Continue(val) => val,
+            ControlFlow::Return(val) => {
+              out = val;
+              break;
+            }
+            ControlFlow::Break(_) => {
+              return Err(ErrorStack::new(
+                "`break` isn't valid at the top level of a closure",
+              ))
+            }
+          };
+          self.eval_assignment(name, val, &closure_scope, *type_hint)?;
+        }
+        Statement::DestructureAssignment { lhs, rhs } => {
+          let rhs = match self.eval_expr(rhs, scope, None)? {
+            ControlFlow::Continue(val) => val,
+            ControlFlow::Return(val) => {
+              out = val;
+              break;
+            }
+            ControlFlow::Break(_) => {
+              return Err(ErrorStack::new(
+                "`break` isn't valid at the top level of a closure",
+              ))
+            }
+          };
+          for res in lhs.iter_assignments(self, rhs) {
+            let (lhs, rhs) =
+              res.map_err(|err| err.wrap("Error evaluating destructure assignment".to_owned()))?;
+            self.eval_assignment(&lhs, rhs, scope, None)?;
+          }
+        }
+        Statement::Return { value } => {
+          out = if let Some(value) = value {
+            match self.eval_expr(value, &closure_scope, None)? {
+              ControlFlow::Continue(val) => val,
+              ControlFlow::Return(val) => {
+                out = val;
+                break;
+              }
+              ControlFlow::Break(_) => {
+                return Err(ErrorStack::new(
+                  "`break` isn't valid at the top level of a closure",
+                ))
+              }
+            }
+          } else {
+            Value::Nil
+          };
+          return Ok(out);
+        }
+        Statement::Break { .. } => {
+          return Err(ErrorStack::new(
+            "`break` isn't valid at the top level of a closure",
+          ));
+        }
+      }
+    }
+
+    if let Some(return_type_hint) = closure.return_type_hint {
+      return_type_hint.validate_val(&out)?;
+    }
+
+    Ok(out)
+  }
+
   fn invoke_callable(
     &self,
     callable: &Callable,
@@ -1671,146 +1849,7 @@ impl EvalCtx {
 
         self.invoke_callable(&paf.inner, &combined_args, &combined_kwargs, scope)
       }
-      Callable::Closure(closure) => {
-        // TODO: should do some basic analysis to see which variables are actually needed and avoid
-        // cloning the rest
-        let closure_scope = Scope::wrap(&closure.captured_scope.upgrade().unwrap());
-        let mut pos_arg_ix = 0usize;
-        let mut any_args_valid = false;
-        let mut invalid_arg_ix = None;
-        for arg in &closure.params {
-          if let Some(kwarg) = kwargs.get(&arg.name) {
-            if let Some(type_hint) = arg.type_hint {
-              type_hint
-                .validate_val(kwarg)
-                .map_err(|err| err.wrap(format!("Type error for closure kwarg `{}`", arg.name)))?;
-            }
-            closure_scope.insert(arg.name.clone(), kwarg.clone());
-            any_args_valid = true;
-          } else if pos_arg_ix < args.len() {
-            let pos_arg = &args[pos_arg_ix];
-            if let Some(type_hint) = arg.type_hint {
-              type_hint.validate_val(pos_arg).map_err(|err| {
-                err.wrap(format!("Type error for closure pos arg `{}`", arg.name))
-              })?;
-            }
-            closure_scope.insert(arg.name.clone(), pos_arg.clone());
-            any_args_valid = true;
-            pos_arg_ix += 1;
-          } else {
-            if let Some(default_val) = &arg.default_val {
-              let default_val = self.eval_expr(default_val, &closure_scope, None)?;
-              let default_val = match default_val {
-                ControlFlow::Continue(val) => val,
-                ControlFlow::Return(_) => {
-                  return Err(ErrorStack::new(format!(
-                    "`return` isn't valid in arg default value expressions; found in default \
-                     value for arg `{}`",
-                    arg.name
-                  )))
-                }
-                ControlFlow::Break(_) => {
-                  return Err(ErrorStack::new(format!(
-                    "`break` isn't valid in arg default value expressions; found in default value \
-                     for arg `{}`",
-                    arg.name
-                  )));
-                }
-              };
-              closure_scope.insert(arg.name.clone(), default_val);
-            } else {
-              if invalid_arg_ix.is_none() {
-                invalid_arg_ix = Some(pos_arg_ix);
-              }
-            }
-          }
-        }
-
-        if let Some(invalid_arg_ix) = invalid_arg_ix {
-          let invalid_arg = &closure.params[invalid_arg_ix];
-          if any_args_valid {
-            return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
-              PartiallyAppliedFn {
-                inner: Box::new(Callable::Closure(closure.clone())),
-                args: args.to_owned(),
-                kwargs: kwargs.clone(),
-              },
-            ))));
-          } else {
-            return Err(ErrorStack::new(format!(
-              "Missing required argument `{}` for closure",
-              invalid_arg.name
-            )));
-          }
-        }
-
-        let mut out: Value = Value::Nil;
-        for stmt in &closure.body {
-          match stmt {
-            Statement::Expr(expr) => match self.eval_expr(expr, &closure_scope, None)? {
-              ControlFlow::Continue(val) => out = val,
-              ControlFlow::Return(val) => {
-                out = val;
-                break;
-              }
-              ControlFlow::Break(_) => {
-                return Err(ErrorStack::new(
-                  "`break` isn't valid at the top level of a closure",
-                ))
-              }
-            },
-            Statement::Assignment {
-              name,
-              expr,
-              type_hint,
-            } => {
-              let val = match self.eval_expr(expr, &closure_scope, Some(name.as_str()))? {
-                ControlFlow::Continue(val) => val,
-                ControlFlow::Return(val) => {
-                  out = val;
-                  break;
-                }
-                ControlFlow::Break(_) => {
-                  return Err(ErrorStack::new(
-                    "`break` isn't valid at the top level of a closure",
-                  ))
-                }
-              };
-              self.eval_assignment(name, val, &closure_scope, *type_hint)?;
-            }
-            Statement::Return { value } => {
-              out = if let Some(value) = value {
-                match self.eval_expr(value, &closure_scope, None)? {
-                  ControlFlow::Continue(val) => val,
-                  ControlFlow::Return(val) => {
-                    out = val;
-                    break;
-                  }
-                  ControlFlow::Break(_) => {
-                    return Err(ErrorStack::new(
-                      "`break` isn't valid at the top level of a closure",
-                    ))
-                  }
-                }
-              } else {
-                Value::Nil
-              };
-              return Ok(out);
-            }
-            Statement::Break { .. } => {
-              return Err(ErrorStack::new(
-                "`break` isn't valid at the top level of a closure",
-              ));
-            }
-          }
-        }
-
-        if let Some(return_type_hint) = closure.return_type_hint {
-          return_type_hint.validate_val(&out)?;
-        }
-
-        Ok(out)
-      }
+      Callable::Closure(closure) => self.invoke_closure(closure, args, kwargs, scope),
       Callable::ComposedFn(ComposedFn { inner }) => {
         let acc = args;
         let mut iter = inner.iter();
@@ -3429,4 +3468,94 @@ v = {b: 1, *y}
   };
   assert_eq!(v.len(), 1);
   assert_eq!(v.get("b").unwrap().as_int(), Some(2));
+}
+
+#[test]
+fn test_seq_destructure() {
+  let src = r#"
+x = [1, 2, 3]
+[a, b, c] = x
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let a = a.as_int().unwrap();
+  assert_eq!(a, 1);
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().unwrap();
+  assert_eq!(b, 2);
+
+  let c = ctx.globals.get("c").unwrap();
+  let c = c.as_int().unwrap();
+  assert_eq!(c, 3);
+}
+
+#[test]
+fn test_map_destructure() {
+  let src = r#"
+x = {a: 1, b: 2, c: 3}
+{a, b, c} = x
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let a = a.as_int().unwrap();
+  assert_eq!(a, 1);
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().unwrap();
+  assert_eq!(b, 2);
+
+  let c = ctx.globals.get("c").unwrap();
+  let c = c.as_int().unwrap();
+  assert_eq!(c, 3);
+}
+
+#[test]
+fn test_nested_destructure() {
+  let src = r#"
+x = [{a: 1}, 2, [{b: 5}]]
+[{a, c}, d, [{b}], z] = x
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap();
+  let a = a.as_int().unwrap();
+  assert_eq!(a, 1);
+
+  let c = ctx.globals.get("c").unwrap();
+  assert!(c.is_nil());
+
+  let d = ctx.globals.get("d").unwrap();
+  let d = d.as_int().unwrap();
+  assert_eq!(d, 2);
+
+  let b = ctx.globals.get("b").unwrap();
+  let b = b.as_int().unwrap();
+  assert_eq!(b, 5);
+
+  let z = ctx.globals.get("z").unwrap();
+  assert!(z.is_nil());
+}
+
+#[test]
+fn test_advanced_map_destructure_assignments() {
+  let src = r#"
+m = {a: 1, b: { c: 2 }}
+{a: foo, b: { c: bar }} = m
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let foo = ctx.globals.get("foo").unwrap();
+  let foo = foo.as_int().unwrap();
+  assert_eq!(foo, 1);
+
+  let bar = ctx.globals.get("bar").unwrap();
+  let bar = bar.as_int().unwrap();
+  assert_eq!(bar, 2);
 }

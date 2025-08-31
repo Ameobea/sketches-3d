@@ -2,11 +2,17 @@ WHITESPACE                   = _{ " " | "\t" | "\n" | "\r" }
 COMMENT                      = _{ "//" ~ (!"\n" ~ ANY)* }
 
 program                      = { SOI ~ statement* ~ EOI }
-statement                    = _{ (return_statement | break_statement | assignment | expr) ~ ";"? ~ EOL* }
+statement                    = _{ (return_statement | break_statement | destructure_assignment | assignment | expr) ~ ";"? ~ EOL* }
 return_statement             = { "return" ~ expr? ~ ";"? }
 break_statement              = { "break" ~ expr? ~ ";"? }
 EOL                          = _{ WHITESPACE* ~ ("\n" | "\r\n") }
 
+destructure_elem             = _{ ident | array_destructure | map_destructure }
+array_destructure            = { "[" ~ (destructure_elem ~ ("," ~ destructure_elem)*)? ~ ","? ~ "]" }
+map_destructure_kv           = { ident ~ ":" ~ destructure_elem }
+map_destructure_elem         = { map_destructure_kv | ident }
+map_destructure              = { "{" ~ (map_destructure_elem ~ ("," ~ map_destructure_elem)*)? ~ ","? ~ "}" }
+destructure_assignment       = { (array_destructure | map_destructure) ~ "=" ~ expr }
 assignment                   = { ident ~ type_hint? ~ "=" ~ expr }
 type_hint                    = { ":" ~ ident }
 

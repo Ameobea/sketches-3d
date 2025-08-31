@@ -262,6 +262,7 @@ impl Sequence for FlattenSeq {
 
 #[derive(Clone, Debug)]
 pub(crate) struct EagerSeq {
+  // TODO: should it be wrapped with `Rc`?
   pub inner: Vec<Value>,
 }
 

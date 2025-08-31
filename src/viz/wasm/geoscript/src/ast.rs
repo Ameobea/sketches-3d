@@ -107,11 +107,83 @@ impl TypeName {
 }
 
 #[derive(Clone, Debug)]
+pub enum DestructurePattern {
+  Ident(String),
+  Array(Vec<DestructurePattern>),
+  Map(FxHashMap<String, DestructurePattern>),
+}
+
+impl DestructurePattern {
+  fn iter_idents<'a>(&'a self) -> Box<dyn Iterator<Item = &'a str> + 'a> {
+    match self {
+      DestructurePattern::Ident(id) => Box::new(std::iter::once(id.as_str())),
+      DestructurePattern::Array(items) => {
+        Box::new(items.iter().flat_map(DestructurePattern::iter_idents))
+      }
+      DestructurePattern::Map(hm) => {
+        Box::new(hm.values().flat_map(DestructurePattern::iter_idents))
+      }
+    }
+  }
+
+  pub fn iter_assignments<'a>(
+    &'a self,
+    ctx: &'a EvalCtx,
+    rhs: Value,
+  ) -> Box<dyn Iterator<Item = Result<(String, Value), ErrorStack>> + 'a> {
+    match self {
+      DestructurePattern::Ident(ident) => Box::new(std::iter::once(Ok((ident.clone(), rhs)))),
+      DestructurePattern::Array(destructure_patterns) => {
+        let Value::Sequence(seq) = rhs else {
+          return Box::new(std::iter::once(Err(ErrorStack::new(format!(
+            "Cannot destructure non-sequence value {rhs:?} with array pattern {self:?}",
+          )))));
+        };
+
+        let mut seq = seq.clone_box().consume(ctx);
+        Box::new(
+          destructure_patterns
+            .iter()
+            .map(move |pat| -> Box<dyn Iterator<Item = _>> {
+              let res = match seq.next() {
+                Some(res) => res,
+                None => Ok(Value::Nil),
+              };
+              let val = match res {
+                Ok(val) => val,
+                Err(err) => return Box::new(std::iter::once(Err(err))),
+              };
+              pat.iter_assignments(ctx, val)
+            })
+            .flatten(),
+        )
+      }
+      DestructurePattern::Map(pat) => {
+        let Value::Map(map) = rhs else {
+          return Box::new(std::iter::once(Err(ErrorStack::new(format!(
+            "Cannot destructure non-map value {rhs:?} with map pattern {self:?}",
+          )))));
+        };
+
+        Box::new(pat.iter().flat_map(move |(k, v)| {
+          let rhs = map.get(k).cloned().unwrap_or(Value::Nil);
+          v.iter_assignments(ctx, rhs)
+        }))
+      }
+    }
+  }
+}
+
+#[derive(Clone, Debug)]
 pub enum Statement {
   Assignment {
     name: String,
     expr: Expr,
     type_hint: Option<TypeName>,
+  },
+  DestructureAssignment {
+    lhs: DestructurePattern,
+    rhs: Expr,
   },
   Expr(Expr),
   Return {
@@ -126,6 +198,7 @@ impl Statement {
   fn inline_const_captures(&mut self, closure_scope: &mut ScopeTracker) -> bool {
     match self {
       Statement::Assignment { expr, .. } => expr.inline_const_captures(closure_scope),
+      Statement::DestructureAssignment { lhs: _, rhs } => rhs.inline_const_captures(closure_scope),
       Statement::Expr(expr) => expr.inline_const_captures(closure_scope),
       Statement::Return { value } => {
         if let Some(expr) = value {
@@ -394,6 +467,7 @@ impl Expr {
     fn traverse_stmt(stmt: &Statement, cb: &mut impl FnMut(&Expr)) {
       match stmt {
         Statement::Assignment { expr, .. } => expr.traverse(cb),
+        Statement::DestructureAssignment { lhs: _, rhs } => rhs.traverse(cb),
         Statement::Expr(expr) => expr.traverse(cb),
         Statement::Return { value } => {
           if let Some(expr) = value {
@@ -1241,6 +1315,80 @@ fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, ErrorStack> {
   })
 }
 
+fn parse_inner_destructure_pattern(pair: Pair<Rule>) -> Result<DestructurePattern, ErrorStack> {
+  match pair.as_rule() {
+    Rule::ident => Ok(DestructurePattern::Ident(pair.as_str().to_owned())),
+    Rule::array_destructure => parse_array_destructure(pair),
+    Rule::map_destructure => parse_map_destructure(pair),
+    _ => Err(ErrorStack::new(format!(
+      "Unexpected inner destructure pattern rule: {:?}",
+      pair.as_rule()
+    ))),
+  }
+}
+
+fn parse_array_destructure(lhs: Pair<Rule>) -> Result<DestructurePattern, ErrorStack> {
+  let elements = lhs
+    .into_inner()
+    .map(parse_inner_destructure_pattern)
+    .collect::<Result<Vec<_>, _>>()?;
+  Ok(DestructurePattern::Array(elements))
+}
+
+fn parse_map_destructure(lhs: Pair<Rule>) -> Result<DestructurePattern, ErrorStack> {
+  let pat = lhs
+    .into_inner()
+    .map(|pair| {
+      if pair.as_rule() != Rule::map_destructure_elem {
+        unreachable!();
+      }
+      let inner = pair.into_inner().next().unwrap();
+      match inner.as_rule() {
+        Rule::ident => {
+          let key = inner.as_str().to_owned();
+          let pat = DestructurePattern::Ident(key.clone());
+          Ok((key, pat))
+        }
+        Rule::map_destructure_kv => {
+          let mut inner = inner.into_inner();
+          let lhs = inner.next().unwrap();
+          let rhs = parse_inner_destructure_pattern(inner.next().unwrap())?;
+          Ok((lhs.as_str().to_owned(), rhs))
+        }
+        _ => unreachable!(
+          "Unexpected map destructure pattern rule: {:?}",
+          inner.as_rule()
+        ),
+      }
+    })
+    .collect::<Result<FxHashMap<_, _>, _>>()?;
+  Ok(DestructurePattern::Map(pat))
+}
+
+fn parse_destructure_lhs(lhs: Pair<Rule>) -> Result<DestructurePattern, ErrorStack> {
+  match lhs.as_rule() {
+    Rule::array_destructure => parse_array_destructure(lhs),
+    Rule::map_destructure => parse_map_destructure(lhs),
+    _ => unreachable!("Unexpected destructure pattern rule: {:?}", lhs.as_rule()),
+  }
+}
+
+fn parse_destructure_assignment(assignment: Pair<Rule>) -> Result<Statement, ErrorStack> {
+  if assignment.as_rule() != Rule::destructure_assignment {
+    return Err(ErrorStack::new(format!(
+      "`parse_destructure_assignment` can only handle `destructure_assignment` rules, found: {:?}",
+      assignment.as_rule()
+    )));
+  }
+
+  let mut inner = assignment.into_inner();
+  let lhs = parse_destructure_lhs(inner.next().unwrap())?;
+
+  let rhs = parse_expr(inner.next().unwrap())?;
+
+  Ok(Statement::DestructureAssignment { lhs, rhs })
+}
+
 fn parse_return_statement(return_stmt: Pair<Rule>) -> Result<Statement, ErrorStack> {
   if return_stmt.as_rule() != Rule::return_statement {
     return Err(ErrorStack::new(format!(
@@ -1280,6 +1428,7 @@ fn parse_break_statement(return_stmt: Pair<Rule>) -> Result<Statement, ErrorStac
 pub(crate) fn parse_statement(stmt: Pair<Rule>) -> Result<Option<Statement>, ErrorStack> {
   match stmt.as_rule() {
     Rule::assignment => parse_assignment(stmt).map(Some),
+    Rule::destructure_assignment => parse_destructure_assignment(stmt).map(Some),
     Rule::expr => Ok(Some(Statement::Expr(parse_expr(stmt)?))),
     Rule::return_statement => Ok(Some(parse_return_statement(stmt)?)),
     Rule::break_statement => Ok(Some(parse_break_statement(stmt)?)),
@@ -2219,6 +2368,9 @@ fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
           Statement::Expr(expr) => {
             dyn_type = dyn_type | get_dyn_type(expr, local_scope);
           }
+          Statement::DestructureAssignment { lhs: _, rhs } => {
+            dyn_type = dyn_type | get_dyn_type(rhs, local_scope);
+          }
           Statement::Assignment { expr, .. } => {
             dyn_type = dyn_type | get_dyn_type(expr, local_scope);
           }
@@ -2279,6 +2431,7 @@ fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
     Expr::Block { statements } => statements.iter().fold(DynType::Const, |acc, stmt| {
       let dyn_type = match stmt {
         Statement::Expr(expr) => get_dyn_type(expr, local_scope),
+        Statement::DestructureAssignment { lhs: _, rhs } => get_dyn_type(rhs, local_scope),
         Statement::Assignment { expr, .. } => get_dyn_type(expr, local_scope),
         Statement::Return { value } => {
           if let Some(value) = value {
@@ -2339,6 +2492,38 @@ fn optimize_statement<'a>(
       );
       Ok(())
     }
+    Statement::DestructureAssignment { lhs, rhs } => {
+      // insert a placeholder for assigned variables in the local scope to support recursive calls
+      // unless we're assigning to an existing variables
+      for name in lhs.iter_idents() {
+        if !local_scope.has(name) {
+          local_scope.set(name.to_owned(), TrackedValue::Dyn);
+        }
+      }
+
+      optimize_expr(ctx, local_scope, rhs)?;
+
+      let Some(rhs) = rhs.as_literal() else {
+        for name in lhs.iter_idents() {
+          local_scope.set(
+            name.to_owned(),
+            TrackedValue::Arg(ClosureArg {
+              name: name.to_owned(),
+              type_hint: None,
+              default_val: None,
+            }),
+          );
+        }
+        return Ok(());
+      };
+
+      for res in lhs.iter_assignments(ctx, rhs) {
+        let (lhs, rhs) = res.map_err(|err| err.wrap("Error evaluating destructure assignment"))?;
+        local_scope.set(lhs, TrackedValue::Const(rhs));
+      }
+
+      Ok(())
+    }
     Statement::Return { value } => {
       if let Some(expr) = value {
         optimize_expr(ctx, local_scope, expr)?
@@ -2378,6 +2563,7 @@ pub fn traverse_fn_calls(program: &Program, mut cb: impl FnMut(&str)) {
     match stmt {
       Statement::Expr(expr) => expr.traverse(&mut cb),
       Statement::Assignment { expr, .. } => expr.traverse(&mut cb),
+      Statement::DestructureAssignment { lhs: _, rhs } => rhs.traverse(&mut cb),
       Statement::Return { value } => {
         if let Some(expr) = value {
           expr.traverse(&mut cb);
