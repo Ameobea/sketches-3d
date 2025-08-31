@@ -220,7 +220,7 @@ impl Statement {
 
 #[derive(Clone, Debug)]
 pub struct ClosureArg {
-  pub name: String,
+  pub ident: DestructurePattern,
   pub type_hint: Option<TypeName>,
   pub default_val: Option<Expr>,
 }
@@ -399,7 +399,20 @@ impl Expr {
 
         let mut closure_scope = ScopeTracker::wrap(local_scope);
         for param in params.iter() {
-          closure_scope.set(param.name.clone(), TrackedValue::Arg(param.clone()));
+          for ident in param.ident.iter_idents() {
+            closure_scope.set(
+              ident.to_owned(),
+              TrackedValue::Arg(ClosureArg {
+                default_val: None,
+                type_hint: match param.ident {
+                  DestructurePattern::Ident(_) => param.type_hint.clone(),
+                  DestructurePattern::Map(_) => Some(TypeName::Map),
+                  DestructurePattern::Array(_) => Some(TypeName::Seq),
+                },
+                ident: DestructurePattern::Ident(ident.to_owned()),
+              }),
+            );
+          }
         }
 
         captures_dyn || body.inline_const_captures(&mut closure_scope)
@@ -588,7 +601,7 @@ impl ClosureBody {
               let dyn_type = get_dyn_type(expr, closure_scope);
               match dyn_type {
                 DynType::Arg => TrackedValue::Arg(ClosureArg {
-                  name: name.clone(),
+                  ident: DestructurePattern::Ident(name.clone()),
                   type_hint: None,
                   default_val: None,
                 }),
@@ -901,14 +914,15 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         .into_inner()
         .map(|p| {
           let mut inner = p.into_inner();
-          let name = inner.next().unwrap().as_str().to_owned();
+          let arg = inner.next().unwrap();
+          let ident = parse_destructure_pattern(arg)?;
           let (type_hint, default_val) = if let Some(next) = inner.next() {
             let mut type_hint = None;
             let mut default_val = None;
             if next.as_rule() == Rule::type_hint {
               type_hint = Some(
                 TypeName::from_str(next.into_inner().next().unwrap().as_str()).map_err(|err| {
-                  ErrorStack::new(err).wrap(format!("Invalid type hint for closure arg {name}"))
+                  ErrorStack::new(err).wrap(format!("Invalid type hint for closure arg {ident:?}"))
                 })?,
               );
               if let Some(next) = inner.next() {
@@ -929,7 +943,7 @@ fn parse_node(expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
             (None, None)
           };
           Ok(ClosureArg {
-            name,
+            ident,
             type_hint,
             default_val,
           })
@@ -1315,7 +1329,7 @@ fn parse_assignment(assignment: Pair<Rule>) -> Result<Statement, ErrorStack> {
   })
 }
 
-fn parse_inner_destructure_pattern(pair: Pair<Rule>) -> Result<DestructurePattern, ErrorStack> {
+fn parse_destructure_pattern(pair: Pair<Rule>) -> Result<DestructurePattern, ErrorStack> {
   match pair.as_rule() {
     Rule::ident => Ok(DestructurePattern::Ident(pair.as_str().to_owned())),
     Rule::array_destructure => parse_array_destructure(pair),
@@ -1330,7 +1344,7 @@ fn parse_inner_destructure_pattern(pair: Pair<Rule>) -> Result<DestructurePatter
 fn parse_array_destructure(lhs: Pair<Rule>) -> Result<DestructurePattern, ErrorStack> {
   let elements = lhs
     .into_inner()
-    .map(parse_inner_destructure_pattern)
+    .map(parse_destructure_pattern)
     .collect::<Result<Vec<_>, _>>()?;
   Ok(DestructurePattern::Array(elements))
 }
@@ -1352,7 +1366,7 @@ fn parse_map_destructure(lhs: Pair<Rule>) -> Result<DestructurePattern, ErrorSta
         Rule::map_destructure_kv => {
           let mut inner = inner.into_inner();
           let lhs = inner.next().unwrap();
-          let rhs = parse_inner_destructure_pattern(inner.next().unwrap())?;
+          let rhs = parse_destructure_pattern(inner.next().unwrap())?;
           Ok((lhs.as_str().to_owned(), rhs))
         }
         _ => unreachable!(
@@ -2009,7 +2023,20 @@ fn fold_constants<'a>(
 
       let mut closure_scope = ScopeTracker::wrap(local_scope);
       for param in params.iter() {
-        closure_scope.set(param.name.clone(), TrackedValue::Arg(param.clone()));
+        for ident in param.ident.iter_idents() {
+          closure_scope.set(
+            ident.to_owned(),
+            TrackedValue::Arg(ClosureArg {
+              default_val: None,
+              type_hint: match param.ident {
+                DestructurePattern::Ident(_) => param.type_hint.clone(),
+                DestructurePattern::Map(_) => Some(TypeName::Map),
+                DestructurePattern::Array(_) => Some(TypeName::Seq),
+              },
+              ident: DestructurePattern::Ident(ident.to_owned()),
+            }),
+          );
+        }
       }
 
       // We use this scope for const capture checking/inlining to avoid situations where the closure
@@ -2182,7 +2209,7 @@ fn fold_constants<'a>(
               parent_scope.set(
                 name.to_owned(),
                 TrackedValue::Arg(ClosureArg {
-                  name: name.to_owned(),
+                  ident: DestructurePattern::Ident(name.to_owned()),
                   type_hint: None,
                   default_val: None,
                 }),
@@ -2481,7 +2508,7 @@ fn optimize_statement<'a>(
             let dyn_type = get_dyn_type(&expr, local_scope);
             match dyn_type {
               DynType::Arg => TrackedValue::Arg(ClosureArg {
-                name: name.clone(),
+                ident: DestructurePattern::Ident(name.clone()),
                 type_hint: None,
                 default_val: None,
               }),
@@ -2508,7 +2535,7 @@ fn optimize_statement<'a>(
           local_scope.set(
             name.to_owned(),
             TrackedValue::Arg(ClosureArg {
-              name: name.to_owned(),
+              ident: DestructurePattern::Ident(name.to_owned()),
               type_hint: None,
               default_val: None,
             }),

@@ -73,7 +73,7 @@ arg                          = { keyword_arg | expr }
 keyword_arg                  = { ident ~ "=" ~ expr }
 
 closure                      = { "|" ~ fn_def_arg_list ~ "|" ~ type_hint? ~ closure_body }
-fn_def_arg                   = { ident ~ type_hint? ~ ("=" ~ fn_arg_default_val)? }
+fn_def_arg                   = { (ident | array_destructure | map_destructure) ~ type_hint? ~ ("=" ~ fn_arg_default_val)? }
 // limiting the things that can be used as an arg default value to prevent the syntax
 // from spiraling out of control and avoiding horrific edge cases like `|x: int = 1 | 1| 1 || 1`
 fn_arg_default_val           = { func_call | literal | array_literal | map_literal | ident | parenthized_term | block_expr | if_expression }

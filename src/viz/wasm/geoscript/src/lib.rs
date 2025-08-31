@@ -39,7 +39,7 @@ use smallvec::SmallVec;
 #[cfg(target_arch = "wasm32")]
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
-  ast::{parse_statement, ClosureArg, MapLiteralEntry, TypeName},
+  ast::{parse_statement, ClosureArg, DestructurePattern, MapLiteralEntry, TypeName},
   builtins::{
     fn_defs::{ArgDef, DefaultValue, FnSignature, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
@@ -1651,22 +1651,36 @@ impl EvalCtx {
     let mut any_args_valid = false;
     let mut invalid_arg_ix = None;
     for arg in &closure.params {
-      if let Some(kwarg) = kwargs.get(&arg.name) {
-        if let Some(type_hint) = arg.type_hint {
-          type_hint
-            .validate_val(kwarg)
-            .map_err(|err| err.wrap(format!("Type error for closure kwarg `{}`", arg.name)))?;
+      match &arg.ident {
+        // there's no way currently to assign a name to destructured args, so they can only be used
+        // positionally
+        DestructurePattern::Ident(name) => {
+          if let Some(kwarg) = kwargs.get(name) {
+            if let Some(type_hint) = arg.type_hint {
+              type_hint
+                .validate_val(kwarg)
+                .map_err(|err| err.wrap(format!("Type error for closure kwarg `{name}`")))?;
+            }
+            closure_scope.insert(name.clone(), kwarg.clone());
+            any_args_valid = true;
+            continue;
+          }
         }
-        closure_scope.insert(arg.name.clone(), kwarg.clone());
-        any_args_valid = true;
-      } else if pos_arg_ix < args.len() {
+        DestructurePattern::Array(_) => (),
+        DestructurePattern::Map(_) => (),
+      }
+
+      if pos_arg_ix < args.len() {
         let pos_arg = &args[pos_arg_ix];
         if let Some(type_hint) = arg.type_hint {
           type_hint
             .validate_val(pos_arg)
-            .map_err(|err| err.wrap(format!("Type error for closure pos arg `{}`", arg.name)))?;
+            .map_err(|err| err.wrap(format!("Type error for closure pos arg `{:?}`", arg.ident)))?;
         }
-        closure_scope.insert(arg.name.clone(), pos_arg.clone());
+        for res in arg.ident.iter_assignments(self, pos_arg.clone()) {
+          let (k, v) = res?;
+          closure_scope.insert(k, v);
+        }
         any_args_valid = true;
         pos_arg_ix += 1;
       } else {
@@ -1677,19 +1691,23 @@ impl EvalCtx {
             ControlFlow::Return(_) => {
               return Err(ErrorStack::new(format!(
                 "`return` isn't valid in arg default value expressions; found in default value \
-                 for arg `{}`",
-                arg.name
+                 for arg `{:?}`",
+                arg.ident
               )))
             }
             ControlFlow::Break(_) => {
               return Err(ErrorStack::new(format!(
                 "`break` isn't valid in arg default value expressions; found in default value for \
-                 arg `{}`",
-                arg.name
+                 arg `{:?}`",
+                arg.ident
               )));
             }
           };
-          closure_scope.insert(arg.name.clone(), default_val);
+
+          for res in arg.ident.iter_assignments(self, default_val) {
+            let (k, v) = res?;
+            closure_scope.insert(k, v);
+          }
         } else {
           if invalid_arg_ix.is_none() {
             invalid_arg_ix = Some(pos_arg_ix);
@@ -1710,8 +1728,8 @@ impl EvalCtx {
         ))));
       } else {
         return Err(ErrorStack::new(format!(
-          "Missing required argument `{}` for closure",
-          invalid_arg.name
+          "Missing required argument `{:?}` for closure",
+          invalid_arg.ident
         )));
       }
     }
@@ -3558,4 +3576,18 @@ m = {a: 1, b: { c: 2 }}
   let bar = ctx.globals.get("bar").unwrap();
   let bar = bar.as_int().unwrap();
   assert_eq!(bar, 2);
+}
+
+#[test]
+fn test_arg_destructure() {
+  let src = r#"
+f = |{x: [b], }, [c, {d, e: f}], [[g]] = [['g']]| { b + c + d + f + g }
+x = f({x: ['b'] }, ['c', {d: 'd', e: 'e'}])
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.globals.get("x").unwrap();
+  let x = x.as_str().unwrap();
+  assert_eq!(x, "bcdeg");
 }
