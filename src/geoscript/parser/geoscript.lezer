@@ -23,11 +23,18 @@
   statement*
 }
 
+DestructureElem { Identifier | ArrayDestructure | MapDestructure }
+MapDestructureKV { Identifier ":" DestructureElem }
+MapDestructureElem { MapDestructureKV | Identifier }
+ArrayDestructure { "[" (DestructureElem ~maybedestructure ("," DestructureElem?)*)? "]" }
+MapDestructure { "{" (MapDestructureElem ~maybedestructure ("," MapDestructureElem?)*)? "}" }
+
 statement {
   ReturnStatement { Return !return Expr? ";"? } |
   BreakStatement { Break !break Expr? ";"? } |
   ExprStatement { Expr ";"? } |
-  DeclarationStatement { Identifier TypeHint? "=" Expr ";"? }
+  DestructureAssignmentStatement { (ArrayDestructure | MapDestructure) "=" Expr ";"? } |
+  AssignmentStatement { Identifier TypeHint? "=" Expr ";"? }
 }
 
 TypeHint { ":" Identifier }
@@ -41,11 +48,11 @@ IfExpr { If !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
 FnArgDefaultValue { Identifier | literal | ArrayExpr | MapExpr | ParenthesizedExpr | CallExpr | BlockExpr | IfExpr }
 
 ClosureParamList {
-  Pipe commaSep<Parameter { Identifier TypeHint? ("=" FnArgDefaultValue)? }> Pipe
+  Pipe commaSep<Parameter { (Identifier | ArrayDestructure | MapDestructure) TypeHint? ("=" FnArgDefaultValue)? }> Pipe
 }
 
-ArrayExpr { "[" commaSep1<Expr>? "]" }
-MapExpr { "{" mapLiteralEntryList? "}" ~maybeblock }
+ArrayExpr { "[" (Expr ~maybedestructure ("," Expr?)*)? "]" }
+MapExpr { "{" (MapEntry ~maybedestructure ("," MapEntry)*)? ","? "}" ~maybeblock }
 
 Expr {
   UnaryExpr { UnaryOp !unary Expr } |
@@ -64,7 +71,7 @@ Expr {
   IfExpr
 }
 
-BlockExpr { "{" ~maybeblock statement* "}" ~maybeblock }
+BlockExpr { "{" statement* ~maybedestructure "}" ~maybeblock }
 ElseIfExpr { ElseIf !cond Expr BlockExpr }
 ElseExpr { Else BlockExpr }
 
@@ -105,13 +112,11 @@ escapedSingleQuote { "\\'" }
 }
 
 commaSep<Expr> { commaSep1<Expr>? }
-
 commaSep1<Expr> { Expr ("," Expr?)* }
 
 MapKV { (Identifier | StringLiteral) ":" Expr }
 MapSplat { "*" Expr }
 MapEntry { MapKV | MapSplat }
-mapLiteralEntryList { MapEntry ("," MapEntry)* ","? }
 
 @external tokens literalTokens from "./tokens" { Float }
 

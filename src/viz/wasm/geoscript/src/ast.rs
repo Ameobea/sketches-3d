@@ -612,6 +612,34 @@ impl ClosureBody {
           closure_scope.set(name.clone(), tracked_val);
         }
       }
+      // TODO: should de-dupe
+      else if let Statement::DestructureAssignment { lhs, rhs } = stmt {
+        for name in lhs.iter_idents() {
+          let is_deconstified = match closure_scope.get(name) {
+            Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn) => true,
+            Some(TrackedValueRef::Const(_)) => false,
+            None => false,
+          };
+
+          if !is_deconstified {
+            let tracked_val = match rhs.as_literal() {
+              Some(literal) => TrackedValue::Const(literal),
+              None => {
+                let dyn_type = get_dyn_type(rhs, closure_scope);
+                match dyn_type {
+                  DynType::Arg => TrackedValue::Arg(ClosureArg {
+                    ident: DestructurePattern::Ident(name.to_owned()),
+                    type_hint: None,
+                    default_val: None,
+                  }),
+                  DynType::Const | DynType::Dyn => TrackedValue::Dyn,
+                }
+              }
+            };
+            closure_scope.set(name.to_owned(), tracked_val);
+          }
+        }
+      }
     }
 
     references_dyn_captures

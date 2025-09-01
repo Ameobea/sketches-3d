@@ -1642,7 +1642,6 @@ impl EvalCtx {
     closure: &Closure,
     args: &[Value],
     kwargs: &FxHashMap<String, Value>,
-    scope: &Scope,
   ) -> Result<Value, ErrorStack> {
     // TODO: should do some basic analysis to see which variables are actually needed and avoid
     // cloning the rest
@@ -1769,7 +1768,7 @@ impl EvalCtx {
           self.eval_assignment(name, val, &closure_scope, *type_hint)?;
         }
         Statement::DestructureAssignment { lhs, rhs } => {
-          let rhs = match self.eval_expr(rhs, scope, None)? {
+          let rhs = match self.eval_expr(rhs, &closure_scope, None)? {
             ControlFlow::Continue(val) => val,
             ControlFlow::Return(val) => {
               out = val;
@@ -1784,7 +1783,7 @@ impl EvalCtx {
           for res in lhs.iter_assignments(self, rhs) {
             let (lhs, rhs) =
               res.map_err(|err| err.wrap("Error evaluating destructure assignment".to_owned()))?;
-            self.eval_assignment(&lhs, rhs, scope, None)?;
+            self.eval_assignment(&lhs, rhs, &closure_scope, None)?;
           }
         }
         Statement::Return { value } => {
@@ -1867,7 +1866,7 @@ impl EvalCtx {
 
         self.invoke_callable(&paf.inner, &combined_args, &combined_kwargs, scope)
       }
-      Callable::Closure(closure) => self.invoke_closure(closure, args, kwargs, scope),
+      Callable::Closure(closure) => self.invoke_closure(closure, args, kwargs),
       Callable::ComposedFn(ComposedFn { inner }) => {
         let acc = args;
         let mut iter = inner.iter();
@@ -3590,4 +3589,19 @@ x = f({x: ['b'] }, ['c', {d: 'd', e: 'e'}])
   let x = ctx.globals.get("x").unwrap();
   let x = x.as_str().unwrap();
   assert_eq!(x, "bcdeg");
+}
+
+#[test]
+fn test_nested_closure_destructure_assignment_repro() {
+  let src = r#"
+f = || {
+  x = |acc| {
+    { x } = acc
+  }
+  x({})
+}
+
+f()"#;
+
+  parse_and_eval_program(src).unwrap();
 }
