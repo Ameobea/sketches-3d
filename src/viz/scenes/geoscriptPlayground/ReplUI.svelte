@@ -1039,22 +1039,20 @@
               );
             }}
           />
+        {:else if userData?.initialComposition}
+          <ReadOnlyCompositionDetails
+            comp={userData.initialComposition.comp}
+            version={userData.initialComposition.version}
+          />
         {:else if !userData?.me}
-          {#if userData?.initialComposition}
-            <ReadOnlyCompositionDetails
-              comp={userData.initialComposition.comp}
-              version={userData.initialComposition.version}
-            />
-          {:else}
-            <div class="not-logged-in" style="border-top: 1px solid #333">
-              <span style="color: #ddd">you must be logged in to save/share compositions</span>
-              <div>
-                <a href="/geotoy/login">log in</a>
-                /
-                <a href="/geotoy/register">register</a>
-              </div>
+          <div class="not-logged-in" style="border-top: 1px solid #333">
+            <span style="color: #ddd">you must be logged in to save/share compositions</span>
+            <div>
+              <a href="/geotoy/login">log in</a>
+              /
+              <a href="/geotoy/register">register</a>
             </div>
-          {/if}
+          </div>
         {/if}
       </div>
     </div>
