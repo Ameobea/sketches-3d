@@ -91,6 +91,7 @@
               alt={composition.comp.description}
               class="composition-thumbnail"
               crossorigin="anonymous"
+              loading="lazy"
             />
           </a>
         {:else}

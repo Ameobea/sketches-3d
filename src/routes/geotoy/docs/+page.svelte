@@ -11,6 +11,7 @@
 
 <ul>
   <li><a href="/geoscript/docs/quickstart">Geoscript Language Quickstart</a></li>
+  <li><a href="https://www.youtube.com/watch?v=CtbXFP4FGpw">Geotoy Intro + Overview (Youtube)</a></li>
   <li><a href="/geoscript/docs">Geoscript Builtin Function Reference</a></li>
   <li><a href="/geotoy/docs/editor">Editor Shortcuts + Reference</a></li>
 </ul>

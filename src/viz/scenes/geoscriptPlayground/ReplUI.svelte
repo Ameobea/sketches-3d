@@ -44,6 +44,7 @@
   import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
   import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
   import { getIsUVUnwrapLoaded, initUVUnwrap, unwrapUVs } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
+  import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
 
   let {
     viz,
@@ -1039,14 +1040,21 @@
             }}
           />
         {:else if !userData?.me}
-          <div class="not-logged-in" style="border-top: 1px solid #333">
-            <span style="color: #ddd">you must be logged in to save/share compositions</span>
-            <div>
-              <a href="/geotoy/login">log in</a>
-              /
-              <a href="/geotoy/register">register</a>
+          {#if userData?.initialComposition}
+            <ReadOnlyCompositionDetails
+              comp={userData.initialComposition.comp}
+              version={userData.initialComposition.version}
+            />
+          {:else}
+            <div class="not-logged-in" style="border-top: 1px solid #333">
+              <span style="color: #ddd">you must be logged in to save/share compositions</span>
+              <div>
+                <a href="/geotoy/login">log in</a>
+                /
+                <a href="/geotoy/register">register</a>
+              </div>
             </div>
-          </div>
+          {/if}
         {/if}
       </div>
     </div>
