@@ -13,6 +13,8 @@
     toggleAxisHelpers,
     toggleMaterialEditorOpen,
     isDirty,
+    togglePreludeEjected,
+    preludeEjected,
   }: {
     isRunning: boolean;
     isEditorCollapsed?: boolean;
@@ -25,6 +27,8 @@
     toggleAxisHelpers: () => void;
     toggleMaterialEditorOpen: () => void;
     isDirty: boolean;
+    togglePreludeEjected: () => void;
+    preludeEjected: boolean;
   } = $props();
 </script>
 
@@ -55,6 +59,7 @@
         <button onclick={onExport}>export scene</button>
         <button onclick={clearLocalChanges}>clear local changes</button>
         <button onclick={toggleAxisHelpers}>toggle axis helpers</button>
+        <button onclick={togglePreludeEjected}>{preludeEjected ? 'un-eject' : 'eject'} prelude</button>
         <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>
         <button
           onclick={() => void window.open('https://github.com/Ameobea/sketches-3d/issues/new', '_blank')}

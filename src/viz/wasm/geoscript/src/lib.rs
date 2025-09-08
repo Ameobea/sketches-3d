@@ -62,7 +62,7 @@ mod seq;
 pub use self::ast::{optimize_ast, traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
 
-const PRELUDE: &str = include_str!("prelude.geo");
+pub const PRELUDE: &str = include_str!("prelude.geo");
 
 #[derive(Parser)]
 #[grammar = "src/geoscript.pest"]

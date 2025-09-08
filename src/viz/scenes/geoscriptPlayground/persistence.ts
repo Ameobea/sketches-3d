@@ -11,6 +11,7 @@ export interface PlaygroundState {
   materials: MaterialDefinitions;
   view: CompositionVersionMetadata['view'];
   lastRunWasSuccessful: boolean;
+  preludeEjected: boolean;
 }
 
 const getLocalStorageKeySuffix = (userData: GeoscriptPlaygroundUserData | undefined): string => {
@@ -27,12 +28,17 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   const savedCode = localStorage.getItem(`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`);
   const savedMaterialsRaw = localStorage.getItem(`geoscriptPlaygroundMaterials${localStorageKeySuffix}`);
   const savedView = localStorage.getItem(`geoscriptPlaygroundView${localStorageKeySuffix}`);
+  const savedPreludeEjected = localStorage.getItem(
+    `geoscriptPlaygroundPreludeEjected${localStorageKeySuffix}`
+  );
+
   const lastRunWasSuccessful =
     localStorage.getItem(`lastGeoscriptRunCompleted${localStorageKeySuffix}`) !== 'false';
 
   const serverCode = userData?.initialComposition?.version.source_code;
   const serverMaterials = userData?.initialComposition?.version.metadata?.materials;
   const serverView = userData?.initialComposition?.version.metadata?.view;
+  const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected;
 
   const code = savedCode || serverCode || DefaultCode;
   let materials: MaterialDefinitions;
@@ -62,12 +68,16 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   } else if (serverView) {
     view = serverView;
   }
+  const preludeEjected = savedPreludeEjected
+    ? savedPreludeEjected === 'true'
+    : (serverPreludeEjected ?? false);
 
   return {
     code,
     materials,
     view,
     lastRunWasSuccessful,
+    preludeEjected,
   };
 };
 
@@ -89,6 +99,10 @@ export const saveState = (
     JSON.stringify(state.materials)
   );
   localStorage.setItem(`geoscriptPlaygroundView${localStorageKeySuffix}`, JSON.stringify(state.view));
+  localStorage.setItem(
+    `geoscriptPlaygroundPreludeEjected${localStorageKeySuffix}`,
+    state.preludeEjected ? 'true' : 'false'
+  );
 };
 
 /**
@@ -98,14 +112,19 @@ export const getIsDirty = (userData: GeoscriptPlaygroundUserData | undefined): b
   const localStorageKeySuffix = getLocalStorageKeySuffix(userData);
   const savedCode = localStorage.getItem(`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`);
   const savedMaterialsRaw = localStorage.getItem(`geoscriptPlaygroundMaterials${localStorageKeySuffix}`);
+  const savedPreludeEjected = localStorage.getItem(
+    `geoscriptPlaygroundPreludeEjected${localStorageKeySuffix}`
+  );
 
   const serverCode = userData?.initialComposition?.version.source_code || DefaultCode;
   const serverMaterials =
     userData?.initialComposition?.version.metadata?.materials || buildDefaultMaterialDefinitions();
+  const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected || false;
 
   return (
     (savedCode !== null ? savedCode !== serverCode : false) ||
-    (savedMaterialsRaw ? savedMaterialsRaw !== JSON.stringify(serverMaterials) : false)
+    (savedMaterialsRaw ? savedMaterialsRaw !== JSON.stringify(serverMaterials) : false) ||
+    (savedPreludeEjected !== null ? (savedPreludeEjected === 'true') !== serverPreludeEjected : false)
   );
 };
 
@@ -119,12 +138,14 @@ export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined
     fov: DefaultCameraFOV,
     zoom: DefaultCameraZoom,
   };
+  const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected || false;
 
   return {
     code: serverCode,
     materials: serverMaterials,
     view: serverView,
     lastRunWasSuccessful: true,
+    preludeEjected: serverPreludeEjected,
   };
 };
 
@@ -132,6 +153,8 @@ export const clearSavedState = (userData: GeoscriptPlaygroundUserData | undefine
   const localStorageKeySuffix = getLocalStorageKeySuffix(userData);
   localStorage.removeItem(`lastGeoscriptPlaygroundCode${localStorageKeySuffix}`);
   localStorage.removeItem(`geoscriptPlaygroundMaterials${localStorageKeySuffix}`);
+  localStorage.removeItem(`geoscriptPlaygroundView${localStorageKeySuffix}`);
+  localStorage.removeItem(`geoscriptPlaygroundPreludeEjected${localStorageKeySuffix}`);
 };
 
 export const setLastRunWasSuccessful = (

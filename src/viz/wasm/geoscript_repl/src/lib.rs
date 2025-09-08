@@ -4,6 +4,7 @@ use fxhash::FxHashMap;
 use geoscript::{
   eval_program_with_ctx, materials::Material, mesh_ops::mesh_boolean::drop_all_mesh_handles,
   optimize_ast, parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program,
+  PRELUDE,
 };
 use mesh::OwnedIndexedMesh;
 use nanoserde::SerJson;
@@ -345,6 +346,11 @@ pub fn geoscript_set_materials(
       .replace(ctx.geo_ctx.materials.values().next().cloned());
   }
   Ok(())
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_prelude() -> String {
+  PRELUDE.to_owned()
 }
 
 // TODO: in a perfect world, this would live in a dedicated tiny lightweight wasm module, but I

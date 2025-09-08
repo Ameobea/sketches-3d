@@ -90,6 +90,7 @@ const methods = {
     Geoscript.geoscript_set_default_material(ctxPtr, defaultMaterialID ?? undefined);
     Geoscript.geoscript_set_materials(ctxPtr, availableMaterials);
   },
+  getPrelude: () => Geoscript.geoscript_repl_get_prelude(),
 };
 
 export type GeoscriptWorkerMethods = typeof methods;

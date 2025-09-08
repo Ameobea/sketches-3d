@@ -40,6 +40,7 @@ export interface CompositionVersionMetadata {
     zoom?: number; // for `OrthographicCamera`
   };
   materials?: MaterialDefinitions;
+  preludeEjected?: boolean;
 }
 
 export interface CompositionVersion {

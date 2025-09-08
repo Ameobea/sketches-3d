@@ -65,6 +65,7 @@
     materials: initialMatDefs,
     lastRunWasSuccessful,
     view: initialView,
+    preludeEjected: initialPreludeEjected,
   } = loadState(userData);
 
   let ctxPtr = $state<number | null>(null);
@@ -122,7 +123,6 @@
   let err: string | null = $state(null);
   let isRunning: boolean = $state(false);
   let runStats: RunStats | null = $state(null);
-  const includePrelude = true;
   let renderedObjects: (
     | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
     | THREE.Line<THREE.BufferGeometry, THREE.Material>
@@ -157,6 +157,7 @@
           code: editorView.state.doc.toString(),
           materials: materialDefinitions,
           view: getView(viz),
+          preludeEjected,
         },
         userData
       );
@@ -204,6 +205,7 @@
                 code: editorView.state.doc.toString(),
                 materials: materialDefinitions,
                 view: getView(viz),
+                preludeEjected,
               },
               userData
             );
@@ -418,6 +420,7 @@
 
   let materialEditorOpen = $state(false);
   let materialDefinitions = $state<MaterialDefinitions>(initialMatDefs);
+  let preludeEjected = $state(initialPreludeEjected);
 
   onMount(() => {
     const referencedTextureIDs: TextureID[] = [];
@@ -623,7 +626,7 @@
     const startTime = performance.now();
     setLastRunWasSuccessful(false, userData);
     try {
-      await repl.eval(ctxPtr, code, includePrelude);
+      await repl.eval(ctxPtr, code, !preludeEjected);
     } catch (evalErr) {
       console.error('Error evaluating code:', err);
       err = `Error evaluating code: ${evalErr}`;
@@ -812,6 +815,7 @@
           code: lastCode,
           materials: materialDefinitions,
           view: getView(viz),
+          preludeEjected,
         },
         userData
       );
@@ -831,6 +835,26 @@
       viz.scene.add(axisHelper);
       localStorage['geoscript-axis-helpers'] = 'true';
     }
+  };
+
+  const ejectPrelude = async (editorView: EditorView) => {
+    const prelude = await repl.getPrelude();
+    editorView.dispatch({
+      changes: { from: 0, insert: prelude + '\n//-- end prelude\n\n' },
+    });
+  };
+
+  const togglePreludeEjected = async () => {
+    if (!editorView) {
+      return;
+    }
+
+    if (!preludeEjected) {
+      await ejectPrelude(editorView);
+    }
+    preludeEjected = !preludeEjected;
+
+    run(editorView.state.doc.toString());
   };
 
   let exportDialog = $state<HTMLDialogElement | null>(null);
@@ -904,6 +928,7 @@
         code: serverState.code,
         materials: serverState.materials,
         view: serverState.view,
+        preludeEjected: serverState.preludeEjected,
       },
       userData
     );
@@ -986,6 +1011,8 @@
       {clearLocalChanges}
       {toggleAxisHelpers}
       {isDirty}
+      {preludeEjected}
+      {togglePreludeEjected}
       toggleMaterialEditorOpen={() => (materialEditorOpen = true)}
     />
   </div>
@@ -1015,6 +1042,8 @@
             {clearLocalChanges}
             {toggleAxisHelpers}
             {isDirty}
+            {preludeEjected}
+            {togglePreludeEjected}
             toggleMaterialEditorOpen={() => {
               materialEditorOpen = !materialEditorOpen;
             }}
@@ -1034,6 +1063,7 @@
                   code: editorView?.state.doc.toString() || '',
                   materials: materialDefinitions,
                   view: getView(viz),
+                  preludeEjected,
                 },
                 userData
               );
