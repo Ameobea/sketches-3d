@@ -19,12 +19,14 @@
     materials,
     getCurrentCode,
     onSave,
+    preludeEjected,
   }: {
     viz: Viz;
     comp: Composition | undefined | null;
     materials: MaterialDefinitions;
     getCurrentCode: () => string;
     onSave?: (savedSrc: string) => void;
+    preludeEjected: boolean;
   } = $props();
 
   let title = $state(comp?.title || '');
@@ -55,6 +57,7 @@
     const metadata: CompositionVersionMetadata = {
       view,
       materials,
+      preludeEjected,
     };
 
     return { type: 'ok', metadata };

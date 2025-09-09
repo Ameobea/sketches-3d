@@ -1056,6 +1056,7 @@
             getCurrentCode={() => editorView?.state.doc.toString() || ''}
             materials={materialDefinitions}
             {viz}
+            {preludeEjected}
             onSave={() => {
               isDirty = false;
               saveState(
