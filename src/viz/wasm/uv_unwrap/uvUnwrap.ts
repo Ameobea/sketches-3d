@@ -24,7 +24,8 @@ const unwrapInner = (
   indices: Uint32Array,
   nCones: number,
   flattenToDisk: boolean,
-  mapToSphere: boolean
+  mapToSphere: boolean,
+  enableUVIslandRotation: boolean
 ) => {
   if (!UVUnwrapWasm.isSome()) {
     throw new Error('UVUnwrapWasm not initialized');
@@ -56,7 +57,15 @@ const unwrapInner = (
   const vec_verts = vec_f32(verts);
   const vec_indices = vec_uint32(indices);
 
-  const output = UVUnwrap.unwrapUVs(vec_indices, vec_verts, nCones, flattenToDisk, mapToSphere);
+  console.log(UVUnwrap.unwrapUVs);
+  const output = UVUnwrap.unwrapUVs(
+    vec_indices,
+    vec_verts,
+    nCones,
+    flattenToDisk,
+    mapToSphere,
+    enableUVIslandRotation
+  );
 
   return {
     output,
@@ -72,7 +81,8 @@ export const unwrapUVs = (
   indices: Uint32Array,
   nCones: number,
   flattenToDisk: boolean,
-  mapToSphere: boolean
+  mapToSphere: boolean,
+  enableUVIslandRotation: boolean
 ):
   | {
       type: 'ok';
@@ -88,7 +98,8 @@ export const unwrapUVs = (
     indices,
     nCones,
     flattenToDisk,
-    mapToSphere
+    mapToSphere,
+    enableUVIslandRotation
   );
 
   const from_vec_f32 = (vec: any): Float32Array => {
@@ -134,9 +145,17 @@ export const buildUVUnwrapDistortionSVG = (
   indices: Uint32Array,
   nCones: number,
   flattenToDisk: boolean,
-  mapToSphere: boolean
+  mapToSphere: boolean,
+  enableUVIslandRotation: boolean
 ): { type: 'ok'; out: string } | { type: 'error'; message: string } => {
-  const { output, vec_verts, vec_indices } = unwrapInner(verts, indices, nCones, flattenToDisk, mapToSphere);
+  const { output, vec_verts, vec_indices } = unwrapInner(
+    verts,
+    indices,
+    nCones,
+    flattenToDisk,
+    mapToSphere,
+    enableUVIslandRotation
+  );
 
   const error = output.error;
   if (error) {

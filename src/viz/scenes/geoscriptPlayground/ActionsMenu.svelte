@@ -48,6 +48,6 @@
     background: #222;
     border: 1px solid #444;
     z-index: 10;
-    min-width: 185px;
+    min-width: 190px;
   }
 </style>

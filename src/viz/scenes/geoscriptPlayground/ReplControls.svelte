@@ -11,6 +11,7 @@
     onExport,
     clearLocalChanges,
     toggleAxisHelpers,
+    toggleLightHelpers,
     toggleMaterialEditorOpen,
     isDirty,
     togglePreludeEjected,
@@ -25,6 +26,7 @@
     onExport: () => void;
     clearLocalChanges: () => void;
     toggleAxisHelpers: () => void;
+    toggleLightHelpers: () => void;
     toggleMaterialEditorOpen: () => void;
     isDirty: boolean;
     togglePreludeEjected: () => void;
@@ -59,6 +61,7 @@
         <button onclick={onExport}>export scene</button>
         <button onclick={clearLocalChanges}>clear local changes</button>
         <button onclick={toggleAxisHelpers}>toggle axis helpers</button>
+        <button onclick={toggleLightHelpers}>toggle light helpers</button>
         <button onclick={togglePreludeEjected}>{preludeEjected ? 'un-eject' : 'eject'} prelude</button>
         <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>
         <button

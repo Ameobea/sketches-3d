@@ -128,6 +128,7 @@
     | THREE.Line<THREE.BufferGeometry, THREE.Material>
     | THREE.Light
   )[] = $state([]);
+  let lightHelpers: THREE.Object3D[] = $state([]);
 
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
@@ -685,6 +686,7 @@
           nCones: matDef.textureMapping.numCones,
           flattenToDisk: matDef.textureMapping.flattenToDisk,
           mapToSphere: matDef.textureMapping.mapToSphere,
+          enableUVIslandRotation: matDef.textureMapping.enableUVIslandRotation,
         };
       })();
 
@@ -694,12 +696,14 @@
         }
 
         try {
+          // TODO: should cache this to avoid re-computing UVs for meshes that haven't changed
           const unwrapRes = unwrapUVs(
             verts,
             indices,
             uvUnwrapParams.nCones,
             uvUnwrapParams.flattenToDisk,
-            uvUnwrapParams.mapToSphere
+            uvUnwrapParams.mapToSphere,
+            uvUnwrapParams.enableUVIslandRotation
           );
           if (unwrapRes.type === 'error') {
             throw new Error(unwrapRes.message);
@@ -758,19 +762,6 @@
       mesh.receiveShadow = true;
       viz.scene.add(mesh);
       newRenderedMeshes.push(mesh);
-
-      // TODO: should cache this to avoid re-computing UVs for meshes that haven't changed
-      // TODO: should maybe have a batch endpoint for this
-      // if (generateUVs) {
-      //   unwrapUVs(verts, indices).then(({ uvs, verts, indices }) => {
-      //     mesh.geometry.dispose();
-      //     mesh.geometry = new THREE.BufferGeometry();
-      //     mesh.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-      //     mesh.geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-      //     mesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-      //     mesh.geometry.computeVertexNormals();
-      //   });
-      // }
     }
 
     localRunStats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
@@ -797,6 +788,16 @@
 
     renderedObjects = newRenderedMeshes;
     runStats = localRunStats;
+
+    for (const helper of lightHelpers) {
+      viz.scene.remove(helper);
+    }
+    if (localStorage['geoscript-light-helpers'] === 'true') {
+      lightHelpers = buildLightHelpers(renderedObjects);
+    } else {
+      lightHelpers = [];
+    }
+
     isRunning = false;
   };
 
@@ -834,6 +835,51 @@
       axisHelper.position.set(0, 0, 0);
       viz.scene.add(axisHelper);
       localStorage['geoscript-axis-helpers'] = 'true';
+    }
+  };
+
+  const buildLightHelpers = (
+    objects: (
+      | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
+      | THREE.Line<THREE.BufferGeometry, THREE.Material>
+      | THREE.Light
+    )[]
+  ): THREE.Object3D[] => {
+    const helpers: THREE.Object3D[] = [];
+    for (const obj of objects) {
+      if (obj instanceof THREE.DirectionalLight) {
+        const helper = new THREE.DirectionalLightHelper(obj, 5);
+        viz.scene.add(helper);
+        helpers.push(helper);
+        if (obj.castShadow) {
+          const shadowHelper = new THREE.CameraHelper(obj.shadow.camera);
+          viz.scene.add(shadowHelper);
+          helpers.push(shadowHelper);
+        }
+      } else if (obj instanceof THREE.PointLight) {
+        const helper = new THREE.PointLightHelper(obj, 1);
+        viz.scene.add(helper);
+        helpers.push(helper);
+      } else if (obj instanceof THREE.SpotLight) {
+        const helper = new THREE.SpotLightHelper(obj);
+        viz.scene.add(helper);
+        helpers.push(helper);
+      }
+    }
+    return helpers;
+  };
+
+  const toggleLightHelpers = () => {
+    const lightHelpersEnabled = localStorage['geoscript-light-helpers'] === 'true';
+    if (lightHelpersEnabled) {
+      for (const helper of lightHelpers) {
+        viz.scene.remove(helper);
+      }
+      lightHelpers = [];
+      localStorage['geoscript-light-helpers'] = 'false';
+    } else {
+      lightHelpers = buildLightHelpers(renderedObjects);
+      localStorage['geoscript-light-helpers'] = 'true';
     }
   };
 
@@ -920,6 +966,7 @@
     });
 
     setView(serverState.view);
+    preludeEjected = serverState.preludeEjected;
 
     run(serverState.code);
 
@@ -1010,6 +1057,7 @@
       {onExport}
       {clearLocalChanges}
       {toggleAxisHelpers}
+      {toggleLightHelpers}
       {isDirty}
       {preludeEjected}
       {togglePreludeEjected}
@@ -1041,6 +1089,7 @@
             {onExport}
             {clearLocalChanges}
             {toggleAxisHelpers}
+            {toggleLightHelpers}
             {isDirty}
             {preludeEjected}
             {togglePreludeEjected}

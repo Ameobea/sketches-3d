@@ -95,7 +95,13 @@
           class:selected={material.textureMapping?.type === 'uv'}
           onclick={() => {
             if (material.textureMapping?.type !== 'uv') {
-              material.textureMapping = { type: 'uv', numCones: 0, flattenToDisk: false, mapToSphere: false };
+              material.textureMapping = {
+                type: 'uv',
+                numCones: 0,
+                flattenToDisk: false,
+                mapToSphere: false,
+                enableUVIslandRotation: true,
+              };
               rerun(true);
             }
           }}

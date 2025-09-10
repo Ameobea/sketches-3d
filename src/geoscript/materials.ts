@@ -11,7 +11,13 @@ export interface RGBColor {
 
 export type TextureMapping =
   | { type: 'triplanar' }
-  | { type: 'uv'; numCones: number; flattenToDisk: boolean; mapToSphere: boolean };
+  | {
+      type: 'uv';
+      numCones: number;
+      flattenToDisk: boolean;
+      mapToSphere: boolean;
+      enableUVIslandRotation: boolean;
+    };
 
 export interface BasicMaterialDef {
   type: 'basic';

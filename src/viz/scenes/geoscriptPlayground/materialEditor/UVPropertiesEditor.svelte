@@ -14,7 +14,9 @@
     if (rawMat.textureMapping?.type !== 'uv') {
       return null;
     }
-    return rawMat as any;
+    return rawMat as Omit<MaterialDef, 'textureMapping'> & {
+      textureMapping: Extract<MaterialDef['textureMapping'], { type: 'uv' }>;
+    };
   });
 </script>
 
@@ -44,5 +46,15 @@
     help="If true, the UVs will be mapped to a sphere.  This can useful for meshes with spherical topology and will likely have no effect if meshes are not closed and topologically watertight.  It also has no effect if the number of cones is >= 3."
   >
     <input type="checkbox" bind:checked={material.textureMapping.mapToSphere} oninput={() => rerun(false)} />
+  </FormField>
+  <FormField
+    label="enable UV island rotation"
+    help="If true, the UV islands will be rotated to minimize their bounding box before packing them into the UV unit square. This can help to reduce wasted space in the UV layout but may result in textures appearing rotated on the mesh."
+  >
+    <input
+      type="checkbox"
+      bind:checked={material.textureMapping.enableUVIslandRotation}
+      oninput={() => rerun(false)}
+    />
   </FormField>
 {/if}

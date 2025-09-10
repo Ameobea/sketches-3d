@@ -55,11 +55,18 @@
       if (matDef.textureMapping?.type !== 'uv') {
         throw new Error('material passed here should always have a uv texture mapping');
       }
-      const { numCones: nCones, flattenToDisk, mapToSphere } = matDef.textureMapping;
+      const { numCones: nCones, flattenToDisk, mapToSphere, enableUVIslandRotation } = matDef.textureMapping;
 
       const { verts, indices } = await repl.getRenderedMesh(ctxPtr, selectedMeshIx);
 
-      const unwrapRes = buildUVUnwrapDistortionSVG(verts, indices, nCones, flattenToDisk, mapToSphere);
+      const unwrapRes = buildUVUnwrapDistortionSVG(
+        verts,
+        indices,
+        nCones,
+        flattenToDisk,
+        mapToSphere,
+        enableUVIslandRotation
+      );
       if (unwrapRes.type === 'error') {
         // TODO: handle error state
         return;

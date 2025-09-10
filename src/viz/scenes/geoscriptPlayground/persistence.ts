@@ -58,6 +58,11 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   } else {
     materials = serverMaterials ?? buildDefaultMaterialDefinitions();
   }
+  for (const mat of Object.values(materials.materials)) {
+    if (mat.textureMapping?.type === 'uv') {
+      mat.textureMapping.enableUVIslandRotation ??= true;
+    }
+  }
   if (savedView) {
     try {
       view = JSON.parse(savedView);
