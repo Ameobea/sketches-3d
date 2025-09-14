@@ -52,6 +52,7 @@
     "svelte-seo": "1.6.1",
     "three": "^0.159.0",
     "three-good-godrays": "^0.7.1",
-    "tweakpane": "^4.0.5"
+    "tweakpane": "^4.0.5",
+    "zod": "^4.1.8"
   }
 }

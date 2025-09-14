@@ -10,6 +10,11 @@ import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 import { buildTriplanarDefsFragment, type TriplanarMappingParams } from './triplanarMapping';
 import ssrDefsFragment from './ssr/ssrDefs.frag?raw';
 import ssrWriteFragment from './ssr/ssrWrite.frag?raw';
+import {
+  buildReverseColorRampGenerator,
+  ReverseColorRampCommonFunctions,
+  type ReverseColorRampParams,
+} from './reverseColorRamp';
 
 // import noise2Shaders from './noise2.frag?raw';
 const noise2Shaders = 'DISABLED TO SAVE SPACE';
@@ -170,9 +175,12 @@ export interface CustomShaderShaders {
   colorShader?: string;
   normalShader?: string;
   roughnessShader?: string;
+  roughnessReverseColorRamp?: ReverseColorRampParams;
   metalnessShader?: string;
+  metalnessReverseColorRamp?: ReverseColorRampParams;
   emissiveShader?: string;
   iridescenceShader?: string;
+  iridescenceReverseColorRamp?: ReverseColorRampParams;
   displacementShader?: string;
   includeNoiseShadersVertex?: boolean;
 }
@@ -202,7 +210,7 @@ export interface CustomShaderOptions {
    * If set, the provided `map` will be treated as a combined grayscale diffuse + normal map. The diffuse
    * component will be read from the R channel and the normal map will be read from the GBA channels.
    */
-  usePackedDiffuseNormalGBA?: boolean | { lut: Uint8Array };
+  usePackedDiffuseNormalGBA?: boolean | { lut: Uint8Array<ArrayBuffer> };
   readRoughnessMapFromRChannel?: boolean;
   disableToneMapping?: boolean;
   // TODO: This is a shocking hack and should be removed
@@ -260,9 +268,12 @@ export const buildCustomShaderArgs = (
     colorShader,
     normalShader,
     roughnessShader,
+    roughnessReverseColorRamp,
     metalnessShader,
+    metalnessReverseColorRamp,
     emissiveShader,
     iridescenceShader,
+    iridescenceReverseColorRamp,
     displacementShader,
     includeNoiseShadersVertex,
   }: CustomShaderShaders = {},
@@ -393,6 +404,16 @@ export const buildCustomShaderArgs = (
   // }
   if (typeof usePackedDiffuseNormalGBA === 'object' && usePackedDiffuseNormalGBA.lut && tileBreaking) {
     throw new Error('LUT and tile breaking are currently broken together');
+  }
+
+  if (roughnessShader && roughnessReverseColorRamp) {
+    throw new Error('Cannot use both roughness shader and roughness reverse color ramp');
+  }
+  if (metalnessShader && metalnessReverseColorRamp) {
+    throw new Error('Cannot use both metalness shader and metalness reverse color ramp');
+  }
+  if (iridescenceShader && iridescenceReverseColorRamp) {
+    throw new Error('Cannot use both iridescence shader and iridescence reverse color ramp');
   }
 
   const buildUVVertexFragment = () => {
@@ -996,7 +1017,11 @@ ${normalShader ?? ''}
 ${roughnessShader ?? ''}
 ${metalnessShader ?? ''}
 ${emissiveShader ?? ''}
+${!!roughnessReverseColorRamp || !!metalnessReverseColorRamp || !!iridescenceReverseColorRamp ? ReverseColorRampCommonFunctions : ''}
+${roughnessReverseColorRamp ? buildReverseColorRampGenerator('roughnessFromColor', roughnessReverseColorRamp) : ''}
+${metalnessReverseColorRamp ? buildReverseColorRampGenerator('metalnessFromColor', metalnessReverseColorRamp) : ''}
 ${iridescenceShader ?? ''}
+${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? tileBreakingFragment : ''}
 ${
   tileBreaking?.type === 'neyret'
@@ -1067,12 +1092,14 @@ void main() {
   }
 
   ${roughnessShader ? buildRoughnessShaderFragment(antialiasRoughnessShader) : ''}
+  ${roughnessReverseColorRamp ? 'roughnessFactor = roughnessFromColor(diffuseColor.rgb);' : ''}
 
   ${
     metalnessShader
       ? 'metalnessFactor = getCustomMetalness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);'
       : ''
   }
+  ${metalnessReverseColorRamp ? 'metalnessFactor = metalnessFromColor(diffuseColor.rgb);' : ''}
 
 	#include <emissivemap_fragment>
   ${
@@ -1086,6 +1113,8 @@ void main() {
 	// accumulation
 	#include <lights_physical_fragment>
   ${iridescenceShader ? buildRunIridescenceShaderFragment() : ''}
+  ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(diffuseColor.rgb);' : ''}
+
 	// #include <lights_fragment_begin>
   ${buildLightsFragmentBegin()}
 	#include <lights_fragment_maps>

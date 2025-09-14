@@ -34,6 +34,7 @@ import { buildCustomShader, type CustomShaderShaders } from 'src/viz/shaders/cus
 import { loadTexture } from 'src/viz/textureLoading';
 import * as THREE from 'three';
 import type { TextureID } from './geotoyAPIClient';
+import type { ReverseColorRampParams } from 'src/viz/shaders/reverseColorRamp';
 
 export interface PhysicalMaterialDef {
   type: 'physical';
@@ -68,6 +69,14 @@ export interface PhysicalMaterialDef {
     roughness?: string;
     metalness?: string;
     iridescence?: string;
+  };
+  reverseColorRamps?: {
+    roughness?: ReverseColorRampParams;
+    metalness?: ReverseColorRampParams;
+    clearcoat?: ReverseColorRampParams;
+    clearcoatRoughness?: ReverseColorRampParams;
+    iridescence?: ReverseColorRampParams;
+    sheen?: ReverseColorRampParams;
   };
   textureMapping?: TextureMapping;
 }
@@ -118,13 +127,19 @@ const buildPhysicalShader = (
     if (def.shaders.color && def.shaders.color !== defaultShaders.color) {
       customShaders.colorShader = def.shaders.color;
     }
-    if (def.shaders.roughness && def.shaders.roughness !== defaultShaders.roughness) {
+    if (def.reverseColorRamps?.roughness) {
+      customShaders.roughnessReverseColorRamp = def.reverseColorRamps.roughness;
+    } else if (def.shaders.roughness && def.shaders.roughness !== defaultShaders.roughness) {
       customShaders.roughnessShader = def.shaders.roughness;
     }
-    if (def.shaders.metalness && def.shaders.metalness !== defaultShaders.metalness) {
+    if (def.reverseColorRamps?.metalness) {
+      customShaders.metalnessReverseColorRamp = def.reverseColorRamps.metalness;
+    } else if (def.shaders.metalness && def.shaders.metalness !== defaultShaders.metalness) {
       customShaders.metalnessShader = def.shaders.metalness;
     }
-    if (def.shaders.iridescence && def.shaders.iridescence !== defaultShaders.iridescence) {
+    if (def.reverseColorRamps?.iridescence) {
+      customShaders.iridescenceReverseColorRamp = def.reverseColorRamps.iridescence;
+    } else if (def.shaders.iridescence && def.shaders.iridescence !== defaultShaders.iridescence) {
       customShaders.iridescenceShader = def.shaders.iridescence;
     }
   }

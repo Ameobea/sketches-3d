@@ -1885,8 +1885,8 @@ impl EvalCtx {
     match lhs {
       Value::Vec2(v2) => {
         let swiz = |c| match c {
-          'x' => Ok(v2.x),
-          'y' => Ok(v2.y),
+          'x' | 'r' => Ok(v2.x),
+          'y' | 'g' => Ok(v2.y),
           _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec2"))),
         };
 
@@ -1906,9 +1906,9 @@ impl EvalCtx {
       }
       Value::Vec3(v3) => {
         let swiz = |c| match c {
-          'x' => Ok(v3.x),
-          'y' => Ok(v3.y),
-          'z' => Ok(v3.z),
+          'x' | 'r' => Ok(v3.x),
+          'y' | 'g' => Ok(v3.y),
+          'z' | 'b' => Ok(v3.z),
           _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec3"))),
         };
         match field.chars().count() {

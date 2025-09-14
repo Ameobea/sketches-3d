@@ -1,10 +1,11 @@
 <script lang="ts">
-  import type { MaterialDef } from 'src/geoscript/materials';
+  import type { MaterialDef, PhysicalMaterialDef } from 'src/geoscript/materials';
   import FormField from './FormField.svelte';
   import ColorPicker from './ColorPicker.svelte';
   import TexturePreview from './TexturePreview.svelte';
   import { Textures } from './state.svelte';
   import UvPropertiesEditor from './UVPropertiesEditor.svelte';
+  import DerivedMapConfigurator from './DerivedMapConfigurator.svelte';
 
   let {
     material = $bindable(),
@@ -20,7 +21,38 @@
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
   } = $props();
   let showAdvanced = $state(false);
+
+  let showRoughnessConfigurator = $state(false);
+  let showMetalnessConfigurator = $state(false);
 </script>
+
+{#if showRoughnessConfigurator}
+  {@const m = material as PhysicalMaterialDef}
+  <DerivedMapConfigurator
+    onclose={() => (showRoughnessConfigurator = false)}
+    onsave={params => {
+      if (!m.reverseColorRamps) {
+        m.reverseColorRamps = {};
+      }
+      m.reverseColorRamps.roughness = params;
+      showRoughnessConfigurator = false;
+    }}
+  />
+{/if}
+
+{#if showMetalnessConfigurator}
+  {@const m = material as PhysicalMaterialDef}
+  <DerivedMapConfigurator
+    onclose={() => (showMetalnessConfigurator = false)}
+    onsave={params => {
+      if (!m.reverseColorRamps) {
+        m.reverseColorRamps = {};
+      }
+      m.reverseColorRamps.metalness = params;
+      showMetalnessConfigurator = false;
+    }}
+  />
+{/if}
 
 <div class="properties-editor">
   <FormField label="name">
@@ -66,12 +98,54 @@
         onclick={() => onpicktexture('roughnessMap')}
       />
     </FormField>
+    {#if material.map}
+      <FormField label="derived roughness map">
+        <div class="derived-map-controls">
+          {#if material.reverseColorRamps?.roughness}
+            <span>enabled</span>
+            <button
+              onclick={() => {
+                if (material.reverseColorRamps) {
+                  material.reverseColorRamps.roughness = undefined;
+                }
+              }}
+            >
+              disable
+            </button>
+          {:else}
+            <span>disabled</span>
+            <button onclick={() => (showRoughnessConfigurator = true)}>configure</button>
+          {/if}
+        </div>
+      </FormField>
+    {/if}
     <FormField label="metalness map">
       <TexturePreview
         texture={material.metalnessMap ? Textures.textures[material.metalnessMap] : undefined}
         onclick={() => onpicktexture('metalnessMap')}
       />
     </FormField>
+    {#if material.map}
+      <FormField label="derived metalness map">
+        <div class="derived-map-controls">
+          {#if material.reverseColorRamps?.metalness}
+            <span>enabled</span>
+            <button
+              onclick={() => {
+                if (material.reverseColorRamps) {
+                  material.reverseColorRamps.metalness = undefined;
+                }
+              }}
+            >
+              disable
+            </button>
+          {:else}
+            <span>disabled</span>
+            <button onclick={() => (showMetalnessConfigurator = true)}>configure</button>
+          {/if}
+        </div>
+      </FormField>
+    {/if}
     <FormField label="normal scale">
       <input type="range" min="0" max="5" step="0.01" bind:value={material.normalScale} />
       <span>{material.normalScale?.toFixed(2)}</span>
@@ -169,6 +243,25 @@
     flex-grow: 1;
     overflow-y: auto;
     font-size: 12px;
+  }
+
+  .derived-map-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .derived-map-controls span {
+    color: #aaa;
+  }
+
+  .derived-map-controls button {
+    background: none;
+    border: 1px solid #555;
+    color: #f0f0f0;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
   }
 
   .advanced-options {

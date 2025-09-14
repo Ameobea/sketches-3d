@@ -57,7 +57,6 @@ const unwrapInner = (
   const vec_verts = vec_f32(verts);
   const vec_indices = vec_uint32(indices);
 
-  console.log(UVUnwrap.unwrapUVs);
   const output = UVUnwrap.unwrapUVs(
     vec_indices,
     vec_verts,
