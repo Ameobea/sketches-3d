@@ -71,7 +71,7 @@ float ${fnName}(vec3 baseColor_srgb) {
   ${
     sigma > 0
       ? `float dPerp2 = dot(rel - proj*U, rel - proj*U);
-       float gate = exp(-${inv2s2} * dPerp2);
+       float gate = exp(-${inv2s2.toFixed(8)} * dPerp2);
        float v01 = mix(baseVal, t_curved, gate);`
       : 'float v01 = t_curved;'
   }

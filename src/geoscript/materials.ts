@@ -17,6 +17,7 @@ export type TextureMapping =
       flattenToDisk: boolean;
       mapToSphere: boolean;
       enableUVIslandRotation: boolean;
+      tileBreaking?: { patchScale: number };
     };
 
 export interface BasicMaterialDef {
@@ -117,8 +118,7 @@ const buildPhysicalShader = (
   id: MaterialID,
   map: THREE.Texture | undefined,
   normalMap: THREE.Texture | undefined,
-  roughnessMap: THREE.Texture | undefined,
-  useTriplanarMapping: boolean
+  roughnessMap: THREE.Texture | undefined
 ) => {
   const defaultShaders = buildDefaultShaders();
   const customShaders: Partial<CustomShaderShaders> = {};
@@ -170,7 +170,14 @@ const buildPhysicalShader = (
       ambientDistanceAmp: def.ambientDistanceAmp,
     },
     customShaders,
-    { useTriplanarMapping, tileBreaking: undefined, useGeneratedUVs: false }
+    {
+      useTriplanarMapping: !def.textureMapping || def.textureMapping?.type === 'triplanar',
+      tileBreaking:
+        def.textureMapping && def.textureMapping.type !== 'triplanar' && def.textureMapping.tileBreaking
+          ? { type: 'neyret', patchScale: def.textureMapping.tileBreaking.patchScale }
+          : undefined,
+      useGeneratedUVs: false,
+    }
   );
 };
 
@@ -179,8 +186,6 @@ export const buildMaterial = (
   def: MaterialDef,
   id: MaterialID
 ): Promise<THREE.Material> | THREE.Material => {
-  const textureMappingType = def.textureMapping?.type;
-  const useTriplanarMapping = textureMappingType === 'triplanar' || textureMappingType === undefined;
   if (def.type === 'basic') {
     return new THREE.MeshBasicMaterial({
       name: id,
@@ -202,11 +207,11 @@ export const buildMaterial = (
       !(normalMapP instanceof Promise) &&
       !(roughnessMapP instanceof Promise)
     ) {
-      return buildPhysicalShader(def, id, mapP, normalMapP, roughnessMapP, useTriplanarMapping);
+      return buildPhysicalShader(def, id, mapP, normalMapP, roughnessMapP);
     }
 
     return Promise.all([mapP, normalMapP, roughnessMapP] as const).then(([map, normalMap, roughnessMap]) =>
-      buildPhysicalShader(def, id, map, normalMap, roughnessMap, useTriplanarMapping)
+      buildPhysicalShader(def, id, map, normalMap, roughnessMap)
     );
   } else {
     def satisfies never;

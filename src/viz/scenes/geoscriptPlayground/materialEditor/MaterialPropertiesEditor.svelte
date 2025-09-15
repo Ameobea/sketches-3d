@@ -150,7 +150,7 @@
       <input type="range" min="0" max="5" step="0.01" bind:value={material.normalScale} />
       <span>{material.normalScale?.toFixed(2)}</span>
     </FormField>
-    <FormField label="uv scale" help="The scale of the texture coordinates.">
+    <FormField label="texture scale" help="The scale of the texture coordinates.">
       <input type="number" step="0.1" bind:value={material.uvScale.x} style="width: 80px" />
       <input type="number" step="0.1" bind:value={material.uvScale.y} style="width: 80px" />
     </FormField>
@@ -191,6 +191,42 @@
           view generated uv mappings
         </button>
       </div>
+      <FormField label="enable hex tilebreaking">
+        <input
+          type="checkbox"
+          checked={material.textureMapping?.tileBreaking !== undefined}
+          onchange={() => {
+            if (material.textureMapping?.type !== 'uv') {
+              console.error('unreachable');
+              return;
+            }
+            if (material.textureMapping) {
+              if (material.textureMapping.tileBreaking) {
+                material.textureMapping.tileBreaking = undefined;
+              } else {
+                material.textureMapping.tileBreaking = { patchScale: 1.0 };
+              }
+              rerun(false);
+            }
+          }}
+        />
+      </FormField>
+      {#if material.textureMapping?.tileBreaking}
+        <div style="margin-top: 8px; padding-left: 16px">
+          <FormField
+            label="hex patch scale"
+            help="Scale factor for the hexagonal tiles used to break up the texture. This parameter is crucial in controlling the hex tiling's appearance and requires adjustment for each texture."
+          >
+            <input
+              type="number"
+              step="0.1"
+              bind:value={material.textureMapping.tileBreaking.patchScale}
+              style="width: 80px"
+              onchange={() => rerun(false)}
+            />
+          </FormField>
+        </div>
+      {/if}
     {/if}
     <div style="display: flex; padding-left: 8px">
       <button class="edit-shaders" onclick={oneditshaders}>edit shaders</button>

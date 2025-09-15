@@ -53,7 +53,7 @@
 
 <div class="modal-overlay" onclick={onclose}>
   <div class="modal-content" onclick={e => e.stopPropagation()}>
-    <button class="close-button" onclick={onclose}>X</button>
+    <button class="close-button" onclick={onclose}>×</button>
     <h2>Configure Derived Map</h2>
     <p>
       This feature uses a reverse color ramp to derive a PBR map (like roughness or metalness) from the base
@@ -64,7 +64,7 @@
       >
         Reverse Color Ramp Tool
       </a>
-       to generate the necessary JSON configuration.
+      to generate the necessary JSON configuration.
     </p>
     <p>
       Paste the JSON from the tool into the text area below. It will be validated and saved automatically.
