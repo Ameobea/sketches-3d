@@ -3245,35 +3245,58 @@ fn rot_impl(
   args: &[Value],
   kwargs: &FxHashMap<String, Value>,
 ) -> Result<Value, ErrorStack> {
-  {
-    let (mesh, rotation) = match def_ix {
-      0 => {
-        let rotation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-        let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+  enum ObjType {
+    Mesh,
+    Light,
+  }
 
-        (
-          mesh,
-          UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
-        )
-      }
-      1 => {
-        let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-        let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-        let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-        let mesh = arg_refs[3].resolve(args, &kwargs).as_mesh().unwrap();
+  let (rotation, obj_arg, obj_type) = match def_ix {
+    0 | 2 => {
+      let rotation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      (
+        UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
+        &arg_refs[1],
+        ObjType::Mesh,
+      )
+    }
+    1 | 3 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      (
+        UnitQuaternion::from_euler_angles(x, y, z),
+        &arg_refs[3],
+        ObjType::Light,
+      )
+    }
+    _ => unimplemented!(),
+  };
+  let obj_arg = obj_arg.resolve(args, kwargs);
 
-        (mesh, UnitQuaternion::from_euler_angles(x, y, z))
-      }
-      _ => unimplemented!(),
-    };
+  let apply_rotation = |transform: &Matrix4<f32>| {
+    let back: Matrix4<f32> = Matrix4::new_translation(&transform.column(3).xyz());
+    let to_origin: Matrix4<f32> = Matrix4::new_translation(&-transform.column(3).xyz());
+    back * rotation.to_homogeneous() * to_origin * *transform
+  };
 
-    // apply rotation by translating to origin, rotating, then translating back
-    let mut rotated_mesh = mesh.clone(true, false, false);
-    let back: Matrix4<f32> = Matrix4::new_translation(&mesh.transform.column(3).xyz());
-    let to_origin: Matrix4<f32> = Matrix4::new_translation(&-mesh.transform.column(3).xyz());
-    rotated_mesh.transform = back * rotation.to_homogeneous() * to_origin * rotated_mesh.transform;
+  match obj_type {
+    ObjType::Mesh => {
+      let mesh = obj_arg.as_mesh().unwrap();
 
-    Ok(Value::Mesh(Rc::new(rotated_mesh)))
+      let mut rotated_mesh = mesh.clone(true, false, false);
+      rotated_mesh.transform = apply_rotation(&rotated_mesh.transform);
+
+      Ok(Value::Mesh(Rc::new(rotated_mesh)))
+    }
+    ObjType::Light => {
+      let light = obj_arg.as_light().unwrap();
+
+      let mut rotated_light = (*light).clone();
+      let transform = rotated_light.transform_mut();
+      *transform = apply_rotation(transform);
+
+      Ok(Value::Light(Box::new(rotated_light)))
+    }
   }
 }
 
@@ -3453,6 +3476,16 @@ fn vec3_impl(
       Ok(Value::Vec3(Vec3::new(x, y, z)))
     }
     1 => {
+      let xy = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let z = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Vec3(Vec3::new(xy.x, xy.y, z)))
+    }
+    2 => {
+      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let yz = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec3(Vec3::new(x, yz.x, yz.y)))
+    }
+    3 => {
       let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(x, x, x)))
     }

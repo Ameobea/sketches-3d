@@ -3605,3 +3605,26 @@ f()"#;
 
   parse_and_eval_program(src).unwrap();
 }
+
+#[test]
+fn test_vec3_from_vec2_swizzle() {
+  let src = r#"
+z = v2(1,2)
+x = vec3(z, 3)
+y = vec3(9, z)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.globals.get("x").unwrap();
+  let Value::Vec3(x) = x else {
+    panic!("Expected result to be a Vec3");
+  };
+  assert_eq!(x, Vec3::new(1., 2., 3.));
+
+  let y = ctx.globals.get("y").unwrap();
+  let Value::Vec3(y) = y else {
+    panic!("Expected result to be a Vec3");
+  };
+  assert_eq!(y, Vec3::new(9., 1., 2.));
+}

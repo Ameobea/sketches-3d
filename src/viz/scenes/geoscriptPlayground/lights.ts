@@ -80,11 +80,7 @@ export const buildAndAddLight = (viz: Viz, light: Light, renderMode: boolean): T
       directionalLight.shadow.camera.bottom = dirLight.shadow_camera.bottom;
       directionalLight.shadow.mapSize.width = dirLight.shadow_map_size.width;
       directionalLight.shadow.mapSize.height = dirLight.shadow_map_size.height;
-      directionalLight.position.set(
-        dirLight.transform[0][12],
-        dirLight.transform[0][13],
-        dirLight.transform[0][14]
-      );
+      directionalLight.applyMatrix4(new THREE.Matrix4().fromArray(dirLight.transform[0]));
       directionalLight.target.position.set(
         dirLight.target[0][0],
         dirLight.target[0][1],

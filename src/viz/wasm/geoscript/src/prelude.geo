@@ -10,6 +10,7 @@ dir_light(
   shadow_map_type="vsm",
   shadow_map_bias=-0.0001,
   shadow_camera={near: 8, far: 300, left: -300, right: 380, top: 94, bottom: -140},
+  target=vec3(0)
 )
   | trans(-20, 50, 0)
   | render;

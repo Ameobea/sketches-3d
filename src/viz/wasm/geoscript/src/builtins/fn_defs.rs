@@ -269,6 +269,54 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Rotates a mesh using individual Euler angle components in radians",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: "Rotation defined by Euler angles in radians"
+          },
+          ArgDef {
+            name: "light",
+            valid_types: &[ArgType::Light],
+            default_value: DefaultValue::Required,
+            description: "Light to rotate"
+          },
+        ],
+        description: "Rotates a light using a Vec3 of Euler angles (radians)",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: "Rotation about X axis (radians)"
+          },
+          ArgDef {
+            name: "y",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: "Rotation about Y axis (radians)"
+          },
+          ArgDef {
+            name: "z",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: "Rotation about Z axis (radians)"
+          },
+          ArgDef {
+            name: "light",
+            valid_types: &[ArgType::Light],
+            default_value: DefaultValue::Required,
+            description: "Light to rotate"
+          },
+        ],
+        description: "Rotates a light using individual Euler angle components in radians",
+        return_type: &[ArgType::Light],
+      },
     ],
   },
   "look_at" => FnDef {
@@ -490,6 +538,42 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
           },
         ],
         description: "Creates a Vec3 given x, y, z",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "xy",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Creates a Vec3 from a Vec2 and a z component",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "yz",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Creates a Vec3 from an x component and a Vec2",
         return_type: &[ArgType::Vec3],
       },
       FnSignature {
@@ -5243,7 +5327,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
           },
         ],
         description: "Sets the material for a mesh",
-        return_type: &[ArgType::Nil],
+        return_type: &[ArgType::Mesh],
       }
     ],
   },
