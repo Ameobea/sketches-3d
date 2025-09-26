@@ -4,6 +4,8 @@ export interface ReplCtx {
   centerView: () => void;
   toggleWireframe: () => void;
   toggleNormalMat: () => void;
+  toggleLightHelpers: () => void;
+  toggleAxesHelper: () => void;
   getLastRunOutcome: () => { type: 'ok'; stats: RunStats } | { type: 'err'; err: string | null } | null;
   getAreAllMaterialsLoaded: () => boolean;
   run: () => void;

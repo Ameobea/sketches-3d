@@ -4,6 +4,7 @@ use rand_pcg::Pcg32;
 use std::cmp::Reverse;
 use std::marker::ConstParamTy;
 use std::rc::Rc;
+use std::str::FromStr;
 use std::{cell::RefCell, fmt::Display};
 
 use fxhash::FxHashMap;
@@ -20,6 +21,7 @@ use rand::Rng;
 use rand::{RngCore, SeedableRng};
 
 use crate::mesh_ops::extrude_pipe::PipeRadius;
+use crate::mesh_ops::mesh_ops::{alpha_wrap_mesh, alpha_wrap_points, smooth_mesh, SmoothType};
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
@@ -1569,6 +1571,79 @@ fn trace_geodesic_path_impl(
       Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: out_points_v3.into_iter().map(|v| Ok(Value::Vec3(v))),
       })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn alpha_wrap_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let alpha = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let offset = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+
+      let out = alpha_wrap_mesh(mesh, alpha, offset)
+        .map_err(|err| ErrorStack::new(err).wrap("Error in `alpha_wrap` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    }
+    1 => {
+      // TODO: would be good to create a helper function for this
+      let points = arg_refs[0]
+        .resolve(args, &kwargs)
+        .as_sequence()
+        .unwrap()
+        .clone_box()
+        .consume(ctx)
+        .map(|res| match res {
+          Ok(Value::Vec3(v)) => Ok(v),
+          Ok(val) => Err(ErrorStack::new(format!(
+            "Expected Vec3 in sequence passed to `alpha_wrap`, found: {val:?}"
+          ))),
+          Err(err) => Err(err),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+      let alpha = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let offset = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+
+      let out = alpha_wrap_points(&points, alpha, offset)
+        .map_err(|err| ErrorStack::new(err).wrap("Error in `alpha_wrap` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn smooth_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let smooth_type = arg_refs[1].resolve(args, &kwargs).as_str().unwrap();
+      let iterations = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
+      let iterations = if iterations <= 0 {
+        return Err(ErrorStack::new(format!(
+          "Invalid iterations argument for `smooth`: {iterations}; must be > 0"
+        )));
+      } else {
+        iterations as u32
+      };
+
+      let smooth_type = SmoothType::from_str(smooth_type)?;
+
+      let out = smooth_mesh(mesh, smooth_type, iterations)
+        .map_err(|err| ErrorStack::new(err).wrap("Error in `smooth` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
   }
@@ -3256,7 +3331,11 @@ fn rot_impl(
       (
         UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
         &arg_refs[1],
-        ObjType::Mesh,
+        if def_ix == 0 {
+          ObjType::Mesh
+        } else {
+          ObjType::Light
+        },
       )
     }
     1 | 3 => {
@@ -3266,7 +3345,11 @@ fn rot_impl(
       (
         UnitQuaternion::from_euler_angles(x, y, z),
         &arg_refs[3],
-        ObjType::Light,
+        if def_ix == 1 {
+          ObjType::Mesh
+        } else {
+          ObjType::Light
+        },
       )
     }
     _ => unimplemented!(),
@@ -4653,6 +4736,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "trace_geodesic_path" => builtin_fn!(trace_geodesic_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_geodesic_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "alpha_wrap" => builtin_fn!(alpha_wrap, |def_ix, arg_refs, args, kwargs, ctx| {
+    alpha_wrap_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "smooth" => builtin_fn!(smooth, |def_ix, arg_refs, args, kwargs, _ctx| {
+    smooth_impl(def_ix, arg_refs, args, kwargs)
   }),
   "fan_fill" => builtin_fn!(fan_fill, |def_ix, arg_refs, args, kwargs, ctx| {
     fan_fill_impl(ctx, def_ix, arg_refs, args, kwargs)

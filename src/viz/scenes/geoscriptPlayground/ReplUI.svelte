@@ -997,6 +997,8 @@
       centerView,
       toggleWireframe,
       toggleNormalMat,
+      toggleLightHelpers,
+      toggleAxesHelper: toggleAxisHelpers,
       getLastRunOutcome: () => lastRunOutcome,
       getAreAllMaterialsLoaded: () => Object.values(customMaterials).every(mat => mat.resolved),
       run,

@@ -4,6 +4,7 @@ import { initManifoldWasm } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 import { initGeodesics } from './geodesics';
+import { initCGAL } from 'src/viz/wasm/cgal/cgal';
 
 const initGeoscript = async () => {
   await Geoscript.default();
@@ -14,12 +15,19 @@ const filterNils = <T>(arr: (T | null | undefined)[]): T[] => arr.filter((x): x 
 
 interface GeoscriptAsyncDeps {
   geodesics: boolean;
+  cgal: boolean;
 }
 
 const initAsyncDeps = (deps: GeoscriptAsyncDeps) => {
   const promises: Promise<void>[] = [];
   if (deps.geodesics) {
     promises.push(initGeodesics());
+  }
+  if (deps.cgal) {
+    const cgalInit = initCGAL();
+    if (cgalInit instanceof Promise) {
+      promises.push(cgalInit);
+    }
   }
 
   if (!promises.length) {

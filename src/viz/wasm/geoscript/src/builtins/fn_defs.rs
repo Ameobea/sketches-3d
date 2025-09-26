@@ -4758,6 +4758,90 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       },
     ],
   },
+  "alpha_wrap" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            valid_types: &[ArgType::Mesh],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "alpha",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1. / 30.)),
+            description: "Controls the feature size of the computed wrapping.  Smaller values will capture more detail and produce more faces.\n\nThis value is relative to the bounding box of the input mesh.  Values should be in the range (0, 1)."
+          },
+          ArgDef {
+            name: "offset",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.03)),
+            description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input mesh.  Values should be in the range (0, 1)."
+          },
+        ],
+        description: "Computes an alpha-wrap of a mesh.  This is kind of like a concave version of a convex hull.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            valid_types: &[ArgType::Sequence],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "alpha",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1. / 30.)),
+            description: "Controls the feature size of the computed wrapping.  Smaller values will capture more detail and produce more faces.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
+          },
+          ArgDef {
+            name: "offset",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.03)),
+            description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
+          },
+        ],
+        description: "Computes an alpha-wrap of a sequence of points.  This is kind of like a concave version of a convex hull.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
+        return_type: &[ArgType::Mesh],
+      }
+    ],
+  },
+  "smooth" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            valid_types: &[ArgType::Mesh],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "type",
+            valid_types: &[ArgType::String],
+            default_value: DefaultValue::Optional(|| Value::String("catmullclark".to_string())),
+            description: "Type of smoothing to perform.  Supported values are \"catmullclark\", \"loop\", \"doosabin\", and \"sqrt\".",
+          },
+          ArgDef {
+            name: "iterations",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(1)),
+            description: "Number of smoothing iterations to perform"
+          },
+        ],
+        description: "Smooths a mesh using the specified algorithm (defaults to catmullclark).  More iterations result in a smoother mesh.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "fan_fill" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 27 }],

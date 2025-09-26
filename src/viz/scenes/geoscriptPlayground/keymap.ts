@@ -13,6 +13,8 @@ export const buildGeotoyKeymap = (getCtx?: () => ReplCtx | null | undefined) => 
   { key: 'w', action: () => getCtx?.()?.toggleWireframe(), label: 'toggle wireframe' },
   { key: 'n', action: () => getCtx?.()?.toggleNormalMat(), label: 'toggle normal material' },
   { key: 'ctrl+enter', action: () => getCtx?.()?.run(), label: 'run code' },
+  { key: 'l', action: () => getCtx?.()?.toggleLightHelpers(), label: 'toggle light helpers' },
+  { key: 'a', action: () => getCtx?.()?.toggleAxesHelper(), label: 'toggle axes helper' },
 
   { key: '.', action: () => getCtx?.()?.centerView(), label: 'center view', group: 'camera' },
   { key: '1', label: 'front/back view', action: () => getCtx?.()?.snapView('z'), group: 'camera' },

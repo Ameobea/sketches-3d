@@ -108,6 +108,7 @@ pub fn geoscript_repl_parse_program(
 #[derive(Default, SerJson)]
 pub struct GeoscriptAsyncDependencies {
   pub geodesics: bool,
+  pub cgal: bool,
 }
 
 #[wasm_bindgen]
@@ -118,9 +119,11 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
   };
 
   let mut deps = GeoscriptAsyncDependencies::default();
-  traverse_fn_calls(program, |name: &'_ str| {
+  traverse_fn_calls(program, |name: &str| {
     if name == "trace_geodesic_path" {
       deps.geodesics = true;
+    } else if name == "alpha_wrap" || name == "smooth" {
+      deps.cgal = true;
     }
   });
 
