@@ -45,6 +45,7 @@
   import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
   import { getIsUVUnwrapLoaded, initUVUnwrap, unwrapUVs } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
   import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
+  import { getUVUnwrapWorker } from 'src/geoscript/uvUnwrapWorker';
 
   let {
     viz,
@@ -595,14 +596,6 @@
       return;
     }
 
-    let uvUnwrapInitP: Promise<void> | true | null = null;
-    const generateUVs = Object.values(materialDefinitions.materials).some(
-      mat => mat.textureMapping?.type === 'uv'
-    );
-    if (generateUVs) {
-      uvUnwrapInitP = initUVUnwrap();
-    }
-
     if (typeof code !== 'string') {
       if (editorView) {
         code = editorView.state.doc.toString();
@@ -691,20 +684,12 @@
       })();
 
       if (uvUnwrapParams) {
-        if (uvUnwrapInitP instanceof Promise) {
-          await uvUnwrapInitP;
-        }
-
         try {
           // TODO: should cache this to avoid re-computing UVs for meshes that haven't changed
-          const unwrapRes = unwrapUVs(
-            verts,
-            indices,
-            uvUnwrapParams.nCones,
-            uvUnwrapParams.flattenToDisk,
-            uvUnwrapParams.mapToSphere,
-            uvUnwrapParams.enableUVIslandRotation
-          );
+          // TODO: should parallelize this, running UV unwrap earlier
+          const uvUnwrapWorker = await getUVUnwrapWorker();
+          const unwrapRes = await uvUnwrapWorker.uvUnwrap(verts, indices, uvUnwrapParams);
+
           if (unwrapRes.type === 'error') {
             throw new Error(unwrapRes.message);
           }

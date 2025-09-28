@@ -2063,6 +2063,101 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     components
   }
 
+  /// For each connected component in the mesh, checks if the component is closed.  If it is, it
+  /// determines if the component is oriented outward (if the face normals are facing the right
+  /// way).  If they are not, the winding order and vertex normals for the component are flipped in
+  /// place.
+  pub fn orient_connected_components_outward(&mut self) {
+    let components = self.connected_components();
+    for component in components {
+      let is_closed = component
+        .iter()
+        .flat_map(|&face_key| {
+          let face = &self.faces[face_key];
+          face.edges.iter().map(|&edge_key| &self.edges[edge_key])
+        })
+        .all(|edge| edge.faces.len() == 2);
+
+      if !is_closed {
+        continue;
+      }
+
+      let uniq_vtx_keys: FxHashSet<_> = component
+        .iter()
+        .flat_map(|&face_key| {
+          let face = &self.faces[face_key];
+          face.vertices.iter().map(|&vtx_key| vtx_key)
+        })
+        .collect();
+
+      let signed_volume_of_component = {
+        let mut v = 0.0f32;
+        for &face_key in &component {
+          let face = &self.faces[face_key];
+          let [i0, i1, i2] = face.vertices;
+          let a = self.vertices[i0].position;
+          let b = self.vertices[i1].position;
+          let c = self.vertices[i2].position;
+          v += a.cross(&b).dot(&c);
+        }
+        v / 6.0
+      };
+      log::info!("signed_volume_of_component: {signed_volume_of_component}");
+      let is_outward_facing = signed_volume_of_component > 0.;
+
+      if is_outward_facing {
+        continue;
+      }
+
+      // Flip the winding order and vertex normals of all faces in this component
+      for &face_key in &component {
+        let face = &mut self.faces[face_key];
+        face.vertices.swap(0, 2);
+      }
+
+      for vtx_key in uniq_vtx_keys {
+        let vtx = &mut self.vertices[vtx_key];
+        vtx.shading_normal = vtx.shading_normal.map(|n| -n);
+        vtx.displacement_normal = vtx.displacement_normal.map(|n| -n);
+      }
+    }
+  }
+
+  /// Removes all faces from the mesh that contain an edge is not shared by exactly two faces.
+  pub fn remove_nonmanifold_faces(&mut self) -> usize {
+    let mut total_removed_count = 0;
+
+    loop {
+      let nonmanifold_face_keys: Vec<FaceKey> = self
+        .faces
+        .iter()
+        .filter_map(|(face_key, face)| {
+          let has_nonmanifold_edge = face.edges.iter().any(|&edge_key| {
+            let edge = &self.edges[edge_key];
+            edge.faces.len() != 2
+          });
+          if has_nonmanifold_edge {
+            Some(face_key)
+          } else {
+            None
+          }
+        })
+        .collect();
+
+      let removed_count = nonmanifold_face_keys.len();
+      if removed_count == 0 {
+        break;
+      }
+      total_removed_count += removed_count;
+
+      for face_key in nonmanifold_face_keys {
+        self.remove_face(face_key);
+      }
+    }
+
+    total_removed_count
+  }
+
   /// Removes all degenerate faces from the mesh.
   pub fn cleanup_degenerate_triangles_cb(&mut self, mut cb: impl FnMut(FaceKey, FaceData) -> ()) {
     let all_face_keys = self.faces.keys().collect::<Vec<_>>();

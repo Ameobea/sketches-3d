@@ -21,7 +21,10 @@ use rand::Rng;
 use rand::{RngCore, SeedableRng};
 
 use crate::mesh_ops::extrude_pipe::PipeRadius;
-use crate::mesh_ops::mesh_ops::{alpha_wrap_mesh, alpha_wrap_points, smooth_mesh, SmoothType};
+use crate::mesh_ops::mesh_ops::{
+  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, isotropic_remesh, remesh_planar_patches,
+  smooth_mesh, SmoothType,
+};
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
@@ -1643,6 +1646,105 @@ fn smooth_impl(
 
       let out = smooth_mesh(mesh, smooth_type, iterations)
         .map_err(|err| ErrorStack::new(err).wrap("Error in `smooth` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn remesh_planar_patches_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let max_angle_deg = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let max_offset = arg_refs[2].resolve(args, &kwargs);
+      let max_offset = match max_offset {
+        _ if let Some(n) = max_offset.as_float() => n,
+        Value::Nil => {
+          let bbox = mesh.get_or_compute_aabb();
+          let diag = (bbox.maxs - bbox.mins).magnitude();
+          diag * 0.01
+        }
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid max_offset argument for `remesh_planar_patches`; expected Float or Nil, \
+             found: {max_offset:?}"
+          )))
+        }
+      };
+
+      let out = remesh_planar_patches(mesh, max_angle_deg, max_offset)
+        .map_err(|err| ErrorStack::new(err).wrap("Error in `remesh_planar_patches` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn isotropic_remesh_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let target_edge_length = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let iterations = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
+      let iterations = if iterations <= 0 {
+        return Err(ErrorStack::new(format!(
+          "Invalid iterations argument for `isotropic_remesh`: {iterations}; must be > 0"
+        )));
+      } else {
+        iterations as u32
+      };
+      let protect_borders = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+      let protect_sharp_edges = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
+      let sharp_angle_threshold_degrees = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
+
+      let out = isotropic_remesh(
+        mesh,
+        target_edge_length,
+        iterations,
+        protect_borders,
+        protect_sharp_edges,
+        sharp_angle_threshold_degrees,
+      )
+      .map_err(|err| ErrorStack::new(err).wrap("Error in `isotropic_remesh` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn delaunay_remesh_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let facet_distance = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let target_edge_length = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let protect_sharp_edges = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
+      let sharp_angle_threshold_degrees = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+
+      let out = delaunay_remesh(
+        mesh,
+        target_edge_length,
+        facet_distance,
+        protect_sharp_edges,
+        sharp_angle_threshold_degrees,
+      )
+      .map_err(|err| ErrorStack::new(err).wrap("Error in `delaunay_remesh` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -4742,6 +4844,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "smooth" => builtin_fn!(smooth, |def_ix, arg_refs, args, kwargs, _ctx| {
     smooth_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "remesh_planar_patches" => builtin_fn!(remesh_planar_patches, |def_ix, arg_refs, args, kwargs, _ctx| {
+    remesh_planar_patches_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "isotropic_remesh" => builtin_fn!(isotropic_remesh, |def_ix, arg_refs, args, kwargs, _ctx| {
+    isotropic_remesh_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "delaunay_remesh" => builtin_fn!(delaunay_remesh, |def_ix, arg_refs, args, kwargs, _ctx| {
+    delaunay_remesh_impl(def_ix, arg_refs, args, kwargs)
   }),
   "fan_fill" => builtin_fn!(fan_fill, |def_ix, arg_refs, args, kwargs, ctx| {
     fan_fill_impl(ctx, def_ix, arg_refs, args, kwargs)

@@ -269,7 +269,7 @@ function preRun() {
 
 function initRuntime() {
   runtimeInitialized = true;
-  wasmExports["I"]();
+  wasmExports["F"]();
 }
 
 function postRun() {
@@ -422,9 +422,9 @@ async function createWasm() {
   // performing other necessary setup
   /** @param {WebAssembly.Module=} module*/ function receiveInstance(instance, module) {
     wasmExports = instance.exports;
-    wasmMemory = wasmExports["H"];
+    wasmMemory = wasmExports["E"];
     updateMemoryViews();
-    wasmTable = wasmExports["K"];
+    wasmTable = wasmExports["H"];
     removeRunDependency("wasm-instantiate");
     return wasmExports;
   }
@@ -491,6 +491,100 @@ var onPreRuns = [];
 var addOnPreRun = cb => onPreRuns.unshift(cb);
 
 var noExitRuntime = Module["noExitRuntime"] || true;
+
+var UTF8Decoder = typeof TextDecoder != "undefined" ? new TextDecoder : undefined;
+
+/**
+     * Given a pointer 'idx' to a null-terminated UTF8-encoded string in the given
+     * array that contains uint8 values, returns a copy of that string as a
+     * Javascript String object.
+     * heapOrArray is either a regular array, or a JavaScript typed array view.
+     * @param {number=} idx
+     * @param {number=} maxBytesToRead
+     * @return {string}
+     */ var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead = NaN) => {
+  var endIdx = idx + maxBytesToRead;
+  var endPtr = idx;
+  // TextDecoder needs to know the byte length in advance, it doesn't stop on
+  // null terminator by itself.  Also, use the length info to avoid running tiny
+  // strings through TextDecoder, since .subarray() allocates garbage.
+  // (As a tiny code save trick, compare endPtr against endIdx using a negation,
+  // so that undefined/NaN means Infinity)
+  while (heapOrArray[endPtr] && !(endPtr >= endIdx)) ++endPtr;
+  if (endPtr - idx > 16 && heapOrArray.buffer && UTF8Decoder) {
+    return UTF8Decoder.decode(heapOrArray.subarray(idx, endPtr));
+  }
+  var str = "";
+  // If building with TextDecoder, we have already computed the string length
+  // above, so test loop end condition against that
+  while (idx < endPtr) {
+    // For UTF8 byte structure, see:
+    // http://en.wikipedia.org/wiki/UTF-8#Description
+    // https://www.ietf.org/rfc/rfc2279.txt
+    // https://tools.ietf.org/html/rfc3629
+    var u0 = heapOrArray[idx++];
+    if (!(u0 & 128)) {
+      str += String.fromCharCode(u0);
+      continue;
+    }
+    var u1 = heapOrArray[idx++] & 63;
+    if ((u0 & 224) == 192) {
+      str += String.fromCharCode(((u0 & 31) << 6) | u1);
+      continue;
+    }
+    var u2 = heapOrArray[idx++] & 63;
+    if ((u0 & 240) == 224) {
+      u0 = ((u0 & 15) << 12) | (u1 << 6) | u2;
+    } else {
+      u0 = ((u0 & 7) << 18) | (u1 << 12) | (u2 << 6) | (heapOrArray[idx++] & 63);
+    }
+    if (u0 < 65536) {
+      str += String.fromCharCode(u0);
+    } else {
+      var ch = u0 - 65536;
+      str += String.fromCharCode(55296 | (ch >> 10), 56320 | (ch & 1023));
+    }
+  }
+  return str;
+};
+
+/**
+     * Given a pointer 'ptr' to a null-terminated UTF8-encoded string in the
+     * emscripten HEAP, returns a copy of that string as a Javascript String object.
+     *
+     * @param {number} ptr
+     * @param {number=} maxBytesToRead - An optional length that specifies the
+     *   maximum number of bytes to read. You can omit this parameter to scan the
+     *   string until the first 0 byte. If maxBytesToRead is passed, and the string
+     *   at [ptr, ptr+maxBytesToReadr[ contains a null byte in the middle, then the
+     *   string will cut short at that byte index (i.e. maxBytesToRead will not
+     *   produce a string of exact length [ptr, ptr+maxBytesToRead[) N.B. mixing
+     *   frequent uses of UTF8ToString() with and without maxBytesToRead may throw
+     *   JS JIT optimizations off, so it is worth to consider consistently using one
+     * @return {string}
+     */ var UTF8ToString = (ptr, maxBytesToRead) => ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead) : "";
+
+var SYSCALLS = {
+  varargs: undefined,
+  getStr(ptr) {
+    var ret = UTF8ToString(ptr);
+    return ret;
+  }
+};
+
+function ___syscall_fcntl64(fd, cmd, varargs) {
+  SYSCALLS.varargs = varargs;
+  return 0;
+}
+
+function ___syscall_ioctl(fd, op, varargs) {
+  SYSCALLS.varargs = varargs;
+  return 0;
+}
+
+function ___syscall_openat(dirfd, path, flags, varargs) {
+  SYSCALLS.varargs = varargs;
+}
 
 var __abort_js = () => abort("");
 
@@ -1811,78 +1905,6 @@ var lengthBytesUTF8 = str => {
   return len;
 };
 
-var UTF8Decoder = typeof TextDecoder != "undefined" ? new TextDecoder : undefined;
-
-/**
-     * Given a pointer 'idx' to a null-terminated UTF8-encoded string in the given
-     * array that contains uint8 values, returns a copy of that string as a
-     * Javascript String object.
-     * heapOrArray is either a regular array, or a JavaScript typed array view.
-     * @param {number=} idx
-     * @param {number=} maxBytesToRead
-     * @return {string}
-     */ var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead = NaN) => {
-  var endIdx = idx + maxBytesToRead;
-  var endPtr = idx;
-  // TextDecoder needs to know the byte length in advance, it doesn't stop on
-  // null terminator by itself.  Also, use the length info to avoid running tiny
-  // strings through TextDecoder, since .subarray() allocates garbage.
-  // (As a tiny code save trick, compare endPtr against endIdx using a negation,
-  // so that undefined/NaN means Infinity)
-  while (heapOrArray[endPtr] && !(endPtr >= endIdx)) ++endPtr;
-  if (endPtr - idx > 16 && heapOrArray.buffer && UTF8Decoder) {
-    return UTF8Decoder.decode(heapOrArray.subarray(idx, endPtr));
-  }
-  var str = "";
-  // If building with TextDecoder, we have already computed the string length
-  // above, so test loop end condition against that
-  while (idx < endPtr) {
-    // For UTF8 byte structure, see:
-    // http://en.wikipedia.org/wiki/UTF-8#Description
-    // https://www.ietf.org/rfc/rfc2279.txt
-    // https://tools.ietf.org/html/rfc3629
-    var u0 = heapOrArray[idx++];
-    if (!(u0 & 128)) {
-      str += String.fromCharCode(u0);
-      continue;
-    }
-    var u1 = heapOrArray[idx++] & 63;
-    if ((u0 & 224) == 192) {
-      str += String.fromCharCode(((u0 & 31) << 6) | u1);
-      continue;
-    }
-    var u2 = heapOrArray[idx++] & 63;
-    if ((u0 & 240) == 224) {
-      u0 = ((u0 & 15) << 12) | (u1 << 6) | u2;
-    } else {
-      u0 = ((u0 & 7) << 18) | (u1 << 12) | (u2 << 6) | (heapOrArray[idx++] & 63);
-    }
-    if (u0 < 65536) {
-      str += String.fromCharCode(u0);
-    } else {
-      var ch = u0 - 65536;
-      str += String.fromCharCode(55296 | (ch >> 10), 56320 | (ch & 1023));
-    }
-  }
-  return str;
-};
-
-/**
-     * Given a pointer 'ptr' to a null-terminated UTF8-encoded string in the
-     * emscripten HEAP, returns a copy of that string as a Javascript String object.
-     *
-     * @param {number} ptr
-     * @param {number=} maxBytesToRead - An optional length that specifies the
-     *   maximum number of bytes to read. You can omit this parameter to scan the
-     *   string until the first 0 byte. If maxBytesToRead is passed, and the string
-     *   at [ptr, ptr+maxBytesToReadr[ contains a null byte in the middle, then the
-     *   string will cut short at that byte index (i.e. maxBytesToRead will not
-     *   produce a string of exact length [ptr, ptr+maxBytesToRead[) N.B. mixing
-     *   frequent uses of UTF8ToString() with and without maxBytesToRead may throw
-     *   JS JIT optimizations off, so it is worth to consider consistently using one
-     * @return {string}
-     */ var UTF8ToString = (ptr, maxBytesToRead) => ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead) : "";
-
 var __embind_register_std_string = (rawType, name) => {
   name = readLatin1String(name);
   var stdStringIsUTF8 = true;
@@ -2158,60 +2180,6 @@ var runtimeKeepaliveCounter = 0;
 var __emscripten_runtime_keepalive_clear = () => {
   noExitRuntime = false;
   runtimeKeepaliveCounter = 0;
-};
-
-var requireRegisteredType = (rawType, humanName) => {
-  var impl = registeredTypes[rawType];
-  if (undefined === impl) {
-    throwBindingError(`${humanName} has unknown type ${getTypeName(rawType)}`);
-  }
-  return impl;
-};
-
-var emval_returnValue = (returnType, destructorsRef, handle) => {
-  var destructors = [];
-  var result = returnType["toWireType"](destructors, handle);
-  if (destructors.length) {
-    // void, primitives and any other types w/o destructors don't need to allocate a handle
-    HEAPU32[((destructorsRef) >> 2)] = Emval.toHandle(destructors);
-  }
-  return result;
-};
-
-var __emval_as = (handle, returnType, destructorsRef) => {
-  handle = Emval.toValue(handle);
-  returnType = requireRegisteredType(returnType, "emval::as");
-  return emval_returnValue(returnType, destructorsRef, handle);
-};
-
-var __emval_get_property = (handle, key) => {
-  handle = Emval.toValue(handle);
-  key = Emval.toValue(key);
-  return Emval.toHandle(handle[key]);
-};
-
-var emval_symbols = {};
-
-var getStringOrSymbol = address => {
-  var symbol = emval_symbols[address];
-  if (symbol === undefined) {
-    return readLatin1String(address);
-  }
-  return symbol;
-};
-
-var __emval_new_cstring = v => Emval.toHandle(getStringOrSymbol(v));
-
-var __emval_run_destructors = handle => {
-  var destructors = Emval.toValue(handle);
-  runDestructors(destructors);
-  __emval_decref(handle);
-};
-
-var __emval_take_value = (type, arg) => {
-  type = requireRegisteredType(type, "_emval_take_value");
-  var v = type["readValueFromPointer"](arg);
-  return Emval.toHandle(v);
 };
 
 var timers = {};
@@ -2514,54 +2482,51 @@ init_emval();
 
 // End JS library code
 var wasmImports = {
-  /** @export */ z: __abort_js,
-  /** @export */ n: __embind_register_bigint,
-  /** @export */ y: __embind_register_bool,
-  /** @export */ h: __embind_register_class,
-  /** @export */ g: __embind_register_class_constructor,
+  /** @export */ l: ___syscall_fcntl64,
+  /** @export */ D: ___syscall_ioctl,
+  /** @export */ C: ___syscall_openat,
+  /** @export */ v: __abort_js,
+  /** @export */ j: __embind_register_bigint,
+  /** @export */ u: __embind_register_bool,
+  /** @export */ g: __embind_register_class,
+  /** @export */ f: __embind_register_class_constructor,
   /** @export */ b: __embind_register_class_function,
-  /** @export */ x: __embind_register_emval,
-  /** @export */ m: __embind_register_float,
-  /** @export */ w: __embind_register_function,
+  /** @export */ t: __embind_register_emval,
+  /** @export */ i: __embind_register_float,
+  /** @export */ s: __embind_register_function,
   /** @export */ c: __embind_register_integer,
   /** @export */ a: __embind_register_memory_view,
-  /** @export */ v: __embind_register_std_string,
-  /** @export */ f: __embind_register_std_wstring,
-  /** @export */ u: __embind_register_void,
-  /** @export */ t: __emscripten_runtime_keepalive_clear,
-  /** @export */ l: __emval_as,
-  /** @export */ d: __emval_decref,
-  /** @export */ k: __emval_get_property,
-  /** @export */ s: __emval_new_cstring,
-  /** @export */ j: __emval_run_destructors,
-  /** @export */ i: __emval_take_value,
-  /** @export */ r: __setitimer_js,
-  /** @export */ q: __tzset_js,
-  /** @export */ p: _emscripten_date_now,
-  /** @export */ o: _emscripten_resize_heap,
-  /** @export */ G: _environ_get,
-  /** @export */ F: _environ_sizes_get,
-  /** @export */ e: _exit,
-  /** @export */ E: _fd_close,
-  /** @export */ D: _fd_read,
-  /** @export */ C: _fd_seek,
-  /** @export */ B: _fd_write,
-  /** @export */ A: _proc_exit
+  /** @export */ r: __embind_register_std_string,
+  /** @export */ e: __embind_register_std_wstring,
+  /** @export */ q: __embind_register_void,
+  /** @export */ p: __emscripten_runtime_keepalive_clear,
+  /** @export */ o: __setitimer_js,
+  /** @export */ n: __tzset_js,
+  /** @export */ h: _emscripten_date_now,
+  /** @export */ m: _emscripten_resize_heap,
+  /** @export */ B: _environ_get,
+  /** @export */ A: _environ_sizes_get,
+  /** @export */ d: _exit,
+  /** @export */ k: _fd_close,
+  /** @export */ z: _fd_read,
+  /** @export */ y: _fd_seek,
+  /** @export */ x: _fd_write,
+  /** @export */ w: _proc_exit
 };
 
 var wasmExports = await createWasm();
 
-var ___wasm_call_ctors = wasmExports["I"];
+var ___wasm_call_ctors = wasmExports["F"];
 
-var ___getTypeName = wasmExports["J"];
+var ___getTypeName = wasmExports["G"];
 
-var __emscripten_timeout = wasmExports["L"];
+var _free = wasmExports["I"];
 
-var _malloc = wasmExports["M"];
+var __emscripten_timeout = wasmExports["J"];
 
-var _free = wasmExports["N"];
+var _malloc = wasmExports["K"];
 
-var ___trap = wasmExports["O"];
+var ___trap = wasmExports["L"];
 
 // include: postamble.js
 // === Auto-generated postamble setup entry stuff ===

@@ -122,7 +122,15 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
   traverse_fn_calls(program, |name: &str| {
     if name == "trace_geodesic_path" {
       deps.geodesics = true;
-    } else if name == "alpha_wrap" || name == "smooth" {
+    } else if name == "alpha_wrap"
+      || name == "smooth"
+      || name == "remesh_planar_patches"
+      || name == "isotropic_remesh"
+      || name == "remesh"
+      || name == "remesh_isotropic"
+      || name == "delaunay_remesh"
+      || name == "remesh_delaunay"
+    {
       deps.cgal = true;
     }
   });

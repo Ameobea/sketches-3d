@@ -79,6 +79,8 @@ const setOutputMeshFromCGALMesh = (mesh: any): void => {
     return HEAPU32().subarray(ptr / 4, ptr / 4 + length);
   };
 
+  mesh.maybe_triangulate();
+
   const indices = mesh.getIndices();
   const verts = mesh.getVertices();
 
@@ -212,6 +214,68 @@ export const cgal_sqrt_smooth_mesh = (verts: Float32Array, indices: Uint32Array,
 
   const mesh = buildCGALPolymesh(verts, indices);
   mesh.sqrt_smooth(iterations);
+
+  setOutputMeshFromCGALMesh(mesh);
+  mesh.delete();
+};
+
+export const cgal_remesh_planar_patches = (
+  verts: Float32Array,
+  indices: Uint32Array,
+  maxAngleDegrees: number,
+  maxOffset: number
+) => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+
+  const mesh = buildCGALPolymesh(verts, indices);
+  mesh.remesh_planar_patches(maxAngleDegrees, maxOffset);
+
+  setOutputMeshFromCGALMesh(mesh);
+  mesh.delete();
+};
+
+export const cgal_remesh_isotropic = (
+  verts: Float32Array,
+  indices: Uint32Array,
+  targetEdgeLength: number,
+  iterations: number,
+  protectBorders: boolean,
+  autoSharpEdges: boolean,
+  sharpAngleThresholdDegrees: number
+) => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+
+  const mesh = buildCGALPolymesh(verts, indices);
+  mesh.isotropic_remesh(
+    targetEdgeLength,
+    iterations,
+    protectBorders,
+    autoSharpEdges,
+    sharpAngleThresholdDegrees
+  );
+
+  setOutputMeshFromCGALMesh(mesh);
+  mesh.delete();
+};
+
+export const cgal_remesh_delaunay = (
+  verts: Float32Array,
+  indices: Uint32Array,
+  targetEdgeLength: number,
+  facetDistance: number,
+  autoSharpEdges: boolean,
+  sharpAngleThresholdDegrees: number
+) => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+
+  const mesh = buildCGALPolymesh(verts, indices);
+  mesh.delaunay_remesh(targetEdgeLength, facetDistance, autoSharpEdges, sharpAngleThresholdDegrees);
 
   setOutputMeshFromCGALMesh(mesh);
   mesh.delete();

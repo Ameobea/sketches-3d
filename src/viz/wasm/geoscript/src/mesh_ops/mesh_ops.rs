@@ -13,26 +13,30 @@ use crate::MeshHandle;
 
 #[cfg(target_arch = "wasm32")]
 #[inline]
-fn read_cgal_output_mesh(
-  transform: Mat4,
-  material: Option<Rc<crate::Material>>,
-) -> Result<MeshHandle, String> {
-  use crate::ManifoldHandle;
-  use std::cell::RefCell;
-
+fn read_raw_cgal_output_mesh() -> LinkedMesh<()> {
   let out_verts = cgal_get_output_mesh_verts();
   let out_indices = cgal_get_output_mesh_indices();
   cgal_clear_output_mesh();
 
-  let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(&out_verts, &out_indices, None, None);
-  Ok(MeshHandle {
+  LinkedMesh::from_raw_indexed(&out_verts, &out_indices, None, None)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn read_cgal_output_mesh(transform: Mat4, material: Option<Rc<crate::Material>>) -> MeshHandle {
+  use crate::ManifoldHandle;
+  use std::cell::RefCell;
+
+  let out_mesh = read_raw_cgal_output_mesh();
+
+  MeshHandle {
     mesh: Rc::new(out_mesh),
     transform,
     manifold_handle: Rc::new(ManifoldHandle::new(0)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
     material,
-  })
+  }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -82,6 +86,29 @@ extern "C" {
   pub fn cgal_loop_smooth_mesh(mesh_verts: &[f32], mesh_indices: &[u32], iterations: u32);
   pub fn cgal_doosabin_smooth_mesh(mesh_verts: &[f32], mesh_indices: &[u32], iterations: u32);
   pub fn cgal_sqrt_smooth_mesh(mesh_verts: &[f32], mesh_indices: &[u32], iterations: u32);
+  pub fn cgal_remesh_planar_patches(
+    mesh_verts: &[f32],
+    mesh_indices: &[u32],
+    max_angle_deg: f32,
+    max_offset: f32,
+  );
+  pub fn cgal_remesh_isotropic(
+    mesh_verts: &[f32],
+    mesh_indices: &[u32],
+    target_edge_length: f32,
+    iterations: u32,
+    protect_borders: bool,
+    auto_sharp_edges: bool,
+    sharp_angle_threshold_degrees: f32,
+  );
+  pub fn cgal_remesh_delaunay(
+    mesh_verts: &[f32],
+    mesh_indices: &[u32],
+    target_edge_length: f32,
+    facet_distance: f32,
+    auto_sharp_edges: bool,
+    sharp_angle_threshold_degrees: f32,
+  );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -249,7 +276,7 @@ pub fn alpha_wrap_mesh(
     relative_offset,
   );
 
-  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
+  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -317,7 +344,7 @@ pub fn smooth_mesh(
     }
   }
 
-  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
+  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -339,7 +366,7 @@ pub fn alpha_wrap_points(
     unsafe { std::slice::from_raw_parts(points.as_ptr() as *const f32, points.len() * 3) };
   cgal_alpha_wrap_points(points, relative_alpha, relative_offset);
 
-  read_cgal_output_mesh(Mat4::identity(), None)
+  Ok(read_cgal_output_mesh(Mat4::identity(), None))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -349,4 +376,123 @@ pub fn alpha_wrap_points(
   _relative_offset: f32,
 ) -> Result<MeshHandle, String> {
   Err("Alpha wrapping is not supported outside of wasm".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn remesh_planar_patches(
+  mesh: &MeshHandle,
+  max_angle_deg: f32,
+  max_offset: f32,
+) -> Result<MeshHandle, String> {
+  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
+
+  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  let in_indices = unsafe {
+    std::slice::from_raw_parts(
+      raw_mesh.indices.as_ptr() as *const u32,
+      raw_mesh.indices.len(),
+    )
+  };
+
+  cgal_remesh_planar_patches(&raw_mesh.vertices, in_indices, max_angle_deg, max_offset);
+
+  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remesh_planar_patches(
+  _mesh: &MeshHandle,
+  _max_angle_deg: f32,
+  _max_offset: Option<f32>,
+) -> Result<MeshHandle, String> {
+  Err("Planar patch remeshing is not supported outside of wasm".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn isotropic_remesh(
+  mesh: &MeshHandle,
+  target_edge_length: f32,
+  max_iterations: u32,
+  protect_borders: bool,
+  auto_sharp_edges: bool,
+  sharp_angle_threshold_degrees: f32,
+) -> Result<MeshHandle, String> {
+  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
+
+  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  let in_indices = unsafe {
+    std::slice::from_raw_parts(
+      raw_mesh.indices.as_ptr() as *const u32,
+      raw_mesh.indices.len(),
+    )
+  };
+
+  cgal_remesh_isotropic(
+    &raw_mesh.vertices,
+    in_indices,
+    target_edge_length,
+    max_iterations,
+    protect_borders,
+    auto_sharp_edges,
+    sharp_angle_threshold_degrees,
+  );
+
+  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn isotropic_remesh(
+  _mesh: &MeshHandle,
+  _target_edge_length: f32,
+  _max_iterations: u32,
+  _protect_borders: bool,
+  _auto_sharp_edges: bool,
+  _sharp_angle_threshold_degrees: f32,
+) -> Result<MeshHandle, String> {
+  Err("Isotropic remeshing is not supported outside of wasm".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn delaunay_remesh(
+  mesh: &MeshHandle,
+  target_edge_length: f32,
+  facet_distance: f32,
+  auto_sharp_edges: bool,
+  sharp_angle_threshold_degrees: f32,
+) -> Result<MeshHandle, String> {
+  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
+
+  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  let in_indices = unsafe {
+    std::slice::from_raw_parts(
+      raw_mesh.indices.as_ptr() as *const u32,
+      raw_mesh.indices.len(),
+    )
+  };
+
+  cgal_remesh_delaunay(
+    &raw_mesh.vertices,
+    in_indices,
+    target_edge_length,
+    facet_distance,
+    auto_sharp_edges,
+    sharp_angle_threshold_degrees,
+  );
+
+  // sometimes the normals get flipped in delaunay remeshing; re-orient connected components
+  // outward.
+  //
+  // This kinda works, the only for the components that are manifold - and manifoldness isn't
+  // guaranteed.
+  let mut out_mesh = read_raw_cgal_output_mesh();
+  out_mesh.orient_connected_components_outward();
+
+  Ok(MeshHandle {
+    mesh: Rc::new(out_mesh),
+    transform: mesh.transform,
+    manifold_handle: mesh.manifold_handle.clone(),
+    aabb: mesh.aabb.clone(),
+    trimesh: mesh.trimesh.clone(),
+    material: mesh.material.clone(),
+  })
 }

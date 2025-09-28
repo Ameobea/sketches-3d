@@ -4760,7 +4760,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "alpha_wrap" => FnDef {
     module: "mesh",
-    examples: &[],
+    examples: &[FnExample { composition_id: 57 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
@@ -4783,7 +4783,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input mesh.  Values should be in the range (0, 1)."
           },
         ],
-        description: "Computes an alpha-wrap of a mesh.  This is kind of like a concave version of a convex hull.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
+        description: "Computes an alpha-wrap of a mesh.  This is kind of like a concave version of a convex hull.  This function is guaranteed to produce watertight/2-manifold outputs.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -4807,7 +4807,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
           },
         ],
-        description: "Computes an alpha-wrap of a sequence of points.  This is kind of like a concave version of a convex hull.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
+        description: "Computes an alpha-wrap of a sequence of points.  This is kind of like a concave version of a convex hull.  This function is guaranteed to produce watertight/2-manifold outputs.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
         return_type: &[ArgType::Mesh],
       }
     ],
@@ -4840,6 +4840,126 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Smooths a mesh using the specified algorithm (defaults to catmullclark).  More iterations result in a smoother mesh.",
         return_type: &[ArgType::Mesh],
       },
+    ],
+  },
+  "remesh_planar_patches" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            valid_types: &[ArgType::Mesh],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max_angle_deg",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(5.)),
+            description: "Maximum angle in degrees between face normals for faces to be considered coplanar"
+          },
+          ArgDef {
+            name: "max_offset",
+            valid_types: &[ArgType::Numeric, ArgType::Nil],
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Maximum distance from the plane for faces to be considered coplanar.  This is an absolute distance in the mesh's local space.  If not provided or set to `nil`, it will default to 1% of the diagonal length of the mesh's bounding box."
+          },
+        ],
+        description: "Remeshes a mesh by identifying planar regions and simplifying them into a simpler set of triangles.  This is useful for optimizing meshes produced by a variety of other built-in methods that tend to produce a lot of small triangles in flat areas.\n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/5.6.3/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "isotropic_remesh" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "target_edge_length",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: "Target edge length for the remeshed output.  Edges will be split or collapsed to try to achieve this length."
+          },
+          ArgDef {
+            name: "mesh",
+            valid_types: &[ArgType::Mesh],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "iterations",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(1)),
+            description: "Number of remeshing iterations to perform.  Typical values are between 1 and 5."
+          },
+          ArgDef {
+            name: "protect_borders",
+            valid_types: &[ArgType::Bool],
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "If true, edges on the border of the mesh will not be modified."
+          },
+          ArgDef {
+            name: "protect_sharp_edges",
+            valid_types: &[ArgType::Bool],
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "If true, edges with angles >= the `sharp_angle_threshold_degrees` will not be modified."
+          },
+          ArgDef {
+            name: "sharp_angle_threshold_degrees",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(30.)),
+            description: "Angle threshold in degrees for edges to be considered sharp.  Only used if `protect_sharp_edges` is true."
+          },
+        ],
+        description: "Remeshes a mesh to have more uniform edge lengths, targeting the specified edge length.  \n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/5.6.3/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "delaunay_remesh" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            valid_types: &[ArgType::Mesh],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "facet_distance",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.14)),
+            description: "This controls the precision of the output mesh.  Smaller values will produce meshes that more closely approximate the input, but will also produce more faces.  This value represents units in the local space of the mesh, so it must be chosen relative to the size of the input mesh."
+          },
+          ArgDef {
+            name: "target_edge_length",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.2)),
+            description: "This serves as an upper bound for the lengths of curve edges in the underlying Delaunay triangulation.  Smaller values will produce more faces.  This value represents units in the local space of the mesh, so it must be chosen relative to the size of the input mesh."
+          },
+          ArgDef {
+            name: "protect_sharp_edges",
+            valid_types: &[ArgType::Bool],
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "If true, edges with angles >= the `sharp_angle_threshold_degrees` will not be modified."
+          },
+          ArgDef {
+            name: "sharp_angle_threshold_degrees",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(30.)),
+            description: "Angle threshold in degrees for edges to be considered sharp.  Only used if `protect_sharp_edges` is true."
+          },
+        ],
+        description: "Remeshes a mesh using a Delaunay refinement of a restricted Delaunay triangulation.  TODO improve docs once we understand the behavior of this function better.\n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/latest/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
+        return_type: &[ArgType::Mesh],
+      }
     ],
   },
   "fan_fill" => FnDef {

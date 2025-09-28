@@ -75,14 +75,7 @@ const unwrapInner = (
   };
 };
 
-export const unwrapUVs = (
-  verts: Float32Array,
-  indices: Uint32Array,
-  nCones: number,
-  flattenToDisk: boolean,
-  mapToSphere: boolean,
-  enableUVIslandRotation: boolean
-):
+export type UVUnwrapRes =
   | {
       type: 'ok';
       out: {
@@ -91,7 +84,16 @@ export const unwrapUVs = (
         indices: Uint32Array;
       };
     }
-  | { type: 'error'; message: string } => {
+  | { type: 'error'; message: string };
+
+export const unwrapUVs = (
+  verts: Float32Array,
+  indices: Uint32Array,
+  nCones: number,
+  flattenToDisk: boolean,
+  mapToSphere: boolean,
+  enableUVIslandRotation: boolean
+): UVUnwrapRes => {
   const { output, vec_verts, vec_indices, HEAPF32, HEAPU32 } = unwrapInner(
     verts,
     indices,
