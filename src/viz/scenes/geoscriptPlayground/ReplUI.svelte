@@ -424,24 +424,34 @@
   let materialDefinitions = $state<MaterialDefinitions>(initialMatDefs);
   let preludeEjected = $state(initialPreludeEjected);
 
-  onMount(() => {
-    const referencedTextureIDs: TextureID[] = [];
-    for (const mat of Object.values(materialDefinitions.materials)) {
+  const getReferencedTextureIDs = (materials: Record<string, MaterialDef>): TextureID[] => {
+    const textureIDs: TextureID[] = [];
+    for (const mat of Object.values(materials)) {
       if (mat.type === 'basic') {
         continue;
       }
 
       if (mat.map) {
-        referencedTextureIDs.push(mat.map);
+        textureIDs.push(mat.map);
       }
       if (mat.normalMap) {
-        referencedTextureIDs.push(mat.normalMap);
+        textureIDs.push(mat.normalMap);
       }
       if (mat.roughnessMap) {
-        referencedTextureIDs.push(mat.roughnessMap);
+        textureIDs.push(mat.roughnessMap);
+      }
+      if (mat.metalnessMap) {
+        textureIDs.push(mat.metalnessMap);
+      }
+      if (mat.clearcoatNormalMap) {
+        textureIDs.push(mat.clearcoatNormalMap);
       }
     }
+    return textureIDs;
+  };
 
+  onMount(() => {
+    const referencedTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
     if (referencedTextureIDs.length > 0) {
       fetchAndSetTextures(referencedTextureIDs);
     }
@@ -473,7 +483,7 @@
     // TODO: needs hashing to avoid re-building materials that haven't changed
     // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
     for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
-      const matMaybeP = buildMaterial(loader, def, id);
+      const matMaybeP = buildMaterial(loader, def as MaterialDef, id);
       const entry: MatEntry = {
         promise: matMaybeP instanceof Promise ? matMaybeP : Promise.resolve(matMaybeP),
         resolved: matMaybeP instanceof Promise ? null : matMaybeP,
@@ -553,7 +563,7 @@
     const matDefsByName: Record<string, MaterialDef> = {};
     for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
       matsByName[def.name] = customMaterials[id];
-      matDefsByName[def.name] = def;
+      matDefsByName[def.name] = def as MaterialDef;
     }
     return { customMaterialsByName: matsByName, matDefsByName };
   });
@@ -929,22 +939,7 @@
     didInitMats = false;
 
     materialDefinitions = serverState.materials;
-    const missingTextureIDs = Object.values(materialDefinitions.materials).flatMap(mat => {
-      if (mat.type === 'basic') {
-        return [];
-      }
-      const referencedTextureIDs: TextureID[] = [];
-      if (mat.map) {
-        referencedTextureIDs.push(mat.map);
-      }
-      if (mat.normalMap) {
-        referencedTextureIDs.push(mat.normalMap);
-      }
-      if (mat.roughnessMap) {
-        referencedTextureIDs.push(mat.roughnessMap);
-      }
-      return referencedTextureIDs;
-    });
+    const missingTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
     fetchAndSetTextures(missingTextureIDs).then(() => {
       didInitMats = false;
       materialDefinitions = { ...serverState.materials };

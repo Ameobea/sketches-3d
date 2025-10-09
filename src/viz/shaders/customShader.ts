@@ -112,6 +112,8 @@ export interface CustomShaderProps {
   metalness?: number;
   clearcoat?: number;
   clearcoatRoughness?: number;
+  clearcoatNormalMap?: THREE.Texture;
+  clearcoatNormalScale?: number;
   iridescence?: number;
   sheen?: number;
   sheenColor?: THREE.Color | number;
@@ -121,6 +123,7 @@ export interface CustomShaderProps {
   map?: THREE.Texture;
   normalMap?: THREE.Texture;
   roughnessMap?: THREE.Texture;
+  metalnessMap?: THREE.Texture;
   normalMapType?: THREE.NormalMapTypes;
   /**
    * If set to `true`, an attribute called `displacementNormal` is expected to be set on the geometry.
@@ -238,6 +241,8 @@ export const buildCustomShaderArgs = (
     metalness = 0,
     clearcoat = 0,
     clearcoatRoughness = 0,
+    clearcoatNormalMap,
+    clearcoatNormalScale = 1,
     iridescence = 0,
     sheen = 0,
     sheenColor = new THREE.Color(0xffffff),
@@ -253,6 +258,7 @@ export const buildCustomShaderArgs = (
     normalMapType,
     useDisplacementNormals,
     roughnessMap,
+    metalnessMap,
     emissiveIntensity,
     lightMapIntensity,
     fogMultiplier,
@@ -298,8 +304,8 @@ export const buildCustomShaderArgs = (
     UniformsLib.common,
     // UniformsLib.envmap,
     // UniformsLib.aomap,
-    UniformsLib.lightmap,
-    UniformsLib.emissivemap,
+    // UniformsLib.lightmap,
+    // UniformsLib.emissivemap,
     // UniformsLib.bumpmap,
     UniformsLib.normalmap,
     // UniformsLib.displacementmap,
@@ -325,7 +331,12 @@ export const buildCustomShaderArgs = (
   uniforms.ior = { type: 'f', value: ior };
   uniforms.clearcoat = { type: 'f', value: clearcoat };
   uniforms.clearcoatRoughness = { type: 'f', value: clearcoatRoughness };
-  uniforms.clearcoatNormal = { type: 'f', value: 0.0 };
+  uniforms.clearcoatNormalMap = { type: 't', value: clearcoatNormalMap };
+  uniforms.clearcoatNormalScale = {
+    type: 'v2',
+    value: new THREE.Vector2(clearcoatNormalScale, clearcoatNormalScale),
+  };
+  uniforms.clearcoatNormalMapTransform = { type: 'mat3', value: clearcoatNormalMap?.matrix };
   uniforms.iridescence = { type: 'f', value: iridescence };
   uniforms.iridescenceIOR = { type: 'f', value: 1.3 };
   uniforms.iridescenceThicknessMinimum = { type: 'f', value: 100 };
@@ -355,6 +366,8 @@ export const buildCustomShaderArgs = (
   if (emissiveIntensity !== undefined) {
     uniforms.emissiveIntensity = { type: 'f', value: emissiveIntensity };
   }
+  uniforms.specularIntensity = { type: 'f', value: 1 };
+  uniforms.specularColor = { type: 'c', value: new THREE.Color(0xffffff) };
   // TODO: Need to handle swapping uvs to `uv2` if light map is provided
   if (lightMapIntensity !== undefined) {
     uniforms.lightMapIntensity = { type: 'f', value: lightMapIntensity };
@@ -364,7 +377,7 @@ export const buildCustomShaderArgs = (
 
   // TODO: enable physically correct lights, look into it at least
 
-  if (tileBreaking && !map) {
+  if (tileBreaking && !map && !normalMap && !clearcoatNormalMap && !roughnessMap && !metalnessMap) {
     throw new Error('Tile breaking requires a map');
   }
 
@@ -768,6 +781,67 @@ material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iride
       }`;
   };
 
+  const buildClearcoatNormalMapFragment = () => {
+    if (!clearcoatNormalMap) {
+      return '';
+    }
+
+    const inner = (() => {
+      if (useTriplanarMapping) {
+        return `
+          // TODO: I'm pretty sure double-applying uv transform is wrong, here and in all others
+          vec3 newClearcoatWorldNormal = triplanarTextureNormalMap(clearcoatNormalMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, clearcoatNormalScale).xyz;
+          // Transform \`newWorldNormal\` from world space to view space
+          clearcoatNormal = normalize((viewMatrix * vec4(newClearcoatWorldNormal, 0.)).xyz);
+          `;
+      }
+
+      if (tileBreaking) {
+        return `
+    ${
+      tileBreaking.type === 'neyret'
+        ? 'vec3 clearcoatMapN = textureNoTileNeyret(clearcoatNormalMap, vClearcoatNormalMapUv).xyz;'
+        : `vec3 clearcoatMapN = textureNoTile(clearcoatNormalMap, noiseSampler, vClearcoatNormalMapUv, 0., ${fastFixMipMapTileBreakingScale}).xyz;`
+    }
+
+    clearcoatMapN = clearcoatMapN * 2.0 - 1.0;
+    clearcoatMapN = normalize(clearcoatMapN);
+    clearcoatMapN.xy *= clearcoatNormalScale;
+
+    #ifdef USE_NORMALMAP_TANGENTSPACE
+      clearcoatNormal = normalize( tbn2 * clearcoatMapN );
+    #else
+      UNIMPLEMENTED_5
+    #endif
+`;
+      } else {
+        return `
+#ifdef USE_CLEARCOAT_NORMALMAP
+
+	vec3 clearcoatMapN = texture2D( clearcoatNormalMap, vClearcoatNormalMapUv ).xyz * 2.0 - 1.0;
+	clearcoatMapN.xy *= clearcoatNormalScale;
+
+	clearcoatNormal = normalize( tbn2 * clearcoatMapN );
+
+#endif
+`;
+      }
+    })();
+
+    if (typeof mapDisableDistance !== 'number') {
+      return inner;
+    }
+
+    return `
+      vec3 baseClearcoatNormal = clearcoatNormal;
+      if (textureActivation < 0.01) {
+        // avoid any texture lookups, relieve pressure on the texture unit
+      } else {
+        ${inner}
+        clearcoatNormal = mix(baseClearcoatNormal, clearcoatNormal, textureActivation);
+      }`;
+  };
+
   return {
     fog: true,
     lights: true,
@@ -886,6 +960,9 @@ void main() {
   #endif
   #if defined(USE_METALNESSMAP) && defined(USE_UV)
     vMetalnessMapUv = ( metalnessMapTransform * vec3( vUv, 1 ) ).xy;
+  #endif
+  #if defined(USE_CLEARCOAT_NORMALMAP)
+    vClearcoatNormalMapUv = ( clearcoatNormalMapTransform * vec3( vUv, 1 ) ).xy;
   #endif
 
   #include <shadowmap_vertex>
@@ -1078,7 +1155,10 @@ void main() {
   ${buildNormalMapFragment()}
 
 	#include <clearcoat_normal_fragment_begin>
-	#include <clearcoat_normal_fragment_maps>
+	// #include <clearcoat_normal_fragment_maps>
+  #if defined(USE_CLEARCOAT) && defined(USE_CLEARCOAT_NORMALMAP)
+    ${buildClearcoatNormalMapFragment()}
+  #endif
 
   ${buildRunColorShaderFragment()}
 
@@ -1207,6 +1287,8 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
    */
   public materialClass: MaterialClass = MaterialClass.Default;
   public flatShading: boolean = false;
+  public isMeshStandardMaterial = true;
+  public isMeshPhysicalMaterial = true;
   /**
    * This flag is set when the material makes use of SSR and expects a second color attachment to be
    * set on the framebuffer.
@@ -1216,6 +1298,25 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
    * texture is bound but not written to.
    */
   public needsSSRBuffer = false;
+
+  public specularMap?: THREE.Texture;
+  public specularColor: THREE.Color = new THREE.Color(0xffffff);
+
+  public roughness: number = 1;
+  public metalness: number = 0;
+
+  public map?: THREE.Texture;
+
+  public normalScale?: THREE.Vector2;
+  public normalMap?: THREE.Texture;
+  public normalMapType?: THREE.NormalMapTypes;
+  public roughnessMap?: THREE.Texture;
+  public metalnessMap?: THREE.Texture;
+
+  public clearcoat?: number;
+  public clearcoatRoughness?: number;
+  public clearcoatNormalMap?: THREE.Texture;
+  public clearcoatNormalScale?: THREE.Vector2;
 
   constructor(args: THREE.ShaderMaterialParameters, materialClass: MaterialClass) {
     super(args);
@@ -1260,7 +1361,15 @@ export const buildCustomShader = (
   }
 
   if (props.clearcoat || props.clearcoatRoughness) {
-    mat.defines.USE_CLEARCOAT = '1';
+    mat.clearcoat = props.clearcoat ?? 0;
+    mat.clearcoatRoughness = props.clearcoatRoughness ?? 0;
+  }
+  if (props.clearcoatNormalMap) {
+    mat.clearcoatNormalMap = props.clearcoatNormalMap;
+    mat.clearcoatNormalScale = new THREE.Vector2(
+      props.clearcoatNormalScale ?? 1,
+      props.clearcoatNormalScale ?? 1
+    );
   }
 
   if (props.iridescence || shaders?.iridescenceShader) {
@@ -1279,6 +1388,9 @@ export const buildCustomShader = (
     mat.defines.SSR_ALPHA = '0.';
   }
 
+  mat.metalness = props.metalness ?? 0;
+  mat.roughness = props.roughness ?? 1;
+
   mat.defines.PHYSICAL = '1';
   mat.defines.USE_UV = '1';
   if (props.map) {
@@ -1286,23 +1398,28 @@ export const buildCustomShader = (
     mat.uniforms.map.value = props.map;
   }
   if (props.normalMap) {
-    (mat as any).normalMap = props.normalMap;
-    (mat as any).normalMapType = props.normalMapType ?? THREE.TangentSpaceNormalMap;
+    mat.normalMap = props.normalMap;
+    mat.normalMapType = props.normalMapType ?? THREE.TangentSpaceNormalMap;
+    mat.normalScale = new THREE.Vector2(props.normalScale ?? 1, props.normalScale ?? 1);
     mat.uniforms.normalMap.value = props.normalMap;
   }
   if (props.roughnessMap) {
-    (mat as any).roughnessMap = props.roughnessMap;
+    mat.roughnessMap = props.roughnessMap;
     mat.uniforms.roughnessMap.value = props.roughnessMap;
+  }
+  if (props.clearcoatNormalMap) {
+    mat.clearcoatNormalMap = props.clearcoatNormalMap;
+    mat.uniforms.clearcoatNormalMap.value = props.clearcoatNormalMap;
   }
   if (props.emissiveIntensity !== undefined) {
     (mat as any).emissiveIntensity = props.emissiveIntensity;
     mat.uniforms.emissiveIntensity.value = props.emissiveIntensity;
   }
-  if (props.lightMap) {
-    (mat as any).lightMap = props.lightMap;
-    mat.uniforms.lightMap.value = props.lightMap;
-    mat.uniforms.lightMapIntensity.value = props.lightMapIntensity ?? 1;
-  }
+  // if (props.lightMap) {
+  //   (mat as any).lightMap = props.lightMap;
+  //   mat.uniforms.lightMap.value = props.lightMap;
+  //   mat.uniforms.lightMapIntensity.value = props.lightMapIntensity ?? 1;
+  // }
   if (props.transparent) {
     (mat as any).transparent = props.transparent;
   }

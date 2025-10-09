@@ -45,6 +45,8 @@ export interface PhysicalMaterialDef {
   metalness: number;
   clearcoat: number;
   clearcoatRoughness: number;
+  clearcoatNormalMap?: TextureID;
+  clearcoatNormalScale?: number;
   iridescence: number;
   sheen?: number;
   sheenColor?: RGBColor;
@@ -118,7 +120,8 @@ const buildPhysicalShader = (
   id: MaterialID,
   map: THREE.Texture | undefined,
   normalMap: THREE.Texture | undefined,
-  roughnessMap: THREE.Texture | undefined
+  roughnessMap: THREE.Texture | undefined,
+  clearcoatNormalMap: THREE.Texture | undefined
 ) => {
   const defaultShaders = buildDefaultShaders();
   const customShaders: Partial<CustomShaderShaders> = {};
@@ -152,6 +155,8 @@ const buildPhysicalShader = (
       metalness: def.metalness,
       clearcoat: def.clearcoat,
       clearcoatRoughness: def.clearcoatRoughness,
+      clearcoatNormalMap,
+      clearcoatNormalScale: def.clearcoatNormalScale,
       iridescence: def.iridescence,
       sheen: def.sheen ?? 0,
       sheenColor: def.sheenColor
@@ -201,17 +206,23 @@ export const buildMaterial = (
       loader,
       def.roughnessMap
     );
+    const clearcoatNormalMapP: Promise<THREE.Texture> | THREE.Texture | undefined = maybeLoadTexture(
+      loader,
+      def.clearcoatNormalMap
+    );
 
     if (
       !(mapP instanceof Promise) &&
       !(normalMapP instanceof Promise) &&
-      !(roughnessMapP instanceof Promise)
+      !(roughnessMapP instanceof Promise) &&
+      !(clearcoatNormalMapP instanceof Promise)
     ) {
-      return buildPhysicalShader(def, id, mapP, normalMapP, roughnessMapP);
+      return buildPhysicalShader(def, id, mapP, normalMapP, roughnessMapP, clearcoatNormalMapP);
     }
 
-    return Promise.all([mapP, normalMapP, roughnessMapP] as const).then(([map, normalMap, roughnessMap]) =>
-      buildPhysicalShader(def, id, map, normalMap, roughnessMap)
+    return Promise.all([mapP, normalMapP, roughnessMapP, clearcoatNormalMapP] as const).then(
+      ([map, normalMap, roughnessMap, clearcoatNormalMap]) =>
+        buildPhysicalShader(def, id, map, normalMap, roughnessMap, clearcoatNormalMap)
     );
   } else {
     def satisfies never;

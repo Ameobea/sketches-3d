@@ -15,7 +15,9 @@
     rerun,
   }: {
     material: MaterialDef;
-    onpicktexture: (name: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap') => void;
+    onpicktexture: (
+      name: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'clearcoatNormalMap'
+    ) => void;
     oneditshaders: () => void;
     onviewuvmappings: () => void;
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
@@ -250,6 +252,18 @@
           <FormField label="clearcoat roughness">
             <input type="range" min="0" max="1" step="0.01" bind:value={material.clearcoatRoughness} />
             <span>{material.clearcoatRoughness?.toFixed(2)}</span>
+          </FormField>
+          <FormField label="clearcoat normal map">
+            <TexturePreview
+              texture={material.clearcoatNormalMap
+                ? Textures.textures[material.clearcoatNormalMap]
+                : undefined}
+              onclick={() => onpicktexture('clearcoatNormalMap')}
+            />
+          </FormField>
+          <FormField label="clearcoat normal scale">
+            <input type="range" min="0" max="5" step="0.01" bind:value={material.clearcoatNormalScale} />
+            <span>{material.clearcoatNormalScale?.toFixed(2)}</span>
           </FormField>
           <FormField label="iridescence">
             <input type="range" min="0" max="1" step="0.01" bind:value={material.iridescence} />

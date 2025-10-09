@@ -38,11 +38,11 @@
     | { type: 'properties' }
     | {
         type: 'texture_picker';
-        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap';
+        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'clearcoatNormalMap';
       }
     | {
         type: 'texture_uploader';
-        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap';
+        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'clearcoatNormalMap';
       }
     | { type: 'shader_editor' }
     | { type: 'uv_viewer' }
@@ -157,9 +157,10 @@
           />
         {:else if view.type === 'texture_picker'}
           {#if materials.materials[selectedMaterialID].type === 'physical'}
+            {@const mat = materials.materials[selectedMaterialID] as PhysicalMaterialDef}
             {@const field = view.field}
             <TexturePicker
-              bind:selectedTextureId={materials.materials[selectedMaterialID][view.field]}
+              bind:selectedTextureId={mat[field]}
               onclose={() => {
                 view = { type: 'properties' };
               }}
@@ -170,6 +171,7 @@
           {/if}
         {:else if view.type === 'texture_uploader'}
           {#if materials.materials[selectedMaterialID].type === 'physical'}
+            {@const mat = materials.materials[selectedMaterialID] as PhysicalMaterialDef}
             {@const field = view.field}
             <TextureUploader
               onclose={() => {
@@ -181,7 +183,7 @@
                 }
 
                 if (materials.materials[selectedMaterialID].type === 'physical') {
-                  materials.materials[selectedMaterialID][field] = texture.id;
+                  mat[field] = texture.id;
                 }
                 view = { type: 'properties' };
               }}
