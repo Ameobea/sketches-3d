@@ -1,4 +1,3 @@
-import type * as Comlink from 'comlink';
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';

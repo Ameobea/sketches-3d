@@ -66,7 +66,7 @@ export const loadTexture = (
   );
 
 export const loadNamedTextures = async <
-  T extends { [key: string]: string | [string] | [string, Partial<TextureArgs> | undefined] }
+  T extends { [key: string]: string | [string] | [string, Partial<TextureArgs> | undefined] },
 >(
   loader: THREE.ImageBitmapLoader,
   textureMap: T
@@ -183,7 +183,7 @@ export const genCrossfadedTexture = async (
   });
 
   const workerPool = await workersP;
-  const crossfadedTextureBytes: Uint8Array = await workerPool.submitWork(worker =>
+  const crossfadedTextureBytes: Uint8Array<ArrayBuffer> = await workerPool.submitWork(worker =>
     worker.genCrossfadedTexture(textureData, canvas.width, threshold)
   );
   if (

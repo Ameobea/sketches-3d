@@ -1,4 +1,3 @@
-import type { Viz } from 'src/viz';
 import * as THREE from 'three';
 
 export interface ShadowMapSize {
@@ -41,7 +40,7 @@ enum LightType {
   Directional,
 }
 
-export const buildAndAddLight = (viz: Viz, light: Light, renderMode: boolean): THREE.Light => {
+export const buildLight = (light: Light, renderMode: boolean): THREE.Light => {
   let lightType: LightType;
   if ('Ambient' in light) {
     lightType = LightType.Ambient;
@@ -55,7 +54,6 @@ export const buildAndAddLight = (viz: Viz, light: Light, renderMode: boolean): T
     case LightType.Ambient: {
       const ambientLight = (light as Extract<Light, { Ambient: any }>).Ambient[0];
       const builtLight = new THREE.AmbientLight(ambientLight.color, ambientLight.intensity);
-      viz.scene.add(builtLight);
       return builtLight;
     }
     case LightType.Directional: {
@@ -86,8 +84,6 @@ export const buildAndAddLight = (viz: Viz, light: Light, renderMode: boolean): T
         dirLight.target[0][1],
         dirLight.target[0][2]
       );
-      viz.scene.add(directionalLight);
-      viz.scene.add(directionalLight.target);
       return directionalLight;
     }
   }

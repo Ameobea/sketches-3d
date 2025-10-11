@@ -13,5 +13,21 @@
     "list": "cpp",
     "vector": "cpp",
     "ranges": "cpp"
-  }
+  },
+  "eslint.probe": [
+    "astro",
+    "civet",
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact",
+    "html",
+    "mdx",
+    "vue",
+    "markdown",
+    "json",
+    "jsonc",
+    "svelte"
+  ],
+  "eslint.validate": ["javascript", "javascriptreact", "svelte"]
 }

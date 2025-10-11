@@ -51,6 +51,8 @@
   });
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-overlay" onclick={onclose}>
   <div class="modal-content" onclick={e => e.stopPropagation()}>
     <button class="close-button" onclick={onclose}>×</button>

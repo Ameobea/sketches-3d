@@ -1,37 +1,30 @@
 <script lang="ts">
   import * as THREE from 'three';
   import { onDestroy, onMount } from 'svelte';
-  import { EditorView, type KeyBinding } from '@codemirror/view';
+  import type { EditorView, KeyBinding } from '@codemirror/view';
   import type * as Comlink from 'comlink';
+  import { resolve } from '$app/paths';
 
   import type { Viz } from 'src/viz';
   import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
   import { buildEditor } from '../../../geoscript/editor';
-  import { buildAndAddLight } from './lights';
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
   import SaveControls from './SaveControls.svelte';
   import { goto } from '$app/navigation';
-  import { DefaultCameraPos, DefaultCameraTarget, type ReplCtx, type RunStats } from './types';
+  import { type ReplCtx, type RunStats } from './types';
   import ReplOutput from './ReplOutput.svelte';
   import ReplControls from './ReplControls.svelte';
   import ExportModal from './ExportModal.svelte';
+  import { runGeoscript } from 'src/geoscript/runner/runner';
   import {
-    buildMaterial,
-    FallbackMat,
     HiddenMat,
-    LineMat,
     NormalMat,
     WireframeMat,
     type MaterialDef,
     type MaterialDefinitions,
   } from 'src/geoscript/materials';
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
-  import {
-    getMultipleTextures,
-    type CompositionVersionMetadata,
-    type TextureID,
-  } from 'src/geoscript/geotoyAPIClient';
-  import { Textures } from './materialEditor/state.svelte';
+  import { type CompositionVersionMetadata } from 'src/geoscript/geotoyAPIClient';
   import {
     clearSavedState,
     getIsDirty,
@@ -41,11 +34,17 @@
     saveState,
     setLastRunWasSuccessful,
   } from './persistence';
-  import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
-  import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
-  import { getIsUVUnwrapLoaded, initUVUnwrap, unwrapUVs } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
+  import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
   import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
-  import { getUVUnwrapWorker } from 'src/geoscript/uvUnwrapWorker';
+  import { populateScene } from 'src/geoscript/runner/geoscriptRunner';
+  import type { MatEntry, RenderedObject } from 'src/geoscript/runner/types';
+  import {
+    buildCustomMaterials,
+    fetchAndSetTextures,
+    getReferencedTextureIDs,
+  } from './materialLoading.svelte';
+  import { centerView, snapView, orbit } from './cameraControls';
+  import { buildLightHelpers, toggleAxisHelpers, toggleLightHelpers } from './gizmos';
 
   let {
     viz,
@@ -124,11 +123,7 @@
   let err: string | null = $state(null);
   let isRunning: boolean = $state(false);
   let runStats: RunStats | null = $state(null);
-  let renderedObjects: (
-    | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
-    | THREE.Line<THREE.BufferGeometry, THREE.Material>
-    | THREE.Light
-  )[] = $state([]);
+  let renderedObjects: RenderedObject[] = $state([]);
   let lightHelpers: THREE.Object3D[] = $state([]);
 
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
@@ -194,7 +189,7 @@
       {
         key: 'Ctrl-.',
         run: () => {
-          centerView();
+          centerView(viz, renderedObjects);
           return true;
         },
       },
@@ -239,161 +234,6 @@
 
   let materialOverride = $state<'wireframe' | 'normal' | null>(null);
 
-  const fetchAndSetTextures = async (textureIDs: TextureID[]) => {
-    if (textureIDs.length === 0) {
-      return;
-    }
-
-    const adminToken = new URLSearchParams(window.location.search).get('admin_token') ?? undefined;
-    await getMultipleTextures(textureIDs, undefined, adminToken).then(textures => {
-      const allTextures = { ...Textures.textures };
-      for (const texture of textures) {
-        allTextures[texture.id] = texture;
-      }
-      Textures.textures = allTextures;
-    });
-  };
-
-  const computeCompositeBoundingBox = (
-    objects: (
-      | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
-      | THREE.Line<THREE.BufferGeometry, THREE.Material>
-      | THREE.Light
-    )[]
-  ): THREE.Box3 => {
-    const box = new THREE.Box3();
-    for (const obj of objects) {
-      if (!(obj instanceof THREE.Mesh || obj instanceof THREE.Line)) {
-        continue;
-      }
-
-      obj.geometry.computeBoundingBox();
-      const meshBox = obj.geometry.boundingBox;
-      if (meshBox) box.union(meshBox.applyMatrix4(obj.matrixWorld));
-    }
-    return box;
-  };
-
-  const centerView = async () => {
-    while (!viz.orbitControls) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-
-    if (!renderedObjects.length) {
-      viz.camera.position.copy(DefaultCameraPos);
-      viz.orbitControls!.target.copy(DefaultCameraTarget);
-      viz.camera.lookAt(DefaultCameraTarget);
-      viz.orbitControls!.update();
-      return;
-    }
-
-    const compositeBbox = computeCompositeBoundingBox(renderedObjects);
-    const boundingSphere = new THREE.Sphere();
-    compositeBbox.getBoundingSphere(boundingSphere);
-    let center = boundingSphere.center;
-    let radius = boundingSphere.radius;
-
-    if (Number.isNaN(center.x) || Number.isNaN(center.y) || Number.isNaN(center.z)) {
-      center = new THREE.Vector3(0, 0, 0);
-    }
-    if (radius <= 0 || Number.isNaN(radius)) {
-      radius = 1;
-    }
-
-    // try to keep the same look direction
-    const lookDir = new THREE.Vector3();
-    lookDir.copy(viz.camera.position).sub(viz.orbitControls!.target);
-
-    if (lookDir.lengthSq() === 0) {
-      lookDir.set(1, 1, 1);
-    }
-    lookDir.normalize();
-
-    const camera = viz.camera as THREE.PerspectiveCamera;
-    let distance;
-
-    if (!camera.isPerspectiveCamera) {
-      console.warn('centerView only works with PerspectiveCamera, falling back to old method');
-      const size = new THREE.Vector3();
-      compositeBbox.getSize(size);
-      const maxDim = Math.max(size.x, size.y, size.z);
-      distance = maxDim * 1.2 + 1;
-    } else {
-      const vfov = THREE.MathUtils.degToRad(camera.fov);
-      const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
-      const fov = Math.min(vfov, hfov);
-
-      // Compute distance to fit bounding sphere in view
-      distance = radius / Math.sin(fov / 2);
-
-      // Add a little padding so the object is not touching the screen edge
-      distance *= 1.1;
-    }
-
-    viz.camera.position.copy(center).add(lookDir.multiplyScalar(distance));
-    viz.orbitControls!.target.copy(center);
-    viz.camera.lookAt(center);
-    viz.orbitControls!.update();
-  };
-
-  const AXES = {
-    x: new THREE.Vector3(1, 0, 0),
-    y: new THREE.Vector3(0, 1, 0),
-    z: new THREE.Vector3(0, 0, 1),
-  } as const;
-
-  const snapView = (axis: 'x' | 'y' | 'z') => {
-    if (!viz.orbitControls) {
-      return;
-    }
-
-    const axisVec = AXES[axis];
-    const viewDir = new THREE.Vector3().subVectors(viz.orbitControls.target, viz.camera.position).normalize();
-    const dot = viewDir.dot(axisVec);
-
-    let sideSign: 1 | -1 = 1;
-    if (Math.abs(Math.abs(dot) - 1) < 1e-3) {
-      sideSign = dot < 0 ? -1 : 1;
-    }
-
-    const distance = viz.camera.position.distanceTo(viz.orbitControls.target);
-
-    viz.camera.position.copy(viz.orbitControls.target).addScaledVector(axisVec, distance * sideSign);
-    viz.camera.lookAt(viz.orbitControls.target);
-  };
-
-  const orbit = (axis: 'vertical' | 'horizontal', angle: number) => {
-    if (!viz.orbitControls) {
-      return;
-    }
-
-    const camera = viz.camera;
-    const target = viz.orbitControls.target;
-
-    const offset = new THREE.Vector3().subVectors(camera.position, target);
-    const s = new THREE.Spherical().setFromVector3(offset);
-
-    if (axis === 'horizontal') {
-      s.theta += angle;
-
-      const minAz = viz.orbitControls.minAzimuthAngle ?? -Infinity;
-      const maxAz = viz.orbitControls.maxAzimuthAngle ?? Infinity;
-      s.theta = Math.max(minAz, Math.min(maxAz, s.theta));
-    } else {
-      s.phi += angle;
-
-      const minPol = viz.orbitControls.minPolarAngle ?? 0;
-      const maxPol = viz.orbitControls.maxPolarAngle ?? Math.PI;
-      s.phi = Math.max(minPol, Math.min(maxPol, s.phi));
-    }
-
-    offset.setFromSpherical(s);
-    camera.position.copy(target).add(offset);
-    camera.lookAt(target);
-
-    viz.orbitControls.update();
-  };
-
   const toggleWireframe = () => {
     materialOverride = materialOverride === 'wireframe' ? null : 'wireframe';
     for (const obj of renderedObjects) {
@@ -424,32 +264,6 @@
   let materialDefinitions = $state<MaterialDefinitions>(initialMatDefs);
   let preludeEjected = $state(initialPreludeEjected);
 
-  const getReferencedTextureIDs = (materials: Record<string, MaterialDef>): TextureID[] => {
-    const textureIDs: TextureID[] = [];
-    for (const mat of Object.values(materials)) {
-      if (mat.type === 'basic') {
-        continue;
-      }
-
-      if (mat.map) {
-        textureIDs.push(mat.map);
-      }
-      if (mat.normalMap) {
-        textureIDs.push(mat.normalMap);
-      }
-      if (mat.roughnessMap) {
-        textureIDs.push(mat.roughnessMap);
-      }
-      if (mat.metalnessMap) {
-        textureIDs.push(mat.metalnessMap);
-      }
-      if (mat.clearcoatNormalMap) {
-        textureIDs.push(mat.clearcoatNormalMap);
-      }
-    }
-    return textureIDs;
-  };
-
   onMount(() => {
     const referencedTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
     if (referencedTextureIDs.length > 0) {
@@ -470,56 +284,15 @@
     );
   });
 
-  interface MatEntry {
-    promise: Promise<THREE.Material>;
-    resolved: THREE.Material | null;
-    beforeRenderCb?: (curTimeSeconds: number) => void;
-  }
-
   const loader = new THREE.ImageBitmapLoader();
-  let customMaterials: Record<string, MatEntry> = $derived.by(() => {
-    const builtMats: Record<string, MatEntry> = {};
-
-    // TODO: needs hashing to avoid re-building materials that haven't changed
+  let customMaterials: Record<string, MatEntry> = $derived.by(() =>
     // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
-    for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
-      const matMaybeP = buildMaterial(loader, def as MaterialDef, id);
-      const entry: MatEntry = {
-        promise: matMaybeP instanceof Promise ? matMaybeP : Promise.resolve(matMaybeP),
-        resolved: matMaybeP instanceof Promise ? null : matMaybeP,
-      };
-
-      const maybeRegisterBeforeRenderCb = (mat: THREE.Material) => {
-        if (
-          !(mat instanceof CustomShaderMaterial || mat instanceof CustomBasicShaderMaterial) ||
-          !def.shaders
-        ) {
-          return;
-        }
-
-        if (
-          def.shaders.color ||
-          (def.type === 'physical' &&
-            (def.shaders.iridescence || def.shaders.metalness || def.shaders.roughness))
-        ) {
-          const beforeRenderCb = (curTimeSeconds: number) => mat.setCurTimeSeconds(curTimeSeconds);
-          viz.registerBeforeRenderCb(beforeRenderCb);
-          entry.beforeRenderCb = beforeRenderCb;
-        }
-      };
-
-      if (matMaybeP instanceof Promise) {
-        matMaybeP.then(mat => {
-          maybeRegisterBeforeRenderCb(mat);
-          entry.resolved = mat;
-        });
-      } else {
-        maybeRegisterBeforeRenderCb(matMaybeP);
-      }
-      builtMats[id] = entry;
-    }
-    return builtMats;
-  });
+    buildCustomMaterials(
+      loader,
+      $state.snapshot(materialDefinitions.materials) as Record<string, MaterialDef>,
+      viz
+    )
+  );
 
   // avoid a ton of before render callbacks from being stuck around, which also prevents
   // old materials from being garbage collected
@@ -548,24 +321,16 @@
     }
   });
 
-  let {
-    customMaterialsByName,
-    matDefsByName,
-  }: {
-    customMaterialsByName: Record<
-      string,
-      { promise: Promise<THREE.Material>; resolved: THREE.Material | null }
-    >;
-    matDefsByName: Record<string, MaterialDef>;
-  } = $derived.by(() => {
+  let customMaterialsByName: Record<
+    string,
+    { promise: Promise<THREE.Material>; resolved: THREE.Material | null }
+  > = $derived.by(() => {
     const matsByName: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
       {};
-    const matDefsByName: Record<string, MaterialDef> = {};
     for (const [id, def] of Object.entries($state.snapshot(materialDefinitions.materials))) {
       matsByName[def.name] = customMaterials[id];
-      matDefsByName[def.name] = def as MaterialDef;
     }
-    return { customMaterialsByName: matsByName, matDefsByName };
+    return matsByName;
   });
 
   $effect(() => {
@@ -606,17 +371,20 @@
       return;
     }
 
-    if (typeof code !== 'string') {
-      if (editorView) {
-        code = editorView.state.doc.toString();
-      } else {
-        code = lastCode;
+    const finalCode = (() => {
+      if (typeof code === 'string') {
+        return code;
       }
-    }
+      if (editorView) {
+        return editorView.state.doc.toString();
+      }
+      return lastCode;
+    })();
 
     beforeUnloadHandler();
 
     isRunning = true;
+
     for (const obj of renderedObjects) {
       viz.scene.remove(obj);
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
@@ -624,171 +392,35 @@
       }
     }
     renderedObjects = [];
-
-    await repl.reset(ctxPtr);
     runStats = null;
-    const startTime = performance.now();
+
     setLastRunWasSuccessful(false, userData);
-    try {
-      await repl.eval(ctxPtr, code, !preludeEjected);
-    } catch (evalErr) {
-      console.error('Error evaluating code:', err);
-      err = `Error evaluating code: ${evalErr}`;
+    const result = await runGeoscript({
+      code: finalCode,
+      ctxPtr,
+      repl,
+      materials: customMaterials,
+      materialDefinitions: materialDefinitions.materials,
+      includePrelude: !preludeEjected,
+      materialOverride,
+      renderMode: userData?.renderMode ?? false,
+    });
+
+    if (result.error) {
+      err = result.error;
       isRunning = false;
       return;
-    } finally {
-      setLastRunWasSuccessful(true, userData);
-    }
-    err = (await repl.getErr(ctxPtr)) || null;
-    if (err) {
-      isRunning = false;
-      return;
     }
 
-    const localRunStats: RunStats = {
-      runtimeMs: performance.now() - startTime,
-      renderedMeshCount: 0,
-      renderedPathCount: 0,
-      renderedLightCount: 0,
-      totalVtxCount: 0,
-      totalFaceCount: 0,
-    };
-
-    const overrideMat = (() => {
-      if (materialOverride === 'wireframe') {
-        return WireframeMat;
-      }
-      if (materialOverride === 'normal') {
-        return NormalMat;
-      }
-      return null;
-    })();
-
-    localRunStats.renderedMeshCount = await repl.getRenderedMeshCount(ctxPtr);
-    const newRenderedMeshes: (
-      | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
-      | THREE.Line<THREE.BufferGeometry, THREE.Material>
-      | THREE.Light
-    )[] = [];
-    for (let i = 0; i < localRunStats.renderedMeshCount; i += 1) {
-      let {
-        transform,
-        verts,
-        indices,
-        normals,
-        material: materialName,
-      } = await repl.getRenderedMesh(ctxPtr, i);
-      let uvs: Float32Array | null = null;
-      const matDef = matDefsByName[materialName];
-      const uvUnwrapParams = (() => {
-        if (!!overrideMat || matDef?.textureMapping?.type !== 'uv') {
-          return null;
-        }
-
-        return {
-          nCones: matDef.textureMapping.numCones,
-          flattenToDisk: matDef.textureMapping.flattenToDisk,
-          mapToSphere: matDef.textureMapping.mapToSphere,
-          enableUVIslandRotation: matDef.textureMapping.enableUVIslandRotation,
-        };
-      })();
-
-      if (uvUnwrapParams) {
-        try {
-          // TODO: should cache this to avoid re-computing UVs for meshes that haven't changed
-          // TODO: should parallelize this, running UV unwrap earlier
-          const uvUnwrapWorker = await getUVUnwrapWorker();
-          const unwrapRes = await uvUnwrapWorker.uvUnwrap(verts, indices, uvUnwrapParams);
-
-          if (unwrapRes.type === 'error') {
-            throw new Error(unwrapRes.message);
-          }
-
-          const { uvs: unwrappedUVs, verts: unwrappedVerts, indices: unwrappedIndices } = unwrapRes.out;
-          uvs = unwrappedUVs;
-          verts = unwrappedVerts;
-          indices = unwrappedIndices;
-        } catch (unwrapErr) {
-          err = `Error unwrapping UVs: ${unwrapErr}`;
-          return;
-        }
-      }
-
-      localRunStats.totalVtxCount += verts.length / 3;
-      localRunStats.totalFaceCount += indices.length / 3;
-
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
-      geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-
-      if (uvs) {
-        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-        geometry.computeVertexNormals();
-      } else if (normals) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      }
-
-      const matEntry = (() => {
-        if (!materialName) {
-          return { resolved: FallbackMat, promise: null };
-        }
-
-        const matEntry = customMaterialsByName[materialName];
-        if (!matEntry) {
-          console.warn(`mesh referenced undefined material: "${materialName}"`);
-          return { resolved: FallbackMat, promise: null };
-        }
-
-        return matEntry;
-      })();
-
-      const mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material> = new THREE.Mesh(
-        geometry,
-        overrideMat ? overrideMat : (matEntry.resolved ?? HiddenMat)
-      );
-      mesh.userData.materialName = materialName;
-      if (!matEntry.resolved && matEntry.promise) {
-        matEntry.promise.then(mat => {
-          mesh.material = mat;
-        });
-      }
-      mesh.applyMatrix4(new THREE.Matrix4().fromArray(transform));
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      viz.scene.add(mesh);
-      newRenderedMeshes.push(mesh);
-    }
-
-    localRunStats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
-    for (let i = 0; i < localRunStats.renderedPathCount; i += 1) {
-      const pathVerts: Float32Array = await repl.getRenderedPathVerts(ctxPtr, i);
-      localRunStats.totalVtxCount += pathVerts.length / 3;
-      localRunStats.totalFaceCount += pathVerts.length / 3 - 1;
-      const pathGeometry = new THREE.BufferGeometry();
-      pathGeometry.setAttribute('position', new THREE.BufferAttribute(pathVerts, 3));
-      const pathMaterial = LineMat;
-      const pathMesh = new THREE.Line(pathGeometry, pathMaterial);
-      pathMesh.castShadow = false;
-      pathMesh.receiveShadow = false;
-      viz.scene.add(pathMesh);
-      newRenderedMeshes.push(pathMesh);
-    }
-
-    localRunStats.renderedLightCount = await repl.getRenderedLightCount(ctxPtr);
-    for (let i = 0; i < localRunStats.renderedLightCount; i += 1) {
-      const light = await repl.getRenderedLight(ctxPtr, i);
-      const builtLight = buildAndAddLight(viz, light, userData?.renderMode ?? false);
-      newRenderedMeshes.push(builtLight);
-    }
-
-    renderedObjects = newRenderedMeshes;
-    runStats = localRunStats;
+    setLastRunWasSuccessful(true, userData);
+    runStats = result.stats;
+    renderedObjects = populateScene(viz.scene, result);
 
     for (const helper of lightHelpers) {
       viz.scene.remove(helper);
     }
     if (localStorage['geoscript-light-helpers'] === 'true') {
-      lightHelpers = buildLightHelpers(renderedObjects);
+      lightHelpers = buildLightHelpers(viz, renderedObjects);
     } else {
       lightHelpers = [];
     }
@@ -818,64 +450,6 @@
     }
     isEditorCollapsed = !isEditorCollapsed;
     onHeightChange(height, isEditorCollapsed);
-  };
-
-  const toggleAxisHelpers = () => {
-    const helper = viz.scene.children.find(obj => obj instanceof THREE.AxesHelper);
-    if (helper) {
-      viz.scene.remove(helper);
-      localStorage['geoscript-axis-helpers'] = 'false';
-    } else {
-      const axisHelper = new THREE.AxesHelper(100);
-      axisHelper.position.set(0, 0, 0);
-      viz.scene.add(axisHelper);
-      localStorage['geoscript-axis-helpers'] = 'true';
-    }
-  };
-
-  const buildLightHelpers = (
-    objects: (
-      | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
-      | THREE.Line<THREE.BufferGeometry, THREE.Material>
-      | THREE.Light
-    )[]
-  ): THREE.Object3D[] => {
-    const helpers: THREE.Object3D[] = [];
-    for (const obj of objects) {
-      if (obj instanceof THREE.DirectionalLight) {
-        const helper = new THREE.DirectionalLightHelper(obj, 5);
-        viz.scene.add(helper);
-        helpers.push(helper);
-        if (obj.castShadow) {
-          const shadowHelper = new THREE.CameraHelper(obj.shadow.camera);
-          viz.scene.add(shadowHelper);
-          helpers.push(shadowHelper);
-        }
-      } else if (obj instanceof THREE.PointLight) {
-        const helper = new THREE.PointLightHelper(obj, 1);
-        viz.scene.add(helper);
-        helpers.push(helper);
-      } else if (obj instanceof THREE.SpotLight) {
-        const helper = new THREE.SpotLightHelper(obj);
-        viz.scene.add(helper);
-        helpers.push(helper);
-      }
-    }
-    return helpers;
-  };
-
-  const toggleLightHelpers = () => {
-    const lightHelpersEnabled = localStorage['geoscript-light-helpers'] === 'true';
-    if (lightHelpersEnabled) {
-      for (const helper of lightHelpers) {
-        viz.scene.remove(helper);
-      }
-      lightHelpers = [];
-      localStorage['geoscript-light-helpers'] = 'false';
-    } else {
-      lightHelpers = buildLightHelpers(renderedObjects);
-      localStorage['geoscript-light-helpers'] = 'true';
-    }
   };
 
   const ejectPrelude = async (editorView: EditorView) => {
@@ -963,6 +537,11 @@
     isDirty = false;
   };
 
+  const wrappedToggleAxesHelpers = () => toggleAxisHelpers(viz);
+  const wrappedToggleLightHelpers = () => {
+    lightHelpers = toggleLightHelpers(viz, renderedObjects, lightHelpers);
+  };
+
   onMount(() => {
     if (userData?.renderMode) {
       const stats = document.getElementById('viz-stats');
@@ -974,16 +553,16 @@
     setTimeout(() => setView(initialView));
 
     setReplCtx({
-      centerView,
+      centerView: () => centerView(viz, renderedObjects),
       toggleWireframe,
       toggleNormalMat,
-      toggleLightHelpers,
-      toggleAxesHelper: toggleAxisHelpers,
+      toggleLightHelpers: wrappedToggleLightHelpers,
+      toggleAxesHelper: wrappedToggleAxesHelpers,
       getLastRunOutcome: () => lastRunOutcome,
       getAreAllMaterialsLoaded: () => Object.values(customMaterials).every(mat => mat.resolved),
       run,
-      snapView,
-      orbit,
+      snapView: axis => snapView(viz, axis),
+      orbit: (axis, angle) => orbit(viz, axis, angle),
     });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
@@ -1009,7 +588,7 @@
       }
     }
 
-    goto('/geotoy');
+    goto(resolve('/geotoy'));
   };
 </script>
 
@@ -1038,8 +617,8 @@
       {err}
       {onExport}
       {clearLocalChanges}
-      {toggleAxisHelpers}
-      {toggleLightHelpers}
+      toggleAxisHelpers={wrappedToggleAxesHelpers}
+      toggleLightHelpers={wrappedToggleLightHelpers}
       {isDirty}
       {preludeEjected}
       {togglePreludeEjected}
@@ -1070,8 +649,8 @@
             {err}
             {onExport}
             {clearLocalChanges}
-            {toggleAxisHelpers}
-            {toggleLightHelpers}
+            toggleAxisHelpers={wrappedToggleAxesHelpers}
+            toggleLightHelpers={wrappedToggleLightHelpers}
             {isDirty}
             {preludeEjected}
             {togglePreludeEjected}
@@ -1110,9 +689,9 @@
           <div class="not-logged-in" style="border-top: 1px solid #333">
             <span style="color: #ddd">you must be logged in to save/share compositions</span>
             <div>
-              <a href="/geotoy/login">log in</a>
+              <a href={resolve('/geotoy/login')}>log in</a>
               /
-              <a href="/geotoy/register">register</a>
+              <a href={resolve('/geotoy/register')}>register</a>
             </div>
           </div>
         {/if}
