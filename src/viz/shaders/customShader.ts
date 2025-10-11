@@ -1300,10 +1300,12 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
   public needsSSRBuffer = false;
 
   public specularMap?: THREE.Texture;
+  public specularIntensity: number = 1;
   public specularColor: THREE.Color = new THREE.Color(0xffffff);
 
   public roughness: number = 1;
   public metalness: number = 0;
+  public ior: number = 1.5;
 
   public map?: THREE.Texture;
 

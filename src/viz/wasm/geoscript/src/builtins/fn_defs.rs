@@ -1072,6 +1072,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       },
     ],
   },
+  "signum" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            valid_types: &[ArgType::Float],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns -1, 0, or 1 depending on the sign of the input.  For infinity, NaN, etc, the behavior is undefined.",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns -1, 0, or 1 depending on the sign of the input",
+        return_type: &[ArgType::Int],
+      }
+    ],
+  },
   "sqrt" => FnDef {
     module: "math",
     examples: &[],
@@ -2938,6 +2968,168 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
       },
     ],
   },
+  "acos" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the arccosine of a numeric value",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec3 with the arccosine of each component",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the arccosine of each component",
+        return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
+  "asin" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the arcsine of a numeric value",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec3 with the arcsine of each component",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the arcsine of each component",
+        return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
+  "atan" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the arctangent of a numeric value",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec3 with the arctangent of each component",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the arctangent of each component",
+        return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
+  "atan2" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "y",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the arctangent of `y / x`, using the signs of both arguments to determine the correct quadrant.",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "xy",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the arctangent of `y / x` for a Vec2, using the signs of both components to determine the correct quadrant.",
+        return_type: &[ArgType::Float],
+      }
+    ],
+  },
   "pow" => FnDef {
     module: "math",
     examples: &[],
@@ -4430,6 +4622,18 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Returns a normalized Vec3 (length 1) in the same direction as the input vector",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "v",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a normalized Vec2 (length 1) in the same direction as the input vector",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },

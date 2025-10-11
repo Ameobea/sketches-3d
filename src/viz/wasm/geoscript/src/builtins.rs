@@ -74,6 +74,7 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "push" => "append",
   "randv3" => "randv",
   "string" => "str",
+  "sign" => "signum",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -2047,6 +2048,10 @@ fn normalize_impl(
       let v = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(v.normalize()))
     }
+    1 => {
+      let v = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(v.normalize()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -2355,9 +2360,9 @@ fn subdivide_by_plane_impl(
 ) -> Result<Value, ErrorStack> {
   fn unhandled_transform_error() -> ErrorStack {
     ErrorStack::new(
-      "subdivide_by_plane does not currently support meshes with transforms.  Either apply before \
-       transforming or use `apply_transforms` to bake the transforms into the mesh vertex \
-       positions.",
+      "subdivide_by_plane does not currently support meshes with transforms.  Either call this \
+       function before transforming or use `apply_transforms` to bake the transforms into the \
+       mesh vertex positions.",
     )
   }
 
@@ -3252,6 +3257,107 @@ fn tanh_impl(
   }
 }
 
+fn acos_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.acos()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.acos(),
+        value.y.acos(),
+        value.z.acos(),
+      )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.acos(), value.y.acos())))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn asin_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.asin()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.asin(),
+        value.y.asin(),
+        value.z.asin(),
+      )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.asin(), value.y.asin())))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn atan_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.atan()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.atan(),
+        value.y.atan(),
+        value.z.atan(),
+      )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.atan(), value.y.atan())))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn atan2_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let y = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(y.atan2(x)))
+    }
+    1 => {
+      let v = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Float(v.y.atan2(v.x)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn box_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -3597,7 +3703,14 @@ fn apply_transforms_impl(
       for vtx in new_mesh.vertices.values_mut() {
         vtx.position = (mesh.transform * vtx.position.push(1.)).xyz();
       }
-      Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(new_mesh)))))
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(new_mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: mesh.material.clone(),
+      })))
     }
     _ => unimplemented!(),
   }
@@ -4202,6 +4315,25 @@ fn abs_impl(
   }
 }
 
+fn signum_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(value.signum()))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      Ok(Value::Int(value.signum()))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn sqrt_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -4609,6 +4741,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "abs" => builtin_fn!(abs, |def_ix, arg_refs, args, kwargs, _ctx| {
     abs_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "signum" => builtin_fn!(signum, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    signum_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "sqrt" => builtin_fn!(sqrt, |def_ix, arg_refs, args, kwargs, _ctx| {
     sqrt_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -4718,6 +4853,18 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "tanh" => builtin_fn!(tanh, |def_ix, arg_refs, args, kwargs, _ctx| {
     tanh_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "acos" => builtin_fn!(acos, |def_ix, arg_refs, args, kwargs, _ctx| {
+    acos_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "asin" => builtin_fn!(asin, |def_ix, arg_refs, args, kwargs, _ctx| {
+    asin_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "atan" => builtin_fn!(atan, |def_ix, arg_refs, args, kwargs, _ctx| {
+    atan_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "atan2" => builtin_fn!(atan2, |def_ix, arg_refs, args, kwargs, _ctx| {
+    atan2_impl(def_ix, arg_refs, args, kwargs)
   }),
   "pow" => builtin_fn!(pow, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     pow_impl(def_ix, arg_refs, args, kwargs)

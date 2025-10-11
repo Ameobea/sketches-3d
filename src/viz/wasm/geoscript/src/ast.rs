@@ -406,8 +406,8 @@ impl Expr {
                 default_val: None,
                 type_hint: match param.ident {
                   DestructurePattern::Ident(_) => param.type_hint.clone(),
-                  DestructurePattern::Map(_) => Some(TypeName::Map),
-                  DestructurePattern::Array(_) => Some(TypeName::Seq),
+                  DestructurePattern::Map(_) => None,
+                  DestructurePattern::Array(_) => None,
                 },
                 ident: DestructurePattern::Ident(ident.to_owned()),
               }),
@@ -2058,8 +2058,8 @@ fn fold_constants<'a>(
               default_val: None,
               type_hint: match param.ident {
                 DestructurePattern::Ident(_) => param.type_hint.clone(),
-                DestructurePattern::Map(_) => Some(TypeName::Map),
-                DestructurePattern::Array(_) => Some(TypeName::Seq),
+                DestructurePattern::Map(_) => None,
+                DestructurePattern::Array(_) => None,
               },
               ident: DestructurePattern::Ident(ident.to_owned()),
             }),

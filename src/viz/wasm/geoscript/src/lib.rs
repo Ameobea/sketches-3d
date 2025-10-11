@@ -3628,3 +3628,71 @@ y = vec3(9, z)
   };
   assert_eq!(y, Vec3::new(9., 1., 2.));
 }
+
+#[test]
+fn test_destructure_type_infer_repro() {
+  let src = r#"
+x = [[1, [1, 1]]]
+  -> |[r, [dx, dy]]| { box(1) | rot(0, r, 0) }
+  | collect
+  "#;
+
+  parse_and_eval_program(src).unwrap();
+}
+
+#[test]
+fn test_inverse_trig_buitins() {
+  let src = r#"
+a = asin(0.5)
+b = acos(0.5)
+c = atan(1.0)
+d = atan2(1.0, 1.0)
+
+e = asin(vec2(0.5, 0.2))
+f = acos(vec2(0.5, 0.6))
+g = atan(vec2(1.0, 0.3))
+
+h = asin(vec3(0.5, 0.0, 0.7))
+i = acos(vec3(0.5, 0.0, 0.5))
+j = atan(vec3(1.0, 0.0, 0.1))"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.globals.get("a").unwrap().as_float().unwrap();
+  assert_eq!(a, (0.5_f32).asin());
+  let b = ctx.globals.get("b").unwrap().as_float().unwrap();
+  assert_eq!(b, (0.5_f32).acos());
+  let c = ctx.globals.get("c").unwrap().as_float().unwrap();
+  assert_eq!(c, (1.0_f32).atan());
+  let d = ctx.globals.get("d").unwrap().as_float().unwrap();
+  assert_eq!(d, (1.0_f32).atan2(1.0));
+
+  let e = ctx.globals.get("e").unwrap();
+  let e = e.as_vec2().unwrap();
+  assert_eq!(e, &Vec2::new(0.5_f32.asin(), 0.2_f32.asin()));
+  let f = ctx.globals.get("f").unwrap();
+  let f = f.as_vec2().unwrap();
+  assert_eq!(f, &Vec2::new(0.5_f32.acos(), 0.6_f32.acos()));
+  let g = ctx.globals.get("g").unwrap();
+  let g = g.as_vec2().unwrap();
+  assert_eq!(g, &Vec2::new(1.0_f32.atan(), 0.3_f32.atan()));
+
+  let h = ctx.globals.get("h").unwrap();
+  let h = h.as_vec3().unwrap();
+  assert_eq!(
+    h,
+    &Vec3::new(0.5_f32.asin(), 0.0_f32.asin(), 0.7_f32.asin())
+  );
+  let i = ctx.globals.get("i").unwrap();
+  let i = i.as_vec3().unwrap();
+  assert_eq!(
+    i,
+    &Vec3::new(0.5_f32.acos(), 0.0_f32.acos(), 0.5_f32.acos())
+  );
+  let j = ctx.globals.get("j").unwrap();
+  let j = j.as_vec3().unwrap();
+  assert_eq!(
+    j,
+    &Vec3::new(1.0_f32.atan(), 0.0_f32.atan(), 0.1_f32.atan())
+  );
+}

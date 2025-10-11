@@ -403,7 +403,7 @@ pub fn remesh_planar_patches(
 pub fn remesh_planar_patches(
   _mesh: &MeshHandle,
   _max_angle_deg: f32,
-  _max_offset: Option<f32>,
+  _max_offset: f32,
 ) -> Result<MeshHandle, String> {
   Err("Planar patch remeshing is not supported outside of wasm".to_string())
 }
@@ -495,4 +495,15 @@ pub fn delaunay_remesh(
     trimesh: mesh.trimesh.clone(),
     material: mesh.material.clone(),
   })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn delaunay_remesh(
+  _mesh: &MeshHandle,
+  _target_edge_length: f32,
+  _facet_distance: f32,
+  _auto_sharp_edges: bool,
+  _sharp_angle_threshold_degrees: f32,
+) -> Result<MeshHandle, String> {
+  Err("Delaunay remeshing is not supported outside of wasm".to_string())
 }

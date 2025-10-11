@@ -15,7 +15,6 @@ use smallvec::SmallVec;
 use crate::{
   models::{
     stanford_bunny::{STANFORD_BUNNY_INDICES, STANFORD_BUNNY_VERTICES},
-    suzanne::{SUZANNE_INDICES, SUZANNE_VERTICES},
     utah_teapot::{UTAH_TEAPOT_INDICES, UTAH_TEAPOT_VERTICES},
   },
   OwnedIndexedMesh, OwnedIndexedMeshBuilder, OwnedMesh, Triangle,
@@ -2621,8 +2620,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       )
     };
     let indices = UTAH_TEAPOT_INDICES;
+    let indices = indices.iter().map(|&i| i as u32).collect::<Vec<_>>();
 
-    Self::from_indexed_vertices(verts, indices, None, None)
+    Self::from_indexed_vertices(verts, &indices, None, None)
   }
 
   pub fn new_stanford_bunny() -> Self {
@@ -2633,21 +2633,23 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       )
     };
     let indices = STANFORD_BUNNY_INDICES;
+    let indices = indices.iter().map(|&i| i as u32).collect::<Vec<_>>();
 
-    Self::from_indexed_vertices(verts, indices, None, None)
+    Self::from_indexed_vertices(verts, &indices, None, None)
   }
 
-  pub fn new_suzanne() -> Self {
-    let verts = unsafe {
-      std::slice::from_raw_parts(
-        SUZANNE_VERTICES.as_ptr() as *const Vec3,
-        SUZANNE_VERTICES.len(),
-      )
-    };
-    let indices = SUZANNE_INDICES;
+  // pub fn new_suzanne() -> Self {
+  //   let verts = unsafe {
+  //     std::slice::from_raw_parts(
+  //       SUZANNE_VERTICES.as_ptr() as *const Vec3,
+  //       SUZANNE_VERTICES.len(),
+  //     )
+  //   };
+  //   let indices = SUZANNE_INDICES;
+  //   let indices = indices.iter().map(|&i| i as u32).collect::<Vec<_>>();
 
-    Self::from_indexed_vertices(verts, indices, None, None)
-  }
+  //   Self::from_indexed_vertices(verts, &indices, None, None)
+  // }
 
   /// Actually flips the winding order of all faces in the mesh and updates all shading +
   /// displacement normals accordingly.

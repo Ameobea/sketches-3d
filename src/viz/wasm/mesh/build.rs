@@ -73,7 +73,7 @@ fn main() {
     dest_path,
     format!(
       "pub const UTAH_TEAPOT_VERTICES: &[[f32; 3]] = &{:?};\npub const UTAH_TEAPOT_INDICES: \
-       &[u32] = &{:?};\n",
+       &[u16] = &{:?};\n",
       vertices, indices
     ),
   )
@@ -93,7 +93,7 @@ fn main() {
     dest_path,
     format!(
       "pub const STANFORD_BUNNY_VERTICES: &[[f32; 3]] = &{:?};\npub const STANFORD_BUNNY_INDICES: \
-       &[u32] = &{:?};\n",
+       &[u16] = &{:?};\n",
       vertices, indices
     ),
   )
@@ -104,7 +104,7 @@ fn main() {
   std::fs::write(
     dest_path,
     format!(
-      "pub const SUZANNE_VERTICES: &[[f32; 3]] = &{:?};\npub const SUZANNE_INDICES: &[u32] = \
+      "pub const SUZANNE_VERTICES: &[[f32; 3]] = &{:?};\npub const SUZANNE_INDICES: &[u16] = \
        &{:?};\n",
       vertices, indices
     ),
