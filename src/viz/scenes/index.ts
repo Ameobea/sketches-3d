@@ -326,7 +326,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'stone' },
     gltfName: 'stone',
     extension: 'glb',
-    legacyLights: true,
+    legacyLights: false,
   },
   terrainSandbox: {
     gltfName: null,

@@ -1287,8 +1287,8 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
    */
   public materialClass: MaterialClass = MaterialClass.Default;
   public flatShading: boolean = false;
-  public isMeshStandardMaterial = true;
-  public isMeshPhysicalMaterial = true;
+  public isMeshStandardMaterial = false;
+  public isMeshPhysicalMaterial = false;
   /**
    * This flag is set when the material makes use of SSR and expects a second color attachment to be
    * set on the framebuffer.

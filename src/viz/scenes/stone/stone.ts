@@ -126,8 +126,8 @@ export const processLoadedScene = async (
   viz.renderer.shadowMap.enabled = true;
   // viz.renderer.shadowMap.type = THREE.VSMShadowMap;
 
-  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const sun = new THREE.DirectionalLight(0x4488bb, 1.6);
+  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.8 * 3));
+  const sun = new THREE.DirectionalLight(0x4488bb, 1.6 * 6);
   sun.castShadow = true;
   sun.shadow.mapSize.width = 2048 * 4;
   sun.shadow.mapSize.height = 2048 * 4;
@@ -285,7 +285,7 @@ export const processLoadedScene = async (
     { randomizeUVOffset: false }
   );
 
-  const stairsPointLight = new THREE.PointLight(0x6ef5f3, 1.1, 50, 0);
+  const stairsPointLight = new THREE.PointLight(0x6ef5f3, 1.1 * 3, 50, 0);
   stairsPointLight.castShadow = true;
   stairsPointLight.shadow.mapSize.width = 512;
   stairsPointLight.shadow.mapSize.height = 512;
@@ -294,7 +294,7 @@ export const processLoadedScene = async (
   stairsPointLight.position.set(-296.092529296875, 44.4, 271.1970947265625);
   viz.scene.add(stairsPointLight);
 
-  const stairsBottomPointLight = new THREE.PointLight(0x30dba5, 1.0, 120, 0.5);
+  const stairsBottomPointLight = new THREE.PointLight(0x30dba5, 1.0 * 3, 120, 0.1);
   stairsBottomPointLight.castShadow = true;
   stairsBottomPointLight.shadow.mapSize.width = 512;
   stairsBottomPointLight.shadow.mapSize.height = 512;
@@ -303,7 +303,7 @@ export const processLoadedScene = async (
   stairsBottomPointLight.position.set(-239, 1.5, 259);
   viz.scene.add(stairsBottomPointLight);
 
-  const stairsBottomOutsidePointLight = new THREE.PointLight(0x30dba5, 0.7, 40, 0.5);
+  const stairsBottomOutsidePointLight = new THREE.PointLight(0x30dba5, 0.7 * 3, 40, 0.2);
   stairsBottomOutsidePointLight.position.set(-238, 5, 235);
   viz.scene.add(stairsBottomOutsidePointLight);
 
@@ -385,10 +385,10 @@ export const processLoadedScene = async (
       map: totemAlbedo,
       normalMap: totemNormal,
       roughnessMap: totemRoughness,
-      metalness: 0.9,
+      metalness: 0.2,
       roughness: 1,
       uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
-      ambientLightScale: 8,
+      ambientLightScale: 1,
       ambientDistanceAmp: { ampFactor: -0.8, exponent: 1, falloffStartDistance: 50, falloffEndDistance: 150 },
     },
     {},
@@ -396,7 +396,7 @@ export const processLoadedScene = async (
   );
 
   const addTotemLight = (pos: [number, number, number]) => {
-    const light = new THREE.PointLight(0x6ef5f3, 1.5, 80, 2);
+    const light = new THREE.PointLight(0x6ef5f3, 1.5 * 3, 80, 0.3);
     light.castShadow = false;
     light.position.set(pos[0], pos[1], pos[2]);
     viz.scene.add(light);
@@ -432,7 +432,7 @@ export const processLoadedScene = async (
   const TotemBeamVisibilityWindowSeconds = 30;
   const TotemBeamHeight = 500;
   const totemBeamMat = buildCustomBasicShader(
-    { color: new THREE.Color(0x61041b) },
+    { color: new THREE.Color(0xd1041b) },
     { colorShader: TotemBeamColorShader }
   );
   totemBeamMat.transparent = true;
@@ -461,7 +461,7 @@ export const processLoadedScene = async (
     });
   });
 
-  const doorLight = new THREE.PointLight(0xee1111, 0.0001, 22, 2.2);
+  const doorLight = new THREE.PointLight(0xee1111, 0.0001 * 3, 22, 0.3);
   doorLight.position.set(-9, 40, 16);
   viz.scene.add(doorLight);
 
@@ -521,7 +521,7 @@ export const processLoadedScene = async (
     viz.fpCtx!.removeCollisionObject(door.userData.rigidBody);
     delete door.userData.rigidBody;
 
-    doorLight.intensity = 3;
+    doorLight.intensity = 9;
 
     exitPortal.visible = true;
 
@@ -651,7 +651,7 @@ export const processLoadedScene = async (
       selectiveBloomEffect.selection.set([...monolithLightBeams, ...totems, ...doorLights, exitPortal]);
       composer.addPass(new EffectPass(viz.camera, selectiveBloomEffect));
     },
-    extraParams: { toneMappingExposure: 1.3 },
+    extraParams: { toneMappingExposure: 1.2 },
   });
 
   return {

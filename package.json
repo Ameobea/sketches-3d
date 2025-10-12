@@ -51,7 +51,7 @@
     "rand-seed": "^2.1.7",
     "seed-random": "^2.2.0",
     "svelte-seo": "1.7.1",
-    "three": "^0.159.0",
+    "three": "^0.165.0",
     "three-good-godrays": "^0.7.1",
     "tweakpane": "^4.0.5",
     "zod": "^4.1.12"
