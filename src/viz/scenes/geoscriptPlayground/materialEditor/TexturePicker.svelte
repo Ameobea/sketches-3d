@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Textures } from './state.svelte';
-  import { listTextures, type Texture, type TextureID } from 'src/geoscript/geotoyAPIClient';
+  import { listTextures, type TextureDescriptor, type TextureID } from 'src/geoscript/geotoyAPIClient';
 
   let {
     selectedTextureId = $bindable(),
@@ -13,8 +13,8 @@
   } = $props();
 
   const origSelectedTextureId = selectedTextureId;
-  let filteredTextures = $state<Texture[]>([]);
-  let selectedTextureForPreview = $state<Texture | null>(
+  let filteredTextures = $state<TextureDescriptor[]>([]);
+  let selectedTextureForPreview = $state<TextureDescriptor | null>(
     selectedTextureId ? Textures.textures[selectedTextureId] : null
   );
   let searchTerm = $state('');
@@ -23,7 +23,7 @@
   $effect(() => {
     isLoading = true;
     listTextures().then(textures => {
-      const texturesByID: Record<TextureID, Texture> = {};
+      const texturesByID: Record<TextureID, TextureDescriptor> = {};
       for (const texture of textures) {
         texturesByID[texture.id] = texture;
       }
@@ -44,7 +44,7 @@
     }
   });
 
-  const handleSelect = (texture: Texture | null) => {
+  const handleSelect = (texture: TextureDescriptor | null) => {
     selectedTextureId = texture?.id || null;
     selectedTextureForPreview = texture;
   };

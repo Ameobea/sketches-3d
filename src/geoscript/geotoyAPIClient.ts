@@ -262,7 +262,7 @@ export const deleteComposition = (id: number): Promise<void> =>
 
 export type TextureID = number;
 
-export interface Texture {
+export interface TextureDescriptor {
   id: TextureID;
   name: string;
   thumbnailUrl: string;
@@ -272,25 +272,26 @@ export interface Texture {
   createdAt: string;
 }
 
-export const listTextures = (fetch: typeof globalThis.fetch = globalThis.fetch): Promise<Texture[]> =>
-  apiFetch<Texture[]>('/textures', {}, fetch);
+export const listTextures = (
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<TextureDescriptor[]> => apiFetch<TextureDescriptor[]>('/textures', {}, fetch);
 
 export const getTexture = (
   id: TextureID,
   fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<Texture> => apiFetch<Texture>(`/textures/${id}`, {}, fetch);
+): Promise<TextureDescriptor> => apiFetch<TextureDescriptor>(`/textures/${id}`, {}, fetch);
 
 export const createTexture = (
   name: string,
   file: File,
   is_shared: boolean,
   fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<Texture> => {
+): Promise<TextureDescriptor> => {
   const searchParams = new URLSearchParams();
   searchParams.set('name', name);
   searchParams.set('is_shared', is_shared.toString());
 
-  return apiFetch<Texture>(
+  return apiFetch<TextureDescriptor>(
     `/textures?${searchParams.toString()}`,
     {
       method: 'POST',
@@ -305,12 +306,12 @@ export const createTextureFromURL = (
   url: string,
   is_shared: boolean,
   fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<Texture> => {
+): Promise<TextureDescriptor> => {
   const searchParams = new URLSearchParams();
   searchParams.set('name', name);
   searchParams.set('is_shared', is_shared.toString());
 
-  return apiFetch<Texture>(
+  return apiFetch<TextureDescriptor>(
     `/textures/from_url?${searchParams.toString()}`,
     {
       method: 'POST',
@@ -324,7 +325,7 @@ export const getMultipleTextures = (
   ids: TextureID[],
   fetch: typeof globalThis.fetch = globalThis.fetch,
   adminToken?: string
-): Promise<Texture[]> => {
+): Promise<TextureDescriptor[]> => {
   const searchParams = new URLSearchParams();
   for (const id of ids) {
     searchParams.append('id', id.toString());
@@ -332,7 +333,7 @@ export const getMultipleTextures = (
   if (adminToken) {
     searchParams.set('admin_token', adminToken);
   }
-  return apiFetch<Texture[]>(`/textures/multiple?${searchParams.toString()}`, {}, fetch);
+  return apiFetch<TextureDescriptor[]>(`/textures/multiple?${searchParams.toString()}`, {}, fetch);
 };
 
 export const unwrapUVs = async (

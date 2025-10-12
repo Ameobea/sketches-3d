@@ -1,23 +1,46 @@
 import { getMultipleTextures, type TextureID } from 'src/geoscript/geotoyAPIClient';
-import { buildMaterial, type MaterialDef } from 'src/geoscript/materials';
+import { buildMaterial, LoadedTextures, type MaterialDef } from 'src/geoscript/materials';
 import type { MatEntry } from 'src/geoscript/runner/types';
 import type { Viz } from 'src/viz';
 import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
 import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
 import { Textures } from './materialEditor/state.svelte';
+import { loadTexture } from 'src/viz/textureLoading';
 
-export const fetchAndSetTextures = async (textureIDs: TextureID[]) => {
-  if (textureIDs.length === 0) {
+export const fetchAndSetTextures = async (loader: THREE.ImageBitmapLoader, textureIDs: TextureID[]) => {
+  const missingTextureIDs = textureIDs.filter(id => !(id in LoadedTextures));
+  if (missingTextureIDs.length === 0) {
     return;
   }
 
-  const adminToken = new URLSearchParams(window.location.search).get('admin_token') ?? undefined;
-  await getMultipleTextures(textureIDs, undefined, adminToken).then(textures => {
-    const allTextures = { ...Textures.textures };
-    for (const texture of textures) {
-      allTextures[texture.id] = texture;
+  const resolvers: (((tex: THREE.Texture) => void) | null)[] = [];
+  for (const id of missingTextureIDs) {
+    if (LoadedTextures.has(id)) {
+      resolvers.push(null);
+      continue;
     }
-    Textures.textures = allTextures;
+    const p = new Promise<THREE.Texture>(resolve => {
+      resolvers.push(resolve);
+    });
+    LoadedTextures.set(id, p);
+  }
+
+  const adminToken = new URLSearchParams(window.location.search).get('admin_token') ?? undefined;
+  await getMultipleTextures(missingTextureIDs, undefined, adminToken).then(textures => {
+    const allTextures = { ...Textures.textures };
+    textures.forEach((tex, i) => {
+      allTextures[tex.id] = tex;
+      const resolver = resolvers[i];
+      if (resolver) {
+        const threeTexP = loadTexture(loader, tex.url);
+        LoadedTextures.set(tex.id, threeTexP);
+        threeTexP.then(threeTex => {
+          resolver(threeTex);
+          LoadedTextures.set(tex.id, threeTex);
+        });
+      }
+    });
+    Textures.textures = { ...Textures.textures, ...allTextures };
   });
 };
 

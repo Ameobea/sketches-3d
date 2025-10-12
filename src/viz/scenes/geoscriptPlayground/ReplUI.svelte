@@ -267,7 +267,7 @@
   onMount(() => {
     const referencedTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
     if (referencedTextureIDs.length > 0) {
-      fetchAndSetTextures(referencedTextureIDs);
+      fetchAndSetTextures(loader, referencedTextureIDs);
     }
   });
 
@@ -518,7 +518,7 @@
 
     materialDefinitions = serverState.materials;
     const missingTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
-    fetchAndSetTextures(missingTextureIDs).then(() => {
+    fetchAndSetTextures(loader, missingTextureIDs).then(() => {
       didInitMats = false;
       materialDefinitions = { ...serverState.materials };
     });

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { Texture } from 'src/geoscript/geotoyAPIClient';
+  import type { TextureDescriptor } from 'src/geoscript/geotoyAPIClient';
 
-  export let texture: Texture | undefined = undefined;
+  export let texture: TextureDescriptor | undefined = undefined;
   export let onclick: () => void = () => {};
 </script>
 

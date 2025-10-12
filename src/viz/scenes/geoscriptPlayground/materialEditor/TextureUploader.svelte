@@ -1,13 +1,18 @@
 <script lang="ts">
-  import { createTexture, createTextureFromURL, type Texture, APIError } from 'src/geoscript/geotoyAPIClient';
+  import {
+    createTexture,
+    createTextureFromURL,
+    type TextureDescriptor,
+    APIError,
+  } from 'src/geoscript/geotoyAPIClient';
   import { Textures } from './state.svelte';
 
   let {
     onclose = () => {},
-    onupload = (texture: Texture) => {},
+    onupload = (texture: TextureDescriptor) => {},
   }: {
     onclose: () => void;
-    onupload: (texture: Texture) => void;
+    onupload: (texture: TextureDescriptor) => void;
   } = $props();
 
   let uploadMethod: 'file' | 'url' = $state('file');
@@ -22,7 +27,7 @@
   const handleSubmit = async () => {
     status = { type: 'loading' };
     try {
-      let texture: Texture;
+      let texture: TextureDescriptor;
       if (uploadMethod === 'file') {
         if (!fileInput?.files?.length) {
           status = { type: 'error', msg: 'no file selected' };
