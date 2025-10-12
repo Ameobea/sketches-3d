@@ -1,4 +1,4 @@
-FROM node:20.9-slim AS builder
+FROM node:24.4-slim AS builder
 
 ADD . /app
 
@@ -7,7 +7,7 @@ WORKDIR /app
 RUN yarn
 RUN yarn run build
 
-FROM node:20.9-slim
+FROM node:24.4-slim
 
 WORKDIR /app
 COPY --from=builder /app/build build/

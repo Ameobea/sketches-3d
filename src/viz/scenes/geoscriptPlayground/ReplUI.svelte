@@ -394,13 +394,17 @@
     renderedObjects = [];
     runStats = null;
 
+    const matsByName: Record<string, { def: MaterialDef; mat: MatEntry }> = {};
+    for (const [id, def] of Object.entries(materialDefinitions.materials)) {
+      matsByName[def.name] = { def, mat: customMaterials[id] };
+    }
+
     setLastRunWasSuccessful(false, userData);
     const result = await runGeoscript({
       code: finalCode,
       ctxPtr,
       repl,
-      materials: customMaterials,
-      materialDefinitions: materialDefinitions.materials,
+      materials: matsByName,
       includePrelude: !preludeEjected,
       materialOverride,
       renderMode: userData?.renderMode ?? false,

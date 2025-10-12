@@ -54,8 +54,7 @@ export interface RunGeoscriptOptions {
   // TODO: maybe make this optional
   ctxPtr: number;
   repl: Comlink.Remote<GeoscriptWorkerMethods>;
-  materialDefinitions: Record<string, MaterialDef>;
-  materials: Record<string, MatEntry | THREE.Material>;
+  materials: Record<string, { def: MaterialDef; mat: MatEntry | THREE.Material }>;
   includePrelude: boolean;
   materialOverride?: 'wireframe' | 'normal' | null;
   onStart?: () => void;

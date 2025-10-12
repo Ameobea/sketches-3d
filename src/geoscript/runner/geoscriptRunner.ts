@@ -3,40 +3,7 @@ import type { RunGeoscriptOptions, GeoscriptRunResult, RunStats, GeneratedObject
 import { buildLight } from 'src/viz/scenes/geoscriptPlayground/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
-import type { MaterialDef } from '../materials';
 import type { RenderedObject } from './types';
-
-const resolveMaterialEntry = (
-  materialName: string,
-  materials: Record<string, MatEntry | THREE.Material>
-): {
-  material: THREE.Material | null;
-  materialPromise: Promise<THREE.Material> | null;
-} => {
-  const entry = materials[materialName];
-  if (!entry) {
-    return { material: null, materialPromise: null };
-  }
-
-  if (typeof entry === 'object' && 'promise' in entry && 'resolved' in entry) {
-    return {
-      material: entry.resolved,
-      materialPromise: entry.promise,
-    };
-  }
-
-  return {
-    material: entry,
-    materialPromise: Promise.resolve(entry),
-  };
-};
-
-const getMaterialDef = (
-  materialName: string,
-  materialDefinitions: Record<string, MaterialDef>
-): MaterialDef | undefined => {
-  return materialDefinitions[materialName];
-};
 
 const buildEmptyRunStats = (startTime: number): RunStats => ({
   runtimeMs: performance.now() - startTime,
@@ -62,7 +29,6 @@ export const runGeoscript = async ({
   ctxPtr,
   repl,
   materials,
-  materialDefinitions,
   includePrelude,
   materialOverride,
   renderMode = false,
@@ -109,7 +75,7 @@ export const runGeoscript = async ({
     let verts = initialVerts;
     let indices = initialIndices;
     let uvs: Float32Array | null = null;
-    const matDef = getMaterialDef(materialName, materialDefinitions);
+    const { def: matDef, mat: mat } = materials[materialName];
 
     const uvUnwrapParams = (() => {
       if (!!overrideMat || matDef?.textureMapping?.type !== 'uv') {
@@ -162,27 +128,19 @@ export const runGeoscript = async ({
       geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     }
 
-    const matEntry = (() => {
+    const matEntry = ((): MatEntry => {
       if (!materialName) {
         return {
           resolved: FallbackMat,
-          promise: null,
+          promise: Promise.resolve(FallbackMat),
         };
       }
 
-      const resolved = resolveMaterialEntry(materialName, materials);
-      if (!resolved.material && !resolved.materialPromise) {
-        console.warn(`mesh referenced undefined material: "${materialName}"`);
-        return {
-          resolved: FallbackMat,
-          promise: null,
-        };
+      if ('promise' in mat) {
+        return mat;
       }
 
-      return {
-        resolved: resolved.material,
-        promise: resolved.materialPromise,
-      };
+      return { resolved: mat, promise: Promise.resolve(mat) };
     })();
 
     const material = overrideMat ? overrideMat : (matEntry.resolved ?? HiddenMat);

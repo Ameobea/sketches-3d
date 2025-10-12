@@ -377,9 +377,9 @@ export const buildCustomShaderArgs = (
 
   // TODO: enable physically correct lights, look into it at least
 
-  if (tileBreaking && !map && !normalMap && !clearcoatNormalMap && !roughnessMap && !metalnessMap) {
-    throw new Error('Tile breaking requires a map');
-  }
+  // if (tileBreaking && !map && !normalMap && !clearcoatNormalMap && !roughnessMap && !metalnessMap) {
+  //   throw new Error('Tile breaking requires a map');
+  // }
 
   if (
     normalMap &&
