@@ -1821,7 +1821,7 @@ sade@^1.8.1:
   dependencies:
     mri "^1.1.0"
 
-schema-dts@^1.1.5:
+schema-dts@^1.1.2:
   version "1.1.5"
   resolved "https://registry.yarnpkg.com/schema-dts/-/schema-dts-1.1.5.tgz#9237725d305bac3469f02b292a035107595dc324"
   integrity sha512-RJr9EaCmsLzBX2NDiO5Z3ux2BVosNZN5jo0gWgsyKvxKIUL5R3swNvoorulAeL9kLB0iTSX7V6aokhla2m7xbg==
@@ -1901,12 +1901,12 @@ svelte-eslint-parser@^1.3.0:
     postcss-scss "^4.0.9"
     postcss-selector-parser "^7.0.0"
 
-svelte-seo@1.7.1:
-  version "1.7.1"
-  resolved "https://registry.yarnpkg.com/svelte-seo/-/svelte-seo-1.7.1.tgz#e166a821374424c65028b405eafd5ed4ee6219f8"
-  integrity sha512-/FjqRoNxFiSXiENdEXiC1JERwnxq8sr19IEF3utk1KoxDJ7AVn/7EhAAnm98q2ZoSW4vV+rx0JmfLeRHyRpNNA==
+svelte-seo@1.6.1:
+  version "1.6.1"
+  resolved "https://registry.yarnpkg.com/svelte-seo/-/svelte-seo-1.6.1.tgz#4506c5c32ac1e9f768e9d5d56565a2adf95fdc11"
+  integrity sha512-vTKvOA0rl3HVhgbyoMhwz0P1s+18ldOT+lHlTlrQn7Mn0SBx7Ia7MB+llF4O/mYoiV5idmNu8i3xWsam8COsbw==
   dependencies:
-    schema-dts "^1.1.5"
+    schema-dts "^1.1.2"
 
 svelte@^5.39.11:
   version "5.39.11"

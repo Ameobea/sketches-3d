@@ -50,7 +50,7 @@
     "postprocessing": "^6.37.8",
     "rand-seed": "^2.1.7",
     "seed-random": "^2.2.0",
-    "svelte-seo": "1.7.1",
+    "svelte-seo": "1.6.1",
     "three": "^0.165.0",
     "three-good-godrays": "^0.7.1",
     "tweakpane": "^4.0.5",

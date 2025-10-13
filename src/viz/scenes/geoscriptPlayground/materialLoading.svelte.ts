@@ -13,14 +13,13 @@ export const fetchAndSetTextures = async (loader: THREE.ImageBitmapLoader, textu
     return;
   }
 
-  const resolvers: (((tex: THREE.Texture) => void) | null)[] = [];
+  const resolvers: Map<TextureID, (tex: THREE.Texture) => void> = new Map();
   for (const id of missingTextureIDs) {
     if (LoadedTextures.has(id)) {
-      resolvers.push(null);
       continue;
     }
     const p = new Promise<THREE.Texture>(resolve => {
-      resolvers.push(resolve);
+      resolvers.set(id, resolve);
     });
     LoadedTextures.set(id, p);
   }
@@ -28,9 +27,9 @@ export const fetchAndSetTextures = async (loader: THREE.ImageBitmapLoader, textu
   const adminToken = new URLSearchParams(window.location.search).get('admin_token') ?? undefined;
   await getMultipleTextures(missingTextureIDs, undefined, adminToken).then(textures => {
     const allTextures = { ...Textures.textures };
-    textures.forEach((tex, i) => {
+    textures.forEach(tex => {
       allTextures[tex.id] = tex;
-      const resolver = resolvers[i];
+      const resolver = resolvers.get(tex.id);
       if (resolver) {
         const threeTexP = loadTexture(loader, tex.url);
         LoadedTextures.set(tex.id, threeTexP);
