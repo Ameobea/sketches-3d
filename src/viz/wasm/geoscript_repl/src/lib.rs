@@ -69,7 +69,13 @@ impl GeoscriptReplCtx {
       if merged_count > 0 {
         ::log::info!("Merged {} vertices in mesh", merged_count);
       }
-      mesh.mark_edge_sharpness(0.8);
+      mesh.mark_edge_sharpness(
+        self
+          .geo_ctx
+          .sharp_angle_threshold_degrees
+          .borrow()
+          .to_radians(),
+      );
       mesh.separate_vertices_and_compute_normals();
 
       let mut owned_mesh = mesh.to_raw_indexed(true, false, false);

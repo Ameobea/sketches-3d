@@ -1172,14 +1172,14 @@ void main() {
   }
 
   ${roughnessShader ? buildRoughnessShaderFragment(antialiasRoughnessShader) : ''}
-  ${roughnessReverseColorRamp ? 'roughnessFactor = roughnessFromColor(diffuseColor.rgb);' : ''}
+  ${roughnessReverseColorRamp ? 'roughnessFactor = roughnessFromColor(ctx.diffuseColor.rgb);' : ''}
 
   ${
     metalnessShader
       ? 'metalnessFactor = getCustomMetalness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);'
       : ''
   }
-  ${metalnessReverseColorRamp ? 'metalnessFactor = metalnessFromColor(diffuseColor.rgb);' : ''}
+  ${metalnessReverseColorRamp ? 'metalnessFactor = metalnessFromColor(ctx.diffuseColor.rgb);' : ''}
 
 	#include <emissivemap_fragment>
   ${
@@ -1193,7 +1193,7 @@ void main() {
 	// accumulation
 	#include <lights_physical_fragment>
   ${iridescenceShader ? buildRunIridescenceShaderFragment() : ''}
-  ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(diffuseColor.rgb);' : ''}
+  ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(ctx.diffuseColor.rgb);' : ''}
 
 	// #include <lights_fragment_begin>
   ${buildLightsFragmentBegin()}

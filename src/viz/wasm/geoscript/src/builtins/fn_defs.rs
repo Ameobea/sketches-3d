@@ -5774,6 +5774,24 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         return_type: &[ArgType::Nil],
       }
     ]
+  },
+  "set_sharp_angle_threshold" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "angle_degrees",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Required,
+            description: "The angle at which edges are considered sharp, in degrees"
+          }
+        ],
+        description: "Sets the sharp angle threshold for computing auto-smooth-shaded normals (specified in degrees).  If the angle between two adjacent faces is greater than this angle, the edge will be considered sharp.",
+        return_type: &[ArgType::Nil],
+      }
+    ]
   }
 };
 

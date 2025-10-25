@@ -1090,6 +1090,7 @@ pub struct EvalCtx {
   pub materials: FxHashMap<String, Rc<Material>>,
   pub textures: FxHashSet<String>,
   pub default_material: RefCell<Option<Rc<Material>>>,
+  pub sharp_angle_threshold_degrees: RefCell<f32>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1108,6 +1109,7 @@ impl Default for EvalCtx {
       materials: FxHashMap::default(),
       textures: FxHashSet::default(),
       default_material: RefCell::new(None),
+      sharp_angle_threshold_degrees: RefCell::new(45.8366),
     }
   }
 }

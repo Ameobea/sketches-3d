@@ -1055,6 +1055,23 @@ fn set_rng_seed_impl(
   Ok(Value::Nil)
 }
 
+fn set_sharp_angle_threshold_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<String, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let angle_degrees = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      ctx.sharp_angle_threshold_degrees.replace(angle_degrees);
+      Ok(Value::Nil)
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn mesh_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -5051,7 +5068,10 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "set_rng_seed" => builtin_fn!(set_rng_seed, |def_ix, arg_refs, args, kwargs, ctx| {
     set_rng_seed_impl(ctx, def_ix, arg_refs, args, kwargs)
-  })
+  }),
+  "set_sharp_angle_threshold" => builtin_fn!(set_sharp_angle_threshold, |def_ix, arg_refs, args, kwargs, ctx| {
+    set_sharp_angle_threshold_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
 };
 
 pub(crate) fn resolve_builtin_impl(

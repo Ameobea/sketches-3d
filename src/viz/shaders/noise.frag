@@ -147,38 +147,18 @@ float ridged_multifractal_noise(vec3 point, float frequency, float lacunarity, f
 
 	int octaves = 2;
 	for (int octave = 0; octave < octaves; ++octave) {
-		// Get the value.
 		float signal = fbm(point + vec3(float(octave)) * 8.);
-
-		// Make the ridges.
 		signal = abs(signal);
 		signal = 1. - signal;
-
-		// Square the signal to increase the sharpness of the ridges.
 		signal *= signal;
-
-		// Apply the weighting from the previous octave to the signal.
-		// Larger values have higher weights, producing sharp points along
-		// the ridges.
 		signal *= weight;
-
-		// Weight successive contributions by the previous signal.
 		weight = signal / attenuation;
-
-		// Clamp the weight to [0,1] to prevent the result from diverging.
 		weight = clamp(weight, 0., 1.);
-
-		// Scale the amplitude appropriately for this frequency.
 		signal *= pow(persistence, float(octave));
-
-		// Add the signal to the result.
 		result += signal;
-
-		// Increase the frequency.
 		point *= lacunarity;
 	}
 
-	// Scale and shift the result into the [-1,1] range
 	float scale = 2. - pow(0.5, float(octaves));
 	return scale_shift(result, 2. / scale);
 }
