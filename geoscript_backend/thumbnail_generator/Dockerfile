@@ -15,7 +15,7 @@ USER pptruser
 COPY package.json .
 RUN npm install
 
-# Copy the rest of the application code
+# Copy the rest of the application code (including TypeScript file)
 COPY . .
 
 # Expose the port the app runs on

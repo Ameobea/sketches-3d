@@ -1,7 +1,7 @@
 // yes this is 100% vibecoded
 
-import express from 'express';
-import puppeteer from 'puppeteer';
+import express, { type Request, type Response } from 'express';
+import puppeteer, { type Page, type Browser } from 'puppeteer';
 import sharp from 'sharp';
 
 const app = express();
@@ -16,13 +16,44 @@ const BROWSER_ARGS = [
   '--ignore-gpu-blacklist',
 ];
 
-async function setupPage(page, url) {
+interface CompositionRender {
+  versionId: number;
+  abortController: AbortController;
+}
+
+interface MaterialRender {
+  abortController: AbortController;
+}
+
+const activeCompositionRenders = new Map<string, CompositionRender>();
+const activeMaterialRenders = new Map<string, MaterialRender>();
+
+async function setupPage(
+  page: Page,
+  url: string,
+  abortController: AbortController
+): Promise<{ promise: Promise<void> }> {
   await page.setViewport({ width: 600, height: 600 });
 
-  const renderReadyPromise = new Promise((resolve, reject) => {
+  const renderReadyPromise = new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Render timed out after 30 minutes')), 30 * 60 * 1000);
+
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new Error('Render cancelled by newer request'));
+    };
+
+    if (abortController.signal.aborted) {
+      clearTimeout(timeout);
+      reject(new Error('Render cancelled by newer request'));
+      return;
+    }
+
+    abortController.signal.addEventListener('abort', onAbort);
+
     page.exposeFunction('onRenderReady', () => {
       clearTimeout(timeout);
+      abortController.signal.removeEventListener('abort', onAbort);
       resolve();
     });
   });
@@ -31,7 +62,7 @@ async function setupPage(page, url) {
 
   page.on('request', request => {
     const requestUrlString = request.url();
-    let requestUrl;
+    let requestUrl: URL;
 
     try {
       requestUrl = new URL(requestUrlString);
@@ -72,13 +103,13 @@ async function setupPage(page, url) {
   return { promise: renderReadyPromise };
 }
 
-async function render(url) {
+async function render(url: string, abortController: AbortController): Promise<Buffer> {
   console.log('Launching browser...');
-  const browser = await puppeteer.launch({ args: BROWSER_ARGS });
+  const browser: Browser = await puppeteer.launch({ args: BROWSER_ARGS });
 
   try {
     const page = await browser.newPage();
-    const { promise: renderReadyPromise } = await setupPage(page, url);
+    const { promise: renderReadyPromise } = await setupPage(page, url, abortController);
 
     console.log(`Navigating to ${url}...`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -101,50 +132,102 @@ async function render(url) {
   }
 }
 
-app.get('/render/:id', async (req, res) => {
+app.get('/render/:id', async (req: Request, res: Response) => {
   const sceneId = req.params.id;
-  const adminToken = req.query.admin_token;
-  const versionID = req.query.version_id;
+  const adminToken = req.query.admin_token as string | undefined;
+  const versionID = req.query.version_id as string | undefined;
 
   if (!/^[0-9]+$/.test(sceneId)) {
     return res.status(400).send('Invalid scene ID');
   }
 
+  const versionNum = parseInt(versionID!, 10);
+  if (isNaN(versionNum)) {
+    return res.status(400).send('Invalid version ID');
+  }
+
+  // Check if there's already an active render for this composition
+  const existingRender = activeCompositionRenders.get(sceneId);
+  if (existingRender) {
+    if (versionNum <= existingRender.versionId) {
+      // New request is for an older or same version, reject it
+      console.log(
+        `Rejecting render request for composition ${sceneId} version ${versionNum} (current: ${existingRender.versionId})`
+      );
+      return res.status(409).send('A render for a newer or equal version is already in progress');
+    } else {
+      // New request is for a newer version, cancel the old one
+      console.log(
+        `Cancelling render for composition ${sceneId} version ${existingRender.versionId} (new: ${versionNum})`
+      );
+      existingRender.abortController.abort();
+    }
+  }
+
+  const abortController = new AbortController();
+  activeCompositionRenders.set(sceneId, { versionId: versionNum, abortController });
+
   try {
     const baseUrl = 'https://3d.ameo.design/geotoy/edit/';
     const url = `${baseUrl}${sceneId}?render=true&admin_token=${adminToken}&version_id=${versionID}`;
-    const screenshot = await render(url);
+    const screenshot = await render(url, abortController);
     res.set('Content-Type', 'image/avif');
     res.send(screenshot);
   } catch (error) {
+    if (error instanceof Error && error.message === 'Render cancelled by newer request') {
+      console.log(`Render for composition ${sceneId} version ${versionNum} was cancelled`);
+      return res.status(409).send('Render cancelled due to newer request');
+    }
     console.error(error);
     res.status(500).send('Error generating screenshot');
+  } finally {
+    // Clean up tracking - only if this is still the active render
+    const currentRender = activeCompositionRenders.get(sceneId);
+    if (currentRender && currentRender.versionId === versionNum) {
+      activeCompositionRenders.delete(sceneId);
+    }
   }
 });
 
-app.get('/render_material/:id', async (req, res) => {
+app.get('/render_material/:id', async (req: Request, res: Response) => {
   const materialId = req.params.id;
-  const adminToken = req.query.admin_token;
+  const adminToken = req.query.admin_token as string | undefined;
 
   if (!/^[0-9]+$/.test(materialId)) {
     return res.status(400).send('Invalid material ID');
   }
 
+  // Check if there's already an active render for this material
+  const existingRender = activeMaterialRenders.get(materialId);
+  if (existingRender) {
+    console.log(`Cancelling existing render for material ${materialId}`);
+    existingRender.abortController.abort();
+  }
+
+  const abortController = new AbortController();
+  activeMaterialRenders.set(materialId, { abortController });
+
   try {
     const baseUrl = 'https://3d.ameo.design/geotoy/material/preview/';
     const url = `${baseUrl}${materialId}?render=true&admin_token=${adminToken}`;
-    const screenshot = await render(url);
+    const screenshot = await render(url, abortController);
     res.set('Content-Type', 'image/avif');
     res.send(screenshot);
   } catch (error) {
+    if (error instanceof Error && error.message === 'Render cancelled by newer request') {
+      console.log(`Render for material ${materialId} was cancelled`);
+      return res.status(409).send('Render cancelled due to newer request');
+    }
     console.error(error);
     res.status(500).send('Error generating screenshot');
+  } finally {
+    activeMaterialRenders.delete(materialId);
   }
 });
 
 const imageBodyParser = express.raw({ type: 'image/*', limit: '100mb' });
 
-app.post('/thumbnail', imageBodyParser, async (req, res) => {
+app.post('/thumbnail', imageBodyParser, async (req: Request, res: Response) => {
   if (!req.body || !Buffer.isBuffer(req.body)) {
     return res
       .status(400)
@@ -176,7 +259,7 @@ app.post('/thumbnail', imageBodyParser, async (req, res) => {
   }
 });
 
-app.post('/convert-to-avif', imageBodyParser, async (req, res) => {
+app.post('/convert-to-avif', imageBodyParser, async (req: Request, res: Response) => {
   if (Buffer.byteLength(req.body) === 0) {
     return res
       .status(400)
@@ -191,8 +274,13 @@ app.post('/convert-to-avif', imageBodyParser, async (req, res) => {
     res.set('Content-Type', 'image/avif');
     res.send(avifBuffer);
   } catch (error) {
-    console.error('Error converting image to AVIF:', error);
-    res.status(500).send(`Error converting image to AVIF: ${error.message}`);
+    if (error instanceof Error) {
+      console.error('Error converting image to AVIF:', error);
+      res.status(500).send(`Error converting image to AVIF: ${error.message}`);
+    } else {
+      console.error('Error converting image to AVIF:', error);
+      res.status(500).send('Error converting image to AVIF');
+    }
   }
 });
 

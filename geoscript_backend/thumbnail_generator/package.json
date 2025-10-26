@@ -2,14 +2,18 @@
   "name": "thumbnail_generator",
   "version": "1.0.0",
   "description": "A standalone script for generating 3D model thumbnails using Puppeteer and SwiftShader.",
-  "main": "render.js",
+  "main": "render.ts",
   "type": "module",
   "scripts": {
-    "start": "node render.js"
+    "start": "node --experimental-strip-types render.ts"
   },
   "dependencies": {
-    "puppeteer": "^22.12.1",
     "express": "^4.19.2",
+    "puppeteer": "^22.12.1",
     "sharp": "^0.33.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.4",
+    "@types/node": "^24.9.1"
   }
 }
