@@ -384,6 +384,7 @@
     beforeUnloadHandler();
 
     isRunning = true;
+    err = null;
 
     for (const obj of renderedObjects) {
       viz.scene.remove(obj);

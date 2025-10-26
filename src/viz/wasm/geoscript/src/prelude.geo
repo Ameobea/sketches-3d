@@ -15,6 +15,4 @@ dir_light(
   | trans(-20, 50, 0)
   | render;
 
-// set_default_material("default");
-
-// set_rng_seed(1822215726251595)
+set_sharp_angle_threshold(45.8366)

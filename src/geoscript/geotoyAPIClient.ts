@@ -1,4 +1,4 @@
-import type { MaterialDefinitions } from './materials';
+import type { MaterialDescriptor, MaterialDefinitions, MaterialDef } from './materials';
 
 export const GEOTOY_API_BASE_URL = import.meta.env.VITE_GEOSCRIPT_API_URL || 'http://localhost:5810';
 
@@ -335,6 +335,64 @@ export const getMultipleTextures = (
   }
   return apiFetch<TextureDescriptor[]>(`/textures/multiple?${searchParams.toString()}`, {}, fetch);
 };
+
+export const listMaterials = (
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<MaterialDescriptor[]> => apiFetch<MaterialDescriptor[]>('/materials', {}, fetch);
+
+export const createMaterial = (
+  def: MaterialDef,
+  isShared: boolean,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<MaterialDescriptor> =>
+  apiFetch<MaterialDescriptor>(
+    '/materials',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        name: def.name,
+        materialDefinition: def,
+        isShared,
+      }),
+      headers: { 'Content-Type': 'application/json' },
+    },
+    fetch
+  );
+
+export const getMaterial = (
+  id: number,
+  fetch: typeof globalThis.fetch = globalThis.fetch,
+  adminToken?: string
+): Promise<MaterialDescriptor> =>
+  apiFetch<MaterialDescriptor>(
+    `/materials/${id}${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
+    {},
+    fetch
+  );
+
+export const updateMaterial = (
+  id: number,
+  body: Partial<{
+    name: string;
+    materialDefinition: MaterialDef;
+    isShared: boolean;
+  }>,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<MaterialDescriptor> =>
+  apiFetch<MaterialDescriptor>(
+    `/materials/${id}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    },
+    fetch
+  );
+
+export const deleteMaterial = (
+  id: number,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<void> => apiFetch<void>(`/materials/${id}`, { method: 'DELETE' }, fetch);
 
 export const unwrapUVs = async (
   vertices: Float32Array,

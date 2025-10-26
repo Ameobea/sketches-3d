@@ -86,6 +86,17 @@ export interface PhysicalMaterialDef {
 
 export type MaterialDef = BasicMaterialDef | PhysicalMaterialDef;
 
+export interface MaterialDescriptor {
+  id: number;
+  name: string;
+  thumbnailUrl: string | null;
+  materialDefinition: MaterialDef;
+  ownerId: number;
+  ownerName: string;
+  createdAt: string;
+  isShared: boolean;
+}
+
 export const LoadedTextures: Map<TextureID, Promise<THREE.Texture> | THREE.Texture> = new Map();
 
 const maybeLoadTexture = (

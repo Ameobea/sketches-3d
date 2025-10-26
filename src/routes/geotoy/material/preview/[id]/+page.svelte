@@ -22,11 +22,10 @@
   // pre-load orbit controls because they will be needed later
   LoadOrbitControls.getter = async () => OrbitControls;
 
-  // TODO: we should fetch used textures in the load and include them here
   let userData: GeoscriptPlaygroundUserData = $derived({
-    initialComposition: data,
+    initialComposition: { comp: data.comp, version: data.version },
     renderMode,
-    me: data.me,
+    me: null,
     // also kick off fetching the worker script + initializing the worker as soon as possible
     geoscriptWorker: browser ? Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker()) : null,
   });
