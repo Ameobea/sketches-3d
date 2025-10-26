@@ -20,7 +20,7 @@ async function setupPage(page, url) {
   await page.setViewport({ width: 600, height: 600 });
 
   const renderReadyPromise = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Render timed out after 60 seconds')), 60000);
+    const timeout = setTimeout(() => reject(new Error('Render timed out after 30 minutes')), 30 * 60 * 1000);
     page.exposeFunction('onRenderReady', () => {
       clearTimeout(timeout);
       resolve();
@@ -69,7 +69,7 @@ async function setupPage(page, url) {
     request.continue();
   });
 
-  return renderReadyPromise;
+  return { promise: renderReadyPromise };
 }
 
 async function render(url) {
@@ -78,7 +78,7 @@ async function render(url) {
 
   try {
     const page = await browser.newPage();
-    const renderReadyPromise = await setupPage(page, url);
+    const { promise: renderReadyPromise } = await setupPage(page, url);
 
     console.log(`Navigating to ${url}...`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
