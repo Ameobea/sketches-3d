@@ -4347,6 +4347,18 @@ fn signum_impl(
       let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
       Ok(Value::Int(value.signum()))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.signum(), value.y.signum())))
+    }
+    3 => {
+      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        value.x.signum(),
+        value.y.signum(),
+        value.z.signum(),
+      )))
+    }
     _ => unimplemented!(),
   }
 }

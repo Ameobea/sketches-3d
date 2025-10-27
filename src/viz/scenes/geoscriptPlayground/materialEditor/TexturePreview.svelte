@@ -1,11 +1,16 @@
 <script lang="ts">
   import type { TextureDescriptor } from 'src/geoscript/geotoyAPIClient';
 
-  export let texture: TextureDescriptor | undefined = undefined;
-  export let onclick: () => void = () => {};
+  let {
+    texture = undefined,
+    onclick = () => {},
+  }: {
+    texture?: TextureDescriptor;
+    onclick?: () => void;
+  } = $props();
 </script>
 
-<button class="texture-preview" on:click={onclick}>
+<button class="texture-preview" {onclick}>
   {#if texture}
     <img src={texture.thumbnailUrl} alt={texture.name} crossorigin="anonymous" title={texture.name} />
   {:else}

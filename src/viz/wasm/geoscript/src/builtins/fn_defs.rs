@@ -1099,6 +1099,30 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Returns -1, 0, or 1 depending on the sign of the input",
         return_type: &[ArgType::Int],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns -1, 0, or 1 depending on the sign of the input element-wise",
+        return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns -1, 0, or 1 depending on the sign of the input element-wise",
+        return_type: &[ArgType::Vec3],
       }
     ],
   },

@@ -17,6 +17,9 @@
   import { makeDraggable, uuidv4 } from './util';
   import UvViewer from './UVViewer.svelte';
 
+  import MaterialLibrary from './MaterialLibrary.svelte';
+  import SaveMaterialForm from './SaveMaterialForm.svelte';
+
   let {
     isOpen = $bindable(),
     materials = $bindable(),
@@ -46,9 +49,12 @@
       }
     | { type: 'shader_editor' }
     | { type: 'uv_viewer' }
+    | { type: 'material_library' }
+    | { type: 'save_material' }
   >({ type: 'properties' });
 
   let selectedMaterialID: MaterialID | null = $state(null);
+  let showAdvanced = $state(false);
 
   $effect(() => {
     if (!selectedMaterialID && materials.materials) {
@@ -137,11 +143,14 @@
               </div>
             {/each}
           </div>
-          <button class="add-material" onclick={addMaterial}>add material</button>
+          <div class="action-buttons">
+            <button class="add-material" onclick={addMaterial}>new material</button>
+            <button class="add-material" onclick={() => (view = { type: 'material_library' })}>
+              material library
+            </button>
+          </div>
         </div>
-      {/if}
-      {#if selectedMaterialID !== null && !!materials.materials[selectedMaterialID]}
-        {#if view.type === 'properties'}
+        {#if selectedMaterialID !== null && !!materials.materials[selectedMaterialID]}
           <MaterialPropertiesEditor
             bind:material={materials.materials[selectedMaterialID]}
             onpicktexture={fieldName => {
@@ -154,13 +163,52 @@
               view = { type: 'uv_viewer' };
             }}
             {rerun}
+            bind:showAdvanced
+            onsavetolibrary={() => {
+              view = { type: 'save_material' };
+            }}
           />
-        {:else if view.type === 'texture_picker'}
+        {/if}
+      {:else if view.type === 'material_library'}
+        <MaterialLibrary
+          onclose={() => {
+            view = { type: 'properties' };
+          }}
+          onselect={material => {
+            let newName = material.name;
+            let i = 1;
+            while (Object.values(materials.materials).some(m => m.name === newName)) {
+              newName = `${material.name}_${i}`;
+              i += 1;
+            }
+            const id = uuidv4();
+            materials.materials[id] = { ...material.materialDefinition, name: newName };
+            selectedMaterialID = id;
+            view = { type: 'properties' };
+          }}
+        />
+      {:else if view.type === 'save_material'}
+        {#if selectedMaterialID !== null && !!materials.materials[selectedMaterialID]}
+          <SaveMaterialForm
+            material={materials.materials[selectedMaterialID]}
+            onclose={() => {
+              view = { type: 'properties' };
+            }}
+            onsave={() => {
+              view = { type: 'properties' };
+            }}
+          />
+        {/if}
+      {:else if selectedMaterialID !== null && !!materials.materials[selectedMaterialID]}
+        {#if view.type === 'texture_picker'}
           {#if materials.materials[selectedMaterialID].type === 'physical'}
             {@const mat = materials.materials[selectedMaterialID] as PhysicalMaterialDef}
             {@const field = view.field}
             <TexturePicker
-              bind:selectedTextureId={mat[field]}
+              selectedTextureId={mat[field]}
+              onselect={newTextureID => {
+                mat[field] = newTextureID;
+              }}
               onclose={() => {
                 view = { type: 'properties' };
               }}
@@ -363,17 +411,27 @@
     color: #f88;
   }
 
-  .add-material {
-    width: calc(100%+12px);
+  .action-buttons {
+    display: flex;
+    gap: 0;
     margin-top: 6px;
     margin-bottom: -4px;
     margin-left: -4px;
     margin-right: -4px;
+  }
+
+  .add-material {
+    flex: 1;
     background: #333;
     border: 1px solid #555;
     color: #f0f0f0;
-    padding: 10px 9px 9px 9px;
+    padding: 6px 4px;
     cursor: pointer;
+    font-size: 11px;
+  }
+
+  .add-material:not(:last-child) {
+    border-right: none;
   }
 
   .add-material:hover {

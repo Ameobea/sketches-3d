@@ -1,3 +1,7 @@
+<svelte:head>
+  <title>Geotoy Docs + Reference</title>
+</svelte:head>
+
 <h2>Geotoy Docs + Reference</h2>
 
 <p>

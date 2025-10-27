@@ -13,6 +13,8 @@
     oneditshaders,
     onviewuvmappings,
     rerun,
+    showAdvanced = $bindable(),
+    onsavetolibrary,
   }: {
     material: MaterialDef;
     onpicktexture: (
@@ -21,8 +23,9 @@
     oneditshaders: () => void;
     onviewuvmappings: () => void;
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
+    showAdvanced: boolean;
+    onsavetolibrary: () => void;
   } = $props();
-  let showAdvanced = $state(false);
 
   let showRoughnessConfigurator = $state(false);
   let showMetalnessConfigurator = $state(false);
@@ -57,6 +60,8 @@
 {/if}
 
 <div class="properties-editor">
+  <button class="save-to-library" onclick={onsavetolibrary}>save/share</button>
+
   <FormField label="name">
     <input type="text" bind:value={material.name} />
   </FormField>
@@ -93,6 +98,10 @@
         texture={material.normalMap ? Textures.textures[material.normalMap] : undefined}
         onclick={() => onpicktexture('normalMap')}
       />
+    </FormField>
+    <FormField label="normal scale">
+      <input type="range" min="0" max="5" step="0.01" bind:value={material.normalScale} />
+      <span>{material.normalScale?.toFixed(2)}</span>
     </FormField>
     <FormField label="roughness map">
       <TexturePreview
@@ -148,10 +157,6 @@
         </div>
       </FormField>
     {/if}
-    <FormField label="normal scale">
-      <input type="range" min="0" max="5" step="0.01" bind:value={material.normalScale} />
-      <span>{material.normalScale?.toFixed(2)}</span>
-    </FormField>
     <FormField label="texture scale" help="The scale of the texture coordinates.">
       <input type="number" step="0.1" bind:value={material.uvScale.x} style="width: 80px" />
       <input type="number" step="0.1" bind:value={material.uvScale.y} style="width: 80px" />
@@ -293,6 +298,26 @@
     flex-grow: 1;
     overflow-y: auto;
     font-size: 12px;
+    position: relative;
+  }
+
+  .save-to-library {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    color: #ddd;
+    text-decoration: underline;
+    padding: 4px 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    position: absolute;
+    top: 8px;
+    left: 8px;
+  }
+
+  .save-to-library:hover {
+    color: #8bb8ff;
   }
 
   .derived-map-controls {

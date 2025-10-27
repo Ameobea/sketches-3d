@@ -55,6 +55,10 @@
   };
 </script>
 
+<svelte:head>
+  <title>Geoscript Builtin Functions</title>
+</svelte:head>
+
 <div class="root">
   <div class="header">
     <div class="toc" class:open={tocMenuOpen}>
