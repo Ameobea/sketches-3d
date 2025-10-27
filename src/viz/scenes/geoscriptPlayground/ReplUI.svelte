@@ -518,8 +518,8 @@
     didInitMats = false;
 
     materialDefinitions = serverState.materials;
-    const missingTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
-    fetchAndSetTextures(loader, missingTextureIDs).then(() => {
+    const referencedTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
+    fetchAndSetTextures(loader, referencedTextureIDs).then(() => {
       didInitMats = false;
       materialDefinitions = { ...serverState.materials };
     });
@@ -606,6 +606,7 @@
   {rerun}
   {repl}
   {ctxPtr}
+  me={userData?.me}
 />
 
 {#if isEditorCollapsed}

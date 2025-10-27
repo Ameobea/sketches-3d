@@ -1,18 +1,25 @@
 <script lang="ts">
-  import { listTextures, type TextureDescriptor, type TextureID } from 'src/geoscript/geotoyAPIClient';
+  import {
+    listTextures,
+    type TextureDescriptor,
+    type TextureID,
+    type User,
+  } from 'src/geoscript/geotoyAPIClient';
   import ItemPicker from './ItemPicker.svelte';
   import { Textures } from './state.svelte';
 
   let {
     selectedTextureId,
-    onselect,
+    onselect: onselectInner,
     onclose = () => {},
     onupload = () => {},
+    me,
   }: {
     selectedTextureId: TextureID | null | undefined;
     onselect: (id: TextureID | null) => void;
     onclose: () => void;
     onupload: () => void;
+    me: User | null | undefined;
   } = $props();
 
   const origSelectedTextureId = selectedTextureId;
@@ -32,6 +39,13 @@
       isLoading = false;
     });
   });
+
+  const onselect = (id: TextureID | null | string) => {
+    if (typeof id === 'string') {
+      throw new Error('unreachable; id should not be a string');
+    }
+    onselectInner(id);
+  };
 </script>
 
 {#if isLoading}
@@ -39,7 +53,9 @@
 {:else}
   <ItemPicker title="Select Texture" selectedId={selectedTextureId} {onselect} items={textures} {onclose}>
     <div slot="footer-start">
-      <button class="footer-button" onclick={onupload}>upload new</button>
+      {#if me}
+        <button class="footer-button" onclick={onupload}>upload new</button>
+      {/if}
     </div>
     <div slot="footer-end">
       <button

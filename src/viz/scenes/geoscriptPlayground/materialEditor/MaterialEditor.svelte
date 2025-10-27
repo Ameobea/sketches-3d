@@ -19,6 +19,7 @@
 
   import MaterialLibrary from './MaterialLibrary.svelte';
   import SaveMaterialForm from './SaveMaterialForm.svelte';
+  import type { User } from 'src/geoscript/geotoyAPIClient';
 
   let {
     isOpen = $bindable(),
@@ -26,12 +27,14 @@
     rerun,
     repl,
     ctxPtr,
+    me,
   }: {
     isOpen: boolean;
     materials: MaterialDefinitions;
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => Promise<void>;
     repl: Comlink.Remote<GeoscriptWorkerMethods>;
     ctxPtr: number | null;
+    me: User | undefined | null;
   } = $props();
 
   let dialogElement = $state<HTMLDivElement | null>(null);
@@ -167,6 +170,7 @@
             onsavetolibrary={() => {
               view = { type: 'save_material' };
             }}
+            {me}
           />
         {/if}
       {:else if view.type === 'material_library'}
@@ -175,6 +179,10 @@
             view = { type: 'properties' };
           }}
           onselect={material => {
+            if (!material) {
+              return;
+            }
+
             let newName = material.name;
             let i = 1;
             while (Object.values(materials.materials).some(m => m.name === newName)) {
@@ -207,7 +215,7 @@
             <TexturePicker
               selectedTextureId={mat[field]}
               onselect={newTextureID => {
-                mat[field] = newTextureID;
+                mat[field] = newTextureID ?? undefined;
               }}
               onclose={() => {
                 view = { type: 'properties' };
@@ -215,6 +223,7 @@
               onupload={() => {
                 view = { type: 'texture_uploader', field };
               }}
+              {me}
             />
           {/if}
         {:else if view.type === 'texture_uploader'}

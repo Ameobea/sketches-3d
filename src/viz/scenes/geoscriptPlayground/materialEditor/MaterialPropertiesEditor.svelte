@@ -6,6 +6,7 @@
   import { Textures } from './state.svelte';
   import UvPropertiesEditor from './UVPropertiesEditor.svelte';
   import DerivedMapConfigurator from './DerivedMapConfigurator.svelte';
+  import type { User } from 'src/geoscript/geotoyAPIClient';
 
   let {
     material = $bindable(),
@@ -15,6 +16,7 @@
     rerun,
     showAdvanced = $bindable(),
     onsavetolibrary,
+    me,
   }: {
     material: MaterialDef;
     onpicktexture: (
@@ -25,6 +27,7 @@
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
     showAdvanced: boolean;
     onsavetolibrary: () => void;
+    me: User | undefined | null;
   } = $props();
 
   let showRoughnessConfigurator = $state(false);
@@ -60,7 +63,9 @@
 {/if}
 
 <div class="properties-editor">
-  <button class="save-to-library" onclick={onsavetolibrary}>save/share</button>
+  {#if me}
+    <button class="save-to-library" onclick={onsavetolibrary}>save/share</button>
+  {/if}
 
   <FormField label="name">
     <input type="text" bind:value={material.name} />

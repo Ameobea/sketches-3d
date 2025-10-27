@@ -9,7 +9,7 @@
 
   let {
     onclose = () => {},
-    onupload = (texture: TextureDescriptor) => {},
+    onupload = (_texture: TextureDescriptor) => {},
   }: {
     onclose: () => void;
     onupload: (texture: TextureDescriptor) => void;

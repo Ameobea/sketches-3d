@@ -5,10 +5,10 @@
 
   let {
     onclose = () => {},
-    onselect = (_: MaterialDescriptor) => {},
+    onselect = (_: MaterialDescriptor | null) => {},
   }: {
     onclose: () => void;
-    onselect: (material: MaterialDescriptor) => void;
+    onselect: (material: MaterialDescriptor | null) => void;
   } = $props();
 
   let materials = $state<MaterialDescriptor[]>([]);
@@ -23,7 +23,7 @@
     });
   });
 
-  const handleSelect = () => {
+  const handleSubmit = () => {
     if (selectedId === null) {
       return;
     }
@@ -33,6 +33,13 @@
     }
     onclose();
   };
+
+  const handleSelect = (id: number | null | string) => {
+    if (typeof id === 'string') {
+      throw new Error('unreachable; id should not be a string');
+    }
+    selectedId = id;
+  };
 </script>
 
 {#if isLoading}
@@ -40,14 +47,15 @@
 {:else}
   <ItemPicker
     title="Select Material"
-    bind:selectedId
+    {selectedId}
+    onselect={handleSelect}
     items={materials.map(m => ({ ...m, url: m.thumbnailUrl }))}
     {onclose}
     showNoneOption={false}
   >
     <div slot="footer-end">
       <button class="footer-button" onclick={onclose}>cancel</button>
-      <button class="footer-button" onclick={handleSelect} disabled={selectedId === null}>import</button>
+      <button class="footer-button" onclick={handleSubmit} disabled={selectedId === null}>import</button>
     </div>
   </ItemPicker>
 {/if}
