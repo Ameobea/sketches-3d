@@ -11,6 +11,7 @@ export interface ReplCtx {
   run: () => void;
   snapView: (axis: 'x' | 'y' | 'z') => void;
   orbit: (axis: 'vertical' | 'horizontal', angle: number) => void;
+  toggleRecording: () => void;
 }
 
 export interface RunStats {

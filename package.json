@@ -38,6 +38,7 @@
   "type": "module",
   "dependencies": {
     "@sentry/browser": "^10.19.0",
+    "canvas-record": "^5.4.2",
     "cm6-theme-gruvbox-dark": "^0.2.0",
     "codemirror": "^6.0.2",
     "comlink": "^4.4.2",

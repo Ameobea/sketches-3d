@@ -45,6 +45,7 @@
   } from './materialLoading.svelte';
   import { centerView, snapView, orbit } from './cameraControls';
   import { buildLightHelpers, toggleAxisHelpers, toggleLightHelpers } from './gizmos';
+  import { useRecording } from './recording';
 
   let {
     viz,
@@ -59,6 +60,8 @@
     userData?: GeoscriptPlaygroundUserData;
     onHeightChange: (height: number, isCollapsed: boolean) => void;
   } = $props();
+
+  const { toggleRecording, recordingState } = useRecording(viz, userData);
 
   const {
     code: initialCode,
@@ -568,6 +571,7 @@
       run,
       snapView: axis => snapView(viz, axis),
       orbit: (axis, angle) => orbit(viz, axis, angle),
+      toggleRecording,
     });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
@@ -623,6 +627,8 @@
       {err}
       {onExport}
       {clearLocalChanges}
+      onRecord={toggleRecording}
+      recordingState={$recordingState}
       toggleAxisHelpers={wrappedToggleAxesHelpers}
       toggleLightHelpers={wrappedToggleLightHelpers}
       {isDirty}
@@ -655,6 +661,8 @@
             {err}
             {onExport}
             {clearLocalChanges}
+            onRecord={toggleRecording}
+            recordingState={$recordingState}
             toggleAxisHelpers={wrappedToggleAxesHelpers}
             toggleLightHelpers={wrappedToggleLightHelpers}
             {isDirty}

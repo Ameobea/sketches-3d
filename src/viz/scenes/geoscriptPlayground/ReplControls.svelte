@@ -1,5 +1,6 @@
 <script lang="ts">
   import ActionsMenu from './ActionsMenu.svelte';
+  import type { RecordingState } from './recording';
 
   let {
     isRunning,
@@ -9,6 +10,8 @@
     goHome,
     err,
     onExport,
+    onRecord,
+    recordingState,
     clearLocalChanges,
     toggleAxisHelpers,
     toggleLightHelpers,
@@ -24,6 +27,8 @@
     goHome: () => void;
     err: string | null;
     onExport: () => void;
+    onRecord: () => void;
+    recordingState: RecordingState;
     clearLocalChanges: () => void;
     toggleAxisHelpers: () => void;
     toggleLightHelpers: () => void;
@@ -38,6 +43,17 @@
   <button class={{ collapsed: isEditorCollapsed }} disabled={isRunning} onclick={run}>
     {#if isRunning}running...{:else}run{/if}
   </button>
+  {#if recordingState === 'recording'}
+    <span class="recording-indicator" title="video recording in progress">🔴</span>
+  {:else if recordingState === 'initializing'}
+    <span
+      class="recording-indicator"
+      title="initializing video recording"
+      style="filter: grayscale(100%) opacity(0.5);"
+    >
+      🔴
+    </span>
+  {/if}
   <button
     class={['show-code-btn', isEditorCollapsed ? 'collapsed' : undefined]}
     onclick={toggleEditorCollapsed}
@@ -59,6 +75,11 @@
       <ActionsMenu>
         <button onclick={toggleMaterialEditorOpen}>edit materials</button>
         <button onclick={onExport}>export scene</button>
+        <button onclick={onRecord}>
+          {{ initializing: 'initializing', 'not-recording': 'start recording', recording: 'stop-recording' }[
+            recordingState
+          ]}
+        </button>
         <button onclick={clearLocalChanges}>clear local changes</button>
         <button onclick={toggleAxisHelpers}>toggle axis helpers</button>
         <button onclick={toggleLightHelpers}>toggle light helpers</button>
@@ -147,5 +168,9 @@
     margin-left: auto;
     display: flex;
     align-items: center;
+  }
+
+  .recording-indicator {
+    margin-left: 8px;
   }
 </style>

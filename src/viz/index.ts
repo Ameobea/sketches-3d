@@ -510,7 +510,7 @@ export class Viz {
       return;
     }
 
-    const key = `${evt.ctrlKey ? 'ctrl+' : ''}${evt.key.toLowerCase()}`;
+    const key = `${evt.ctrlKey ? 'ctrl+' : ''}${evt.shiftKey ? 'shift+' : ''}${evt.key.toLowerCase()}`;
 
     this.customKeyEventMap.get(key)?.();
   };

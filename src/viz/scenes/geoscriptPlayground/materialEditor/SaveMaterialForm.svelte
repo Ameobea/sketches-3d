@@ -40,11 +40,11 @@
     }}
   >
     <div class="form-group">
-      <label for="material-name">Name</label>
+      <label for="material-name">name</label>
       <input id="material-name" type="text" bind:value={name} />
     </div>
     <div class="form-group">
-      <label for="material-shared">Shared</label>
+      <label for="material-shared">public</label>
       <input id="material-shared" type="checkbox" bind:checked={isShared} />
     </div>
     {#if error}

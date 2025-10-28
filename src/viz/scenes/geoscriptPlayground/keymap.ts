@@ -45,4 +45,10 @@ export const buildGeotoyKeymap = (getCtx?: () => ReplCtx | null | undefined) => 
     action: () => getCtx?.()?.orbit('horizontal', -ROTATION_AMOUNT),
     group: 'camera',
   },
+  {
+    key: 'ctrl+shift+p',
+    label: 'start/stop recording',
+    action: () => getCtx?.()?.toggleRecording(),
+    group: 'recording',
+  },
 ];
