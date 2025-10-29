@@ -47,7 +47,7 @@ use crate::{
   },
   seq_as_eager, ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
-use crate::{ManifoldHandle, MeshHandle, Sequence};
+use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod fn_defs;
 
@@ -121,7 +121,7 @@ fn eval_numeric_bool_op(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
   op: BoolOp,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
@@ -235,7 +235,7 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       0,
       &[ArgRef::Positional(1), ArgRef::Positional(0)],
       &[lhs.clone(), rhs.clone()],
-      &Default::default(),
+      &EMPTY_KWARGS,
     ),
     // vec3 + float
     6 => {
@@ -302,7 +302,7 @@ pub(crate) fn sub_impl(
         0,
         &[ArgRef::Positional(0), ArgRef::Positional(1)],
         &[lhs.clone(), rhs.clone()],
-        &Default::default(),
+        &EMPTY_KWARGS,
         ctx,
         MeshBooleanOp::Difference,
       )
@@ -311,7 +311,7 @@ pub(crate) fn sub_impl(
       0,
       &[ArgRef::Positional(1), ArgRef::Positional(0)],
       &[lhs.clone(), Value::Vec3(-rhs.as_vec3().unwrap())],
-      &Default::default(),
+      &EMPTY_KWARGS,
     ),
     // vec3 - float
     6 => {
@@ -372,7 +372,7 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       1,
       &[ArgRef::Positional(1), ArgRef::Positional(0)],
       &[lhs.clone(), rhs.clone()],
-      &Default::default(),
+      &EMPTY_KWARGS,
     ),
     // vec2 * vec2
     7 => {
@@ -532,50 +532,24 @@ pub(crate) fn neq_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
   }
 }
 
-pub(crate) fn and_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  lhs: &Value,
-  rhs: &Value,
-) -> Result<Value, ErrorStack> {
+pub(crate) fn and_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       let a = lhs.as_bool().unwrap();
       let b = rhs.as_bool().unwrap();
       Ok(Value::Bool(a && b))
     }
-    1 => eval_mesh_boolean(
-      0,
-      &[ArgRef::Positional(0), ArgRef::Positional(1)],
-      &[lhs.clone(), rhs.clone()],
-      &Default::default(),
-      ctx,
-      MeshBooleanOp::Intersection,
-    ),
     _ => unimplemented!(),
   }
 }
 
-pub(crate) fn or_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  lhs: &Value,
-  rhs: &Value,
-) -> Result<Value, ErrorStack> {
+pub(crate) fn or_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       let a = lhs.as_bool().unwrap();
       let b = rhs.as_bool().unwrap();
       Ok(Value::Bool(a || b))
     }
-    1 => eval_mesh_boolean(
-      0,
-      &[ArgRef::Positional(0), ArgRef::Positional(1)],
-      &[lhs.clone(), rhs.clone()],
-      &Default::default(),
-      ctx,
-      MeshBooleanOp::Union,
-    ),
     _ => unimplemented!(),
   }
 }
@@ -596,7 +570,7 @@ pub(crate) fn bit_and_impl(
       0,
       &[ArgRef::Positional(0), ArgRef::Positional(1)],
       &[lhs.clone(), rhs.clone()],
-      &Default::default(),
+      &EMPTY_KWARGS,
       ctx,
       MeshBooleanOp::Intersection,
     ),
@@ -620,7 +594,7 @@ pub(crate) fn bit_or_impl(
       0,
       &[ArgRef::Positional(0), ArgRef::Positional(1)],
       &[lhs.clone(), rhs.clone()],
-      &Default::default(),
+      &EMPTY_KWARGS,
       ctx,
       MeshBooleanOp::Union,
     ),
@@ -651,7 +625,7 @@ pub(crate) fn map_impl(
       0,
       &[ArgRef::Positional(0), ArgRef::Positional(1)],
       &[fn_value.clone(), seq.clone()],
-      &Default::default(),
+      &EMPTY_KWARGS,
     ),
     _ => unimplemented!(),
   }
@@ -662,7 +636,7 @@ fn fold_while_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -676,7 +650,7 @@ fn fold_while_impl(
           err.wrap("Error produced while consuming sequence passed to `fold_while`")
         })?;
         let out = ctx
-          .invoke_callable(cb, &[acc.clone(), next], &Default::default(), &ctx.globals)
+          .invoke_callable(cb, &[acc.clone(), next], &EMPTY_KWARGS)
           .map_err(|err| err.wrap("Error in user-provided callback to `fold_while`"))?;
         if out.is_nil() {
           return Ok(acc);
@@ -696,7 +670,7 @@ pub(crate) fn warp_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -722,8 +696,7 @@ pub(crate) fn warp_impl(
               Value::Vec3(vtx.position),
               Value::Vec3(vtx.displacement_normal.unwrap_or(Vec3::zeros())),
             ],
-            &Default::default(),
-            &ctx.globals,
+            &EMPTY_KWARGS,
           )
           .map_err(|err| err.wrap("error calling warp cb"))?;
         let warped_pos = warped_pos.as_vec3().ok_or_else(|| {
@@ -810,7 +783,7 @@ pub(crate) fn translate_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let (translation, obj) = match def_ix {
     0 => {
@@ -849,7 +822,7 @@ pub(crate) fn scale_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let (scale, mesh) = match def_ix {
     0 => {
@@ -892,7 +865,7 @@ fn spot_light_impl(
   def_ix: usize,
   _arg_refs: &[ArgRef],
   _args: &[Value],
-  _kwargs: &FxHashMap<String, Value>,
+  _kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -906,7 +879,7 @@ fn point_light_impl(
   def_ix: usize,
   _arg_refs: &[ArgRef],
   _args: &[Value],
-  _kwargs: &FxHashMap<String, Value>,
+  _kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -920,7 +893,7 @@ fn ambient_light_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -939,7 +912,7 @@ fn dir_light_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -977,7 +950,7 @@ fn set_material_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1001,7 +974,7 @@ fn set_default_material_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1022,7 +995,7 @@ fn set_rng_seed_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1050,7 +1023,7 @@ fn set_rng_seed_impl(
   _def_ix: usize,
   _arg_refs: &[ArgRef],
   _args: &[Value],
-  _kwargs: &FxHashMap<String, Value>,
+  _kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   Ok(Value::Nil)
 }
@@ -1060,7 +1033,7 @@ fn set_sharp_angle_threshold_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1077,7 +1050,7 @@ fn mesh_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1164,12 +1137,12 @@ fn call_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       let callable = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      ctx.invoke_callable(callable, &[], &Default::default(), &ctx.globals)
+      ctx.invoke_callable(callable, &[], &EMPTY_KWARGS)
     }
     1 => {
       let callable = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
@@ -1179,7 +1152,7 @@ fn call_impl(
         .unwrap()
         .clone_box();
       let args = call_args.consume(ctx).collect::<Result<Vec<_>, _>>()?;
-      ctx.invoke_callable(callable, &args, &Default::default(), &ctx.globals)
+      ctx.invoke_callable(callable, &args, &EMPTY_KWARGS)
     }
     _ => unimplemented!(),
   }
@@ -1189,7 +1162,7 @@ fn fbm_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1229,7 +1202,7 @@ fn randi_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1256,7 +1229,7 @@ fn randv_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   fn invalid_bounds_err(min: impl Display, max: impl Display) -> ErrorStack {
     ErrorStack::new(format!(
@@ -1307,7 +1280,7 @@ fn randf_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1324,7 +1297,7 @@ fn verts_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1351,7 +1324,7 @@ fn convex_hull_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1391,7 +1364,7 @@ fn simplify_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1411,7 +1384,7 @@ fn fan_fill_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1457,7 +1430,7 @@ fn stitch_contours_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1508,7 +1481,7 @@ fn trace_geodesic_path_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1602,7 +1575,7 @@ fn alpha_wrap_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1645,7 +1618,7 @@ fn smooth_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1674,7 +1647,7 @@ fn remesh_planar_patches_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1708,7 +1681,7 @@ fn isotropic_remesh_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1745,7 +1718,7 @@ fn delaunay_remesh_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1773,7 +1746,7 @@ fn extrude_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1800,7 +1773,7 @@ fn torus_knot_path_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1822,7 +1795,7 @@ fn lissajous_knot_path_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1850,7 +1823,7 @@ fn extrude_pipe_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1862,7 +1835,7 @@ fn extrude_pipe_impl(
 
       enum Twist<'a> {
         Const(f32),
-        Dyn(&'a Callable),
+        Dyn(&'a Rc<Callable>),
       }
 
       let twist = match arg_refs[5].resolve(args, &kwargs) {
@@ -1879,15 +1852,14 @@ fn extrude_pipe_impl(
 
       fn build_twist_callable<'a>(
         ctx: &'a EvalCtx,
-        get_twist: &'a Callable,
+        get_twist: &'a Rc<Callable>,
       ) -> impl Fn(usize, Vec3) -> Result<f32, ErrorStack> + 'a {
         move |i, pos| {
           let out = ctx
             .invoke_callable(
               get_twist,
               &[Value::Int(i as i64), Value::Vec3(pos)],
-              &Default::default(),
-              &ctx.globals,
+              &EMPTY_KWARGS,
             )
             .map_err(|err| {
               err.wrap(format!(
@@ -1905,15 +1877,14 @@ fn extrude_pipe_impl(
 
       fn build_radius_callable<'a>(
         ctx: &'a EvalCtx,
-        get_radius: &'a Callable,
+        get_radius: &'a Rc<Callable>,
       ) -> impl Fn(usize, Vec3) -> Result<PipeRadius, ErrorStack> + 'a {
         move |i, pos| {
           let radius_for_ring = ctx
             .invoke_callable(
               get_radius,
               &[Value::Int(i as i64), Value::Vec3(pos)],
-              &Default::default(),
-              &ctx.globals,
+              &EMPTY_KWARGS,
             )
             .map_err(|err| {
               err.wrap(format!(
@@ -2017,7 +1988,7 @@ fn bezier3d_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2038,7 +2009,7 @@ fn superellipse_path_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2058,7 +2029,7 @@ fn normalize_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2077,7 +2048,7 @@ fn distance_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2099,7 +2070,7 @@ fn len_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2138,7 +2109,7 @@ fn chars_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2187,7 +2158,7 @@ fn assert_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2208,7 +2179,7 @@ fn intersects_ray_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2240,7 +2211,7 @@ fn intersects_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2287,7 +2258,7 @@ fn connected_components_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2339,7 +2310,7 @@ fn tessellate_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2373,7 +2344,7 @@ fn subdivide_by_plane_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   fn unhandled_transform_error() -> ErrorStack {
     ErrorStack::new(
@@ -2478,7 +2449,7 @@ fn split_by_plane_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2501,7 +2472,7 @@ fn compose_impl(
   ctx: &EvalCtx,
   def_ix: usize,
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2562,7 +2533,7 @@ fn point_distribute_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2603,7 +2574,7 @@ fn render_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2700,7 +2671,7 @@ fn render_impl(
 fn print_impl(
   ctx: &EvalCtx,
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let formatted_pos_ags = args
     .iter()
@@ -2721,7 +2692,7 @@ fn lerp_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2744,7 +2715,7 @@ fn smoothstep_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2762,7 +2733,7 @@ fn linearstep_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2780,7 +2751,7 @@ fn deg2rad_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2795,7 +2766,7 @@ fn rad2deg_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2810,7 +2781,7 @@ fn fix_float_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2844,7 +2815,7 @@ fn round_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2871,7 +2842,7 @@ fn floor_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2898,7 +2869,7 @@ fn ceil_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2925,7 +2896,7 @@ fn fract_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2952,7 +2923,7 @@ fn trunc_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -2979,7 +2950,7 @@ fn pow_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3012,7 +2983,7 @@ fn exp_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3039,7 +3010,7 @@ fn log10_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3066,7 +3037,7 @@ fn log2_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3093,7 +3064,7 @@ fn ln_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3120,7 +3091,7 @@ fn tan_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3147,7 +3118,7 @@ fn cos_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3174,7 +3145,7 @@ fn sin_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3197,7 +3168,7 @@ fn sinh_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3224,7 +3195,7 @@ fn cosh_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3251,7 +3222,7 @@ fn tanh_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3278,7 +3249,7 @@ fn acos_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3305,7 +3276,7 @@ fn asin_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3332,7 +3303,7 @@ fn atan_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3359,7 +3330,7 @@ fn atan2_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3379,7 +3350,7 @@ fn box_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   {
     let (width, height, depth) = match def_ix {
@@ -3417,7 +3388,7 @@ fn icosphere_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3439,7 +3410,7 @@ fn cylinder_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3471,7 +3442,7 @@ fn grid_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3543,7 +3514,7 @@ fn rot_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   enum ObjType {
     Mesh,
@@ -3612,7 +3583,7 @@ fn look_at_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     // TODO: I'm pretty sure this isn't working like I was expecting it to
@@ -3679,7 +3650,7 @@ fn origin_to_geometry_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3711,7 +3682,7 @@ fn apply_transforms_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3737,7 +3708,7 @@ fn flip_normals_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3761,7 +3732,7 @@ fn vec2_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3781,7 +3752,7 @@ fn vec3_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3903,7 +3874,7 @@ fn join_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3932,7 +3903,7 @@ fn filter_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3952,7 +3923,7 @@ fn scan_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3973,7 +3944,7 @@ fn take_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -3993,7 +3964,7 @@ fn skip_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4013,7 +3984,7 @@ fn take_while_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4032,7 +4003,7 @@ fn skip_while_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4052,7 +4023,7 @@ fn chain_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4072,7 +4043,7 @@ fn first_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4092,7 +4063,7 @@ fn last_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4116,7 +4087,7 @@ fn append_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4145,7 +4116,7 @@ fn reverse_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4167,7 +4138,7 @@ fn collect_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4193,7 +4164,7 @@ fn any_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4203,7 +4174,7 @@ fn any_impl(
       for (i, res) in iter.enumerate() {
         let val = res?;
         let val = ctx
-          .invoke_callable(cb, &[val], &Default::default(), &ctx.globals)
+          .invoke_callable(cb, &[val], &EMPTY_KWARGS)
           .map_err(|err| err.wrap("error calling user-provided callback passed to `any`"))?;
         match val {
           Value::Bool(b) => {
@@ -4229,7 +4200,7 @@ fn all_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4239,7 +4210,7 @@ fn all_impl(
       for (i, res) in iter.enumerate() {
         let val = res?;
         let val = ctx
-          .invoke_callable(cb, &[val], &Default::default(), &ctx.globals)
+          .invoke_callable(cb, &[val], &EMPTY_KWARGS)
           .map_err(|err| err.wrap("error calling user-provided callback passed to `all`"))?;
         match val {
           Value::Bool(b) => {
@@ -4265,7 +4236,7 @@ fn for_each_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4275,7 +4246,7 @@ fn for_each_impl(
       for res in iter {
         let val = res?;
         ctx
-          .invoke_callable(cb, &[val], &Default::default(), &ctx.globals)
+          .invoke_callable(cb, &[val], &EMPTY_KWARGS)
           .map_err(|err| err.wrap("error calling user-provided callback passed to `for_each`"))?;
       }
       Ok(Value::Nil)
@@ -4288,7 +4259,7 @@ fn flatten_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4305,7 +4276,7 @@ fn abs_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4336,7 +4307,7 @@ fn signum_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4367,7 +4338,7 @@ fn sqrt_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4394,7 +4365,7 @@ fn max_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4433,7 +4404,7 @@ fn min_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4472,7 +4443,7 @@ fn clamp_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4518,7 +4489,7 @@ fn float_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4541,7 +4512,7 @@ fn int_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4564,7 +4535,7 @@ fn str_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -4597,7 +4568,7 @@ macro_rules! builtin_fn {
         def_ix: usize,
         arg_refs: &[ArgRef],
         args: &[Value],
-        kwargs: &FxHashMap<String, Value>,
+        kwargs: &FxHashMap<Sym, Value>,
         ctx: &EvalCtx,
       ) -> Result<Value, ErrorStack> {
         $impl(def_ix, arg_refs, args, kwargs, ctx)
@@ -4614,7 +4585,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     def_ix: usize,
     arg_refs: &[ArgRef],
     args: &[Value],
-    kwargs: &FxHashMap<String, Value>,
+    kwargs: &FxHashMap<Sym, Value>,
     ctx: &EvalCtx,
   ) -> Result<Value, ErrorStack>,
 > = phf::phf_map! {
@@ -4841,15 +4812,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let rhs = arg_refs[1].resolve(args, kwargs);
     neq_impl(def_ix, lhs, rhs)
   }),
-  "and" => builtin_fn!(and, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
+  "and" => builtin_fn!(and, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
-    and_impl(ctx, def_ix, lhs, rhs)
+    and_impl(def_ix, lhs, rhs)
   }),
-  "or" => builtin_fn!(or, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
+  "or" => builtin_fn!(or, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
-    or_impl(ctx, def_ix, lhs, rhs)
+    or_impl(def_ix, lhs, rhs)
   }),
   "not" => builtin_fn!(not, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let val = arg_refs[0].resolve(args, kwargs);
@@ -5092,7 +5063,7 @@ pub(crate) fn resolve_builtin_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
   ctx: &EvalCtx,
 ) -> Result<Value, ErrorStack> {
   match BUILTIN_FN_IMPLS.get(name) {

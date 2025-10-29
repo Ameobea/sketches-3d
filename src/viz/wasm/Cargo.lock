@@ -323,6 +323,7 @@ dependencies = [
  "pest",
  "pest_derive",
  "phf",
+ "phf_shared",
  "point_distribute",
  "rand 0.8.5",
  "rand_pcg",

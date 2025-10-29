@@ -5,7 +5,7 @@ use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::Matrix4;
 use point_distribute::MeshSurfaceSampler;
 
-use crate::{Callable, ErrorStack, EvalCtx, MeshHandle, Sequence, Value};
+use crate::{Callable, ErrorStack, EvalCtx, MeshHandle, Sequence, Value, EMPTY_KWARGS};
 
 #[derive(Clone, Debug)]
 pub(crate) struct IntRange {
@@ -60,14 +60,14 @@ impl Sequence for IntRange {
 #[derive(Debug)]
 pub(crate) struct MapSeq {
   pub inner: Box<dyn Sequence>,
-  pub cb: Callable,
+  pub cb: Rc<Callable>,
 }
 
 impl Sequence for MapSeq {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(Self {
       inner: self.inner.clone_box(),
-      cb: self.cb.clone(),
+      cb: Rc::clone(&self.cb),
     })
   }
 
@@ -76,19 +76,13 @@ impl Sequence for MapSeq {
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let inner = self.inner.consume(ctx).enumerate();
-    // TODO: more clones here
     let cb = self.cb;
     Box::new(inner.map(move |(i, res)| {
       match res {
         Ok(v) => ctx
-          .invoke_callable(
-            &cb,
-            &[v, Value::Int(i as i64)],
-            &Default::default(),
-            &ctx.globals,
-          )
+          .invoke_callable(&cb, &[v, Value::Int(i as i64)], &EMPTY_KWARGS)
           .map_err(|err| err.wrap("cb passed to map produced an error")),
-        Err(e) => Err(e),
+        Err(err) => Err(err),
       }
     }))
   }
@@ -97,7 +91,7 @@ impl Sequence for MapSeq {
 #[derive(Debug)]
 pub(crate) struct FilterSeq {
   pub inner: Box<dyn Sequence>,
-  pub cb: Callable,
+  pub cb: Rc<Callable>,
 }
 
 impl Sequence for FilterSeq {
@@ -121,12 +115,7 @@ impl Sequence for FilterSeq {
         .map(move |(i, res)| match res {
           Ok(v) => {
             let flag = ctx
-              .invoke_callable(
-                &cb,
-                &[v.clone(), Value::Int(i as i64)],
-                &Default::default(),
-                &ctx.globals,
-              )
+              .invoke_callable(&cb, &[v.clone(), Value::Int(i as i64)], &EMPTY_KWARGS)
               .map_err(|err| err.wrap("cb passed to filter produced an error"))?;
             let Some(flag) = flag.as_bool() else {
               return Err(ErrorStack::new(format!(
@@ -147,13 +136,13 @@ impl Sequence for FilterSeq {
 pub(crate) struct ScanSeq {
   pub acc: Value,
   pub inner: Box<dyn Sequence>,
-  pub cb: Callable,
+  pub cb: Rc<Callable>,
 }
 
 pub(crate) struct ScanIter<'a> {
   acc: Value,
   inner: Enumerate<Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>>,
-  cb: Callable,
+  cb: Rc<Callable>,
   ctx: &'a EvalCtx,
 }
 
@@ -165,10 +154,7 @@ impl<'a> Iterator for ScanIter<'a> {
       match res {
         (ix, Ok(v)) => {
           let args = &[self.acc.clone(), v, Value::Int(ix as i64)];
-          match self
-            .ctx
-            .invoke_callable(&self.cb, args, &Default::default(), &self.ctx.globals)
-          {
+          match self.ctx.invoke_callable(&self.cb, args, &EMPTY_KWARGS) {
             Ok(new_acc) => {
               self.acc = new_acc;
               Some(Ok(self.acc.clone()))
@@ -284,7 +270,7 @@ pub(crate) struct PointDistributeSeq {
   pub mesh: MeshHandle,
   pub seed: u64,
   pub point_count: Option<usize>,
-  pub cb: Option<Callable>,
+  pub cb: Option<Rc<Callable>>,
   pub world_space: bool,
 }
 
@@ -306,7 +292,7 @@ pub(crate) struct PointDistributeIter<'a> {
   mesh: MeshHandle,
   inverse_transposed_transform: Matrix4<f32>,
   sampler: MeshSurfaceSampler<'static>,
-  cb: Option<Callable>,
+  cb: Option<Rc<Callable>>,
   world_space: bool,
 }
 
@@ -315,7 +301,7 @@ impl<'a> PointDistributeIter<'a> {
     ctx: &'a EvalCtx,
     mesh: MeshHandle,
     seed: u64,
-    cb: Option<Callable>,
+    cb: Option<Rc<Callable>>,
     world_space: bool,
   ) -> Result<Self, ErrorStack> {
     // safe because this reference will only live as long as the iterator, and by holding the `Arc`
@@ -356,12 +342,9 @@ impl<'a> Iterator for PointDistributeIter<'a> {
         }
         let value = Value::Vec3(Vec3::new(pos.x, pos.y, pos.z));
         if let Some(cb) = &self.cb {
-          let mapped = self.ctx.invoke_callable(
-            cb,
-            &[value, Value::Vec3(normal)],
-            &Default::default(),
-            &self.ctx.globals,
-          );
+          let mapped = self
+            .ctx
+            .invoke_callable(cb, &[value, Value::Vec3(normal)], &EMPTY_KWARGS);
           Some(mapped)
         } else {
           Some(Ok(value))
@@ -551,12 +534,12 @@ impl Debug for SkipSeq {
 
 pub(crate) struct TakeWhileSeq {
   pub inner: Box<dyn Sequence>,
-  pub cb: Callable,
+  pub cb: Rc<Callable>,
 }
 
 pub(crate) struct TakeWhileIter<'a> {
   inner: Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>,
-  cb: Callable,
+  cb: Rc<Callable>,
   ctx: &'a EvalCtx,
 }
 
@@ -571,12 +554,10 @@ impl Iterator for TakeWhileIter<'_> {
       return Some(res);
     };
 
-    match self.ctx.invoke_callable(
-      &self.cb,
-      &[val.clone()],
-      &Default::default(),
-      &self.ctx.globals,
-    ) {
+    match self
+      .ctx
+      .invoke_callable(&self.cb, &[val.clone()], &EMPTY_KWARGS)
+    {
       Ok(Value::Bool(flag)) => {
         if flag {
           Some(Ok(val))
@@ -626,12 +607,12 @@ impl Debug for TakeWhileSeq {
 #[derive(Debug)]
 pub(crate) struct SkipWhileSeq {
   pub inner: Box<dyn Sequence>,
-  pub cb: Callable,
+  pub cb: Rc<Callable>,
 }
 
 pub(crate) struct SkipWhileIter<'a> {
   inner: Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>,
-  cb: Callable,
+  cb: Rc<Callable>,
   ctx: &'a EvalCtx,
 }
 
@@ -644,12 +625,10 @@ impl Iterator for SkipWhileIter<'_> {
         return Some(res);
       };
 
-      match self.ctx.invoke_callable(
-        &self.cb,
-        &[val.clone()],
-        &Default::default(),
-        &self.ctx.globals,
-      ) {
+      match self
+        .ctx
+        .invoke_callable(&self.cb, &[val.clone()], &EMPTY_KWARGS)
+      {
         Ok(Value::Bool(flag)) => {
           if flag {
             continue;
@@ -674,7 +653,7 @@ impl Sequence for SkipWhileSeq {
   fn clone_box(&self) -> Box<dyn Sequence> {
     Box::new(Self {
       inner: self.inner.clone_box(),
-      cb: self.cb.clone(),
+      cb: Rc::clone(&self.cb),
     })
   }
 

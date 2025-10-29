@@ -4,7 +4,8 @@
   adt_const_params,
   thread_local,
   impl_trait_in_fn_trait_return,
-  unsafe_cell_access
+  unsafe_cell_access,
+  likely_unlikely
 )]
 
 #[cfg(target_arch = "wasm32")]
@@ -14,7 +15,6 @@ use std::{
   cell::{Cell, RefCell},
   fmt::{Debug, Display},
   rc::{self, Rc},
-  sync::Mutex,
 };
 
 use ast::{Expr, FunctionCallTarget, Statement};
@@ -39,9 +39,12 @@ use smallvec::SmallVec;
 #[cfg(target_arch = "wasm32")]
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
-  ast::{parse_statement, ClosureArg, DestructurePattern, MapLiteralEntry, TypeName},
+  ast::{
+    maybe_init_binop_def_shorthands, parse_statement, BinOp, ClosureArg, DestructurePattern,
+    FunctionCall, MapLiteralEntry, TypeName,
+  },
   builtins::{
-    fn_defs::{ArgDef, DefaultValue, FnSignature, FN_SIGNATURE_DEFS},
+    fn_defs::{get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnSignature, FN_SIGNATURE_DEFS},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
   lights::{AmbientLight, Light},
@@ -105,12 +108,14 @@ pub struct ErrorStack {
 }
 
 impl ErrorStack {
+  #[cold]
   pub fn new(msg: impl Into<String>) -> Self {
     ErrorStack {
       errors: vec![msg.into()],
     }
   }
 
+  #[cold]
   pub fn wrap(mut self, msg: impl Into<String>) -> Self {
     self.errors.push(msg.into());
     self
@@ -118,6 +123,7 @@ impl ErrorStack {
 }
 
 impl Display for ErrorStack {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let indent = "  ";
     for (ix, err) in self.errors.iter().rev().enumerate() {
@@ -143,6 +149,7 @@ impl Display for ErrorStack {
 }
 
 impl Debug for ErrorStack {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{self}")
   }
@@ -164,12 +171,13 @@ pub(crate) fn seq_as_eager<'a>(seq: &'a dyn Sequence) -> Option<&'a EagerSeq> {
 
 #[derive(Clone)]
 pub struct PartiallyAppliedFn {
-  inner: Box<Callable>,
+  inner: Rc<Callable>,
   args: Vec<Value>,
-  kwargs: FxHashMap<String, Value>,
+  kwargs: FxHashMap<Sym, Value>,
 }
 
 impl Debug for PartiallyAppliedFn {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(
       f,
@@ -207,6 +215,7 @@ pub struct Closure {
 }
 
 impl Debug for Closure {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let return_type_hint_formatted = self
       .return_type_hint
@@ -226,6 +235,7 @@ pub struct ComposedFn {
 }
 
 impl Debug for ComposedFn {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "<composed fn of {} inner callables>", self.inner.len())
   }
@@ -237,20 +247,13 @@ pub struct PreResolvedSignature {
   def_ix: usize,
 }
 
-#[derive(Clone)]
 pub enum Callable {
   Builtin {
-    name: String,
-    fn_impl: fn(
-      usize,
-      &[ArgRef],
-      &[Value],
-      &FxHashMap<String, Value>,
-      &EvalCtx,
-    ) -> Result<Value, ErrorStack>,
+    fn_entry_ix: usize,
+    fn_impl:
+      fn(usize, &[ArgRef], &[Value], &FxHashMap<Sym, Value>, &EvalCtx) -> Result<Value, ErrorStack>,
     /// This will be set in the case that a single signature can be resolved in advance
     pre_resolved_signature: Option<PreResolvedSignature>,
-    fn_signature_defs: &'static [FnSignature],
   },
   PartiallyAppliedFn(PartiallyAppliedFn),
   Closure(Closure),
@@ -258,25 +261,39 @@ pub enum Callable {
 }
 
 impl Debug for Callable {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Callable::Builtin {
-        name,
+        fn_entry_ix,
         pre_resolved_signature,
         ..
-      } => Debug::fmt(
-        &format!(
-          "<built-in fn \"{name}\"{}>",
-          match pre_resolved_signature {
-            Some(PreResolvedSignature {
-              arg_refs: _,
-              def_ix,
-            }) => format!(" with signature {def_ix}"),
-            None => String::new(),
+      } => {
+        let entry = match FN_SIGNATURE_DEFS.entries.get(*fn_entry_ix) {
+          Some(entry) => entry,
+          None => {
+            return Debug::fmt(
+              &format!("<built-in fn with invalid entry ix {fn_entry_ix}>"),
+              f,
+            );
           }
-        ),
-        f,
-      ),
+        };
+
+        let name = entry.0;
+        Debug::fmt(
+          &format!(
+            "<built-in fn \"{name}\"{}>",
+            match pre_resolved_signature {
+              Some(PreResolvedSignature {
+                arg_refs: _,
+                def_ix,
+              }) => format!(" with signature {def_ix}"),
+              None => String::new(),
+            }
+          ),
+          f,
+        )
+      }
       Callable::PartiallyAppliedFn(paf) => Debug::fmt(&format!("{paf:?}"), f),
       Callable::Closure(closure) => Debug::fmt(&format!("{closure:?}"), f),
       Callable::ComposedFn(composed) => Debug::fmt(&format!("{composed:?}"), f),
@@ -287,9 +304,10 @@ impl Debug for Callable {
 impl Callable {
   pub fn is_side_effectful(&self) -> bool {
     match self {
-      Callable::Builtin { name, .. } => {
+      Callable::Builtin { fn_entry_ix, .. } => {
+        let name = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0;
         matches!(
-          name.as_str(),
+          name,
           "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert"
         )
       }
@@ -416,6 +434,7 @@ impl MeshHandle {
 }
 
 impl Debug for MeshHandle {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(
       f,
@@ -439,43 +458,81 @@ impl Drop for ManifoldHandle {
 
 pub type Vec2 = Vector2<f32>;
 
+#[repr(u8)]
 pub enum Value {
+  Nil,
   Int(i64),
   Float(f32),
   Vec2(Vec2),
   Vec3(Vec3),
+  Bool(bool),
   Mesh(Rc<MeshHandle>),
-  Light(Box<Light>),
   Callable(Rc<Callable>),
   Sequence(Rc<dyn Sequence>),
   Map(Rc<FxHashMap<String, Value>>),
-  Bool(bool),
-  String(String),
   Material(Rc<Material>),
-  Nil,
+  Light(Box<Light>),
+  String(String),
+}
+
+impl Value {
+  fn discriminant(&self) -> u8 {
+    unsafe { *<*const _>::from(self).cast::<u8>() }
+  }
+}
+
+/// asserts invariants depended upon by fast-pathed `Value::clone` impl
+#[test]
+fn test_value_discriminant_order() {
+  let copyable_vals = &[
+    Value::Nil,
+    Value::Int(0),
+    Value::Float(0.0),
+    Value::Vec2(Vec2::new(0.0, 0.0)),
+    Value::Vec3(Vec3::new(0.0, 0.0, 0.0)),
+    Value::Bool(true),
+  ];
+
+  for (i, v) in copyable_vals.into_iter().enumerate() {
+    assert_eq!(v.discriminant(), i as u8);
+  }
+
+  assert_eq!((Value::Bool(false)).discriminant(), 5);
+}
+
+#[cold]
+#[inline(never)]
+fn clone_value_slow(val: &Value) -> Value {
+  match val {
+    Value::Int(_)
+    | Value::Float(_)
+    | Value::Vec2(_)
+    | Value::Vec3(_)
+    | Value::Bool(_)
+    | Value::Nil => unsafe { std::hint::unreachable_unchecked() },
+    Value::Mesh(mesh) => Value::Mesh(Rc::clone(mesh)),
+    Value::Light(light) => Value::Light(light.clone()),
+    Value::Callable(callable) => Value::Callable(Rc::clone(&callable)),
+    Value::Sequence(seq) => Value::Sequence(Rc::clone(seq)),
+    Value::Map(map) => Value::Map(Rc::clone(map)),
+    Value::String(s) => Value::String(s.clone()),
+    Value::Material(material) => Value::Material(Rc::clone(material)),
+  }
 }
 
 impl Clone for Value {
   fn clone(&self) -> Self {
-    match self {
-      Value::Int(i) => Value::Int(*i),
-      Value::Float(f) => Value::Float(*f),
-      Value::Vec2(v2) => Value::Vec2(*v2),
-      Value::Vec3(v3) => Value::Vec3(*v3),
-      Value::Mesh(mesh) => Value::Mesh(Rc::clone(mesh)),
-      Value::Light(light) => Value::Light(light.clone()),
-      Value::Callable(callable) => Value::Callable(callable.clone()),
-      Value::Sequence(seq) => Value::Sequence(Rc::clone(seq)),
-      Value::Map(map) => Value::Map(map.clone()),
-      Value::Bool(b) => Value::Bool(*b),
-      Value::String(s) => Value::String(s.clone()),
-      Value::Material(material) => Value::Material(Rc::clone(material)),
-      Value::Nil => Value::Nil,
+    if std::hint::likely(self.discriminant() <= 5) {
+      // fast path for copyable variants
+      return unsafe { std::ptr::read(self as *const Value) };
     }
+
+    clone_value_slow(self)
   }
 }
 
 impl Debug for Value {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Value::Int(i) => write!(f, "Int({i})"),
@@ -532,7 +589,7 @@ impl Value {
     }
   }
 
-  fn as_callable(&self) -> Option<&Callable> {
+  fn as_callable(&self) -> Option<&Rc<Callable>> {
     match self {
       Value::Callable(callable) => Some(callable),
       _ => None,
@@ -702,10 +759,9 @@ impl ArgType {
         AmbientLight::default(),
       )))),
       ArgType::Callable => Some(Value::Callable(Rc::new(Callable::Builtin {
-        name: String::new(),
+        fn_entry_ix: std::usize::MAX,
         fn_impl: |_, _, _, _, _| panic!("example callable should never be called"),
         pre_resolved_signature: None,
-        fn_signature_defs: &[],
       }))),
       ArgType::Sequence => Some(Value::Sequence(Rc::new(EagerSeq { inner: Vec::new() }))),
       ArgType::Map => Some(Value::Map(Rc::new(FxHashMap::default()))),
@@ -720,7 +776,7 @@ impl ArgType {
 
 enum UnrealizedArgRef {
   Positional(usize),
-  Keyword(&'static str),
+  Keyword(Sym),
   Default(fn() -> Value),
 }
 
@@ -737,19 +793,15 @@ impl UnrealizedArgRef {
 #[derive(Clone, Debug)]
 pub enum ArgRef {
   Positional(usize),
-  Keyword(&'static str),
+  Keyword(Sym),
   Default(Value),
 }
 
 impl ArgRef {
-  pub fn resolve<'a>(
-    &'a self,
-    args: &'a [Value],
-    kwargs: &'a FxHashMap<String, Value>,
-  ) -> &'a Value {
+  pub fn resolve<'a>(&'a self, args: &'a [Value], kwargs: &'a FxHashMap<Sym, Value>) -> &'a Value {
     match self {
       ArgRef::Positional(ix) => &args[*ix],
-      ArgRef::Keyword(name) => kwargs.get(*name).expect("Keyword argument not found"),
+      ArgRef::Keyword(name) => kwargs.get(name).expect("Keyword argument not found"),
       ArgRef::Default(val) => val,
     }
   }
@@ -764,6 +816,7 @@ enum GetArgsOutput {
   PartiallyApplied,
 }
 
+#[cold]
 fn format_fn_signatures(arg_defs: &[FnSignature]) -> String {
   arg_defs
     .iter()
@@ -792,24 +845,32 @@ fn format_fn_signatures(arg_defs: &[FnSignature]) -> String {
     .join("\n")
 }
 
+#[cold]
 pub(crate) fn build_no_fn_def_found_err(
+  ctx: &EvalCtx,
   fn_name: &str,
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
   defs: &[FnSignature],
 ) -> ErrorStack {
+  let desymbolicated_kwargs = ctx.desymbolicate_kwargs(kwargs);
   ErrorStack::new(format!(
     "No valid function signature found for `{fn_name}` with args: {args:?}, kwargs: \
-     {kwargs:?}\n\nAvailable signatures:\n{}",
+     {desymbolicated_kwargs:?}\n\nAvailable signatures:\n{}",
     format_fn_signatures(defs)
   ))
 }
 
+const EMPTY_ARGS: Vec<Value> = Vec::new();
+const EMPTY_KWARGS: FxHashMap<Sym, Value> =
+  std::collections::HashMap::with_hasher(fxhash::FxBuildHasher::new());
+
 fn get_args(
+  ctx: &EvalCtx,
   fn_name: &str,
   defs: &[FnSignature],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<GetArgsOutput, ErrorStack> {
   // if the name of the first arg is empty, then the function is considered fully dynamic and no
   // type-checking/validation is performed
@@ -824,10 +885,15 @@ fn get_args(
     }
   }
 
-  for key in kwargs.keys() {
-    if !defs
-      .iter()
-      .any(|def| def.arg_defs.iter().any(|arg| arg.name == key))
+  for &key in kwargs.keys() {
+    // TODO: again, bad that we have to resolve here for each kwarg
+    if ctx
+      .with_resolved_sym(key, |resolved_kwarg| {
+        !defs
+          .iter()
+          .any(|def| def.arg_defs.iter().any(|arg| arg.name == resolved_kwarg))
+      })
+      .unwrap()
     {
       return Err(ErrorStack::new(format!(
         "kwarg `{key}` is not valid in any function signature.\n\nAvailable signatures:\n{}",
@@ -840,6 +906,21 @@ fn get_args(
   let mut valid_partial: bool = false;
   let any_args_provided = !args.is_empty() || !kwargs.is_empty();
   'def: for (def_ix, def) in defs.iter().enumerate() {
+    // if a kwarg was passed which isn't defined in this function signature, skip
+    for &kwarg_key in kwargs.keys() {
+      if ctx
+        .with_resolved_sym(kwarg_key, |resolved_kwarg_key| {
+          def
+            .arg_defs
+            .iter()
+            .all(|def| def.name != resolved_kwarg_key)
+        })
+        .unwrap()
+      {
+        continue 'def;
+      }
+    }
+
     let mut pos_arg_ix = 0;
     arg_refs.clear();
     'arg: for ArgDef {
@@ -849,15 +930,10 @@ fn get_args(
       valid_types,
     } in def.arg_defs
     {
-      // if a kwarg was passed which isn't defined in this function signature, skip
-      for kwarg_key in kwargs.keys() {
-        if def.arg_defs.iter().all(|def| def.name != *kwarg_key) {
-          continue 'def;
-        }
-      }
-
-      let (arg, arg_ref) = if let Some(kwarg) = kwargs.get(*name) {
-        (kwarg, UnrealizedArgRef::Keyword(*name))
+      // TODO: this is not ideal; would be good to pre-resolve these.
+      let kwarg_sym = ctx.interned_symbols.intern(name);
+      let (arg, arg_ref) = if let Some(kwarg) = kwargs.get(&kwarg_sym) {
+        (kwarg, UnrealizedArgRef::Keyword(kwarg_sym))
       } else if pos_arg_ix < args.len() {
         let arg = &args[pos_arg_ix];
         let arg_ref = UnrealizedArgRef::Positional(pos_arg_ix);
@@ -898,17 +974,19 @@ fn get_args(
     return Ok(GetArgsOutput::PartiallyApplied);
   }
 
-  Err(build_no_fn_def_found_err(fn_name, args, kwargs, defs))
+  Err(build_no_fn_def_found_err(ctx, fn_name, args, kwargs, defs))
 }
 
 /// Specialized version of `get_args` for more efficient binary operator lookup.  Assumes that each
 /// def in `defs` has exactly two args.
 fn get_binop_def_ix(
-  name: &str,
-  defs: &[FnSignature],
+  ctx: &EvalCtx,
+  fn_entry_ix: usize,
   lhs: &Value,
   rhs: &Value,
 ) -> Result<usize, ErrorStack> {
+  let fn_entry = &FN_SIGNATURE_DEFS.entries[fn_entry_ix];
+  let defs = fn_entry.1.signatures;
   for (def_ix, def) in defs.iter().enumerate() {
     let lhs_def = &def.arg_defs[0];
     let rhs_def = &def.arg_defs[1];
@@ -920,44 +998,22 @@ fn get_binop_def_ix(
   }
 
   return Err(build_no_fn_def_found_err(
-    name,
+    ctx,
+    fn_entry.0,
     &[lhs.clone(), rhs.clone()],
-    &Default::default(),
-    FN_SIGNATURE_DEFS[name].signatures,
-  ));
-}
-
-/// Specialized version of `get_args` for more efficient binary operator lookup.  Assumes that each
-/// def in `defs` has exactly two args.
-///
-/// Returns `(def_ix, return_types)`
-fn get_binop_return_ty(
-  name: &str,
-  defs: &[FnSignature],
-  lhs: &Value,
-  rhs: &Value,
-) -> Result<&'static [ArgType], ErrorStack> {
-  for def in defs {
-    let lhs_def = &def.arg_defs[0];
-    let rhs_def = &def.arg_defs[1];
-    if ArgType::any_valid(&lhs_def.valid_types, lhs)
-      && ArgType::any_valid(&rhs_def.valid_types, rhs)
-    {
-      return Ok(&def.return_type);
-    }
-  }
-
-  return Err(build_no_fn_def_found_err(
-    name,
-    &[lhs.clone(), rhs.clone()],
-    &Default::default(),
-    FN_SIGNATURE_DEFS[name].signatures,
+    &EMPTY_KWARGS,
+    fn_entry.1.signatures,
   ));
 }
 
 /// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
 /// def in `defs` has exactly one arg.
-fn get_unop_def_ix(name: &str, defs: &[FnSignature], arg: &Value) -> Result<usize, ErrorStack> {
+fn get_unop_def_ix(
+  ctx: &EvalCtx,
+  fn_entry_ix: usize,
+  defs: &[FnSignature],
+  arg: &Value,
+) -> Result<usize, ErrorStack> {
   for (def_ix, def) in defs.iter().enumerate() {
     let arg_def = &def.arg_defs[0];
     if ArgType::any_valid(&arg_def.valid_types, arg) {
@@ -965,17 +1021,20 @@ fn get_unop_def_ix(name: &str, defs: &[FnSignature], arg: &Value) -> Result<usiz
     }
   }
 
+  let fn_entry = &FN_SIGNATURE_DEFS.entries[fn_entry_ix];
   return Err(build_no_fn_def_found_err(
-    name,
+    ctx,
+    fn_entry.0,
     &[arg.clone()],
-    &Default::default(),
-    FN_SIGNATURE_DEFS[name].signatures,
+    &EMPTY_KWARGS,
+    fn_entry.1.signatures,
   ));
 }
 
 /// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
 /// def in `defs` has exactly one arg.
 fn get_unop_return_ty(
+  ctx: &EvalCtx,
   name: &str,
   defs: &[FnSignature],
   arg: &Value,
@@ -988,9 +1047,10 @@ fn get_unop_return_ty(
   }
 
   return Err(build_no_fn_def_found_err(
+    ctx,
     name,
     &[arg.clone()],
-    &Default::default(),
+    &EMPTY_KWARGS,
     FN_SIGNATURE_DEFS[name].signatures,
   ));
 }
@@ -1029,38 +1089,140 @@ type RenderedMeshes = AppendOnlyBuffer<Rc<MeshHandle>>;
 type RenderedLights = AppendOnlyBuffer<Light>;
 type RenderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
+// #[derive(Clone, Debug)]
+// enum ScopeVars {
+//   Flat {
+//     ids: SmallVec<[Sym; 4]>,
+//     vals: SmallVec<[Value; 4]>,
+//   },
+//   Map(FxHashMap<Sym, Value>),
+// }
+
+// impl Default for ScopeVars {
+//   fn default() -> Self {
+//     ScopeVars::Flat {
+//       ids: SmallVec::new(),
+//       vals: SmallVec::new(),
+//     }
+//   }
+// }
+
+// impl ScopeVars {
+//   fn insert(&mut self, key: Sym, value: Value) {
+//     match self {
+//       ScopeVars::Flat { ids, vals } => {
+//         if let Some(ix) = ids.iter().position(|k| *k == key) {
+//           vals[ix] = value;
+//           return;
+//         }
+
+//         if ids.len() < 4 {
+//           ids.push(key);
+//           vals.push(value);
+//           return;
+//         }
+
+//         ::log::info!("spilling scope vars to map; {:?}; {:?}", ids, vals);
+//         let mut map = FxHashMap::default();
+//         for (k, v) in ids.iter().cloned().zip(vals.iter().cloned()) {
+//           map.insert(k, v);
+//         }
+//         map.insert(key, value);
+//         *self = ScopeVars::Map(map);
+//       }
+//       ScopeVars::Map(map) => {
+//         map.insert(key, value);
+//       }
+//     }
+//   }
+
+//   fn get(&self, key: &Sym) -> Option<&Value> {
+//     match self {
+//       ScopeVars::Flat { ids, vals } => {
+//         if let Some(ix) = ids.iter().position(|k| k == key) {
+//           return Some(&vals[ix]);
+//         }
+//         None
+//       }
+//       ScopeVars::Map(map) => map.get(key),
+//     }
+//   }
+
+//   fn get_mut(&mut self, key: &Sym) -> Option<&mut Value> {
+//     match self {
+//       ScopeVars::Flat { ids, vals } => {
+//         if let Some(ix) = ids.iter().position(|k| k == key) {
+//           return Some(&mut vals[ix]);
+//         }
+//         None
+//       }
+//       ScopeVars::Map(map) => map.get_mut(key),
+//     }
+//   }
+
+//   fn contains_key(&self, key: &Sym) -> bool {
+//     match self {
+//       ScopeVars::Flat { ids, .. } => ids.iter().any(|k| *k == *key),
+//       ScopeVars::Map(map) => map.contains_key(&key),
+//     }
+//   }
+
+//   fn drain_with<F>(&mut self, mut f: F)
+//   where
+//     F: FnMut(Sym, Value),
+//   {
+//     match self {
+//       ScopeVars::Flat { ids, vals } => {
+//         for (k, v) in ids.drain(..).zip(vals.drain(..)) {
+//           f(k, v);
+//         }
+//       }
+//       ScopeVars::Map(map) => {
+//         for (k, v) in map.drain() {
+//           f(k, v);
+//         }
+//       }
+//     }
+//   }
+// }
+
 #[derive(Default, Debug)]
 pub struct Scope {
-  vars: Mutex<FxHashMap<String, Value>>,
+  // vars: RefCell<ScopeVars>,
+  vars: RefCell<FxHashMap<Sym, Value>>,
   parent: Option<Rc<Scope>>,
 }
 
 impl Clone for Scope {
   fn clone(&self) -> Self {
     Scope {
-      vars: Mutex::new(self.vars.lock().unwrap().clone()),
+      vars: RefCell::new(self.vars.borrow().clone()),
       parent: self.parent.as_ref().map(Rc::clone),
     }
   }
+}
+
+fn get_default_globals() -> [(&'static str, Sym, Value); 1] {
+  [("pi", Sym(0), Value::Float(std::f32::consts::PI))]
 }
 
 impl Scope {
   pub fn default_globals() -> Self {
     let scope = Scope::default();
 
-    // TODO: should move these to a table or something
-    scope.insert("pi".to_owned(), Value::Float(std::f32::consts::PI));
+    for (_name, sym, val) in get_default_globals() {
+      scope.insert(sym, val);
+    }
 
     scope
   }
 
-  pub fn insert(&self, key: String, value: Value) {
-    self.vars.lock().unwrap().insert(key, value);
+  pub fn insert(&self, key: Sym, value: Value) {
+    self.vars.borrow_mut().insert(key, value);
   }
 
-  pub fn get(&self, key: &str) -> Option<Value> {
-    // TODO: can't be cloning here...
-    if let Some(val) = self.vars.lock().unwrap().get(key).cloned() {
+  pub fn get(&self, key: Sym) -> Option<Value> {
+    if let Some(val) = self.vars.borrow().get(&key).cloned() {
       return Some(val);
     }
 
@@ -1073,14 +1235,82 @@ impl Scope {
 
   fn wrap(parent: &Rc<Scope>) -> Scope {
     Scope {
-      vars: Mutex::new(FxHashMap::default()),
+      vars: RefCell::new(Default::default()),
       parent: Some(Rc::clone(parent)),
     }
+  }
+
+  fn has(&self, key: Sym) -> bool {
+    self.vars.borrow().contains_key(&key)
+      || self.parent.as_ref().map(|p| p.has(key)).unwrap_or(false)
+  }
+}
+
+/// Handle to an interned symbol.
+///
+/// This is done to speed up variable lookups by avoiding string comparisons.
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
+pub struct Sym(pub usize);
+
+impl Display for Sym {
+  #[cold]
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "Sym({})", self.0)
+  }
+}
+
+pub struct SymbolInterner {
+  pub symbols: RefCell<FxHashMap<String, Sym>>,
+  pub reverse_symbols: RefCell<FxHashMap<Sym, String>>,
+  pub next_sym: Cell<usize>,
+}
+
+impl SymbolInterner {
+  pub fn intern(&self, name: &str) -> Sym {
+    if let Some(sym) = self.symbols.borrow().get(name) {
+      return *sym;
+    }
+
+    let sym = Sym(self.next_sym.get());
+    self.next_sym.set(self.next_sym.get() + 1);
+    self.symbols.borrow_mut().insert(name.to_owned(), sym);
+    self
+      .reverse_symbols
+      .borrow_mut()
+      .insert(sym, name.to_owned());
+    sym
+  }
+
+  pub fn with_resolved<F, R>(&self, sym: Sym, f: F) -> Option<R>
+  where
+    F: FnOnce(&str) -> R,
+  {
+    self
+      .reverse_symbols
+      .borrow()
+      .get(&sym)
+      .map(|name| f(name.as_str()))
+  }
+}
+
+impl Default for SymbolInterner {
+  fn default() -> Self {
+    let interner = SymbolInterner {
+      symbols: RefCell::new(FxHashMap::default()),
+      reverse_symbols: RefCell::new(FxHashMap::default()),
+      next_sym: Cell::new(0),
+    };
+
+    for (name, _, _) in get_default_globals() {
+      interner.intern(name);
+    }
+    interner
   }
 }
 
 pub struct EvalCtx {
   pub globals: Scope,
+  pub interned_symbols: SymbolInterner,
   pub rendered_meshes: RenderedMeshes,
   pub rendered_lights: RenderedLights,
   pub rendered_paths: RenderedPaths,
@@ -1091,6 +1321,8 @@ pub struct EvalCtx {
   pub textures: FxHashSet<String>,
   pub default_material: RefCell<Option<Rc<Material>>>,
   pub sharp_angle_threshold_degrees: RefCell<f32>,
+  scratch_args: RefCell<Vec<Vec<Value>>>,
+  scratch_kwargs: RefCell<Vec<FxHashMap<Sym, Value>>>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1100,6 +1332,7 @@ impl Default for EvalCtx {
   fn default() -> Self {
     EvalCtx {
       globals: Scope::default_globals(),
+      interned_symbols: SymbolInterner::default(),
       rendered_meshes: RenderedMeshes::default(),
       rendered_lights: RenderedLights::default(),
       rendered_paths: RenderedPaths::default(),
@@ -1110,6 +1343,8 @@ impl Default for EvalCtx {
       textures: FxHashSet::default(),
       default_material: RefCell::new(None),
       sharp_angle_threshold_degrees: RefCell::new(45.8366),
+      scratch_args: RefCell::new(Vec::with_capacity(8)),
+      scratch_kwargs: RefCell::new(Vec::new()),
     }
   }
 }
@@ -1141,67 +1376,162 @@ impl EvalCtx {
     unsafe { &mut *std::ptr::addr_of_mut!(THREAD_RNG) }
   }
 
+  pub fn get_args_scratch(&self) -> Vec<Value> {
+    self.scratch_args.borrow_mut().pop().unwrap_or_default()
+  }
+
+  pub fn restore_args_scratch(&self, mut args: Vec<Value>) {
+    args.clear();
+    let mut borrowed = self.scratch_args.borrow_mut();
+    if borrowed.len() < 64 {
+      borrowed.push(args);
+    }
+  }
+
+  pub fn get_kwargs_scratch(&self) -> FxHashMap<Sym, Value> {
+    self
+      .scratch_kwargs
+      .borrow_mut()
+      .pop()
+      .unwrap_or_else(FxHashMap::default)
+  }
+
+  pub fn restore_kwargs_scratch(&self, mut kwargs: FxHashMap<Sym, Value>) {
+    kwargs.clear();
+    let mut borrowed = self.scratch_kwargs.borrow_mut();
+    if borrowed.len() < 64 {
+      borrowed.push(kwargs);
+    }
+  }
+
+  fn eval_fn_call(
+    &self,
+    scope: &Scope,
+    call: &FunctionCall,
+  ) -> Result<ControlFlow<Value>, ErrorStack> {
+    let mut args_opt = None;
+    if !call.args.is_empty() {
+      let mut args = self.get_args_scratch();
+      for arg in &call.args {
+        let val = match self.eval_expr(arg, scope, None)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        args.push(val);
+      }
+      args_opt = Some(args);
+    }
+
+    let mut kwargs_opt = None;
+    if !call.kwargs.is_empty() {
+      let mut kwargs = self.get_kwargs_scratch();
+      for (k, v) in &call.kwargs {
+        let val = match self.eval_expr(v, scope, None)? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        kwargs.insert(*k, val);
+      }
+      kwargs_opt = Some(kwargs);
+    }
+
+    let do_call =
+      |callable: &Rc<Callable>, args: Option<Vec<Value>>, kwargs: Option<FxHashMap<Sym, Value>>| {
+        let ret = self
+          .invoke_callable(
+            callable,
+            args.as_ref().unwrap_or(&EMPTY_ARGS),
+            kwargs.as_ref().unwrap_or(&EMPTY_KWARGS),
+          )
+          .map_err(|err| err.wrap("Error invoking callable"))
+          .map(ControlFlow::Continue);
+
+        if let Some(args) = args {
+          self.restore_args_scratch(args);
+        }
+        if let Some(kwargs) = kwargs {
+          self.restore_kwargs_scratch(kwargs);
+        }
+
+        ret
+      };
+
+    match &call.target {
+      FunctionCallTarget::Name(name) => {
+        if let Some(global) = scope.get(*name) {
+          let Value::Callable(callable) = global else {
+            if let Some(args) = args_opt {
+              self.restore_args_scratch(args);
+            }
+            if let Some(kwargs) = kwargs_opt {
+              self.restore_kwargs_scratch(kwargs);
+            }
+            return Err(ErrorStack::new(format!(
+              "\"{name}\" is not a callable; found: {global:?}"
+            )));
+          };
+
+          do_call(&callable, args_opt, kwargs_opt)
+        } else {
+          return Err(ErrorStack::new(format!(
+            "No variable found with name `{name}`"
+          )));
+        }
+      }
+      FunctionCallTarget::Literal(callable) => do_call(callable, args_opt, kwargs_opt),
+    }
+  }
+
   pub fn eval_expr(
     &self,
     expr: &Expr,
     scope: &Scope,
-    binding_name: Option<&str>,
+    binding_name: Option<Sym>,
   ) -> Result<ControlFlow<Value>, ErrorStack> {
     match expr {
-      Expr::Call(call) => {
-        let mut args = Vec::with_capacity(call.args.len());
-        for arg in &call.args {
-          let val = match self.eval_expr(arg, scope, None)? {
-            ControlFlow::Continue(val) => val,
-            early_exit => return Ok(early_exit),
-          };
-          args.push(val);
-        }
-
-        let mut kwargs = FxHashMap::default();
-        for (k, v) in &call.kwargs {
-          let val = match self.eval_expr(v, scope, None)? {
-            ControlFlow::Continue(val) => val,
-            early_exit => return Ok(early_exit),
-          };
-          kwargs.insert(k.clone(), val);
-        }
-
-        match &call.target {
-          FunctionCallTarget::Name(name) => {
-            if let Some(global) = scope.get(name) {
-              let Value::Callable(callable) = global else {
-                return Err(ErrorStack::new(format!(
-                  "\"{name}\" is not a callable; found: {global:?}"
-                )));
-              };
-
-              return self
-                .invoke_callable(&callable, &args, &kwargs, scope)
-                .map_err(|err| err.wrap(format!("Error invoking callable `{name}`")))
-                .map(ControlFlow::Continue);
-            } else {
-              return Err(ErrorStack::new(format!(
-                "No variable found with name `{name}`"
-              )));
-            }
-          }
-          FunctionCallTarget::Literal(callable) => self
-            .invoke_callable(callable, &args, &kwargs, scope)
-            .map_err(|err| err.wrap("Error invoking callable")),
-        }
-        .map(ControlFlow::Continue)
-      }
-      Expr::BinOp { op, lhs, rhs } => {
+      Expr::Call(call) => self.eval_fn_call(scope, call),
+      Expr::BinOp {
+        op,
+        lhs,
+        rhs,
+        pre_resolved_def_ix,
+      } => {
         let lhs = match self.eval_expr(lhs, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
+
+        // special-case short-circuiting for boolean ops
+        if matches!(op, BinOp::And | BinOp::Or) {
+          let lhs_bool = match lhs.as_bool() {
+            Some(b) => b,
+            None => {
+              return Err(ErrorStack::new(format!(
+                "Left-hand side of `{op:?}` must be a boolean, found: {lhs:?}"
+              )))
+            }
+          };
+
+          match op {
+            BinOp::And => {
+              if !lhs_bool {
+                return Ok(ControlFlow::Continue(Value::Bool(false)));
+              }
+            }
+            BinOp::Or => {
+              if lhs_bool {
+                return Ok(ControlFlow::Continue(Value::Bool(true)));
+              }
+            }
+            _ => unreachable!(),
+          }
+        }
+
         let rhs = match self.eval_expr(rhs, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        op.apply(self, lhs, rhs)
+        op.apply(self, &lhs, &rhs, *pre_resolved_def_ix)
           .map(ControlFlow::Continue)
           .map_err(|err| err.wrap(format!("Error applying binary operator `{op:?}`")))
       }
@@ -1210,7 +1540,7 @@ impl EvalCtx {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        op.apply(val)
+        op.apply(self, &val)
           .map(ControlFlow::Continue)
           .map_err(|err| err.wrap(format!("Error applying prefix operator `{op:?}`")))
       }
@@ -1241,7 +1571,7 @@ impl EvalCtx {
             };
 
             if *inclusive {
-              end += 1;
+              end = end.saturating_add(1);
             }
 
             Some(end)
@@ -1254,9 +1584,7 @@ impl EvalCtx {
           end,
         }))))
       }
-      Expr::Ident(name) => self
-        .eval_ident(name.as_str(), scope)
-        .map(ControlFlow::Continue),
+      Expr::Ident(name) => self.eval_ident(*name, scope).map(ControlFlow::Continue),
       Expr::Literal(val) => Ok(ControlFlow::Continue(val.clone())),
       Expr::ArrayLiteral(elems) => {
         let mut evaluated = Vec::with_capacity(elems.len());
@@ -1313,7 +1641,7 @@ impl EvalCtx {
         if let Some(binding_name) = binding_name {
           // add the closure itself to the scope to support recursive calls
           captured_scope.insert(
-            binding_name.to_owned(),
+            binding_name,
             Value::Callable(Rc::new(Callable::Closure(Closure {
               params: params.clone(),
               body: body.0.clone(),
@@ -1326,9 +1654,8 @@ impl EvalCtx {
           let captured_scope_clone = Rc::downgrade(&captured_scope);
           match captured_scope
             .vars
-            .lock()
-            .unwrap()
-            .get_mut(binding_name)
+            .borrow_mut()
+            .get_mut(&binding_name)
             .unwrap()
           {
             Value::Callable(callable) => {
@@ -1363,7 +1690,7 @@ impl EvalCtx {
           early_exit => return Ok(early_exit),
         };
         self
-          .eval_static_field_access(lhs, field)
+          .eval_static_field_access(&lhs, field)
           .map(ControlFlow::Continue)
       }
       Expr::FieldAccess { lhs, field } => {
@@ -1376,7 +1703,7 @@ impl EvalCtx {
           early_exit => return Ok(early_exit),
         };
         self
-          .eval_field_access(lhs, field)
+          .eval_field_access(&lhs, &field)
           .map(ControlFlow::Continue)
       }
       Expr::Conditional {
@@ -1432,10 +1759,10 @@ impl EvalCtx {
               break;
             }
             ControlFlow::Return(val) => {
-              for (key, val) in block_scope.vars.into_inner().unwrap() {
-                let exists = scope.get(&key).is_some();
+              for (key, val) in block_scope.vars.into_inner() {
+                let exists = scope.has(key);
                 if exists {
-                  scope.insert(key, val);
+                  scope.insert(key, val.clone());
                 }
               }
 
@@ -1447,10 +1774,10 @@ impl EvalCtx {
           }
         }
 
-        for (key, val) in block_scope.vars.into_inner().unwrap() {
-          let exists = scope.get(&key).is_some();
+        for (key, val) in block_scope.vars.into_inner() {
+          let exists = scope.has(key);
           if exists {
-            scope.insert(key, val);
+            scope.insert(key, val.clone());
           }
         }
 
@@ -1461,22 +1788,16 @@ impl EvalCtx {
 
   fn eval_assignment(
     &self,
-    ident: &str,
+    ident: Sym,
     value: Value,
     scope: &Scope,
     type_hint: Option<TypeName>,
   ) -> Result<Value, ErrorStack> {
-    if ident.is_empty() {
-      return Err(ErrorStack::new(
-        "found empty ident in assignment; shouldn't be possible I think",
-      ));
-    }
-
     if let Some(type_hint) = type_hint {
       type_hint.validate_val(&value)?;
     }
 
-    scope.insert(ident.to_owned(), value);
+    scope.insert(ident, value);
     Ok(Value::Nil)
   }
 
@@ -1492,12 +1813,12 @@ impl EvalCtx {
         expr,
         type_hint,
       } => {
-        let val = match self.eval_expr(expr, scope, Some(name.as_str()))? {
+        let val = match self.eval_expr(expr, scope, Some(*name))? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
         self
-          .eval_assignment(&name, val, scope, *type_hint)
+          .eval_assignment(*name, val, scope, *type_hint)
           .map(ControlFlow::Continue)
       }
       Statement::DestructureAssignment { lhs, rhs } => {
@@ -1505,11 +1826,12 @@ impl EvalCtx {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        for res in lhs.iter_assignments(self, rhs) {
-          let (lhs, rhs) =
-            res.map_err(|err| err.wrap("Error evaluating destructure assignment".to_owned()))?;
-          self.eval_assignment(&lhs, rhs, scope, None)?;
-        }
+        lhs
+          .visit_assignments(self, rhs, &mut |lhs, rhs| {
+            self.eval_assignment(lhs, rhs, scope, None)?;
+            Ok(())
+          })
+          .map_err(|err| err.wrap("Error evaluating destructure assignment"))?;
         Ok(ControlFlow::Continue(Value::Nil))
       }
       Statement::Return { value } => {
@@ -1540,13 +1862,14 @@ impl EvalCtx {
   fn fold<'a>(
     &'a self,
     initial_val: Value,
-    callable: &Callable,
+    callable: &Rc<Callable>,
     seq: Rc<dyn Sequence>,
   ) -> Result<Value, ErrorStack> {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
-    if let Callable::Builtin { name, .. } = callable {
-      if matches!(name.as_str(), "union" | "difference" | "intersect") {
+    if let Callable::Builtin { fn_entry_ix, .. } = &**callable {
+      let builtin_name = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0;
+      if matches!(builtin_name, "union" | "difference" | "intersect") {
         let combined_iter = ChainSeq::new(
           self,
           &EagerSeq {
@@ -1560,9 +1883,9 @@ impl EvalCtx {
           1,
           &[ArgRef::Positional(0), ArgRef::Positional(1)],
           &[Value::Sequence(Rc::new(combined_iter))],
-          &Default::default(),
+          &EMPTY_KWARGS,
           self,
-          MeshBooleanOp::from_str(name),
+          MeshBooleanOp::from_str(builtin_name),
         )
         .map_err(|err| err.wrap("Error invoking mesh boolean op in `fold`"));
       }
@@ -1577,25 +1900,30 @@ impl EvalCtx {
         ))
       })?;
       acc = self
-        .invoke_callable(callable, &[acc, value], &Default::default(), &self.globals)
-        .map_err(|err| err.wrap("Error invoking callable in reduce".to_owned()))?;
+        .invoke_callable(callable, &[acc, value], &EMPTY_KWARGS)
+        .map_err(|err| err.wrap("Error invoking callable in reduce"))?;
     }
 
     Ok(acc)
   }
 
-  fn reduce<'a>(&'a self, fn_value: &Callable, seq: Rc<dyn Sequence>) -> Result<Value, ErrorStack> {
+  fn reduce<'a>(
+    &'a self,
+    fn_value: &Rc<Callable>,
+    seq: Rc<dyn Sequence>,
+  ) -> Result<Value, ErrorStack> {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
-    if let Callable::Builtin { name, .. } = fn_value {
-      if matches!(name.as_str(), "union" | "difference" | "intersect") {
+    if let Callable::Builtin { fn_entry_ix, .. } = &**fn_value {
+      let builtin_name = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0;
+      if matches!(builtin_name, "union" | "difference" | "intersect") {
         return eval_mesh_boolean(
           1,
           &[ArgRef::Positional(0), ArgRef::Positional(1)],
           &[Value::Sequence(seq)],
-          &Default::default(),
+          &EMPTY_KWARGS,
           self,
-          MeshBooleanOp::from_str(name),
+          MeshBooleanOp::from_str(builtin_name),
         )
         .map_err(|err| err.wrap("Error invoking mesh boolean op in `reduce`"));
       }
@@ -1615,23 +1943,28 @@ impl EvalCtx {
         ))
       })?;
       acc = self
-        .invoke_callable(fn_value, &[acc, value], &Default::default(), &self.globals)
-        .map_err(|err| err.wrap("Error invoking callable in reduce".to_owned()))?;
+        .invoke_callable(fn_value, &[acc, value], &EMPTY_KWARGS)
+        .map_err(|err| err.wrap("Error invoking callable in reduce"))?;
     }
     Ok(acc)
   }
 
-  pub(crate) fn eval_ident(&self, name: &str, scope: &Scope) -> Result<Value, ErrorStack> {
+  pub(crate) fn eval_ident(&self, name: Sym, scope: &Scope) -> Result<Value, ErrorStack> {
     if let Some(local) = scope.get(name) {
       return Ok(local);
     }
 
     // look it up as a builtin fn
-    if FN_SIGNATURE_DEFS.contains_key(&name) {
+    let resolved = self
+      .with_resolved_sym(name, |resolved_name| {
+        get_builtin_fn_sig_entry_ix(resolved_name)
+          .map(|ix| (ix, resolve_builtin_impl(resolved_name)))
+      })
+      .unwrap();
+    if let Some((fn_entry_ix, fn_impl)) = resolved {
       return Ok(Value::Callable(Rc::new(Callable::Builtin {
-        name: name.to_owned(),
-        fn_impl: resolve_builtin_impl(name),
-        fn_signature_defs: &FN_SIGNATURE_DEFS[name].signatures,
+        fn_entry_ix,
+        fn_impl,
         pre_resolved_signature: None,
       })));
     }
@@ -1643,10 +1976,12 @@ impl EvalCtx {
     &self,
     closure: &Closure,
     args: &[Value],
-    kwargs: &FxHashMap<String, Value>,
+    kwargs: &FxHashMap<Sym, Value>,
   ) -> Result<Value, ErrorStack> {
     // TODO: should do some basic analysis to see which variables are actually needed and avoid
     // cloning the rest
+
+    // TODO: should re-use hashmaps here to avoid allocations on each call
     let closure_scope = Scope::wrap(&closure.captured_scope.upgrade().unwrap());
     let mut pos_arg_ix = 0usize;
     let mut any_args_valid = false;
@@ -1662,7 +1997,7 @@ impl EvalCtx {
                 .validate_val(kwarg)
                 .map_err(|err| err.wrap(format!("Type error for closure kwarg `{name}`")))?;
             }
-            closure_scope.insert(name.clone(), kwarg.clone());
+            closure_scope.insert(*name, kwarg.clone());
             any_args_valid = true;
             continue;
           }
@@ -1678,10 +2013,12 @@ impl EvalCtx {
             .validate_val(pos_arg)
             .map_err(|err| err.wrap(format!("Type error for closure pos arg `{:?}`", arg.ident)))?;
         }
-        for res in arg.ident.iter_assignments(self, pos_arg.clone()) {
-          let (k, v) = res?;
-          closure_scope.insert(k, v);
-        }
+        arg
+          .ident
+          .visit_assignments(self, pos_arg.clone(), &mut |k, v| {
+            closure_scope.insert(k, v);
+            Ok(())
+          })?;
         any_args_valid = true;
         pos_arg_ix += 1;
       } else {
@@ -1705,10 +2042,12 @@ impl EvalCtx {
             }
           };
 
-          for res in arg.ident.iter_assignments(self, default_val) {
-            let (k, v) = res?;
-            closure_scope.insert(k, v);
-          }
+          arg
+            .ident
+            .visit_assignments(self, default_val, &mut |k, v| {
+              closure_scope.insert(k, v);
+              Ok(())
+            })?;
         } else {
           if invalid_arg_ix.is_none() {
             invalid_arg_ix = Some(pos_arg_ix);
@@ -1722,7 +2061,7 @@ impl EvalCtx {
       if any_args_valid {
         return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
           PartiallyAppliedFn {
-            inner: Box::new(Callable::Closure(closure.clone())),
+            inner: Rc::new(Callable::Closure(closure.clone())),
             args: args.to_owned(),
             kwargs: kwargs.clone(),
           },
@@ -1755,7 +2094,7 @@ impl EvalCtx {
           expr,
           type_hint,
         } => {
-          let val = match self.eval_expr(expr, &closure_scope, Some(name.as_str()))? {
+          let val = match self.eval_expr(expr, &closure_scope, Some(*name))? {
             ControlFlow::Continue(val) => val,
             ControlFlow::Return(val) => {
               out = val;
@@ -1767,7 +2106,7 @@ impl EvalCtx {
               ))
             }
           };
-          self.eval_assignment(name, val, &closure_scope, *type_hint)?;
+          self.eval_assignment(*name, val, &closure_scope, *type_hint)?;
         }
         Statement::DestructureAssignment { lhs, rhs } => {
           let rhs = match self.eval_expr(rhs, &closure_scope, None)? {
@@ -1782,11 +2121,12 @@ impl EvalCtx {
               ))
             }
           };
-          for res in lhs.iter_assignments(self, rhs) {
-            let (lhs, rhs) =
-              res.map_err(|err| err.wrap("Error evaluating destructure assignment".to_owned()))?;
-            self.eval_assignment(&lhs, rhs, &closure_scope, None)?;
-          }
+          lhs
+            .visit_assignments(self, rhs, &mut |lhs, rhs| {
+              self.eval_assignment(lhs, rhs, &closure_scope, None)?;
+              Ok(())
+            })
+            .map_err(|err| err.wrap("Error evaluating destructure assignment"))?;
         }
         Statement::Return { value } => {
           out = if let Some(value) = value {
@@ -1824,29 +2164,30 @@ impl EvalCtx {
 
   fn invoke_callable(
     &self,
-    callable: &Callable,
+    callable: &Rc<Callable>,
     args: &[Value],
-    kwargs: &FxHashMap<String, Value>,
-    scope: &Scope,
+    kwargs: &FxHashMap<Sym, Value>,
   ) -> Result<Value, ErrorStack> {
-    match callable {
+    match &**callable {
       Callable::Builtin {
-        name,
+        fn_entry_ix,
         fn_impl,
-        fn_signature_defs,
         pre_resolved_signature,
       } => match pre_resolved_signature {
         Some(PreResolvedSignature { arg_refs, def_ix }) => {
           fn_impl(*def_ix, arg_refs, args, kwargs, self)
         }
         None => {
-          let arg_refs = get_args(name, fn_signature_defs, args, kwargs)?;
+          let entry = &FN_SIGNATURE_DEFS.entries[*fn_entry_ix];
+          let builtin_name = entry.0;
+          let fn_signature_defs = entry.1.signatures;
+          let arg_refs = get_args(self, builtin_name, fn_signature_defs, args, kwargs)?;
           let (def_ix, arg_refs) = match arg_refs {
             GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
             GetArgsOutput::PartiallyApplied => {
               return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
                 PartiallyAppliedFn {
-                  inner: Box::new(callable.clone()),
+                  inner: Rc::clone(callable),
                   args: args.to_owned(),
                   kwargs: kwargs.clone(),
                 },
@@ -1856,26 +2197,34 @@ impl EvalCtx {
           fn_impl(def_ix, &arg_refs, args, kwargs, self)
         }
       }
-      .map_err(|err| err.wrap(format!("Error invoking builtin function `{name}`"))),
+      .map_err(|err| {
+        err.wrap(format!(
+          "Error invoking builtin function `{}`",
+          FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0
+        ))
+      }),
       Callable::PartiallyAppliedFn(paf) => {
         let mut combined_args = paf.args.clone();
         combined_args.extend(args.iter().cloned());
+
+        if kwargs.is_empty() {
+          return self.invoke_callable(&paf.inner, &combined_args, &paf.kwargs);
+        }
 
         let mut combined_kwargs = paf.kwargs.clone();
         for (key, value) in kwargs {
           combined_kwargs.insert(key.clone(), value.clone());
         }
 
-        self.invoke_callable(&paf.inner, &combined_args, &combined_kwargs, scope)
+        self.invoke_callable(&paf.inner, &combined_args, &combined_kwargs)
       }
       Callable::Closure(closure) => self.invoke_closure(closure, args, kwargs),
       Callable::ComposedFn(ComposedFn { inner }) => {
         let acc = args;
         let mut iter = inner.iter();
-        let mut acc =
-          self.invoke_callable(iter.next().unwrap(), acc, &Default::default(), scope)?;
+        let mut acc = self.invoke_callable(iter.next().unwrap(), acc, &EMPTY_KWARGS)?;
         for callable in iter {
-          acc = self.invoke_callable(callable, &[acc], &Default::default(), scope)?;
+          acc = self.invoke_callable(callable, &[acc], &EMPTY_KWARGS)?;
         }
 
         Ok(acc)
@@ -1883,7 +2232,7 @@ impl EvalCtx {
     }
   }
 
-  fn eval_static_field_access(&self, lhs: Value, field: &str) -> Result<Value, ErrorStack> {
+  fn eval_static_field_access(&self, lhs: &Value, field: &str) -> Result<Value, ErrorStack> {
     match lhs {
       Value::Vec2(v2) => {
         let swiz = |c| match c {
@@ -1946,7 +2295,7 @@ impl EvalCtx {
     }
   }
 
-  fn eval_field_access(&self, lhs: Value, field: Value) -> Result<Value, ErrorStack> {
+  fn eval_field_access(&self, lhs: &Value, field: &Value) -> Result<Value, ErrorStack> {
     match field {
       Value::String(s) => self.eval_static_field_access(lhs, &s),
       Value::Int(i) => match lhs {
@@ -1967,19 +2316,19 @@ impl EvalCtx {
           Value::Nil
         }),
         Value::Sequence(seq) => {
-          if i < 0 {
+          if *i < 0 {
             return Err(ErrorStack::new(format!(
               "negative index {i} not supported for sequences"
             )));
           }
 
-          let Some(eager_seq) = seq_as_eager(&*seq) else {
+          let Some(eager_seq) = seq_as_eager(&**seq) else {
             return Err(ErrorStack::new(
               "sequence is not eager and must be realized with `collect` before indexing",
             ));
           };
 
-          eager_seq.inner.get(i as usize).cloned().ok_or_else(|| {
+          eager_seq.inner.get(*i as usize).cloned().ok_or_else(|| {
             ErrorStack::new(format!(
               "Index {i} out of bounds for sequence; len={}",
               eager_seq.inner.len()
@@ -1997,9 +2346,37 @@ impl EvalCtx {
       ))),
     }
   }
+
+  pub fn with_resolved_sym<F, R>(&self, sym: Sym, f: F) -> Option<R>
+  where
+    F: FnOnce(&str) -> R,
+  {
+    self.interned_symbols.with_resolved(sym, f)
+  }
+
+  #[cold]
+  fn desymbolicate_kwargs(&self, kwargs: &FxHashMap<Sym, Value>) -> FxHashMap<String, Value> {
+    kwargs
+      .iter()
+      .map(|(k, v)| {
+        (
+          self.with_resolved_sym(*k, |s| s.to_owned()).unwrap(),
+          v.clone(),
+        )
+      })
+      .collect()
+  }
+
+  #[cfg(test)]
+  fn get_global(&self, arg: &str) -> Option<Value> {
+    let sym = self.interned_symbols.intern(arg);
+    self.globals.get(sym)
+  }
 }
 
-pub(crate) fn parse_program_src<'a>(src: &'a str) -> Result<Program, ErrorStack> {
+pub(crate) fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, ErrorStack> {
+  maybe_init_binop_def_shorthands();
+
   let pairs = GSParser::parse(Rule::program, src)
     .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
   let Some(program) = pairs.into_iter().next() else {
@@ -2015,7 +2392,7 @@ pub(crate) fn parse_program_src<'a>(src: &'a str) -> Result<Program, ErrorStack>
 
   let statements = program
     .into_inner()
-    .map(parse_statement)
+    .map(|stmt| parse_statement(ctx, stmt))
     .filter_map_ok(|s| s)
     .collect::<Result<Vec<_>, ErrorStack>>()?;
 
@@ -2023,6 +2400,7 @@ pub(crate) fn parse_program_src<'a>(src: &'a str) -> Result<Program, ErrorStack>
 }
 
 pub fn parse_program_maybe_with_prelude(
+  ctx: &EvalCtx,
   src: String,
   include_prelude: bool,
 ) -> Result<Program, ErrorStack> {
@@ -2031,7 +2409,7 @@ pub fn parse_program_maybe_with_prelude(
   } else {
     src
   };
-  parse_program_src(&src)
+  parse_program_src(ctx, &src)
 }
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
@@ -2059,7 +2437,7 @@ pub fn parse_and_eval_program_with_ctx(
   ctx: &EvalCtx,
   include_prelude: bool,
 ) -> Result<(), ErrorStack> {
-  let mut ast = parse_program_maybe_with_prelude(src, include_prelude)
+  let mut ast = parse_program_maybe_with_prelude(ctx, src, include_prelude)
     .map_err(|err| err.wrap("Error parsing program"))?;
 
   optimize_ast(ctx, &mut ast)?;
@@ -2170,8 +2548,10 @@ fn test_partial_application_with_only_kwargs() {
   }];
   let args = Vec::new();
   let mut kwargs = FxHashMap::default();
-  kwargs.insert("y".to_owned(), Value::Int(1));
-  let result = get_args("fn_name", defs, &args, &kwargs);
+  let ctx = EvalCtx::default();
+  let y_interned = ctx.interned_symbols.intern("y");
+  kwargs.insert(y_interned, Value::Int(1));
+  let result = get_args(&ctx, "fn_name", defs, &args, &kwargs);
   match result {
     Ok(GetArgsOutput::PartiallyApplied) => {}
     _ => panic!("Expected PartiallyApplied, got {:?}", result),
@@ -2200,10 +2580,12 @@ fn test_unknown_kwarg_returns_error() {
     return_type: &[ArgType::Any],
   }];
 
+  let ctx = EvalCtx::default();
+  let z_interned = ctx.interned_symbols.intern("z");
   let args = Vec::new();
   let mut kwargs = FxHashMap::default();
-  kwargs.insert("z".to_owned(), Value::Int(1));
-  let result = get_args("fn_name", defs, &args, &kwargs);
+  kwargs.insert(z_interned, Value::Int(1));
+  let result = get_args(&ctx, "fn_name", defs, &args, &kwargs);
   assert!(result.is_err(), "Expected error for unknown kwarg");
 }
 
@@ -2216,7 +2598,7 @@ print(result, asdf=result, x=4.2)
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
-  let result = &ctx.globals.get("result").unwrap();
+  let result = &ctx.get_global("result").unwrap();
   let result = result.as_int().expect("Expected result to be an Int");
   // (0+1) + (1+1) + (2+1) + (3+1) + (4+1) = 15
   assert_eq!(result, 15);
@@ -2243,17 +2625,17 @@ c = vec3(1) * 2 + (vec3(4,4,4) / 2)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = &ctx.globals.get("a").unwrap();
+  let a = &ctx.get_global("a").unwrap();
   let a = a.as_int().expect("Expected result to be an Int");
   assert_eq!(a, 7);
 
-  let b = &ctx.globals.get("b").unwrap();
+  let b = &ctx.get_global("b").unwrap();
   let Value::Float(b) = b else {
     panic!("Expected result to be a Float");
   };
   assert_eq!(*b, 4.);
 
-  let c = &ctx.globals.get("c").unwrap();
+  let c = &ctx.get_global("c").unwrap();
   let Value::Vec3(c) = c else {
     panic!("Expected result to be a Vec3");
   };
@@ -2282,19 +2664,19 @@ d = d | sum
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = &ctx.globals.get("a").unwrap();
+  let a = &ctx.get_global("a").unwrap();
   let a = a.as_int().expect("Expected result to be an Int");
   assert_eq!(a, 10); // 0 + 1 + 2 + 3 + 4
 
-  let b = &ctx.globals.get("b").unwrap();
+  let b = &ctx.get_global("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 10);
 
-  let c = &ctx.globals.get("c").unwrap();
+  let c = &ctx.get_global("c").unwrap();
   let c = c.as_int().expect("Expected result to be an Int");
   assert_eq!(c, 10);
 
-  let d = &ctx.globals.get("d").unwrap();
+  let d = &ctx.get_global("d").unwrap();
   let d = d.as_int().expect("Expected result to be an Int");
   assert_eq!(d, 10);
 }
@@ -2308,13 +2690,13 @@ b = 0.5 | lerp(a=0.0, b=1)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = &ctx.globals.get("a").unwrap();
+  let a = &ctx.get_global("a").unwrap();
   let Value::Vec3(a) = a else {
     panic!("Expected result to be a Vec3");
   };
   assert_eq!(*a, Vec3::new(0.5, 0.5, 0.5));
 
-  let b = &ctx.globals.get("b").unwrap();
+  let b = &ctx.get_global("b").unwrap();
   let Value::Float(b) = b else {
     panic!("Expected result to be a Float");
   };
@@ -2331,19 +2713,19 @@ c = 1 <= 1
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = &ctx.globals.get("a").unwrap();
+  let a = &ctx.get_global("a").unwrap();
   let Value::Bool(a) = a else {
     panic!("Expected result to be a Bool");
   };
   assert!(*a);
 
-  let b = &ctx.globals.get("b").unwrap();
+  let b = &ctx.get_global("b").unwrap();
   let Value::Bool(b) = b else {
     panic!("Expected result to be a Bool");
   };
   assert!(!*b);
 
-  let c = &ctx.globals.get("c").unwrap();
+  let c = &ctx.get_global("c").unwrap();
   let Value::Bool(c) = c else {
     panic!("Expected result to be a Bool");
   };
@@ -2359,13 +2741,13 @@ b = -vec3(1,2,3)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = &ctx.globals.get("a").unwrap();
+  let a = &ctx.get_global("a").unwrap();
   let Value::Float(a) = a else {
     panic!("Expected result to be a Float");
   };
   assert_eq!(*a, 1.0);
 
-  let b = &ctx.globals.get("b").unwrap();
+  let b = &ctx.get_global("b").unwrap();
   let Value::Vec3(b) = b else {
     panic!("Expected result to be a Vec3");
   };
@@ -2381,7 +2763,7 @@ seq = 0..10 | filter(is_even) | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let seq = &ctx.globals.get("seq").unwrap();
+  let seq = &ctx.get_global("seq").unwrap();
   let seq = seq.as_int().expect("Expected result to be an Int");
   assert_eq!(seq, 20); // 0 + 2 + 4 + 6 + 8
 }
@@ -2404,7 +2786,7 @@ result = outer(3)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let result = &ctx.globals.get("result").unwrap();
+  let result = &ctx.get_global("result").unwrap();
   let result = result.as_int().expect("Expected result to be an Int");
   assert_eq!(result, 10);
 }
@@ -2428,11 +2810,9 @@ render(meshes)
       .vertices
       .values()
       .map(|vtx| {
-        println!("xform: {:?}", mesh.transform);
         let pt = vtx.position.push(1.);
         let transformed = mesh.transform * pt;
         let transformed = transformed.xyz();
-        println!("{:?} -> {:?}", vtx.position, transformed);
         transformed
       })
       .sum::<Vec3>()
@@ -2453,7 +2833,7 @@ result = composed(3)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let result = &ctx.globals.get("result").unwrap();
+  let result = &ctx.get_global("result").unwrap();
   let result = result.as_float().expect("Expected result to be a Float");
   assert_eq!(result, (3. + 1.) * 2.5);
 }
@@ -2468,7 +2848,7 @@ res = composed(3)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let result = &ctx.globals.get("res").unwrap();
+  let result = &ctx.get_global("res").unwrap();
   let result = result.as_int().expect("Expected result to be an int");
   assert_eq!(result, ((3 + 1) * 2) - 3);
 }
@@ -2526,19 +2906,19 @@ c = 0..5 -> |x| { x * 2 } | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = &ctx.globals.get("a").unwrap();
+  let a = &ctx.get_global("a").unwrap();
   let a = a
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {a:?}"));
   assert_eq!(a, 0 * 2 + 1 * 2 + 2 * 2 + 3 * 2 + 4 * 2);
 
-  let b = &ctx.globals.get("b").unwrap();
+  let b = &ctx.get_global("b").unwrap();
   let b = b
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {b:?}"));
   assert_eq!(a, b);
 
-  let c = &ctx.globals.get("c").unwrap();
+  let c = &ctx.get_global("c").unwrap();
   let c = c
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {c:?}"));
@@ -2553,7 +2933,7 @@ result = add(1, 2)
 "#;
 
   let ctx_good = parse_and_eval_program(src_good).unwrap();
-  let result_good = ctx_good.globals.get("result").unwrap();
+  let result_good = ctx_good.get_global("result").unwrap();
   let result_good = result_good.as_int().expect("Expected result to be an Int");
   assert_eq!(result_good, 3);
 
@@ -2575,13 +2955,13 @@ x = pi*2
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let Value::Vec3(b) = b else {
     panic!("Expected result to be a Vec3");
   };
   assert_eq!(b, Vec3::new(3.0, 2.0, 1.0));
 
-  let c = ctx.globals.get("c").unwrap();
+  let c = ctx.get_global("c").unwrap();
   let Value::Float(c) = c else {
     panic!("Expected result to be a Float");
   };
@@ -2600,31 +2980,31 @@ e = !a
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let Value::Bool(a) = a else {
     panic!("Expected result to be a Bool");
   };
   assert!(a);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let Value::Bool(b) = b else {
     panic!("Expected result to be a Bool");
   };
   assert!(!b);
 
-  let c = ctx.globals.get("c").unwrap();
+  let c = ctx.get_global("c").unwrap();
   let Value::Bool(c) = c else {
     panic!("Expected result to be a Bool");
   };
   assert!(!c);
 
-  let d = ctx.globals.get("d").unwrap();
+  let d = ctx.get_global("d").unwrap();
   let Value::Bool(d) = d else {
     panic!("Expected result to be a Bool");
   };
   assert!(d);
 
-  let e = ctx.globals.get("e").unwrap();
+  let e = ctx.get_global("e").unwrap();
   let Value::Bool(e) = e else {
     panic!("Expected result to be a Bool");
   };
@@ -2640,7 +3020,7 @@ out = vals | skip(2) | take_while(|x| x < 4) | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out = ctx.globals.get("out").unwrap();
+  let out = ctx.get_global("out").unwrap();
   let out = out.as_int().expect("Expected result to be an Int");
   assert_eq!(out, 1 + 2 + 3);
 }
@@ -2652,7 +3032,7 @@ a = -1
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let a = a.as_int().expect("Expected result to be an Int");
   assert_eq!(a, -1);
 }
@@ -2674,7 +3054,7 @@ out = [1,2,3,4] -> |x| {
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out = ctx.globals.get("out").unwrap();
+  let out = ctx.get_global("out").unwrap();
   let out = out
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
@@ -2697,7 +3077,7 @@ out = fn()
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out = ctx.globals.get("out").unwrap();
+  let out = ctx.get_global("out").unwrap();
   let out = out
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
@@ -2732,7 +3112,7 @@ out = [0, 1, 2] -> fn | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out = ctx.globals.get("out").unwrap();
+  let out = ctx.get_global("out").unwrap();
   let out = out
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
@@ -2770,7 +3150,7 @@ result = outer(w=500, 3)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let result = ctx.globals.get("result").unwrap();
+  let result = ctx.get_global("result").unwrap();
   let result = result.as_int().expect("Expected result to be an Int");
   assert_eq!(result, 3 + 400 + 300 + 500);
 }
@@ -2822,10 +3202,10 @@ d = 'as\'df'
   let ctx = parse_and_eval_program(src).unwrap();
 
   let (a, b, c, d) = (
-    ctx.globals.get("a").unwrap(),
-    ctx.globals.get("b").unwrap(),
-    ctx.globals.get("c").unwrap(),
-    ctx.globals.get("d").unwrap(),
+    ctx.get_global("a").unwrap(),
+    ctx.get_global("b").unwrap(),
+    ctx.get_global("c").unwrap(),
+    ctx.get_global("d").unwrap(),
   );
   let (a, b, c, d) = (
     a.as_str().unwrap(),
@@ -2852,7 +3232,7 @@ inc2(2) | print
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out = ctx.globals.get("out").unwrap();
+  let out = ctx.get_global("out").unwrap();
   let out = out.as_int().expect("Expected result to be an Int");
   assert_eq!(out, 3);
 }
@@ -2865,7 +3245,7 @@ out = [1,2,3,4,5] | skip_while(|x| x < 3) | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out = ctx.globals.get("out").unwrap();
+  let out = ctx.get_global("out").unwrap();
   let out = out.as_int().expect("Expected result to be an Int");
   assert_eq!(out, 3 + 4 + 5);
 }
@@ -2883,11 +3263,11 @@ first = chained | first
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out = ctx.globals.get("out").unwrap();
+  let out = ctx.get_global("out").unwrap();
   let out = out.as_int().expect("Expected result to be an Int");
   assert_eq!(out, 0 + 1 + 2 + 3 + 4 + 5 + 1 + 2);
 
-  let first = ctx.globals.get("first").unwrap();
+  let first = ctx.get_global("first").unwrap();
   let first = first.as_int().expect("Expected result to be an Int");
   assert_eq!(first, 0, "Expected first element to be 0, found: {first}");
 }
@@ -2900,7 +3280,7 @@ a = { x: 1, "y+": 1+4, z: 3 }
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let Value::Map(a) = a else {
     panic!("Expected result to be a Map");
   };
@@ -2919,7 +3299,7 @@ x = map.x
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let x = x.as_int().expect("Expected result to be an Int");
   assert_eq!(x, 1);
 }
@@ -2933,7 +3313,7 @@ x = map["x"]
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let x = x.as_int().expect("Expected result to be an Int");
   assert_eq!(x, 1);
 }
@@ -2947,11 +3327,11 @@ b = 0x001
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let a = a.as_int().expect("Expected result to be an Int");
   assert_eq!(a, 0x1234);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 0x001);
 }
@@ -2979,11 +3359,11 @@ out2 = fn2(|x| x + 2)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let out1 = ctx.globals.get("out1").unwrap();
+  let out1 = ctx.get_global("out1").unwrap();
   let out1 = out1.as_int().expect("Expected result to be an Int");
   assert_eq!(out1, 124);
 
-  let out2 = ctx.globals.get("out2").unwrap();
+  let out2 = ctx.get_global("out2").unwrap();
   let out2 = out2.as_int().expect("Expected result to be an Int");
   assert_eq!(out2, 125);
 }
@@ -2997,7 +3377,7 @@ b = a -> |v: vec3, norm: vec3|: vec3 vec3(0)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let Value::Mesh(b) = b else {
     panic!("Expected result to be a Mesh");
   };
@@ -3018,7 +3398,7 @@ x = 0
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let x = x.as_int().expect("Expected result to be an Int");
   assert_eq!(x, 1);
 }
@@ -3039,11 +3419,11 @@ b = f(2)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let a = a.as_int().expect("Expected result to be an Int");
   assert_eq!(a, 0 + 1);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 2 + 1);
 }
@@ -3067,13 +3447,13 @@ b = f(1)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let Value::Bool(a) = a else {
     panic!("Expected result to be a Bool");
   };
   assert!(!a, "Expected a to be false");
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let Value::Bool(b) = b else {
     panic!("Expected result to be a Bool");
   };
@@ -3096,7 +3476,7 @@ sum = 0..2
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let sum = ctx.globals.get("sum").unwrap();
+  let sum = ctx.get_global("sum").unwrap();
   let sum = sum.as_int().expect("Expected result to be an int");
   assert_eq!(sum, 2);
 }
@@ -3110,7 +3490,7 @@ a = 0..5 | cumsum
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let Value::Sequence(a) = a else {
     panic!("Expected result to be a Seq");
   };
@@ -3136,7 +3516,7 @@ a = 0..3 | cumsum
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let Value::Sequence(a) = a else {
     panic!("Expected result to be a Seq");
   };
@@ -3160,7 +3540,7 @@ b = a | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 0 + 1 + 2 + 3 + 4 + 0 + 1 + 2 + 3 + 4);
 }
@@ -3174,7 +3554,7 @@ b = a | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 0 + 2 + 4 + 6);
 }
@@ -3189,11 +3569,11 @@ c = ([1,2,3])[1]
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().expect("Expected result to be an Int");
   assert_eq!(b, 2);
 
-  let c = ctx.globals.get("c").unwrap();
+  let c = ctx.get_global("c").unwrap();
   let c = c.as_int().expect("Expected result to be an Int");
   assert_eq!(c, 2);
 }
@@ -3237,11 +3617,11 @@ c = b | reduce(add)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let c = ctx.globals.get("c").unwrap();
+  let c = ctx.get_global("c").unwrap();
   let c = c.as_int().expect("Expected result to be an Int");
   assert_eq!(c, 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let Value::Sequence(b) = b else {
     panic!("Expected result to be a Seq");
   };
@@ -3270,21 +3650,21 @@ b = contours | skip(1) | first
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let a = a.as_float().expect("Expected result to be a Float");
   assert!(a != 10., "Expected a to not be 10, found: {}", a);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_float().expect("Expected result to be a Float");
   assert!(b != 10., "Expected b to not be 10, found: {}", b);
 
-  let seq = match ctx.globals.get("contours") {
+  let seq = match ctx.get_global("contours") {
     Some(Value::Sequence(seq)) => seq,
     other => panic!("Expected contours to be a seq, found: {other:?}"),
   };
   let seq: &dyn Any = &*seq;
   let MapSeq { inner: _, cb }: &MapSeq = seq.downcast_ref::<MapSeq>().unwrap();
-  let closure = match cb {
+  let closure = match &**cb {
     Callable::Closure(closure) => closure,
     _ => unreachable!(),
   };
@@ -3305,7 +3685,7 @@ b = contours | skip(1) | first
   match body.last().unwrap() {
     Statement::Expr(expr) => match expr {
       Expr::Ident(ident) => {
-        assert_eq!(ident, "radius");
+        assert_eq!(*ident, ctx.interned_symbols.intern("radius"));
       }
       _ => panic!("Expected last expression to be an ident, found: {expr:?}"),
     },
@@ -3330,7 +3710,7 @@ x = contours | first | first
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let x = x.as_float().expect("Expected result to be a Float");
   assert_eq!(x, 10. + 1. * 1.);
 }
@@ -3358,11 +3738,11 @@ y = ["1", "2"] | join("")
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let x = x.as_str().expect("Expected result to be a String");
   assert_eq!(x, "a, b, c");
 
-  let y = ctx.globals.get("y").unwrap();
+  let y = ctx.get_global("y").unwrap();
   let y = y.as_str().expect("Expected result to be a String");
   assert_eq!(y, "12");
 }
@@ -3383,7 +3763,7 @@ x = fn(5)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let x = x.as_int().expect("Expected result to be an Int");
   assert_eq!(x, 6);
 }
@@ -3396,7 +3776,13 @@ fn test_closure_scope_reference_counting() {
     return_type_hint: None,
   };
   let ctx = EvalCtx::default();
-  let out = ctx.eval_expr(&closure, &ctx.globals, Some("name")).unwrap();
+  let out = ctx
+    .eval_expr(
+      &closure,
+      &ctx.globals,
+      Some(ctx.interned_symbols.intern("name")),
+    )
+    .unwrap();
   let callable = match out {
     ControlFlow::Continue(Value::Callable(callable)) => callable,
     _ => unreachable!(),
@@ -3413,9 +3799,11 @@ fn test_closure_scope_reference_counting() {
   assert_eq!(Rc::strong_count(&captured_scope), 1,);
 
   // the captured scope recursively refers to the closure to support recursive calls
-  let cloned_closure = captured_scope.get("name").unwrap();
+  let cloned_closure = captured_scope
+    .get(ctx.interned_symbols.intern("name"))
+    .unwrap();
   let cloned_closure = cloned_closure.as_callable().unwrap();
-  let Callable::Closure(cloned_closure) = cloned_closure else {
+  let Callable::Closure(cloned_closure) = &**cloned_closure else {
     unreachable!();
   };
 
@@ -3439,7 +3827,7 @@ arr = arr | append(3)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let arr = ctx.globals.get("arr").unwrap();
+  let arr = ctx.get_global("arr").unwrap();
   let arr = arr.as_sequence().unwrap();
   let eager = seq_as_eager(&*arr).unwrap();
   assert_eq!(
@@ -3465,7 +3853,7 @@ v = {b: 1, *y}
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let z = ctx.globals.get("z").unwrap();
+  let z = ctx.get_global("z").unwrap();
   let Value::Map(z) = z else {
     panic!("Expected result to be a Map");
   };
@@ -3474,14 +3862,14 @@ v = {b: 1, *y}
   assert_eq!(z.get("b").unwrap().as_int(), Some(2));
   assert_eq!(z.get("c").unwrap().as_int(), Some(3));
 
-  let w = ctx.globals.get("w").unwrap();
+  let w = ctx.get_global("w").unwrap();
   let Value::Map(w) = w else {
     panic!("Expected result to be a Map");
   };
   assert_eq!(w.len(), 1);
   assert_eq!(w.get("a").unwrap().as_int(), Some(4));
 
-  let v = ctx.globals.get("v").unwrap();
+  let v = ctx.get_global("v").unwrap();
   let Value::Map(v) = v else {
     panic!("Expected result to be a Map");
   };
@@ -3498,15 +3886,15 @@ x = [1, 2, 3]
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let a = a.as_int().unwrap();
   assert_eq!(a, 1);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().unwrap();
   assert_eq!(b, 2);
 
-  let c = ctx.globals.get("c").unwrap();
+  let c = ctx.get_global("c").unwrap();
   let c = c.as_int().unwrap();
   assert_eq!(c, 3);
 }
@@ -3520,15 +3908,15 @@ x = {a: 1, b: 2, c: 3}
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let a = a.as_int().unwrap();
   assert_eq!(a, 1);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().unwrap();
   assert_eq!(b, 2);
 
-  let c = ctx.globals.get("c").unwrap();
+  let c = ctx.get_global("c").unwrap();
   let c = c.as_int().unwrap();
   assert_eq!(c, 3);
 }
@@ -3542,22 +3930,22 @@ x = [{a: 1}, 2, [{b: 5}]]
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap();
+  let a = ctx.get_global("a").unwrap();
   let a = a.as_int().unwrap();
   assert_eq!(a, 1);
 
-  let c = ctx.globals.get("c").unwrap();
+  let c = ctx.get_global("c").unwrap();
   assert!(c.is_nil());
 
-  let d = ctx.globals.get("d").unwrap();
+  let d = ctx.get_global("d").unwrap();
   let d = d.as_int().unwrap();
   assert_eq!(d, 2);
 
-  let b = ctx.globals.get("b").unwrap();
+  let b = ctx.get_global("b").unwrap();
   let b = b.as_int().unwrap();
   assert_eq!(b, 5);
 
-  let z = ctx.globals.get("z").unwrap();
+  let z = ctx.get_global("z").unwrap();
   assert!(z.is_nil());
 }
 
@@ -3570,11 +3958,11 @@ m = {a: 1, b: { c: 2 }}
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let foo = ctx.globals.get("foo").unwrap();
+  let foo = ctx.get_global("foo").unwrap();
   let foo = foo.as_int().unwrap();
   assert_eq!(foo, 1);
 
-  let bar = ctx.globals.get("bar").unwrap();
+  let bar = ctx.get_global("bar").unwrap();
   let bar = bar.as_int().unwrap();
   assert_eq!(bar, 2);
 }
@@ -3588,7 +3976,7 @@ x = f({x: ['b'] }, ['c', {d: 'd', e: 'e'}])
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let x = x.as_str().unwrap();
   assert_eq!(x, "bcdeg");
 }
@@ -3618,13 +4006,13 @@ y = vec3(9, z)
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let x = ctx.globals.get("x").unwrap();
+  let x = ctx.get_global("x").unwrap();
   let Value::Vec3(x) = x else {
     panic!("Expected result to be a Vec3");
   };
   assert_eq!(x, Vec3::new(1., 2., 3.));
 
-  let y = ctx.globals.get("y").unwrap();
+  let y = ctx.get_global("y").unwrap();
   let Value::Vec3(y) = y else {
     panic!("Expected result to be a Vec3");
   };
@@ -3660,41 +4048,89 @@ j = atan(vec3(1.0, 0.0, 0.1))"#;
 
   let ctx = parse_and_eval_program(src).unwrap();
 
-  let a = ctx.globals.get("a").unwrap().as_float().unwrap();
+  let a = ctx.get_global("a").unwrap().as_float().unwrap();
   assert_eq!(a, (0.5_f32).asin());
-  let b = ctx.globals.get("b").unwrap().as_float().unwrap();
+  let b = ctx.get_global("b").unwrap().as_float().unwrap();
   assert_eq!(b, (0.5_f32).acos());
-  let c = ctx.globals.get("c").unwrap().as_float().unwrap();
+  let c = ctx.get_global("c").unwrap().as_float().unwrap();
   assert_eq!(c, (1.0_f32).atan());
-  let d = ctx.globals.get("d").unwrap().as_float().unwrap();
+  let d = ctx.get_global("d").unwrap().as_float().unwrap();
   assert_eq!(d, (1.0_f32).atan2(1.0));
 
-  let e = ctx.globals.get("e").unwrap();
+  let e = ctx.get_global("e").unwrap();
   let e = e.as_vec2().unwrap();
   assert_eq!(e, &Vec2::new(0.5_f32.asin(), 0.2_f32.asin()));
-  let f = ctx.globals.get("f").unwrap();
+  let f = ctx.get_global("f").unwrap();
   let f = f.as_vec2().unwrap();
   assert_eq!(f, &Vec2::new(0.5_f32.acos(), 0.6_f32.acos()));
-  let g = ctx.globals.get("g").unwrap();
+  let g = ctx.get_global("g").unwrap();
   let g = g.as_vec2().unwrap();
   assert_eq!(g, &Vec2::new(1.0_f32.atan(), 0.3_f32.atan()));
 
-  let h = ctx.globals.get("h").unwrap();
+  let h = ctx.get_global("h").unwrap();
   let h = h.as_vec3().unwrap();
   assert_eq!(
     h,
     &Vec3::new(0.5_f32.asin(), 0.0_f32.asin(), 0.7_f32.asin())
   );
-  let i = ctx.globals.get("i").unwrap();
+  let i = ctx.get_global("i").unwrap();
   let i = i.as_vec3().unwrap();
   assert_eq!(
     i,
     &Vec3::new(0.5_f32.acos(), 0.0_f32.acos(), 0.5_f32.acos())
   );
-  let j = ctx.globals.get("j").unwrap();
+  let j = ctx.get_global("j").unwrap();
   let j = j.as_vec3().unwrap();
   assert_eq!(
     j,
     &Vec3::new(1.0_f32.atan(), 0.0_f32.atan(), 0.1_f32.atan())
   );
+}
+
+#[test]
+fn test_boolean_short_circuiting() {
+  let src = r#"
+bail = |x| {
+  assert(false)
+  return 100
+}
+
+f = |x| {
+  if x == 1 || x == 2 || x == bail(3) {
+    return true
+  }
+  return false
+}
+
+a = f(1)
+b = f(2)
+
+f2 = |x| {
+  if 1 == 1 || x == 2 {
+    return true
+  }
+  return bail()
+}
+
+c = f2(123)"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let a = ctx.get_global("a").unwrap();
+  let Value::Bool(a) = a else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(a, "Expected a to be true");
+
+  let b = ctx.get_global("b").unwrap();
+  let Value::Bool(b) = b else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(b, "Expected b to be true");
+
+  let c = ctx.get_global("c").unwrap();
+  let Value::Bool(c) = c else {
+    panic!("Expected result to be a Bool");
+  };
+  assert!(c, "Expected c to be true");
 }

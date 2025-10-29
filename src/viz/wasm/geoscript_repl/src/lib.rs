@@ -4,7 +4,7 @@ use fxhash::FxHashMap;
 use geoscript::{
   eval_program_with_ctx, materials::Material, mesh_ops::mesh_boolean::drop_all_mesh_handles,
   optimize_ast, parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program,
-  PRELUDE,
+  Sym, PRELUDE,
 };
 use mesh::OwnedIndexedMesh;
 use nanoserde::SerJson;
@@ -107,7 +107,7 @@ pub fn geoscript_repl_parse_program(
   include_prelude: bool,
 ) {
   let ctx = unsafe { &mut *ctx };
-  ctx.last_program = parse_program_maybe_with_prelude(src, include_prelude);
+  ctx.last_program = parse_program_maybe_with_prelude(&ctx.geo_ctx, src, include_prelude);
   ctx.last_result = Ok(());
 }
 
@@ -125,20 +125,25 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
   };
 
   let mut deps = GeoscriptAsyncDependencies::default();
-  traverse_fn_calls(program, |name: &str| {
-    if name == "trace_geodesic_path" {
-      deps.geodesics = true;
-    } else if name == "alpha_wrap"
-      || name == "smooth"
-      || name == "remesh_planar_patches"
-      || name == "isotropic_remesh"
-      || name == "remesh"
-      || name == "remesh_isotropic"
-      || name == "delaunay_remesh"
-      || name == "remesh_delaunay"
-    {
-      deps.cgal = true;
-    }
+  traverse_fn_calls(program, |name: Sym| {
+    ctx
+      .geo_ctx
+      .with_resolved_sym(name, |name| {
+        if name == "trace_geodesic_path" {
+          deps.geodesics = true;
+        } else if name == "alpha_wrap"
+          || name == "smooth"
+          || name == "remesh_planar_patches"
+          || name == "isotropic_remesh"
+          || name == "remesh"
+          || name == "remesh_isotropic"
+          || name == "delaunay_remesh"
+          || name == "remesh_delaunay"
+        {
+          deps.cgal = true;
+        }
+      })
+      .unwrap()
   });
 
   deps.serialize_json()

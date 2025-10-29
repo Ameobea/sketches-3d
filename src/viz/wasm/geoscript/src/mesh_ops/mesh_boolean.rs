@@ -9,6 +9,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use crate::ErrorStack;
 #[cfg(target_arch = "wasm32")]
 use crate::MeshHandle;
+use crate::Sym;
 use crate::{ArgRef, EvalCtx, Value};
 
 #[cfg(target_arch = "wasm32")]
@@ -153,7 +154,7 @@ pub(crate) fn eval_mesh_boolean(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
-  kwargs: &FxHashMap<String, Value>,
+  kwargs: &FxHashMap<Sym, Value>,
   ctx: &EvalCtx,
   op: MeshBooleanOp,
 ) -> Result<Value, ErrorStack> {
@@ -213,7 +214,7 @@ pub(crate) fn eval_mesh_boolean(
   _def_ix: usize,
   _arg_refs: &[ArgRef],
   _args: &[Value],
-  _kwargs: &FxHashMap<String, Value>,
+  _kwargs: &FxHashMap<Sym, Value>,
   _ctx: &EvalCtx,
   _op: MeshBooleanOp,
 ) -> Result<Value, ErrorStack> {

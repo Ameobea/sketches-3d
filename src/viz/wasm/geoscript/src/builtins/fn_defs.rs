@@ -2198,24 +2198,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         description: "Logical AND operation of two booleans",
         return_type: &[ArgType::Bool],
       },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "a",
-            valid_types: &[ArgType::Mesh],
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "b",
-            valid_types: &[ArgType::Mesh],
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Returns the boolean intersection of two meshes (`a & b`)",
-        return_type: &[ArgType::Mesh],
-      },
     ],
   },
   "or" => FnDef {
@@ -2239,24 +2221,6 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         ],
         description: "Logical OR operation of two booleans",
         return_type: &[ArgType::Bool],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "a",
-            valid_types: &[ArgType::Mesh],
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "b",
-            valid_types: &[ArgType::Mesh],
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Returns the boolean union of two meshes (`a | b`)",
-        return_type: &[ArgType::Mesh],
       },
     ],
   },
@@ -5818,6 +5782,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
     ]
   }
 };
+
+pub fn get_builtin_fn_sig_entry_ix(name: &str) -> Option<usize> {
+  let hashes = phf_shared::hash(name, &FN_SIGNATURE_DEFS.key);
+  let index = phf_shared::get_index(
+    &hashes,
+    FN_SIGNATURE_DEFS.disps,
+    FN_SIGNATURE_DEFS.entries.len(),
+  );
+  let entry = &FN_SIGNATURE_DEFS.entries[index as usize];
+  let b = entry.0;
+  if b == name {
+    Some(index as usize)
+  } else {
+    None
+  }
+}
 
 pub fn serialize_fn_defs() -> String {
   let serializable_defs: FxHashMap<&'static str, SerializableFnDef> = FN_SIGNATURE_DEFS
