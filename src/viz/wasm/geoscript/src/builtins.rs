@@ -616,7 +616,7 @@ pub(crate) fn map_impl(
 
       Ok(Value::Sequence(Rc::new(MapSeq {
         cb: fn_value.clone(),
-        inner: seq.clone_box(),
+        inner: seq,
       })))
     }
     // map(fn, mesh), alias for warp
@@ -645,7 +645,7 @@ fn fold_while_impl(
       let seq = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
 
       let mut acc = init.clone();
-      for next in seq.clone_box().consume(ctx) {
+      for next in seq.consume(ctx) {
         let next = next.map_err(|err| {
           err.wrap("Error produced while consuming sequence passed to `fold_while`")
         })?;
@@ -1054,16 +1054,8 @@ fn mesh_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let verts = arg_refs[0]
-        .resolve(args, &kwargs)
-        .as_sequence()
-        .unwrap()
-        .clone_box();
-      let indices = arg_refs[1]
-        .resolve(args, &kwargs)
-        .as_sequence()
-        .unwrap()
-        .clone_box();
+      let verts = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let indices = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
 
       let verts: Vec<Vec3> = verts
         .consume(ctx)
@@ -1146,11 +1138,7 @@ fn call_impl(
     }
     1 => {
       let callable = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let call_args = arg_refs[1]
-        .resolve(args, &kwargs)
-        .as_sequence()
-        .unwrap()
-        .clone_box();
+      let call_args = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
       let args = call_args.consume(ctx).collect::<Result<Vec<_>, _>>()?;
       ctx.invoke_callable(callable, &args, &EMPTY_KWARGS)
     }
@@ -1330,7 +1318,6 @@ fn convex_hull_impl(
     0 => {
       let verts_seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
       let verts = verts_seq
-        .clone_box()
         .consume(ctx)
         .map(|res| match res {
           Ok(Value::Vec3(v)) => Ok(v),
@@ -1392,7 +1379,6 @@ fn fan_fill_impl(
         .resolve(args, &kwargs)
         .as_sequence()
         .unwrap()
-        .clone_box()
         .consume(ctx)
         .map(|res| match res {
           Ok(Value::Vec3(v)) => Ok(v),
@@ -1438,11 +1424,10 @@ fn stitch_contours_impl(
         .resolve(args, &kwargs)
         .as_sequence()
         .unwrap()
-        .clone_box()
         .consume(ctx)
         .enumerate()
         .map(|(contour_ix, res)| match res {
-          Ok(Value::Sequence(seq)) => Ok(seq.clone_box().consume(ctx)),
+          Ok(Value::Sequence(seq)) => Ok(seq.consume(ctx)),
           Ok(val) => Err(ErrorStack::new(format!(
             "Expected sequence of sequences in `stitch_contours`, found: {val:?} at contour index \
              {contour_ix}",
@@ -1489,7 +1474,6 @@ fn trace_geodesic_path_impl(
         .resolve(args, &kwargs)
         .as_sequence()
         .unwrap()
-        .clone_box()
         .consume(ctx);
       let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
       let world_space = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
@@ -1593,7 +1577,6 @@ fn alpha_wrap_impl(
         .resolve(args, &kwargs)
         .as_sequence()
         .unwrap()
-        .clone_box()
         .consume(ctx)
         .map(|res| match res {
           Ok(Value::Vec3(v)) => Ok(v),
@@ -1896,7 +1879,6 @@ fn extrude_pipe_impl(
             return Ok(PipeRadius::constant(radius));
           } else if let Some(seq) = radius_for_ring.as_sequence() {
             let radii: Vec<f32> = seq
-              .clone_box()
               .consume(ctx)
               .map(|res| match res {
                 Ok(val) if let Some(f) = val.as_float() => Ok(f),
@@ -1917,7 +1899,7 @@ fn extrude_pipe_impl(
         }
       }
 
-      let path = path.clone_box().consume(ctx).map(|res| match res {
+      let path = path.consume(ctx).map(|res| match res {
         Ok(Value::Vec3(v)) => Ok(v),
         Ok(val) => Err(ErrorStack::new(format!(
           "Expected Vec3 in path seq passed to `extrude_pipe`, found: {val:?}"
@@ -2090,7 +2072,7 @@ fn len_impl(
       if let Some(eager) = seq_as_eager(&*v) {
         Ok(Value::Int(eager.inner.len() as i64))
       } else {
-        let iter = v.clone_box().consume(ctx);
+        let iter = v.consume(ctx);
         let mut len = 0;
         for res in iter {
           match res {
@@ -2386,7 +2368,6 @@ fn subdivide_by_plane_impl(
         .resolve(args, &kwargs)
         .as_sequence()
         .unwrap()
-        .clone_box()
         .consume(&EvalCtx::default())
         .map(|res| match res {
           Ok(Value::Vec3(v)) => Ok(v),
@@ -2400,7 +2381,6 @@ fn subdivide_by_plane_impl(
         .resolve(args, &kwargs)
         .as_sequence()
         .unwrap()
-        .clone_box()
         .consume(&EvalCtx::default())
         .map(|res| match res {
           Ok(Value::Float(f)) => Ok(f),
@@ -2493,10 +2473,7 @@ fn compose_impl(
           return Ok(args[0].clone());
         } else if let Some(seq) = args[0].as_sequence() {
           // have to eagerly evaluate the sequence to get the inner callables
-          seq
-            .clone_box()
-            .consume(ctx)
-            .collect::<Result<Vec<_>, _>>()?
+          seq.consume(ctx).collect::<Result<Vec<_>, _>>()?
         } else {
           return Err(ErrorStack::new(format!(
             "compose function requires a sequence or callable if a single arg is provided, found: \
@@ -2591,11 +2568,7 @@ fn render_impl(
     }
     2 => {
       // This is expected to be a `seq<Vec3> | seq<Mesh | seq<Vec3>>`
-      let sequence = arg_refs[0]
-        .resolve(args, &kwargs)
-        .as_sequence()
-        .unwrap()
-        .clone_box();
+      let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
 
       fn render_path(
         ctx: &EvalCtx,
@@ -2626,7 +2599,7 @@ fn render_impl(
             ctx.rendered_meshes.push(mesh);
           }
           Ok(Value::Sequence(inner_seq)) => {
-            let iter = inner_seq.clone_box().consume(ctx);
+            let iter = inner_seq.consume(ctx);
             render_path(ctx, iter)?;
           }
           other => {
@@ -3882,7 +3855,6 @@ fn join_impl(
         .resolve(args, &kwargs)
         .as_sequence()
         .unwrap()
-        .clone_box()
         .consume(ctx)
         .peekable();
 
@@ -3891,7 +3863,7 @@ fn join_impl(
     1 => {
       let separator = arg_refs[0].resolve(args, &kwargs).as_str().unwrap();
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      let mut iter = sequence.clone_box().consume(ctx).peekable();
+      let mut iter = sequence.consume(ctx).peekable();
 
       join_strings(&mut iter, separator)
     }
@@ -3912,7 +3884,7 @@ fn filter_impl(
 
       Ok(Value::Sequence(Rc::new(FilterSeq {
         cb: fn_value.clone(),
-        inner: sequence.clone_box(),
+        inner: sequence,
       })))
     }
     _ => unimplemented!(),
@@ -3933,7 +3905,7 @@ fn scan_impl(
       Ok(Value::Sequence(Rc::new(ScanSeq {
         acc: init.clone(),
         cb: fn_value.clone(),
-        inner: sequence.clone_box(),
+        inner: sequence,
       })))
     }
     _ => unimplemented!(),
@@ -3953,7 +3925,7 @@ fn take_impl(
       let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(TakeSeq {
         count,
-        inner: sequence.clone_box(),
+        inner: sequence,
       })))
     }
     _ => unimplemented!(),
@@ -3973,7 +3945,7 @@ fn skip_impl(
       let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(SkipSeq {
         count,
-        inner: sequence.clone_box(),
+        inner: sequence,
       })))
     }
     _ => unimplemented!(),
@@ -3992,7 +3964,7 @@ fn take_while_impl(
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(TakeWhileSeq {
         cb: fn_value.clone(),
-        inner: sequence.clone_box(),
+        inner: sequence,
       })))
     }
     _ => unimplemented!(),
@@ -4011,7 +3983,7 @@ fn skip_while_impl(
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(SkipWhileSeq {
         cb: fn_value.clone(),
-        inner: sequence.clone_box(),
+        inner: sequence,
       })))
     }
     _ => unimplemented!(),
@@ -4027,12 +3999,8 @@ fn chain_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let seqs = arg_refs[0]
-        .resolve(args, &kwargs)
-        .as_sequence()
-        .unwrap()
-        .clone_box();
-      Ok(Value::Sequence(Rc::new(ChainSeq::new(ctx, &*seqs)?)))
+      let seqs = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      Ok(Value::Sequence(Rc::new(ChainSeq::new(ctx, seqs)?)))
     }
     _ => unimplemented!(),
   }
@@ -4048,7 +4016,7 @@ fn first_impl(
   match def_ix {
     0 => {
       let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
-      let mut iter = sequence.clone_box().consume(ctx);
+      let mut iter = sequence.consume(ctx);
       match iter.next() {
         Some(res) => res,
         None => Ok(Value::Nil),
@@ -4072,7 +4040,7 @@ fn last_impl(
         return Ok(eager.inner.last().cloned().unwrap_or(Value::Nil));
       }
 
-      let iter = seq.clone_box().consume(ctx);
+      let iter = seq.consume(ctx);
       match iter.last() {
         Some(res) => res,
         None => Ok(Value::Nil),
@@ -4097,7 +4065,7 @@ fn append_impl(
       let mut eager_seq = match seq_as_eager(&*seq) {
         Some(eager) => eager.clone(),
         None => {
-          let iter = seq.clone_box().consume(ctx);
+          let iter = seq.consume(ctx);
           let collected = iter
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.wrap("error produced during `collect`"))?;
@@ -4121,10 +4089,7 @@ fn reverse_impl(
   match def_ix {
     0 => {
       let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      let vals: Vec<Value> = sequence
-        .clone_box()
-        .consume(ctx)
-        .collect::<Result<Vec<_>, _>>()?;
+      let vals: Vec<Value> = sequence.consume(ctx).collect::<Result<Vec<_>, _>>()?;
       Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: vals.into_iter().rev().map(Ok),
       })))
@@ -4147,7 +4112,7 @@ fn collect_impl(
       match seq_as_eager(&*seq) {
         Some(_) => Ok(val.clone()),
         None => {
-          let iter = seq.clone_box().consume(ctx);
+          let iter = seq.consume(ctx);
           let collected = iter
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.wrap("error produced during `collect`"))?;
@@ -4170,7 +4135,7 @@ fn any_impl(
     0 => {
       let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      let iter = sequence.clone_box().consume(ctx);
+      let iter = sequence.consume(ctx);
       for (i, res) in iter.enumerate() {
         let val = res?;
         let val = ctx
@@ -4206,7 +4171,7 @@ fn all_impl(
     0 => {
       let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      let iter = sequence.clone_box().consume(ctx);
+      let iter = sequence.consume(ctx);
       for (i, res) in iter.enumerate() {
         let val = res?;
         let val = ctx
@@ -4242,7 +4207,7 @@ fn for_each_impl(
     0 => {
       let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
-      let iter = sequence.clone_box().consume(ctx);
+      let iter = sequence.consume(ctx);
       for res in iter {
         let val = res?;
         ctx
@@ -4264,9 +4229,7 @@ fn flatten_impl(
   match def_ix {
     0 => {
       let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      Ok(Value::Sequence(Rc::new(FlattenSeq {
-        inner: seq.clone_box(),
-      })))
+      Ok(Value::Sequence(Rc::new(FlattenSeq { inner: seq })))
     }
     _ => unimplemented!(),
   }
@@ -4667,7 +4630,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let initial_val = arg_refs[0].resolve(args, kwargs).clone();
     let fn_value = arg_refs[1].resolve(args, kwargs).as_callable().unwrap();
     let sequence = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
-    ctx.fold(initial_val, fn_value, sequence.clone_box().into())
+    ctx.fold(initial_val, fn_value, sequence)
   }),
   "fold_while" => builtin_fn!(fold, |def_ix, arg_refs, args, kwargs, ctx| {
     fold_while_impl(ctx, def_ix, arg_refs, args, kwargs)
@@ -4675,7 +4638,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "reduce" => builtin_fn!(reduce, |_def_ix, arg_refs: &[ArgRef], args, kwargs, ctx: &EvalCtx| {
     let fn_value = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
     let seq = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
-    ctx.reduce(fn_value, seq.clone_box().into())
+    ctx.reduce(fn_value, seq)
   }),
   "map" => builtin_fn!(map, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     let fn_value = arg_refs[0].resolve(args, kwargs);

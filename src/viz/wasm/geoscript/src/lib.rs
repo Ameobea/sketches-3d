@@ -156,10 +156,8 @@ impl Debug for ErrorStack {
 }
 
 pub trait Sequence: Any + Debug {
-  fn clone_box(&self) -> Box<dyn Sequence>;
-
   fn consume<'a>(
-    self: Box<Self>,
+    self: Rc<Self>,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>;
 }
@@ -1872,9 +1870,9 @@ impl EvalCtx {
       if matches!(builtin_name, "union" | "difference" | "intersect") {
         let combined_iter = ChainSeq::new(
           self,
-          &EagerSeq {
+          Rc::new(EagerSeq {
             inner: vec![initial_val, Value::Sequence(seq)],
-          },
+          }),
         )
         .map_err(|err| {
           err.wrap("Internal error creating chained sequence when folding mesh boolean op")
@@ -1892,7 +1890,7 @@ impl EvalCtx {
     }
 
     let mut acc = initial_val;
-    let iter = seq.clone_box().consume(self);
+    let iter = seq.consume(self);
     for (i, res) in iter.enumerate() {
       let value = res.map_err(|err| {
         err.wrap(format!(
@@ -1929,7 +1927,7 @@ impl EvalCtx {
       }
     }
 
-    let mut iter = seq.clone_box().consume(self);
+    let mut iter = seq.consume(self);
     let Some(first_value_res) = iter.next() else {
       return Err(ErrorStack::new("empty sequence passed to reduce"));
     };
@@ -3494,11 +3492,7 @@ a = 0..5 | cumsum
   let Value::Sequence(a) = a else {
     panic!("Expected result to be a Seq");
   };
-  let a = a
-    .clone_box()
-    .consume(&ctx)
-    .collect::<Result<Vec<_>, _>>()
-    .unwrap();
+  let a = a.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
   assert_eq!(a.len(), 5);
   assert_eq!(a[0].as_int(), Some(0));
   assert_eq!(a[1].as_int(), Some(1));
@@ -3520,11 +3514,7 @@ a = 0..3 | cumsum
   let Value::Sequence(a) = a else {
     panic!("Expected result to be a Seq");
   };
-  let a = a
-    .clone_box()
-    .consume(&ctx)
-    .collect::<Result<Vec<_>, _>>()
-    .unwrap();
+  let a = a.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
   assert_eq!(a.len(), 3);
   assert_eq!(a[0].as_int(), Some(0 + 0 + 0));
   assert_eq!(a[1].as_int(), Some(0 + 1 + 1));
@@ -3625,11 +3615,7 @@ c = b | reduce(add)
   let Value::Sequence(b) = b else {
     panic!("Expected result to be a Seq");
   };
-  let b = b
-    .clone_box()
-    .consume(&ctx)
-    .collect::<Result<Vec<_>, _>>()
-    .unwrap();
+  let b = b.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
   assert_eq!(b.len(), 8);
 }
 

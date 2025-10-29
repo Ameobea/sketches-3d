@@ -168,7 +168,7 @@ impl DestructurePattern {
           )));
         };
 
-        let mut seq = seq.clone_box().consume(ctx);
+        let mut seq = seq.consume(ctx);
         for pat in destructure_patterns {
           let res = match seq.next() {
             Some(res) => res,

@@ -170,7 +170,7 @@ pub(crate) fn eval_mesh_boolean(
     }
     1 => {
       let sequence = arg_refs[0].resolve(&args, &kwargs).as_sequence().unwrap();
-      sequence.clone_box().consume(ctx)
+      sequence.consume(ctx)
     }
     _ => unimplemented!(),
   };
