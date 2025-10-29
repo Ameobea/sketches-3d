@@ -3883,7 +3883,7 @@ fn filter_impl(
       let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
 
       Ok(Value::Sequence(Rc::new(FilterSeq {
-        cb: fn_value.clone(),
+        cb: Rc::clone(&fn_value),
         inner: sequence,
       })))
     }

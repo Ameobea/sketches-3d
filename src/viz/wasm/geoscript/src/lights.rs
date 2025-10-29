@@ -192,12 +192,12 @@ impl ShadowCamera {
 impl Default for ShadowCamera {
   fn default() -> Self {
     Self {
-      near: 8.0,
-      far: 300.0,
-      left: -300.0,
-      right: 380.0,
-      top: 94.0,
-      bottom: -140.0,
+      near: 8.,
+      far: 300.,
+      left: -300.,
+      right: 380.,
+      top: 94.,
+      bottom: -140.,
     }
   }
 }

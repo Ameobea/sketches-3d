@@ -1,6 +1,5 @@
 use std::{collections::VecDeque, fmt::Debug, iter::Enumerate, rc::Rc};
 
-use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::Matrix4;
 use point_distribute::MeshSurfaceSampler;
@@ -46,7 +45,7 @@ impl IntoIterator for IntRange {
 
 impl Sequence for IntRange {
   fn consume(&self, _ctx: &EvalCtx) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>>> {
-    Box::new((*self).clone().into_iter())
+    Box::new(self.clone().into_iter())
   }
 }
 
@@ -88,26 +87,26 @@ impl Sequence for FilterSeq {
     let inner = self.inner.consume(ctx);
     let cb = Rc::clone(&self.cb);
 
-    Box::new(
-      inner
-        .enumerate()
-        .map(move |(i, res)| match res {
-          Ok(v) => {
-            let flag = ctx
-              .invoke_callable(&cb, &[v.clone(), Value::Int(i as i64)], &EMPTY_KWARGS)
-              .map_err(|err| err.wrap("cb passed to filter produced an error"))?;
-            let Some(flag) = flag.as_bool() else {
-              return Err(ErrorStack::new(format!(
-                "cb passed to filter produced value which could not be interpreted as a bool: \
-                 {flag:?}"
-              )));
-            };
-            Ok(if flag { Some(v) } else { None })
-          }
-          Err(e) => Err(e),
-        })
-        .filter_map_ok(|opt| opt),
-    )
+    Box::new(inner.enumerate().filter_map(move |(i, res)| match res {
+      Ok(v) => {
+        let flag = match ctx.invoke_callable(&cb, &[v.clone(), Value::Int(i as i64)], &EMPTY_KWARGS)
+        {
+          Ok(flag) => flag,
+          Err(err) => return Some(Err(err.wrap("cb passed to filter produced an error"))),
+        };
+        let Some(flag) = flag.as_bool() else {
+          return Some(Err(ErrorStack::new(format!(
+            "cb passed to filter produced non-bool value: {flag:?}"
+          ))));
+        };
+        if flag {
+          Some(Ok(v))
+        } else {
+          None
+        }
+      }
+      Err(e) => Some(Err(e)),
+    }))
   }
 }
 

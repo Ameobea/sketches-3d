@@ -1,7 +1,6 @@
 use std::{borrow::Borrow, ops::ControlFlow, ptr::addr_of, rc::Rc, str::FromStr};
 
 use fxhash::FxHashMap;
-use itertools::Itertools;
 use pest::iterators::Pair;
 
 use crate::{
@@ -1092,8 +1091,11 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         Rule::bracketed_closure_body => {
           let stmts = next
             .into_inner()
-            .map(|stmt| parse_statement(ctx, stmt))
-            .filter_map_ok(|s| s)
+            .filter_map(|stmt| match parse_statement(ctx, stmt) {
+              Ok(Some(stmt)) => Some(Ok(stmt)),
+              Ok(None) => None,
+              Err(err) => Some(Err(err)),
+            })
             .collect::<Result<Vec<_>, ErrorStack>>()?;
 
           ClosureBody(stmts)
@@ -1320,7 +1322,11 @@ fn parse_block_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
   let statements = expr
     .into_inner()
     .map(|stmt| parse_statement(ctx, stmt))
-    .filter_map_ok(|s| s)
+    .filter_map(|res| match res {
+      Ok(Some(stmt)) => Some(Ok(stmt)),
+      Ok(None) => None,
+      Err(err) => Some(Err(err)),
+    })
     .collect::<Result<Vec<_>, ErrorStack>>()?;
 
   Ok(Expr::Block { statements })

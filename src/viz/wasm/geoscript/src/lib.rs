@@ -19,7 +19,6 @@ use std::{
 
 use ast::{Expr, FunctionCallTarget, Statement};
 use fxhash::{FxHashMap, FxHashSet};
-use itertools::Itertools;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::{Matrix4, Vector2};
 use nanoserde::SerJson;
@@ -485,9 +484,9 @@ fn test_value_discriminant_order() {
   let copyable_vals = &[
     Value::Nil,
     Value::Int(0),
-    Value::Float(0.0),
-    Value::Vec2(Vec2::new(0.0, 0.0)),
-    Value::Vec3(Vec3::new(0.0, 0.0, 0.0)),
+    Value::Float(0.),
+    Value::Vec2(Vec2::new(0., 0.)),
+    Value::Vec3(Vec3::new(0., 0., 0.)),
     Value::Bool(true),
   ];
 
@@ -642,7 +641,7 @@ impl Value {
         Some(mat) => Some(Ok(Rc::clone(mat))),
         None => Some(Err(ErrorStack::new(format!(
           "Material not found: \"{s}\"\n\nAvailable materials: {:?}",
-          ctx.materials.keys().collect_vec()
+          ctx.materials.keys().collect::<Vec<_>>()
         )))),
       },
       _ => None,
@@ -2390,8 +2389,11 @@ pub(crate) fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Progr
 
   let statements = program
     .into_inner()
-    .map(|stmt| parse_statement(ctx, stmt))
-    .filter_map_ok(|s| s)
+    .filter_map(|stmt| match parse_statement(ctx, stmt) {
+      Ok(Some(statement)) => Some(Ok(statement)),
+      Ok(None) => None,
+      Err(err) => Some(Err(err.wrap("Error parsing statement"))),
+    })
     .collect::<Result<Vec<_>, ErrorStack>>()?;
 
   Ok(Program { statements })

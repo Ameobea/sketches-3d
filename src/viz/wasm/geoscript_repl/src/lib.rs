@@ -67,7 +67,7 @@ impl GeoscriptReplCtx {
 
       let merged_count = mesh.merge_vertices_by_distance(0.0001);
       if merged_count > 0 {
-        ::log::info!("Merged {} vertices in mesh", merged_count);
+        ::log::info!("Merged {merged_count} vertices in mesh");
       }
       mesh.mark_edge_sharpness(
         self
