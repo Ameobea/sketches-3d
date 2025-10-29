@@ -157,7 +157,7 @@ impl Debug for ErrorStack {
 
 pub trait Sequence: Any + Debug {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>;
 }

@@ -4089,10 +4089,9 @@ fn reverse_impl(
   match def_ix {
     0 => {
       let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      let vals: Vec<Value> = sequence.consume(ctx).collect::<Result<Vec<_>, _>>()?;
-      Ok(Value::Sequence(Rc::new(IteratorSeq {
-        inner: vals.into_iter().rev().map(Ok),
-      })))
+      let mut vals: Vec<Value> = sequence.consume(ctx).collect::<Result<Vec<_>, _>>()?;
+      vals.reverse();
+      Ok(Value::Sequence(Rc::new(EagerSeq { inner: vals })))
     }
     _ => unimplemented!(),
   }

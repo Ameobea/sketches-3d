@@ -45,10 +45,7 @@ impl IntoIterator for IntRange {
 }
 
 impl Sequence for IntRange {
-  fn consume(
-    self: Rc<Self>,
-    _ctx: &EvalCtx,
-  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>>> {
+  fn consume(&self, _ctx: &EvalCtx) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>>> {
     Box::new((*self).clone().into_iter())
   }
 }
@@ -61,10 +58,10 @@ pub(crate) struct MapSeq {
 
 impl Sequence for MapSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    let inner = Rc::clone(&self.inner).consume(ctx).enumerate();
+    let inner = self.inner.consume(ctx).enumerate();
     let cb = Rc::clone(&self.cb);
     Box::new(inner.map(move |(i, res)| {
       match res {
@@ -85,10 +82,10 @@ pub(crate) struct FilterSeq {
 
 impl Sequence for FilterSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    let inner = Rc::clone(&self.inner).consume(ctx);
+    let inner = self.inner.consume(ctx);
     let cb = Rc::clone(&self.cb);
 
     Box::new(
@@ -154,12 +151,12 @@ impl<'a> Iterator for ScanIter<'a> {
 
 impl Sequence for ScanSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(ScanIter {
       acc: self.acc.clone(),
-      inner: Rc::clone(&self.inner).consume(ctx).enumerate(),
+      inner: self.inner.consume(ctx).enumerate(),
       cb: Rc::clone(&self.cb),
       ctx,
     })
@@ -203,11 +200,11 @@ impl<'a> Iterator for FlattenIter<'a> {
 
 impl Sequence for FlattenSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(FlattenIter {
-      inner: Rc::clone(&self.inner).consume(ctx),
+      inner: self.inner.consume(ctx),
       cur_sub_iter: None,
       ctx,
     })
@@ -222,7 +219,7 @@ pub(crate) struct EagerSeq {
 
 impl Sequence for EagerSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(self.inner.clone().into_iter().map(Ok))
@@ -320,7 +317,7 @@ impl<'a> Iterator for PointDistributeIter<'a> {
 
 impl Sequence for PointDistributeSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     let mesh = self.mesh.clone(false, false, false);
@@ -356,7 +353,7 @@ impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone> Debug for IteratorSe
 
 impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> Sequence for IteratorSeq<T> {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(self.inner.clone())
@@ -414,7 +411,7 @@ impl<const WORLD_SPACE: bool> Iterator for MeshVertsIter<WORLD_SPACE> {
 
 impl<const WORLD_SPACE: bool> Sequence for MeshVertsSeq<WORLD_SPACE> {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(MeshVertsIter::<WORLD_SPACE>::new(
@@ -430,15 +427,16 @@ pub(crate) struct TakeSeq {
 
 impl Sequence for TakeSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    let inner = Rc::clone(&self.inner).consume(ctx);
+    let inner = self.inner.consume(ctx);
     Box::new(inner.take(self.count))
   }
 }
 
 impl Debug for TakeSeq {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(
       f,
@@ -455,10 +453,10 @@ pub(crate) struct SkipSeq {
 
 impl Sequence for SkipSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    let inner = Rc::clone(&self.inner).consume(ctx);
+    let inner = self.inner.consume(ctx);
     Box::new(inner.skip(self.count))
   }
 }
@@ -518,11 +516,11 @@ impl Iterator for TakeWhileIter<'_> {
 
 impl Sequence for TakeWhileSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(TakeWhileIter {
-      inner: Rc::clone(&self.inner).consume(ctx),
+      inner: self.inner.consume(ctx),
       cb: Rc::clone(&self.cb),
       ctx,
     })
@@ -530,6 +528,7 @@ impl Sequence for TakeWhileSeq {
 }
 
 impl Debug for TakeWhileSeq {
+  #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(
       f,
@@ -586,11 +585,11 @@ impl Iterator for SkipWhileIter<'_> {
 
 impl Sequence for SkipWhileSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(SkipWhileIter {
-      inner: Rc::clone(&self.inner).consume(ctx),
+      inner: self.inner.consume(ctx),
       cb: Rc::clone(&self.cb),
       ctx,
     })
@@ -634,7 +633,7 @@ impl<'a> ChainIter<'a> {
         let iter = seq.consume(ctx);
         Box::new(ChainIter {
           ctx,
-          inner: inner,
+          inner,
           cur: iter,
         })
       }
@@ -664,7 +663,7 @@ impl<'a> Iterator for ChainIter<'a> {
 
 impl Sequence for ChainSeq {
   fn consume<'a>(
-    self: Rc<Self>,
+    &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(ChainIter::new(ctx, self.inner.clone()))
