@@ -1,4 +1,6 @@
-use std::{f32::consts::PI, fmt::Debug, hash::Hash, mem::MaybeUninit};
+use std::{
+  f32::consts::PI, fmt::Debug, hash::Hash, marker::PhantomData, mem::MaybeUninit, num::NonZeroU32,
+};
 
 use arrayvec::ArrayVec;
 use bitvec::{bitarr, slice::BitSlice};
@@ -18,8 +20,9 @@ use crate::{
     utah_teapot::{UTAH_TEAPOT_INDICES, UTAH_TEAPOT_VERTICES},
   },
   slotmap_utils::{
-    build_slotmap_from_iter, build_slotmap_from_iter_with_key, slotmap_insert_dense,
-    slotmap_insert_dense_with_key, vkey, vkey_ix,
+    build_slotmap_from_iter, build_slotmap_from_iter_with_key, ekey_ix, slotmap_insert_dense,
+    slotmap_insert_dense_with_key, vkey, vkey_ix, vkey_ix_mut, vkey_version, LocalKeyData,
+    LocalSlotMap,
   },
   OwnedIndexedMesh, OwnedIndexedMeshBuilder, OwnedMesh, Triangle,
 };
@@ -272,11 +275,23 @@ fn sort_edge(v0: VertexKey, v1: VertexKey) -> [VertexKey; 2] {
   }
 }
 
-fn sort_edge_inplace(vtxs: &mut [VertexKey; 2]) {
-  let v0_ix = vkey_ix(&vtxs[0]);
-  let v1_ix = vkey_ix(&vtxs[1]);
-  if v0_ix > v1_ix {
-    vtxs.swap(0, 1);
+fn sort_edge_inplace<const DENSE: bool>(vtxs: &mut [VertexKey; 2]) {
+  if DENSE {
+    let [vtx0, vtx1] = vtxs;
+    debug_assert_eq!(vkey_version(vtx0), 1);
+    debug_assert_eq!(vkey_version(vtx1), 1);
+    let v0_ix = vkey_ix_mut(vtx0);
+    let v1_ix = vkey_ix_mut(vtx1);
+
+    if *v0_ix > *v1_ix {
+      std::mem::swap(v0_ix, v1_ix);
+    }
+  } else {
+    let v0_ix = vkey_ix(&vtxs[0]);
+    let v1_ix = vkey_ix(&vtxs[1]);
+    if v0_ix > v1_ix {
+      vtxs.swap(0, 1);
+    }
   }
 }
 
@@ -487,9 +502,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         indices.len()
       );
     }
-    let mut mesh = Self::new(0, 0, transform);
 
-    mesh.vertices =
+    let vertices: SlotMap<VertexKey, Vertex> =
       build_slotmap_from_iter(vertices.iter().enumerate().map(|(i, &vtx_pos)| Vertex {
         position: vtx_pos,
         shading_normal: normals.map(|normals| normals[i]),
@@ -497,6 +511,19 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         edges: SmallVec::new(),
         _padding: Default::default(),
       }));
+
+    let temp_faces: LocalSlotMap<FaceKey, Face<()>> = LocalSlotMap {
+      slots: Vec::new(),
+      free_head: 1,
+      num_elems: 0,
+      _k: PhantomData,
+    };
+    let mut mesh = Self {
+      vertices,
+      faces: unsafe { std::mem::transmute(temp_faces) },
+      edges: SlotMap::with_key(),
+      transform,
+    };
 
     mesh.faces = build_slotmap_from_iter_with_key(
       indices.array_chunks::<3>(),
@@ -509,20 +536,25 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         let vertices = [a, b, c];
 
         let edges = [(0, 1), (1, 2), (2, 0)];
-        let edge_keys =
-          edges.map(|(a, b)| mesh.get_or_create_edge::<true>([vertices[a], vertices[b]]));
-
-        // TODO: should do the create_with pattern for these too
-        for edge_key in edge_keys {
-          let edge = unsafe { mesh.edges.get_unchecked_mut(edge_key) };
-          edge.faces.push(face_key);
-        }
-
-        Face {
+        let face = Face {
           vertices,
-          edges: edge_keys,
+          edges: edges.map(|(a, b)| {
+            let edge_key = mesh.get_or_create_edge::<true>([vertices[a], vertices[b]]);
+
+            let edge = unsafe { mesh.edges.get_unchecked_mut(edge_key) };
+            edge.faces.push(face_key);
+
+            unsafe {
+              std::mem::transmute(LocalKeyData {
+                idx: ekey_ix(&edge_key),
+                version: NonZeroU32::new_unchecked(1),
+              })
+            }
+          }),
           data: Default::default(),
-        }
+        };
+
+        face
       },
     );
 
@@ -616,7 +648,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         let v0 = &mut self.vertices[v0_key];
         v0.edges.push(edge_key);
 
-        sort_edge_inplace(&mut edge.vertices);
+        sort_edge_inplace::<false>(&mut edge.vertices);
         (pair_vtx_key, edge.vertices)
       };
 
@@ -1965,11 +1997,14 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   pub fn get_edge_key(&self, mut vertices: [VertexKey; 2]) -> Option<EdgeKey> {
-    sort_edge_inplace(&mut vertices);
-    self.get_edge_key_from_sorted(vertices)
+    sort_edge_inplace::<false>(&mut vertices);
+    self.get_edge_key_from_sorted::<false>(vertices)
   }
 
-  pub fn get_edge_key_from_sorted(&self, sorted_vtx_keys: [VertexKey; 2]) -> Option<EdgeKey> {
+  pub fn get_edge_key_from_sorted<const DENSE: bool>(
+    &self,
+    sorted_vtx_keys: [VertexKey; 2],
+  ) -> Option<EdgeKey> {
     // iter through the vtx with fewer edges
     let vtx0 = unsafe { self.vertices.get_unchecked(sorted_vtx_keys[0]) };
     let vtx1 = unsafe { self.vertices.get_unchecked(sorted_vtx_keys[1]) };
@@ -1984,7 +2019,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       .iter()
       .find(|&&edge_key| {
         let edge = unsafe { self.edges.get_unchecked(edge_key) };
-        edge.vertices == sorted_vtx_keys
+        if DENSE {
+          vkey_ix(&edge.vertices[0]) == vkey_ix(&sorted_vtx_keys[0])
+            && vkey_ix(&edge.vertices[1]) == vkey_ix(&sorted_vtx_keys[1])
+        } else {
+          edge.vertices == sorted_vtx_keys
+        }
       })
       .copied()
   }
@@ -1997,9 +2037,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   /// If `DENSE` is true, assumes that the `edges` slotmap is dense, meaning that it has never had
   /// elements removed from it, and uses a fastpath method for inserting new edges.
   pub fn get_or_create_edge<const DENSE: bool>(&mut self, mut vertices: [VertexKey; 2]) -> EdgeKey {
-    sort_edge_inplace(&mut vertices);
+    sort_edge_inplace::<DENSE>(&mut vertices);
 
-    match self.get_edge_key_from_sorted(vertices) {
+    match self.get_edge_key_from_sorted::<DENSE>(vertices) {
       Some(edge_key) => edge_key,
       None => {
         let new_edge = Edge {

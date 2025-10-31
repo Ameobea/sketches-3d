@@ -2,7 +2,7 @@ use std::{marker::PhantomData, mem::ManuallyDrop, num::NonZeroU32};
 
 use slotmap::{Key, KeyData, SlotMap};
 
-use crate::linked_mesh::VertexKey;
+use crate::linked_mesh::{EdgeKey, VertexKey};
 
 pub fn vkey(ix: u32, version: u32) -> VertexKey {
   debug_assert!(version > 0);
@@ -30,10 +30,25 @@ pub fn vkey_ix(key: &VertexKey) -> u32 {
   key.idx
 }
 
+pub fn vkey_ix_mut<'a>(key: &'a mut VertexKey) -> &'a mut u32 {
+  let key: &mut LocalKeyData = unsafe { std::mem::transmute(key) };
+  &mut key.idx
+}
+
+pub fn vkey_version(key: &VertexKey) -> u32 {
+  let key: &LocalKeyData = unsafe { std::mem::transmute(key) };
+  key.version.get()
+}
+
+pub fn ekey_ix(key: &EdgeKey) -> u32 {
+  let key: &LocalKeyData = unsafe { std::mem::transmute(key) };
+  key.idx
+}
+
 #[allow(dead_code)]
-struct LocalKeyData {
-  idx: u32,
-  version: NonZeroU32,
+pub struct LocalKeyData {
+  pub idx: u32,
+  pub version: NonZeroU32,
 }
 
 // Storage inside a slot or metadata for the freelist when vacant.
@@ -45,7 +60,7 @@ union LocalSlotUnion<T> {
 // A slot, which represents storage for a value and a current version.
 // Can be occupied or vacant.
 #[allow(dead_code)]
-struct LocalSlot<T> {
+pub struct LocalSlot<T> {
   u: LocalSlotUnion<T>,
   version: u32, // Even = vacant, odd = occupied.
 }
@@ -53,10 +68,10 @@ struct LocalSlot<T> {
 /// Same as `SlotMap`, done so that we can do fun low-level things that the library doesn't think
 /// we're worthy of.
 pub struct LocalSlotMap<K: Key, V> {
-  slots: Vec<LocalSlot<V>>,
-  free_head: u32,
-  num_elems: u32,
-  _k: PhantomData<fn(K) -> K>,
+  pub slots: Vec<LocalSlot<V>>,
+  pub free_head: u32,
+  pub num_elems: u32,
+  pub _k: PhantomData<fn(K) -> K>,
 }
 
 /// Optimized routine to build a slotmap from an iterator of values.  This avoids a lot of
