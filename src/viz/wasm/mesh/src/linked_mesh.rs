@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, fmt::Debug, hash::Hash};
+use std::{f32::consts::PI, fmt::Debug, hash::Hash, mem::MaybeUninit};
 
 use arrayvec::ArrayVec;
 use bitvec::{bitarr, slice::BitSlice};
@@ -17,6 +17,10 @@ use crate::{
     stanford_bunny::{STANFORD_BUNNY_INDICES, STANFORD_BUNNY_VERTICES},
     utah_teapot::{UTAH_TEAPOT_INDICES, UTAH_TEAPOT_VERTICES},
   },
+  slotmap_utils::{
+    build_slotmap_from_iter, build_slotmap_from_iter_with_key, slotmap_insert_dense,
+    slotmap_insert_dense_with_key, vkey, vkey_ix,
+  },
   OwnedIndexedMesh, OwnedIndexedMeshBuilder, OwnedMesh, Triangle,
 };
 
@@ -29,14 +33,27 @@ new_key_type! {
   pub struct EdgeKey;
 }
 
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct VtxPadding(MaybeUninit<[u8; 4]>);
+
+impl Default for VtxPadding {
+  fn default() -> Self {
+    VtxPadding(MaybeUninit::uninit())
+  }
+}
+
 #[derive(Clone, Debug, Default)]
+// #[repr(align(128))]
 pub struct Vertex {
   pub position: Vec3,
   /// Normal of the vertex used for shading/lighting.
   pub shading_normal: Option<Vec3>,
   /// Normal of the vertex used for displacement mapping.
   pub displacement_normal: Option<Vec3>,
-  pub edges: Vec<EdgeKey>,
+  // 9 is the max size of the inline buffer we can set while keeping `Vertex` size under 128 bytes
+  pub edges: SmallVec<[EdgeKey; 9]>,
+  pub _padding: VtxPadding,
 }
 
 #[derive(Clone, Debug)]
@@ -81,18 +98,18 @@ pub fn set_debug_print(f: fn(&str) -> ()) {
   }
 }
 
-/// Same as Vec::retain but it doesn't preserve order of elements and can possibly work a bit faster
-/// if only removing a few elements.
-fn swap_retain<T>(vec: &mut Vec<T>, mut f: impl FnMut(&mut T) -> bool) {
-  let mut i = 0;
-  while i < vec.len() {
-    if !f(&mut vec[i]) {
-      vec.swap_remove(i);
-    } else {
-      i += 1;
-    }
-  }
-}
+// /// Same as Vec::retain but it doesn't preserve order of elements and can possibly work a bit
+// faster /// if only removing a few elements.
+// fn swap_retain<T>(vec: &mut Vec<T>, mut f: impl FnMut(&mut T) -> bool) {
+//   let mut i = 0;
+//   while i < vec.len() {
+//     if !f(&mut vec[i]) {
+//       vec.swap_remove(i);
+//     } else {
+//       i += 1;
+//     }
+//   }
+// }
 
 /// Same as SmallVec::retain but it doesn't preserve order of elements and can possibly work a bit
 /// faster if only removing a few elements.
@@ -246,10 +263,20 @@ impl<T> Debug for LinkedMesh<T> {
 }
 
 fn sort_edge(v0: VertexKey, v1: VertexKey) -> [VertexKey; 2] {
-  if v0 < v1 {
+  let v0_ix = vkey_ix(&v0);
+  let v1_ix = vkey_ix(&v1);
+  if v0_ix < v1_ix {
     [v0, v1]
   } else {
     [v1, v0]
+  }
+}
+
+fn sort_edge_inplace(vtxs: &mut [VertexKey; 2]) {
+  let v0_ix = vkey_ix(&vtxs[0]);
+  let v1_ix = vkey_ix(&vtxs[1]);
+  if v0_ix > v1_ix {
+    vtxs.swap(0, 1);
   }
 }
 
@@ -460,28 +487,44 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         indices.len()
       );
     }
-    let mut mesh = Self::new(vertices.len(), indices.len() / 3, transform);
+    let mut mesh = Self::new(0, 0, transform);
 
-    let vertex_keys_by_ix = vertices
-      .iter()
-      .enumerate()
-      .map(|(i, &position)| {
-        mesh.vertices.insert(Vertex {
-          position,
-          shading_normal: normals.map(|normals| normals[i]),
-          displacement_normal: None,
-          edges: Vec::new(),
-        })
-      })
-      .collect::<Vec<_>>();
+    mesh.vertices =
+      build_slotmap_from_iter(vertices.iter().enumerate().map(|(i, &vtx_pos)| Vertex {
+        position: vtx_pos,
+        shading_normal: normals.map(|normals| normals[i]),
+        displacement_normal: None,
+        edges: SmallVec::new(),
+        _padding: Default::default(),
+      }));
 
-    for &[a_ix, b_ix, c_ix] in indices.array_chunks::<3>() {
-      let a = vertex_keys_by_ix[a_ix as usize];
-      let b = vertex_keys_by_ix[b_ix as usize];
-      let c = vertex_keys_by_ix[c_ix as usize];
+    mesh.faces = build_slotmap_from_iter_with_key(
+      indices.array_chunks::<3>(),
+      |[a_ix, b_ix, c_ix], face_key| {
+        // we've inserted all the vertices in a fixed order without any removals, so the keys are
+        // deterministic
+        let a = vkey(a_ix + 1, 1);
+        let b = vkey(b_ix + 1, 1);
+        let c = vkey(c_ix + 1, 1);
+        let vertices = [a, b, c];
 
-      mesh.add_face([a, b, c], Default::default());
-    }
+        let edges = [(0, 1), (1, 2), (2, 0)];
+        let edge_keys =
+          edges.map(|(a, b)| mesh.get_or_create_edge::<true>([vertices[a], vertices[b]]));
+
+        // TODO: should do the create_with pattern for these too
+        for edge_key in edge_keys {
+          let edge = unsafe { mesh.edges.get_unchecked_mut(edge_key) };
+          edge.faces.push(face_key);
+        }
+
+        Face {
+          vertices,
+          edges: edge_keys,
+          data: Default::default(),
+        }
+      },
+    );
 
     mesh
   }
@@ -492,6 +535,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let size = max_size.unwrap_or(min_size);
     let mut mesh = Self::new(size * 3, size, None);
 
+    // TODO: optimize using fastpath slotmap methods
     for tri in triangles {
       // This might break mesh topology in some cases, but it saves us from dealing
       // with NaNs
@@ -505,23 +549,26 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           position: tri.a,
           shading_normal: None,
           displacement_normal: None,
-          edges: Vec::new(),
+          edges: SmallVec::new(),
+          _padding: Default::default(),
         }),
         mesh.vertices.insert(Vertex {
           position: tri.b,
           shading_normal: None,
           displacement_normal: None,
-          edges: Vec::new(),
+          edges: SmallVec::new(),
+          _padding: Default::default(),
         }),
         mesh.vertices.insert(Vertex {
           position: tri.c,
           shading_normal: None,
           displacement_normal: None,
-          edges: Vec::new(),
+          edges: SmallVec::new(),
+          _padding: Default::default(),
         }),
       ];
 
-      mesh.add_face([a_key, b_key, c_key], Default::default());
+      mesh.add_face::<true>([a_key, b_key, c_key], Default::default());
     }
 
     mesh
@@ -569,9 +616,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         let v0 = &mut self.vertices[v0_key];
         v0.edges.push(edge_key);
 
-        let new_edge_vertices = sort_edge(edge.vertices[0], edge.vertices[1]);
-        edge.vertices = new_edge_vertices;
-        (pair_vtx_key, new_edge_vertices)
+        sort_edge_inplace(&mut edge.vertices);
+        (pair_vtx_key, edge.vertices)
       };
 
       // We've updated the edge between (v1 and v_pair) to be between (v0 and v_pair)
@@ -617,7 +663,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
         for &vert_key in &dropped_edge.vertices {
           let vert = &mut self.vertices[vert_key];
-          swap_retain(&mut vert.edges, |&mut e| e != edge_key);
+          swap_retain_sv(&mut vert.edges, |&mut e| e != edge_key);
         }
       }
     }
@@ -1005,14 +1051,14 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       if edge.faces.is_empty() {
         for vtx_key in edge.vertices {
           let vtx = &mut self.vertices[vtx_key];
-          swap_retain(&mut vtx.edges, |&mut e| e != old_edge_key);
+          swap_retain_sv(&mut vtx.edges, |&mut e| e != old_edge_key);
         }
         self.edges.remove(old_edge_key);
       }
     }
 
-    let new_edge_key_0 = self.get_or_create_edge([new_vtx_key, pair_vtx_keys[0]]);
-    let new_edge_key_1 = self.get_or_create_edge([new_vtx_key, pair_vtx_keys[1]]);
+    let new_edge_key_0 = self.get_or_create_edge::<false>([new_vtx_key, pair_vtx_keys[0]]);
+    let new_edge_key_1 = self.get_or_create_edge::<false>([new_vtx_key, pair_vtx_keys[1]]);
     self.edges[new_edge_key_0].faces.push(face_key);
     self.edges[new_edge_key_0].displacement_normal = edge_displacement_normals[0];
     self.edges[new_edge_key_1].faces.push(face_key);
@@ -1668,7 +1714,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         position,
         shading_normal: Some(normal),
         displacement_normal,
-        edges: Vec::new(),
+        edges: SmallVec::new(),
+        _padding: Default::default(),
       });
 
       for face_key in face_keys {
@@ -1701,7 +1748,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
     }
 
-    builder.build(self.transform.clone())
+    builder.build(self.transform)
   }
 
   /// Works the same as `to_raw_indexed` but splits the triangles into multiple different meshes
@@ -1829,7 +1876,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       position: vm_position,
       displacement_normal,
       shading_normal,
-      edges: Vec::new(),
+      edges: SmallVec::new(),
+      _padding: Default::default(),
     });
 
     // Split each adjacent face
@@ -1870,7 +1918,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
       let mut add_face = |order_ix: usize| {
         let order = &orders[order_ix];
-        let face_key = self.add_face(
+        let face_key = self.add_face::<false>(
           [
             vertex_keys[order[0]],
             vertex_keys[order[1]],
@@ -1916,17 +1964,15 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     )
   }
 
-  pub fn get_edge_key(&self, vertices: [VertexKey; 2]) -> Option<EdgeKey> {
-    let sorted_vertex_keys = sort_edge(vertices[0], vertices[1]);
-    self.get_edge_key_from_sorted(sorted_vertex_keys)
+  pub fn get_edge_key(&self, mut vertices: [VertexKey; 2]) -> Option<EdgeKey> {
+    sort_edge_inplace(&mut vertices);
+    self.get_edge_key_from_sorted(vertices)
   }
 
-  pub fn get_edge_key_from_sorted(&self, sorted_edge_keys: [VertexKey; 2]) -> Option<EdgeKey> {
+  pub fn get_edge_key_from_sorted(&self, sorted_vtx_keys: [VertexKey; 2]) -> Option<EdgeKey> {
     // iter through the vtx with fewer edges
-    let [vtx0, vtx1] = [
-      &self.vertices[sorted_edge_keys[0]],
-      &self.vertices[sorted_edge_keys[1]],
-    ];
+    let vtx0 = unsafe { self.vertices.get_unchecked(sorted_vtx_keys[0]) };
+    let vtx1 = unsafe { self.vertices.get_unchecked(sorted_vtx_keys[1]) };
     let vtx = if vtx0.edges.len() < vtx1.edges.len() {
       vtx0
     } else {
@@ -1937,31 +1983,39 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       .edges
       .iter()
       .find(|&&edge_key| {
-        let edge = &self.edges[edge_key];
-        edge.vertices == sorted_edge_keys
+        let edge = unsafe { self.edges.get_unchecked(edge_key) };
+        edge.vertices == sorted_vtx_keys
       })
       .copied()
   }
 
-  /// Returns the key of the edge between the two provided vertices if it exists
-  /// and creates it if not.
+  /// Returns the key of the edge between the two provided vertices if it exists and creates it if
+  /// not.
   ///
-  /// If a new edge was created, the vertices of the edge will be updated to
-  /// reference it.
-  pub fn get_or_create_edge(&mut self, vertices: [VertexKey; 2]) -> EdgeKey {
-    let sorted_vertex_keys = sort_edge(vertices[0], vertices[1]);
-    match self.get_edge_key_from_sorted(sorted_vertex_keys) {
+  /// If a new edge was created, the vertices of the edge will be updated to reference it.
+  ///
+  /// If `DENSE` is true, assumes that the `edges` slotmap is dense, meaning that it has never had
+  /// elements removed from it, and uses a fastpath method for inserting new edges.
+  pub fn get_or_create_edge<const DENSE: bool>(&mut self, mut vertices: [VertexKey; 2]) -> EdgeKey {
+    sort_edge_inplace(&mut vertices);
+
+    match self.get_edge_key_from_sorted(vertices) {
       Some(edge_key) => edge_key,
       None => {
-        let edge_key = self.edges.insert(Edge {
-          vertices: sorted_vertex_keys,
+        let new_edge = Edge {
+          vertices,
           faces: SmallVec::new(),
           sharp: false,
           displacement_normal: None,
-        });
+        };
+        let edge_key = if DENSE {
+          slotmap_insert_dense(&mut self.edges, new_edge)
+        } else {
+          self.edges.insert(new_edge)
+        };
 
         for vert_key in vertices {
-          let vert = &mut self.vertices[vert_key];
+          let vert = unsafe { self.vertices.get_unchecked_mut(vert_key) };
           vert.edges.push(edge_key);
         }
 
@@ -1970,37 +2024,33 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
-  pub fn add_face(&mut self, vertices: [VertexKey; 3], data: FaceData) -> FaceKey {
-    let edges = [
-      sort_edge(vertices[0], vertices[1]),
-      sort_edge(vertices[1], vertices[2]),
-      sort_edge(vertices[2], vertices[0]),
-    ];
-    let mut edge_keys: [EdgeKey; 3] = [EdgeKey::null(); 3];
-    for (i, &[v0, v1]) in edges.iter().enumerate() {
-      let edge_key = self.get_or_create_edge([v0, v1]);
-      edge_keys[i] = edge_key;
-    }
+  pub fn add_face<const DENSE: bool>(
+    &mut self,
+    vertices: [VertexKey; 3],
+    data: FaceData,
+  ) -> FaceKey {
+    let edges = [(0, 1), (1, 2), (2, 0)];
+    let edge_keys =
+      edges.map(|(a, b)| self.get_or_create_edge::<DENSE>([vertices[a], vertices[b]]));
 
-    let face_key = self.faces.insert(Face {
-      vertices,
-      edges: edge_keys,
-      data,
-    });
-
-    for edge_key in edge_keys {
-      let edge = &mut self.edges[edge_key];
-      edge.faces.push(face_key);
-
-      for vert in edge.vertices {
-        let vert = &mut self.vertices[vert];
-        if !vert.edges.contains(&edge_key) {
-          vert.edges.push(edge_key);
-        }
+    let cb = |face_key| {
+      for edge_key in edge_keys {
+        let edge = unsafe { self.edges.get_unchecked_mut(edge_key) };
+        edge.faces.push(face_key);
       }
-    }
 
-    face_key
+      Face {
+        vertices,
+        edges: edge_keys,
+        data,
+      }
+    };
+
+    if DENSE {
+      slotmap_insert_dense_with_key(&mut self.faces, cb)
+    } else {
+      self.faces.insert_with_key(cb)
+    }
   }
 
   pub fn remove_face(&mut self, face_key: FaceKey) -> FaceData {
@@ -2021,7 +2071,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         let edge = self.edges.remove(edge_key).unwrap();
         for vert_key in edge.vertices {
           let vert = &mut self.vertices[vert_key];
-          swap_retain(&mut vert.edges, |&mut e| e != edge_key);
+          swap_retain_sv(&mut vert.edges, |&mut e| e != edge_key);
         }
       }
     }
@@ -2241,7 +2291,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
               position: new_v_pos,
               shading_normal,
               displacement_normal,
-              edges: Vec::new(),
+              edges: SmallVec::new(),
+              _padding: Default::default(),
             });
 
             f.push(new_v_key);
@@ -2252,16 +2303,16 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         self.remove_face(face_key);
 
         if f.len() >= 3 {
-          self.add_face([f[0], f[1], f[2]], Default::default());
+          self.add_face::<false>([f[0], f[1], f[2]], Default::default());
           if f.len() == 4 {
-            self.add_face([f[0], f[2], f[3]], Default::default());
+            self.add_face::<false>([f[0], f[2], f[3]], Default::default());
           }
         }
 
         if b.len() >= 3 {
-          self.add_face([b[0], b[1], b[2]], Default::default());
+          self.add_face::<false>([b[0], b[1], b[2]], Default::default());
           if b.len() == 4 {
-            self.add_face([b[0], b[2], b[3]], Default::default());
+            self.add_face::<false>([b[0], b[2], b[3]], Default::default());
           }
         }
       }
@@ -2396,7 +2447,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     // ];
 
     // same as above but pre-computed::
-    let mut vertices = vec![
+    const BASE_VERTICES: &[Vec3] = &[
       Vec3::new(-0.5257311, 0.8506508, 0.),
       Vec3::new(0.5257311, 0.8506508, 0.),
       Vec3::new(-0.5257311, -0.8506508, 0.),
@@ -2411,7 +2462,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       Vec3::new(-0.8506508, 0., 0.5257311),
     ];
 
-    let mut faces = vec![
+    const BASE_FACES: &[[usize; 3]] = &[
       [0, 11, 5],
       [0, 5, 1],
       [0, 1, 7],
@@ -2434,8 +2485,20 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       [9, 8, 1],
     ];
 
+    let total_vtx_count = 10 * (4usize).pow(subdivisions) + 2;
+
+    let mut faces: Vec<[usize; 3]> = Vec::new();
+    let mut vertices: Vec<Vec3> = Vec::with_capacity(total_vtx_count);
+    vertices.extend_from_slice(BASE_VERTICES);
+
+    if subdivisions == 0 {
+      faces = BASE_FACES.to_vec();
+    }
+
     for _ in 0..subdivisions {
-      let mut new_faces = Vec::with_capacity(faces.len() * 4);
+      let old_faces: &[_] = if faces.is_empty() { BASE_FACES } else { &faces };
+      let new_face_count = old_faces.len() * 4;
+      let mut new_faces = Vec::with_capacity(new_face_count);
       let mut midpoint_cache = FxHashMap::<(usize, usize), usize>::default();
 
       let mut get_midpoint = |i1: usize, i2: usize| {
@@ -2443,8 +2506,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         if let Some(&idx) = midpoint_cache.get(&key) {
           return idx;
         }
-        let v1 = vertices[i1];
-        let v2 = vertices[i2];
+        let v1 = *unsafe { vertices.get_unchecked(i1) };
+        let v2 = *unsafe { vertices.get_unchecked(i2) };
         let midpoint = ((v1 + v2) * 0.5).normalize();
         let vtx_ix = vertices.len();
         vertices.push(midpoint);
@@ -2452,7 +2515,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         vtx_ix
       };
 
-      for &[i0, i1, i2] in &faces {
+      for &[i0, i1, i2] in old_faces {
         let a = get_midpoint(i0, i1);
         let b = get_midpoint(i1, i2);
         let c = get_midpoint(i2, i0);
@@ -2463,9 +2526,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         new_faces.push([a, b, c]);
       }
 
+      assert_eq!(new_faces.len(), new_face_count);
       faces = new_faces;
     }
 
+    assert_eq!(vertices.len(), total_vtx_count);
     for v in &mut vertices {
       *v *= radius;
     }
@@ -2667,6 +2732,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
 impl<T: Default> From<TriMesh> for LinkedMesh<T> {
   fn from(trimesh: TriMesh) -> Self {
+    // TODO: optimize using the fastpath slotmap methods
     let mut mesh: LinkedMesh<T> =
       LinkedMesh::new(trimesh.vertices().len(), trimesh.indices().len(), None);
     let mut vtx_keys = Vec::with_capacity(trimesh.vertices().len());
@@ -2675,13 +2741,14 @@ impl<T: Default> From<TriMesh> for LinkedMesh<T> {
         position: Vec3::new(vtx.x, vtx.y, vtx.z),
         shading_normal: None,
         displacement_normal: None,
-        edges: Vec::new(),
+        edges: SmallVec::new(),
+        _padding: Default::default(),
       });
       vtx_keys.push(vtx_key);
     }
 
     for &[v0, v1, v2] in trimesh.indices() {
-      mesh.add_face(
+      mesh.add_face::<true>(
         [
           vtx_keys[v0 as usize],
           vtx_keys[v1 as usize],
@@ -2697,15 +2764,9 @@ impl<T: Default> From<TriMesh> for LinkedMesh<T> {
 
 #[cfg(test)]
 mod tests {
+  use crate::slotmap_utils::fkey;
+
   use super::*;
-
-  fn vkey(ix: u32, version: u32) -> VertexKey {
-    unsafe { std::mem::transmute((version, ix)) }
-  }
-
-  fn fkey(ix: u32, version: u32) -> FaceKey {
-    unsafe { std::mem::transmute((version, ix)) }
-  }
 
   #[test]
   fn basic_edge_split() {

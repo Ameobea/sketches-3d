@@ -6,6 +6,7 @@ use nalgebra::Vector3;
 
 pub mod linked_mesh;
 pub use linked_mesh::LinkedMesh;
+mod slotmap_utils;
 
 pub mod csg;
 pub mod models;

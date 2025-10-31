@@ -2,6 +2,7 @@ use mesh::{
   linked_mesh::{Vec3, Vertex, VertexKey},
   LinkedMesh,
 };
+use smallvec::SmallVec;
 
 use crate::{ErrorStack, Value};
 
@@ -31,7 +32,8 @@ pub fn stitch_contours<'a>(
         position: v3,
         shading_normal: None,
         displacement_normal: None,
-        edges: Vec::new(),
+        edges: SmallVec::new(),
+        _padding: Default::default(),
       }))),
       Some(Ok(other)) => Err(ErrorStack::new(format!(
         "Invalid value produced in seq for contour ix={seq_ix}; expected Vec3, found: {other:?}",
@@ -51,7 +53,8 @@ pub fn stitch_contours<'a>(
       position: center,
       shading_normal: None,
       displacement_normal: None,
-      edges: Vec::new(),
+      edges: SmallVec::new(),
+      _padding: Default::default(),
     });
 
     for (ix0, ix1) in contour_verts
@@ -66,7 +69,7 @@ pub fn stitch_contours<'a>(
       } else {
         [v1, center_vtx, v0]
       };
-      mesh.add_face(tri, ());
+      mesh.add_face::<true>(tri, ());
     }
   }
 
@@ -127,8 +130,8 @@ pub fn stitch_contours<'a>(
         ([v1_0, v1_1, v0_0], [v1_1, v0_1, v0_0])
       };
 
-      mesh.add_face(tri0, ());
-      mesh.add_face(tri1, ());
+      mesh.add_face::<true>(tri0, ());
+      mesh.add_face::<true>(tri1, ());
     }
 
     std::mem::swap(&mut frontier_verts, &mut new_frontier_verts);
@@ -155,8 +158,8 @@ pub fn stitch_contours<'a>(
         ([v1_0, v1_1, v0_0], [v1_1, v0_1, v0_0])
       };
 
-      mesh.add_face(tri0, ());
-      mesh.add_face(tri1, ());
+      mesh.add_face::<true>(tri0, ());
+      mesh.add_face::<true>(tri1, ());
     }
   }
 

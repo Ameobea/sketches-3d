@@ -2,6 +2,7 @@ use mesh::{
   linked_mesh::{Vec3, Vertex},
   LinkedMesh,
 };
+use smallvec::SmallVec;
 
 use crate::ErrorStack;
 
@@ -23,14 +24,16 @@ pub fn fan_fill(
     position: center,
     shading_normal: None,
     displacement_normal: None,
-    edges: Vec::new(),
+    edges: SmallVec::new(),
+    _padding: Default::default(),
   });
 
   let start_vtx_key = mesh.vertices.insert(Vertex {
     position: path[0],
     shading_normal: None,
     displacement_normal: None,
-    edges: Vec::new(),
+    edges: SmallVec::new(),
+    _padding: Default::default(),
   });
   let mut vtx0_key = start_vtx_key;
   for vtx1_ix in 1..path.len() {
@@ -38,14 +41,15 @@ pub fn fan_fill(
       position: path[vtx1_ix],
       shading_normal: None,
       displacement_normal: None,
-      edges: Vec::new(),
+      edges: SmallVec::new(),
+      _padding: Default::default(),
     });
     let tri = if flipped {
       [vtx1_key, vtx0_key, center_vtx_key]
     } else {
       [center_vtx_key, vtx0_key, vtx1_key]
     };
-    mesh.add_face(tri, ());
+    mesh.add_face::<true>(tri, ());
     vtx0_key = vtx1_key;
   }
 
@@ -55,7 +59,7 @@ pub fn fan_fill(
     } else {
       [center_vtx_key, vtx0_key, start_vtx_key]
     };
-    mesh.add_face(tri, ());
+    mesh.add_face::<true>(tri, ());
   }
 
   Ok(mesh)

@@ -1,6 +1,7 @@
 use paste::paste;
 #[cfg(target_arch = "wasm32")]
 use rand_pcg::Pcg32;
+use smallvec::SmallVec;
 use std::cmp::Reverse;
 use std::marker::ConstParamTy;
 use std::rc::Rc;
@@ -198,12 +199,13 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
               position: transformed_pos.xyz(),
               displacement_normal: old_vtx.displacement_normal,
               shading_normal: old_vtx.shading_normal,
-              edges: Vec::new(),
+              edges: SmallVec::new(),
+              _padding: Default::default(),
             });
             new_vtx_key
           })
         });
-        combined.add_face(new_vtx_keys, ());
+        combined.add_face::<false>(new_vtx_keys, ());
       }
 
       let maybe_combined_aabb = match (&*lhs.aabb.borrow(), &*rhs.aabb.borrow()) {
@@ -2261,7 +2263,8 @@ fn connected_components_impl(
                 position: mesh.vertices[vkey].position,
                 shading_normal: None,
                 displacement_normal: None,
-                edges: Vec::new(),
+                edges: SmallVec::new(),
+                _padding: Default::default(),
               })
             })
           };
@@ -2271,7 +2274,7 @@ fn connected_components_impl(
             let vtx0 = map_vtx(&mut sub_mesh, face.vertices[0]);
             let vtx1 = map_vtx(&mut sub_mesh, face.vertices[1]);
             let vtx2 = map_vtx(&mut sub_mesh, face.vertices[2]);
-            sub_mesh.add_face([vtx0, vtx1, vtx2], ());
+            sub_mesh.add_face::<true>([vtx0, vtx1, vtx2], ());
           }
           Ok(Value::Mesh(Rc::new(MeshHandle {
             mesh: Rc::new(sub_mesh),
@@ -3797,12 +3800,13 @@ fn join_meshes(
             position: transformed_pos.xyz(),
             displacement_normal: old_vtx.displacement_normal,
             shading_normal: old_vtx.shading_normal,
-            edges: Vec::new(),
+            edges: SmallVec::new(),
+            _padding: Default::default(),
           });
           new_vtx_key
         })
       });
-      combined.add_face(new_vtx_keys, ());
+      combined.add_face::<false>(new_vtx_keys, ());
     }
   }
 

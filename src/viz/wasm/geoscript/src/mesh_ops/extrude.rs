@@ -3,6 +3,7 @@ use mesh::{
   linked_mesh::{FaceKey, Vec3, Vertex},
   LinkedMesh,
 };
+use smallvec::SmallVec;
 
 fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKey]) {
   let mut border_edges = FxHashSet::default();
@@ -23,12 +24,13 @@ fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKe
             position: mesh.vertices[vtx_key].position + up,
             shading_normal: None,
             displacement_normal: None,
-            edges: Vec::new(),
+            edges: SmallVec::new(),
+            _padding: Default::default(),
           })
         })
       })
     };
-    mesh.add_face(new_vtx_keys, ());
+    mesh.add_face::<false>(new_vtx_keys, ());
 
     // flip the winding order of the original faces to create the bottom of the extrusion
     let old_face = &mut mesh.faces[face_key];
@@ -58,8 +60,8 @@ fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKe
     // join the two border edges with two triangles
     let nv0 = new_vtx_key_by_old[&v0];
     let nv1 = new_vtx_key_by_old[&v1];
-    mesh.add_face([nv1, v1, v0], ());
-    mesh.add_face([nv0, nv1, v0], ());
+    mesh.add_face::<false>([nv1, v1, v0], ());
+    mesh.add_face::<false>([nv0, nv1, v0], ());
   }
 }
 

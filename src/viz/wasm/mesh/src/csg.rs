@@ -18,6 +18,7 @@ use parry3d::{
   },
 };
 use slotmap::Key;
+use smallvec::SmallVec;
 
 use crate::{
   linked_mesh::{self, DisplacementNormalMethod, Edge, EdgeSplitPos, FaceKey, Vec3, VertexKey},
@@ -131,7 +132,7 @@ fn triangulate_polygon<'a>(
   node_key: NodeKey,
 ) -> impl Iterator<Item = Polygon> + 'a {
   (2..vertices.len()).map(move |i| {
-    let face_key = mesh.add_face(
+    let face_key = mesh.add_face::<false>(
       [vertices[0], vertices[i - 1], vertices[i]],
       FaceData {
         plane: plane.clone(),
@@ -380,7 +381,8 @@ impl Plane {
                 position,
                 shading_normal,
                 displacement_normal,
-                edges: Vec::with_capacity(2),
+                edges: SmallVec::new(),
+                _padding: Default::default(),
               })
             };
 
@@ -1127,61 +1129,6 @@ impl Node {
     Some((perimeter, interior_vtx_keys))
   }
 
-  #[cfg(feature = "earcut")]
-  fn remesh_earcut(&mut self, self_key: NodeKey, mesh: &mut LinkedMesh<FaceData>) {
-    let Some((perimeter, interior_vtx_keys)) = self.compute_perimeter(mesh) else {
-      return;
-    };
-
-    // TODO: dedup?
-    // earcut tessellates 2D polygons, so we use the plane to project the vertices into 2D space
-    //
-    // they can be projected back using these vectors after we re-add the new path
-    let plane = self.polygons[0].plane(mesh).clone();
-    let (u, v) = plane.compute_basis();
-
-    // remove all faces and interior vertices
-    let before_face_count = self.polygons.len();
-    for poly in self.polygons.drain(..) {
-      mesh.remove_face(poly.key);
-    }
-    for vtx_key in interior_vtx_keys {
-      assert!(
-        mesh.vertices.remove(vtx_key).unwrap().edges.is_empty(),
-        "Interior vertex has edges"
-      );
-    }
-
-    let to_2d = |vtx_key: VertexKey| {
-      let pos = mesh.vertices[vtx_key].position;
-      plane.to_2d(pos, &u, &v)
-    };
-
-    let mut verts_2d = Vec::with_capacity(perimeter.len() * 2);
-    verts_2d.extend(perimeter.iter().flat_map(|&vtx_key| to_2d(vtx_key)));
-
-    let indices = earcutr::earcut(&verts_2d, &vec![], 2).expect("earcut failed");
-    assert_eq!(indices.len() % 3, 0);
-    let after_face_count = indices.len() / 3;
-    log::info!("earcut: {before_face_count} -> {after_face_count} faces");
-
-    self
-      .polygons
-      .extend(indices.array_chunks::<3>().map(|&[i0, i1, i2]| {
-        let vtx_keys = [perimeter[i0], perimeter[i1], perimeter[i2]];
-        let face_key = mesh.add_face(
-          vtx_keys,
-          FaceData {
-            plane: plane.clone(),
-            node_key: self_key,
-          },
-        );
-        let poly = Polygon { key: face_key };
-        poly.set_node_key(self_key, mesh);
-        poly
-      }));
-  }
-
   fn remesh_lyon(&mut self, self_key: NodeKey, mesh: &mut LinkedMesh<FaceData>) {
     let Some((perimeter, interior_vtx_keys)) = self.compute_perimeter(mesh) else {
       return;
@@ -1239,7 +1186,7 @@ impl Node {
         let a = self.vertices[a.0 as usize];
         let b = self.vertices[b.0 as usize];
         let c = self.vertices[c.0 as usize];
-        let face_key = self.mesh.add_face(
+        let face_key = self.mesh.add_face::<false>(
           [c, b, a],
           FaceData {
             plane: self.plane.clone(),
@@ -1512,7 +1459,8 @@ impl CSG {
         position: vtx.position,
         shading_normal: vtx.shading_normal,
         displacement_normal: vtx.displacement_normal,
-        edges: Vec::new(),
+        edges: SmallVec::new(),
+        _padding: Default::default(),
       });
       our_vtx_key_by_other_vtx_key.insert(vtx_key, new_key);
     }
@@ -1525,7 +1473,7 @@ impl CSG {
           our_vtx_key_by_other_vtx_key[&face.vertices[1]],
           our_vtx_key_by_other_vtx_key[&face.vertices[2]],
         ];
-        let face_key = mesh.add_face(vertices, face.data);
+        let face_key = mesh.add_face::<false>(vertices, face.data);
         Polygon { key: face_key }
       })
       .collect::<Vec<_>>();

@@ -8,7 +8,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-nalgebra = "0.33"
+nalgebra = "0.34"
 common = { path = "../common" }
 mesh = { path = "../mesh" }
 log = "0.4"

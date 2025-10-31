@@ -5,22 +5,21 @@ authors = ["Casey Primozic <casey@cprimozic.net>"]
 edition = "2021"
 
 [dependencies]
-nalgebra = "0.33"
+nalgebra = "0.34"
 slotmap = "1.0"
 fxhash = "0.2"
-smallvec = "1.13"
+smallvec = "1.15"
 bitvec = { version = "1",  default-features = false, features = ["alloc", "std"] }
-common = { path = "../common" }
 log = { version = "0.4", features = [] }
 arrayvec = "0.7"
 lyon_tessellation = "1.0"
-earcutr = { version = "0.4", optional = true }
-parry3d = "0.21"
+parry3d = "0.25"
+
+common = { path = "../common" }
 
 [features]
 # disables slotmap's checks for invalid keys
 unsafe_indexing = []
-earcut = ["earcutr"]
 broken-csg-welding = []
 
 # enable this is you're very brave

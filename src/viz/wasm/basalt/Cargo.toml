@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 wasm-bindgen = "=0.2.92"
 # using an older version because new versions don't allow f32 noise anymore
 noise = "0.4"
-nalgebra = "0.33"
+nalgebra = "0.34"
 console_error_panic_hook = "0.1"
 wasm-logger = "0.2"
 log = "0.4"
@@ -19,7 +19,7 @@ mesh = { path = "../mesh" }
 common = { path = "../common" }
 tessellation = { path = "../tessellation", default-features = false }
 bitvec = "1"
-smallvec = "1"
+smallvec = "1.15"
 rand = { version = "0.8", default-features = false, features = ["nightly"] }
 point_distribute = { path = "../point_distribute" }
 fxhash = "0.2"
