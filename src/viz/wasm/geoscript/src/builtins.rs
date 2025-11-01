@@ -26,6 +26,7 @@ use crate::mesh_ops::mesh_ops::{
   alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, isotropic_remesh, remesh_planar_patches,
   smooth_mesh, SmoothType,
 };
+use crate::noise::{curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d};
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
@@ -40,7 +41,7 @@ use crate::{
     },
     stitch_contours::stitch_contours,
   },
-  noise::fbm,
+  noise::fbm_3d,
   path_building::{build_torus_knot_path, cubic_bezier_3d_path, superellipse_path},
   seq::{
     ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq,
@@ -1157,7 +1158,7 @@ fn fbm_impl(
   match def_ix {
     0 => {
       let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      Ok(Value::Float(fbm(0, 4, 1., 0.5, 2., *pos)))
+      Ok(Value::Float(fbm_3d(0, 4, 1., 0.5, 2., *pos)))
     }
     1 => {
       let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
@@ -1174,12 +1175,206 @@ fn fbm_impl(
       let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
       let pos = arg_refs[5].resolve(args, &kwargs).as_vec3().unwrap();
 
-      Ok(Value::Float(fbm(
+      Ok(Value::Float(fbm_3d(
         seed,
         octaves,
         frequency,
         persistence,
         lacunarity,
+        *pos,
+      )))
+    }
+    2 => {
+      let pos = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Float(fbm_2d(0, 4, 1., 0.5, 2., *pos)))
+    }
+    3 => {
+      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      if seed < 0 || seed > u32::MAX as i64 {
+        return Err(ErrorStack::new(format!(
+          "Seed for fbm must be in range [0, {}], found: {seed}",
+          u32::MAX
+        )));
+      }
+      let seed = seed as u32;
+      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, &kwargs).as_vec2().unwrap();
+
+      Ok(Value::Float(fbm_2d(
+        seed,
+        octaves,
+        frequency,
+        persistence,
+        lacunarity,
+        *pos,
+      )))
+    }
+    4 => {
+      let pos = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      Ok(Value::Float(fbm_1d(0, 4, 1., 0.5, 2., pos)))
+    }
+    5 => {
+      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      if seed < 0 || seed > u32::MAX as i64 {
+        return Err(ErrorStack::new(format!(
+          "Seed for fbm must be in range [0, {}], found: {seed}",
+          u32::MAX
+        )));
+      }
+      let seed = seed as u32;
+      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
+
+      Ok(Value::Float(fbm_1d(
+        seed,
+        octaves,
+        frequency,
+        persistence,
+        lacunarity,
+        pos,
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn curl_noise_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(curl_noise_3d(0, 4, 1., 0.5, 2., *pos)))
+    }
+    1 => {
+      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      if seed < 0 || seed > u32::MAX as i64 {
+        return Err(ErrorStack::new(format!(
+          "Seed for fbm must be in range [0, {}], found: {seed}",
+          u32::MAX
+        )));
+      }
+      let seed = seed as u32;
+      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, &kwargs).as_vec3().unwrap();
+
+      Ok(Value::Vec3(curl_noise_3d(
+        seed,
+        octaves,
+        frequency,
+        persistence,
+        lacunarity,
+        *pos,
+      )))
+    }
+    2 => {
+      let pos = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(curl_noise_2d(0, 4, 1., 0.5, 2., *pos)))
+    }
+    3 => {
+      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      if seed < 0 || seed > u32::MAX as i64 {
+        return Err(ErrorStack::new(format!(
+          "Seed for fbm must be in range [0, {}], found: {seed}",
+          u32::MAX
+        )));
+      }
+      let seed = seed as u32;
+      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, &kwargs).as_vec2().unwrap();
+
+      Ok(Value::Vec2(curl_noise_2d(
+        seed,
+        octaves,
+        frequency,
+        persistence,
+        lacunarity,
+        *pos,
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn ridged_multifractal_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      Ok(Value::Float(ridged_3d(0, 4, 1., 0.5, 2., 2., *pos)))
+    }
+    1 => {
+      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      if seed < 0 || seed > u32::MAX as i64 {
+        return Err(ErrorStack::new(format!(
+          "Seed for fbm must be in range [0, {}], found: {seed}",
+          u32::MAX
+        )));
+      }
+      let seed = seed as u32;
+      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+      let gain = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
+      let pos = arg_refs[6].resolve(args, &kwargs).as_vec3().unwrap();
+
+      Ok(Value::Float(ridged_3d(
+        seed,
+        octaves,
+        frequency,
+        persistence,
+        lacunarity,
+        gain,
+        *pos,
+      )))
+    }
+    2 => {
+      let pos = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      Ok(Value::Float(ridged_2d(0, 4, 1., 0.5, 2., 2., *pos)))
+    }
+    3 => {
+      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      if seed < 0 || seed > u32::MAX as i64 {
+        return Err(ErrorStack::new(format!(
+          "Seed for fbm must be in range [0, {}], found: {seed}",
+          u32::MAX
+        )));
+      }
+      let seed = seed as u32;
+      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+      let gain = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
+      let pos = arg_refs[6].resolve(args, &kwargs).as_vec2().unwrap();
+
+      Ok(Value::Float(ridged_2d(
+        seed,
+        octaves,
+        frequency,
+        persistence,
+        lacunarity,
+        gain,
         *pos,
       )))
     }
@@ -4990,6 +5185,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "fbm" => builtin_fn!(fbm, |def_ix, arg_refs, args, kwargs, _ctx| {
     fbm_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "curl_noise" => builtin_fn!(curl_noise, |def_ix, arg_refs, args, kwargs, _ctx| {
+    curl_noise_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "ridged_multifractal" => builtin_fn!(ridged_multifractal, |def_ix, arg_refs, args, kwargs, _ctx| {
+    ridged_multifractal_impl(def_ix, arg_refs, args, kwargs)
   }),
   "call" => builtin_fn!(call, |def_ix, arg_refs, args, kwargs, ctx| {
     call_impl(ctx, def_ix, arg_refs, args, kwargs)

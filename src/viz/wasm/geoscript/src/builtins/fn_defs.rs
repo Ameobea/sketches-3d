@@ -5356,7 +5356,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           },
         ],
-        description: "Generates a fractal Brownian motion (FBM) value at a given position using default parameters",
+        description: "Samples 3D fractal Brownian motion (FBM) at a given position using default parameters",
         return_type: &[ArgType::Float],
       },
       FnSignature {
@@ -5398,7 +5398,355 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
             description: ""
           },
         ],
-        description: "Samples fractional brownian noise at a given position using the specified parameters",
+        description: "Samples 3D fractal Brownian motion (FBM) at a given position using the specified parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 2D fractal Brownian motion (FBM) at a given position using default parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "octaves",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: ""
+          },
+          ArgDef {
+            name: "frequency",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
+          },
+          ArgDef {
+            name: "lacunarity",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "persistence",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: ""
+          },
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 2D fractal Brownian motion (FBM) at a given position using the specified parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Float],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 1D fractal Brownian motion (FBM) at a given position using default parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "octaves",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: ""
+          },
+          ArgDef {
+            name: "frequency",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
+          },
+          ArgDef {
+            name: "lacunarity",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "persistence",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: ""
+          },
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Float],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 1D fractal Brownian motion (FBM) at a given position using the specified parameters",
+        return_type: &[ArgType::Float],
+      },
+    ],
+  },
+  "curl_noise" => FnDef {
+    module: "rand",
+    examples: &[], // TODO: should have an example for curl noise
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 3D curl noise at a given position using default parameters",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "octaves",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: ""
+          },
+          ArgDef {
+            name: "frequency",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
+          },
+          ArgDef {
+            name: "lacunarity",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "persistence",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: ""
+          },
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 3D curl noise at a given position using the specified parameters",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 2D curl noise at a given position using default parameters",
+        return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "octaves",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: ""
+          },
+          ArgDef {
+            name: "frequency",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
+          },
+          ArgDef {
+            name: "lacunarity",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "persistence",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: ""
+          },
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 2D curl noise at a given position using the specified parameters",
+        return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
+  "ridged_multifractal" => FnDef {
+    module: "rand",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 3D ridged multifractal noise at a given position using default parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "octaves",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: ""
+          },
+          ArgDef {
+            name: "frequency",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
+          },
+          ArgDef {
+            name: "lacunarity",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "persistence",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: ""
+          },
+          ArgDef {
+            name: "gain",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec3],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 3D ridged multifractal noise at a given position using the specified parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 2D ridged multifractal noise at a given position using default parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "octaves",
+            valid_types: &[ArgType::Int],
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: ""
+          },
+          ArgDef {
+            name: "frequency",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
+          },
+          ArgDef {
+            name: "lacunarity",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "persistence",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: ""
+          },
+          ArgDef {
+            name: "gain",
+            valid_types: &[ArgType::Numeric],
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: ""
+          },
+          ArgDef {
+            name: "pos",
+            valid_types: &[ArgType::Vec2],
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Samples 2D ridged multifractal noise at a given position using the specified parameters",
         return_type: &[ArgType::Float],
       },
     ],

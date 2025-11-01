@@ -316,17 +316,18 @@ impl NormalAcc {
       //   face.to_triangle(verts),
       //   face.is_degenerate(verts)
       // );
-      // log::warn!(
-      //   "Face normal is NaN: {:?}; is_degen={}; face_key={face_key:?}",
-      //   face.to_triangle(verts),
-      //   face.is_degenerate(verts)
-      // );
+      log::warn!(
+        "Face normal is NaN: {:?}; is_degen={}; face_key={face_key:?}",
+        face.to_triangle(verts),
+        face.is_degenerate(verts)
+      );
       return None;
     }
 
     let angle_at_vtx = face.compute_angle_at_vertex_key(fan_center_vtx_key, verts);
     if angle_at_vtx.is_nan() {
-      panic!("NaN angle: {:?}", face.to_triangle(verts));
+      ::log::error!("NaN angle: {:?}", face.to_triangle(verts));
+      return None;
     }
 
     let weighted_normal = face_normal * angle_at_vtx;
