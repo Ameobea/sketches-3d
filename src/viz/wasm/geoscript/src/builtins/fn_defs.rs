@@ -4838,9 +4838,9 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "up",
-            valid_types: &[ArgType::Vec3],
+            valid_types: &[ArgType::Vec3, ArgType::Callable],
             default_value: DefaultValue::Required,
-            description: "Direction to extrude the mesh.  Vertices will be displaced by this amount."
+            description: "Direction to extrude the mesh.  Each vertex will be displaced by this amount.  If a callable is provided, it should have signature `|vertex_pos: vec3|: vec3` and return the displacement for each vertex."
           },
           ArgDef {
             name: "mesh",

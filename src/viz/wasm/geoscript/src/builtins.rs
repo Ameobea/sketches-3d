@@ -1923,6 +1923,7 @@ fn delaunay_remesh_impl(
 }
 
 fn extrude_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -1930,11 +1931,32 @@ fn extrude_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let up = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let up = arg_refs[0].resolve(args, &kwargs);
       let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
       let mut out_mesh = (*mesh.mesh).clone();
 
-      extrude(&mut out_mesh, *up);
+      match up {
+        Value::Vec3(up) => extrude(&mut out_mesh, |_| Ok(*up))?,
+        Value::Callable(cb) => extrude(&mut out_mesh, |vtx| {
+          let out = ctx
+            .invoke_callable(&cb, &[Value::Vec3(vtx)], &EMPTY_KWARGS)
+            .map_err(|err| {
+              err.wrap(format!(
+                "Error calling user-provided cb passed to `up` arg in `extrude`"
+              ))
+            })?;
+          out.as_vec3().copied().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Expected Vec3 from user-provided cb passed to `up` arg in `extrude`, found: {out:?}"
+            ))
+          })
+        })?,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid up argument for `extrude`; expected Vec3 or Callable, found: {up:?}"
+          )))
+        }
+      }
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(out_mesh),
@@ -5138,8 +5160,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "lissajous_knot_path" => builtin_fn!(lissajous_knot_path, |def_ix, arg_refs, args, kwargs, _ctx| {
     lissajous_knot_path_impl(def_ix, arg_refs, args, kwargs)
   }),
-  "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, _ctx| {
-    extrude_impl(def_ix, arg_refs, args, kwargs)
+  "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, ctx| {
+    extrude_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "stitch_contours" => builtin_fn!(stitch_contours, |def_ix, arg_refs, args, kwargs, ctx| {
     stitch_contours_impl(ctx, def_ix, arg_refs, args, kwargs)

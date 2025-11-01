@@ -1,11 +1,19 @@
+use std::collections::hash_map::Entry;
+
 use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
-  linked_mesh::{FaceKey, Vec3, Vertex},
+  linked_mesh::{FaceKey, Vec3, Vertex, VertexKey},
   LinkedMesh,
 };
 use smallvec::SmallVec;
 
-fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKey]) {
+use crate::ErrorStack;
+
+fn extrude_single_component(
+  mesh: &mut LinkedMesh<()>,
+  up: impl Fn(Vec3) -> Result<Vec3, ErrorStack>,
+  faces: &[FaceKey],
+) -> Result<(), ErrorStack> {
   let mut border_edges = FxHashSet::default();
   for &face_key in faces {
     for &edge_key in &mesh.faces[face_key].edges {
@@ -17,19 +25,26 @@ fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKe
 
   let mut new_vtx_key_by_old = FxHashMap::default();
   for &face_key in faces {
-    let new_vtx_keys = {
-      mesh.faces[face_key].vertices.map(|vtx_key| {
-        *new_vtx_key_by_old.entry(vtx_key).or_insert_with(|| {
-          mesh.vertices.insert(Vertex {
-            position: mesh.vertices[vtx_key].position + up,
+    let mut new_vtx_keys: [VertexKey; 3] = unsafe { std::mem::transmute([(0u32, 0u32); 3]) };
+    for (i, &vtx_key) in mesh.faces[face_key].vertices.iter().enumerate() {
+      let new_vtx_key = match new_vtx_key_by_old.entry(vtx_key) {
+        Entry::Occupied(o) => *o.get(),
+        Entry::Vacant(v) => {
+          let pos = mesh.vertices[vtx_key].position;
+          let new_vtx_key = mesh.vertices.insert(Vertex {
+            position: pos + up(pos)?,
             shading_normal: None,
             displacement_normal: None,
             edges: SmallVec::new(),
             _padding: Default::default(),
-          })
-        })
-      })
-    };
+          });
+          v.insert(new_vtx_key);
+          new_vtx_key
+        }
+      };
+      new_vtx_keys[i] = new_vtx_key;
+    }
+
     mesh.add_face::<false>(new_vtx_keys, ());
 
     // flip the winding order of the original faces to create the bottom of the extrusion
@@ -37,7 +52,6 @@ fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKe
     old_face.vertices.reverse();
   }
 
-  // let mut visited = FxHashSet::default();
   for &border_edge in &border_edges {
     // figure out canonical direction for extrusion using faces from the pre-extruded mesh
     let edge = &mesh.edges[border_edge];
@@ -63,13 +77,19 @@ fn extrude_single_component(mesh: &mut LinkedMesh<()>, up: Vec3, faces: &[FaceKe
     mesh.add_face::<false>([nv1, v1, v0], ());
     mesh.add_face::<false>([nv0, nv1, v0], ());
   }
+
+  Ok(())
 }
 
-pub fn extrude(mesh: &mut LinkedMesh<()>, up: Vec3) {
+pub fn extrude(
+  mesh: &mut LinkedMesh<()>,
+  up: impl Fn(Vec3) -> Result<Vec3, ErrorStack>,
+) -> Result<(), ErrorStack> {
   let components = mesh.connected_components();
   for faces in components {
-    extrude_single_component(mesh, up, &faces);
+    extrude_single_component(mesh, &up, &faces)?;
   }
+  Ok(())
 }
 
 #[test]
@@ -100,6 +120,6 @@ fn test_extrude_issue() {
     .check_is_manifold::<false>()
     .expect("not manifold before extrude");
 
-  extrude(&mut mesh, Vec3::new(0., 1., 0.));
+  extrude(&mut mesh, |_| Ok(Vec3::new(0., 1., 0.))).unwrap();
   mesh.check_is_manifold::<true>().expect("not two-manifold");
 }
