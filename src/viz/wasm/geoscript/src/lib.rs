@@ -892,10 +892,15 @@ fn get_args(
       })
       .unwrap()
     {
-      return Err(ErrorStack::new(format!(
-        "kwarg `{key}` is not valid in any function signature.\n\nAvailable signatures:\n{}",
-        format_fn_signatures(defs)
-      )));
+      return ctx
+        .with_resolved_sym(key, |resolved| {
+          Err(ErrorStack::new(format!(
+            "kwarg `{resolved}` is not valid in any function signature.\n\nAvailable \
+             signatures:\n{}",
+            format_fn_signatures(defs)
+          )))
+        })
+        .unwrap();
     }
   }
 
@@ -1249,13 +1254,6 @@ impl Scope {
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
 pub struct Sym(pub usize);
 
-impl Display for Sym {
-  #[cold]
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "Sym({})", self.0)
-  }
-}
-
 pub struct SymbolInterner {
   pub symbols: RefCell<FxHashMap<String, Sym>>,
   pub reverse_symbols: RefCell<FxHashMap<Sym, String>>,
@@ -1463,16 +1461,24 @@ impl EvalCtx {
             if let Some(kwargs) = kwargs_opt {
               self.restore_kwargs_scratch(kwargs);
             }
-            return Err(ErrorStack::new(format!(
-              "\"{name}\" is not a callable; found: {global:?}"
-            )));
+            return self
+              .with_resolved_sym(*name, |name| {
+                Err(ErrorStack::new(format!(
+                  "\"{name}\" is not a callable; found: {global:?}"
+                )))
+              })
+              .unwrap();
           };
 
           do_call(&callable, args_opt, kwargs_opt)
         } else {
-          return Err(ErrorStack::new(format!(
-            "No variable found with name `{name}`"
-          )));
+          return self
+            .with_resolved_sym(*name, |name| {
+              Err(ErrorStack::new(format!(
+                "No variable found with name `{name}`"
+              )))
+            })
+            .unwrap();
         }
       }
       FunctionCallTarget::Literal(callable) => do_call(callable, args_opt, kwargs_opt),
@@ -1966,7 +1972,13 @@ impl EvalCtx {
       })));
     }
 
-    Err(ErrorStack::new(format!("Variable `{name}` not defined",)))
+    self
+      .with_resolved_sym(name, |resolved_name| {
+        Err(ErrorStack::new(format!(
+          "Variable `{resolved_name}` not defined",
+        )))
+      })
+      .unwrap()
   }
 
   fn invoke_closure(
@@ -1990,9 +2002,13 @@ impl EvalCtx {
         DestructurePattern::Ident(name) => {
           if let Some(kwarg) = kwargs.get(name) {
             if let Some(type_hint) = arg.type_hint {
-              type_hint
-                .validate_val(kwarg)
-                .map_err(|err| err.wrap(format!("Type error for closure kwarg `{name}`")))?;
+              type_hint.validate_val(kwarg).map_err(|err| {
+                self
+                  .with_resolved_sym(*name, |name| {
+                    err.wrap(format!("Type error for closure kwarg `{name}`"))
+                  })
+                  .unwrap()
+              })?;
             }
             closure_scope.insert(*name, kwarg.clone());
             any_args_valid = true;
@@ -2006,9 +2022,12 @@ impl EvalCtx {
       if pos_arg_ix < args.len() {
         let pos_arg = &args[pos_arg_ix];
         if let Some(type_hint) = arg.type_hint {
-          type_hint
-            .validate_val(pos_arg)
-            .map_err(|err| err.wrap(format!("Type error for closure pos arg `{:?}`", arg.ident)))?;
+          type_hint.validate_val(pos_arg).map_err(|err| {
+            err.wrap(format!(
+              "Type error for positional closure arg `{:?}`",
+              arg.ident.debug(self)
+            ))
+          })?;
         }
         arg
           .ident
@@ -2027,14 +2046,14 @@ impl EvalCtx {
               return Err(ErrorStack::new(format!(
                 "`return` isn't valid in arg default value expressions; found in default value \
                  for arg `{:?}`",
-                arg.ident
+                arg.ident.debug(self)
               )))
             }
             ControlFlow::Break(_) => {
               return Err(ErrorStack::new(format!(
                 "`break` isn't valid in arg default value expressions; found in default value for \
                  arg `{:?}`",
-                arg.ident
+                arg.ident.debug(self)
               )));
             }
           };
@@ -2066,7 +2085,7 @@ impl EvalCtx {
       } else {
         return Err(ErrorStack::new(format!(
           "Missing required argument `{:?}` for closure",
-          invalid_arg.ident
+          invalid_arg.ident.debug(self)
         )));
       }
     }

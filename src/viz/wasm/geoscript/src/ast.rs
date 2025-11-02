@@ -137,6 +137,27 @@ pub enum DestructurePattern {
 }
 
 impl DestructurePattern {
+  pub fn debug(&self, ctx: &EvalCtx) -> String {
+    match self {
+      DestructurePattern::Ident(id) => ctx.with_resolved_sym(*id, |name| name.to_string()).unwrap(),
+      DestructurePattern::Array(items) => {
+        let item_strs: Vec<String> = items.iter().map(|item| item.debug(ctx)).collect();
+        format!("[{}]", item_strs.join(", "))
+      }
+      DestructurePattern::Map(hm) => {
+        let item_strs: Vec<String> = hm
+          .iter()
+          .map(|(k, v)| {
+            ctx
+              .with_resolved_sym(*k, |key| format!("{key}: {}", v.debug(ctx)))
+              .unwrap()
+          })
+          .collect();
+        format!("{{{}}}", item_strs.join(", "))
+      }
+    }
+  }
+
   fn iter_idents<'a>(&'a self) -> Box<dyn Iterator<Item = Sym> + 'a> {
     match self {
       DestructurePattern::Ident(id) => Box::new(std::iter::once(*id)),
@@ -163,7 +184,8 @@ impl DestructurePattern {
       DestructurePattern::Array(destructure_patterns) => {
         let Value::Sequence(seq) = rhs else {
           return Err(ErrorStack::new(format!(
-            "Cannot destructure non-sequence value {rhs:?} with array pattern {self:?}",
+            "Cannot destructure non-sequence value {rhs:?} with array pattern {:?}",
+            self.debug(ctx)
           )));
         };
 
@@ -184,7 +206,8 @@ impl DestructurePattern {
       DestructurePattern::Map(pat) => {
         let Value::Map(map) = rhs else {
           return Err(ErrorStack::new(format!(
-            "Cannot destructure non-map value {rhs:?} with map pattern {self:?}",
+            "Cannot destructure non-map value {rhs:?} with map pattern {:?}",
+            self.debug(ctx)
           )));
         };
 
@@ -1043,7 +1066,10 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
             if next.as_rule() == Rule::type_hint {
               type_hint = Some(
                 TypeName::from_str(next.into_inner().next().unwrap().as_str()).map_err(|err| {
-                  ErrorStack::new(err).wrap(format!("Invalid type hint for closure arg {ident:?}"))
+                  ErrorStack::new(err).wrap(format!(
+                    "Invalid type hint for closure arg {:?}",
+                    ident.debug(ctx)
+                  ))
                 })?,
               );
               if let Some(next) = inner.next() {
@@ -2122,9 +2148,13 @@ fn fold_constants<'a>(
                 *target = FunctionCallTarget::Literal(callable.clone());
               }
               other => {
-                return Err(ErrorStack::new(format!(
-                  "Tried to call non-callable value: {name} = {other:?}",
-                )))
+                return ctx
+                  .with_resolved_sym(*name, |name| {
+                    Err(ErrorStack::new(format!(
+                      "Tried to call non-callable value: {name} = {other:?}",
+                    )))
+                  })
+                  .unwrap()
               }
             },
             // calling a closure argument or dynamic captured variable
@@ -2196,9 +2226,13 @@ fn fold_constants<'a>(
                   }
                 }
                 other => {
-                  return Err(ErrorStack::new(format!(
-                    "Tried to call non-callable value: {name} = {other:?}",
-                  )))
+                  return ctx
+                    .with_resolved_sym(*name, |name| {
+                      Err(ErrorStack::new(format!(
+                        "Tried to call non-callable value: {name} = {other:?}",
+                      )))
+                    })
+                    .unwrap()
                 }
               },
               TrackedValueRef::Arg(_) => (),

@@ -5513,7 +5513,7 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   },
   "curl_noise" => FnDef {
     module: "rand",
-    examples: &[], // TODO: should have an example for curl noise
+    examples: &[FnExample { composition_id: 66 }],
     signatures: &[
       FnSignature {
         arg_defs: &[

@@ -2873,7 +2873,7 @@ fn print_impl(
     .join(", ");
   let formatted_kwargs = kwargs
     .iter()
-    .map(|(k, v)| format!("{k}={v:?}"))
+    .map(|(k, v)| ctx.with_resolved_sym(*k, |k| format!("{k}={v:?}")).unwrap())
     .collect::<Vec<_>>()
     .join(", ");
 
