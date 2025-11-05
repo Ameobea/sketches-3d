@@ -5,7 +5,8 @@
   thread_local,
   impl_trait_in_fn_trait_return,
   unsafe_cell_access,
-  likely_unlikely
+  likely_unlikely,
+  generic_arg_infer
 )]
 
 #[cfg(target_arch = "wasm32")]
@@ -17,6 +18,7 @@ use std::{
   rc::{self, Rc},
 };
 
+use arrayvec::ArrayVec;
 use ast::{Expr, FunctionCallTarget, Statement};
 use fxhash::{FxHashMap, FxHashSet};
 use mesh::{linked_mesh::Vec3, LinkedMesh};
@@ -39,8 +41,8 @@ use smallvec::SmallVec;
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
   ast::{
-    maybe_init_binop_def_shorthands, parse_statement, BinOp, ClosureArg, DestructurePattern,
-    FunctionCall, MapLiteralEntry, TypeName,
+    maybe_init_op_def_shorthands, parse_statement, BinOp, ClosureArg, ClosureBody,
+    DestructurePattern, FunctionCall, MapLiteralEntry, TypeName,
   },
   builtins::{
     fn_defs::{get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnSignature, FN_SIGNATURE_DEFS},
@@ -135,12 +137,12 @@ impl Display for ErrorStack {
         write!(f, "{line}")?;
 
         if lines.peek().is_some() {
-          write!(f, "\n")?;
+          writeln!(f)?;
         }
       }
 
       if ix < self.errors.len() - 1 {
-        write!(f, "\n")?;
+        writeln!(f)?;
       }
     }
     Ok(())
@@ -162,7 +164,7 @@ pub trait Sequence: Any + Debug {
 }
 
 pub(crate) fn seq_as_eager<'a>(seq: &'a dyn Sequence) -> Option<&'a EagerSeq> {
-  let seq: &dyn Any = &*seq;
+  let seq: &dyn Any = seq;
   seq.downcast_ref::<EagerSeq>()
 }
 
@@ -204,10 +206,16 @@ impl CapturedScope {
 #[derive(Clone)]
 pub struct Closure {
   /// Names of parameters for this closure in order
-  params: Vec<ClosureArg>,
-  body: Vec<Statement>,
+  params: Rc<Vec<ClosureArg>>,
+  body: Rc<ClosureBody>,
   /// Contains variables captured from the environment when the closure was created
   captured_scope: CapturedScope,
+  /// A scope pre-populated with `nil` placeholders for all arguments.  This is used when invoking
+  /// the closure to help avoid allocations.  This scope should always only contain entries for the
+  /// arguments of the closure, never any other values.
+  ///
+  /// This will be `None` in the case of a recursive call since it's taken by the root call.
+  arg_placeholder_scope: RefCell<Option<FxHashMap<Sym, Value>>>,
   return_type_hint: Option<TypeName>,
 }
 
@@ -223,6 +231,19 @@ impl Debug for Closure {
       "<closure with {} params{return_type_hint_formatted}>",
       self.params.len(),
     )
+  }
+}
+
+impl Closure {
+  fn build_arg_placeholder_scope(params: &[ClosureArg]) -> FxHashMap<Sym, Value> {
+    let mut arg_placeholders = FxHashMap::default();
+    for param in params {
+      param.ident.visit_idents(&mut |ident| {
+        arg_placeholders.insert(ident, Value::Nil);
+      });
+    }
+
+    arg_placeholders
   }
 }
 
@@ -377,11 +398,11 @@ impl MeshHandle {
 
   fn get_or_compute_aabb(&self) -> Aabb {
     if let Some(aabb) = self.aabb.borrow().as_ref() {
-      return aabb.clone();
+      return *aabb;
     }
 
     let aabb = self.mesh.compute_aabb(&self.transform);
-    *self.aabb.borrow_mut() = Some(aabb.clone());
+    *self.aabb.borrow_mut() = Some(aabb);
     aabb
   }
 
@@ -509,7 +530,7 @@ fn clone_value_slow(val: &Value) -> Value {
     | Value::Nil => unsafe { std::hint::unreachable_unchecked() },
     Value::Mesh(mesh) => Value::Mesh(Rc::clone(mesh)),
     Value::Light(light) => Value::Light(light.clone()),
-    Value::Callable(callable) => Value::Callable(Rc::clone(&callable)),
+    Value::Callable(callable) => Value::Callable(Rc::clone(callable)),
     Value::Sequence(seq) => Value::Sequence(Rc::clone(seq)),
     Value::Map(map) => Value::Map(Rc::clone(map)),
     Value::String(s) => Value::String(s.clone()),
@@ -560,7 +581,7 @@ impl Value {
 
   fn as_mesh(&self) -> Option<&MeshHandle> {
     match self {
-      Value::Mesh(mesh) => Some(&mesh),
+      Value::Mesh(mesh) => Some(mesh),
       _ => None,
     }
   }
@@ -756,7 +777,7 @@ impl ArgType {
         AmbientLight::default(),
       )))),
       ArgType::Callable => Some(Value::Callable(Rc::new(Callable::Builtin {
-        fn_entry_ix: std::usize::MAX,
+        fn_entry_ix: usize::MAX,
         fn_impl: |_, _, _, _, _| panic!("example callable should never be called"),
         pre_resolved_signature: None,
       }))),
@@ -858,9 +879,20 @@ pub(crate) fn build_no_fn_def_found_err(
   ))
 }
 
-const EMPTY_ARGS: Vec<Value> = Vec::new();
-const EMPTY_KWARGS: FxHashMap<Sym, Value> =
+#[allow(dead_code)]
+#[repr(transparent)]
+struct SyncValue(Value);
+
+unsafe impl Send for SyncValue {}
+unsafe impl Sync for SyncValue {}
+
+static EMPTY_ARGS_INNER: Vec<SyncValue> = Vec::new();
+static EMPTY_KWARGS_INNER: FxHashMap<Sym, SyncValue> =
   std::collections::HashMap::with_hasher(fxhash::FxBuildHasher::new());
+
+const EMPTY_ARGS: &'static Vec<Value> = unsafe { std::mem::transmute(&EMPTY_ARGS_INNER) };
+const EMPTY_KWARGS: &'static FxHashMap<Sym, Value> =
+  unsafe { std::mem::transmute(&EMPTY_KWARGS_INNER) };
 
 fn get_args(
   ctx: &EvalCtx,
@@ -884,23 +916,17 @@ fn get_args(
 
   for &key in kwargs.keys() {
     // TODO: again, bad that we have to resolve here for each kwarg
-    if ctx
-      .with_resolved_sym(key, |resolved_kwarg| {
-        !defs
-          .iter()
-          .any(|def| def.arg_defs.iter().any(|arg| arg.name == resolved_kwarg))
-      })
-      .unwrap()
-    {
-      return ctx
-        .with_resolved_sym(key, |resolved| {
-          Err(ErrorStack::new(format!(
-            "kwarg `{resolved}` is not valid in any function signature.\n\nAvailable \
-             signatures:\n{}",
-            format_fn_signatures(defs)
-          )))
-        })
-        .unwrap();
+    if ctx.with_resolved_sym(key, |resolved_kwarg| {
+      !defs
+        .iter()
+        .any(|def| def.arg_defs.iter().any(|arg| arg.name == resolved_kwarg))
+    }) {
+      return ctx.with_resolved_sym(key, |resolved| {
+        Err(ErrorStack::new(format!(
+          "kwarg `{resolved}` is not valid in any function signature.\n\nAvailable signatures:\n{}",
+          format_fn_signatures(defs)
+        )))
+      });
     }
   }
 
@@ -910,15 +936,12 @@ fn get_args(
   'def: for (def_ix, def) in defs.iter().enumerate() {
     // if a kwarg was passed which isn't defined in this function signature, skip
     for &kwarg_key in kwargs.keys() {
-      if ctx
-        .with_resolved_sym(kwarg_key, |resolved_kwarg_key| {
-          def
-            .arg_defs
-            .iter()
-            .all(|def| def.name != resolved_kwarg_key)
-        })
-        .unwrap()
-      {
+      if ctx.with_resolved_sym(kwarg_key, |resolved_kwarg_key| {
+        def
+          .arg_defs
+          .iter()
+          .all(|def| def.name != resolved_kwarg_key)
+      }) {
         continue 'def;
       }
     }
@@ -992,8 +1015,7 @@ fn get_binop_def_ix(
   for (def_ix, def) in defs.iter().enumerate() {
     let lhs_def = &def.arg_defs[0];
     let rhs_def = &def.arg_defs[1];
-    if ArgType::any_valid(&lhs_def.valid_types, lhs)
-      && ArgType::any_valid(&rhs_def.valid_types, rhs)
+    if ArgType::any_valid(lhs_def.valid_types, lhs) && ArgType::any_valid(rhs_def.valid_types, rhs)
     {
       return Ok(def_ix);
     }
@@ -1003,19 +1025,17 @@ fn get_binop_def_ix(
     ctx,
     fn_entry.0,
     &[lhs.clone(), rhs.clone()],
-    &EMPTY_KWARGS,
+    EMPTY_KWARGS,
     fn_entry.1.signatures,
   ));
 }
 
 /// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
 /// def in `defs` has exactly one arg.
-fn get_unop_def_ix(
-  ctx: &EvalCtx,
-  fn_entry_ix: usize,
-  defs: &[FnSignature],
-  arg: &Value,
-) -> Result<usize, ErrorStack> {
+fn get_unop_def_ix(ctx: &EvalCtx, fn_entry_ix: usize, arg: &Value) -> Result<usize, ErrorStack> {
+  let fn_entry = &FN_SIGNATURE_DEFS.entries[fn_entry_ix];
+  let defs = fn_entry.1.signatures;
+
   for (def_ix, def) in defs.iter().enumerate() {
     let arg_def = &def.arg_defs[0];
     if ArgType::any_valid(&arg_def.valid_types, arg) {
@@ -1023,13 +1043,13 @@ fn get_unop_def_ix(
     }
   }
 
-  let fn_entry = &FN_SIGNATURE_DEFS.entries[fn_entry_ix];
+  let fn_name = fn_entry.0;
   return Err(build_no_fn_def_found_err(
     ctx,
-    fn_entry.0,
+    fn_name,
     &[arg.clone()],
-    &EMPTY_KWARGS,
-    fn_entry.1.signatures,
+    EMPTY_KWARGS,
+    defs,
   ));
 }
 
@@ -1052,7 +1072,7 @@ fn get_unop_return_ty(
     ctx,
     name,
     &[arg.clone()],
-    &EMPTY_KWARGS,
+    EMPTY_KWARGS,
     FN_SIGNATURE_DEFS[name].signatures,
   ));
 }
@@ -1090,103 +1110,6 @@ impl<T> AppendOnlyBuffer<T> {
 type RenderedMeshes = AppendOnlyBuffer<Rc<MeshHandle>>;
 type RenderedLights = AppendOnlyBuffer<Light>;
 type RenderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
-
-// #[derive(Clone, Debug)]
-// enum ScopeVars {
-//   Flat {
-//     ids: SmallVec<[Sym; 4]>,
-//     vals: SmallVec<[Value; 4]>,
-//   },
-//   Map(FxHashMap<Sym, Value>),
-// }
-
-// impl Default for ScopeVars {
-//   fn default() -> Self {
-//     ScopeVars::Flat {
-//       ids: SmallVec::new(),
-//       vals: SmallVec::new(),
-//     }
-//   }
-// }
-
-// impl ScopeVars {
-//   fn insert(&mut self, key: Sym, value: Value) {
-//     match self {
-//       ScopeVars::Flat { ids, vals } => {
-//         if let Some(ix) = ids.iter().position(|k| *k == key) {
-//           vals[ix] = value;
-//           return;
-//         }
-
-//         if ids.len() < 4 {
-//           ids.push(key);
-//           vals.push(value);
-//           return;
-//         }
-
-//         ::log::info!("spilling scope vars to map; {:?}; {:?}", ids, vals);
-//         let mut map = FxHashMap::default();
-//         for (k, v) in ids.iter().cloned().zip(vals.iter().cloned()) {
-//           map.insert(k, v);
-//         }
-//         map.insert(key, value);
-//         *self = ScopeVars::Map(map);
-//       }
-//       ScopeVars::Map(map) => {
-//         map.insert(key, value);
-//       }
-//     }
-//   }
-
-//   fn get(&self, key: &Sym) -> Option<&Value> {
-//     match self {
-//       ScopeVars::Flat { ids, vals } => {
-//         if let Some(ix) = ids.iter().position(|k| k == key) {
-//           return Some(&vals[ix]);
-//         }
-//         None
-//       }
-//       ScopeVars::Map(map) => map.get(key),
-//     }
-//   }
-
-//   fn get_mut(&mut self, key: &Sym) -> Option<&mut Value> {
-//     match self {
-//       ScopeVars::Flat { ids, vals } => {
-//         if let Some(ix) = ids.iter().position(|k| k == key) {
-//           return Some(&mut vals[ix]);
-//         }
-//         None
-//       }
-//       ScopeVars::Map(map) => map.get_mut(key),
-//     }
-//   }
-
-//   fn contains_key(&self, key: &Sym) -> bool {
-//     match self {
-//       ScopeVars::Flat { ids, .. } => ids.iter().any(|k| *k == *key),
-//       ScopeVars::Map(map) => map.contains_key(&key),
-//     }
-//   }
-
-//   fn drain_with<F>(&mut self, mut f: F)
-//   where
-//     F: FnMut(Sym, Value),
-//   {
-//     match self {
-//       ScopeVars::Flat { ids, vals } => {
-//         for (k, v) in ids.drain(..).zip(vals.drain(..)) {
-//           f(k, v);
-//         }
-//       }
-//       ScopeVars::Map(map) => {
-//         for (k, v) in map.drain() {
-//           f(k, v);
-//         }
-//       }
-//     }
-//   }
-// }
 
 #[derive(Default, Debug)]
 pub struct Scope {
@@ -1235,10 +1158,10 @@ impl Scope {
     None
   }
 
-  fn wrap(parent: &Rc<Scope>) -> Scope {
+  fn wrap(parent: Rc<Scope>) -> Scope {
     Scope {
       vars: RefCell::new(Default::default()),
-      parent: Some(Rc::clone(parent)),
+      parent: Some(parent),
     }
   }
 
@@ -1316,8 +1239,8 @@ pub struct EvalCtx {
   pub textures: FxHashSet<String>,
   pub default_material: RefCell<Option<Rc<Material>>>,
   pub sharp_angle_threshold_degrees: RefCell<f32>,
-  scratch_args: RefCell<Vec<Vec<Value>>>,
-  scratch_kwargs: RefCell<Vec<FxHashMap<Sym, Value>>>,
+  scratch_args: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
+  scratch_kwargs: Box<RefCell<ArrayVec<FxHashMap<Sym, Value>, 64>>>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1338,8 +1261,8 @@ impl Default for EvalCtx {
       textures: FxHashSet::default(),
       default_material: RefCell::new(None),
       sharp_angle_threshold_degrees: RefCell::new(45.8366),
-      scratch_args: RefCell::new(Vec::with_capacity(8)),
-      scratch_kwargs: RefCell::new(Vec::new()),
+      scratch_args: Box::new(RefCell::new(ArrayVec::new())),
+      scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
     }
   }
 }
@@ -1378,9 +1301,7 @@ impl EvalCtx {
   pub fn restore_args_scratch(&self, mut args: Vec<Value>) {
     args.clear();
     let mut borrowed = self.scratch_args.borrow_mut();
-    if borrowed.len() < 64 {
-      borrowed.push(args);
-    }
+    let _ = borrowed.try_push(args);
   }
 
   pub fn get_kwargs_scratch(&self) -> FxHashMap<Sym, Value> {
@@ -1394,9 +1315,7 @@ impl EvalCtx {
   pub fn restore_kwargs_scratch(&self, mut kwargs: FxHashMap<Sym, Value>) {
     kwargs.clear();
     let mut borrowed = self.scratch_kwargs.borrow_mut();
-    if borrowed.len() < 64 {
-      borrowed.push(kwargs);
-    }
+    let _ = borrowed.try_push(kwargs);
   }
 
   fn eval_fn_call(
@@ -1410,7 +1329,10 @@ impl EvalCtx {
       for arg in &call.args {
         let val = match self.eval_expr(arg, scope, None)? {
           ControlFlow::Continue(val) => val,
-          early_exit => return Ok(early_exit),
+          early_exit => {
+            self.restore_args_scratch(args);
+            return Ok(early_exit);
+          }
         };
         args.push(val);
       }
@@ -1423,7 +1345,10 @@ impl EvalCtx {
       for (k, v) in &call.kwargs {
         let val = match self.eval_expr(v, scope, None)? {
           ControlFlow::Continue(val) => val,
-          early_exit => return Ok(early_exit),
+          early_exit => {
+            self.restore_kwargs_scratch(kwargs);
+            return Ok(early_exit);
+          }
         };
         kwargs.insert(*k, val);
       }
@@ -1435,8 +1360,8 @@ impl EvalCtx {
         let ret = self
           .invoke_callable(
             callable,
-            args.as_ref().unwrap_or(&EMPTY_ARGS),
-            kwargs.as_ref().unwrap_or(&EMPTY_KWARGS),
+            args.as_ref().unwrap_or(EMPTY_ARGS),
+            kwargs.as_ref().unwrap_or(EMPTY_KWARGS),
           )
           .map_err(|err| err.wrap("Error invoking callable"))
           .map(ControlFlow::Continue);
@@ -1461,24 +1386,20 @@ impl EvalCtx {
             if let Some(kwargs) = kwargs_opt {
               self.restore_kwargs_scratch(kwargs);
             }
-            return self
-              .with_resolved_sym(*name, |name| {
-                Err(ErrorStack::new(format!(
-                  "\"{name}\" is not a callable; found: {global:?}"
-                )))
-              })
-              .unwrap();
+            return self.with_resolved_sym(*name, |name| {
+              Err(ErrorStack::new(format!(
+                "\"{name}\" is not a callable; found: {global:?}"
+              )))
+            });
           };
 
           do_call(&callable, args_opt, kwargs_opt)
         } else {
-          return self
-            .with_resolved_sym(*name, |name| {
-              Err(ErrorStack::new(format!(
-                "No variable found with name `{name}`"
-              )))
-            })
-            .unwrap();
+          return self.with_resolved_sym(*name, |name| {
+            Err(ErrorStack::new(format!(
+              "No variable found with name `{name}`"
+            )))
+          });
         }
       }
       FunctionCallTarget::Literal(callable) => do_call(callable, args_opt, kwargs_opt),
@@ -1635,6 +1556,7 @@ impl EvalCtx {
       Expr::Closure {
         params,
         body,
+        arg_placeholder_scope,
         return_type_hint,
       } => {
         // cloning the scope here makes the closure function like a rust `move` closure
@@ -1646,44 +1568,27 @@ impl EvalCtx {
           captured_scope.insert(
             binding_name,
             Value::Callable(Rc::new(Callable::Closure(Closure {
-              params: params.clone(),
-              body: body.0.clone(),
-              // this is going to be immediately overwritten
-              captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-              return_type_hint: return_type_hint.clone(),
-            }))),
-          );
-
-          let captured_scope_clone = Rc::downgrade(&captured_scope);
-          match captured_scope
-            .vars
-            .borrow_mut()
-            .get_mut(&binding_name)
-            .unwrap()
-          {
-            Value::Callable(callable) => {
-              let callable =
-                Rc::get_mut(callable).expect("Should only be one reference to this Rc");
-              let Callable::Closure(closure) = callable else {
-                unreachable!();
-              };
+              params: Rc::clone(params),
+              body: Rc::clone(body),
               // writing this as a weak reference prevents a reference cycle:
               //
               // closure -> captured_scope -> closure_clone
               //                   ^---------------------┘
               //                           ^ this one is weak
-              closure.captured_scope = CapturedScope::Weak(captured_scope_clone);
-            }
-            _ => unreachable!(),
-          };
+              captured_scope: CapturedScope::Weak(Rc::downgrade(&captured_scope)),
+              arg_placeholder_scope: RefCell::new(None),
+              return_type_hint: *return_type_hint,
+            }))),
+          );
         }
 
         Ok(ControlFlow::Continue(Value::Callable(Rc::new(
           Callable::Closure(Closure {
-            params: params.clone(),
-            body: body.0.clone(),
+            params: Rc::clone(params),
+            body: Rc::clone(body),
             captured_scope: CapturedScope::Strong(captured_scope),
-            return_type_hint: return_type_hint.clone(),
+            arg_placeholder_scope: RefCell::new(Some(arg_placeholder_scope.clone())),
+            return_type_hint: *return_type_hint,
           }),
         ))))
       }
@@ -1751,7 +1656,7 @@ impl EvalCtx {
         // TODO: ideally, we'd avoid cloning the scope here and use the scope nesting functionality
         // like closures.  However, adding in references to scopes creates incredibly lifetime
         // headaches across the whole codebase very quickly and just isn't worth it rn
-        let block_scope = Scope::wrap(&Rc::new(scope.clone()));
+        let block_scope = Scope::wrap(Rc::new(scope.clone()));
         let mut last_value = Value::Nil;
 
         for statement in statements {
@@ -1886,7 +1791,7 @@ impl EvalCtx {
           1,
           &[ArgRef::Positional(0), ArgRef::Positional(1)],
           &[Value::Sequence(Rc::new(combined_iter))],
-          &EMPTY_KWARGS,
+          EMPTY_KWARGS,
           self,
           MeshBooleanOp::from_str(builtin_name),
         )
@@ -1903,7 +1808,7 @@ impl EvalCtx {
         ))
       })?;
       acc = self
-        .invoke_callable(callable, &[acc, value], &EMPTY_KWARGS)
+        .invoke_callable(callable, &[acc, value], EMPTY_KWARGS)
         .map_err(|err| err.wrap("Error invoking callable in reduce"))?;
     }
 
@@ -1924,7 +1829,7 @@ impl EvalCtx {
           1,
           &[ArgRef::Positional(0), ArgRef::Positional(1)],
           &[Value::Sequence(seq)],
-          &EMPTY_KWARGS,
+          EMPTY_KWARGS,
           self,
           MeshBooleanOp::from_str(builtin_name),
         )
@@ -1946,7 +1851,7 @@ impl EvalCtx {
         ))
       })?;
       acc = self
-        .invoke_callable(fn_value, &[acc, value], &EMPTY_KWARGS)
+        .invoke_callable(fn_value, &[acc, value], EMPTY_KWARGS)
         .map_err(|err| err.wrap("Error invoking callable in reduce"))?;
     }
     Ok(acc)
@@ -1958,12 +1863,9 @@ impl EvalCtx {
     }
 
     // look it up as a builtin fn
-    let resolved = self
-      .with_resolved_sym(name, |resolved_name| {
-        get_builtin_fn_sig_entry_ix(resolved_name)
-          .map(|ix| (ix, resolve_builtin_impl(resolved_name)))
-      })
-      .unwrap();
+    let resolved = self.with_resolved_sym(name, |resolved_name| {
+      get_builtin_fn_sig_entry_ix(resolved_name).map(|ix| (ix, resolve_builtin_impl(resolved_name)))
+    });
     if let Some((fn_entry_ix, fn_impl)) = resolved {
       return Ok(Value::Callable(Rc::new(Callable::Builtin {
         fn_entry_ix,
@@ -1972,30 +1874,25 @@ impl EvalCtx {
       })));
     }
 
-    self
-      .with_resolved_sym(name, |resolved_name| {
-        Err(ErrorStack::new(format!(
-          "Variable `{resolved_name}` not defined",
-        )))
-      })
-      .unwrap()
+    self.with_resolved_sym(name, |resolved_name| {
+      Err(ErrorStack::new(format!(
+        "Variable `{resolved_name}` not defined",
+      )))
+    })
   }
 
-  fn invoke_closure(
+  fn eval_closure_args(
     &self,
     closure: &Closure,
+    captured_scope: &Rc<Scope>,
     args: &[Value],
     kwargs: &FxHashMap<Sym, Value>,
-  ) -> Result<Value, ErrorStack> {
-    // TODO: should do some basic analysis to see which variables are actually needed and avoid
-    // cloning the rest
-
-    // TODO: should re-use hashmaps here to avoid allocations on each call
-    let closure_scope = Scope::wrap(&closure.captured_scope.upgrade().unwrap());
+    mut insert_arg: impl FnMut(Sym, Value),
+  ) -> Result<(Option<usize>, bool), ErrorStack> {
     let mut pos_arg_ix = 0usize;
     let mut any_args_valid = false;
     let mut invalid_arg_ix = None;
-    for arg in &closure.params {
+    for arg in &*closure.params {
       match &arg.ident {
         // there's no way currently to assign a name to destructured args, so they can only be used
         // positionally
@@ -2003,14 +1900,12 @@ impl EvalCtx {
           if let Some(kwarg) = kwargs.get(name) {
             if let Some(type_hint) = arg.type_hint {
               type_hint.validate_val(kwarg).map_err(|err| {
-                self
-                  .with_resolved_sym(*name, |name| {
-                    err.wrap(format!("Type error for closure kwarg `{name}`"))
-                  })
-                  .unwrap()
+                self.with_resolved_sym(*name, |name| {
+                  err.wrap(format!("Type error for closure kwarg `{name}`"))
+                })
               })?;
             }
-            closure_scope.insert(*name, kwarg.clone());
+            insert_arg(*name, kwarg.clone());
             any_args_valid = true;
             continue;
           }
@@ -2032,14 +1927,14 @@ impl EvalCtx {
         arg
           .ident
           .visit_assignments(self, pos_arg.clone(), &mut |k, v| {
-            closure_scope.insert(k, v);
+            insert_arg(k, v);
             Ok(())
           })?;
         any_args_valid = true;
         pos_arg_ix += 1;
       } else {
         if let Some(default_val) = &arg.default_val {
-          let default_val = self.eval_expr(default_val, &closure_scope, None)?;
+          let default_val = self.eval_expr(default_val, &captured_scope, None)?;
           let default_val = match default_val {
             ControlFlow::Continue(val) => val,
             ControlFlow::Return(_) => {
@@ -2061,7 +1956,7 @@ impl EvalCtx {
           arg
             .ident
             .visit_assignments(self, default_val, &mut |k, v| {
-              closure_scope.insert(k, v);
+              insert_arg(k, v);
               Ok(())
             })?;
         } else {
@@ -2072,9 +1967,52 @@ impl EvalCtx {
       }
     }
 
+    Ok((invalid_arg_ix, any_args_valid))
+  }
+
+  fn invoke_closure(
+    &self,
+    closure: &Closure,
+    args: &[Value],
+    kwargs: &FxHashMap<Sym, Value>,
+  ) -> Result<Value, ErrorStack> {
+    // TODO: should do some basic analysis to see which variables are actually needed and avoid
+    // cloning the rest
+
+    let captured_scope = closure.captured_scope.upgrade().unwrap();
+    let has_arg_placeholders = closure.arg_placeholder_scope.borrow().is_some();
+
+    let (arg_vars, invalid_arg_ix, any_args_valid) = if has_arg_placeholders {
+      let mut arg_vars = closure.arg_placeholder_scope.borrow_mut().take().unwrap();
+      let insert_arg = |name: Sym, val: Value| {
+        let slot = arg_vars.get_mut(&name).unwrap_or_else(|| {
+          panic!("Internal error: closure arg scope missing slot for arg `{name:?}`")
+        });
+        *slot = val;
+      };
+
+      let (invalid_arg_ix, any_args_valid) =
+        self.eval_closure_args(closure, &captured_scope, args, kwargs, insert_arg)?;
+      (arg_vars, invalid_arg_ix, any_args_valid)
+    } else {
+      let mut arg_vars = FxHashMap::default();
+      let insert_arg = |name: Sym, val: Value| {
+        arg_vars.insert(name, val);
+      };
+
+      let (invalid_arg_ix, any_args_valid) =
+        self.eval_closure_args(closure, &captured_scope, args, kwargs, insert_arg)?;
+      (arg_vars, invalid_arg_ix, any_args_valid)
+    };
+
     if let Some(invalid_arg_ix) = invalid_arg_ix {
       let invalid_arg = &closure.params[invalid_arg_ix];
       if any_args_valid {
+        {
+          let mut arg_placeholders = closure.arg_placeholder_scope.borrow_mut();
+          *arg_placeholders = Some(arg_vars);
+        }
+
         return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
           PartiallyAppliedFn {
             inner: Rc::new(Callable::Closure(closure.clone())),
@@ -2090,8 +2028,14 @@ impl EvalCtx {
       }
     }
 
+    let args_scope = Rc::new(Scope {
+      vars: RefCell::new(arg_vars),
+      parent: Some(captured_scope),
+    });
+    let closure_scope = Scope::wrap(args_scope);
+
     let mut out: Value = Value::Nil;
-    for stmt in &closure.body {
+    for stmt in &closure.body.0 {
       match stmt {
         Statement::Expr(expr) => match self.eval_expr(expr, &closure_scope, None)? {
           ControlFlow::Continue(val) => out = val,
@@ -2171,6 +2115,25 @@ impl EvalCtx {
       }
     }
 
+    if has_arg_placeholders {
+      let Scope { parent, vars } = closure_scope;
+      drop(vars);
+      let args_scope = parent.unwrap();
+
+      match Rc::try_unwrap(args_scope) {
+        Ok(args_scope) => {
+          let vars = args_scope.vars.into_inner();
+          let mut arg_placeholders = closure.arg_placeholder_scope.borrow_mut();
+          *arg_placeholders = Some(vars);
+        }
+        Err(_) => {
+          // it's likely that this closure has returned a new closure that wraps the arg scope.
+          //
+          // So, we can't get those placeholders back and have to give up on the optimization.
+        }
+      }
+    }
+
     if let Some(return_type_hint) = closure.return_type_hint {
       return_type_hint.validate_val(&out)?;
     }
@@ -2229,7 +2192,7 @@ impl EvalCtx {
 
         let mut combined_kwargs = paf.kwargs.clone();
         for (key, value) in kwargs {
-          combined_kwargs.insert(key.clone(), value.clone());
+          combined_kwargs.insert(*key, value.clone());
         }
 
         self.invoke_callable(&paf.inner, &combined_args, &combined_kwargs)
@@ -2238,9 +2201,9 @@ impl EvalCtx {
       Callable::ComposedFn(ComposedFn { inner }) => {
         let acc = args;
         let mut iter = inner.iter();
-        let mut acc = self.invoke_callable(iter.next().unwrap(), acc, &EMPTY_KWARGS)?;
+        let mut acc = self.invoke_callable(iter.next().unwrap(), acc, EMPTY_KWARGS)?;
         for callable in iter {
-          acc = self.invoke_callable(callable, &[acc], &EMPTY_KWARGS)?;
+          acc = self.invoke_callable(callable, &[acc], EMPTY_KWARGS)?;
         }
 
         Ok(acc)
@@ -2266,9 +2229,7 @@ impl EvalCtx {
 
             Ok(Value::Vec2(Vec2::new(swiz(a)?, swiz(b)?)))
           }
-          _ => Err(ErrorStack::new(format!(
-            "invalid swizzle; expected 1 or 2 chars"
-          ))),
+          _ => Err(ErrorStack::new("invalid swizzle; expected 1 or 2 chars")),
         }
       }
       Value::Vec3(v3) => {
@@ -2295,9 +2256,7 @@ impl EvalCtx {
 
             Ok(Value::Vec3(Vec3::new(swiz(a)?, swiz(b)?, swiz(c)?)))
           }
-          _ => Err(ErrorStack::new(format!(
-            "invalid swizzle; expected 1 to 3 chars"
-          ))),
+          _ => Err(ErrorStack::new("invalid swizzle; expected 1 to 3 chars")),
         }
       }
       Value::Map(map) => Ok(if let Some(val) = map.get(field) {
@@ -2313,7 +2272,7 @@ impl EvalCtx {
 
   fn eval_field_access(&self, lhs: &Value, field: &Value) -> Result<Value, ErrorStack> {
     match field {
-      Value::String(s) => self.eval_static_field_access(lhs, &s),
+      Value::String(s) => self.eval_static_field_access(lhs, s),
       Value::Int(i) => match lhs {
         Value::Vec2(v2) => match i {
           0 => Ok(Value::Float(v2.x)),
@@ -2363,23 +2322,18 @@ impl EvalCtx {
     }
   }
 
-  pub fn with_resolved_sym<F, R>(&self, sym: Sym, f: F) -> Option<R>
+  pub fn with_resolved_sym<F, R>(&self, sym: Sym, f: F) -> R
   where
     F: FnOnce(&str) -> R,
   {
-    self.interned_symbols.with_resolved(sym, f)
+    self.interned_symbols.with_resolved(sym, f).unwrap()
   }
 
   #[cold]
   fn desymbolicate_kwargs(&self, kwargs: &FxHashMap<Sym, Value>) -> FxHashMap<String, Value> {
     kwargs
       .iter()
-      .map(|(k, v)| {
-        (
-          self.with_resolved_sym(*k, |s| s.to_owned()).unwrap(),
-          v.clone(),
-        )
-      })
+      .map(|(k, v)| (self.with_resolved_sym(*k, |s| s.to_owned()), v.clone()))
       .collect()
   }
 
@@ -2391,7 +2345,7 @@ impl EvalCtx {
 }
 
 pub(crate) fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, ErrorStack> {
-  maybe_init_binop_def_shorthands();
+  maybe_init_op_def_shorthands();
 
   let pairs = GSParser::parse(Rule::program, src)
     .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
@@ -2424,7 +2378,7 @@ pub fn parse_program_maybe_with_prelude(
   include_prelude: bool,
 ) -> Result<Program, ErrorStack> {
   let src = if include_prelude {
-    format!("{}\n{src}", PRELUDE)
+    format!("{PRELUDE}\n{src}")
   } else {
     src
   };
@@ -2433,7 +2387,7 @@ pub fn parse_program_maybe_with_prelude(
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
   for statement in &ast.statements {
-    let _val = match ctx.eval_statement(&statement, &ctx.globals)? {
+    let _val = match ctx.eval_statement(statement, &ctx.globals)? {
       ControlFlow::Continue(val) => val,
       ControlFlow::Break(_) => {
         return Err(ErrorStack::new(
@@ -2441,9 +2395,9 @@ pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorSt
         ))
       }
       ControlFlow::Return(_) => {
-        return Err(ErrorStack::new(format!(
-          "`return` outside of a function is not allowed; found"
-        )));
+        return Err(ErrorStack::new(
+          "`return` outside of a function is not allowed",
+        ));
       }
     };
   }
@@ -3676,7 +3630,7 @@ b = contours | skip(1) | first
     _ => unreachable!(),
   };
   let body = &closure.body;
-  let assignment_rhs = match body.first().unwrap() {
+  let assignment_rhs = match body.0.first().unwrap() {
     Statement::Assignment { expr, .. } => expr,
     _ => unreachable!(),
   };
@@ -3689,7 +3643,7 @@ b = contours | skip(1) | first
 
   // the `radius` returned at the end should not be inlined since its value depends on the closure
   // argument
-  match body.last().unwrap() {
+  match body.0.last().unwrap() {
     Statement::Expr(expr) => match expr {
       Expr::Ident(ident) => {
         assert_eq!(*ident, ctx.interned_symbols.intern("radius"));
@@ -3778,8 +3732,11 @@ x = fn(5)
 #[test]
 fn test_closure_scope_reference_counting() {
   let closure = Expr::Closure {
-    params: vec![],
-    body: crate::ast::ClosureBody(vec![Statement::Expr(Expr::Literal(Value::Int(1)))]),
+    params: Rc::new(vec![]),
+    body: Rc::new(crate::ast::ClosureBody(vec![Statement::Expr(
+      Expr::Literal(Value::Int(1)),
+    )])),
+    arg_placeholder_scope: Closure::build_arg_placeholder_scope(&[]),
     return_type_hint: None,
   };
   let ctx = EvalCtx::default();

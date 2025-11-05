@@ -72,15 +72,9 @@ impl<'a, T> MeshImpl<'a, T> {
       MeshImpl::LinkedMesh { mesh, face_keys } => {
         let face_key = face_keys[face_index];
         let vtxs = mesh.faces[face_key].vertices;
-        let Some(a) = mesh.vertices[vtxs[0]].shading_normal else {
-          return None;
-        };
-        let Some(b) = mesh.vertices[vtxs[1]].shading_normal else {
-          return None;
-        };
-        let Some(c) = mesh.vertices[vtxs[2]].shading_normal else {
-          return None;
-        };
+        let a = mesh.vertices[vtxs[0]].shading_normal?;
+        let b = mesh.vertices[vtxs[1]].shading_normal?;
+        let c = mesh.vertices[vtxs[2]].shading_normal?;
         (a, b, c)
       }
     };

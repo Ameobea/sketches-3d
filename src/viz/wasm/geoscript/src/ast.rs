@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, ops::ControlFlow, ptr::addr_of, rc::Rc, str::FromStr};
+use std::{borrow::Borrow, cell::RefCell, ops::ControlFlow, ptr::addr_of, rc::Rc, str::FromStr};
 
 use fxhash::FxHashMap;
 use pest::iterators::Pair;
@@ -137,9 +137,10 @@ pub enum DestructurePattern {
 }
 
 impl DestructurePattern {
+  #[cold]
   pub fn debug(&self, ctx: &EvalCtx) -> String {
     match self {
-      DestructurePattern::Ident(id) => ctx.with_resolved_sym(*id, |name| name.to_string()).unwrap(),
+      DestructurePattern::Ident(id) => ctx.with_resolved_sym(*id, |name| name.to_string()),
       DestructurePattern::Array(items) => {
         let item_strs: Vec<String> = items.iter().map(|item| item.debug(ctx)).collect();
         format!("[{}]", item_strs.join(", "))
@@ -147,11 +148,7 @@ impl DestructurePattern {
       DestructurePattern::Map(hm) => {
         let item_strs: Vec<String> = hm
           .iter()
-          .map(|(k, v)| {
-            ctx
-              .with_resolved_sym(*k, |key| format!("{key}: {}", v.debug(ctx)))
-              .unwrap()
-          })
+          .map(|(k, v)| ctx.with_resolved_sym(*k, |key| format!("{key}: {}", v.debug(ctx))))
           .collect();
         format!("{{{}}}", item_strs.join(", "))
       }
@@ -166,6 +163,24 @@ impl DestructurePattern {
       }
       DestructurePattern::Map(hm) => {
         Box::new(hm.values().flat_map(DestructurePattern::iter_idents))
+      }
+    }
+  }
+
+  pub fn visit_idents(&self, cb: &mut impl FnMut(Sym)) {
+    match self {
+      DestructurePattern::Ident(ident) => {
+        cb(*ident);
+      }
+      DestructurePattern::Array(destructure_patterns) => {
+        for pat in destructure_patterns {
+          pat.visit_idents(cb);
+        }
+      }
+      DestructurePattern::Map(pat) => {
+        for v in pat.values() {
+          v.visit_idents(cb);
+        }
       }
     }
   }
@@ -191,13 +206,9 @@ impl DestructurePattern {
 
         let mut seq = seq.consume(ctx);
         for pat in destructure_patterns {
-          let res = match seq.next() {
-            Some(res) => res,
-            None => Ok(Value::Nil),
-          };
-          let val = match res {
-            Ok(val) => val,
-            Err(err) => return Err(err),
+          let val = match seq.next() {
+            Some(res) => res?,
+            None => Value::Nil,
           };
           pat.visit_assignments(ctx, val, cb)?;
         }
@@ -212,11 +223,9 @@ impl DestructurePattern {
         };
 
         for (k, v) in pat {
-          let rhs = ctx
-            .with_resolved_sym(*k, |k_resolved| {
-              map.get(k_resolved).cloned().unwrap_or(Value::Nil)
-            })
-            .unwrap();
+          let rhs = ctx.with_resolved_sym(*k, |k_resolved| {
+            map.get(k_resolved).cloned().unwrap_or(Value::Nil)
+          });
           v.visit_assignments(ctx, rhs, cb)?;
         }
         Ok(())
@@ -331,8 +340,9 @@ pub enum Expr {
   },
   Call(FunctionCall),
   Closure {
-    params: Vec<ClosureArg>,
-    body: ClosureBody,
+    params: Rc<Vec<ClosureArg>>,
+    body: Rc<ClosureBody>,
+    arg_placeholder_scope: FxHashMap<Sym, Value>,
     return_type_hint: Option<TypeName>,
   },
   Ident(Sym),
@@ -356,16 +366,13 @@ pub enum Expr {
 impl Expr {
   pub fn as_literal(&self) -> Option<&Value> {
     match self {
-      Expr::Literal(val) => Some(&val),
+      Expr::Literal(val) => Some(val),
       _ => None,
     }
   }
 
   pub fn is_literal(&self) -> bool {
-    match self {
-      Expr::Literal(_) => true,
-      _ => false,
-    }
+    matches!(self, Expr::Literal(_))
   }
 
   fn inline_const_captures(&mut self, ctx: &EvalCtx, local_scope: &mut ScopeTracker) -> bool {
@@ -432,42 +439,43 @@ impl Expr {
             _ => false,
           }
         } else {
-          ctx
-            .with_resolved_sym(*name, |resolved_name| {
-              if FN_SIGNATURE_DEFS.contains_key(resolved_name)
-                || FUNCTION_ALIASES.contains_key(resolved_name)
-              {
-                let builtin_name = if let Some(alias_target) = FUNCTION_ALIASES.get(resolved_name) {
-                  alias_target
-                } else {
-                  resolved_name
-                };
-                let fn_entry_ix = get_builtin_fn_sig_entry_ix(builtin_name).unwrap();
-                let callable = Callable::Builtin {
-                  fn_entry_ix,
-                  fn_impl: |_, _, _, _, _| unreachable!(),
-                  pre_resolved_signature: None,
-                };
-                callable.is_side_effectful()
+          ctx.with_resolved_sym(*name, |resolved_name| {
+            if FN_SIGNATURE_DEFS.contains_key(resolved_name)
+              || FUNCTION_ALIASES.contains_key(resolved_name)
+            {
+              let builtin_name = if let Some(alias_target) = FUNCTION_ALIASES.get(resolved_name) {
+                alias_target
               } else {
-                true
-              }
-            })
-            .unwrap()
+                resolved_name
+              };
+              let fn_entry_ix = get_builtin_fn_sig_entry_ix(builtin_name).unwrap();
+              let callable = Callable::Builtin {
+                fn_entry_ix,
+                fn_impl: |_, _, _, _, _| unreachable!(),
+                pre_resolved_signature: None,
+              };
+              callable.is_side_effectful()
+            } else {
+              true
+            }
+          })
         }
       }
       Expr::Closure {
         params,
         body,
+        arg_placeholder_scope: _,
         return_type_hint: _,
       } => {
         let mut captures_dyn = false;
 
-        for param in params.iter_mut() {
+        let mut params_inner: Vec<_> = (**params).clone();
+        for param in params_inner.iter_mut() {
           if let Some(default_val) = &mut param.default_val {
             captures_dyn |= default_val.inline_const_captures(ctx, local_scope);
           }
         }
+        *params = Rc::new(params_inner);
 
         let mut closure_scope = ScopeTracker::wrap(local_scope);
         for param in params.iter() {
@@ -477,7 +485,7 @@ impl Expr {
               TrackedValue::Arg(ClosureArg {
                 default_val: None,
                 type_hint: match param.ident {
-                  DestructurePattern::Ident(_) => param.type_hint.clone(),
+                  DestructurePattern::Ident(_) => param.type_hint,
                   DestructurePattern::Map(_) => None,
                   DestructurePattern::Array(_) => None,
                 },
@@ -487,7 +495,11 @@ impl Expr {
           }
         }
 
-        captures_dyn || body.inline_const_captures(ctx, &mut closure_scope)
+        let mut body_inner = (**body).clone();
+        let body_captures_dyn = body_inner.inline_const_captures(ctx, &mut closure_scope);
+        *body = Rc::new(body_inner);
+
+        captures_dyn || body_captures_dyn
       }
       Expr::Ident(id) => match local_scope.vars.get(id) {
         Some(TrackedValue::Const(resolved)) => {
@@ -791,13 +803,14 @@ fn eval_range(start: &Value, end: Option<&Value>, inclusive: bool) -> Result<Val
 }
 
 // it would be great if these could somehow be made const rather than static
-static mut BINOP_DEF_SHORTHANDS_INITIALIZED: bool = false;
+static mut OP_DEF_SHORTHANDS_INITIALIZED: bool = false;
 
-static mut BINOP_DEF_IX_TABLE: [(usize, bool); 18] = [(std::usize::MAX, false); 18];
+static mut BINOP_DEF_IX_TABLE: [(usize, bool); 18] = [(usize::MAX, false); 18];
+static mut UNOP_DEF_IX_TABLE: [usize; 3] = [usize::MAX; 3];
 
-pub(crate) fn maybe_init_binop_def_shorthands() {
+pub(crate) fn maybe_init_op_def_shorthands() {
   unsafe {
-    if BINOP_DEF_SHORTHANDS_INITIALIZED {
+    if OP_DEF_SHORTHANDS_INITIALIZED {
       return;
     }
 
@@ -821,6 +834,12 @@ pub(crate) fn maybe_init_binop_def_shorthands() {
       (get_builtin_fn_sig_entry_ix("bit_or").unwrap(), false), // Pipeline
       (get_builtin_fn_sig_entry_ix("map").unwrap(), true),
     ];
+
+    UNOP_DEF_IX_TABLE = [
+      get_builtin_fn_sig_entry_ix("neg").unwrap(),
+      get_builtin_fn_sig_entry_ix("pos").unwrap(),
+      get_builtin_fn_sig_entry_ix("not").unwrap(),
+    ];
   }
 }
 
@@ -837,7 +856,7 @@ impl BinOp {
         // eval as a pipeline operator if the rhs is a callable
         if let Some(callable) = rhs.as_callable() {
           return ctx
-            .invoke_callable(callable, &[lhs.clone()], &EMPTY_KWARGS)
+            .invoke_callable(callable, &[lhs.clone()], EMPTY_KWARGS)
             .map_err(|err| err.wrap("Error invoking callable in pipeline"));
         }
       }
@@ -854,36 +873,32 @@ impl BinOp {
             as *const (usize, bool))
             .add(*self as usize)
             .read();
-          let (arg1, arg2) = if args_flipped {
-            (&rhs, &lhs)
-          } else {
-            (&lhs, &rhs)
-          };
+          let (arg1, arg2) = if args_flipped { (rhs, lhs) } else { (lhs, rhs) };
           get_binop_def_ix(ctx, fn_sig_entry_ix, arg1, arg2)?
         }
       };
 
       match self {
-        BinOp::Add => add_impl(def_ix, &lhs, &rhs),
-        BinOp::Sub => sub_impl(ctx, def_ix, &lhs, &rhs),
-        BinOp::Mul => mul_impl(def_ix, &lhs, &rhs),
-        BinOp::Div => div_impl(def_ix, &lhs, &rhs),
-        BinOp::Mod => mod_impl(def_ix, &lhs, &rhs),
-        BinOp::Gt => numeric_bool_op_impl::<{ BoolOp::Gt }>(def_ix, &lhs, &rhs),
-        BinOp::Lt => numeric_bool_op_impl::<{ BoolOp::Lt }>(def_ix, &lhs, &rhs),
-        BinOp::Gte => numeric_bool_op_impl::<{ BoolOp::Gte }>(def_ix, &lhs, &rhs),
-        BinOp::Lte => numeric_bool_op_impl::<{ BoolOp::Lte }>(def_ix, &lhs, &rhs),
-        BinOp::Eq => eq_impl(def_ix, &lhs, &rhs),
-        BinOp::Neq => neq_impl(def_ix, &lhs, &rhs),
-        BinOp::And => and_impl(def_ix, &lhs, &rhs),
-        BinOp::Or => or_impl(def_ix, &lhs, &rhs),
-        BinOp::BitAnd => bit_and_impl(ctx, def_ix, &lhs, &rhs),
+        BinOp::Add => add_impl(def_ix, lhs, rhs),
+        BinOp::Sub => sub_impl(ctx, def_ix, lhs, rhs),
+        BinOp::Mul => mul_impl(def_ix, lhs, rhs),
+        BinOp::Div => div_impl(def_ix, lhs, rhs),
+        BinOp::Mod => mod_impl(def_ix, lhs, rhs),
+        BinOp::Gt => numeric_bool_op_impl::<{ BoolOp::Gt }>(def_ix, lhs, rhs),
+        BinOp::Lt => numeric_bool_op_impl::<{ BoolOp::Lt }>(def_ix, lhs, rhs),
+        BinOp::Gte => numeric_bool_op_impl::<{ BoolOp::Gte }>(def_ix, lhs, rhs),
+        BinOp::Lte => numeric_bool_op_impl::<{ BoolOp::Lte }>(def_ix, lhs, rhs),
+        BinOp::Eq => eq_impl(def_ix, lhs, rhs),
+        BinOp::Neq => neq_impl(def_ix, lhs, rhs),
+        BinOp::And => and_impl(def_ix, lhs, rhs),
+        BinOp::Or => or_impl(def_ix, lhs, rhs),
+        BinOp::BitAnd => bit_and_impl(ctx, def_ix, lhs, rhs),
         BinOp::Map => {
           // this operator acts the same as `lhs | map(rhs)`
-          map_impl(ctx, def_ix, &rhs, &lhs)
+          map_impl(ctx, def_ix, rhs, lhs)
         }
         // treating as bit-or
-        BinOp::Pipeline => bit_or_impl(ctx, def_ix, &lhs, &rhs),
+        BinOp::Pipeline => bit_or_impl(ctx, def_ix, lhs, rhs),
         BinOp::Range | BinOp::RangeInclusive => unreachable!("previously special-cased"),
       }
     }
@@ -923,34 +938,17 @@ pub enum PrefixOp {
 
 impl PrefixOp {
   pub fn apply(&self, ctx: &EvalCtx, val: &Value) -> Result<Value, ErrorStack> {
+    let fn_sig_entry_ix = unsafe {
+      (addr_of!(UNOP_DEF_IX_TABLE) as *const usize)
+        .add(*self as usize)
+        .read()
+    };
+    let def_ix = get_unop_def_ix(ctx, fn_sig_entry_ix, val)?;
+
     match self {
-      PrefixOp::Neg => {
-        let def_ix = get_unop_def_ix(
-          ctx,
-          get_builtin_fn_sig_entry_ix("neg").unwrap(),
-          &FN_SIGNATURE_DEFS["neg"].signatures,
-          val,
-        )?;
-        neg_impl(def_ix, val)
-      }
-      PrefixOp::Pos => {
-        let def_ix = get_unop_def_ix(
-          ctx,
-          get_builtin_fn_sig_entry_ix("pos").unwrap(),
-          &FN_SIGNATURE_DEFS["pos"].signatures,
-          val,
-        )?;
-        pos_impl(def_ix, val)
-      }
-      PrefixOp::Not => {
-        let def_ix = get_unop_def_ix(
-          ctx,
-          get_builtin_fn_sig_entry_ix("not").unwrap(),
-          &FN_SIGNATURE_DEFS["not"].signatures,
-          val,
-        )?;
-        not_impl(def_ix, val)
-      }
+      PrefixOp::Neg => neg_impl(def_ix, val),
+      PrefixOp::Pos => pos_impl(def_ix, val),
+      PrefixOp::Not => not_impl(def_ix, val),
     }
   }
 }
@@ -1130,8 +1128,9 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       };
 
       Ok(Expr::Closure {
-        params,
-        body,
+        arg_placeholder_scope: Closure::build_arg_placeholder_scope(&params),
+        params: Rc::new(params),
+        body: Rc::new(body),
         return_type_hint,
       })
     }
@@ -1722,18 +1721,9 @@ fn pre_resolve_expr_type(
     Expr::Literal(v) => Some(v.get_type()),
     Expr::Ident(id) => match scope_tracker.get(*id) {
       Some(TrackedValueRef::Const(val)) => Some(val.get_type()),
-      Some(TrackedValueRef::Arg(arg)) => {
-        if let Some(type_hint) = &arg.type_hint {
-          Some((*type_hint).into())
-        } else {
-          return None;
-        }
-      }
+      Some(TrackedValueRef::Arg(arg)) => arg.type_hint.map(Into::into),
       Some(TrackedValueRef::Dyn { type_hint }) => type_hint.map(Into::into),
-      None => {
-        // error will happen later
-        return None;
-      }
+      None => None, // error will happen later
     },
     Expr::BinOp {
       op,
@@ -1745,9 +1735,8 @@ fn pre_resolve_expr_type(
         BinOp::Range | BinOp::RangeInclusive => return Some(ArgType::Sequence),
         BinOp::Pipeline => {
           let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
-          match rhs_ty {
-            ArgType::Mesh => return Some(ArgType::Mesh),
-            _ => (),
+          if rhs_ty == ArgType::Mesh {
+            return Some(ArgType::Mesh);
           }
 
           match &**rhs {
@@ -1815,19 +1804,19 @@ fn pre_resolve_expr_type(
         PrefixOp::Neg => get_unop_return_ty(
           ctx,
           "neg",
-          &FN_SIGNATURE_DEFS["neg"].signatures,
+          FN_SIGNATURE_DEFS["neg"].signatures,
           &example_val,
         ),
         PrefixOp::Pos => get_unop_return_ty(
           ctx,
           "pos",
-          &FN_SIGNATURE_DEFS["pos"].signatures,
+          FN_SIGNATURE_DEFS["pos"].signatures,
           &example_val,
         ),
         PrefixOp::Not => get_unop_return_ty(
           ctx,
           "not",
-          &FN_SIGNATURE_DEFS["not"].signatures,
+          FN_SIGNATURE_DEFS["not"].signatures,
           &example_val,
         ),
       };
@@ -1970,7 +1959,7 @@ fn maybe_pre_resolve_bulitin_call_signature(
   // in order to re-use `get_args` code, we create fake args and kwargs of the types we're expecting
   let Ok(args) = arg_tys
     .into_iter()
-    .map(|ty| Ok(ty.build_example_val().ok_or(())?))
+    .map(|ty| ty.build_example_val().ok_or(()))
     .collect::<Result<Vec<Value>, ()>>()
   else {
     return Ok(None);
@@ -2064,7 +2053,7 @@ fn fold_constants<'a>(
         }
       }
 
-      let val = op.apply(&ctx, lhs_val, rhs_val, *pre_resolved_def_ix)?;
+      let val = op.apply(ctx, lhs_val, rhs_val, *pre_resolved_def_ix)?;
       *expr = val.into_literal_expr();
       Ok(())
     }
@@ -2148,13 +2137,11 @@ fn fold_constants<'a>(
                 *target = FunctionCallTarget::Literal(callable.clone());
               }
               other => {
-                return ctx
-                  .with_resolved_sym(*name, |name| {
-                    Err(ErrorStack::new(format!(
-                      "Tried to call non-callable value: {name} = {other:?}",
-                    )))
-                  })
-                  .unwrap()
+                return ctx.with_resolved_sym(*name, |name| {
+                  Err(ErrorStack::new(format!(
+                    "Tried to call non-callable value: {name} = {other:?}",
+                  )))
+                })
               }
             },
             // calling a closure argument or dynamic captured variable
@@ -2163,8 +2150,8 @@ fn fold_constants<'a>(
           }
         } else {
           // try to resolve it as a builtin
-          let (fn_entry_ix, fn_impl) = ctx
-            .with_resolved_sym(*name, |name| match FN_SIGNATURE_DEFS.get(name) {
+          let (fn_entry_ix, fn_impl) =
+            ctx.with_resolved_sym(*name, |name| match FN_SIGNATURE_DEFS.get(name) {
               Some(_) => Ok((
                 get_builtin_fn_sig_entry_ix(name).unwrap(),
                 resolve_builtin_impl(name),
@@ -2174,21 +2161,13 @@ fn fold_constants<'a>(
                   get_builtin_fn_sig_entry_ix(alias).unwrap(),
                   resolve_builtin_impl(alias),
                 )),
-                None => {
-                  return Err(ErrorStack::new(format!(
-                    "Variable or function not found: {name}",
-                  )));
-                }
+                None => Err(ErrorStack::new(format!(
+                  "Variable or function not found: {name}",
+                ))),
               },
-            })
-            .unwrap()?;
-          let pre_resolved_signature = maybe_pre_resolve_bulitin_call_signature(
-            ctx,
-            local_scope,
-            fn_entry_ix,
-            &args,
-            &kwargs,
-          )?;
+            })?;
+          let pre_resolved_signature =
+            maybe_pre_resolve_bulitin_call_signature(ctx, local_scope, fn_entry_ix, args, kwargs)?;
           *target = FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
             fn_entry_ix,
             fn_impl,
@@ -2207,7 +2186,7 @@ fn fold_constants<'a>(
       };
       let kwarg_vals = match kwargs
         .iter()
-        .map(|(k, v)| v.as_literal().cloned().map(|v| (k.clone(), v)).ok_or(()))
+        .map(|(k, v)| v.as_literal().cloned().map(|v| (*k, v)).ok_or(()))
         .collect::<Result<FxHashMap<_, _>, _>>()
       {
         Ok(kwarg_vals) => kwarg_vals,
@@ -2238,7 +2217,7 @@ fn fold_constants<'a>(
               TrackedValueRef::Arg(_) => (),
               TrackedValueRef::Dyn { .. } => (),
             }
-            return Ok(());
+            Ok(())
           } else {
             unreachable!(
               "If this was a builtin, it would have been resolved earlier.  If it was undefined, \
@@ -2258,13 +2237,16 @@ fn fold_constants<'a>(
     Expr::Closure {
       params,
       body,
+      arg_placeholder_scope,
       return_type_hint,
     } => {
-      for param in params.iter_mut() {
+      let mut params_inner = (**params).clone();
+      for param in &mut params_inner {
         if let Some(default_val) = &mut param.default_val {
           optimize_expr(ctx, local_scope, default_val)?;
         }
       }
+      *params = Rc::new(params_inner);
 
       let mut closure_scope = ScopeTracker::wrap(local_scope);
       for param in params.iter() {
@@ -2274,7 +2256,7 @@ fn fold_constants<'a>(
             TrackedValue::Arg(ClosureArg {
               default_val: None,
               type_hint: match param.ident {
-                DestructurePattern::Ident(_) => param.type_hint.clone(),
+                DestructurePattern::Ident(_) => param.type_hint,
                 DestructurePattern::Map(_) => None,
                 DestructurePattern::Array(_) => None,
               },
@@ -2293,22 +2275,24 @@ fn fold_constants<'a>(
         parent: Some(local_scope),
       };
 
-      for stmt in &mut body.0 {
+      let mut body_inner = (**body).clone();
+      for stmt in &mut body_inner.0 {
         optimize_statement(ctx, &mut closure_scope, stmt)?;
       }
+      *body = Rc::new(body_inner);
 
       for (name, val) in closure_scope.vars.iter() {
         match val {
           TrackedValue::Dyn { type_hint } => {
             local_scope_with_args.set(
-              name.clone(),
+              *name,
               TrackedValue::Dyn {
                 type_hint: *type_hint,
               },
             );
           }
           TrackedValue::Arg(arg) => {
-            local_scope_with_args.set(name.clone(), TrackedValue::Arg(arg.clone()));
+            local_scope_with_args.set(*name, TrackedValue::Arg(arg.clone()));
           }
           TrackedValue::Const(_) => (),
         }
@@ -2322,15 +2306,19 @@ fn fold_constants<'a>(
         }
       }
 
-      if body.inline_const_captures(ctx, &mut local_scope_with_args) {
+      let mut body_inner = (**body).clone();
+      let body_captures_dyn = body_inner.inline_const_captures(ctx, &mut local_scope_with_args);
+      *body = Rc::new(body_inner);
+      if body_captures_dyn {
         return Ok(());
       }
 
       *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Closure(Closure {
-        params: params.clone(),
-        body: body.0.clone(),
+        params: Rc::clone(&params),
+        body: Rc::clone(&body),
         captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-        return_type_hint: return_type_hint.clone(),
+        arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
+        return_type_hint: *return_type_hint,
       }))));
 
       Ok(())
@@ -2350,22 +2338,20 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
-      let cf = ctx
-        .with_resolved_sym(id, |resolved_name| {
-          if FN_SIGNATURE_DEFS.contains_key(resolved_name)
-            || FUNCTION_ALIASES.contains_key(resolved_name)
-          {
-            *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Builtin {
-              fn_entry_ix: get_builtin_fn_sig_entry_ix(resolved_name).unwrap(),
-              fn_impl: resolve_builtin_impl(resolved_name),
-              pre_resolved_signature: None,
-            })));
-            return ControlFlow::Break(());
-          } else {
-            ControlFlow::Continue(())
-          }
-        })
-        .unwrap();
+      let cf = ctx.with_resolved_sym(id, |resolved_name| {
+        if FN_SIGNATURE_DEFS.contains_key(resolved_name)
+          || FUNCTION_ALIASES.contains_key(resolved_name)
+        {
+          *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Builtin {
+            fn_entry_ix: get_builtin_fn_sig_entry_ix(resolved_name).unwrap(),
+            fn_impl: resolve_builtin_impl(resolved_name),
+            pre_resolved_signature: None,
+          })));
+          ControlFlow::Break(())
+        } else {
+          ControlFlow::Continue(())
+        }
+      });
       match cf {
         ControlFlow::Break(()) => return Ok(()),
         ControlFlow::Continue(()) => (),
@@ -2456,17 +2442,15 @@ fn fold_constants<'a>(
         conditional_scope_var_names: impl Iterator<Item = Sym>,
       ) {
         for name in conditional_scope_var_names {
-          if let Some(val) = parent_scope.get(name) {
-            if let TrackedValueRef::Const(_) = val {
-              parent_scope.set(
-                name,
-                TrackedValue::Arg(ClosureArg {
-                  ident: DestructurePattern::Ident(name),
-                  type_hint: None,
-                  default_val: None,
-                }),
-              );
-            }
+          if let Some(TrackedValueRef::Const(_)) = parent_scope.get(name) {
+            parent_scope.set(
+              name,
+              TrackedValue::Arg(ClosureArg {
+                ident: DestructurePattern::Ident(name),
+                type_hint: None,
+                default_val: None,
+              }),
+            );
           }
         }
       }
@@ -2634,10 +2618,11 @@ fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
     Expr::Closure {
       params,
       body,
+      arg_placeholder_scope: _,
       return_type_hint: _,
     } => {
       let mut dyn_type = DynType::Const;
-      for param in params {
+      for param in &**params {
         if let Some(default_val) = &param.default_val {
           dyn_type = dyn_type | get_dyn_type(default_val, local_scope);
         } else {
@@ -2760,21 +2745,21 @@ fn optimize_statement<'a>(
       optimize_expr(ctx, local_scope, expr)?;
 
       local_scope.set(
-        name.clone(),
+        *name,
         match expr.as_literal() {
           Some(val) => TrackedValue::Const(val.clone()),
           None => {
-            let dyn_type = get_dyn_type(&expr, local_scope);
+            let dyn_type = get_dyn_type(expr, local_scope);
             let pre_resolved_ty = match *type_hint {
               Some(hint) => Some(hint),
-              None => match pre_resolve_expr_type(ctx, local_scope, &expr) {
+              None => match pre_resolve_expr_type(ctx, local_scope, expr) {
                 Some(ty) => ty.into(),
                 None => None,
               },
             };
             match dyn_type {
               DynType::Arg => TrackedValue::Arg(ClosureArg {
-                ident: DestructurePattern::Ident(name.clone()),
+                ident: DestructurePattern::Ident(*name),
                 type_hint: pre_resolved_ty,
                 default_val: None,
               }),
@@ -2843,7 +2828,7 @@ fn optimize_statement<'a>(
 pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
   let mut local_scope = ScopeTracker::default();
   for stmt in &mut ast.statements {
-    optimize_statement(&ctx, &mut local_scope, stmt)?;
+    optimize_statement(ctx, &mut local_scope, stmt)?;
   }
   Ok(())
 }
@@ -3065,7 +3050,7 @@ y = cb(2)
     },
     _ => unreachable!(),
   };
-  let call_target = match &closure_body[0] {
+  let call_target = match &closure_body.0[0] {
     Statement::Expr(expr) => match expr {
       Expr::Call(FunctionCall {
         target: FunctionCallTarget::Literal(target),
@@ -3141,7 +3126,7 @@ x = f(2, 3)
     },
     _ => unreachable!(),
   };
-  let binop_def_ix = match &closure_body[0] {
+  let binop_def_ix = match &closure_body.0[0] {
     Statement::Expr(expr) => match expr {
       Expr::BinOp {
         pre_resolved_def_ix,
@@ -3233,7 +3218,7 @@ fn test_preresolve_binop_def_ix_advanced() {
     _ => unreachable!(),
   };
 
-  let stmt0 = &cb.body[0];
+  let stmt0 = &cb.body.0[0];
   match stmt0 {
     Statement::Assignment {
       name: _,
@@ -3274,7 +3259,7 @@ fn test_preresolve_binop_def_ix_advanced() {
   };
 
   // noise > 0.5
-  let stmt1 = &cb.body[1];
+  let stmt1 = &cb.body.0[1];
   match stmt1 {
     Statement::Expr(expr) => match expr {
       Expr::BinOp {

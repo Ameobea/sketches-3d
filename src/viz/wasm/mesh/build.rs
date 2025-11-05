@@ -72,9 +72,8 @@ fn main() {
   std::fs::write(
     dest_path,
     format!(
-      "pub const UTAH_TEAPOT_VERTICES: &[[f32; 3]] = &{:?};\npub const UTAH_TEAPOT_INDICES: \
-       &[u16] = &{:?};\n",
-      vertices, indices
+      "pub const UTAH_TEAPOT_VERTICES: &[[f32; 3]] = &{vertices:?};\npub const \
+       UTAH_TEAPOT_INDICES: &[u16] = &{indices:?};\n"
     ),
   )
   .unwrap();
@@ -92,9 +91,8 @@ fn main() {
   std::fs::write(
     dest_path,
     format!(
-      "pub const STANFORD_BUNNY_VERTICES: &[[f32; 3]] = &{:?};\npub const STANFORD_BUNNY_INDICES: \
-       &[u16] = &{:?};\n",
-      vertices, indices
+      "pub const STANFORD_BUNNY_VERTICES: &[[f32; 3]] = &{vertices:?};\npub const \
+       STANFORD_BUNNY_INDICES: &[u16] = &{indices:?};\n"
     ),
   )
   .unwrap();
@@ -104,9 +102,8 @@ fn main() {
   std::fs::write(
     dest_path,
     format!(
-      "pub const SUZANNE_VERTICES: &[[f32; 3]] = &{:?};\npub const SUZANNE_INDICES: &[u16] = \
-       &{:?};\n",
-      vertices, indices
+      "pub const SUZANNE_VERTICES: &[[f32; 3]] = &{vertices:?};\npub const SUZANNE_INDICES: \
+       &[u16] = &{indices:?};\n"
     ),
   )
   .unwrap();

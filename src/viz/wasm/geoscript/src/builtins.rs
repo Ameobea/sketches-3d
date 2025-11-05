@@ -128,8 +128,8 @@ fn eval_numeric_bool_op(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
       let result = match op {
         BoolOp::Gte => a >= b,
         BoolOp::Lte => a <= b,
@@ -139,8 +139,8 @@ fn eval_numeric_bool_op(
       Ok(Value::Bool(result))
     }
     1 => {
-      let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let result = match op {
         BoolOp::Gte => a >= b,
         BoolOp::Lte => a <= b,
@@ -196,14 +196,13 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
             let transformed_pos =
               lhs.transform.try_inverse().unwrap() * rhs.transform * old_vtx.position.push(1.);
 
-            let new_vtx_key = combined.vertices.insert(Vertex {
+            combined.vertices.insert(Vertex {
               position: transformed_pos.xyz(),
               displacement_normal: old_vtx.displacement_normal,
               shading_normal: old_vtx.shading_normal,
               edges: SmallVec::new(),
               _padding: Default::default(),
-            });
-            new_vtx_key
+            })
           })
         });
         combined.add_face::<false>(new_vtx_keys, ());
@@ -238,7 +237,7 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       0,
       &[ArgRef::Positional(1), ArgRef::Positional(0)],
       &[lhs.clone(), rhs.clone()],
-      &EMPTY_KWARGS,
+      EMPTY_KWARGS,
     ),
     // vec3 + float
     6 => {
@@ -305,7 +304,7 @@ pub(crate) fn sub_impl(
         0,
         &[ArgRef::Positional(0), ArgRef::Positional(1)],
         &[lhs.clone(), rhs.clone()],
-        &EMPTY_KWARGS,
+        EMPTY_KWARGS,
         ctx,
         MeshBooleanOp::Difference,
       )
@@ -314,7 +313,7 @@ pub(crate) fn sub_impl(
       0,
       &[ArgRef::Positional(1), ArgRef::Positional(0)],
       &[lhs.clone(), Value::Vec3(-rhs.as_vec3().unwrap())],
-      &EMPTY_KWARGS,
+      EMPTY_KWARGS,
     ),
     // vec3 - float
     6 => {
@@ -375,7 +374,7 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       1,
       &[ArgRef::Positional(1), ArgRef::Positional(0)],
       &[lhs.clone(), rhs.clone()],
-      &EMPTY_KWARGS,
+      EMPTY_KWARGS,
     ),
     // vec2 * vec2
     7 => {
@@ -573,7 +572,7 @@ pub(crate) fn bit_and_impl(
       0,
       &[ArgRef::Positional(0), ArgRef::Positional(1)],
       &[lhs.clone(), rhs.clone()],
-      &EMPTY_KWARGS,
+      EMPTY_KWARGS,
       ctx,
       MeshBooleanOp::Intersection,
     ),
@@ -597,7 +596,7 @@ pub(crate) fn bit_or_impl(
       0,
       &[ArgRef::Positional(0), ArgRef::Positional(1)],
       &[lhs.clone(), rhs.clone()],
-      &EMPTY_KWARGS,
+      EMPTY_KWARGS,
       ctx,
       MeshBooleanOp::Union,
     ),
@@ -628,7 +627,7 @@ pub(crate) fn map_impl(
       0,
       &[ArgRef::Positional(0), ArgRef::Positional(1)],
       &[fn_value.clone(), seq.clone()],
-      &EMPTY_KWARGS,
+      EMPTY_KWARGS,
     ),
     _ => unimplemented!(),
   }
@@ -643,9 +642,9 @@ fn fold_while_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let init = arg_refs[0].resolve(args, &kwargs);
-      let cb = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
-      let seq = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
+      let init = arg_refs[0].resolve(args, kwargs);
+      let cb = arg_refs[1].resolve(args, kwargs).as_callable().unwrap();
+      let seq = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
 
       let mut acc = init.clone();
       for next in seq.consume(ctx) {
@@ -653,7 +652,7 @@ fn fold_while_impl(
           err.wrap("Error produced while consuming sequence passed to `fold_while`")
         })?;
         let out = ctx
-          .invoke_callable(cb, &[acc.clone(), next], &EMPTY_KWARGS)
+          .invoke_callable(cb, &[acc.clone(), next], EMPTY_KWARGS)
           .map_err(|err| err.wrap("Error in user-provided callback to `fold_while`"))?;
         if out.is_nil() {
           return Ok(acc);
@@ -677,8 +676,8 @@ pub(crate) fn warp_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let warp_fn = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let warp_fn = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
 
       let mut needs_displacement_normals_computed = false;
       let mut new_mesh = (*mesh.mesh).clone();
@@ -699,7 +698,7 @@ pub(crate) fn warp_impl(
               Value::Vec3(vtx.position),
               Value::Vec3(vtx.displacement_normal.unwrap_or(Vec3::zeros())),
             ],
-            &EMPTY_KWARGS,
+            EMPTY_KWARGS,
           )
           .map_err(|err| err.wrap("error calling warp cb"))?;
         let warped_pos = warped_pos.as_vec3().ok_or_else(|| {
@@ -712,7 +711,7 @@ pub(crate) fn warp_impl(
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(new_mesh),
-        transform: mesh.transform.clone(),
+        transform: mesh.transform,
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
@@ -790,16 +789,16 @@ pub(crate) fn translate_impl(
 ) -> Result<Value, ErrorStack> {
   let (translation, obj) = match def_ix {
     0 => {
-      let translation = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let obj = arg_refs[1].resolve(args, &kwargs);
+      let translation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let obj = arg_refs[1].resolve(args, kwargs);
       (*translation, obj)
     }
     1 => {
-      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       let translation = Vec3::new(x, y, z);
-      let obj = arg_refs[3].resolve(args, &kwargs);
+      let obj = arg_refs[3].resolve(args, kwargs);
       (translation, obj)
     }
     _ => unimplemented!(),
@@ -829,13 +828,13 @@ pub(crate) fn scale_impl(
 ) -> Result<Value, ErrorStack> {
   let (scale, mesh) = match def_ix {
     0 => {
-      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      (Vec3::new(x, y, z), arg_refs[3].resolve(args, &kwargs))
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      (Vec3::new(x, y, z), arg_refs[3].resolve(args, kwargs))
     }
     1 => {
-      let val = arg_refs[0].resolve(args, &kwargs);
+      let val = arg_refs[0].resolve(args, kwargs);
       let scale = match val {
         Value::Vec3(scale) => *scale,
         Value::Float(scale) => Vec3::new(*scale, *scale, *scale),
@@ -850,7 +849,7 @@ pub(crate) fn scale_impl(
         }
       };
 
-      let mesh = arg_refs[1].resolve(args, &kwargs);
+      let mesh = arg_refs[1].resolve(args, kwargs);
       (scale, mesh)
     }
     _ => unimplemented!(),
@@ -900,8 +899,8 @@ fn ambient_light_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let color = arg_refs[0].resolve(args, &kwargs); // vec3 or int
-      let intensity = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let color = arg_refs[0].resolve(args, kwargs); // vec3 or int
+      let intensity = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
 
       let light = AmbientLight::new(color, intensity)
         .map_err(|err| ErrorStack::new(format!("Error creating ambient light: {err}")))?;
@@ -919,16 +918,16 @@ fn dir_light_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let target = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let color = arg_refs[1].resolve(args, &kwargs); // vec3 or int
-      let intensity = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let cast_shadow = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
-      let shadow_map_size = arg_refs[4].resolve(args, &kwargs); // map or int
-      let shadow_map_radius = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
-      let shadow_map_blur_samples = arg_refs[6].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let shadow_map_type = arg_refs[7].resolve(args, &kwargs).as_str().unwrap();
-      let shadow_map_bias = arg_refs[8].resolve(args, &kwargs).as_float().unwrap();
-      let shadow_camera = arg_refs[9].resolve(args, &kwargs).as_map().unwrap();
+      let target = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let color = arg_refs[1].resolve(args, kwargs); // vec3 or int
+      let intensity = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let cast_shadow = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let shadow_map_size = arg_refs[4].resolve(args, kwargs); // map or int
+      let shadow_map_radius = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
+      let shadow_map_blur_samples = arg_refs[6].resolve(args, kwargs).as_int().unwrap() as usize;
+      let shadow_map_type = arg_refs[7].resolve(args, kwargs).as_str().unwrap();
+      let shadow_map_bias = arg_refs[8].resolve(args, kwargs).as_float().unwrap();
+      let shadow_camera = arg_refs[9].resolve(args, kwargs).as_map().unwrap();
       let light = DirectionalLight::new(
         target,
         color,
@@ -958,10 +957,10 @@ fn set_material_impl(
   match def_ix {
     0 => {
       let material = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_material(ctx)
         .unwrap()?;
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
 
       let mut mesh_handle = mesh.clone(true, true, true);
       mesh_handle.material = Some(material.clone());
@@ -982,7 +981,7 @@ fn set_default_material_impl(
   match def_ix {
     0 => {
       let material = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_material(ctx)
         .unwrap()?;
       ctx.default_material.replace(Some(material.clone()));
@@ -1002,7 +1001,7 @@ fn set_rng_seed_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       unsafe {
         ctx
           .rng
@@ -1040,7 +1039,7 @@ fn set_sharp_angle_threshold_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let angle_degrees = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let angle_degrees = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       ctx.sharp_angle_threshold_degrees.replace(angle_degrees);
       Ok(Value::Nil)
     }
@@ -1057,8 +1056,8 @@ fn mesh_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let verts = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
-      let indices = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let verts = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
+      let indices = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
 
       let verts: Vec<Vec3> = verts
         .consume(ctx)
@@ -1136,14 +1135,14 @@ fn call_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let callable = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      ctx.invoke_callable(callable, &[], &EMPTY_KWARGS)
+      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      ctx.invoke_callable(callable, &[], EMPTY_KWARGS)
     }
     1 => {
-      let callable = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let call_args = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let call_args = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       let args = call_args.consume(ctx).collect::<Result<Vec<_>, _>>()?;
-      ctx.invoke_callable(callable, &args, &EMPTY_KWARGS)
+      ctx.invoke_callable(callable, &args, EMPTY_KWARGS)
     }
     _ => unimplemented!(),
   }
@@ -1157,11 +1156,11 @@ fn fbm_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Float(fbm_3d(0, 4, 1., 0.5, 2., *pos)))
     }
     1 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       if seed < 0 || seed > u32::MAX as i64 {
         return Err(ErrorStack::new(format!(
           "Seed for fbm must be in range [0, {}], found: {seed}",
@@ -1169,11 +1168,11 @@ fn fbm_impl(
         )));
       }
       let seed = seed as u32;
-      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
-      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-      let pos = arg_refs[5].resolve(args, &kwargs).as_vec3().unwrap();
+      let octaves = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, kwargs).as_vec3().unwrap();
 
       Ok(Value::Float(fbm_3d(
         seed,
@@ -1185,11 +1184,11 @@ fn fbm_impl(
       )))
     }
     2 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float(fbm_2d(0, 4, 1., 0.5, 2., *pos)))
     }
     3 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       if seed < 0 || seed > u32::MAX as i64 {
         return Err(ErrorStack::new(format!(
           "Seed for fbm must be in range [0, {}], found: {seed}",
@@ -1197,11 +1196,11 @@ fn fbm_impl(
         )));
       }
       let seed = seed as u32;
-      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
-      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-      let pos = arg_refs[5].resolve(args, &kwargs).as_vec2().unwrap();
+      let octaves = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, kwargs).as_vec2().unwrap();
 
       Ok(Value::Float(fbm_2d(
         seed,
@@ -1213,11 +1212,11 @@ fn fbm_impl(
       )))
     }
     4 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(fbm_1d(0, 4, 1., 0.5, 2., pos)))
     }
     5 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       if seed < 0 || seed > u32::MAX as i64 {
         return Err(ErrorStack::new(format!(
           "Seed for fbm must be in range [0, {}], found: {seed}",
@@ -1225,11 +1224,11 @@ fn fbm_impl(
         )));
       }
       let seed = seed as u32;
-      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
-      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-      let pos = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
+      let octaves = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
 
       Ok(Value::Float(fbm_1d(
         seed,
@@ -1252,11 +1251,11 @@ fn curl_noise_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(curl_noise_3d(0, 4, 1., 0.5, 2., *pos)))
     }
     1 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       if seed < 0 || seed > u32::MAX as i64 {
         return Err(ErrorStack::new(format!(
           "Seed for fbm must be in range [0, {}], found: {seed}",
@@ -1264,11 +1263,11 @@ fn curl_noise_impl(
         )));
       }
       let seed = seed as u32;
-      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
-      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-      let pos = arg_refs[5].resolve(args, &kwargs).as_vec3().unwrap();
+      let octaves = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, kwargs).as_vec3().unwrap();
 
       Ok(Value::Vec3(curl_noise_3d(
         seed,
@@ -1280,11 +1279,11 @@ fn curl_noise_impl(
       )))
     }
     2 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(curl_noise_2d(0, 4, 1., 0.5, 2., *pos)))
     }
     3 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       if seed < 0 || seed > u32::MAX as i64 {
         return Err(ErrorStack::new(format!(
           "Seed for fbm must be in range [0, {}], found: {seed}",
@@ -1292,11 +1291,11 @@ fn curl_noise_impl(
         )));
       }
       let seed = seed as u32;
-      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
-      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-      let pos = arg_refs[5].resolve(args, &kwargs).as_vec2().unwrap();
+      let octaves = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let pos = arg_refs[5].resolve(args, kwargs).as_vec2().unwrap();
 
       Ok(Value::Vec2(curl_noise_2d(
         seed,
@@ -1319,11 +1318,11 @@ fn ridged_multifractal_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Float(ridged_3d(0, 4, 1., 0.5, 2., 2., *pos)))
     }
     1 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       if seed < 0 || seed > u32::MAX as i64 {
         return Err(ErrorStack::new(format!(
           "Seed for fbm must be in range [0, {}], found: {seed}",
@@ -1331,12 +1330,12 @@ fn ridged_multifractal_impl(
         )));
       }
       let seed = seed as u32;
-      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
-      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-      let gain = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
-      let pos = arg_refs[6].resolve(args, &kwargs).as_vec3().unwrap();
+      let octaves = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let gain = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
+      let pos = arg_refs[6].resolve(args, kwargs).as_vec3().unwrap();
 
       Ok(Value::Float(ridged_3d(
         seed,
@@ -1349,11 +1348,11 @@ fn ridged_multifractal_impl(
       )))
     }
     2 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float(ridged_2d(0, 4, 1., 0.5, 2., 2., *pos)))
     }
     3 => {
-      let seed = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       if seed < 0 || seed > u32::MAX as i64 {
         return Err(ErrorStack::new(format!(
           "Seed for fbm must be in range [0, {}], found: {seed}",
@@ -1361,12 +1360,12 @@ fn ridged_multifractal_impl(
         )));
       }
       let seed = seed as u32;
-      let octaves = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let frequency = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let lacunarity = arg_refs[3].resolve(args, &kwargs).as_float().unwrap();
-      let persistence = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
-      let gain = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
-      let pos = arg_refs[6].resolve(args, &kwargs).as_vec2().unwrap();
+      let octaves = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let frequency = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let gain = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
+      let pos = arg_refs[6].resolve(args, kwargs).as_vec2().unwrap();
 
       Ok(Value::Float(ridged_2d(
         seed,
@@ -1391,8 +1390,8 @@ fn randi_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let min = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
 
       if max < min {
         return Err(ErrorStack::new(format!(
@@ -1424,8 +1423,8 @@ fn randv_impl(
 
   match def_ix {
     0 => {
-      let min = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
       if min == max {
         return Ok(Value::Vec3(*min));
       } else if min.x > max.x || min.y > max.y || min.z > max.z {
@@ -1438,8 +1437,8 @@ fn randv_impl(
       )))
     }
     1 => {
-      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       if min > max {
         return Err(invalid_bounds_err(min, max));
       } else if min == max {
@@ -1469,8 +1468,8 @@ fn randf_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(ctx.rng().gen_range(min..max)))
     }
     1 => Ok(Value::Float(ctx.rng().gen())),
@@ -1487,11 +1486,11 @@ fn verts_impl(
   match def_ix {
     0 => {
       let mesh = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_mesh()
         .unwrap()
         .clone(false, false, true);
-      let world_space = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
+      let world_space = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
 
       let seq: Rc<dyn Sequence> = if world_space {
         Rc::new(MeshVertsSeq::<true> { mesh })
@@ -1513,7 +1512,7 @@ fn convex_hull_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let verts_seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let verts_seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       let verts = verts_seq
         .consume(ctx)
         .map(|res| match res {
@@ -1529,7 +1528,7 @@ fn convex_hull_impl(
       Ok(Value::Mesh(Rc::new(out_mesh)))
     }
     1 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       let verts = mesh
         .mesh
         .vertices
@@ -1552,11 +1551,11 @@ fn simplify_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let tolerance = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let tolerance = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
 
       let out_mesh_handle =
-        simplify_mesh(&mesh, tolerance).map_err(|err| err.wrap("Error in `simplify` function"))?;
+        simplify_mesh(mesh, tolerance).map_err(|err| err.wrap("Error in `simplify` function"))?;
       Ok(Value::Mesh(Rc::new(out_mesh_handle)))
     }
     _ => unimplemented!(),
@@ -1573,7 +1572,7 @@ fn fan_fill_impl(
   match def_ix {
     0 => {
       let path = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_sequence()
         .unwrap()
         .consume(ctx)
@@ -1585,9 +1584,9 @@ fn fan_fill_impl(
           Err(err) => Err(err),
         })
         .collect::<Result<Vec<_>, _>>()?;
-      let closed = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
-      let flipped = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
-      let center = match arg_refs[3].resolve(args, &kwargs) {
+      let closed = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
+      let flipped = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+      let center = match arg_refs[3].resolve(args, kwargs) {
         Value::Vec3(v) => Some(*v),
         Value::Nil => None,
         _ => None,
@@ -1618,7 +1617,7 @@ fn stitch_contours_impl(
   match def_ix {
     0 => {
       let mut contours = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_sequence()
         .unwrap()
         .consume(ctx)
@@ -1634,11 +1633,11 @@ fn stitch_contours_impl(
           ))),
         })
         .collect::<Result<Vec<_>, _>>()?;
-      let flipped = arg_refs[1].resolve(args, &kwargs).as_bool().unwrap();
-      let closed = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
-      let cap_start = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
-      let cap_end = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
-      let cap_ends = arg_refs[5].resolve(args, &kwargs).as_bool().unwrap();
+      let flipped = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
+      let closed = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+      let cap_start = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let cap_end = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
+      let cap_ends = arg_refs[5].resolve(args, kwargs).as_bool().unwrap();
 
       let cap_start = cap_ends || cap_start;
       let cap_end = cap_ends || cap_end;
@@ -1668,18 +1667,18 @@ fn trace_geodesic_path_impl(
   match def_ix {
     0 => {
       let path = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_sequence()
         .unwrap()
         .consume(ctx);
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
-      let world_space = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
-      let full_path = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
-      let start_pos_local_space = arg_refs[4].resolve(args, &kwargs).as_vec3();
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+      let world_space = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+      let full_path = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let start_pos_local_space = arg_refs[4].resolve(args, kwargs).as_vec3();
       let start_pos_local_space = start_pos_local_space
         .map(|v| v.as_slice())
         .unwrap_or_default();
-      let up_dir_world_space = arg_refs[5].resolve(args, &kwargs).as_vec3();
+      let up_dir_world_space = arg_refs[5].resolve(args, kwargs).as_vec3();
       let up_dir_world_space = up_dir_world_space.map(|v| v.as_slice()).unwrap_or_default();
 
       let path = path
@@ -1760,9 +1759,9 @@ fn alpha_wrap_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let alpha = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let offset = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let alpha = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let offset = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
 
       let out = alpha_wrap_mesh(mesh, alpha, offset)
         .map_err(|err| ErrorStack::new(err).wrap("Error in `alpha_wrap` function"))?;
@@ -1771,7 +1770,7 @@ fn alpha_wrap_impl(
     1 => {
       // TODO: would be good to create a helper function for this
       let points = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_sequence()
         .unwrap()
         .consume(ctx)
@@ -1783,8 +1782,8 @@ fn alpha_wrap_impl(
           Err(err) => Err(err),
         })
         .collect::<Result<Vec<_>, _>>()?;
-      let alpha = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let offset = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let alpha = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let offset = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
 
       let out = alpha_wrap_points(&points, alpha, offset)
         .map_err(|err| ErrorStack::new(err).wrap("Error in `alpha_wrap` function"))?;
@@ -1802,9 +1801,9 @@ fn smooth_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let smooth_type = arg_refs[1].resolve(args, &kwargs).as_str().unwrap();
-      let iterations = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let smooth_type = arg_refs[1].resolve(args, kwargs).as_str().unwrap();
+      let iterations = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
       let iterations = if iterations <= 0 {
         return Err(ErrorStack::new(format!(
           "Invalid iterations argument for `smooth`: {iterations}; must be > 0"
@@ -1831,9 +1830,9 @@ fn remesh_planar_patches_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let max_angle_deg = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let max_offset = arg_refs[2].resolve(args, &kwargs);
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let max_angle_deg = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let max_offset = arg_refs[2].resolve(args, kwargs);
       let max_offset = match max_offset {
         _ if let Some(n) = max_offset.as_float() => n,
         Value::Nil => {
@@ -1865,9 +1864,9 @@ fn isotropic_remesh_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let target_edge_length = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
-      let iterations = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
+      let target_edge_length = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+      let iterations = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
       let iterations = if iterations <= 0 {
         return Err(ErrorStack::new(format!(
           "Invalid iterations argument for `isotropic_remesh`: {iterations}; must be > 0"
@@ -1875,9 +1874,9 @@ fn isotropic_remesh_impl(
       } else {
         iterations as u32
       };
-      let protect_borders = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
-      let protect_sharp_edges = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
-      let sharp_angle_threshold_degrees = arg_refs[5].resolve(args, &kwargs).as_float().unwrap();
+      let protect_borders = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let protect_sharp_edges = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
+      let sharp_angle_threshold_degrees = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
 
       let out = isotropic_remesh(
         mesh,
@@ -1902,11 +1901,11 @@ fn delaunay_remesh_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let facet_distance = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let target_edge_length = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let protect_sharp_edges = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
-      let sharp_angle_threshold_degrees = arg_refs[4].resolve(args, &kwargs).as_float().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let facet_distance = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let target_edge_length = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let protect_sharp_edges = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let sharp_angle_threshold_degrees = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
 
       let out = delaunay_remesh(
         mesh,
@@ -1931,19 +1930,17 @@ fn extrude_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let up = arg_refs[0].resolve(args, &kwargs);
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let up = arg_refs[0].resolve(args, kwargs);
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
       let mut out_mesh = (*mesh.mesh).clone();
 
       match up {
         Value::Vec3(up) => extrude(&mut out_mesh, |_| Ok(*up))?,
         Value::Callable(cb) => extrude(&mut out_mesh, |vtx| {
           let out = ctx
-            .invoke_callable(&cb, &[Value::Vec3(vtx)], &EMPTY_KWARGS)
+            .invoke_callable(cb, &[Value::Vec3(vtx)], EMPTY_KWARGS)
             .map_err(|err| {
-              err.wrap(format!(
-                "Error calling user-provided cb passed to `up` arg in `extrude`"
-              ))
+              err.wrap("Error calling user-provided cb passed to `up` arg in `extrude`")
             })?;
           out.as_vec3().copied().ok_or_else(|| {
             ErrorStack::new(format!(
@@ -1960,7 +1957,7 @@ fn extrude_impl(
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(out_mesh),
-        transform: mesh.transform.clone(),
+        transform: mesh.transform,
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
@@ -1979,11 +1976,11 @@ fn torus_knot_path_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let radius = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let tube_radius = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let p = arg_refs[2].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let q = arg_refs[3].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let radius = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let tube_radius = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let p = arg_refs[2].resolve(args, kwargs).as_int().unwrap() as usize;
+      let q = arg_refs[3].resolve(args, kwargs).as_int().unwrap() as usize;
+      let count = arg_refs[4].resolve(args, kwargs).as_int().unwrap() as usize;
 
       Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: build_torus_knot_path(radius, tube_radius, p, q, count).map(|v| Ok(Value::Vec3(v))),
@@ -2001,10 +1998,10 @@ fn lissajous_knot_path_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let amp = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let freq = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-      let phase = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
-      let count = arg_refs[3].resolve(args, &kwargs).as_int().unwrap();
+      let amp = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let freq = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let phase = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
+      let count = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
       if count < 1 {
         return Err(ErrorStack::new(format!(
           "Invalid count for lissajous knot path: {count}; must be >= 1"
@@ -2029,25 +2026,25 @@ fn extrude_pipe_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let radius = arg_refs[0].resolve(args, &kwargs);
-      let resolution = arg_refs[1].resolve(args, &kwargs).as_int().unwrap() as usize;
-      let path = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
-      let close_ends = arg_refs[3].resolve(args, &kwargs).as_bool().unwrap();
-      let connect_ends = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
+      let radius = arg_refs[0].resolve(args, kwargs);
+      let resolution = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let path = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
+      let close_ends = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let connect_ends = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
 
       enum Twist<'a> {
         Const(f32),
         Dyn(&'a Rc<Callable>),
       }
 
-      let twist = match arg_refs[5].resolve(args, &kwargs) {
+      let twist = match arg_refs[5].resolve(args, kwargs) {
         Value::Float(f) => Twist::Const(*f),
         Value::Int(i) => Twist::Const(*i as f32),
         Value::Callable(cb) => Twist::Dyn(cb),
         _ => {
           return Err(ErrorStack::new(format!(
             "Invalid twist argument for `extrude_pipe`; expected Numeric or Callable, found: {:?}",
-            arg_refs[4].resolve(args, &kwargs)
+            arg_refs[4].resolve(args, kwargs)
           )))
         }
       };
@@ -2061,12 +2058,10 @@ fn extrude_pipe_impl(
             .invoke_callable(
               get_twist,
               &[Value::Int(i as i64), Value::Vec3(pos)],
-              &EMPTY_KWARGS,
+              EMPTY_KWARGS,
             )
             .map_err(|err| {
-              err.wrap(format!(
-                "Error calling user-provided cb passed to `twist` arg in `extrude_pipe`"
-              ))
+              err.wrap("Error calling user-provided cb passed to `twist` arg in `extrude_pipe`")
             })?;
           out.as_float().ok_or_else(|| {
             ErrorStack::new(format!(
@@ -2086,16 +2081,14 @@ fn extrude_pipe_impl(
             .invoke_callable(
               get_radius,
               &[Value::Int(i as i64), Value::Vec3(pos)],
-              &EMPTY_KWARGS,
+              EMPTY_KWARGS,
             )
             .map_err(|err| {
-              err.wrap(format!(
-                "Error calling user-provided cb passed to `radius` arg in `extrude_pipe`"
-              ))
+              err.wrap("Error calling user-provided cb passed to `radius` arg in `extrude_pipe`")
             })?;
 
           if let Some(radius) = radius_for_ring.as_float() {
-            return Ok(PipeRadius::constant(radius));
+            Ok(PipeRadius::constant(radius))
           } else if let Some(seq) = radius_for_ring.as_sequence() {
             let radii: Vec<f32> = seq
               .consume(ctx)
@@ -2193,11 +2186,11 @@ fn bezier3d_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let p0 = *arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let p1 = *arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-      let p2 = *arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
-      let p3 = *arg_refs[3].resolve(args, &kwargs).as_vec3().unwrap();
-      let count = arg_refs[4].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let p0 = *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let p1 = *arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let p2 = *arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
+      let p3 = *arg_refs[3].resolve(args, kwargs).as_vec3().unwrap();
+      let count = arg_refs[4].resolve(args, kwargs).as_int().unwrap() as usize;
 
       let curve = cubic_bezier_3d_path(p0, p1, p2, p3, count).map(|v| Ok(Value::Vec3(v)));
       Ok(Value::Sequence(Rc::new(IteratorSeq { inner: curve })))
@@ -2214,10 +2207,10 @@ fn superellipse_path_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let width = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let height = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let n = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
-      let point_count = arg_refs[3].resolve(args, &kwargs).as_int().unwrap() as usize;
+      let width = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let height = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let n = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let point_count = arg_refs[3].resolve(args, kwargs).as_int().unwrap() as usize;
 
       let curve = superellipse_path(width, height, n, point_count).map(|v| Ok(Value::Vec2(v)));
       Ok(Value::Sequence(Rc::new(IteratorSeq { inner: curve })))
@@ -2234,11 +2227,11 @@ fn normalize_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let v = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let v = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(v.normalize()))
     }
     1 => {
-      let v = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(v.normalize()))
     }
     _ => unimplemented!(),
@@ -2253,13 +2246,13 @@ fn distance_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Float((*a - *b).magnitude()))
     }
     1 => {
-      let a = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float((*a - *b).magnitude()))
     }
     _ => unimplemented!(),
@@ -2275,19 +2268,19 @@ fn len_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let v = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let v = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Float(v.magnitude()))
     }
     1 => {
-      let v = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float(v.magnitude()))
     }
     2 => {
-      let v = arg_refs[0].resolve(args, &kwargs).as_str().unwrap();
+      let v = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
       Ok(Value::Int(v.chars().count() as i64))
     }
     3 => {
-      let v = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let v = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       if let Some(eager) = seq_as_eager(&*v) {
         Ok(Value::Int(eager.inner.len() as i64))
       } else {
@@ -2315,7 +2308,7 @@ fn chars_impl(
   match def_ix {
     0 => {
       let s = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_str()
         .unwrap()
         .to_owned();
@@ -2363,8 +2356,8 @@ fn assert_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let condition = arg_refs[0].resolve(args, &kwargs).as_bool().unwrap();
-      let msg = arg_refs[1].resolve(args, &kwargs).as_str().unwrap();
+      let condition = arg_refs[0].resolve(args, kwargs).as_bool().unwrap();
+      let msg = arg_refs[1].resolve(args, kwargs).as_str().unwrap();
 
       if !condition {
         return Err(ErrorStack::new(msg.to_owned()));
@@ -2384,10 +2377,10 @@ fn intersects_ray_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let ray_origin = *arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let ray_direction = *arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-      let mesh = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
-      let max_distance = arg_refs[3].resolve(args, &kwargs).as_float();
+      let ray_origin = *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let ray_direction = *arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let mesh = arg_refs[2].resolve(args, kwargs).as_mesh().unwrap();
+      let max_distance = arg_refs[3].resolve(args, kwargs).as_float();
 
       let trimesh = mesh
         .get_or_create_trimesh()
@@ -2416,8 +2409,8 @@ fn intersects_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let a = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
 
       if a.mesh.is_empty() || b.mesh.is_empty() {
         return Ok(Value::Bool(false));
@@ -2463,8 +2456,8 @@ fn connected_components_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh_handle = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let transform = mesh_handle.transform.clone();
+      let mesh_handle = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let transform = mesh_handle.transform;
       let mesh = Rc::clone(&mesh_handle.mesh);
       let mut components: Vec<Vec<FaceKey>> = mesh.connected_components();
       components.sort_unstable_by_key(|c| Reverse(c.len()));
@@ -2516,12 +2509,12 @@ fn tessellate_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let target_edge_length = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let target_edge_length = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       if target_edge_length <= 0. {
         return Err(ErrorStack::new("`target_edge_length` must be > 0"));
       }
-      let mesh_handle = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
-      let transform = mesh_handle.transform.clone();
+      let mesh_handle = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+      let transform = mesh_handle.transform;
 
       let mut mesh = (*mesh_handle.mesh).clone();
       tessellation::tessellate_mesh(
@@ -2558,9 +2551,9 @@ fn subdivide_by_plane_impl(
 
   match def_ix {
     0 => {
-      let plane_normal = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let plane_offset = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let mesh_handle = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
+      let plane_normal = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let plane_offset = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let mesh_handle = arg_refs[2].resolve(args, kwargs).as_mesh().unwrap();
 
       // TODO: handle transform
       if mesh_handle.transform != Matrix4::identity() {
@@ -2575,7 +2568,7 @@ fn subdivide_by_plane_impl(
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
-        transform: mesh_handle.transform.clone(),
+        transform: mesh_handle.transform,
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
@@ -2583,9 +2576,9 @@ fn subdivide_by_plane_impl(
       })))
     }
     1 => {
-      let mesh_handle = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
+      let mesh_handle = arg_refs[2].resolve(args, kwargs).as_mesh().unwrap();
       let plane_normals = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_sequence()
         .unwrap()
         .consume(&EvalCtx::default())
@@ -2598,7 +2591,7 @@ fn subdivide_by_plane_impl(
         })
         .collect::<Result<Vec<_>, _>>()?;
       let plane_offsets = arg_refs[1]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_sequence()
         .unwrap()
         .consume(&EvalCtx::default())
@@ -2634,7 +2627,7 @@ fn subdivide_by_plane_impl(
       }
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
-        transform: mesh_handle.transform.clone(),
+        transform: mesh_handle.transform,
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
@@ -2653,9 +2646,9 @@ fn split_by_plane_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let plane_normal = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let plane_offset = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let mesh_handle = arg_refs[2].resolve(args, &kwargs).as_mesh().unwrap();
+      let plane_normal = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let plane_offset = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let mesh_handle = arg_refs[2].resolve(args, kwargs).as_mesh().unwrap();
 
       let (a, b) = split_mesh_by_plane(mesh_handle, *plane_normal, plane_offset)
         .map_err(|err| ErrorStack::new(format!("Error in `split_by_plane`: {err}")))?;
@@ -2734,7 +2727,7 @@ fn point_distribute_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let count = arg_refs[0].resolve(args, &kwargs);
+      let count = arg_refs[0].resolve(args, kwargs);
       let point_count = match count {
         _ if let Some(count) = count.as_int() => {
           if count < 0 {
@@ -2748,10 +2741,14 @@ fn point_distribute_impl(
         _ if count.is_nil() => None,
         _ => unreachable!(),
       };
-      let mesh = arg_refs[1].resolve(args, &kwargs).as_mesh().unwrap();
-      let seed = arg_refs[2].resolve(args, &kwargs).as_int().unwrap().abs() as u64;
-      let cb = arg_refs[3].resolve(args, &kwargs).as_callable().cloned();
-      let world_space = arg_refs[4].resolve(args, &kwargs).as_bool().unwrap();
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+      let seed = arg_refs[2]
+        .resolve(args, kwargs)
+        .as_int()
+        .unwrap()
+        .unsigned_abs();
+      let cb = arg_refs[3].resolve(args, kwargs).as_callable().cloned();
+      let world_space = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
 
       let sampler_seq = PointDistributeSeq {
         mesh: mesh.clone(false, false, true),
@@ -2775,20 +2772,20 @@ fn render_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let Value::Mesh(mesh) = arg_refs[0].resolve(args, &kwargs) else {
+      let Value::Mesh(mesh) = arg_refs[0].resolve(args, kwargs) else {
         unreachable!()
       };
       ctx.rendered_meshes.push(Rc::clone(mesh));
       Ok(Value::Nil)
     }
     1 => {
-      let light = arg_refs[0].resolve(args, &kwargs).as_light().unwrap();
+      let light = arg_refs[0].resolve(args, kwargs).as_light().unwrap();
       ctx.rendered_lights.push(light.clone());
       Ok(Value::Nil)
     }
     2 => {
       // This is expected to be a `seq<Vec3> | seq<Mesh | seq<Vec3>>`
-      let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
 
       fn render_path(
         ctx: &EvalCtx,
@@ -2873,11 +2870,11 @@ fn print_impl(
     .join(", ");
   let formatted_kwargs = kwargs
     .iter()
-    .map(|(k, v)| ctx.with_resolved_sym(*k, |k| format!("{k}={v:?}")).unwrap())
+    .map(|(k, v)| ctx.with_resolved_sym(*k, |k| format!("{k}={v:?}")))
     .collect::<Vec<_>>()
     .join(", ");
 
-  (ctx.log_fn)(&format!("{}, {}", formatted_pos_ags, formatted_kwargs));
+  (ctx.log_fn)(&format!("{formatted_pos_ags}, {formatted_kwargs}"));
   Ok(Value::Nil)
 }
 
@@ -2889,15 +2886,15 @@ fn lerp_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let t = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let a = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-      let b = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
+      let t = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let a = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let b = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(a.lerp(b, t)))
     }
     1 => {
-      let t = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let a = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let b = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let t = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let a = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let b = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(a + (b - a) * t))
     }
     _ => unimplemented!(),
@@ -2912,9 +2909,9 @@ fn smoothstep_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let edge0 = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let edge1 = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let x = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let edge0 = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let edge1 = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let x = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       let t = ((x - edge0) / (edge1 - edge0)).clamp(0., 1.);
       Ok(Value::Float(t * t * (3. - 2. * t)))
     }
@@ -2930,9 +2927,9 @@ fn linearstep_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let edge0 = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let edge1 = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let x = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let edge0 = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let edge1 = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let x = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       let t = ((x - edge0) / (edge1 - edge0)).clamp(0., 1.);
       Ok(Value::Float(t))
     }
@@ -2948,7 +2945,7 @@ fn deg2rad_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.to_radians()))
     }
     _ => unimplemented!(),
@@ -2963,7 +2960,7 @@ fn rad2deg_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.to_degrees()))
     }
     _ => unimplemented!(),
@@ -2978,7 +2975,7 @@ fn fix_float_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       if value.is_normal() {
         Ok(Value::Float(value))
       } else {
@@ -2986,7 +2983,7 @@ fn fix_float_impl(
       }
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         if value.x.is_normal() { value.x } else { 0. },
         if value.y.is_normal() { value.y } else { 0. },
@@ -2994,7 +2991,7 @@ fn fix_float_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(
         if value.x.is_normal() { value.x } else { 0. },
         if value.y.is_normal() { value.y } else { 0. },
@@ -3012,11 +3009,11 @@ fn round_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.round()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.round(),
         value.y.round(),
@@ -3024,7 +3021,7 @@ fn round_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.round(), value.y.round())))
     }
     _ => unimplemented!(),
@@ -3039,11 +3036,11 @@ fn floor_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.floor()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.floor(),
         value.y.floor(),
@@ -3051,7 +3048,7 @@ fn floor_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.floor(), value.y.floor())))
     }
     _ => unimplemented!(),
@@ -3066,11 +3063,11 @@ fn ceil_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.ceil()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.ceil(),
         value.y.ceil(),
@@ -3078,7 +3075,7 @@ fn ceil_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.ceil(), value.y.ceil())))
     }
     _ => unimplemented!(),
@@ -3093,11 +3090,11 @@ fn fract_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.fract()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.fract(),
         value.y.fract(),
@@ -3105,7 +3102,7 @@ fn fract_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.fract(), value.y.fract())))
     }
     _ => unimplemented!(),
@@ -3120,11 +3117,11 @@ fn trunc_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.trunc()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.trunc(),
         value.y.trunc(),
@@ -3132,7 +3129,7 @@ fn trunc_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.trunc(), value.y.trunc())))
     }
     _ => unimplemented!(),
@@ -3147,13 +3144,13 @@ fn pow_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let base = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let exponent = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let base = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(base.powf(exponent)))
     }
     1 => {
-      let base = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let exponent = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let base = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(
         base.x.powf(exponent),
         base.y.powf(exponent),
@@ -3161,8 +3158,8 @@ fn pow_impl(
       )))
     }
     2 => {
-      let base = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
-      let exponent = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let base = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec2(Vec2::new(
         base.x.powf(exponent),
         base.y.powf(exponent),
@@ -3180,11 +3177,11 @@ fn exp_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.exp()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.exp(),
         value.y.exp(),
@@ -3192,7 +3189,7 @@ fn exp_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.exp(), value.y.exp())))
     }
     _ => unimplemented!(),
@@ -3207,11 +3204,11 @@ fn log10_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.log10()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.log10(),
         value.y.log10(),
@@ -3219,7 +3216,7 @@ fn log10_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.log10(), value.y.log10())))
     }
     _ => unimplemented!(),
@@ -3234,11 +3231,11 @@ fn log2_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.log2()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.log2(),
         value.y.log2(),
@@ -3246,7 +3243,7 @@ fn log2_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.log2(), value.y.log2())))
     }
     _ => unimplemented!(),
@@ -3261,11 +3258,11 @@ fn ln_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.ln()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.ln(),
         value.y.ln(),
@@ -3273,7 +3270,7 @@ fn ln_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.ln(), value.y.ln())))
     }
     _ => unimplemented!(),
@@ -3288,11 +3285,11 @@ fn tan_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.tan()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.tan(),
         value.y.tan(),
@@ -3300,7 +3297,7 @@ fn tan_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.tan(), value.y.tan())))
     }
     _ => unimplemented!(),
@@ -3315,11 +3312,11 @@ fn cos_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.cos()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.cos(),
         value.y.cos(),
@@ -3327,7 +3324,7 @@ fn cos_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.cos(), value.y.cos())))
     }
     _ => unimplemented!(),
@@ -3342,11 +3339,11 @@ fn sin_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.sin()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.sin(),
         value.y.sin(),
@@ -3365,11 +3362,11 @@ fn sinh_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.sinh()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.sinh(),
         value.y.sinh(),
@@ -3377,7 +3374,7 @@ fn sinh_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.sinh(), value.y.sinh())))
     }
     _ => unimplemented!(),
@@ -3392,11 +3389,11 @@ fn cosh_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.cosh()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.cosh(),
         value.y.cosh(),
@@ -3404,7 +3401,7 @@ fn cosh_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.cosh(), value.y.cosh())))
     }
     _ => unimplemented!(),
@@ -3419,11 +3416,11 @@ fn tanh_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.tanh()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.tanh(),
         value.y.tanh(),
@@ -3431,7 +3428,7 @@ fn tanh_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.tanh(), value.y.tanh())))
     }
     _ => unimplemented!(),
@@ -3446,11 +3443,11 @@ fn acos_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.acos()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.acos(),
         value.y.acos(),
@@ -3458,7 +3455,7 @@ fn acos_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.acos(), value.y.acos())))
     }
     _ => unimplemented!(),
@@ -3473,11 +3470,11 @@ fn asin_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.asin()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.asin(),
         value.y.asin(),
@@ -3485,7 +3482,7 @@ fn asin_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.asin(), value.y.asin())))
     }
     _ => unimplemented!(),
@@ -3500,11 +3497,11 @@ fn atan_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.atan()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.atan(),
         value.y.atan(),
@@ -3512,7 +3509,7 @@ fn atan_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.atan(), value.y.atan())))
     }
     _ => unimplemented!(),
@@ -3527,12 +3524,12 @@ fn atan2_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let y = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let x = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let y = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let x = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(y.atan2(x)))
     }
     1 => {
-      let v = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float(v.y.atan2(v.x)))
     }
     _ => unimplemented!(),
@@ -3548,13 +3545,13 @@ fn box_impl(
   {
     let (width, height, depth) = match def_ix {
       0 => {
-        let w = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-        let h = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-        let d = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+        let w = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+        let h = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+        let d = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
         (w, h, d)
       }
       1 => {
-        let val = arg_refs[0].resolve(args, &kwargs);
+        let val = arg_refs[0].resolve(args, kwargs);
         match val {
           Value::Vec3(v3) => (v3.x, v3.y, v3.z),
           Value::Float(size) => (*size, *size, *size),
@@ -3585,8 +3582,8 @@ fn icosphere_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let radius = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let resolution = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let radius = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let resolution = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
       if resolution < 0 {
         return Err(ErrorStack::new("Resolution must be a non-negative integer"));
       }
@@ -3607,10 +3604,10 @@ fn cylinder_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let radius = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let height = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let radial_segments = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
-      let height_segments = arg_refs[3].resolve(args, &kwargs).as_int().unwrap();
+      let radius = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let height = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let radial_segments = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
+      let height_segments = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
 
       if radial_segments < 3 {
         return Err(ErrorStack::new("`radial_segments` must be >= 3"));
@@ -3639,23 +3636,23 @@ fn grid_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let size = match arg_refs[0].resolve(args, &kwargs) {
-        _ if let Some(v) = arg_refs[0].resolve(args, &kwargs).as_vec2() => *v,
-        _ if let Some(f) = arg_refs[0].resolve(args, &kwargs).as_float() => Vec2::new(f, f),
+      let size = match arg_refs[0].resolve(args, kwargs) {
+        _ if let Some(v) = arg_refs[0].resolve(args, kwargs).as_vec2() => *v,
+        _ if let Some(f) = arg_refs[0].resolve(args, kwargs).as_float() => Vec2::new(f, f),
         other => {
           return Err(ErrorStack::new(format!(
             "Invalid type for grid size: expected Vec2 or Float, found {other:?}",
           )))
         }
       };
-      let divisions = match arg_refs[1].resolve(args, &kwargs) {
-        _ if let Some(v) = arg_refs[1].resolve(args, &kwargs).as_vec2() => {
+      let divisions = match arg_refs[1].resolve(args, kwargs) {
+        _ if let Some(v) = arg_refs[1].resolve(args, kwargs).as_vec2() => {
           if v.x < 1. || v.y < 1. {
             return Err(ErrorStack::new("Grid divisions must be >= 1"));
           }
           (v.x as usize, v.y as usize)
         }
-        _ if let Some(i) = arg_refs[1].resolve(args, &kwargs).as_int() => {
+        _ if let Some(i) = arg_refs[1].resolve(args, kwargs).as_int() => {
           if i < 1 {
             return Err(ErrorStack::new("Grid divisions must be >= 1"));
           }
@@ -3667,7 +3664,7 @@ fn grid_impl(
           )))
         }
       };
-      let flipped = arg_refs[2].resolve(args, &kwargs).as_bool().unwrap();
+      let flipped = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
 
       let mesh = LinkedMesh::new_grid(size.x, size.y, divisions.0, divisions.1, flipped);
       Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(mesh)))))
@@ -3781,8 +3778,8 @@ fn look_at_impl(
   match def_ix {
     // TODO: I'm pretty sure this isn't working like I was expecting it to
     0 => {
-      let pos = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let target = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let target = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
 
       let dir = target - *pos;
       let up = Vec3::new(0., 1., 0.);
@@ -3791,9 +3788,9 @@ fn look_at_impl(
       Ok(Value::Vec3(Vec3::new(x, y, z)))
     }
     1 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
-      let target = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
-      let up = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let target = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let up = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
 
       let mut mesh = mesh.clone(true, false, false);
 
@@ -3808,7 +3805,7 @@ fn look_at_impl(
 
       let dir = (target - translation).normalize();
 
-      let rotation = Rotation3::rotation_between(&up, &dir).ok_or_else(|| {
+      let rotation = Rotation3::rotation_between(up, &dir).ok_or_else(|| {
         ErrorStack::new(format!(
           "Error computing rotation; degenerate direction or parallel to up? dir={dir:?}, \
            up={up:?}"
@@ -3847,7 +3844,7 @@ fn origin_to_geometry_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       let mut new_mesh = (*mesh.mesh).clone();
       let center = mesh
         .mesh
@@ -3879,7 +3876,7 @@ fn apply_transforms_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       let mut new_mesh = (*mesh.mesh).clone();
       for vtx in new_mesh.vertices.values_mut() {
         vtx.position = (mesh.transform * vtx.position.push(1.)).xyz();
@@ -3905,7 +3902,7 @@ fn flip_normals_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, &kwargs).as_mesh().unwrap();
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       let mut new_mesh = (*mesh.mesh).clone();
       new_mesh.flip_normals();
       Ok(Value::Mesh(Rc::new(MeshHandle {
@@ -3929,12 +3926,12 @@ fn vec2_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec2(Vec2::new(x, y)))
     }
     1 => {
-      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec2(Vec2::new(x, x)))
     }
     _ => unimplemented!(),
@@ -3949,23 +3946,23 @@ fn vec3_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(x, y, z)))
     }
     1 => {
-      let xy = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
-      let z = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let xy = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      let z = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(xy.x, xy.y, z)))
     }
     2 => {
-      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let yz = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let yz = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec3(Vec3::new(x, yz.x, yz.y)))
     }
     3 => {
-      let x = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(x, x, x)))
     }
     _ => unimplemented!(),
@@ -4013,14 +4010,13 @@ fn join_meshes(
           // transform from rhs local space -> world space -> lhs local space
           let transformed_pos = out_transform_inv * rhs.transform * old_vtx.position.push(1.);
 
-          let new_vtx_key = combined.vertices.insert(Vertex {
+          combined.vertices.insert(Vertex {
             position: transformed_pos.xyz(),
             displacement_normal: old_vtx.displacement_normal,
             shading_normal: old_vtx.shading_normal,
             edges: SmallVec::new(),
             _padding: Default::default(),
-          });
-          new_vtx_key
+          })
         })
       });
       combined.add_face::<false>(new_vtx_keys, ());
@@ -4043,7 +4039,7 @@ fn join_strings(
 ) -> Result<Value, ErrorStack> {
   let mut out = String::new();
   let mut is_first = true;
-  while let Some(res) = iter.next() {
+  for res in iter.by_ref() {
     match res {
       Ok(Value::String(s)) => {
         if !is_first {
@@ -4073,7 +4069,7 @@ fn join_impl(
   match def_ix {
     0 => {
       let mut iter = arg_refs[0]
-        .resolve(args, &kwargs)
+        .resolve(args, kwargs)
         .as_sequence()
         .unwrap()
         .consume(ctx)
@@ -4082,8 +4078,8 @@ fn join_impl(
       join_meshes(&mut iter)
     }
     1 => {
-      let separator = arg_refs[0].resolve(args, &kwargs).as_str().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let separator = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       let mut iter = sequence.consume(ctx).peekable();
 
       join_strings(&mut iter, separator)
@@ -4100,11 +4096,11 @@ fn filter_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let fn_value = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
 
       Ok(Value::Sequence(Rc::new(FilterSeq {
-        cb: Rc::clone(&fn_value),
+        cb: Rc::clone(fn_value),
         inner: sequence,
       })))
     }
@@ -4120,9 +4116,9 @@ fn scan_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let init = arg_refs[0].resolve(args, &kwargs);
-      let fn_value = arg_refs[1].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[2].resolve(args, &kwargs).as_sequence().unwrap();
+      let init = arg_refs[0].resolve(args, kwargs);
+      let fn_value = arg_refs[1].resolve(args, kwargs).as_callable().unwrap();
+      let sequence = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(ScanSeq {
         acc: init.clone(),
         cb: fn_value.clone(),
@@ -4181,8 +4177,8 @@ fn take_while_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let fn_value = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(TakeWhileSeq {
         cb: fn_value.clone(),
         inner: sequence,
@@ -4200,8 +4196,8 @@ fn skip_while_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let fn_value = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let fn_value = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(SkipWhileSeq {
         cb: fn_value.clone(),
         inner: sequence,
@@ -4220,7 +4216,7 @@ fn chain_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let seqs = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let seqs = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(ChainSeq::new(ctx, seqs)?)))
     }
     _ => unimplemented!(),
@@ -4309,7 +4305,7 @@ fn reverse_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let sequence = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       let mut vals: Vec<Value> = sequence.consume(ctx).collect::<Result<Vec<_>, _>>()?;
       vals.reverse();
       Ok(Value::Sequence(Rc::new(EagerSeq { inner: vals })))
@@ -4327,7 +4323,7 @@ fn collect_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let val = arg_refs[0].resolve(args, &kwargs);
+      let val = arg_refs[0].resolve(args, kwargs);
       let seq = val.as_sequence().unwrap();
       match seq_as_eager(&*seq) {
         Some(_) => Ok(val.clone()),
@@ -4353,13 +4349,13 @@ fn any_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let cb = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       let iter = sequence.consume(ctx);
       for (i, res) in iter.enumerate() {
         let val = res?;
         let val = ctx
-          .invoke_callable(cb, &[val], &EMPTY_KWARGS)
+          .invoke_callable(cb, &[val], EMPTY_KWARGS)
           .map_err(|err| err.wrap("error calling user-provided callback passed to `any`"))?;
         match val {
           Value::Bool(b) => {
@@ -4389,13 +4385,13 @@ fn all_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let cb = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       let iter = sequence.consume(ctx);
       for (i, res) in iter.enumerate() {
         let val = res?;
         let val = ctx
-          .invoke_callable(cb, &[val], &EMPTY_KWARGS)
+          .invoke_callable(cb, &[val], EMPTY_KWARGS)
           .map_err(|err| err.wrap("error calling user-provided callback passed to `all`"))?;
         match val {
           Value::Bool(b) => {
@@ -4425,13 +4421,13 @@ fn for_each_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let cb = arg_refs[0].resolve(args, &kwargs).as_callable().unwrap();
-      let sequence = arg_refs[1].resolve(args, &kwargs).as_sequence().unwrap();
+      let cb = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let sequence = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
       let iter = sequence.consume(ctx);
       for res in iter {
         let val = res?;
         ctx
-          .invoke_callable(cb, &[val], &EMPTY_KWARGS)
+          .invoke_callable(cb, &[val], EMPTY_KWARGS)
           .map_err(|err| err.wrap("error calling user-provided callback passed to `for_each`"))?;
       }
       Ok(Value::Nil)
@@ -4448,7 +4444,7 @@ fn flatten_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let seq = arg_refs[0].resolve(args, &kwargs).as_sequence().unwrap();
+      let seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       Ok(Value::Sequence(Rc::new(FlattenSeq { inner: seq })))
     }
     _ => unimplemented!(),
@@ -4463,15 +4459,15 @@ fn abs_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       Ok(Value::Int(value.abs()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.abs()))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.abs(),
         value.y.abs(),
@@ -4479,7 +4475,7 @@ fn abs_impl(
       )))
     }
     3 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.abs(), value.y.abs())))
     }
     _ => unimplemented!(),
@@ -4494,19 +4490,19 @@ fn signum_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.signum()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       Ok(Value::Int(value.signum()))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.signum(), value.y.signum())))
     }
     3 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.signum(),
         value.y.signum(),
@@ -4525,11 +4521,11 @@ fn sqrt_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.sqrt()))
     }
     1 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.sqrt(),
         value.y.sqrt(),
@@ -4537,7 +4533,7 @@ fn sqrt_impl(
       )))
     }
     2 => {
-      let value = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.sqrt(), value.y.sqrt())))
     }
     _ => unimplemented!(),
@@ -4553,20 +4549,20 @@ fn max_impl(
   match def_ix {
     0 => {
       // int, int
-      let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
       Ok(Value::Int(a.max(b)))
     }
     1 => {
       // float, float
-      let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(a.max(b)))
     }
     2 => {
       // vec3, vec3
-      let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         a.x.max(b.x),
         a.y.max(b.y),
@@ -4575,8 +4571,8 @@ fn max_impl(
     }
     3 => {
       // vec2, vec2
-      let a = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(a.x.max(b.x), a.y.max(b.y))))
     }
     _ => unimplemented!(),
@@ -4592,20 +4588,20 @@ fn min_impl(
   match def_ix {
     0 => {
       // int, int
-      let a = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
       Ok(Value::Int(a.min(b)))
     }
     1 => {
       // float, float
-      let a = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(a.min(b)))
     }
     2 => {
       // vec3, vec3
-      let a = arg_refs[0].resolve(args, &kwargs).as_vec3().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_vec3().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         a.x.min(b.x),
         a.y.min(b.y),
@@ -4614,8 +4610,8 @@ fn min_impl(
     }
     3 => {
       // vec2, vec2
-      let a = arg_refs[0].resolve(args, &kwargs).as_vec2().unwrap();
-      let b = arg_refs[1].resolve(args, &kwargs).as_vec2().unwrap();
+      let a = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(a.x.min(b.x), a.y.min(b.y))))
     }
     _ => unimplemented!(),
@@ -4631,23 +4627,23 @@ fn clamp_impl(
   match def_ix {
     0 => {
       // int, int, int
-      let min = arg_refs[0].resolve(args, &kwargs).as_int().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_int().unwrap();
-      let value = arg_refs[2].resolve(args, &kwargs).as_int().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
+      let value = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
       Ok(Value::Int(value.clamp(min, max)))
     }
     1 => {
       // float, float, float
-      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let value = arg_refs[2].resolve(args, &kwargs).as_float().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let value = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(value.clamp(min, max)))
     }
     2 => {
       // float, float, vec3
-      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let value = arg_refs[2].resolve(args, &kwargs).as_vec3().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let value = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
         value.x.clamp(min, max),
         value.y.clamp(min, max),
@@ -4656,9 +4652,9 @@ fn clamp_impl(
     }
     3 => {
       // float, float, vec2
-      let min = arg_refs[0].resolve(args, &kwargs).as_float().unwrap();
-      let max = arg_refs[1].resolve(args, &kwargs).as_float().unwrap();
-      let value = arg_refs[2].resolve(args, &kwargs).as_vec2().unwrap();
+      let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let value = arg_refs[2].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(
         value.x.clamp(min, max),
         value.y.clamp(min, max),
@@ -4676,7 +4672,7 @@ fn float_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let val = arg_refs[0].resolve(args, &kwargs);
+      let val = arg_refs[0].resolve(args, kwargs);
       let val = match val {
         _ if let Some(float) = val.as_float() => float,
         _ if let Some(int) = val.as_int() => int as f32,
@@ -4699,7 +4695,7 @@ fn int_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let val = arg_refs[0].resolve(args, &kwargs);
+      let val = arg_refs[0].resolve(args, kwargs);
       let val = match val {
         _ if let Some(int) = val.as_int() => int,
         _ if let Some(float) = val.as_float() => float as i64,
@@ -4722,7 +4718,7 @@ fn str_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let val = arg_refs[0].resolve(args, &kwargs);
+      let val = arg_refs[0].resolve(args, kwargs);
       let s = match val {
         Value::Int(i) => format!("{i}"),
         Value::Float(f) => format!("{f}"),

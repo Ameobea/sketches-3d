@@ -233,8 +233,8 @@ pub fn extrude_pipe(
       for j in 0..resolution {
         let a = (last * resolution + j) as u32;
         let b = (last * resolution + (j + 1) % resolution) as u32;
-        let c = (0 * resolution + j) as u32;
-        let d = (0 * resolution + (j + 1) % resolution) as u32;
+        let c = j as u32;
+        let d = ((j + 1) % resolution) as u32;
 
         indices.push(a);
         indices.push(b);

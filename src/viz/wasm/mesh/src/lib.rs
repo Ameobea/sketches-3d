@@ -112,7 +112,7 @@ impl<'a> From<&'a OwnedMesh> for Mesh<'a> {
   fn from(mesh: &'a OwnedMesh) -> Self {
     Mesh {
       vertices: &mesh.vertices,
-      normals: mesh.normals.as_ref().map(|normals| normals.as_slice()),
+      normals: mesh.normals.as_deref(),
       transform: mesh.transform,
     }
   }

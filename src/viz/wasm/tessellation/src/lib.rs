@@ -58,8 +58,7 @@ pub fn tessellate_mesh_cb<T: Default>(
       let longest_edge_key = face
         .edges
         .iter()
-        .map(|&edge_key| edge_key)
-        .max_by_key(|&edge_key| {
+        .max_by_key(|&&edge_key| {
           let edge = &mesh.edges[edge_key];
           let length = edge.length(&mesh.vertices);
           if length.is_nan() || length.is_infinite() {
@@ -69,7 +68,7 @@ pub fn tessellate_mesh_cb<T: Default>(
         })
         .unwrap();
       if !has_bad_edge {
-        edges_needing_split.push(longest_edge_key);
+        edges_needing_split.push(*longest_edge_key);
       }
     }
 

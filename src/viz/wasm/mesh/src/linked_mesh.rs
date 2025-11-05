@@ -85,7 +85,7 @@ pub fn set_graphviz_print(f: fn(&str) -> ()) {
 }
 
 static mut DEBUG_PRINT_INNER: fn(&str) -> () = |s| {
-  println!("{}", s);
+  println!("{s}");
 };
 
 #[allow(dead_code)]
@@ -341,7 +341,7 @@ impl NormalAcc {
     } else {
       let normalized = self.accumulated_normal.normalize();
       if normalized.x.is_nan() || normalized.y.is_nan() || normalized.z.is_nan() {
-        panic!("Non-zero but still NaN normalized: {:?}", self);
+        panic!("Non-zero but still NaN normalized: {self:?}");
       }
       Some(normalized)
     }
@@ -735,7 +735,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   pub fn merge_vertices_by_distance_cb(
     &mut self,
     max_distance: f32,
-    mut cb: impl FnMut(FaceKey, FaceData) -> (),
+    mut cb: impl FnMut(FaceKey, FaceData),
   ) -> usize {
     // simple spatial hashing
     // TODO: this seems trash and should be re-written to use a proper r-tree or similar
@@ -1126,17 +1126,17 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       if TWO_MANIFOLD {
         if face_count != 2 {
           return Err(NonManifoldError::NonManifoldEdge {
-            edge_key: edge_key,
+            edge_key,
             face_count,
           });
         }
       } else {
         if face_count == 0 {
           log::error!("Found edge with no faces: {edge:?}");
-          return Err(NonManifoldError::LooseEdge { edge_key: edge_key });
+          return Err(NonManifoldError::LooseEdge { edge_key });
         } else if face_count > 2 {
           return Err(NonManifoldError::NonManifoldEdge {
-            edge_key: edge_key,
+            edge_key,
             face_count,
           });
         }
@@ -1261,17 +1261,17 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       if two_manifold {
         if face_count != 2 {
           return Err(NonManifoldError::NonManifoldEdge {
-            edge_key: edge_key,
+            edge_key,
             face_count,
           });
         }
       } else {
         if face_count == 0 {
           log::error!("Found edge with no faces: {edge:?}");
-          return Err(NonManifoldError::LooseEdge { edge_key: edge_key });
+          return Err(NonManifoldError::LooseEdge { edge_key });
         } else if face_count > 2 {
           return Err(NonManifoldError::NonManifoldEdge {
-            edge_key: edge_key,
+            edge_key,
             face_count,
           });
         }
@@ -1811,10 +1811,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
 
     out_meshes
-      .into_iter()
-      .map(|(_k, v)| v)
+      .into_values()
       .filter(|builder| !builder.is_empty())
-      .map(|builder| builder.build(self.transform.clone()))
+      .map(|builder| builder.build(self.transform))
       .collect()
   }
 
@@ -1833,7 +1832,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
             face.vertices.map(|vtx_key| {
               self.vertices[vtx_key]
                 .displacement_normal
-                .unwrap_or_else(|| Vec3::zeros())
+                .unwrap_or_else(Vec3::zeros)
             })
           })
           .collect(),
@@ -1852,7 +1851,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     edge_key_to_split: EdgeKey,
     split_pos: EdgeSplitPos,
     displacement_normal_method: DisplacementNormalMethod,
-    mut face_split_cb: impl FnMut(&Self, FaceKey, FaceData, [FaceKey; 2]) -> (),
+    mut face_split_cb: impl FnMut(&Self, FaceKey, FaceData, [FaceKey; 2]),
   ) -> VertexKey {
     let edge = self.edges.get(edge_key_to_split).unwrap_or_else(|| {
       panic!("Tried to split edge that doesn't exist; key={edge_key_to_split:?}")
@@ -2176,7 +2175,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         .iter()
         .flat_map(|&face_key| {
           let face = &self.faces[face_key];
-          face.vertices.iter().map(|&vtx_key| vtx_key)
+          face.vertices.iter().copied()
         })
         .collect();
 
@@ -2249,7 +2248,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   /// Removes all degenerate faces from the mesh.
-  pub fn cleanup_degenerate_triangles_cb(&mut self, mut cb: impl FnMut(FaceKey, FaceData) -> ()) {
+  pub fn cleanup_degenerate_triangles_cb(&mut self, mut cb: impl FnMut(FaceKey, FaceData)) {
     let all_face_keys = self.faces.keys().collect::<Vec<_>>();
     for face_key in all_face_keys {
       let face = &self.faces[face_key];
@@ -2639,11 +2638,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     // 0,2n-2,2n-1
     for (middle_vtx_ix, reverse_winding, ix_offset) in [
       (bottom_center_ix, false, 0usize),
-      (
-        top_center_ix,
-        true,
-        (height_segments * radial_segments) as usize,
-      ),
+      (top_center_ix, true, (height_segments * radial_segments)),
     ] {
       for i in 0..radial_segments {
         if reverse_winding {

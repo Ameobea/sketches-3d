@@ -126,24 +126,21 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
 
   let mut deps = GeoscriptAsyncDependencies::default();
   traverse_fn_calls(program, |name: Sym| {
-    ctx
-      .geo_ctx
-      .with_resolved_sym(name, |name| {
-        if name == "trace_geodesic_path" {
-          deps.geodesics = true;
-        } else if name == "alpha_wrap"
-          || name == "smooth"
-          || name == "remesh_planar_patches"
-          || name == "isotropic_remesh"
-          || name == "remesh"
-          || name == "remesh_isotropic"
-          || name == "delaunay_remesh"
-          || name == "remesh_delaunay"
-        {
-          deps.cgal = true;
-        }
-      })
-      .unwrap()
+    ctx.geo_ctx.with_resolved_sym(name, |name| {
+      if name == "trace_geodesic_path" {
+        deps.geodesics = true;
+      } else if name == "alpha_wrap"
+        || name == "smooth"
+        || name == "remesh_planar_patches"
+        || name == "isotropic_remesh"
+        || name == "remesh"
+        || name == "remesh_isotropic"
+        || name == "delaunay_remesh"
+        || name == "remesh_delaunay"
+      {
+        deps.cgal = true;
+      }
+    })
   });
 
   deps.serialize_json()

@@ -65,7 +65,7 @@ impl Sequence for MapSeq {
     Box::new(inner.map(move |(i, res)| {
       match res {
         Ok(v) => ctx
-          .invoke_callable(&cb, &[v, Value::Int(i as i64)], &EMPTY_KWARGS)
+          .invoke_callable(&cb, &[v, Value::Int(i as i64)], EMPTY_KWARGS)
           .map_err(|err| err.wrap("cb passed to map produced an error")),
         Err(err) => Err(err),
       }
@@ -89,7 +89,7 @@ impl Sequence for FilterSeq {
 
     Box::new(inner.enumerate().filter_map(move |(i, res)| match res {
       Ok(v) => {
-        let flag = match ctx.invoke_callable(&cb, &[v.clone(), Value::Int(i as i64)], &EMPTY_KWARGS)
+        let flag = match ctx.invoke_callable(&cb, &[v.clone(), Value::Int(i as i64)], EMPTY_KWARGS)
         {
           Ok(flag) => flag,
           Err(err) => return Some(Err(err.wrap("cb passed to filter produced an error"))),
@@ -132,7 +132,7 @@ impl<'a> Iterator for ScanIter<'a> {
       match res {
         (ix, Ok(v)) => {
           let args = &[self.acc.clone(), v, Value::Int(ix as i64)];
-          match self.ctx.invoke_callable(&self.cb, args, &EMPTY_KWARGS) {
+          match self.ctx.invoke_callable(&self.cb, args, EMPTY_KWARGS) {
             Ok(new_acc) => {
               self.acc = new_acc;
               Some(Ok(self.acc.clone()))
@@ -304,7 +304,7 @@ impl<'a> Iterator for PointDistributeIter<'a> {
         if let Some(cb) = &self.cb {
           let mapped = self
             .ctx
-            .invoke_callable(cb, &[value, Value::Vec3(normal)], &EMPTY_KWARGS);
+            .invoke_callable(cb, &[value, Value::Vec3(normal)], EMPTY_KWARGS);
           Some(mapped)
         } else {
           Some(Ok(value))
@@ -486,16 +486,14 @@ impl Iterator for TakeWhileIter<'_> {
   type Item = Result<Value, ErrorStack>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let Some(res) = self.inner.next() else {
-      return None;
-    };
+    let res = self.inner.next()?;
     let Ok(val) = res else {
       return Some(res);
     };
 
     match self
       .ctx
-      .invoke_callable(&self.cb, &[val.clone()], &EMPTY_KWARGS)
+      .invoke_callable(&self.cb, &[val.clone()], EMPTY_KWARGS)
     {
       Ok(Value::Bool(flag)) => {
         if flag {
@@ -553,14 +551,14 @@ impl Iterator for SkipWhileIter<'_> {
   type Item = Result<Value, ErrorStack>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    while let Some(res) = self.inner.next() {
+    for res in self.inner.by_ref() {
       let Ok(val) = res else {
         return Some(res);
       };
 
       match self
         .ctx
-        .invoke_callable(&self.cb, &[val.clone()], &EMPTY_KWARGS)
+        .invoke_callable(&self.cb, &[val.clone()], EMPTY_KWARGS)
       {
         Ok(Value::Bool(flag)) => {
           if flag {

@@ -220,6 +220,6 @@ pub(crate) fn eval_mesh_boolean(
 ) -> Result<Value, ErrorStack> {
   // Err("mesh boolean ops are only supported in wasm".to_owned())
   Ok(Value::Mesh(Rc::new(crate::MeshHandle::new(Rc::new(
-    mesh::LinkedMesh::new(0, 0, None).into(),
+    mesh::LinkedMesh::new(0, 0, None),
   )))))
 }

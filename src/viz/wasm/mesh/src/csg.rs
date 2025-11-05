@@ -1260,7 +1260,7 @@ impl Node {
   fn into_polygons(self_key: NodeKey, nodes: &mut NodeMap) -> Vec<Polygon> {
     let mut polygons = Vec::new();
     Self::traverse_mut(self_key, nodes, &mut |_key, node| {
-      polygons.extend(node.polygons.drain(..));
+      polygons.append(&mut node.polygons);
     });
     polygons
   }
@@ -1464,7 +1464,7 @@ impl CSG {
       });
       our_vtx_key_by_other_vtx_key.insert(vtx_key, new_key);
     }
-    let csg_polys = other
+    other
       .faces
       .into_iter()
       .map(|(_key, face)| {
@@ -1476,9 +1476,7 @@ impl CSG {
         let face_key = mesh.add_face::<false>(vertices, face.data);
         Polygon { key: face_key }
       })
-      .collect::<Vec<_>>();
-
-    csg_polys
+      .collect::<Vec<_>>()
   }
 
   /// Inits a node map with some special hard-coded keys that are used as temporary buffers to avoid
@@ -1525,12 +1523,11 @@ impl CSG {
       for face in mesh.faces.values() {
         let ixs = std::array::from_fn(|i| {
           let vtx_key = face.vertices[i];
-          let vtx_ix = vtx_ix_by_key.entry(vtx_key).or_insert_with(|| {
+          *vtx_ix_by_key.entry(vtx_key).or_insert_with(|| {
             let ix = verts.len();
             verts.push(mesh.vertices[vtx_key].position.into());
             ix as u32
-          });
-          *vtx_ix as u32
+          })
         });
         indices.push(ixs);
       }
@@ -1779,9 +1776,8 @@ impl CSG {
         let Some(edge_key_to_remove) = mesh.get_edge_key([verts_to_merge.0, verts_to_merge.1])
         else {
           log::error!(
-            "No edge found for vertices {:?} in face {:?} yet they appear in the same face?",
-            verts_to_merge,
-            face_key
+            "No edge found for vertices {verts_to_merge:?} in face {face_key:?} yet they appear \
+             in the same face?"
           );
           continue;
         };

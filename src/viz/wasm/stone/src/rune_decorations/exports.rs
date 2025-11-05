@@ -43,8 +43,7 @@ pub fn generate_rune_decoration_mesh_2d() -> *mut GeneratedRunes2D {
 #[wasm_bindgen]
 pub fn get_generated_indices_3d(generated_ptr: *mut GeneratedRunes3D) -> Vec<u32> {
   let generated = unsafe { &mut *generated_ptr };
-  let indices = std::mem::take(&mut generated.buffers.indices);
-  indices
+  std::mem::take(&mut generated.buffers.indices)
 }
 
 #[wasm_bindgen]
@@ -80,8 +79,7 @@ pub fn get_vertex_normals_3d(generated_ptr: *mut GeneratedRunes3D) -> Vec<f32> {
 #[wasm_bindgen]
 pub fn get_generated_indices_2d(generated_ptr: *mut GeneratedRunes2D) -> Vec<u32> {
   let generated = unsafe { &mut *generated_ptr };
-  let indices = std::mem::take(&mut generated.buffers.indices);
-  indices
+  std::mem::take(&mut generated.buffers.indices)
 }
 
 #[wasm_bindgen]
