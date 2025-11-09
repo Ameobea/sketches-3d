@@ -527,7 +527,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     };
 
     mesh.faces = build_slotmap_from_iter_with_key(
-      indices.array_chunks::<3>(),
+      indices.as_chunks::<3>().0.iter(),
       |[a_ix, b_ix, c_ix], face_key| {
         // we've inserted all the vertices in a fixed order without any removals, so the keys are
         // deterministic
@@ -2431,7 +2431,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       arr_indices
     } else {
       indices
-        .array_chunks::<3>()
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|[a, b, c]| [*a as u32, *b as u32, *c as u32])
         .collect()
     };

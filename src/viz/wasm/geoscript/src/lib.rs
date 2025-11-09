@@ -5,8 +5,7 @@
   thread_local,
   impl_trait_in_fn_trait_return,
   unsafe_cell_access,
-  likely_unlikely,
-  generic_arg_infer
+  likely_unlikely
 )]
 
 #[cfg(target_arch = "wasm32")]
@@ -45,7 +44,7 @@ use crate::{
     DestructurePattern, FunctionCall, MapLiteralEntry, TypeName,
   },
   builtins::{
-    fn_defs::{get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnSignature, FN_SIGNATURE_DEFS},
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
   lights::{AmbientLight, Light},
@@ -287,7 +286,7 @@ impl Debug for Callable {
         pre_resolved_signature,
         ..
       } => {
-        let entry = match FN_SIGNATURE_DEFS.entries.get(*fn_entry_ix) {
+        let entry = match fn_sigs().entries.get(*fn_entry_ix) {
           Some(entry) => entry,
           None => {
             return Debug::fmt(
@@ -323,7 +322,7 @@ impl Callable {
   pub fn is_side_effectful(&self) -> bool {
     match self {
       Callable::Builtin { fn_entry_ix, .. } => {
-        let name = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0;
+        let name = fn_sigs().entries[*fn_entry_ix].0;
         matches!(
           name,
           "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert"
@@ -570,6 +569,22 @@ impl Debug for Value {
   }
 }
 
+const INT_FLAG: u16 = 0b0000_0000_0000_0001;
+const FLOAT_FLAG: u16 = 0b0000_0000_0000_0010;
+const NUMERIC_FLAG: u16 = INT_FLAG | FLOAT_FLAG;
+const VEC2_FLAG: u16 = 0b0000_0000_0000_0100;
+const VEC3_FLAG: u16 = 0b0000_0000_0000_1000;
+const MESH_FLAG: u16 = 0b0000_0000_0001_0000;
+const LIGHT_FLAG: u16 = 0b0000_0000_0010_0000;
+const CALLABLE_FLAG: u16 = 0b0000_0000_0100_0000;
+const SEQUENCE_FLAG: u16 = 0b0000_0000_1000_0000;
+const MAP_FLAG: u16 = 0b0000_0001_0000_0000;
+const BOOL_FLAG: u16 = 0b0000_0010_0000_0000;
+const STRING_FLAG: u16 = 0b0000_0100_0000_0000;
+const MATERIAL_FLAG: u16 = 0b0000_1000_0000_0000;
+const NIL_FLAG: u16 = 0b0001_0000_0000_0000;
+const ANY_FLAG: u16 = 0xFFFF;
+
 impl Value {
   pub fn as_float(&self) -> Option<f32> {
     match self {
@@ -690,9 +705,27 @@ impl Value {
       Value::Nil => ArgType::Nil,
     }
   }
+
+  fn as_bitflags(&self) -> u16 {
+    match self {
+      Value::Int(_) => INT_FLAG,
+      Value::Float(_) => FLOAT_FLAG,
+      Value::Vec2(_) => VEC2_FLAG,
+      Value::Vec3(_) => VEC3_FLAG,
+      Value::Mesh(_) => MESH_FLAG,
+      Value::Light(_) => LIGHT_FLAG,
+      Value::Callable(_) => CALLABLE_FLAG,
+      Value::Sequence(_) => SEQUENCE_FLAG,
+      Value::Map(_) => MAP_FLAG,
+      Value::Bool(_) => BOOL_FLAG,
+      Value::String(_) => STRING_FLAG,
+      Value::Material(_) => MATERIAL_FLAG,
+      Value::Nil => NIL_FLAG,
+    }
+  }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, SerJson)]
+#[derive(Clone, Copy, Debug, SerJson)]
 pub enum ArgType {
   Int,
   Float,
@@ -712,31 +745,31 @@ pub enum ArgType {
 }
 
 impl ArgType {
-  pub fn is_valid(&self, arg: &Value) -> bool {
+  pub fn any_valid(valid_types_flags: u16, arg: &Value) -> bool {
+    valid_types_flags & arg.as_bitflags() != 0
+  }
+
+  pub const fn as_bitflags(&self) -> u16 {
     match self {
-      ArgType::Int => matches!(arg, Value::Int(_)),
-      ArgType::Float => matches!(arg, Value::Float(_)),
-      ArgType::Numeric => matches!(arg, Value::Int(_) | Value::Float(_)),
-      ArgType::Vec2 => matches!(arg, Value::Vec2(_)),
-      ArgType::Vec3 => matches!(arg, Value::Vec3(_)),
-      ArgType::Mesh => matches!(arg, Value::Mesh(_)),
-      ArgType::Light => matches!(arg, Value::Light(_)),
-      ArgType::Callable => matches!(arg, Value::Callable { .. }),
-      ArgType::Sequence => matches!(arg, Value::Sequence(_)),
-      ArgType::Map => matches!(arg, Value::Map(_)),
-      ArgType::Bool => matches!(arg, Value::Bool(_)),
-      ArgType::String => matches!(arg, Value::String(_)),
-      ArgType::Material => matches!(arg, Value::Material(_) | Value::String(_)),
-      ArgType::Nil => matches!(arg, Value::Nil),
-      ArgType::Any => true,
+      ArgType::Int => INT_FLAG,
+      ArgType::Float => FLOAT_FLAG,
+      ArgType::Numeric => NUMERIC_FLAG,
+      ArgType::Vec2 => VEC2_FLAG,
+      ArgType::Vec3 => VEC3_FLAG,
+      ArgType::Mesh => MESH_FLAG,
+      ArgType::Light => LIGHT_FLAG,
+      ArgType::Callable => CALLABLE_FLAG,
+      ArgType::Sequence => SEQUENCE_FLAG,
+      ArgType::Map => MAP_FLAG,
+      ArgType::Bool => BOOL_FLAG,
+      ArgType::String => STRING_FLAG,
+      ArgType::Material => MATERIAL_FLAG,
+      ArgType::Nil => NIL_FLAG,
+      ArgType::Any => ANY_FLAG,
     }
   }
 
-  pub fn any_valid(types: &[ArgType], arg: &Value) -> bool {
-    types.iter().any(|t| t.is_valid(arg))
-  }
-
-  pub fn as_str(&self) -> &'static str {
+  pub const fn as_str(&self) -> &'static str {
     match self {
       ArgType::Int => "int",
       ArgType::Float => "float",
@@ -790,21 +823,38 @@ impl ArgType {
       ArgType::Any => None,
     }
   }
-}
 
-enum UnrealizedArgRef {
-  Positional(usize),
-  Keyword(Sym),
-  Default(fn() -> Value),
-}
-
-impl UnrealizedArgRef {
-  pub fn realize(self) -> ArgRef {
-    match self {
-      UnrealizedArgRef::Positional(ix) => ArgRef::Positional(ix),
-      UnrealizedArgRef::Keyword(name) => ArgRef::Keyword(name),
-      UnrealizedArgRef::Default(get_default) => ArgRef::Default(get_default()),
+  fn list_from_bitflags(valid_types: u16) -> Vec<ArgType> {
+    let mut types = Vec::new();
+    for arg_type in &[
+      ArgType::Vec2,
+      ArgType::Vec3,
+      ArgType::Mesh,
+      ArgType::Light,
+      ArgType::Callable,
+      ArgType::Sequence,
+      ArgType::Map,
+      ArgType::Bool,
+      ArgType::String,
+      ArgType::Material,
+      ArgType::Nil,
+      ArgType::Any,
+    ] {
+      if valid_types & arg_type.as_bitflags() != 0 {
+        types.push(*arg_type);
+      }
     }
+
+    // check if both int and float match
+    if valid_types & (ArgType::Int.as_bitflags() | ArgType::Float.as_bitflags()) != 0 {
+      types.push(ArgType::Numeric);
+    } else if valid_types & ArgType::Int.as_bitflags() != 0 {
+      types.push(ArgType::Int);
+    } else if valid_types & ArgType::Float.as_bitflags() != 0 {
+      types.push(ArgType::Float);
+    }
+
+    types
   }
 }
 
@@ -829,7 +879,7 @@ impl ArgRef {
 enum GetArgsOutput {
   Valid {
     def_ix: usize,
-    arg_refs: Vec<ArgRef>,
+    arg_refs: SmallVec<[ArgRef; 6]>,
   },
   PartiallyApplied,
 }
@@ -847,8 +897,7 @@ fn format_fn_signatures(arg_defs: &[FnSignature]) -> String {
         .arg_defs
         .iter()
         .map(|arg_def| {
-          let types_str = arg_def
-            .valid_types
+          let types_str = ArgType::list_from_bitflags(arg_def.valid_types)
             .iter()
             .map(ArgType::as_str)
             .collect::<Vec<_>>()
@@ -908,19 +957,17 @@ fn get_args(
       if def.name.is_empty() {
         return Ok(GetArgsOutput::Valid {
           def_ix: 0,
-          arg_refs: Vec::new(),
+          arg_refs: SmallVec::new(),
         });
       }
     }
   }
 
   for &key in kwargs.keys() {
-    // TODO: again, bad that we have to resolve here for each kwarg
-    if ctx.with_resolved_sym(key, |resolved_kwarg| {
-      !defs
-        .iter()
-        .any(|def| def.arg_defs.iter().any(|arg| arg.name == resolved_kwarg))
-    }) {
+    if !defs
+      .iter()
+      .any(|def| def.arg_defs.iter().any(|arg| arg.interned_name == key))
+    {
       return ctx.with_resolved_sym(key, |resolved| {
         Err(ErrorStack::new(format!(
           "kwarg `{resolved}` is not valid in any function signature.\n\nAvailable signatures:\n{}",
@@ -930,18 +977,17 @@ fn get_args(
     }
   }
 
-  let mut arg_refs: SmallVec<[UnrealizedArgRef; 8]> = SmallVec::new();
+  let mut arg_refs: SmallVec<[ArgRef; 6]> = SmallVec::new();
   let mut valid_partial: bool = false;
   let any_args_provided = !args.is_empty() || !kwargs.is_empty();
   'def: for (def_ix, def) in defs.iter().enumerate() {
     // if a kwarg was passed which isn't defined in this function signature, skip
     for &kwarg_key in kwargs.keys() {
-      if ctx.with_resolved_sym(kwarg_key, |resolved_kwarg_key| {
-        def
-          .arg_defs
-          .iter()
-          .all(|def| def.name != resolved_kwarg_key)
-      }) {
+      if def
+        .arg_defs
+        .iter()
+        .all(|def| def.interned_name != kwarg_key)
+      {
         continue 'def;
       }
     }
@@ -951,22 +997,21 @@ fn get_args(
     'arg: for ArgDef {
       default_value,
       description: _,
-      name,
+      name: _,
+      interned_name: kwarg_sym,
       valid_types,
     } in def.arg_defs
     {
-      // TODO: this is not ideal; would be good to pre-resolve these.
-      let kwarg_sym = ctx.interned_symbols.intern(name);
-      let (arg, arg_ref) = if let Some(kwarg) = kwargs.get(&kwarg_sym) {
-        (kwarg, UnrealizedArgRef::Keyword(kwarg_sym))
+      let (arg, arg_ref) = if let Some(kwarg) = kwargs.get(kwarg_sym) {
+        (kwarg, ArgRef::Keyword(*kwarg_sym))
       } else if pos_arg_ix < args.len() {
         let arg = &args[pos_arg_ix];
-        let arg_ref = UnrealizedArgRef::Positional(pos_arg_ix);
+        let arg_ref = ArgRef::Positional(pos_arg_ix);
         pos_arg_ix += 1;
         (arg, arg_ref)
       } else {
         if let DefaultValue::Optional(get_default) = default_value {
-          arg_refs.push(UnrealizedArgRef::Default(*get_default));
+          arg_refs.push(ArgRef::Default(get_default()));
           continue 'arg;
         } else {
           // If any required argument is missing, mark as partial if any args/kwargs were provided
@@ -977,7 +1022,7 @@ fn get_args(
         }
       };
 
-      if !ArgType::any_valid(valid_types, arg) {
+      if !ArgType::any_valid(*valid_types, arg) {
         continue 'def;
       }
 
@@ -985,14 +1030,7 @@ fn get_args(
     }
 
     // valid args found for the whole def, so the function call is valid
-    let realized_arg_defs = arg_refs
-      .into_iter()
-      .map(UnrealizedArgRef::realize)
-      .collect();
-    return Ok(GetArgsOutput::Valid {
-      def_ix,
-      arg_refs: realized_arg_defs,
-    });
+    return Ok(GetArgsOutput::Valid { def_ix, arg_refs });
   }
 
   if valid_partial {
@@ -1010,7 +1048,7 @@ fn get_binop_def_ix(
   lhs: &Value,
   rhs: &Value,
 ) -> Result<usize, ErrorStack> {
-  let fn_entry = &FN_SIGNATURE_DEFS.entries[fn_entry_ix];
+  let fn_entry = &fn_sigs().entries[fn_entry_ix];
   let defs = fn_entry.1.signatures;
   for (def_ix, def) in defs.iter().enumerate() {
     let lhs_def = &def.arg_defs[0];
@@ -1033,12 +1071,12 @@ fn get_binop_def_ix(
 /// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
 /// def in `defs` has exactly one arg.
 fn get_unop_def_ix(ctx: &EvalCtx, fn_entry_ix: usize, arg: &Value) -> Result<usize, ErrorStack> {
-  let fn_entry = &FN_SIGNATURE_DEFS.entries[fn_entry_ix];
+  let fn_entry = &fn_sigs().entries[fn_entry_ix];
   let defs = fn_entry.1.signatures;
 
   for (def_ix, def) in defs.iter().enumerate() {
     let arg_def = &def.arg_defs[0];
-    if ArgType::any_valid(&arg_def.valid_types, arg) {
+    if ArgType::any_valid(arg_def.valid_types, arg) {
       return Ok(def_ix);
     }
   }
@@ -1063,7 +1101,7 @@ fn get_unop_return_ty(
 ) -> Result<&'static [ArgType], ErrorStack> {
   for def in defs {
     let arg_def = &def.arg_defs[0];
-    if ArgType::any_valid(&arg_def.valid_types, arg) {
+    if ArgType::any_valid(arg_def.valid_types, arg) {
       return Ok(&def.return_type);
     }
   }
@@ -1073,7 +1111,7 @@ fn get_unop_return_ty(
     name,
     &[arg.clone()],
     EMPTY_KWARGS,
-    FN_SIGNATURE_DEFS[name].signatures,
+    fn_sigs()[name].signatures,
   ));
 }
 
@@ -1177,6 +1215,7 @@ impl Scope {
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
 pub struct Sym(pub usize);
 
+#[derive(Clone)]
 pub struct SymbolInterner {
   pub symbols: RefCell<FxHashMap<String, Sym>>,
   pub reverse_symbols: RefCell<FxHashMap<Sym, String>>,
@@ -1211,18 +1250,86 @@ impl SymbolInterner {
   }
 }
 
+static mut DEFAULT_INTERNER: *const SymbolInterner = std::ptr::null();
+
+#[cfg(not(target_arch = "wasm32"))]
+static INTERNER_INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn build_default_symbol_interner() -> SymbolInterner {
+  let interner = SymbolInterner {
+    symbols: RefCell::new(FxHashMap::default()),
+    reverse_symbols: RefCell::new(FxHashMap::default()),
+    next_sym: Cell::new(0),
+  };
+
+  for (name, _, _) in get_default_globals() {
+    interner.intern(name);
+  }
+
+  for FnDef {
+    module: _,
+    examples: _,
+    signatures,
+  } in fn_sigs().values()
+  {
+    for FnSignature {
+      arg_defs,
+      description: _,
+      return_type: _,
+    } in *signatures
+    {
+      for ArgDef {
+        name,
+        interned_name,
+        valid_types: _,
+        default_value: _,
+        description: _,
+      } in *arg_defs
+      {
+        let sym = interner.intern(name);
+        // don't worry about it
+        let addr: *mut Sym = unsafe { std::mem::transmute::<&Sym, *mut Sym>(interned_name) };
+        unsafe {
+          addr.write(sym);
+        }
+      }
+    }
+  }
+
+  interner
+}
+
+fn get_or_init_default_symbol_interner() -> SymbolInterner {
+  unsafe {
+    if !DEFAULT_INTERNER.is_null() {
+      return (*DEFAULT_INTERNER).clone();
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+      let interner = build_default_symbol_interner();
+      let out = interner.clone();
+      DEFAULT_INTERNER = Box::into_raw(Box::new(interner));
+
+      out
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+      let _lock = INTERNER_INIT.lock().unwrap();
+
+      let interner = build_default_symbol_interner();
+      let out = interner.clone();
+      DEFAULT_INTERNER = Box::into_raw(Box::new(interner));
+
+      out
+    }
+  }
+}
+
 impl Default for SymbolInterner {
   fn default() -> Self {
-    let interner = SymbolInterner {
-      symbols: RefCell::new(FxHashMap::default()),
-      reverse_symbols: RefCell::new(FxHashMap::default()),
-      next_sym: Cell::new(0),
-    };
-
-    for (name, _, _) in get_default_globals() {
-      interner.intern(name);
-    }
-    interner
+    get_or_init_default_symbol_interner()
   }
 }
 
@@ -1776,7 +1883,7 @@ impl EvalCtx {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
     if let Callable::Builtin { fn_entry_ix, .. } = &**callable {
-      let builtin_name = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0;
+      let builtin_name = fn_sigs().entries[*fn_entry_ix].0;
       if matches!(builtin_name, "union" | "difference" | "intersect") {
         let combined_iter = ChainSeq::new(
           self,
@@ -1823,7 +1930,7 @@ impl EvalCtx {
     // if we're applying a mesh boolean op here, we can use the fast path that avoids the overhead
     // of encoding/decoding intermediate meshes
     if let Callable::Builtin { fn_entry_ix, .. } = &**fn_value {
-      let builtin_name = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0;
+      let builtin_name = fn_sigs().entries[*fn_entry_ix].0;
       if matches!(builtin_name, "union" | "difference" | "intersect") {
         return eval_mesh_boolean(
           1,
@@ -2157,7 +2264,7 @@ impl EvalCtx {
           fn_impl(*def_ix, arg_refs, args, kwargs, self)
         }
         None => {
-          let entry = &FN_SIGNATURE_DEFS.entries[*fn_entry_ix];
+          let entry = &fn_sigs().entries[*fn_entry_ix];
           let builtin_name = entry.0;
           let fn_signature_defs = entry.1.signatures;
           let arg_refs = get_args(self, builtin_name, fn_signature_defs, args, kwargs)?;
@@ -2179,7 +2286,7 @@ impl EvalCtx {
       .map_err(|err| {
         err.wrap(format!(
           "Error invoking builtin function `{}`",
-          FN_SIGNATURE_DEFS.entries[*fn_entry_ix].0
+          fn_sigs().entries[*fn_entry_ix].0
         ))
       }),
       Callable::PartiallyAppliedFn(paf) => {
@@ -2500,30 +2607,40 @@ render(a)
 
 #[test]
 fn test_partial_application_with_only_kwargs() {
-  static ARGS: &[ArgDef] = &[
+  let ctx = EvalCtx::default();
+  let interned_x = ctx.interned_symbols.intern("x");
+  let interned_y = ctx.interned_symbols.intern("y");
+
+  static mut ARGS: &mut [ArgDef] = &mut [
     ArgDef {
       name: "x",
-      valid_types: &[ArgType::Int],
+      interned_name: Sym(0),
+      valid_types: ArgType::Int.as_bitflags(),
       default_value: builtins::fn_defs::DefaultValue::Required,
       description: "",
     },
     ArgDef {
       name: "y",
-      valid_types: &[ArgType::Int],
+      interned_name: Sym(0),
+      valid_types: ArgType::Int.as_bitflags(),
       default_value: builtins::fn_defs::DefaultValue::Required,
       description: "",
     },
   ];
+
+  unsafe {
+    ARGS[0].interned_name = interned_x;
+    ARGS[1].interned_name = interned_y;
+  }
+
   let defs = &[FnSignature {
-    arg_defs: ARGS,
+    arg_defs: unsafe { ARGS },
     description: "",
     return_type: &[ArgType::Any],
   }];
   let args = Vec::new();
   let mut kwargs = FxHashMap::default();
-  let ctx = EvalCtx::default();
-  let y_interned = ctx.interned_symbols.intern("y");
-  kwargs.insert(y_interned, Value::Int(1));
+  kwargs.insert(interned_y, Value::Int(1));
   let result = get_args(&ctx, "fn_name", defs, &args, &kwargs);
   match result {
     Ok(GetArgsOutput::PartiallyApplied) => {}
@@ -2533,27 +2650,38 @@ fn test_partial_application_with_only_kwargs() {
 
 #[test]
 fn test_unknown_kwarg_returns_error() {
-  static ARGS: &[ArgDef] = &[
+  let ctx = EvalCtx::default();
+  let interned_x = ctx.interned_symbols.intern("x");
+  let interned_y = ctx.interned_symbols.intern("y");
+
+  static mut ARGS: &mut [ArgDef] = &mut [
     ArgDef {
       name: "x",
-      valid_types: &[ArgType::Int],
+      interned_name: Sym(0),
+      valid_types: ArgType::Int.as_bitflags(),
       default_value: builtins::fn_defs::DefaultValue::Required,
       description: "",
     },
     ArgDef {
       name: "y",
-      valid_types: &[ArgType::Int],
+      interned_name: Sym(0),
+      valid_types: ArgType::Int.as_bitflags(),
       default_value: builtins::fn_defs::DefaultValue::Required,
       description: "",
     },
   ];
+
+  unsafe {
+    ARGS[0].interned_name = interned_x;
+    ARGS[1].interned_name = interned_y;
+  }
+
   let defs = &[FnSignature {
-    arg_defs: ARGS,
+    arg_defs: unsafe { ARGS },
     description: "",
     return_type: &[ArgType::Any],
   }];
 
-  let ctx = EvalCtx::default();
   let z_interned = ctx.interned_symbols.intern("z");
   let args = Vec::new();
   let mut kwargs = FxHashMap::default();

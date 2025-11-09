@@ -6,14 +6,13 @@ use pest::iterators::Pair;
 use crate::{
   builtins::{
     add_impl, and_impl, bit_and_impl, bit_or_impl, div_impl, eq_impl,
-    fn_defs::{get_builtin_fn_sig_entry_ix, FnSignature},
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, FnSignature},
     map_impl, mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl,
     pos_impl, sub_impl, BoolOp,
   },
   get_args, get_binop_def_ix, get_unop_def_ix, get_unop_return_ty, resolve_builtin_impl, ArgType,
   Callable, CapturedScope, Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput, IntRange,
-  PreResolvedSignature, Rule, Scope, Sym, Value, EMPTY_KWARGS, FN_SIGNATURE_DEFS, FUNCTION_ALIASES,
-  PRATT_PARSER,
+  PreResolvedSignature, Rule, Scope, Sym, Value, EMPTY_KWARGS, FUNCTION_ALIASES, PRATT_PARSER,
 };
 
 #[derive(Debug)]
@@ -440,8 +439,7 @@ impl Expr {
           }
         } else {
           ctx.with_resolved_sym(*name, |resolved_name| {
-            if FN_SIGNATURE_DEFS.contains_key(resolved_name)
-              || FUNCTION_ALIASES.contains_key(resolved_name)
+            if fn_sigs().contains_key(resolved_name) || FUNCTION_ALIASES.contains_key(resolved_name)
             {
               let builtin_name = if let Some(alias_target) = FUNCTION_ALIASES.get(resolved_name) {
                 alias_target
@@ -1697,7 +1695,7 @@ fn pre_resolve_binop_def_ix(
 ) -> Option<(&'static [FnSignature], usize)> {
   let builtin_name = op.get_builtin_fn_name()?;
 
-  let builtin_arg_defs = FN_SIGNATURE_DEFS[builtin_name].signatures;
+  let builtin_arg_defs = fn_sigs()[builtin_name].signatures;
 
   let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
   let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
@@ -1735,7 +1733,7 @@ fn pre_resolve_expr_type(
         BinOp::Range | BinOp::RangeInclusive => return Some(ArgType::Sequence),
         BinOp::Pipeline => {
           let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
-          if rhs_ty == ArgType::Mesh {
+          if matches!(rhs_ty, ArgType::Mesh) {
             return Some(ArgType::Mesh);
           }
 
@@ -1747,7 +1745,7 @@ fn pre_resolve_expr_type(
                 pre_resolved_signature,
               } => match pre_resolved_signature {
                 Some(sig) => {
-                  let fn_signature_defs = &FN_SIGNATURE_DEFS.entries[*fn_entry_ix].1.signatures;
+                  let fn_signature_defs = &fn_sigs().entries[*fn_entry_ix].1.signatures;
                   let return_ty = fn_signature_defs[sig.def_ix].return_type;
                   if return_ty.len() == 1 {
                     return Some(return_ty[0]);
@@ -1781,7 +1779,7 @@ fn pre_resolve_expr_type(
       let (builtin_arg_defs, def_ix) = match pre_resolved_def_ix {
         Some(def_ix) => {
           let builtin_name = op.get_builtin_fn_name()?;
-          let builtin_arg_defs = FN_SIGNATURE_DEFS[builtin_name].signatures;
+          let builtin_arg_defs = fn_sigs()[builtin_name].signatures;
           (builtin_arg_defs, *def_ix)
         }
         None => pre_resolve_binop_def_ix(ctx, scope_tracker, op, lhs, rhs)?,
@@ -1801,29 +1799,14 @@ fn pre_resolve_expr_type(
       let arg_ty = pre_resolve_expr_type(ctx, scope_tracker, expr)?;
       let example_val = arg_ty.build_example_val()?;
       let return_ty_res = match op {
-        PrefixOp::Neg => get_unop_return_ty(
-          ctx,
-          "neg",
-          FN_SIGNATURE_DEFS["neg"].signatures,
-          &example_val,
-        ),
-        PrefixOp::Pos => get_unop_return_ty(
-          ctx,
-          "pos",
-          FN_SIGNATURE_DEFS["pos"].signatures,
-          &example_val,
-        ),
-        PrefixOp::Not => get_unop_return_ty(
-          ctx,
-          "not",
-          FN_SIGNATURE_DEFS["not"].signatures,
-          &example_val,
-        ),
+        PrefixOp::Neg => get_unop_return_ty(ctx, "neg", fn_sigs()["neg"].signatures, &example_val),
+        PrefixOp::Pos => get_unop_return_ty(ctx, "pos", fn_sigs()["pos"].signatures, &example_val),
+        PrefixOp::Not => get_unop_return_ty(ctx, "not", fn_sigs()["not"].signatures, &example_val),
       };
       match return_ty_res {
         Ok(return_tys) => {
           if return_tys.len() == 1 {
-            if return_tys[0] == ArgType::Any {
+            if matches!(return_tys[0], ArgType::Any) {
               None
             } else {
               Some(return_tys[0])
@@ -1850,7 +1833,7 @@ fn pre_resolve_expr_type(
         }
       };
       let out_ty = out_val.get_type();
-      if out_ty == ArgType::Any {
+      if matches!(out_ty, ArgType::Any) {
         return None;
       }
       Some(out_ty)
@@ -1871,7 +1854,7 @@ fn pre_resolve_expr_type(
         }
       };
       let out_ty = out_val.get_type();
-      if out_ty == ArgType::Any {
+      if matches!(out_ty, ArgType::Any) {
         return None;
       }
       Some(out_ty)
@@ -1889,7 +1872,7 @@ fn pre_resolve_expr_type(
           ..
         } => {
           let return_ty = if let Some(sig) = pre_resolved_signature {
-            let fn_signature_defs = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].1.signatures;
+            let fn_signature_defs = fn_sigs().entries[*fn_entry_ix].1.signatures;
             fn_signature_defs[sig.def_ix].return_type
           } else {
             match maybe_pre_resolve_bulitin_call_signature(
@@ -1900,7 +1883,7 @@ fn pre_resolve_expr_type(
               kwargs,
             ) {
               Ok(Some(sig)) => {
-                let fn_signature_defs = FN_SIGNATURE_DEFS.entries[*fn_entry_ix].1.signatures;
+                let fn_signature_defs = fn_sigs().entries[*fn_entry_ix].1.signatures;
                 fn_signature_defs[sig.def_ix].return_type
               }
               Ok(None) => return None,
@@ -1910,7 +1893,7 @@ fn pre_resolve_expr_type(
           match return_ty.len() {
             0 => None,
             1 => {
-              if return_ty[0] != ArgType::Any {
+              if !matches!(return_ty[0], ArgType::Any) {
                 Some(return_ty[0])
               } else {
                 None
@@ -1972,14 +1955,15 @@ fn maybe_pre_resolve_bulitin_call_signature(
     return Ok(None);
   };
 
-  let (fn_name, def) = &FN_SIGNATURE_DEFS.entries[fn_entry_ix];
+  let (fn_name, def) = &fn_sigs().entries[fn_entry_ix];
   let sigs = &def.signatures;
 
   let resolved_sig = get_args(ctx, fn_name, sigs, &args, &kwargs)?;
   match resolved_sig {
-    GetArgsOutput::Valid { def_ix, arg_refs } => {
-      Ok(Some(PreResolvedSignature { def_ix, arg_refs }))
-    }
+    GetArgsOutput::Valid { def_ix, arg_refs } => Ok(Some(PreResolvedSignature {
+      def_ix,
+      arg_refs: arg_refs.into_iter().collect(),
+    })),
     GetArgsOutput::PartiallyApplied => Ok(None),
   }
 }
@@ -2151,7 +2135,7 @@ fn fold_constants<'a>(
         } else {
           // try to resolve it as a builtin
           let (fn_entry_ix, fn_impl) =
-            ctx.with_resolved_sym(*name, |name| match FN_SIGNATURE_DEFS.get(name) {
+            ctx.with_resolved_sym(*name, |name| match fn_sigs().get(name) {
               Some(_) => Ok((
                 get_builtin_fn_sig_entry_ix(name).unwrap(),
                 resolve_builtin_impl(name),
@@ -2339,9 +2323,7 @@ fn fold_constants<'a>(
       }
 
       let cf = ctx.with_resolved_sym(id, |resolved_name| {
-        if FN_SIGNATURE_DEFS.contains_key(resolved_name)
-          || FUNCTION_ALIASES.contains_key(resolved_name)
-        {
+        if fn_sigs().contains_key(resolved_name) || FUNCTION_ALIASES.contains_key(resolved_name) {
           *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Builtin {
             fn_entry_ix: get_builtin_fn_sig_entry_ix(resolved_name).unwrap(),
             fn_impl: resolve_builtin_impl(resolved_name),

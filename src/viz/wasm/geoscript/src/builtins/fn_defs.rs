@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, rc::Rc};
+use std::{f32::consts::PI, ptr::addr_of, rc::Rc};
 
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
@@ -7,7 +7,7 @@ use nanoserde::SerJson;
 use crate::{
   builtins::FUNCTION_ALIASES,
   lights::{AmbientLight, DirectionalLight},
-  ArgType, Value, Vec2,
+  ArgType, Sym, Value, Vec2,
 };
 
 pub enum DefaultValue {
@@ -23,7 +23,10 @@ pub enum SerializableDefaultValue {
 
 pub struct ArgDef {
   pub name: &'static str,
-  pub valid_types: &'static [ArgType],
+  /// This will be populated lazily
+  pub interned_name: Sym,
+  /// Bitflags
+  pub valid_types: u16,
   pub default_value: DefaultValue,
   pub description: &'static str,
 }
@@ -31,7 +34,7 @@ pub struct ArgDef {
 #[derive(SerJson)]
 pub struct SerializableArgDef {
   pub name: &'static str,
-  pub valid_types: &'static [ArgType],
+  pub valid_types: Vec<ArgType>,
   pub default_value: SerializableDefaultValue,
   pub description: &'static str,
 }
@@ -40,7 +43,7 @@ impl From<&ArgDef> for SerializableArgDef {
   fn from(arg_def: &ArgDef) -> Self {
     Self {
       name: arg_def.name,
-      valid_types: arg_def.valid_types,
+      valid_types: ArgType::list_from_bitflags(arg_def.valid_types),
       default_value: match arg_def.default_value {
         DefaultValue::Required => SerializableDefaultValue::Required,
         DefaultValue::Optional(get_default) => {
@@ -119,7 +122,19 @@ impl SerializableFnSignature {
   }
 }
 
-pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_map! {
+macro_rules! argtype_flags {
+  ( $( $x:expr ),* ) => {
+    {
+      let mut flags = 0;
+      $(
+        flags |= $x.as_bitflags();
+      )*
+      flags
+    }
+  };
+}
+
+pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_map! {
   "box" => FnDef {
     module: "mesh",
     examples: &[],
@@ -128,19 +143,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "width",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Width along the X axis"
           },
           ArgDef {
             name: "height",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Height along the Y axis"
           },
           ArgDef {
             name: "depth",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Depth along the Z axis"
           },
@@ -153,7 +171,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "size",
-            valid_types: &[ArgType::Vec3, ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(1., 1., 1.))),
             description: "Size of the box as a Vec3, or a single numeric value for a cube"
           },
@@ -171,13 +190,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "translation",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh, ArgType::Light],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -189,25 +210,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "y",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "z",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "object",
-            valid_types: &[ArgType::Mesh, ArgType::Light],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -225,13 +250,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "rotation",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: "Rotation defined by Euler angles in radians"
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: "Mesh to rotate"
           },
@@ -243,25 +270,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Rotation about X axis (radians)"
           },
           ArgDef {
             name: "y",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Rotation about Y axis (radians)"
           },
           ArgDef {
             name: "z",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Rotation about Z axis (radians)"
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: "Mesh to rotate"
           },
@@ -273,13 +304,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "rotation",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: "Rotation defined by Euler angles in radians"
           },
           ArgDef {
             name: "light",
-            valid_types: &[ArgType::Light],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
             default_value: DefaultValue::Required,
             description: "Light to rotate"
           },
@@ -291,25 +324,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Rotation about X axis (radians)"
           },
           ArgDef {
             name: "y",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Rotation about Y axis (radians)"
           },
           ArgDef {
             name: "z",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Rotation about Z axis (radians)"
           },
           ArgDef {
             name: "light",
-            valid_types: &[ArgType::Light],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
             default_value: DefaultValue::Required,
             description: "Light to rotate"
           },
@@ -327,13 +364,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: "Source position"
           },
           ArgDef {
             name: "target",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: "Target position"
           },
@@ -345,19 +384,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "target",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "up",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
             description: ""
           },
@@ -375,25 +417,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "y",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "z",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -406,13 +452,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "scale",
-            valid_types: &[ArgType::Vec3, ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -430,7 +478,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -448,7 +497,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -466,7 +516,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -484,13 +535,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "y",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -502,7 +555,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -520,19 +574,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "y",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "z",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -544,13 +601,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "xy",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "z",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -562,13 +621,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "yz",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -580,7 +641,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -599,7 +661,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "meshes",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -611,14 +674,16 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "separator",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             // this needs to stay required in order to allow the signatures to be disambiguated
             default_value: DefaultValue::Required,
             description: "String to insert between each mesh"
           },
           ArgDef {
             name: "strings",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of strings to join"
           },
@@ -636,13 +701,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -654,7 +721,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "meshes",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of meshes to union"
           },
@@ -672,13 +740,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: "Base mesh"
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: "Mesh to subtract"
           },
@@ -690,7 +760,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "meshes",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of meshes to subtract in order"
           },
@@ -708,13 +779,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -726,7 +799,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "meshes",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of meshes to intersect"
           },
@@ -744,19 +818,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "initial_val",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|acc, x|: acc`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -774,19 +851,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "initial_val",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|acc, x|: acc | nil`.  If this callback returns `nil`, the final state of the accumulator passed into that iteration will be returned."
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -804,13 +884,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|acc, x|: acc`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence to reduce"
           },
@@ -828,13 +910,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "cb",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|x|: bool`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -852,13 +936,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "cb",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|x|: bool`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -876,13 +962,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "cb",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|x|`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -900,7 +988,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -918,7 +1007,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -930,7 +1020,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -942,7 +1033,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -954,7 +1046,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -966,7 +1059,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -984,7 +1078,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "h"
           },
@@ -996,7 +1091,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1008,7 +1104,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1026,7 +1123,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1038,7 +1136,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1050,7 +1149,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1062,7 +1162,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1080,7 +1181,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1092,7 +1194,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1104,7 +1207,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1116,7 +1220,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1134,7 +1239,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1146,7 +1252,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1158,7 +1265,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1176,13 +1284,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1194,13 +1304,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1212,13 +1324,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1230,13 +1344,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1248,13 +1364,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1266,13 +1384,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "offset",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1284,13 +1404,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "vec",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "num",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1302,13 +1424,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1320,13 +1444,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1338,13 +1464,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1362,13 +1490,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1380,13 +1510,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1398,13 +1530,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1416,13 +1550,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1434,13 +1570,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: "Base mesh"
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: "Mesh to subtract"
           },
@@ -1452,13 +1590,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "offset",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1470,13 +1610,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "vec",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "num",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1488,13 +1630,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1506,13 +1650,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1530,13 +1676,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1548,13 +1696,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1566,13 +1716,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1584,13 +1736,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1602,13 +1756,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1620,13 +1776,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: "Mesh to scale"
           },
           ArgDef {
             name: "factor",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Uniform scale to apply to the mesh"
           },
@@ -1638,13 +1796,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "factor",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1656,13 +1816,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1674,13 +1836,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1698,13 +1862,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1716,13 +1882,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1734,13 +1902,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1752,13 +1922,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1770,13 +1942,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1788,13 +1962,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1806,13 +1982,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1830,13 +2008,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1848,13 +2028,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1872,13 +2054,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1890,13 +2074,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1908,13 +2094,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1926,13 +2114,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1950,13 +2140,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1968,13 +2160,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -1986,13 +2180,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2004,13 +2200,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2028,19 +2226,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2052,19 +2253,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2076,19 +2280,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2100,19 +2307,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2130,7 +2340,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric, ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2148,7 +2359,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric, ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2166,7 +2378,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2184,13 +2397,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2208,13 +2423,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2232,13 +2449,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2256,7 +2475,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2274,13 +2494,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2292,13 +2514,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2316,13 +2540,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2334,13 +2560,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2358,13 +2586,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|x: T, ix: int|: y`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence to map over"
           },
@@ -2376,13 +2606,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|vtx: Vec3, normal: Vec3|: Vec3` that will be invoked for each vertex in the new mesh, returning a new position for that vertex"
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2400,13 +2632,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|x: T, ix: int|: bool`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence to filter"
           },
@@ -2424,19 +2658,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "initial",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: "Initial value to seed the state with.  This value will NOT be included in the output sequence."
           },
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|acc, x, ix|: acc`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence to scan"
           },
@@ -2454,13 +2691,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "count",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of elements to take from the start of the sequence"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence to take elements from"
           },
@@ -2478,13 +2717,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "count",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of elements to skip from the start of the sequence"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence to skip elements from"
           },
@@ -2502,13 +2743,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|x|: bool`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence to take elements from"
           },
@@ -2526,13 +2769,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|x|: bool`"
           },
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2550,7 +2795,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "sequences",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of sequences to chain together"
           },
@@ -2568,7 +2814,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2586,7 +2833,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2604,13 +2852,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "val",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: "The value to add to the end of the sequence"
           },
           ArgDef {
             name: "seq",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "The sequence to which the value should be added"
           }
@@ -2628,7 +2878,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2646,7 +2897,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "sequence",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2664,7 +2916,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2682,7 +2935,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2694,7 +2948,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "light",
-            valid_types: &[ArgType::Light],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2706,7 +2961,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "meshes",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Either:\n - `Seq<Mesh | Light | Seq<Vec3>>` of objects to render to the scene, or\n - `Seq<Vec3>` of points representing a path to render",
           },
@@ -2724,7 +2980,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2736,7 +2993,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2754,7 +3012,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2766,7 +3025,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2778,7 +3038,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2796,7 +3057,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2808,7 +3070,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2820,7 +3083,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2838,7 +3102,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2850,7 +3115,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2862,7 +3128,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2880,7 +3147,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2892,7 +3160,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2904,7 +3173,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2922,7 +3192,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2934,7 +3205,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2946,7 +3218,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2964,7 +3237,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2976,7 +3250,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -2988,7 +3263,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3006,7 +3282,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3018,7 +3295,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3030,7 +3308,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3048,7 +3327,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3060,7 +3340,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3072,7 +3353,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3090,13 +3372,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "y",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3108,7 +3392,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "xy",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3127,13 +3412,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "base",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "exponent",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3145,13 +3432,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "base",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "exponent",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3163,13 +3452,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "base",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "exponent",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3187,7 +3478,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3199,7 +3491,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3211,7 +3504,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3229,7 +3523,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3241,7 +3536,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3253,7 +3549,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3271,7 +3568,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3283,7 +3581,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3295,7 +3594,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3313,7 +3613,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3325,7 +3626,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3337,7 +3639,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3355,7 +3658,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3367,7 +3671,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3379,7 +3684,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3397,7 +3703,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3409,7 +3716,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3421,7 +3729,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3439,7 +3748,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3451,7 +3761,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3463,7 +3774,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3481,7 +3793,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3493,7 +3806,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3505,7 +3819,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3523,7 +3838,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3535,7 +3851,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3547,7 +3864,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3565,7 +3883,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3577,7 +3896,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: "Vec3 value to fix"
           },
@@ -3589,7 +3909,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: "Vec2 value to fix"
           },
@@ -3607,7 +3928,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3625,7 +3947,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "value",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3643,13 +3966,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3661,13 +3986,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3685,13 +4012,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3703,13 +4032,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3727,13 +4058,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3745,13 +4078,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3769,13 +4104,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3787,13 +4124,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3811,13 +4150,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3829,13 +4170,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3847,13 +4190,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Nil),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3865,13 +4210,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Nil),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3883,13 +4230,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3901,13 +4250,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3925,13 +4276,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3943,13 +4296,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3961,13 +4316,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Nil),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3979,13 +4336,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Any],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Nil),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -3997,13 +4356,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4015,13 +4376,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4039,31 +4402,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "count",
-            valid_types: &[ArgType::Int, ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
             default_value: DefaultValue::Required,
             description: "The number of points to distribute across the mesh.  If `nil`, returns an infinite sequence."
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "cb",
-            valid_types: &[ArgType::Callable, ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Optional callable with signature `|point: vec3, normal: vec3|: any`.  If provided, this function will be called for each generated point and normal and whatever it returns will be included in the output sequence instead of the point."
           },
           ArgDef {
             name: "world_space",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "If true, points and normals will be returned in world space.  If false, they will be returned in the local space of the mesh."
           }
@@ -4081,19 +4449,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "t",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4105,19 +4476,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "t",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4135,19 +4509,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "edge0",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "edge1",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4165,19 +4542,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "edge0",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "edge1",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "x",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4195,7 +4575,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "",
-            valid_types: &[],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           }
@@ -4207,7 +4588,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "callables",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of callables to compose"
           },
@@ -4225,7 +4607,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "points",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4237,7 +4620,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4255,13 +4639,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Callable with signature `|pos: vec3, normal: vec3|: vec3`.  Given the position and normal of each vertex in the mesh, returns a new position for that vertex in the output mesh."
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4279,13 +4665,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "target_edge_length",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4303,19 +4691,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "plane_normal",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: "Normal vector of the plane to cut the mesh with"
           },
           ArgDef {
             name: "plane_offset",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Offset of the plane from the origin along the plane normal"
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4327,19 +4718,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "plane_normals",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of normal vectors of the planes to cut the mesh with"
           },
           ArgDef {
             name: "plane_offsets",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of offsets of the planes from the origin along the plane normals"
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4357,19 +4751,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "plane_normal",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: "Normal vector of the plane to cut the mesh with"
           },
           ArgDef {
             name: "plane_offset",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Offset of the plane from the origin along the plane normal"
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4387,7 +4784,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4405,13 +4803,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4429,25 +4829,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "ray_origin",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "ray_direction",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max_distance",
-            valid_types: &[ArgType::Float, ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max distance to check for intersection (`nil` considers intersections at any distance).  If the intersection occurs at a distance greater than this, `false` will be returned."
           },
@@ -4465,7 +4869,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "v",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4477,7 +4882,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "v",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4489,7 +4895,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "v",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4501,7 +4908,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "v",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4519,7 +4927,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "s",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4537,13 +4946,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "condition",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "message",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("Assertion failed".to_string())),
             description: "Optional message to include in the error if the assertion fails"
           },
@@ -4561,13 +4972,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4579,13 +4992,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "a",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "b",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4603,7 +5018,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "v",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4615,7 +5031,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "v",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4633,31 +5050,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "p0",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "p1",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "p2",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "p3",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "count",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -4675,25 +5097,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "width",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "height",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "n",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Exponent that controls the shape of the superellipse.  A value of 2 produces an ellipse, higher values produce more rectangular shapes, and lower values produce diamond and star-like shapes."
           },
           ArgDef {
             name: "point_count",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of points to generate along the path"
           },
@@ -4711,37 +5137,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "radius",
-            valid_types: &[ArgType::Numeric, ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Radius of the pipe or a callable with signature `|point_ix: int, path_point: vec3|: float | seq` that returns the radius at each point along the path.  If a sequence is returned by the callback, its length must match the resolution and it should contain the distance of each point along the ring from the pipe's center."
           },
           ArgDef {
             name: "resolution",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(8)),
             description: "Number of segments to use for the pipe's circular cross-section"
           },
           ArgDef {
             name: "path",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of Vec3 points defining the path of the pipe.  Often the output of a function like `bezier3d`."
           },
           ArgDef {
             name: "close_ends",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "Whether to close the ends of the pipe with triangle fans"
           },
           ArgDef {
             name: "connect_ends",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "Whether the pipe should be a closed loop, connecting the last point back to the first.  If true, the first and last points of the path will be connected with triangles."
           },
           ArgDef {
             name: "twist",
-            valid_types: &[ArgType::Numeric, ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
             default_value: DefaultValue::Optional(|| Value::Float(0.)),
             description: "Twist angle in radians to apply along the path, or a callable with signature `|point_ix: int, path_point: vec3|: float` that returns the twist angle at each point along the path.  A value of 0 means no twist."
           }
@@ -4760,31 +5192,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "radius",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "tube_radius",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "p",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of times the knot wraps around the torus in the longitudinal direction"
           },
           ArgDef {
             name: "q",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of times the knot wraps around the torus in the meridional direction"
           },
           ArgDef {
             name: "point_count",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of points to generate along the path"
           },
@@ -4802,25 +5239,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "amp",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(1., 1., 1.))),
             description: "Amplitude of the Lissajous curve in each axis"
           },
           ArgDef {
             name: "freq",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(3., 5., 7.))),
             description: "Frequency of the Lissajous curve in each axis.  These should be \"pairwise-coprime\" integers, meaning that the ratio of any two frequencies should not be reducible to a simpler fraction."
           },
           ArgDef {
             name: "phase",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., PI / 2., PI / 5.))),
             description: "Phase offset of the Lissajous curve in each axis"
           },
           ArgDef {
             name: "count",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of points to sample along the path"
           },
@@ -4838,13 +5279,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "up",
-            valid_types: &[ArgType::Vec3, ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "Direction to extrude the mesh.  Each vertex will be displaced by this amount.  If a callable is provided, it should have signature `|vertex_pos: vec3|: vec3` and return the displacement for each vertex."
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           }
@@ -4862,37 +5305,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "contours",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "A `Seq<Seq<Vec3>>`, where each inner sequence contains points representing a contour that will be stitched together into a mesh"
           },
           ArgDef {
             name: "flipped",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, the winding order of the triangles generated will be flipped - inverting the inside/outside of the generated mesh."
           },
           ArgDef {
             name: "closed",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "If true, the contours will be stitched together as closed loops - connecting the last point to the first for each one."
           },
           ArgDef {
             name: "cap_start",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, a triangle fan will be created to cap the first contour"
           },
           ArgDef {
             name: "cap_end",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, a triangle fan will be created to cap the last contour"
           },
           ArgDef {
             name: "cap_ends",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "shorthand for `cap_start=true, cap_end=true`"
           }
@@ -4910,37 +5359,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "path",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "A sequence of `Vec2` points representing movements to take across the surface of the mesh relative to the current position.  For example, a sequence of `[vec2(0, 1), vec2(1, 0)]` would move 1 unit up and then 1 unit right."
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "world_space",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "If true, points will be returned in world space.  If false, they will be returned in the local space of the mesh."
           },
           ArgDef {
             name: "full_path",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "This controls behavior when the path crosses between faces in the mesh.  If true, intermediate points will be included in the output for whenever the path hits an edge.  This can result in the output sequence having more elements than the input sequence, and it will ensure that all generated edges in the output path lie on the surface of the mesh."
           },
           ArgDef {
             name: "start_pos_local_space",
-            valid_types: &[ArgType::Vec3, ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "If provided, the starting position for the path will be snapped to the surface of the mesh at this position.  If `nil`, the walk will start at an arbitrary point on the mesh surface."
           },
           ArgDef {
             name: "up_dir_world_space",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
             description: "When the walk starts, it will be oriented such that the positive Y axis of the local tangent space is aligned as closely as possible with this up direction at the starting position.  Another way of saying this is that it lets you set what direction is north when first starting the walk on the mesh's surface."
           },
@@ -4958,19 +5413,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "alpha",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1. / 30.)),
             description: "Controls the feature size of the computed wrapping.  Smaller values will capture more detail and produce more faces.\n\nThis value is relative to the bounding box of the input mesh.  Values should be in the range (0, 1)."
           },
           ArgDef {
             name: "offset",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.03)),
             description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input mesh.  Values should be in the range (0, 1)."
           },
@@ -4982,19 +5440,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "points",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "alpha",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1. / 30.)),
             description: "Controls the feature size of the computed wrapping.  Smaller values will capture more detail and produce more faces.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
           },
           ArgDef {
             name: "offset",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.03)),
             description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
           },
@@ -5012,19 +5473,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "type",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("catmullclark".to_string())),
             description: "Type of smoothing to perform.  Supported values are \"catmullclark\", \"loop\", \"doosabin\", and \"sqrt\".",
           },
           ArgDef {
             name: "iterations",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(1)),
             description: "Number of smoothing iterations to perform"
           },
@@ -5042,19 +5506,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max_angle_deg",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(5.)),
             description: "Maximum angle in degrees between face normals for faces to be considered coplanar"
           },
           ArgDef {
             name: "max_offset",
-            valid_types: &[ArgType::Numeric, ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Maximum distance from the plane for faces to be considered coplanar.  This is an absolute distance in the mesh's local space.  If not provided or set to `nil`, it will default to 1% of the diagonal length of the mesh's bounding box."
           },
@@ -5072,37 +5539,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "target_edge_length",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Target edge length for the remeshed output.  Edges will be split or collapsed to try to achieve this length."
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "iterations",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(1)),
             description: "Number of remeshing iterations to perform.  Typical values are between 1 and 5."
           },
           ArgDef {
             name: "protect_borders",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "If true, edges on the border of the mesh will not be modified."
           },
           ArgDef {
             name: "protect_sharp_edges",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "If true, edges with angles >= the `sharp_angle_threshold_degrees` will not be modified."
           },
           ArgDef {
             name: "sharp_angle_threshold_degrees",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(30.)),
             description: "Angle threshold in degrees for edges to be considered sharp.  Only used if `protect_sharp_edges` is true."
           },
@@ -5120,31 +5593,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "facet_distance",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.14)),
             description: "This controls the precision of the output mesh.  Smaller values will produce meshes that more closely approximate the input, but will also produce more faces.  This value represents units in the local space of the mesh, so it must be chosen relative to the size of the input mesh."
           },
           ArgDef {
             name: "target_edge_length",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.2)),
             description: "This serves as an upper bound for the lengths of curve edges in the underlying Delaunay triangulation.  Smaller values will produce more faces.  This value represents units in the local space of the mesh, so it must be chosen relative to the size of the input mesh."
           },
           ArgDef {
             name: "protect_sharp_edges",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "If true, edges with angles >= the `sharp_angle_threshold_degrees` will not be modified."
           },
           ArgDef {
             name: "sharp_angle_threshold_degrees",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(30.)),
             description: "Angle threshold in degrees for edges to be considered sharp.  Only used if `protect_sharp_edges` is true."
           },
@@ -5162,25 +5640,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "path",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "A sequence of Vec3 points representing the path to fill"
           },
           ArgDef {
             name: "closed",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "If true, the path will be treated as closed - connecting the last point to the first."
           },
           ArgDef {
             name: "flipped",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, the winding order of the triangles generated will be flipped - inverting the inside/outside of the generated mesh."
           },
           ArgDef {
             name: "center",
-            valid_types: &[ArgType::Vec3, ArgType::Nil],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "If provided, the center point for the fan will be placed at this position.  Otherwise, the center will be computed as the average of the points in the path."
           }
@@ -5198,13 +5680,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "tolerance",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.01)),
             description: "The maximum distance between the original and simplified meshes.  0.01 is a good starting point."
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5222,13 +5706,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "world_space",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, the vertices will be returned in world space coordinates.  If false, they will be returned in the local space of the mesh."
           }
@@ -5246,13 +5732,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5275,13 +5763,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5304,13 +5794,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5322,13 +5814,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "min",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "max",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5351,7 +5845,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5363,37 +5858,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "octaves",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(4)),
             description: ""
           },
           ArgDef {
             name: "frequency",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "lacunarity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "persistence",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.5)),
             description: ""
           },
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5405,7 +5906,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5417,37 +5919,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "octaves",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(4)),
             description: ""
           },
           ArgDef {
             name: "frequency",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "lacunarity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "persistence",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.5)),
             description: ""
           },
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5459,7 +5967,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5471,37 +5980,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "octaves",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(4)),
             description: ""
           },
           ArgDef {
             name: "frequency",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "lacunarity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "persistence",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.5)),
             description: ""
           },
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Float],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5519,7 +6034,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5531,37 +6047,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "octaves",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(4)),
             description: ""
           },
           ArgDef {
             name: "frequency",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "lacunarity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "persistence",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.5)),
             description: ""
           },
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5573,7 +6095,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5585,37 +6108,43 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "octaves",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(4)),
             description: ""
           },
           ArgDef {
             name: "frequency",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "lacunarity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "persistence",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.5)),
             description: ""
           },
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5633,7 +6162,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5645,43 +6175,50 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "octaves",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(4)),
             description: ""
           },
           ArgDef {
             name: "frequency",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "lacunarity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "persistence",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.5)),
             description: ""
           },
           ArgDef {
             name: "gain",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5693,7 +6230,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5705,48 +6243,129 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(0)),
             description: ""
           },
           ArgDef {
             name: "octaves",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(4)),
             description: ""
           },
           ArgDef {
             name: "frequency",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "lacunarity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "persistence",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.5)),
             description: ""
           },
           ArgDef {
             name: "gain",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(2.)),
             description: ""
           },
           ArgDef {
             name: "pos",
-            valid_types: &[ArgType::Vec2],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
         ],
         description: "Samples 2D ridged multifractal noise at a given position using the specified parameters",
+        return_type: &[ArgType::Float],
+      },
+    ],
+  },
+  "worley_noise" => FnDef {
+    module: "rand",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "range_fn",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("euclidean".to_owned())),
+            description: r#"Distance function used to sample the noise.  Must be one of the following: "euclidean" (default), "euclidean_squared", "manhattan", "chebyshev", or "quadratic"."#,
+          },
+          ArgDef {
+            name: "return_type",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("distance".to_owned())),
+            description: r#"Flag to control whether distances or values are returned.  Must be either "distance" (default) or "value"."#,
+          },
+        ],
+        description: "Samples 3D Worley noise at a given position using default parameters",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+          ArgDef {
+            name: "range_fn",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("euclidean".to_owned())),
+            description: r#"Distance function used to sample the noise.  Must be one of the following: "euclidean" (default), "euclidean_squared", "manhattan", "chebyshev", or "quadratic"."#,
+          },
+          ArgDef {
+            name: "return_type",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("distance".to_owned())),
+            description: r#"Flag to control whether distances or values are returned.  Must be either "distance" (default) or "value"."#,
+          },
+        ],
+        description: "Samples 2D Worley noise at a given position using the specified parameters",
         return_type: &[ArgType::Float],
       },
     ],
@@ -5759,13 +6378,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "radius",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "resolution",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of subdivisions to apply when generating the icosphere.  0 -> 20 faces, 1 -> 80 faces, 2 -> 320 faces, ..."
           },
@@ -5783,25 +6404,29 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "radius",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "height",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "radial_segments",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "height_segments",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(1)),
             description: ""
           },
@@ -5819,19 +6444,22 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "size",
-            valid_types: &[ArgType::Vec2, ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "Size of the grid along the X and Z axes (providing a number will set the same size for both axes).  The grid is centered at the origin, so a size of `vec2(1, 1)` will produce a grid that extends from -0.5 to +0.5 along both axes."
           },
           ArgDef {
             name: "divisions",
-            valid_types: &[ArgType::Vec2, ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(1., 1.))),
             description: "Number of subdivisions along each axis.  If an integer is provided, it will be used for both axes."
           },
           ArgDef {
             name: "flipped",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, the winding order of the triangles will be flipped - making the front side face downwards (negative Y)."
           }
@@ -5882,7 +6510,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5894,13 +6523,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "fn",
-            valid_types: &[ArgType::Callable],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: ""
           },
           ArgDef {
             name: "args",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -5918,13 +6549,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "verts",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of Vec3 vertices, pointed into by `faces`"
           },
           ArgDef {
             name: "indices",
-            valid_types: &[ArgType::Sequence],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "A flag sequence of integer indices corresponding to triangles.  Must have `length % 3 == 0`"
           },
@@ -5947,31 +6580,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "target",
-            valid_types: &[ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Vec3(DirectionalLight::default().target)),
             description: "Target point that the light is pointing at.  If the light as at the same position as the target, it will point down towards negative Y"
           },
           ArgDef {
             name: "color",
-            valid_types: &[ArgType::Int, ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Int(DirectionalLight::default().color as i64)),
             description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
           },
           ArgDef {
             name: "intensity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(DirectionalLight::default().intensity)),
             description: ""
           },
           ArgDef {
             name: "cast_shadow",
-            valid_types: &[ArgType::Bool],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(DirectionalLight::default().cast_shadow)),
             description: ""
           },
           ArgDef {
             name: "shadow_map_size",
-            valid_types: &[ArgType::Map, ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map, ArgType::Int),
             default_value: DefaultValue::Optional(|| {
               let shadow_map_size = DirectionalLight::default().shadow_map_size;
               Value::Map(Rc::new(FxHashMap::from_iter([
@@ -5983,31 +6621,36 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
           },
           ArgDef {
             name: "shadow_map_radius",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(DirectionalLight::default().shadow_map_radius)),
             description: "Radius for shadow map filtering"
           },
           ArgDef {
             name: "shadow_map_blur_samples",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(DirectionalLight::default().shadow_map_blur_samples as i64)),
             description: "Number of samples for shadow map blur"
           },
           ArgDef {
             name: "shadow_map_type",
-            valid_types: &[ArgType::String],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String(DirectionalLight::default().shadow_map_type.to_str().to_owned())),
             description: "Allowed values: `vsm`"
           },
           ArgDef {
             name: "shadow_map_bias",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(DirectionalLight::default().shadow_map_bias)),
             description: ""
           },
           ArgDef {
             name: "shadow_camera",
-            valid_types: &[ArgType::Map],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
             default_value: DefaultValue::Optional(|| {
               let shadow_camera = DirectionalLight::default().shadow_camera;
               Value::Map(Rc::new(FxHashMap::from_iter([
@@ -6035,13 +6678,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "color",
-            valid_types: &[ArgType::Int, ArgType::Vec3],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Int(AmbientLight::default().color as i64)),
             description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
           },
           ArgDef {
             name: "intensity",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(AmbientLight::default().intensity)),
             description: ""
           },
@@ -6059,13 +6704,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "material",
-            valid_types: &[ArgType::Material],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Material),
             default_value: DefaultValue::Required,
             description: "Can be either a `Material` value or a string specifying the name of an externally defined material"
           },
           ArgDef {
             name: "mesh",
-            valid_types: &[ArgType::Mesh],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -6083,7 +6730,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "material",
-            valid_types: &[ArgType::Material],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Material),
             default_value: DefaultValue::Required,
             description: "Can be either a `Material` value or a string specifying the name of an externally defined material"
           },
@@ -6101,7 +6749,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "seed",
-            valid_types: &[ArgType::Int],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: ""
           }
@@ -6119,7 +6768,8 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
         arg_defs: &[
           ArgDef {
             name: "angle_degrees",
-            valid_types: &[ArgType::Numeric],
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
             description: "The angle at which edges are considered sharp, in degrees"
           }
@@ -6131,14 +6781,15 @@ pub(crate) static FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_ma
   }
 };
 
+#[inline(always)]
+pub fn fn_sigs() -> &'static phf::Map<&'static str, FnDef> {
+  unsafe { &*addr_of!(FN_SIGNATURE_DEFS) }
+}
+
 pub fn get_builtin_fn_sig_entry_ix(name: &str) -> Option<usize> {
-  let hashes = phf_shared::hash(name, &FN_SIGNATURE_DEFS.key);
-  let index = phf_shared::get_index(
-    &hashes,
-    FN_SIGNATURE_DEFS.disps,
-    FN_SIGNATURE_DEFS.entries.len(),
-  );
-  let entry = &FN_SIGNATURE_DEFS.entries[index as usize];
+  let hashes = phf_shared::hash(name, &fn_sigs().key);
+  let index = phf_shared::get_index(&hashes, fn_sigs().disps, fn_sigs().entries.len());
+  let entry = &fn_sigs().entries[index as usize];
   let b = entry.0;
   if b == name {
     Some(index as usize)
@@ -6148,7 +6799,7 @@ pub fn get_builtin_fn_sig_entry_ix(name: &str) -> Option<usize> {
 }
 
 pub fn serialize_fn_defs() -> String {
-  let serializable_defs: FxHashMap<&'static str, SerializableFnDef> = FN_SIGNATURE_DEFS
+  let serializable_defs: FxHashMap<&'static str, SerializableFnDef> = fn_sigs()
     .entries()
     .map(|(name, def)| (*name, SerializableFnDef::new(name, def)))
     .collect();

@@ -1,3 +1,4 @@
+use noise::RangeFunction;
 use paste::paste;
 #[cfg(target_arch = "wasm32")]
 use rand_pcg::Pcg32;
@@ -26,7 +27,10 @@ use crate::mesh_ops::mesh_ops::{
   alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, isotropic_remesh, remesh_planar_patches,
   smooth_mesh, SmoothType,
 };
-use crate::noise::{curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d};
+use crate::noise::{
+  curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d, worley_noise_2d,
+  worley_noise_3d, WorleyReturnType,
+};
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, Light},
@@ -77,6 +81,7 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "randv3" => "randv",
   "string" => "str",
   "sign" => "signum",
+  "worley" => "worley_noise",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -1375,6 +1380,65 @@ fn ridged_multifractal_impl(
         lacunarity,
         gain,
         *pos,
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn worley_noise_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let seed = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
+  if seed < 0 || seed > u32::MAX as i64 {
+    return Err(ErrorStack::new(format!(
+      "Seed for worley_noise must be in range [0, {}], found: {seed}",
+      u32::MAX
+    )));
+  }
+  let seed = seed as u32;
+  let range_fn = arg_refs[2].resolve(args, kwargs).as_str().unwrap();
+  let range_fn = match range_fn {
+    "euclidean" => RangeFunction::Euclidean,
+    "euclidean_squared" => RangeFunction::EuclideanSquared,
+    "manhattan" => RangeFunction::Manhattan,
+    "chebyshev" => RangeFunction::Chebyshev,
+    "quadratic" => RangeFunction::Quadratic,
+    _ => {
+      return Err(ErrorStack::new(format!(
+        "Invalid range function for worley_noise: {range_fn:?}",
+      )))
+    }
+  };
+  let return_type = arg_refs[3].resolve(args, kwargs).as_str().unwrap();
+  let return_type = WorleyReturnType::from_str(return_type).ok_or_else(|| {
+    ErrorStack::new(format!(
+      "Invalid return type for worley_noise: {return_type:?}",
+    ))
+  })?;
+
+  match def_ix {
+    0 => {
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+
+      Ok(Value::Float(worley_noise_3d(
+        seed,
+        *pos,
+        range_fn,
+        return_type,
+      )))
+    }
+    1 => {
+      let pos = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+
+      Ok(Value::Float(worley_noise_2d(
+        seed,
+        *pos,
+        range_fn,
+        return_type,
       )))
     }
     _ => unimplemented!(),
@@ -5209,6 +5273,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "ridged_multifractal" => builtin_fn!(ridged_multifractal, |def_ix, arg_refs, args, kwargs, _ctx| {
     ridged_multifractal_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "worley_noise" => builtin_fn!(worley_noise, |def_ix, arg_refs, args, kwargs, _ctx| {
+    worley_noise_impl(def_ix, arg_refs, args, kwargs)
   }),
   "call" => builtin_fn!(call, |def_ix, arg_refs, args, kwargs, ctx| {
     call_impl(ctx, def_ix, arg_refs, args, kwargs)

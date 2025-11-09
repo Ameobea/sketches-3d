@@ -1,4 +1,4 @@
-#![feature(array_chunks, iter_array_chunks)]
+#![feature(iter_array_chunks)]
 
 use fxhash::{FxBuildHasher, FxHashMap};
 use linked_mesh::{Mat4, Vec3, Vertex, VertexKey};
