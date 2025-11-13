@@ -47,6 +47,13 @@ export class AsyncOnce<T, Args extends any[] = []> {
     return this.pending!;
   }
 
+  public getOptSync(): T | null {
+    if (!this.isSome()) {
+      return null;
+    }
+    return this.res as T;
+  }
+
   public getSync(): T {
     if (!this.isSome()) {
       throw new Error('AsyncOnce not initialized');

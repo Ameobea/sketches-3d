@@ -1,21 +1,19 @@
+import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+
 let LastError = '';
-let Geodesics: any = null;
 
-export const initGeodesics = () => {
-  if (Geodesics) {
-    return Promise.resolve();
-  }
-
-  return import('src/geodesics/geodesics.js')
+const GeodesicsModule = new AsyncOnce(() =>
+  import('src/geodesics/geodesics.js')
     .then(mod => {
       (mod.Geodesics as any).locateFile = (path: string) => `/${path}`;
       return mod.Geodesics;
     })
     .then(mod => mod({ locateFile: (path: string) => `/${path}` }))
-    .then(mod => {
-      Geodesics = mod;
-    });
-};
+);
+
+export const initGeodesics = () => GeodesicsModule.get();
+
+export const get_geodesics_loaded = (): boolean => GeodesicsModule.isSome();
 
 export const trace_geodesic_path = (
   meshVerts: Float32Array,
@@ -25,6 +23,7 @@ export const trace_geodesic_path = (
   startPosWorld: Float32Array,
   upDirectionWorld: Float32Array
 ): Float32Array => {
+  const Geodesics = GeodesicsModule.getOptSync();
   if (!Geodesics) {
     LastError = 'Geodesics module not initialized';
     return new Float32Array(1);

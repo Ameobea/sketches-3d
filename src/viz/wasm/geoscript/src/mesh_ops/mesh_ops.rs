@@ -67,6 +67,12 @@ extern "C" {
     up_dir_world_space: &[f32],
   ) -> Vec<f32>;
   pub fn get_geodesic_error() -> String;
+  pub fn get_geodesics_loaded() -> bool;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_geodesics_loaded() -> bool {
+  true
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -109,6 +115,7 @@ extern "C" {
     auto_sharp_edges: bool,
     sharp_angle_threshold_degrees: f32,
   );
+  pub fn cgal_get_is_loaded() -> bool;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -129,10 +136,21 @@ pub fn get_geodesic_error() -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn verify_cgal_loaded() -> Result<(), ErrorStack> {
+  if !cgal_get_is_loaded() {
+    Err(ErrorStack::new_uninitialized_module("cgal"))
+  } else {
+    Ok(())
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, ErrorStack> {
   use std::cell::RefCell;
 
   use crate::ManifoldHandle;
+
+  verify_cgal_loaded()?;
 
   if tolerance <= 0. {
     return Err(ErrorStack::new(
@@ -161,10 +179,12 @@ pub fn simplify_mesh(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, E
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
+pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, ErrorStack> {
   use std::cell::RefCell;
 
   use crate::ManifoldHandle;
+
+  verify_cgal_loaded()?;
 
   let verts = unsafe { std::slice::from_raw_parts(verts.as_ptr() as *const f32, verts.len() * 3) };
 
@@ -184,7 +204,7 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn convex_hull_from_verts(_verts: &[Vec3]) -> Result<MeshHandle, String> {
+pub fn convex_hull_from_verts(_verts: &[Vec3]) -> Result<MeshHandle, ErrorStack> {
   Ok(MeshHandle::new(Rc::new(LinkedMesh::new(0, 0, None))))
 }
 
@@ -195,6 +215,8 @@ pub fn split_mesh_by_plane(
   plane_offset: f32,
 ) -> Result<(MeshHandle, MeshHandle), ErrorStack> {
   use crate::ManifoldHandle;
+
+  verify_cgal_loaded()?;
 
   let handle = mesh.get_or_create_handle()?;
   split_by_plane(
@@ -258,7 +280,9 @@ pub fn alpha_wrap_mesh(
   mesh: &MeshHandle,
   relative_alpha: f32,
   relative_offset: f32,
-) -> Result<MeshHandle, String> {
+) -> Result<MeshHandle, ErrorStack> {
+  verify_cgal_loaded()?;
+
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
   assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
@@ -284,8 +308,10 @@ pub fn alpha_wrap_mesh(
   _mesh: &MeshHandle,
   _relative_alpha: f32,
   _relative_offset: f32,
-) -> Result<MeshHandle, String> {
-  Err("Alpha wrapping is not supported outside of wasm".to_string())
+) -> Result<MeshHandle, ErrorStack> {
+  Err(ErrorStack::new(
+    "Alpha wrapping is not supported outside of wasm",
+  ))
 }
 
 pub enum SmoothType {
@@ -318,7 +344,9 @@ pub fn smooth_mesh(
   mesh: &MeshHandle,
   smooth_type: SmoothType,
   iterations: u32,
-) -> Result<MeshHandle, String> {
+) -> Result<MeshHandle, ErrorStack> {
+  verify_cgal_loaded()?;
+
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
   assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
@@ -352,8 +380,10 @@ pub fn smooth_mesh(
   _mesh: &MeshHandle,
   _smooth_type: SmoothType,
   _iterations: u32,
-) -> Result<MeshHandle, String> {
-  Err("Mesh smoothing is not supported outside of wasm".to_string())
+) -> Result<MeshHandle, ErrorStack> {
+  Err(ErrorStack::new(
+    "Mesh smoothing is not supported outside of wasm",
+  ))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -361,7 +391,9 @@ pub fn alpha_wrap_points(
   points: &[Vec3],
   relative_alpha: f32,
   relative_offset: f32,
-) -> Result<MeshHandle, String> {
+) -> Result<MeshHandle, ErrorStack> {
+  verify_cgal_loaded()?;
+
   let points =
     unsafe { std::slice::from_raw_parts(points.as_ptr() as *const f32, points.len() * 3) };
   cgal_alpha_wrap_points(points, relative_alpha, relative_offset);
@@ -374,8 +406,10 @@ pub fn alpha_wrap_points(
   _points: &[Vec3],
   _relative_alpha: f32,
   _relative_offset: f32,
-) -> Result<MeshHandle, String> {
-  Err("Alpha wrapping is not supported outside of wasm".to_string())
+) -> Result<MeshHandle, ErrorStack> {
+  Err(ErrorStack::new(
+    "Alpha wrapping is not supported outside of wasm",
+  ))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -383,7 +417,9 @@ pub fn remesh_planar_patches(
   mesh: &MeshHandle,
   max_angle_deg: f32,
   max_offset: f32,
-) -> Result<MeshHandle, String> {
+) -> Result<MeshHandle, ErrorStack> {
+  verify_cgal_loaded()?;
+
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
   assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
@@ -404,8 +440,10 @@ pub fn remesh_planar_patches(
   _mesh: &MeshHandle,
   _max_angle_deg: f32,
   _max_offset: f32,
-) -> Result<MeshHandle, String> {
-  Err("Planar patch remeshing is not supported outside of wasm".to_string())
+) -> Result<MeshHandle, ErrorStack> {
+  Err(ErrorStack::new(
+    "Planar patch remeshing is not supported outside of wasm",
+  ))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -416,7 +454,9 @@ pub fn isotropic_remesh(
   protect_borders: bool,
   auto_sharp_edges: bool,
   sharp_angle_threshold_degrees: f32,
-) -> Result<MeshHandle, String> {
+) -> Result<MeshHandle, ErrorStack> {
+  verify_cgal_loaded()?;
+
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
   assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
@@ -448,8 +488,10 @@ pub fn isotropic_remesh(
   _protect_borders: bool,
   _auto_sharp_edges: bool,
   _sharp_angle_threshold_degrees: f32,
-) -> Result<MeshHandle, String> {
-  Err("Isotropic remeshing is not supported outside of wasm".to_string())
+) -> Result<MeshHandle, ErrorStack> {
+  Err(ErrorStack::new(
+    "Isotropic remeshing is not supported outside of wasm",
+  ))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -459,7 +501,9 @@ pub fn delaunay_remesh(
   facet_distance: f32,
   auto_sharp_edges: bool,
   sharp_angle_threshold_degrees: f32,
-) -> Result<MeshHandle, String> {
+) -> Result<MeshHandle, ErrorStack> {
+  verify_cgal_loaded()?;
+
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
   assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
@@ -504,6 +548,8 @@ pub fn delaunay_remesh(
   _facet_distance: f32,
   _auto_sharp_edges: bool,
   _sharp_angle_threshold_degrees: f32,
-) -> Result<MeshHandle, String> {
-  Err("Delaunay remeshing is not supported outside of wasm".to_string())
+) -> Result<MeshHandle, ErrorStack> {
+  Err(ErrorStack::new(
+    "Delaunay remeshing is not supported outside of wasm",
+  ))
 }

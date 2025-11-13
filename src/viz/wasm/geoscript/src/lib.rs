@@ -120,6 +120,10 @@ impl ErrorStack {
     self.errors.push(msg.into());
     self
   }
+
+  fn new_uninitialized_module(module_name: &str) -> ErrorStack {
+    Self::new(format!("__GEOTOY_UNINITIALIZED_MODULE__:{module_name}"))
+  }
 }
 
 impl Display for ErrorStack {

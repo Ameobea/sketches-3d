@@ -13,9 +13,9 @@ const initGeoscript = async () => {
 
 const filterNils = <T>(arr: (T | null | undefined)[]): T[] => arr.filter((x): x is T => x != null);
 
-interface GeoscriptAsyncDeps {
-  geodesics: boolean;
-  cgal: boolean;
+export interface GeoscriptAsyncDeps {
+  geodesics?: boolean;
+  cgal?: boolean;
 }
 
 const initAsyncDeps = (deps: GeoscriptAsyncDeps) => {
@@ -44,6 +44,9 @@ const methods = {
   },
   reset: (ctxPtr: number) => {
     return Geoscript.geoscript_repl_reset(ctxPtr);
+  },
+  initAsyncDeps: async (deps: GeoscriptAsyncDeps) => {
+    await initAsyncDeps(deps);
   },
   eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
     Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);

@@ -24,8 +24,8 @@ use rand::{RngCore, SeedableRng};
 
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
-  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, isotropic_remesh, remesh_planar_patches,
-  smooth_mesh, SmoothType,
+  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_geodesics_loaded, isotropic_remesh,
+  remesh_planar_patches, smooth_mesh, SmoothType,
 };
 use crate::noise::{
   curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d, worley_noise_2d,
@@ -1588,7 +1588,7 @@ fn convex_hull_impl(
         })
         .collect::<Result<Vec<_>, _>>()?;
       let out_mesh = convex_hull_from_verts(&verts)
-        .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
+        .map_err(|err| err.wrap("Error in `convex_hull` function"))?;
       Ok(Value::Mesh(Rc::new(out_mesh)))
     }
     1 => {
@@ -1600,7 +1600,7 @@ fn convex_hull_impl(
         .map(|v| (mesh.transform * v.position.push(1.)).xyz())
         .collect::<Vec<_>>();
       let out_mesh = convex_hull_from_verts(&verts)
-        .map_err(|err| ErrorStack::new(err).wrap("Error in `convex_hull` function"))?;
+        .map_err(|err| err.wrap("Error in `convex_hull` function"))?;
       Ok(Value::Mesh(Rc::new(out_mesh)))
     }
     _ => unimplemented!(),
@@ -1728,6 +1728,10 @@ fn trace_geodesic_path_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if !get_geodesics_loaded() {
+    return Err(ErrorStack::new_uninitialized_module("geodesics"));
+  }
+
   match def_ix {
     0 => {
       let path = arg_refs[0]
@@ -1828,7 +1832,7 @@ fn alpha_wrap_impl(
       let offset = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
 
       let out = alpha_wrap_mesh(mesh, alpha, offset)
-        .map_err(|err| ErrorStack::new(err).wrap("Error in `alpha_wrap` function"))?;
+        .map_err(|err| err.wrap("Error in `alpha_wrap` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     1 => {
@@ -1850,7 +1854,7 @@ fn alpha_wrap_impl(
       let offset = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
 
       let out = alpha_wrap_points(&points, alpha, offset)
-        .map_err(|err| ErrorStack::new(err).wrap("Error in `alpha_wrap` function"))?;
+        .map_err(|err| err.wrap("Error in `alpha_wrap` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -1879,7 +1883,7 @@ fn smooth_impl(
       let smooth_type = SmoothType::from_str(smooth_type)?;
 
       let out = smooth_mesh(mesh, smooth_type, iterations)
-        .map_err(|err| ErrorStack::new(err).wrap("Error in `smooth` function"))?;
+        .map_err(|err| err.wrap("Error in `smooth` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -1913,7 +1917,7 @@ fn remesh_planar_patches_impl(
       };
 
       let out = remesh_planar_patches(mesh, max_angle_deg, max_offset)
-        .map_err(|err| ErrorStack::new(err).wrap("Error in `remesh_planar_patches` function"))?;
+        .map_err(|err| err.wrap("Error in `remesh_planar_patches` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -1950,7 +1954,7 @@ fn isotropic_remesh_impl(
         protect_sharp_edges,
         sharp_angle_threshold_degrees,
       )
-      .map_err(|err| ErrorStack::new(err).wrap("Error in `isotropic_remesh` function"))?;
+      .map_err(|err| err.wrap("Error in `isotropic_remesh` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -1978,7 +1982,7 @@ fn delaunay_remesh_impl(
         protect_sharp_edges,
         sharp_angle_threshold_degrees,
       )
-      .map_err(|err| ErrorStack::new(err).wrap("Error in `delaunay_remesh` function"))?;
+      .map_err(|err| err.wrap("Error in `delaunay_remesh` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),

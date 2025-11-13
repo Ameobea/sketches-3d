@@ -4,6 +4,7 @@ import { buildLight } from 'src/viz/scenes/geoscriptPlayground/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
+import type { GeoscriptAsyncDeps } from '../geoscriptWorker.worker';
 
 const buildEmptyRunStats = (startTime: number): RunStats => ({
   runtimeMs: performance.now() - startTime,
@@ -50,6 +51,33 @@ export const runGeoscript = async ({
 
   const err = (await repl.getErr(ctxPtr)) || null;
   if (err) {
+    // Check if it's a special error indicating that an async dep needs to be loaded
+    if (err.includes('__GEOTOY_UNINITIALIZED_MODULE__:')) {
+      const depName = /__GEOTOY_UNINITIALIZED_MODULE__:(\w+)/.exec(err)?.[1];
+      if (!depName) {
+        console.error('Unrecognized error format:', err);
+        return {
+          objects: [],
+          stats: buildEmptyRunStats(startTime),
+          error: err,
+        };
+      }
+
+      const deps: GeoscriptAsyncDeps = {};
+      deps[depName as keyof GeoscriptAsyncDeps] = true;
+
+      await repl.initAsyncDeps(deps);
+      return runGeoscript({
+        code,
+        ctxPtr,
+        repl,
+        materials,
+        includePrelude,
+        materialOverride,
+        renderMode,
+      });
+    }
+
     return {
       objects: [],
       stats: buildEmptyRunStats(startTime),

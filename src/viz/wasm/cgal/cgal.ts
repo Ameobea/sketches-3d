@@ -19,6 +19,8 @@ export const initCGAL = (): Promise<void> | true => {
 
 export const getIsCGALLoaded = (): boolean => CGALWasm.isSome();
 
+export const cgal_get_is_loaded = (): boolean => getIsCGALLoaded();
+
 const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
   if (!CGALWasm.isSome()) {
     throw new Error('CGALWasm not initialized');
