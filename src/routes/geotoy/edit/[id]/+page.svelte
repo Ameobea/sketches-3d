@@ -1,5 +1,4 @@
 <script lang="ts">
-  import * as Comlink from 'comlink';
   import * as OrbitControls from 'three/examples/jsm/controls/OrbitControls.js';
   import { browser } from '$app/environment';
 
@@ -11,9 +10,8 @@
   } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import { page } from '$app/state';
   import { LoadOrbitControls } from 'src/viz/preloadCache';
-  import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
-  import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
   import { ScenesByName } from 'src/viz/scenes';
+  import { WorkerManager } from 'src/geoscript/workerManager';
 
   let { data }: { data: PageData } = $props();
 
@@ -28,7 +26,7 @@
     renderMode,
     me: data.me,
     // also kick off fetching the worker script + initializing the worker as soon as possible
-    geoscriptWorker: browser ? Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker()) : null,
+    workerManager: browser ? new WorkerManager() : null,
   });
 
   const sceneDefOverride = { ...ScenesByName['geoscript'], sceneLoader: () => processLoadedScene };

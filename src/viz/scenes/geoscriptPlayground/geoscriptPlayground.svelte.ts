@@ -1,18 +1,16 @@
 import * as THREE from 'three';
 import { N8AOPostPass } from 'n8ao';
 import { mount } from 'svelte';
-import * as Comlink from 'comlink';
 
 import type { Viz } from 'src/viz';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi from './ReplUI.svelte';
-import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
-import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
 import type { ReplCtx } from './types';
 import { buildGeotoyKeymap } from './keymap';
+import { WorkerManager } from 'src/geoscript/workerManager';
 
 const locations = {
   spawn: {
@@ -21,9 +19,9 @@ const locations = {
   },
 };
 
-const initRepl = (
+const initRepl = async (
   viz: Viz,
-  geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>,
+  workerManager: WorkerManager,
   setReplCtx: (ctx: ReplCtx) => void,
   userData: GeoscriptPlaygroundUserData | undefined = undefined,
   onHeightChange: (height: number, isCollapsed: boolean) => void
@@ -32,7 +30,7 @@ const initRepl = (
     target: document.getElementById('viz-container')!,
     props: {
       viz,
-      geoscriptWorker,
+      workerManager,
       setReplCtx,
       userData,
       onHeightChange,
@@ -41,20 +39,19 @@ const initRepl = (
 };
 
 export interface GeoscriptPlaygroundUserData {
-  geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods> | null;
+  workerManager: WorkerManager | null;
   initialComposition: { comp: Composition; version: CompositionVersion } | null;
   renderMode?: boolean;
   me?: User | null | undefined;
 }
 
-export const processLoadedScene = (
+export const processLoadedScene = async (
   viz: Viz,
   _loadedWorld: THREE.Group,
   vizConf: VizConfig,
   userData: GeoscriptPlaygroundUserData | undefined = undefined
-): SceneConfig => {
-  const geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods> =
-    userData?.geoscriptWorker ?? Comlink.wrap<GeoscriptWorkerMethods>(new GeoscriptWorker());
+): Promise<SceneConfig> => {
+  const workerManager: WorkerManager = userData?.workerManager ?? (await new WorkerManager());
 
   const quality = vizConf.graphics.quality;
 
@@ -132,9 +129,9 @@ export const processLoadedScene = (
   viz.registerResizeCb(updateCanvasSize);
   updateCanvasSize();
 
-  initRepl(
+  await initRepl(
     viz,
-    geoscriptWorker,
+    workerManager,
     (newCtx: ReplCtx) => {
       ctx = newCtx;
     },

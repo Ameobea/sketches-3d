@@ -6,6 +6,7 @@
     isRunning,
     isEditorCollapsed = false,
     run,
+    cancel,
     toggleEditorCollapsed,
     goHome,
     err,
@@ -23,6 +24,7 @@
     isRunning: boolean;
     isEditorCollapsed?: boolean;
     run: () => void;
+    cancel: () => void;
     toggleEditorCollapsed: () => void;
     goHome: () => void;
     err: string | null;
@@ -43,6 +45,9 @@
   <button class={{ collapsed: isEditorCollapsed }} disabled={isRunning} onclick={run}>
     {#if isRunning}running...{:else}run{/if}
   </button>
+  {#if isRunning}
+    <button class={{ collapsed: isEditorCollapsed }} onclick={cancel} style="margin-left: 8px">cancel</button>
+  {/if}
   {#if recordingState === 'recording'}
     <span class="recording-indicator" title="video recording in progress">🔴</span>
   {:else if recordingState === 'initializing'}

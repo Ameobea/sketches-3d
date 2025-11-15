@@ -2,11 +2,10 @@
   import * as THREE from 'three';
   import { onDestroy, onMount } from 'svelte';
   import type { EditorView, KeyBinding } from '@codemirror/view';
-  import type * as Comlink from 'comlink';
   import { resolve } from '$app/paths';
 
   import type { Viz } from 'src/viz';
-  import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
+  import type { WorkerManager } from 'src/geoscript/workerManager';
   import { buildEditor } from '../../../geoscript/editor';
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
   import SaveControls from './SaveControls.svelte';
@@ -49,19 +48,23 @@
 
   let {
     viz,
-    geoscriptWorker: repl,
+    workerManager,
     setReplCtx,
     userData,
     onHeightChange,
   }: {
     viz: Viz;
-    geoscriptWorker: Comlink.Remote<GeoscriptWorkerMethods>;
+    workerManager: WorkerManager;
     setReplCtx: (ctx: ReplCtx) => void;
     userData?: GeoscriptPlaygroundUserData;
     onHeightChange: (height: number, isCollapsed: boolean) => void;
   } = $props();
 
   const { toggleRecording, recordingState } = useRecording(viz, userData);
+
+  // The `Comlink.Remote` is itself a proxy, and nesting the proxies seems to break things
+  // svelte-ignore non_reactive_update
+  let repl = workerManager.getWorker();
 
   const {
     code: initialCode,
@@ -436,7 +439,31 @@
     isRunning = false;
   };
 
-  const rerun = async (onlyIfUVUnwrapperNotLoaded: boolean): Promise<void> => {
+  const cancel = async () => {
+    if (!isRunning) {
+      return;
+    }
+
+    workerManager.terminate();
+
+    for (const obj of renderedObjects) {
+      viz.scene.remove(obj);
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+        obj.geometry.dispose();
+      }
+    }
+    renderedObjects = [];
+    runStats = null;
+
+    repl = await workerManager.recreate();
+
+    ctxPtr = await repl.init();
+
+    err = 'Execution interrupted';
+    isRunning = false;
+  };
+
+  const rerun = async (onlyIfUVUnwrapperNotLoaded: boolean) => {
     if (onlyIfUVUnwrapperNotLoaded && getIsUVUnwrapLoaded()) {
       return;
     }
@@ -577,6 +604,8 @@
     window.addEventListener('beforeunload', beforeUnloadHandler);
 
     return () => {
+      workerManager.terminate();
+
       for (const mesh of renderedObjects) {
         viz.scene.remove(mesh);
         if (mesh instanceof THREE.Mesh || mesh instanceof THREE.Line) {
@@ -596,6 +625,8 @@
         return;
       }
     }
+
+    workerManager.terminate();
 
     goto(resolve('/geotoy'));
   };
@@ -622,6 +653,7 @@
       {isRunning}
       {isEditorCollapsed}
       {run}
+      {cancel}
       {toggleEditorCollapsed}
       {goHome}
       {err}
@@ -656,6 +688,7 @@
             {isRunning}
             {isEditorCollapsed}
             {run}
+            {cancel}
             {toggleEditorCollapsed}
             {goHome}
             {err}
