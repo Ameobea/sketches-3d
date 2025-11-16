@@ -487,6 +487,7 @@ async fn list_compositions(
   is_shared: Option<bool>,
   is_featured: Option<bool>,
   limit: Option<i64>,
+  offset: Option<usize>,
   include_code: bool,
 ) -> Result<Vec<PublicComposition>, APIError> {
   #[derive(Debug, FromRow)]
@@ -545,7 +546,12 @@ ORDER BY c.updated_at DESC
     } else {
       "'' as latest_source_code"
     },
-    if limit.is_some() { "LIMIT ?" } else { "" }
+    match (limit, offset) {
+      (Some(limit), Some(offset)) => format!("LIMIT {limit} OFFSET {offset}"),
+      (Some(limit), None) => format!("LIMIT {limit}"),
+      (None, Some(offset)) => format!("LIMIT 9999999999 OFFSET {offset}"),
+      (None, None) => String::new(),
+    }
   );
 
   let mut query = sqlx::query_as::<_, PublicCompositionRow>(&query_str);
@@ -597,6 +603,7 @@ pub async fn list_my_compositions(
     None,
     None,
     None,
+    None,
     query.include_code.unwrap_or(false),
   )
   .await?;
@@ -607,6 +614,7 @@ pub async fn list_my_compositions(
 pub struct ListPublicCompositionsQuery {
   featured_only: Option<bool>,
   count: Option<usize>,
+  offset: Option<usize>,
   pub include_code: Option<bool>,
   pub user_id: Option<i64>,
 }
@@ -622,6 +630,7 @@ pub async fn list_public_compositions(
   Query(ListPublicCompositionsQuery {
     featured_only,
     count,
+    offset,
     include_code,
     user_id,
   }): Query<ListPublicCompositionsQuery>,
@@ -632,6 +641,7 @@ pub async fn list_public_compositions(
     Some(true),
     featured_only,
     Some(count.unwrap_or(100).min(100) as i64),
+    offset,
     include_code.unwrap_or(false),
   )
   .await?;

@@ -149,11 +149,13 @@ export const listPublicCompositions = (
   {
     featuredOnly,
     count = 20,
+    offset = 0,
     includeCode = false,
     userID,
   }: {
     featuredOnly?: boolean;
     count?: number;
+    offset?: number;
     includeCode?: boolean;
     userID?: number;
   },
@@ -165,6 +167,9 @@ export const listPublicCompositions = (
   }
   if (count) {
     params.set('count', count.toString());
+  }
+  if (offset) {
+    params.set('offset', offset.toString());
   }
   params.set('include_code', includeCode.toString());
   if (userID) {

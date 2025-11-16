@@ -28,7 +28,12 @@
 />
 
 <div class="root">
-  <FrontPage featuredCompositions={data.featuredCompositions} me={data.me} />
+  <FrontPage
+    featuredCompositions={data.featuredCompositions}
+    me={data.me}
+    currentPage={data.currentPage}
+    hasMore={data.hasMore}
+  />
 </div>
 
 <style lang="css">
