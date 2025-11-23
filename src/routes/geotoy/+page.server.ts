@@ -14,7 +14,7 @@ export const load: PageServerLoad = async ({
 }): Promise<{
   featuredCompositions: {
     comp: Composition;
-    latest: CompositionVersion;
+    latest: Pick<CompositionVersion, 'thumbnail_url'>;
   }[];
   currentPage: number;
   hasMore: boolean;
@@ -32,5 +32,12 @@ export const load: PageServerLoad = async ({
   const hasMore = compositions.length > PAGE_SIZE;
   const featuredCompositions = hasMore ? compositions.slice(0, PAGE_SIZE) : compositions;
 
-  return { featuredCompositions, currentPage, hasMore };
+  return {
+    featuredCompositions: featuredCompositions.map(({ comp, latest }) => ({
+      comp,
+      latest: { thumbnail_url: latest.thumbnail_url },
+    })),
+    currentPage,
+    hasMore,
+  };
 };

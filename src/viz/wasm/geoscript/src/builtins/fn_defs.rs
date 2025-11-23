@@ -6705,7 +6705,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "material",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Material),
+            valid_types: argtype_flags!(ArgType::Material, ArgType::String),
             default_value: DefaultValue::Required,
             description: "Can be either a `Material` value or a string specifying the name of an externally defined material"
           },

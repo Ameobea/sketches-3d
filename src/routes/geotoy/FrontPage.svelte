@@ -8,7 +8,7 @@
   } from 'src/geoscript/geotoyAPIClient';
 
   export let me: User | null;
-  export let featuredCompositions: { comp: Composition; latest: CompositionVersion }[];
+  export let featuredCompositions: { comp: Composition; latest: Pick<CompositionVersion, 'thumbnail_url'> }[];
   export let currentPage: number;
   export let hasMore: boolean;
 
