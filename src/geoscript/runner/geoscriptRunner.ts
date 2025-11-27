@@ -63,10 +63,17 @@ export const runGeoscript = async ({
         };
       }
 
+      const argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>> = {};
+
       const deps: GeoscriptAsyncDeps = {};
       deps[depName as keyof GeoscriptAsyncDeps] = true;
+      const hasArgs = err.includes('||__||');
+      if (hasArgs) {
+        const args = err.split('||__||').slice(1);
+        argsByKey[depName as keyof GeoscriptAsyncDeps] = args;
+      }
 
-      await repl.initAsyncDeps(deps);
+      await repl.initAsyncDeps(deps, argsByKey);
       return runGeoscript({
         code,
         ctxPtr,

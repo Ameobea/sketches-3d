@@ -38,3 +38,4 @@ static/geodesics.wasm
 static/geodesics.js
 static/geoscript_repl_bg.wasm
 session.json
+static/path_tessellate_bg.wasm

@@ -1,5 +1,3 @@
-#![feature(vec_into_raw_parts)]
-
 use std::ptr::{self, addr_of};
 
 const TEXTURE_PTR_COUNT: usize = 8;

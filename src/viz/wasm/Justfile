@@ -7,6 +7,7 @@ copy-files:
   cp -r ./geodesics/build/bin/* ../../../src/geodesics/
   cp -r ./geodesics/build/bin/* ../../../static/
   cp ./build/geoscript_repl_bg.wasm ../../../static
+  cp ./build/path_tessellate_bg.wasm ../../../static
 
 bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/bridge2.wasm --target web --remove-producers-section --out-dir ./build
@@ -17,6 +18,7 @@ bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/basalt.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/csg_sandbox.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/path_tessellate.wasm --target web --remove-producers-section --out-dir ./build
 
   cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
@@ -38,6 +40,7 @@ opt:
   wasm-opt ./build/basalt_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/basalt_bg.wasm --enable-bulk-memory
   wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/csg_sandbox_bg.wasm --enable-bulk-memory
   wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
+  wasm-opt ./build/path_tessellate_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/path_tessellate_bg.wasm --enable-bulk-memory
 
 build:
   #!/bin/bash

@@ -553,3 +553,126 @@ pub fn delaunay_remesh(
     "Delaunay remeshing is not supported outside of wasm",
   ))
 }
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(module = "src/geoscript/text_to_path")]
+extern "C" {
+  pub fn get_cached_text_to_path_verts(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    font_weight: &str,
+    font_style: &str,
+    letter_spacing: f32,
+    width: f32,
+    height: f32,
+  ) -> Option<Vec<f32>>;
+  pub fn get_cached_text_to_path_indices(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    font_weight: &str,
+    font_style: &str,
+    letter_spacing: f32,
+    width: f32,
+    height: f32,
+  ) -> Option<Vec<u32>>;
+  pub fn get_cached_text_to_path_err(
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    font_weight: &str,
+    font_style: &str,
+    letter_spacing: f32,
+    width: f32,
+    height: f32,
+  ) -> Option<String>;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn get_text_to_path_cached_mesh(
+  text: &str,
+  font_family: &str,
+  font_size: f32,
+  font_weight: &str,
+  font_style: &str,
+  letter_spacing: f32,
+  width: f32,
+  height: f32,
+  depth: Option<f32>,
+) -> Result<Option<LinkedMesh<()>>, ErrorStack> {
+  let maybe_err = get_cached_text_to_path_err(
+    text,
+    font_family,
+    font_size,
+    font_weight,
+    font_style,
+    letter_spacing,
+    width,
+    height,
+  );
+  if let Some(err_str) = maybe_err {
+    return Err(ErrorStack::new(err_str));
+  }
+
+  let maybe_verts = get_cached_text_to_path_verts(
+    text,
+    font_family,
+    font_size,
+    font_weight,
+    font_style,
+    letter_spacing,
+    width,
+    height,
+  );
+  let maybe_indices = get_cached_text_to_path_indices(
+    text,
+    font_family,
+    font_size,
+    font_weight,
+    font_style,
+    letter_spacing,
+    width,
+    height,
+  );
+
+  // convert from 2d vertices to 3d vertices in the XZ plane
+  let maybe_verts = maybe_verts.map(|verts_2d| {
+    let mut verts_3d = Vec::with_capacity(verts_2d.len() / 2 * 3);
+    for i in 0..(verts_2d.len() / 2) {
+      verts_3d.push(verts_2d[i * 2]);
+      verts_3d.push(0.);
+      verts_3d.push(verts_2d[i * 2 + 1]);
+    }
+    verts_3d
+  });
+
+  let mut mesh = match (maybe_verts, maybe_indices) {
+    (Some(verts), Some(indices)) => LinkedMesh::from_raw_indexed(&verts, &indices, None, None),
+    _ => return Ok(None),
+  };
+
+  let Some(depth) = depth else {
+    return Ok(Some(mesh));
+  };
+
+  crate::mesh_ops::extrude::extrude(&mut mesh, |_| Ok(Vec3::new(0., depth, 0.)))?;
+  Ok(Some(mesh))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn get_text_to_path_cached_mesh(
+  text: &str,
+  font_family: &str,
+  font_size: &str,
+  font_weight: &str,
+  font_style: &str,
+  letter_spacing: &str,
+  width: f32,
+  height: f32,
+  depth: Option<f32>,
+) -> Result<Option<LinkedMesh<()>>, ErrorStack> {
+  Err(ErrorStack::new(
+    "Text to path mesh generation is not supported outside of wasm",
+  ))
+}

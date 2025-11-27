@@ -124,6 +124,18 @@ impl ErrorStack {
   fn new_uninitialized_module(module_name: &str) -> ErrorStack {
     Self::new(format!("__GEOTOY_UNINITIALIZED_MODULE__:{module_name}"))
   }
+
+  fn new_uninitialized_module_with_args(
+    module_name: &str,
+    args: impl Iterator<Item = String>,
+  ) -> ErrorStack {
+    let mut err = format!("__GEOTOY_UNINITIALIZED_MODULE__:{module_name}");
+    for arg in args {
+      err.push_str("||__||");
+      err.push_str(&arg);
+    }
+    ErrorStack::new(err)
+  }
 }
 
 impl Display for ErrorStack {

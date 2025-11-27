@@ -5405,6 +5405,81 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "text_to_mesh" => FnDef {
+    module: "mesh",
+    examples: &[], // TODO: needs example
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "text",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "font_family",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("IBM Plex Sans".to_string())),
+            description: "Font family to use for the text.  Must exist on Google Fonts."
+          },
+          ArgDef {
+            name: "font_size",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(24.)),
+            description: ""
+          },
+          ArgDef {
+            name: "font_weight",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil, ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: ""
+          },
+          ArgDef {
+            name: "font_style",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Must be one of \"normal\", \"italic\", or \"oblique\".  If nil, defaults to \"normal\".",
+          },
+          ArgDef {
+            name: "letter_spacing",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: ""
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Width of the generated mesh in world units along the X axis.  If only one of `width` or `height` is provided, the other dimension will be scaled to maintain the aspect ratio of the text."
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Height of the generated mesh in world units along the Z axis.  If only one of `width` or `height` is provided, the other dimension will be scaled to maintain the aspect ratio of the text.",
+          },
+          ArgDef {
+            name: "depth",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Float(0.2)),
+            description: "Depth to extrude the text into a 3D mesh.  If 0 or nil, will produce a flat 2D mesh in the XZ plane."
+          },
+        ],
+        description: "Generates a 2D path representing the given text string, triangulates it into a mesh, and optionally extrudes it into 3D.  The generated mesh lies in the XZ plane, with Y being the up direction.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "alpha_wrap" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 57 }],

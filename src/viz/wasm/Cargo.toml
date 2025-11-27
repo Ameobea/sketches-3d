@@ -15,6 +15,7 @@ members = [
   "csg_sandbox",
   "geoscript",
   "geoscript_repl",
+  "path_tessellate",
 ]
 resolver = "2"
 

@@ -1,0 +1,8 @@
+{
+  "jsxSingleQuote": true,
+  "printWidth": 110,
+  "singleQuote": true,
+  "trailingComma": "es5",
+  "arrowParens": "avoid",
+  "htmlWhitespaceSensitivity": "ignore"
+}

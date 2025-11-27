@@ -1,0 +1,12 @@
+set dotenv-load
+
+docker-build:
+  docker build -t ameo/text-to-path:latest .
+
+build-and-deploy:
+  #!/bin/bash
+
+  just docker-build
+  docker save ameo/text-to-path:latest | bzip2 > /tmp/text-to-path.tar.bz2
+  scp /tmp/text-to-path.tar.bz2 debian@ameo.dev:/tmp/text-to-path.tar.bz2
+  ssh debian@ameo.dev -t "cat /tmp/text-to-path.tar.bz2 | bunzip2 | docker load && (docker kill text-to-path-server || true) && docker container rm text-to-path-server && docker run -d --name text-to-path-server --restart always -e PORT=5805 -p 5805:5805 -e GOOGLE_FONTS_API_KEY=$GOOGLE_FONTS_API_KEY -e GOOGLE_CACHE_MS=$GOOGLE_CACHE_MS ameo/text-to-path:latest && rm /tmp/text-to-path.tar.bz2"

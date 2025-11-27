@@ -544,6 +544,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lyon_extra"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ca94c7bf1e2557c2798989c43416822c12fc5dcc5e17cc3307ef0e71894a955"
+dependencies = [
+ "lyon_path",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "lyon_geom"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -807,7 +817,7 @@ dependencies = [
  "smallvec",
  "spade",
  "static_assertions",
- "thiserror",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -815,6 +825,15 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "path_tessellate"
+version = "0.1.0"
+dependencies = [
+ "lyon_extra",
+ "lyon_tessellation",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "pest"
@@ -1234,11 +1253,31 @@ version = "0.1.0"
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.17",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

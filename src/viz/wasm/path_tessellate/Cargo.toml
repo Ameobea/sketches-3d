@@ -1,0 +1,13 @@
+[package]
+name = "path_tessellate"
+version = "0.1.0"
+authors = ["Casey Primozic <casey@cprimozic.net>"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "=0.2.92"
+lyon_tessellation = "1.0"
+lyon_extra = "1.0"

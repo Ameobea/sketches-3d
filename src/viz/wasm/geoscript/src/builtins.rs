@@ -24,8 +24,8 @@ use rand::{RngCore, SeedableRng};
 
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
-  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_geodesics_loaded, isotropic_remesh,
-  remesh_planar_patches, smooth_mesh, SmoothType,
+  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_geodesics_loaded,
+  get_text_to_path_cached_mesh, isotropic_remesh, remesh_planar_patches, smooth_mesh, SmoothType,
 };
 use crate::noise::{
   curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d, worley_noise_2d,
@@ -1812,6 +1812,137 @@ fn trace_geodesic_path_impl(
 
       Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: out_points_v3.into_iter().map(|v| Ok(Value::Vec3(v))),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn text_to_mesh_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let text = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
+      let font_family = arg_refs[1].resolve(args, kwargs).as_str().unwrap();
+      let font_size = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let font_weight_val = arg_refs[3].resolve(args, kwargs);
+      let font_weight = match font_weight_val {
+        Value::Int(i) => {
+          if *i < 100 || *i > 900 {
+            return Err(ErrorStack::new(format!(
+              "Invalid font_weight argument for `text_to_mesh`; expected value in range [100, \
+               900], found: {i}"
+            )));
+          }
+          Some(i.to_string())
+        }
+        Value::String(s) => Some(s.clone()),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid font_weight argument for `text_to_mesh`; expected Int, String, or Nil, \
+             found: {font_weight_val:?}"
+          )));
+        }
+      };
+      let font_style_val = arg_refs[4].resolve(args, kwargs);
+      let font_style = match font_style_val {
+        Value::String(s) => Some(s.as_str().to_string()),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid font_style argument for `text_to_mesh`; expected String or Nil, found: \
+             {font_style_val:?}"
+          )));
+        }
+      };
+      let letter_spacing = match arg_refs[5].resolve(args, kwargs) {
+        Value::Float(f) => *f,
+        Value::Int(i) => *i as f32,
+        Value::Nil => 0.,
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid letter_spacing argument for `text_to_mesh`; expected Float, Int, or Nil, \
+             found: {other:?}"
+          )));
+        }
+      };
+      let width_val = arg_refs[6].resolve(args, kwargs);
+      let width = match width_val {
+        Value::Float(f) => Some(*f),
+        Value::Int(i) => Some(*i as f32),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid width argument for `text_to_mesh`; expected Float, Int, or Nil, found: \
+             {width_val:?}"
+          )));
+        }
+      };
+      let height_val = arg_refs[7].resolve(args, kwargs);
+      let height = match height_val {
+        Value::Float(f) => Some(*f),
+        Value::Int(i) => Some(*i as f32),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid height argument for `text_to_mesh`; expected Float, Int, or Nil, found: \
+             {height_val:?}"
+          )));
+        }
+      };
+      let depth_val = arg_refs[8].resolve(args, kwargs);
+      let depth = match depth_val {
+        Value::Float(f) => Some(*f),
+        Value::Int(i) => Some(*i as f32),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid depth argument for `text_to_mesh`; expected Float, Int, or Nil, found: \
+             {depth_val:?}"
+          )));
+        }
+      };
+
+      let mesh = get_text_to_path_cached_mesh(
+        &text,
+        &font_family,
+        font_size,
+        font_weight.as_ref().map(String::as_str).unwrap_or_default(),
+        font_style.as_ref().map(String::as_str).unwrap_or_default(),
+        letter_spacing,
+        width.unwrap_or(0.),
+        height.unwrap_or(0.),
+        depth,
+      )?;
+      let Some(mesh) = mesh else {
+        let args = [
+          text.to_owned(),
+          font_family.to_owned(),
+          font_size.to_string(),
+          font_weight.unwrap_or_default(),
+          font_style.unwrap_or_default(),
+          letter_spacing.to_string(),
+          width.unwrap_or(0.).to_string(),
+          height.unwrap_or(0.).to_string(),
+          depth.unwrap_or(0.).to_string(),
+        ];
+        return Err(ErrorStack::new_uninitialized_module_with_args(
+          "text_to_path",
+          args.into_iter(),
+        ));
+      };
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: None,
       })))
     }
     _ => unimplemented!(),
@@ -5232,6 +5363,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "trace_geodesic_path" => builtin_fn!(trace_geodesic_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_geodesic_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "text_to_mesh" => builtin_fn!(text_to_mesh, |def_ix, arg_refs, args, kwargs, _ctx| {
+    text_to_mesh_impl(def_ix, arg_refs, args, kwargs)
   }),
   "alpha_wrap" => builtin_fn!(alpha_wrap, |def_ix, arg_refs, args, kwargs, ctx| {
     alpha_wrap_impl(ctx, def_ix, arg_refs, args, kwargs)

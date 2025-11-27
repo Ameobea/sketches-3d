@@ -5,6 +5,7 @@ import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 import { initGeodesics } from './geodesics';
 import { initCGAL } from 'src/viz/wasm/cgal/cgal';
+import { textToPath } from './text_to_path';
 
 const initGeoscript = async () => {
   await Geoscript.default();
@@ -16,9 +17,13 @@ const filterNils = <T>(arr: (T | null | undefined)[]): T[] => arr.filter((x): x 
 export interface GeoscriptAsyncDeps {
   geodesics?: boolean;
   cgal?: boolean;
+  text_to_path?: boolean;
 }
 
-const initAsyncDeps = (deps: GeoscriptAsyncDeps) => {
+const initAsyncDeps = (
+  deps: GeoscriptAsyncDeps,
+  argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>>
+) => {
   const promises: Promise<void>[] = [];
   if (deps.geodesics) {
     promises.push(initGeodesics());
@@ -28,6 +33,39 @@ const initAsyncDeps = (deps: GeoscriptAsyncDeps) => {
     if (cgalInit instanceof Promise) {
       promises.push(cgalInit);
     }
+  }
+  if (deps.text_to_path) {
+    const args = argsByKey.text_to_path;
+    if (!args) {
+      throw new Error('text_to_path dependency requires arguments');
+    }
+
+    const [text, fontFamily, fontSize, fontWeight, fontStyle, letterSpacing, width, height] = args;
+    const widthNum = +(width || 0);
+    const heightNum = +(height || 0);
+
+    const convertedFontWeight = fontWeight
+      ? isNaN(Number(fontWeight))
+        ? fontWeight
+        : Number(fontWeight)
+      : undefined;
+
+    promises.push(
+      textToPath(
+        text,
+        {
+          width: width && widthNum !== 0 ? +width : null,
+          height: height && heightNum !== 0 ? +height : null,
+        },
+        {
+          fontFamily,
+          fontSize: fontSize ? +fontSize : undefined,
+          fontWeight: convertedFontWeight,
+          fontStyle: (fontStyle || undefined) as 'normal' | 'italic' | 'oblique' | undefined,
+          letterSpacing: letterSpacing ? +letterSpacing : undefined,
+        }
+      ).then(() => {})
+    );
   }
 
   if (!promises.length) {
@@ -45,8 +83,11 @@ const methods = {
   reset: (ctxPtr: number) => {
     return Geoscript.geoscript_repl_reset(ctxPtr);
   },
-  initAsyncDeps: async (deps: GeoscriptAsyncDeps) => {
-    await initAsyncDeps(deps);
+  initAsyncDeps: async (
+    deps: GeoscriptAsyncDeps,
+    argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>>
+  ) => {
+    await initAsyncDeps(deps, argsByKey);
   },
   eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
     Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
@@ -55,7 +96,7 @@ const methods = {
     }
 
     const deps: GeoscriptAsyncDeps = JSON.parse(Geoscript.geoscript_repl_get_async_dependencies(ctxPtr));
-    const depsPromise = initAsyncDeps(deps);
+    const depsPromise = initAsyncDeps(deps, {});
     if (depsPromise) {
       await depsPromise;
     }
