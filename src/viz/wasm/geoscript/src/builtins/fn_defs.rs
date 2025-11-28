@@ -1955,8 +1955,8 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "a / b",
-        return_type: &[ArgType::Int],
+        description: "Divides two integers a / b and returns a float.  The integers are converted to floats before division.  If you need true integer division, use the `mod` function or `%` operator instead.",
+        return_type: &[ArgType::Float],
       },
       FnSignature {
         arg_defs: &[
