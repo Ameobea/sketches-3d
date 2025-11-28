@@ -5407,7 +5407,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
   },
   "text_to_mesh" => FnDef {
     module: "mesh",
-    examples: &[], // TODO: needs example
+    examples: &[FnExample { composition_id: 69 }],
     signatures: &[
       FnSignature {
         arg_defs: &[

@@ -8,7 +8,7 @@ use lyon_tessellation::{
   },
   geometry_builder::Positions,
   path::Path,
-  BuffersBuilder, FillOptions, FillTessellator, VertexBuffers,
+  BuffersBuilder, FillOptions, FillRule, FillTessellator, VertexBuffers,
 };
 use wasm_bindgen::prelude::*;
 
@@ -132,7 +132,11 @@ pub fn tessellate_path(path: &str, width: f32, height: f32) -> *mut TessOutput {
 
     let mut tessellator = FillTessellator::new();
 
-    tessellator.tessellate_path(&path, &FillOptions::default(), &mut vertex_builder)
+    tessellator.tessellate_path(
+      &path,
+      &FillOptions::default().with_fill_rule(FillRule::NonZero),
+      &mut vertex_builder,
+    )
   };
   match res {
     Ok(_) => {
