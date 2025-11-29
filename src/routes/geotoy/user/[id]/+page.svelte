@@ -1,25 +1,27 @@
 <script lang="ts">
+  import { deleteComposition } from 'src/geoscript/geotoyAPIClient';
   import type { PageData } from './$types';
+  import { resolve } from '$app/paths';
+  import { showToast } from 'src/viz/util/GlobalToastState.svelte';
+  import GeotoyHeader from '../../GeotoyHeader.svelte';
 
   let { data }: { data: PageData } = $props();
 
   let compositions = $state(data.compositions);
-  let errorMessage = $state<string | null>(null);
 
-  const deleteComposition = async (compositionID: number) => {
+  const doDeleteComposition = async (compositionID: number) => {
     if (!confirm('Are you sure you want to delete this composition?')) {
       return;
     }
-
-    errorMessage = null;
 
     try {
       await deleteComposition(compositionID);
 
       compositions = compositions.filter(c => c.comp.id !== compositionID);
+      showToast({ status: 'success', message: 'Composition deleted' });
     } catch (err) {
       console.error('Failed to delete composition:', err);
-      errorMessage = 'Failed to delete composition. Please try again.';
+      showToast({ status: 'error', message: 'Failed to delete composition' });
     }
   };
 
@@ -33,83 +35,78 @@
 </svelte:head>
 
 <div class="root">
-  <h2>{data.user.username}</h2>
+  <GeotoyHeader me={data.me} showTitleLink />
 
-  {#if errorMessage}
-    <div class="error-message">{errorMessage}</div>
-  {/if}
+  <div class="content">
+    <h2>{data.user.username}</h2>
 
-  <ul class="composition-list">
-    {#each compositions as { comp, latest } (comp.id)}
-      <li class="composition-item">
-        <a href={`/geotoy/edit/${comp.id}`} tabindex="-1" class="thumbnail-link">
-          {#if latest.thumbnail_url}
-            <img
-              src={latest.thumbnail_url}
-              alt={comp.description || 'Composition thumbnail'}
-              class="thumbnail"
-              crossorigin="anonymous"
-              loading="lazy"
-              width="70"
-              height="70"
-            />
-          {:else}
-            <div class="thumbnail placeholder"></div>
+    <ul class="composition-list">
+      {#each compositions as { comp, latest } (comp.id)}
+        <li class="composition-item">
+          <a href={resolve(`/geotoy/edit/${comp.id}`)} tabindex="-1" class="thumbnail-link">
+            {#if latest.thumbnail_url}
+              <img
+                src={latest.thumbnail_url}
+                alt={comp.description || 'Composition thumbnail'}
+                class="thumbnail"
+                crossorigin="anonymous"
+                loading="lazy"
+                width="70"
+                height="70"
+              />
+            {:else}
+              <div class="thumbnail placeholder"></div>
+            {/if}
+          </a>
+
+          <div class="info">
+            <a href={resolve(`/geotoy/edit/${comp.id}`)} class="title-text">{comp.title}</a>
+            <div class="meta">
+              <span class="date">last updated {new Date(comp.updated_at).toLocaleDateString()}</span>
+              <span class="status" style={`color: ${comp.is_shared ? '#12cc12' : 'red'}`}>
+                {comp.is_shared ? 'public' : 'private'}
+              </span>
+            </div>
+          </div>
+
+          {#if data.isMe}
+            <div class="actions">
+              <button class="delete-btn" onclick={() => doDeleteComposition(comp.id)}>delete</button>
+            </div>
           {/if}
-        </a>
-
-        <div class="info">
-          <a href={`/geotoy/edit/${comp.id}`} class="title">{comp.title}</a>
-          <div class="meta">
-            <span class="date">last updated {new Date(comp.updated_at).toLocaleDateString()}</span>
-            <span class="status" style={`color: ${comp.is_shared ? '#12cc12' : 'red'}`}>
-              {comp.is_shared ? 'public' : 'private'}
-            </span>
-          </div>
-        </div>
-
-        {#if data.isMe}
-          <div class="actions">
-            <button class="delete-btn" onclick={() => deleteComposition(comp.id)}>delete</button>
-          </div>
-        {/if}
-      </li>
-    {/each}
-    {#if compositions.length === 0}
-      <li class="empty-message">{data.isMe ? 'you have no compositions' : 'no public compositions'}</li>
-    {/if}
-  </ul>
-
-  <div class="back-link">
-    <a href="/geotoy">home</a>
+        </li>
+      {/each}
+      {#if compositions.length === 0}
+        <li class="empty-message">{data.isMe ? 'you have no compositions' : 'no public compositions'}</li>
+      {/if}
+    </ul>
   </div>
 </div>
 
 <style>
   .root {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 16px;
-    height: 100vh;
-    margin-bottom: 24px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0 8px 8px 8px;
+    box-sizing: border-box;
     font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+  }
+
+  .content {
+    max-width: 900px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 16px 8px;
   }
 
   h2 {
     text-align: left;
-    margin-bottom: 12px;
+    margin: 0 0 12px 0;
     font-size: 24px;
     font-weight: 400;
     border-bottom: 1px solid #555;
     padding-bottom: 4px;
-  }
-
-  .error-message {
-    background-color: #401a1a;
-    border: 1px solid #a04040;
-    color: #f0c0c0;
-    padding: 12px;
-    margin-bottom: 16px;
   }
 
   .composition-list {
@@ -156,7 +153,7 @@
     min-width: 0;
   }
 
-  .title {
+  .title-text {
     font-size: 16px;
     font-weight: 600;
     color: #f0f0f0;
@@ -166,7 +163,7 @@
     text-overflow: ellipsis;
   }
 
-  a.title:hover {
+  a.title-text:hover {
     color: #fff;
     text-decoration: underline;
   }
@@ -207,12 +204,11 @@
     border-bottom: 1px solid #2a2a2a;
   }
 
-  .back-link {
-    margin-top: 32px;
-    text-align: center;
-  }
-
   @media (max-width: 600px) {
+    .content {
+      padding: 12px 4px;
+    }
+
     h2 {
       font-size: 20px;
     }
@@ -236,7 +232,7 @@
       flex-grow: 1;
     }
 
-    .title {
+    .title-text {
       font-size: 15px;
     }
 

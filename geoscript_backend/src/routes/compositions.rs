@@ -33,6 +33,10 @@ pub fn compositions_routes() -> Router {
       patch(instrument_handler("update_composition", update_composition)),
     )
     .route(
+      "/{id}",
+      delete(instrument_handler("delete_composition", delete_composition)),
+    )
+    .route(
       "/{id}/fork",
       post(instrument_handler("fork_composition", fork_composition)),
     )
@@ -86,10 +90,6 @@ pub fn compositions_routes() -> Router {
         "list_public_compositions",
         list_public_compositions,
       )),
-    )
-    .route(
-      "/{id}",
-      delete(instrument_handler("delete_composition", delete_composition)),
     )
     .merge(protected_routes)
     .merge(maybe_authed_routes)
