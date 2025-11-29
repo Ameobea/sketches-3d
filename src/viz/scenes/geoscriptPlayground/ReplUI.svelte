@@ -52,18 +52,37 @@
     workerManager,
     setReplCtx,
     userData: providedUserData,
-    onHeightChange,
+    onSizeChange,
   }: {
     viz: Viz;
     workerManager: WorkerManager;
     setReplCtx: (ctx: ReplCtx) => void;
     userData?: GeoscriptPlaygroundUserData;
-    onHeightChange: (height: number, isCollapsed: boolean) => void;
+    onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void;
   } = $props();
 
   let userData = $state<GeoscriptPlaygroundUserData | undefined>(providedUserData);
 
   const { toggleRecording, recordingState } = useRecording(viz, providedUserData);
+
+  let layoutOrientation = $state<'vertical' | 'horizontal'>(
+    (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal') || 'vertical'
+  );
+  $effect(() => {
+    localStorage.setItem('geoscriptLayoutOrientation', layoutOrientation);
+  });
+
+  const toggleLayoutOrientation = () => {
+    const newOrientation = layoutOrientation === 'vertical' ? 'horizontal' : 'vertical';
+    layoutOrientation = newOrientation;
+    if (newOrientation === 'horizontal') {
+      size = Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth);
+    } else {
+      size =
+        Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight);
+    }
+    onSizeChange(size, isEditorCollapsed, layoutOrientation);
+  };
 
   // The `Comlink.Remote` is itself a proxy, and nesting the proxies seems to break things
   // svelte-ignore non_reactive_update
@@ -94,17 +113,21 @@
   $effect(() => {
     if (innerWidth >= 768 && isEditorCollapsed) {
       isEditorCollapsed = false;
-      onHeightChange(height, isEditorCollapsed);
+      onSizeChange(size, isEditorCollapsed, layoutOrientation);
     }
   });
 
-  let height = $state(
-    Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
+  const initialLayoutOrientation =
+    (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal' | null) || 'vertical';
+  let size = $state(
+    initialLayoutOrientation === 'horizontal'
+      ? Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth)
+      : Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
   );
   let lastCode = initialCode;
 
   onMount(() => {
-    onHeightChange(height, isEditorCollapsed);
+    onSizeChange(size, isEditorCollapsed, layoutOrientation);
 
     repl.init().then(ptr => {
       ctxPtr = ptr;
@@ -115,9 +138,16 @@
     e.preventDefault();
 
     const handleMousemove = (e: MouseEvent) => {
-      const newHeight = Math.min(window.innerHeight * 0.9, Math.max(100, window.innerHeight - e.clientY));
-      height = newHeight;
-      onHeightChange(height, isEditorCollapsed);
+      if (layoutOrientation === 'horizontal') {
+        const newWidth = Math.min(window.innerWidth * 0.9, Math.max(200, window.innerWidth - e.clientX));
+        size = newWidth;
+        localStorage.setItem('geoscript-repl-width', `${newWidth}`);
+      } else {
+        const newHeight = Math.min(window.innerHeight * 0.9, Math.max(100, window.innerHeight - e.clientY));
+        size = newHeight;
+        localStorage.setItem('geoscript-repl-height', `${newHeight}`);
+      }
+      onSizeChange(size, isEditorCollapsed, layoutOrientation);
     };
 
     const handleMouseup = () => {
@@ -487,7 +517,7 @@
       );
     }
     isEditorCollapsed = !isEditorCollapsed;
-    onHeightChange(height, isEditorCollapsed);
+    onSizeChange(size, isEditorCollapsed, layoutOrientation);
   };
 
   const ejectPrelude = async (editorView: EditorView) => {
@@ -649,8 +679,8 @@
 
 {#if isEditorCollapsed}
   <div
-    class="root collapsed"
-    style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} height: 36px;`}
+    class={['root', 'collapsed', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
+    style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} ${layoutOrientation === 'horizontal' ? 'width: 36px;' : 'height: 36px;'}`}
   >
     <ReplControls
       {isRunning}
@@ -670,16 +700,22 @@
       {preludeEjected}
       {togglePreludeEjected}
       toggleMaterialEditorOpen={() => (materialEditorOpen = true)}
+      {toggleLayoutOrientation}
     />
   </div>
 {:else}
   <div
-    class="root"
-    style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} height: ${height}px;`}
+    class={['root', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
+    style={`${userData?.renderMode ? 'visibility: hidden; height: 0; width: 0;' : ''} ${layoutOrientation === 'horizontal' ? `width: ${size}px;` : `height: ${size}px;`}`}
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="dragger" role="separator" aria-orientation="horizontal" onmousedown={handleMousedown}></div>
-    <div class="editor-container">
+    <div
+      class={['dragger', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
+      role="separator"
+      aria-orientation={layoutOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
+      onmousedown={handleMousedown}
+    ></div>
+    <div class={['editor-container', layoutOrientation === 'horizontal' ? 'horizontal' : '']}>
       <div
         bind:this={codemirrorContainer}
         class="codemirror-wrapper"
@@ -707,6 +743,7 @@
             toggleMaterialEditorOpen={() => {
               materialEditorOpen = !materialEditorOpen;
             }}
+            {toggleLayoutOrientation}
           />
           <ReplOutput {err} {runStats} />
         </div>
@@ -775,6 +812,26 @@
     font-size: 15px;
   }
 
+  .root.horizontal {
+    width: auto;
+    height: 100%;
+    max-width: none;
+    max-height: 100vh;
+    overflow-x: auto;
+    overflow-y: hidden;
+    bottom: 0;
+    right: 0;
+    left: auto;
+    top: 0;
+    flex-direction: row;
+  }
+
+  .root.horizontal.collapsed {
+    flex-direction: column;
+    width: 36px;
+    overflow: hidden;
+  }
+
   .dragger {
     width: 100%;
     height: 5px;
@@ -785,11 +842,25 @@
     z-index: 2;
   }
 
+  .dragger.horizontal {
+    width: 5px;
+    height: 100%;
+    top: 0;
+    left: -2px;
+    cursor: ew-resize;
+  }
+
   .editor-container {
     display: flex;
     flex-direction: row;
     flex: 1;
     min-height: 0;
+  }
+
+  .editor-container.horizontal {
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
   }
 
   .output {
@@ -829,6 +900,13 @@
     flex: 0.4;
     border-top: 1px solid #444;
     overflow-y: auto;
+  }
+
+  .horizontal .controls {
+    border-top: none;
+    border-left: 1px solid #444;
+    flex: 0.5;
+    min-width: 180px;
   }
 
   .not-logged-in {

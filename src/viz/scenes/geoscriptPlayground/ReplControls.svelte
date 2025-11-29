@@ -20,6 +20,7 @@
     isDirty,
     togglePreludeEjected,
     preludeEjected,
+    toggleLayoutOrientation,
   }: {
     isRunning: boolean;
     isEditorCollapsed?: boolean;
@@ -38,6 +39,7 @@
     isDirty: boolean;
     togglePreludeEjected: () => void;
     preludeEjected: boolean;
+    toggleLayoutOrientation: () => void;
   } = $props();
 </script>
 
@@ -88,6 +90,7 @@
         <button onclick={clearLocalChanges}>clear local changes</button>
         <button onclick={toggleAxisHelpers}>toggle axis helpers</button>
         <button onclick={toggleLightHelpers}>toggle light helpers</button>
+        <button onclick={toggleLayoutOrientation}>toggle layout horizontal/vertical</button>
         <button onclick={togglePreludeEjected}>{preludeEjected ? 'un-eject' : 'eject'} prelude</button>
         <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>
         <button

@@ -24,7 +24,7 @@ const initRepl = async (
   workerManager: WorkerManager,
   setReplCtx: (ctx: ReplCtx) => void,
   userData: GeoscriptPlaygroundUserData | undefined = undefined,
-  onHeightChange: (height: number, isCollapsed: boolean) => void
+  onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void
 ) => {
   const _ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
@@ -33,7 +33,7 @@ const initRepl = async (
       workerManager,
       setReplCtx,
       userData,
-      onHeightChange,
+      onSizeChange,
     },
   });
 };
@@ -108,8 +108,13 @@ export const processLoadedScene = async (
     viz.scene.add(axisHelper);
   }
 
-  let controlsHeight = $state(
-    Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
+  let layoutOrientation = $state<'vertical' | 'horizontal'>(
+    (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal') || 'vertical'
+  );
+  let controlsSize = $state(
+    layoutOrientation === 'horizontal'
+      ? Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth)
+      : Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
   );
   let isEditorCollapsed = $state(window.innerWidth < 768);
 
@@ -118,11 +123,20 @@ export const processLoadedScene = async (
       return;
     }
 
-    const newHeight = isEditorCollapsed ? 36 : controlsHeight;
-    const canvasHeight = Math.max(window.innerHeight - newHeight, 0);
-    viz.renderer.setSize(window.innerWidth, canvasHeight, true);
-    if (viz.camera.isPerspectiveCamera) {
-      viz.camera.aspect = window.innerWidth / canvasHeight;
+    if (layoutOrientation === 'horizontal') {
+      const newWidth = isEditorCollapsed ? 36 : controlsSize;
+      const canvasWidth = Math.max(window.innerWidth - newWidth, 0);
+      viz.renderer.setSize(canvasWidth, window.innerHeight, true);
+      if (viz.camera.isPerspectiveCamera) {
+        viz.camera.aspect = canvasWidth / window.innerHeight;
+      }
+    } else {
+      const newHeight = isEditorCollapsed ? 36 : controlsSize;
+      const canvasHeight = Math.max(window.innerHeight - newHeight, 0);
+      viz.renderer.setSize(window.innerWidth, canvasHeight, true);
+      if (viz.camera.isPerspectiveCamera) {
+        viz.camera.aspect = window.innerWidth / canvasHeight;
+      }
     }
     viz.camera.updateProjectionMatrix();
   };
@@ -136,10 +150,10 @@ export const processLoadedScene = async (
       ctx = newCtx;
     },
     userData,
-    (newHeight: number, newIsCollapsed: boolean) => {
-      controlsHeight = newHeight;
+    (newSize: number, newIsCollapsed: boolean, newOrientation: 'vertical' | 'horizontal') => {
+      controlsSize = newSize;
       isEditorCollapsed = newIsCollapsed;
-      localStorage.setItem('geoscript-repl-height', `${newHeight}`);
+      layoutOrientation = newOrientation;
       updateCanvasSize();
     }
   );
