@@ -77,7 +77,7 @@
         modules
       </span>
       <div class="toc-items">
-        {#each defsByModule as { moduleName }}
+        {#each defsByModule as { moduleName } (moduleName)}
           <a
             href="#module-{moduleName}"
             class="toc-item"
@@ -127,9 +127,9 @@
     </div>
   </div>
   <div class="docs">
-    {#each defsByModule as { moduleName, defs }}
+    {#each defsByModule as { moduleName, defs } (moduleName)}
       <h2 id={`module-${moduleName}`} class="module-name"><a href="#module-{moduleName}">{moduleName}</a></h2>
-      {#each defs as { name, def }}
+      {#each defs as { name, def } (name)}
         <FnDoc {name} {def} />
       {/each}
     {/each}
@@ -137,8 +137,6 @@
 </div>
 
 <style lang="css">
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
-
   .root {
     font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
     display: flex;

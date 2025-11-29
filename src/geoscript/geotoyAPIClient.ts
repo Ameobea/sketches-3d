@@ -225,8 +225,12 @@ export const createCompositionVersion = (
     body: JSON.stringify(data),
   });
 
-export const forkComposition = (id: number): Promise<Composition> =>
-  apiFetch<Composition>(`/compositions/${id}/fork`, { method: 'POST' });
+export const forkComposition = (
+  id: number
+): Promise<{ composition: Composition; version: CompositionVersion }> =>
+  apiFetch<{ composition: Composition; version: CompositionVersion }>(`/compositions/${id}/fork`, {
+    method: 'POST',
+  });
 
 export const listCompositionVersions = (id: number): Promise<number[]> =>
   apiFetch<number[]>(`/compositions/${id}/versions`);

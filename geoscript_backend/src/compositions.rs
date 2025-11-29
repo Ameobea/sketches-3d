@@ -24,6 +24,12 @@ pub struct Composition {
   pub is_featured: bool,
 }
 
+#[derive(Serialize)]
+pub struct CompositionAndVersion {
+  pub composition: Composition,
+  pub version: CompositionVersion,
+}
+
 #[derive(Debug, FromRow, Serialize)]
 pub struct CompositionVersion {
   pub id: i64,
@@ -228,7 +234,7 @@ pub async fn fork_composition(
   State(pool): State<SqlitePool>,
   Extension(user): Extension<User>,
   Path(composition_id): Path<i64>,
-) -> Result<Json<Composition>, APIError> {
+) -> Result<Json<CompositionAndVersion>, APIError> {
   let original_composition = sqlx::query_as::<_, Composition>(
     "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
      u.id WHERE c.id = ?",
@@ -246,6 +252,13 @@ pub async fn fork_composition(
       format!("Failed to fetch original composition: {err}"),
     ),
   })?;
+
+  if original_composition.author_id != user.id && !original_composition.is_shared {
+    return Err(APIError::new(
+      StatusCode::NOT_FOUND,
+      "Original composition not found or you do not have permission to access it",
+    ));
+  }
 
   let latest_version = sqlx::query_as::<_, CompositionVersion>(
     "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -292,10 +305,12 @@ pub async fn fork_composition(
   })?;
 
   let version_id = sqlx::query(
-    "INSERT INTO composition_versions (composition_id, source_code) VALUES (?, ?) RETURNING id",
+    "INSERT INTO composition_versions (composition_id, source_code, metadata) VALUES (?, ?, ?) \
+     RETURNING id",
   )
   .bind(forked_composition_id)
   .bind(&latest_version.source_code)
+  .bind(&latest_version.metadata)
   .fetch_one(&mut *tx)
   .await
   .map_err(|err| {
@@ -335,7 +350,17 @@ pub async fn fork_composition(
 
   render_thumbnail(pool, forked_composition_id, version_id);
 
-  Ok(Json(forked_composition))
+  Ok(Json(CompositionAndVersion {
+    composition: forked_composition,
+    version: CompositionVersion {
+      id: version_id,
+      composition_id: forked_composition_id,
+      source_code: latest_version.source_code,
+      created_at: Utc::now(),
+      thumbnail_url: None,
+      metadata: latest_version.metadata,
+    },
+  }))
 }
 
 pub async fn get_composition(
@@ -374,7 +399,7 @@ pub async fn get_composition(
     return Err(not_found());
   };
 
-  if user.id != composition.author_id && !is_admin {
+  if user.id != composition.author_id {
     return Err(not_found());
   }
 
@@ -662,7 +687,7 @@ pub async fn update_composition(
     if !allowed_fields.contains(&field.as_str()) {
       return Err(APIError::new(
         StatusCode::BAD_REQUEST,
-        format!("Field '{{field}}' cannot be updated"),
+        format!("Field '{field}' cannot be updated"),
       ));
     }
     match field.as_str() {

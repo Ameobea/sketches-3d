@@ -1,17 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import {
-    APIError,
-    createComposition,
-    createCompositionVersion,
-    updateComposition,
-    type Composition,
-    type CompositionVersionMetadata,
-  } from 'src/geoscript/geotoyAPIClient';
+  import { APIError, createComposition, type Composition } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
-  import { OrthographicCamera, PerspectiveCamera } from 'three';
-  import type { OrbitControls } from 'three/examples/jsm/Addons.js';
+  import { buildCompositionVersionMetadata, saveNewVersion } from './persistence';
+  import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
+  import { resolve } from '$app/paths';
 
   let {
     viz,
@@ -20,13 +14,15 @@
     getCurrentCode,
     onSave,
     preludeEjected,
+    userData,
   }: {
     viz: Viz;
     comp: Composition | undefined | null;
     materials: MaterialDefinitions;
     getCurrentCode: () => string;
-    onSave?: (savedSrc: string) => void;
+    onSave: () => void;
     preludeEjected: boolean;
+    userData: GeoscriptPlaygroundUserData | undefined;
   } = $props();
 
   let title = $state(comp?.title || '');
@@ -37,68 +33,10 @@
     { type: 'ok'; msg: string; seq: number } | { type: 'error'; msg: string } | { type: 'loading' } | null
   >(null);
 
-  const buildCompositionVersionMetadata = (
-    viz: Viz
-  ): { type: 'ok'; metadata: CompositionVersionMetadata } | { type: 'error'; msg: string } => {
-    const controls: OrbitControls | null = viz.orbitControls;
-    if (!controls) {
-      return { type: 'error', msg: 'missing orbit controls; app not yet initialized?' };
-    }
-    const view: CompositionVersionMetadata['view'] = {
-      cameraPosition: [viz.camera.position.x, viz.camera.position.y, viz.camera.position.z],
-      target: [controls.target.x, controls.target.y, controls.target.z],
-    };
-    if (viz.camera instanceof PerspectiveCamera) {
-      view.fov = (viz.camera as any).fov;
-    }
-    if (viz.camera instanceof OrthographicCamera) {
-      view.zoom = (viz.camera as any).zoom;
-    }
-    const metadata: CompositionVersionMetadata = {
-      view,
-      materials,
-      preludeEjected,
-    };
-
-    return { type: 'ok', metadata };
-  };
-
-  const saveNewVersion = async (
-    comp: Composition
-  ): Promise<{ type: 'ok' } | { type: 'error'; msg: string }> => {
-    try {
-      const code = getCurrentCode();
-
-      const metadataRes = buildCompositionVersionMetadata(viz);
-      if (metadataRes.type === 'error') {
-        return metadataRes;
-      }
-      const metadata = metadataRes.metadata;
-
-      await Promise.all([
-        createCompositionVersion(comp.id, { source_code: code, metadata }),
-        updateComposition(comp.id, ['title', 'description', 'is_shared'], {
-          title,
-          description,
-          is_shared: isShared,
-        }),
-      ]);
-      onSave?.(code);
-      return { type: 'ok' };
-    } catch (error) {
-      console.error('Error saving changes:', error);
-      if (error instanceof APIError) {
-        return { type: 'error', msg: error.message };
-      } else {
-        return { type: 'error', msg: `${error}` };
-      }
-    }
-  };
-
   const createNewComposition = async (): Promise<
     { type: 'ok'; comp: Composition } | { type: 'error'; msg: string }
   > => {
-    const metadataRes = buildCompositionVersionMetadata(viz);
+    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected);
     if (metadataRes.type === 'error') {
       return metadataRes;
     }
@@ -127,10 +65,21 @@
 
     const res = await (async (): Promise<{ type: 'ok'; msg: string } | { type: 'error'; msg: string }> => {
       if (comp) {
-        const res = await saveNewVersion(comp);
+        const res = await saveNewVersion(
+          comp,
+          getCurrentCode(),
+          viz,
+          materials,
+          preludeEjected,
+          title,
+          description,
+          isShared,
+          userData
+        );
         if (res.type === 'error') {
           return res;
         }
+        onSave();
         return { type: 'ok', msg: 'Successfully created new version' };
       } else {
         const compRes = await createNewComposition();
@@ -138,7 +87,7 @@
           return { type: 'error', msg: compRes.msg };
         }
         const comp = compRes.comp;
-        goto(`/geotoy/edit/${comp.id}`);
+        goto(resolve(`/geotoy/edit/${comp.id}`));
         return { type: 'ok', msg: 'Successfully saved new composition' };
       }
     })();

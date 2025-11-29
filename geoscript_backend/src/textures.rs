@@ -94,6 +94,13 @@ pub async fn get_texture(
   Path(texture_id): Path<i64>,
   Extension(user_opt): Extension<Option<User>>,
 ) -> Result<Json<Texture>, APIError> {
+  fn not_found() -> APIError {
+    APIError::new(
+      StatusCode::NOT_FOUND,
+      "Texture not found or no permission to view it",
+    )
+  }
+
   let texture_row = sqlx::query_as::<_, TextureRow>(
     r#"
     SELECT textures.id, textures.name, textures.thumbnail_url, textures.url, textures.owner_id, users.username as owner_name, textures.created_at, textures.is_shared
@@ -105,20 +112,16 @@ pub async fn get_texture(
   .bind(texture_id)
   .fetch_one(&pool)
   .await
-  .map_err(|err| {
-    error!("Error fetching texture: {err}");
-    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch texture")
+  .map_err(|err| match err {
+    sqlx::Error::RowNotFound => not_found(),
+    _ => {
+      error!("Error fetching texture: {err}");
+      APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch texture")
+    }
   })?;
 
   if texture_row.is_shared {
     return Ok(Json(texture_row.try_into()?));
-  }
-
-  fn not_found() -> APIError {
-    APIError::new(
-      StatusCode::NOT_FOUND,
-      "Texture not found or no permission to view it",
-    )
   }
 
   let Some(user) = user_opt else {

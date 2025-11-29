@@ -1,8 +1,16 @@
-import type { CompositionVersionMetadata } from 'src/geoscript/geotoyAPIClient';
+import {
+  APIError,
+  createCompositionVersion,
+  updateComposition,
+  type Composition,
+  type CompositionVersionMetadata,
+} from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
 import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget, DefaultCameraZoom } from './types';
 import { buildDefaultMaterialDefinitions, type MaterialDefinitions } from 'src/geoscript/materials';
 import type { Viz } from 'src/viz';
+import type { OrbitControls } from 'three/examples/jsm/Addons.js';
+import { OrthographicCamera, PerspectiveCamera } from 'three';
 
 const DefaultCode = 'box(8) | (box(8) + vec3(4, 4, -4)) | render';
 
@@ -108,6 +116,80 @@ export const saveState = (
     `geoscriptPlaygroundPreludeEjected${localStorageKeySuffix}`,
     state.preludeEjected ? 'true' : 'false'
   );
+};
+
+export const buildCompositionVersionMetadata = (
+  viz: Viz,
+  materials: MaterialDefinitions,
+  preludeEjected: boolean
+): { type: 'ok'; metadata: CompositionVersionMetadata } | { type: 'error'; msg: string } => {
+  const controls: OrbitControls | null = viz.orbitControls;
+  if (!controls) {
+    return { type: 'error', msg: 'missing orbit controls; app not yet initialized?' };
+  }
+  const view: CompositionVersionMetadata['view'] = {
+    cameraPosition: [viz.camera.position.x, viz.camera.position.y, viz.camera.position.z],
+    target: [controls.target.x, controls.target.y, controls.target.z],
+  };
+  if (viz.camera instanceof PerspectiveCamera) {
+    view.fov = (viz.camera as any).fov;
+  }
+  if (viz.camera instanceof OrthographicCamera) {
+    view.zoom = (viz.camera as any).zoom;
+  }
+  const metadata: CompositionVersionMetadata = {
+    view,
+    materials,
+    preludeEjected,
+  };
+
+  return { type: 'ok', metadata };
+};
+
+export const saveNewVersion = async (
+  comp: Composition,
+  currentCode: string,
+  viz: Viz,
+  materials: MaterialDefinitions,
+  preludeEjected: boolean,
+  title: string,
+  description: string,
+  isShared: boolean,
+  userData?: GeoscriptPlaygroundUserData
+): Promise<{ type: 'ok' } | { type: 'error'; msg: string }> => {
+  try {
+    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected);
+    if (metadataRes.type === 'error') {
+      return metadataRes;
+    }
+    const metadata = metadataRes.metadata;
+
+    await Promise.all([
+      createCompositionVersion(comp.id, { source_code: currentCode, metadata }),
+      updateComposition(comp.id, ['title', 'description', 'is_shared'], {
+        title,
+        description,
+        is_shared: isShared,
+      }),
+    ]);
+    saveState(
+      {
+        code: currentCode,
+        materials,
+        view: metadata.view,
+        preludeEjected,
+      },
+      userData
+    );
+    return { type: 'ok' };
+  } catch (error) {
+    console.error('Error saving changes:', error);
+    if (error instanceof APIError) {
+      return { type: 'error', msg: error.message };
+    } else {
+      return { type: 'error', msg: `${error}` };
+    }
+  }
 };
 
 /**

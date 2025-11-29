@@ -30,6 +30,7 @@
     getServerState,
     getView,
     loadState,
+    saveNewVersion,
     saveState,
     setLastRunWasSuccessful,
   } from './persistence';
@@ -50,7 +51,7 @@
     viz,
     workerManager,
     setReplCtx,
-    userData,
+    userData: providedUserData,
     onHeightChange,
   }: {
     viz: Viz;
@@ -60,7 +61,9 @@
     onHeightChange: (height: number, isCollapsed: boolean) => void;
   } = $props();
 
-  const { toggleRecording, recordingState } = useRecording(viz, userData);
+  let userData = $state<GeoscriptPlaygroundUserData | undefined>(providedUserData);
+
+  const { toggleRecording, recordingState } = useRecording(viz, providedUserData);
 
   // The `Comlink.Remote` is itself a proxy, and nesting the proxies seems to break things
   // svelte-ignore non_reactive_update
@@ -72,11 +75,11 @@
     lastRunWasSuccessful,
     view: initialView,
     preludeEjected: initialPreludeEjected,
-  } = loadState(userData);
+  } = $derived(loadState(userData));
 
   let ctxPtr = $state<number | null>(null);
 
-  let isDirty = $state(getIsDirty(userData));
+  let isDirty = $state(getIsDirty(providedUserData));
 
   let innerWidth = $state(window.innerWidth);
   let isEditorCollapsed = $state(
@@ -716,21 +719,32 @@
             {preludeEjected}
             onSave={() => {
               isDirty = false;
-              saveState(
-                {
-                  code: editorView?.state.doc.toString() || '',
-                  materials: materialDefinitions,
-                  view: getView(viz),
-                  preludeEjected,
-                },
-                userData
-              );
             }}
+            {userData}
           />
         {:else if userData?.initialComposition}
           <ReadOnlyCompositionDetails
             comp={userData.initialComposition.comp}
-            version={userData.initialComposition.version}
+            saveNewVersion={async (newComp, newVersion) => {
+              const newUserData: GeoscriptPlaygroundUserData = {
+                initialComposition: { comp: newComp, version: newVersion },
+                workerManager: userData!.workerManager,
+                me: userData!.me,
+                renderMode: userData!.renderMode,
+              };
+              await saveNewVersion(
+                newComp,
+                editorView?.state.doc.toString() || '',
+                viz,
+                materialDefinitions,
+                preludeEjected,
+                userData?.initialComposition?.comp?.title ?? 'untitled (fork)',
+                userData?.initialComposition?.comp?.description ?? '',
+                userData?.initialComposition?.comp?.is_shared ?? false,
+                newUserData
+              );
+              userData = newUserData;
+            }}
           />
         {:else if !userData?.me}
           <div class="not-logged-in" style="border-top: 1px solid #333">
@@ -748,8 +762,6 @@
 {/if}
 
 <style lang="css">
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
-
   .root {
     width: 100%;
     position: absolute;
