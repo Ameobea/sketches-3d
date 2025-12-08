@@ -22,11 +22,13 @@ use rand::Rng;
 #[cfg(target_arch = "wasm32")]
 use rand::{RngCore, SeedableRng};
 
+use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
   alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_geodesics_loaded,
   get_text_to_path_cached_mesh, isotropic_remesh, remesh_planar_patches, smooth_mesh, SmoothType,
 };
+use crate::mesh_ops::voxels::sample_voxels;
 use crate::noise::{
   curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d, worley_noise_2d,
   worley_noise_3d, WorleyReturnType,
@@ -232,7 +234,7 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(combined),
         transform: lhs.transform,
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(maybe_combined_aabb),
         trimesh: RefCell::new(None),
         material: lhs.material.clone(),
@@ -717,7 +719,7 @@ pub(crate) fn warp_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(new_mesh),
         transform: mesh.transform,
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: mesh.material.clone(),
@@ -1113,7 +1115,7 @@ fn mesh_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: None,
@@ -1122,7 +1124,7 @@ fn mesh_impl(
     1 => Ok(Value::Mesh(Rc::new(MeshHandle {
       mesh: Rc::new(LinkedMesh::default()),
       transform: Matrix4::identity(),
-      manifold_handle: Rc::new(ManifoldHandle::new(0)),
+      manifold_handle: Rc::new(ManifoldHandle::new_empty()),
       aabb: RefCell::new(None),
       trimesh: RefCell::new(None),
       material: None,
@@ -1626,6 +1628,114 @@ fn simplify_impl(
   }
 }
 
+fn sample_voxels_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let dims = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      if dims.x <= 0. || dims.y <= 0. || dims.z <= 0. {
+        return Err(ErrorStack::new(format!(
+          "All dimensions passed to `voxelize` must be positive, found: {dims:?}",
+        )));
+      }
+      let cb = arg_refs[1].resolve(args, kwargs).as_callable().unwrap();
+      let materials: Option<Vec<Rc<Material>>> = match arg_refs[2].resolve(args, kwargs) {
+        Value::Sequence(seq) => Some(
+          seq
+            .consume(ctx)
+            .map(|res| match res {
+              Ok(val) => val.as_material(ctx).unwrap(),
+              Err(err) => Err(err),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Value::Nil => None,
+        _ => unreachable!(),
+      };
+
+      let cb = move |x: usize, y: usize, z: usize| -> Result<u8, ErrorStack> {
+        let val = ctx.invoke_callable(
+          &cb,
+          &[
+            Value::Int(x as i64),
+            Value::Int(y as i64),
+            Value::Int(z as i64),
+          ],
+          EMPTY_KWARGS,
+        )?;
+        match val {
+          Value::Int(ix) => {
+            if ix < 0 || ix > u8::MAX as i64 {
+              Err(ErrorStack::new(format!(
+                "cb passed to `voxelize` returned invalid material index: {ix}.  Must be in range \
+                 [0, {}]",
+                u8::MAX
+              )))
+            } else {
+              Ok(ix as u8)
+            }
+          }
+          Value::Nil => Ok(0),
+          Value::Bool(b) => {
+            if b {
+              Ok(1)
+            } else {
+              Ok(0)
+            }
+          }
+          _ => Err(ErrorStack::new(format!(
+            "Voxel callback passed to `voxelize` must return an integer, boolean, or nil, found: \
+             {val:?}",
+          ))),
+        }
+      };
+
+      let use_cgal_remeshing = match arg_refs[3].resolve(args, kwargs) {
+        Value::Bool(b) => Some(*b),
+        Value::Nil => None,
+        _ => unreachable!(),
+      };
+
+      let fill_internal_voids = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
+
+      let out_meshes = sample_voxels(
+        [dims.x as usize, dims.y as usize, dims.z as usize],
+        cb,
+        fill_internal_voids,
+        materials.unwrap_or_default(),
+        use_cgal_remeshing,
+      )?;
+
+      if out_meshes.is_empty() {
+        Ok(Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(LinkedMesh::default()),
+          transform: Matrix4::identity(),
+          manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+          material: None,
+        })))
+      } else if out_meshes.len() == 1 {
+        Ok(Value::Mesh(Rc::new(out_meshes.into_iter().next().unwrap())))
+      } else {
+        let seq: Rc<dyn Sequence> = Rc::new(EagerSeq {
+          inner: out_meshes
+            .into_iter()
+            .map(|m| Value::Mesh(Rc::new(m)))
+            .collect(),
+        });
+        Ok(Value::Sequence(seq))
+      }
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn fan_fill_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -1661,7 +1771,7 @@ fn fan_fill_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: None,
@@ -1711,7 +1821,7 @@ fn stitch_contours_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: None,
@@ -1939,7 +2049,7 @@ fn text_to_mesh_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: None,
@@ -2157,7 +2267,7 @@ fn extrude_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(out_mesh),
         transform: mesh.transform,
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: mesh.material.clone(),
@@ -2367,7 +2477,7 @@ fn extrude_pipe_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: None,
@@ -2688,7 +2798,7 @@ fn connected_components_impl(
           Ok(Value::Mesh(Rc::new(MeshHandle {
             mesh: Rc::new(sub_mesh),
             transform,
-            manifold_handle: Rc::new(ManifoldHandle::new(0)),
+            manifold_handle: Rc::new(ManifoldHandle::new_empty()),
             aabb: RefCell::new(None),
             trimesh: RefCell::new(None),
             material: material.clone(),
@@ -2724,7 +2834,7 @@ fn tessellate_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: transform,
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: mesh_handle.material.clone(),
@@ -2768,7 +2878,7 @@ fn subdivide_by_plane_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: mesh_handle.transform,
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: mesh_handle.material.clone(),
@@ -2827,7 +2937,7 @@ fn subdivide_by_plane_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: mesh_handle.transform,
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
         trimesh: RefCell::new(None),
         material: mesh_handle.material.clone(),
@@ -4225,7 +4335,7 @@ fn join_meshes(
   Ok(Value::Mesh(Rc::new(MeshHandle {
     mesh: Rc::new(combined),
     transform: out_transform,
-    manifold_handle: Rc::new(ManifoldHandle::new(0)),
+    manifold_handle: Rc::new(ManifoldHandle::new_empty()),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
     material: base.material.clone(),
@@ -5381,6 +5491,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "delaunay_remesh" => builtin_fn!(delaunay_remesh, |def_ix, arg_refs, args, kwargs, _ctx| {
     delaunay_remesh_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "sample_voxels" => builtin_fn!(sample_voxels, |def_ix, arg_refs, args, kwargs, ctx| {
+    sample_voxels_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "fan_fill" => builtin_fn!(fan_fill, |def_ix, arg_refs, args, kwargs, ctx| {
     fan_fill_impl(ctx, def_ix, arg_refs, args, kwargs)

@@ -5707,6 +5707,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       }
     ],
   },
+  "sample_voxels" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "dims",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "The bounds of the voxel grid to sample"
+          },
+          ArgDef {
+            name: "cb",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A callable with signature `|x_ix: int, y_ix: int, z_ix: int|: bool | int | nil` that will be called for each voxel in the grid.  Returning 0, false, or nil will leave the voxel empty.  Returning true or any non-zero integer will fill the voxel.  Values > 1 will use material `n - 1` from the `materials` argument.  The maximum material index is 254."
+          },
+          ArgDef {
+            name: "materials",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "An optional sequence of materials to assign to filled voxels.  The first material in the sequence will be used for voxels where the callback returns true or 1, the second material for voxels where the callback returns 2, and so on.  If not provided or set to `nil`, all filled voxels will use the default material.  The maximum number of materials is 254."
+          },
+          ArgDef {
+            name: "cgal_remesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Determines whether the generated mesh(es) will be remeshed using CGAL's `remesh_planar_patches` function.  This produces better outputs with fewer faces and vertices, but takes more time to compute.  If not provided or set to `nil`, this will be dynamically enabled/disabled for each output mesh depending on its vertex count.",
+          },
+          ArgDef {
+            name: "fill_internal_voids",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, internal voids in the generated meshes will be filled.  This can help reduce face/vertex counts, but requires extra computation."
+          }
+        ],
+        description: "Generates a mesh or sequence of meshes by sampling a 3D grid defined by `dims`.  For each voxel in the grid, the provided callback will be called with the voxel's coordinate.  If the callback returns 0, false, or nil, the voxel will be left empty.  If it returns true or any non-zero integer, the voxel will be filled.  Values > 1 will use material `n - 1` from the `materials` argument.  A separate mesh will be generated for each unique material used.  The generated meshes are guaranteed to be 2-manifold/watertight, meaning that they can be further processed by other builtins like `smooth`, `simplify`, CSG (`union`/`intersect`/etc.).",
+        return_type: &[ArgType::Mesh, ArgType::Sequence],
+      }
+    ],
+  },
   "fan_fill" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 27 }],

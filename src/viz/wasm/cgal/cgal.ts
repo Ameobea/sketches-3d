@@ -53,12 +53,18 @@ const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
   const vec_indices = vec_uint32(indices);
 
   const mesh = new CGAL.PolyMesh();
-  mesh.buildFromBuffers(vec_verts, vec_indices);
-
-  vec_verts.delete();
-  vec_indices.delete();
-
-  return mesh;
+  // TODO: should save errors and expose an error getter to Wasm like the other modules
+  try {
+    mesh.buildFromBuffers(vec_verts, vec_indices);
+    return mesh;
+  } catch(err) {
+    console.error('Error building CGAL PolyMesh:', err);
+    mesh.delete();
+    return new CGAL.PolyMesh();
+  } finally {
+    vec_verts.delete();
+    vec_indices.delete();
+  }
 };
 
 let OutputMesh: { verts: Float32Array; indices: Uint32Array } | null = null;

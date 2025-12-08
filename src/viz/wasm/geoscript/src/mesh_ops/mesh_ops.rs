@@ -23,7 +23,10 @@ fn read_raw_cgal_output_mesh() -> LinkedMesh<()> {
 
 #[cfg(target_arch = "wasm32")]
 #[inline]
-fn read_cgal_output_mesh(transform: Mat4, material: Option<Rc<crate::Material>>) -> MeshHandle {
+pub(crate) fn read_cgal_output_mesh(
+  transform: Mat4,
+  material: Option<Rc<crate::Material>>,
+) -> MeshHandle {
   use crate::ManifoldHandle;
   use std::cell::RefCell;
 
@@ -136,7 +139,7 @@ pub fn get_geodesic_error() -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn verify_cgal_loaded() -> Result<(), ErrorStack> {
+pub(crate) fn verify_cgal_loaded() -> Result<(), ErrorStack> {
   if !cgal_get_is_loaded() {
     Err(ErrorStack::new_uninitialized_module("cgal"))
   } else {
@@ -422,7 +425,7 @@ pub fn remesh_planar_patches(
 
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
   let in_indices = unsafe {
     std::slice::from_raw_parts(
       raw_mesh.indices.as_ptr() as *const u32,
@@ -662,15 +665,15 @@ pub(crate) fn get_text_to_path_cached_mesh(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn get_text_to_path_cached_mesh(
-  text: &str,
-  font_family: &str,
-  font_size: &str,
-  font_weight: &str,
-  font_style: &str,
-  letter_spacing: &str,
-  width: f32,
-  height: f32,
-  depth: Option<f32>,
+  _text: &str,
+  _font_family: &str,
+  _font_size: f32,
+  _font_weight: &str,
+  _font_style: &str,
+  _letter_spacing: f32,
+  _width: f32,
+  _height: f32,
+  _depth: Option<f32>,
 ) -> Result<Option<LinkedMesh<()>>, ErrorStack> {
   Err(ErrorStack::new(
     "Text to path mesh generation is not supported outside of wasm",
