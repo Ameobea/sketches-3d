@@ -1,8 +1,10 @@
 use nalgebra::Matrix4;
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+use geoscript::mesh_ops::mesh_boolean::{apply_boolean, decode_manifold_output};
 use geoscript::mesh_ops::mesh_boolean::{
-  apply_boolean, create_manifold, decode_manifold_output, drop_manifold_mesh_handle, MeshBooleanOp,
+  create_manifold, drop_manifold_mesh_handle, MeshBooleanOp,
 };
 use mesh::{csg::FaceData, linked_mesh::DisplacementNormalMethod, LinkedMesh, OwnedIndexedMesh};
 
@@ -65,6 +67,7 @@ fn displace_mesh<T>(mesh: &mut LinkedMesh<T>) {
   // }
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn csg_sandbox_init(
   mesh_0: *const LinkedMesh<FaceData>,

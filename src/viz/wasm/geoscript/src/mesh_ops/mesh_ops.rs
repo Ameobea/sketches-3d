@@ -13,12 +13,21 @@ use crate::MeshHandle;
 
 #[cfg(target_arch = "wasm32")]
 #[inline]
-fn read_raw_cgal_output_mesh() -> LinkedMesh<()> {
+fn read_raw_cgal_output_mesh() -> Result<LinkedMesh<()>, ErrorStack> {
+  if let Some(err) = cgal_get_last_error() {
+    return Err(ErrorStack::new(err));
+  }
+
   let out_verts = cgal_get_output_mesh_verts();
   let out_indices = cgal_get_output_mesh_indices();
   cgal_clear_output_mesh();
 
-  LinkedMesh::from_raw_indexed(&out_verts, &out_indices, None, None)
+  Ok(LinkedMesh::from_raw_indexed(
+    &out_verts,
+    &out_indices,
+    None,
+    None,
+  ))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -26,20 +35,20 @@ fn read_raw_cgal_output_mesh() -> LinkedMesh<()> {
 pub(crate) fn read_cgal_output_mesh(
   transform: Mat4,
   material: Option<Rc<crate::Material>>,
-) -> MeshHandle {
+) -> Result<MeshHandle, ErrorStack> {
   use crate::ManifoldHandle;
   use std::cell::RefCell;
 
-  let out_mesh = read_raw_cgal_output_mesh();
+  let out_mesh = read_raw_cgal_output_mesh()?;
 
-  MeshHandle {
+  Ok(MeshHandle {
     mesh: Rc::new(out_mesh),
     transform,
     manifold_handle: Rc::new(ManifoldHandle::new(0)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
     material,
-  }
+  })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -81,6 +90,7 @@ pub fn get_geodesics_loaded() -> bool {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "src/viz/wasm/cgal/cgal")]
 extern "C" {
+  pub fn cgal_get_last_error() -> Option<String>;
   pub fn cgal_alpha_wrap_mesh(
     mesh_verts: &[f32],
     mesh_indices: &[u32],
@@ -303,7 +313,7 @@ pub fn alpha_wrap_mesh(
     relative_offset,
   );
 
-  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
+  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -375,7 +385,7 @@ pub fn smooth_mesh(
     }
   }
 
-  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
+  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -401,7 +411,7 @@ pub fn alpha_wrap_points(
     unsafe { std::slice::from_raw_parts(points.as_ptr() as *const f32, points.len() * 3) };
   cgal_alpha_wrap_points(points, relative_alpha, relative_offset);
 
-  Ok(read_cgal_output_mesh(Mat4::identity(), None))
+  read_cgal_output_mesh(Mat4::identity(), None)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -435,7 +445,7 @@ pub fn remesh_planar_patches(
 
   cgal_remesh_planar_patches(&raw_mesh.vertices, in_indices, max_angle_deg, max_offset);
 
-  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
+  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -480,7 +490,7 @@ pub fn isotropic_remesh(
     sharp_angle_threshold_degrees,
   );
 
-  Ok(read_cgal_output_mesh(mesh.transform, mesh.material.clone()))
+  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -531,7 +541,7 @@ pub fn delaunay_remesh(
   //
   // This kinda works, the only for the components that are manifold - and manifoldness isn't
   // guaranteed.
-  let mut out_mesh = read_raw_cgal_output_mesh();
+  let mut out_mesh = read_raw_cgal_output_mesh()?;
   out_mesh.orient_connected_components_outward();
 
   Ok(MeshHandle {

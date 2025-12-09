@@ -21,6 +21,10 @@ export const getIsCGALLoaded = (): boolean => CGALWasm.isSome();
 
 export const cgal_get_is_loaded = (): boolean => getIsCGALLoaded();
 
+let LastBuildPolymeshError: string | null = null;
+
+export const cgal_get_last_error = (): string | null => LastBuildPolymeshError;
+
 const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
   if (!CGALWasm.isSome()) {
     throw new Error('CGALWasm not initialized');
@@ -53,14 +57,20 @@ const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
   const vec_indices = vec_uint32(indices);
 
   const mesh = new CGAL.PolyMesh();
-  // TODO: should save errors and expose an error getter to Wasm like the other modules
   try {
-    mesh.buildFromBuffers(vec_verts, vec_indices);
+    const ok = mesh.buildFromBuffers(vec_verts, vec_indices);
+    if (!ok) {
+      const err = mesh.getLastError()
+      LastBuildPolymeshError = err;
+      throw new Error(err);
+    } else {
+      LastBuildPolymeshError = null;
+    }
     return mesh;
   } catch(err) {
     console.error('Error building CGAL PolyMesh:', err);
     mesh.delete();
-    return new CGAL.PolyMesh();
+    return null
   } finally {
     vec_verts.delete();
     vec_indices.delete();
@@ -111,6 +121,9 @@ export const cgal_alpha_wrap_mesh = (
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
 
   let wrapped;
   try {
@@ -185,6 +198,9 @@ export const cgal_catmull_smooth_mesh = (verts: Float32Array, indices: Uint32Arr
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
   mesh.catmull_smooth(iterations);
 
   setOutputMeshFromCGALMesh(mesh);
@@ -197,6 +213,9 @@ export const cgal_loop_smooth_mesh = (verts: Float32Array, indices: Uint32Array,
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
   mesh.loop_smooth(iterations);
 
   setOutputMeshFromCGALMesh(mesh);
@@ -209,6 +228,9 @@ export const cgal_doosabin_smooth_mesh = (verts: Float32Array, indices: Uint32Ar
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
   mesh.dooSabin_smooth(iterations);
 
   setOutputMeshFromCGALMesh(mesh);
@@ -221,6 +243,9 @@ export const cgal_sqrt_smooth_mesh = (verts: Float32Array, indices: Uint32Array,
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
   mesh.sqrt_smooth(iterations);
 
   setOutputMeshFromCGALMesh(mesh);
@@ -238,6 +263,9 @@ export const cgal_remesh_planar_patches = (
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
   mesh.remesh_planar_patches(maxAngleDegrees, maxOffset);
 
   setOutputMeshFromCGALMesh(mesh);
@@ -258,6 +286,9 @@ export const cgal_remesh_isotropic = (
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
   mesh.isotropic_remesh(
     targetEdgeLength,
     iterations,
@@ -283,6 +314,9 @@ export const cgal_remesh_delaunay = (
   }
 
   const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
   mesh.delaunay_remesh(targetEdgeLength, facetDistance, autoSharpEdges, sharpAngleThresholdDegrees);
 
   setOutputMeshFromCGALMesh(mesh);

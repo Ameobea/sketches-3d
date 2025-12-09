@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
+#[cfg(target_arch = "wasm32")]
+use geoscript::mesh_ops::mesh_boolean::drop_all_mesh_handles;
 use geoscript::{
-  eval_program_with_ctx, materials::Material, mesh_ops::mesh_boolean::drop_all_mesh_handles,
-  optimize_ast, parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program,
-  Sym, PRELUDE,
+  eval_program_with_ctx, materials::Material, optimize_ast, parse_program_maybe_with_prelude,
+  traverse_fn_calls, ErrorStack, EvalCtx, Program, Sym, PRELUDE,
 };
 use mesh::OwnedIndexedMesh;
 use nanoserde::SerJson;
@@ -173,6 +174,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.materials = materials;
   ctx.geo_ctx.textures = textures;
   ctx.geo_ctx.default_material = default_material;
+  #[cfg(target_arch = "wasm32")]
   drop_all_mesh_handles();
 }
 
