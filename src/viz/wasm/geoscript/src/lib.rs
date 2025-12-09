@@ -1317,29 +1317,18 @@ fn build_default_symbol_interner() -> SymbolInterner {
 
 fn get_or_init_default_symbol_interner() -> SymbolInterner {
   unsafe {
+    #[cfg(not(target_arch = "wasm32"))]
+    let _lock = INTERNER_INIT.lock().unwrap();
+
     if !DEFAULT_INTERNER.is_null() {
       return (*DEFAULT_INTERNER).clone();
     }
 
-    #[cfg(target_arch = "wasm32")]
-    {
-      let interner = build_default_symbol_interner();
-      let out = interner.clone();
-      DEFAULT_INTERNER = Box::into_raw(Box::new(interner));
+    let interner = build_default_symbol_interner();
+    let out = interner.clone();
+    DEFAULT_INTERNER = Box::into_raw(Box::new(interner));
 
-      out
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-      let _lock = INTERNER_INIT.lock().unwrap();
-
-      let interner = build_default_symbol_interner();
-      let out = interner.clone();
-      DEFAULT_INTERNER = Box::into_raw(Box::new(interner));
-
-      out
-    }
+    out
   }
 }
 

@@ -18,8 +18,6 @@ type_hint                    = { ":" ~ ident }
 
 expr                         = { prefix_op* ~ term ~ postfix* ~ (operator ~ prefix_op* ~ term ~ postfix*)* }
 
-// TODO: ternary would be cool at some point
-
 prefix_op                    = _{ neg_op | pos_op | negate_op }
 parenthized_term             = _{ "(" ~ expr ~ ")" }
 term                         = { map_literal | array_literal | closure | func_call | range_inclusive_literal_expr
@@ -67,7 +65,8 @@ and_op                       = { "&&" }
 or_op                        = { "||" }
 bit_and_op                   = { "&" }
 
-func_call                    = { ident ~ "(" ~ arg_list? ~ ")" }
+func_call                    = { func_call_start ~ arg_list? ~ ")" }
+func_call_start              = @{ ident ~ "(" }
 arg_list                     = _{ (arg ~ ("," ~ arg)*)? ~ ","? }
 arg                          = { keyword_arg | expr }
 keyword_arg                  = { ident ~ "=" ~ expr }
@@ -78,8 +77,16 @@ fn_def_arg                   = { (ident | array_destructure | map_destructure) ~
 // from spiraling out of control and avoiding horrific edge cases like `|x: int = 1 | 1| 1 || 1`
 fn_arg_default_val           = { func_call | literal | array_literal | map_literal | ident | parenthized_term | block_expr | if_expression }
 fn_def_arg_list              = { (fn_def_arg* ~ ("," ~ fn_def_arg)*)}
-closure_body                 = _{ bracketed_closure_body | expr }
+closure_body                 = _{ bracketed_closure_body | simple_closure_body | until_eol_closure_body }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }
+// non-bracketed closure body must all be on a single line
+non_newline_char             = { !"\n" ~ ANY }
+rest_until_newline           = @{ non_newline_char* }
+simple_closure_body          = _{ expr ~ &(non_newline_char+) }
+// this is handled in the Rust code by initiating a sub-parser on the rest of the line
+until_eol_closure_body       = { &expr ~ rest_until_newline }
+// used by the sub-parser to parse just an expression without trailing garbage
+standalone_expr              = { SOI ~ expr ~ EOI }
 
 array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
 map_kv                       = { (ident | string_literal) ~ ":" ~ expr }

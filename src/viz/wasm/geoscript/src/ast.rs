@@ -1,7 +1,7 @@
 use std::{borrow::Borrow, cell::RefCell, ops::ControlFlow, ptr::addr_of, rc::Rc, str::FromStr};
 
 use fxhash::FxHashMap;
-use pest::iterators::Pair;
+use pest::{iterators::Pair, Parser};
 
 use crate::{
   builtins::{
@@ -11,8 +11,9 @@ use crate::{
     pos_impl, sub_impl, BoolOp,
   },
   get_args, get_binop_def_ix, get_unop_def_ix, get_unop_return_ty, resolve_builtin_impl, ArgType,
-  Callable, CapturedScope, Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput, IntRange,
-  PreResolvedSignature, Rule, Scope, Sym, Value, EMPTY_KWARGS, FUNCTION_ALIASES, PRATT_PARSER,
+  Callable, CapturedScope, Closure, EagerSeq, ErrorStack, EvalCtx, GSParser, GetArgsOutput,
+  IntRange, PreResolvedSignature, Rule, Scope, Sym, Value, EMPTY_KWARGS, FUNCTION_ALIASES,
+  PRATT_PARSER,
 };
 
 #[derive(Debug)]
@@ -960,7 +961,11 @@ fn parse_fn_call(ctx: &EvalCtx, func_call: Pair<Rule>) -> Result<Expr, ErrorStac
   }
 
   let mut inner = func_call.into_inner();
-  let name = ctx.interned_symbols.intern(inner.next().unwrap().as_str());
+  // this contains `fn_name(`
+  let name = inner.next().unwrap().as_str();
+  // trim to just `fn_name`
+  let name = &name[..name.len() - 1];
+  let name = ctx.interned_symbols.intern(name);
 
   let mut args: Vec<Expr> = Vec::new();
   let mut kwargs: FxHashMap<Sym, Expr> = FxHashMap::default();
@@ -1107,8 +1112,18 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       let body = match next.as_rule() {
         Rule::expr => {
           let expr = parse_expr(ctx, next)?;
-          let stmt = Statement::Expr(expr);
-          ClosureBody(vec![stmt])
+          ClosureBody(vec![Statement::Expr(expr)])
+        }
+        Rule::until_eol_closure_body => {
+          let pairs = GSParser::parse(Rule::standalone_expr, next.as_str()).map_err(|err| {
+            ErrorStack::new(format!("{err}")).wrap("Syntax error while parsing single-line closure")
+          })?;
+          let Some(expr) = pairs.into_iter().next() else {
+            return Err(ErrorStack::new("No expr found in input"));
+          };
+          let expr = expr.into_inner().next().unwrap();
+          let expr = parse_expr(ctx, expr)?;
+          ClosureBody(vec![Statement::Expr(expr)])
         }
         Rule::bracketed_closure_body => {
           let stmts = next
@@ -3255,4 +3270,40 @@ fn test_preresolve_binop_def_ix_advanced() {
     },
     _ => unreachable!(),
   }
+}
+
+#[test]
+fn test_space_between_fn_call_parens_not_allowed() {
+  let code = "x = add (1, 2)";
+
+  let ctx = EvalCtx::default();
+  crate::parse_program_src(&ctx, code).unwrap_err();
+}
+
+#[test]
+fn test_if_with_parens_condition() {
+  let code = r#"
+x = if (1 == 1) {
+  1
+} else {
+  0
+}"#;
+
+  let ctx = super::parse_and_eval_program(code).unwrap();
+  let x = ctx.get_global("x").unwrap().as_int().unwrap();
+  assert_eq!(x, 1);
+}
+
+#[test]
+fn test_single_line_closure_chaining() {
+  let code = r#"
+x = [1,2,3]
+  -> |x| x * 2
+  -> |x| x + 1
+  | reduce(add)
+"#;
+
+  let ctx = super::parse_and_eval_program(code).unwrap();
+  let x = ctx.get_global("x").unwrap().as_int().unwrap();
+  assert_eq!(x, 1 * 2 + 1 + 2 * 2 + 1 + 3 * 2 + 1);
 }
