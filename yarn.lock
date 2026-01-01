@@ -2311,10 +2311,10 @@ svelte@^5.45.6:
     magic-string "^0.30.11"
     zimmerframe "^1.1.2"
 
-three-good-godrays@^0.8.0:
-  version "0.8.0"
-  resolved "https://registry.yarnpkg.com/three-good-godrays/-/three-good-godrays-0.8.0.tgz#33121ba9cac2f36a8dddad51bbf3b60100ad8475"
-  integrity sha512-DTDVIm9b/OLF/KfB3LgHaIx2nxclFlTOh/8A+0JHc2MENDJ4lS7g/Dky1938/hd0qXPZj6xdyuDsPHo66M7Hjw==
+three-good-godrays@^0.8.1:
+  version "0.8.1"
+  resolved "https://registry.yarnpkg.com/three-good-godrays/-/three-good-godrays-0.8.1.tgz#134a2d1d5106d6f0dd1089a0fb5b730a8b4a2ed1"
+  integrity sha512-ABpSoaNaRCydqgRECqOvzeO2utecwT8LJ8z/hLIXeTdebPoutP54gTiAP+Ii5FsKDDixH9PRJGzQogxbHOzRjA==
 
 three@^0.165.0:
   version "0.165.0"
