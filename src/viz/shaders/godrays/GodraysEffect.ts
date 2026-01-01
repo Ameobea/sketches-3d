@@ -50,7 +50,7 @@ class GodraysPass extends Pass implements Resizable {
   private material: GodraysMaterial;
 
   constructor(props: GodraysEffectProps, params: GodraysEffectParams) {
-    super('GodraysPass');
+    super('GodraysPass', undefined, new THREE.Camera());
 
     this.material = new GodraysMaterial(props.blueNoiseTexture);
 
@@ -164,7 +164,7 @@ class GodraysCompositorMaterial extends THREE.ShaderMaterial implements Resizabl
 
 class GodraysCompositorPass extends Pass implements Resizable {
   constructor(camera: THREE.PerspectiveCamera, props: GodraysCompositorMaterialProps) {
-    super('GodraysCompositorPass');
+    super('GodraysCompositorPass', undefined, new THREE.Camera());
     this.fullscreenMaterial = new GodraysCompositorMaterial(camera, props);
   }
 
@@ -297,7 +297,7 @@ export class GodraysEffect extends Pass implements Disposable {
     blueNoiseTexture: THREE.Texture,
     partialParams: Partial<GodraysEffectParams> = {}
   ) {
-    super('GodraysEffect');
+    super('GodraysEffect', undefined, new THREE.Camera());
 
     this.props = {
       camera,

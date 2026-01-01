@@ -48,12 +48,12 @@
     "lezer-glsl": "^0.6.0",
     "manifold-3d": "^3.3.2",
     "n8ao": "^1.10.1",
-    "postprocessing": "^6.38.0",
+    "postprocessing": "=6.38.2",
     "rand-seed": "^2.1.7",
     "seed-random": "^2.2.0",
     "svelte-seo": "1.6.1",
     "three": "^0.165.0",
-    "three-good-godrays": "^0.7.1",
+    "three-good-godrays": "^0.8.0",
     "tweakpane": "^4.0.5",
     "zod": "^4.1.13"
   }

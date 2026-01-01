@@ -152,7 +152,7 @@ export class VolumetricPass extends Pass implements Disposable {
   private noiseTexture3D: THREE.Data3DTexture;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, params: VolumetricPassParams) {
-    super('VolumetricPass');
+    super('VolumetricPass', undefined, new THREE.Camera());
     this.params = params;
 
     // Indicate to the composer that this pass needs depth information from the previous pass

@@ -26,7 +26,7 @@ export class FogPass extends Pass {
   getDistanceBuffer: () => THREE.WebGLRenderTarget;
 
   constructor(getDistanceBuffer: () => THREE.WebGLRenderTarget, camera: THREE.PerspectiveCamera) {
-    super('FogPass');
+    super('FogPass', undefined, new THREE.Camera());
     this.needsDepthTexture = false;
     this.fullscreenMaterial = new FogPassMaterial(camera.near, camera.far);
     this.getDistanceBuffer = getDistanceBuffer;

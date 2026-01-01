@@ -76,7 +76,9 @@ export class VolumetricCompositorPass extends Pass {
   private depthTextureCopyPass: CopyPass | null = null;
 
   constructor(props: VolumetricCompositorMaterialProps) {
-    super('VolumetricCompositorPass');
+    // version >= 6.38 of pmndrs/postprocessing uses an orthographic camera as default when
+    // constructing a `Pass`.  The compositor code expects a default `THREE.Camera`.
+    super('VolumetricCompositorPass', undefined, new THREE.Camera());
     this.fullscreenMaterial = new VolumetricCompositorMaterial(props);
     this.sceneCamera = props.camera;
   }

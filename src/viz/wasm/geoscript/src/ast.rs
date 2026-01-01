@@ -3307,3 +3307,15 @@ x = [1,2,3]
   let x = ctx.get_global("x").unwrap().as_int().unwrap();
   assert_eq!(x, 1 * 2 + 1 + 2 * 2 + 1 + 3 * 2 + 1);
 }
+
+#[test]
+fn test_parenthesized_expr_fn_call_disambiguation() {
+  let code = r#"
+x = box(1)
+foo = box(2)
+(x + foo) | render
+"#;
+
+  let ctx = super::parse_and_eval_program(code).unwrap();
+  let _rendered = ctx.rendered_meshes.into_inner().into_iter().next().unwrap();
+}

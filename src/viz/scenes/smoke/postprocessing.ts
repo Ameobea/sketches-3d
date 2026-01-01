@@ -111,6 +111,8 @@ export const configurePostprocessing = (
         [GraphicsQuality.High]: 'Medium',
       }[quality]
     );
+    n8aoPass.enabled = false;
+    // effectComposer.addPass(n8aoPass, USE_DEPTH_PREPASS ? 2 : 1);
   }
 
   const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
@@ -211,10 +213,11 @@ export const configurePostprocessing = (
       lastN8AOIntensity = newN8AOIntensity;
 
       if (newN8AOIntensity > 0 && !n8aoPassEnabled) {
-        effectComposer.addPass(n8aoPass, USE_DEPTH_PREPASS ? 2 : 1);
-        n8aoPassEnabled = true;
+        // effectComposer.addPass(n8aoPass, USE_DEPTH_PREPASS ? 2 : 1);
+        n8aoPass.enabled = true;
+        n8aoPass.n8aoPassEnabled = true;
       } else if (newN8AOIntensity === 0 && n8aoPassEnabled) {
-        effectComposer.removePass(n8aoPass);
+        n8aoPass.enabled = false;
         n8aoPassEnabled = false;
       }
     }

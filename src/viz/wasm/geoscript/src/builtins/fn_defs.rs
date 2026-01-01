@@ -5709,7 +5709,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
   },
   "sample_voxels" => FnDef {
     module: "mesh",
-    examples: &[],
+    examples: &[FnExample { composition_id: 72 }],
     signatures: &[
       FnSignature {
         arg_defs: &[
