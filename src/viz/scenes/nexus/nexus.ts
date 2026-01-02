@@ -123,6 +123,10 @@ export const processLoadedScene = async (
   for (const portal of portals) {
     portal.userData.nocollide = true;
     portal.material = buildCheckpointMaterial(viz, PortalColorByName[portal.name.split('_')[1]]);
+    // it would be good to eventually be able to handle these transparent portals correctly so that the
+    // volumetrics show up behind them, but that makes things very complicated with the depth pre-pass
+    // and other render passes so isn't worth it for now
+    // portal.material.depthWrite = false;
     portal.userData.noLight = true;
 
     if (!portal.name.includes('_')) {
@@ -343,34 +347,33 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
         compositor: { edgeRadius: 4, edgeStrength: 2 },
         ...{
           [GraphicsQuality.Low]: { baseRaymarchStepCount: 20 },
-          [GraphicsQuality.Medium]: { baseRaymarchStepCount: 40 },
-          [GraphicsQuality.High]: { baseRaymarchStepCount: 80 },
+          [GraphicsQuality.Medium]: { baseRaymarchStepCount: 30 },
+          [GraphicsQuality.High]: { baseRaymarchStepCount: 60 },
         }[quality],
       });
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
 
-      if (vizConf.graphics.quality > GraphicsQuality.Low) {
-        const n8aoPass = new N8AOPostPass(
-          viz.scene,
-          viz.camera,
-          viz.renderer.domElement.width,
-          viz.renderer.domElement.height
-        );
-        composer.addPass(n8aoPass);
-        n8aoPass.gammaCorrection = false;
-        n8aoPass.configuration.intensity = 2;
-        n8aoPass.configuration.aoRadius = 5;
-        // \/ this breaks rendering and makes the background black if enabled
-        // n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Low;
-        n8aoPass.setQualityMode(
-          {
-            [GraphicsQuality.Low]: 'Performance',
-            [GraphicsQuality.Medium]: 'Low',
-            [GraphicsQuality.High]: 'High',
-          }[vizConf.graphics.quality]
-        );
-      }
+      const n8aoPass = new N8AOPostPass(
+        viz.scene,
+        viz.camera,
+        viz.renderer.domElement.width,
+        viz.renderer.domElement.height
+      );
+      composer.addPass(n8aoPass);
+      n8aoPass.gammaCorrection = false;
+      n8aoPass.enabled = vizConf.graphics.quality > GraphicsQuality.Medium;
+      n8aoPass.configuration.intensity = 2;
+      n8aoPass.configuration.aoRadius = 5;
+      // \/ this breaks rendering and makes the background black if enabled
+      n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Medium;
+      n8aoPass.setQualityMode(
+        {
+          [GraphicsQuality.Low]: 'Performance',
+          [GraphicsQuality.Medium]: 'Low',
+          [GraphicsQuality.High]: 'High',
+        }[vizConf.graphics.quality]
+      );
 
       const bloomEffect = new BloomEffect({
         intensity: 4,

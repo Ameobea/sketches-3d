@@ -24,7 +24,7 @@ export const processLoadedScene = async (
   viz.scene.add(loadedWorld);
 
   const LIGHT_COLOR = 0xa14e0b;
-  const ambientLight = new THREE.AmbientLight(LIGHT_COLOR, 0.41);
+  const ambientLight = new THREE.AmbientLight(LIGHT_COLOR, 1.41);
   viz.scene.add(ambientLight);
 
   const loader = new THREE.ImageBitmapLoader();

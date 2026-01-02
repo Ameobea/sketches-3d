@@ -72,8 +72,8 @@ export const configurePostprocessing = (
     color: new THREE.Color().copy(dirLight.color),
     edgeRadius: 1,
     edgeStrength: 1,
-    distanceAttenuation: 1,
-    density: 1 / 8,
+    distanceAttenuation: 2,
+    density: 1 / 16,
     maxDensity: 1,
     raymarchSteps: {
       [GraphicsQuality.Low]: 50,
@@ -112,7 +112,7 @@ export const configurePostprocessing = (
       }[quality]
     );
     n8aoPass.enabled = false;
-    // effectComposer.addPass(n8aoPass, USE_DEPTH_PREPASS ? 2 : 1);
+    effectComposer.addPass(n8aoPass, USE_DEPTH_PREPASS ? 2 : 1);
   }
 
   const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
