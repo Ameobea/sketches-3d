@@ -40,8 +40,8 @@ use smallvec::SmallVec;
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
   ast::{
-    maybe_init_op_def_shorthands, parse_statement, BinOp, ClosureArg, ClosureBody,
-    DestructurePattern, FunctionCall, MapLiteralEntry, TypeName,
+    bracketify_closures, maybe_init_op_def_shorthands, parse_statement, BinOp, ClosureArg,
+    ClosureBody, DestructurePattern, FunctionCall, MapLiteralEntry, TypeName,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
@@ -2461,9 +2461,26 @@ pub(crate) fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Progr
 
   let pairs = GSParser::parse(Rule::program, src)
     .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
-  let Some(program) = pairs.into_iter().next() else {
+
+  let Some(mut program) = pairs.into_iter().next() else {
     return Err(ErrorStack::new("No program found in input"));
   };
+
+  let transformed_src = bracketify_closures(ctx, &mut program, src)?;
+
+  if transformed_src != src {
+    let pairs = GSParser::parse(Rule::program, &transformed_src)
+      .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
+
+    program = match pairs.into_iter().next() {
+      Some(prog) => prog,
+      None => {
+        return Err(ErrorStack::new(
+          "No program found in input after transforming closures",
+        ));
+      }
+    };
+  }
 
   if program.as_rule() != Rule::program {
     return Err(ErrorStack::new(format!(

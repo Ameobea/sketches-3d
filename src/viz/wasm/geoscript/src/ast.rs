@@ -1,7 +1,9 @@
-use std::{borrow::Borrow, cell::RefCell, ops::ControlFlow, ptr::addr_of, rc::Rc, str::FromStr};
+use std::{
+  borrow::Borrow, cell::RefCell, cmp::Reverse, ops::ControlFlow, ptr::addr_of, rc::Rc, str::FromStr,
+};
 
 use fxhash::FxHashMap;
-use pest::{iterators::Pair, Parser};
+use pest::iterators::Pair;
 
 use crate::{
   builtins::{
@@ -11,9 +13,8 @@ use crate::{
     pos_impl, sub_impl, BoolOp,
   },
   get_args, get_binop_def_ix, get_unop_def_ix, get_unop_return_ty, resolve_builtin_impl, ArgType,
-  Callable, CapturedScope, Closure, EagerSeq, ErrorStack, EvalCtx, GSParser, GetArgsOutput,
-  IntRange, PreResolvedSignature, Rule, Scope, Sym, Value, EMPTY_KWARGS, FUNCTION_ALIASES,
-  PRATT_PARSER,
+  Callable, CapturedScope, Closure, EagerSeq, ErrorStack, EvalCtx, GetArgsOutput, IntRange,
+  PreResolvedSignature, Rule, Scope, Sym, Value, EMPTY_KWARGS, FUNCTION_ALIASES, PRATT_PARSER,
 };
 
 #[derive(Debug)]
@@ -1110,19 +1111,8 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       };
 
       let body = match next.as_rule() {
-        Rule::expr => {
-          let expr = parse_expr(ctx, next)?;
-          ClosureBody(vec![Statement::Expr(expr)])
-        }
-        Rule::until_eol_closure_body => {
-          let pairs = GSParser::parse(Rule::standalone_expr, next.as_str()).map_err(|err| {
-            ErrorStack::new(format!("{err}")).wrap("Syntax error while parsing single-line closure")
-          })?;
-          let Some(expr) = pairs.into_iter().next() else {
-            return Err(ErrorStack::new("No expr found in input"));
-          };
-          let expr = expr.into_inner().next().unwrap();
-          let expr = parse_expr(ctx, expr)?;
+        Rule::simple_closure_body => {
+          let expr = parse_expr(ctx, next.clone().into_inner().next().unwrap())?;
           ClosureBody(vec![Statement::Expr(expr)])
         }
         Rule::bracketed_closure_body => {
@@ -2861,6 +2851,77 @@ pub fn traverse_fn_calls(program: &Program, mut cb: impl FnMut(Sym)) {
   }
 }
 
+/// In order to simplify the syntax and make it more ergonomic to chain unbracketed closures in
+/// pipelines, we apply a transform to transform non-bracketed closures into bracketed ones,
+/// treating newline characters as ending the closure body.
+pub(crate) fn bracketify_closures(
+  ctx: &EvalCtx,
+  program: &mut Pair<Rule>,
+  src: &str,
+) -> Result<String, ErrorStack> {
+  #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+  enum CurlyBracketType {
+    Open,
+    Close,
+  }
+
+  let mut curly_bracket_positions: Vec<(usize, CurlyBracketType)> = Vec::new();
+
+  fn traverse(
+    ctx: &EvalCtx,
+    curly_bracket_positions: &mut Vec<(usize, CurlyBracketType)>,
+    pair: Pair<Rule>,
+  ) -> Result<(), ErrorStack> {
+    match &pair.as_rule() {
+      Rule::simple_closure_body => {
+        let expr = parse_expr(ctx, pair.clone().into_inner().next().unwrap())?;
+        match expr {
+          Expr::BinOp { .. } => (),
+          _ => return Ok(()),
+        }
+
+        let start_pos = pair.as_span().start();
+        match pair.as_str().split_once('\n') {
+          Some((body, _rest)) => {
+            let end_pos = start_pos + body.len();
+            curly_bracket_positions.push((start_pos, CurlyBracketType::Open));
+            curly_bracket_positions.push((end_pos, CurlyBracketType::Close));
+          }
+          None => (),
+        }
+      }
+      _ => (),
+    }
+
+    for inner_pair in pair.into_inner() {
+      traverse(ctx, curly_bracket_positions, inner_pair)?;
+    }
+
+    Ok(())
+  }
+
+  for pair in program.clone().into_inner() {
+    traverse(ctx, &mut curly_bracket_positions, pair)?;
+  }
+
+  curly_bracket_positions.sort_unstable_by_key(|(pos, _)| Reverse(*pos));
+  let mut transformed_src = String::new();
+
+  transformed_src.push_str(&src[..]);
+  for (pos, bracket_type) in curly_bracket_positions {
+    match bracket_type {
+      CurlyBracketType::Open => {
+        transformed_src.insert(pos, '{');
+      }
+      CurlyBracketType::Close => {
+        transformed_src.insert(pos, '}');
+      }
+    }
+  }
+
+  Ok(transformed_src)
+}
+
 #[test]
 fn test_basic_constant_folding() {
   let mut expr = Expr::BinOp {
@@ -3306,6 +3367,23 @@ x = [1,2,3]
   let ctx = super::parse_and_eval_program(code).unwrap();
   let x = ctx.get_global("x").unwrap().as_int().unwrap();
   assert_eq!(x, 1 * 2 + 1 + 2 * 2 + 1 + 3 * 2 + 1);
+}
+
+#[test]
+fn test_single_line_closure_chaining_2() {
+  let code = r#"
+x = |x: int| {
+  0..=2
+    -> |i: int| add(i, x)
+    -> |v: int| v * 2
+}
+
+x = x(3) | reduce(add)
+"#;
+
+  let ctx = super::parse_and_eval_program(code).unwrap();
+  let x = ctx.get_global("x").unwrap().as_int().unwrap();
+  assert_eq!(x, (0 + 3) * 2 + (1 + 3) * 2 + (2 + 3) * 2);
 }
 
 #[test]

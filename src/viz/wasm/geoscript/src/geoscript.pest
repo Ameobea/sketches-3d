@@ -77,16 +77,9 @@ fn_def_arg                   = { (ident | array_destructure | map_destructure) ~
 // from spiraling out of control and avoiding horrific edge cases like `|x: int = 1 | 1| 1 || 1`
 fn_arg_default_val           = { func_call | literal | array_literal | map_literal | ident | parenthized_term | block_expr | if_expression }
 fn_def_arg_list              = { (fn_def_arg* ~ ("," ~ fn_def_arg)*)}
-closure_body                 = _{ bracketed_closure_body | simple_closure_body | until_eol_closure_body }
+closure_body                 = _{ bracketed_closure_body | simple_closure_body }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }
-// non-bracketed closure body must all be on a single line
-non_newline_char             = { !"\n" ~ ANY }
-rest_until_newline           = @{ non_newline_char* }
-simple_closure_body          = _{ expr ~ &(non_newline_char+) }
-// this is handled in the Rust code by initiating a sub-parser on the rest of the line
-until_eol_closure_body       = { &expr ~ rest_until_newline }
-// used by the sub-parser to parse just an expression without trailing garbage
-standalone_expr              = { SOI ~ expr ~ EOI }
+simple_closure_body          = { expr }
 
 array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
 map_kv                       = { (ident | string_literal) ~ ":" ~ expr }

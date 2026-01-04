@@ -10,9 +10,11 @@ build_ring = |segment_count: int, ring_radius: num, tube_radius: num = 1|: mesh 
 }
 
 rings = 0..12
-  -> (|| build_ring(segment_count=90, ring_radius=20+14, tube_radius=0.2)
-           | scale(1, 8, 1)
-           | rot(randv(-pi*2, pi*2)))
+  -> || {
+    build_ring(segment_count=90, ring_radius=20+14, tube_radius=0.2)
+      | scale(1, 8, 1)
+      | rot(randv(-pi*2, pi*2))
+  }
   | join;
 
 build_spoke = |pos: vec3, norm: vec3| {

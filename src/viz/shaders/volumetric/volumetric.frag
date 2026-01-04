@@ -292,20 +292,6 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
     }
   }
 
-  // debug density
-  // return vec4(vec3(density), 1.0);
-  // if (density > 0.5) {
-  //   return vec4((density - 0.5) * 2., 0., 0., 1.);
-  // } else {
-  //   return vec4(0., 0., density * 2., 1.);
-  // }
-
-  // debug fog color
-  // return vec4(accumulatedColor, 1.);
-
-  // debug step count
-  // return vec4(vec3(float(totalIters) / float(baseRaymarchStepCount)), 1.0);
-
   density = pow(density * postDensityMultiplier, postDensityPow);
 
   return clamp(vec4(accumulatedColor, density), 0., 1.);
