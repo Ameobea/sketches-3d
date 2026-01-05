@@ -3387,6 +3387,34 @@ x = x(3) | reduce(add)
 }
 
 #[test]
+fn test_single_line_closure_chaining_3() {
+  let code = r#"
+chip = |a: num, b: num, x_rad: num, y_rad: num, n_contours: int, resolution: int|: mesh {
+  shape = |t: num|: vec3 {
+    x = x_rad * cos(2 * pi * t)
+    y = y_rad * sin(2 * pi * t)
+    z = ((x*x) / (a*a)) - ((y*y) / (b*b))
+    v3(x, y, z*0.03)
+  }
+
+  0..=n_contours
+    -> |contour_ix: int| {
+      0..resolution
+        -> |i: int| shape(i / resolution)
+        -> |v: vec3| v * (contour_ix / n_contours)
+    }
+    | stitch_contours
+    | extrude(up=v3(0,0,0.1))
+    | rot(-pi/2, 0, 0)
+}
+x = chip(1, 1, 1, 1, 10, 10)
+"#;
+
+  let ctx = super::parse_and_eval_program(code).unwrap();
+  let _x = ctx.get_global("x").unwrap().as_mesh().unwrap();
+}
+
+#[test]
 fn test_parenthesized_expr_fn_call_disambiguation() {
   let code = r#"
 x = box(1)

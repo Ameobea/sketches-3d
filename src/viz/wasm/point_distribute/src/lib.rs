@@ -116,6 +116,10 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
     mesh: impl Into<MeshImpl<'a, T>>,
     rng_seed: Option<u64>,
   ) -> Result<Self, &'static str> {
+    if rng_seed.is_none() {
+      common::maybe_init_rng();
+    }
+
     let mut samp = MeshSurfaceSampler {
       mesh: mesh.into(),
       distribution: Vec::new(),

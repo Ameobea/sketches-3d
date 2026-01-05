@@ -87,6 +87,11 @@ debug:
 
 # ---
 
+build-cave:
+  RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package cave
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/cave.wasm --target web --remove-producers-section --out-dir ./build
+  cp ./build/cave* ../wasmComp
+
 build-basalt:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package basalt
   wasm-bindgen ./target/wasm32-unknown-unknown/release/basalt.wasm --target web --remove-producers-section --out-dir ./build

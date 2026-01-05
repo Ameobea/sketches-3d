@@ -45,6 +45,9 @@ build-and-deploy:
 
 # ---
 
+build-cave:
+  cd src/viz/wasm && just build-cave
+
 build-basalt:
   cd src/viz/wasm && just build-basalt
 

@@ -22,11 +22,11 @@ export const processLoadedScene = async (
     wsCtx.startAll();
   });
 
-  viz.scene.add(new THREE.AmbientLight(0xffffff, 3, 3.5));
+  viz.scene.add(new THREE.AmbientLight(0xffffff, 3.5));
 
   viz.renderer.shadowMap.enabled = false;
 
-  const funnelSpotlight = new THREE.SpotLight(0x612e06, 1.5, 120, 0.07, 0.9, 0);
+  const funnelSpotlight = new THREE.SpotLight(0x612e06, 3.5, 120, 0.07, 0.9, 0);
   funnelSpotlight.position.set(-16, 100, -5);
   funnelSpotlight.target.position.set(-16, 0, -5);
   funnelSpotlight.updateMatrixWorld();
@@ -64,7 +64,7 @@ export const processLoadedScene = async (
     // caveNormal: 'https://i.ameo.link/bfk.jpg',
   });
 
-  const playerPointLight = new THREE.PointLight(0xd1c9ab, 0.75, 50, 0.7);
+  const playerPointLight = new THREE.PointLight(0xd1c9ab, 2.75, 50, 0.7);
   viz.scene.add(playerPointLight);
 
   const cave = loadedWorld.getObjectByName('cave') as THREE.Mesh;
