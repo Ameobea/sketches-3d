@@ -66,6 +66,7 @@ const setupOrbitControls = async (
 export const applyGraphicsSettings = (viz: Viz, graphics: Conf.GraphicsSettings) => {
   viz.camera.fov = graphics.fov;
   viz.camera.updateProjectionMatrix();
+  viz.setStatsEnabled(graphics.showFPSStats);
 };
 
 export const applyAudioSettings = (audio: Conf.AudioSettings) => {
@@ -96,7 +97,7 @@ interface ViewModeInterpolationState {
 export class Viz {
   public camera!: THREE.PerspectiveCamera;
   public renderer!: THREE.WebGLRenderer;
-  public stats!: Stats;
+  public stats: Stats | null = null;
   public clock: THREE.Clock = new THREE.Clock();
   public inventory: Inventory = new Inventory();
   public sfxManager: SfxManager = new SfxManager();
@@ -212,11 +213,6 @@ export class Viz {
       stencil: false,
     });
 
-    this.stats = new Stats.default();
-    this.stats.dom.style.position = 'absolute';
-    this.stats.dom.style.top = '0px';
-    this.stats.dom.id = 'viz-stats';
-
     // backwards compat
     if (sceneDef.legacyLights) {
       this.renderer.useLegacyLights = true;
@@ -258,7 +254,7 @@ export class Viz {
 
     this.afterRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
 
-    this.stats.update();
+    this.stats?.update();
 
     this.animateHandle = requestAnimationFrame(this.animate);
   };
@@ -437,6 +433,29 @@ export class Viz {
 
   public setSpawnPos = (pos: THREE.Vector3, rot: THREE.Vector3) => {
     this.spawnPos = { pos, rot };
+  };
+
+  public setStatsEnabled = (statsEnabled: boolean) => {
+    if (!!statsEnabled === !!this.stats) {
+      return;
+    }
+
+    if (statsEnabled) {
+      this.stats = new Stats.default();
+      this.stats.dom.style.position = 'absolute';
+      this.stats.dom.style.top = '0px';
+      this.stats.dom.id = 'viz-stats';
+
+      const container = this.renderer.domElement.parentElement;
+      if (!container) {
+        console.error('canvas not attached to DOM; cannot add stats element');
+        return;
+      }
+      container.appendChild(this.stats.dom);
+    } else if (this.stats) {
+      this.stats.dom.remove();
+      this.stats = null;
+    }
   };
 
   private maybePauseViz = () => {
@@ -759,7 +778,6 @@ export const initViz = (
   (window as any).THREE = THREE;
 
   container.appendChild(viz.renderer.domElement);
-  container.appendChild(viz.stats.dom);
 
   const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
     if (viz.destroyed) {

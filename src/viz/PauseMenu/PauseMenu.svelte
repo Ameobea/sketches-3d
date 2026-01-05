@@ -38,12 +38,13 @@
   export let sceneConfig: SceneConfig | null;
   $: customControlsEntries = sceneConfig?.customControlsEntries ?? [];
 
-  const startVizConfig = loadVizConfig();
+  let startVizConfig = loadVizConfig();
 
   const saveNewConfig = (newVizConfig: VizConfig) => {
     liveConfig.set(newVizConfig);
     localStorage.setItem('vizConfig', JSON.stringify(newVizConfig));
     activeMenu = Menu.Main;
+    startVizConfig = { ...newVizConfig };
   };
 
   const audioConf = derived(liveConfig, $newConfig => $newConfig.audio);

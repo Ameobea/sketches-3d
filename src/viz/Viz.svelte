@@ -18,7 +18,6 @@
   export let userData: any = undefined;
   export let sceneDefOverride: SceneDef | undefined = undefined;
 
-  // svelte-ignore reactive_declaration_non_reactive_property
   $: sceneDef = sceneDefOverride ?? ScenesByName[sceneName];
   $: metadata = sceneDef.metadata;
 
