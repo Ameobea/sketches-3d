@@ -1852,6 +1852,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Multiplied each element of a Vec2 by a scalar",
         return_type: &[ArgType::Vec2],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Multiplied each element of a Vec2 by a scalar",
+        return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Multiplied each element of a Vec3 by a scalar",
+        return_type: &[ArgType::Vec3],
+      },
     ],
   },
   "div" => FnDef {

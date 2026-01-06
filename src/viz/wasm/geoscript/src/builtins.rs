@@ -395,6 +395,18 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let b = rhs.as_float().unwrap();
       Ok(Value::Vec2(a * b))
     }
+    // float * vec2
+    9 => {
+      let a = lhs.as_float().unwrap();
+      let b = rhs.as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(a * b.x, a * b.y)))
+    }
+    // float * vec3
+    10 => {
+      let a = lhs.as_float().unwrap();
+      let b = rhs.as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(a * b.x, a * b.y, a * b.z)))
+    }
     _ => unimplemented!(),
   }
 }
