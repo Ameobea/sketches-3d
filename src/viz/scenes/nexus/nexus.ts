@@ -115,9 +115,18 @@ export const processLoadedScene = async (
     }
   });
 
+  const EASY = [0.4, 0.7, 0.4] as [number, number, number];
+  const NORMAL = [0.15, 0.51, 0.9] as [number, number, number];
+  const HARD = [0.7, 0.5, 0.04] as [number, number, number];
+  const VERY_HARD = [1.3, 0.3, 0.12] as [number, number, number];
+
   const PortalColorByName: Record<string, [number, number, number]> = {
-    tutorial: [0.4, 0.7, 0.4],
-    stone: [0.11, 0.31, 0.7],
+    tutorial: EASY,
+    stone: NORMAL,
+    pylons: NORMAL,
+    movementv2: HARD,
+    plats: HARD,
+    cornered: VERY_HARD,
   };
 
   for (const portal of portals) {

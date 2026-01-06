@@ -78,7 +78,7 @@ const setupScene = (
 
   addStartSignpost(
     new THREE.Vector3(10, 7, 4),
-    'Your goal is simple:\n\nGet to the finish as fast as you can.\n\nJust a few tips to get you started...'
+    'Your goal is simple:\n\nGet to the finish as fast as you can.'
   );
   addStartSignpost(
     new THREE.Vector3(10, 7, 18),
@@ -86,7 +86,7 @@ const setupScene = (
   );
   addStartSignpost(
     new THREE.Vector3(10, 7, 32),
-    "The timer doesn't start until after you jump for the first time, so you can take your time lining up your start on the spawn platform."
+    "The timer doesn't start until after you jump for the first time."
   );
   addStartSignpost(
     new THREE.Vector3(10, 7, 46),
