@@ -654,12 +654,12 @@ fn fold_while_impl(
       let seq = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
 
       let mut acc = init.clone();
-      for next in seq.consume(ctx) {
+      for (i, next) in seq.consume(ctx).enumerate() {
         let next = next.map_err(|err| {
           err.wrap("Error produced while consuming sequence passed to `fold_while`")
         })?;
         let out = ctx
-          .invoke_callable(cb, &[acc.clone(), next], EMPTY_KWARGS)
+          .invoke_callable(cb, &[acc.clone(), next, Value::Int(i as i64)], EMPTY_KWARGS)
           .map_err(|err| err.wrap("Error in user-provided callback to `fold_while`"))?;
         if out.is_nil() {
           return Ok(acc);
@@ -2604,6 +2604,10 @@ fn len_impl(
         Ok(Value::Int(len as i64))
       }
     }
+    4 => {
+      let m = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      Ok(Value::Int(m.mesh.vertices.len() as i64))
+    }
     _ => unimplemented!(),
   }
 }
@@ -3937,6 +3941,38 @@ fn cylinder_impl(
   }
 }
 
+fn cone_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let radius = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let height = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let radial_segments = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
+      let height_segments = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
+
+      if radial_segments < 3 {
+        return Err(ErrorStack::new("`radial_segments` must be >= 3"));
+      } else if height_segments < 1 {
+        return Err(ErrorStack::new("`height_segments` must be >= 1"));
+      }
+
+      Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
+        LinkedMesh::new_cone(
+          radius,
+          height,
+          radial_segments as usize,
+          height_segments as usize,
+        ),
+      )))))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn grid_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -5085,6 +5121,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "cylinder" => builtin_fn!(cylinder, |def_ix, arg_refs, args, kwargs, _ctx| {
     cylinder_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "cone" => builtin_fn!(cone, |def_ix, arg_refs, args, kwargs, _ctx| {
+    cone_impl(def_ix, arg_refs, args, kwargs)
   }),
   "grid" => builtin_fn!(grid, |def_ix, arg_refs, args, kwargs, _ctx| {
     grid_impl(def_ix, arg_refs, args, kwargs)

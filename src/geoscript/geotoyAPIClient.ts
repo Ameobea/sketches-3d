@@ -200,6 +200,18 @@ export const getComposition = (
     baseURL
   );
 
+export const getCompositionHistory = (
+  id: number,
+  fetch: typeof globalThis.fetch = globalThis.fetch,
+  sessionID?: string,
+  adminToken?: string
+): Promise<CompositionVersion[]> =>
+  apiFetch<CompositionVersion[]>(
+    `/compositions/${id}/history${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
+    sessionID ? { headers: { session_id: sessionID } } : {},
+    fetch
+  );
+
 export interface UpdateCompositionPatch {
   title?: string;
   description?: string;

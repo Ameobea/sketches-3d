@@ -469,6 +469,85 @@ impl std::ops::BitOr for PolygonClass {
   }
 }
 
+/// Generates vertices arranged in rings at different heights.
+///
+/// Creates `height_segments + 1` rings, each with `radial_segments` vertices.
+/// - `radius_fn(h)`: returns the radius at normalized height `h` (0.0 to 1.0)
+/// - `y_fn(h)`: returns the y-coordinate at normalized height `h` (0.0 to 1.0)
+fn generate_radial_vertices(
+  vertices: &mut Vec<Vec3>,
+  radial_segments: usize,
+  height_segments: usize,
+  radius_fn: impl Fn(f32) -> f32,
+  y_fn: impl Fn(f32) -> f32,
+) {
+  for h in 0..=height_segments {
+    let h_norm = h as f32 / height_segments as f32;
+    let y = y_fn(h_norm);
+    let radius = radius_fn(h_norm);
+    for r in 0..radial_segments {
+      let theta = (r as f32 / radial_segments as f32) * 2. * PI;
+      let x = radius * theta.cos();
+      let z = radius * theta.sin();
+      vertices.push(Vec3::new(x, y, z));
+    }
+  }
+}
+
+/// Generates quad (two triangle) indices connecting adjacent height rings.
+///
+/// Connects rings of vertices arranged in the pattern created by `generate_radial_vertices`.
+fn generate_radial_side_indices(
+  indices: &mut Vec<u32>,
+  radial_segments: usize,
+  height_segments: usize,
+) {
+  for h in 0..height_segments {
+    for r in 0..radial_segments {
+      let v0 = h * radial_segments + r;
+      let v1 = v0 + radial_segments;
+      let next_r = (r + 1) % radial_segments;
+      let v0_next = h * radial_segments + next_r;
+      let v1_next = v0_next + radial_segments;
+
+      indices.push(v0 as u32);
+      indices.push(v1 as u32);
+      indices.push(v0_next as u32);
+      indices.push(v1 as u32);
+      indices.push(v1_next as u32);
+      indices.push(v0_next as u32);
+    }
+  }
+}
+
+/// Generates cap (fan) indices from a center vertex to a ring of vertices.
+///
+/// - `center_ix`: index of the center vertex
+/// - `radial_segments`: number of vertices in the ring
+/// - `ring_offset`: starting index of the ring vertices
+/// - `reverse_winding`: if true, reverses the winding order (for top caps)
+fn generate_cap_indices(
+  indices: &mut Vec<u32>,
+  center_ix: u32,
+  radial_segments: usize,
+  ring_offset: usize,
+  reverse_winding: bool,
+) {
+  for i in 0..radial_segments {
+    let curr = (ring_offset + i) as u32;
+    let next = (ring_offset + ((i + 1) % radial_segments)) as u32;
+    if reverse_winding {
+      indices.push(next);
+      indices.push(curr);
+      indices.push(center_ix);
+    } else {
+      indices.push(center_ix);
+      indices.push(curr);
+      indices.push(next);
+    }
+  }
+}
+
 impl<FaceData: Default> LinkedMesh<FaceData> {
   pub fn new(vertex_count: usize, face_count: usize, transform: Option<Mat4>) -> Self {
     Self {
@@ -2600,22 +2679,66 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
-    for h in 0..=height_segments {
-      let y = -height / 2. + (h as f32 / height_segments as f32) * height;
-      for r in 0..radial_segments {
-        let theta = (r as f32 / radial_segments as f32) * 2. * PI;
-        let x = radius * theta.cos();
-        let z = radius * theta.sin();
+    generate_radial_vertices(
+      &mut vertices,
+      radial_segments,
+      height_segments,
+      |_h| radius,
+      |h| -height / 2. + h * height,
+    );
+
+    generate_radial_side_indices(&mut indices, radial_segments, height_segments);
+
+    let bottom_center_ix = vertices.len() as u32;
+    vertices.push(Vec3::new(0., -height / 2., 0.));
+    let top_center_ix = vertices.len() as u32;
+    vertices.push(Vec3::new(0., height / 2., 0.));
+
+    for (center_ix, reverse_winding, ring_offset) in [
+      (bottom_center_ix, false, 0usize),
+      (top_center_ix, true, height_segments * radial_segments),
+    ] {
+      generate_cap_indices(
+        &mut indices,
+        center_ix,
+        radial_segments,
+        ring_offset,
+        reverse_winding,
+      );
+    }
+
+    LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
+  }
+
+  /// Generates a cone mesh.  The base of the cone is centered at the origin, and the cone extends
+  /// upwards along the positive Y axis.  The apex (point) of the cone is at the top.
+  pub fn new_cone(
+    radius: f32,
+    height: f32,
+    radial_segments: usize,
+    height_segments: usize,
+  ) -> Self {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for h in 0..height_segments {
+      let h_norm = h as f32 / height_segments as f32;
+      let y = h_norm * height;
+      let r = radius * (1.0 - h_norm);
+      for seg in 0..radial_segments {
+        let theta = (seg as f32 / radial_segments as f32) * 2. * PI;
+        let x = r * theta.cos();
+        let z = r * theta.sin();
         vertices.push(Vec3::new(x, y, z));
       }
     }
 
-    for h in 0..height_segments {
+    for h in 0..(height_segments - 1) {
       for r in 0..radial_segments {
         let v0 = h * radial_segments + r;
         let v1 = v0 + radial_segments;
-        let segment_ix = (r + 1) % radial_segments;
-        let v0_next = h * radial_segments + segment_ix;
+        let next_r = (r + 1) % radial_segments;
+        let v0_next = h * radial_segments + next_r;
         let v1_next = v0_next + radial_segments;
 
         indices.push(v0 as u32);
@@ -2627,33 +2750,21 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
     }
 
-    // to help reduce sliver triangles, add a center vertex at the top and bottom caps and fan out
-    // from that to fill them in
+    let apex_ix = vertices.len() as u32;
+    vertices.push(Vec3::new(0., height, 0.));
+
+    let top_ring_offset = (height_segments - 1) * radial_segments;
+    generate_cap_indices(
+      &mut indices,
+      apex_ix,
+      radial_segments,
+      top_ring_offset,
+      true,
+    );
+
     let bottom_center_ix = vertices.len() as u32;
-    vertices.push(Vec3::new(0., -height / 2., 0.));
-    let top_center_ix = vertices.len() as u32;
-    vertices.push(Vec3::new(0., height / 2., 0.));
-    //
-    // 0,1,2
-    // 0,2,3
-    // ...
-    // 0,2n-2,2n-1
-    for (middle_vtx_ix, reverse_winding, ix_offset) in [
-      (bottom_center_ix, false, 0usize),
-      (top_center_ix, true, (height_segments * radial_segments)),
-    ] {
-      for i in 0..radial_segments {
-        if reverse_winding {
-          indices.push((ix_offset + ((i + 1) % radial_segments)) as u32);
-          indices.push((ix_offset + i) as u32);
-          indices.push(middle_vtx_ix);
-        } else {
-          indices.push(middle_vtx_ix);
-          indices.push((ix_offset + i) as u32);
-          indices.push((ix_offset + ((i + 1) % radial_segments)) as u32);
-        }
-      }
-    }
+    vertices.push(Vec3::new(0., 0., 0.));
+    generate_cap_indices(&mut indices, bottom_center_ix, radial_segments, 0, false);
 
     LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
   }

@@ -2,16 +2,15 @@ use crate::{
   auth::{auth_middleware, maybe_auth_middleware},
   compositions::{
     create_composition, create_composition_version, delete_composition, fork_composition,
-    get_composition, get_composition_latest, get_composition_version, list_composition_versions,
-    list_my_compositions, list_public_compositions, update_composition,
+    get_composition, get_composition_history, get_composition_latest, get_composition_version,
+    list_composition_versions, list_my_compositions, list_public_compositions, update_composition,
   },
   db::get_db_pool,
   server::instrument_handler,
 };
 use axum::{
-  middleware,
+  Router, middleware,
   routing::{delete, get, patch, post},
-  Router,
 };
 
 pub fn compositions_routes() -> Router {
@@ -56,6 +55,13 @@ pub fn compositions_routes() -> Router {
     .route(
       "/{id}",
       get(instrument_handler("get_composition", get_composition)),
+    )
+    .route(
+      "/{id}/history",
+      get(instrument_handler(
+        "get_composition_history",
+        get_composition_history,
+      )),
     )
     .route(
       "/{id}/versions",

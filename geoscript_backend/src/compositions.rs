@@ -1,11 +1,11 @@
 use crate::{auth::User, render_thumbnail::render_thumbnail};
 use axum::{
-  extract::{Extension, Path, Query, State},
   Json,
+  extract::{Extension, Path, Query, State},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteArguments, Arguments, FromRow, Row, SqlitePool};
+use sqlx::{Arguments, FromRow, Row, SqlitePool, sqlite::SqliteArguments};
 
 use crate::server::APIError;
 use axum::http::StatusCode;
@@ -404,6 +404,38 @@ pub async fn get_composition(
   }
 
   Ok(Json(composition))
+}
+
+pub async fn get_composition_history(
+  State(pool): State<SqlitePool>,
+  Path(composition_id): Path<i64>,
+  Extension(user_opt): Extension<Option<User>>,
+  Query(AdminTokenQuery { admin_token }): Query<AdminTokenQuery>,
+) -> Result<Json<Vec<CompositionVersion>>, APIError> {
+  // this makes sure that the user has access to the composition
+  let _composition = get_composition(
+    State(pool.clone()),
+    Path(composition_id),
+    Extension(user_opt),
+    Query(AdminTokenQuery { admin_token }),
+  )
+  .await?
+  .0;
+
+  let versions = sqlx::query_as::<_, CompositionVersion>(
+    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY created_at DESC",
+  )
+  .bind(composition_id)
+  .fetch_all(&pool)
+  .await
+  .map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to fetch composition versions: {err}"),
+    )
+  })?;
+
+  Ok(Json(versions))
 }
 
 pub async fn list_composition_versions(

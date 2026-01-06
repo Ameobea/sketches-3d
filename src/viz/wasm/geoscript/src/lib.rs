@@ -1920,7 +1920,7 @@ impl EvalCtx {
         ))
       })?;
       acc = self
-        .invoke_callable(callable, &[acc, value], EMPTY_KWARGS)
+        .invoke_callable(callable, &[acc, value, Value::Int(i as i64)], EMPTY_KWARGS)
         .map_err(|err| err.wrap("Error invoking callable in reduce"))?;
     }
 
@@ -1963,7 +1963,7 @@ impl EvalCtx {
         ))
       })?;
       acc = self
-        .invoke_callable(fn_value, &[acc, value], EMPTY_KWARGS)
+        .invoke_callable(fn_value, &[acc, value, Value::Int(i as i64)], EMPTY_KWARGS)
         .map_err(|err| err.wrap("Error invoking callable in reduce"))?;
     }
     Ok(acc)
@@ -4247,4 +4247,17 @@ c = f2(123)"#;
     panic!("Expected result to be a Bool");
   };
   assert!(c, "Expected c to be true");
+}
+
+#[test]
+fn test_mesh_len_vert_count() {
+  let src = r#"
+m = box(1)
+x = len(m)"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let x = ctx.get_global("x").unwrap();
+  let x = x.as_int().expect("Expected result to be an Int");
+  assert_eq!(x, 8);
 }

@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { deleteComposition } from 'src/geoscript/geotoyAPIClient';
-  import type { PageData } from './$types';
   import { resolve } from '$app/paths';
+
+  import { deleteComposition } from 'src/geoscript/geotoyAPIClient';
   import { showToast } from 'src/viz/util/GlobalToastState.svelte';
   import GeotoyHeader from '../../GeotoyHeader.svelte';
+  import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
-  let compositions = $state(data.compositions);
+  let compositions = $derived(data.compositions);
 
   const doDeleteComposition = async (compositionID: number) => {
     if (!confirm('Are you sure you want to delete this composition?')) {
@@ -24,10 +25,6 @@
       showToast({ status: 'error', message: 'Failed to delete composition' });
     }
   };
-
-  $effect(() => {
-    compositions = data.compositions;
-  });
 </script>
 
 <svelte:head>
@@ -69,11 +66,12 @@
             </div>
           </div>
 
-          {#if data.isMe}
-            <div class="actions">
+          <div class="actions">
+            <a href={resolve(`/geotoy/history/${comp.id}`)} class="action-link">history</a>
+            {#if data.isMe}
               <button class="delete-btn" onclick={() => doDeleteComposition(comp.id)}>delete</button>
-            </div>
-          {/if}
+            {/if}
+          </div>
         </li>
       {/each}
       {#if compositions.length === 0}
@@ -178,6 +176,19 @@
 
   .actions {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .action-link {
+    color: #7cb3f0;
+    text-decoration: none;
+    font-size: 12px;
+  }
+
+  .action-link:hover {
+    text-decoration: underline;
   }
 
   .delete-btn {

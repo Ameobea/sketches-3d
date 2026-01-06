@@ -828,7 +828,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable with signature `|acc, x|: acc`"
+            description: "Callable with signature `|acc, x, i|: acc`"
           },
           ArgDef {
             name: "sequence",
@@ -861,7 +861,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable with signature `|acc, x|: acc | nil`.  If this callback returns `nil`, the final state of the accumulator passed into that iteration will be returned."
+            description: "Callable with signature `|acc, x, i|: acc | nil`.  If this callback returns `nil`, the final state of the accumulator passed into that iteration will be returned."
           },
           ArgDef {
             name: "sequence",
@@ -887,7 +887,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable with signature `|acc, x|: acc`"
+            description: "Callable with signature `|acc, x, i|: acc`"
           },
           ArgDef {
             name: "sequence",
@@ -4916,7 +4916,20 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Returns the number of elements in a sequence.  This will fully evaluate the sequence.  Calling this with an infinite sequence will result in the program hanging or crashing.",
         return_type: &[ArgType::Int],
-      }
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "m",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the number of vertices in a mesh",
+        return_type: &[ArgType::Int],
+      },
     ],
   },
   "chars" => FnDef {
@@ -6554,6 +6567,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Generates a cylinder mesh",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "cone" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "radial_segments",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height_segments",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(1)),
+            description: ""
+          },
+        ],
+        description: "Generates a cone mesh.  The base of the cone is centered at the origin, and the cone extends upwards along the positive Y axis.",
         return_type: &[ArgType::Mesh],
       },
     ],
