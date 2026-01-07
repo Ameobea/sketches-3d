@@ -1004,20 +1004,23 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   match expr.as_rule() {
     Rule::int => {
       let int_str = expr.as_str();
-      int_str
+      let normalized = int_str.replace('_', "");
+      normalized
         .parse::<i64>()
         .map(|i| Expr::Literal(Value::Int(i)))
         .map_err(|_| ErrorStack::new(format!("Invalid integer: {int_str}")))
     }
     Rule::hex_int => {
       let hex_str = expr.as_str();
-      i64::from_str_radix(&hex_str[2..], 16)
+      let normalized = hex_str.replace('_', "");
+      i64::from_str_radix(&normalized[2..], 16)
         .map(|i| Expr::Literal(Value::Int(i)))
         .map_err(|_| ErrorStack::new(format!("Invalid hex integer: {hex_str}")))
     }
     Rule::float => {
       let float_str = expr.as_str();
-      float_str
+      let normalized = float_str.replace('_', "");
+      normalized
         .parse::<f32>()
         .map(|i| Expr::Literal(Value::Float(i)))
         .map_err(|_| ErrorStack::new(format!("Invalid float: {float_str}")))
@@ -3355,6 +3358,34 @@ x = if (1 == 1) {
   let ctx = super::parse_and_eval_program(code).unwrap();
   let x = ctx.get_global("x").unwrap().as_int().unwrap();
   assert_eq!(x, 1);
+}
+
+#[test]
+fn test_numeric_separators_in_int_literals() {
+  let code = r#"
+a = 100_000
+b = 0xFF_FF
+"#;
+
+  let ctx = super::parse_and_eval_program(code).unwrap();
+  let a = ctx.get_global("a").unwrap().as_int().unwrap();
+  let b = ctx.get_global("b").unwrap().as_int().unwrap();
+  assert_eq!(a, 100000);
+  assert_eq!(b, 0xFFFF);
+}
+
+#[test]
+fn test_numeric_separators_in_float_literals() {
+  let code = r#"
+x = 1_234.5_6
+y = 10_0.
+"#;
+
+  let ctx = super::parse_and_eval_program(code).unwrap();
+  let x = ctx.get_global("x").unwrap().as_float().unwrap();
+  let y = ctx.get_global("y").unwrap().as_float().unwrap();
+  assert_eq!(x, 1234.56_f32);
+  assert_eq!(y, 100.0_f32);
 }
 
 #[test]
