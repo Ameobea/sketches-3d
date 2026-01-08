@@ -4,8 +4,8 @@ use fxhash::FxHashMap;
 #[cfg(target_arch = "wasm32")]
 use geoscript::mesh_ops::mesh_boolean::drop_all_mesh_handles;
 use geoscript::{
-  eval_program_with_ctx, materials::Material, optimize_ast, parse_program_maybe_with_prelude,
-  traverse_fn_calls, ErrorStack, EvalCtx, Program, Sym, PRELUDE,
+  eval_program_with_ctx, materials::Material, optimizer::optimize_ast,
+  parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program, Sym, PRELUDE,
 };
 use mesh::OwnedIndexedMesh;
 use nanoserde::SerJson;

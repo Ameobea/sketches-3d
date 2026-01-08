@@ -50,6 +50,7 @@ use crate::{
   lights::{AmbientLight, Light},
   materials::Material,
   mesh_ops::mesh_boolean::{drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp},
+  optimizer::optimize_ast,
   seq::{ChainSeq, IntRange, MapSeq},
 };
 
@@ -59,10 +60,11 @@ pub mod lights;
 pub mod materials;
 pub mod mesh_ops;
 pub mod noise;
+pub mod optimizer;
 pub mod path_building;
 mod seq;
 
-pub use self::ast::{optimize_ast, traverse_fn_calls, Program};
+pub use self::ast::{traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
 
 pub const PRELUDE: &str = include_str!("prelude.geo");
