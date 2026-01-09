@@ -174,10 +174,6 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.textures = textures;
   ctx.geo_ctx.default_material = default_material;
   ctx.geo_ctx.const_eval_cache = const_eval_cache;
-  log::info!(
-    "const eval cache size: {}",
-    (*ctx.geo_ctx.const_eval_cache.borrow()).entries.len()
-  );
 
   // #[cfg(target_arch = "wasm32")]
   // drop_all_mesh_handles();

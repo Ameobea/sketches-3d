@@ -60,12 +60,6 @@ fn const_eval_cache_get(ctx: &EvalCtx, lookup: ConstEvalCacheLookup) -> Option<V
   if let Some(rng_end_state) = hit.rng_end_state {
     ctx.set_rng_state(rng_end_state);
   }
-  log::info!(
-    "Const eval cache hit for key {}, {}: {:?}",
-    lookup.key,
-    lookup.uses_rng,
-    hit.value
-  );
   Some(hit.value)
 }
 
@@ -1589,6 +1583,421 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
 
 pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
   default_optimizer_pipeline().run(ctx, ast)
+}
+
+#[test]
+fn test_basic_constant_folding() {
+  let mut expr = Expr::BinOp {
+    op: BinOp::Add,
+    lhs: Box::new(Expr::Literal(Value::Int(2))),
+    rhs: Box::new(Expr::Literal(Value::Int(3))),
+    pre_resolved_def_ix: None,
+  };
+  let mut local_scope = ScopeTracker::default();
+  let ctx = EvalCtx::default();
+  optimize_expr(&ctx, &mut local_scope, &mut expr, true).unwrap();
+  let Expr::Literal(Value::Int(5)) = expr else {
+    panic!("Expected constant folding to produce 5");
+  };
+}
+
+#[test]
+fn test_vec3_const_folding() {
+  let code = "vec3(1+2, 2, 3*1+0+1).zyx";
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+  let val = match &ast.statements[0] {
+    Statement::Expr(expr) => expr.as_literal().unwrap(),
+    _ => unreachable!(),
+  };
+  assert!(matches!(val, Value::Vec3(v) if v.x == 4. && v.y == 2. && v.z == 3.));
+}
+
+#[test]
+fn test_const_eval_side_effects() {
+  let code = r#"
+print(1+2)
+//(1+2) | print
+fn = || {
+  print(1+2)
+  return 1+2
+}
+fn() | print
+print(fn())
+fn | call | print
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+}
+
+#[test]
+fn test_basic_const_closure_eval() {
+  let code = r#"
+fn = |x| x + 1
+y = fn(2)
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+
+  let Statement::Assignment { name, expr, .. } = &ast.statements[1] else {
+    panic!("Expected second statement to be an assignment");
+  };
+  assert_eq!(*name, ctx.interned_symbols.intern("y"));
+  let Expr::Literal(Value::Int(3)) = expr else {
+    panic!("Expected constant folding to produce 3");
+  };
+}
+
+#[test]
+fn test_basic_const_closure_eval_2() {
+  let code = r#"
+a = 1
+fn = |x| x + a
+y = fn(2, a)
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+
+  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+    panic!("Expected second statement to be an assignment");
+  };
+  assert_eq!(*name, ctx.interned_symbols.intern("y"));
+  match expr {
+    Expr::Literal(Value::Int(3)) => {}
+    _ => panic!("Expected constant folding to produce 3, found: {expr:?}"),
+  };
+}
+
+#[test]
+fn test_basic_const_closure_eval_3() {
+  let code = r#"
+xyz=2
+x = [
+  box(1) | warp(|v| v * 2),
+  box(xyz)
+] | join
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  // the whole thing should get const-eval'd to a mesh at the AST level
+  let Statement::Assignment { expr, .. } = &ast.statements[1] else {
+    unreachable!();
+  };
+  assert!(
+    matches!(expr, Expr::Literal(Value::Mesh(_))),
+    "Expected constant folding to produce a mesh, found: {expr:?}"
+  );
+}
+
+#[test]
+fn test_basic_const_closure_eval_4() {
+  let code = r#"
+x = 1
+fn = |a| {
+  foo = 1
+  bar = 1
+  baz = || x + 1
+  return a + x + foo + bar + baz()
+}
+y = fn(2)
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+
+  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+    panic!("Expected second statement to be an assignment");
+  };
+  assert_eq!(*name, ctx.interned_symbols.intern("y"));
+  let Expr::Literal(Value::Int(7)) = expr else {
+    panic!("Expected constant folding to produce 7, found: {expr:?}");
+  };
+}
+
+#[test]
+fn test_block_const_folding() {
+  let code = r#"
+{
+  a = 1
+  b = 2
+  c = a + b
+  3
+}
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  let Statement::Expr(expr) = &ast.statements[0] else {
+    panic!("Expected first statement to be an expression");
+  };
+  let Expr::Literal(Value::Int(3)) = expr else {
+    panic!("Expected constant folding to produce 3, found: {expr:?}");
+  };
+}
+
+#[test]
+fn test_pre_resolve_builtin_signature() {
+  let code = r#"
+cb = |x: int| add(x+1, 1)
+y = cb(2)
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  let st1 = ast.statements[0].clone();
+  let closure_body = match st1 {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal(Value::Callable(callable)) => match &*callable {
+        Callable::Closure(closure) => closure.body.clone(),
+        _ => unreachable!(),
+      },
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let call_target = match &closure_body.0[0] {
+    Statement::Expr(expr) => match expr {
+      Expr::Call(FunctionCall {
+        target: FunctionCallTarget::Literal(target),
+        ..
+      }) => target,
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let pre_resolved_sig = match &**call_target {
+    Callable::Builtin {
+      pre_resolved_signature,
+      ..
+    } => pre_resolved_signature,
+    _ => unreachable!(),
+  };
+  let pre_resolved_sig = pre_resolved_sig.as_ref().unwrap();
+  assert_eq!(pre_resolved_sig.def_ix, 3);
+  assert_eq!(pre_resolved_sig.arg_refs.len(), 2);
+  assert!(matches!(
+    &pre_resolved_sig.arg_refs[0],
+    crate::ArgRef::Positional(0)
+  ));
+  assert!(matches!(
+    &pre_resolved_sig.arg_refs[1],
+    crate::ArgRef::Positional(1)
+  ));
+}
+
+#[test]
+fn test_const_eval_with_local_shadowing() {
+  let src = r#"
+x = 1
+fn = |a| {
+  x = x + a
+  x
+}
+y = fn(2)
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, src).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+    panic!("Expected second statement to be an assignment");
+  };
+  assert_eq!(*name, ctx.interned_symbols.intern("y"));
+  let Expr::Literal(Value::Int(3)) = expr else {
+    panic!("Expected constant folding to produce 3, found: {expr:?}");
+  };
+}
+
+#[test]
+fn test_preresolve_binop_def_ix_basic() {
+  let src = r#"
+f = |a: int, b: int| { a + b }
+x = f(2, 3)
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, src).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  let st1 = ast.statements[0].clone();
+  let closure_body = match st1 {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal(Value::Callable(callable)) => match &*callable {
+        Callable::Closure(closure) => closure.body.clone(),
+        _ => unreachable!(),
+      },
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let binop_def_ix = match &closure_body.0[0] {
+    Statement::Expr(expr) => match expr {
+      Expr::BinOp {
+        pre_resolved_def_ix,
+        ..
+      } => pre_resolved_def_ix,
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  assert_eq!(*binop_def_ix, Some(3)); // int + int
+}
+
+#[test]
+fn test_preresolve_binop_def_ix_advanced() {
+  let src = r#"
+fn = || {
+  0..
+    -> || { randv(-5, 5) }
+    | filter(|p: vec3| {
+      noise = fbm(p * 0.0283)
+      noise > 0.5
+      // (noise > -0.31 && noise < -0.3) ||
+      //   (noise > 0.01 && noise < 0.02) ||
+      //   (noise > 0.21 && noise < 0.22) ||
+      //   (noise > 0.48 && noise < 0.49) ||
+      //   (noise > 0.78 && noise < 0.79)
+    })
+    | take(550)
+    | convex_hull
+}"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, src).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  let st1 = ast.statements[0].clone();
+  let closure_body = match st1 {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal(Value::Callable(callable)) => match &*callable {
+        Callable::Closure(closure) => closure.body.clone(),
+        _ => unreachable!(),
+      },
+      Expr::Closure { body, .. } => body.clone(),
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let expr = match &closure_body.0[0] {
+    Statement::Expr(expr) => expr.clone(),
+    Statement::Return { value: Some(expr) } => expr.clone(),
+    _ => unreachable!(),
+  };
+  let expr = match expr {
+    Expr::BinOp {
+      op: BinOp::Pipeline,
+      lhs,
+      rhs: _, // convex_hull
+      pre_resolved_def_ix: _,
+    } => (*lhs).clone(),
+    _ => unreachable!(),
+  };
+  let expr = match expr {
+    Expr::BinOp {
+      op: BinOp::Pipeline,
+      lhs,
+      rhs: _, // take
+      pre_resolved_def_ix: _,
+    } => (*lhs).clone(),
+    _ => unreachable!(),
+  };
+  let expr = match expr {
+    Expr::BinOp {
+      op: BinOp::Pipeline,
+      lhs: _, // range
+      rhs,
+      pre_resolved_def_ix: _,
+    } => (*rhs).clone(),
+    _ => unreachable!(),
+  };
+
+  let filter_paf = match expr {
+    Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Callable::PartiallyAppliedFn(paf) => paf.clone(),
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let cb = match filter_paf.args[0].clone() {
+    Value::Callable(callable) => match &*callable {
+      Callable::Closure(closure) => closure.clone(),
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+
+  let stmt0 = &cb.body.0[0];
+  match stmt0 {
+    Statement::Assignment {
+      name: _,
+      expr,
+      type_hint: _,
+    } => match expr {
+      Expr::Call(FunctionCall {
+        args,
+        kwargs: _,
+        target,
+      }) => {
+        let arg0 = &args[0];
+        match arg0 {
+          Expr::BinOp {
+            op: BinOp::Mul,
+            pre_resolved_def_ix,
+            ..
+          } => {
+            assert!(pre_resolved_def_ix.is_some());
+          }
+          _ => unreachable!(),
+        }
+
+        match target {
+          FunctionCallTarget::Literal(callable) => match &**callable {
+            Callable::Builtin {
+              pre_resolved_signature,
+              ..
+            } => assert!(pre_resolved_signature.is_some()),
+            _ => unreachable!(),
+          },
+          _ => unreachable!(),
+        }
+      }
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+
+  // noise > 0.5
+  let stmt1 = &cb.body.0[1];
+  match stmt1 {
+    Statement::Expr(expr) => match expr {
+      Expr::BinOp {
+        op: BinOp::Gt,
+        pre_resolved_def_ix,
+        ..
+      } => {
+        assert!(pre_resolved_def_ix.is_some());
+      }
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  }
 }
 
 #[test]
