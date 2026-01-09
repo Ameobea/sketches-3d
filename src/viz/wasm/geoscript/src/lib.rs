@@ -13,6 +13,7 @@ use std::cell::UnsafeCell;
 use std::{
   any::Any,
   cell::{Cell, RefCell},
+  collections::VecDeque,
   fmt::{Debug, Display},
   rc::{self, Rc},
 };
@@ -343,7 +344,7 @@ impl Callable {
         let name = fn_sigs().entries[*fn_entry_ix].0;
         matches!(
           name,
-          "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert"
+          "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert" | "set_rng_seed"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
@@ -351,6 +352,22 @@ impl Callable {
       Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_side_effectful()),
     }
   }
+
+  pub fn is_rng_dependent(&self) -> bool {
+    match self {
+      Callable::Builtin { fn_entry_ix, .. } => {
+        let name = fn_sigs().entries[*fn_entry_ix].0;
+        is_rng_builtin_name(name)
+      }
+      Callable::PartiallyAppliedFn(paf) => paf.inner.is_rng_dependent(),
+      Callable::Closure(_) => false,
+      Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_rng_dependent()),
+    }
+  }
+}
+
+fn is_rng_builtin_name(name: &str) -> bool {
+  matches!(name, "randv" | "randf" | "randi")
 }
 
 pub struct ManifoldHandle(Cell<usize>);
@@ -583,6 +600,94 @@ impl Debug for Value {
       Value::String(s) => write!(f, "String({s})"),
       Value::Material(material) => write!(f, "Material({material:?})"),
       Value::Nil => write!(f, "Nil"),
+    }
+  }
+}
+
+const CONST_EVAL_CACHE_MAX_ENTRIES: usize = 4096;
+
+pub(crate) struct ConstEvalCacheHit {
+  pub value: Value,
+  pub rng_end_state: Option<Pcg32>,
+}
+
+pub struct ConstEvalCacheEntry {
+  pub value: Value,
+  rng_end_state: Option<Pcg32>,
+  last_access: u64,
+}
+
+pub struct ConstEvalCache {
+  pub entries: FxHashMap<u64, ConstEvalCacheEntry>,
+  access_tick: u64,
+  access_queue: VecDeque<(u64, u64)>,
+  max_entries: usize,
+}
+
+impl Default for ConstEvalCache {
+  fn default() -> Self {
+    Self {
+      entries: FxHashMap::default(),
+      access_tick: 0,
+      access_queue: VecDeque::new(),
+      max_entries: CONST_EVAL_CACHE_MAX_ENTRIES,
+    }
+  }
+}
+
+impl ConstEvalCache {
+  pub(crate) fn get(&mut self, key: u64) -> Option<ConstEvalCacheHit> {
+    self.access_tick = self.access_tick.wrapping_add(1);
+    let stamp = self.access_tick;
+    let (value, rng_end_state) = {
+      let entry = self.entries.get_mut(&key)?;
+      entry.last_access = stamp;
+      (entry.value.clone(), entry.rng_end_state.clone())
+    };
+    self.access_queue.push_back((key, stamp));
+    Some(ConstEvalCacheHit {
+      value,
+      rng_end_state,
+    })
+  }
+
+  pub(crate) fn insert(&mut self, key: u64, value: Value, rng_end_state: Option<Pcg32>) {
+    if self.max_entries == 0 {
+      return;
+    }
+
+    if let Some(entry) = self.entries.get_mut(&key) {
+      self.access_tick = self.access_tick.wrapping_add(1);
+      let stamp = self.access_tick;
+      entry.value = value;
+      entry.rng_end_state = rng_end_state;
+      entry.last_access = stamp;
+      self.access_queue.push_back((key, stamp));
+      return;
+    }
+
+    self.access_tick = self.access_tick.wrapping_add(1);
+    self.entries.insert(
+      key,
+      ConstEvalCacheEntry {
+        value,
+        rng_end_state,
+        last_access: self.access_tick,
+      },
+    );
+    self.access_queue.push_back((key, self.access_tick));
+
+    while self.entries.len() > self.max_entries {
+      let Some((old_key, stamp)) = self.access_queue.pop_front() else {
+        break;
+      };
+      let should_remove = match self.entries.get(&old_key) {
+        Some(entry) => entry.last_access == stamp,
+        None => false,
+      };
+      if should_remove {
+        self.entries.remove(&old_key);
+      }
     }
   }
 }
@@ -1353,6 +1458,7 @@ pub struct EvalCtx {
   pub textures: FxHashSet<String>,
   pub default_material: RefCell<Option<Rc<Material>>>,
   pub sharp_angle_threshold_degrees: RefCell<f32>,
+  pub const_eval_cache: RefCell<ConstEvalCache>,
   scratch_args: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
   scratch_kwargs: Box<RefCell<ArrayVec<FxHashMap<Sym, Value>, 64>>>,
 }
@@ -1375,6 +1481,7 @@ impl Default for EvalCtx {
       textures: FxHashSet::default(),
       default_material: RefCell::new(None),
       sharp_angle_threshold_degrees: RefCell::new(45.8366),
+      const_eval_cache: RefCell::new(ConstEvalCache::default()),
       scratch_args: Box::new(RefCell::new(ArrayVec::new())),
       scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
     }
@@ -1406,6 +1513,14 @@ impl EvalCtx {
   #[cfg(not(target_arch = "wasm32"))]
   pub fn rng(&self) -> &'static mut Pcg32 {
     unsafe { &mut *std::ptr::addr_of_mut!(THREAD_RNG) }
+  }
+
+  pub(crate) fn rng_state(&self) -> Pcg32 {
+    self.rng().clone()
+  }
+
+  pub(crate) fn set_rng_state(&self, state: Pcg32) {
+    *self.rng() = state;
   }
 
   pub fn get_args_scratch(&self) -> Vec<Value> {

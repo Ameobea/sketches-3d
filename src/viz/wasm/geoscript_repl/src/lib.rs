@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
-#[cfg(target_arch = "wasm32")]
-use geoscript::mesh_ops::mesh_boolean::drop_all_mesh_handles;
 use geoscript::{
   eval_program_with_ctx, materials::Material, optimizer::optimize_ast,
   parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program, Sym, PRELUDE,
@@ -170,12 +168,31 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   let materials = std::mem::take(&mut ctx.geo_ctx.materials);
   let textures = std::mem::take(&mut ctx.geo_ctx.textures);
   let default_material = std::mem::take(&mut ctx.geo_ctx.default_material);
+  let const_eval_cache = std::mem::take(&mut ctx.geo_ctx.const_eval_cache);
   *ctx = GeoscriptReplCtx::default();
   ctx.geo_ctx.materials = materials;
   ctx.geo_ctx.textures = textures;
   ctx.geo_ctx.default_material = default_material;
-  #[cfg(target_arch = "wasm32")]
-  drop_all_mesh_handles();
+  ctx.geo_ctx.const_eval_cache = const_eval_cache;
+  log::info!(
+    "const eval cache size: {}",
+    (*ctx.geo_ctx.const_eval_cache.borrow()).entries.len()
+  );
+
+  // #[cfg(target_arch = "wasm32")]
+  // drop_all_mesh_handles();
+
+  // need to selectively drop only mesh handles that are no longer referenced by the const eval
+  // cache
+  // let mut still_in_use_mesh_manifold_handles: FxHashSet<usize> = FxHashSet::default();
+  // for entry in ctx.geo_ctx.const_eval_cache.borrow().entries.values() {
+  //   if let geoscript::Value::Mesh(mesh_handle) = &entry.value {
+  //     still_in_use_mesh_manifold_handles.insert(mesh_handle.manifold_handle.get());
+  //   }
+  // }
+
+  // TODO: why is this necessary?  Manifold handles are automatically dropped in the `Drop` impl for
+  // `ManifoldHandle`, so why do we need to explicitly drop them here?
 }
 
 #[wasm_bindgen]
