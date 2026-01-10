@@ -1,11 +1,7 @@
-use std::{
-  cell::RefCell,
-  hash::{Hash, Hasher},
-  ops::ControlFlow,
-  rc::Rc,
-};
+use std::{cell::RefCell, hash::Hash, ops::ControlFlow, rc::Rc};
 
-use fxhash::{FxHashMap, FxHasher};
+use fxhash::FxHashMap;
+use siphasher::sip128::{Hasher128, SipHasher};
 
 use crate::{
   ast::{
@@ -18,6 +14,7 @@ use crate::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
+  parse_and_eval_program,
   seq::EagerSeq,
   ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value,
 };
@@ -30,16 +27,16 @@ const FLOAT_ASSOC_FOLDING_ENABLED: bool = true;
 
 #[derive(Clone, Copy)]
 struct ConstEvalCacheLookup {
-  key: u64,
+  key: u128,
   uses_rng: bool,
 }
 
 fn const_eval_cache_lookup_with(
   ctx: &EvalCtx,
   allow_rng_const_eval: bool,
-  hash_fn: impl FnOnce(&mut FxHasher, &mut bool) -> Option<()>,
+  hash_fn: impl FnOnce(&mut SipHasher, &mut bool) -> Option<()>,
 ) -> Option<ConstEvalCacheLookup> {
-  let mut hasher = FxHasher::default();
+  let mut hasher = SipHasher::new_with_keys(0, 0);
   let mut uses_rng = false;
   hash_fn(&mut hasher, &mut uses_rng)?;
   if uses_rng {
@@ -49,10 +46,8 @@ fn const_eval_cache_lookup_with(
     let rng_state = ctx.rng_state();
     hash_rng_state(&mut hasher, &rng_state);
   }
-  Some(ConstEvalCacheLookup {
-    key: hasher.finish(),
-    uses_rng,
-  })
+  let key = hasher.finish128().as_u128();
+  Some(ConstEvalCacheLookup { key, uses_rng })
 }
 
 fn const_eval_cache_get(ctx: &EvalCtx, lookup: ConstEvalCacheLookup) -> Option<Value> {
@@ -76,11 +71,11 @@ fn const_eval_cache_store(ctx: &EvalCtx, lookup: ConstEvalCacheLookup, value: Va
 }
 
 fn can_const_eval_callable(callable: &Callable, allow_rng_const_eval: bool) -> bool {
-  if callable.is_side_effectful() {
-    return false;
-  }
   if callable.is_rng_dependent() {
     return allow_rng_const_eval;
+  }
+  if callable.is_side_effectful() {
+    return false;
   }
   if allow_rng_const_eval {
     return true;
@@ -107,7 +102,7 @@ fn callable_requires_rng_state(callable: &Callable) -> bool {
   }
 }
 
-fn hash_rng_state(hasher: &mut FxHasher, rng_state: &impl std::fmt::Debug) {
+fn hash_rng_state(hasher: &mut SipHasher, rng_state: &impl std::fmt::Debug) {
   let debug = format!("{rng_state:?}");
   debug.hash(hasher);
 }
@@ -143,7 +138,7 @@ impl ExprHashConfig {
 /// Unified expression hasher that handles both const eval and structural hashing modes.
 fn hash_expr(
   expr: &Expr,
-  hasher: &mut FxHasher,
+  hasher: &mut SipHasher,
   uses_rng: &mut bool,
   config: ExprHashConfig,
 ) -> Option<()> {
@@ -302,11 +297,11 @@ fn hash_expr(
   }
 }
 
-fn hash_type_name(type_name: TypeName, hasher: &mut FxHasher) {
+fn hash_type_name(type_name: TypeName, hasher: &mut SipHasher) {
   std::mem::discriminant(&type_name).hash(hasher);
 }
 
-fn hash_destructure_pattern(pattern: &DestructurePattern, hasher: &mut FxHasher) -> Option<()> {
+fn hash_destructure_pattern(pattern: &DestructurePattern, hasher: &mut SipHasher) -> Option<()> {
   std::mem::discriminant(pattern).hash(hasher);
   match pattern {
     DestructurePattern::Ident(ident) => {
@@ -336,7 +331,7 @@ fn hash_destructure_pattern(pattern: &DestructurePattern, hasher: &mut FxHasher)
 
 fn hash_closure_arg(
   arg: &ClosureArg,
-  hasher: &mut FxHasher,
+  hasher: &mut SipHasher,
   uses_rng: &mut bool,
   config: ExprHashConfig,
 ) -> Option<()> {
@@ -354,7 +349,7 @@ fn hash_closure_arg(
 
 fn hash_statement(
   stmt: &Statement,
-  hasher: &mut FxHasher,
+  hasher: &mut SipHasher,
   uses_rng: &mut bool,
   config: ExprHashConfig,
 ) -> Option<()> {
@@ -398,7 +393,7 @@ fn hash_closure_parts(
   params: &Rc<Vec<ClosureArg>>,
   body: &Rc<crate::ast::ClosureBody>,
   return_type_hint: &Option<TypeName>,
-  hasher: &mut FxHasher,
+  hasher: &mut SipHasher,
   uses_rng: &mut bool,
   config: ExprHashConfig,
 ) -> Option<()> {
@@ -421,7 +416,7 @@ fn hash_call(
   callable: &Rc<Callable>,
   args: &[Expr],
   kwargs: &FxHashMap<Sym, Expr>,
-  hasher: &mut FxHasher,
+  hasher: &mut SipHasher,
   uses_rng: &mut bool,
   config: ExprHashConfig,
 ) -> Option<()> {
@@ -453,7 +448,7 @@ fn hash_call(
 
 fn hash_callable(
   callable: &Rc<Callable>,
-  hasher: &mut FxHasher,
+  hasher: &mut SipHasher,
   uses_rng: &mut bool,
   config: ExprHashConfig,
 ) -> Option<()> {
@@ -514,7 +509,7 @@ fn const_eval_call_value(
   Ok(Some(evaled))
 }
 
-fn hash_value(value: &Value, hasher: &mut FxHasher) -> Option<()> {
+fn hash_value(value: &Value, hasher: &mut SipHasher) -> Option<()> {
   std::mem::discriminant(value).hash(hasher);
   match value {
     Value::Nil => {}
@@ -1151,8 +1146,28 @@ fn fold_constants<'a>(
 
       let mut body_inner = (**body).clone();
       let mut analysis_scope = local_scope_with_args.fork();
-      let body_captures_dyn =
-        body_inner.analyze_const_captures(ctx, &mut analysis_scope, allow_rng_const_eval, false);
+      let mut body_captures_dyn = body_inner.analyze_const_captures(
+        ctx,
+        &mut analysis_scope,
+        allow_rng_const_eval,
+        false,
+        false,
+      );
+
+      // Capture analysis that treats locals as const so nested closures don't mask outer captures.
+      let mut capture_scope = ScopeTracker::wrap(local_scope);
+      for name in closure_scope.vars.keys() {
+        capture_scope.set(*name, TrackedValue::Const(Value::Nil));
+      }
+      let mut capture_analysis_scope = capture_scope.fork();
+      body_captures_dyn |= body_inner.analyze_const_captures(
+        ctx,
+        &mut capture_analysis_scope,
+        allow_rng_const_eval,
+        true,
+        true,
+      );
+
       body_inner.inline_const_captures(ctx, &mut local_scope_with_args);
       *body = Rc::new(body_inner);
       if body_captures_dyn {
@@ -1394,7 +1409,7 @@ fn fold_constants<'a>(
       // can const-fold the block if all inner statements are const
       let mut analysis_scope = block_scope.fork();
       let mut captures_dyn = statements.iter().any(|stmt| {
-        stmt.analyze_const_captures(ctx, &mut analysis_scope, allow_rng_const_eval, true)
+        stmt.analyze_const_captures(ctx, &mut analysis_scope, allow_rng_const_eval, true, false)
       });
       for stmt in statements.iter_mut() {
         stmt.inline_const_captures(ctx, &mut block_scope);
@@ -2444,4 +2459,24 @@ fn test_closure_hash_distinguishes_body() {
   };
 
   assert!(!Rc::ptr_eq(&seq1, &seq2));
+}
+
+#[test]
+fn test_bad_optim_repro() {
+  let code = r#"
+build_curl = || {
+  build_path = || [v3(0), v3(1)]
+
+  contours = [build_path()]
+    -> collect
+    | collect
+
+  0..len(contours[0])
+    -> |i| { 0..4 -> |j| contours[0][i] }
+    | stitch_contours
+}
+
+build_curl()"#;
+
+  parse_and_eval_program(code).unwrap();
 }

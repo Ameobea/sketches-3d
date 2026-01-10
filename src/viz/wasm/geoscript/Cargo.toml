@@ -24,6 +24,7 @@ strum = { version = "0.27", features = ["derive"] }
 lazy_static = "1.5"
 arrayvec = "0.7"
 bitvec = "1"
+siphasher = "0.3"
 
 mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }

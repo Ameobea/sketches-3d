@@ -262,6 +262,7 @@ impl Statement {
     closure_scope: &mut ScopeTracker,
     allow_rng_const_eval: bool,
     propagate_closure_captures: bool,
+    constify_assignments: bool,
   ) -> bool {
     match self {
       Statement::Assignment { expr, .. } => expr.analyze_const_captures(
@@ -269,18 +270,21 @@ impl Statement {
         closure_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ),
       Statement::DestructureAssignment { lhs: _, rhs } => rhs.analyze_const_captures(
         ctx,
         closure_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ),
       Statement::Expr(expr) => expr.analyze_const_captures(
         ctx,
         closure_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ),
       Statement::Return { value } => {
         if let Some(expr) = value {
@@ -289,6 +293,7 @@ impl Statement {
             closure_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           )
         } else {
           false
@@ -301,6 +306,7 @@ impl Statement {
             closure_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           )
         } else {
           false
@@ -354,6 +360,7 @@ impl MapLiteralEntry {
     local_scope: &mut ScopeTracker<'_>,
     allow_rng_const_eval: bool,
     propagate_closure_captures: bool,
+    constify_assignments: bool,
   ) -> bool {
     match self {
       MapLiteralEntry::KeyValue { key: _, value } => value.analyze_const_captures(
@@ -361,12 +368,14 @@ impl MapLiteralEntry {
         local_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ),
       MapLiteralEntry::Splat { expr } => expr.analyze_const_captures(
         ctx,
         local_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ),
     }
   }
@@ -469,6 +478,7 @@ impl Expr {
     local_scope: &mut ScopeTracker,
     allow_rng_const_eval: bool,
     propagate_closure_captures: bool,
+    constify_assignments: bool,
   ) -> bool {
     match self {
       Expr::BinOp {
@@ -482,12 +492,14 @@ impl Expr {
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
         captures_dyn |= rhs.analyze_const_captures(
           ctx,
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
         captures_dyn
       }
@@ -496,6 +508,7 @@ impl Expr {
         local_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ),
       Expr::Range {
         start,
@@ -507,6 +520,7 @@ impl Expr {
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
         if let Some(end) = end {
           captures_dyn |= end.analyze_const_captures(
@@ -514,6 +528,7 @@ impl Expr {
             local_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           );
         }
         captures_dyn
@@ -523,6 +538,7 @@ impl Expr {
         local_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ),
       Expr::FieldAccess { lhs, field } => {
         let mut captures_dyn = lhs.analyze_const_captures(
@@ -530,12 +546,14 @@ impl Expr {
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
         captures_dyn |= field.analyze_const_captures(
           ctx,
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
         captures_dyn
       }
@@ -551,6 +569,7 @@ impl Expr {
             local_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           );
         }
         for kwarg in kwargs.values() {
@@ -559,6 +578,7 @@ impl Expr {
             local_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           );
         }
 
@@ -617,6 +637,7 @@ impl Expr {
               local_scope,
               allow_rng_const_eval,
               propagate_closure_captures,
+              constify_assignments,
             );
           }
         }
@@ -644,6 +665,7 @@ impl Expr {
           &mut closure_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
 
         if propagate_closure_captures {
@@ -672,6 +694,7 @@ impl Expr {
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         )
       }),
       Expr::MapLiteral { entries } => entries.iter().any(|entry| {
@@ -680,6 +703,7 @@ impl Expr {
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         )
       }),
       Expr::Literal(_) => false,
@@ -694,12 +718,14 @@ impl Expr {
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
         captures_dyn |= then.analyze_const_captures(
           ctx,
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         );
         for (cond, expr) in else_if_exprs {
           captures_dyn |= cond.analyze_const_captures(
@@ -707,12 +733,14 @@ impl Expr {
             local_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           );
           captures_dyn |= expr.analyze_const_captures(
             ctx,
             local_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           );
         }
         if let Some(else_expr) = else_expr {
@@ -721,6 +749,7 @@ impl Expr {
             local_scope,
             allow_rng_const_eval,
             propagate_closure_captures,
+            constify_assignments,
           );
         }
         captures_dyn
@@ -731,6 +760,7 @@ impl Expr {
           local_scope,
           allow_rng_const_eval,
           propagate_closure_captures,
+          constify_assignments,
         )
       }),
     }
@@ -983,6 +1013,7 @@ impl ClosureBody {
     closure_scope: &mut ScopeTracker,
     allow_rng_const_eval: bool,
     propagate_closure_captures: bool,
+    constify_assignments: bool,
   ) -> bool {
     let mut references_dyn_captures = false;
     for stmt in &self.0 {
@@ -991,6 +1022,7 @@ impl ClosureBody {
         closure_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
+        constify_assignments,
       ) {
         references_dyn_captures = true;
       }
@@ -1000,6 +1032,10 @@ impl ClosureBody {
         type_hint: _,
       } = stmt
       {
+        if constify_assignments {
+          closure_scope.set(*name, TrackedValue::Const(Value::Nil));
+          continue;
+        }
         // if this variable has already been de-constified in the scope, we avoid overwriting it
         let is_deconstified = match closure_scope.get(*name) {
           Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn { .. }) => true,
@@ -1033,6 +1069,10 @@ impl ClosureBody {
       // TODO: should de-dupe
       else if let Statement::DestructureAssignment { lhs, rhs } = stmt {
         for name in lhs.iter_idents() {
+          if constify_assignments {
+            closure_scope.set(name, TrackedValue::Const(Value::Nil));
+            continue;
+          }
           let is_deconstified = match closure_scope.get(name) {
             Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn { .. }) => true,
             Some(TrackedValueRef::Const(_)) => false,
@@ -2683,7 +2723,7 @@ fn test_inline_const_captures_blocks_side_effectful_alias() {
     kwargs: FxHashMap::default(),
   });
 
-  let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false);
+  let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false, false);
   assert!(
     captures_dyn,
     "Expected side-effectful callable aliases to block const capture"
@@ -2709,7 +2749,7 @@ fn test_inline_const_captures_visits_all_conditional_branches() {
     else_expr: Some(Box::new(Expr::Ident(else_sym))),
   };
 
-  let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false);
+  let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false, false);
   assert!(captures_dyn);
   expr.inline_const_captures(&ctx, &mut scope);
 

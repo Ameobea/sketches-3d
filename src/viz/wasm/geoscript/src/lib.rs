@@ -618,9 +618,9 @@ pub struct ConstEvalCacheEntry {
 }
 
 pub struct ConstEvalCache {
-  pub entries: FxHashMap<u64, ConstEvalCacheEntry>,
+  pub entries: FxHashMap<u128, ConstEvalCacheEntry>,
   access_tick: u64,
-  access_queue: VecDeque<(u64, u64)>,
+  access_queue: VecDeque<(u128, u64)>,
   max_entries: usize,
 }
 
@@ -636,7 +636,7 @@ impl Default for ConstEvalCache {
 }
 
 impl ConstEvalCache {
-  pub(crate) fn get(&mut self, key: u64) -> Option<ConstEvalCacheHit> {
+  pub(crate) fn get(&mut self, key: u128) -> Option<ConstEvalCacheHit> {
     self.access_tick = self.access_tick.wrapping_add(1);
     let stamp = self.access_tick;
     let (value, rng_end_state) = {
@@ -651,7 +651,7 @@ impl ConstEvalCache {
     })
   }
 
-  pub(crate) fn insert(&mut self, key: u64, value: Value, rng_end_state: Option<Pcg32>) {
+  pub(crate) fn insert(&mut self, key: u128, value: Value, rng_end_state: Option<Pcg32>) {
     if self.max_entries == 0 {
       return;
     }
