@@ -908,7 +908,8 @@ impl Expr {
     }
   }
 
-  fn traverse(&self, cb: &mut impl FnMut(&Self)) {
+  pub fn traverse(&self, cb: &mut impl FnMut(&Self)) {
+    // TODO: this match statement is duplicated like 3 times in the codebase
     fn traverse_stmt(stmt: &Statement, cb: &mut impl FnMut(&Expr)) {
       match stmt {
         Statement::Assignment { expr, .. } => expr.traverse(cb),
@@ -995,6 +996,144 @@ impl Expr {
         cb(self);
         for stmt in statements {
           traverse_stmt(stmt, cb);
+        }
+      }
+    }
+  }
+
+  fn traverse_mut(&mut self, cb: &mut impl FnMut(&mut Self)) {
+    fn traverse_stmt_mut(stmt: &mut Statement, cb: &mut impl FnMut(&mut Expr)) {
+      match stmt {
+        Statement::Assignment { expr, .. } => expr.traverse_mut(cb),
+        Statement::DestructureAssignment { lhs: _, rhs } => rhs.traverse_mut(cb),
+        Statement::Expr(expr) => expr.traverse_mut(cb),
+        Statement::Return { value } => {
+          if let Some(expr) = value {
+            expr.traverse_mut(cb);
+          }
+        }
+        Statement::Break { value } => {
+          if let Some(expr) = value {
+            expr.traverse_mut(cb);
+          }
+        }
+      }
+    }
+
+    match self {
+      Expr::BinOp { .. } => {
+        cb(self);
+        let Expr::BinOp { lhs, rhs, .. } = self else {
+          return;
+        };
+        lhs.traverse_mut(cb);
+        rhs.traverse_mut(cb);
+      }
+      Expr::PrefixOp { .. } => {
+        cb(self);
+        let Expr::PrefixOp { expr, .. } = self else {
+          return;
+        };
+        expr.traverse_mut(cb);
+      }
+      Expr::Range { .. } => {
+        cb(self);
+        let Expr::Range { start, end, .. } = self else {
+          return;
+        };
+        start.traverse_mut(cb);
+        if let Some(end) = end {
+          end.traverse_mut(cb);
+        }
+      }
+      Expr::StaticFieldAccess { .. } => {
+        cb(self);
+        let Expr::StaticFieldAccess { lhs, .. } = self else {
+          return;
+        };
+        lhs.traverse_mut(cb);
+      }
+      Expr::FieldAccess { .. } => {
+        cb(self);
+        let Expr::FieldAccess { lhs, field } = self else {
+          return;
+        };
+        lhs.traverse_mut(cb);
+        field.traverse_mut(cb);
+      }
+      Expr::Call(_) => {
+        cb(self);
+        let Expr::Call(call) = self else {
+          return;
+        };
+        call.args.iter_mut().for_each(|arg| arg.traverse_mut(cb));
+        call
+          .kwargs
+          .values_mut()
+          .for_each(|kwarg| kwarg.traverse_mut(cb));
+      }
+      Expr::Closure { .. } => {
+        cb(self);
+        let Expr::Closure { body, .. } = self else {
+          return;
+        };
+        Rc::make_mut(body)
+          .0
+          .iter_mut()
+          .for_each(|stmt| traverse_stmt_mut(stmt, cb));
+      }
+      Expr::Ident(_) | Expr::Literal(_) => {
+        cb(self);
+      }
+      Expr::ArrayLiteral(_) => {
+        cb(self);
+        let Expr::ArrayLiteral(exprs) = self else {
+          return;
+        };
+        for expr in exprs.iter_mut() {
+          expr.traverse_mut(cb);
+        }
+      }
+      Expr::MapLiteral { .. } => {
+        cb(self);
+        let Expr::MapLiteral { entries } = self else {
+          return;
+        };
+        for entry in entries {
+          match entry {
+            MapLiteralEntry::KeyValue { key: _, value } => value.traverse_mut(cb),
+            MapLiteralEntry::Splat { expr } => expr.traverse_mut(cb),
+          }
+        }
+      }
+      Expr::Conditional { .. } => {
+        cb(self);
+        let Expr::Conditional {
+          cond,
+          then,
+          else_if_exprs,
+          else_expr,
+        } = self
+        else {
+          return;
+        };
+        cond.traverse_mut(cb);
+        then.traverse_mut(cb);
+        for (cond, expr) in else_if_exprs {
+          cond.traverse_mut(cb);
+          expr.traverse_mut(cb);
+        }
+        if let Some(else_expr) = else_expr {
+          else_expr.traverse_mut(cb);
+        }
+      }
+      Expr::Block { .. } => {
+        cb(self);
+        let Expr::Block { statements } = self else {
+          return;
+        };
+        for stmt in statements {
+          traverse_stmt_mut(stmt, cb);
         }
       }
     }
@@ -1175,6 +1314,32 @@ impl ClosureBody {
               }
             };
             closure_scope.set(name, tracked_val);
+          }
+        }
+      }
+    }
+  }
+
+  pub(crate) fn traverse_exprs_mut(&mut self, mut traverse: impl FnMut(&mut Expr)) {
+    for stmt in &mut self.0 {
+      match stmt {
+        Statement::Assignment { expr, .. } => {
+          traverse(expr);
+        }
+        Statement::DestructureAssignment { lhs: _, rhs } => {
+          traverse(rhs);
+        }
+        Statement::Expr(expr) => {
+          traverse(expr);
+        }
+        Statement::Return { value } => {
+          if let Some(expr) = value {
+            traverse(expr);
+          }
+        }
+        Statement::Break { value } => {
+          if let Some(expr) = value {
+            traverse(expr);
           }
         }
       }
@@ -2227,6 +2392,7 @@ pub(crate) fn pre_resolve_expr_type(
                 None => return None,
               },
               Callable::ComposedFn(_) => return None,
+              Callable::Dynamic { inner, .. } => return inner.get_return_type_hint(),
             },
             _ => return None,
           }
@@ -2364,6 +2530,7 @@ pub(crate) fn pre_resolve_expr_type(
         Callable::PartiallyAppliedFn(_) => None,
         Callable::Closure(closure) => closure.return_type_hint.map(Into::into),
         Callable::ComposedFn(_) => None,
+        Callable::Dynamic { inner, .. } => return inner.get_return_type_hint(),
       },
     },
     Expr::Closure { .. } => Some(ArgType::Callable),

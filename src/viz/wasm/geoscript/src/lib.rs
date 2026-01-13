@@ -283,6 +283,25 @@ pub struct PreResolvedSignature {
   def_ix: usize,
 }
 
+pub trait DynamicCallable {
+  // TODO: these need to get merged into an enum across the whole codebase.
+  //
+  // I even did that work, but it got lost in a merge conflict
+  fn is_side_effectful(&self) -> bool;
+  fn is_rng_dependent(&self) -> bool;
+
+  fn invoke(
+    &self,
+    args: &[Value],
+    kwargs: &FxHashMap<Sym, Value>,
+    ctx: &EvalCtx,
+  ) -> Result<Value, ErrorStack>;
+
+  /// Despite being called a hint, this _MUST_ be correct if provided.  This is used for type
+  /// inference and optimization and will cause big problems if incorrectly specified.
+  fn get_return_type_hint(&self) -> Option<ArgType>;
+}
+
 pub enum Callable {
   Builtin {
     fn_entry_ix: usize,
@@ -294,6 +313,14 @@ pub enum Callable {
   PartiallyAppliedFn(PartiallyAppliedFn),
   Closure(Closure),
   ComposedFn(ComposedFn),
+  /// A dynamically produced callable, used for cases where builtins return callables that may
+  /// depend on captured variables or other dynamic internal logic
+  Dynamic {
+    /// Used for printing and debugging.  Should indicate the source and variant of the dynamic
+    /// callable.
+    name: String,
+    inner: Box<dyn DynamicCallable>,
+  },
 }
 
 impl Debug for Callable {
@@ -333,6 +360,7 @@ impl Debug for Callable {
       Callable::PartiallyAppliedFn(paf) => Debug::fmt(&format!("{paf:?}"), f),
       Callable::Closure(closure) => Debug::fmt(&format!("{closure:?}"), f),
       Callable::ComposedFn(composed) => Debug::fmt(&format!("{composed:?}"), f),
+      Callable::Dynamic { name, .. } => Debug::fmt(&format!("<dynamic callable: \"{name}\">"), f),
     }
   }
 }
@@ -344,12 +372,26 @@ impl Callable {
         let name = fn_sigs().entries[*fn_entry_ix].0;
         matches!(
           name,
-          "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert" | "set_rng_seed"
+          "print"
+            | "render"
+            | "call"
+            | "randv"
+            | "randf"
+            | "randi"
+            | "assert"
+            | "set_rng_seed"
+            | "move"
+            | "line"
+            | "quadratic_bezier"
+            | "quad_bezier"
+            | "cubic_bezier"
+            | "arc"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
       Callable::Closure(_) => false,
       Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_side_effectful()),
+      Callable::Dynamic { inner, .. } => inner.is_side_effectful(),
     }
   }
 
@@ -362,6 +404,7 @@ impl Callable {
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_rng_dependent(),
       Callable::Closure(_) => false,
       Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_rng_dependent()),
+      Callable::Dynamic { inner, .. } => inner.is_rng_dependent(),
     }
   }
 }
@@ -999,7 +1042,7 @@ impl ArgRef {
 }
 
 #[derive(Debug)]
-enum GetArgsOutput {
+pub(crate) enum GetArgsOutput {
   Valid {
     def_ix: usize,
     arg_refs: SmallVec<[ArgRef; 6]>,
@@ -1062,11 +1105,12 @@ static EMPTY_ARGS_INNER: Vec<SyncValue> = Vec::new();
 static EMPTY_KWARGS_INNER: FxHashMap<Sym, SyncValue> =
   std::collections::HashMap::with_hasher(fxhash::FxBuildHasher::new());
 
+// TODO: should these be `static` instead?
 const EMPTY_ARGS: &'static Vec<Value> = unsafe { std::mem::transmute(&EMPTY_ARGS_INNER) };
 const EMPTY_KWARGS: &'static FxHashMap<Sym, Value> =
   unsafe { std::mem::transmute(&EMPTY_KWARGS_INNER) };
 
-fn get_args(
+pub(crate) fn get_args(
   ctx: &EvalCtx,
   fn_name: &str,
   defs: &[FnSignature],
@@ -1266,6 +1310,10 @@ impl<T> AppendOnlyBuffer<T> {
   pub fn len(&self) -> usize {
     self.inner.borrow().len()
   }
+
+  pub fn borrow(&self) -> std::cell::Ref<'_, Vec<T>> {
+    self.inner.borrow()
+  }
 }
 
 type RenderedMeshes = AppendOnlyBuffer<Rc<MeshHandle>>;
@@ -1274,7 +1322,6 @@ type RenderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
 #[derive(Default, Debug)]
 pub struct Scope {
-  // vars: RefCell<ScopeVars>,
   vars: RefCell<FxHashMap<Sym, Value>>,
   parent: Option<Rc<Scope>>,
 }
@@ -1488,6 +1535,7 @@ impl Default for EvalCtx {
   }
 }
 
+#[derive(Debug)]
 pub enum ControlFlow<T> {
   Continue(T),
   Break(T),
@@ -2437,6 +2485,9 @@ impl EvalCtx {
 
         Ok(acc)
       }
+      Callable::Dynamic { name, inner } => inner
+        .invoke(args, kwargs, self)
+        .map_err(|err| err.wrap(format!("Error invoking dynamic callable `{name}`"))),
     }
   }
 

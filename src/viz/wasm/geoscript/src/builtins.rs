@@ -58,6 +58,7 @@ use crate::{
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod fn_defs;
+pub(crate) mod trace_path;
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
@@ -5115,6 +5116,16 @@ macro_rules! builtin_fn {
   };
 }
 
+fn builtin_move_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  ctx: &EvalCtx,
+) -> Result<Value, ErrorStack> {
+  trace_path::draw_command_stub_impl("move", def_ix, arg_refs, args, kwargs, ctx)
+}
+
 pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   &'static str,
   fn(
@@ -5515,6 +5526,25 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "lissajous_knot_path" => builtin_fn!(lissajous_knot_path, |def_ix, arg_refs, args, kwargs, _ctx| {
     lissajous_knot_path_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "move" => builtin_move_impl,
+  "line" => builtin_fn!(line, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("line", def_ix, arg_refs, args, kwargs, ctx)
+  }),
+  "quadratic_bezier" => builtin_fn!(quadratic_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("quadratic_bezier", def_ix, arg_refs, args, kwargs, ctx)
+  }),
+  "quad_bezier" => builtin_fn!(quad_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("quad_bezier", def_ix, arg_refs, args, kwargs, ctx)
+  }),
+  "cubic_bezier" => builtin_fn!(cubic_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("cubic_bezier", def_ix, arg_refs, args, kwargs, ctx)
+  }),
+  "arc" => builtin_fn!(arc, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("arc", def_ix, arg_refs, args, kwargs, ctx)
+  }),
+  "trace_path" => builtin_fn!(trace_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::trace_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_impl(ctx, def_ix, arg_refs, args, kwargs)

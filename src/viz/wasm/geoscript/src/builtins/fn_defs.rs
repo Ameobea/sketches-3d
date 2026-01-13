@@ -6993,7 +6993,497 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         return_type: &[ArgType::Nil],
       }
     ]
-  }
+  },
+  "trace_path" => FnDef {
+    module: "path",
+    examples: &[], // TODO
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cb",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A function that will be called with a special scope including draw commands to define the path.  It receives no arguments and its return value is ignored; the path is defined based on the draw commands issued within the function."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the path will be closed by connecting the last point to the first point."
+          }
+        ],
+        description: "Traces a path based on draw commands issued within the provided callback function.  The function returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
+        return_type: &[ArgType::Callable]
+      }
+    ]
+  },
+  "move" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Moves the current point to the given position without drawing.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Moves the current point to the given position without drawing.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "line" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Draws a straight line from the current point to the given position.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Draws a straight line from the current point to the given position.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "quadratic_bezier" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a quadratic Bezier segment from the current point to `to` using `ctrl` as the control point.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a quadratic Bezier segment from the current point to `x,y` using `cx,cy` as the control point.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "quad_bezier" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Alias of `quadratic_bezier`.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Alias of `quadratic_bezier`.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "cubic_bezier" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl1",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a cubic Bezier segment from the current point to `to` using `ctrl1` and `ctrl2` as control points.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c1x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c1y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a cubic Bezier segment from the current point to `x,y` using the provided control points.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "arc" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "large_arc_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "sweep_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "large_arc_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "sweep_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  // TODO: builtin that parses a subset of SVG path data strings and returns a sampler callable like above
 };
 
 #[inline(always)]

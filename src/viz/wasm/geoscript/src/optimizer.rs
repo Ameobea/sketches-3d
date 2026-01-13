@@ -6,15 +6,16 @@ use siphasher::sip128::{Hasher128, SipHasher};
 use crate::{
   ast::{
     eval_range, get_dyn_type, maybe_pre_resolve_bulitin_call_signature, pre_resolve_binop_def_ix,
-    pre_resolve_expr_type, BinOp, ClosureArg, DestructurePattern, DynType, Expr, FunctionCall,
-    FunctionCallTarget, MapLiteralEntry, ScopeTracker, Statement, TrackedValue, TrackedValueRef,
-    TypeName,
+    pre_resolve_expr_type, BinOp, ClosureArg, ClosureBody, DestructurePattern, DynType, Expr,
+    FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, Statement, TrackedValue,
+    TrackedValueRef, TypeName,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
-    resolve_builtin_impl, FUNCTION_ALIASES,
+    resolve_builtin_impl,
+    trace_path::TRACE_PATH_DRAW_COMMAND_NAMES,
+    FUNCTION_ALIASES,
   },
-  parse_and_eval_program,
   seq::EagerSeq,
   ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value,
 };
@@ -24,6 +25,31 @@ use crate::{
 /// slightly different results in some cases.  For almost everything done in Geoscript/Geotoy, it's
 /// unlikely to matter though.
 const FLOAT_ASSOC_FOLDING_ENABLED: bool = true;
+
+fn add_trace_path_draw_commands(ctx: &EvalCtx, scope: &mut ScopeTracker) {
+  for name in TRACE_PATH_DRAW_COMMAND_NAMES {
+    let sym = ctx.interned_symbols.intern(name);
+    if !scope.has(sym) {
+      scope.set(
+        sym,
+        TrackedValue::Const(Value::Callable(Rc::new(Callable::Closure(Closure {
+          params: Rc::new(Vec::new()),
+          body: Rc::new(ClosureBody(Vec::new())),
+          captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
+          arg_placeholder_scope: RefCell::new(None),
+          return_type_hint: None,
+        })))),
+      );
+    }
+  }
+}
+
+fn is_trace_path_callable(callable: &Callable) -> bool {
+  match callable {
+    Callable::Builtin { fn_entry_ix, .. } => fn_sigs().entries[*fn_entry_ix].0 == "trace_path",
+    _ => false,
+  }
+}
 
 #[derive(Clone, Copy)]
 struct ConstEvalCacheLookup {
@@ -92,7 +118,102 @@ fn is_known_rng_free_callable(callable: &Callable) -> bool {
       .iter()
       .all(|callable| is_known_rng_free_callable(&*callable)),
     Callable::Closure(_) => false,
+    Callable::Dynamic { inner, .. } => !inner.is_side_effectful() && !inner.is_rng_dependent(),
   }
+}
+
+fn is_trace_path_closure_effectively_const(
+  ctx: &EvalCtx,
+  local_scope: &mut ScopeTracker,
+  expr: &mut Expr,
+  allow_rng_const_eval: bool,
+) -> Result<bool, ErrorStack> {
+  // we construct a new scope for optimizing the body which contains fake trace path functions that
+  // resolve to const callables
+  let mut fake_scope = ScopeTracker::wrap(local_scope);
+  add_trace_path_draw_commands(ctx, &mut fake_scope);
+
+  let mut test_expr = expr.clone();
+  optimize_expr(ctx, &mut fake_scope, &mut test_expr, allow_rng_const_eval)?;
+
+  // if the closure was literalized successfully, we need to swap back the closure body to the
+  // original one so the draw commands actually do something and then attempt to re-optimize it so
+  // as many optimizations as possibly can apply
+  if let Expr::Literal(Value::Callable(callable)) = test_expr {
+    if matches!(callable.as_ref(), Callable::Closure(_)) {
+      if let Expr::Closure { params, .. } = expr {
+        if !params.is_empty() {
+          return Err(ErrorStack::new(
+            "Trace path closures should have no parameters",
+          ));
+        }
+
+        return Ok(true);
+      }
+    }
+  }
+
+  Ok(false)
+}
+
+/// Special-case for the `trace_path` builtin to allow constifying its closure argument which
+/// contains effectful calls.
+///
+/// The effects of those calls are limited to the function call, so it's safe to constify them.
+fn maybe_constify_trace_path_closure_arg(
+  ctx: &EvalCtx,
+  local_scope: &mut ScopeTracker,
+  args: &mut [Expr],
+  kwargs: &mut FxHashMap<Sym, Expr>,
+  allow_rng_const_eval: bool,
+) -> Result<(), ErrorStack> {
+  let cb_sym = ctx.interned_symbols.intern("cb");
+  let (is_effectively_const, expr_opt) = if let Some(expr) = kwargs.get_mut(&cb_sym) {
+    (
+      is_trace_path_closure_effectively_const(ctx, local_scope, expr, allow_rng_const_eval)?,
+      Some(expr),
+    )
+  } else if let Some(expr) = args.get_mut(0) {
+    (
+      is_trace_path_closure_effectively_const(ctx, local_scope, expr, allow_rng_const_eval)?,
+      Some(expr),
+    )
+  } else {
+    (false, None)
+  };
+
+  // since the closure with the effectful commands removed optimized to a constant, we can
+  // also the original closure and assume that it doesn't capture any dynamic environment.
+  if is_effectively_const {
+    if let Some(expr) = expr_opt {
+      if matches!(&expr, Expr::Closure { .. }) {
+        optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
+
+        // if the expr wasn't literalized (which it won't be if contained any draw
+        // commands...), we force it to be now.
+        match expr {
+          Expr::Closure {
+            params,
+            body,
+            arg_placeholder_scope,
+            return_type_hint,
+          } => {
+            *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Closure(Closure {
+              params: Rc::clone(&params),
+              body: Rc::clone(&body),
+              // There is no captured scope since everything was const in the test case
+              captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
+              arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
+              return_type_hint: *return_type_hint,
+            }))));
+          }
+          _ => (),
+        }
+      }
+    }
+  }
+
+  Ok(())
 }
 
 fn callable_requires_rng_state(callable: &Callable) -> bool {
@@ -949,13 +1070,6 @@ fn fold_constants<'a>(
       args,
       kwargs,
     }) => {
-      for arg in args.iter_mut() {
-        optimize_expr(ctx, local_scope, arg, allow_rng_const_eval)?;
-      }
-      for (_, expr) in kwargs.iter_mut() {
-        optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
-      }
-
       // if the function call target is a name, resolve the callable referenced to make calling it
       // more efficient if it's called repeatedly later on
       if let FunctionCallTarget::Name(name) = target {
@@ -995,13 +1109,55 @@ fn fold_constants<'a>(
                 ))),
               },
             })?;
-          let pre_resolved_signature =
-            maybe_pre_resolve_bulitin_call_signature(ctx, local_scope, fn_entry_ix, args, kwargs)?;
+
           *target = FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
             fn_entry_ix,
             fn_impl,
-            pre_resolved_signature,
+            pre_resolved_signature: None,
           }));
+        }
+      }
+
+      if let FunctionCallTarget::Literal(callable) = target {
+        if is_trace_path_callable(callable) {
+          maybe_constify_trace_path_closure_arg(
+            ctx,
+            local_scope,
+            args,
+            kwargs,
+            allow_rng_const_eval,
+          )?;
+        }
+      }
+
+      for arg in args.iter_mut() {
+        optimize_expr(ctx, local_scope, arg, allow_rng_const_eval)?;
+      }
+      for (_, expr) in kwargs.iter_mut() {
+        optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
+      }
+
+      if let FunctionCallTarget::Literal(callable) = target {
+        if let Callable::Builtin {
+          fn_entry_ix,
+          fn_impl,
+          pre_resolved_signature,
+        } = &**callable
+        {
+          if pre_resolved_signature.is_none() {
+            let pre_resolved_signature = maybe_pre_resolve_bulitin_call_signature(
+              ctx,
+              local_scope,
+              *fn_entry_ix,
+              args,
+              kwargs,
+            )?;
+            *target = FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
+              fn_entry_ix: *fn_entry_ix,
+              fn_impl: *fn_impl,
+              pre_resolved_signature,
+            }));
+          }
         }
       }
 
@@ -1342,7 +1498,7 @@ fn fold_constants<'a>(
     } => {
       // TODO: check if conditions are const and elide the whole conditional if they are
 
-      /// If there's an assignment performend to a variable in the parent scope from within one of
+      /// If there's an assignment performed to a variable in the parent scope from within one of
       /// the conditional blocks, we can no longer depend on knowing the value of that variable
       /// going forward.
       fn deconstify_parent_scope<'a>(
@@ -2343,6 +2499,89 @@ a = 0..4 -> |x| x + offset
   assert!(Rc::ptr_eq(&seq1, &seq2));
 }
 
+#[test]
+fn test_const_eval_cache_persists_across_runs_with_trace_path() {
+  let code = r#"
+distance = 1
+path_sampler = trace_path(|| {
+  move(0, 0)
+  line(distance, 0)
+  line(distance, distance)
+})
+"#;
+
+  let ctx = EvalCtx::default();
+  let mut ast1 = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast1).unwrap();
+
+  let sampler1 = match &ast1.statements[1] {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal(Value::Callable(callable)) => Rc::clone(callable),
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+
+  let mut ast2 = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast2).unwrap();
+
+  let sampler2 = match &ast2.statements[1] {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal(Value::Callable(callable)) => Rc::clone(callable),
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+
+  assert!(Rc::ptr_eq(&sampler1, &sampler2));
+
+  // should be functional
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let sampler = ctx.get_global("path_sampler").unwrap();
+  let sampler = sampler.as_callable().unwrap();
+  let p0 = ctx
+    .invoke_callable(sampler, &[Value::Float(0.)], crate::EMPTY_KWARGS)
+    .unwrap();
+  let p1 = ctx
+    .invoke_callable(sampler, &[Value::Float(0.25)], crate::EMPTY_KWARGS)
+    .unwrap();
+  let p2 = ctx
+    .invoke_callable(sampler, &[Value::Float(0.5)], crate::EMPTY_KWARGS)
+    .unwrap();
+  let p3 = ctx
+    .invoke_callable(sampler, &[Value::Float(1.)], crate::EMPTY_KWARGS)
+    .unwrap();
+  assert_eq!(*p0.as_vec2().unwrap(), crate::Vec2::new(0., 0.));
+  assert_eq!(*p1.as_vec2().unwrap(), crate::Vec2::new(0.5, 0.));
+  assert_eq!(*p2.as_vec2().unwrap(), crate::Vec2::new(1., 0.));
+  assert_eq!(*p3.as_vec2().unwrap(), crate::Vec2::new(1., 1.));
+}
+
+// just because we can
+#[test]
+fn test_trace_path_sneaky_ref_const_eval() {
+  let code = r#"
+m = move
+l2 = line
+path_sampler = trace_path(|| {
+  // helper functions that call draw commands can be defined, but they must
+  // be defined within the `trace_path` closure
+  l = |x, y| {
+    l2(x, y)
+  }
+
+  m(0, 0)
+  l(10, 0)
+})
+out = path_sampler(0.5)
+"#;
+
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let out = ctx.get_global("out").unwrap();
+  let out = out.as_vec2().unwrap();
+  assert_eq!(*out, crate::Vec2::new(5., 0.));
+}
+
 #[cfg(test)]
 fn optimize_and_get_mesh(ctx: &EvalCtx, code: &str, stmt_index: usize) -> Rc<crate::MeshHandle> {
   let mut ast = crate::parse_program_src(ctx, code).unwrap();
@@ -2478,5 +2717,5 @@ build_curl = || {
 
 build_curl()"#;
 
-  parse_and_eval_program(code).unwrap();
+  crate::parse_and_eval_program(code).unwrap();
 }
