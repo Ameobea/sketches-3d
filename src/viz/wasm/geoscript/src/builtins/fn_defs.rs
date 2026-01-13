@@ -7020,6 +7020,25 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       }
     ]
   },
+  "trace_svg_path" => FnDef {
+    module: "path",
+    examples: &[], // TODO
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "svg_path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "An SVG path data string using move, line, cubic/quadratic, smooth, and arc commands."
+          },
+        ],
+        description: "Parses SVG path data and returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
+        return_type: &[ArgType::Callable]
+      }
+    ]
+  },
   "move" => FnDef {
     module: "trace_path",
     examples: &[],
@@ -7158,19 +7177,12 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
-  "quad_bezier" => FnDef {
+  "smooth_quadratic_bezier" => FnDef {
     module: "trace_path",
     examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
-          ArgDef {
-            name: "ctrl",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
           ArgDef {
             name: "to",
             interned_name: Sym(0),
@@ -7179,25 +7191,11 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Alias of `quadratic_bezier`.  This can only be called within the callback passed to `trace_path`.",
+        description: "Adds a smooth quadratic Bezier segment from the current point to `to` using the reflection of the previous quadratic control point as the new control point.  This can only be called within the callback passed to `trace_path`.",
         return_type: &[ArgType::Nil],
       },
       FnSignature {
         arg_defs: &[
-          ArgDef {
-            name: "cx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "cy",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
           ArgDef {
             name: "x",
             interned_name: Sym(0),
@@ -7213,7 +7211,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Alias of `quadratic_bezier`.  This can only be called within the callback passed to `trace_path`.",
+        description: "Adds a smooth quadratic Bezier segment from the current point to `x,y` using the reflection of the previous quadratic control point as the new control point.  This can only be called within the callback passed to `trace_path`.",
         return_type: &[ArgType::Nil],
       },
     ],
@@ -7295,6 +7293,66 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Adds a cubic Bezier segment from the current point to `x,y` using the provided control points.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "smooth_cubic_bezier" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a smooth cubic Bezier segment from the current point to `to` using the reflection of the previous cubic's second control point as the first control point, and `ctrl2` as the second control point.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a smooth cubic Bezier segment from the current point to `x,y` using the reflection of the previous cubic's second control point as the first control point, and the provided second control point.  This can only be called within the callback passed to `trace_path`.",
         return_type: &[ArgType::Nil],
       },
     ],
@@ -7479,6 +7537,17 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "close" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[],
+        description: "Closes the current subpath by drawing a straight line from the current point back to the initial point of the subpath (the position of the last `move` command).  Mirrors the SVG `z` command.  This can only be called within the callback passed to `trace_path`.",
         return_type: &[ArgType::Nil],
       },
     ],

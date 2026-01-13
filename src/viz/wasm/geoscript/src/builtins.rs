@@ -85,6 +85,9 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "string" => "str",
   "sign" => "signum",
   "worley" => "worley_noise",
+  "quad_bezier" => "quadratic_bezier",
+  "smooth_quad_bezier" => "smooth_quadratic_bezier",
+  "smooth_bezier" => "smooth_cubic_bezier",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -5534,17 +5537,26 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "quadratic_bezier" => builtin_fn!(quadratic_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::draw_command_stub_impl("quadratic_bezier", def_ix, arg_refs, args, kwargs, ctx)
   }),
-  "quad_bezier" => builtin_fn!(quad_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
-    trace_path::draw_command_stub_impl("quad_bezier", def_ix, arg_refs, args, kwargs, ctx)
+  "smooth_quadratic_bezier" => builtin_fn!(smooth_quadratic_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("smooth_quadratic_bezier", def_ix, arg_refs, args, kwargs, ctx)
   }),
   "cubic_bezier" => builtin_fn!(cubic_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::draw_command_stub_impl("cubic_bezier", def_ix, arg_refs, args, kwargs, ctx)
   }),
+  "smooth_cubic_bezier" => builtin_fn!(smooth_cubic_bezier, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("smooth_cubic_bezier", def_ix, arg_refs, args, kwargs, ctx)
+  }),
   "arc" => builtin_fn!(arc, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::draw_command_stub_impl("arc", def_ix, arg_refs, args, kwargs, ctx)
   }),
+  "close" => builtin_fn!(close, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("close", def_ix, arg_refs, args, kwargs, ctx)
+  }),
   "trace_path" => builtin_fn!(trace_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::trace_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "trace_svg_path" => builtin_fn!(trace_svg_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::trace_svg_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_impl(ctx, def_ix, arg_refs, args, kwargs)

@@ -338,6 +338,44 @@ impl Statement {
       }
     }
   }
+
+  /// Iterates over all expressions directly contained in this statement (not recursively).
+  pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
+    let (first, second) = match self {
+      Statement::Assignment { expr, .. } => (Some(expr), None),
+      Statement::DestructureAssignment { lhs: _, rhs } => (Some(rhs), None),
+      Statement::Expr(expr) => (Some(expr), None),
+      Statement::Return { value } => (value.as_ref(), None),
+      Statement::Break { value } => (value.as_ref(), None),
+    };
+    first.into_iter().chain(second)
+  }
+
+  /// Iterates over all expressions directly contained in this statement (not recursively), mutably.
+  pub fn exprs_mut(&mut self) -> impl Iterator<Item = &mut Expr> {
+    let (first, second) = match self {
+      Statement::Assignment { expr, .. } => (Some(expr), None),
+      Statement::DestructureAssignment { lhs: _, rhs } => (Some(rhs), None),
+      Statement::Expr(expr) => (Some(expr), None),
+      Statement::Return { value } => (value.as_mut(), None),
+      Statement::Break { value } => (value.as_mut(), None),
+    };
+    first.into_iter().chain(second)
+  }
+
+  /// Traverses all expressions in this statement recursively, calling `cb` on each.
+  pub fn traverse_exprs(&self, cb: &mut impl FnMut(&Expr)) {
+    for expr in self.exprs() {
+      expr.traverse(cb);
+    }
+  }
+
+  /// Traverses all expressions in this statement recursively and mutably, calling `cb` on each.
+  pub fn traverse_exprs_mut(&mut self, cb: &mut impl FnMut(&mut Expr)) {
+    for expr in self.exprs_mut() {
+      expr.traverse_mut(cb);
+    }
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -909,25 +947,6 @@ impl Expr {
   }
 
   pub fn traverse(&self, cb: &mut impl FnMut(&Self)) {
-    // TODO: this match statement is duplicated like 3 times in the codebase
-    fn traverse_stmt(stmt: &Statement, cb: &mut impl FnMut(&Expr)) {
-      match stmt {
-        Statement::Assignment { expr, .. } => expr.traverse(cb),
-        Statement::DestructureAssignment { lhs: _, rhs } => rhs.traverse(cb),
-        Statement::Expr(expr) => expr.traverse(cb),
-        Statement::Return { value } => {
-          if let Some(expr) = value {
-            expr.traverse(cb);
-          }
-        }
-        Statement::Break { value } => {
-          if let Some(expr) = value {
-            expr.traverse(cb);
-          }
-        }
-      }
-    }
-
     match self {
       Expr::BinOp { lhs, rhs, .. } => {
         cb(self);
@@ -961,7 +980,7 @@ impl Expr {
       }
       Expr::Closure { body, .. } => {
         cb(self);
-        body.0.iter().for_each(|stmt| traverse_stmt(stmt, cb));
+        body.0.iter().for_each(|stmt| stmt.traverse_exprs(cb));
       }
       Expr::Ident(_) | Expr::Literal(_) | Expr::ArrayLiteral(_) => {
         cb(self);
@@ -995,31 +1014,13 @@ impl Expr {
       Expr::Block { statements } => {
         cb(self);
         for stmt in statements {
-          traverse_stmt(stmt, cb);
+          stmt.traverse_exprs(cb);
         }
       }
     }
   }
 
   fn traverse_mut(&mut self, cb: &mut impl FnMut(&mut Self)) {
-    fn traverse_stmt_mut(stmt: &mut Statement, cb: &mut impl FnMut(&mut Expr)) {
-      match stmt {
-        Statement::Assignment { expr, .. } => expr.traverse_mut(cb),
-        Statement::DestructureAssignment { lhs: _, rhs } => rhs.traverse_mut(cb),
-        Statement::Expr(expr) => expr.traverse_mut(cb),
-        Statement::Return { value } => {
-          if let Some(expr) = value {
-            expr.traverse_mut(cb);
-          }
-        }
-        Statement::Break { value } => {
-          if let Some(expr) = value {
-            expr.traverse_mut(cb);
-          }
-        }
-      }
-    }
-
     match self {
       Expr::BinOp { .. } => {
         cb(self);
@@ -1080,7 +1081,7 @@ impl Expr {
         Rc::make_mut(body)
           .0
           .iter_mut()
-          .for_each(|stmt| traverse_stmt_mut(stmt, cb));
+          .for_each(|stmt| stmt.traverse_exprs_mut(cb));
       }
       Expr::Ident(_) | Expr::Literal(_) => {
         cb(self);
@@ -1133,7 +1134,7 @@ impl Expr {
           return;
         };
         for stmt in statements {
-          traverse_stmt_mut(stmt, cb);
+          stmt.traverse_exprs_mut(cb);
         }
       }
     }
@@ -1322,26 +1323,8 @@ impl ClosureBody {
 
   pub(crate) fn traverse_exprs_mut(&mut self, mut traverse: impl FnMut(&mut Expr)) {
     for stmt in &mut self.0 {
-      match stmt {
-        Statement::Assignment { expr, .. } => {
-          traverse(expr);
-        }
-        Statement::DestructureAssignment { lhs: _, rhs } => {
-          traverse(rhs);
-        }
-        Statement::Expr(expr) => {
-          traverse(expr);
-        }
-        Statement::Return { value } => {
-          if let Some(expr) = value {
-            traverse(expr);
-          }
-        }
-        Statement::Break { value } => {
-          if let Some(expr) = value {
-            traverse(expr);
-          }
-        }
+      for expr in stmt.exprs_mut() {
+        traverse(expr);
       }
     }
   }
@@ -1349,7 +1332,6 @@ impl ClosureBody {
 
 #[derive(Clone, Debug)]
 pub enum FunctionCallTarget {
-  // TODO: we should aim to phase out name and resolve callables during const eval
   Name(Sym),
   Literal(Rc<Callable>),
 }
@@ -2361,41 +2343,10 @@ pub(crate) fn pre_resolve_expr_type(
             return Some(ArgType::Mesh);
           }
 
-          match &**rhs {
-            Expr::Literal(Value::Callable(callable)) => match &**callable {
-              Callable::Builtin {
-                fn_entry_ix,
-                fn_impl: _,
-                pre_resolved_signature,
-              } => match pre_resolved_signature {
-                Some(sig) => {
-                  let fn_signature_defs = &fn_sigs().entries[*fn_entry_ix].1.signatures;
-                  let return_ty = fn_signature_defs[sig.def_ix].return_type;
-                  if return_ty.len() == 1 {
-                    return Some(return_ty[0]);
-                  } else {
-                    return None;
-                  }
-                }
-                None => {
-                  return None;
-                }
-              },
-              Callable::PartiallyAppliedFn(_) => {
-                // TODO: should eventually be able to resolve this
-                return None;
-              }
-              Callable::Closure(Closure {
-                return_type_hint, ..
-              }) => match return_type_hint {
-                Some(ty) => return Some((*ty).into()),
-                None => return None,
-              },
-              Callable::ComposedFn(_) => return None,
-              Callable::Dynamic { inner, .. } => return inner.get_return_type_hint(),
-            },
-            _ => return None,
-          }
+          return match &**rhs {
+            Expr::Literal(Value::Callable(callable)) => callable.get_return_type_hint(),
+            _ => None,
+          };
         }
         BinOp::Map => return Some(ArgType::Sequence),
         _ => (),
@@ -2527,7 +2478,7 @@ pub(crate) fn pre_resolve_expr_type(
             _ => None,
           }
         }
-        Callable::PartiallyAppliedFn(_) => None,
+        Callable::PartiallyAppliedFn(paf) => paf.get_return_type_hint(),
         Callable::Closure(closure) => closure.return_type_hint.map(Into::into),
         Callable::ComposedFn(_) => None,
         Callable::Dynamic { inner, .. } => return inner.get_return_type_hint(),
@@ -2680,26 +2631,8 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
         }
       }
       for stmt in &body.0 {
-        match stmt {
-          Statement::Expr(expr) => {
-            dyn_type = dyn_type | get_dyn_type(expr, local_scope);
-          }
-          Statement::DestructureAssignment { lhs: _, rhs } => {
-            dyn_type = dyn_type | get_dyn_type(rhs, local_scope);
-          }
-          Statement::Assignment { expr, .. } => {
-            dyn_type = dyn_type | get_dyn_type(expr, local_scope);
-          }
-          Statement::Return { value } => {
-            if let Some(value) = value {
-              dyn_type = dyn_type | get_dyn_type(value, local_scope);
-            }
-          }
-          Statement::Break { value } => {
-            if let Some(value) = value {
-              dyn_type = dyn_type | get_dyn_type(value, local_scope);
-            }
-          }
+        for expr in stmt.exprs() {
+          dyn_type = dyn_type | get_dyn_type(expr, local_scope);
         }
       }
       dyn_type
@@ -2745,26 +2678,9 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
       dyn_type
     }
     Expr::Block { statements } => statements.iter().fold(DynType::Const, |acc, stmt| {
-      let dyn_type = match stmt {
-        Statement::Expr(expr) => get_dyn_type(expr, local_scope),
-        Statement::DestructureAssignment { lhs: _, rhs } => get_dyn_type(rhs, local_scope),
-        Statement::Assignment { expr, .. } => get_dyn_type(expr, local_scope),
-        Statement::Return { value } => {
-          if let Some(value) = value {
-            get_dyn_type(value, local_scope)
-          } else {
-            DynType::Const
-          }
-        }
-        Statement::Break { value } => {
-          if let Some(value) = value {
-            get_dyn_type(value, local_scope)
-          } else {
-            DynType::Const
-          }
-        }
-      };
-      acc | dyn_type
+      stmt
+        .exprs()
+        .fold(acc, |acc, expr| acc | get_dyn_type(expr, local_scope))
     }),
   }
 }
@@ -2782,21 +2698,7 @@ pub fn traverse_fn_calls(program: &Program, mut cb: impl FnMut(Sym)) {
   };
 
   for stmt in &program.statements {
-    match stmt {
-      Statement::Expr(expr) => expr.traverse(&mut cb),
-      Statement::Assignment { expr, .. } => expr.traverse(&mut cb),
-      Statement::DestructureAssignment { lhs: _, rhs } => rhs.traverse(&mut cb),
-      Statement::Return { value } => {
-        if let Some(expr) = value {
-          expr.traverse(&mut cb);
-        }
-      }
-      Statement::Break { value } => {
-        if let Some(expr) = value {
-          expr.traverse(&mut cb);
-        }
-      }
-    }
+    stmt.traverse_exprs(&mut cb);
   }
 }
 

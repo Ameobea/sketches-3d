@@ -29,3 +29,4 @@ siphasher = "0.3"
 mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }
 tessellation = { path = "../tessellation" }
+svgtypes = "0.16.1"

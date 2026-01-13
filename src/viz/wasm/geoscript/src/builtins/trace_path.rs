@@ -3,10 +3,14 @@ use std::f32::consts::PI;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
+use svgtypes::PathParser;
 
 use crate::{
   ast::{ClosureBody, Expr, FunctionCall, FunctionCallTarget},
-  builtins::fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
+  builtins::{
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, FN_SIGNATURE_DEFS},
+    FUNCTION_ALIASES,
+  },
   get_args, AppendOnlyBuffer, ArgRef, ArgType, Callable, CapturedScope, Closure, DynamicCallable,
   ErrorStack, EvalCtx, GetArgsOutput, Scope, Sym, Value, Vec2, EMPTY_ARGS, EMPTY_KWARGS,
 };
@@ -200,6 +204,8 @@ impl PathTracerCallable {
     let mut segments = Vec::new();
     let mut current: Option<Vec2> = None;
     let mut first_point: Option<Vec2> = None;
+    let mut last_cubic_ctrl: Option<Vec2> = None;
+    let mut last_quad_ctrl: Option<Vec2> = None;
 
     let get_start = |current: &Option<Vec2>, first_point: &Option<Vec2>| -> Vec2 {
       current
@@ -214,6 +220,8 @@ impl PathTracerCallable {
           if first_point.is_none() {
             first_point = Some(pos);
           }
+          last_cubic_ctrl = None;
+          last_quad_ctrl = None;
         }
         DrawCommand::LineTo(pos) => {
           let start = get_start(&current, &first_point);
@@ -226,6 +234,8 @@ impl PathTracerCallable {
             });
           }
           current = Some(pos);
+          last_cubic_ctrl = None;
+          last_quad_ctrl = None;
         }
         DrawCommand::QuadraticBezier { ctrl, to } => {
           let start = get_start(&current, &first_point);
@@ -241,6 +251,29 @@ impl PathTracerCallable {
             });
           }
           current = Some(to);
+          last_quad_ctrl = Some(ctrl);
+          last_cubic_ctrl = None;
+        }
+        DrawCommand::SmoothQuadraticBezier { to } => {
+          let start = get_start(&current, &first_point);
+          let ctrl = match last_quad_ctrl {
+            Some(last_ctrl) => start + (start - last_ctrl),
+            None => start,
+          };
+          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+            quadratic_bezier(start, ctrl, to, t)
+          });
+          if table.total() > LENGTH_EPSILON {
+            segments.push(PathSegment::Quadratic {
+              start,
+              ctrl,
+              end: to,
+              table,
+            });
+          }
+          current = Some(to);
+          last_quad_ctrl = Some(ctrl);
+          last_cubic_ctrl = None;
         }
         DrawCommand::CubicBezier { ctrl1, ctrl2, to } => {
           let start = get_start(&current, &first_point);
@@ -257,6 +290,30 @@ impl PathTracerCallable {
             });
           }
           current = Some(to);
+          last_cubic_ctrl = Some(ctrl2);
+          last_quad_ctrl = None;
+        }
+        DrawCommand::SmoothCubicBezier { ctrl2, to } => {
+          let start = get_start(&current, &first_point);
+          let ctrl1 = match last_cubic_ctrl {
+            Some(last_ctrl) => start + (start - last_ctrl),
+            None => start,
+          };
+          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+            cubic_bezier(start, ctrl1, ctrl2, to, t)
+          });
+          if table.total() > LENGTH_EPSILON {
+            segments.push(PathSegment::Cubic {
+              start,
+              ctrl1,
+              ctrl2,
+              end: to,
+              table,
+            });
+          }
+          current = Some(to);
+          last_cubic_ctrl = Some(ctrl2);
+          last_quad_ctrl = None;
         }
         DrawCommand::Arc {
           rx,
@@ -275,6 +332,23 @@ impl PathTracerCallable {
             }
           }
           current = Some(to);
+          last_cubic_ctrl = None;
+          last_quad_ctrl = None;
+        }
+        DrawCommand::Close => {
+          if let (Some(cur), Some(first)) = (current, first_point) {
+            let length = (first - cur).norm();
+            if length > LENGTH_EPSILON {
+              segments.push(PathSegment::Line {
+                start: cur,
+                end: first,
+                length,
+              });
+            }
+            current = Some(first);
+          }
+          last_cubic_ctrl = None;
+          last_quad_ctrl = None;
         }
       }
     }
@@ -399,8 +473,15 @@ pub enum DrawCommand {
     ctrl: Vec2,
     to: Vec2,
   },
+  SmoothQuadraticBezier {
+    to: Vec2,
+  },
   CubicBezier {
     ctrl1: Vec2,
+    ctrl2: Vec2,
+    to: Vec2,
+  },
+  SmoothCubicBezier {
     ctrl2: Vec2,
     to: Vec2,
   },
@@ -412,11 +493,19 @@ pub enum DrawCommand {
     sweep: bool,
     to: Vec2,
   },
+  Close,
 }
 
-#[derive(Default)]
 struct DrawCtx {
   pub cmds: AppendOnlyBuffer<DrawCommand>,
+}
+
+impl Default for DrawCtx {
+  fn default() -> Self {
+    Self {
+      cmds: AppendOnlyBuffer::default(),
+    }
+  }
 }
 
 impl DrawCtx {
@@ -427,6 +516,20 @@ impl DrawCtx {
 }
 
 fn inject_draw_commands(ctx: &EvalCtx, scope: &Scope, draw_ctx: &Rc<DrawCtx>) {
+  fn draw_command_kind_for_name(name: &str) -> Option<DrawCommandKind> {
+    match name {
+      "move" => Some(DrawCommandKind::Move),
+      "line" => Some(DrawCommandKind::Line),
+      "quadratic_bezier" => Some(DrawCommandKind::Quadratic),
+      "smooth_quadratic_bezier" => Some(DrawCommandKind::SmoothQuadratic),
+      "cubic_bezier" => Some(DrawCommandKind::Cubic),
+      "smooth_cubic_bezier" => Some(DrawCommandKind::SmoothCubic),
+      "arc" => Some(DrawCommandKind::Arc),
+      "close" => Some(DrawCommandKind::Close),
+      _ => None,
+    }
+  }
+
   fn insert_cmd(
     ctx: &EvalCtx,
     scope: &Scope,
@@ -447,25 +550,30 @@ fn inject_draw_commands(ctx: &EvalCtx, scope: &Scope, draw_ctx: &Rc<DrawCtx>) {
     );
   }
 
-  insert_cmd(ctx, scope, draw_ctx, "move", DrawCommandKind::Move);
-  insert_cmd(ctx, scope, draw_ctx, "line", DrawCommandKind::Line);
-  insert_cmd(
-    ctx,
-    scope,
-    draw_ctx,
+  let canonical = [
+    "move",
+    "line",
     "quadratic_bezier",
-    DrawCommandKind::Quadratic,
-  );
-  insert_cmd(
-    ctx,
-    scope,
-    draw_ctx,
-    "quad_bezier",
-    DrawCommandKind::Quadratic,
-  );
-  insert_cmd(ctx, scope, draw_ctx, "cubic_bezier", DrawCommandKind::Cubic);
+    "smooth_quadratic_bezier",
+    "cubic_bezier",
+    "smooth_cubic_bezier",
+    "arc",
+    "close",
+  ];
+  for name in canonical {
+    if let Some(kind) = draw_command_kind_for_name(name) {
+      insert_cmd(ctx, scope, draw_ctx, name, kind);
+    }
+  }
+
+  // Trace-path-specific alias; global aliasing maps "bezier" to 3d.
   insert_cmd(ctx, scope, draw_ctx, "bezier", DrawCommandKind::Cubic);
-  insert_cmd(ctx, scope, draw_ctx, "arc", DrawCommandKind::Arc);
+
+  for (alias, target) in FUNCTION_ALIASES.entries() {
+    if let Some(kind) = draw_command_kind_for_name(target) {
+      insert_cmd(ctx, scope, draw_ctx, alias, kind);
+    }
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -473,8 +581,11 @@ enum DrawCommandKind {
   Move,
   Line,
   Quadratic,
+  SmoothQuadratic,
   Cubic,
+  SmoothCubic,
   Arc,
+  Close,
 }
 
 struct DrawCommandCallable {
@@ -497,8 +608,15 @@ impl DynamicCallable for DrawCommandCallable {
     ctx: &EvalCtx,
   ) -> Result<Value, ErrorStack> {
     let fn_name = self.fn_name();
+    let resolved_name = match fn_name {
+      "quad_bezier" => "quadratic_bezier",
+      "smooth_quad_bezier" => "smooth_quadratic_bezier",
+      "smooth_bezier" => "smooth_cubic_bezier",
+      "bezier" => "cubic_bezier",
+      _ => fn_name,
+    };
     let fn_def = fn_sigs()
-      .get(fn_name)
+      .get(resolved_name)
       .ok_or_else(|| ErrorStack::new(format!("Unknown draw command `{fn_name}`")))?;
     let (def_ix, arg_refs) = match get_args(ctx, fn_name, fn_def.signatures, args, kwargs)? {
       GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
@@ -554,6 +672,21 @@ impl DynamicCallable for DrawCommandCallable {
           .cmds
           .push(DrawCommand::QuadraticBezier { ctrl, to });
       }
+      DrawCommandKind::SmoothQuadratic => {
+        let to = match def_ix {
+          0 => *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
+          1 => {
+            let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+            let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+            Vec2::new(x, y)
+          }
+          _ => unreachable!(),
+        };
+        self
+          .draw_ctx
+          .cmds
+          .push(DrawCommand::SmoothQuadraticBezier { to });
+      }
       DrawCommandKind::Cubic => {
         let (ctrl1, ctrl2, to) = match def_ix {
           0 => (
@@ -581,6 +714,26 @@ impl DynamicCallable for DrawCommandCallable {
           .draw_ctx
           .cmds
           .push(DrawCommand::CubicBezier { ctrl1, ctrl2, to });
+      }
+      DrawCommandKind::SmoothCubic => {
+        let (ctrl2, to) = match def_ix {
+          0 => (
+            *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
+            *arg_refs[1].resolve(args, kwargs).as_vec2().unwrap(),
+          ),
+          1 => {
+            let c2x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+            let c2y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+            let x = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+            let y = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+            (Vec2::new(c2x, c2y), Vec2::new(x, y))
+          }
+          _ => unreachable!(),
+        };
+        self
+          .draw_ctx
+          .cmds
+          .push(DrawCommand::SmoothCubicBezier { ctrl2, to });
       }
       DrawCommandKind::Arc => {
         let rx = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
@@ -619,6 +772,9 @@ impl DynamicCallable for DrawCommandCallable {
           sweep,
           to,
         });
+      }
+      DrawCommandKind::Close => {
+        self.draw_ctx.cmds.push(DrawCommand::Close);
       }
     }
 
@@ -766,13 +922,15 @@ fn build_arc_segment(
   })
 }
 
-pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: [&str; 6] = [
+pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: [&str; 8] = [
   "move",
   "line",
   "quadratic_bezier",
-  "quad_bezier",
+  "smooth_quadratic_bezier",
   "cubic_bezier",
+  "smooth_cubic_bezier",
   "arc",
+  "close",
 ];
 
 fn eval_trace_path_cb(ctx: &EvalCtx, cb: &Callable) -> Result<Vec<DrawCommand>, ErrorStack> {
@@ -821,6 +979,7 @@ fn eval_trace_path_cb(ctx: &EvalCtx, cb: &Callable) -> Result<Vec<DrawCommand>, 
         Expr::Call(FunctionCall { target, .. }) => match target {
           FunctionCallTarget::Literal(callable) => match &**callable {
             Callable::Builtin { fn_entry_ix, .. } => {
+              dbg!(fn_sigs().entries[*fn_entry_ix].0);
               if let Some(name) = draw_cmd_name_by_entry_ix.get(fn_entry_ix) {
                 *target = FunctionCallTarget::Name(ctx.interned_symbols.intern(name));
               }
@@ -846,7 +1005,6 @@ fn eval_trace_path_cb(ctx: &EvalCtx, cb: &Callable) -> Result<Vec<DrawCommand>, 
 
     traverse_inner(ctx, &draw_cmd_name_by_entry_ix, expr);
   };
-  dbg!(&body);
   body.traverse_exprs_mut(&mut traverse);
   closure.body = Rc::new(body);
 
@@ -897,9 +1055,182 @@ pub fn trace_path_impl(
   }
 }
 
+fn parse_svg_path_to_draw_commands(svg_path_str: &str) -> Result<Vec<DrawCommand>, ErrorStack> {
+  let parser = PathParser::from(svg_path_str);
+
+  let mut draw_cmds = Vec::new();
+  let mut current_pos = Vec2::new(0.0, 0.0);
+  let mut start_pos = Vec2::new(0.0, 0.0); // For ClosePath
+
+  for segment in parser {
+    let segment =
+      segment.map_err(|err| ErrorStack::new(format!("invalid SVG path data: {err}",)))?;
+    match segment {
+      svgtypes::PathSegment::MoveTo { abs, x, y } => {
+        let pos = if abs {
+          Vec2::new(x as f32, y as f32)
+        } else {
+          Vec2::new(current_pos.x + x as f32, current_pos.y + y as f32)
+        };
+        draw_cmds.push(DrawCommand::MoveTo(pos));
+        current_pos = pos;
+        start_pos = pos;
+      }
+      svgtypes::PathSegment::LineTo { abs, x, y } => {
+        let pos = if abs {
+          Vec2::new(x as f32, y as f32)
+        } else {
+          Vec2::new(current_pos.x + x as f32, current_pos.y + y as f32)
+        };
+        draw_cmds.push(DrawCommand::LineTo(pos));
+        current_pos = pos;
+      }
+      svgtypes::PathSegment::HorizontalLineTo { abs, x } => {
+        let pos = if abs {
+          Vec2::new(x as f32, current_pos.y)
+        } else {
+          Vec2::new(current_pos.x + x as f32, current_pos.y)
+        };
+        draw_cmds.push(DrawCommand::LineTo(pos));
+        current_pos = pos;
+      }
+      svgtypes::PathSegment::VerticalLineTo { abs, y } => {
+        let pos = if abs {
+          Vec2::new(current_pos.x, y as f32)
+        } else {
+          Vec2::new(current_pos.x, current_pos.y + y as f32)
+        };
+        draw_cmds.push(DrawCommand::LineTo(pos));
+        current_pos = pos;
+      }
+      svgtypes::PathSegment::CurveTo {
+        abs,
+        x1,
+        y1,
+        x2,
+        y2,
+        x,
+        y,
+      } => {
+        let (ctrl1, ctrl2, to) = if abs {
+          (
+            Vec2::new(x1 as f32, y1 as f32),
+            Vec2::new(x2 as f32, y2 as f32),
+            Vec2::new(x as f32, y as f32),
+          )
+        } else {
+          (
+            Vec2::new(current_pos.x + x1 as f32, current_pos.y + y1 as f32),
+            Vec2::new(current_pos.x + x2 as f32, current_pos.y + y2 as f32),
+            Vec2::new(current_pos.x + x as f32, current_pos.y + y as f32),
+          )
+        };
+        draw_cmds.push(DrawCommand::CubicBezier { ctrl1, ctrl2, to });
+        current_pos = to;
+      }
+      svgtypes::PathSegment::SmoothCurveTo { abs, x2, y2, x, y } => {
+        let (ctrl2, to) = if abs {
+          (
+            Vec2::new(x2 as f32, y2 as f32),
+            Vec2::new(x as f32, y as f32),
+          )
+        } else {
+          (
+            Vec2::new(current_pos.x + x2 as f32, current_pos.y + y2 as f32),
+            Vec2::new(current_pos.x + x as f32, current_pos.y + y as f32),
+          )
+        };
+        draw_cmds.push(DrawCommand::SmoothCubicBezier { ctrl2, to });
+        current_pos = to;
+      }
+      svgtypes::PathSegment::Quadratic { abs, x1, y1, x, y } => {
+        let (ctrl, to) = if abs {
+          (
+            Vec2::new(x1 as f32, y1 as f32),
+            Vec2::new(x as f32, y as f32),
+          )
+        } else {
+          (
+            Vec2::new(current_pos.x + x1 as f32, current_pos.y + y1 as f32),
+            Vec2::new(current_pos.x + x as f32, current_pos.y + y as f32),
+          )
+        };
+        draw_cmds.push(DrawCommand::QuadraticBezier { ctrl, to });
+        current_pos = to;
+      }
+      svgtypes::PathSegment::SmoothQuadratic { abs, x, y } => {
+        let to = if abs {
+          Vec2::new(x as f32, y as f32)
+        } else {
+          Vec2::new(current_pos.x + x as f32, current_pos.y + y as f32)
+        };
+        draw_cmds.push(DrawCommand::SmoothQuadraticBezier { to });
+        current_pos = to;
+      }
+      svgtypes::PathSegment::EllipticalArc {
+        abs,
+        rx,
+        ry,
+        x_axis_rotation,
+        large_arc,
+        sweep,
+        x,
+        y,
+      } => {
+        let to = if abs {
+          Vec2::new(x as f32, y as f32)
+        } else {
+          Vec2::new(current_pos.x + x as f32, current_pos.y + y as f32)
+        };
+        draw_cmds.push(DrawCommand::Arc {
+          rx: rx as f32,
+          ry: ry as f32,
+          x_axis_rotation: x_axis_rotation as f32,
+          large_arc,
+          sweep,
+          to,
+        });
+        current_pos = to;
+      }
+      svgtypes::PathSegment::ClosePath { abs: _ } => {
+        draw_cmds.push(DrawCommand::Close);
+        current_pos = start_pos;
+      }
+    }
+  }
+
+  Ok(draw_cmds)
+}
+
+pub fn trace_svg_path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let svg_path_str = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
+
+      let draw_cmds = parse_svg_path_to_draw_commands(svg_path_str)
+        .map_err(|err| err.wrap("Error while parsing SVG path string"))?;
+
+      let interned_t_kwarg = ctx.interned_symbols.intern("t");
+      let path_tracer = PathTracerCallable::new(false, draw_cmds, interned_t_kwarg);
+      Ok(Value::Callable(Rc::new(Callable::Dynamic {
+        name: "trace_svg_path".to_string(),
+        inner: Box::new(path_tracer),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::parse_and_eval_program;
 
   fn assert_vec2_close(actual: Vec2, expected: Vec2) {
     let diff = (actual - expected).norm();
@@ -939,6 +1270,54 @@ mod tests {
   }
 
   #[test]
+  fn test_path_tracer_smooth_cubic_reflection() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::CubicBezier {
+        ctrl1: Vec2::new(0.0, 1.0),
+        ctrl2: Vec2::new(1.0, 1.0),
+        to: Vec2::new(2.0, 0.0),
+      },
+      DrawCommand::SmoothCubicBezier {
+        ctrl2: Vec2::new(4.0, 2.0),
+        to: Vec2::new(5.0, 0.0),
+      },
+    ];
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_eq!(tracer.segments.len(), 2);
+    match &tracer.segments[1] {
+      PathSegment::Cubic { ctrl1, .. } => {
+        assert_vec2_close(*ctrl1, Vec2::new(3.0, -1.0));
+      }
+      _ => panic!("Expected cubic segment for smooth cubic reflection"),
+    }
+  }
+
+  #[test]
+  fn test_path_tracer_smooth_quadratic_reflection() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::QuadraticBezier {
+        ctrl: Vec2::new(1.0, 1.0),
+        to: Vec2::new(2.0, 0.0),
+      },
+      DrawCommand::SmoothQuadraticBezier {
+        to: Vec2::new(4.0, 0.0),
+      },
+    ];
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_eq!(tracer.segments.len(), 2);
+    match &tracer.segments[1] {
+      PathSegment::Quadratic { ctrl, .. } => {
+        assert_vec2_close(*ctrl, Vec2::new(3.0, -1.0));
+      }
+      _ => panic!("Expected quadratic segment for smooth quadratic reflection"),
+    }
+  }
+
+  #[test]
   fn test_path_tracer_arc_endpoints() {
     let cmds = vec![
       DrawCommand::MoveTo(Vec2::new(1.0, 0.0)),
@@ -955,5 +1334,153 @@ mod tests {
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(-1.0, 0.0));
+  }
+
+  #[test]
+  fn test_path_tracer_closed_flag_adds_closing_segment() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(2.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(2.0, 2.0)),
+    ];
+    let tracer = PathTracerCallable::new(true, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(0.0, 0.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_absolute_line() {
+    // Simple absolute path: move to origin, line to (10, 0), line to (10, 10)
+    let svg = "M 0 0 L 10 0 L 10 10";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(10.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 10.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_relative_line() {
+    // Relative path: move to (5, 5), relative line +10 in x, then +10 in y
+    let svg = "M 5 5 l 10 0 l 0 10";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(5.0, 5.0));
+    assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(15.0, 5.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(15.0, 15.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_horizontal_vertical() {
+    // H and V commands
+    let svg = "M 0 0 H 10 V 10";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(10.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 10.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_cubic_bezier() {
+    // Cubic bezier from (0,0) to (10,0) with control points
+    let svg = "M 0 0 C 3 5, 7 5, 10 0";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_quadratic_bezier() {
+    // Quadratic bezier from (0,0) to (10,0) with control point at (5, 5)
+    let svg = "M 0 0 Q 5 5, 10 0";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_arc() {
+    // Arc from (1,0) to (-1,0) with rx=ry=1
+    let svg = "M 1 0 A 1 1 0 0 1 -1 0";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(1.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(-1.0, 0.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_close() {
+    // Triangle that closes back to start
+    let svg = "M 0 0 L 10 0 L 5 10 Z";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+
+    // Should have MoveTo, LineTo, LineTo, Close
+    assert_eq!(cmds.len(), 4);
+    assert!(matches!(cmds[3], DrawCommand::Close));
+
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    // With close, path goes back to origin
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(0.0, 0.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_smooth_cubic() {
+    // Smooth cubic: S command reflects the previous control point
+    let svg = "M 0 0 C 0 5, 5 5, 5 0 S 10 -5, 10 0";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    assert!(matches!(cmds[2], DrawCommand::SmoothCubicBezier { .. }));
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert!(matches!(tracer.segments[1], PathSegment::Cubic { .. }));
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
+  }
+
+  #[test]
+  fn test_parse_svg_path_smooth_quadratic() {
+    // Smooth quadratic: T command reflects the previous control point
+    let svg = "M 0 0 Q 2.5 5, 5 0 T 10 0";
+    let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
+    assert!(matches!(cmds[2], DrawCommand::SmoothQuadraticBezier { .. }));
+    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+
+    assert!(matches!(tracer.segments[1], PathSegment::Quadratic { .. }));
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
+  }
+
+  #[test]
+  fn test_trace_path_alias_draw_commands() {
+    let src = r#"
+path = trace_path(|| {
+  move(0, 0)
+  quad_bezier(vec2(1, 0), vec2(2, 0))
+  smooth_quadratic_bezier(3, 0)
+  cubic_bezier(vec2(4, 0), vec2(5, 0), vec2(6, 0))
+  smooth_bezier(vec2(7, 0), vec2(8, 0))
+})
+p0 = path(0)
+p1 = path(1)
+"#;
+
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0_val = ctx.get_global("p0").unwrap();
+    let p1_val = ctx.get_global("p1").unwrap();
+    let p0 = p0_val.as_vec2().unwrap();
+    let p1 = p1_val.as_vec2().unwrap();
+
+    assert_vec2_close(*p0, Vec2::new(0.0, 0.0));
+    assert_vec2_close(*p1, Vec2::new(8.0, 0.0));
   }
 }

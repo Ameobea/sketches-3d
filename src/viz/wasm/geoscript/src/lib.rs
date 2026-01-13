@@ -193,6 +193,14 @@ pub struct PartiallyAppliedFn {
   kwargs: FxHashMap<Sym, Value>,
 }
 
+impl PartiallyAppliedFn {
+  fn get_return_type_hint(&self) -> Option<ArgType> {
+    // TODO: not sure if it's possible to determine this since the return type is dynamic based on
+    // what args are passed (either another PAF or the final return type)
+    None
+  }
+}
+
 impl Debug for PartiallyAppliedFn {
   #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -385,7 +393,10 @@ impl Callable {
             | "quadratic_bezier"
             | "quad_bezier"
             | "cubic_bezier"
+            | "smooth_cubic_bezier"
+            | "smooth_quadratic_bezier"
             | "arc"
+            | "close"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
@@ -405,6 +416,38 @@ impl Callable {
       Callable::Closure(_) => false,
       Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_rng_dependent()),
       Callable::Dynamic { inner, .. } => inner.is_rng_dependent(),
+    }
+  }
+
+  pub fn get_return_type_hint(&self) -> Option<ArgType> {
+    match self {
+      Callable::Builtin {
+        fn_entry_ix,
+        fn_impl: _,
+        pre_resolved_signature,
+      } => match pre_resolved_signature {
+        Some(sig) => {
+          let fn_signature_defs = &fn_sigs().entries[*fn_entry_ix].1.signatures;
+          let return_ty = fn_signature_defs[sig.def_ix].return_type;
+          if return_ty.len() == 1 {
+            return Some(return_ty[0]);
+          } else {
+            return None;
+          }
+        }
+        None => {
+          return None;
+        }
+      },
+      Callable::PartiallyAppliedFn(paf) => paf.get_return_type_hint(),
+      Callable::Closure(Closure {
+        return_type_hint, ..
+      }) => match return_type_hint {
+        Some(ty) => return Some((*ty).into()),
+        None => return None,
+      },
+      Callable::ComposedFn(_) => return None,
+      Callable::Dynamic { inner, .. } => return inner.get_return_type_hint(),
     }
   }
 }
