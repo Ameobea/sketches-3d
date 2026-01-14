@@ -2348,6 +2348,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
   pub fn subdivide_by_plane(&mut self, plane: &Plane) {
     let face_keys: Vec<FaceKey> = self.faces.keys().collect();
+    let mut created_vertices = FxHashMap::<[VertexKey; 2], VertexKey>::default();
 
     for face_key in face_keys {
       if !self.faces.contains_key(face_key) {
@@ -2392,27 +2393,34 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           }
 
           if (ti | tj) == PolygonClass::Spanning {
-            let t = dists[i] / (dists[i] - dists[j]);
-            let v_i = &self.vertices[vi_key];
-            let v_j = &self.vertices[vj_key];
-            let new_v_pos = v_i.position.lerp(&v_j.position, t);
+            let edge_key = sort_edge(vi_key, vj_key);
+            let new_v_key = if let Some(&key) = created_vertices.get(&edge_key) {
+              key
+            } else {
+              let t = dists[i] / (dists[i] - dists[j]);
+              let v_i = &self.vertices[vi_key];
+              let v_j = &self.vertices[vj_key];
+              let new_v_pos = v_i.position.lerp(&v_j.position, t);
 
-            let shading_normal = match (v_i.shading_normal, v_j.shading_normal) {
-              (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-              _ => None,
-            };
-            let displacement_normal = match (v_i.displacement_normal, v_j.displacement_normal) {
-              (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-              _ => None,
-            };
+              let shading_normal = match (v_i.shading_normal, v_j.shading_normal) {
+                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+                _ => None,
+              };
+              let displacement_normal = match (v_i.displacement_normal, v_j.displacement_normal) {
+                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+                _ => None,
+              };
 
-            let new_v_key = self.vertices.insert(Vertex {
-              position: new_v_pos,
-              shading_normal,
-              displacement_normal,
-              edges: SmallVec::new(),
-              _padding: Default::default(),
-            });
+              let key = self.vertices.insert(Vertex {
+                position: new_v_pos,
+                shading_normal,
+                displacement_normal,
+                edges: SmallVec::new(),
+                _padding: Default::default(),
+              });
+              created_vertices.insert(edge_key, key);
+              key
+            };
 
             f.push(new_v_key);
             b.push(new_v_key);
@@ -3263,5 +3271,22 @@ mod tests {
     mesh
       .check_is_manifold::<true>()
       .expect("basic cube mesh should be two-manifold");
+  }
+
+  #[test]
+  fn subdivide_by_plane_manifold() {
+    let mut mesh: LinkedMesh<()> = LinkedMesh::new_box(1., 1., 1.);
+    let plane = Plane {
+      normal: Vec3::new(1., 1., 0.).normalize(),
+      w: 0.,
+    };
+
+    mesh.subdivide_by_plane(&plane);
+
+    mesh
+      .check_is_manifold::<true>()
+      .expect("Mesh should remain manifold after plane subdivision");
+
+    assert!(mesh.faces.len() > 12);
   }
 }

@@ -3475,6 +3475,12 @@ fn lerp_impl(
       let b = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Float(a + (b - a) * t))
     }
+    2 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let a = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
+      let b = arg_refs[2].resolve(args, kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(a.lerp(b, t)))
+    }
     _ => unimplemented!(),
   }
 }
