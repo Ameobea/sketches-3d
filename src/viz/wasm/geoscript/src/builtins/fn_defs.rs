@@ -5237,6 +5237,74 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "rail_sweep" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "spine_resolution",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Number of samples to take along the spine"
+          },
+          ArgDef {
+            name: "ring_resolution",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Number of samples to take around each profile ring"
+          },
+          ArgDef {
+            name: "spine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Spine definition as a callable with signature `|u: float|: vec3` or a sequence of Vec3 points.  If a sequence is provided and its length differs from `spine_resolution`, it will be resampled along its length."
+          },
+          ArgDef {
+            name: "profile",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Callable with signature `|u: float, v: float, u_ix: int, v_ix: int, spine_center: vec3|: vec2` that returns the local (x, y) offset for each point in the ring."
+          },
+          ArgDef {
+            name: "frame_mode",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::String("rmf".to_owned())),
+            description: "Frame mode for the sweep.  Use \"rmf\" (default) for rotation-minimizing frames, or provide a Vec3 up direction for fixed-up framing."
+          },
+          ArgDef {
+            name: "twist",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
+            default_value: DefaultValue::Optional(|| Value::Float(0.)),
+            description: "Twist angle in radians to apply per ring, or a callable with signature `|point_ix: int, spine_center: vec3|: float`."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "Whether to connect the last ring back to the first."
+          },
+          ArgDef {
+            name: "capped",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Whether to cap the start and end rings with triangle fans.  Ignored when `closed` is true."
+          },
+        ],
+        description: "Sweeps a profile along a spine to produce a mesh.  Profile points are connected in increasing `v` order; for outward-facing normals, the profile winding should be counter-clockwise when viewed along the local tangent.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "torus_knot_path" => FnDef {
     module: "path",
     examples: &[FnExample { composition_id: 13 }],
@@ -7013,6 +7081,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, the path will be closed by connecting the last point to the first point."
+          },
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the path will be centered around the origin after being traced."
           }
         ],
         description: "Traces a path based on draw commands issued within the provided callback function.  The function returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
@@ -7033,6 +7108,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: "An SVG path data string using move, line, cubic/quadratic, smooth, and arc commands."
           },
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the path will be centered around the origin after being traced."
+          }
         ],
         description: "Parses SVG path data and returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
         return_type: &[ArgType::Callable]

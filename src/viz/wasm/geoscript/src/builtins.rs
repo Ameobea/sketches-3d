@@ -45,6 +45,7 @@ use crate::{
       convex_hull_from_verts, get_geodesic_error, simplify_mesh, split_mesh_by_plane,
       trace_geodesic_path,
     },
+    rail_sweep::{rail_sweep, FrameMode},
     stitch_contours::stitch_contours,
   },
   noise::fbm_3d,
@@ -2490,6 +2491,254 @@ fn extrude_pipe_impl(
           )))
         }
       };
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: None,
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn rail_sweep_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let spine_resolution = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+      let ring_resolution = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
+      if spine_resolution < 2 {
+        return Err(ErrorStack::new(format!(
+          "Invalid spine_resolution for `rail_sweep`; expected >= 2, found: {spine_resolution}"
+        )));
+      }
+      if ring_resolution < 3 {
+        return Err(ErrorStack::new(format!(
+          "Invalid ring_resolution for `rail_sweep`; expected >= 3, found: {ring_resolution}"
+        )));
+      }
+      let spine_resolution = spine_resolution as usize;
+      let ring_resolution = ring_resolution as usize;
+
+      let spine = arg_refs[2].resolve(args, kwargs);
+      let profile = arg_refs[3].resolve(args, kwargs).as_callable().unwrap();
+      let frame_mode_val = arg_refs[4].resolve(args, kwargs);
+      let twist_val = arg_refs[5].resolve(args, kwargs);
+      let closed = arg_refs[6].resolve(args, kwargs).as_bool().unwrap();
+      let capped = arg_refs[7].resolve(args, kwargs).as_bool().unwrap();
+
+      fn resample_spine_points(
+        points: &[Vec3],
+        spine_resolution: usize,
+      ) -> Result<Vec<Vec3>, ErrorStack> {
+        if points.len() < 2 {
+          return Err(ErrorStack::new(format!(
+            "`rail_sweep` requires at least two spine points, found: {}",
+            points.len()
+          )));
+        }
+        if points.len() == spine_resolution {
+          return Ok(points.to_vec());
+        }
+
+        let mut cumulative = Vec::with_capacity(points.len());
+        cumulative.push(0.0);
+        for i in 1..points.len() {
+          let seg_len = (points[i] - points[i - 1]).norm();
+          cumulative.push(cumulative[i - 1] + seg_len);
+        }
+
+        let total = *cumulative.last().unwrap_or(&0.0);
+        if total <= 0.0 {
+          return Err(ErrorStack::new(
+            "Cannot resample `rail_sweep` spine with zero length",
+          ));
+        }
+
+        let mut out = Vec::with_capacity(spine_resolution);
+        for i in 0..spine_resolution {
+          let target = total * (i as f32) / ((spine_resolution - 1) as f32);
+          let mut seg_ix = 0;
+          while seg_ix + 1 < cumulative.len() && cumulative[seg_ix + 1] < target {
+            seg_ix += 1;
+          }
+          let seg_len = cumulative[seg_ix + 1] - cumulative[seg_ix];
+          let local_t = if seg_len <= 0.0 {
+            0.0
+          } else {
+            (target - cumulative[seg_ix]) / seg_len
+          };
+          out.push(points[seg_ix].lerp(&points[seg_ix + 1], local_t));
+        }
+
+        Ok(out)
+      }
+
+      let spine_points = if let Some(seq) = spine.as_sequence() {
+        let raw_points: Vec<Vec3> = seq
+          .consume(ctx)
+          .map(|res| match res {
+            Ok(Value::Vec3(v)) => Ok(v),
+            Ok(val) => Err(ErrorStack::new(format!(
+              "Expected Vec3 in spine sequence passed to `rail_sweep`, found: {val:?}"
+            ))),
+            Err(err) => Err(err),
+          })
+          .collect::<Result<_, _>>()?;
+
+        if raw_points.len() < 2 {
+          return Err(ErrorStack::new(format!(
+            "`rail_sweep` requires at least two spine points, found: {}",
+            raw_points.len()
+          )));
+        }
+
+        if raw_points.len() != spine_resolution {
+          resample_spine_points(&raw_points, spine_resolution)?
+        } else {
+          raw_points
+        }
+      } else if let Some(cb) = spine.as_callable() {
+        let mut points = Vec::with_capacity(spine_resolution);
+        let denom = (spine_resolution - 1) as f32;
+        for i in 0..spine_resolution {
+          let u = if denom > 0.0 { i as f32 / denom } else { 0.0 };
+          let out = ctx
+            .invoke_callable(cb, &[Value::Float(u)], EMPTY_KWARGS)
+            .map_err(|err| {
+              err.wrap("Error calling user-provided cb passed to `spine` arg in `rail_sweep`")
+            })?;
+          let v = out.as_vec3().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Expected Vec3 from user-provided cb passed to `spine` arg in `rail_sweep`, found: \
+               {out:?}"
+            ))
+          })?;
+          points.push(*v);
+        }
+        points
+      } else {
+        return Err(ErrorStack::new(format!(
+          "Invalid spine argument for `rail_sweep`; expected Sequence or Callable, found: \
+           {spine:?}"
+        )));
+      };
+
+      let frame_mode = if let Some(v) = frame_mode_val.as_vec3() {
+        FrameMode::Up(*v)
+      } else if let Some(mode) = frame_mode_val.as_str() {
+        if mode.eq_ignore_ascii_case("rmf") {
+          FrameMode::Rmf
+        } else {
+          return Err(ErrorStack::new(format!(
+            "Invalid frame_mode argument for `rail_sweep`; expected \"rmf\" or Vec3, found: \
+             {mode:?}"
+          )));
+        }
+      } else {
+        return Err(ErrorStack::new(format!(
+          "Invalid frame_mode argument for `rail_sweep`; expected \"rmf\" or Vec3, found: \
+           {frame_mode_val:?}"
+        )));
+      };
+
+      enum Twist<'a> {
+        Const(f32),
+        Dyn(&'a Rc<Callable>),
+      }
+
+      let twist = if let Some(f) = twist_val.as_float() {
+        Twist::Const(f)
+      } else if let Some(cb) = twist_val.as_callable() {
+        Twist::Dyn(cb)
+      } else {
+        return Err(ErrorStack::new(format!(
+          "Invalid twist argument for `rail_sweep`; expected Numeric or Callable, found: \
+           {twist_val:?}"
+        )));
+      };
+
+      fn build_twist_callable<'a>(
+        ctx: &'a EvalCtx,
+        get_twist: &'a Rc<Callable>,
+      ) -> impl Fn(usize, Vec3) -> Result<f32, ErrorStack> + 'a {
+        move |i, pos| {
+          let out = ctx
+            .invoke_callable(
+              get_twist,
+              &[Value::Int(i as i64), Value::Vec3(pos)],
+              EMPTY_KWARGS,
+            )
+            .map_err(|err| {
+              err.wrap("Error calling user-provided cb passed to `twist` arg in `rail_sweep`")
+            })?;
+          out.as_float().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Expected Float from user-provided cb passed to `twist` arg in `rail_sweep`, found: \
+               {out:?}"
+            ))
+          })
+        }
+      }
+
+      fn build_profile_callable<'a>(
+        ctx: &'a EvalCtx,
+        profile: &'a Rc<Callable>,
+      ) -> impl Fn(f32, f32, usize, usize, Vec3) -> Result<Vec2, ErrorStack> + 'a {
+        move |u, v, u_ix, v_ix, center| {
+          let out = ctx
+            .invoke_callable(
+              profile,
+              &[
+                Value::Float(u),
+                Value::Float(v),
+                Value::Int(u_ix as i64),
+                Value::Int(v_ix as i64),
+                Value::Vec3(center),
+              ],
+              EMPTY_KWARGS,
+            )
+            .map_err(|err| {
+              err.wrap("Error calling user-provided cb passed to `profile` arg in `rail_sweep`")
+            })?;
+          out.as_vec2().copied().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Expected Vec2 from user-provided cb passed to `profile` arg in `rail_sweep`, \
+               found: {out:?}"
+            ))
+          })
+        }
+      }
+
+      let mesh = match twist {
+        Twist::Const(twist) => rail_sweep(
+          &spine_points,
+          ring_resolution,
+          frame_mode,
+          closed,
+          capped,
+          |_, _| Ok(twist),
+          build_profile_callable(ctx, profile),
+        )?,
+        Twist::Dyn(get_twist) => rail_sweep(
+          &spine_points,
+          ring_resolution,
+          frame_mode,
+          closed,
+          capped,
+          build_twist_callable(ctx, get_twist),
+          build_profile_callable(ctx, profile),
+        )?,
+      };
+
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
@@ -5523,6 +5772,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "extrude_pipe" => builtin_fn!(extrude_pipe, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_pipe_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "rail_sweep" => builtin_fn!(rail_sweep, |def_ix, arg_refs, args, kwargs, ctx| {
+    rail_sweep_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "torus_knot_path" => builtin_fn!(torus_knot_path, |def_ix, arg_refs, args, kwargs, _ctx| {
     torus_knot_path_impl(def_ix, arg_refs, args, kwargs)

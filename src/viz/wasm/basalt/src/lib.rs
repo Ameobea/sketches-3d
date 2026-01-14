@@ -1,4 +1,4 @@
-#![feature(iter_array_chunks, array_windows)]
+#![feature(iter_array_chunks)]
 
 use bitvec::bitarr;
 use common::{random, rng, smoothstep, uninit};

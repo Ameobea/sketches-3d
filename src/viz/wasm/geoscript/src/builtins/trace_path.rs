@@ -8,7 +8,7 @@ use svgtypes::PathParser;
 use crate::{
   ast::{ClosureBody, Expr, FunctionCall, FunctionCallTarget},
   builtins::{
-    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, FN_SIGNATURE_DEFS},
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
     FUNCTION_ALIASES,
   },
   get_args, AppendOnlyBuffer, ArgRef, ArgType, Callable, CapturedScope, Closure, DynamicCallable,
@@ -18,6 +18,13 @@ use crate::{
 const CURVE_TABLE_SAMPLES: usize = 32;
 const LENGTH_EPSILON: f32 = 1e-5;
 
+fn extend_bounds(min: &mut Vec2, max: &mut Vec2, p: Vec2) {
+  min.x = min.x.min(p.x);
+  min.y = min.y.min(p.y);
+  max.x = max.x.max(p.x);
+  max.y = max.y.max(p.y);
+}
+
 #[derive(Clone)]
 struct ArcLengthTable {
   cumulative: Vec<f32>,
@@ -25,22 +32,28 @@ struct ArcLengthTable {
 }
 
 impl ArcLengthTable {
-  fn new(samples: usize, mut sample_fn: impl FnMut(f32) -> Vec2) -> Self {
+  fn new(samples: usize, mut sample_fn: impl FnMut(f32) -> Vec2) -> (Self, Vec2, Vec2) {
     let samples = samples.max(1);
     let mut cumulative = Vec::with_capacity(samples + 1);
     let mut total = 0.0;
+
+    let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
+    let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+
     let mut prev = sample_fn(0.0);
+    extend_bounds(&mut min, &mut max, prev);
     cumulative.push(0.0);
 
     for i in 1..=samples {
       let t = i as f32 / samples as f32;
       let point = sample_fn(t);
+      extend_bounds(&mut min, &mut max, point);
       total += (point - prev).norm();
       cumulative.push(total);
       prev = point;
     }
 
-    Self { cumulative, total }
+    (Self { cumulative, total }, min, max)
   }
 
   fn total(&self) -> f32 {
@@ -115,6 +128,38 @@ enum PathSegment {
 }
 
 impl PathSegment {
+  fn translate(&mut self, offset: Vec2) {
+    match self {
+      PathSegment::Line { start, end, .. } => {
+        *start = *start + offset;
+        *end = *end + offset;
+      }
+      PathSegment::Quadratic {
+        start, ctrl, end, ..
+      } => {
+        *start = *start + offset;
+        *ctrl = *ctrl + offset;
+        *end = *end + offset;
+      }
+      PathSegment::Cubic {
+        start,
+        ctrl1,
+        ctrl2,
+        end,
+        ..
+      } => {
+        *start = *start + offset;
+        *ctrl1 = *ctrl1 + offset;
+        *ctrl2 = *ctrl2 + offset;
+        *end = *end + offset;
+      }
+      PathSegment::Arc { center, end, .. } => {
+        *center = *center + offset;
+        *end = *end + offset;
+      }
+    }
+  }
+
   fn length(&self) -> f32 {
     match self {
       PathSegment::Line { length, .. } => *length,
@@ -200,12 +245,20 @@ pub struct PathTracerCallable {
 }
 
 impl PathTracerCallable {
-  pub fn new(closed: bool, draw_cmds: Vec<DrawCommand>, interned_t_kwarg: Sym) -> Self {
+  pub fn new(
+    closed: bool,
+    center: bool,
+    draw_cmds: Vec<DrawCommand>,
+    interned_t_kwarg: Sym,
+  ) -> Self {
     let mut segments = Vec::new();
     let mut current: Option<Vec2> = None;
     let mut first_point: Option<Vec2> = None;
     let mut last_cubic_ctrl: Option<Vec2> = None;
     let mut last_quad_ctrl: Option<Vec2> = None;
+
+    let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
+    let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
 
     let get_start = |current: &Option<Vec2>, first_point: &Option<Vec2>| -> Vec2 {
       current
@@ -216,6 +269,7 @@ impl PathTracerCallable {
     for cmd in draw_cmds {
       match cmd {
         DrawCommand::MoveTo(pos) => {
+          extend_bounds(&mut min, &mut max, pos);
           current = Some(pos);
           if first_point.is_none() {
             first_point = Some(pos);
@@ -225,6 +279,8 @@ impl PathTracerCallable {
         }
         DrawCommand::LineTo(pos) => {
           let start = get_start(&current, &first_point);
+          extend_bounds(&mut min, &mut max, start);
+          extend_bounds(&mut min, &mut max, pos);
           let length = (pos - start).norm();
           if length > LENGTH_EPSILON {
             segments.push(PathSegment::Line {
@@ -239,9 +295,11 @@ impl PathTracerCallable {
         }
         DrawCommand::QuadraticBezier { ctrl, to } => {
           let start = get_start(&current, &first_point);
-          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             quadratic_bezier(start, ctrl, to, t)
           });
+          extend_bounds(&mut min, &mut max, tmin);
+          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             segments.push(PathSegment::Quadratic {
               start,
@@ -260,9 +318,11 @@ impl PathTracerCallable {
             Some(last_ctrl) => start + (start - last_ctrl),
             None => start,
           };
-          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             quadratic_bezier(start, ctrl, to, t)
           });
+          extend_bounds(&mut min, &mut max, tmin);
+          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             segments.push(PathSegment::Quadratic {
               start,
@@ -277,9 +337,11 @@ impl PathTracerCallable {
         }
         DrawCommand::CubicBezier { ctrl1, ctrl2, to } => {
           let start = get_start(&current, &first_point);
-          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             cubic_bezier(start, ctrl1, ctrl2, to, t)
           });
+          extend_bounds(&mut min, &mut max, tmin);
+          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             segments.push(PathSegment::Cubic {
               start,
@@ -299,9 +361,11 @@ impl PathTracerCallable {
             Some(last_ctrl) => start + (start - last_ctrl),
             None => start,
           };
-          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             cubic_bezier(start, ctrl1, ctrl2, to, t)
           });
+          extend_bounds(&mut min, &mut max, tmin);
+          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             segments.push(PathSegment::Cubic {
               start,
@@ -324,9 +388,11 @@ impl PathTracerCallable {
           to,
         } => {
           let start = get_start(&current, &first_point);
-          if let Some(segment) =
+          if let Some((segment, tmin, tmax)) =
             build_arc_segment(start, to, rx, ry, x_axis_rotation, large_arc, sweep)
           {
+            extend_bounds(&mut min, &mut max, tmin);
+            extend_bounds(&mut min, &mut max, tmax);
             if segment.length() > LENGTH_EPSILON {
               segments.push(segment);
             }
@@ -337,6 +403,8 @@ impl PathTracerCallable {
         }
         DrawCommand::Close => {
           if let (Some(cur), Some(first)) = (current, first_point) {
+            extend_bounds(&mut min, &mut max, cur);
+            extend_bounds(&mut min, &mut max, first);
             let length = (first - cur).norm();
             if length > LENGTH_EPSILON {
               segments.push(PathSegment::Line {
@@ -356,6 +424,8 @@ impl PathTracerCallable {
     if closed {
       if let Some(cur) = current {
         let start = first_point.unwrap_or(cur);
+        extend_bounds(&mut min, &mut max, cur);
+        extend_bounds(&mut min, &mut max, start);
         let length = (start - cur).norm();
         if length > LENGTH_EPSILON {
           segments.push(PathSegment::Line {
@@ -364,6 +434,14 @@ impl PathTracerCallable {
             length,
           });
         }
+      }
+    }
+
+    if center && min.x <= max.x {
+      let center_pt = (min + max) * 0.5;
+      let offset = -center_pt;
+      for segment in &mut segments {
+        segment.translate(offset);
       }
     }
 
@@ -837,12 +915,15 @@ fn build_arc_segment(
   x_axis_rotation: f32,
   large_arc: bool,
   sweep: bool,
-) -> Option<PathSegment> {
+) -> Option<(PathSegment, Vec2, Vec2)> {
   let mut rx = rx.abs();
   let mut ry = ry.abs();
   if rx <= LENGTH_EPSILON || ry <= LENGTH_EPSILON {
     let length = (end - start).norm();
-    return Some(PathSegment::Line { start, end, length });
+    let mut min = start;
+    let mut max = start;
+    extend_bounds(&mut min, &mut max, end);
+    return Some((PathSegment::Line { start, end, length }, min, max));
   }
 
   if (end - start).norm() <= LENGTH_EPSILON {
@@ -871,7 +952,10 @@ fn build_arc_segment(
   let denom = rx_sq * y1p_sq + ry_sq * x1p_sq;
   if denom.abs() <= LENGTH_EPSILON {
     let length = (end - start).norm();
-    return Some(PathSegment::Line { start, end, length });
+    let mut min = start;
+    let mut max = start;
+    extend_bounds(&mut min, &mut max, end);
+    return Some((PathSegment::Line { start, end, length }, min, max));
   }
 
   let numerator = rx_sq * ry_sq - rx_sq * y1p_sq - ry_sq * x1p_sq;
@@ -896,7 +980,7 @@ fn build_arc_segment(
     theta_delta += 2.0 * PI;
   }
 
-  let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+  let (table, min, max) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
     arc_point(
       center,
       rx,
@@ -909,17 +993,21 @@ fn build_arc_segment(
     )
   });
 
-  Some(PathSegment::Arc {
-    end,
-    center,
-    rx,
-    ry,
-    cos_phi,
-    sin_phi,
-    theta_start,
-    theta_delta,
-    table,
-  })
+  Some((
+    PathSegment::Arc {
+      end,
+      center,
+      rx,
+      ry,
+      cos_phi,
+      sin_phi,
+      theta_start,
+      theta_delta,
+      table,
+    },
+    min,
+    max,
+  ))
 }
 
 pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: [&str; 8] = [
@@ -1040,12 +1128,13 @@ pub fn trace_path_impl(
     0 => {
       let cb = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
       let closed = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
+      let center = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
 
       let draw_cmds = eval_trace_path_cb(ctx, cb)
         .map_err(|err| err.wrap("Error while evaluating callback provided to `trace_path`"))?;
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let path_tracer = PathTracerCallable::new(closed, draw_cmds, interned_t_kwarg);
+      let path_tracer = PathTracerCallable::new(closed, center, draw_cmds, interned_t_kwarg);
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_path".to_string(),
         inner: Box::new(path_tracer),
@@ -1212,12 +1301,13 @@ pub fn trace_svg_path_impl(
   match def_ix {
     0 => {
       let svg_path_str = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
+      let center = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
 
       let draw_cmds = parse_svg_path_to_draw_commands(svg_path_str)
         .map_err(|err| err.wrap("Error while parsing SVG path string"))?;
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let path_tracer = PathTracerCallable::new(false, draw_cmds, interned_t_kwarg);
+      let path_tracer = PathTracerCallable::new(false, center, draw_cmds, interned_t_kwarg);
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_svg_path".to_string(),
         inner: Box::new(path_tracer),
@@ -1247,11 +1337,27 @@ mod tests {
       DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
       DrawCommand::LineTo(Vec2::new(1.0, 3.0)),
     ];
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(0.25).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(0.75).unwrap(), Vec2::new(1.0, 2.0));
+  }
+
+  #[test]
+  fn test_path_tracer_centering() {
+    // 10x10 Box ending at (10, 10). Center is (5, 5).
+    // Result should be shifted by (-5, -5), moving (0,0) to (-5, -5).
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(10.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(10.0, 10.0)),
+    ];
+    let tracer = PathTracerCallable::new(false, true, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(-5.0, -5.0)); // was 0,0
+    assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(5.0, -5.0)); // was 10,0
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(5.0, 5.0)); // was 10,10
   }
 
   #[test]
@@ -1263,7 +1369,7 @@ mod tests {
         to: Vec2::new(2.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(2.0, 0.0));
@@ -1283,7 +1389,7 @@ mod tests {
         to: Vec2::new(5.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_eq!(tracer.segments.len(), 2);
     match &tracer.segments[1] {
@@ -1306,7 +1412,7 @@ mod tests {
         to: Vec2::new(4.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_eq!(tracer.segments.len(), 2);
     match &tracer.segments[1] {
@@ -1330,7 +1436,7 @@ mod tests {
         to: Vec2::new(-1.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(-1.0, 0.0));
@@ -1343,7 +1449,7 @@ mod tests {
       DrawCommand::LineTo(Vec2::new(2.0, 0.0)),
       DrawCommand::LineTo(Vec2::new(2.0, 2.0)),
     ];
-    let tracer = PathTracerCallable::new(true, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(true, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(0.0, 0.0));
@@ -1354,7 +1460,7 @@ mod tests {
     // Simple absolute path: move to origin, line to (10, 0), line to (10, 10)
     let svg = "M 0 0 L 10 0 L 10 10";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(10.0, 0.0));
@@ -1366,7 +1472,7 @@ mod tests {
     // Relative path: move to (5, 5), relative line +10 in x, then +10 in y
     let svg = "M 5 5 l 10 0 l 0 10";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(5.0, 5.0));
     assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(15.0, 5.0));
@@ -1378,7 +1484,7 @@ mod tests {
     // H and V commands
     let svg = "M 0 0 H 10 V 10";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(10.0, 0.0));
@@ -1390,7 +1496,7 @@ mod tests {
     // Cubic bezier from (0,0) to (10,0) with control points
     let svg = "M 0 0 C 3 5, 7 5, 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
@@ -1401,7 +1507,7 @@ mod tests {
     // Quadratic bezier from (0,0) to (10,0) with control point at (5, 5)
     let svg = "M 0 0 Q 5 5, 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
@@ -1412,7 +1518,7 @@ mod tests {
     // Arc from (1,0) to (-1,0) with rx=ry=1
     let svg = "M 1 0 A 1 1 0 0 1 -1 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(-1.0, 0.0));
@@ -1428,7 +1534,7 @@ mod tests {
     assert_eq!(cmds.len(), 4);
     assert!(matches!(cmds[3], DrawCommand::Close));
 
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
     // With close, path goes back to origin
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(0.0, 0.0));
@@ -1440,7 +1546,7 @@ mod tests {
     let svg = "M 0 0 C 0 5, 5 5, 5 0 S 10 -5, 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
     assert!(matches!(cmds[2], DrawCommand::SmoothCubicBezier { .. }));
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert!(matches!(tracer.segments[1], PathSegment::Cubic { .. }));
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
@@ -1453,7 +1559,7 @@ mod tests {
     let svg = "M 0 0 Q 2.5 5, 5 0 T 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
     assert!(matches!(cmds[2], DrawCommand::SmoothQuadraticBezier { .. }));
-    let tracer = PathTracerCallable::new(false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
 
     assert!(matches!(tracer.segments[1], PathSegment::Quadratic { .. }));
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
