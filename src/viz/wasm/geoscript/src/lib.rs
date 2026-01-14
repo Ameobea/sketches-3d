@@ -1034,6 +1034,10 @@ impl ArgType {
   }
 
   fn list_from_bitflags(valid_types: u16) -> Vec<ArgType> {
+    if valid_types == ANY_FLAG {
+      return vec![ArgType::Any];
+    }
+
     let mut types = Vec::new();
     for arg_type in &[
       ArgType::Vec2,
@@ -1047,7 +1051,6 @@ impl ArgType {
       ArgType::String,
       ArgType::Material,
       ArgType::Nil,
-      ArgType::Any,
     ] {
       if valid_types & arg_type.as_bitflags() != 0 {
         types.push(*arg_type);
