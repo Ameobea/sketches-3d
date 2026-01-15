@@ -101,5 +101,7 @@ pub fn extrude_pipe(
       let radius = ring_radii[u_ix].get(v_ix);
       Ok(Vec2::new(theta.cos() * radius, theta.sin() * radius))
     },
+    None,
+    None,
   )
 }

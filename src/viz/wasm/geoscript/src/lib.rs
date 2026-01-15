@@ -295,6 +295,7 @@ pub trait DynamicCallable {
   // TODO: these need to get merged into an enum across the whole codebase.
   //
   // I even did that work, but it got lost in a merge conflict
+  fn as_any(&self) -> &dyn Any;
   fn is_side_effectful(&self) -> bool;
   fn is_rng_dependent(&self) -> bool;
 

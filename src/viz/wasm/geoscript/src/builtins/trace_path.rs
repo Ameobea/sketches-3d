@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::cmp::Ordering;
 use std::f32::consts::PI;
 use std::rc::Rc;
@@ -127,6 +128,13 @@ enum PathSegment {
   },
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SegmentInterval {
+  pub start: f32,
+  pub end: f32,
+  pub has_detail: bool,
+}
+
 impl PathSegment {
   fn translate(&mut self, offset: Vec2) {
     match self {
@@ -167,6 +175,10 @@ impl PathSegment {
       PathSegment::Cubic { table, .. } => table.total(),
       PathSegment::Arc { table, .. } => table.total(),
     }
+  }
+
+  fn has_detail(&self) -> bool {
+    !matches!(self, PathSegment::Line { .. })
   }
 
   fn end(&self) -> Vec2 {
@@ -242,12 +254,14 @@ pub struct PathTracerCallable {
   segments: Vec<PathSegment>,
   cumulative_lengths: Vec<f32>,
   total_length: f32,
+  reverse: bool,
 }
 
 impl PathTracerCallable {
   pub fn new(
     closed: bool,
     center: bool,
+    reverse: bool,
     draw_cmds: Vec<DrawCommand>,
     interned_t_kwarg: Sym,
   ) -> Self {
@@ -457,7 +471,67 @@ impl PathTracerCallable {
       segments,
       cumulative_lengths,
       total_length,
+      reverse,
     }
+  }
+
+  /// "Critical t values" refer to points at which sharp features occur in the path, such as where
+  /// two line segments intersect.  These are used to provide extra information when sampling to
+  /// avoid aliasing missing these sharp details.
+  ///
+  /// When `reverse` is enabled, these values are transformed via `1 - t` so that they still
+  /// correspond to the same physical points on the path when using the reversed sampling.
+  pub(crate) fn critical_t_values(&self) -> Vec<f32> {
+    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
+      return Vec::new();
+    }
+
+    let mut out = Vec::with_capacity(self.cumulative_lengths.len() + 1);
+    out.push(0.);
+    for len in &self.cumulative_lengths {
+      out.push((len / self.total_length).clamp(0., 1.));
+    }
+
+    if self.reverse {
+      // Transform all t values via `1 - t` and reverse the order to maintain sorted order
+      for t in &mut out {
+        *t = 1.0 - *t;
+      }
+      out.reverse();
+    }
+
+    out
+  }
+
+  pub(crate) fn segment_intervals(&self) -> Vec<SegmentInterval> {
+    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
+      return Vec::new();
+    }
+
+    let mut intervals = Vec::with_capacity(self.segments.len());
+    let mut prev = 0.0f32;
+    for (seg, cum_len) in self.segments.iter().zip(self.cumulative_lengths.iter()) {
+      let end = (cum_len / self.total_length).clamp(0.0, 1.0);
+      let start = prev.clamp(0.0, 1.0);
+      intervals.push(SegmentInterval {
+        start,
+        end,
+        has_detail: seg.has_detail(),
+      });
+      prev = end;
+    }
+
+    if self.reverse {
+      for interval in &mut intervals {
+        let start = (1.0 - interval.end).clamp(0.0, 1.0);
+        let end = (1.0 - interval.start).clamp(0.0, 1.0);
+        interval.start = start;
+        interval.end = end;
+      }
+      intervals.reverse();
+    }
+
+    intervals
   }
 
   fn sample(&self, t: f32) -> Result<Vec2, ErrorStack> {
@@ -466,6 +540,9 @@ impl PathTracerCallable {
         "trace_path path has no drawable segments to sample",
       ));
     }
+
+    // When reverse is true, sample at (1 - t) to walk the path backwards
+    let t = if self.reverse { 1.0 - t } else { t };
 
     let target = t * self.total_length;
     let mut idx = match self
@@ -495,6 +572,10 @@ impl PathTracerCallable {
 }
 
 impl DynamicCallable for PathTracerCallable {
+  fn as_any(&self) -> &dyn Any {
+    self
+  }
+
   fn invoke(
     &self,
     args: &[crate::Value],
@@ -679,6 +760,10 @@ impl DrawCommandCallable {
 }
 
 impl DynamicCallable for DrawCommandCallable {
+  fn as_any(&self) -> &dyn Any {
+    self
+  }
+
   fn invoke(
     &self,
     args: &[Value],
@@ -1129,12 +1214,14 @@ pub fn trace_path_impl(
       let cb = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
       let closed = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
       let center = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+      let reverse = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
 
       let draw_cmds = eval_trace_path_cb(ctx, cb)
         .map_err(|err| err.wrap("Error while evaluating callback provided to `trace_path`"))?;
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let path_tracer = PathTracerCallable::new(closed, center, draw_cmds, interned_t_kwarg);
+      let path_tracer =
+        PathTracerCallable::new(closed, center, reverse, draw_cmds, interned_t_kwarg);
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_path".to_string(),
         inner: Box::new(path_tracer),
@@ -1302,12 +1389,14 @@ pub fn trace_svg_path_impl(
     0 => {
       let svg_path_str = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
       let center = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
+      let reverse = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
 
       let draw_cmds = parse_svg_path_to_draw_commands(svg_path_str)
         .map_err(|err| err.wrap("Error while parsing SVG path string"))?;
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let path_tracer = PathTracerCallable::new(false, center, draw_cmds, interned_t_kwarg);
+      let path_tracer =
+        PathTracerCallable::new(false, center, reverse, draw_cmds, interned_t_kwarg);
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_svg_path".to_string(),
         inner: Box::new(path_tracer),
@@ -1337,11 +1426,52 @@ mod tests {
       DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
       DrawCommand::LineTo(Vec2::new(1.0, 3.0)),
     ];
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(0.25).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(0.75).unwrap(), Vec2::new(1.0, 2.0));
+  }
+
+  #[test]
+  fn test_path_tracer_critical_t_values() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 1.0)),
+    ];
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+    let guides = tracer.critical_t_values();
+
+    assert_eq!(guides.len(), 3);
+    assert!((guides[0] - 0.0).abs() < 1e-6);
+    assert!((guides[1] - 0.5).abs() < 1e-6);
+    assert!((guides[2] - 1.0).abs() < 1e-6);
+  }
+
+  #[test]
+  fn test_path_tracer_segment_intervals_detail_order() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
+      DrawCommand::QuadraticBezier {
+        ctrl: Vec2::new(1.0, 1.0),
+        to: Vec2::new(2.0, 0.0),
+      },
+    ];
+    let tracer = PathTracerCallable::new(false, false, false, cmds.clone(), Sym(0));
+    let intervals = tracer.segment_intervals();
+
+    assert_eq!(intervals.len(), 2);
+    assert!(!intervals[0].has_detail);
+    assert!(intervals[1].has_detail);
+
+    let reverse_tracer = PathTracerCallable::new(false, false, true, cmds, Sym(0));
+    let reverse_intervals = reverse_tracer.segment_intervals();
+
+    assert_eq!(reverse_intervals.len(), 2);
+    assert!(reverse_intervals[0].has_detail);
+    assert!(!reverse_intervals[1].has_detail);
   }
 
   #[test]
@@ -1353,7 +1483,7 @@ mod tests {
       DrawCommand::LineTo(Vec2::new(10.0, 0.0)),
       DrawCommand::LineTo(Vec2::new(10.0, 10.0)),
     ];
-    let tracer = PathTracerCallable::new(false, true, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, true, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(-5.0, -5.0)); // was 0,0
     assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(5.0, -5.0)); // was 10,0
@@ -1369,7 +1499,7 @@ mod tests {
         to: Vec2::new(2.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(2.0, 0.0));
@@ -1389,7 +1519,7 @@ mod tests {
         to: Vec2::new(5.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_eq!(tracer.segments.len(), 2);
     match &tracer.segments[1] {
@@ -1412,7 +1542,7 @@ mod tests {
         to: Vec2::new(4.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_eq!(tracer.segments.len(), 2);
     match &tracer.segments[1] {
@@ -1436,7 +1566,7 @@ mod tests {
         to: Vec2::new(-1.0, 0.0),
       },
     ];
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(-1.0, 0.0));
@@ -1449,7 +1579,7 @@ mod tests {
       DrawCommand::LineTo(Vec2::new(2.0, 0.0)),
       DrawCommand::LineTo(Vec2::new(2.0, 2.0)),
     ];
-    let tracer = PathTracerCallable::new(true, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(true, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(0.0, 0.0));
@@ -1460,7 +1590,7 @@ mod tests {
     // Simple absolute path: move to origin, line to (10, 0), line to (10, 10)
     let svg = "M 0 0 L 10 0 L 10 10";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(10.0, 0.0));
@@ -1472,7 +1602,7 @@ mod tests {
     // Relative path: move to (5, 5), relative line +10 in x, then +10 in y
     let svg = "M 5 5 l 10 0 l 0 10";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(5.0, 5.0));
     assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(15.0, 5.0));
@@ -1484,7 +1614,7 @@ mod tests {
     // H and V commands
     let svg = "M 0 0 H 10 V 10";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(10.0, 0.0));
@@ -1496,7 +1626,7 @@ mod tests {
     // Cubic bezier from (0,0) to (10,0) with control points
     let svg = "M 0 0 C 3 5, 7 5, 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
@@ -1507,7 +1637,7 @@ mod tests {
     // Quadratic bezier from (0,0) to (10,0) with control point at (5, 5)
     let svg = "M 0 0 Q 5 5, 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
@@ -1518,7 +1648,7 @@ mod tests {
     // Arc from (1,0) to (-1,0) with rx=ry=1
     let svg = "M 1 0 A 1 1 0 0 1 -1 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(-1.0, 0.0));
@@ -1534,7 +1664,7 @@ mod tests {
     assert_eq!(cmds.len(), 4);
     assert!(matches!(cmds[3], DrawCommand::Close));
 
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
     // With close, path goes back to origin
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(0.0, 0.0));
@@ -1546,7 +1676,7 @@ mod tests {
     let svg = "M 0 0 C 0 5, 5 5, 5 0 S 10 -5, 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
     assert!(matches!(cmds[2], DrawCommand::SmoothCubicBezier { .. }));
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert!(matches!(tracer.segments[1], PathSegment::Cubic { .. }));
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
@@ -1559,7 +1689,7 @@ mod tests {
     let svg = "M 0 0 Q 2.5 5, 5 0 T 10 0";
     let cmds = parse_svg_path_to_draw_commands(svg).unwrap();
     assert!(matches!(cmds[2], DrawCommand::SmoothQuadraticBezier { .. }));
-    let tracer = PathTracerCallable::new(false, false, cmds, Sym(0));
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
     assert!(matches!(tracer.segments[1], PathSegment::Quadratic { .. }));
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
