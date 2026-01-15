@@ -200,6 +200,15 @@ impl OwnedIndexedMeshBuilder {
     self.mesh
   }
 
+  /// Like `build`, but also returns the mapping from VertexKey to buffer index.
+  pub fn build_with_vtx_mapping(
+    mut self,
+    transform: Option<Mat4>,
+  ) -> (OwnedIndexedMesh, FxHashMap<VertexKey, usize>) {
+    self.mesh.transform = transform;
+    (self.mesh, self.seen_vtx_keys)
+  }
+
   fn is_empty(&self) -> bool {
     self.mesh.vertices.is_empty()
   }

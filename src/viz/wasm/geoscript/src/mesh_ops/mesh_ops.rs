@@ -129,6 +129,13 @@ extern "C" {
     sharp_angle_threshold_degrees: f32,
   );
   pub fn cgal_get_is_loaded() -> bool;
+  pub fn cgal_bevel_mesh(
+    mesh_verts: &[f32],
+    mesh_indices: &[u32],
+    edges_to_bevel: &[u32],
+    inset_amount: f32,
+    subdivision_levels: u32,
+  );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -298,7 +305,7 @@ pub fn alpha_wrap_mesh(
 
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
   let in_indices = unsafe {
     std::slice::from_raw_parts(
       raw_mesh.indices.as_ptr() as *const u32,
@@ -362,7 +369,7 @@ pub fn smooth_mesh(
 
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
   let in_indices = unsafe {
     std::slice::from_raw_parts(
       raw_mesh.indices.as_ptr() as *const u32,
@@ -472,7 +479,7 @@ pub fn isotropic_remesh(
 
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
   let in_indices = unsafe {
     std::slice::from_raw_parts(
       raw_mesh.indices.as_ptr() as *const u32,
@@ -519,7 +526,7 @@ pub fn delaunay_remesh(
 
   let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
 
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
+  assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
   let in_indices = unsafe {
     std::slice::from_raw_parts(
       raw_mesh.indices.as_ptr() as *const u32,
@@ -564,6 +571,133 @@ pub fn delaunay_remesh(
 ) -> Result<MeshHandle, ErrorStack> {
   Err(ErrorStack::new(
     "Delaunay remeshing is not supported outside of wasm",
+  ))
+}
+
+/// Information about an edge for filtering in `bevel_mesh`.
+pub struct EdgeBevelInfo {
+  /// Position of the first vertex of the edge
+  pub v0_pos: Vec3,
+  /// Position of the second vertex of the edge
+  pub v1_pos: Vec3,
+  /// Dihedral angle in radians between the two adjacent faces.
+  /// For non-manifold edges (more than 2 faces), this is the maximum angle between any pair.
+  /// For boundary edges (1 face), this is PI (180 degrees).
+  pub dihedral_angle: f32,
+}
+
+/// Computes the dihedral angle between two face normals sharing an edge.
+/// Returns angle in radians in range [0, PI].
+fn compute_dihedral_angle(n0: Vec3, n1: Vec3) -> f32 {
+  // The dihedral angle is the angle between the face normals.
+  // For convex edges, this is < PI, for concave edges > PI.
+  // However, we use the unsigned angle here.
+  let dot = n0.dot(&n1).clamp(-1.0, 1.0);
+  dot.acos()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn bevel_mesh<F>(
+  mesh: &MeshHandle,
+  inset_amount: f32,
+  subdivision_levels: u32,
+  mut edge_filter: F,
+) -> Result<MeshHandle, ErrorStack>
+where
+  F: FnMut(&EdgeBevelInfo) -> Result<bool, ErrorStack>,
+{
+  verify_cgal_loaded()?;
+
+  let (raw_mesh, vtx_key_to_ix) = mesh.mesh.to_raw_indexed_with_mapping(false, false, true);
+
+  assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
+  let in_indices = unsafe {
+    std::slice::from_raw_parts(
+      raw_mesh.indices.as_ptr() as *const u32,
+      raw_mesh.indices.len(),
+    )
+  };
+
+  // Iterate all edges in the mesh and determine which to bevel
+  let mut edges_to_bevel: Vec<u32> = Vec::new();
+
+  for (_edge_key, edge) in mesh.mesh.iter_edges() {
+    let [v0_key, v1_key] = edge.vertices;
+    let v0_pos = mesh.mesh.vertices[v0_key].position;
+    let v1_pos = mesh.mesh.vertices[v1_key].position;
+
+    // Compute dihedral angle
+    let dihedral_angle = if edge.faces.is_empty() {
+      // Isolated edge (shouldn't happen normally), treat as sharp
+      std::f32::consts::PI
+    } else if edge.faces.len() == 1 {
+      // Boundary edge, treat as sharp
+      std::f32::consts::PI
+    } else {
+      // Compute max dihedral angle across all face pairs
+      let mut max_angle: f32 = 0.0;
+      for i in 0..edge.faces.len() {
+        let face_i = &mesh.mesh.faces[edge.faces[i]];
+        let normal_i = face_i.normal(&mesh.mesh.vertices);
+        for j in (i + 1)..edge.faces.len() {
+          let face_j = &mesh.mesh.faces[edge.faces[j]];
+          let normal_j = face_j.normal(&mesh.mesh.vertices);
+          let angle = compute_dihedral_angle(normal_i, normal_j);
+          max_angle = max_angle.max(angle);
+        }
+      }
+      max_angle
+    };
+
+    let info = EdgeBevelInfo {
+      v0_pos,
+      v1_pos,
+      dihedral_angle,
+    };
+
+    if edge_filter(&info)? {
+      let Some(&v0_ix) = vtx_key_to_ix.get(&v0_key) else {
+        // Vertex not in the indexed mesh (e.g., isolated vertex)
+        continue;
+      };
+      let Some(&v1_ix) = vtx_key_to_ix.get(&v1_key) else {
+        continue;
+      };
+
+      let (v0_ix, v1_ix) = if v0_ix < v1_ix {
+        (v0_ix as u32, v1_ix as u32)
+      } else {
+        (v1_ix as u32, v0_ix as u32)
+      };
+
+      edges_to_bevel.push(v0_ix);
+      edges_to_bevel.push(v1_ix);
+    }
+  }
+
+  cgal_bevel_mesh(
+    &raw_mesh.vertices,
+    in_indices,
+    &edges_to_bevel,
+    inset_amount,
+    subdivision_levels,
+  );
+
+  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bevel_mesh<F>(
+  _mesh: &MeshHandle,
+  _inset_amount: f32,
+  _subdivision_levels: u32,
+  _edge_filter: F,
+) -> Result<MeshHandle, ErrorStack>
+where
+  F: FnMut(&EdgeBevelInfo) -> Result<bool, ErrorStack>,
+{
+  Err(ErrorStack::new(
+    "Mesh beveling is not supported outside of wasm",
   ))
 }
 

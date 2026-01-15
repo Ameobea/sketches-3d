@@ -5728,6 +5728,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "bevel" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "The mesh to bevel"
+          },
+          ArgDef {
+            name: "inset_amount",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.1)),
+            description: "How far to inset the bevel from the original edge.  This is in the local coordinate space of the mesh."
+          },
+          ArgDef {
+            name: "subdivision_levels",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(1)),
+            description: "Number of subdivision levels in the bevel.  Higher values create smoother, rounder bevels."
+          },
+          ArgDef {
+            name: "angle_threshold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Only bevel edges with a dihedral angle (in degrees) greater than or equal to this threshold.  If `nil` and no filter is provided, defaults to 30 degrees.  If `nil` and a filter is provided, no angle filtering is applied."
+          },
+          ArgDef {
+            name: "filter",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional callback with signature `|v0: vec3, v1: vec3, dihedral_angle: float| -> bool` that receives the positions of the two vertices of each edge and the dihedral angle in degrees.  Return `true` to bevel the edge, `false` to skip it.  This filter is applied after the angle threshold filter (if any)."
+          },
+        ],
+        description: "Bevels edges of a mesh, creating chamfered or rounded corners.  By default, only edges sharper than 30 degrees are beveled.  Use `angle_threshold` to adjust this, or provide a `filter` callback for custom edge selection logic.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "remesh_planar_patches" => FnDef {
     module: "mesh",
     examples: &[],

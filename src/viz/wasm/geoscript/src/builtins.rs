@@ -25,7 +25,7 @@ use rand::{RngCore, SeedableRng};
 use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
-  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_geodesics_loaded,
+  alpha_wrap_mesh, alpha_wrap_points, bevel_mesh, delaunay_remesh, get_geodesics_loaded,
   get_text_to_path_cached_mesh, isotropic_remesh, remesh_planar_patches, smooth_mesh, SmoothType,
 };
 use crate::mesh_ops::voxels::sample_voxels;
@@ -2141,6 +2141,102 @@ fn smooth_impl(
 
       let out = smooth_mesh(mesh, smooth_type, iterations)
         .map_err(|err| err.wrap("Error in `smooth` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn bevel_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  use crate::mesh_ops::mesh_ops::EdgeBevelInfo;
+
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let inset_amount = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let subdivision_levels = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
+      let subdivision_levels = if subdivision_levels < 0 {
+        return Err(ErrorStack::new(format!(
+          "Invalid subdivision_levels argument for `bevel`: {subdivision_levels}; must be > 0"
+        )));
+      } else {
+        subdivision_levels as u32
+      };
+
+      let angle_threshold_val = arg_refs[3].resolve(args, kwargs);
+      let filter_val = arg_refs[4].resolve(args, kwargs);
+
+      let angle_threshold_rad: Option<f32> = match (&angle_threshold_val, &filter_val) {
+        // If angle threshold is provided, use it
+        (Value::Float(deg), _) => Some(deg.to_radians()),
+        (Value::Int(deg), _) => Some((*deg as f32).to_radians()),
+        // If angle threshold is nil but filter is provided, no angle filtering
+        (Value::Nil, Value::Callable(_)) => None,
+        // If both are nil, default to 30 degrees
+        (Value::Nil, Value::Nil) => Some(30.0_f32.to_radians()),
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid angle_threshold argument for `bevel`; expected Numeric or Nil, found: \
+             {angle_threshold_val:?}"
+          )))
+        }
+      };
+
+      let filter_callable: Option<Rc<Callable>> = match filter_val {
+        Value::Callable(cb) => Some(cb.clone()),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid filter argument for `bevel`; expected Callable or Nil, found: {filter_val:?}"
+          )))
+        }
+      };
+
+      let out = bevel_mesh(
+        mesh,
+        inset_amount,
+        subdivision_levels,
+        |info: &EdgeBevelInfo| {
+          if let Some(threshold) = angle_threshold_rad {
+            if info.dihedral_angle < threshold {
+              return Ok(false);
+            }
+          }
+
+          if let Some(ref cb) = filter_callable {
+            let dihedral_angle_deg = info.dihedral_angle.to_degrees();
+            let result = ctx
+              .invoke_callable(
+                cb,
+                &[
+                  Value::Vec3(info.v0_pos),
+                  Value::Vec3(info.v1_pos),
+                  Value::Float(dihedral_angle_deg),
+                ],
+                EMPTY_KWARGS,
+              )
+              .map_err(|err| err.wrap("Error in user-provided filter callback for `bevel`"))?;
+
+            match result {
+              Value::Bool(b) => return Ok(b),
+              _ => {
+                return Err(ErrorStack::new(format!(
+                  "Filter callback for `bevel` must return a bool, got: {result:?}"
+                )))
+              }
+            }
+          }
+
+          Ok(true)
+        },
+      )
+      .map_err(|err| err.wrap("Error in `bevel` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -5584,6 +5680,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "smooth" => builtin_fn!(smooth, |def_ix, arg_refs, args, kwargs, _ctx| {
     smooth_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "bevel" => builtin_fn!(bevel, |def_ix, arg_refs, args, kwargs, ctx| {
+    bevel_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "remesh_planar_patches" => builtin_fn!(remesh_planar_patches, |def_ix, arg_refs, args, kwargs, _ctx| {
     remesh_planar_patches_impl(def_ix, arg_refs, args, kwargs)

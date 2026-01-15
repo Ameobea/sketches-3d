@@ -1882,6 +1882,34 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     builder.build(self.transform)
   }
 
+  /// Like `to_raw_indexed` but also returns a mapping from `VertexKey` to buffer index.
+  pub fn to_raw_indexed_with_mapping(
+    &self,
+    include_shading_normals: bool,
+    include_displacement_normals: bool,
+    include_degenerate_faces: bool,
+  ) -> (OwnedIndexedMesh, FxHashMap<VertexKey, usize>) {
+    let mut builder = OwnedIndexedMeshBuilder::with_capacity(
+      self.vertices.len(),
+      self.faces.len(),
+      include_displacement_normals,
+      include_shading_normals,
+    );
+
+    for face in self.faces.values() {
+      if !include_degenerate_faces && face.is_degenerate(&self.vertices) {
+        continue;
+      }
+
+      for &vtx_key in &face.vertices {
+        let vtx = &self.vertices[vtx_key];
+        builder.add_vtx(vtx_key, vtx)
+      }
+    }
+
+    builder.build_with_vtx_mapping(self.transform)
+  }
+
   /// Works the same as `to_raw_indexed` but splits the triangles into multiple different meshes
   /// based on `partition_fn`.
   pub fn to_raw_indexed_multi<T: Hash + Eq>(

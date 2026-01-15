@@ -600,7 +600,6 @@ pub(crate) fn rail_sweep_impl(
       }
 
       let profile_guide_data = collect_profile_guides(ctx, &profile_samplers_val)?;
-      log::info!("{:?}", profile_guide_data.as_ref().map(|data| &data.guides));
 
       fn resample_spine_points(
         points: &[Vec3],

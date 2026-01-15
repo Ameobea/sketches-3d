@@ -60,17 +60,17 @@ const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
   try {
     const ok = mesh.buildFromBuffers(vec_verts, vec_indices);
     if (!ok) {
-      const err = mesh.getLastError()
+      const err = mesh.getLastError();
       LastBuildPolymeshError = err;
       throw new Error(err);
     } else {
       LastBuildPolymeshError = null;
     }
     return mesh;
-  } catch(err) {
+  } catch (err) {
     console.error('Error building CGAL PolyMesh:', err);
     mesh.delete();
-    return null
+    return null;
   } finally {
     vec_verts.delete();
     vec_indices.delete();
@@ -320,5 +320,51 @@ export const cgal_remesh_delaunay = (
   mesh.delaunay_remesh(targetEdgeLength, facetDistance, autoSharpEdges, sharpAngleThresholdDegrees);
 
   setOutputMeshFromCGALMesh(mesh);
+  mesh.delete();
+};
+
+export const cgal_bevel_mesh = (
+  verts: Float32Array,
+  indices: Uint32Array,
+  edgesToBevel: Uint32Array,
+  insetAmount: number,
+  subdivisionLevels: number
+) => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+
+  const CGAL = CGALWasm.getSync();
+
+  const HEAPU32 = () => CGAL.HEAPU32 as Uint32Array;
+
+  const vec_generic = (
+    vecCtor: new () => any,
+    mem: () => Float32Array | Uint32Array,
+    vals: number[] | Float32Array | Uint32Array | Uint16Array
+  ) => {
+    const vec = new vecCtor();
+    vec.resize(vals.length, 0);
+    const ptr = vec.data();
+    const buf = mem().subarray(ptr / 4, ptr / 4 + vals.length);
+    buf.set(vals);
+    return vec;
+  };
+
+  const vec_uint32 = (vals: number[] | Uint32Array | Uint16Array) =>
+    vec_generic(CGAL.vector$uint32_t$, HEAPU32, vals);
+
+  const edgesToBevel_vec = vec_uint32(edgesToBevel);
+
+  const mesh = buildCGALPolymesh(verts, indices);
+  if (!mesh) {
+    return;
+  }
+
+  mesh.auto_bevel(edgesToBevel_vec, insetAmount, subdivisionLevels);
+
+  setOutputMeshFromCGALMesh(mesh);
+
+  edgesToBevel_vec.delete();
   mesh.delete();
 };

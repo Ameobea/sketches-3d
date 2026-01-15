@@ -8,7 +8,7 @@ backend
 src/viz/wasm/target
 src/viz/wasm/geodesics
 src/viz/wasm/uv_unwrap
-src/viz/wasm/cgal
+src/viz/wasm/cgal/index.js
 src/api
 src/geoscript/parser
 static
