@@ -309,6 +309,10 @@ impl NormalAcc {
     faces: &SlotMap<FaceKey, Face<FaceData>>,
   ) -> Option<Vec3> {
     let face = &faces[face_key];
+    // Filter out sliver triangles that can destabilize the average normal.
+    if face.area(verts) < EPSILON {
+      return None;
+    }
     let face_normal = face.normal(verts);
     if face_normal.x.is_nan() || face_normal.y.is_nan() || face_normal.z.is_nan() {
       // panic!(
@@ -1113,11 +1117,18 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     old_vtx_key: VertexKey,
     new_vtx_key: VertexKey,
   ) {
-    let (edge_indices_to_alter, old_edge_keys, pair_vtx_keys, edge_displacement_normals) = {
+    let (
+      edge_indices_to_alter,
+      old_edge_keys,
+      pair_vtx_keys,
+      edge_displacement_normals,
+      edge_sharpness,
+    ) = {
       let face = &mut self.faces[face_key];
       let mut edge_indices_to_alter: [usize; 2] = [usize::MAX, usize::MAX];
       let mut pair_vtx_keys: [VertexKey; 2] = [VertexKey::null(), VertexKey::null()];
       let mut edge_displacement_normals: [Option<Vec3>; 2] = [None, None];
+      let mut edge_sharpness: [bool; 2] = [false, false];
       let mut old_edge_keys: [EdgeKey; 2] = [EdgeKey::null(), EdgeKey::null()];
 
       for (edge_ix, &edge_key) in face.edges.iter().enumerate() {
@@ -1132,6 +1143,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
               edge.vertices[0]
             };
             edge_displacement_normals[0] = edge.displacement_normal;
+            edge_sharpness[0] = edge.sharp;
           } else {
             edge_indices_to_alter[1] = edge_ix;
             old_edge_keys[1] = edge_key;
@@ -1141,6 +1153,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
               edge.vertices[0]
             };
             edge_displacement_normals[1] = edge.displacement_normal;
+            edge_sharpness[1] = edge.sharp;
             break;
           }
         }
@@ -1151,6 +1164,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         old_edge_keys,
         pair_vtx_keys,
         edge_displacement_normals,
+        edge_sharpness,
       )
     };
 
@@ -1173,8 +1187,10 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let new_edge_key_1 = self.get_or_create_edge::<false>([new_vtx_key, pair_vtx_keys[1]]);
     self.edges[new_edge_key_0].faces.push(face_key);
     self.edges[new_edge_key_0].displacement_normal = edge_displacement_normals[0];
+    self.edges[new_edge_key_0].sharp = edge_sharpness[0];
     self.edges[new_edge_key_1].faces.push(face_key);
     self.edges[new_edge_key_1].displacement_normal = edge_displacement_normals[1];
+    self.edges[new_edge_key_1].sharp = edge_sharpness[1];
 
     let face = &mut self.faces[face_key];
 
@@ -1685,22 +1701,25 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
 
     loop {
-      let visited_edges = &mut visited_edges[..edge_count];
+      let visited_edges_slice = &mut visited_edges[..edge_count];
+      // Track progress to prevent infinite loops on loose edges.
+      let visited_count_start = visited_edges_slice.count_ones();
 
       let computed_fan_normal = self.walk_one_smooth_fan(
         vtx_key,
-        visited_edges,
+        visited_edges_slice,
         &mut visited_faces,
         &mut smooth_fan_faces,
         &mut vtx_normal_acc,
       );
 
-      let all_faces_visited = visited_edges.all();
-      if all_faces_visited {
+      let all_faces_visited = visited_edges_slice.all();
+      let made_progress = visited_edges_slice.count_ones() > visited_count_start;
+      if all_faces_visited || !made_progress {
         // All faces from this fan can retain the same vertex, and we can assign
         // it the computed normal directly
         let vtx = &mut self.vertices[vtx_key];
-        vtx.shading_normal = computed_fan_normal;
+        vtx.shading_normal = computed_fan_normal.or_else(|| vtx_normal_acc.get());
 
         break;
       }
