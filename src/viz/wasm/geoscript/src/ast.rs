@@ -15,6 +15,11 @@ use crate::{
   EMPTY_KWARGS, FUNCTION_ALIASES, PRATT_PARSER,
 };
 
+/// Source location index. Points into a SourceMap to retrieve (line, col).
+/// A value of 0 indicates an unknown or non-existent location.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SourceLoc(pub u32);
+
 #[derive(Debug)]
 pub struct Program {
   pub statements: Vec<Statement>,
@@ -448,47 +453,88 @@ pub enum Expr {
     lhs: Box<Expr>,
     rhs: Box<Expr>,
     pre_resolved_def_ix: Option<usize>,
+    loc: SourceLoc,
   },
   PrefixOp {
     op: PrefixOp,
     expr: Box<Expr>,
+    loc: SourceLoc,
   },
   Range {
     start: Box<Expr>,
     end: Option<Box<Expr>>,
     inclusive: bool,
+    loc: SourceLoc,
   },
   StaticFieldAccess {
     lhs: Box<Expr>,
     field: String,
+    loc: SourceLoc,
   },
   FieldAccess {
     lhs: Box<Expr>,
     field: Box<Expr>,
+    loc: SourceLoc,
   },
-  Call(FunctionCall),
+  Call {
+    call: FunctionCall,
+    loc: SourceLoc,
+  },
   Closure {
     params: Rc<Vec<ClosureArg>>,
     body: Rc<ClosureBody>,
     arg_placeholder_scope: FxHashMap<Sym, Value>,
     return_type_hint: Option<TypeName>,
+    loc: SourceLoc,
   },
-  Ident(Sym),
-  ArrayLiteral(Vec<Expr>),
+  Ident {
+    name: Sym,
+    loc: SourceLoc,
+  },
+  ArrayLiteral {
+    elements: Vec<Expr>,
+    loc: SourceLoc,
+  },
   MapLiteral {
     entries: Vec<MapLiteralEntry>,
+    loc: SourceLoc,
   },
-  Literal(Value),
+  Literal {
+    value: Value,
+    loc: SourceLoc,
+  },
   Conditional {
     cond: Box<Expr>,
     then: Box<Expr>,
     /// (cond, expr)
     else_if_exprs: Vec<(Expr, Expr)>,
     else_expr: Option<Box<Expr>>,
+    loc: SourceLoc,
   },
   Block {
     statements: Vec<Statement>,
+    loc: SourceLoc,
   },
+}
+
+impl Expr {
+  pub fn loc(&self) -> SourceLoc {
+    match self {
+      Expr::BinOp { loc, .. }
+      | Expr::PrefixOp { loc, .. }
+      | Expr::Range { loc, .. }
+      | Expr::StaticFieldAccess { loc, .. }
+      | Expr::FieldAccess { loc, .. }
+      | Expr::Call { loc, .. }
+      | Expr::Closure { loc, .. }
+      | Expr::Ident { loc, .. }
+      | Expr::ArrayLiteral { loc, .. }
+      | Expr::MapLiteral { loc, .. }
+      | Expr::Literal { loc, .. }
+      | Expr::Conditional { loc, .. }
+      | Expr::Block { loc, .. } => *loc,
+    }
+  }
 }
 
 fn callable_is_dyn_for_const_eval(callable: &Callable, allow_rng_const_eval: bool) -> bool {
@@ -501,13 +547,13 @@ fn callable_is_dyn_for_const_eval(callable: &Callable, allow_rng_const_eval: boo
 impl Expr {
   pub fn as_literal(&self) -> Option<&Value> {
     match self {
-      Expr::Literal(val) => Some(val),
+      Expr::Literal { value, .. } => Some(value),
       _ => None,
     }
   }
 
   pub fn is_literal(&self) -> bool {
-    matches!(self, Expr::Literal(_))
+    matches!(self, Expr::Literal { .. })
   }
 
   fn analyze_const_captures(
@@ -519,12 +565,7 @@ impl Expr {
     constify_assignments: bool,
   ) -> bool {
     match self {
-      Expr::BinOp {
-        op: _,
-        lhs,
-        rhs,
-        pre_resolved_def_ix: _,
-      } => {
+      Expr::BinOp { lhs, rhs, .. } => {
         let mut captures_dyn = lhs.analyze_const_captures(
           ctx,
           local_scope,
@@ -541,18 +582,14 @@ impl Expr {
         );
         captures_dyn
       }
-      Expr::PrefixOp { op: _, expr } => expr.analyze_const_captures(
+      Expr::PrefixOp { expr, .. } => expr.analyze_const_captures(
         ctx,
         local_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
         constify_assignments,
       ),
-      Expr::Range {
-        start,
-        end,
-        inclusive: _,
-      } => {
+      Expr::Range { start, end, .. } => {
         let mut captures_dyn = start.analyze_const_captures(
           ctx,
           local_scope,
@@ -571,14 +608,14 @@ impl Expr {
         }
         captures_dyn
       }
-      Expr::StaticFieldAccess { lhs, field: _ } => lhs.analyze_const_captures(
+      Expr::StaticFieldAccess { lhs, .. } => lhs.analyze_const_captures(
         ctx,
         local_scope,
         allow_rng_const_eval,
         propagate_closure_captures,
         constify_assignments,
       ),
-      Expr::FieldAccess { lhs, field } => {
+      Expr::FieldAccess { lhs, field, .. } => {
         let mut captures_dyn = lhs.analyze_const_captures(
           ctx,
           local_scope,
@@ -595,11 +632,14 @@ impl Expr {
         );
         captures_dyn
       }
-      Expr::Call(FunctionCall {
-        target,
-        args,
-        kwargs,
-      }) => {
+      Expr::Call {
+        call: FunctionCall {
+          target,
+          args,
+          kwargs,
+        },
+        ..
+      } => {
         let mut captures_dyn = false;
         for arg in args.iter() {
           captures_dyn |= arg.analyze_const_captures(
@@ -660,12 +700,7 @@ impl Expr {
           })
         }
       }
-      Expr::Closure {
-        params,
-        body,
-        arg_placeholder_scope: _,
-        return_type_hint: _,
-      } => {
+      Expr::Closure { params, body, .. } => {
         let mut captures_dyn = false;
 
         for param in params.iter() {
@@ -712,7 +747,7 @@ impl Expr {
           captures_dyn
         }
       }
-      Expr::Ident(id) => match local_scope.vars.get(id) {
+      Expr::Ident { name: id, .. } => match local_scope.vars.get(id) {
         Some(TrackedValue::Const(_)) => false,
         Some(TrackedValue::Arg(_)) => false,
         Some(TrackedValue::Dyn { .. }) => true,
@@ -726,7 +761,9 @@ impl Expr {
           None => true,
         },
       },
-      Expr::ArrayLiteral(exprs) => exprs.iter().any(|expr| {
+      Expr::ArrayLiteral {
+        elements: exprs, ..
+      } => exprs.iter().any(|expr| {
         expr.analyze_const_captures(
           ctx,
           local_scope,
@@ -735,7 +772,7 @@ impl Expr {
           constify_assignments,
         )
       }),
-      Expr::MapLiteral { entries } => entries.iter().any(|entry| {
+      Expr::MapLiteral { entries, .. } => entries.iter().any(|entry| {
         entry.analyze_const_captures(
           ctx,
           local_scope,
@@ -744,12 +781,13 @@ impl Expr {
           constify_assignments,
         )
       }),
-      Expr::Literal(_) => false,
+      Expr::Literal { .. } => false,
       Expr::Conditional {
         cond,
         then,
         else_if_exprs,
         else_expr,
+        ..
       } => {
         let mut captures_dyn = cond.analyze_const_captures(
           ctx,
@@ -792,7 +830,7 @@ impl Expr {
         }
         captures_dyn
       }
-      Expr::Block { statements } => statements.iter().any(|stmt| {
+      Expr::Block { statements, .. } => statements.iter().any(|stmt| {
         stmt.analyze_const_captures(
           ctx,
           local_scope,
@@ -806,40 +844,34 @@ impl Expr {
 
   fn inline_const_captures(&mut self, ctx: &EvalCtx, local_scope: &mut ScopeTracker) {
     match self {
-      Expr::BinOp {
-        op: _,
-        lhs,
-        rhs,
-        pre_resolved_def_ix: _,
-      } => {
+      Expr::BinOp { lhs, rhs, .. } => {
         lhs.inline_const_captures(ctx, local_scope);
         rhs.inline_const_captures(ctx, local_scope);
       }
-      Expr::PrefixOp { op: _, expr } => {
+      Expr::PrefixOp { expr, .. } => {
         expr.inline_const_captures(ctx, local_scope);
       }
-      Expr::Range {
-        start,
-        end,
-        inclusive: _,
-      } => {
+      Expr::Range { start, end, .. } => {
         start.inline_const_captures(ctx, local_scope);
         if let Some(end) = end {
           end.inline_const_captures(ctx, local_scope);
         }
       }
-      Expr::StaticFieldAccess { lhs, field: _ } => {
+      Expr::StaticFieldAccess { lhs, .. } => {
         lhs.inline_const_captures(ctx, local_scope);
       }
-      Expr::FieldAccess { lhs, field } => {
+      Expr::FieldAccess { lhs, field, .. } => {
         lhs.inline_const_captures(ctx, local_scope);
         field.inline_const_captures(ctx, local_scope);
       }
-      Expr::Call(FunctionCall {
-        target,
-        args,
-        kwargs,
-      }) => {
+      Expr::Call {
+        call: FunctionCall {
+          target,
+          args,
+          kwargs,
+        },
+        ..
+      } => {
         for arg in args.iter_mut() {
           arg.inline_const_captures(ctx, local_scope);
         }
@@ -857,12 +889,7 @@ impl Expr {
           }
         }
       }
-      Expr::Closure {
-        params,
-        body,
-        arg_placeholder_scope: _,
-        return_type_hint: _,
-      } => {
+      Expr::Closure { params, body, .. } => {
         let mut params_inner: Vec<_> = (**params).clone();
         for param in params_inner.iter_mut() {
           if let Some(default_val) = &mut param.default_val {
@@ -893,16 +920,22 @@ impl Expr {
         body_inner.inline_const_captures(ctx, &mut closure_scope);
         *body = Rc::new(body_inner);
       }
-      Expr::Ident(id) => match local_scope.vars.get(id) {
+      Expr::Ident { name: id, loc } => match local_scope.vars.get(id) {
         Some(TrackedValue::Const(resolved)) => {
-          *self = Expr::Literal(resolved.clone());
+          *self = Expr::Literal {
+            value: resolved.clone(),
+            loc: *loc,
+          };
         }
         Some(TrackedValue::Arg(_)) => {}
         Some(TrackedValue::Dyn { .. }) => {}
         None => match local_scope.parent {
           Some(parent) => match parent.get(*id) {
             Some(TrackedValueRef::Const(resolved)) => {
-              *self = Expr::Literal(resolved.clone());
+              *self = Expr::Literal {
+                value: resolved.clone(),
+                loc: *loc,
+              };
             }
             Some(TrackedValueRef::Arg(_)) => {}
             Some(TrackedValueRef::Dyn { .. }) => {}
@@ -911,22 +944,25 @@ impl Expr {
           None => {}
         },
       },
-      Expr::ArrayLiteral(exprs) => {
+      Expr::ArrayLiteral {
+        elements: exprs, ..
+      } => {
         for expr in exprs.iter_mut() {
           expr.inline_const_captures(ctx, local_scope);
         }
       }
-      Expr::MapLiteral { entries } => {
+      Expr::MapLiteral { entries, .. } => {
         for entry in entries.iter_mut() {
           entry.inline_const_captures(ctx, local_scope);
         }
       }
-      Expr::Literal(_) => {}
+      Expr::Literal { .. } => {}
       Expr::Conditional {
         cond,
         then,
         else_if_exprs,
         else_expr,
+        ..
       } => {
         cond.inline_const_captures(ctx, local_scope);
         then.inline_const_captures(ctx, local_scope);
@@ -938,7 +974,7 @@ impl Expr {
           else_expr.inline_const_captures(ctx, local_scope);
         }
       }
-      Expr::Block { statements } => {
+      Expr::Block { statements, .. } => {
         for stmt in statements.iter_mut() {
           stmt.inline_const_captures(ctx, local_scope);
         }
@@ -968,12 +1004,12 @@ impl Expr {
         cb(self);
         lhs.traverse(cb);
       }
-      Expr::FieldAccess { lhs, field } => {
+      Expr::FieldAccess { lhs, field, .. } => {
         cb(self);
         lhs.traverse(cb);
         field.traverse(cb);
       }
-      Expr::Call(call) => {
+      Expr::Call { call, .. } => {
         cb(self);
         call.args.iter().for_each(|arg| arg.traverse(cb));
         call.kwargs.values().for_each(|kwarg| kwarg.traverse(cb));
@@ -982,10 +1018,16 @@ impl Expr {
         cb(self);
         body.0.iter().for_each(|stmt| stmt.traverse_exprs(cb));
       }
-      Expr::Ident(_) | Expr::Literal(_) | Expr::ArrayLiteral(_) => {
+      Expr::Ident { .. } | Expr::Literal { .. } => {
         cb(self);
       }
-      Expr::MapLiteral { entries } => {
+      Expr::ArrayLiteral { elements, .. } => {
+        cb(self);
+        for expr in elements {
+          expr.traverse(cb);
+        }
+      }
+      Expr::MapLiteral { entries, .. } => {
         cb(self);
         for entry in entries {
           match entry {
@@ -999,6 +1041,7 @@ impl Expr {
         then,
         else_if_exprs,
         else_expr,
+        ..
       } => {
         cb(self);
         cond.traverse(cb);
@@ -1011,7 +1054,7 @@ impl Expr {
           else_expr.traverse(cb);
         }
       }
-      Expr::Block { statements } => {
+      Expr::Block { statements, .. } => {
         cb(self);
         for stmt in statements {
           stmt.traverse_exprs(cb);
@@ -1056,15 +1099,15 @@ impl Expr {
       }
       Expr::FieldAccess { .. } => {
         cb(self);
-        let Expr::FieldAccess { lhs, field } = self else {
+        let Expr::FieldAccess { lhs, field, .. } = self else {
           return;
         };
         lhs.traverse_mut(cb);
         field.traverse_mut(cb);
       }
-      Expr::Call(_) => {
+      Expr::Call { .. } => {
         cb(self);
-        let Expr::Call(call) = self else {
+        let Expr::Call { call, .. } = self else {
           return;
         };
         call.args.iter_mut().for_each(|arg| arg.traverse_mut(cb));
@@ -1083,12 +1126,15 @@ impl Expr {
           .iter_mut()
           .for_each(|stmt| stmt.traverse_exprs_mut(cb));
       }
-      Expr::Ident(_) | Expr::Literal(_) => {
+      Expr::Ident { .. } | Expr::Literal { .. } => {
         cb(self);
       }
-      Expr::ArrayLiteral(_) => {
+      Expr::ArrayLiteral { .. } => {
         cb(self);
-        let Expr::ArrayLiteral(exprs) = self else {
+        let Expr::ArrayLiteral {
+          elements: exprs, ..
+        } = self
+        else {
           return;
         };
         for expr in exprs.iter_mut() {
@@ -1097,7 +1143,7 @@ impl Expr {
       }
       Expr::MapLiteral { .. } => {
         cb(self);
-        let Expr::MapLiteral { entries } = self else {
+        let Expr::MapLiteral { entries, .. } = self else {
           return;
         };
         for entry in entries {
@@ -1114,6 +1160,7 @@ impl Expr {
           then,
           else_if_exprs,
           else_expr,
+          ..
         } = self
         else {
           return;
@@ -1130,7 +1177,7 @@ impl Expr {
       }
       Expr::Block { .. } => {
         cb(self);
-        let Expr::Block { statements } = self else {
+        let Expr::Block { statements, .. } = self else {
           return;
         };
         for stmt in statements {
@@ -1552,6 +1599,9 @@ fn parse_fn_call(ctx: &EvalCtx, func_call: Pair<Rule>) -> Result<Expr, ErrorStac
     )));
   }
 
+  let (line, col) = func_call.line_col();
+  let loc = ctx.add_source_loc(line, col);
+
   let mut inner = func_call.into_inner();
   // this contains `fn_name(`
   let name = inner.next().unwrap().as_str();
@@ -1582,28 +1632,40 @@ fn parse_fn_call(ctx: &EvalCtx, func_call: Pair<Rule>) -> Result<Expr, ErrorStac
     }
   }
 
-  Ok(Expr::Call(FunctionCall {
-    target: FunctionCallTarget::Name(name),
-    args,
-    kwargs,
-  }))
+  Ok(Expr::Call {
+    call: FunctionCall {
+      target: FunctionCallTarget::Name(name),
+      args,
+      kwargs,
+    },
+    loc,
+  })
 }
 
 fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
+  let (line, col) = expr.line_col();
+  let loc = ctx.add_source_loc(line, col);
+
   match expr.as_rule() {
     Rule::int => {
       let int_str = expr.as_str();
       let normalized = int_str.replace('_', "");
       normalized
         .parse::<i64>()
-        .map(|i| Expr::Literal(Value::Int(i)))
+        .map(|i| Expr::Literal {
+          value: Value::Int(i),
+          loc,
+        })
         .map_err(|_| ErrorStack::new(format!("Invalid integer: {int_str}")))
     }
     Rule::hex_int => {
       let hex_str = expr.as_str();
       let normalized = hex_str.replace('_', "");
       i64::from_str_radix(&normalized[2..], 16)
-        .map(|i| Expr::Literal(Value::Int(i)))
+        .map(|i| Expr::Literal {
+          value: Value::Int(i),
+          loc,
+        })
         .map_err(|_| ErrorStack::new(format!("Invalid hex integer: {hex_str}")))
     }
     Rule::float => {
@@ -1611,11 +1673,18 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       let normalized = float_str.replace('_', "");
       normalized
         .parse::<f32>()
-        .map(|i| Expr::Literal(Value::Float(i)))
+        .map(|i| Expr::Literal {
+          value: Value::Float(i),
+          loc,
+        })
         .map_err(|_| ErrorStack::new(format!("Invalid float: {float_str}")))
     }
-    Rule::ident => Ok(Expr::Ident(ctx.interned_symbols.intern(expr.as_str()))),
+    Rule::ident => Ok(Expr::Ident {
+      name: ctx.interned_symbols.intern(expr.as_str()),
+      loc,
+    }),
     Rule::term => {
+      // Delegate to inner; the inner will have its own location
       let inner = expr.into_inner().next().unwrap();
       parse_node(ctx, inner)
     }
@@ -1632,6 +1701,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         start: Box::new(start),
         end,
         inclusive: false,
+        loc,
       })
     }
     Rule::range_inclusive_literal_expr => {
@@ -1645,6 +1715,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         start: Box::new(start),
         end,
         inclusive: true,
+        loc,
       })
     }
     Rule::closure => {
@@ -1729,6 +1800,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         params: Rc::new(params),
         body: Rc::new(body),
         return_type_hint,
+        loc,
       })
     }
     Rule::array_literal => {
@@ -1736,17 +1808,29 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         .into_inner()
         .map(|e| parse_expr(ctx, e))
         .collect::<Result<Vec<_>, ErrorStack>>()?;
-      Ok(Expr::ArrayLiteral(elems))
+      Ok(Expr::ArrayLiteral {
+        elements: elems,
+        loc,
+      })
     }
     Rule::bool_literal => {
       let bool_str = expr.as_str();
       match bool_str {
-        "true" => Ok(Expr::Literal(Value::Bool(true))),
-        "false" => Ok(Expr::Literal(Value::Bool(false))),
+        "true" => Ok(Expr::Literal {
+          value: Value::Bool(true),
+          loc,
+        }),
+        "false" => Ok(Expr::Literal {
+          value: Value::Bool(false),
+          loc,
+        }),
         _ => unreachable!("Unexpected boolean literal: {bool_str}, expected 'true' or 'false'"),
       }
     }
-    Rule::nil_literal => Ok(Expr::Literal(Value::Nil)),
+    Rule::nil_literal => Ok(Expr::Literal {
+      value: Value::Nil,
+      loc,
+    }),
     Rule::if_expression => {
       let mut inner = expr.into_inner();
       let cond = parse_expr(ctx, inner.next().unwrap())?;
@@ -1789,6 +1873,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
                 then: Box::new(then),
                 else_if_exprs,
                 else_expr: Some(Box::new(else_expr)),
+                loc,
               });
             }
             _ => unreachable!("Unexpected rule in if expression: {:?}", next.as_rule()),
@@ -1801,6 +1886,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         then: Box::new(then),
         else_if_exprs,
         else_expr,
+        loc,
       })
     }
     Rule::double_quote_string_literal => {
@@ -1809,7 +1895,10 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         unreachable!();
       }
       let s = parse_double_quote_string_inner(inner)?;
-      Ok(Expr::Literal(Value::String(s)))
+      Ok(Expr::Literal {
+        value: Value::String(s),
+        loc,
+      })
     }
     Rule::single_quote_string_literal => {
       let inner = expr.into_inner().next().unwrap();
@@ -1817,7 +1906,10 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         unreachable!();
       }
       let s = parse_single_quote_string_inner(inner)?;
-      Ok(Expr::Literal(Value::String(s)))
+      Ok(Expr::Literal {
+        value: Value::String(s),
+        loc,
+      })
     }
     Rule::map_literal => {
       let entries = expr.into_inner();
@@ -1855,6 +1947,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
 
       Ok(Expr::MapLiteral {
         entries: out_entries,
+        loc,
       })
     }
     Rule::block_expr => parse_block_expr(ctx, expr),
@@ -1941,6 +2034,9 @@ fn parse_block_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
     )));
   }
 
+  let (line, col) = expr.line_col();
+  let loc = ctx.add_source_loc(line, col);
+
   let statements = expr
     .into_inner()
     .map(|stmt| parse_statement(ctx, stmt))
@@ -1951,7 +2047,7 @@ fn parse_block_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
     })
     .collect::<Result<Vec<_>, ErrorStack>>()?;
 
-  Ok(Expr::Block { statements })
+  Ok(Expr::Block { statements, loc })
 }
 
 pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
@@ -1973,20 +2069,27 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         _ => unimplemented!("Unexpected primary rule: {:?}", primary.as_rule()),
       }
     })
-    .map_prefix(|op, expr| match op.as_rule() {
-      Rule::neg_op => Ok(Expr::PrefixOp {
-        op: PrefixOp::Neg,
-        expr: Box::new(expr?),
-      }),
-      Rule::pos_op => Ok(Expr::PrefixOp {
-        op: PrefixOp::Pos,
-        expr: Box::new(expr?),
-      }),
-      Rule::negate_op => Ok(Expr::PrefixOp {
-        op: PrefixOp::Not,
-        expr: Box::new(expr?),
-      }),
-      _ => unreachable!("Unexpected prefix operator rule: {:?}", op.as_rule()),
+    .map_prefix(|op, expr| {
+      let (line, col) = op.line_col();
+      let loc = ctx.add_source_loc(line, col);
+      match op.as_rule() {
+        Rule::neg_op => Ok(Expr::PrefixOp {
+          op: PrefixOp::Neg,
+          expr: Box::new(expr?),
+          loc,
+        }),
+        Rule::pos_op => Ok(Expr::PrefixOp {
+          op: PrefixOp::Pos,
+          expr: Box::new(expr?),
+          loc,
+        }),
+        Rule::negate_op => Ok(Expr::PrefixOp {
+          op: PrefixOp::Not,
+          expr: Box::new(expr?),
+          loc,
+        }),
+        _ => unreachable!("Unexpected prefix operator rule: {:?}", op.as_rule()),
+      }
     })
     .map_infix(|lhs, op, rhs| {
       let bin_op = match op.as_rule() {
@@ -2015,15 +2118,19 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           )))
         }
       };
+      let lhs = lhs?;
+      let loc = lhs.loc();
       Ok(Expr::BinOp {
         op: bin_op,
-        lhs: Box::new(lhs?),
+        lhs: Box::new(lhs),
         rhs: Box::new(rhs?),
         pre_resolved_def_ix: None,
+        loc,
       })
     })
     .map_postfix(|expr, op| {
       let expr = expr?;
+      let loc = expr.loc();
 
       if op.as_rule() != Rule::postfix {
         unreachable!("Expected postfix rule, found: {:?}", op.as_rule());
@@ -2036,6 +2143,7 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           Ok(Expr::StaticFieldAccess {
             lhs: Box::new(expr),
             field,
+            loc,
           })
         }
         Rule::field_access => {
@@ -2043,6 +2151,7 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           Ok(Expr::FieldAccess {
             lhs: Box::new(expr),
             field: Box::new(index_expr),
+            loc,
           })
         }
         other => unreachable!("Unexpected postfix rule: {other:?} in expression: {expr:?}",),
@@ -2322,8 +2431,8 @@ pub(crate) fn pre_resolve_expr_type(
   arg: &Expr,
 ) -> Option<ArgType> {
   match arg {
-    Expr::Literal(v) => Some(v.get_type()),
-    Expr::Ident(id) => match scope_tracker.get(*id) {
+    Expr::Literal { value: v, .. } => Some(v.get_type()),
+    Expr::Ident { name: id, .. } => match scope_tracker.get(*id) {
       Some(TrackedValueRef::Const(val)) => Some(val.get_type()),
       Some(TrackedValueRef::Arg(arg)) => arg.type_hint.map(Into::into),
       Some(TrackedValueRef::Dyn { type_hint }) => type_hint.map(Into::into),
@@ -2334,6 +2443,7 @@ pub(crate) fn pre_resolve_expr_type(
       lhs,
       rhs,
       pre_resolved_def_ix,
+      ..
     } => {
       match op {
         BinOp::Range | BinOp::RangeInclusive => return Some(ArgType::Sequence),
@@ -2344,7 +2454,10 @@ pub(crate) fn pre_resolve_expr_type(
           }
 
           return match &**rhs {
-            Expr::Literal(Value::Callable(callable)) => callable.get_return_type_hint(),
+            Expr::Literal {
+              value: Value::Callable(callable),
+              ..
+            } => callable.get_return_type_hint(),
             _ => None,
           };
         }
@@ -2371,7 +2484,7 @@ pub(crate) fn pre_resolve_expr_type(
         ty => Some(*ty),
       }
     }
-    Expr::PrefixOp { op, expr } => {
+    Expr::PrefixOp { op, expr, .. } => {
       let arg_ty = pre_resolve_expr_type(ctx, scope_tracker, expr)?;
       let example_val = arg_ty.build_example_val()?;
       let return_ty_res = match op {
@@ -2395,7 +2508,7 @@ pub(crate) fn pre_resolve_expr_type(
       }
     }
     Expr::Range { .. } => Some(ArgType::Sequence),
-    Expr::StaticFieldAccess { lhs, field } => {
+    Expr::StaticFieldAccess { lhs, field, .. } => {
       let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
       let lhs_val = lhs_ty.build_example_val()?;
       let out_val = match ctx.eval_static_field_access(&lhs_val, field) {
@@ -2414,7 +2527,7 @@ pub(crate) fn pre_resolve_expr_type(
       }
       Some(out_ty)
     }
-    Expr::FieldAccess { lhs, field } => {
+    Expr::FieldAccess { lhs, field, .. } => {
       let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
       let lhs_val = lhs_ty.build_example_val()?;
       let field_ty = pre_resolve_expr_type(ctx, scope_tracker, field)?;
@@ -2435,11 +2548,14 @@ pub(crate) fn pre_resolve_expr_type(
       }
       Some(out_ty)
     }
-    Expr::Call(FunctionCall {
-      target,
-      args,
-      kwargs,
-    }) => match target {
+    Expr::Call {
+      call: FunctionCall {
+        target,
+        args,
+        kwargs,
+      },
+      ..
+    } => match target {
       FunctionCallTarget::Name(_) => None,
       FunctionCallTarget::Literal(callable) => match &**callable {
         Callable::Builtin {
@@ -2485,7 +2601,7 @@ pub(crate) fn pre_resolve_expr_type(
       },
     },
     Expr::Closure { .. } => Some(ArgType::Callable),
-    Expr::ArrayLiteral(_) => Some(ArgType::Sequence),
+    Expr::ArrayLiteral { .. } => Some(ArgType::Sequence),
     Expr::MapLiteral { .. } => Some(ArgType::Map),
     Expr::Conditional { .. } => None,
     Expr::Block { .. } => None,
@@ -2573,22 +2689,13 @@ impl std::ops::BitOr for DynType {
 
 pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
   match expr {
-    Expr::BinOp {
-      op: _,
-      lhs,
-      rhs,
-      pre_resolved_def_ix: _,
-    } => {
+    Expr::BinOp { lhs, rhs, .. } => {
       let lhs_type = get_dyn_type(lhs, local_scope);
       let rhs_type = get_dyn_type(rhs, local_scope);
       lhs_type | rhs_type
     }
-    Expr::PrefixOp { op: _, expr } => get_dyn_type(expr, local_scope),
-    Expr::Range {
-      start,
-      end,
-      inclusive: _,
-    } => {
+    Expr::PrefixOp { expr, .. } => get_dyn_type(expr, local_scope),
+    Expr::Range { start, end, .. } => {
       let start_type = get_dyn_type(start, local_scope);
       if let Some(end) = end.as_ref() {
         let end_type = get_dyn_type(end, local_scope);
@@ -2597,15 +2704,14 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
         start_type
       }
     }
-    Expr::StaticFieldAccess { lhs, field: _ } => get_dyn_type(lhs, local_scope),
-    Expr::FieldAccess { lhs, field } => {
+    Expr::StaticFieldAccess { lhs, .. } => get_dyn_type(lhs, local_scope),
+    Expr::FieldAccess { lhs, field, .. } => {
       get_dyn_type(lhs, local_scope) | get_dyn_type(field, local_scope)
     }
-    Expr::Call(FunctionCall {
-      target: _,
-      args,
-      kwargs,
-    }) => {
+    Expr::Call {
+      call: FunctionCall { args, kwargs, .. },
+      ..
+    } => {
       let mut dyn_type = DynType::Const;
       for arg in args {
         dyn_type = dyn_type | get_dyn_type(arg, local_scope);
@@ -2616,12 +2722,7 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
 
       dyn_type
     }
-    Expr::Closure {
-      params,
-      body,
-      arg_placeholder_scope: _,
-      return_type_hint: _,
-    } => {
+    Expr::Closure { params, body, .. } => {
       let mut dyn_type = DynType::Const;
       for param in &**params {
         if let Some(default_val) = &param.default_val {
@@ -2637,7 +2738,7 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
       }
       dyn_type
     }
-    Expr::Ident(name) => match local_scope.vars.get(name) {
+    Expr::Ident { name, .. } => match local_scope.vars.get(name) {
       Some(TrackedValue::Const(_)) => DynType::Const,
       Some(TrackedValue::Arg(_)) => DynType::Arg,
       Some(TrackedValue::Dyn { .. }) => DynType::Dyn,
@@ -2653,18 +2754,21 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
         None => DynType::Dyn,
       },
     },
-    Expr::ArrayLiteral(exprs) => exprs.iter().fold(DynType::Const, |acc, expr| {
+    Expr::ArrayLiteral {
+      elements: exprs, ..
+    } => exprs.iter().fold(DynType::Const, |acc, expr| {
       acc | get_dyn_type(expr, local_scope)
     }),
-    Expr::MapLiteral { entries } => entries.iter().fold(DynType::Const, |acc, entry| {
+    Expr::MapLiteral { entries, .. } => entries.iter().fold(DynType::Const, |acc, entry| {
       acc | get_dyn_type(entry.expr(), local_scope)
     }),
-    Expr::Literal(_) => DynType::Const,
+    Expr::Literal { .. } => DynType::Const,
     Expr::Conditional {
       cond,
       then,
       else_if_exprs,
       else_expr,
+      ..
     } => {
       let mut dyn_type = get_dyn_type(cond, local_scope);
       dyn_type = dyn_type | get_dyn_type(then, local_scope);
@@ -2677,7 +2781,7 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
       }
       dyn_type
     }
-    Expr::Block { statements } => statements.iter().fold(DynType::Const, |acc, stmt| {
+    Expr::Block { statements, .. } => statements.iter().fold(DynType::Const, |acc, stmt| {
       stmt
         .exprs()
         .fold(acc, |acc, expr| acc | get_dyn_type(expr, local_scope))
@@ -2688,10 +2792,13 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
 /// This doesn't disambiguate between builtin fn calls and calling user-defined functions.
 pub fn traverse_fn_calls(program: &Program, mut cb: impl FnMut(Sym)) {
   let mut cb = move |expr: &Expr| {
-    if let Expr::Call(FunctionCall {
-      target: FunctionCallTarget::Name(name),
+    if let Expr::Call {
+      call: FunctionCall {
+        target: FunctionCallTarget::Name(name),
+        ..
+      },
       ..
-    }) = expr
+    } = expr
     {
       cb(*name)
     }
@@ -2786,11 +2893,17 @@ fn test_inline_const_captures_blocks_side_effectful_alias() {
   let mut scope = ScopeTracker::default();
   scope.set(sym, TrackedValue::Const(Value::Callable(Rc::new(callable))));
 
-  let expr = Expr::Call(FunctionCall {
-    target: FunctionCallTarget::Name(sym),
-    args: vec![Expr::Literal(Value::Int(1))],
-    kwargs: FxHashMap::default(),
-  });
+  let expr = Expr::Call {
+    call: FunctionCall {
+      target: FunctionCallTarget::Name(sym),
+      args: vec![Expr::Literal {
+        value: Value::Int(1),
+        loc: SourceLoc::default(),
+      }],
+      kwargs: FxHashMap::default(),
+    },
+    loc: SourceLoc::default(),
+  };
 
   let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false, false);
   assert!(
@@ -2812,10 +2925,20 @@ fn test_inline_const_captures_visits_all_conditional_branches() {
   scope.set(else_sym, TrackedValue::Const(Value::Int(2)));
 
   let mut expr = Expr::Conditional {
-    cond: Box::new(Expr::Ident(cond_sym)),
-    then: Box::new(Expr::Ident(then_sym)),
+    cond: Box::new(Expr::Ident {
+      name: cond_sym,
+      loc: SourceLoc::default(),
+    }),
+    then: Box::new(Expr::Ident {
+      name: then_sym,
+      loc: SourceLoc::default(),
+    }),
     else_if_exprs: Vec::new(),
-    else_expr: Some(Box::new(Expr::Ident(else_sym))),
+    else_expr: Some(Box::new(Expr::Ident {
+      name: else_sym,
+      loc: SourceLoc::default(),
+    })),
+    loc: SourceLoc::default(),
   };
 
   let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false, false);
@@ -2826,11 +2949,23 @@ fn test_inline_const_captures_visits_all_conditional_branches() {
     Expr::Conditional {
       then, else_expr, ..
     } => {
-      assert!(matches!(*then, Expr::Literal(Value::Int(1))));
+      assert!(matches!(
+        *then,
+        Expr::Literal {
+          value: Value::Int(1),
+          ..
+        }
+      ));
       let Some(else_expr) = else_expr else {
         panic!("Expected else branch to be preserved");
       };
-      assert!(matches!(*else_expr, Expr::Literal(Value::Int(2))));
+      assert!(matches!(
+        *else_expr,
+        Expr::Literal {
+          value: Value::Int(2),
+          ..
+        }
+      ));
     }
     _ => panic!("Expected a conditional expression"),
   }

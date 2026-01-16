@@ -1149,7 +1149,10 @@ fn eval_trace_path_cb(ctx: &EvalCtx, cb: &Callable) -> Result<Vec<DrawCommand>, 
       expr: &mut Expr,
     ) {
       match expr {
-        Expr::Call(FunctionCall { target, .. }) => match target {
+        Expr::Call {
+          call: FunctionCall { target, .. },
+          ..
+        } => match target {
           FunctionCallTarget::Literal(callable) => match &**callable {
             Callable::Builtin { fn_entry_ix, .. } => {
               dbg!(fn_sigs().entries[*fn_entry_ix].0);

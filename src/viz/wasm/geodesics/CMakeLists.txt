@@ -48,7 +48,7 @@ add_subdirectory(deps/geometry-central)
 
 set(SRCS
   src/Geodesics.cpp
-  )
+)
 
 add_executable(geodesics "${SRCS}")
 target_include_directories(geodesics PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/" "${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/glm" "${CMAKE_CURRENT_SOURCE_DIR}/deps/polyscope/deps/args")

@@ -108,6 +108,8 @@ lazy_static::lazy_static! {
 #[derive(Clone)]
 pub struct ErrorStack {
   pub errors: Vec<String>,
+  /// Source location (line, col) where the error originated. Preserves the innermost location.
+  pub loc: Option<(u32, u32)>,
 }
 
 impl ErrorStack {
@@ -115,12 +117,22 @@ impl ErrorStack {
   pub fn new(msg: impl Into<String>) -> Self {
     ErrorStack {
       errors: vec![msg.into()],
+      loc: None,
     }
   }
 
   #[cold]
   pub fn wrap(mut self, msg: impl Into<String>) -> Self {
     self.errors.push(msg.into());
+    self
+  }
+
+  /// Attach a source location to this error. Preserves the innermost (first set) location.
+  #[cold]
+  pub fn with_loc(mut self, line: u32, col: u32) -> Self {
+    if self.loc.is_none() {
+      self.loc = Some((line, col));
+    }
     self
   }
 
@@ -144,6 +156,10 @@ impl ErrorStack {
 impl Display for ErrorStack {
   #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    if let Some((line, col)) = self.loc {
+      write!(f, "at line {line}, column {col}: ")?;
+    }
+
     let indent = "  ";
     for (ix, err) in self.errors.iter().rev().enumerate() {
       let mut lines = err.lines().peekable();
@@ -894,8 +910,11 @@ impl Value {
     }
   }
 
-  fn into_literal_expr(&self) -> Expr {
-    Expr::Literal(self.clone())
+  fn into_literal_expr(&self, loc: SourceLoc) -> Expr {
+    Expr::Literal {
+      value: self.clone(),
+      loc,
+    }
   }
 
   fn get_type(&self) -> ArgType {
@@ -1538,6 +1557,47 @@ impl Default for SymbolInterner {
   }
 }
 
+use crate::ast::SourceLoc;
+
+/// Maps SourceLoc indices to (line, col) pairs.
+#[derive(Default)]
+pub struct SourceMap {
+  /// (line, col) pairs. Index 0 is reserved as a sentinel for unknown locations.
+  locations: Vec<(u32, u32)>,
+  /// Number of lines in the prelude included before user code.  This is subtracted from line
+  /// numbers in error messages.
+  pub prelude_line_count: u32,
+}
+
+impl SourceMap {
+  pub fn new(prelude_line_count: u32) -> Self {
+    let mut map = SourceMap {
+      locations: Vec::new(),
+      prelude_line_count,
+    };
+    // Reserve index 0 as "unknown location" sentinel
+    map.locations.push((0, 0));
+    map
+  }
+
+  /// Add a location and return its SourceLoc index.
+  pub fn add(&mut self, line: usize, col: usize) -> SourceLoc {
+    let idx = self.locations.len() as u32;
+    self.locations.push((line as u32, col as u32));
+    SourceLoc(idx)
+  }
+
+  /// Get the (line, col) for a SourceLoc. Returns (0, 0) for unknown locations.
+  pub fn get(&self, loc: SourceLoc) -> (u32, u32) {
+    self
+      .locations
+      .get(loc.0 as usize)
+      .copied()
+      .map(|(line, col)| (line.saturating_sub(self.prelude_line_count), col))
+      .unwrap_or((0, 0))
+  }
+}
+
 pub struct EvalCtx {
   pub globals: Scope,
   pub interned_symbols: SymbolInterner,
@@ -1554,6 +1614,8 @@ pub struct EvalCtx {
   pub const_eval_cache: RefCell<ConstEvalCache>,
   scratch_args: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
   scratch_kwargs: Box<RefCell<ArrayVec<FxHashMap<Sym, Value>, 64>>>,
+  /// Maps SourceLoc indices to (line, col) pairs for error reporting.
+  pub source_map: RefCell<SourceMap>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1577,7 +1639,16 @@ impl Default for EvalCtx {
       const_eval_cache: RefCell::new(ConstEvalCache::default()),
       scratch_args: Box::new(RefCell::new(ArrayVec::new())),
       scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
+      source_map: RefCell::new(SourceMap::new(0)),
     }
+  }
+}
+
+impl Debug for EvalCtx {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("EvalCtx")
+      .field("globals", &self.globals)
+      .finish()
   }
 }
 
@@ -1633,6 +1704,16 @@ impl EvalCtx {
       .borrow_mut()
       .pop()
       .unwrap_or_else(FxHashMap::default)
+  }
+
+  /// Resolve a SourceLoc to (line, col). Returns (0, 0) for unknown locations.
+  pub fn resolve_loc(&self, loc: SourceLoc) -> (u32, u32) {
+    self.source_map.borrow().get(loc)
+  }
+
+  /// Add a source location to the map and return its SourceLoc index.
+  pub fn add_source_loc(&self, line: usize, col: usize) -> SourceLoc {
+    self.source_map.borrow_mut().add(line, col)
   }
 
   pub fn restore_kwargs_scratch(&self, mut kwargs: FxHashMap<Sym, Value>) {
@@ -1735,13 +1816,17 @@ impl EvalCtx {
     scope: &Scope,
     binding_name: Option<Sym>,
   ) -> Result<ControlFlow<Value>, ErrorStack> {
+    let (line, col) = self.resolve_loc(expr.loc());
     match expr {
-      Expr::Call(call) => self.eval_fn_call(scope, call),
+      Expr::Call { call, .. } => self
+        .eval_fn_call(scope, call)
+        .map_err(|err| err.with_loc(line, col)),
       Expr::BinOp {
         op,
         lhs,
         rhs,
         pre_resolved_def_ix,
+        ..
       } => {
         let lhs = match self.eval_expr(lhs, scope, None)? {
           ControlFlow::Continue(val) => val,
@@ -1753,9 +1838,12 @@ impl EvalCtx {
           let lhs_bool = match lhs.as_bool() {
             Some(b) => b,
             None => {
-              return Err(ErrorStack::new(format!(
-                "Left-hand side of `{op:?}` must be a boolean, found: {lhs:?}"
-              )))
+              return Err(
+                ErrorStack::new(format!(
+                  "Left-hand side of `{op:?}` must be a boolean, found: {lhs:?}"
+                ))
+                .with_loc(line, col),
+              )
             }
           };
 
@@ -1780,30 +1868,40 @@ impl EvalCtx {
         };
         op.apply(self, &lhs, &rhs, *pre_resolved_def_ix)
           .map(ControlFlow::Continue)
-          .map_err(|err| err.wrap(format!("Error applying binary operator `{op:?}`")))
+          .map_err(|err| {
+            err
+              .wrap(format!("Error applying binary operator `{op:?}`"))
+              .with_loc(line, col)
+          })
       }
-      Expr::PrefixOp { op, expr } => {
+      Expr::PrefixOp { op, expr, .. } => {
         let val = match self.eval_expr(expr, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
         op.apply(self, &val)
           .map(ControlFlow::Continue)
-          .map_err(|err| err.wrap(format!("Error applying prefix operator `{op:?}`")))
+          .map_err(|err| {
+            err
+              .wrap(format!("Error applying prefix operator `{op:?}`"))
+              .with_loc(line, col)
+          })
       }
       Expr::Range {
         start,
         end,
         inclusive,
+        ..
       } => {
         let start = match self.eval_expr(start, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
         let Value::Int(start) = start else {
-          return Err(ErrorStack::new(format!(
-            "Range start must be an integer, found: {start:?}"
-          )));
+          return Err(
+            ErrorStack::new(format!("Range start must be an integer, found: {start:?}"))
+              .with_loc(line, col),
+          );
         };
         let end = match end {
           Some(end) => {
@@ -1812,9 +1910,10 @@ impl EvalCtx {
               early_exit => return Ok(early_exit),
             };
             let Value::Int(mut end) = end else {
-              return Err(ErrorStack::new(format!(
-                "Range end must be an integer, found: {end:?}"
-              )));
+              return Err(
+                ErrorStack::new(format!("Range end must be an integer, found: {end:?}"))
+                  .with_loc(line, col),
+              );
             };
 
             if *inclusive {
@@ -1831,9 +1930,14 @@ impl EvalCtx {
           end,
         }))))
       }
-      Expr::Ident(name) => self.eval_ident(*name, scope).map(ControlFlow::Continue),
-      Expr::Literal(val) => Ok(ControlFlow::Continue(val.clone())),
-      Expr::ArrayLiteral(elems) => {
+      Expr::Ident { name, .. } => self
+        .eval_ident(*name, scope)
+        .map(ControlFlow::Continue)
+        .map_err(|err| err.with_loc(line, col)),
+      Expr::Literal { value, .. } => Ok(ControlFlow::Continue(value.clone())),
+      Expr::ArrayLiteral {
+        elements: elems, ..
+      } => {
         let mut evaluated = Vec::with_capacity(elems.len());
         for elem in elems {
           let val = match self.eval_expr(elem, scope, None)? {
@@ -1846,7 +1950,7 @@ impl EvalCtx {
           inner: evaluated,
         }))))
       }
-      Expr::MapLiteral { entries } => {
+      Expr::MapLiteral { entries, .. } => {
         let mut evaluated = FxHashMap::default();
         for entry in entries {
           match entry {
@@ -1863,10 +1967,13 @@ impl EvalCtx {
                 early_exit => return Ok(early_exit),
               };
               let Value::Map(splat) = splat else {
-                return Err(ErrorStack::new(format!(
-                  "Tried to splat value of type {:?} into map; expected a map.",
-                  splat.get_type()
-                )));
+                return Err(
+                  ErrorStack::new(format!(
+                    "Tried to splat value of type {:?} into map; expected a map.",
+                    splat.get_type()
+                  ))
+                  .with_loc(line, col),
+                );
               };
               for (key, val) in &*splat {
                 evaluated.insert(key.clone(), val.clone());
@@ -1881,6 +1988,7 @@ impl EvalCtx {
         body,
         arg_placeholder_scope,
         return_type_hint,
+        ..
       } => {
         // cloning the scope here makes the closure function like a rust `move` closure
         // where all the values are cloned before being moved into the closure.
@@ -1915,7 +2023,9 @@ impl EvalCtx {
           }),
         ))))
       }
-      Expr::StaticFieldAccess { lhs: obj, field } => {
+      Expr::StaticFieldAccess {
+        lhs: obj, field, ..
+      } => {
         let lhs = match self.eval_expr(obj, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
@@ -1923,8 +2033,9 @@ impl EvalCtx {
         self
           .eval_static_field_access(&lhs, field)
           .map(ControlFlow::Continue)
+          .map_err(|err| err.with_loc(line, col))
       }
-      Expr::FieldAccess { lhs, field } => {
+      Expr::FieldAccess { lhs, field, .. } => {
         let lhs = match self.eval_expr(lhs, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
@@ -1936,21 +2047,26 @@ impl EvalCtx {
         self
           .eval_field_access(&lhs, &field)
           .map(ControlFlow::Continue)
+          .map_err(|err| err.with_loc(line, col))
       }
       Expr::Conditional {
         cond,
         then,
         else_if_exprs,
         else_expr,
+        ..
       } => {
         let cond = match self.eval_expr(cond, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
         let Value::Bool(cond) = cond else {
-          return Err(ErrorStack::new(format!(
-            "Condition passed to if statement must be a boolean; found: {cond:?}"
-          )));
+          return Err(
+            ErrorStack::new(format!(
+              "Condition passed to if statement must be a boolean; found: {cond:?}"
+            ))
+            .with_loc(line, col),
+          );
         };
         if cond {
           return self.eval_expr(then, scope, None);
@@ -1961,9 +2077,12 @@ impl EvalCtx {
             early_exit => return Ok(early_exit),
           };
           let Value::Bool(else_if_cond) = else_if_cond else {
-            return Err(ErrorStack::new(format!(
-              "Condition passed to else-if statement must be a boolean; found: {else_if_cond:?}"
-            )));
+            return Err(
+              ErrorStack::new(format!(
+                "Condition passed to else-if statement must be a boolean; found: {else_if_cond:?}"
+              ))
+              .with_loc(line, col),
+            );
           };
           if else_if_cond {
             return self.eval_expr(else_if_body, scope, None);
@@ -1975,7 +2094,7 @@ impl EvalCtx {
 
         Ok(ControlFlow::Continue(Value::Nil))
       }
-      Expr::Block { statements } => {
+      Expr::Block { statements, .. } => {
         // TODO: ideally, we'd avoid cloning the scope here and use the scope nesting functionality
         // like closures.  However, adding in references to scopes creates incredibly lifetime
         // headaches across the whole codebase very quickly and just isn't worth it rn
@@ -2721,6 +2840,8 @@ pub fn parse_program_maybe_with_prelude(
   include_prelude: bool,
 ) -> Result<Program, ErrorStack> {
   let src = if include_prelude {
+    let prelude_line_count = PRELUDE.lines().count();
+    ctx.source_map.borrow_mut().prelude_line_count = prelude_line_count as u32 + 1; // one extra for the newline
     format!("{PRELUDE}\n{src}")
   } else {
     src
@@ -2767,6 +2888,73 @@ pub fn parse_and_eval_program(src: impl Into<String>) -> Result<EvalCtx, ErrorSt
   let ctx = EvalCtx::default();
   parse_and_eval_program_with_ctx(src.into(), &ctx, false)?;
   Ok(ctx)
+}
+
+#[test]
+fn test_error_loc_basic_binop() {
+  let src = r#"fn = |x| {
+  x + "hello"
+}
+fn(1)
+"#;
+  let err = parse_and_eval_program(src).unwrap_err();
+  assert_eq!(err.loc, Some((2, 3)));
+  assert!(format!("{err}").contains("at line 2, column 3"));
+}
+
+#[test]
+fn test_error_loc_nested_closure() {
+  let src = r#"outer = || {
+  inner = || {
+    inner2 = |x| {
+      1 + x
+    }
+    inner2("nope")
+  }
+  inner()
+}
+outer()
+"#;
+  let err = parse_and_eval_program(src).unwrap_err();
+  assert_eq!(err.loc, Some((4, 7)));
+}
+
+#[test]
+fn test_const_eval_cache_preserves_loc_across_runs() {
+  let ctx = EvalCtx::default();
+
+  let src1 = r#"a = [1, 2]"#;
+  let mut ast1 = parse_program_src(&ctx, src1).unwrap();
+  optimize_ast(&ctx, &mut ast1).unwrap();
+  let (seq1, loc1) = match &ast1.statements[0] {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        loc,
+      } => (Rc::clone(seq), *loc),
+      _ => panic!("Expected const folding to produce a sequence literal"),
+    },
+    _ => unreachable!(),
+  };
+  assert_eq!(ctx.resolve_loc(loc1), (1, 5));
+
+  let src2 = r#"
+x = 1
+b = [1, 2]"#;
+  let mut ast2 = parse_program_src(&ctx, src2).unwrap();
+  optimize_ast(&ctx, &mut ast2).unwrap();
+  let (seq2, loc2) = match &ast2.statements[1] {
+    Statement::Assignment { expr, .. } => match expr {
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        loc,
+      } => (Rc::clone(seq), *loc),
+      _ => panic!("Expected const folding to produce a sequence literal"),
+    },
+    _ => unreachable!(),
+  };
+  assert!(Rc::ptr_eq(&seq1, &seq2));
+  assert_eq!(ctx.resolve_loc(loc2), (3, 5));
 }
 
 #[test]
@@ -4003,13 +4191,19 @@ b = contours | skip(1) | first
     Expr::BinOp { lhs, .. } => &**lhs,
     _ => unreachable!(),
   };
-  assert!(matches!(lhs, Expr::Literal(Value::Int(10))));
+  assert!(matches!(
+    lhs,
+    Expr::Literal {
+      value: Value::Int(10),
+      ..
+    }
+  ));
 
   // the `radius` returned at the end should not be inlined since its value depends on the closure
   // argument
   match body.0.last().unwrap() {
     Statement::Expr(expr) => match expr {
-      Expr::Ident(ident) => {
+      Expr::Ident { name: ident, .. } => {
         assert_eq!(*ident, ctx.interned_symbols.intern("radius"));
       }
       _ => panic!("Expected last expression to be an ident, found: {expr:?}"),
@@ -4098,10 +4292,14 @@ fn test_closure_scope_reference_counting() {
   let closure = Expr::Closure {
     params: Rc::new(vec![]),
     body: Rc::new(crate::ast::ClosureBody(vec![Statement::Expr(
-      Expr::Literal(Value::Int(1)),
+      Expr::Literal {
+        value: Value::Int(1),
+        loc: SourceLoc::default(),
+      },
     )])),
     arg_placeholder_scope: Closure::build_arg_placeholder_scope(&[]),
     return_type_hint: None,
+    loc: SourceLoc::default(),
   };
   let ctx = EvalCtx::default();
   let out = ctx

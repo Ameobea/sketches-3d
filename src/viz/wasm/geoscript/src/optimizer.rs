@@ -7,8 +7,8 @@ use crate::{
   ast::{
     eval_range, get_dyn_type, maybe_pre_resolve_bulitin_call_signature, pre_resolve_binop_def_ix,
     pre_resolve_expr_type, BinOp, ClosureArg, ClosureBody, DestructurePattern, DynType, Expr,
-    FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, Statement, TrackedValue,
-    TrackedValueRef, TypeName,
+    FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, SourceLoc, Statement,
+    TrackedValue, TrackedValueRef, TypeName,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -139,7 +139,11 @@ fn is_trace_path_closure_effectively_const(
   // if the closure was literalized successfully, we need to swap back the closure body to the
   // original one so the draw commands actually do something and then attempt to re-optimize it so
   // as many optimizations as possibly can apply
-  if let Expr::Literal(Value::Callable(callable)) = test_expr {
+  if let Expr::Literal {
+    value: Value::Callable(callable),
+    ..
+  } = test_expr
+  {
     if matches!(callable.as_ref(), Callable::Closure(_)) {
       if let Expr::Closure { params, .. } = expr {
         if !params.is_empty() {
@@ -197,15 +201,19 @@ fn maybe_constify_trace_path_closure_arg(
             body,
             arg_placeholder_scope,
             return_type_hint,
+            loc,
           } => {
-            *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Closure(Closure {
-              params: Rc::clone(&params),
-              body: Rc::clone(&body),
-              // There is no captured scope since everything was const in the test case
-              captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-              arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
-              return_type_hint: *return_type_hint,
-            }))));
+            *expr = Expr::Literal {
+              value: Value::Callable(Rc::new(Callable::Closure(Closure {
+                params: Rc::clone(&params),
+                body: Rc::clone(&body),
+                // There is no captured scope since everything was const in the test case
+                captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
+                arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
+                return_type_hint: *return_type_hint,
+              }))),
+              loc: *loc,
+            };
           }
           _ => (),
         }
@@ -265,17 +273,16 @@ fn hash_expr(
 ) -> Option<()> {
   std::mem::discriminant(expr).hash(hasher);
   match expr {
-    Expr::BinOp {
-      op,
-      lhs,
-      rhs,
-      pre_resolved_def_ix: _,
-    } => {
+    Expr::BinOp { op, lhs, rhs, .. } => {
       std::mem::discriminant(op).hash(hasher);
       hash_expr(lhs, hasher, uses_rng, config)?;
       hash_expr(rhs, hasher, uses_rng, config)?;
       if config.track_rng && matches!(op, BinOp::Pipeline | BinOp::Map) {
-        if let Expr::Literal(Value::Callable(callable)) = rhs.as_ref() {
+        if let Expr::Literal {
+          value: Value::Callable(callable),
+          ..
+        } = rhs.as_ref()
+        {
           if callable_requires_rng_state(callable) {
             *uses_rng = true;
           }
@@ -283,7 +290,9 @@ fn hash_expr(
       }
       Some(())
     }
-    Expr::PrefixOp { op, expr: inner } => {
+    Expr::PrefixOp {
+      op, expr: inner, ..
+    } => {
       std::mem::discriminant(op).hash(hasher);
       hash_expr(inner, hasher, uses_rng, config)
     }
@@ -291,6 +300,7 @@ fn hash_expr(
       start,
       end,
       inclusive,
+      ..
     } => {
       inclusive.hash(hasher);
       hash_expr(start, hasher, uses_rng, config)?;
@@ -300,19 +310,22 @@ fn hash_expr(
       }
       Some(())
     }
-    Expr::StaticFieldAccess { lhs, field } => {
+    Expr::StaticFieldAccess { lhs, field, .. } => {
       field.hash(hasher);
       hash_expr(lhs, hasher, uses_rng, config)
     }
-    Expr::FieldAccess { lhs, field } => {
+    Expr::FieldAccess { lhs, field, .. } => {
       hash_expr(lhs, hasher, uses_rng, config)?;
       hash_expr(field, hasher, uses_rng, config)
     }
-    Expr::Call(FunctionCall {
-      target,
-      args,
-      kwargs,
-    }) => {
+    Expr::Call {
+      call: FunctionCall {
+        target,
+        args,
+        kwargs,
+      },
+      ..
+    } => {
       std::mem::discriminant(target).hash(hasher);
       match target {
         FunctionCallTarget::Literal(callable) => {
@@ -352,21 +365,23 @@ fn hash_expr(
       }
       hash_closure_parts(params, body, return_type_hint, hasher, uses_rng, config)
     }
-    Expr::Ident(name) => {
+    Expr::Ident { name, .. } => {
       if !config.allow_dynamic {
         return None;
       }
       name.hash(hasher);
       Some(())
     }
-    Expr::ArrayLiteral(exprs) => {
+    Expr::ArrayLiteral {
+      elements: exprs, ..
+    } => {
       exprs.len().hash(hasher);
       for expr in exprs {
         hash_expr(expr, hasher, uses_rng, config)?;
       }
       Some(())
     }
-    Expr::MapLiteral { entries } => {
+    Expr::MapLiteral { entries, .. } => {
       entries.len().hash(hasher);
       for entry in entries {
         std::mem::discriminant(entry).hash(hasher);
@@ -382,12 +397,13 @@ fn hash_expr(
       }
       Some(())
     }
-    Expr::Literal(value) => hash_value(value, hasher),
+    Expr::Literal { value, .. } => hash_value(value, hasher),
     Expr::Conditional {
       cond,
       then,
       else_if_exprs,
       else_expr,
+      ..
     } => {
       if !config.allow_dynamic {
         return None;
@@ -405,7 +421,7 @@ fn hash_expr(
       }
       Some(())
     }
-    Expr::Block { statements } => {
+    Expr::Block { statements, .. } => {
       if !config.allow_dynamic {
         return None;
       }
@@ -542,11 +558,14 @@ fn hash_call(
   config: ExprHashConfig,
 ) -> Option<()> {
   // Hash a marker for function calls
-  std::mem::discriminant(&Expr::Call(FunctionCall {
-    target: FunctionCallTarget::Literal(Rc::clone(callable)),
-    args: Vec::new(),
-    kwargs: FxHashMap::default(),
-  }))
+  std::mem::discriminant(&Expr::Call {
+    call: FunctionCall {
+      target: FunctionCallTarget::Literal(Rc::clone(callable)),
+      args: Vec::new(),
+      kwargs: FxHashMap::default(),
+    },
+    loc: SourceLoc::default(),
+  })
   .hash(hasher);
   std::mem::discriminant(&FunctionCallTarget::Literal(Rc::clone(callable))).hash(hasher);
   hash_callable(callable, hasher, uses_rng, config)?;
@@ -737,22 +756,35 @@ fn fold_associative_literal_chain(
   }
 
   if let Some(lhs_val) = lhs.as_literal().cloned() {
-    let mut rhs_expr = std::mem::replace(rhs, Box::new(Expr::Literal(Value::Nil)));
+    let lhs_loc = lhs.loc();
+    let mut rhs_expr = std::mem::replace(
+      rhs,
+      Box::new(Expr::Literal {
+        value: Value::Nil,
+        loc: SourceLoc::default(),
+      }),
+    );
     let mut changed = false;
 
     if let Expr::BinOp {
       op: rhs_op,
       lhs: rhs_lhs,
       rhs: rhs_rhs,
-      pre_resolved_def_ix: _,
+      ..
     } = &mut *rhs_expr
     {
       if *rhs_op == op {
         if let Some(rhs_lhs_val) = rhs_lhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_val, &rhs_lhs_val, rhs_rhs.as_ref()) {
             let new_val = op.apply(ctx, &lhs_val, &rhs_lhs_val, None)?;
-            *lhs = Box::new(new_val.into_literal_expr());
-            rhs_expr = std::mem::replace(rhs_rhs, Box::new(Expr::Literal(Value::Nil)));
+            *lhs = Box::new(new_val.into_literal_expr(lhs_loc));
+            rhs_expr = std::mem::replace(
+              rhs_rhs,
+              Box::new(Expr::Literal {
+                value: Value::Nil,
+                loc: SourceLoc::default(),
+              }),
+            );
             changed = true;
           }
         }
@@ -766,22 +798,35 @@ fn fold_associative_literal_chain(
   }
 
   if let Some(rhs_val) = rhs.as_literal().cloned() {
-    let mut lhs_expr = std::mem::replace(lhs, Box::new(Expr::Literal(Value::Nil)));
+    let rhs_loc = rhs.loc();
+    let mut lhs_expr = std::mem::replace(
+      lhs,
+      Box::new(Expr::Literal {
+        value: Value::Nil,
+        loc: SourceLoc::default(),
+      }),
+    );
     let mut changed = false;
 
     if let Expr::BinOp {
       op: lhs_op,
       lhs: lhs_lhs,
       rhs: lhs_rhs,
-      pre_resolved_def_ix: _,
+      ..
     } = &mut *lhs_expr
     {
       if *lhs_op == op {
         if let Some(lhs_rhs_val) = lhs_rhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_rhs_val, &rhs_val, lhs_lhs.as_ref()) {
             let new_val = op.apply(ctx, &lhs_rhs_val, &rhs_val, None)?;
-            *rhs = Box::new(new_val.into_literal_expr());
-            lhs_expr = std::mem::replace(lhs_lhs, Box::new(Expr::Literal(Value::Nil)));
+            *rhs = Box::new(new_val.into_literal_expr(rhs_loc));
+            lhs_expr = std::mem::replace(
+              lhs_lhs,
+              Box::new(Expr::Literal {
+                value: Value::Nil,
+                loc: SourceLoc::default(),
+              }),
+            );
             changed = true;
           }
         }
@@ -818,6 +863,7 @@ fn fold_constants<'a>(
       lhs,
       rhs,
       pre_resolved_def_ix,
+      loc,
     } => {
       // need to special case short-circuiting logical ops
       let mut did_opt_lhs = false;
@@ -839,13 +885,13 @@ fn fold_constants<'a>(
           match op {
             BinOp::And => {
               if !lhs_bool {
-                *expr = Value::Bool(false).into_literal_expr();
+                *expr = Value::Bool(false).into_literal_expr(*loc);
                 return Ok(());
               }
             }
             BinOp::Or => {
               if lhs_bool {
-                *expr = Value::Bool(true).into_literal_expr();
+                *expr = Value::Bool(true).into_literal_expr(*loc);
                 return Ok(());
               }
             }
@@ -888,11 +934,19 @@ fn fold_constants<'a>(
 
       let binop_discriminant = std::mem::discriminant(&Expr::BinOp {
         op: *op,
-        lhs: Box::new(Expr::Literal(Value::Nil)),
-        rhs: Box::new(Expr::Literal(Value::Nil)),
+        lhs: Box::new(Expr::Literal {
+          value: Value::Nil,
+          loc: SourceLoc::default(),
+        }),
+        rhs: Box::new(Expr::Literal {
+          value: Value::Nil,
+          loc: SourceLoc::default(),
+        }),
         pre_resolved_def_ix: None,
+        loc: SourceLoc::default(),
       });
       let op_discriminant = std::mem::discriminant(op);
+      let expr_loc = *loc;
       let cache_lookup =
         const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
           binop_discriminant.hash(hasher);
@@ -901,7 +955,11 @@ fn fold_constants<'a>(
           hash_expr(rhs, hasher, uses_rng, ExprHashConfig::const_eval())?;
           // Already handled by hash_expr with const_eval config, but add explicit check for clarity
           if matches!(op, BinOp::Pipeline | BinOp::Map) {
-            if let Expr::Literal(Value::Callable(callable)) = rhs.as_ref() {
+            if let Expr::Literal {
+              value: Value::Callable(callable),
+              ..
+            } = rhs.as_ref()
+            {
               if callable_requires_rng_state(callable) {
                 *uses_rng = true;
               }
@@ -911,7 +969,7 @@ fn fold_constants<'a>(
         });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
-          *expr = cached.into_literal_expr();
+          *expr = cached.into_literal_expr(expr_loc);
           return Ok(());
         }
       }
@@ -920,10 +978,14 @@ fn fold_constants<'a>(
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }
-      *expr = val.into_literal_expr();
+      *expr = val.into_literal_expr(expr_loc);
       Ok(())
     }
-    Expr::PrefixOp { op, expr: inner } => {
+    Expr::PrefixOp {
+      op,
+      expr: inner,
+      loc,
+    } => {
       optimize_expr(ctx, local_scope, inner, allow_rng_const_eval)?;
 
       let Some(val) = inner.as_literal() else {
@@ -931,9 +993,14 @@ fn fold_constants<'a>(
       };
       let prefix_discriminant = std::mem::discriminant(&Expr::PrefixOp {
         op: *op,
-        expr: Box::new(Expr::Literal(Value::Nil)),
+        expr: Box::new(Expr::Literal {
+          value: Value::Nil,
+          loc: SourceLoc::default(),
+        }),
+        loc: SourceLoc::default(),
       });
       let op_discriminant = std::mem::discriminant(op);
+      let expr_loc = *loc;
       let cache_lookup =
         const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
           prefix_discriminant.hash(hasher);
@@ -942,7 +1009,7 @@ fn fold_constants<'a>(
         });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
-          *expr = cached.into_literal_expr();
+          *expr = cached.into_literal_expr(expr_loc);
           return Ok(());
         }
       }
@@ -950,13 +1017,14 @@ fn fold_constants<'a>(
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }
-      *expr = val.into_literal_expr();
+      *expr = val.into_literal_expr(expr_loc);
       Ok(())
     }
     Expr::Range {
       start,
       end,
       inclusive,
+      loc,
     } => {
       optimize_expr(ctx, local_scope, start, allow_rng_const_eval)?;
       if let Some(end) = end {
@@ -974,9 +1042,13 @@ fn fold_constants<'a>(
       };
       let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, _| {
         std::mem::discriminant(&Expr::Range {
-          start: Box::new(Expr::Literal(Value::Nil)),
+          start: Box::new(Expr::Literal {
+            value: Value::Nil,
+            loc: SourceLoc::default(),
+          }),
           end: None,
           inclusive: false,
+          loc: SourceLoc::default(),
         })
         .hash(hasher);
         inclusive.hash(hasher);
@@ -989,7 +1061,7 @@ fn fold_constants<'a>(
       });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
-          *expr = cached.into_literal_expr();
+          *expr = cached.into_literal_expr(*loc);
           return Ok(());
         }
       }
@@ -997,10 +1069,10 @@ fn fold_constants<'a>(
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }
-      *expr = val.into_literal_expr();
+      *expr = val.into_literal_expr(*loc);
       Ok(())
     }
-    Expr::StaticFieldAccess { lhs, field } => {
+    Expr::StaticFieldAccess { lhs, field, loc } => {
       optimize_expr(ctx, local_scope, lhs, allow_rng_const_eval)?;
 
       let Some(lhs_val) = lhs.as_literal() else {
@@ -1008,8 +1080,12 @@ fn fold_constants<'a>(
       };
 
       let static_access_discriminant = std::mem::discriminant(&Expr::StaticFieldAccess {
-        lhs: Box::new(Expr::Literal(Value::Nil)),
+        lhs: Box::new(Expr::Literal {
+          value: Value::Nil,
+          loc: SourceLoc::default(),
+        }),
         field: field.clone(),
+        loc: SourceLoc::default(),
       });
       let cache_lookup =
         const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
@@ -1019,7 +1095,7 @@ fn fold_constants<'a>(
         });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
-          *expr = cached.into_literal_expr();
+          *expr = cached.into_literal_expr(*loc);
           return Ok(());
         }
       }
@@ -1028,11 +1104,11 @@ fn fold_constants<'a>(
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }
-      *expr = val.into_literal_expr();
+      *expr = val.into_literal_expr(*loc);
 
       Ok(())
     }
-    Expr::FieldAccess { lhs, field } => {
+    Expr::FieldAccess { lhs, field, loc } => {
       optimize_expr(ctx, local_scope, lhs, allow_rng_const_eval)?;
       optimize_expr(ctx, local_scope, field, allow_rng_const_eval)?;
 
@@ -1041,8 +1117,15 @@ fn fold_constants<'a>(
       };
 
       let field_access_discriminant = std::mem::discriminant(&Expr::FieldAccess {
-        lhs: Box::new(Expr::Literal(Value::Nil)),
-        field: Box::new(Expr::Literal(Value::Nil)),
+        lhs: Box::new(Expr::Literal {
+          value: Value::Nil,
+          loc: SourceLoc::default(),
+        }),
+        field: Box::new(Expr::Literal {
+          value: Value::Nil,
+          loc: SourceLoc::default(),
+        }),
+        loc: SourceLoc::default(),
       });
       let cache_lookup =
         const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
@@ -1052,7 +1135,7 @@ fn fold_constants<'a>(
         });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
-          *expr = cached.into_literal_expr();
+          *expr = cached.into_literal_expr(*loc);
           return Ok(());
         }
       }
@@ -1061,15 +1144,18 @@ fn fold_constants<'a>(
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }
-      *expr = val.into_literal_expr();
+      *expr = val.into_literal_expr(*loc);
 
       Ok(())
     }
-    Expr::Call(FunctionCall {
-      target,
-      args,
-      kwargs,
-    }) => {
+    Expr::Call {
+      call: FunctionCall {
+        target,
+        args,
+        kwargs,
+      },
+      loc,
+    } => {
       // if the function call target is a name, resolve the callable referenced to make calling it
       // more efficient if it's called repeatedly later on
       if let FunctionCallTarget::Name(name) = target {
@@ -1104,9 +1190,13 @@ fn fold_constants<'a>(
                   get_builtin_fn_sig_entry_ix(alias).unwrap(),
                   resolve_builtin_impl(alias),
                 )),
-                None => Err(ErrorStack::new(format!(
-                  "Variable or function not found: {name}",
-                ))),
+                None => {
+                  let (line, col) = ctx.resolve_loc(*loc);
+                  Err(
+                    ErrorStack::new(format!("Variable or function not found: {name}"))
+                      .with_loc(line, col),
+                  )
+                }
               },
             })?;
 
@@ -1224,7 +1314,7 @@ fn fold_constants<'a>(
       };
 
       if let Some(evaled) = evaled {
-        *expr = evaled.into_literal_expr();
+        *expr = evaled.into_literal_expr(*loc);
       }
       Ok(())
     }
@@ -1233,6 +1323,7 @@ fn fold_constants<'a>(
       body,
       arg_placeholder_scope,
       return_type_hint,
+      loc,
     } => {
       let mut params_inner = (**params).clone();
       for param in &mut params_inner {
@@ -1330,20 +1421,23 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
-      *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Closure(Closure {
-        params: Rc::clone(&params),
-        body: Rc::clone(&body),
-        captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-        arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
-        return_type_hint: *return_type_hint,
-      }))));
+      *expr = Expr::Literal {
+        value: Value::Callable(Rc::new(Callable::Closure(Closure {
+          params: Rc::clone(&params),
+          body: Rc::clone(&body),
+          captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
+          arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
+          return_type_hint: *return_type_hint,
+        }))),
+        loc: *loc,
+      };
 
       Ok(())
     }
-    &mut Expr::Ident(id) => {
+    &mut Expr::Ident { name: id, loc } => {
       if let Some(val) = local_scope.get(id) {
         if let TrackedValueRef::Const(val) = val {
-          *expr = val.clone().into_literal_expr();
+          *expr = val.clone().into_literal_expr(loc);
           return Ok(());
         } else {
           return Ok(());
@@ -1351,17 +1445,20 @@ fn fold_constants<'a>(
       }
 
       if let Some(val) = ctx.globals.get(id) {
-        *expr = val.clone().into_literal_expr();
+        *expr = val.clone().into_literal_expr(loc);
         return Ok(());
       }
 
       let cf = ctx.with_resolved_sym(id, |resolved_name| {
         if fn_sigs().contains_key(resolved_name) || FUNCTION_ALIASES.contains_key(resolved_name) {
-          *expr = Expr::Literal(Value::Callable(Rc::new(Callable::Builtin {
-            fn_entry_ix: get_builtin_fn_sig_entry_ix(resolved_name).unwrap(),
-            fn_impl: resolve_builtin_impl(resolved_name),
-            pre_resolved_signature: None,
-          })));
+          *expr = Expr::Literal {
+            value: Value::Callable(Rc::new(Callable::Builtin {
+              fn_entry_ix: get_builtin_fn_sig_entry_ix(resolved_name).unwrap(),
+              fn_impl: resolve_builtin_impl(resolved_name),
+              pre_resolved_signature: None,
+            })),
+            loc,
+          };
           ControlFlow::Break(())
         } else {
           ControlFlow::Continue(())
@@ -1375,21 +1472,29 @@ fn fold_constants<'a>(
       ctx
         .interned_symbols
         .with_resolved(id, |resolved_name| {
-          Err(ErrorStack::new(format!(
-            "Variable or function not found: {resolved_name}"
-          )))
+          let (line, col) = ctx.resolve_loc(loc);
+          Err(
+            ErrorStack::new(format!("Variable or function not found: {resolved_name}"))
+              .with_loc(line, col),
+          )
         })
         .unwrap()
     }
-    Expr::Literal(_) => Ok(()),
-    Expr::ArrayLiteral(exprs) => {
+    Expr::Literal { .. } => Ok(()),
+    Expr::ArrayLiteral {
+      elements: exprs,
+      loc,
+    } => {
       for inner in exprs.iter_mut() {
         optimize_expr(ctx, local_scope, inner, allow_rng_const_eval)?;
       }
 
       // if all elements are literals, can fold into an `EagerSeq`
       if exprs.iter().all(|e| e.is_literal()) {
-        let array_discriminant = std::mem::discriminant(&Expr::ArrayLiteral(vec![]));
+        let array_discriminant = std::mem::discriminant(&Expr::ArrayLiteral {
+          elements: vec![],
+          loc: SourceLoc::default(),
+        });
         let cache_lookup =
           const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
             array_discriminant.hash(hasher);
@@ -1401,7 +1506,7 @@ fn fold_constants<'a>(
           });
         if let Some(lookup) = cache_lookup {
           if let Some(cached) = const_eval_cache_get(ctx, lookup) {
-            *expr = cached.into_literal_expr();
+            *expr = cached.into_literal_expr(*loc);
             return Ok(());
           }
         }
@@ -1413,12 +1518,15 @@ fn fold_constants<'a>(
         if let Some(lookup) = cache_lookup {
           const_eval_cache_store(ctx, lookup, val.clone());
         }
-        *expr = Expr::Literal(val);
+        *expr = Expr::Literal {
+          value: val,
+          loc: *loc,
+        };
       }
 
       Ok(())
     }
-    Expr::MapLiteral { entries } => {
+    Expr::MapLiteral { entries, loc } => {
       for value in entries.iter_mut() {
         match value {
           MapLiteralEntry::KeyValue { key: _, value } => {
@@ -1432,7 +1540,10 @@ fn fold_constants<'a>(
 
       // if all values are literals, can fold into a `Map`
       if entries.iter().all(|e| e.is_literal()) {
-        let map_discriminant = std::mem::discriminant(&Expr::MapLiteral { entries: vec![] });
+        let map_discriminant = std::mem::discriminant(&Expr::MapLiteral {
+          entries: vec![],
+          loc: SourceLoc::default(),
+        });
         let cache_lookup =
           const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
             map_discriminant.hash(hasher);
@@ -1453,7 +1564,7 @@ fn fold_constants<'a>(
           });
         if let Some(lookup) = cache_lookup {
           if let Some(cached) = const_eval_cache_get(ctx, lookup) {
-            *expr = cached.into_literal_expr();
+            *expr = cached.into_literal_expr(*loc);
             return Ok(());
           }
         }
@@ -1485,7 +1596,10 @@ fn fold_constants<'a>(
         if let Some(lookup) = cache_lookup {
           const_eval_cache_store(ctx, lookup, val.clone());
         }
-        *expr = Expr::Literal(val);
+        *expr = Expr::Literal {
+          value: val,
+          loc: *loc,
+        };
       }
 
       Ok(())
@@ -1495,6 +1609,7 @@ fn fold_constants<'a>(
       then,
       else_if_exprs,
       else_expr,
+      ..
     } => {
       // TODO: check if conditions are const and elide the whole conditional if they are
 
@@ -1548,7 +1663,7 @@ fn fold_constants<'a>(
       }
       Ok(())
     }
-    Expr::Block { statements } => {
+    Expr::Block { statements, loc } => {
       // the const-capture analysis was built for closure bodies, so they think everything
       // is OK if a local at the most inner scope level is declared but not const-available - those
       // correspond to closure args.
@@ -1583,17 +1698,28 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
-      let evaled = ctx.eval_expr(expr, &ctx.globals, None)?;
+      let evaled_expr = Expr::Block {
+        statements: statements.clone(),
+        loc: *loc,
+      };
+      let evaled = ctx.eval_expr(&evaled_expr, &ctx.globals, None)?;
       match evaled {
         crate::ControlFlow::Continue(val) | crate::ControlFlow::Break(val) => {
-          *expr = Expr::Literal(val)
+          *expr = Expr::Literal {
+            value: val,
+            loc: *loc,
+          }
         }
         crate::ControlFlow::Return(retval) => {
           // replace the block with a new one that just includes the return statement
           *expr = Expr::Block {
             statements: vec![Statement::Return {
-              value: Some(Expr::Literal(retval)),
+              value: Some(Expr::Literal {
+                value: retval,
+                loc: *loc,
+              }),
             }],
+            loc: *loc,
           };
         }
       }
@@ -1760,14 +1886,25 @@ pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> 
 fn test_basic_constant_folding() {
   let mut expr = Expr::BinOp {
     op: BinOp::Add,
-    lhs: Box::new(Expr::Literal(Value::Int(2))),
-    rhs: Box::new(Expr::Literal(Value::Int(3))),
+    lhs: Box::new(Expr::Literal {
+      value: Value::Int(2),
+      loc: SourceLoc::default(),
+    }),
+    rhs: Box::new(Expr::Literal {
+      value: Value::Int(3),
+      loc: SourceLoc::default(),
+    }),
     pre_resolved_def_ix: None,
+    loc: SourceLoc::default(),
   };
   let mut local_scope = ScopeTracker::default();
   let ctx = EvalCtx::default();
   optimize_expr(&ctx, &mut local_scope, &mut expr, true).unwrap();
-  let Expr::Literal(Value::Int(5)) = expr else {
+  let Expr::Literal {
+    value: Value::Int(5),
+    ..
+  } = expr
+  else {
     panic!("Expected constant folding to produce 5");
   };
 }
@@ -1820,7 +1957,11 @@ y = fn(2)
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
-  let Expr::Literal(Value::Int(3)) = expr else {
+  let Expr::Literal {
+    value: Value::Int(3),
+    ..
+  } = expr
+  else {
     panic!("Expected constant folding to produce 3");
   };
 }
@@ -1842,7 +1983,10 @@ y = fn(2, a)
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
   match expr {
-    Expr::Literal(Value::Int(3)) => {}
+    Expr::Literal {
+      value: Value::Int(3),
+      ..
+    } => {}
     _ => panic!("Expected constant folding to produce 3, found: {expr:?}"),
   };
 }
@@ -1866,7 +2010,13 @@ x = [
     unreachable!();
   };
   assert!(
-    matches!(expr, Expr::Literal(Value::Mesh(_))),
+    matches!(
+      expr,
+      Expr::Literal {
+        value: Value::Mesh(_),
+        ..
+      }
+    ),
     "Expected constant folding to produce a mesh, found: {expr:?}"
   );
 }
@@ -1892,7 +2042,11 @@ y = fn(2)
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
-  let Expr::Literal(Value::Int(7)) = expr else {
+  let Expr::Literal {
+    value: Value::Int(7),
+    ..
+  } = expr
+  else {
     panic!("Expected constant folding to produce 7, found: {expr:?}");
   };
 }
@@ -1915,7 +2069,11 @@ fn test_block_const_folding() {
   let Statement::Expr(expr) = &ast.statements[0] else {
     panic!("Expected first statement to be an expression");
   };
-  let Expr::Literal(Value::Int(3)) = expr else {
+  let Expr::Literal {
+    value: Value::Int(3),
+    ..
+  } = expr
+  else {
     panic!("Expected constant folding to produce 3, found: {expr:?}");
   };
 }
@@ -1934,7 +2092,10 @@ y = cb(2)
   let st1 = ast.statements[0].clone();
   let closure_body = match st1 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -1944,10 +2105,14 @@ y = cb(2)
   };
   let call_target = match &closure_body.0[0] {
     Statement::Expr(expr) => match expr {
-      Expr::Call(FunctionCall {
-        target: FunctionCallTarget::Literal(target),
+      Expr::Call {
+        call:
+          FunctionCall {
+            target: FunctionCallTarget::Literal(target),
+            ..
+          },
         ..
-      }) => target,
+      } => target,
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -1991,7 +2156,11 @@ y = fn(2)
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
-  let Expr::Literal(Value::Int(3)) = expr else {
+  let Expr::Literal {
+    value: Value::Int(3),
+    ..
+  } = expr
+  else {
     panic!("Expected constant folding to produce 3, found: {expr:?}");
   };
 }
@@ -2010,7 +2179,10 @@ x = f(2, 3)
   let st1 = ast.statements[0].clone();
   let closure_body = match st1 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -2057,7 +2229,10 @@ fn = || {
   let st1 = ast.statements[0].clone();
   let closure_body = match st1 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -2077,6 +2252,7 @@ fn = || {
       lhs,
       rhs: _, // convex_hull
       pre_resolved_def_ix: _,
+      ..
     } => (*lhs).clone(),
     _ => unreachable!(),
   };
@@ -2086,6 +2262,7 @@ fn = || {
       lhs,
       rhs: _, // take
       pre_resolved_def_ix: _,
+      ..
     } => (*lhs).clone(),
     _ => unreachable!(),
   };
@@ -2095,12 +2272,16 @@ fn = || {
       lhs: _, // range
       rhs,
       pre_resolved_def_ix: _,
+      ..
     } => (*rhs).clone(),
     _ => unreachable!(),
   };
 
   let filter_paf = match expr {
-    Expr::Literal(Value::Callable(callable)) => match &*callable {
+    Expr::Literal {
+      value: Value::Callable(callable),
+      ..
+    } => match &*callable {
       Callable::PartiallyAppliedFn(paf) => paf.clone(),
       _ => unreachable!(),
     },
@@ -2121,11 +2302,14 @@ fn = || {
       expr,
       type_hint: _,
     } => match expr {
-      Expr::Call(FunctionCall {
-        args,
-        kwargs: _,
-        target,
-      }) => {
+      Expr::Call {
+        call: FunctionCall {
+          args,
+          kwargs: _,
+          target,
+        },
+        ..
+      } => {
         let arg0 = &args[0];
         match arg0 {
           Expr::BinOp {
@@ -2184,7 +2368,10 @@ fn = |x| 1 + (1 + (1 + x))
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -2204,11 +2391,12 @@ fn = |x| 1 + (1 + (1 + x))
       lhs,
       rhs,
       pre_resolved_def_ix: _,
+      ..
     } => {
       assert!(matches!(lhs.as_literal(), Some(Value::Int(3))));
       assert!(matches!(
         **rhs,
-        Expr::Ident(id) if id == ctx.interned_symbols.intern("x")
+        Expr::Ident { name: id, .. } if id == ctx.interned_symbols.intern("x")
       ));
     }
     _ => panic!("Expected an add expression, found: {expr:?}"),
@@ -2228,7 +2416,10 @@ fn = |x| (x + 1) + 1
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -2247,10 +2438,11 @@ fn = |x| (x + 1) + 1
       lhs,
       rhs,
       pre_resolved_def_ix: _,
+      ..
     } => {
       assert!(matches!(
         **lhs,
-        Expr::Ident(id) if id == ctx.interned_symbols.intern("x")
+        Expr::Ident { name: id, .. } if id == ctx.interned_symbols.intern("x")
       ));
       assert!(matches!(rhs.as_literal(), Some(Value::Int(2))));
     }
@@ -2271,7 +2463,10 @@ fn = |x| 1.5 + (2.5 + x)
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -2290,11 +2485,12 @@ fn = |x| 1.5 + (2.5 + x)
       lhs,
       rhs,
       pre_resolved_def_ix: _,
+      ..
     } => {
       assert!(matches!(lhs.as_literal(), Some(Value::Float(f)) if *f == 4.0));
       assert!(matches!(
         **rhs,
-        Expr::Ident(id) if id == ctx.interned_symbols.intern("x")
+        Expr::Ident { name: id, .. } if id == ctx.interned_symbols.intern("x")
       ));
     }
     _ => panic!("Expected an add expression, found: {expr:?}"),
@@ -2314,7 +2510,10 @@ fn = |v: vec2| vec2(1, 2) + (vec2(3, 4) + v)
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -2333,6 +2532,7 @@ fn = |v: vec2| vec2(1, 2) + (vec2(3, 4) + v)
       lhs,
       rhs,
       pre_resolved_def_ix: _,
+      ..
     } => {
       assert!(matches!(
         lhs.as_literal(),
@@ -2340,7 +2540,7 @@ fn = |v: vec2| vec2(1, 2) + (vec2(3, 4) + v)
       ));
       assert!(matches!(
         **rhs,
-        Expr::Ident(id) if id == ctx.interned_symbols.intern("v")
+        Expr::Ident { name: id, .. } if id == ctx.interned_symbols.intern("v")
       ));
     }
     _ => panic!("Expected an add expression, found: {expr:?}"),
@@ -2360,7 +2560,10 @@ fn = |v: vec3| 2. * (3. * v)
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => match &*callable {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &*callable {
         Callable::Closure(closure) => closure.body.clone(),
         _ => unreachable!(),
       },
@@ -2379,11 +2582,12 @@ fn = |v: vec3| 2. * (3. * v)
       lhs,
       rhs,
       pre_resolved_def_ix: _,
+      ..
     } => {
       assert!(matches!(lhs.as_literal(), Some(Value::Float(f)) if *f == 6.));
       assert!(matches!(
         **rhs,
-        Expr::Ident(id) if id == ctx.interned_symbols.intern("v")
+        Expr::Ident { name: id, .. } if id == ctx.interned_symbols.intern("v")
       ));
     }
     _ => panic!("Expected a mul expression, found: {expr:?}"),
@@ -2400,7 +2604,13 @@ fn test_rng_const_folding_top_level() {
 
   match &ast.statements[0] {
     Statement::Assignment { expr, .. } => {
-      assert!(matches!(expr, Expr::Literal(Value::Float(_))));
+      assert!(matches!(
+        expr,
+        Expr::Literal {
+          value: Value::Float(_),
+          ..
+        }
+      ));
     }
     _ => unreachable!(),
   }
@@ -2416,7 +2626,10 @@ fn test_const_eval_cache_persists_across_runs() {
 
   let mesh1 = match &ast1.statements[0] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Mesh(mesh)) => Rc::clone(mesh),
+      Expr::Literal {
+        value: Value::Mesh(mesh),
+        ..
+      } => Rc::clone(mesh),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2427,7 +2640,10 @@ fn test_const_eval_cache_persists_across_runs() {
 
   let mesh2 = match &ast2.statements[0] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Mesh(mesh)) => Rc::clone(mesh),
+      Expr::Literal {
+        value: Value::Mesh(mesh),
+        ..
+      } => Rc::clone(mesh),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2446,7 +2662,10 @@ fn test_const_eval_cache_persists_across_runs_with_closure_map() {
 
   let seq1 = match &ast1.statements[0] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Sequence(seq)) => Rc::clone(seq),
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        ..
+      } => Rc::clone(seq),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2457,7 +2676,10 @@ fn test_const_eval_cache_persists_across_runs_with_closure_map() {
 
   let seq2 = match &ast2.statements[0] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Sequence(seq)) => Rc::clone(seq),
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        ..
+      } => Rc::clone(seq),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2479,7 +2701,10 @@ a = 0..4 -> |x| x + offset
 
   let seq1 = match &ast1.statements[1] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Sequence(seq)) => Rc::clone(seq),
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        ..
+      } => Rc::clone(seq),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2490,7 +2715,10 @@ a = 0..4 -> |x| x + offset
 
   let seq2 = match &ast2.statements[1] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Sequence(seq)) => Rc::clone(seq),
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        ..
+      } => Rc::clone(seq),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2516,7 +2744,10 @@ path_sampler = trace_path(|| {
 
   let sampler1 = match &ast1.statements[1] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => Rc::clone(callable),
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => Rc::clone(callable),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2527,7 +2758,10 @@ path_sampler = trace_path(|| {
 
   let sampler2 = match &ast2.statements[1] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Callable(callable)) => Rc::clone(callable),
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => Rc::clone(callable),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2588,7 +2822,10 @@ fn optimize_and_get_mesh(ctx: &EvalCtx, code: &str, stmt_index: usize) -> Rc<cra
   optimize_ast(ctx, &mut ast).unwrap();
   match &ast.statements[stmt_index] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Mesh(mesh)) => Rc::clone(mesh),
+      Expr::Literal {
+        value: Value::Mesh(mesh),
+        ..
+      } => Rc::clone(mesh),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2605,7 +2842,10 @@ fn optimize_and_get_sequence(
   optimize_ast(ctx, &mut ast).unwrap();
   match &ast.statements[stmt_index] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Sequence(seq)) => Rc::clone(seq),
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        ..
+      } => Rc::clone(seq),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2680,7 +2920,10 @@ fn test_closure_hash_distinguishes_body() {
   optimize_ast(&ctx, &mut ast1).unwrap();
   let seq1 = match &ast1.statements[0] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Sequence(seq)) => Rc::clone(seq),
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        ..
+      } => Rc::clone(seq),
       _ => unreachable!(),
     },
     _ => unreachable!(),
@@ -2691,7 +2934,10 @@ fn test_closure_hash_distinguishes_body() {
   optimize_ast(&ctx, &mut ast2).unwrap();
   let seq2 = match &ast2.statements[0] {
     Statement::Assignment { expr, .. } => match expr {
-      Expr::Literal(Value::Sequence(seq)) => Rc::clone(seq),
+      Expr::Literal {
+        value: Value::Sequence(seq),
+        ..
+      } => Rc::clone(seq),
       _ => unreachable!(),
     },
     _ => unreachable!(),

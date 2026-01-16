@@ -110,14 +110,14 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConfig: VizConfig
 ): Promise<SceneConfig> => {
-  const dirLight = new THREE.DirectionalLight(0xbb4242, 1);
+  const dirLight = new THREE.DirectionalLight(0xbb4242, 4);
   dirLight.position.set(1000, 1000, 1000);
   dirLight.updateMatrixWorld();
   dirLight.target.position.set(0, 0, 0);
   dirLight.target.updateMatrixWorld();
   viz.scene.add(dirLight);
   viz.scene.add(dirLight.target);
-  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  viz.scene.add(new THREE.AmbientLight(0xffffff, 2));
 
   viz.camera.far = 40_000;
   viz.camera.near = 10;

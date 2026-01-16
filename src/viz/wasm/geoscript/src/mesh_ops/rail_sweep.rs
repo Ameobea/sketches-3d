@@ -13,6 +13,9 @@ use crate::{
 const FRAME_EPSILON: f32 = 1e-6;
 const COLLAPSE_EPSILON: f32 = 1e-5;
 const GUIDE_EPSILON: f32 = 1e-6;
+/// Maximum allowed deviation from a straight line (as a fraction of total spine length) before
+/// disabling the topology-aware sampling optimization.
+const SPINE_STRAIGHTNESS_THRESHOLD: f32 = 0.035;
 
 #[derive(Clone, Copy, Debug)]
 pub enum FrameMode {
@@ -159,6 +162,47 @@ fn ring_is_collapsed(ring: &[Vec3]) -> bool {
 
 fn ring_center(ring: &[Vec3]) -> Vec3 {
   ring.iter().fold(Vec3::new(0., 0., 0.), |acc, v| acc + *v) / (ring.len() as f32)
+}
+
+/// Checks whether the spine points lie approximately on a straight line.
+///
+/// Returns `true` if the maximum perpendicular distance of any point from the line connecting the
+/// first and last points is within `SPINE_STRAIGHTNESS_THRESHOLD` times the total spine length.
+fn spine_is_approximately_straight(points: &[Vec3]) -> bool {
+  if points.len() < 3 {
+    return true;
+  }
+
+  let start = points[0];
+  let end = points[points.len() - 1];
+  let line_dir = end - start;
+  let line_len_sq = line_dir.norm_squared();
+
+  // degenerate case
+  if line_len_sq < FRAME_EPSILON {
+    let threshold_sq = SPINE_STRAIGHTNESS_THRESHOLD * SPINE_STRAIGHTNESS_THRESHOLD;
+    return points
+      .iter()
+      .all(|p| (*p - start).norm_squared() < threshold_sq);
+  }
+
+  let line_len = line_len_sq.sqrt();
+  let line_dir_normalized = line_dir / line_len;
+
+  let mut max_deviation = 0.0f32;
+  for point in &points[1..points.len() - 1] {
+    let to_point = *point - start;
+    // Project onto line direction
+    let proj_len = to_point.dot(&line_dir_normalized);
+    let proj = line_dir_normalized * proj_len;
+    // Perpendicular distance
+    let perp = to_point - proj;
+    let deviation = perp.norm();
+    max_deviation = max_deviation.max(deviation);
+  }
+
+  // Compare deviation to total spine length (use line length as proxy)
+  max_deviation <= line_len * SPINE_STRAIGHTNESS_THRESHOLD
 }
 
 fn normalize_guides(guides: &[f32]) -> Vec<f32> {
@@ -600,7 +644,6 @@ pub(crate) fn rail_sweep_impl(
       }
 
       let profile_guide_data = collect_profile_guides(ctx, &profile_samplers_val)?;
-      log::info!("{:?}", profile_guide_data.as_ref().map(|data| &data.guides));
 
       fn resample_spine_points(
         points: &[Vec3],
@@ -717,44 +760,53 @@ pub(crate) fn rail_sweep_impl(
         )));
       };
 
-      enum Twist<'a> {
+      /// Epsilon for comparing twist values to determine if they're effectively constant.
+      const TWIST_CONST_EPSILON: f32 = 1e-6;
+
+      enum Twist {
+        /// All twist values are constant (or effectively constant within epsilon).
         Const(f32),
-        Dyn(&'a Rc<Callable>),
+        /// Twist values vary; pre-sampled for each spine point.
+        Presampled(Vec<f32>),
       }
 
       let twist = if let Some(f) = twist_val.as_float() {
         Twist::Const(f)
       } else if let Some(cb) = twist_val.as_callable() {
-        Twist::Dyn(cb)
+        // Pre-sample twist values to check if they're effectively constant
+        let mut twist_values = Vec::with_capacity(spine_points.len());
+        for (i, pos) in spine_points.iter().enumerate() {
+          let out = ctx
+            .invoke_callable(cb, &[Value::Int(i as i64), Value::Vec3(*pos)], EMPTY_KWARGS)
+            .map_err(|err| {
+              err.wrap("Error calling user-provided cb passed to `twist` arg in `rail_sweep`")
+            })?;
+          let val = out.as_float().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Expected Float from user-provided cb passed to `twist` arg in `rail_sweep`, found: \
+               {out:?}"
+            ))
+          })?;
+          twist_values.push(val);
+        }
+
+        // Check if all values are effectively constant
+        let first = twist_values.first().copied().unwrap_or(0.0);
+        let is_constant = twist_values
+          .iter()
+          .all(|v| (*v - first).abs() <= TWIST_CONST_EPSILON);
+
+        if is_constant {
+          Twist::Const(first)
+        } else {
+          Twist::Presampled(twist_values)
+        }
       } else {
         return Err(ErrorStack::new(format!(
           "Invalid twist argument for `rail_sweep`; expected Numeric or Callable, found: \
            {twist_val:?}"
         )));
       };
-
-      fn build_twist_callable<'a>(
-        ctx: &'a EvalCtx,
-        get_twist: &'a Rc<Callable>,
-      ) -> impl Fn(usize, Vec3) -> Result<f32, ErrorStack> + 'a {
-        move |i, pos| {
-          let out = ctx
-            .invoke_callable(
-              get_twist,
-              &[Value::Int(i as i64), Value::Vec3(pos)],
-              EMPTY_KWARGS,
-            )
-            .map_err(|err| {
-              err.wrap("Error calling user-provided cb passed to `twist` arg in `rail_sweep`")
-            })?;
-          out.as_float().ok_or_else(|| {
-            ErrorStack::new(format!(
-              "Expected Float from user-provided cb passed to `twist` arg in `rail_sweep`, found: \
-               {out:?}"
-            ))
-          })
-        }
-      }
 
       fn build_profile_callable<'a>(
         ctx: &'a EvalCtx,
@@ -793,28 +845,41 @@ pub(crate) fn rail_sweep_impl(
         None => (None, None),
       };
 
+      // Disable topology-aware sampling optimization when conditions might cause artifacts:
+      // 1. Non-constant twist can distort "straight" segments in ways that require more detail
+      // 2. Non-straight spines can bend segments, causing shading artifacts with reduced detail
+      let has_varying_twist = matches!(twist, Twist::Presampled(_));
+      let spine_is_straight = spine_is_approximately_straight(&spine_points);
+      let should_disable_optimization = has_varying_twist || !spine_is_straight;
+
+      let effective_profile_weights = if should_disable_optimization {
+        None
+      } else {
+        profile_weights
+      };
+
       let mesh = match twist {
-        Twist::Const(twist) => rail_sweep(
+        Twist::Const(twist_val) => rail_sweep(
           &spine_points,
           ring_resolution,
           frame_mode,
           closed,
           capped,
-          |_, _| Ok(twist),
+          |_, _| Ok(twist_val),
           build_profile_callable(ctx, profile),
           profile_guides,
-          profile_weights,
+          effective_profile_weights,
         )?,
-        Twist::Dyn(get_twist) => rail_sweep(
+        Twist::Presampled(twist_values) => rail_sweep(
           &spine_points,
           ring_resolution,
           frame_mode,
           closed,
           capped,
-          build_twist_callable(ctx, get_twist),
+          |i, _| Ok(twist_values[i]),
           build_profile_callable(ctx, profile),
           profile_guides,
-          profile_weights,
+          effective_profile_weights,
         )?,
       };
 
@@ -918,5 +983,80 @@ mod tests {
     assert!((samples[3] - 0.7).abs() < 1e-6);
     assert!((samples[4] - 0.8).abs() < 1e-6);
     assert!((samples[5] - 0.9).abs() < 1e-6);
+  }
+
+  #[test]
+  fn test_spine_is_approximately_straight_with_straight_spine() {
+    use super::spine_is_approximately_straight;
+
+    // Perfectly straight spine
+    let straight = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(0., 0., 1.),
+      Vec3::new(0., 0., 2.),
+    ];
+    assert!(spine_is_approximately_straight(&straight));
+
+    // Straight spine with more points
+    let longer_straight = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(1., 1., 1.),
+      Vec3::new(2., 2., 2.),
+      Vec3::new(3., 3., 3.),
+      Vec3::new(4., 4., 4.),
+    ];
+    assert!(spine_is_approximately_straight(&longer_straight));
+
+    // Two-point spine is always straight
+    let two_points = vec![Vec3::new(0., 0., 0.), Vec3::new(5., 5., 5.)];
+    assert!(spine_is_approximately_straight(&two_points));
+  }
+
+  #[test]
+  fn test_spine_is_approximately_straight_with_curved_spine() {
+    use super::spine_is_approximately_straight;
+
+    // Significantly curved spine (should fail the straightness check)
+    let curved = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(5., 0., 5.), // Large deviation from straight line
+      Vec3::new(0., 0., 10.),
+    ];
+    assert!(!spine_is_approximately_straight(&curved));
+
+    // Arc-like spine
+    let arc = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(0.5, 1., 0.),
+      Vec3::new(1., 1.5, 0.),
+      Vec3::new(1.5, 1., 0.),
+      Vec3::new(2., 0., 0.),
+    ];
+    assert!(!spine_is_approximately_straight(&arc));
+  }
+
+  #[test]
+  fn test_spine_is_approximately_straight_within_threshold() {
+    use super::{spine_is_approximately_straight, SPINE_STRAIGHTNESS_THRESHOLD};
+
+    // Spine with small deviation just within threshold
+    // For a line of length 10, 1% threshold means 0.1 max deviation
+    let spine_len = 10.0;
+    let small_deviation = spine_len * SPINE_STRAIGHTNESS_THRESHOLD * 0.5; // Half the threshold
+    let within_threshold = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(0., small_deviation, 5.),
+      Vec3::new(0., 0., 10.),
+    ];
+    assert!(spine_is_approximately_straight(&within_threshold));
+
+    // Spine with deviation just beyond threshold
+    let large_deviation = spine_len * SPINE_STRAIGHTNESS_THRESHOLD * 2.0; // Double the threshold
+    let beyond_threshold = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(0., large_deviation, 5.),
+      Vec3::new(0., 0., 10.),
+    ];
+    assert!(!spine_is_approximately_straight(&beyond_threshold));
   }
 }

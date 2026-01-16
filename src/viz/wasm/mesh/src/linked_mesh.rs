@@ -2289,7 +2289,6 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         }
         v / 6.0
       };
-      log::info!("signed_volume_of_component: {signed_volume_of_component}");
       let is_outward_facing = signed_volume_of_component > 0.;
 
       if is_outward_facing {
