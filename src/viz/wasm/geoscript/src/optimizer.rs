@@ -145,11 +145,12 @@ fn is_trace_path_closure_effectively_const(
   } = test_expr
   {
     if matches!(callable.as_ref(), Callable::Closure(_)) {
-      if let Expr::Closure { params, .. } = expr {
+      if let Expr::Closure { params, loc, .. } = expr {
         if !params.is_empty() {
-          return Err(ErrorStack::new(
-            "Trace path closures should have no parameters",
-          ));
+          let (line, col) = ctx.resolve_loc(*loc);
+          return Err(
+            ErrorStack::new("Trace path closures should have no parameters").with_loc(line, col),
+          );
         }
 
         return Ok(true);
@@ -776,7 +777,10 @@ fn fold_associative_literal_chain(
       if *rhs_op == op {
         if let Some(rhs_lhs_val) = rhs_lhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_val, &rhs_lhs_val, rhs_rhs.as_ref()) {
-            let new_val = op.apply(ctx, &lhs_val, &rhs_lhs_val, None)?;
+            let new_val = op.apply(ctx, &lhs_val, &rhs_lhs_val, None).map_err(|err| {
+              let (line, col) = ctx.resolve_loc(lhs_loc);
+              err.with_loc(line, col)
+            })?;
             *lhs = Box::new(new_val.into_literal_expr(lhs_loc));
             rhs_expr = std::mem::replace(
               rhs_rhs,
@@ -818,7 +822,10 @@ fn fold_associative_literal_chain(
       if *lhs_op == op {
         if let Some(lhs_rhs_val) = lhs_rhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_rhs_val, &rhs_val, lhs_lhs.as_ref()) {
-            let new_val = op.apply(ctx, &lhs_rhs_val, &rhs_val, None)?;
+            let new_val = op.apply(ctx, &lhs_rhs_val, &rhs_val, None).map_err(|err| {
+              let (line, col) = ctx.resolve_loc(rhs_loc);
+              err.with_loc(line, col)
+            })?;
             *rhs = Box::new(new_val.into_literal_expr(rhs_loc));
             lhs_expr = std::mem::replace(
               lhs_lhs,
@@ -876,9 +883,13 @@ fn fold_constants<'a>(
           let lhs_bool = match lhs_lit {
             Value::Bool(b) => *b,
             _ => {
-              return Err(ErrorStack::new(format!(
-                "Left-hand side of logical operator must be a boolean, found: {lhs_lit:?}",
-              )))
+              let (line, col) = ctx.resolve_loc(*loc);
+              return Err(
+                ErrorStack::new(format!(
+                  "Left-hand side of logical operator must be a boolean, found: {lhs_lit:?}",
+                ))
+                .with_loc(line, col),
+              );
             }
           };
 
@@ -974,7 +985,12 @@ fn fold_constants<'a>(
         }
       }
 
-      let val = op.apply(ctx, lhs_val, rhs_val, *pre_resolved_def_ix)?;
+      let val = op
+        .apply(ctx, lhs_val, rhs_val, *pre_resolved_def_ix)
+        .map_err(|err| {
+          let (line, col) = ctx.resolve_loc(*loc);
+          err.with_loc(line, col)
+        })?;
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }
@@ -1065,7 +1081,10 @@ fn fold_constants<'a>(
           return Ok(());
         }
       }
-      let val = eval_range(start_val, end_val_opt, *inclusive)?;
+      let val = eval_range(start_val, end_val_opt, *inclusive).map_err(|err| {
+        let (line, col) = ctx.resolve_loc(*loc);
+        err.with_loc(line, col)
+      })?;
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }
@@ -1166,11 +1185,15 @@ fn fold_constants<'a>(
                 *target = FunctionCallTarget::Literal(callable.clone());
               }
               other => {
+                let (line, col) = ctx.resolve_loc(*loc);
                 return ctx.with_resolved_sym(*name, |name| {
-                  Err(ErrorStack::new(format!(
-                    "Tried to call non-callable value: {name} = {other:?}",
-                  )))
-                })
+                  Err(
+                    ErrorStack::new(format!(
+                      "Tried to call non-callable value: {name} = {other:?}",
+                    ))
+                    .with_loc(line, col),
+                  )
+                });
               }
             },
             // calling a closure argument or dynamic captured variable
@@ -1283,13 +1306,17 @@ fn fold_constants<'a>(
                   allow_rng_const_eval,
                 )?,
                 other => {
+                  let (line, col) = ctx.resolve_loc(*loc);
                   return ctx
                     .with_resolved_sym(*name, |name| {
-                      Err(ErrorStack::new(format!(
-                        "Tried to call non-callable value: {name} = {other:?}",
-                      )))
+                      Err(
+                        ErrorStack::new(format!(
+                          "Tried to call non-callable value: {name} = {other:?}",
+                        ))
+                        .with_loc(line, col),
+                      )
                     })
-                    .unwrap()
+                    .unwrap();
                 }
               },
               TrackedValueRef::Arg(_) => None,
@@ -1579,10 +1606,14 @@ fn fold_constants<'a>(
               let splat = match literal.as_map() {
                 Some(map) => map,
                 None => {
-                  return Err(ErrorStack::new(format!(
-                    "Tried to splat value of type {:?} into map; expected a map.",
-                    literal.get_type()
-                  )))
+                  let (line, col) = ctx.resolve_loc(*loc);
+                  return Err(
+                    ErrorStack::new(format!(
+                      "Tried to splat value of type {:?} into map; expected a map.",
+                      literal.get_type()
+                    ))
+                    .with_loc(line, col),
+                  );
                 }
               };
               for (key, val) in splat {
@@ -1796,6 +1827,7 @@ fn optimize_statement<'a>(
         }
       }
 
+      let (line, col) = ctx.resolve_loc(rhs.loc());
       optimize_expr(ctx, local_scope, rhs, allow_rng_const_eval)?;
 
       let Some(rhs) = rhs.as_literal() else {
@@ -1817,7 +1849,11 @@ fn optimize_statement<'a>(
           local_scope.set(lhs, TrackedValue::Const(rhs));
           Ok(())
         })
-        .map_err(|err| err.wrap("Error evaluating destructure assignment"))?;
+        .map_err(|err| {
+          err
+            .wrap("Error evaluating destructure assignment")
+            .with_loc(line, col)
+        })?;
 
       Ok(())
     }

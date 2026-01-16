@@ -2163,6 +2163,7 @@ impl EvalCtx {
         expr,
         type_hint,
       } => {
+        let (line, col) = self.resolve_loc(expr.loc());
         let val = match self.eval_expr(expr, scope, Some(*name))? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
@@ -2170,8 +2171,10 @@ impl EvalCtx {
         self
           .eval_assignment(*name, val, scope, *type_hint)
           .map(ControlFlow::Continue)
+          .map_err(|err| err.with_loc(line, col))
       }
       Statement::DestructureAssignment { lhs, rhs } => {
+        let (line, col) = self.resolve_loc(rhs.loc());
         let rhs = match self.eval_expr(rhs, scope, None)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
@@ -2181,7 +2184,11 @@ impl EvalCtx {
             self.eval_assignment(lhs, rhs, scope, None)?;
             Ok(())
           })
-          .map_err(|err| err.wrap("Error evaluating destructure assignment"))?;
+          .map_err(|err| {
+            err
+              .wrap("Error evaluating destructure assignment")
+              .with_loc(line, col)
+          })?;
         Ok(ControlFlow::Continue(Value::Nil))
       }
       Statement::Return { value } => {
@@ -2496,6 +2503,7 @@ impl EvalCtx {
           expr,
           type_hint,
         } => {
+          let (line, col) = self.resolve_loc(expr.loc());
           let val = match self.eval_expr(expr, &closure_scope, Some(*name))? {
             ControlFlow::Continue(val) => val,
             ControlFlow::Return(val) => {
@@ -2508,9 +2516,12 @@ impl EvalCtx {
               ))
             }
           };
-          self.eval_assignment(*name, val, &closure_scope, *type_hint)?;
+          self
+            .eval_assignment(*name, val, &closure_scope, *type_hint)
+            .map_err(|err| err.with_loc(line, col))?;
         }
         Statement::DestructureAssignment { lhs, rhs } => {
+          let (line, col) = self.resolve_loc(rhs.loc());
           let rhs = match self.eval_expr(rhs, &closure_scope, None)? {
             ControlFlow::Continue(val) => val,
             ControlFlow::Return(val) => {
@@ -2528,7 +2539,11 @@ impl EvalCtx {
               self.eval_assignment(lhs, rhs, &closure_scope, None)?;
               Ok(())
             })
-            .map_err(|err| err.wrap("Error evaluating destructure assignment"))?;
+            .map_err(|err| {
+              err
+                .wrap("Error evaluating destructure assignment")
+                .with_loc(line, col)
+            })?;
         }
         Statement::Return { value } => {
           out = if let Some(value) = value {

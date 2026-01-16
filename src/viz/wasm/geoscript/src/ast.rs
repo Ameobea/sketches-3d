@@ -1592,15 +1592,18 @@ impl PrefixOp {
 }
 
 fn parse_fn_call(ctx: &EvalCtx, func_call: Pair<Rule>) -> Result<Expr, ErrorStack> {
-  if func_call.as_rule() != Rule::func_call {
-    return Err(ErrorStack::new(format!(
-      "`parse_func_call` can only handle `func_call` rules, found: {:?}",
-      func_call.as_rule()
-    )));
-  }
-
   let (line, col) = func_call.line_col();
   let loc = ctx.add_source_loc(line, col);
+
+  if func_call.as_rule() != Rule::func_call {
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_func_call` can only handle `func_call` rules, found: {:?}",
+        func_call.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
+  }
 
   let mut inner = func_call.into_inner();
   // this contains `fn_name(`
@@ -1656,7 +1659,9 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           value: Value::Int(i),
           loc,
         })
-        .map_err(|_| ErrorStack::new(format!("Invalid integer: {int_str}")))
+        .map_err(|_| {
+          ErrorStack::new(format!("Invalid integer: {int_str}")).with_loc(line as u32, col as u32)
+        })
     }
     Rule::hex_int => {
       let hex_str = expr.as_str();
@@ -1666,7 +1671,10 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           value: Value::Int(i),
           loc,
         })
-        .map_err(|_| ErrorStack::new(format!("Invalid hex integer: {hex_str}")))
+        .map_err(|_| {
+          ErrorStack::new(format!("Invalid hex integer: {hex_str}"))
+            .with_loc(line as u32, col as u32)
+        })
     }
     Rule::float => {
       let float_str = expr.as_str();
@@ -1677,7 +1685,9 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           value: Value::Float(i),
           loc,
         })
-        .map_err(|_| ErrorStack::new(format!("Invalid float: {float_str}")))
+        .map_err(|_| {
+          ErrorStack::new(format!("Invalid float: {float_str}")).with_loc(line as u32, col as u32)
+        })
     }
     Rule::ident => Ok(Expr::Ident {
       name: ctx.interned_symbols.intern(expr.as_str()),
@@ -1733,10 +1743,12 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
             if next.as_rule() == Rule::type_hint {
               type_hint = Some(
                 TypeName::from_str(next.into_inner().next().unwrap().as_str()).map_err(|err| {
-                  ErrorStack::new(err).wrap(format!(
-                    "Invalid type hint for closure arg {:?}",
-                    ident.debug(ctx)
-                  ))
+                  ErrorStack::new(err)
+                    .wrap(format!(
+                      "Invalid type hint for closure arg {:?}",
+                      ident.debug(ctx)
+                    ))
+                    .with_loc(line as u32, col as u32)
                 })?,
               );
               if let Some(next) = inner.next() {
@@ -1767,8 +1779,11 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       let mut next = inner.next().unwrap();
       let return_type_hint = if next.as_rule() == Rule::type_hint {
         let type_hint_str = next.into_inner().next().unwrap().as_str();
-        let return_type_hint = TypeName::from_str(type_hint_str)
-          .map_err(|err| ErrorStack::new(err).wrap("Invalid type hint for closure return type"))?;
+        let return_type_hint = TypeName::from_str(type_hint_str).map_err(|err| {
+          ErrorStack::new(err)
+            .wrap("Invalid type hint for closure return type")
+            .with_loc(line as u32, col as u32)
+        })?;
         next = inner.next().unwrap();
         Some(return_type_hint)
       } else {
@@ -1959,12 +1974,16 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
 }
 
 fn parse_double_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStack> {
+  let (line, col) = pair.line_col();
   if pair.as_rule() != Rule::double_quote_string_inner {
-    return Err(ErrorStack::new(format!(
-      "`parse_double_quote_string_inner` can only handle `double_quote_string_inner` rules, \
-       found: {:?}",
-      pair.as_rule()
-    )));
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_double_quote_string_inner` can only handle `double_quote_string_inner` rules, \
+         found: {:?}",
+        pair.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
   }
 
   let mut acc = String::new();
@@ -1993,12 +2012,16 @@ fn parse_double_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStac
 }
 
 fn parse_single_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStack> {
+  let (line, col) = pair.line_col();
   if pair.as_rule() != Rule::single_quote_string_inner {
-    return Err(ErrorStack::new(format!(
-      "`parse_single_quote_string_inner` can only handle `single_quote_string_inner` rules, \
-       found: {:?}",
-      pair.as_rule()
-    )));
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_single_quote_string_inner` can only handle `single_quote_string_inner` rules, \
+         found: {:?}",
+        pair.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
   }
 
   let mut acc = String::new();
@@ -2027,15 +2050,18 @@ fn parse_single_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStac
 }
 
 fn parse_block_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
-  if expr.as_rule() != Rule::block_expr {
-    return Err(ErrorStack::new(format!(
-      "`parse_block_expr` can only handle `block_expr` rules, found: {:?}",
-      expr.as_rule()
-    )));
-  }
-
   let (line, col) = expr.line_col();
   let loc = ctx.add_source_loc(line, col);
+
+  if expr.as_rule() != Rule::block_expr {
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_block_expr` can only handle `block_expr` rules, found: {:?}",
+        expr.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
+  }
 
   let statements = expr
     .into_inner()
@@ -2112,10 +2138,11 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         Rule::or_op => BinOp::Or,
         Rule::map_op => BinOp::Map,
         _ => {
-          return Err(ErrorStack::new(format!(
-            "Unhandled operator rule: {:?}",
-            op.as_rule()
-          )))
+          let (line, col) = op.line_col();
+          return Err(
+            ErrorStack::new(format!("Unhandled operator rule: {:?}", op.as_rule()))
+              .with_loc(line as u32, col as u32),
+          );
         }
       };
       let lhs = lhs?;
@@ -2161,11 +2188,15 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
 }
 
 fn parse_assignment(ctx: &EvalCtx, assignment: Pair<Rule>) -> Result<Statement, ErrorStack> {
+  let (line, col) = assignment.line_col();
   if assignment.as_rule() != Rule::assignment {
-    return Err(ErrorStack::new(format!(
-      "`parse_assignment` can only handle `assignment` rules, found: {:?}",
-      assignment.as_rule()
-    )));
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_assignment` can only handle `assignment` rules, found: {:?}",
+        assignment.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
   }
 
   let mut inner = assignment.into_inner();
@@ -2173,8 +2204,8 @@ fn parse_assignment(ctx: &EvalCtx, assignment: Pair<Rule>) -> Result<Statement, 
 
   let mut next = inner.next().unwrap();
   let type_hint = if next.as_rule() == Rule::type_hint {
-    let type_hint =
-      TypeName::from_str(next.into_inner().next().unwrap().as_str()).map_err(ErrorStack::new)?;
+    let type_hint = TypeName::from_str(next.into_inner().next().unwrap().as_str())
+      .map_err(|err| ErrorStack::new(err).with_loc(line as u32, col as u32))?;
     next = inner.next().unwrap();
     Some(type_hint)
   } else {
@@ -2194,16 +2225,20 @@ fn parse_destructure_pattern(
   ctx: &EvalCtx,
   pair: Pair<Rule>,
 ) -> Result<DestructurePattern, ErrorStack> {
+  let (line, col) = pair.line_col();
   match pair.as_rule() {
     Rule::ident => Ok(DestructurePattern::Ident(
       ctx.interned_symbols.intern(pair.as_str()),
     )),
     Rule::array_destructure => parse_array_destructure(ctx, pair),
     Rule::map_destructure => parse_map_destructure(ctx, pair),
-    _ => Err(ErrorStack::new(format!(
-      "Unexpected inner destructure pattern rule: {:?}",
-      pair.as_rule()
-    ))),
+    _ => Err(
+      ErrorStack::new(format!(
+        "Unexpected inner destructure pattern rule: {:?}",
+        pair.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    ),
   }
 }
 
@@ -2260,11 +2295,16 @@ fn parse_destructure_assignment(
   ctx: &EvalCtx,
   assignment: Pair<Rule>,
 ) -> Result<Statement, ErrorStack> {
+  let (line, col) = assignment.line_col();
   if assignment.as_rule() != Rule::destructure_assignment {
-    return Err(ErrorStack::new(format!(
-      "`parse_destructure_assignment` can only handle `destructure_assignment` rules, found: {:?}",
-      assignment.as_rule()
-    )));
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_destructure_assignment` can only handle `destructure_assignment` rules, found: \
+         {:?}",
+        assignment.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
   }
 
   let mut inner = assignment.into_inner();
@@ -2276,11 +2316,15 @@ fn parse_destructure_assignment(
 }
 
 fn parse_return_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<Statement, ErrorStack> {
+  let (line, col) = return_stmt.line_col();
   if return_stmt.as_rule() != Rule::return_statement {
-    return Err(ErrorStack::new(format!(
-      "`parse_return_statement` can only handle `return_statement` rules, found: {:?}",
-      return_stmt.as_rule()
-    )));
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_return_statement` can only handle `return_statement` rules, found: {:?}",
+        return_stmt.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
   }
 
   let mut inner = return_stmt.into_inner();
@@ -2294,11 +2338,15 @@ fn parse_return_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<Stat
 }
 
 fn parse_break_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<Statement, ErrorStack> {
+  let (line, col) = return_stmt.line_col();
   if return_stmt.as_rule() != Rule::break_statement {
-    return Err(ErrorStack::new(format!(
-      "`parse_break_statement` can only handle `break_statement` rules, found: {:?}",
-      return_stmt.as_rule()
-    )));
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_break_statement` can only handle `break_statement` rules, found: {:?}",
+        return_stmt.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
   }
 
   let mut inner = return_stmt.into_inner();
