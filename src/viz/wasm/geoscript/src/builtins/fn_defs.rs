@@ -5339,6 +5339,60 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "parametric_surface" => FnDef {
+    module: "mesh",
+    examples: &[FnExample { composition_id: 82 }],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "u_res",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Number of segments along the U axis"
+          },
+          ArgDef {
+            name: "v_res",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Number of segments along the V axis"
+          },
+          ArgDef {
+            name: "u_closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, connects the U-end back to U-start (creates cylindrical topology along U)"
+          },
+          ArgDef {
+            name: "v_closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, connects the V-end back to V-start (creates cylindrical topology along V)"
+          },
+          ArgDef {
+            name: "flip_normals",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, reverses triangle winding to flip normal direction. By default, normals follow the cross product of U and V tangents."
+          },
+          ArgDef {
+            name: "generator",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A function `|u: num, v: num| -> vec3` that returns the 3D position for each (u, v) coordinate in [0, 1]"
+          },
+        ],
+        description: "Generates a mesh from a parametric function over a 2D domain. Handles topological wrapping via the closed flags and automatically welds coincident vertices at boundary poles to maintain manifold topology. By default, normals point outward when V increases counter-clockwise (looking down +Y); use flip_normals=true to reverse.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "torus_knot_path" => FnDef {
     module: "path",
     examples: &[FnExample { composition_id: 13 }],
@@ -7048,7 +7102,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "material",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Material),
+            valid_types: argtype_flags!(ArgType::Material, ArgType::String),
             default_value: DefaultValue::Required,
             description: "Can be either a `Material` value or a string specifying the name of an externally defined material"
           },

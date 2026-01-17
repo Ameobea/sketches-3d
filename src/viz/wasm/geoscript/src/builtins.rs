@@ -5533,6 +5533,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "rail_sweep" => builtin_fn!(rail_sweep, |def_ix, arg_refs, args, kwargs, ctx| {
     crate::mesh_ops::rail_sweep::rail_sweep_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "parametric_surface" => builtin_fn!(parametric_surface, |def_ix, arg_refs, args, kwargs, ctx| {
+    crate::mesh_ops::parametric_surface::parametric_surface_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "torus_knot_path" => builtin_fn!(torus_knot_path, |def_ix, arg_refs, args, kwargs, _ctx| {
     torus_knot_path_impl(def_ix, arg_refs, args, kwargs)
   }),

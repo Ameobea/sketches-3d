@@ -39,3 +39,6 @@ static/geodesics.js
 static/geoscript_repl_bg.wasm
 session.json
 static/path_tessellate_bg.wasm
+src/viz/wasm/clipper2/*
+!src/viz/wasm/clipper2/.gitkeep
+!src/viz/wasm/clipper2/clipper2.ts
