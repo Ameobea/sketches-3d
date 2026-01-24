@@ -114,6 +114,7 @@ pub fn geoscript_repl_parse_program(
 pub struct GeoscriptAsyncDependencies {
   pub geodesics: bool,
   pub cgal: bool,
+  pub clipper2: bool,
 }
 
 #[wasm_bindgen]
@@ -128,6 +129,8 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
     ctx.geo_ctx.with_resolved_sym(name, |name| {
       if name == "trace_geodesic_path" {
         deps.geodesics = true;
+      } else if name == "offset_path" {
+        deps.clipper2 = true;
       } else if name == "alpha_wrap"
         || name == "smooth"
         || name == "remesh_planar_patches"

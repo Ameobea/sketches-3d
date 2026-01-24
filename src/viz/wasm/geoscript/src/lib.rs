@@ -308,10 +308,11 @@ pub struct PreResolvedSignature {
 }
 
 pub trait DynamicCallable {
+  fn as_any(&self) -> &dyn Any;
+
   // TODO: these need to get merged into an enum across the whole codebase.
   //
   // I even did that work, but it got lost in a merge conflict
-  fn as_any(&self) -> &dyn Any;
   fn is_side_effectful(&self) -> bool;
   fn is_rng_dependent(&self) -> bool;
 
@@ -1117,7 +1118,7 @@ pub(crate) enum GetArgsOutput {
 }
 
 #[cold]
-fn format_fn_signatures(arg_defs: &[FnSignature]) -> String {
+pub(crate) fn format_fn_signatures(arg_defs: &[FnSignature]) -> String {
   arg_defs
     .iter()
     .map(|def| {
@@ -1400,8 +1401,11 @@ impl Clone for Scope {
   }
 }
 
-fn get_default_globals() -> [(&'static str, Sym, Value); 1] {
-  [("pi", Sym(0), Value::Float(std::f32::consts::PI))]
+fn get_default_globals() -> [(&'static str, Sym, Value); 2] {
+  [
+    ("pi", Sym(0), Value::Float(std::f32::consts::PI)),
+    ("tau", Sym(1), Value::Float(std::f32::consts::TAU)),
+  ]
 }
 
 impl Scope {

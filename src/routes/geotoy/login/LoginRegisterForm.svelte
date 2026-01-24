@@ -2,12 +2,45 @@
   import { login, register } from 'src/geoscript/geotoyAPIClient';
 
   export let mode: 'login' | 'register';
+  export let returnTo: string | null = null;
 
   let username = '';
   let password = '';
   let confirmPassword = '';
 
   let loginError: string | null = null;
+
+  const redirectAfterAuth = () => {
+    const fallback = '/geotoy';
+    const storageKey = 'geotoy:returnTo';
+    const sanitizeTarget = (rawTarget: string | null): string | null => {
+      if (!rawTarget) {
+        return null;
+      }
+      try {
+        const targetUrl = new URL(rawTarget, window.location.origin);
+        if (targetUrl.origin !== window.location.origin) {
+          return null;
+        }
+        if (targetUrl.pathname === '/geotoy/login' || targetUrl.pathname === '/geotoy/register') {
+          return null;
+        }
+        return `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
+      } catch {
+        return null;
+      }
+    };
+
+    const storedReturnTo =
+      typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(storageKey) : null;
+    const target =
+      sanitizeTarget(returnTo) ?? sanitizeTarget(storedReturnTo) ?? sanitizeTarget(document.referrer);
+
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(storageKey);
+    }
+    window.location.href = target ?? fallback;
+  };
 </script>
 
 <div class="root">
@@ -29,8 +62,7 @@
           loginError = error instanceof Error ? error.message : `unknown error: ${error}`;
           return;
         }
-        // TODO: should go back to previous page instead
-        window.location.href = '/geotoy';
+        redirectAfterAuth();
       }}
     >
       <label class="form-row">

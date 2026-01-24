@@ -25,6 +25,7 @@
   let svgData = $state<string | null>(null);
   let isComputingSVG = $state(false);
   let meshIndices = $state<Uint32Array | null>(null);
+  let errorMessage = $state<string | null>(null);
 
   const onSelectMesh = async (ix: number | null) => {
     if (isComputingSVG) {
@@ -33,6 +34,7 @@
     isComputingSVG = true;
 
     try {
+      errorMessage = null;
       // check to see if meshes have been removed
       meshIndices = await repl.getRenderedMeshIndicesWithMaterial(ctxPtr, matDef.name);
       if (meshIndices.length === 0) {
@@ -68,9 +70,11 @@
         enableUVIslandRotation
       );
       if (unwrapRes.type === 'error') {
-        // TODO: handle error state
+        errorMessage = unwrapRes.message;
+        svgData = null;
         return;
       } else {
+        errorMessage = null;
         svgData = unwrapRes.out;
       }
     } finally {
@@ -114,7 +118,9 @@
         />
       </div>
     </div>
-    {#if svgData}
+    {#if errorMessage}
+      <div class="error">{errorMessage}</div>
+    {:else if svgData}
       <div class="uv-preview">
         {@html svgData}
       </div>
@@ -174,5 +180,11 @@
     button {
       width: 80px;
     }
+  }
+
+  .error {
+    color: #ff6b6b;
+    font-size: 12px;
+    padding: 6px;
   }
 </style>

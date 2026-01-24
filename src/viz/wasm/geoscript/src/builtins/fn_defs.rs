@@ -1276,6 +1276,51 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "sigmoid" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Sigmoid function",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise sigmoid of a Vec3",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise sigmoid of a Vec2",
+        return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
   "add" => FnDef {
     module: "math",
     examples: &[],
@@ -5294,9 +5339,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "profile",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Callable with signature `|u: float, v: float, u_ix: int, v_ix: int, spine_center: vec3|: vec2` that returns the local (x, y) offset for each point in the ring."
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Callable with signature `|u: float, v: float, u_ix: int, v_ix: int, spine_center: vec3|: vec2` that returns the local (x, y) offset for each point in the ring. Optional when `dynamic_profile` is provided."
           },
           ArgDef {
             name: "frame_mode",
@@ -5324,14 +5369,35 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
-            description: "Whether to cap the start and end rings with triangle fans.  Ignored when `closed` is true."
+            description: "Whether to cap the start and end rings with triangulated faces.  Ignored when `closed` is true."
           },
           ArgDef {
             name: "profile_samplers",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional path sampler or sequence of path samplers (from `trace_path`) used to align profile `v` sampling with critical points."
+            description: "Optional path sampler, sequence of path samplers (from `trace_path`), or function of `|u: float|: Seq<PathSampler> | PathSampler`.  Used to align profile `v` sampling with critical points."
+          },
+          ArgDef {
+            name: "dynamic_profile",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler> }`. Returns either a path sampler directly (critical points extracted automatically if it's a PathTracerCallable) or a map with a sampler plus `path_samplers` (trace_path samplers used to derive critical points). More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
+          },
+          ArgDef {
+            name: "fku_stitching",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true (default), uses the Fuchs/Kedem/Uselton (FKU) dynamic programming algorithm to find optimal triangulation between adjacent rings. FKU minimizes total edge length, producing better triangle quality when ring vertex counts differ or when vertices drift between rings. When false, uses simple quad-based stitching for predictable topology and uniform wireframe appearance."
+          },
+          ArgDef {
+            name: "spine_sampling_scheme",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Sequence, ArgType::Callable, ArgType::Map, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Controls how sample points are distributed along the spine. String options: \"uniform\" (default) - evenly spaced samples; \"chebyshev\"/\"cos\"/\"cosine\" - Chebyshev node spacing (denser near endpoints); \"superellipse\"/\"bevel\" - superellipse-adapted spacing with default exponent 5. Map options: { type: \"uniform\" }, { type: \"chebyshev\" }, { type: \"superellipse\", exponent: N } - superellipse-adapted spacing where higher exponent concentrates samples more at endpoints (exponent=2 is similar to chebyshev, exponent>2 is progressively sharper). Also accepts: a sequence of floats - explicit t values in [0, 1] (length must match spine_resolution); a callable `|i: int|: float` - returns t value for each sample index. The t values are used both for sampling the spine/rail and as the `u` parameter passed to the profile function."
           },
         ],
         description: "Sweeps a profile along a spine to produce a mesh.  Profile points are connected in increasing `v` order; for outward-facing normals, the profile winding should be counter-clockwise when viewed along the local tangent.",
@@ -5386,6 +5452,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
             description: "A function `|u: num, v: num| -> vec3` that returns the 3D position for each (u, v) coordinate in [0, 1]"
+          },
+          ArgDef {
+            name: "fku_stitching",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true (default), uses the Fuchs/Kedem/Uselton (FKU) dynamic programming algorithm to find optimal triangulation between adjacent rows. FKU minimizes total edge length, avoiding sharp angles and long edges when vertex positions drift between rows. When false, uses simple quad-based stitching for predictable topology and uniform wireframe appearance."
           },
         ],
         description: "Generates a mesh from a parametric function over a 2D domain. Handles topological wrapping via the closed flags and automatically welds coincident vertices at boundary poles to maintain manifold topology. By default, normals point outward when V increases counter-clockwise (looking down +Y); use flip_normals=true to reverse.",
@@ -5999,6 +6072,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           }
         ],
         description: "Builds a fan of triangles from a sequence of points, filling the area inside them.  One triangle will be built for each pair of adjacent points in the path, connecting them to the center point.",
+        return_type: &[ArgType::Mesh],
+      }
+    ],
+  },
+  "tessellate_path" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A sequence of Vec2 points, a sequence of Vec2 sequences, or a callable `|t: num|: vec2` (preferably from `trace_path`)."
+          },
+          ArgDef {
+            name: "flipped",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the winding order of the generated triangles will be flipped."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            description: "Max turning angle (degrees) per segment when discretizing trace_path curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the input as closed. Tessellation always closes the path; passing closed=false will return an error."
+          },
+        ],
+        description: "Tessellates a 2D path into a triangle mesh in the XZ plane.",
         return_type: &[ArgType::Mesh],
       }
     ],
@@ -7220,6 +7340,386 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Parses SVG path data and returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
         return_type: &[ArgType::Callable]
+      }
+    ]
+  },
+  "subpaths" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler created by `trace_path` or similar functions"
+          }
+        ],
+        description: "Returns a lazy sequence of path samplers, one for each disconnected subpath in the input path.\n\nFor example, if a path is created with multiple `move` commands, each segment between moves becomes a separate subpath. Each returned sampler works like the original, with `t` in [0,1] sampling along that particular subpath.",
+        return_type: &[ArgType::Sequence]
+      }
+    ]
+  },
+  "offset_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler callable of signature `|t: num|: vec2`. Use `trace_path` for topology-aware sampling."
+          },
+          ArgDef {
+            name: "delta",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Offset distance (positive inflates, negative deflates)."
+          },
+          ArgDef {
+            name: "join_type",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::String("round".to_string())),
+            description: "Join type at corners: square, bevel, round, miter, superellipse, knob, step, spike (or numeric enum)."
+          },
+          ArgDef {
+            name: "end_type",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::String("round".to_string())),
+            description: "End cap type for open paths: polygon, joined, butt, square, round, superellipse, triangle, arrow, teardrop (or numeric enum)."
+          },
+          ArgDef {
+            name: "miter_limit",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(2.0)),
+            description: "Miter limit for sharp corners."
+          },
+          ArgDef {
+            name: "arc_tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.0)),
+            description: "Arc tolerance for round joins."
+          },
+          ArgDef {
+            name: "preserve_collinear",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, preserve collinear vertices during offset."
+          },
+          ArgDef {
+            name: "reverse_solution",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, reverse output path orientation."
+          },
+          ArgDef {
+            name: "step_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: "Number of steps for stepped joins/caps."
+          },
+          ArgDef {
+            name: "superellipse_exponent",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(2.5)),
+            description: "Superellipse exponent for superellipse joins/caps."
+          },
+          ArgDef {
+            name: "end_extension_scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            description: "Scale for open end caps."
+          },
+          ArgDef {
+            name: "arrow_back_sweep",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.0)),
+            description: "Arrow back sweep for arrow end caps."
+          },
+          ArgDef {
+            name: "teardrop_pinch",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: "Teardrop pinch amount for teardrop end caps."
+          },
+          ArgDef {
+            name: "join_angle_threshold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.0)),
+            description: "Angle threshold used by some join types."
+          },
+          ArgDef {
+            name: "chebyshev_spacing",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, use Chebyshev spacing for round joins."
+          },
+          ArgDef {
+            name: "simplify_epsilon",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.0001)),
+            description: "Epsilon for pre-offset simplification (0 disables)."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the input as closed/open."
+          },
+        ],
+        description: "Offsets a 2D path using Clipper2 and returns a new path sampler.  Note: continuous curve detail is lost; the output is a polyline representation.",
+        return_type: &[ArgType::Callable],
+      }
+    ]
+  },
+  "path_union" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "subject",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The first path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "clip",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The second path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the inputs as closed/open."
+          },
+        ],
+        description: "Computes the union of two 2D paths using Clipper2. The union contains all areas inside either path.",
+        return_type: &[ArgType::Callable],
+      }
+    ]
+  },
+  "path_intersect" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "subject",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The first path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "clip",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The second path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the inputs as closed/open."
+          },
+        ],
+        description: "Computes the intersection of two 2D paths using Clipper2. The intersection contains only areas inside both paths.",
+        return_type: &[ArgType::Callable],
+      }
+    ]
+  },
+  "path_difference" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "subject",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The first path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "clip",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The second path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the inputs as closed/open."
+          },
+        ],
+        description: "Computes the difference of two 2D paths using Clipper2 (subject minus clip). The result contains areas inside subject but not inside clip.",
+        return_type: &[ArgType::Callable],
+      }
+    ]
+  },
+  "path_xor" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "subject",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The first path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "clip",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The second path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the inputs as closed/open."
+          },
+        ],
+        description: "Computes the exclusive-or (XOR) of two 2D paths using Clipper2. The result contains areas inside either path but not both.",
+        return_type: &[ArgType::Callable],
       }
     ]
   },

@@ -5,6 +5,7 @@ import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 import { initGeodesics } from './geodesics';
 import { initCGAL } from 'src/viz/wasm/cgal/cgal';
+import { initClipper2 } from 'src/viz/wasm/clipper2/clipper2';
 import { textToPath } from './text_to_path';
 
 const initGeoscript = async () => {
@@ -18,6 +19,7 @@ export interface GeoscriptAsyncDeps {
   geodesics?: boolean;
   cgal?: boolean;
   text_to_path?: boolean;
+  clipper2?: boolean;
 }
 
 const initAsyncDeps = (
@@ -32,6 +34,12 @@ const initAsyncDeps = (
     const cgalInit = initCGAL();
     if (cgalInit instanceof Promise) {
       promises.push(cgalInit);
+    }
+  }
+  if (deps.clipper2) {
+    const clipperInit = initClipper2();
+    if (clipperInit instanceof Promise) {
+      promises.push(clipperInit);
     }
   }
   if (deps.text_to_path) {

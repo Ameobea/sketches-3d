@@ -322,3 +322,133 @@ export const cgal_remesh_delaunay = (
   setOutputMeshFromCGALMesh(mesh);
   mesh.delete();
 };
+
+export interface CDT2DResult {
+  vertices: Float32Array;
+  indices: Uint32Array;
+  /**
+   * in vtx ix -> out vtx ix mapping
+   */
+  vertexMapping: Int32Array;
+}
+
+let CDT2DOutput: CDT2DResult | null = null;
+
+/**
+ * Triangulates a 2D polygon using Constrained Delaunay Triangulation.  Guarantees that input vertices
+ * are preserved in the output so that this result can be used as part of the a process to build 2-manifold
+ * 3D meshes.
+ *
+ * @param vertices 2D points [x0, y0, x1, y1, ...] defining the path in CCW winding order
+ * @returns true if triangulation succeeded, false if it failed (errors retrievable via `cgal_get_last_error`)
+ *
+ * Use cgal_get_cdt2d_* functions to retrieve the result after a successful call.
+ */
+export const cgal_triangulate_polygon_2d = (vertices: Float32Array): boolean => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+
+  const CGAL = CGALWasm.getSync();
+
+  const HEAPF32 = () => CGAL.HEAPF32 as Float32Array;
+  const HEAPU32 = () => CGAL.HEAPU32 as Uint32Array;
+  const HEAP32 = () => CGAL.HEAP32 as Int32Array;
+
+  const vec_f32 = (vals: Float32Array): any => {
+    const vec = new CGAL.vector$float$();
+    vec.resize(vals.length, 0);
+    const ptr = vec.data();
+    const buf = HEAPF32().subarray(ptr / 4, ptr / 4 + vals.length);
+    buf.set(vals);
+    return vec;
+  };
+
+  const from_vec_f32 = (vec: any): Float32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAPF32()
+      .subarray(ptr / 4, ptr / 4 + length)
+      .slice();
+  };
+
+  const from_vec_uint32 = (vec: any): Uint32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAPU32()
+      .subarray(ptr / 4, ptr / 4 + length)
+      .slice();
+  };
+
+  const from_vec_int32 = (vec: any): Int32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAP32()
+      .subarray(ptr / 4, ptr / 4 + length)
+      .slice();
+  };
+
+  const inputVec = vec_f32(vertices);
+  let result: any;
+
+  try {
+    result = CGAL.triangulatePolygon2D(inputVec);
+  } catch (err) {
+    inputVec.delete();
+    LastBuildPolymeshError = `CDT2D exception: ${err}`;
+    return false;
+  }
+
+  inputVec.delete();
+
+  if (!result.success()) {
+    const error = result.getError();
+    LastBuildPolymeshError = error;
+    result.delete();
+    return false;
+  }
+
+  LastBuildPolymeshError = null;
+
+  const outVerts = result.getVertices();
+  const outIndices = result.getIndices();
+  const outMapping = result.getVertexMapping();
+
+  CDT2DOutput = {
+    vertices: from_vec_f32(outVerts),
+    indices: from_vec_uint32(outIndices),
+    vertexMapping: from_vec_int32(outMapping),
+  };
+
+  outVerts.delete();
+  outIndices.delete();
+  outMapping.delete();
+  result.delete();
+
+  return true;
+};
+
+export const cgal_get_cdt2d_vertices = (): Float32Array => {
+  if (!CDT2DOutput) {
+    throw new Error('No CDT2D output set');
+  }
+  return CDT2DOutput.vertices;
+};
+
+export const cgal_get_cdt2d_indices = (): Uint32Array => {
+  if (!CDT2DOutput) {
+    throw new Error('No CDT2D output set');
+  }
+  return CDT2DOutput.indices;
+};
+
+export const cgal_get_cdt2d_vertex_mapping = (): Int32Array => {
+  if (!CDT2DOutput) {
+    throw new Error('No CDT2D output set');
+  }
+  return CDT2DOutput.vertexMapping;
+};
+
+export const cgal_clear_cdt2d_output = (): void => {
+  CDT2DOutput = null;
+};

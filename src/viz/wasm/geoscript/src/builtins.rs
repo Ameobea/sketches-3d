@@ -22,6 +22,9 @@ use rand::Rng;
 #[cfg(target_arch = "wasm32")]
 use rand::{RngCore, SeedableRng};
 
+use crate::builtins::trace_path::{
+  build_topology_samples, sample_subpath_points, PathTracerCallable, SubpathsSeq,
+};
 use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
@@ -58,6 +61,8 @@ use crate::{
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod fn_defs;
+pub(crate) mod offset_path;
+pub(crate) mod path_boolean;
 pub(crate) mod trace_path;
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
@@ -1797,6 +1802,201 @@ fn fan_fill_impl(
   }
 }
 
+fn tessellate_path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let path_val = arg_refs[0].resolve(args, kwargs);
+      let flipped = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
+      let curve_angle_degrees = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let sample_count = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
+      let closed_override = match arg_refs[4].resolve(args, kwargs) {
+        Value::Bool(val) => Some(val),
+        Value::Nil => None,
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid closed argument for `tessellate_path`; expected bool or nil, found: {other:?}"
+          )))
+        }
+      };
+
+      if sample_count < 3 {
+        return Err(ErrorStack::new(format!(
+          "Invalid sample_count for `tessellate_path`; expected >= 3, found: {sample_count}"
+        )));
+      }
+
+      if matches!(closed_override, Some(false)) {
+        return Err(ErrorStack::new(
+          "`tessellate_path` does not support open paths; omit `closed` or set closed=true.",
+        ));
+      }
+
+      let curve_angle_radians = if curve_angle_degrees <= 0.0 {
+        0.0
+      } else {
+        curve_angle_degrees.to_radians()
+      };
+
+      const DEDUP_EPSILON: f32 = 1e-5;
+      let dedup_eps_sq = DEDUP_EPSILON * DEDUP_EPSILON;
+
+      let mut paths: Vec<Vec<Vec2>> = Vec::new();
+
+      let mut push_clean_path = |points: Vec<Vec2>, label: &str| -> Result<(), ErrorStack> {
+        if points.is_empty() {
+          return Ok(());
+        }
+
+        let mut cleaned: Vec<Vec2> = Vec::with_capacity(points.len());
+        for point in points {
+          if cleaned
+            .last()
+            .map(|last| (*last - point).norm_squared() <= dedup_eps_sq)
+            .unwrap_or(false)
+          {
+            continue;
+          }
+          cleaned.push(point);
+        }
+
+        if cleaned.len() >= 2
+          && (cleaned[0] - *cleaned.last().unwrap()).norm_squared() <= dedup_eps_sq
+        {
+          cleaned.pop();
+        }
+
+        if cleaned.len() < 3 {
+          return Err(ErrorStack::new(format!(
+            "Cannot tessellate path with fewer than 3 points after cleanup in {label}; provided \
+             path has {} points",
+            cleaned.len()
+          )));
+        }
+
+        paths.push(cleaned);
+        Ok(())
+      };
+
+      if let Some(seq) = path_val.as_sequence() {
+        let mut flat_points: Vec<Vec2> = Vec::new();
+        let mut saw_nested = false;
+        let mut saw_points = false;
+
+        for (ix, res) in seq.consume(ctx).enumerate() {
+          let val = res?;
+          match val {
+            Value::Vec2(v) => {
+              if saw_nested {
+                return Err(ErrorStack::new(
+                  "Invalid path sequence for `tessellate_path`; found mixed Vec2 and Sequence \
+                   entries",
+                ));
+              }
+              saw_points = true;
+              flat_points.push(Vec2::new(v.x, v.y));
+            }
+            Value::Sequence(inner) => {
+              if saw_points {
+                return Err(ErrorStack::new(
+                  "Invalid path sequence for `tessellate_path`; found mixed Vec2 and Sequence \
+                   entries",
+                ));
+              }
+              saw_nested = true;
+              let points = inner
+                .consume(ctx)
+                .enumerate()
+                .map(|(inner_ix, res)| match res {
+                  Ok(Value::Vec2(v)) => Ok(Vec2::new(v.x, v.y)),
+                  Ok(other) => Err(ErrorStack::new(format!(
+                    "Expected Vec2 in nested path sequence for `tessellate_path` at \
+                     [{ix}][{inner_ix}], found: {other:?}"
+                  ))),
+                  Err(err) => Err(err),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+              push_clean_path(points, &format!("subpath {ix}"))?;
+            }
+            other => {
+              return Err(ErrorStack::new(format!(
+                "Invalid path sequence for `tessellate_path`; expected Vec2 or Sequence, found: \
+                 {other:?}"
+              )))
+            }
+          }
+        }
+
+        if saw_points {
+          push_clean_path(flat_points, "path sequence")?;
+        }
+      } else if let Some(cb) = path_val.as_callable() {
+        let tracer = match &**cb {
+          Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
+          _ => None,
+        };
+
+        if let Some(tracer) = tracer {
+          for (ix, subpath) in tracer.subpaths.iter().enumerate() {
+            let actual_closed = subpath.is_closed();
+            let include_end = !actual_closed;
+            let mut points = sample_subpath_points(subpath, curve_angle_radians, include_end);
+            if tracer.reverse {
+              points.reverse();
+            }
+            push_clean_path(points, &format!("subpath {ix}"))?;
+          }
+        } else {
+          let sample_point = |t: f32| -> Result<Vec2, ErrorStack> {
+            let out = ctx
+              .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
+              .map_err(|err| err.wrap("Error sampling callable passed to `tessellate_path`"))?;
+            let point = out.as_vec2().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected Vec2 from callable passed to `tessellate_path`, found: {out:?}"
+              ))
+            })?;
+            Ok(*point)
+          };
+
+          let p0 = sample_point(0.0)?;
+          let p1 = sample_point(1.0)?;
+          let actual_closed = (p0 - p1).norm() <= 1e-4;
+          let include_end = !actual_closed;
+          let t_samples = build_topology_samples(sample_count as usize, None, None, include_end);
+          let mut points = Vec::with_capacity(t_samples.len());
+          for t in t_samples {
+            points.push(sample_point(t)?);
+          }
+
+          push_clean_path(points, "callable path")?;
+        }
+      } else {
+        return Err(ErrorStack::new(format!(
+          "Invalid path argument for `tessellate_path`; expected Sequence or Callable, found: \
+           {path_val:?}"
+        )));
+      }
+
+      let mesh = crate::mesh_ops::tessellate_polygon::tessellate_2d_paths(&paths, flipped)?;
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: None,
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn stitch_contours_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -3148,11 +3348,14 @@ fn render_impl(
             let iter = inner_seq.consume(ctx);
             render_path(ctx, iter)?;
           }
-          other => {
+          Ok(other) => {
             return Err(ErrorStack::new(format!(
               "Invalid type yielded from sequence passed to `render`; expected seq<Mesh> or \
                seq<seq<Vec3>> representing a path, found: {other:?}",
             )))
+          }
+          Err(err) => {
+            return Err(err.wrap("Error evaluating inner sequence in `render`"));
           }
         }
         Ok(())
@@ -4907,6 +5110,36 @@ fn sqrt_impl(
   }
 }
 
+fn sigmoid_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      Ok(Value::Float(1.0 / (1.0 + (-value).exp())))
+    }
+    1 => {
+      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(Vec3::new(
+        1.0 / (1.0 + (-value.x).exp()),
+        1.0 / (1.0 + (-value.y).exp()),
+        1.0 / (1.0 + (-value.z).exp()),
+      )))
+    }
+    2 => {
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(
+        1.0 / (1.0 + (-value.x).exp()),
+        1.0 / (1.0 + (-value.y).exp()),
+      )))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn max_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -5107,6 +5340,28 @@ fn str_impl(
   }
 }
 
+fn subpaths_impl(args: &[Value]) -> Result<Value, ErrorStack> {
+  let path_val = &args[0];
+  let Some(cb) = path_val.as_callable() else {
+    return Err(ErrorStack::new(format!(
+      "subpaths: expected a path callable, got {path_val:?}"
+    )));
+  };
+
+  let tracer = match &**cb {
+    Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
+    _ => None,
+  };
+
+  let Some(tracer) = tracer else {
+    return Err(ErrorStack::new(
+      "subpaths: expected a path sampler created by trace_path or similar functions",
+    ));
+  };
+
+  Ok(Value::Sequence(Rc::new(SubpathsSeq::new(Rc::clone(cb)))))
+}
+
 macro_rules! builtin_fn {
   ($name:ident, $impl:expr) => {
     paste! {{
@@ -5305,6 +5560,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "sqrt" => builtin_fn!(sqrt, |def_ix, arg_refs, args, kwargs, _ctx| {
     sqrt_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "sigmoid" => builtin_fn!(sigmoid, |def_ix, arg_refs, args, kwargs, _ctx| {
+    sigmoid_impl(def_ix, arg_refs, args, kwargs)
   }),
   "add" => builtin_fn!(add, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
@@ -5570,6 +5828,24 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "trace_svg_path" => builtin_fn!(trace_svg_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::trace_svg_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "subpaths" => builtin_fn!(subpaths, |_def_ix, _arg_refs, args, _kwargs, _ctx| {
+    subpaths_impl(args)
+  }),
+  "offset_path" => builtin_fn!(offset_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    offset_path::offset_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "path_union" => builtin_fn!(path_union, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_boolean::path_union_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "path_intersect" => builtin_fn!(path_intersect, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_boolean::path_intersect_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "path_difference" => builtin_fn!(path_difference, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_boolean::path_difference_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "path_xor" => builtin_fn!(path_xor, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_boolean::path_xor_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
@@ -5602,6 +5878,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "fan_fill" => builtin_fn!(fan_fill, |def_ix, arg_refs, args, kwargs, ctx| {
     fan_fill_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "tessellate_path" => builtin_fn!(tessellate_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    tessellate_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "simplify" => builtin_fn!(simplify, |def_ix, arg_refs, args, kwargs, _ctx| {
     simplify_impl(def_ix, arg_refs, args, kwargs)

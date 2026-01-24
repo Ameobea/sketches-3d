@@ -1,9 +1,11 @@
 pub mod extrude;
 pub mod extrude_pipe;
 pub mod fan_fill;
+pub mod fku_stitch;
 pub mod mesh_boolean;
 pub mod mesh_ops;
 pub mod parametric_surface;
 pub mod rail_sweep;
 pub mod stitch_contours;
+pub mod tessellate_polygon;
 pub mod voxels;

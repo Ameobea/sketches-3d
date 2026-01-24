@@ -6,6 +6,10 @@ use nalgebra::Matrix4;
 
 use crate::{ArgRef, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value, EMPTY_KWARGS};
 
+use super::fku_stitch::{
+  dp_stitch_presampled, should_use_fku, stitch_apex_to_row, uniform_stitch_rows,
+};
+
 const COLLAPSE_EPSILON: f32 = 1e-5;
 
 fn row_is_collapsed(row: &[Vec3]) -> bool {
@@ -31,70 +35,6 @@ struct RowInfo {
   count: usize,
 }
 
-#[inline]
-fn push_tri<const FLIP: bool>(indices: &mut Vec<u32>, v0: u32, v1: u32, v2: u32) {
-  if FLIP {
-    indices.push(v0);
-    indices.push(v2);
-    indices.push(v1);
-  } else {
-    indices.push(v0);
-    indices.push(v1);
-    indices.push(v2);
-  }
-}
-
-fn stitch_rows<const FLIP: bool>(
-  indices: &mut Vec<u32>,
-  row_a: &RowInfo,
-  row_b: &RowInfo,
-  v_points: usize,
-  v_closed: bool,
-) {
-  let wrap_count = if v_closed {
-    v_points
-  } else {
-    v_points.saturating_sub(1)
-  };
-
-  match (row_a.count, row_b.count) {
-    // both rows collapsed to single points; no faces to create
-    (1, 1) => {}
-    // row A is collapsed; build triangle fan to all vertices in row B
-    (1, _) => {
-      let apex = row_a.start_ix as u32;
-      for j in 0..wrap_count {
-        let b = (row_b.start_ix + j) as u32;
-        let c = (row_b.start_ix + (j + 1) % row_b.count) as u32;
-        push_tri::<FLIP>(indices, apex, b, c);
-      }
-    }
-    // row B is collapsed; build triangle fan to all vertices in row A
-    (_, 1) => {
-      let apex = row_b.start_ix as u32;
-      for j in 0..wrap_count {
-        let a = (row_a.start_ix + j) as u32;
-        let b = (row_a.start_ix + (j + 1) % row_a.count) as u32;
-        push_tri::<FLIP>(indices, a, apex, b);
-      }
-    }
-    // normal case; stitch together with quads
-    _ => {
-      for j in 0..wrap_count {
-        let j_next = (j + 1) % row_a.count;
-
-        let a = (row_a.start_ix + j) as u32;
-        let b = (row_a.start_ix + j_next) as u32;
-        let c = (row_b.start_ix + j) as u32;
-        let d = (row_b.start_ix + j_next) as u32;
-
-        push_tri::<FLIP>(indices, a, c, b);
-        push_tri::<FLIP>(indices, b, c, d);
-      }
-    }
-  }
-}
-
 /// Allows creating any genus 0 or 1 surface (generalized spheres or tori) by mapping a 2D plane
 /// parameterized by (`u`, `v`) each in [0, 1] to 3D positions.  This is the most fundamental
 /// 3D surface generation function Geoscript has; theoretically any other could be implemented
@@ -110,6 +50,7 @@ pub fn parametric_surface(
   u_closed: bool,
   v_closed: bool,
   flip_normals: bool,
+  fku_stitching: bool,
   generator: impl Fn(f32, f32) -> Result<Vec3, ErrorStack>,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   if u_res < 1 {
@@ -162,16 +103,85 @@ pub fn parametric_surface(
 
   let mut indices: Vec<u32> = Vec::with_capacity(u_res * v_res * 6);
 
+  let use_fku = should_use_fku(fku_stitching, v_points, v_points);
+
   for i in 0..u_res {
     let i_next = if u_closed && i == u_res - 1 { 0 } else { i + 1 };
-    let stitch_impl = if flip_normals { stitch_rows::<true> } else { stitch_rows::<false> };
-    stitch_impl(
-      &mut indices,
-      &row_infos[i],
-      &row_infos[i_next],
-      v_points,
-      v_closed,
-    );
+    let row_a = &row_infos[i];
+    let row_b = &row_infos[i_next];
+
+    match (row_a.count, row_b.count) {
+      // Both rows collapsed to single points; no faces to create
+      (1, 1) => {}
+      // Row A is collapsed (apex); build triangle fan
+      (1, _) => {
+        stitch_apex_to_row(
+          row_a.start_ix,
+          row_b.start_ix,
+          row_b.count,
+          v_closed,
+          true,
+          flip_normals,
+          &mut indices,
+        );
+      }
+      // Row B is collapsed (apex); build triangle fan
+      (_, 1) => {
+        stitch_apex_to_row(
+          row_b.start_ix,
+          row_a.start_ix,
+          row_a.count,
+          v_closed,
+          false,
+          flip_normals,
+          &mut indices,
+        );
+      }
+      // Normal case: both rows have full vertex count
+      _ => {
+        if use_fku {
+          // Use FKU DP-based stitching for optimal triangulation
+          // This minimizes edge lengths, avoiding sharp angles when vertices drift between rows
+          let pts_a: Vec<Vec3> = (row_a.start_ix..row_a.start_ix + row_a.count)
+            .map(|idx| verts[idx])
+            .collect();
+          let pts_b: Vec<Vec3> = (row_b.start_ix..row_b.start_ix + row_b.count)
+            .map(|idx| verts[idx])
+            .collect();
+
+          // Handle flip_normals by swapping row order
+          if flip_normals {
+            dp_stitch_presampled(
+              &pts_b,
+              &pts_a,
+              row_b.start_ix,
+              row_a.start_ix,
+              v_closed,
+              &mut indices,
+            );
+          } else {
+            dp_stitch_presampled(
+              &pts_a,
+              &pts_b,
+              row_a.start_ix,
+              row_b.start_ix,
+              v_closed,
+              &mut indices,
+            );
+          }
+        } else {
+          // Use simple uniform quad-based stitching for predictable topology
+          uniform_stitch_rows(
+            row_a.start_ix,
+            row_b.start_ix,
+            row_a.count,
+            v_closed,
+            flip_normals,
+            &mut indices,
+          );
+        }
+      }
+    }
   }
 
   Ok(LinkedMesh::from_indexed_vertices(
@@ -194,6 +204,7 @@ pub(crate) fn parametric_surface_impl(
       let v_closed = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
       let flip_normals = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
       let generator = arg_refs[5].resolve(args, kwargs).as_callable().unwrap();
+      let fku_stitching = arg_refs[6].resolve(args, kwargs).as_bool().unwrap();
 
       if u_res < 1 {
         return Err(ErrorStack::new(format!(
@@ -206,16 +217,28 @@ pub(crate) fn parametric_surface_impl(
         )));
       }
 
-      let mesh = parametric_surface(u_res as usize, v_res as usize, u_closed, v_closed, flip_normals, |u, v| {
-        let out = ctx
-          .invoke_callable(generator, &[Value::Float(u), Value::Float(v)], EMPTY_KWARGS)
-          .map_err(|err| err.wrap("Error produced by user-supplied `generator` callable in `parametric_surface`"))?;
-        out.as_vec3().copied().ok_or_else(|| {
-          ErrorStack::new(format!(
-            "Expected Vec3 from generator function in `parametric_surface`, found: {out:?}"
-          ))
-        })
-      })?;
+      let mesh = parametric_surface(
+        u_res as usize,
+        v_res as usize,
+        u_closed,
+        v_closed,
+        flip_normals,
+        fku_stitching,
+        |u, v| {
+          let out = ctx
+            .invoke_callable(generator, &[Value::Float(u), Value::Float(v)], EMPTY_KWARGS)
+            .map_err(|err| {
+              err.wrap(
+                "Error produced by user-supplied `generator` callable in `parametric_surface`",
+              )
+            })?;
+          out.as_vec3().copied().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Expected Vec3 from generator function in `parametric_surface`, found: {out:?}"
+            ))
+          })
+        },
+      )?;
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
@@ -239,8 +262,10 @@ mod tests {
   #[test]
   fn test_parametric_surface_simple_plane() {
     // Simple plane: z = 0, x and y from 0 to 1
-    let mesh =
-      parametric_surface(2, 2, false, false, false, |u, v| Ok(Vec3::new(u, v, 0.0))).unwrap();
+    let mesh = parametric_surface(2, 2, false, false, false, false, |u, v| {
+      Ok(Vec3::new(u, v, 0.0))
+    })
+    .unwrap();
 
     // 3x3 grid of vertices
     assert_eq!(mesh.vertices.len(), 9);
@@ -250,9 +275,7 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_cylinder() {
-    // Cylinder: u is height, v is angle (closed)
-    // flip_normals=true for outward-facing normals with this parameterization
-    let mesh = parametric_surface(2, 8, false, true, true, |u, v| {
+    let mesh = parametric_surface(2, 8, false, true, true, false, |u, v| {
       let angle = v * 2.0 * PI;
       Ok(Vec3::new(angle.cos(), u, angle.sin()))
     })
@@ -266,8 +289,7 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_sphere_with_poles() {
-    // Sphere: u is latitude (0=south pole, 1=north pole), v is longitude (closed)
-    let mesh = parametric_surface(4, 8, false, true, false, |u, v| {
+    let mesh = parametric_surface(4, 8, false, true, false, false, |u, v| {
       let phi = u * PI; // 0 to PI (south to north)
       let theta = v * 2.0 * PI; // 0 to 2PI (around)
       Ok(Vec3::new(
@@ -297,7 +319,7 @@ mod tests {
     // flip_normals=true for outward-facing normals with this parameterization
     let major_r = 2.0;
     let minor_r = 0.5;
-    let mesh = parametric_surface(8, 8, true, true, true, |u, v| {
+    let mesh = parametric_surface(8, 8, true, true, true, false, |u, v| {
       let theta = u * 2.0 * PI; // around the major circle
       let phi = v * 2.0 * PI; // around the minor circle
       let r = major_r + minor_r * phi.cos();
@@ -317,10 +339,14 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_error_on_zero_resolution() {
-    let result = parametric_surface(0, 4, false, false, false, |u, v| Ok(Vec3::new(u, v, 0.0)));
+    let result = parametric_surface(0, 4, false, false, false, false, |u, v| {
+      Ok(Vec3::new(u, v, 0.0))
+    });
     assert!(result.is_err());
 
-    let result = parametric_surface(4, 0, false, false, false, |u, v| Ok(Vec3::new(u, v, 0.0)));
+    let result = parametric_surface(4, 0, false, false, false, false, |u, v| {
+      Ok(Vec3::new(u, v, 0.0))
+    });
     assert!(result.is_err());
   }
 
@@ -380,7 +406,7 @@ mesh = parametric_surface(
 
   #[test]
   fn test_parametric_surface_integration_torus() {
-    // torus
+    // torus with uniform stitching (fku_stitching=false for predictable topology)
     let src = r#"
 major_r = 2
 minor_r = 0.5
@@ -390,6 +416,7 @@ mesh = parametric_surface(
   u_closed=true,
   v_closed=true,
   flip_normals=true,
+  fku_stitching=false,
   generator=|u, v| {
     theta = u * 2 * pi
     phi = v * 2 * pi
@@ -403,7 +430,7 @@ mesh = parametric_surface(
     let mesh_handle = mesh_val.as_mesh().unwrap();
     // 8x8 = 64 vertices (no collapse for torus)
     assert_eq!(mesh_handle.mesh.vertices.len(), 64);
-    // 64 quads = 128 triangles
+    // 64 quads = 128 triangles (uniform stitching)
     assert_eq!(mesh_handle.mesh.faces.len(), 128);
   }
 }

@@ -12,8 +12,9 @@ use crate::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
     FUNCTION_ALIASES,
   },
-  get_args, AppendOnlyBuffer, ArgRef, ArgType, Callable, CapturedScope, Closure, DynamicCallable,
-  ErrorStack, EvalCtx, GetArgsOutput, Scope, Sym, Value, Vec2, EMPTY_ARGS, EMPTY_KWARGS,
+  format_fn_signatures, get_args, AppendOnlyBuffer, ArgRef, ArgType, Callable, CapturedScope,
+  Closure, DynamicCallable, ErrorStack, EvalCtx, GetArgsOutput, Scope, Sequence, Sym, Value, Vec2,
+  EMPTY_ARGS, EMPTY_KWARGS,
 };
 
 const CURVE_TABLE_SAMPLES: usize = 32;
@@ -135,6 +136,182 @@ pub(crate) struct SegmentInterval {
   pub has_detail: bool,
 }
 
+const GUIDE_EPSILON: f32 = 1e-6;
+
+pub(crate) fn normalize_guides(guides: &[f32]) -> Vec<f32> {
+  let mut out: Vec<f32> = guides
+    .iter()
+    .copied()
+    .filter(|v| v.is_finite())
+    .map(|v| v.clamp(0.0, 1.0))
+    .collect();
+  out.push(0.0);
+  out.push(1.0);
+  out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+  out.dedup_by(|a, b| (*a - *b).abs() <= GUIDE_EPSILON);
+  out
+}
+
+fn uniform_samples(count: usize, include_end: bool) -> Vec<f32> {
+  if count == 0 {
+    return Vec::new();
+  }
+  if include_end {
+    if count == 1 {
+      return vec![0.0];
+    }
+    let denom = (count - 1) as f32;
+    return (0..count).map(|i| i as f32 / denom).collect();
+  }
+
+  let denom = count as f32;
+  (0..count).map(|i| i as f32 / denom).collect()
+}
+
+pub(crate) fn build_topology_samples(
+  sample_count: usize,
+  guides: Option<&[f32]>,
+  interval_weights: Option<&[f32]>,
+  include_end: bool,
+) -> Vec<f32> {
+  let Some(guides) = guides else {
+    return uniform_samples(sample_count, include_end);
+  };
+
+  let guide_points = normalize_guides(guides);
+
+  if guide_points.len() < 2 {
+    return uniform_samples(sample_count, include_end);
+  }
+
+  let interval_count = guide_points.len() - 1;
+  let base_count = if include_end {
+    interval_count + 1
+  } else {
+    interval_count
+  };
+  let target_count = sample_count.max(base_count);
+  let remaining = target_count - base_count;
+  if remaining == 0 {
+    return if include_end {
+      guide_points
+    } else {
+      guide_points[..guide_points.len() - 1].to_vec()
+    };
+  }
+
+  let weights = interval_weights.filter(|weights| weights.len() == interval_count);
+  let mut spans = Vec::with_capacity(interval_count);
+  let mut total_effective = 0.0;
+  for (ix, window) in guide_points.windows(2).enumerate() {
+    let span = (window[1] - window[0]).max(0.0);
+    let weight = weights.map(|weights| weights[ix]).unwrap_or(1.0).max(0.0);
+    let effective = span * weight;
+    spans.push((span, effective));
+    total_effective += effective;
+  }
+
+  if total_effective <= GUIDE_EPSILON {
+    total_effective = 0.0;
+    for (span, effective) in spans.iter_mut() {
+      *effective = *span;
+      total_effective += *effective;
+    }
+  }
+
+  let mut allocations = Vec::with_capacity(interval_count);
+  let mut remainders: Vec<(f32, usize)> = Vec::with_capacity(interval_count);
+  let mut assigned = 0usize;
+
+  for (ix, (span, effective)) in spans.iter().enumerate() {
+    if *span <= 0.0 {
+      allocations.push(0);
+      remainders.push((0.0, ix));
+      continue;
+    }
+    let exact = if total_effective > 0.0 {
+      (remaining as f32) * (effective / total_effective)
+    } else {
+      0.0
+    };
+    let count = exact.floor() as usize;
+    assigned += count;
+    allocations.push(count);
+    remainders.push((exact - count as f32, ix));
+  }
+
+  let mut leftover = remaining.saturating_sub(assigned);
+  remainders.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
+  for (_, ix) in remainders {
+    if leftover == 0 {
+      break;
+    }
+    allocations[ix] += 1;
+    leftover -= 1;
+  }
+
+  let mut samples = Vec::with_capacity(target_count);
+  for (ix, window) in guide_points.windows(2).enumerate() {
+    let start = window[0];
+    let end = window[1];
+    samples.push(start);
+
+    let count = allocations[ix];
+    if count == 0 {
+      continue;
+    }
+    let step = (end - start) / ((count + 1) as f32);
+    for j in 1..=count {
+      samples.push(start + step * (j as f32));
+    }
+  }
+
+  if include_end {
+    samples.push(*guide_points.last().unwrap_or(&1.0));
+  }
+
+  samples
+}
+
+pub(crate) fn build_interval_weights(
+  guides: &[f32],
+  sampler_intervals: &[Vec<SegmentInterval>],
+) -> Option<Vec<f32>> {
+  if guides.len() < 2 || sampler_intervals.is_empty() {
+    return None;
+  }
+
+  let mut indices = vec![0usize; sampler_intervals.len()];
+  let mut weights = Vec::with_capacity(guides.len() - 1);
+  for window in guides.windows(2) {
+    let start = window[0];
+    let end = window[1];
+    let mid = (start + end) * 0.5;
+    let mut all_detail = true;
+
+    for (sampler_ix, intervals) in sampler_intervals.iter().enumerate() {
+      if intervals.is_empty() {
+        all_detail = false;
+        continue;
+      }
+
+      let mut idx = indices[sampler_ix];
+      while idx + 1 < intervals.len() && mid > intervals[idx].end + GUIDE_EPSILON {
+        idx += 1;
+      }
+      indices[sampler_ix] = idx;
+
+      if !intervals[idx].has_detail {
+        all_detail = false;
+      }
+    }
+
+    weights.push(if all_detail { 1.0 } else { 0.0 });
+  }
+
+  Some(weights)
+}
+
 impl PathSegment {
   fn translate(&mut self, offset: Vec2) {
     match self {
@@ -249,12 +426,133 @@ impl PathSegment {
   }
 }
 
-pub struct PathTracerCallable {
-  interned_t_kwarg: Sym,
+#[derive(Clone)]
+pub(crate) struct PathSubpath {
   segments: Vec<PathSegment>,
   cumulative_lengths: Vec<f32>,
   total_length: f32,
-  reverse: bool,
+  closed: bool,
+}
+
+struct SubpathBuilder {
+  start: Vec2,
+  current: Vec2,
+  segments: Vec<PathSegment>,
+  closed: bool,
+  last_cubic_ctrl: Option<Vec2>,
+  last_quad_ctrl: Option<Vec2>,
+}
+
+impl SubpathBuilder {
+  fn new(start: Vec2) -> Self {
+    Self {
+      start,
+      current: start,
+      segments: Vec::new(),
+      closed: false,
+      last_cubic_ctrl: None,
+      last_quad_ctrl: None,
+    }
+  }
+}
+
+impl PathSubpath {
+  fn new(segments: Vec<PathSegment>, closed: bool) -> Option<Self> {
+    if segments.is_empty() {
+      return None;
+    }
+    let mut cumulative_lengths = Vec::with_capacity(segments.len());
+    let mut total_length = 0.0;
+    for segment in &segments {
+      total_length += segment.length();
+      cumulative_lengths.push(total_length);
+    }
+    if total_length <= LENGTH_EPSILON {
+      return None;
+    }
+    Some(Self {
+      segments,
+      cumulative_lengths,
+      total_length,
+      closed,
+    })
+  }
+
+  fn sample_by_length(&self, length: f32) -> Vec2 {
+    let mut idx = match self
+      .cumulative_lengths
+      .binary_search_by(|len| len.partial_cmp(&length).unwrap_or(Ordering::Less))
+    {
+      Ok(ix) => ix,
+      Err(ix) => ix,
+    };
+    if idx >= self.segments.len() {
+      idx = self.segments.len() - 1;
+    }
+    let seg_start_len = if idx == 0 {
+      0.0
+    } else {
+      self.cumulative_lengths[idx - 1]
+    };
+    let seg = &self.segments[idx];
+    let seg_len = seg.length();
+    if seg_len <= LENGTH_EPSILON {
+      return seg.end();
+    }
+    let local_len = (length - seg_start_len).clamp(0.0, seg_len);
+    seg.sample_by_length(local_len)
+  }
+
+  pub(crate) fn critical_t_values(&self) -> Vec<f32> {
+    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
+      return Vec::new();
+    }
+
+    let mut out = Vec::with_capacity(self.cumulative_lengths.len() + 1);
+    out.push(0.0);
+    for len in &self.cumulative_lengths {
+      out.push((len / self.total_length).clamp(0.0, 1.0));
+    }
+    out
+  }
+
+  pub(crate) fn segment_intervals(&self) -> Vec<SegmentInterval> {
+    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
+      return Vec::new();
+    }
+
+    let mut intervals = Vec::with_capacity(self.segments.len());
+    let mut prev = 0.0f32;
+    for (seg, cum_len) in self.segments.iter().zip(self.cumulative_lengths.iter()) {
+      let end = (cum_len / self.total_length).clamp(0., 1.);
+      let start = prev.clamp(0., 1.);
+      intervals.push(SegmentInterval {
+        start,
+        end,
+        has_detail: seg.has_detail(),
+      });
+      prev = end;
+    }
+
+    intervals
+  }
+
+  pub(crate) fn is_closed(&self) -> bool {
+    self.closed
+  }
+
+  pub(crate) fn total_length(&self) -> f32 {
+    self.total_length
+  }
+}
+
+pub struct PathTracerCallable {
+  interned_t_kwarg: Sym,
+  pub subpaths: Vec<PathSubpath>,
+  pub subpath_cumulative_lengths: Vec<f32>,
+  pub total_length: f32,
+  pub reverse: bool,
+  override_critical_points: Option<Vec<f32>>,
 }
 
 impl PathTracerCallable {
@@ -265,70 +563,114 @@ impl PathTracerCallable {
     draw_cmds: Vec<DrawCommand>,
     interned_t_kwarg: Sym,
   ) -> Self {
-    let mut segments = Vec::new();
-    let mut current: Option<Vec2> = None;
-    let mut first_point: Option<Vec2> = None;
-    let mut last_cubic_ctrl: Option<Vec2> = None;
-    let mut last_quad_ctrl: Option<Vec2> = None;
-
+    let mut subpaths: Vec<PathSubpath> = Vec::new();
+    let mut builder: Option<SubpathBuilder> = None;
     let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
     let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
 
-    let get_start = |current: &Option<Vec2>, first_point: &Option<Vec2>| -> Vec2 {
-      current
-        .or(*first_point)
-        .unwrap_or_else(|| Vec2::new(0.0, 0.0))
-    };
+    fn finalize_subpath(
+      builder: &mut Option<SubpathBuilder>,
+      force_close: bool,
+      min: &mut Vec2,
+      max: &mut Vec2,
+      out: &mut Vec<PathSubpath>,
+    ) {
+      let Some(mut builder) = builder.take() else {
+        return;
+      };
+
+      if force_close && !builder.closed {
+        let cur = builder.current;
+        let start = builder.start;
+        extend_bounds(min, max, cur);
+        extend_bounds(min, max, start);
+        let length = (start - cur).norm();
+        if length > LENGTH_EPSILON {
+          builder.segments.push(PathSegment::Line {
+            start: cur,
+            end: start,
+            length,
+          });
+        }
+        builder.current = start;
+        builder.closed = true;
+      }
+
+      if let Some(subpath) = PathSubpath::new(builder.segments, builder.closed) {
+        out.push(subpath);
+      }
+    }
+
+    fn get_or_create_builder(
+      builder: &mut Option<SubpathBuilder>,
+      start: Vec2,
+    ) -> &mut SubpathBuilder {
+      if builder.is_none() {
+        *builder = Some(SubpathBuilder::new(start));
+      }
+      builder.as_mut().unwrap()
+    }
 
     for cmd in draw_cmds {
       match cmd {
         DrawCommand::MoveTo(pos) => {
+          finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
           extend_bounds(&mut min, &mut max, pos);
-          current = Some(pos);
-          if first_point.is_none() {
-            first_point = Some(pos);
-          }
-          last_cubic_ctrl = None;
-          last_quad_ctrl = None;
+          builder = Some(SubpathBuilder::new(pos));
         }
         DrawCommand::LineTo(pos) => {
-          let start = get_start(&current, &first_point);
+          let start = builder
+            .as_ref()
+            .map(|b| b.current)
+            .unwrap_or_else(|| Vec2::new(0.0, 0.0));
+          let builder = get_or_create_builder(&mut builder, start);
+          builder.closed = false;
           extend_bounds(&mut min, &mut max, start);
           extend_bounds(&mut min, &mut max, pos);
           let length = (pos - start).norm();
           if length > LENGTH_EPSILON {
-            segments.push(PathSegment::Line {
+            builder.segments.push(PathSegment::Line {
               start,
               end: pos,
               length,
             });
           }
-          current = Some(pos);
-          last_cubic_ctrl = None;
-          last_quad_ctrl = None;
+          builder.current = pos;
+          builder.last_cubic_ctrl = None;
+          builder.last_quad_ctrl = None;
         }
         DrawCommand::QuadraticBezier { ctrl, to } => {
-          let start = get_start(&current, &first_point);
+          let start = builder
+            .as_ref()
+            .map(|b| b.current)
+            .unwrap_or_else(|| Vec2::new(0.0, 0.0));
+          let builder = get_or_create_builder(&mut builder, start);
+          builder.closed = false;
           let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             quadratic_bezier(start, ctrl, to, t)
           });
           extend_bounds(&mut min, &mut max, tmin);
           extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
-            segments.push(PathSegment::Quadratic {
+            builder.segments.push(PathSegment::Quadratic {
               start,
               ctrl,
               end: to,
               table,
             });
           }
-          current = Some(to);
-          last_quad_ctrl = Some(ctrl);
-          last_cubic_ctrl = None;
+          builder.current = to;
+          builder.last_quad_ctrl = Some(ctrl);
+          builder.last_cubic_ctrl = None;
         }
         DrawCommand::SmoothQuadraticBezier { to } => {
-          let start = get_start(&current, &first_point);
-          let ctrl = match last_quad_ctrl {
+          let start = builder
+            .as_ref()
+            .map(|b| b.current)
+            .unwrap_or_else(|| Vec2::new(0., 0.));
+          let builder = get_or_create_builder(&mut builder, start);
+          builder.closed = false;
+          let ctrl = match builder.last_quad_ctrl {
             Some(last_ctrl) => start + (start - last_ctrl),
             None => start,
           };
@@ -338,26 +680,31 @@ impl PathTracerCallable {
           extend_bounds(&mut min, &mut max, tmin);
           extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
-            segments.push(PathSegment::Quadratic {
+            builder.segments.push(PathSegment::Quadratic {
               start,
               ctrl,
               end: to,
               table,
             });
           }
-          current = Some(to);
-          last_quad_ctrl = Some(ctrl);
-          last_cubic_ctrl = None;
+          builder.current = to;
+          builder.last_quad_ctrl = Some(ctrl);
+          builder.last_cubic_ctrl = None;
         }
         DrawCommand::CubicBezier { ctrl1, ctrl2, to } => {
-          let start = get_start(&current, &first_point);
+          let start = builder
+            .as_ref()
+            .map(|b| b.current)
+            .unwrap_or_else(|| Vec2::new(0., 0.));
+          let builder = get_or_create_builder(&mut builder, start);
+          builder.closed = false;
           let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             cubic_bezier(start, ctrl1, ctrl2, to, t)
           });
           extend_bounds(&mut min, &mut max, tmin);
           extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
-            segments.push(PathSegment::Cubic {
+            builder.segments.push(PathSegment::Cubic {
               start,
               ctrl1,
               ctrl2,
@@ -365,13 +712,18 @@ impl PathTracerCallable {
               table,
             });
           }
-          current = Some(to);
-          last_cubic_ctrl = Some(ctrl2);
-          last_quad_ctrl = None;
+          builder.current = to;
+          builder.last_cubic_ctrl = Some(ctrl2);
+          builder.last_quad_ctrl = None;
         }
         DrawCommand::SmoothCubicBezier { ctrl2, to } => {
-          let start = get_start(&current, &first_point);
-          let ctrl1 = match last_cubic_ctrl {
+          let start = builder
+            .as_ref()
+            .map(|b| b.current)
+            .unwrap_or_else(|| Vec2::new(0., 0.));
+          let builder = get_or_create_builder(&mut builder, start);
+          builder.closed = false;
+          let ctrl1 = match builder.last_cubic_ctrl {
             Some(last_ctrl) => start + (start - last_ctrl),
             None => start,
           };
@@ -381,7 +733,7 @@ impl PathTracerCallable {
           extend_bounds(&mut min, &mut max, tmin);
           extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
-            segments.push(PathSegment::Cubic {
+            builder.segments.push(PathSegment::Cubic {
               start,
               ctrl1,
               ctrl2,
@@ -389,9 +741,9 @@ impl PathTracerCallable {
               table,
             });
           }
-          current = Some(to);
-          last_cubic_ctrl = Some(ctrl2);
-          last_quad_ctrl = None;
+          builder.current = to;
+          builder.last_cubic_ctrl = Some(ctrl2);
+          builder.last_quad_ctrl = None;
         }
         DrawCommand::Arc {
           rx,
@@ -401,78 +753,89 @@ impl PathTracerCallable {
           sweep,
           to,
         } => {
-          let start = get_start(&current, &first_point);
+          let start = builder
+            .as_ref()
+            .map(|b| b.current)
+            .unwrap_or_else(|| Vec2::new(0.0, 0.0));
+          let builder = get_or_create_builder(&mut builder, start);
+          builder.closed = false;
           if let Some((segment, tmin, tmax)) =
             build_arc_segment(start, to, rx, ry, x_axis_rotation, large_arc, sweep)
           {
             extend_bounds(&mut min, &mut max, tmin);
             extend_bounds(&mut min, &mut max, tmax);
             if segment.length() > LENGTH_EPSILON {
-              segments.push(segment);
+              builder.segments.push(segment);
             }
           }
-          current = Some(to);
-          last_cubic_ctrl = None;
-          last_quad_ctrl = None;
+          builder.current = to;
+          builder.last_cubic_ctrl = None;
+          builder.last_quad_ctrl = None;
         }
         DrawCommand::Close => {
-          if let (Some(cur), Some(first)) = (current, first_point) {
+          if let Some(builder) = builder.as_mut() {
+            let cur = builder.current;
+            let first = builder.start;
             extend_bounds(&mut min, &mut max, cur);
             extend_bounds(&mut min, &mut max, first);
             let length = (first - cur).norm();
             if length > LENGTH_EPSILON {
-              segments.push(PathSegment::Line {
+              builder.segments.push(PathSegment::Line {
                 start: cur,
                 end: first,
                 length,
               });
             }
-            current = Some(first);
+            builder.current = first;
+            builder.closed = true;
+            builder.last_cubic_ctrl = None;
+            builder.last_quad_ctrl = None;
           }
-          last_cubic_ctrl = None;
-          last_quad_ctrl = None;
         }
       }
     }
 
-    if closed {
-      if let Some(cur) = current {
-        let start = first_point.unwrap_or(cur);
-        extend_bounds(&mut min, &mut max, cur);
-        extend_bounds(&mut min, &mut max, start);
-        let length = (start - cur).norm();
-        if length > LENGTH_EPSILON {
-          segments.push(PathSegment::Line {
-            start: cur,
-            end: start,
-            length,
-          });
-        }
-      }
-    }
+    finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
 
     if center && min.x <= max.x {
       let center_pt = (min + max) * 0.5;
       let offset = -center_pt;
-      for segment in &mut segments {
-        segment.translate(offset);
+      for subpath in &mut subpaths {
+        for segment in &mut subpath.segments {
+          segment.translate(offset);
+        }
       }
     }
 
-    let mut cumulative_lengths = Vec::with_capacity(segments.len());
+    let mut subpath_cumulative_lengths = Vec::with_capacity(subpaths.len());
     let mut total_length = 0.0;
-    for segment in &segments {
-      total_length += segment.length();
-      cumulative_lengths.push(total_length);
+    for subpath in &subpaths {
+      total_length += subpath.total_length;
+      subpath_cumulative_lengths.push(total_length);
     }
 
     Self {
       interned_t_kwarg,
-      segments,
-      cumulative_lengths,
+      subpaths,
+      subpath_cumulative_lengths,
       total_length,
       reverse,
+      override_critical_points: None,
     }
+  }
+
+  #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+  pub fn new_with_critical_points(
+    closed: bool,
+    center: bool,
+    reverse: bool,
+    draw_cmds: Vec<DrawCommand>,
+    interned_t_kwarg: Sym,
+    override_critical_points: Option<Vec<f32>>,
+  ) -> Self {
+    let mut tracer = Self::new(closed, center, reverse, draw_cmds, interned_t_kwarg);
+    tracer.override_critical_points = override_critical_points;
+    tracer
   }
 
   /// "Critical t values" refer to points at which sharp features occur in the path, such as where
@@ -482,14 +845,33 @@ impl PathTracerCallable {
   /// When `reverse` is enabled, these values are transformed via `1 - t` so that they still
   /// correspond to the same physical points on the path when using the reversed sampling.
   pub(crate) fn critical_t_values(&self) -> Vec<f32> {
-    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
+    if let Some(ref override_cps) = self.override_critical_points {
+      let mut out: Vec<f32> = override_cps
+        .iter()
+        .copied()
+        .map(|t| t.clamp(0.0, 1.0))
+        .collect();
+      if self.reverse {
+        for t in &mut out {
+          *t = 1.0 - *t;
+        }
+        out.reverse();
+      }
+      return out;
+    }
+
+    if self.subpaths.is_empty() || self.total_length <= LENGTH_EPSILON {
       return Vec::new();
     }
 
-    let mut out = Vec::with_capacity(self.cumulative_lengths.len() + 1);
-    out.push(0.);
-    for len in &self.cumulative_lengths {
-      out.push((len / self.total_length).clamp(0., 1.));
+    let mut out = Vec::with_capacity(self.subpath_cumulative_lengths.len() + 1);
+    out.push(0.0);
+    let mut offset = 0.0;
+    for subpath in &self.subpaths {
+      for len in &subpath.cumulative_lengths {
+        out.push(((offset + len) / self.total_length).clamp(0.0, 1.0));
+      }
+      offset += subpath.total_length;
     }
 
     if self.reverse {
@@ -504,21 +886,29 @@ impl PathTracerCallable {
   }
 
   pub(crate) fn segment_intervals(&self) -> Vec<SegmentInterval> {
-    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
+    if self.subpaths.is_empty() || self.total_length <= LENGTH_EPSILON {
       return Vec::new();
     }
 
-    let mut intervals = Vec::with_capacity(self.segments.len());
+    let mut intervals = Vec::new();
     let mut prev = 0.0f32;
-    for (seg, cum_len) in self.segments.iter().zip(self.cumulative_lengths.iter()) {
-      let end = (cum_len / self.total_length).clamp(0.0, 1.0);
-      let start = prev.clamp(0.0, 1.0);
-      intervals.push(SegmentInterval {
-        start,
-        end,
-        has_detail: seg.has_detail(),
-      });
-      prev = end;
+    let mut offset = 0.0f32;
+    for subpath in &self.subpaths {
+      for (seg, cum_len) in subpath
+        .segments
+        .iter()
+        .zip(subpath.cumulative_lengths.iter())
+      {
+        let end = ((offset + cum_len) / self.total_length).clamp(0.0, 1.0);
+        let start = prev.clamp(0.0, 1.0);
+        intervals.push(SegmentInterval {
+          start,
+          end,
+          has_detail: seg.has_detail(),
+        });
+        prev = end;
+      }
+      offset += subpath.total_length;
     }
 
     if self.reverse {
@@ -535,7 +925,7 @@ impl PathTracerCallable {
   }
 
   fn sample(&self, t: f32) -> Result<Vec2, ErrorStack> {
-    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
+    if self.subpaths.is_empty() || self.total_length <= LENGTH_EPSILON {
       return Err(ErrorStack::new(
         "trace_path path has no drawable segments to sample",
       ));
@@ -545,30 +935,179 @@ impl PathTracerCallable {
     let t = if self.reverse { 1.0 - t } else { t };
 
     let target = t * self.total_length;
-    let mut idx = match self
-      .cumulative_lengths
+    let mut subpath_ix = match self
+      .subpath_cumulative_lengths
       .binary_search_by(|len| len.partial_cmp(&target).unwrap_or(Ordering::Less))
     {
       Ok(ix) => ix,
       Err(ix) => ix,
     };
-    if idx >= self.segments.len() {
-      idx = self.segments.len() - 1;
+    if subpath_ix >= self.subpaths.len() {
+      subpath_ix = self.subpaths.len() - 1;
     }
-
-    let seg_start_len = if idx == 0 {
+    let subpath_start_len = if subpath_ix == 0 {
       0.0
     } else {
-      self.cumulative_lengths[idx - 1]
+      self.subpath_cumulative_lengths[subpath_ix - 1]
     };
-    let seg = &self.segments[idx];
-    let seg_len = seg.length();
-    if seg_len <= LENGTH_EPSILON {
-      return Ok(seg.end());
-    }
-    let local_len = (target - seg_start_len).clamp(0.0, seg_len);
-    Ok(seg.sample_by_length(local_len))
+    let subpath = &self.subpaths[subpath_ix];
+    let local_target = (target - subpath_start_len).clamp(0.0, subpath.total_length);
+    Ok(subpath.sample_by_length(local_target))
   }
+
+  pub(crate) fn from_subpath(subpath: PathSubpath, interned_t_kwarg: Sym, reverse: bool) -> Self {
+    let total_length = subpath.total_length;
+    Self {
+      interned_t_kwarg,
+      subpaths: vec![subpath],
+      subpath_cumulative_lengths: vec![total_length],
+      total_length,
+      reverse,
+      override_critical_points: None,
+    }
+  }
+}
+
+/// A lazy sequence that yields new `PathTracerCallable`` instances for each subpath
+pub(crate) struct SubpathsSeq {
+  tracer: Rc<Callable>,
+}
+
+impl std::fmt::Debug for SubpathsSeq {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "SubpathsSeq {{ {} subpaths }}",
+      self.get_subpaths().map(|s| s.len()).unwrap_or(0)
+    )
+  }
+}
+
+impl SubpathsSeq {
+  fn get_tracer(&self) -> Result<&PathTracerCallable, ErrorStack> {
+    if let Callable::Dynamic { inner, .. } = self.tracer.as_ref() {
+      if let Some(tracer) = inner.as_any().downcast_ref::<PathTracerCallable>() {
+        return Ok(tracer);
+      }
+    }
+    Err(ErrorStack::new(
+      "Internal error: `SubpathsSeq` constructed with non-`PathTracerCallable` tracer",
+    ))
+  }
+
+  fn get_subpaths(&self) -> Result<&[PathSubpath], ErrorStack> {
+    let tracer = self.get_tracer()?;
+    Ok(&tracer.subpaths)
+  }
+
+  pub fn new(tracer: Rc<Callable>) -> Self {
+    Self { tracer }
+  }
+}
+
+impl Sequence for SubpathsSeq {
+  fn consume<'a>(
+    &self,
+    _ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    let tracer = match self.get_tracer() {
+      Ok(t) => t,
+      Err(e) => {
+        return Box::new(std::iter::once(Err(e)));
+      }
+    };
+    let interned_t_kwarg = tracer.interned_t_kwarg;
+    let reverse = tracer.reverse;
+    let subpaths = tracer.subpaths.clone();
+
+    Box::new(subpaths.into_iter().map(move |subpath| {
+      let tracer = PathTracerCallable::from_subpath(subpath, interned_t_kwarg, reverse);
+      Ok(Value::Callable(Rc::new(Callable::Dynamic {
+        name: "trace_path".to_owned(),
+        inner: Box::new(tracer),
+      })))
+    }))
+  }
+}
+
+fn angle_between(a: Vec2, b: Vec2) -> f32 {
+  let la = a.norm();
+  let lb = b.norm();
+  if la <= LENGTH_EPSILON || lb <= LENGTH_EPSILON {
+    return 0.0;
+  }
+  let cos = (a.dot(&b) / (la * lb)).clamp(-1.0, 1.0);
+  cos.acos()
+}
+
+fn segment_turning_angle(seg: &PathSegment) -> f32 {
+  match seg {
+    PathSegment::Line { .. } => 0.0,
+    PathSegment::Quadratic {
+      start, ctrl, end, ..
+    } => angle_between(*ctrl - *start, *end - *ctrl),
+    PathSegment::Cubic {
+      start,
+      ctrl1,
+      ctrl2,
+      end,
+      ..
+    } => {
+      let a = angle_between(*ctrl1 - *start, *ctrl2 - *ctrl1);
+      let b = angle_between(*ctrl2 - *ctrl1, *end - *ctrl2);
+      a + b
+    }
+    PathSegment::Arc { theta_delta, .. } => theta_delta.abs(),
+  }
+}
+
+fn segment_subdivisions(seg: &PathSegment, angle_tolerance: f32) -> usize {
+  if angle_tolerance <= 0.0 || !seg.has_detail() {
+    return 1;
+  }
+  let angle = segment_turning_angle(seg);
+  if angle <= 0.0 {
+    return 1;
+  }
+  let count = (angle / angle_tolerance).ceil() as usize;
+  count.max(1)
+}
+
+pub(crate) fn sample_subpath_points(
+  subpath: &PathSubpath,
+  angle_tolerance: f32,
+  include_end: bool,
+) -> Vec<Vec2> {
+  if subpath.segments.is_empty() || subpath.total_length <= LENGTH_EPSILON {
+    return Vec::new();
+  }
+
+  let mut extra = 0usize;
+  for seg in &subpath.segments {
+    extra = extra.saturating_add(segment_subdivisions(seg, angle_tolerance).saturating_sub(1));
+  }
+
+  let base_count = if include_end {
+    subpath.segments.len() + 1
+  } else {
+    subpath.segments.len()
+  };
+  let target_count = base_count.saturating_add(extra);
+
+  let guides = subpath.critical_t_values();
+  let intervals = subpath.segment_intervals();
+  let interval_weights = build_interval_weights(&guides, &[intervals]);
+  let t_samples = build_topology_samples(
+    target_count,
+    Some(&guides),
+    interval_weights.as_deref(),
+    include_end,
+  );
+
+  t_samples
+    .into_iter()
+    .map(|t| subpath.sample_by_length(t * subpath.total_length()))
+    .collect()
 }
 
 impl DynamicCallable for PathTracerCallable {
@@ -624,7 +1163,7 @@ impl DynamicCallable for PathTracerCallable {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum DrawCommand {
   MoveTo(Vec2),
   LineTo(Vec2),
@@ -784,9 +1323,11 @@ impl DynamicCallable for DrawCommandCallable {
     let (def_ix, arg_refs) = match get_args(ctx, fn_name, fn_def.signatures, args, kwargs)? {
       GetArgsOutput::Valid { def_ix, arg_refs } => (def_ix, arg_refs),
       GetArgsOutput::PartiallyApplied => {
-        return Err(ErrorStack::new(
-          "Draw commands do not support partial application",
-        ))
+        return Err(ErrorStack::new(format!(
+          "Draw commands do not support partial application.\n\nAvailable signatures for \
+           `{fn_name}`:\n{}",
+          format_fn_signatures(fn_def.signatures)
+        )));
       }
     };
 
@@ -1044,14 +1585,14 @@ fn build_arc_segment(
   }
 
   let numerator = rx_sq * ry_sq - rx_sq * y1p_sq - ry_sq * x1p_sq;
-  let coef = (numerator / denom).max(0.0).sqrt();
-  let sign = if large_arc == sweep { -1.0 } else { 1.0 };
+  let coef = (numerator / denom).max(0.).sqrt();
+  let sign = if large_arc == sweep { -1. } else { 1. };
   let coef = sign * coef;
 
   let cxp = coef * (rx * y1p / ry);
   let cyp = coef * (-ry * x1p / rx);
-  let cx = cos_phi * cxp - sin_phi * cyp + (start.x + end.x) / 2.0;
-  let cy = sin_phi * cxp + cos_phi * cyp + (start.y + end.y) / 2.0;
+  let cx = cos_phi * cxp - sin_phi * cyp + (start.x + end.x) / 2.;
+  let cy = sin_phi * cxp + cos_phi * cyp + (start.y + end.y) / 2.;
   let center = Vec2::new(cx, cy);
 
   let v1 = Vec2::new((x1p - cxp) / rx, (y1p - cyp) / ry);
@@ -1059,10 +1600,10 @@ fn build_arc_segment(
   let theta_start = v1.y.atan2(v1.x);
   let mut theta_delta = (v1.x * v2.y - v1.y * v2.x).atan2(v1.x * v2.x + v1.y * v2.y);
 
-  if !sweep && theta_delta > 0.0 {
-    theta_delta -= 2.0 * PI;
-  } else if sweep && theta_delta < 0.0 {
-    theta_delta += 2.0 * PI;
+  if !sweep && theta_delta > 0. {
+    theta_delta -= 2. * PI;
+  } else if sweep && theta_delta < 0. {
+    theta_delta += 2. * PI;
   }
 
   let (table, min, max) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
@@ -1453,6 +1994,92 @@ mod tests {
   }
 
   #[test]
+  fn test_path_tracer_override_critical_points() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 1.0)),
+      DrawCommand::LineTo(Vec2::new(0.0, 1.0)),
+      DrawCommand::Close,
+    ];
+    let override_cps = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+    let tracer = PathTracerCallable::new_with_critical_points(
+      false,
+      false,
+      false,
+      cmds,
+      Sym(0),
+      Some(override_cps.clone()),
+    );
+
+    assert_eq!(tracer.critical_t_values(), override_cps);
+  }
+
+  #[test]
+  fn test_path_tracer_multiple_subpaths_sampling() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
+      DrawCommand::MoveTo(Vec2::new(10.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(11.0, 0.0)),
+    ];
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.25).unwrap(), Vec2::new(0.5, 0.0));
+    assert_vec2_close(tracer.sample(0.75).unwrap(), Vec2::new(10.5, 0.0));
+  }
+
+  #[test]
+  fn test_path_tracer_subpath_close_uses_local_start() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
+      DrawCommand::Close,
+      DrawCommand::MoveTo(Vec2::new(5.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(6.0, 0.0)),
+      DrawCommand::Close,
+    ];
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+
+    assert_eq!(tracer.subpaths.len(), 2);
+    assert_eq!(tracer.subpaths[1].segments.len(), 2);
+    match &tracer.subpaths[1].segments[1] {
+      PathSegment::Line { start, end, .. } => {
+        assert_vec2_close(*start, Vec2::new(6.0, 0.0));
+        assert_vec2_close(*end, Vec2::new(5.0, 0.0));
+      }
+      _ => panic!("Expected closing line segment for subpath close"),
+    }
+  }
+
+  #[test]
+  fn test_sample_subpath_points_curvature_detail() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::QuadraticBezier {
+        ctrl: Vec2::new(1.0, 1.0),
+        to: Vec2::new(2.0, 0.0),
+      },
+    ];
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+    let subpath = &tracer.subpaths[0];
+
+    let points = sample_subpath_points(subpath, std::f32::consts::FRAC_PI_4, true);
+    assert_eq!(points.len(), 3);
+    assert_vec2_close(points[0], Vec2::new(0.0, 0.0));
+    assert_vec2_close(points[2], Vec2::new(2.0, 0.0));
+  }
+
+  #[test]
+  fn test_build_topology_samples_include_end() {
+    let samples = build_topology_samples(3, None, None, true);
+    assert_eq!(samples.len(), 3);
+    assert!((samples[0] - 0.0).abs() < 1e-6);
+    assert!((samples[1] - 0.5).abs() < 1e-6);
+    assert!((samples[2] - 1.0).abs() < 1e-6);
+  }
+
+  #[test]
   fn test_path_tracer_segment_intervals_detail_order() {
     let cmds = vec![
       DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
@@ -1524,8 +2151,9 @@ mod tests {
     ];
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
-    assert_eq!(tracer.segments.len(), 2);
-    match &tracer.segments[1] {
+    assert_eq!(tracer.subpaths.len(), 1);
+    assert_eq!(tracer.subpaths[0].segments.len(), 2);
+    match &tracer.subpaths[0].segments[1] {
       PathSegment::Cubic { ctrl1, .. } => {
         assert_vec2_close(*ctrl1, Vec2::new(3.0, -1.0));
       }
@@ -1547,8 +2175,9 @@ mod tests {
     ];
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
-    assert_eq!(tracer.segments.len(), 2);
-    match &tracer.segments[1] {
+    assert_eq!(tracer.subpaths.len(), 1);
+    assert_eq!(tracer.subpaths[0].segments.len(), 2);
+    match &tracer.subpaths[0].segments[1] {
       PathSegment::Quadratic { ctrl, .. } => {
         assert_vec2_close(*ctrl, Vec2::new(3.0, -1.0));
       }
@@ -1681,7 +2310,10 @@ mod tests {
     assert!(matches!(cmds[2], DrawCommand::SmoothCubicBezier { .. }));
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
-    assert!(matches!(tracer.segments[1], PathSegment::Cubic { .. }));
+    assert!(matches!(
+      tracer.subpaths[0].segments[1],
+      PathSegment::Cubic { .. }
+    ));
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
   }
@@ -1694,7 +2326,10 @@ mod tests {
     assert!(matches!(cmds[2], DrawCommand::SmoothQuadraticBezier { .. }));
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
-    assert!(matches!(tracer.segments[1], PathSegment::Quadratic { .. }));
+    assert!(matches!(
+      tracer.subpaths[0].segments[1],
+      PathSegment::Quadratic { .. }
+    ));
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(10.0, 0.0));
   }
@@ -1721,5 +2356,87 @@ p1 = path(1)
 
     assert_vec2_close(*p0, Vec2::new(0.0, 0.0));
     assert_vec2_close(*p1, Vec2::new(8.0, 0.0));
+  }
+
+  #[test]
+  fn test_tessellate_path_from_sequence() {
+    let src = r#"
+path = [vec2(0, 0), vec2(1, 0), vec2(0, 1)]
+mesh = tessellate_path(path)
+"#;
+
+    let ctx = parse_and_eval_program(src).unwrap();
+    let mesh_val = ctx.get_global("mesh").unwrap();
+    let mesh = mesh_val.as_mesh().unwrap();
+    assert_eq!(mesh.mesh.faces.len(), 1);
+  }
+
+  #[test]
+  fn test_tessellate_path_from_trace_path() {
+    let src = r#"
+path = trace_path(|| {
+  move(0, 0)
+  line(1, 0)
+  line(1, 1)
+  line(0, 1)
+  close()
+})
+mesh = tessellate_path(path)
+"#;
+
+    let ctx = parse_and_eval_program(src).unwrap();
+    let mesh_val = ctx.get_global("mesh").unwrap();
+    let mesh = mesh_val.as_mesh().unwrap();
+    assert_eq!(mesh.mesh.vertices.len(), 4);
+    assert_eq!(mesh.mesh.faces.len(), 2);
+  }
+
+  #[test]
+  fn test_subpaths_builtin() {
+    let src = r#"
+// Create a path with two disconnected subpaths via two move commands
+path = trace_path(|| {
+  move(0, 0)
+  line(10, 0)
+
+  move(100, 0)
+  line(100, 20)
+})
+
+// Extract the subpaths as a sequence
+subs = subpaths(path)
+
+// Collect the subpaths into an array and sample them
+sub_array = collect(subs)
+count = len(sub_array)
+
+// Sample the first subpath
+first = sub_array[0]
+first_start = first(0)
+first_end = first(1)
+
+// Sample the second subpath
+second = sub_array[1]
+second_start = second(0)
+second_end = second(1)
+"#;
+
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    // Verify we have 2 subpaths
+    let count = ctx.get_global("count").unwrap();
+    assert_eq!(count.as_int().unwrap(), 2);
+
+    // Verify first subpath samples correctly
+    let first_start = ctx.get_global("first_start").unwrap();
+    let first_end = ctx.get_global("first_end").unwrap();
+    assert_vec2_close(*first_start.as_vec2().unwrap(), Vec2::new(0.0, 0.0));
+    assert_vec2_close(*first_end.as_vec2().unwrap(), Vec2::new(10.0, 0.0));
+
+    // Verify second subpath samples correctly
+    let second_start = ctx.get_global("second_start").unwrap();
+    let second_end = ctx.get_global("second_end").unwrap();
+    assert_vec2_close(*second_start.as_vec2().unwrap(), Vec2::new(100.0, 0.0));
+    assert_vec2_close(*second_end.as_vec2().unwrap(), Vec2::new(100.0, 20.0));
   }
 }

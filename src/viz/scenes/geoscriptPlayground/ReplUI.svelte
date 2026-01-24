@@ -310,17 +310,22 @@
     }
   });
 
+  let lastMaterialsKey: string | null = null;
+  let lastMaterialsCtxPtr: number | null = null;
   $effect(() => {
     if (ctxPtr === null) {
       return;
     }
 
-    // TODO: only do this if these have changed
-    repl.setMaterials(
-      ctxPtr,
-      materialDefinitions.defaultMaterialID,
-      Object.values(materialDefinitions.materials).map(mat => mat.name)
-    );
+    const materialNames = Object.values(materialDefinitions.materials).map(mat => mat.name);
+    const key = `${materialDefinitions.defaultMaterialID ?? ''}|${materialNames.join('\u0000')}`;
+    if (ctxPtr === lastMaterialsCtxPtr && key === lastMaterialsKey) {
+      return;
+    }
+
+    repl.setMaterials(ctxPtr, materialDefinitions.defaultMaterialID, materialNames);
+    lastMaterialsKey = key;
+    lastMaterialsCtxPtr = ctxPtr;
   });
 
   const loader = new THREE.ImageBitmapLoader();

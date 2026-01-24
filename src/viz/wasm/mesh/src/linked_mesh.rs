@@ -309,10 +309,16 @@ impl NormalAcc {
     faces: &SlotMap<FaceKey, Face<FaceData>>,
   ) -> Option<Vec3> {
     let face = &faces[face_key];
+    // TODO: this filtering is too aggressive and creates black triangles if they're small enough.
+    //
+    // Maybe need a smaller `EPSILON` or more intelligent filtering method (leaning towards the
+    // latter)
+
     // Filter out sliver triangles that can destabilize the average normal.
-    if face.area(verts) < EPSILON {
-      return None;
-    }
+    // if face.area(verts) < EPSILON {
+    //   return None;
+    // }
+
     let face_normal = face.normal(verts);
     if face_normal.x.is_nan() || face_normal.y.is_nan() || face_normal.z.is_nan() {
       // panic!(

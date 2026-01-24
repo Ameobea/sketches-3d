@@ -1873,6 +1873,7 @@ fn optimize_statement<'a>(
 }
 
 struct OptimizationPass {
+  #[allow(dead_code)]
   name: &'static str,
   run: fn(&EvalCtx, &mut Program) -> Result<(), ErrorStack>,
 }
