@@ -5301,8 +5301,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
             default_value: DefaultValue::Optional(|| Value::Float(0.)),
             description: "Twist angle in radians to apply along the path, or a callable with signature `|point_ix: int, path_point: vec3|: float` that returns the twist angle at each point along the path.  A value of 0 means no twist."
+          },
+          ArgDef {
+            name: "adaptive_path_sampling",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true (default), uses curvature-aware adaptive sampling to distribute path points. Concentrates vertices in high-curvature regions of the path, improving mesh quality at bends while using fewer vertices on straight sections. Set to false to use the input points directly without resampling. Note: automatically disabled when a dynamic twist callable is provided, as twist complicates the geometry in ways the adaptive sampler cannot account for."
           }
-          // TODO: support closed path that connects back to the start
         ],
         description: "Extrudes a pipe along a sequence of points.  The radius can be constant or vary along the path using a callable.",
         return_type: &[ArgType::Mesh],
@@ -5383,7 +5389,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler> }`. Returns either a path sampler directly (critical points extracted automatically if it's a PathTracerCallable) or a map with a sampler plus `path_samplers` (trace_path samplers used to derive critical points). More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
+            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler>, sharp: bool, adaptive: bool }`. Returns either a path sampler directly (critical points extracted automatically if it's a PathTracerCallable) or a map with a sampler plus optional keys: `path_samplers` (trace_path samplers for critical points), `sharp` (mark ring edges as sharp), `adaptive` (override global adaptive_profile_sampling for this ring). More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
           },
           ArgDef {
             name: "fku_stitching",
@@ -5397,7 +5403,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String, ArgType::Sequence, ArgType::Callable, ArgType::Map, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Controls how sample points are distributed along the spine. String options: \"uniform\" (default) - evenly spaced samples; \"chebyshev\"/\"cos\"/\"cosine\" - Chebyshev node spacing (denser near endpoints); \"superellipse\"/\"bevel\" - superellipse-adapted spacing with default exponent 5. Map options: { type: \"uniform\" }, { type: \"chebyshev\" }, { type: \"superellipse\", exponent: N } - superellipse-adapted spacing where higher exponent concentrates samples more at endpoints (exponent=2 is similar to chebyshev, exponent>2 is progressively sharper). Also accepts: a sequence of floats - explicit t values in [0, 1] (length must match spine_resolution); a callable `|i: int|: float` - returns t value for each sample index. The t values are used both for sampling the spine/rail and as the `u` parameter passed to the profile function."
+            description: "Controls how sample points are distributed along the spine. String options: \"uniform\" (default) - evenly spaced samples; \"chebyshev\"/\"cos\"/\"cosine\" - Chebyshev node spacing (denser near endpoints); \"superellipse\"/\"bevel\" - superellipse-adapted spacing with default exponent 5; \"adaptive\" - curvature-aware sampling that concentrates vertices in high-curvature regions of the spine. Map options: { type: \"uniform\" }, { type: \"chebyshev\" }, { type: \"superellipse\", exponent: N } - superellipse-adapted spacing where higher exponent concentrates samples more at endpoints (exponent=2 is similar to chebyshev, exponent>2 is progressively sharper), { type: \"adaptive\" } - adaptive curvature-based sampling. Also accepts: a sequence of floats - explicit t values in [0, 1] (length must match spine_resolution); a callable `|i: int|: float` - returns t value for each sample index. The t values are used both for sampling the spine/rail and as the `u` parameter passed to the profile function."
+          },
+          ArgDef {
+            name: "adaptive_profile_sampling",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true (default), uses curvature-aware adaptive sampling for profile rings. Concentrates vertices in high-curvature regions of the profile curve, often achieving equivalent visual quality with significantly fewer vertices. Only applies when using `dynamic_profile`. Can be overridden per-ring by returning `{ sampler: ..., adaptive: true/false }` from the dynamic_profile callable. Set to false to use uniform sampling."
           },
         ],
         description: "Sweeps a profile along a spine to produce a mesh.  Profile points are connected in increasing `v` order; for outward-facing normals, the profile winding should be counter-clockwise when viewed along the local tangent.",
@@ -5459,6 +5472,20 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "When true (default), uses the Fuchs/Kedem/Uselton (FKU) dynamic programming algorithm to find optimal triangulation between adjacent rows. FKU minimizes total edge length, avoiding sharp angles and long edges when vertex positions drift between rows. When false, uses simple quad-based stitching for predictable topology and uniform wireframe appearance."
+          },
+          ArgDef {
+            name: "adaptive_u_sampling",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, uses curvature-aware adaptive sampling along the U axis. Concentrates rows in high-curvature U regions of the surface. Disabled by default since parametric_surface is very general-purpose and adaptive sampling may not always be appropriate."
+          },
+          ArgDef {
+            name: "adaptive_v_sampling",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, uses curvature-aware adaptive sampling along the V axis within each row. Concentrates vertices in high-curvature V regions. Works well with FKU stitching which can handle rows with non-uniform vertex distributions. Disabled by default since parametric_surface is very general-purpose and adaptive sampling may not always be appropriate."
           },
         ],
         description: "Generates a mesh from a parametric function over a 2D domain. Handles topological wrapping via the closed flags and automatically welds coincident vertices at boundary poles to maintain manifold topology. By default, normals point outward when V increases counter-clockwise (looking down +Y); use flip_normals=true to reverse.",
@@ -6100,7 +6127,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
             description: "Max turning angle (degrees) per segment when discretizing trace_path curves."
           },
           ArgDef {
@@ -7484,7 +7511,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -7538,7 +7565,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -7592,7 +7619,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -7646,7 +7673,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -7700,7 +7727,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(8.0)),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {

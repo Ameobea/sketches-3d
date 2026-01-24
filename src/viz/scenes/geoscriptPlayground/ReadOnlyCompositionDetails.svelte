@@ -1,41 +1,17 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { forkComposition, type Composition, type CompositionVersion } from 'src/geoscript/geotoyAPIClient';
-  import { showToast } from 'src/viz/util/GlobalToastState.svelte';
+  import type { Composition, CompositionVersion } from 'src/geoscript/geotoyAPIClient';
+  import ForkCompositionButton from './ForkCompositionButton.svelte';
 
   let {
     comp,
-    saveNewVersion,
+    onForked,
+    showFork = true,
   }: {
     comp: Composition;
-    saveNewVersion: (comp: Composition, version: CompositionVersion) => Promise<void>;
+    onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
+    showFork?: boolean;
   } = $props();
-
-  let isForking = $state(false);
-
-  const fork = () => {
-    if (isForking) {
-      return;
-    }
-    isForking = true;
-    forkComposition(comp.id)
-      .then(({ composition: newComp, version: newVersion }) => {
-        showToast({ status: 'success', message: 'Successfully forked composition' });
-        goto(resolve(`/geotoy/edit/${newComp.id}`), {
-          noScroll: true,
-          invalidateAll: true,
-          keepFocus: false,
-        }).then(() => saveNewVersion(newComp, newVersion));
-      })
-      .catch(err => {
-        console.error('Error forking composition:', err);
-        alert('Error forking composition');
-      })
-      .finally(() => {
-        isForking = false;
-      });
-  };
 </script>
 
 <div class="root">
@@ -48,7 +24,9 @@
     </div>
     <label class="label" for="composition-details-description">Description:</label>
     <div class="value description" id="composition-details-description">{comp.description}</div>
-    <button onclick={fork}>fork composition</button>
+    {#if showFork && onForked}
+      <ForkCompositionButton {comp} {onForked} />
+    {/if}
   </div>
 </div>
 

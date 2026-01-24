@@ -1,7 +1,9 @@
+pub mod adaptive_sampler;
 pub mod extrude;
 pub mod extrude_pipe;
 pub mod fan_fill;
 pub mod fku_stitch;
+pub mod helpers;
 pub mod mesh_boolean;
 pub mod mesh_ops;
 pub mod parametric_surface;

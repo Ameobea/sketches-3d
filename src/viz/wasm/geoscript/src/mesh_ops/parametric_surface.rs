@@ -6,29 +6,11 @@ use nalgebra::Matrix4;
 
 use crate::{ArgRef, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value, EMPTY_KWARGS};
 
+use super::adaptive_sampler::adaptive_sample_fallible;
 use super::fku_stitch::{
   dp_stitch_presampled, should_use_fku, stitch_apex_to_row, uniform_stitch_rows,
 };
-
-const COLLAPSE_EPSILON: f32 = 1e-5;
-
-fn row_is_collapsed(row: &[Vec3]) -> bool {
-  if row.is_empty() {
-    return true;
-  }
-  let first = row[0];
-  let epsilon_sq = COLLAPSE_EPSILON * COLLAPSE_EPSILON;
-  row
-    .iter()
-    .all(|v| (*v - first).norm_squared() <= epsilon_sq)
-}
-
-fn compute_row_centroid(row: &[Vec3]) -> Vec3 {
-  if row.is_empty() {
-    return Vec3::new(0., 0., 0.);
-  }
-  row.iter().fold(Vec3::new(0., 0., 0.), |acc, v| acc + *v) / (row.len() as f32)
-}
+use super::helpers::{compute_centroid, vertices_are_collapsed};
 
 struct RowInfo {
   start_ix: usize,
@@ -44,6 +26,8 @@ struct RowInfo {
 /// u_closed=true + v_closed=true -> topological torus
 /// u_closed=false + v_closed=false -> topological plane
 /// u_closd=true + v_closed=false -> topological sphere
+///
+/// TODO: should probably collapse these arguments down to a params struct
 pub fn parametric_surface(
   u_res: usize,
   v_res: usize,
@@ -51,6 +35,8 @@ pub fn parametric_surface(
   v_closed: bool,
   flip_normals: bool,
   fku_stitching: bool,
+  adaptive_u_sampling: bool,
+  adaptive_v_sampling: bool,
   generator: impl Fn(f32, f32) -> Result<Vec3, ErrorStack>,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   if u_res < 1 {
@@ -67,18 +53,56 @@ pub fn parametric_surface(
   let u_points = if u_closed { u_res } else { u_res + 1 };
   let v_points = if v_closed { v_res } else { v_res + 1 };
 
-  // TODO: would be good to switch this to a flat array of `nalgebra` matrix
-  let mut raw_rows: Vec<Vec<Vec3>> = Vec::with_capacity(u_points);
+  // Compute u sample values (either uniform or adaptive)
+  let u_samples: Vec<f32> = if adaptive_u_sampling && u_points >= 3 {
+    // For adaptive u sampling, we sample the generator along a representative v curve
+    // (using v=0.5 as a middle sample) to detect curvature in the u direction
+    let v_sample = 0.5;
+    let initial_ts = &[0.0, 1.0];
 
-  for i in 0..u_points {
-    let u = i as f32 / u_res as f32;
-    let mut row = Vec::with_capacity(v_points);
-    for j in 0..v_points {
-      let v = j as f32 / v_res as f32;
-      let pos = generator(u, v)?;
-      row.push(pos);
+    adaptive_sample_fallible::<Vec3, ErrorStack>(
+      u_points,
+      initial_ts,
+      |u| generator(u, v_sample),
+      1e-5,
+    )?
+  } else {
+    // Uniform u sampling
+    (0..u_points).map(|i| i as f32 / u_res as f32).collect()
+  };
+
+  // Generate rows, potentially with adaptive v sampling per row
+  let mut raw_rows: Vec<Vec<Vec3>> = Vec::with_capacity(u_points);
+  let mut row_v_counts: Vec<usize> = Vec::with_capacity(u_points);
+
+  for &u in &u_samples {
+    if adaptive_v_sampling && v_points >= 3 {
+      // Adaptive v sampling for this row
+      let initial_ts: Vec<f32> = vec![0.0, 1.0];
+
+      let v_samples = adaptive_sample_fallible::<Vec3, ErrorStack>(
+        v_points,
+        &initial_ts,
+        |v| generator(u, v),
+        1e-5,
+      )?;
+
+      let mut row = Vec::with_capacity(v_samples.len());
+      for &v in &v_samples {
+        row.push(generator(u, v)?);
+      }
+      row_v_counts.push(row.len());
+      raw_rows.push(row);
+    } else {
+      // Uniform v sampling
+      let mut row = Vec::with_capacity(v_points);
+      for j in 0..v_points {
+        let v = j as f32 / v_res as f32;
+        row.push(generator(u, v)?);
+      }
+      row_v_counts.push(row.len());
+      raw_rows.push(row);
     }
-    raw_rows.push(row);
   }
 
   let mut verts: Vec<Vec3> = Vec::with_capacity(u_points * v_points);
@@ -87,23 +111,25 @@ pub fn parametric_surface(
   for (u_ix, row) in raw_rows.iter().enumerate() {
     let is_boundary = u_ix == 0 || u_ix == u_points - 1;
 
-    let should_collapse = is_boundary && v_closed && row_is_collapsed(row);
+    let should_collapse = is_boundary && v_closed && vertices_are_collapsed(row);
     let start_ix = verts.len();
     if should_collapse {
-      verts.push(compute_row_centroid(row));
+      verts.push(compute_centroid(row));
       row_infos.push(RowInfo { start_ix, count: 1 });
     } else {
       verts.extend(row.iter().copied());
       row_infos.push(RowInfo {
         start_ix,
-        count: v_points,
+        count: row.len(),
       });
     }
   }
 
   let mut indices: Vec<u32> = Vec::with_capacity(u_res * v_res * 6);
 
-  let use_fku = should_use_fku(fku_stitching, v_points, v_points);
+  // When using adaptive v sampling, rows may have different vertex counts,
+  // so we need to check FKU compatibility per row pair
+  let base_use_fku = should_use_fku(fku_stitching, v_points, v_points);
 
   for i in 0..u_res {
     let i_next = if u_closed && i == u_res - 1 { 0 } else { i + 1 };
@@ -139,6 +165,8 @@ pub fn parametric_surface(
       }
       // Normal case: both rows have full vertex count
       _ => {
+        // When rows have different vertex counts (adaptive v sampling), always use FKU
+        let use_fku = base_use_fku || row_a.count != row_b.count;
         if use_fku {
           // Use FKU DP-based stitching for optimal triangulation
           // This minimizes edge lengths, avoiding sharp angles when vertices drift between rows
@@ -205,6 +233,8 @@ pub(crate) fn parametric_surface_impl(
       let flip_normals = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
       let generator = arg_refs[5].resolve(args, kwargs).as_callable().unwrap();
       let fku_stitching = arg_refs[6].resolve(args, kwargs).as_bool().unwrap();
+      let adaptive_u_sampling = arg_refs[7].resolve(args, kwargs).as_bool().unwrap();
+      let adaptive_v_sampling = arg_refs[8].resolve(args, kwargs).as_bool().unwrap();
 
       if u_res < 1 {
         return Err(ErrorStack::new(format!(
@@ -224,6 +254,8 @@ pub(crate) fn parametric_surface_impl(
         v_closed,
         flip_normals,
         fku_stitching,
+        adaptive_u_sampling,
+        adaptive_v_sampling,
         |u, v| {
           let out = ctx
             .invoke_callable(generator, &[Value::Float(u), Value::Float(v)], EMPTY_KWARGS)
@@ -262,7 +294,7 @@ mod tests {
   #[test]
   fn test_parametric_surface_simple_plane() {
     // Simple plane: z = 0, x and y from 0 to 1
-    let mesh = parametric_surface(2, 2, false, false, false, false, |u, v| {
+    let mesh = parametric_surface(2, 2, false, false, false, false, false, false, |u, v| {
       Ok(Vec3::new(u, v, 0.0))
     })
     .unwrap();
@@ -275,7 +307,7 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_cylinder() {
-    let mesh = parametric_surface(2, 8, false, true, true, false, |u, v| {
+    let mesh = parametric_surface(2, 8, false, true, true, false, false, false, |u, v| {
       let angle = v * 2.0 * PI;
       Ok(Vec3::new(angle.cos(), u, angle.sin()))
     })
@@ -289,7 +321,7 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_sphere_with_poles() {
-    let mesh = parametric_surface(4, 8, false, true, false, false, |u, v| {
+    let mesh = parametric_surface(4, 8, false, true, false, false, false, false, |u, v| {
       let phi = u * PI; // 0 to PI (south to north)
       let theta = v * 2.0 * PI; // 0 to 2PI (around)
       Ok(Vec3::new(
@@ -319,7 +351,7 @@ mod tests {
     // flip_normals=true for outward-facing normals with this parameterization
     let major_r = 2.0;
     let minor_r = 0.5;
-    let mesh = parametric_surface(8, 8, true, true, true, false, |u, v| {
+    let mesh = parametric_surface(8, 8, true, true, true, false, false, false, |u, v| {
       let theta = u * 2.0 * PI; // around the major circle
       let phi = v * 2.0 * PI; // around the minor circle
       let r = major_r + minor_r * phi.cos();
@@ -339,32 +371,32 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_error_on_zero_resolution() {
-    let result = parametric_surface(0, 4, false, false, false, false, |u, v| {
+    let result = parametric_surface(0, 4, false, false, false, false, false, false, |u, v| {
       Ok(Vec3::new(u, v, 0.0))
     });
     assert!(result.is_err());
 
-    let result = parametric_surface(4, 0, false, false, false, false, |u, v| {
+    let result = parametric_surface(4, 0, false, false, false, false, false, false, |u, v| {
       Ok(Vec3::new(u, v, 0.0))
     });
     assert!(result.is_err());
   }
 
   #[test]
-  fn test_row_is_collapsed() {
+  fn test_vertices_are_collapsed() {
     let collapsed = vec![
       Vec3::new(0.0, 0.0, 0.0),
       Vec3::new(1e-6, 0.0, 0.0),
       Vec3::new(0.0, 1e-6, 0.0),
     ];
-    assert!(row_is_collapsed(&collapsed));
+    assert!(vertices_are_collapsed(&collapsed));
 
     let not_collapsed = vec![
       Vec3::new(0.0, 0.0, 0.0),
       Vec3::new(1.0, 0.0, 0.0),
       Vec3::new(0.0, 1.0, 0.0),
     ];
-    assert!(!row_is_collapsed(&not_collapsed));
+    assert!(!vertices_are_collapsed(&not_collapsed));
   }
 
   #[test]

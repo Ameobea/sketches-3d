@@ -23,7 +23,11 @@
     type MaterialDefinitions,
   } from 'src/geoscript/materials';
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
-  import { type CompositionVersionMetadata } from 'src/geoscript/geotoyAPIClient';
+  import {
+    type Composition,
+    type CompositionVersion,
+    type CompositionVersionMetadata,
+  } from 'src/geoscript/geotoyAPIClient';
   import {
     clearSavedState,
     getIsDirty,
@@ -116,6 +120,30 @@
       onSizeChange(size, isEditorCollapsed, layoutOrientation);
     }
   });
+
+  const handleForkedComposition = async (newComp: Composition, newVersion: CompositionVersion) => {
+    if (!userData?.me) {
+      return;
+    }
+    const newUserData: GeoscriptPlaygroundUserData = {
+      initialComposition: { comp: newComp, version: newVersion },
+      workerManager: userData.workerManager,
+      me: userData.me,
+      renderMode: userData.renderMode,
+    };
+    await saveNewVersion(
+      newComp,
+      editorView?.state.doc.toString() || '',
+      viz,
+      materialDefinitions,
+      preludeEjected,
+      userData?.initialComposition?.comp?.title ?? 'untitled (fork)',
+      userData?.initialComposition?.comp?.description ?? '',
+      userData?.initialComposition?.comp?.is_shared ?? false,
+      newUserData
+    );
+    userData = newUserData;
+  };
 
   const initialLayoutOrientation =
     (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal' | null) || 'vertical';
@@ -752,43 +780,33 @@
           />
           <ReplOutput {err} {runStats} />
         </div>
-        {#if userData?.me && (!userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id)}
-          <SaveControls
-            comp={userData.initialComposition?.comp}
-            getCurrentCode={() => editorView?.state.doc.toString() || ''}
-            materials={materialDefinitions}
-            {viz}
-            {preludeEjected}
-            onSave={() => {
-              isDirty = false;
-            }}
-            {userData}
-          />
-        {:else if userData?.initialComposition}
-          <ReadOnlyCompositionDetails
-            comp={userData.initialComposition.comp}
-            saveNewVersion={async (newComp, newVersion) => {
-              const newUserData: GeoscriptPlaygroundUserData = {
-                initialComposition: { comp: newComp, version: newVersion },
-                workerManager: userData!.workerManager,
-                me: userData!.me,
-                renderMode: userData!.renderMode,
-              };
-              await saveNewVersion(
-                newComp,
-                editorView?.state.doc.toString() || '',
-                viz,
-                materialDefinitions,
-                preludeEjected,
-                userData?.initialComposition?.comp?.title ?? 'untitled (fork)',
-                userData?.initialComposition?.comp?.description ?? '',
-                userData?.initialComposition?.comp?.is_shared ?? false,
-                newUserData
-              );
-              userData = newUserData;
-            }}
-          />
-        {:else if !userData?.me}
+        {#if userData?.me}
+          {#if !userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id}
+            <SaveControls
+              comp={userData.initialComposition?.comp}
+              getCurrentCode={() => editorView?.state.doc.toString() || ''}
+              materials={materialDefinitions}
+              {viz}
+              {preludeEjected}
+              onSave={() => {
+                isDirty = false;
+              }}
+              onForked={handleForkedComposition}
+              {userData}
+            />
+          {:else}
+            <ReadOnlyCompositionDetails
+              comp={userData.initialComposition.comp}
+              onForked={handleForkedComposition}
+            />
+          {/if}
+        {:else}
+          {#if userData?.initialComposition}
+            <ReadOnlyCompositionDetails
+              comp={userData.initialComposition.comp}
+              showFork={false}
+            />
+          {/if}
           <div class="not-logged-in" style="border-top: 1px solid #333">
             <span style="color: #ddd">you must be logged in to save/share compositions</span>
             <div>

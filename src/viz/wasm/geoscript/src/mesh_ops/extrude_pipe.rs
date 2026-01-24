@@ -2,6 +2,7 @@ use std::f32::consts::PI;
 
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 
+use crate::mesh_ops::adaptive_sampler::adaptive_sample;
 use crate::mesh_ops::rail_sweep::{rail_sweep, FrameMode};
 use crate::{ErrorStack, Vec2};
 
@@ -60,6 +61,7 @@ pub fn extrude_pipe(
   path: impl Iterator<Item = Result<Vec3, ErrorStack>>,
   end_mode: EndMode,
   twist: impl Fn(usize, Vec3) -> Result<f32, ErrorStack>,
+  adaptive_path_sampling: bool,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   if resolution < 3 {
     return Err(ErrorStack::new(
@@ -67,14 +69,45 @@ pub fn extrude_pipe(
     ));
   }
 
-  let points = path.collect::<Result<Vec<_>, _>>()?;
+  let raw_points = path.collect::<Result<Vec<_>, _>>()?;
 
-  if points.len() < 2 {
+  if raw_points.len() < 2 {
     return Err(ErrorStack::new(format!(
       "`extrude_pipe` requires at least two points in the path, found: {}",
-      points.len()
+      raw_points.len()
     )));
   }
+
+  // Optionally resample the path adaptively based on curvature
+  let points = if adaptive_path_sampling && raw_points.len() >= 3 {
+    // Use original point t-values as critical points to preserve them
+    let original_ts: Vec<f32> = (0..raw_points.len())
+      .map(|i| i as f32 / (raw_points.len() - 1) as f32)
+      .collect();
+
+    let sample_polyline = |t: f32| -> Vec3 {
+      if t <= 0. {
+        return raw_points[0];
+      }
+      if t >= 1. {
+        return raw_points[raw_points.len() - 1];
+      }
+      let scaled = t * (raw_points.len() - 1) as f32;
+      let seg_ix = scaled.floor() as usize;
+      let local_t = scaled - seg_ix as f32;
+      if seg_ix + 1 >= raw_points.len() {
+        raw_points[raw_points.len() - 1]
+      } else {
+        raw_points[seg_ix].lerp(&raw_points[seg_ix + 1], local_t)
+      }
+    };
+
+    let adaptive_ts =
+      adaptive_sample::<Vec3, _>(raw_points.len(), &original_ts, sample_polyline, 1e-5);
+    adaptive_ts.iter().map(|&t| sample_polyline(t)).collect()
+  } else {
+    raw_points
+  };
 
   let mut ring_radii = Vec::with_capacity(points.len());
   for (i, center) in points.iter().enumerate() {

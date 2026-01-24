@@ -201,7 +201,8 @@ const simplifyPathD = (Clipper2: any, path: any, epsilon: number, isClosed: bool
  * @param endType - How to cap the ends of open paths (ignored for closed paths which use Polygon end type)
  * @param joinAngleThreshold - Minimum join angle in radians for special joins; 0 disables
  * @param criticalAngleThreshold - Angle threshold in radians for critical point detection
- * @param criticalPositionEpsilon - Position epsilon in input units for critical corner matching; 0 = auto
+ * @param criticalSegmentFraction - Endpoints of non-colinear segments longer than `(path_perimeter * criticalSegmentFraction)`
+ *                                  are considered critical regardless of angle. Set to 1 to disable; 0 = auto.
  * @param simplifyEpsilon - Epsilon for pre-offset simplification. Set to 0 to disable simplification.
  *                          Defaults to 0.01. Clipper2 docs strongly recommend simplifying before offset.
  */
@@ -224,10 +225,9 @@ export const clipper2_offset_paths = (
   joinAngleThreshold: number = 0.0, // radians
   chebyshevSpacing: boolean = false,
   simplifyEpsilon: number = 0.0001,
-  // TODO: these are not routed through yet
-  // TODO: this is almost certainly not right, but it seems to work best with this value...
-  criticalAngleThreshold: number = 0.001, // radians
-  criticalPositionEpsilon: number = 0.0 // input units (0 = auto)
+  // TODO: these are not routed through yet from the Rust side
+  criticalAngleThreshold: number = 0.35, // radians
+  criticalSegmentFraction: number = 0.15 // input units (0 = auto)
 ): void => {
   const Clipper2 = Clipper2Wasm.getSync();
 
@@ -253,8 +253,8 @@ export const clipper2_offset_paths = (
   if (typeof clipperOffset.SetAngleThreshold === 'function') {
     clipperOffset.SetAngleThreshold(criticalAngleThreshold);
   }
-  if (typeof clipperOffset.SetPositionEpsilon === 'function') {
-    clipperOffset.SetPositionEpsilon(criticalPositionEpsilon);
+  if (typeof clipperOffset.SetCriticalSegmentFraction === 'function') {
+    clipperOffset.SetCriticalSegmentFraction(criticalSegmentFraction);
   }
 
   let offset = 0;

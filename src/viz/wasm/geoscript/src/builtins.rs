@@ -2556,6 +2556,7 @@ fn extrude_pipe_impl(
       let path = arg_refs[2].resolve(args, kwargs).as_sequence().unwrap();
       let close_ends = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
       let connect_ends = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
+      let adaptive_path_sampling_requested = arg_refs[6].resolve(args, kwargs).as_bool().unwrap();
 
       enum Twist<'a> {
         Const(f32),
@@ -2572,6 +2573,13 @@ fn extrude_pipe_impl(
             arg_refs[4].resolve(args, kwargs)
           )))
         }
+      };
+
+      // Disable adaptive path sampling when dynamic twist is provided, as the twist
+      // complicates the geometry in ways the adaptive sampler can't account for
+      let adaptive_path_sampling = match twist {
+        Twist::Const(_) => adaptive_path_sampling_requested,
+        Twist::Dyn(_) => false,
       };
 
       fn build_twist_callable<'a>(
@@ -2656,30 +2664,42 @@ fn extrude_pipe_impl(
         _ if let Some(radius) = radius.as_float() => {
           let get_radius = |_, _| Ok(PipeRadius::Constant(radius));
           match twist {
-            Twist::Const(twist) => {
-              extrude_pipe(get_radius, resolution, path, end_mode, |_, _| Ok(twist))?
-            }
+            Twist::Const(twist) => extrude_pipe(
+              get_radius,
+              resolution,
+              path,
+              end_mode,
+              |_, _| Ok(twist),
+              adaptive_path_sampling,
+            )?,
             Twist::Dyn(get_twist) => extrude_pipe(
               get_radius,
               resolution,
               path,
               end_mode,
               build_twist_callable(ctx, get_twist),
+              adaptive_path_sampling,
             )?,
           }
         }
         _ if let Some(get_radius) = radius.as_callable() => {
           let get_radius = build_radius_callable(ctx, get_radius);
           match twist {
-            Twist::Const(twist) => {
-              extrude_pipe(get_radius, resolution, path, end_mode, |_, _| Ok(twist))?
-            }
+            Twist::Const(twist) => extrude_pipe(
+              get_radius,
+              resolution,
+              path,
+              end_mode,
+              |_, _| Ok(twist),
+              adaptive_path_sampling,
+            )?,
             Twist::Dyn(get_twist) => extrude_pipe(
               get_radius,
               resolution,
               path,
               end_mode,
               build_twist_callable(ctx, get_twist),
+              adaptive_path_sampling,
             )?,
           }
         }
@@ -5353,7 +5373,7 @@ fn subpaths_impl(args: &[Value]) -> Result<Value, ErrorStack> {
     _ => None,
   };
 
-  let Some(tracer) = tracer else {
+  let Some(_) = tracer else {
     return Err(ErrorStack::new(
       "subpaths: expected a path sampler created by trace_path or similar functions",
     ));

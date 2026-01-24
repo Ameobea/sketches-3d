@@ -1,11 +1,12 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { APIError, createComposition, type Composition } from 'src/geoscript/geotoyAPIClient';
+  import { APIError, createComposition, type Composition, type CompositionVersion } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
   import { buildCompositionVersionMetadata, saveNewVersion } from './persistence';
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
   import { resolve } from '$app/paths';
+  import ForkCompositionButton from './ForkCompositionButton.svelte';
 
   let {
     viz,
@@ -15,6 +16,7 @@
     onSave,
     preludeEjected,
     userData,
+    onForked,
   }: {
     viz: Viz;
     comp: Composition | undefined | null;
@@ -23,6 +25,7 @@
     onSave: () => void;
     preludeEjected: boolean;
     userData: GeoscriptPlaygroundUserData | undefined;
+    onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
   } = $props();
 
   let title = $state(comp?.title || '');
@@ -125,6 +128,9 @@
         </div>
       {/if}
     </div>
+    {#if comp && onForked}
+      <ForkCompositionButton comp={comp} onForked={onForked} />
+    {/if}
     <button onclick={handleSave} disabled={status?.type === 'loading'}>
       {#if status?.type === 'loading'}
         saving...

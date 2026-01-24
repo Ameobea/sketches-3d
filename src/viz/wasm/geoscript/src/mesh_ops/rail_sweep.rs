@@ -13,10 +13,12 @@ use crate::{
   EMPTY_KWARGS,
 };
 
+use super::adaptive_sampler::adaptive_sample_fallible;
 use super::fku_stitch::{
   dp_stitch_presampled, should_use_fku, snap_critical_points, stitch_apex_to_row,
   uniform_stitch_rows,
 };
+use super::helpers::{compute_centroid, vertices_are_collapsed};
 
 const FRAME_EPSILON: f32 = 1e-6;
 const COLLAPSE_EPSILON: f32 = 1e-5;
@@ -176,18 +178,6 @@ fn apply_twist(normal: Vec3, binormal: Vec3, twist: f32) -> (Vec3, Vec3) {
   (rotated_normal, rotated_binormal)
 }
 
-fn ring_is_collapsed(ring: &[Vec3]) -> bool {
-  let first = ring[0];
-  let epsilon_sq = COLLAPSE_EPSILON * COLLAPSE_EPSILON;
-  ring
-    .iter()
-    .all(|v| (*v - first).norm_squared() <= epsilon_sq)
-}
-
-fn ring_center(ring: &[Vec3]) -> Vec3 {
-  ring.iter().fold(Vec3::new(0., 0., 0.), |acc, v| acc + *v) / (ring.len() as f32)
-}
-
 /// Checks whether the spine points lie approximately on a straight line.
 ///
 /// Returns `true` if the maximum perpendicular distance of any point from the line connecting the
@@ -241,6 +231,10 @@ struct DynamicProfileData {
   sampler: Rc<Callable>,
   critical_points: Vec<f32>,
   sharp: bool,
+  /// When Some(true), forces adaptive sampling for this ring.
+  /// When Some(false), disables adaptive sampling even if global is enabled.
+  /// When None, uses the global `adaptive_profile_sampling` setting.
+  adaptive: Option<bool>,
 }
 
 struct RingContext {
@@ -374,6 +368,7 @@ fn extract_dynamic_profile_data(
           sampler: Rc::clone(callable),
           critical_points,
           sharp: false,
+          adaptive: None,
         });
       }
     }
@@ -381,11 +376,12 @@ fn extract_dynamic_profile_data(
       sampler: Rc::clone(callable),
       critical_points: vec![0., 1.],
       sharp: false,
+      adaptive: None,
     });
   }
 
   if let Some(map) = value.as_map() {
-    let valid_keys = &["sampler", "path_samplers", "sharp"];
+    let valid_keys = &["sampler", "path_samplers", "sharp", "adaptive"];
     for key in map.keys() {
       if !valid_keys.contains(&key.as_str()) {
         return Err(ErrorStack::new(format!(
@@ -415,10 +411,20 @@ fn extract_dynamic_profile_data(
       None => false,
     };
 
+    let adaptive = match map.get("adaptive") {
+      Some(val) => Some(val.as_bool().ok_or_else(|| {
+        ErrorStack::new(format!(
+          "dynamic_profile 'adaptive' key must be a boolean; found: {val:?}"
+        ))
+      })?),
+      None => None,
+    };
+
     return Ok(DynamicProfileData {
       sampler: Rc::clone(sampler),
       critical_points,
       sharp,
+      adaptive,
     });
   }
 
@@ -427,16 +433,21 @@ fn extract_dynamic_profile_data(
   ))
 }
 
-fn sample_profile_at(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Vec3, ErrorStack> {
+/// Samples the 2D profile offset at the given t value.
+fn sample_profile_offset(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Vec2, ErrorStack> {
   let offset_2d = ctx
     .invoke_callable(&ring.profile_data.sampler, &[Value::Float(v)], EMPTY_KWARGS)
     .map_err(|err| err.wrap("Error calling user-provided sampler returned by `dynamic_profile`"))?;
-  let offset = offset_2d.as_vec2().copied().ok_or_else(|| {
+  offset_2d.as_vec2().copied().ok_or_else(|| {
     ErrorStack::new(format!(
       "Profile sampler must return Vec2, found: {offset_2d:?}"
     ))
-  })?;
+  })
+}
 
+/// Samples the 3D position by applying the profile offset to the ring's coordinate frame.
+fn sample_profile_at(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Vec3, ErrorStack> {
+  let offset = sample_profile_offset(ctx, ring, v)?;
   Ok(ring.center + ring.normal * offset.x + ring.binormal * offset.y)
 }
 
@@ -527,9 +538,9 @@ pub fn rail_sweep(
       None
     };
 
-    if is_end && ring_is_collapsed(&ring) {
+    if is_end && vertices_are_collapsed(&ring) {
       let start = verts.len();
-      verts.push(ring_center(&ring));
+      verts.push(compute_centroid(&ring));
       ring_infos.push(RingInfo {
         start,
         count: 1,
@@ -606,6 +617,7 @@ fn rail_sweep_dynamic(
   dynamic_profile_cb: &Rc<Callable>,
   fku_stitching: bool,
   spine_u_values: Option<&[f32]>,
+  adaptive_profile_sampling: bool,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   let frames = calculate_spine_frames(spine_points, frame_mode)?;
   let u_denom = (frames.len() - 1) as f32;
@@ -666,16 +678,34 @@ fn rail_sweep_dynamic(
         verts.push(apex);
         1
       } else {
-        let use_fku = should_use_fku(fku_stitching, ring_resolution, ring_resolution);
-        let base_samples = build_topology_samples(ring_resolution, None, None, false);
-        let samples = if use_fku {
-          snap_critical_points(
-            &base_samples,
-            &ring.profile_data.critical_points,
+        let use_adaptive = ring
+          .profile_data
+          .adaptive
+          .unwrap_or(adaptive_profile_sampling);
+
+        let samples = if use_adaptive {
+          // TODO: maybe define this in terms of perimeter / ring_resolution?
+          let min_segment_length = 1e-5;
+
+          adaptive_sample_fallible(
             ring_resolution,
-          )
+            &ring.profile_data.critical_points,
+            |t| sample_profile_offset(ctx, &ring, t),
+            min_segment_length,
+          )?
         } else {
-          base_samples
+          // Use existing topology-aware uniform sampling
+          let use_fku = should_use_fku(fku_stitching, ring_resolution, ring_resolution);
+          let base_samples = build_topology_samples(ring_resolution, None, None, false);
+          if use_fku {
+            snap_critical_points(
+              &base_samples,
+              &ring.profile_data.critical_points,
+              ring_resolution,
+            )
+          } else {
+            base_samples
+          }
         };
 
         for v in samples {
@@ -784,12 +814,26 @@ fn rail_sweep_dynamic(
   Ok(mesh)
 }
 
-/// Computes uniform sampling t values for `n` points in [0, 1].
 fn uniform_nodes(n: usize) -> Vec<f32> {
   let denom = (n - 1) as f32;
   (0..n)
     .map(|i| if denom > 0.0 { i as f32 / denom } else { 0.0 })
     .collect()
+}
+
+fn is_adaptive_spine_scheme(scheme: &Value) -> bool {
+  match scheme {
+    Value::String(s) => s.eq_ignore_ascii_case("adaptive"),
+    Value::Map(map) => {
+      if let Some(type_val) = map.get("type") {
+        if let Some(s) = type_val.as_str() {
+          return s.eq_ignore_ascii_case("adaptive");
+        }
+      }
+      false
+    }
+    _ => false,
+  }
 }
 
 /// Computes Chebyshev nodes mapped to [0, 1].  These nodes are denser near the endpoints and
@@ -873,9 +917,12 @@ fn compute_spine_t_values(
              not possible in string form, use map form with explicit exponent",
           )
         }),
+        // "adaptive" is handled separately in rail_sweep_impl before calling this function
+        "adaptive" => Ok(uniform_nodes(spine_resolution)),
         _ => Err(ErrorStack::new(format!(
           "Invalid spine_sampling_scheme string for `rail_sweep`; expected \"uniform\", \
-           \"chebyshev\", \"cos\", \"cosine\", \"superellipse\", or \"bevel\", found: \"{scheme}\""
+           \"chebyshev\", \"cos\", \"cosine\", \"superellipse\", \"bevel\", or \"adaptive\", \
+           found: \"{scheme}\""
         ))),
       }
     }
@@ -883,7 +930,7 @@ fn compute_spine_t_values(
       let type_val = map.get("type").ok_or_else(|| {
         ErrorStack::new(
           "spine_sampling_scheme map requires a 'type' key; expected { type: \"uniform\" | \
-           \"chebyshev\" | \"superellipse\", ... }",
+           \"chebyshev\" | \"superellipse\" | \"adaptive\", ... }",
         )
       })?;
 
@@ -944,9 +991,21 @@ fn compute_spine_t_values(
             None => Ok(uniform_nodes(spine_resolution)),
           }
         }
+        // "adaptive" is handled separately in rail_sweep_impl before calling this function
+        "adaptive" => {
+          for key in map.keys() {
+            if key != "type" {
+              return Err(ErrorStack::new(format!(
+                "Unknown key '{key}' in spine_sampling_scheme map for type \"adaptive\"; only \
+                 'type' is allowed"
+              )));
+            }
+          }
+          Ok(uniform_nodes(spine_resolution))
+        }
         _ => Err(ErrorStack::new(format!(
           "Invalid spine_sampling_scheme type \"{type_str}\"; expected \"uniform\", \
-           \"chebyshev\"/\"cos\"/\"cosine\", \"superellipse\", or \"bevel\""
+           \"chebyshev\"/\"cos\"/\"cosine\", \"superellipse\", \"bevel\", or \"adaptive\""
         ))),
       }
     }
@@ -1046,9 +1105,9 @@ pub(crate) fn rail_sweep_impl(
       let dynamic_profile_val = arg_refs[9].resolve(args, kwargs);
       let fku_stitching = arg_refs[10].resolve(args, kwargs).as_bool().unwrap();
       let spine_sampling_scheme_val = arg_refs[11].resolve(args, kwargs);
+      let adaptive_profile_sampling = arg_refs[12].resolve(args, kwargs).as_bool().unwrap();
 
-      let spine_t_values =
-        compute_spine_t_values(ctx, &spine_sampling_scheme_val, spine_resolution)?;
+      let use_adaptive_spine = is_adaptive_spine_scheme(&spine_sampling_scheme_val);
 
       let has_profile = !matches!(profile_val, Value::Nil);
       let has_dynamic_profile = !matches!(dynamic_profile_val, Value::Nil);
@@ -1223,7 +1282,8 @@ pub(crate) fn rail_sweep_impl(
         Ok(out)
       }
 
-      let spine_points = if let Some(seq) = spine.as_sequence() {
+      // Compute spine_t_values and spine_points based on sampling scheme
+      let (spine_t_values, spine_points) = if let Some(seq) = spine.as_sequence() {
         let raw_points: Vec<Vec3> = seq
           .consume(ctx)
           .map(|res| match res {
@@ -1242,28 +1302,116 @@ pub(crate) fn rail_sweep_impl(
           )));
         }
 
-        // Always resample the spine path at the specified t values
-        // This ensures the sampling scheme is respected even when the input
-        // sequence happens to have the same length as spine_resolution
-        resample_spine_points_at_t(&raw_points, &spine_t_values)?
-      } else if let Some(cb) = spine.as_callable() {
-        // Sample the spine callable at the specified t values
-        let mut points = Vec::with_capacity(spine_resolution);
-        for &t in &spine_t_values {
-          let out = ctx
-            .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
-            .map_err(|err| {
-              err.wrap("Error calling user-provided cb passed to `spine` arg in `rail_sweep`")
-            })?;
-          let v = out.as_vec3().ok_or_else(|| {
-            ErrorStack::new(format!(
-              "Expected Vec3 from user-provided cb passed to `spine` arg in `rail_sweep`, found: \
-               {out:?}"
-            ))
-          })?;
-          points.push(*v);
+        if use_adaptive_spine {
+          // Adaptively resample the polyline based on curvature
+          // Use the original point t-values as critical points so they're preserved
+          let original_ts: Vec<f32> = (0..raw_points.len())
+            .map(|i| i as f32 / (raw_points.len() - 1) as f32)
+            .collect();
+
+          // Build a sampler function that interpolates the polyline
+          let sample_polyline = |t: f32| -> Vec3 {
+            if t <= 0.0 {
+              return raw_points[0];
+            }
+            if t >= 1.0 {
+              return raw_points[raw_points.len() - 1];
+            }
+            // Find segment
+            let scaled = t * (raw_points.len() - 1) as f32;
+            let seg_ix = scaled.floor() as usize;
+            let local_t = scaled - seg_ix as f32;
+            if seg_ix + 1 >= raw_points.len() {
+              raw_points[raw_points.len() - 1]
+            } else {
+              raw_points[seg_ix].lerp(&raw_points[seg_ix + 1], local_t)
+            }
+          };
+
+          // Use adaptive sampling with Vec3 points
+          use super::adaptive_sampler::adaptive_sample;
+          let adaptive_ts =
+            adaptive_sample::<Vec3, _>(spine_resolution, &original_ts, sample_polyline, 1e-5);
+
+          // Resample at the adaptive t values
+          let points = resample_spine_points_at_t(&raw_points, &adaptive_ts)?;
+          (adaptive_ts, points)
+        } else {
+          // Use regular sampling scheme
+          let spine_t_values =
+            compute_spine_t_values(ctx, &spine_sampling_scheme_val, spine_resolution)?;
+
+          // Always resample the spine path at the specified t values
+          // This ensures the sampling scheme is respected even when the input
+          // sequence happens to have the same length as spine_resolution
+          let points = resample_spine_points_at_t(&raw_points, &spine_t_values)?;
+          (spine_t_values, points)
         }
-        points
+      } else if let Some(cb) = spine.as_callable() {
+        if use_adaptive_spine {
+          // Use adaptive sampling with the spine callable
+          let sample_spine = |t: f32| -> Result<Vec3, ErrorStack> {
+            let out = ctx
+              .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
+              .map_err(|err| {
+                err.wrap("Error calling user-provided cb passed to `spine` arg in `rail_sweep`")
+              })?;
+            out.as_vec3().copied().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected Vec3 from user-provided cb passed to `spine` arg in `rail_sweep`, \
+                 found: {out:?}"
+              ))
+            })
+          };
+
+          // Get adaptive t values using the spine callable
+          let adaptive_ts = adaptive_sample_fallible::<Vec3, ErrorStack>(
+            spine_resolution,
+            &[0.0, 1.0], // Critical points at endpoints
+            sample_spine,
+            1e-5,
+          )?;
+
+          // Sample spine at adaptive t values
+          let mut points = Vec::with_capacity(spine_resolution);
+          for &t in &adaptive_ts {
+            let out = ctx
+              .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
+              .map_err(|err| {
+                err.wrap("Error calling user-provided cb passed to `spine` arg in `rail_sweep`")
+              })?;
+            let v = out.as_vec3().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected Vec3 from user-provided cb passed to `spine` arg in `rail_sweep`, \
+                 found: {out:?}"
+              ))
+            })?;
+            points.push(*v);
+          }
+          (adaptive_ts, points)
+        } else {
+          // Use regular sampling scheme
+          let spine_t_values =
+            compute_spine_t_values(ctx, &spine_sampling_scheme_val, spine_resolution)?;
+
+          // Sample the spine callable at the specified t values
+          let mut points = Vec::with_capacity(spine_resolution);
+          for &t in &spine_t_values {
+            let out = ctx
+              .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
+              .map_err(|err| {
+                err.wrap("Error calling user-provided cb passed to `spine` arg in `rail_sweep`")
+              })?;
+            let v = out.as_vec3().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected Vec3 from user-provided cb passed to `spine` arg in `rail_sweep`, \
+                 found: {out:?}"
+              ))
+            })?;
+            points.push(*v);
+          }
+          (spine_t_values, points)
+        }
       } else {
         return Err(ErrorStack::new(format!(
           "Invalid spine argument for `rail_sweep`; expected Sequence or Callable, found: \
@@ -1409,6 +1557,7 @@ pub(crate) fn rail_sweep_impl(
           dynamic_profile_cb,
           fku_stitching,
           Some(&spine_t_values),
+          adaptive_profile_sampling,
         )?
       } else {
         let profile =
@@ -1976,11 +2125,150 @@ mod tests {
       &dynamic_profile_cb,
       true,
       None,
+      false,
     )
     .unwrap();
 
     mesh
       .check_is_manifold::<true>()
       .expect("Dynamic rail sweep should produce a 2-manifold mesh");
+  }
+
+  #[test]
+  fn test_rail_sweep_dynamic_adaptive_sampling() {
+    // Test that adaptive sampling produces a valid 2-manifold mesh
+    // using a superellipse profile (high curvature at corners)
+    struct SuperellipseSampler {
+      exponent: f32,
+    }
+
+    impl DynamicCallable for SuperellipseSampler {
+      fn as_any(&self) -> &dyn Any {
+        self
+      }
+
+      fn is_side_effectful(&self) -> bool {
+        false
+      }
+
+      fn is_rng_dependent(&self) -> bool {
+        false
+      }
+
+      fn invoke(
+        &self,
+        args: &[Value],
+        _kwargs: &FxHashMap<Sym, Value>,
+        _ctx: &EvalCtx,
+      ) -> Result<Value, ErrorStack> {
+        let t = match args.first() {
+          Some(Value::Float(v)) => *v,
+          other => {
+            return Err(ErrorStack::new(format!(
+              "Expected Float in test sampler, found: {other:?}"
+            )));
+          }
+        };
+        let angle = t * std::f32::consts::TAU;
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+
+        // Superellipse parametric formula
+        let x = cos_a.abs().powf(2.0 / self.exponent) * cos_a.signum();
+        let y = sin_a.abs().powf(2.0 / self.exponent) * sin_a.signum();
+
+        Ok(Value::Vec2(Vec2::new(x, y)))
+      }
+
+      fn get_return_type_hint(&self) -> Option<crate::ArgType> {
+        Some(crate::ArgType::Vec2)
+      }
+    }
+
+    // Dynamic profile that returns a map with adaptive: true
+    struct AdaptiveDynamicProfile {
+      sampler: Rc<Callable>,
+    }
+
+    impl DynamicCallable for AdaptiveDynamicProfile {
+      fn as_any(&self) -> &dyn Any {
+        self
+      }
+
+      fn is_side_effectful(&self) -> bool {
+        false
+      }
+
+      fn is_rng_dependent(&self) -> bool {
+        false
+      }
+
+      fn invoke(
+        &self,
+        _args: &[Value],
+        _kwargs: &FxHashMap<Sym, Value>,
+        _ctx: &EvalCtx,
+      ) -> Result<Value, ErrorStack> {
+        // Return a map with sampler and adaptive: true
+        let mut map = FxHashMap::default();
+        map.insert(
+          "sampler".to_owned(),
+          Value::Callable(Rc::clone(&self.sampler)),
+        );
+        map.insert("adaptive".to_owned(), Value::Bool(true));
+        Ok(Value::Map(Rc::new(map)))
+      }
+
+      fn get_return_type_hint(&self) -> Option<crate::ArgType> {
+        None
+      }
+    }
+
+    let ctx = EvalCtx::default();
+    let sampler = Rc::new(Callable::Dynamic {
+      name: "superellipse_sampler".to_owned(),
+      inner: Box::new(SuperellipseSampler { exponent: 6.0 }),
+    });
+    let dynamic_profile_cb = Rc::new(Callable::Dynamic {
+      name: "adaptive_dynamic_profile".to_owned(),
+      inner: Box::new(AdaptiveDynamicProfile {
+        sampler: Rc::clone(&sampler),
+      }),
+    });
+
+    let spine = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(0., 0., 1.),
+      Vec3::new(0., 0., 2.),
+    ];
+    let twist = Twist::Const(0.0);
+
+    // Test with per-ring adaptive setting (via map)
+    let mesh = rail_sweep_dynamic(
+      &ctx,
+      &spine,
+      16,
+      FrameMode::Rmf,
+      false,
+      true,
+      &twist,
+      &dynamic_profile_cb,
+      true,
+      None,
+      false,
+    )
+    .unwrap();
+
+    mesh
+      .check_is_manifold::<true>()
+      .expect("Adaptive sampling should produce a 2-manifold mesh");
+
+    // Verify we got a reasonable number of vertices
+    // 3 spine points * 16 ring_resolution = 48 expected (approximately)
+    assert!(
+      mesh.vertices.len() >= 30 && mesh.vertices.len() <= 60,
+      "Unexpected vertex count: {}",
+      mesh.vertices.len()
+    );
   }
 }

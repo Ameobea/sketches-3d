@@ -409,9 +409,12 @@ pub fn offset_path_impl(
         }
 
         let result = run_clipper_offset(&coords, &lengths, &closed_flags, &opts)?;
-        if output_paths.is_empty()
-          && result.paths.len() == 1
-          && !result.critical_t_values.is_empty()
+        if output_paths.is_empty() && result.paths.len() == 1
+        // with new critical t detection logic in the Clipper2 fork, a case of 0 critical points is
+        // valid.  Using the adaptive sampler handles distributing points more intelligently along
+        // the path perimeter so we can force the inclusion of 0 explicit critical t values here.
+        //
+        // && !result.critical_t_values.is_empty()
         {
           critical_points = Some(result.critical_t_values.clone());
         }
