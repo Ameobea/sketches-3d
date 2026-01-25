@@ -2909,6 +2909,87 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       vtx.displacement_normal = vtx.displacement_normal.map(|n| -n);
     }
   }
+
+  /// Computes the centroid of the mesh surface, weighted by triangle area.  Used as an
+  /// approximation of the center of mass for non-2-manifold meshes.
+  pub fn compute_surface_area_centroid(&self) -> Vec3 {
+    let mut weighted_sum = Vec3::zeros();
+    let mut total_area = 0.0f32;
+
+    for face in self.faces.values() {
+      let area = face.area(&self.vertices);
+      let center = face.center(&self.vertices);
+      weighted_sum += center * area;
+      total_area += area;
+    }
+
+    if total_area > 0.0 {
+      weighted_sum / total_area
+    } else {
+      Vec3::zeros()
+    }
+  }
+
+  /// Computes the centroid of the volume enclosed by a 2-manifold mesh using the divergence
+  /// theorem.
+  ///
+  /// Returns `None` if the mesh is not a closed 2-manifold.
+  pub fn compute_volume_centroid(&self) -> Option<Vec3> {
+    if self.check_is_manifold::<true>().is_err() {
+      return None;
+    }
+
+    let mut total_volume = 0.0f32;
+    let mut centroid_accum = Vec3::zeros();
+
+    for face in self.faces.values() {
+      let [p0, p1, p2] = face.vertex_positions(&self.vertices);
+
+      // signed volume of tetrahedron formed by triangle and origin
+      let cross = p1.cross(&p2);
+      let signed_volume_6x = p0.dot(&cross);
+
+      total_volume += signed_volume_6x;
+
+      // Centroid of tetrahedron is at (p0 + p1 + p2 + origin) / 4 = (p0 + p1 + p2) / 4
+      // Weighted by volume: contribution = V_tet * centroid_tet
+      // = (signed_volume_6x / 6) * (p0 + p1 + p2) / 4
+      // = signed_volume_6x * (p0 + p1 + p2) / 24
+      centroid_accum += (p0 + p1 + p2) * signed_volume_6x;
+    }
+
+    // total_volume is 6x the actual volume, centroid_accum needs to be divided by 24
+    // Final centroid = centroid_accum / 24 / (total_volume / 6) = centroid_accum / (4 *
+    // total_volume)
+
+    if total_volume.abs() < 1e-10 {
+      // degenerate case - zero volume
+      return None;
+    }
+
+    Some(centroid_accum / (4. * total_volume))
+  }
+
+  /// Computes the centroid of the mesh using the best available method based on mesh topology.
+  ///
+  /// For closed 2-manifold meshes, uses volume centroid (center of mass of enclosed solid).
+  /// For other meshes, uses surface area weighted centroid.
+  pub fn compute_centroid(&self) -> Vec3 {
+    self
+      .compute_volume_centroid()
+      .unwrap_or_else(|| self.compute_surface_area_centroid())
+  }
+
+  /// Translates all vertices so that the mesh centroid is at the origin.
+  ///
+  /// For closed 2-manifold meshes, uses volume centroid (center of mass of enclosed solid).
+  /// For other meshes, uses surface area weighted centroid.
+  pub fn origin_to_geometry(&mut self) {
+    let centroid = self.compute_centroid();
+    for vtx in self.vertices.values_mut() {
+      vtx.position -= centroid;
+    }
+  }
 }
 
 impl<T: Default> From<TriMesh> for LinkedMesh<T> {
@@ -3312,5 +3393,71 @@ mod tests {
       .expect("Mesh should remain manifold after plane subdivision");
 
     assert!(mesh.faces.len() > 12);
+  }
+
+  #[test]
+  fn volume_centroid_unit_cube() {
+    let mesh: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+
+    let centroid = mesh.compute_volume_centroid();
+    assert!(centroid.is_some(), "Unit cube should be 2-manifold");
+
+    let centroid = centroid.unwrap();
+    assert!(
+      centroid.magnitude() < 1e-5,
+      "Centroid of centered cube should be at origin, got {centroid:?}",
+    );
+  }
+
+  #[test]
+  fn volume_centroid_offset_cube() {
+    let mut mesh: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+
+    let offset = Vec3::new(1., 2., 3.);
+    for vtx in mesh.vertices.values_mut() {
+      vtx.position += offset;
+    }
+
+    let centroid = mesh.compute_volume_centroid().unwrap();
+    let diff = (centroid - offset).magnitude();
+    assert!(
+      diff < 1e-5,
+      "Centroid should be at offset {offset:?}, got {centroid:?}",
+    );
+  }
+
+  #[test]
+  fn surface_area_centroid_unit_cube() {
+    let mesh: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+
+    let centroid = mesh.compute_surface_area_centroid();
+    assert!(
+      centroid.magnitude() < 1e-5,
+      "Surface centroid of centered cube should be at origin, got {centroid:?}",
+    );
+  }
+
+  #[test]
+  fn origin_to_geometry_centers_mesh() {
+    let mut mesh: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+
+    let offset = Vec3::new(5., -3., 7.);
+    for vtx in mesh.vertices.values_mut() {
+      vtx.position += offset;
+    }
+
+    let centroid_before = mesh.compute_centroid();
+    assert!(
+      (centroid_before - offset).magnitude() < 1e-5,
+      "Mesh should be offset before origin_to_geometry"
+    );
+
+    mesh.origin_to_geometry();
+
+    let centroid_after = mesh.compute_centroid();
+    assert!(
+      centroid_after.magnitude() < 1e-5,
+      "Mesh should be centered after origin_to_geometry, got {centroid_after:?}",
+    );
   }
 }

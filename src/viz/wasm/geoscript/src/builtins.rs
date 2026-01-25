@@ -4436,15 +4436,7 @@ fn origin_to_geometry_impl(
     0 => {
       let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       let mut new_mesh = (*mesh.mesh).clone();
-      let center = mesh
-        .mesh
-        .vertices
-        .values()
-        .fold(Vec3::zeros(), |acc, vtx| acc + vtx.position)
-        / new_mesh.vertices.len() as f32;
-      for vtx in new_mesh.vertices.values_mut() {
-        vtx.position -= center;
-      }
+      new_mesh.origin_to_geometry();
       Ok(Value::Mesh(Rc::new(MeshHandle {
         aabb: RefCell::new(None),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
