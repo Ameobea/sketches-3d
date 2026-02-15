@@ -5,7 +5,7 @@ import type { Viz } from '..';
 import { buildCustomShaderArgs } from '../shaders/customShader';
 import walkwayColorShader from '../shaders/walkway/color.frag?raw';
 import walkwayRoughnessShader from '../shaders/walkway/roughness.frag?raw';
-import { initBaseScene } from '../util/util';
+import { initBaseScene } from '../util/three';
 
 const conf = {
   platformCount: 30,

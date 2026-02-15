@@ -18,7 +18,6 @@ import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
 
 import { parser as geoscriptParser } from './parser/geoscript';
 import { filterNils } from '../viz/util/util';
-import { parser as glslParser } from 'lezer-glsl';
 
 const buildGeoscriptLanguage = (): { language: Language } => {
   const parserWithMetadata = geoscriptParser.configure({
@@ -42,7 +41,9 @@ const buildGeoscriptLanguage = (): { language: Language } => {
   return { language: geoscriptLang };
 };
 
-export const buildGLSLLanguage = (): LanguageSupport => {
+export const buildGLSLLanguage = async (): Promise<LanguageSupport> => {
+  const glslParser = await import('lezer-glsl').then(mod => mod.parser);
+
   const glslLanguage = LRLanguage.define({
     name: 'glsl',
     parser: glslParser.configure({

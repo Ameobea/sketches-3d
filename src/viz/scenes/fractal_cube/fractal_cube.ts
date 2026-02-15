@@ -7,7 +7,7 @@ import { buildCustomShader } from '../../shaders/customShader';
 import groundColorShader from '../../shaders/fractal_cube/ground/color.frag?raw';
 import groundRoughnessShader from '../../shaders/fractal_cube/ground/roughness.frag?raw';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
-import { initBaseScene } from '../../util/util';
+import { initBaseScene } from '../../util/three';
 import { initWebSynth } from '../../webSynth';
 import { buildCube } from './genCube';
 

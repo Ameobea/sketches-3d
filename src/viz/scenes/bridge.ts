@@ -9,7 +9,8 @@ import bigCubeShader from '../shaders/bigCube.frag?raw';
 import bridgeShader from '../shaders/bridge.frag?raw';
 import { buildCustomShaderArgs } from '../shaders/customShader';
 import redNoiseShader from '../shaders/redNoise.frag?raw';
-import { getFlickerActivation, initBaseScene } from '../util/util';
+import { getFlickerActivation } from '../util/util';
+import { initBaseScene } from '../util/three';
 
 const buildBridge = (viz: Viz, bridge: THREE.Mesh) => {
   bridge.material = new THREE.ShaderMaterial(

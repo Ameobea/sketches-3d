@@ -20,7 +20,8 @@ import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/Muddy
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../textureLoading';
-import { delay, getMesh, mix, smoothstep } from '../../util/util';
+import { delay, mix, smoothstep } from '../../util/util';
+import { getMesh } from '../../util/three';
 
 const locations = {
   spawn: {

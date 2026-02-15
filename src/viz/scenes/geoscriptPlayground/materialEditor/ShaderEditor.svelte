@@ -52,18 +52,26 @@
       return;
     }
 
-    const editor = buildEditor({
-      container: codemirrorContainer,
-      initialCode: getCode(),
-      buildLanguage: buildGLSLLanguage,
-      onDocChange: () => {
-        if (editorView) {
-          (localShaders as any)[activeShader] = editorView.state.doc.toString();
+    buildGLSLLanguage()
+      .then(language => language)
+      .then(language => {
+        if (!codemirrorContainer || !!editorView) {
+          return;
         }
-      },
-      customKeymap,
-    });
-    editorView = editor.editorView;
+
+        const editor = buildEditor({
+          container: codemirrorContainer,
+          initialCode: getCode(),
+          buildLanguage: () => language,
+          onDocChange: () => {
+            if (editorView) {
+              (localShaders as any)[activeShader] = editorView.state.doc.toString();
+            }
+          },
+          customKeymap,
+        });
+        editorView = editor.editorView;
+      });
   });
 
   onDestroy(() => {
@@ -90,7 +98,7 @@
     <div class="content">
       <div class="sidebar">
         <div class="shader-list">
-          {#each shaderTypes[shaderState.type] as shaderName}
+          {#each shaderTypes[shaderState.type] as shaderName (shaderName)}
             <div class="shader-item" class:selected={activeShader === shaderName}>
               <button
                 class="select-button"

@@ -3,7 +3,7 @@ import { Pane } from 'tweakpane';
 
 import type { SceneConfig } from '.';
 import type { Viz } from '..';
-import { initBaseScene } from '../util/util';
+import { initBaseScene } from '../util/three';
 
 const buildControls = (
   defaultConfJson: string,

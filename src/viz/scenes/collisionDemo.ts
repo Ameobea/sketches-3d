@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import type { SceneConfig } from '.';
 import type { Viz } from '..';
-import { initBaseScene } from '../util/util';
+import { initBaseScene } from '../util/three';
 
 const locations = {
   spawn: {

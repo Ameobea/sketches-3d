@@ -8,7 +8,7 @@ import pillarColorShader from '../shaders/subdivided/pillar/color.frag?raw';
 import PillarVertexShaderFragment from '../shaders/subdivided/pillar/displacement.vert?raw';
 import pillarRoghnessShader from '../shaders/subdivided/pillar/roughness.frag?raw';
 import { generateNormalMapFromTexture, loadTexture } from '../textureLoading';
-import { initBaseScene } from '../util/util';
+import { initBaseScene } from '../util/three';
 
 const locations = {
   spawn: { pos: new THREE.Vector3(52.7, 1.35, -5.515), rot: new THREE.Vector3(0.51, 1.65, 0) },
