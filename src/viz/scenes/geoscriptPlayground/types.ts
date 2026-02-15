@@ -3,6 +3,7 @@ import * as THREE from 'three';
 export interface ReplCtx {
   centerView: () => void;
   toggleWireframe: () => void;
+  toggleWireframeXray: () => void;
   toggleNormalMat: () => void;
   toggleLightHelpers: () => void;
   toggleAxesHelper: () => void;

@@ -11,6 +11,7 @@ export interface KeymapEntry {
 
 export const buildGeotoyKeymap = (getCtx?: () => ReplCtx | null | undefined) => [
   { key: 'w', action: () => getCtx?.()?.toggleWireframe(), label: 'toggle wireframe' },
+  { key: 'shift+w', action: () => getCtx?.()?.toggleWireframeXray(), label: 'toggle wireframe x-ray' },
   { key: 'n', action: () => getCtx?.()?.toggleNormalMat(), label: 'toggle normal material' },
   { key: 'ctrl+enter', action: () => getCtx?.()?.run(), label: 'run code' },
   { key: 'l', action: () => getCtx?.()?.toggleLightHelpers(), label: 'toggle light helpers' },

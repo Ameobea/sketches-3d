@@ -25,25 +25,59 @@ use mesh::linked_mesh::Vec3;
 /// At 5000 vertices per ring, the DP table is 25M cells (~200MB) which should be fine.
 pub const MAX_DP_STITCH_RESOLUTION: usize = 5000;
 
-const AREA_WEIGHT: f32 = 0.35;
+const AREA_WEIGHT: f32 = 0.85;
 const EDGE_LEN_WEIGHT: f32 = 1.;
+
+/// Weight for the t-value difference penalty. This encourages stitching together vertices with
+/// similar t-values along the spine. This discourages large fans from getting created when not
+/// necessary, which helps avoid large jumps in dihedral angles between triangles which can cause
+/// shading artifacts.
+const DT_WEIGHT: f32 = 2.5;
 
 /// Cost function for DP stitching.
 ///
-/// Computes a combined cost metric based on triangle area and edge length.
 /// - `p1`, `p2`: The two vertices on the ring that is advancing (the "segment" being added)
-/// - `p3`: The vertex on the opposite ring (the "pivot")
-///
-/// The triangle formed is (p1, p2, p3). The new edge added to the triangulation is (p2, p3).
+/// - `p3`: The vertex on the opposite ring
+/// - `inv_scale`, `inv_scale_sq`: Precomputed 1/scale and 1/scale^2 where scale is the
+///   characteristic size of the ring pair (e.g. average radius).
+/// - `t2`, `t3`: Parametric t-values for `p2` and `p3` respectively. When not available, callers
+///   should pass 0.0 for both (making the dt term zero).
 #[inline]
-pub fn dp_stitch_cost(p1: Vec3, p2: Vec3, p3: Vec3) -> f32 {
+pub fn dp_stitch_cost(
+  p1: Vec3,
+  p2: Vec3,
+  p3: Vec3,
+  inv_scale: f32,
+  inv_scale_sq: f32,
+  t2: f32,
+  t3: f32,
+) -> f32 {
   let edge1 = p2 - p1;
   let edge2 = p3 - p1;
   let area = edge1.cross(&edge2).norm() * 0.5;
 
-  let edge_len = (p2 - p3).norm();
+  let connecting_edge = p3 - p2;
+  let edge_len = connecting_edge.norm();
 
-  AREA_WEIGHT * area + EDGE_LEN_WEIGHT * edge_len
+  let mut dt = (t2 - t3).abs();
+  if dt > 0.5 {
+    // Wrap around for closed loops
+    dt = 1.0 - dt;
+  }
+
+  AREA_WEIGHT * area * inv_scale_sq + EDGE_LEN_WEIGHT * edge_len * inv_scale + DT_WEIGHT * dt
+}
+
+/// Computes the average distance of a set of points from their centroid.
+/// Used as a characteristic scale for non-dimensionalizing the DP cost function.
+fn ring_average_radius(pts: &[Vec3]) -> f32 {
+  if pts.is_empty() {
+    return 0.;
+  }
+
+  let n = pts.len() as f32;
+  let centroid = pts.iter().copied().sum::<Vec3>() / n;
+  pts.iter().map(|p| (*p - centroid).norm()).sum::<f32>() / n
 }
 
 /// Creates a physically rotated copy of a ring.
@@ -189,6 +223,10 @@ pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
 pub fn dp_stitch_solve<const CLOSED: bool>(
   pts_a: &[Vec3],
   pts_b: &[Vec3],
+  ts_a: Option<&[f32]>,
+  ts_b: Option<&[f32]>,
+  inv_scale: f32,
+  inv_scale_sq: f32,
 ) -> std::iter::Rev<<Vec<(usize, usize, DpMove)> as IntoIterator>::IntoIter> {
   let n = pts_a.len();
   let m = pts_b.len();
@@ -207,29 +245,60 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
   let get_a = |i: usize| -> Vec3 { pts_a[if CLOSED && i == n { 0 } else { i }] };
   let get_b = |j: usize| -> Vec3 { pts_b[if CLOSED && j == m { 0 } else { j }] };
 
+  // T-value accessors with wrap-around for closed rings.
+  // When no t-values are provided, returns 0.0 (dt penalty becomes zero).
+  let get_ta = |i: usize| -> f32 {
+    ts_a
+      .map(|ts| ts[if CLOSED && i == n { 0 } else { i }])
+      .unwrap_or(0.)
+  };
+  let get_tb = |j: usize| -> f32 {
+    ts_b
+      .map(|ts| ts[if CLOSED && j == m { 0 } else { j }])
+      .unwrap_or(0.)
+  };
+
   // Allocate DP table as (table_n+1) x (table_m+1) grid using SoA layout
   // State (i, j) means we've processed vertices 0..i from A and 0..j from B
   let mut table = DpTable::new(table_n + 1, table_m + 1);
 
-  table.set_cost(0, 0, 0.0);
+  table.set_cost(0, 0, 0.);
 
   // Fill first row (only advancing on B)
   table.init_row_0(table_m, |j| {
     if j == 1 {
-      EDGE_LEN_WEIGHT * (get_a(0) - get_b(0)).norm()
+      EDGE_LEN_WEIGHT * (get_a(0) - get_b(0)).norm() * inv_scale
     } else {
       // Triangle: (A[0], B[j-2], B[j-1])
-      dp_stitch_cost(get_b(j - 2), get_b(j - 1), get_a(0))
+      // Connecting edge: B[j-1] -> A[0]
+      dp_stitch_cost(
+        get_b(j - 2),
+        get_b(j - 1),
+        get_a(0),
+        inv_scale,
+        inv_scale_sq,
+        get_tb(j - 1),
+        get_ta(0),
+      )
     }
   });
 
   // Fill first column (only advancing on A)
   table.init_col_0(table_n, |i| {
     if i == 1 {
-      EDGE_LEN_WEIGHT * (get_a(0) - get_b(0)).norm()
+      EDGE_LEN_WEIGHT * (get_a(0) - get_b(0)).norm() * inv_scale
     } else {
       // Triangle: (B[0], A[i-2], A[i-1])
-      dp_stitch_cost(get_a(i - 2), get_a(i - 1), get_b(0))
+      // Connecting edge: A[i-1] -> B[0]
+      dp_stitch_cost(
+        get_a(i - 2),
+        get_a(i - 1),
+        get_b(0),
+        inv_scale,
+        inv_scale_sq,
+        get_ta(i - 1),
+        get_tb(0),
+      )
     }
   });
 
@@ -238,24 +307,42 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
     for j in 1..=table_m {
       // Option 1: Advance on A (horizontal move)
       // Triangle formed: (A[i-2], A[i-1], B[j-1])
+      // Connecting edge: A[i-1] -> B[j-1]
       let cost_advance_a = {
         let prev_cost = table.get_cost(i - 1, j);
         if i == 1 {
           prev_cost
         } else {
-          let edge_cost = dp_stitch_cost(get_a(i - 2), get_a(i - 1), get_b(j - 1));
+          let edge_cost = dp_stitch_cost(
+            get_a(i - 2),
+            get_a(i - 1),
+            get_b(j - 1),
+            inv_scale,
+            inv_scale_sq,
+            get_ta(i - 1),
+            get_tb(j - 1),
+          );
           prev_cost + edge_cost
         }
       };
 
       // Option 2: Advance on B (vertical move)
       // Triangle formed: (A[i-1], B[j-2], B[j-1])
+      // Connecting edge: B[j-1] -> A[i-1]
       let cost_advance_b = {
         let prev_cost = table.get_cost(i, j - 1);
         if j == 1 {
           prev_cost
         } else {
-          let edge_cost = dp_stitch_cost(get_b(j - 2), get_b(j - 1), get_a(i - 1));
+          let edge_cost = dp_stitch_cost(
+            get_b(j - 2),
+            get_b(j - 1),
+            get_a(i - 1),
+            inv_scale,
+            inv_scale_sq,
+            get_tb(j - 1),
+            get_ta(i - 1),
+          );
           prev_cost + edge_cost
         }
       };
@@ -324,9 +411,9 @@ pub fn snap_critical_points(
   base.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 
   let mut min_step: Option<f32> = None;
-  for window in base.windows(2) {
-    let step = window[1] - window[0];
-    if step > 0.0 {
+  for &[a, b] in base.array_windows::<2>() {
+    let step = b - a;
+    if step > 0. {
       min_step = Some(min_step.map_or(step, |prev| prev.min(step)));
     }
   }
@@ -400,6 +487,8 @@ pub fn snap_critical_points(
 pub fn dp_stitch_presampled(
   pts_a: &[Vec3],
   pts_b: &[Vec3],
+  ts_a: Option<&[f32]>,
+  ts_b: Option<&[f32]>,
   ring_a_base_idx: usize,
   ring_b_base_idx: usize,
   closed: bool,
@@ -412,6 +501,12 @@ pub fn dp_stitch_presampled(
     return;
   }
 
+  // Compute characteristic scale from average ring radius for non-dimensionalization.
+  // This makes the cost function weights behave consistently regardless of mesh size.
+  let scale = ((ring_average_radius(pts_a) + ring_average_radius(pts_b)) * 0.5).max(1e-6);
+  let inv_scale = 1. / scale;
+  let inv_scale_sq = inv_scale * inv_scale;
+
   // Find best alignment for ring B (only matters for closed rings, but harmless for open)
   let b_offset = if closed {
     find_best_ring_alignment(pts_a, pts_b)
@@ -419,13 +514,35 @@ pub fn dp_stitch_presampled(
     0
   };
 
-  // Pre-rotate ring B positions to avoid a bunch of modulo ops in the DP solver
+  // Pre-rotate ring B positions and t-values to avoid modulo ops in the DP solver
   let rotated_pts_b = rotate_ring(pts_b, b_offset);
+  let rotated_ts_b = ts_b.map(|ts| {
+    let m = ts.len();
+    if b_offset == 0 || m == 0 {
+      ts.to_vec()
+    } else {
+      (0..m).map(|i| ts[(i + b_offset) % m]).collect()
+    }
+  });
 
   let moves = if closed {
-    dp_stitch_solve::<true>(pts_a, &rotated_pts_b)
+    dp_stitch_solve::<true>(
+      pts_a,
+      &rotated_pts_b,
+      ts_a,
+      rotated_ts_b.as_deref(),
+      inv_scale,
+      inv_scale_sq,
+    )
   } else {
-    dp_stitch_solve::<false>(pts_a, &rotated_pts_b)
+    dp_stitch_solve::<false>(
+      pts_a,
+      &rotated_pts_b,
+      ts_a,
+      rotated_ts_b.as_deref(),
+      inv_scale,
+      inv_scale_sq,
+    )
   };
 
   // Map DP indices to actual vertex buffer indices.
@@ -580,7 +697,7 @@ mod tests {
     ];
     let pts_b = pts_a.clone();
 
-    let moves = dp_stitch_solve::<false>(&pts_a, &pts_b);
+    let moves = dp_stitch_solve::<false>(&pts_a, &pts_b, None, None, 1.0, 1.0);
     // For open strips: should have n + m moves total
     assert_eq!(moves.len(), 8);
   }
@@ -600,7 +717,7 @@ mod tests {
     assert_eq!(offset, 0); // Should be aligned already
 
     let rotated_b = rotate_ring(&pts_b, offset);
-    let moves = dp_stitch_solve::<true>(&pts_a, &rotated_b);
+    let moves = dp_stitch_solve::<true>(&pts_a, &rotated_b, None, None, 1.0, 1.0);
     // For closed rings: should have (n+1) + (m+1) moves total (includes wrap-around)
     assert_eq!(moves.len(), 10);
   }
@@ -676,6 +793,8 @@ mod tests {
     dp_stitch_presampled(
       &ring0_pts,
       &ring1_pts,
+      None,
+      None,
       ring_a_start,
       ring_b_start,
       true,

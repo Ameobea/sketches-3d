@@ -4933,6 +4933,25 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "is_self_intersecting" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "The mesh to check for self-intersections"
+          },
+        ],
+        description: "Checks if a mesh has any self-intersecting triangles.  Returns `nil` if no self-intersections are found.  If a self-intersection is found, returns a map with keys: `tri0` and `tri1` (sequences of 3 Vec3 vertices for each intersecting triangle), `point` (a Vec3 on the intersection), and `type` (\"segment\" or \"coplanar\").",
+        return_type: &[ArgType::Nil, ArgType::Map],
+      },
+    ],
+  },
   "intersects_ray" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 36 }],

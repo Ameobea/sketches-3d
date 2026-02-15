@@ -225,6 +225,9 @@ struct RingInfo {
   cap_frame: Option<super::tessellate_polygon::PlaneFrame>,
   /// Whether the edges connecting vertices within this ring should be marked sharp.
   sharp: bool,
+  /// The parametric t-values used to sample this ring's profile.
+  /// Used by the DP stitcher to penalize connecting vertices with dissimilar t-values.
+  t_values: Option<Vec<f32>>,
 }
 
 struct DynamicProfileData {
@@ -546,6 +549,7 @@ pub fn rail_sweep(
         count: 1,
         cap_frame: None,
         sharp: false,
+        t_values: None,
       });
     } else {
       let start = verts.len();
@@ -555,6 +559,7 @@ pub fn rail_sweep(
         count: ring_resolution,
         cap_frame,
         sharp: false,
+        t_values: None,
       });
     }
   }
@@ -673,10 +678,10 @@ fn rail_sweep_dynamic(
     .into_iter()
     .map(|ring| {
       let start = verts.len();
-      let count = if ring.collapsed {
+      let (count, t_values) = if ring.collapsed {
         let apex = sample_profile_at(ctx, &ring, 0.0)?;
         verts.push(apex);
-        1
+        (1, None)
       } else {
         let use_adaptive = ring
           .profile_data
@@ -708,10 +713,11 @@ fn rail_sweep_dynamic(
           }
         };
 
+        let t_vals = samples.clone();
         for v in samples {
           verts.push(sample_profile_at(ctx, &ring, v)?);
         }
-        verts.len() - start
+        (verts.len() - start, Some(t_vals))
       };
 
       Ok(RingInfo {
@@ -719,6 +725,7 @@ fn rail_sweep_dynamic(
         count,
         cap_frame: ring.cap_frame.clone(),
         sharp: ring.profile_data.sharp,
+        t_values,
       })
     })
     .collect::<Result<Vec<_>, ErrorStack>>()?;
@@ -747,7 +754,16 @@ fn rail_sweep_dynamic(
     if use_fku {
       let pts_a = &verts[r_a.start..r_a.start + r_a.count];
       let pts_b = &verts[r_b.start..r_b.start + r_b.count];
-      dp_stitch_presampled(pts_a, pts_b, r_a.start, r_b.start, true, indices);
+      dp_stitch_presampled(
+        pts_a,
+        pts_b,
+        r_a.t_values.as_deref(),
+        r_b.t_values.as_deref(),
+        r_a.start,
+        r_b.start,
+        true,
+        indices,
+      );
     } else {
       let count = r_a.count.min(r_b.count);
       uniform_stitch_rows(r_a.start, r_b.start, count, true, true, indices);
@@ -1367,7 +1383,7 @@ pub(crate) fn rail_sweep_impl(
           // Get adaptive t values using the spine callable
           let adaptive_ts = adaptive_sample_fallible::<Vec3, ErrorStack>(
             spine_resolution,
-            &[0.0, 1.0], // Critical points at endpoints
+            &[0., 1.],
             sample_spine,
             1e-5,
           )?;

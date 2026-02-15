@@ -10,9 +10,7 @@ in vec2 vUv;
 
 uniform sampler2D sceneDiffuse;
 uniform sampler2D sceneDepth;
-uniform sampler2D blueNoise;
 uniform lowp sampler3D noiseTexture;
-uniform ivec2 resolution;
 uniform vec3 cameraPos;
 uniform mat4 cameraProjectionMatrixInv;
 uniform mat4 cameraMatrixWorld;
@@ -36,7 +34,6 @@ uniform vec3 fogColorHighDensity;
 uniform vec3 fogColorLowDensity;
 uniform vec3 lightColor;
 uniform float lightIntensity;
-uniform int blueNoiseResolution;
 uniform float lightFalloffDistance;
 uniform float fogFadeOutPow;
 uniform float fogFadeOutRangeY;
@@ -222,8 +219,8 @@ void sampleOneStep(
   }
 }
 
-vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
-  float beforeLength = length(endPos - startPos);
+vec4 march(in vec3 startPos, in vec3 endPos) {
+  // float beforeLength = length(endPos - startPos);
 
   // clip the march segment endpoints to minimize the length of the ray
   clipRayEndpoints(startPos, endPos);
@@ -232,8 +229,8 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
   // return vec4(vec3(length(endPos - startPos) / beforeLength), 1.0);
 
   // This indicates that the entire ray is outside of the fog zone, so we can
-  // skip marching alltogether.
-  if (startPos == endPos) {
+  // skip marching altogether.
+  if (length(endPos - startPos) < 0.001) {
     return vec4(0.0);
   }
 
@@ -261,9 +258,9 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
 
   float baseStepLength = rayLength / float(baseRaymarchStepCount);
 
-  // use blue noise to jitter the ray
-  float blueNoiseSample = texelFetch(blueNoise, screenCoord % blueNoiseResolution, 0).r;
-  float jitter = (blueNoiseSample - 0.5) * 0.1;
+  // jitter using interleaved gradient noise
+  float noise = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
+  float jitter = (noise - 0.5) * 0.1;
   startPos += rayDir * jitter;
 
   float density = 0.;
@@ -275,14 +272,10 @@ vec4 march(in vec3 startPos, in vec3 endPos, in ivec2 screenCoord) {
     // safety check to avoid infinite march bugs and similar
     if (totalIters > maxRaymarchStepCount) {
       return vec4(1., 1., 0., 1.);
-      // break;
     }
     totalIters += 1;
 
     float stepLength = max(baseStepLength, minStepLength);
-    // I've found that adding some jitter to the step length helps to reduce artifacts in very
-    // short rays, and allows the min step length to be set higher, which improves performance.
-    // stepLength += jitter * 0.2;
     totalDistance += stepLength;
     sampleOneStep(totalDistance, stepLength, startPos, rayDir, gradient, accumulatedColor, density);
 
@@ -304,8 +297,7 @@ void main() {
   vec3 rayStartPos = cameraPos;
   vec3 rayEndPos = worldPos;
 
-  ivec2 screenCoord = ivec2(vUv * vec2(resolution));
-  vec4 fogColor = march(rayStartPos, rayEndPos, screenCoord);
+  vec4 fogColor = march(rayStartPos, rayEndPos);
 
   #ifdef DO_DIRECT_COMPOSITING
   vec3 diffuse = texture2D(sceneDiffuse, vUv).rgb;

@@ -9,36 +9,26 @@ import type { PerspectiveCamera } from 'three';
 import VolumetricCompositorFragmentShader from './compositor.frag?raw';
 import VolumetricCompositorVertexShader from './compositor.vert?raw';
 
-export interface VolumetricPassCompositorParams {
-  edgeStrength: number;
-  edgeRadius: number;
-}
-
-const DefaultVolumetricPassCompositorParams: VolumetricPassCompositorParams = Object.freeze({
-  edgeStrength: 2,
-  edgeRadius: 2,
-});
+export interface VolumetricPassCompositorParams {}
 
 interface VolumetricCompositorMaterialProps {
   /**
    * Output of the volumetric pass
    */
   fogTexture: THREE.Texture;
-  params: Partial<VolumetricPassCompositorParams> | undefined;
   camera: THREE.PerspectiveCamera;
 }
 
 export class VolumetricCompositorMaterial extends THREE.ShaderMaterial implements Resizable {
-  constructor({ fogTexture, params, camera }: VolumetricCompositorMaterialProps) {
+  constructor({ fogTexture, camera }: VolumetricCompositorMaterialProps) {
     const uniforms = {
       fogTexture: { value: fogTexture },
       sceneDiffuse: { value: null },
       sceneDepth: { value: null },
-      edgeStrength: { value: params?.edgeStrength ?? DefaultVolumetricPassCompositorParams.edgeStrength },
-      edgeRadius: { value: params?.edgeRadius ?? DefaultVolumetricPassCompositorParams.edgeRadius },
       near: { value: 0.1 },
       far: { value: 1000.0 },
       resolution: { value: new THREE.Vector2(1, 1) },
+      fogResolution: { value: new THREE.Vector2(1, 1) },
     };
 
     super({
@@ -48,25 +38,27 @@ export class VolumetricCompositorMaterial extends THREE.ShaderMaterial implement
       depthTest: false,
       fragmentShader: VolumetricCompositorFragmentShader,
       vertexShader: VolumetricCompositorVertexShader,
+      defines: {
+        JBU_EXTENT: '1',
+        JBU_SPATIAL_SIGMA: '1.0',
+        JBU_DEPTH_SIGMA: '0.02',
+      },
     });
 
-    this.updateUniforms(params, camera.near, camera.far);
+    this.updateUniforms(camera.near, camera.far);
   }
 
-  public updateUniforms(
-    params: Partial<VolumetricPassCompositorParams> | undefined,
-    near: number,
-    far: number
-  ): void {
-    this.uniforms.edgeStrength.value =
-      params?.edgeStrength ?? DefaultVolumetricPassCompositorParams.edgeStrength;
-    this.uniforms.edgeRadius.value = params?.edgeRadius ?? DefaultVolumetricPassCompositorParams.edgeRadius;
+  public updateUniforms(near: number, far: number): void {
     this.uniforms.near.value = near;
     this.uniforms.far.value = far;
   }
 
   setSize(width: number, height: number): void {
     this.uniforms.resolution.value.set(width, height);
+  }
+
+  setFogResolution(width: number, height: number): void {
+    this.uniforms.fogResolution.value.set(width, height);
   }
 }
 
@@ -83,11 +75,8 @@ export class VolumetricCompositorPass extends Pass {
     this.sceneCamera = props.camera;
   }
 
-  public updateUniforms(
-    params: Partial<VolumetricPassCompositorParams> = DefaultVolumetricPassCompositorParams
-  ): void {
+  public updateUniforms(): void {
     (this.fullscreenMaterial as VolumetricCompositorMaterial).updateUniforms(
-      params,
       this.sceneCamera.near,
       this.sceneCamera.far
     );
@@ -153,5 +142,9 @@ export class VolumetricCompositorPass extends Pass {
 
   override setSize(width: number, height: number): void {
     (this.fullscreenMaterial as VolumetricCompositorMaterial).setSize(width, height);
+  }
+
+  public setFogResolution(width: number, height: number): void {
+    (this.fullscreenMaterial as VolumetricCompositorMaterial).setFogResolution(width, height);
   }
 }

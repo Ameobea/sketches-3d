@@ -4,6 +4,7 @@ import {
   EffectComposer,
   EffectPass,
   MaskPass,
+  RenderPass,
   SMAAEffect,
   SMAAPreset,
   type Timer,
@@ -264,6 +265,32 @@ class CustomEffectComposer extends EffectComposer {
   }
 }
 
+export class PostprocessingPipelineController {
+  public effectComposer: CustomEffectComposer;
+  public depthPass: DepthPass | null;
+  public depthPrePassMaterial: THREE.MeshBasicMaterial | null;
+  public renderer: THREE.WebGLRenderer;
+
+  constructor(
+    effectComposer: CustomEffectComposer,
+    depthPass: DepthPass | null,
+    depthPrePassMaterial: THREE.MeshBasicMaterial | null,
+    renderer: THREE.WebGLRenderer
+  ) {
+    this.effectComposer = effectComposer;
+    this.depthPass = depthPass;
+    this.depthPrePassMaterial = depthPrePassMaterial;
+    this.renderer = renderer;
+  }
+
+  setDepthPrePassEnabled(enabled: boolean) {
+    if (this.depthPass) {
+      this.depthPass.enabled = enabled;
+    }
+    this.renderer.autoClearDepth = !enabled;
+  }
+}
+
 interface ExtraPostprocessingParams {
   toneMappingExposure?: number;
 }
@@ -276,6 +303,7 @@ interface ConfigureDefaultPostprocessingPipelineParams {
   postEffects?: Effect[];
   autoUpdateShadowMap?: boolean;
   enableAntiAliasing?: boolean;
+  useDepthPrePass?: boolean;
 }
 
 export const configureDefaultPostprocessingPipeline = ({
@@ -286,24 +314,33 @@ export const configureDefaultPostprocessingPipeline = ({
   postEffects,
   autoUpdateShadowMap = false,
   enableAntiAliasing = true,
-}: ConfigureDefaultPostprocessingPipelineParams) => {
+  useDepthPrePass = true,
+}: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
   const effectComposer = new CustomEffectComposer(viz, {
     multisampling: 0,
     frameBufferType: THREE.HalfFloatType,
   });
 
-  viz.renderer.autoClear = false;
-  viz.renderer.autoClearColor = true;
-  viz.renderer.autoClearDepth = false;
-  const depthPrePassMaterial = new THREE.MeshBasicMaterial();
-  const depthPass = new DepthPass(viz.scene, viz.camera, depthPrePassMaterial);
-  depthPass.skipShadowMapUpdate = true;
-  effectComposer.addPass(depthPass);
+  let depthPass: DepthPass | null = null;
+  let depthPrePassMaterial: THREE.MeshBasicMaterial | null = null;
 
-  const renderPass = new MainRenderPass(viz.scene, viz.camera);
-  renderPass.skipShadowMapUpdate = true;
-  renderPass.needsDepthTexture = true;
-  effectComposer.addPass(renderPass);
+  if (useDepthPrePass) {
+    viz.renderer.autoClear = false;
+    viz.renderer.autoClearColor = true;
+    viz.renderer.autoClearDepth = false;
+    depthPrePassMaterial = new THREE.MeshBasicMaterial();
+    depthPass = new DepthPass(viz.scene, viz.camera, depthPrePassMaterial);
+    depthPass.skipShadowMapUpdate = true;
+    effectComposer.addPass(depthPass);
+
+    const renderPass = new MainRenderPass(viz.scene, viz.camera);
+    renderPass.skipShadowMapUpdate = true;
+    renderPass.needsDepthTexture = true;
+    effectComposer.addPass(renderPass);
+  } else {
+    const renderPass = new RenderPass(viz.scene, viz.camera);
+    effectComposer.addPass(renderPass);
+  }
 
   addMiddlePasses?.(effectComposer, viz, quality);
 
@@ -342,4 +379,6 @@ export const configureDefaultPostprocessingPipeline = ({
       populateShadowMap(viz, autoUpdateShadowMap);
     }
   });
+
+  return new PostprocessingPipelineController(effectComposer, depthPass, depthPrePassMaterial, viz.renderer);
 };

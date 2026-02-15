@@ -31,7 +31,6 @@ export const initPylonsPostprocessing = (viz: Viz, vizConf: VizConfig, autoUpdat
         noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
         globalScale: 1,
         halfRes: true,
-        compositor: { edgeRadius: 4, edgeStrength: 2 },
         ...{
           [GraphicsQuality.Low]: { baseRaymarchStepCount: 88 },
           [GraphicsQuality.Medium]: { baseRaymarchStepCount: 130 },

@@ -4,7 +4,10 @@ import { mount } from 'svelte';
 
 import type { Viz } from 'src/viz';
 import type { SceneConfig } from '..';
-import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+import {
+  configureDefaultPostprocessingPipeline,
+  type PostprocessingPipelineController,
+} from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi from './ReplUI.svelte';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
@@ -24,7 +27,8 @@ const initRepl = async (
   workerManager: WorkerManager,
   setReplCtx: (ctx: ReplCtx) => void,
   userData: GeoscriptPlaygroundUserData | undefined = undefined,
-  onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void
+  onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void,
+  pipelineController: PostprocessingPipelineController | null
 ) => {
   const _ui = mount(ReplUi, {
     target: document.getElementById('viz-container')!,
@@ -34,6 +38,7 @@ const initRepl = async (
       setReplCtx,
       userData,
       onSizeChange,
+      pipelineController,
     },
   });
 };
@@ -57,6 +62,8 @@ export const processLoadedScene = async (
 
   let ctx = $state<ReplCtx | null>(null);
 
+  let pipelineController: PostprocessingPipelineController | null = null;
+
   if (userData?.renderMode) {
     let didRender = false;
     viz.setRenderOverride(() => {
@@ -69,7 +76,7 @@ export const processLoadedScene = async (
       (window as any).onRenderReady?.();
     });
   } else {
-    configureDefaultPostprocessingPipeline({
+    pipelineController = configureDefaultPostprocessingPipeline({
       viz,
       quality,
       addMiddlePasses: (composer, viz, _quality) => {
@@ -155,7 +162,8 @@ export const processLoadedScene = async (
       isEditorCollapsed = newIsCollapsed;
       layoutOrientation = newOrientation;
       updateCanvasSize();
-    }
+    },
+    pipelineController
   );
 
   return {

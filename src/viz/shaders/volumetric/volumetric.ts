@@ -1,13 +1,11 @@
 import { type Disposable, Pass } from 'postprocessing';
 import * as THREE from 'three';
 
-import { getBlueNoiseTexture } from './blueNoise';
 import VolumetricFragmentShader from './volumetric.frag?raw';
 import VolumetricVertexShader from './volumetric.vert?raw';
 import {
   type VolumetricCompositorMaterial,
   VolumetricCompositorPass,
-  type VolumetricPassCompositorParams,
 } from './compositorPass';
 
 export interface VolumetricPassParams {
@@ -65,12 +63,6 @@ export interface VolumetricPassParams {
    */
   postDensityPow?: number;
   /**
-   * Controls the compositing pass that upscales + combines the volumetric pass with the main scene.
-   *
-   * Only applies if `halfRes` is set to `true`.
-   */
-  compositor?: Partial<VolumetricPassCompositorParams>;
-  /**
    * If set, the volumetric pass will render at half resolution and then upscale to full resolution.
    *
    * Cannot be changed after the pass is created.
@@ -86,8 +78,6 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
     const uniforms = {
       sceneDepth: { value: null },
       sceneDiffuse: { value: null },
-      blueNoise: { value: null },
-      resolution: { value: new THREE.Vector2(1, 1) },
       cameraPos: { value: new THREE.Vector3(0, 0, 0) },
       cameraProjectionMatrixInv: { value: new THREE.Matrix4() },
       cameraMatrixWorld: { value: new THREE.Matrix4() },
@@ -107,7 +97,6 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       fogColorLowDensity: { value: new THREE.Vector3(0.11, 0.31, 0.7) },
       lightColor: { value: new THREE.Vector3(1.0, 0.0, 0.76) },
       lightIntensity: { value: 7.5 },
-      blueNoiseResolution: { value: 256 },
       lightFalloffDistance: { value: 110 },
       fogFadeOutPow: { value: 1 },
       fogFadeOutRangeY: { value: 1.5 },
@@ -130,10 +119,6 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       fragmentShader: VolumetricFragmentShader,
       vertexShader: VolumetricVertexShader,
       defines: params.halfRes ? {} : { DO_DIRECT_COMPOSITING: '1' },
-    });
-
-    getBlueNoiseTexture(new THREE.TextureLoader()).then(blueNoiseTexture => {
-      this.uniforms.blueNoise.value = blueNoiseTexture;
     });
   }
 }
@@ -167,7 +152,6 @@ export class VolumetricPass extends Pass implements Disposable {
       });
       this.compositorPass = new VolumetricCompositorPass({
         camera,
-        params: params.compositor,
         fogTexture: this.fogRenderTarget.texture,
       });
     }
@@ -232,12 +216,11 @@ export class VolumetricPass extends Pass implements Disposable {
   }
 
   override setSize(width: number, height: number): void {
-    this.material.uniforms.resolution.value.set(width, height);
-    this.fogRenderTarget?.setSize(
-      Math.ceil(width * (this.params.halfRes ? 0.5 : 1)),
-      Math.ceil(height * (this.params.halfRes ? 0.5 : 1))
-    );
+    const fogWidth = Math.ceil(width * (this.params.halfRes ? 0.5 : 1));
+    const fogHeight = Math.ceil(height * (this.params.halfRes ? 0.5 : 1));
+    this.fogRenderTarget?.setSize(fogWidth, fogHeight);
     this.compositorPass?.setSize(width, height);
+    this.compositorPass?.setFogResolution(fogWidth, fogHeight);
   }
 
   override setDepthTexture(

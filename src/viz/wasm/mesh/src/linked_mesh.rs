@@ -2990,6 +2990,90 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       vtx.position -= centroid;
     }
   }
+
+  /// Searches for the first pair of self-intersecting (non-adjacent) triangles in this mesh.
+  ///
+  /// Uses a BVH for broad-phase acceleration and the Guigue-Devillers algorithm for
+  /// narrow-phase triangle-triangle intersection testing.  Face pairs sharing an edge are
+  /// skipped.  Face pairs sharing a single vertex are tested, but point-only intersections
+  /// at the shared vertex are filtered out.
+  ///
+  /// Returns `None` if no self-intersection is found.
+  pub fn find_first_self_intersection(&self) -> Option<SelfIntersectionResult> {
+    use parry3d::bounding_volume::BoundingVolume;
+    use parry3d::partitioning::{Bvh, BvhBuildStrategy, BvhWorkspace};
+
+    use crate::triangle_intersection::tri_tri_intersection;
+
+    if self.faces.len() < 2 {
+      return None;
+    }
+
+    // 1. Build parallel arrays: face keys and per-face AABBs
+    let face_keys: Vec<FaceKey> = self.faces.keys().collect();
+    let aabbs: Vec<Aabb> = face_keys
+      .iter()
+      .map(|&fk| {
+        let face = &self.faces[fk];
+        let positions = face.vertex_positions(&self.vertices);
+        let mut aabb = Aabb::from_points(positions.iter().map(|p| Point::new(p.x, p.y, p.z)));
+        // Pad the AABB slightly for numerical robustness with f32 vertex positions
+        aabb.loosen(1e-6);
+        aabb
+      })
+      .collect();
+
+    // 2. Build BVH
+    let bvh = Bvh::from_leaves(BvhBuildStrategy::Binned, &aabbs);
+
+    // 3. Traverse BVH against itself to find overlapping AABB pairs
+    let mut workspace = BvhWorkspace::default();
+    let mut result: Option<SelfIntersectionResult> = None;
+
+    bvh.traverse_bvtt_single_tree::<false>(&mut workspace, &mut |a, b| {
+      if result.is_some() {
+        return;
+      }
+
+      let fk_a = face_keys[a as usize];
+      let fk_b = face_keys[b as usize];
+      let face_a = &self.faces[fk_a];
+      let face_b = &self.faces[fk_b];
+
+      // 4. Count shared vertices to determine adjacency
+      let mut shared = 0usize;
+      for va in &face_a.vertices {
+        for vb in &face_b.vertices {
+          if va == vb {
+            shared += 1;
+          }
+        }
+      }
+      // Skip edge-adjacent faces (2 shared vertices) and same face (3 shared)
+      if shared >= 2 {
+        return;
+      }
+
+      // 5. Narrow-phase: triangle-triangle intersection test
+      let pos_a = face_a.vertex_positions(&self.vertices);
+      let pos_b = face_b.vertex_positions(&self.vertices);
+
+      if let Some(isect) = tri_tri_intersection(
+        pos_a[0], pos_a[1], pos_a[2], pos_b[0], pos_b[1], pos_b[2],
+      ) {
+        result = Some(SelfIntersectionResult {
+          face_a: fk_a,
+          face_b: fk_b,
+          positions_a: pos_a,
+          positions_b: pos_b,
+          point: isect.point,
+          intersection_type: isect.intersection_type,
+        });
+      }
+    });
+
+    result
+  }
 }
 
 impl<T: Default> From<TriMesh> for LinkedMesh<T> {
@@ -3022,6 +3106,21 @@ impl<T: Default> From<TriMesh> for LinkedMesh<T> {
 
     mesh
   }
+}
+
+/// Result of a self-intersection query on a mesh.
+#[derive(Debug, Clone)]
+pub struct SelfIntersectionResult {
+  pub face_a: FaceKey,
+  pub face_b: FaceKey,
+  /// The three vertex positions of the first intersecting triangle
+  pub positions_a: [Vec3; 3],
+  /// The three vertex positions of the second intersecting triangle
+  pub positions_b: [Vec3; 3],
+  /// A representative point on or near the intersection
+  pub point: Vec3,
+  /// The type of intersection (segment or coplanar)
+  pub intersection_type: crate::triangle_intersection::TriTriIntersectionType,
 }
 
 #[cfg(test)]

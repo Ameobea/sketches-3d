@@ -128,9 +128,29 @@ export const buildEditor = ({
     keymap.of(defaultKeymap),
     keymap.of([indentWithTab]),
     gruvboxDark,
+    EditorView.theme({
+      '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+        backgroundColor: '#1b3830 !important',
+      },
+      ...(readonly
+        ? {}
+        : {
+            '.cm-activeLine': { backgroundColor: 'rgba(255, 255, 255, 0.08) !important' },
+            '.cm-activeLineGutter': { backgroundColor: 'rgba(255, 255, 255, 0.08) !important' },
+          }),
+    }),
     languageSupport,
     syntaxErrorLinter,
-    readonly ? EditorState.readOnly.of(true) : null,
+    readonly ? EditorView.editable.of(false) : null,
+    readonly
+      ? EditorView.theme({
+          '.cm-cursor, .cm-dropCursor': { display: 'none !important' },
+          '.cm-activeLine': { backgroundColor: 'transparent !important' },
+          '.cm-activeLineGutter': { backgroundColor: 'transparent !important' },
+          '&.cm-focused': { outline: 'none' },
+          '.cm-content': { cursor: 'text' },
+        })
+      : null,
     EditorState.allowMultipleSelections.of(true),
   ]);
 

@@ -10,6 +10,7 @@ pub mod slotmap_utils;
 
 pub mod csg;
 pub mod models;
+pub mod triangle_intersection;
 
 #[derive(Clone, Debug)]
 pub struct Triangle {

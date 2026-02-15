@@ -50,6 +50,7 @@
   import { centerView, snapView, orbit } from './cameraControls';
   import { buildLightHelpers, toggleAxisHelpers, toggleLightHelpers } from './gizmos';
   import { useRecording } from './recording';
+  import type { PostprocessingPipelineController } from 'src/viz/postprocessing/defaultPostprocessing';
 
   let {
     viz,
@@ -57,12 +58,14 @@
     setReplCtx,
     userData: providedUserData,
     onSizeChange,
+    pipelineController = null,
   }: {
     viz: Viz;
     workerManager: WorkerManager;
     setReplCtx: (ctx: ReplCtx) => void;
     userData?: GeoscriptPlaygroundUserData;
     onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void;
+    pipelineController?: PostprocessingPipelineController | null;
   } = $props();
 
   let userData = $state<GeoscriptPlaygroundUserData | undefined>(providedUserData);
@@ -299,30 +302,77 @@
 
   $effect(setupEditor);
 
-  let materialOverride = $state<'wireframe' | 'normal' | null>(null);
+  let materialOverride = $state<'wireframe' | 'wireframe-xray' | 'normal' | null>(null);
 
-  const toggleWireframe = () => {
-    materialOverride = materialOverride === 'wireframe' ? null : 'wireframe';
+  const restoreMaterials = () => {
     for (const obj of renderedObjects) {
       if (obj instanceof THREE.Mesh) {
-        const mat =
-          materialOverride === 'wireframe'
-            ? WireframeMat
-            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? HiddenMat);
-        obj.material = mat;
+        obj.material = customMaterialsByName[obj.userData.materialName]?.resolved ?? HiddenMat;
+      }
+    }
+    if (pipelineController?.depthPrePassMaterial) {
+      pipelineController.depthPrePassMaterial.polygonOffset = false;
+    }
+    pipelineController?.setDepthPrePassEnabled(true);
+  };
+
+  const applyWireframeMaterial = () => {
+    for (const obj of renderedObjects) {
+      if (obj instanceof THREE.Mesh) {
+        obj.material = WireframeMat;
       }
     }
   };
 
+  const toggleWireframe = () => {
+    const wasWireframe = materialOverride === 'wireframe';
+    if (materialOverride) {
+      restoreMaterials();
+      materialOverride = null;
+    }
+    if (wasWireframe) {
+      return;
+    }
+
+    materialOverride = 'wireframe';
+    applyWireframeMaterial();
+    if (pipelineController?.depthPrePassMaterial) {
+      pipelineController.depthPrePassMaterial.polygonOffset = true;
+      pipelineController.depthPrePassMaterial.polygonOffsetFactor = 1;
+      pipelineController.depthPrePassMaterial.polygonOffsetUnits = 1;
+    }
+    pipelineController?.setDepthPrePassEnabled(true);
+  };
+
+  const toggleWireframeXray = () => {
+    const wasXray = materialOverride === 'wireframe-xray';
+    if (materialOverride) {
+      restoreMaterials();
+      materialOverride = null;
+    }
+    if (wasXray) {
+      return;
+    }
+
+    materialOverride = 'wireframe-xray';
+    applyWireframeMaterial();
+    pipelineController?.setDepthPrePassEnabled(false);
+  };
+
   const toggleNormalMat = () => {
-    materialOverride = materialOverride === 'normal' ? null : 'normal';
+    const wasNormal = materialOverride === 'normal';
+    if (materialOverride) {
+      restoreMaterials();
+      materialOverride = null;
+    }
+    if (wasNormal) {
+      return;
+    }
+
+    materialOverride = 'normal';
     for (const obj of renderedObjects) {
       if (obj instanceof THREE.Mesh) {
-        const mat =
-          materialOverride === 'normal'
-            ? NormalMat
-            : (customMaterialsByName[obj.userData.materialName]?.resolved ?? HiddenMat);
-        obj.material = mat;
+        obj.material = NormalMat;
       }
     }
   };
@@ -656,6 +706,7 @@
     setReplCtx({
       centerView: () => centerView(viz, renderedObjects),
       toggleWireframe,
+      toggleWireframeXray,
       toggleNormalMat,
       toggleLightHelpers: wrappedToggleLightHelpers,
       toggleAxesHelper: wrappedToggleAxesHelpers,

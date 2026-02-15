@@ -182,6 +182,8 @@ pub fn parametric_surface(
             dp_stitch_presampled(
               &pts_b,
               &pts_a,
+              None,
+              None,
               row_b.start_ix,
               row_a.start_ix,
               v_closed,
@@ -191,6 +193,8 @@ pub fn parametric_surface(
             dp_stitch_presampled(
               &pts_a,
               &pts_b,
+              None,
+              None,
               row_a.start_ix,
               row_b.start_ix,
               v_closed,

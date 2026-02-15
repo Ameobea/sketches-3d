@@ -284,10 +284,7 @@ where
   // Initialize the priority queue with segments between consecutive t-values
   let mut heap: BinaryHeap<SegmentCandidate> = BinaryHeap::new();
 
-  for window in ts.windows(2) {
-    let t_start = window[0];
-    let t_end = window[1];
-
+  for &[t_start, t_end] in ts.array_windows::<2>() {
     // Only create candidates for segments that are large enough to split
     if t_end - t_start >= min_seg_len * 2.0 {
       let candidate = create_segment_candidate(t_start, t_end, &sample_fn)?;
@@ -384,8 +381,8 @@ mod tests {
     assert!(result.last().unwrap() < &1.0);
 
     // Verify sorted
-    for window in result.windows(2) {
-      assert!(window[0] < window[1], "Results should be sorted");
+    for &[a, b] in result.array_windows::<2>() {
+      assert!(a < b, "Results should be sorted");
     }
   }
 
@@ -398,13 +395,10 @@ mod tests {
 
     // Check that gaps are reasonably uniform (within 2x of each other)
     let mut gaps: Vec<f32> = Vec::new();
-    for i in 0..result.len() {
-      let next = if i + 1 < result.len() {
-        result[i + 1]
-      } else {
-        1.0
-      };
-      gaps.push(next - result[i]);
+    for &[a, b] in result.array_windows::<2>() {
+      let next = b;
+      let current = a;
+      gaps.push(next - current);
     }
 
     let min_gap = gaps.iter().copied().fold(f32::INFINITY, f32::min);
@@ -431,13 +425,8 @@ mod tests {
     // For a high-exponent superellipse, gaps near corners should be smaller
     // than gaps along the flat sides.
     let mut gaps: Vec<f32> = Vec::new();
-    for i in 0..result.len() {
-      let next = if i + 1 < result.len() {
-        result[i + 1]
-      } else {
-        1.0
-      };
-      gaps.push(next - result[i]);
+    for &[a, b] in result.array_windows::<2>() {
+      gaps.push(b - a);
     }
 
     let min_gap = gaps.iter().copied().fold(f32::INFINITY, f32::min);
@@ -517,8 +506,8 @@ mod tests {
     assert!(result.last().unwrap() < &1.0);
 
     // Verify sorted
-    for window in result.windows(2) {
-      assert!(window[0] < window[1], "Results should be sorted");
+    for &[a, b] in result.array_windows::<2>() {
+      assert!(a < b, "Results should be sorted");
     }
   }
 

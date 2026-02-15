@@ -2,11 +2,27 @@ use crate::algorithm::NoiseParams;
 use common::maybe_init_rng;
 use nanoserde::DeJson;
 
+#[cfg(target_arch = "wasm32")]
 mod imports {
   extern "C" {
     #[allow(dead_code)]
     pub fn log_msg(msg: *const u8, len: usize);
     pub fn log_error(msg: *const u8, len: usize);
+  }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod imports {
+  #[allow(dead_code)]
+  pub unsafe fn log_msg(msg: *const u8, len: usize) {
+    println!("{}", unsafe {
+      std::str::from_utf8_unchecked(std::slice::from_raw_parts(msg, len))
+    })
+  }
+  pub unsafe fn log_error(msg: *const u8, len: usize) {
+    eprintln!("{}", unsafe {
+      std::str::from_utf8_unchecked(std::slice::from_raw_parts(msg, len))
+    })
   }
 }
 

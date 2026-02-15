@@ -15,8 +15,8 @@ const buildEmptyRunStats = (startTime: number): RunStats => ({
   totalFaceCount: 0,
 });
 
-const getOverrideMat = (materialOverride: 'wireframe' | 'normal' | null | undefined) => {
-  if (materialOverride === 'wireframe') {
+const getOverrideMat = (materialOverride: 'wireframe' | 'wireframe-xray' | 'normal' | null | undefined) => {
+  if (materialOverride === 'wireframe' || materialOverride === 'wireframe-xray') {
     return WireframeMat;
   }
   if (materialOverride === 'normal') {

@@ -381,7 +381,6 @@ return vec4(outColor, 1.);
         noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
         globalScale: 1,
         halfRes: true,
-        compositor: { edgeRadius: 4, edgeStrength: 2 },
         ...{
           [GraphicsQuality.Low]: { baseRaymarchStepCount: 20 },
           [GraphicsQuality.Medium]: { baseRaymarchStepCount: 40 },

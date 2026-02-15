@@ -203,9 +203,9 @@ pub(crate) fn build_topology_samples(
   let weights = interval_weights.filter(|weights| weights.len() == interval_count);
   let mut spans = Vec::with_capacity(interval_count);
   let mut total_effective = 0.0;
-  for (ix, window) in guide_points.windows(2).enumerate() {
-    let span = (window[1] - window[0]).max(0.0);
-    let weight = weights.map(|weights| weights[ix]).unwrap_or(1.0).max(0.0);
+  for (ix, &[start, end]) in guide_points.array_windows::<2>().enumerate() {
+    let span = (end - start).max(0.);
+    let weight = weights.map(|weights| weights[ix]).unwrap_or(1.).max(0.);
     let effective = span * weight;
     spans.push((span, effective));
     total_effective += effective;
@@ -251,9 +251,7 @@ pub(crate) fn build_topology_samples(
   }
 
   let mut samples = Vec::with_capacity(target_count);
-  for (ix, window) in guide_points.windows(2).enumerate() {
-    let start = window[0];
-    let end = window[1];
+  for (ix, &[start, end]) in guide_points.array_windows::<2>().enumerate() {
     samples.push(start);
 
     let count = allocations[ix];
@@ -267,7 +265,7 @@ pub(crate) fn build_topology_samples(
   }
 
   if include_end {
-    samples.push(*guide_points.last().unwrap_or(&1.0));
+    samples.push(*guide_points.last().unwrap_or(&1.));
   }
 
   samples
@@ -283,9 +281,7 @@ pub(crate) fn build_interval_weights(
 
   let mut indices = vec![0usize; sampler_intervals.len()];
   let mut weights = Vec::with_capacity(guides.len() - 1);
-  for window in guides.windows(2) {
-    let start = window[0];
-    let end = window[1];
+  for &[start, end] in guides.array_windows::<2>() {
     let mid = (start + end) * 0.5;
     let mut all_detail = true;
 

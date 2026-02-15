@@ -1,3 +1,4 @@
+use mesh::triangle_intersection::TriTriIntersectionType;
 use noise::RangeFunction;
 use paste::paste;
 #[cfg(target_arch = "wasm32")]
@@ -2997,6 +2998,61 @@ fn intersects_impl(
   }
 }
 
+fn is_self_intersecting_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh_handle = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+
+      if mesh_handle.mesh.is_empty() {
+        return Ok(Value::Nil);
+      }
+
+      let result = mesh_handle.mesh.find_first_self_intersection();
+
+      match result {
+        None => Ok(Value::Nil),
+        Some(ixn) => {
+          let mut map = FxHashMap::default();
+
+          // tri0: sequence of 3 Vec3 vertices
+          map.insert(
+            "tri0".to_owned(),
+            Value::Sequence(Rc::new(EagerSeq {
+              inner: ixn.positions_a.iter().map(|p| Value::Vec3(*p)).collect(),
+            })),
+          );
+
+          // tri1: sequence of 3 Vec3 vertices
+          map.insert(
+            "tri1".to_owned(),
+            Value::Sequence(Rc::new(EagerSeq {
+              inner: ixn.positions_b.iter().map(|p| Value::Vec3(*p)).collect(),
+            })),
+          );
+
+          // point: Vec3 on the intersection
+          map.insert("point".to_owned(), Value::Vec3(ixn.point));
+
+          // type: "segment" or "coplanar"
+          let type_str = match ixn.intersection_type {
+            TriTriIntersectionType::Segment => "segment",
+            TriTriIntersectionType::Coplanar => "coplanar",
+          };
+          map.insert("type".to_owned(), Value::String(type_str.to_owned()));
+
+          Ok(Value::Map(Rc::new(map)))
+        }
+      }
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn connected_components_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -5772,6 +5828,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "intersects" => builtin_fn!(intersects, |def_ix, arg_refs, args, kwargs, _ctx| {
     intersects_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "is_self_intersecting" => builtin_fn!(is_self_intersecting, |def_ix, arg_refs, args, kwargs, _ctx| {
+    is_self_intersecting_impl(def_ix, arg_refs, args, kwargs)
   }),
   "intersects_ray" => builtin_fn!(intersects_ray, |def_ix, arg_refs, args, kwargs, _ctx| {
     intersects_ray_impl(def_ix, arg_refs, args, kwargs)

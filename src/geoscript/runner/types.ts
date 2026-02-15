@@ -56,7 +56,7 @@ export interface RunGeoscriptOptions {
   repl: Comlink.Remote<GeoscriptWorkerMethods>;
   materials: Record<string, { def: MaterialDef; mat: MatEntry | THREE.Material }>;
   includePrelude: boolean;
-  materialOverride?: 'wireframe' | 'normal' | null;
+  materialOverride?: 'wireframe' | 'wireframe-xray' | 'normal' | null;
   onStart?: () => void;
   onError?: (error: string) => void;
   renderMode?: boolean;
