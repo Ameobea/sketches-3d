@@ -143,13 +143,99 @@ pub(crate) fn normalize_guides(guides: &[f32]) -> Vec<f32> {
     .iter()
     .copied()
     .filter(|v| v.is_finite())
-    .map(|v| v.clamp(0.0, 1.0))
+    .map(|v| v.clamp(0., 1.))
     .collect();
-  out.push(0.0);
-  out.push(1.0);
+  out.push(0.);
+  out.push(1.);
   out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
   out.dedup_by(|a, b| (*a - *b).abs() <= GUIDE_EPSILON);
   out
+}
+
+pub(crate) trait PathSampler: Any {
+  fn interned_t_kwarg(&self) -> Sym;
+  fn critical_t_values(&self) -> Vec<f32>;
+  fn segment_intervals(&self) -> Vec<SegmentInterval> {
+    Vec::new()
+  }
+  fn eval_at(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack>;
+}
+
+fn parse_path_sampler_t_arg<'a>(
+  args: &'a [Value],
+  kwargs: &'a FxHashMap<Sym, Value>,
+  interned_t_kwarg: Sym,
+) -> Result<f32, ErrorStack> {
+  let t = if !kwargs.is_empty() {
+    if kwargs.len() != 1 || !kwargs.contains_key(&interned_t_kwarg) {
+      return Err(ErrorStack::new(
+        "Unexpected keyword arguments; expected only `t`",
+      ));
+    }
+    if !args.is_empty() {
+      return Err(ErrorStack::new(
+        "Expected only keyword argument `t` and no positional args",
+      ));
+    }
+    kwargs.get(&interned_t_kwarg).unwrap()
+  } else {
+    if args.len() != 1 {
+      return Err(ErrorStack::new("Expected argument `t`"));
+    }
+    &args[0]
+  };
+  let Some(t) = t.as_float() else {
+    return Err(ErrorStack::new(format!(
+      "Expected 't' to be a number, found {t:?}"
+    )));
+  };
+  Ok(t.clamp(0., 1.))
+}
+
+impl<T: PathSampler + 'static> DynamicCallable for T {
+  fn as_any(&self) -> &dyn Any {
+    self
+  }
+
+  fn invoke(
+    &self,
+    args: &[Value],
+    kwargs: &FxHashMap<Sym, Value>,
+    ctx: &EvalCtx,
+  ) -> Result<Value, ErrorStack> {
+    let t = parse_path_sampler_t_arg(args, kwargs, self.interned_t_kwarg())?;
+    let pos = self.eval_at(t, ctx)?;
+    Ok(Value::Vec2(pos))
+  }
+
+  fn get_return_type_hint(&self) -> Option<ArgType> {
+    Some(ArgType::Vec2)
+  }
+
+  fn is_side_effectful(&self) -> bool {
+    false
+  }
+
+  fn is_rng_dependent(&self) -> bool {
+    false
+  }
+}
+
+pub(crate) fn as_path_sampler(callable: &Callable) -> Option<&dyn PathSampler> {
+  match callable {
+    Callable::Dynamic { inner, .. } => {
+      let any = inner.as_any();
+      any
+        .downcast_ref::<PathTracerCallable>()
+        .map(|t| t as &dyn PathSampler)
+        .or_else(|| {
+          any
+            .downcast_ref::<super::lerp_path::LerpPathCallable>()
+            .map(|t| t as &dyn PathSampler)
+        })
+    }
+    _ => None,
+  }
 }
 
 fn uniform_samples(count: usize, include_end: bool) -> Vec<f32> {
@@ -1106,56 +1192,21 @@ pub(crate) fn sample_subpath_points(
     .collect()
 }
 
-impl DynamicCallable for PathTracerCallable {
-  fn as_any(&self) -> &dyn Any {
-    self
+impl PathSampler for PathTracerCallable {
+  fn interned_t_kwarg(&self) -> Sym {
+    self.interned_t_kwarg
   }
 
-  fn invoke(
-    &self,
-    args: &[crate::Value],
-    kwargs: &FxHashMap<Sym, Value>,
-    _ctx: &EvalCtx,
-  ) -> Result<Value, ErrorStack> {
-    let t = if !kwargs.is_empty() {
-      if kwargs.len() != 1 || !kwargs.contains_key(&self.interned_t_kwarg) {
-        return Err(ErrorStack::new(
-          "Unexpected keyword arguments; expected only `t`",
-        ));
-      }
-      if !args.is_empty() {
-        return Err(ErrorStack::new(
-          "Expected only keyword argument `t` and no positional args",
-        ));
-      }
-      kwargs.get(&self.interned_t_kwarg).unwrap()
-    } else {
-      if args.len() != 1 {
-        return Err(ErrorStack::new("Expected argument `t`"));
-      }
-      &args[0]
-    };
-    let Some(t) = t.as_float() else {
-      return Err(ErrorStack::new(format!(
-        "Expected 't' to be a number, found {t:?}"
-      )));
-    };
-    let t = t.clamp(0., 1.);
-
-    let pos = self.sample(t)?;
-    Ok(Value::Vec2(pos))
+  fn critical_t_values(&self) -> Vec<f32> {
+    PathTracerCallable::critical_t_values(self)
   }
 
-  fn get_return_type_hint(&self) -> Option<ArgType> {
-    Some(ArgType::Vec2)
+  fn segment_intervals(&self) -> Vec<SegmentInterval> {
+    PathTracerCallable::segment_intervals(self)
   }
 
-  fn is_side_effectful(&self) -> bool {
-    false
-  }
-
-  fn is_rng_dependent(&self) -> bool {
-    false
+  fn eval_at(&self, t: f32, _ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
+    self.sample(t)
   }
 }
 
@@ -2434,5 +2485,120 @@ second_end = second(1)
     let second_end = ctx.get_global("second_end").unwrap();
     assert_vec2_close(*second_start.as_vec2().unwrap(), Vec2::new(100.0, 0.0));
     assert_vec2_close(*second_end.as_vec2().unwrap(), Vec2::new(100.0, 20.0));
+  }
+
+  #[test]
+  fn test_lerp_paths_midpoint() {
+    let src = r#"
+path_a = trace_path(|| {
+  move(0, 0)
+  line(2, 0)
+})
+path_b = trace_path(|| {
+  move(0, 2)
+  line(2, 2)
+})
+lerped = lerp_paths(path_a, path_b, 0.5)
+result = lerped(0.5)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let result = ctx.get_global("result").unwrap();
+    assert_vec2_close(*result.as_vec2().unwrap(), Vec2::new(1.0, 1.0));
+  }
+
+  #[test]
+  fn test_lerp_paths_mix_extremes() {
+    let src = r#"
+path_a = trace_path(|| {
+  move(0, 0)
+  line(4, 0)
+})
+path_b = trace_path(|| {
+  move(0, 10)
+  line(4, 10)
+})
+lerped_a = lerp_paths(path_a, path_b, 0.0)
+at_a = lerped_a(0.5)
+lerped_b = lerp_paths(path_a, path_b, 1.0)
+at_b = lerped_b(0.5)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let at_a = ctx.get_global("at_a").unwrap();
+    let at_b = ctx.get_global("at_b").unwrap();
+    assert_vec2_close(*at_a.as_vec2().unwrap(), Vec2::new(2.0, 0.0));
+    assert_vec2_close(*at_b.as_vec2().unwrap(), Vec2::new(2.0, 10.0));
+  }
+
+  #[test]
+  fn test_lerp_paths_critical_point_merging() {
+    let src = r#"
+path_a = trace_path(|| {
+  move(0, 0)
+  line(1, 0)
+  line(2, 0)
+})
+path_b = trace_path(|| {
+  move(0, 0)
+  line(0.5, 0)
+  line(1, 0)
+  line(2, 0)
+})
+lerped = lerp_paths(path_a, path_b, 0.5)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let lerped = ctx.get_global("lerped").unwrap();
+    let callable = lerped.as_callable().unwrap();
+    let sampler = as_path_sampler(callable).expect("lerped path should be a PathSampler");
+    let cps = sampler.critical_t_values();
+    // Merged critical points should be sorted and include 0.0 and 1.0
+    assert!(cps.len() >= 2);
+    assert!((cps[0] - 0.0).abs() < 1e-6);
+    assert!((cps[cps.len() - 1] - 1.0).abs() < 1e-6);
+    // Should be sorted
+    for w in cps.windows(2) {
+      assert!(w[0] <= w[1], "Critical points not sorted: {:?}", cps);
+    }
+    // Should have more points than either path alone (union of both)
+    assert!(
+      cps.len() > 3,
+      "Expected merged critical points from both paths, got {:?}",
+      cps
+    );
+  }
+
+  #[test]
+  fn test_critical_points_builtin() {
+    let src = r#"
+path = trace_path(|| {
+  move(0, 0)
+  line(1, 0)
+  line(2, 1)
+})
+cps = critical_points(path)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let cps_val = ctx.get_global("cps").unwrap();
+    let seq = cps_val.as_sequence().unwrap();
+    let items: Vec<f32> = seq
+      .consume(&ctx)
+      .map(|r| r.unwrap().as_float().unwrap())
+      .collect();
+    assert!(items.len() >= 3, "Expected at least 3 critical points (0, mid, 1), got {:?}", items);
+    assert!((items[0] - 0.0).abs() < 1e-6);
+    assert!((items[items.len() - 1] - 1.0).abs() < 1e-6);
+    for w in items.windows(2) {
+      assert!(w[0] <= w[1], "Critical points not sorted: {:?}", items);
+    }
+  }
+
+  #[test]
+  fn test_critical_points_error_on_generic_callable() {
+    let src = r#"
+f = |t| { vec2(t, t) }
+cps = critical_points(f)
+"#;
+    let err = parse_and_eval_program(src).unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("path sampler"), "Expected path sampler error, got: {msg}");
   }
 }

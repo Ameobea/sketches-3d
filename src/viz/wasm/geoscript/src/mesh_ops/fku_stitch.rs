@@ -206,6 +206,50 @@ pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
   best_offset
 }
 
+// const ALIGNMENT_ANCHOR_COUNT: usize = 8;
+
+// /// Find the best starting offset for ring B to minimize twist/misalignment with ring A.
+// ///
+// /// Samples `ALIGNMENT_ANCHOR_COUNT` evenly-spaced anchor vertices from ring A, and for each
+// /// candidate offset, measures the total squared distance from each anchor to its corresponding
+// /// vertex in ring B.  The offset with the lowest total wins.
+// ///
+// /// This is more robust than single-vertex alignment, especially when rings have mismatched
+// /// vertex counts or non-uniform vertex density.
+// pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
+//   let n = pts_a.len();
+//   let m = pts_b.len();
+//   if n == 0 || m == 0 {
+//     return 0;
+//   }
+
+//   // Pick up to `ALIGNMENT_ANCHOR_COUNT` evenly-spaced indices from ring A
+//   let k = ALIGNMENT_ANCHOR_COUNT.min(n);
+//   let anchors = (0..k).map(|i| {
+//     let a_idx = i * n / k;
+//     (a_idx, pts_a[a_idx])
+//   });
+
+//   let mut best_offset = 0usize;
+//   let mut best_total_dist = f32::INFINITY;
+
+//   for offset in 0..m {
+//     let mut total_dist = 0.0f32;
+//     for (a_idx, a_pos) in anchors.clone() {
+//       // The corresponding index in B for this anchor, given the candidate offset.
+//       // a_idx/n gives the fractional position around ring A; scale to ring B.
+//       let b_idx = (a_idx * m / n + offset) % m;
+//       total_dist += (pts_b[b_idx] - a_pos).norm_squared();
+//     }
+//     if total_dist < best_total_dist {
+//       best_total_dist = total_dist;
+//       best_offset = offset;
+//     }
+//   }
+
+//   best_offset
+// }
+
 /// Performs FKU DP stitching between two rings/strips of 3D points.
 ///
 /// For closed rings (`CLOSED=true`), the algorithm naturally handles wrap-around
@@ -514,36 +558,43 @@ pub fn dp_stitch_presampled(
     0
   };
 
-  // Pre-rotate ring B positions and t-values to avoid modulo ops in the DP solver
+  // Pre-rotate ring B positions and t-values to avoid modulo ops in the DP solver.
   let rotated_pts_b = rotate_ring(pts_b, b_offset);
-  let rotated_ts_b = ts_b.map(|ts| {
+  let rotated_ts_b = ts_b.map(|ts: &[f32]| {
     let m = ts.len();
     if b_offset == 0 || m == 0 {
       ts.to_vec()
     } else {
-      (0..m).map(|i| ts[(i + b_offset) % m]).collect()
+      // re-normalize t-values so the parametric origin aligns with the new spatial origin.  Without
+      // this, the `DT_WEIGHT` penalty fights against the spatial alignment, causing the DP to
+      // create large vertex fans as it tries to reconcile conflicting objectives.
+      let t_shift = ts[b_offset % m];
+      (0..m)
+        .map(|i| {
+          let t = ts[(i + b_offset) % m] - t_shift;
+          if t < 0. {
+            t + 1.
+          } else {
+            t
+          }
+        })
+        .collect()
     }
   });
 
-  let moves = if closed {
-    dp_stitch_solve::<true>(
-      pts_a,
-      &rotated_pts_b,
-      ts_a,
-      rotated_ts_b.as_deref(),
-      inv_scale,
-      inv_scale_sq,
-    )
+  let solve_impl = if closed {
+    dp_stitch_solve::<true>
   } else {
-    dp_stitch_solve::<false>(
-      pts_a,
-      &rotated_pts_b,
-      ts_a,
-      rotated_ts_b.as_deref(),
-      inv_scale,
-      inv_scale_sq,
-    )
+    dp_stitch_solve::<false>
   };
+  let moves = solve_impl(
+    pts_a,
+    &rotated_pts_b,
+    ts_a,
+    rotated_ts_b.as_deref(),
+    inv_scale,
+    inv_scale_sq,
+  );
 
   // Map DP indices to actual vertex buffer indices.
   // Ring A: DP index i maps directly to vertex buffer (with wrap for closed rings)

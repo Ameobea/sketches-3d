@@ -1,5 +1,5 @@
 tile = |n: num| {
-  path = superellipse(width=4, height=10, n=n, point_count=50) -> |v| vec3(v.x, 0, v.y)
+  path = superellipse_path(width=4, height=10, n=n, point_count=50) -> |v| vec3(v.x, 0, v.y)
 
   blocker = path
     | fan_fill(flipped=true)

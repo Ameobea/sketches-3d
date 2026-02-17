@@ -6,7 +6,7 @@ use nalgebra::Matrix4;
 
 use crate::{
   builtins::trace_path::{
-    build_interval_weights, build_topology_samples, normalize_guides, PathTracerCallable,
+    as_path_sampler, build_interval_weights, build_topology_samples, normalize_guides,
     SegmentInterval,
   },
   ArgRef, Callable, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value, Vec2,
@@ -305,13 +305,7 @@ fn collect_path_sampler_guides(
   label: &str,
 ) -> Result<Option<Vec<f32>>, ErrorStack> {
   fn sampler_guides(callable: &Callable) -> Option<Vec<f32>> {
-    match callable {
-      Callable::Dynamic { inner, .. } => inner
-        .as_any()
-        .downcast_ref::<PathTracerCallable>()
-        .map(|tracer| tracer.critical_t_values()),
-      _ => None,
-    }
+    as_path_sampler(callable).map(|s| s.critical_t_values())
   }
 
   let err_expected = || {
@@ -364,16 +358,14 @@ fn extract_dynamic_profile_data(
   value: Value,
 ) -> Result<DynamicProfileData, ErrorStack> {
   if let Some(callable) = value.as_callable() {
-    if let Callable::Dynamic { inner, .. } = &**callable {
-      if let Some(tracer) = inner.as_any().downcast_ref::<PathTracerCallable>() {
-        let critical_points = normalize_guides(&tracer.critical_t_values());
-        return Ok(DynamicProfileData {
-          sampler: Rc::clone(callable),
-          critical_points,
-          sharp: false,
-          adaptive: None,
-        });
-      }
+    if let Some(sampler) = as_path_sampler(callable) {
+      let critical_points = normalize_guides(&sampler.critical_t_values());
+      return Ok(DynamicProfileData {
+        sampler: Rc::clone(callable),
+        critical_points,
+        sharp: false,
+        adaptive: None,
+      });
     }
     return Ok(DynamicProfileData {
       sampler: Rc::clone(callable),
@@ -1163,21 +1155,15 @@ pub(crate) fn rail_sweep_impl(
         }
 
         fn sampler_data(callable: &Callable) -> Option<SamplerData> {
-          match callable {
-            Callable::Dynamic { inner, .. } => inner
-              .as_any()
-              .downcast_ref::<PathTracerCallable>()
-              .map(|tracer| SamplerData {
-                guides: tracer.critical_t_values(),
-                intervals: tracer.segment_intervals(),
-              }),
-            _ => None,
-          }
+          as_path_sampler(callable).map(|s| SamplerData {
+            guides: s.critical_t_values(),
+            intervals: s.segment_intervals(),
+          })
         }
 
         let err_expected = || {
           ErrorStack::new(format!(
-            "Invalid profile_samplers argument for `rail_sweep`; expected a trace_path sampler, a \
+            "Invalid profile_samplers argument for `rail_sweep`; expected a path sampler, a \
              sequence of samplers, or a function of `|u: float|: Seq<PathSampler> | PathSampler`",
           ))
         };
@@ -1186,13 +1172,7 @@ pub(crate) fn rail_sweep_impl(
         match value {
           Value::Nil => return Ok(None),
           Value::Callable(callable) => {
-            let data = match sampler_data(callable) {
-              Some(data) => data,
-              None => todo!(
-                "need to be able to handle the dynamic case where there's a dynamic path sampler \
-                 based on `u`"
-              ),
-            };
+            let data = sampler_data(callable).ok_or_else(err_expected)?;
             if data.guides.is_empty() {
               return Ok(None);
             }

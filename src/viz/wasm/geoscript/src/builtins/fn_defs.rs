@@ -5233,26 +5233,52 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
-  "superellipse_path" => FnDef {
+  "superellipse" => FnDef {
     module: "path",
     examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
           ArgDef {
-            name: "width",
+            name: "t",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
+            description: "Parameter in [0, 1] specifying the position along the superellipse perimeter"
+          },
+          ArgDef {
+            name: "n",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Exponent that controls the shape of the superellipse.  A value of 2 produces an ellipse, higher values produce more rectangular shapes, and lower values produce diamond and star-like shapes."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
           ArgDef {
             name: "height",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
             description: ""
           },
+        ],
+        description: "Returns the `Vec2` position at parameter `t` along the perimeter of a superellipse",
+        return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
+  "superellipse_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
           ArgDef {
             name: "n",
             interned_name: Sym(0),
@@ -5266,6 +5292,20 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Required,
             description: "Number of points to generate along the path"
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: ""
           },
         ],
         description: "Generates a sequence of points defining a superellipse, or rounded rectangle.  Returns a sequence of `point_count` `Vec2` points",
@@ -7550,6 +7590,65 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Offsets a 2D path using Clipper2 and returns a new path sampler.  Note: continuous curve detail is lost; the output is a polyline representation.",
         return_type: &[ArgType::Callable],
+      }
+    ]
+  },
+  "lerp_paths" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path_a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "First path sampler callable of signature `|t: float|: vec2`."
+          },
+          ArgDef {
+            name: "path_b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Second path sampler callable of signature `|t: float|: vec2`."
+          },
+          ArgDef {
+            name: "mix",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Interpolation factor [0, 1]. 0 returns path_a, 1 returns path_b."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Fallback critical point resolution when inputs lack topology data."
+          },
+        ],
+        description: "Interpolates between two path samplers, returning a new path callable. At each `t`, the output point is `lerp(path_a(t), path_b(t), mix)`. Critical points from both input paths are merged to preserve sharp features during interpolation.",
+        return_type: &[ArgType::Callable],
+      }
+    ]
+  },
+  "critical_points" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler callable (e.g. from trace_path, offset_path, lerp_paths)."
+          },
+        ],
+        description: "Returns the critical t values of a path sampler as a sequence of floats. Critical points are parameter values where sharp features (corners, segment boundaries) occur. Only works with path samplers that have topology information.",
+        return_type: &[ArgType::Sequence],
       }
     ]
   },

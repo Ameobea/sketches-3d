@@ -52,7 +52,7 @@ use crate::{
     stitch_contours::stitch_contours,
   },
   noise::fbm_3d,
-  path_building::{build_torus_knot_path, cubic_bezier_3d_path, superellipse_path},
+  path_building::{build_torus_knot_path, cubic_bezier_3d_path, get_superellipse_point, superellipse_path},
   seq::{
     ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq,
     ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
@@ -62,6 +62,7 @@ use crate::{
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod fn_defs;
+pub(crate) mod lerp_path;
 pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 pub(crate) mod trace_path;
@@ -79,7 +80,6 @@ pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::
   "bezier" => "bezier3d",
   "sphere" => "icosphere",
   "cyl" => "cylinder",
-  "superellipse" => "superellipse_path",
   "rounded_rectangle" => "superellipse_path",
   "rounded_rect" => "superellipse_path",
   "mix" => "lerp",
@@ -2745,6 +2745,25 @@ fn bezier3d_impl(
   }
 }
 
+fn superellipse_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let n = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let width = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let height = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let (x, y) = get_superellipse_point(t, width, height, n);
+      Ok(Value::Vec2(Vec2::new(x, y)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn superellipse_path_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -2753,10 +2772,10 @@ fn superellipse_path_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let width = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let height = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let n = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let point_count = arg_refs[3].resolve(args, kwargs).as_int().unwrap() as usize;
+      let n = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let point_count = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+      let width = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let height = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
 
       let curve = superellipse_path(width, height, n, point_count).map(|v| Ok(Value::Vec2(v)));
       Ok(Value::Sequence(Rc::new(IteratorSeq { inner: curve })))
@@ -5853,6 +5872,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "bezier3d" => builtin_fn!(bezier3d, |def_ix, arg_refs, args, kwargs, _ctx| {
     bezier3d_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "superellipse" => builtin_fn!(superellipse, |def_ix, arg_refs, args, kwargs, _ctx| {
+    superellipse_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "superellipse_path" => builtin_fn!(superellipse_path, |def_ix, arg_refs, args, kwargs, _ctx| {
     superellipse_path_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -5904,6 +5926,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "offset_path" => builtin_fn!(offset_path, |def_ix, arg_refs, args, kwargs, ctx| {
     offset_path::offset_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "lerp_paths" => builtin_fn!(lerp_paths, |def_ix, arg_refs, args, kwargs, ctx| {
+    lerp_path::lerp_paths_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "critical_points" => builtin_fn!(critical_points, |def_ix, arg_refs, args, kwargs, ctx| {
+    lerp_path::critical_points_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "path_union" => builtin_fn!(path_union, |def_ix, arg_refs, args, kwargs, ctx| {
     path_boolean::path_union_impl(ctx, def_ix, arg_refs, args, kwargs)
