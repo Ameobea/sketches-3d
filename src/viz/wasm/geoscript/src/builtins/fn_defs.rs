@@ -5441,14 +5441,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional path sampler, sequence of path samplers (from `trace_path`), or function of `|u: float|: Seq<PathSampler> | PathSampler`.  Used to align profile `v` sampling with critical points."
+            description: "Optional path sampler or sequence of path samplers (from `trace_path`)`.  Used to align profile `v` sampling with critical points."
           },
           ArgDef {
             name: "dynamic_profile",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler>, sharp: bool, adaptive: bool }`. Returns either a path sampler directly (critical points extracted automatically if it's a PathTracerCallable) or a map with a sampler plus optional keys: `path_samplers` (trace_path samplers for critical points), `sharp` (mark ring edges as sharp), `adaptive` (override global adaptive_profile_sampling for this ring). More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
+            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float, u_ix: int|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler>, sharp: bool, adaptive: bool }`. Returns either a path sampler directly (critical points extracted automatically if it's a PathTracerCallable) or a map with a sampler plus optional keys: `path_samplers` (trace_path samplers for critical points), `sharp` (mark ring edges as sharp), `adaptive` (override global adaptive_profile_sampling for this ring). More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
           },
           ArgDef {
             name: "fku_stitching",
@@ -7550,6 +7550,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.0)),
+            // TODO: better description
             description: "Angle threshold used by some join types."
           },
           ArgDef {
@@ -7577,7 +7578,10 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "sample_count",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
-            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            default_value: DefaultValue::Optional(|| Value::Int(128)),
+            // TODO: this seems to be getting used for all paths even when the underlying path has topology data.
+            //
+            // maybe only with the lerp_paths case?
             description: "Uniform sample count for non-trace_path callables."
           },
           ArgDef {

@@ -5,7 +5,8 @@
   thread_local,
   impl_trait_in_fn_trait_return,
   unsafe_cell_access,
-  likely_unlikely
+  likely_unlikely,
+  iter_array_chunks
 )]
 
 #[cfg(target_arch = "wasm32")]

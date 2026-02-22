@@ -229,6 +229,28 @@ export const clipper2_offset_paths = (
   criticalAngleThreshold: number = 0.35, // radians
   criticalSegmentFraction: number = 0.15 // input units (0 = auto)
 ): void => {
+  // console.log({
+  //   coords: [...coords],
+  //   pathLengths: [...pathLengths],
+  //   pathIsClosed: [...pathIsClosed],
+  //   delta,
+  //   joinType,
+  //   endType,
+  //   miterLimit,
+  //   arcTolerance,
+  //   preserveCollinear,
+  //   reverseSolution,
+  //   stepCount,
+  //   superellipseExponent,
+  //   endExtensionScale,
+  //   arrowBackSweep,
+  //   teardropPinch,
+  //   joinAngleThreshold,
+  //   chebyshevSpacing,
+  //   simplifyEpsilon,
+  //   criticalAngleThreshold,
+  //   criticalSegmentFraction,
+  // });
   const Clipper2 = Clipper2Wasm.getSync();
 
   if (pathLengths.length !== pathIsClosed.length) {
@@ -255,6 +277,9 @@ export const clipper2_offset_paths = (
   }
   if (typeof clipperOffset.SetCriticalSegmentFraction === 'function') {
     clipperOffset.SetCriticalSegmentFraction(criticalSegmentFraction);
+  }
+  if (typeof clipperOffset.SetNormalizeStart === 'function') {
+    clipperOffset.SetNormalizeStart(true); // TODO is this even necessary with our fancy ring alignment stuff on the rust side?
   }
 
   let offset = 0;

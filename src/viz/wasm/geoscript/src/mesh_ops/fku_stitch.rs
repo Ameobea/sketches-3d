@@ -34,6 +34,11 @@ const EDGE_LEN_WEIGHT: f32 = 1.;
 /// shading artifacts.
 const DT_WEIGHT: f32 = 2.5;
 
+/// Cost multiplier applied when both endpoints of the connecting edge are critical points.
+/// This biases the stitching to connect critical-to-critical vertices (e.g. sharp seam points)
+/// rather than taking shortcuts across seams.
+const CRITICAL_PAIR_MULTIPLIER: f32 = 0.5;
+
 /// Cost function for DP stitching.
 ///
 /// - `p1`, `p2`: The two vertices on the ring that is advancing (the "segment" being added)
@@ -42,6 +47,9 @@ const DT_WEIGHT: f32 = 2.5;
 ///   characteristic size of the ring pair (e.g. average radius).
 /// - `t2`, `t3`: Parametric t-values for `p2` and `p3` respectively. When not available, callers
 ///   should pass 0.0 for both (making the dt term zero).
+/// - `both_critical`: When true, both `p2` and `p3` are critical points (e.g. sharp seam vertices).
+///   The cost is multiplied by `CRITICAL_PAIR_MULTIPLIER` to bias stitching towards connecting
+///   critical vertices to each other.
 #[inline]
 pub fn dp_stitch_cost(
   p1: Vec3,
@@ -51,6 +59,7 @@ pub fn dp_stitch_cost(
   inv_scale_sq: f32,
   t2: f32,
   t3: f32,
+  both_critical: bool,
 ) -> f32 {
   let edge1 = p2 - p1;
   let edge2 = p3 - p1;
@@ -65,7 +74,14 @@ pub fn dp_stitch_cost(
     dt = 1.0 - dt;
   }
 
-  AREA_WEIGHT * area * inv_scale_sq + EDGE_LEN_WEIGHT * edge_len * inv_scale + DT_WEIGHT * dt
+  let cost =
+    AREA_WEIGHT * area * inv_scale_sq + EDGE_LEN_WEIGHT * edge_len * inv_scale + DT_WEIGHT * dt;
+
+  if both_critical {
+    cost * CRITICAL_PAIR_MULTIPLIER
+  } else {
+    cost
+  }
 }
 
 /// Computes the average distance of a set of points from their centroid.
@@ -182,73 +198,124 @@ impl DpTable {
   }
 }
 
+/// Number of evenly-spaced arc-length samples used during ring alignment cross-correlation.
+///
+/// K=64 captures enough geometric structure (corners, curves) to distinguish orientations
+/// without being expensive. Cross-correlation is O(K²) = ~4096 operations.
+const ALIGNMENT_RESAMPLE_K: usize = 64;
+
+/// Computes cumulative arc lengths for a closed ring.
+///
+/// Returns a vector of length `pts.len() + 1` where entry `i` is the total
+/// distance from `pts[0]` to `pts[i]` along the ring edges. The final entry
+/// is the full perimeter length.
+fn cumulative_arc_lengths(pts: &[Vec3]) -> Vec<f32> {
+  let n = pts.len();
+  let mut lens = Vec::with_capacity(n + 1);
+  lens.push(0.0f32);
+  let mut total = 0.0f32;
+  for i in 0..n {
+    total += (pts[(i + 1) % n] - pts[i]).norm();
+    lens.push(total);
+  }
+  lens
+}
+
+// TODO: this duplicates some functionality from path_sampler; maybe we could re-use?
+/// Samples the ring at normalized arc-length parameter `t` in [0, 1) by linearly
+/// interpolating between adjacent vertices.
+fn sample_ring_at(pts: &[Vec3], lens: &[f32], total_len: f32, t: f32) -> Vec3 {
+  let target = t * total_len;
+
+  if target <= 0.0 {
+    return pts[0];
+  }
+  let idx = match lens.binary_search_by(|v| v.partial_cmp(&target).unwrap()) {
+    Ok(i) => i.min(pts.len() - 1),
+    Err(i) => (i - 1).min(pts.len() - 1),
+  };
+
+  let p0 = pts[idx];
+  let p1 = pts[(idx + 1) % pts.len()];
+  let seg_len = lens[idx + 1] - lens[idx];
+  if seg_len < 1e-9 {
+    return p0;
+  }
+  let alpha = (target - lens[idx]) / seg_len;
+  p0.lerp(&p1, alpha)
+}
+
+/// Resamples a ring into `count` uniformly arc-length-spaced points.
+fn resample_ring(pts: &[Vec3], count: usize) -> Vec<Vec3> {
+  let cum = cumulative_arc_lengths(pts);
+  let total_len = *cum.last().unwrap();
+  (0..count)
+    .map(|i| {
+      let t = i as f32 / count as f32;
+      sample_ring_at(pts, &cum, total_len, t)
+    })
+    .collect()
+}
+
 /// Find the best starting offset for ring B to minimize twist/misalignment with ring A.
-/// This rotates ring B's starting index to best align with ring A's starting position.
+///
+/// Uses arc-length resampling + cyclic cross-correlation to compare the full shape of
+/// both rings simultaneously.  This is robust to differences in vertex count and
+/// non-uniform vertex density — problems that break single-vertex or index-scaled
+/// approaches.
+///
+/// Algorithm:
+/// 1. Resample both rings to K uniformly arc-length-spaced points.
+/// 2. Try all K cyclic shifts of the resampled B ring; pick the shift that minimizes the sum of
+///    squared distances to the resampled A ring.
+/// 3. Map the winning normalized shift back to the nearest actual vertex index in pts_b.
 pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
-  if pts_b.is_empty() || pts_a.is_empty() {
+  if pts_a.is_empty() || pts_b.is_empty() {
     return 0;
   }
 
-  // Use centroid-based alignment: find the offset that minimizes distance between
-  // the first vertex of A and the corresponding vertex of B
-  let first_a = pts_a[0];
-  let mut best_offset = 0;
-  let mut best_dist = f32::INFINITY;
+  let k = ALIGNMENT_RESAMPLE_K;
+  let res_a = resample_ring(pts_a, k);
+  let res_b = resample_ring(pts_b, k);
 
-  for offset in 0..pts_b.len() {
-    let dist = (pts_b[offset] - first_a).norm_squared();
-    if dist < best_dist {
-      best_dist = dist;
-      best_offset = offset;
+  // Find the cyclic shift of res_b that best matches res_a.
+  let mut best_shift = 0usize;
+  let mut best_error = f32::MAX;
+  for shift in 0..k {
+    let mut error = 0.0f32;
+    for i in 0..k {
+      error += (res_a[i] - res_b[(i + shift) % k]).norm_squared();
+    }
+    if error < best_error {
+      best_error = error;
+      best_shift = shift;
     }
   }
 
-  best_offset
+  // Convert the winning normalized shift (best_shift / K) to the nearest actual
+  // vertex index in pts_b using its arc-length parameterization.
+  let best_t = best_shift as f32 / k as f32;
+  let cum_b = cumulative_arc_lengths(pts_b);
+  let total_len_b = *cum_b.last().unwrap();
+
+  let mut best_real_idx = 0usize;
+  let mut best_diff = f32::MAX;
+  for (i, &d) in cum_b.iter().take(pts_b.len()).enumerate() {
+    let t = if total_len_b > 1e-9 {
+      d / total_len_b
+    } else {
+      0.0
+    };
+    let diff = (t - best_t).abs();
+    let cyclic_diff = diff.min(1.0 - diff);
+    if cyclic_diff < best_diff {
+      best_diff = cyclic_diff;
+      best_real_idx = i;
+    }
+  }
+
+  best_real_idx
 }
-
-// const ALIGNMENT_ANCHOR_COUNT: usize = 8;
-
-// /// Find the best starting offset for ring B to minimize twist/misalignment with ring A.
-// ///
-// /// Samples `ALIGNMENT_ANCHOR_COUNT` evenly-spaced anchor vertices from ring A, and for each
-// /// candidate offset, measures the total squared distance from each anchor to its corresponding
-// /// vertex in ring B.  The offset with the lowest total wins.
-// ///
-// /// This is more robust than single-vertex alignment, especially when rings have mismatched
-// /// vertex counts or non-uniform vertex density.
-// pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
-//   let n = pts_a.len();
-//   let m = pts_b.len();
-//   if n == 0 || m == 0 {
-//     return 0;
-//   }
-
-//   // Pick up to `ALIGNMENT_ANCHOR_COUNT` evenly-spaced indices from ring A
-//   let k = ALIGNMENT_ANCHOR_COUNT.min(n);
-//   let anchors = (0..k).map(|i| {
-//     let a_idx = i * n / k;
-//     (a_idx, pts_a[a_idx])
-//   });
-
-//   let mut best_offset = 0usize;
-//   let mut best_total_dist = f32::INFINITY;
-
-//   for offset in 0..m {
-//     let mut total_dist = 0.0f32;
-//     for (a_idx, a_pos) in anchors.clone() {
-//       // The corresponding index in B for this anchor, given the candidate offset.
-//       // a_idx/n gives the fractional position around ring A; scale to ring B.
-//       let b_idx = (a_idx * m / n + offset) % m;
-//       total_dist += (pts_b[b_idx] - a_pos).norm_squared();
-//     }
-//     if total_dist < best_total_dist {
-//       best_total_dist = total_dist;
-//       best_offset = offset;
-//     }
-//   }
-
-//   best_offset
-// }
 
 /// Performs FKU DP stitching between two rings/strips of 3D points.
 ///
@@ -259,9 +326,6 @@ pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
 /// The `CLOSED` const generic ensures specialized code generation for both cases,
 /// eliminating runtime branching in the hot inner loop.
 ///
-/// Returns a vector of (i, j, move) tuples representing the DP path.
-/// These can be used to generate triangles connecting the two rings.
-///
 /// Note: For closed rings, pts_b should be pre-rotated using `rotate_ring` and
 /// `find_best_ring_alignment` before calling this function.
 pub fn dp_stitch_solve<const CLOSED: bool>(
@@ -269,6 +333,8 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
   pts_b: &[Vec3],
   ts_a: Option<&[f32]>,
   ts_b: Option<&[f32]>,
+  crit_a: Option<&BitSlice>,
+  crit_b: Option<&BitSlice>,
   inv_scale: f32,
   inv_scale_sq: f32,
 ) -> std::iter::Rev<<Vec<(usize, usize, DpMove)> as IntoIterator>::IntoIter> {
@@ -302,6 +368,19 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
       .unwrap_or(0.)
   };
 
+  // Critical-point accessors with wrap-around for closed rings.
+  // When no critical mask is provided, returns false.
+  let is_crit_a = |i: usize| -> bool {
+    crit_a
+      .map(|c| c[if CLOSED && i == n { 0 } else { i }])
+      .unwrap_or(false)
+  };
+  let is_crit_b = |j: usize| -> bool {
+    crit_b
+      .map(|c| c[if CLOSED && j == m { 0 } else { j }])
+      .unwrap_or(false)
+  };
+
   // Allocate DP table as (table_n+1) x (table_m+1) grid using SoA layout
   // State (i, j) means we've processed vertices 0..i from A and 0..j from B
   let mut table = DpTable::new(table_n + 1, table_m + 1);
@@ -323,6 +402,7 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
         inv_scale_sq,
         get_tb(j - 1),
         get_ta(0),
+        is_crit_b(j - 1) && is_crit_a(0),
       )
     }
   });
@@ -342,6 +422,7 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
         inv_scale_sq,
         get_ta(i - 1),
         get_tb(0),
+        is_crit_a(i - 1) && is_crit_b(0),
       )
     }
   });
@@ -365,6 +446,7 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
             inv_scale_sq,
             get_ta(i - 1),
             get_tb(j - 1),
+            is_crit_a(i - 1) && is_crit_b(j - 1),
           );
           prev_cost + edge_cost
         }
@@ -386,6 +468,7 @@ pub fn dp_stitch_solve<const CLOSED: bool>(
             inv_scale_sq,
             get_tb(j - 1),
             get_ta(i - 1),
+            is_crit_b(j - 1) && is_crit_a(i - 1),
           );
           prev_cost + edge_cost
         }
@@ -533,6 +616,8 @@ pub fn dp_stitch_presampled(
   pts_b: &[Vec3],
   ts_a: Option<&[f32]>,
   ts_b: Option<&[f32]>,
+  crit_a: Option<&BitSlice>,
+  crit_b: Option<&BitSlice>,
   ring_a_base_idx: usize,
   ring_b_base_idx: usize,
   closed: bool,
@@ -582,6 +667,20 @@ pub fn dp_stitch_presampled(
     }
   });
 
+  // Pre-rotate critical mask for ring B to match the rotated positions/t-values.
+  let rotated_crit_b = crit_b.map(|c| {
+    let m = c.len();
+    if b_offset == 0 || m == 0 {
+      c.to_bitvec()
+    } else {
+      let mut rotated = bitvec![0; m];
+      for i in 0..m {
+        rotated.set(i, c[(i + b_offset) % m]);
+      }
+      rotated
+    }
+  });
+
   let solve_impl = if closed {
     dp_stitch_solve::<true>
   } else {
@@ -592,6 +691,8 @@ pub fn dp_stitch_presampled(
     &rotated_pts_b,
     ts_a,
     rotated_ts_b.as_deref(),
+    crit_a,
+    rotated_crit_b.as_deref(),
     inv_scale,
     inv_scale_sq,
   );
@@ -602,7 +703,7 @@ pub fn dp_stitch_presampled(
   let get_a_vtx_ix = |i: usize| -> u32 { (ring_a_base_idx + (i % n)) as u32 };
   let get_b_vtx_ix = |j: usize| -> u32 { (ring_b_base_idx + ((j + b_offset) % m)) as u32 };
 
-  // Generate triangles from DP moves.
+  // Generate triangles from DP moves, collecting stats in the same pass.
   // For closed rings, the solver includes wrap-around moves, so we generate all
   // triangles including the seam (no manual closing needed).
   for (i, j, mv) in moves {
@@ -748,7 +849,7 @@ mod tests {
     ];
     let pts_b = pts_a.clone();
 
-    let moves = dp_stitch_solve::<false>(&pts_a, &pts_b, None, None, 1.0, 1.0);
+    let moves = dp_stitch_solve::<false>(&pts_a, &pts_b, None, None, None, None, 1.0, 1.0);
     // For open strips: should have n + m moves total
     assert_eq!(moves.len(), 8);
   }
@@ -768,7 +869,7 @@ mod tests {
     assert_eq!(offset, 0); // Should be aligned already
 
     let rotated_b = rotate_ring(&pts_b, offset);
-    let moves = dp_stitch_solve::<true>(&pts_a, &rotated_b, None, None, 1.0, 1.0);
+    let moves = dp_stitch_solve::<true>(&pts_a, &rotated_b, None, None, None, None, 1.0, 1.0);
     // For closed rings: should have (n+1) + (m+1) moves total (includes wrap-around)
     assert_eq!(moves.len(), 10);
   }
@@ -791,7 +892,7 @@ mod tests {
     ];
 
     let offset = find_best_ring_alignment(&pts_a, &pts_b);
-    // The closest vertex in B to A[0]=(1,0,0) is B[2]=(1,0,0), so offset should be 2
+    // B is rotated by 2 positions from A; arc-length cross-correlation should recover this
     assert_eq!(offset, 2);
   }
 
@@ -844,6 +945,8 @@ mod tests {
     dp_stitch_presampled(
       &ring0_pts,
       &ring1_pts,
+      None,
+      None,
       None,
       None,
       ring_a_start,

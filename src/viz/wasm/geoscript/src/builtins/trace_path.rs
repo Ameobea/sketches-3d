@@ -27,8 +27,8 @@ fn extend_bounds(min: &mut Vec2, max: &mut Vec2, p: Vec2) {
   max.y = max.y.max(p.y);
 }
 
-#[derive(Clone)]
-struct ArcLengthTable {
+#[derive(Clone, Debug)]
+pub(crate) struct ArcLengthTable {
   cumulative: Vec<f32>,
   total: f32,
 }
@@ -96,8 +96,8 @@ impl ArcLengthTable {
   }
 }
 
-#[derive(Clone)]
-enum PathSegment {
+#[derive(Clone, Debug)]
+pub(crate) enum PathSegment {
   Line {
     start: Vec2,
     end: Vec2,
@@ -508,12 +508,12 @@ impl PathSegment {
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct PathSubpath {
-  segments: Vec<PathSegment>,
-  cumulative_lengths: Vec<f32>,
-  total_length: f32,
-  closed: bool,
+  pub(crate) segments: Vec<PathSegment>,
+  pub(crate) cumulative_lengths: Vec<f32>,
+  pub(crate) total_length: f32,
+  pub(crate) closed: bool,
 }
 
 struct SubpathBuilder {
@@ -628,13 +628,14 @@ impl PathSubpath {
   }
 }
 
+#[derive(Debug)]
 pub struct PathTracerCallable {
-  interned_t_kwarg: Sym,
+  pub interned_t_kwarg: Sym,
   pub subpaths: Vec<PathSubpath>,
   pub subpath_cumulative_lengths: Vec<f32>,
   pub total_length: f32,
   pub reverse: bool,
-  override_critical_points: Option<Vec<f32>>,
+  pub override_critical_points: Option<Vec<f32>>,
 }
 
 impl PathTracerCallable {
@@ -2583,7 +2584,11 @@ cps = critical_points(path)
       .consume(&ctx)
       .map(|r| r.unwrap().as_float().unwrap())
       .collect();
-    assert!(items.len() >= 3, "Expected at least 3 critical points (0, mid, 1), got {:?}", items);
+    assert!(
+      items.len() >= 3,
+      "Expected at least 3 critical points (0, mid, 1), got {:?}",
+      items
+    );
     assert!((items[0] - 0.0).abs() < 1e-6);
     assert!((items[items.len() - 1] - 1.0).abs() < 1e-6);
     for w in items.windows(2) {
@@ -2599,6 +2604,9 @@ cps = critical_points(f)
 "#;
     let err = parse_and_eval_program(src).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("path sampler"), "Expected path sampler error, got: {msg}");
+    assert!(
+      msg.contains("path sampler"),
+      "Expected path sampler error, got: {msg}"
+    );
   }
 }

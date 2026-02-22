@@ -1,5 +1,7 @@
 use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 
+use bitvec::prelude::*;
+
 use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, slotmap_utils::vkey, LinkedMesh};
 use nalgebra::Matrix4;
@@ -228,6 +230,9 @@ struct RingInfo {
   /// The parametric t-values used to sample this ring's profile.
   /// Used by the DP stitcher to penalize connecting vertices with dissimilar t-values.
   t_values: Option<Vec<f32>>,
+  /// Bitmask indicating which t-values correspond to critical points (e.g. sharp seam vertices).
+  /// Used by the DP stitcher to bias towards connecting critical vertices to each other.
+  critical_mask: Option<BitVec>,
 }
 
 struct DynamicProfileData {
@@ -396,7 +401,14 @@ fn extract_dynamic_profile_data(
     let critical_points = match map.get("path_samplers") {
       Some(val) => collect_path_sampler_guides(ctx, val, "dynamic_profile path_samplers")?
         .unwrap_or_else(|| vec![0., 1.]),
-      None => vec![0., 1.],
+      None => {
+        // check if the sampler itself is a path sampler with guides
+        if let Some(sampler_guides) = as_path_sampler(sampler).map(|s| s.critical_t_values()) {
+          normalize_guides(&sampler_guides)
+        } else {
+          vec![0., 1.]
+        }
+      }
     };
 
     let sharp = match map.get("sharp") {
@@ -542,6 +554,7 @@ pub fn rail_sweep(
         cap_frame: None,
         sharp: false,
         t_values: None,
+        critical_mask: None,
       });
     } else {
       let start = verts.len();
@@ -552,6 +565,7 @@ pub fn rail_sweep(
         cap_frame,
         sharp: false,
         t_values: None,
+        critical_mask: None,
       });
     }
   }
@@ -634,7 +648,11 @@ fn rail_sweep_dynamic(
     let twist_angle = twist.value_at(u_ix);
     let (normal, binormal) = apply_twist(frame.normal, frame.binormal, twist_angle);
 
-    let result = ctx.invoke_callable(dynamic_profile_cb, &[Value::Float(u)], EMPTY_KWARGS)?;
+    let result = ctx.invoke_callable(
+      dynamic_profile_cb,
+      &[Value::Float(u), Value::Int(u_ix as i64)],
+      EMPTY_KWARGS,
+    )?;
     let mut profile_data = extract_dynamic_profile_data(ctx, result)?;
     if profile_data.critical_points.len() < 2 {
       profile_data.critical_points = vec![0.0, 1.0];
@@ -670,10 +688,10 @@ fn rail_sweep_dynamic(
     .into_iter()
     .map(|ring| {
       let start = verts.len();
-      let (count, t_values) = if ring.collapsed {
+      let (count, t_values, critical_mask) = if ring.collapsed {
         let apex = sample_profile_at(ctx, &ring, 0.0)?;
         verts.push(apex);
-        (1, None)
+        (1, None, None)
       } else {
         let use_adaptive = ring
           .profile_data
@@ -705,11 +723,32 @@ fn rail_sweep_dynamic(
           }
         };
 
+        // TODO: this is gross; we should at least do a binary search instead of iterating every
+        // sample for every critical point
+        //
+        // or better yet, track the critical status of each samples and plumb it through
+
+        // Build critical mask: mark each sample that
+        // coincides with a critical point.
+        let crit_pts = &ring.profile_data.critical_points;
+        let crit_mask = if crit_pts.is_empty() {
+          None
+        } else {
+          let epsilon = 1e-6;
+          let mut mask = bitvec![0; samples.len()];
+          for (i, &t) in samples.iter().enumerate() {
+            if crit_pts.iter().any(|&c| (t - c).abs() < epsilon) {
+              mask.set(i, true);
+            }
+          }
+          Some(mask)
+        };
+
         let t_vals = samples.clone();
         for v in samples {
           verts.push(sample_profile_at(ctx, &ring, v)?);
         }
-        (verts.len() - start, Some(t_vals))
+        (verts.len() - start, Some(t_vals), crit_mask)
       };
 
       Ok(RingInfo {
@@ -718,6 +757,7 @@ fn rail_sweep_dynamic(
         cap_frame: ring.cap_frame.clone(),
         sharp: ring.profile_data.sharp,
         t_values,
+        critical_mask,
       })
     })
     .collect::<Result<Vec<_>, ErrorStack>>()?;
@@ -751,6 +791,8 @@ fn rail_sweep_dynamic(
         pts_b,
         r_a.t_values.as_deref(),
         r_b.t_values.as_deref(),
+        r_a.critical_mask.as_deref(),
+        r_b.critical_mask.as_deref(),
         r_a.start,
         r_b.start,
         true,
