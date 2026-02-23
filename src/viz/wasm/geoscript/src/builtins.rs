@@ -52,7 +52,9 @@ use crate::{
     stitch_contours::stitch_contours,
   },
   noise::fbm_3d,
-  path_building::{build_torus_knot_path, cubic_bezier_3d_path, get_superellipse_point, superellipse_path},
+  path_building::{
+    build_torus_knot_path, cubic_bezier_3d_path, get_superellipse_point, superellipse_path,
+  },
   seq::{
     ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq,
     ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,

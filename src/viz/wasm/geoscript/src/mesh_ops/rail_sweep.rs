@@ -440,6 +440,44 @@ fn extract_dynamic_profile_data(
   ))
 }
 
+/// Validates that a dynamic profile sampler's path topology is suitable for rail_sweep.
+///
+/// Rail sweep profiles must be a single continuous path (one subpath). Multiple subpaths
+/// indicate disconnected curves or a shape with holes, which would produce a garbled mesh
+/// since the ring stitching treats all sampled points as a single closed loop.
+///
+/// Only checks path samplers that expose topology info; black-box callables are skipped.
+fn validate_profile_topology(sampler: &Callable, u_ix: usize, u: f32) -> Result<(), ErrorStack> {
+  let Some(path_sampler) = as_path_sampler(sampler) else {
+    return Ok(());
+  };
+  let Some(topology) = path_sampler.subpath_topology() else {
+    return Ok(());
+  };
+
+  if topology.len() <= 1 {
+    return Ok(());
+  }
+
+  let mut detail = String::new();
+  for (i, sp) in topology.iter().enumerate() {
+    let status = if sp.closed { "closed" } else { "open" };
+    detail.push_str(&format!(
+      "\n  subpath {i}: {status}, {seg_count} segment{s}",
+      seg_count = sp.segment_count,
+      s = if sp.segment_count == 1 { "" } else { "s" },
+    ));
+  }
+
+  Err(ErrorStack::new(format!(
+    "Invalid dynamic_profile at spine index u_ix={u_ix} (u={u:.4}): path has {n} subpaths, but \
+     rail_sweep profiles must be a single continuous path (1 subpath).\nMultiple subpaths \
+     typically indicate a shape with holes or disconnected curves, which cannot be swept into a \
+     valid mesh.{detail}",
+    n = topology.len(),
+  )))
+}
+
 /// Samples the 2D profile offset at the given t value.
 fn sample_profile_offset(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Vec2, ErrorStack> {
   let offset_2d = ctx
@@ -544,6 +582,12 @@ pub fn rail_sweep(
     } else {
       None
     };
+
+    // TODO: in addition to handling the case where all vertices collapse to a point,
+    // also handle cases where they collapse to a line segment.
+    //
+    // CGAL's triangulation can't handle these cases and returns an error, but we should be able to
+    // do something intelligent for this case.
 
     if is_end && vertices_are_collapsed(&ring) {
       let start = verts.len();
@@ -654,6 +698,7 @@ fn rail_sweep_dynamic(
       EMPTY_KWARGS,
     )?;
     let mut profile_data = extract_dynamic_profile_data(ctx, result)?;
+    validate_profile_topology(&profile_data.sampler, u_ix, u)?;
     if profile_data.critical_points.len() < 2 {
       profile_data.critical_points = vec![0.0, 1.0];
     }

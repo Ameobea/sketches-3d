@@ -7389,6 +7389,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, the path will be sampled in reverse direction (from end to start). Sampling at t=0 will return the end point and t=1 will return the start point."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional fill rule that describes how the interior of this path should be interpreted for operations like tessellation.  One of \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil."
           }
         ],
         description: "Traces a path based on draw commands issued within the provided callback function.  The function returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
@@ -7422,6 +7429,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "If true, the path will be sampled in reverse direction (from end to start). Sampling at t=0 will return the end point and t=1 will return the start point."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional fill rule that describes how the interior of this path should be interpreted for operations like tessellation.  One of \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil."
           }
         ],
         description: "Parses SVG path data and returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",

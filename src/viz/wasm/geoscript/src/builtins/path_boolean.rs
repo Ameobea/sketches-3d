@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
-  build_topology_samples, sample_subpath_points, DrawCommand, PathTracerCallable,
+  build_topology_samples, sample_subpath_points, DrawCommand, FillRule, PathTracerCallable,
 };
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
@@ -58,38 +58,6 @@ pub enum BooleanOp {
   Intersect,
   Difference,
   Xor,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn parse_fill_rule(value: &Value, fn_name: &str) -> Result<u32, ErrorStack> {
-  if let Some(val) = value.as_str() {
-    let key = val.to_ascii_lowercase();
-    let mapped = match key.as_str() {
-      "evenodd" | "even_odd" | "even-odd" => 0,
-      "nonzero" | "non_zero" | "non-zero" => 1,
-      "positive" => 2,
-      "negative" => 3,
-      _ => {
-        return Err(ErrorStack::new(format!(
-          "Invalid fill_rule for `{fn_name}`; expected one of evenodd, nonzero, positive, \
-           negative, found: {val}"
-        )));
-      }
-    };
-    return Ok(mapped);
-  }
-
-  let num = value.as_float().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "Invalid fill_rule for `{fn_name}`; expected string or number, found: {value:?}"
-    ))
-  })? as f64;
-  if !(0.0..=3.0).contains(&num) {
-    return Err(ErrorStack::new(format!(
-      "Invalid fill_rule for `{fn_name}`; expected in [0, 3], found: {num}"
-    )));
-  }
-  Ok(num as u32)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -289,7 +257,9 @@ pub fn path_boolean_impl(
         ))
       })?;
 
-      let fill_rule = parse_fill_rule(arg_refs[2].resolve(args, kwargs), fn_name)?;
+      let fill_rule_enum =
+        FillRule::parse(arg_refs[2].resolve(args, kwargs), fn_name)?;
+      let fill_rule = fill_rule_enum.to_clipper2_u32();
 
       let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap() as f64;
       if curve_angle_degrees <= 0.0 {
@@ -352,7 +322,7 @@ pub fn path_boolean_impl(
       let draw_cmds = build_draw_commands(output_paths);
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let tracer = PathTracerCallable::new_with_critical_points(
+      let mut tracer = PathTracerCallable::new_with_critical_points(
         false,
         false,
         false,
@@ -360,6 +330,8 @@ pub fn path_boolean_impl(
         interned_t_kwarg,
         None,
       );
+      // The output has been resolved by Clipper2 using this fill rule, so carry it forward.
+      tracer.fill_rule = Some(fill_rule_enum);
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: fn_name.to_owned(),
         inner: Box::new(tracer),

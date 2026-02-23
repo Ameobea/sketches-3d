@@ -129,6 +129,71 @@ pub(crate) enum PathSegment {
   },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FillRule {
+  NonZero,
+  EvenOdd,
+  Positive,
+  Negative,
+}
+
+impl FillRule {
+  pub(crate) fn parse(value: &Value, fn_name: &str) -> Result<Self, ErrorStack> {
+    if let Some(s) = value.as_str() {
+      let key = s.to_ascii_lowercase();
+      return match key.as_str() {
+        "nonzero" | "non_zero" | "non-zero" => Ok(FillRule::NonZero),
+        "evenodd" | "even_odd" | "even-odd" => Ok(FillRule::EvenOdd),
+        "positive" => Ok(FillRule::Positive),
+        "negative" => Ok(FillRule::Negative),
+        _ => Err(ErrorStack::new(format!(
+          "Invalid fill_rule for `{fn_name}`; expected one of \"nonzero\", \"evenodd\", \
+           \"positive\", \"negative\", found: \"{s}\""
+        ))),
+      };
+    }
+
+    if let Some(num) = value.as_float() {
+      let num = num as f64;
+      if !(0.0..=3.0).contains(&num) {
+        return Err(ErrorStack::new(format!(
+          "Invalid fill_rule for `{fn_name}`; expected in [0, 3], found: {num}"
+        )));
+      }
+      return FillRule::from_clipper2_u32(num as u32).ok_or_else(|| {
+        ErrorStack::new(format!(
+          "Invalid fill_rule for `{fn_name}`; unexpected numeric value: {num}"
+        ))
+      });
+    }
+
+    Err(ErrorStack::new(format!(
+      "Invalid fill_rule for `{fn_name}`; expected string or number, found: {value:?}"
+    )))
+  }
+
+  #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+  pub(crate) fn to_clipper2_u32(self) -> u32 {
+    match self {
+      FillRule::EvenOdd => 0,
+      FillRule::NonZero => 1,
+      FillRule::Positive => 2,
+      FillRule::Negative => 3,
+    }
+  }
+
+  #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+  pub(crate) fn from_clipper2_u32(val: u32) -> Option<Self> {
+    match val {
+      0 => Some(FillRule::EvenOdd),
+      1 => Some(FillRule::NonZero),
+      2 => Some(FillRule::Positive),
+      3 => Some(FillRule::Negative),
+      _ => None,
+    }
+  }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SegmentInterval {
   pub start: f32,
@@ -152,11 +217,22 @@ pub(crate) fn normalize_guides(guides: &[f32]) -> Vec<f32> {
   out
 }
 
+pub(crate) struct SubpathTopology {
+  pub closed: bool,
+  pub segment_count: usize,
+}
+
 pub(crate) trait PathSampler: Any {
   fn interned_t_kwarg(&self) -> Sym;
   fn critical_t_values(&self) -> Vec<f32>;
   fn segment_intervals(&self) -> Vec<SegmentInterval> {
     Vec::new()
+  }
+  fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
+    None
+  }
+  fn fill_rule(&self) -> Option<FillRule> {
+    None
   }
   fn eval_at(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack>;
 }
@@ -636,6 +712,7 @@ pub struct PathTracerCallable {
   pub total_length: f32,
   pub reverse: bool,
   pub override_critical_points: Option<Vec<f32>>,
+  pub fill_rule: Option<FillRule>,
 }
 
 impl PathTracerCallable {
@@ -904,7 +981,14 @@ impl PathTracerCallable {
       total_length,
       reverse,
       override_critical_points: None,
+      fill_rule: None,
     }
+  }
+
+  #[allow(dead_code)]
+  pub fn with_fill_rule(mut self, fill_rule: FillRule) -> Self {
+    self.fill_rule = Some(fill_rule);
+    self
   }
 
   #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -1047,6 +1131,7 @@ impl PathTracerCallable {
       total_length,
       reverse,
       override_critical_points: None,
+      fill_rule: None,
     }
   }
 }
@@ -1204,6 +1289,23 @@ impl PathSampler for PathTracerCallable {
 
   fn segment_intervals(&self) -> Vec<SegmentInterval> {
     PathTracerCallable::segment_intervals(self)
+  }
+
+  fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
+    Some(
+      self
+        .subpaths
+        .iter()
+        .map(|sp| SubpathTopology {
+          closed: sp.closed,
+          segment_count: sp.segments.len(),
+        })
+        .collect(),
+    )
+  }
+
+  fn fill_rule(&self) -> Option<FillRule> {
+    self.fill_rule
   }
 
   fn eval_at(&self, t: f32, _ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
@@ -1807,13 +1909,19 @@ pub fn trace_path_impl(
       let closed = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
       let center = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
       let reverse = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let fill_rule_val = arg_refs[4].resolve(args, kwargs);
+      let fill_rule = match fill_rule_val {
+        Value::Nil => None,
+        val => Some(FillRule::parse(val, "trace_path")?),
+      };
 
       let draw_cmds = eval_trace_path_cb(ctx, cb)
         .map_err(|err| err.wrap("Error while evaluating callback provided to `trace_path`"))?;
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let path_tracer =
+      let mut path_tracer =
         PathTracerCallable::new(closed, center, reverse, draw_cmds, interned_t_kwarg);
+      path_tracer.fill_rule = fill_rule;
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_path".to_string(),
         inner: Box::new(path_tracer),
@@ -1982,13 +2090,19 @@ pub fn trace_svg_path_impl(
       let svg_path_str = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
       let center = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
       let reverse = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+      let fill_rule_val = arg_refs[3].resolve(args, kwargs);
+      let fill_rule = match fill_rule_val {
+        Value::Nil => None,
+        val => Some(FillRule::parse(val, "trace_svg_path")?),
+      };
 
       let draw_cmds = parse_svg_path_to_draw_commands(svg_path_str)
         .map_err(|err| err.wrap("Error while parsing SVG path string"))?;
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let path_tracer =
+      let mut path_tracer =
         PathTracerCallable::new(false, center, reverse, draw_cmds, interned_t_kwarg);
+      path_tracer.fill_rule = fill_rule;
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_svg_path".to_string(),
         inner: Box::new(path_tracer),

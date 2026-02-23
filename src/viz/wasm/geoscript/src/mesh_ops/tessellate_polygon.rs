@@ -20,9 +20,7 @@ extern "C" {
 #[derive(Clone, Copy, Debug)]
 pub struct PlaneFrame {
   pub center: Vec3,
-  /// The U axis of the local coordinate frame (lies in the plane).
   pub u_axis: Vec3,
-  /// The V axis of the local coordinate frame (lies in the plane).
   pub v_axis: Vec3,
 }
 
@@ -44,7 +42,7 @@ fn run_triangulation(vertices: &[f32], input_vertex_count: usize) -> Result<Vec<
 
   if !cgal_triangulate_polygon_2d(vertices) {
     let err = cgal_get_last_error().unwrap_or_else(|| "CGAL triangulation failed".to_owned());
-    return Err(ErrorStack::new(err));
+    return Err(ErrorStack::new(err).wrap("Error triangulating polygon with CGAL"));
   }
 
   let out_vertices = cgal_get_cdt2d_vertices();

@@ -418,9 +418,7 @@ pub fn offset_path_impl(
         {
           critical_points = Some(result.critical_t_values.clone());
         }
-        for path in result.paths {
-          output_paths.push(path);
-        }
+        output_paths.extend(result.paths);
         Ok(())
       };
 
