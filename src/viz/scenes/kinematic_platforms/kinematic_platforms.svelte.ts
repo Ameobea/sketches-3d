@@ -37,32 +37,28 @@ const initLevel = async (viz: Viz) => {
   const btTransform = new fpCtx.Ammo.btTransform();
   const btQuat = new fpCtx.Ammo.btQuaternion(0, 0, 0, 1);
   btTransform.setIdentity();
-  viz.registerBeforeRenderCb(curTimeSeconds => {
-    const t = curTimeSeconds * 0.5 * 15;
-    kinematicCube.position.set(-15 + Math.sin(t * 0.2) * 2, -4, 0);
-    kinematicCube.rotation.set(0, t * 0.02, 0);
+  const rigidBody = kinematicCube.userData.rigidBody as BtRigidBody;
+  const scratchEuler = new THREE.Euler();
+  const scratchQuat = new THREE.Quaternion();
+  const initialPhysicsTime = fpCtx.getPhysicsTime();
+  fpCtx.registerPhysicsTicker(
+    {
+      tick: physicsTimeSeconds => {
+        const elapsed = physicsTimeSeconds - initialPhysicsTime;
+        const t = elapsed * 0.5 * 15;
+        const x = -15 + Math.sin(t * 0.2) * 2;
+        const yRot = t * 0.02;
 
-    kinematicCube.updateMatrixWorld();
-    btTransform.setOrigin(
-      btvec3(kinematicCube.position.x, kinematicCube.position.y, kinematicCube.position.z)
-    );
-    btQuat.setValue(
-      kinematicCube.quaternion.x,
-      kinematicCube.quaternion.y,
-      kinematicCube.quaternion.z,
-      kinematicCube.quaternion.w
-    );
-    btTransform.setRotation(btQuat);
-    const rigidBody = kinematicCube.userData.rigidBody as BtRigidBody;
-    // rigidBody.setWorldTransform(btTransform);
-
-    // using motion state gives us interpolation for internal physics engine ticks.
-    // this helps reduce collision issues from fast-moving objects by treating it as if
-    // it moves steadily from its previous position to this new one over the course of
-    // one animation frame.
-    const motionState = rigidBody.getMotionState()!;
-    motionState.setWorldTransform(btTransform);
-  });
+        btTransform.setOrigin(btvec3(x, -4, 0));
+        scratchEuler.set(0, yRot, 0);
+        scratchQuat.setFromEuler(scratchEuler);
+        btQuat.setValue(scratchQuat.x, scratchQuat.y, scratchQuat.z, scratchQuat.w);
+        btTransform.setRotation(btQuat);
+        rigidBody.setWorldTransform(btTransform);
+      },
+    },
+    { mesh: kinematicCube, body: rigidBody }
+  );
 
   // const bulletGeo = new THREE.SphereGeometry(2, 16, 16);
   // const bulletMat = buildCustomShader({ color: 0xff0000 }, {}, { materialClass: MaterialClass.Instakill });

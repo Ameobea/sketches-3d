@@ -6,7 +6,8 @@ import type { BtCollisionObject, BtPairCachingGhostObject } from 'src/ammojs/amm
 import { delay } from '../util/util';
 import killerBulletColorShader from './shaders/killerBulletColor.frag?raw';
 import { EasingFnType } from '../util/easingFns';
-import { Scheduler, type SchedulerHandle } from './Scheduler';
+import { Scheduler } from './Scheduler';
+import type { PhysicsTickerHandle } from '../collision';
 
 interface BaseBulletHellEvent {
   /**
@@ -198,14 +199,15 @@ class BulletManager {
 
 export class BulletHellManager {
   private viz: Viz;
-  private startTimeSeconds: number = 0;
+  private startPhysicsTimeSeconds: number | null = null;
   private events: BulletHellEvent[] = [];
   private nextEventIx: number = 0;
   private bulletManager: BulletManager;
   private scheduler: Scheduler = new Scheduler();
   private gameEndCb?: (outcome: BulletHellOutcome) => void;
   private isPaused: boolean = false;
-  private pauseTimeSeconds: number = 0;
+  private pausePhysicsTimeSeconds: number = 0;
+  private physicsTickerHandle: PhysicsTickerHandle | null = null;
 
   constructor(viz: Viz, events: BulletHellEvent[], bounds: THREE.Box3) {
     // ensure events are sorted by time
@@ -299,15 +301,22 @@ export class BulletHellManager {
     }
   };
 
-  private tick = (curTimeSeconds: number, tDiffSeconds: number) => {
-    KillerBulletMaterial.setCurTimeSeconds(curTimeSeconds);
+  private getPhysicsTime = (): number => {
+    const fpCtx = this.viz.fpCtx;
+    if (!fpCtx) {
+      throw new Error('fpCtx not initialized');
+    }
+    return fpCtx.getPhysicsTime();
+  };
 
-    if (this.isPaused) {
+  private tickPhysics = (physicsTimeSeconds: number, fixedDtSeconds: number) => {
+    KillerBulletMaterial.setCurTimeSeconds(physicsTimeSeconds);
+
+    if (this.isPaused || this.startPhysicsTimeSeconds === null) {
       return;
     }
 
-    // have to factor in pause time and make time look continuous
-    const elapsedSinceStart = curTimeSeconds - this.pauseTimeSeconds - this.startTimeSeconds;
+    const elapsedSinceStart = physicsTimeSeconds - this.startPhysicsTimeSeconds;
 
     this.scheduler.tick(elapsedSinceStart);
 
@@ -316,7 +325,7 @@ export class BulletHellManager {
       this.nextEventIx += 1;
     }
 
-    this.bulletManager.tick(elapsedSinceStart, tDiffSeconds);
+    this.bulletManager.tick(elapsedSinceStart, fixedDtSeconds);
 
     if (
       this.nextEventIx >= this.events.length &&
@@ -332,13 +341,17 @@ export class BulletHellManager {
     const promise = new Promise<BulletHellOutcome>(resolve => {
       this.gameEndCb = resolve;
     });
-    if (this.startTimeSeconds !== 0) {
+    if (this.startPhysicsTimeSeconds !== null) {
       throw new Error('`BulletHellManager` already started');
     }
+    const fpCtx = this.viz.fpCtx;
+    if (!fpCtx) {
+      throw new Error('fpCtx not initialized');
+    }
 
-    this.startTimeSeconds = this.viz.clock.getElapsedTime();
-    this.pauseTimeSeconds = 0;
-    this.viz.registerBeforeRenderCb(this.tick);
+    this.startPhysicsTimeSeconds = this.getPhysicsTime();
+    this.pausePhysicsTimeSeconds = 0;
+    this.physicsTickerHandle = fpCtx.registerPhysicsTicker({ tick: this.tickPhysics });
     this.viz.registerOnRespawnCb(this.reset);
     this.viz.setOnInstakillTerrainCollisionCb(this.onBulletHit);
 
@@ -346,24 +359,32 @@ export class BulletHellManager {
   };
 
   public reset = () => {
-    this.startTimeSeconds = 0;
+    this.startPhysicsTimeSeconds = null;
+    this.pausePhysicsTimeSeconds = 0;
     this.nextEventIx = 0;
     this.bulletManager.reset();
     this.scheduler.clear();
     this.gameEndCb = undefined;
     this.isPaused = false;
-    this.viz.unregisterBeforeRenderCb(this.tick);
+    this.physicsTickerHandle?.unregister();
+    this.physicsTickerHandle = null;
     this.viz.unregisterOnRespawnCb(this.reset);
     this.viz.setOnInstakillTerrainCollisionCb(null);
   };
 
   public pause = () => {
-    this.pauseTimeSeconds = this.viz.clock.getElapsedTime();
+    if (this.startPhysicsTimeSeconds === null) {
+      return;
+    }
+    this.pausePhysicsTimeSeconds = this.getPhysicsTime();
     this.isPaused = true;
   };
 
   public resume = () => {
-    this.startTimeSeconds += this.viz.clock.getElapsedTime() - this.pauseTimeSeconds;
+    if (this.startPhysicsTimeSeconds === null) {
+      return;
+    }
+    this.startPhysicsTimeSeconds += this.getPhysicsTime() - this.pausePhysicsTimeSeconds;
     this.isPaused = false;
   };
 
@@ -432,15 +453,4 @@ export class BulletHellManager {
     this.viz.controlState.cameraControlEnabled = true;
   };
 
-  /**
-   * Registers a periodic callback that will be executed at `initialTimeSeconds` and then repeatedly every
-   * `intervalSeconds` after that.
-   */
-  private schedulePeriodic(
-    callback: () => void,
-    initialTimeSeconds: number,
-    intervalSeconds: number
-  ): SchedulerHandle {
-    return this.scheduler.schedule(callback, initialTimeSeconds, intervalSeconds);
-  }
 }

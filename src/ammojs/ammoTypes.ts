@@ -12,7 +12,7 @@ export interface BtTransform {
   getOrigin(): BtVec3;
   setOrigin(vec: BtVec3): void;
   setRotation(quat: BtQuaternion): void;
-  // getRotation(): BtQuaternion;
+  getRotation(): BtQuaternion;
   setEulerZYX(x: number, y: number, z: number): void;
 }
 
@@ -23,6 +23,37 @@ export interface BtQuaternion {
   y(): number;
   z(): number;
   w(): number;
+}
+
+export interface BtJumpPad {
+  setDirection(direction: BtVec3): void;
+  setBaseImpulse(impulse: number): void;
+  setSpeedScaling(scaling: number): void;
+  setCooldownSeconds(seconds: number): void;
+  getZoneId(): number;
+  setEnabled(enabled: boolean): void;
+}
+
+export interface BtBoostZone {
+  setDirection(direction: BtVec3): void;
+  setStrength(strength: number): void;
+  setDirectionalBias(bias: number): void;
+  getZoneId(): number;
+  setEnabled(enabled: boolean): void;
+}
+
+export interface BtSensor {
+  getZoneId(): number;
+  isOverlapping(): boolean;
+  setEnabled(enabled: boolean): void;
+}
+
+export enum ZoneEventType {
+  SensorEnter = 0,
+  SensorLeave = 1,
+  JumpPadTriggered = 2,
+  BoostZoneEnter = 3,
+  BoostZoneExit = 4,
 }
 
 export interface BtKinematicCharacterController {
@@ -51,6 +82,16 @@ export interface BtKinematicCharacterController {
   resetFall(): void;
   getForcedRotation(): BtQuaternion;
   resetForcedRotation(): void;
+  addJumpPad(pad: BtJumpPad): void;
+  removeJumpPad(pad: BtJumpPad): void;
+  addBoostZone(zone: BtBoostZone): void;
+  removeBoostZone(zone: BtBoostZone): void;
+  addSensor(sensor: BtSensor): void;
+  removeSensor(sensor: BtSensor): void;
+  getNumPendingEvents(): number;
+  getPendingEventId(index: number): number;
+  getPendingEventType(index: number): number;
+  clearPendingEvents(): void;
 }
 
 export type BtActionInterface = BtKinematicCharacterController;
@@ -67,6 +108,8 @@ export interface BtCollisionObject {
   setWorldTransform(transform: BtTransform): void;
   setCollisionShape(shape: BtCollisionShape): void;
   setCollisionFlags(flags: number): void;
+  setInterpolationLinearVelocity(linvel: BtVec3): void;
+  setInterpolationAngularVelocity(angvel: BtVec3): void;
   getNumOverlappingObjects(): number;
   // getOverlappingObject(index: number): BtCollisionObject;
   setActivationState(state: number): void;
@@ -101,6 +144,15 @@ export interface BtDiscreteDynamicsWorld {
   addAction(action: BtActionInterface): void;
   setGravity(gravity: BtVec3): void;
   stepSimulation(tDiffSeconds: number, maxSubSteps: number, fixedTimeStep: number): number;
+  beginStepSimulation(timeStep: number, maxSubSteps: number, fixedTimeStep: number): number;
+  substepSimulation(): void;
+  finishStepSimulation(): void;
+  computeAndSetInterpolationVelocity(
+    body: BtCollisionObject,
+    from: BtTransform,
+    to: BtTransform,
+    dt: number
+  ): void;
   addRigidBody(body: BtRigidBody): void;
   // setSynchronizeAllMotionStates(synchronize: boolean): void;
   // getSynchronizeAllMotionStates(): boolean;
@@ -181,6 +233,24 @@ export interface AmmoInterface {
   btCapsuleShape: new (radius: number, height: number) => BtCapsuleShape;
   btCylinderShape: new (halfExtents: BtVec3) => BtCylinderShape;
   btSphereShape: new (radius: number) => BtSphereShape;
+  btJumpPad: new (
+    ghostObject: BtPairCachingGhostObject,
+    zoneId: number,
+    baseImpulse: number,
+    speedScaling: number,
+    cooldownSeconds: number
+  ) => BtJumpPad;
+  btBoostZone: new (
+    ghostObject: BtPairCachingGhostObject,
+    zoneId: number,
+    strength: number,
+    directionalBias: number
+  ) => BtBoostZone;
+  btSensor: new (
+    ghostObject: BtPairCachingGhostObject,
+    zoneId: number,
+    minPenetrationDepth: number
+  ) => BtSensor;
   btKinematicCharacterController: new (
     ghostObject: BtPairCachingGhostObject,
     shape: BtConvexShape,

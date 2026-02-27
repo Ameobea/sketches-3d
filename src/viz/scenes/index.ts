@@ -419,7 +419,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () =>
       import('./kinematic_platforms/kinematic_platforms.svelte.ts').then(mod => mod.processLoadedScene),
     sceneName: null,
-    metadata: { title: 'kinematic_platforms' },
+    metadata: { title: 'kinematic_platforms (legacy test)' },
     legacyLights: false,
   },
   plats: {
