@@ -29,5 +29,7 @@
     "jsonc",
     "svelte"
   ],
-  "eslint.validate": ["javascript", "javascriptreact", "svelte"]
+  "eslint.validate": ["javascript", "javascriptreact", "svelte"],
+  "python-envs.defaultEnvManager": "ms-python.python:system",
+  "python-envs.pythonProjects": []
 }

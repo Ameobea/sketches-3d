@@ -5914,6 +5914,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "arc" => builtin_fn!(arc, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::draw_command_stub_impl("arc", def_ix, arg_refs, args, kwargs, ctx)
   }),
+  "circle" => builtin_fn!(circle, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("circle", def_ix, arg_refs, args, kwargs, ctx)
+  }),
   "close" => builtin_fn!(close, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::draw_command_stub_impl("close", def_ix, arg_refs, args, kwargs, ctx)
   }),

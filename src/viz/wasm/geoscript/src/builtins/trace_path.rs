@@ -932,6 +932,46 @@ impl PathTracerCallable {
           builder.last_cubic_ctrl = None;
           builder.last_quad_ctrl = None;
         }
+        DrawCommand::Circle { center, radius } => {
+          // Emit as: move to right of circle, two semicircular arcs, close.
+          finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
+
+          let right = center + Vec2::new(radius, 0.0);
+          let left = center - Vec2::new(radius, 0.0);
+
+          extend_bounds(&mut min, &mut max, center - Vec2::new(radius, radius));
+          extend_bounds(&mut min, &mut max, center + Vec2::new(radius, radius));
+
+          builder = Some(SubpathBuilder::new(right));
+          let b = builder.as_mut().unwrap();
+
+          // First semicircle: right -> left (sweep = true => goes through top)
+          if let Some((seg, smin, smax)) =
+            build_arc_segment(right, left, radius, radius, 0.0, false, true)
+          {
+            extend_bounds(&mut min, &mut max, smin);
+            extend_bounds(&mut min, &mut max, smax);
+            if seg.length() > LENGTH_EPSILON {
+              b.segments.push(seg);
+            }
+          }
+          b.current = left;
+
+          // Second semicircle: left -> right (sweep = true => completes the circle)
+          if let Some((seg, smin, smax)) =
+            build_arc_segment(left, right, radius, radius, 0.0, false, true)
+          {
+            extend_bounds(&mut min, &mut max, smin);
+            extend_bounds(&mut min, &mut max, smax);
+            if seg.length() > LENGTH_EPSILON {
+              b.segments.push(seg);
+            }
+          }
+          b.current = right;
+          b.closed = true;
+          b.last_cubic_ctrl = None;
+          b.last_quad_ctrl = None;
+        }
         DrawCommand::Close => {
           if let Some(builder) = builder.as_mut() {
             let cur = builder.current;
@@ -1341,6 +1381,10 @@ pub enum DrawCommand {
     sweep: bool,
     to: Vec2,
   },
+  Circle {
+    center: Vec2,
+    radius: f32,
+  },
   Close,
 }
 
@@ -1373,6 +1417,7 @@ fn inject_draw_commands(ctx: &EvalCtx, scope: &Scope, draw_ctx: &Rc<DrawCtx>) {
       "cubic_bezier" => Some(DrawCommandKind::Cubic),
       "smooth_cubic_bezier" => Some(DrawCommandKind::SmoothCubic),
       "arc" => Some(DrawCommandKind::Arc),
+      "circle" => Some(DrawCommandKind::Circle),
       "close" => Some(DrawCommandKind::Close),
       _ => None,
     }
@@ -1406,6 +1451,7 @@ fn inject_draw_commands(ctx: &EvalCtx, scope: &Scope, draw_ctx: &Rc<DrawCtx>) {
     "cubic_bezier",
     "smooth_cubic_bezier",
     "arc",
+    "circle",
     "close",
   ];
   for name in canonical {
@@ -1433,6 +1479,7 @@ enum DrawCommandKind {
   Cubic,
   SmoothCubic,
   Arc,
+  Circle,
   Close,
 }
 
@@ -1627,6 +1674,26 @@ impl DynamicCallable for DrawCommandCallable {
           to,
         });
       }
+      DrawCommandKind::Circle => {
+        let (center, radius) = match def_ix {
+          0 => {
+            let center = *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+            let radius = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+            (center, radius)
+          }
+          1 => {
+            let cx = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+            let cy = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+            let radius = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+            (Vec2::new(cx, cy), radius)
+          }
+          _ => unreachable!(),
+        };
+        self
+          .draw_ctx
+          .cmds
+          .push(DrawCommand::Circle { center, radius });
+      }
       DrawCommandKind::Close => {
         self.draw_ctx.cmds.push(DrawCommand::Close);
       }
@@ -1786,7 +1853,7 @@ fn build_arc_segment(
   ))
 }
 
-pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: [&str; 8] = [
+pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: &[&str] = &[
   "move",
   "line",
   "quadratic_bezier",
@@ -1794,6 +1861,7 @@ pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: [&str; 8] = [
   "cubic_bezier",
   "smooth_cubic_bezier",
   "arc",
+  "circle",
   "close",
 ];
 
@@ -1829,7 +1897,7 @@ fn eval_trace_path_cb(ctx: &EvalCtx, cb: &Callable) -> Result<Vec<DrawCommand>, 
   let mut body: ClosureBody = (*closure.body).clone();
 
   let mut draw_cmd_name_by_entry_ix = FxHashMap::default();
-  for name in TRACE_PATH_DRAW_COMMAND_NAMES {
+  for &name in TRACE_PATH_DRAW_COMMAND_NAMES {
     let entry_ix = get_builtin_fn_sig_entry_ix(name).unwrap();
     draw_cmd_name_by_entry_ix.insert(entry_ix, name);
   }

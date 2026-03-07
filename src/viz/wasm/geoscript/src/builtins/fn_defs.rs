@@ -8388,6 +8388,59 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "circle" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Center of the circle."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Radius of the circle."
+          },
+        ],
+        description: "Adds a circle centered at `center` with the given `radius`.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X coordinate of the center of the circle."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y coordinate of the center of the circle."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Radius of the circle."
+          },
+        ],
+        description: "Adds a circle centered at `cx,cy` with the given `radius`.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
   "close" => FnDef {
     module: "trace_path",
     examples: &[],

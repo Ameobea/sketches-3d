@@ -1,5 +1,4 @@
 #![feature(
-  if_let_guard,
   impl_trait_in_bindings,
   adt_const_params,
   thread_local,
@@ -415,6 +414,7 @@ impl Callable {
             | "smooth_cubic_bezier"
             | "smooth_quadratic_bezier"
             | "arc"
+            | "circle"
             | "close"
         )
       }
