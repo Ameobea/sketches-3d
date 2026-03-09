@@ -10,6 +10,7 @@ import type { ScoreThresholds } from './TimeDisplay.svelte';
 import TimeDisplay from './TimeDisplay.svelte';
 import type { SceneConfig } from '../scenes';
 import { API, MetricsAPI } from 'src/api/client';
+import { mergeDeep, type DeepPartial } from '../util/util';
 import { rwritable, type TransparentWritable } from '../util/TransparentWritable';
 import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { Scheduler, type SchedulerHandle } from '../bulletHell/Scheduler';
@@ -40,6 +41,7 @@ export class ParkourManager {
   private scoreThresholds: ScoreThresholds;
   private mapID: string;
   private useExternalVelocity: boolean;
+  private sceneConfigOverrides: DeepPartial<SceneConfig>;
 
   private curDashCharges: TransparentWritable<number> = rwritable(0);
   private lastResetPhysicsTime: number = 0;
@@ -70,7 +72,8 @@ export class ParkourManager {
     scoreThresholds: ScoreThresholds,
     materials: ParkourMaterials | undefined,
     mapID: string,
-    useExternalVelocity: boolean
+    useExternalVelocity: boolean,
+    sceneConfigOverrides: DeepPartial<SceneConfig> = {}
   ) {
     // pre-load physics engine since we know we'll need it and the viz can't start loading that until we return from
     // `processLoadedScene` function
@@ -82,6 +85,7 @@ export class ParkourManager {
     this.scoreThresholds = scoreThresholds;
     this.mapID = mapID;
     this.useExternalVelocity = useExternalVelocity;
+    this.sceneConfigOverrides = sceneConfigOverrides;
 
     if (materials) {
       this.setMaterials(materials);
@@ -453,7 +457,7 @@ export class ParkourManager {
   }
 
   public buildSceneConfig = (): SceneConfig => {
-    return {
+    const defaultSceneConfig: SceneConfig = {
       spawnLocation: 'spawn',
       gravity: 30,
       player: {
@@ -482,6 +486,7 @@ export class ParkourManager {
         neededSfx: ['dash', 'dash_pickup'],
       },
     };
+    return mergeDeep(defaultSceneConfig, this.sceneConfigOverrides);
   };
 
   private destroy = () => {

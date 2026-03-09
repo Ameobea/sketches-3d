@@ -422,6 +422,14 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     metadata: { title: 'kinematic_platforms (legacy test)' },
     legacyLights: false,
   },
+  jump_pad_speedup_test: {
+    gltfName: null,
+    sceneLoader: () =>
+      import('./jump_pad_speedup_test/jump_pad_speedup_test').then(mod => mod.processLoadedScene),
+    sceneName: null,
+    metadata: { title: 'jump pad + speedup test' },
+    legacyLights: false,
+  },
   plats: {
     gltfName: 'plats',
     extension: 'glb',
