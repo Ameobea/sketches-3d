@@ -158,7 +158,18 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     true,
     {
       gravity: 60,
-      player: { jumpVelocity: 36, dashConfig: { chargeConfig: { curCharges: rwritable(Infinity) } } },
+      gravityShaping: {
+        riseMultiplier: 1.0,
+        apexMultiplier: 0.85,
+        fallMultiplier: 1.5,
+        apexThreshold: 4.0,
+        kneeWidth: 0.5,
+      },
+      player: {
+        jumpVelocity: 36,
+        terminalVelocity: 80,
+        dashConfig: { chargeConfig: { curCharges: rwritable(Infinity) } },
+      },
     }
   );
 

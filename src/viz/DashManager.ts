@@ -5,7 +5,7 @@ import type { Viz } from '.';
 export class DashManager {
   public lastDashTimeSeconds = 0;
   /**
-   * `true` if the player has not touched the ground since they last dashed
+   * `true` if the player has not touched the ground (or hit a jump pad) since they last dashed
    */
   private dashNeedsGroundTouch = false;
   private dashCbs: ((curTimeSeconds: number) => void)[] = [];
@@ -103,6 +103,10 @@ export class DashManager {
     }
 
     return true;
+  }
+
+  public resetDashGroundTouch() {
+    this.dashNeedsGroundTouch = false;
   }
 
   public registerDashCb(cb: (curTimeSeconds: number) => void) {

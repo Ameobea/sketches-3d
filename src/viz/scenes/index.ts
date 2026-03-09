@@ -107,6 +107,31 @@ export interface SceneConfig {
   debugPlayerKinematics?: boolean;
   gravity?: number;
   /**
+   * Shapes the gravity curve during airborne movement to allow asymmetric jump arcs.
+   *
+   * Effective gravity is scaled by a multiplier that varies with vertical velocity:
+   *  - When `|verticalVelocity|` is large and positive (rising fast): `riseMultiplier` applies
+   *  - When `|verticalVelocity|` is near zero (apex of jump): `apexMultiplier` applies
+   *  - When `|verticalVelocity|` is large and negative (falling fast): `fallMultiplier` applies
+   *
+   * Transitions between zones are smoothed by `kneeWidth` to avoid jarring acceleration changes.
+   * All multipliers default to 1.0 (no shaping / standard parabolic arc).
+   */
+  gravityShaping?: {
+    /** Gravity multiplier when rising quickly. Default: 1.0 */
+    riseMultiplier?: number;
+    /** Gravity multiplier near the apex of a jump. Default: 1.0 */
+    apexMultiplier?: number;
+    /** Gravity multiplier when falling quickly. Default: 1.0 */
+    fallMultiplier?: number;
+    /** Vertical velocity (units/s) that defines the center of the apex zone. Default: 3.0 */
+    apexThreshold?: number;
+    /** Width of the smooth transition between zones (units/s). Default: 2.0 */
+    kneeWidth?: number;
+    /** If true, gravity shaping only applies during jumps (not when walking off ledges). Default: false */
+    onlyJumps?: boolean;
+  };
+  /**
    * Tick rate in hertz used to determine the fixed time step for the bullet physics simulation.
    *
    * Default: 160
@@ -115,6 +140,10 @@ export interface SceneConfig {
   player?: {
     dashConfig?: Partial<DashConfig>;
     jumpVelocity?: number;
+    /** Terminal fall speed in units/s. Default: 55 */
+    terminalVelocity?: number;
+    /** Grace period in seconds after leaving a ledge during which the player can still jump. Default: 0 (disabled) */
+    coyoteTimeSeconds?: number;
     /**
      * Over the course of a second `externalVelocityAirDampingFactor` percent of the external velocity
      * will bleed off while the player is in the air.  So vec3(0.5, 0.5, 0.5) means that 50% of external

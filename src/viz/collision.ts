@@ -151,6 +151,8 @@ export class BulletPhysics {
 
   private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
   private lastJumpTimeSeconds = 0;
+  private lastGroundedTimeSeconds = 0;
+  private coyoteTimeSeconds = 0;
   private moveDirection = new THREE.Vector3();
   private isWalking = false;
   private upDir = new THREE.Vector3(0, 1, 0);
@@ -303,6 +305,9 @@ export class BulletPhysics {
     this.playerController.setMaxSlope(MAX_SLOPE_RADS);
     this.playerController.setStepHeight(playerStepHeight);
     this.playerController.setJumpSpeed(this.viz.sceneConf.player?.jumpVelocity ?? DefaultJumpSpeed);
+    if (this.viz.sceneConf.player?.terminalVelocity !== undefined) {
+      this.playerController.setFallSpeed(this.viz.sceneConf.player.terminalVelocity);
+    }
 
     this.collisionWorld.addCollisionObject(
       this.playerGhostObject,
@@ -312,6 +317,28 @@ export class BulletPhysics {
     this.collisionWorld.addAction(this.playerController);
 
     this.setGravity(this.viz.sceneConf.gravity ?? DefaultGravity);
+
+    const gravityShaping = this.viz.sceneConf.gravityShaping;
+    if (gravityShaping) {
+      if (gravityShaping.riseMultiplier !== undefined) {
+        this.playerController.setGravityShapeRiseMultiplier(gravityShaping.riseMultiplier);
+      }
+      if (gravityShaping.apexMultiplier !== undefined) {
+        this.playerController.setGravityShapeApexMultiplier(gravityShaping.apexMultiplier);
+      }
+      if (gravityShaping.fallMultiplier !== undefined) {
+        this.playerController.setGravityShapeFallMultiplier(gravityShaping.fallMultiplier);
+      }
+      if (gravityShaping.apexThreshold !== undefined) {
+        this.playerController.setGravityShapeApexThreshold(gravityShaping.apexThreshold);
+      }
+      if (gravityShaping.kneeWidth !== undefined) {
+        this.playerController.setGravityShapeKneeWidth(gravityShaping.kneeWidth);
+      }
+      if (gravityShaping.onlyJumps !== undefined) {
+        this.playerController.setGravityShapeOnlyJumps(gravityShaping.onlyJumps);
+      }
+    }
 
     const externalVelocityAirDampingFactor =
       this.viz.sceneConf.player?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor;
@@ -332,6 +359,8 @@ export class BulletPhysics {
         externalVelocityGroundDampingFactor.z
       )
     );
+
+    this.coyoteTimeSeconds = this.viz.sceneConf.player?.coyoteTimeSeconds ?? 0;
   };
 
   private installMouseInputHandlers = () => {
@@ -528,7 +557,17 @@ export class BulletPhysics {
       }
     }
 
-    if (this.viz.controlState.movementEnabled && this.viz.keyStates['Space'] && wasOnGround) {
+    if (wasOnGround) {
+      this.lastGroundedTimeSeconds = curTimeSeconds;
+    }
+
+    const canJump =
+      wasOnGround ||
+      (this.coyoteTimeSeconds > 0 &&
+        curTimeSeconds - this.lastGroundedTimeSeconds <= this.coyoteTimeSeconds &&
+        curTimeSeconds - this.lastJumpTimeSeconds > this.coyoteTimeSeconds);
+
+    if (this.viz.controlState.movementEnabled && this.viz.keyStates['Space'] && canJump) {
       if (curTimeSeconds - this.lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
         this.playerController.jump(
           this.btvec3(
@@ -537,14 +576,9 @@ export class BulletPhysics {
             this.moveDirection.z * (this.jumpSpeed * 0.18)
           )
         );
-        // playerController.setExternalVelocity(
-        //   this.btvec3(
-        //     moveDirection.x * (jumpSpeed * 0.18) * 0.01,
-        //     jumpSpeed * 0.01,
-        //     moveDirection.z * (jumpSpeed * 0.18) * 0.01
-        //   )
-        // );
         this.lastJumpTimeSeconds = curTimeSeconds;
+        // Consume coyote time so it can't be used again until next grounding
+        this.lastGroundedTimeSeconds = -Infinity;
         for (const cb of this.jumpCbs) {
           cb(curTimeSeconds);
         }
@@ -634,8 +668,11 @@ export class BulletPhysics {
       }
 
       switch (eventType) {
-        case ZoneEventType.SensorEnter:
         case ZoneEventType.JumpPadTriggered:
+          this.dashManager.resetDashGroundTouch();
+          cbs.onEnter?.();
+          break;
+        case ZoneEventType.SensorEnter:
         case ZoneEventType.BoostZoneEnter:
           cbs.onEnter?.();
           break;

@@ -62,6 +62,7 @@ export interface BtKinematicCharacterController {
   setStepHeight(height: number): void;
   setJumpSpeed(speed: number): void;
   setGravity(gravity: BtVec3): void;
+  setFallSpeed(fallSpeed: number): void;
   setExternalVelocityAirDampingFactor(factor: BtVec3): void;
   setExternalVelocityGroundDampingFactor(factor: BtVec3): void;
   onGround(): boolean;
@@ -80,6 +81,12 @@ export interface BtKinematicCharacterController {
   getJumpAxis(): BtVec3;
   isJumping(): boolean;
   resetFall(): void;
+  setGravityShapeRiseMultiplier(v: number): void;
+  setGravityShapeApexMultiplier(v: number): void;
+  setGravityShapeFallMultiplier(v: number): void;
+  setGravityShapeApexThreshold(v: number): void;
+  setGravityShapeKneeWidth(v: number): void;
+  setGravityShapeOnlyJumps(v: boolean): void;
   getForcedRotation(): BtQuaternion;
   resetForcedRotation(): void;
   addJumpPad(pad: BtJumpPad): void;
