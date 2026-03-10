@@ -14,22 +14,24 @@
     "vector": "cpp",
     "ranges": "cpp"
   },
-  "eslint.probe": [
-    "astro",
-    "civet",
-    "javascript",
-    "javascriptreact",
-    "typescript",
-    "typescriptreact",
-    "html",
-    "mdx",
-    "vue",
-    "markdown",
-    "json",
-    "jsonc",
-    "svelte"
-  ],
-  "eslint.validate": ["javascript", "javascriptreact", "svelte"],
+  "eslint.enable": false,
+  "prettier.enable": false,
+  "oxc.enable": true,
   "python-envs.defaultEnvManager": "ms-python.python:system",
-  "python-envs.pythonProjects": []
+  "python-envs.pythonProjects": [],
+  "[typescript]": {
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[javascriptreact]": {
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  },
+  "[svelte]": {
+    "editor.defaultFormatter": "oxc.oxc-vscode"
+  }
 }

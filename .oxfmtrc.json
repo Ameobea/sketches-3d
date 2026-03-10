@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "jsxSingleQuote": true,
+  "printWidth": 110,
+  "singleQuote": true,
+  "trailingComma": "es5",
+  "arrowParens": "avoid",
+  "htmlWhitespaceSensitivity": "ignore",
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "node_modules",
+    "build",
+    "dist",
+    ".svelte-kit",
+    "public/build",
+    "geoscript_backend",
+    "backend",
+    "src/viz/wasm/target",
+    "src/viz/wasm/geodesics",
+    "src/viz/wasm/uv_unwrap",
+    "src/viz/wasm/cgal",
+    "src/api",
+    "src/geoscript/parser",
+    "static",
+    "src/viz/wasmComp",
+    "src/viz/wasm/build",
+    "**/*.md",
+    "**/*.toml",
+    "src/geodesics/geodesics.js",
+    "src/ammojs"
+  ]
+}

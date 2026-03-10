@@ -364,7 +364,6 @@ export class BulletPhysics {
   };
 
   private installMouseInputHandlers = () => {
-    const handlerID = Math.random();
     if (window.location?.href.includes('localhost')) {
       document.body.addEventListener('mousedown', evt => {
         if (evt.button === 3) {

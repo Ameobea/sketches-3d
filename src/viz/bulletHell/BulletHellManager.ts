@@ -452,5 +452,4 @@ export class BulletHellManager {
     this.viz.controlState.movementEnabled = true;
     this.viz.controlState.cameraControlEnabled = true;
   };
-
 }

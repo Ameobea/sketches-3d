@@ -46,6 +46,11 @@ extern "C" {
     clip_path_lengths: &[u32],
     fill_rule: u32,
   );
+  fn clipper2_union_self_paths(
+    subject_coords: &[f64],
+    subject_path_lengths: &[u32],
+    fill_rule: u32,
+  );
   fn clipper2_get_output_coords() -> Vec<f64>;
   fn clipper2_get_output_path_lengths() -> Vec<u32>;
   fn clipper2_clear_output();
@@ -100,13 +105,19 @@ fn run_clipper_boolean(
   }
 
   match op {
-    BooleanOp::Union => clipper2_union_paths(
-      subject_coords,
-      subject_path_lengths,
-      clip_coords,
-      clip_path_lengths,
-      fill_rule,
-    ),
+    BooleanOp::Union => {
+      if subject_coords == clip_coords && subject_path_lengths == clip_path_lengths {
+        clipper2_union_self_paths(subject_coords, subject_path_lengths, fill_rule);
+      } else {
+        clipper2_union_paths(
+          subject_coords,
+          subject_path_lengths,
+          clip_coords,
+          clip_path_lengths,
+          fill_rule,
+        )
+      }
+    }
     BooleanOp::Intersect => clipper2_intersect_paths(
       subject_coords,
       subject_path_lengths,
@@ -257,8 +268,7 @@ pub fn path_boolean_impl(
         ))
       })?;
 
-      let fill_rule_enum =
-        FillRule::parse(arg_refs[2].resolve(args, kwargs), fn_name)?;
+      let fill_rule_enum = FillRule::parse(arg_refs[2].resolve(args, kwargs), fn_name)?;
       let fill_rule = fill_rule_enum.to_clipper2_u32();
 
       let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap() as f64;

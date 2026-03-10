@@ -3,10 +3,7 @@ import * as THREE from 'three';
 
 import VolumetricFragmentShader from './volumetric.frag?raw';
 import VolumetricVertexShader from './volumetric.vert?raw';
-import {
-  type VolumetricCompositorMaterial,
-  VolumetricCompositorPass,
-} from './compositorPass';
+import { type VolumetricCompositorMaterial, VolumetricCompositorPass } from './compositorPass';
 
 export interface VolumetricPassParams {
   ambientLightColor?: THREE.Color;

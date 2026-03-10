@@ -66,10 +66,18 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   } else {
     materials = serverMaterials ?? buildDefaultMaterialDefinitions();
   }
-  for (const mat of Object.values(materials.materials)) {
-    if (mat.textureMapping?.type === 'uv') {
-      mat.textureMapping.enableUVIslandRotation ??= true;
+  const patchedMats: typeof materials.materials = {};
+  let hadMatPatches = false;
+  for (const [key, mat] of Object.entries(materials.materials)) {
+    if (mat.textureMapping?.type === 'uv' && mat.textureMapping.enableUVIslandRotation === undefined) {
+      patchedMats[key] = { ...mat, textureMapping: { ...mat.textureMapping, enableUVIslandRotation: true } };
+      hadMatPatches = true;
+    } else {
+      patchedMats[key] = mat;
     }
+  }
+  if (hadMatPatches) {
+    materials = { ...materials, materials: patchedMats };
   }
   if (savedView) {
     try {
