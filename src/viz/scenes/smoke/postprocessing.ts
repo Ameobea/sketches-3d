@@ -117,7 +117,6 @@ export const configurePostprocessing = (
   }
 
   const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
-  // godraysEffect.renderToScreen = true;
   effectComposer.addPass(godraysEffect);
 
   // Make the pipe lights glow through the godrays

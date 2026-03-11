@@ -46,11 +46,7 @@ extern "C" {
     clip_path_lengths: &[u32],
     fill_rule: u32,
   );
-  fn clipper2_union_self_paths(
-    subject_coords: &[f64],
-    subject_path_lengths: &[u32],
-    fill_rule: u32,
-  );
+  fn clipper2_union_self(subject_coords: &[f64], subject_path_lengths: &[u32], fill_rule: u32);
   fn clipper2_get_output_coords() -> Vec<f64>;
   fn clipper2_get_output_path_lengths() -> Vec<u32>;
   fn clipper2_clear_output();
@@ -107,7 +103,7 @@ fn run_clipper_boolean(
   match op {
     BooleanOp::Union => {
       if subject_coords == clip_coords && subject_path_lengths == clip_path_lengths {
-        clipper2_union_self_paths(subject_coords, subject_path_lengths, fill_rule);
+        clipper2_union_self(subject_coords, subject_path_lengths, fill_rule);
       } else {
         clipper2_union_paths(
           subject_coords,
