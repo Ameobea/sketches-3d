@@ -2064,9 +2064,10 @@ postcss@^8.4.49, postcss@^8.5.3:
     picocolors "^1.1.1"
     source-map-js "^1.2.1"
 
-"postprocessing@link:../postprocessing":
-  version "0.0.0"
-  uid ""
+postprocessing@^6.38.3:
+  version "6.38.3"
+  resolved "https://registry.yarnpkg.com/postprocessing/-/postprocessing-6.38.3.tgz#f3273c0fedb318fab088fc10a34737c0155715b0"
+  integrity sha512-5qCFp8j62nWL6sSVv/RKuHscQUIV+VMMgWeHLYZQEBpAk7G+r3jA3bSKON7gZjiuxdZ/F4PXj2Jc1oPh/7Eg+g==
 
 prelude-ls@^1.2.1:
   version "1.2.1"

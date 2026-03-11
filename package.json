@@ -41,7 +41,7 @@
     "lezer-glsl": "^0.6.0",
     "manifold-3d": "^3.3.2",
     "n8ao": "^1.10.1",
-    "postprocessing": "link:../postprocessing",
+    "postprocessing": "^6.38.3",
     "rand-seed": "^2.1.7",
     "seed-random": "^2.2.0",
     "svelte-seo": "1.6.1",
