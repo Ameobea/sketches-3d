@@ -1035,6 +1035,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   );
   furnacePositions.forEach((furnacePosition, i) => {
     const furnaceSide = furnacePosition.z > 400 ? 'left' : 'right';
+    // eslint-disable-next-line prefer-const
     let [x, y, z] = furnacePosition.toArray();
     y -= 2;
     z += furnaceSide === 'left' ? 0.1 : -0.1;

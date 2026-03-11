@@ -8,7 +8,6 @@ import type { Viz } from 'src/viz';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 
 type Point3D = [number, number, number];
-type Cube = { position: Point3D; scale: number };
 
 const p: Point3D[] = [
   [-1, 0, 0],

@@ -22,7 +22,7 @@ export const useRecording = (
   const recordingState = writable<RecordingState>('not-recording');
 
   const toggleRecording = async () => {
-    let currentRecordingState = get(recordingState);
+    const currentRecordingState = get(recordingState);
 
     if (currentRecordingState === 'initializing') {
       return;

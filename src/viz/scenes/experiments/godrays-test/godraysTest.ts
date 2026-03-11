@@ -1,4 +1,4 @@
-import { EffectComposer, EffectPass, RenderPass } from 'postprocessing';
+import { EffectComposer, RenderPass } from 'postprocessing';
 import * as THREE from 'three';
 import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
 
@@ -7,7 +7,7 @@ import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoadin
 import type { SceneConfig } from '../..';
 import type { Viz } from '../../..';
 
-export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Promise<SceneConfig> => {
+export const processLoadedScene = async (viz: Viz, _loadedWorld: THREE.Group): Promise<SceneConfig> => {
   const loader = new THREE.ImageBitmapLoader();
   const dungeonWallTextureP = loadTexture(loader, 'https://i.ameo.link/akz.jpg');
   const dungeonWallTextureCombinedDiffuseNormalTextureP = dungeonWallTextureP.then(dungeonWallTexture =>

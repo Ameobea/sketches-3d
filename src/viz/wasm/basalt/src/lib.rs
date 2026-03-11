@@ -1,5 +1,3 @@
-#![feature(iter_array_chunks)]
-
 use bitvec::bitarr;
 use common::{random, rng, smoothstep, uninit};
 use crystals::{generate_crystals, BatchMesh};

@@ -12,7 +12,7 @@ import type { SceneConfig } from '..';
 
 export const processLoadedScene = async (
   viz: Viz,
-  loadedWorld: THREE.Group,
+  _loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
   viz.camera.near = 0.5;
@@ -27,7 +27,7 @@ export const processLoadedScene = async (
   const terrainGenWorker = await getTerrainGenWorker();
   const ctxPtr = await terrainGenWorker.createTerrainGenCtx();
 
-  let params: TerrainGenParams = {
+  const params: TerrainGenParams = {
     variant: {
       // Hill: { octaves: 11, wavelengths: [220, 160, 120, 100, 75, 40, 20, 10, 5, 2, 1], seed: 33 },
       OpenSimplex: {
@@ -96,22 +96,10 @@ export const processLoadedScene = async (
       viewportSize
     );
 
-  let terrain = buildTerrain();
+  const terrain = buildTerrain();
   viz.scene.add(terrain);
   viz.registerResizeCb(() => (terrain.viewportSize = viz.renderer.getSize(new THREE.Vector2())));
   viz.registerBeforeRenderCb(() => terrain.update());
-
-  const updateTerrain = () => {
-    viz.scene.remove(terrain);
-    terrain = buildTerrain();
-    viz.scene.add(terrain);
-  };
-
-  const handleParamsChange = async (newParams: TerrainGenParams) => {
-    params = newParams;
-    await terrainGenWorker.setTerrainGenParams(ctxPtr, params);
-    updateTerrain();
-  };
 
   configureDefaultPostprocessingPipeline({ viz, quality: vizConf.graphics.quality });
 

@@ -3,14 +3,13 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 import { initManifoldWasm } from 'src/geoscript/manifold';
 
 export const processLoadedScene = async (
   viz: Viz,
   _loadedWorld: THREE.Group,
-  vizConf: VizConfig
+  _vizConf: VizConfig
 ): Promise<SceneConfig> => {
   const manifoldInitPromise = initManifoldWasm();
   const loader = new THREE.ImageBitmapLoader();
@@ -137,8 +136,6 @@ export const processLoadedScene = async (
     fpCtx.addTriMesh(mesh);
     fpCtx.addTriMesh(platform);
   });
-
-  // configureDefaultPostprocessingPipeline(viz, vizConf.graphics.quality);
 
   return {
     spawnLocation: 'spawn',

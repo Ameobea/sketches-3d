@@ -11,6 +11,7 @@ import { createSignboard, type CreateSignboardArgs } from 'src/viz/helpers/signb
 import type { CustomShaderMaterial } from 'src/viz/shaders/customShader';
 import { goto } from '$app/navigation';
 import { MetricsAPI } from 'src/api/client';
+import { resolve } from '$app/paths';
 
 const locations = {
   spawn: {
@@ -182,12 +183,12 @@ const setupScene = (
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: nextLevelTP }, () => {
       MetricsAPI.recordPortalTravel('nexus');
-      goto('/nexus', { keepFocus: true });
+      goto(resolve('/nexus'), { keepFocus: true });
     });
 
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: backToNexusTP }, () => {
       MetricsAPI.recordPortalTravel('movement_v2');
-      goto('/movement_v2', { keepFocus: true });
+      goto(resolve('/movement_v2'), { keepFocus: true });
     });
   });
 

@@ -1,7 +1,6 @@
 import { N8AOPostPass } from 'n8ao';
 import {
   BlendFunction,
-  EffectComposer,
   EffectPass,
   KernelSize,
   RenderPass,
@@ -10,7 +9,9 @@ import {
   SMAAPreset,
 } from 'postprocessing';
 import * as THREE from 'three';
-import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
+import { GodraysPass, GodraysUpsampleQuality, type GodraysPassParams } from 'three-good-godrays';
+
+import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 
 import type { Viz } from 'src/viz';
 import { GraphicsQuality } from 'src/viz/conf';
@@ -45,7 +46,7 @@ export const configurePostprocessing = (
   quality: GraphicsQuality,
   onFirstRender: () => void
 ) => {
-  const effectComposer = new EffectComposer(viz.renderer, {
+  const effectComposer = new StableDepthEffectComposer(viz.renderer, {
     multisampling: 0,
     frameBufferType: THREE.HalfFloatType,
   });
@@ -70,8 +71,8 @@ export const configurePostprocessing = (
 
   const godraysParams: GodraysPassParams = {
     color: new THREE.Color().copy(dirLight.color),
-    edgeRadius: 1,
-    edgeStrength: 1,
+    resolutionScale: 1,
+    upsampleQuality: GodraysUpsampleQuality.LOW,
     distanceAttenuation: 2,
     density: 1 / 16,
     maxDensity: 1,
@@ -116,6 +117,7 @@ export const configurePostprocessing = (
   }
 
   const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
+  // godraysEffect.renderToScreen = true;
   effectComposer.addPass(godraysEffect);
 
   // Make the pipe lights glow through the godrays

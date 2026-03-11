@@ -2064,10 +2064,9 @@ postcss@^8.4.49, postcss@^8.5.3:
     picocolors "^1.1.1"
     source-map-js "^1.2.1"
 
-postprocessing@=6.38.2:
-  version "6.38.2"
-  resolved "https://registry.yarnpkg.com/postprocessing/-/postprocessing-6.38.2.tgz#e84f963f01da5d21a4cc4d4a6076a256550092d1"
-  integrity sha512-7DwuT7Tkst41ZjSj287g7C9c5/D3Xx5rMgBosg0dadbUPoZD2HNzkadKPol1d2PJAoI9f+Jeh1/v9YfLzpFGVw==
+"postprocessing@link:../postprocessing":
+  version "0.0.0"
+  uid ""
 
 prelude-ls@^1.2.1:
   version "1.2.1"
@@ -2298,10 +2297,10 @@ svelte@^5.45.6:
     magic-string "^0.30.11"
     zimmerframe "^1.1.2"
 
-three-good-godrays@^0.8.1:
-  version "0.8.1"
-  resolved "https://registry.yarnpkg.com/three-good-godrays/-/three-good-godrays-0.8.1.tgz#134a2d1d5106d6f0dd1089a0fb5b730a8b4a2ed1"
-  integrity sha512-ABpSoaNaRCydqgRECqOvzeO2utecwT8LJ8z/hLIXeTdebPoutP54gTiAP+Ii5FsKDDixH9PRJGzQogxbHOzRjA==
+three-good-godrays@=0.11.1:
+  version "0.11.1"
+  resolved "https://registry.yarnpkg.com/three-good-godrays/-/three-good-godrays-0.11.1.tgz#53dabba09d7c4738576830561292288aca1005fd"
+  integrity sha512-UN+oY2YUz1G591gSYm14z7+l8x9aAiCmwwCW0su0KLZ9AzvNCXeIT03ajrcWTdHrnOcu9egQCc8XnmYskFov9Q==
 
 three@^0.165.0:
   version "0.165.0"

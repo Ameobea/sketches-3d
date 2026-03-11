@@ -13,6 +13,7 @@ import { configurePostprocessing } from './postprocessing';
 import BgMonolithColorShader from './shaders/bgMonolith/color.frag?raw';
 import { goto } from '$app/navigation';
 import { MetricsAPI } from 'src/api/client';
+import { resolve } from '$app/paths';
 
 export const processLoadedScene = async (
   viz: Viz,
@@ -301,7 +302,7 @@ export const processLoadedScene = async (
       },
       () => {
         MetricsAPI.recordPortalTravel('cave');
-        goto('/cave', { keepFocus: true });
+        goto(resolve('/cave'), { keepFocus: true });
       }
     )
   );

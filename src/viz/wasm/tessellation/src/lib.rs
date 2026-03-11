@@ -1,5 +1,3 @@
-#![feature(iter_array_chunks)]
-
 use float_ord::FloatOrd;
 use mesh::{
   linked_mesh::{DisplacementNormalMethod, Edge, EdgeSplitPos, Face},

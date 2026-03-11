@@ -19,6 +19,7 @@ import { getRuneGenerator } from './runeGen/runeGen';
 import MonolithLightBeamColorShader from './shaders/monolithLightBeam/color.frag?raw';
 import TotemBeamColorShader from './shaders/totemBeam/color.frag?raw';
 import { MetricsAPI } from 'src/api/client';
+import { resolve } from '$app/paths';
 
 const locations: SceneLocations = {
   spawn: {
@@ -510,7 +511,7 @@ export const processLoadedScene = async (
         const curTimeSeconds = viz.clock.getElapsedTime();
         getSentry()?.captureMessage('Stone level completed', { extra: { levelPlayTime: curTimeSeconds } });
         MetricsAPI.recordPortalTravel('construction');
-        goto(nextLevelURL, { keepFocus: true });
+        goto(resolve(nextLevelURL), { keepFocus: true });
       }
     );
   });

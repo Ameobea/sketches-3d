@@ -22,6 +22,8 @@ import { getAmmoJS } from 'src/viz/collision';
 import { MetricsAPI } from 'src/api/client';
 import PlatformColorShader from './shaders/platform/color.frag?raw';
 import PlatformRoughnessShader from './shaders/platform/roughness.frag?raw';
+import { resolve } from '$app/paths';
+import type { RouteId } from '$app/types';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -248,16 +250,16 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     viz.scene.add(sign);
   };
 
-  const PortalDefs: Record<string, { scene: string; displayName: string }> = {
-    tutorial: { scene: 'tutorial', displayName: 'TUTORIAL' },
-    pylons: { scene: 'pk_pylons', displayName: 'PYLONS' },
-    movementv2: { scene: 'movement_v2', displayName: 'MOVEMENT V2' },
-    plats: { scene: 'plats', displayName: 'PLATS' },
-    cornered: { scene: 'cornered', displayName: 'CORNERED' },
-    stone: { scene: 'stone', displayName: 'STONE' },
-    basalt: { scene: 'basalt', displayName: 'BASALT' },
-    stronghold: { scene: 'stronghold', displayName: 'STRONGHOLD' },
-    pinklights: { scene: 'pinklights', displayName: 'PINKLIGHTS' },
+  const PortalDefs: Record<string, { scene: RouteId; displayName: string }> = {
+    tutorial: { scene: '/tutorial', displayName: 'TUTORIAL' },
+    pylons: { scene: '/pk_pylons', displayName: 'PYLONS' },
+    movementv2: { scene: '/movement_v2', displayName: 'MOVEMENT V2' },
+    plats: { scene: '/plats', displayName: 'PLATS' },
+    cornered: { scene: '/cornered', displayName: 'CORNERED' },
+    stone: { scene: '/stone', displayName: 'STONE' },
+    basalt: { scene: '/basalt', displayName: 'BASALT' },
+    stronghold: { scene: '/stronghold', displayName: 'STRONGHOLD' },
+    pinklights: { scene: '/pinklights', displayName: 'PINKLIGHTS' },
   };
 
   for (const portalFrame of portalFrames) {
@@ -277,8 +279,8 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
       if (def) {
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          MetricsAPI.recordPortalTravel(def.scene);
-          goto(`/${def.scene}`, { keepFocus: true });
+          MetricsAPI.recordPortalTravel(def.scene.slice(1));
+          goto(resolve(def.scene as `/${string}`), { keepFocus: true });
         });
       } else {
         portal.visible = false;
