@@ -9,7 +9,7 @@ use nalgebra::Matrix4;
 use crate::{
   builtins::trace_path::{
     as_path_sampler, build_interval_weights, build_topology_samples, normalize_guides,
-    SegmentInterval,
+    normalize_path_sampler_guides, SegmentInterval,
   },
   ArgRef, Callable, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value, Vec2,
   EMPTY_KWARGS,
@@ -243,6 +243,10 @@ struct DynamicProfileData {
   /// When Some(false), disables adaptive sampling even if global is enabled.
   /// When None, uses the global `adaptive_profile_sampling` setting.
   adaptive: Option<bool>,
+  /// Non-zero when the profile's t-parameterization has been rotated so that the first
+  /// real critical point aligns to t=0. The sampler must be called at
+  /// `(t + rotation_offset).rem_euclid(1.0)` to recover the original t.
+  rotation_offset: f32,
 }
 
 struct RingContext {
@@ -364,12 +368,13 @@ fn extract_dynamic_profile_data(
 ) -> Result<DynamicProfileData, ErrorStack> {
   if let Some(callable) = value.as_callable() {
     if let Some(sampler) = as_path_sampler(callable) {
-      let critical_points = normalize_guides(&sampler.critical_t_values());
+      let (critical_points, rotation_offset) = normalize_path_sampler_guides(sampler);
       return Ok(DynamicProfileData {
         sampler: Rc::clone(callable),
         critical_points,
         sharp: false,
         adaptive: None,
+        rotation_offset,
       });
     }
     return Ok(DynamicProfileData {
@@ -377,6 +382,7 @@ fn extract_dynamic_profile_data(
       critical_points: vec![0., 1.],
       sharp: false,
       adaptive: None,
+      rotation_offset: 0.0,
     });
   }
 
@@ -398,15 +404,18 @@ fn extract_dynamic_profile_data(
       ErrorStack::new("dynamic_profile map requires 'sampler' key with callable value")
     })?;
 
-    let critical_points = match map.get("path_samplers") {
-      Some(val) => collect_path_sampler_guides(ctx, val, "dynamic_profile path_samplers")?
-        .unwrap_or_else(|| vec![0., 1.]),
+    let (critical_points, rotation_offset) = match map.get("path_samplers") {
+      Some(val) => (
+        collect_path_sampler_guides(ctx, val, "dynamic_profile path_samplers")?
+          .unwrap_or_else(|| vec![0., 1.]),
+        0.0,
+      ),
       None => {
         // check if the sampler itself is a path sampler with guides
-        if let Some(sampler_guides) = as_path_sampler(sampler).map(|s| s.critical_t_values()) {
-          normalize_guides(&sampler_guides)
+        if let Some(path_samp) = as_path_sampler(sampler) {
+          normalize_path_sampler_guides(path_samp)
         } else {
-          vec![0., 1.]
+          (vec![0., 1.], 0.0)
         }
       }
     };
@@ -432,6 +441,7 @@ fn extract_dynamic_profile_data(
       critical_points,
       sharp,
       adaptive,
+      rotation_offset,
     });
   }
 
@@ -480,6 +490,13 @@ fn validate_profile_topology(sampler: &Callable, u_ix: usize, u: f32) -> Result<
 
 /// Samples the 2D profile offset at the given t value.
 fn sample_profile_offset(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Vec2, ErrorStack> {
+  // If the critical points were rotated to align t=0 with a real feature, undo the rotation
+  // before calling the sampler so it receives t-values in its original parameterization.
+  let v = if ring.profile_data.rotation_offset != 0.0 {
+    (v + ring.profile_data.rotation_offset).rem_euclid(1.0)
+  } else {
+    v
+  };
   let offset_2d = ctx
     .invoke_callable(&ring.profile_data.sampler, &[Value::Float(v)], EMPTY_KWARGS)
     .map_err(|err| err.wrap("Error calling user-provided sampler returned by `dynamic_profile`"))?;

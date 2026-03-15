@@ -7,6 +7,8 @@ use std::rc::Rc;
 use crate::builtins::trace_path::{
   build_topology_samples, sample_subpath_points, DrawCommand, PathTracerCallable,
 };
+#[cfg(target_arch = "wasm32")]
+use crate::builtins::path_critical_points::{detect_critical_points, CriticalPointConfig};
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
 use crate::{Callable, Vec2, EMPTY_KWARGS};
@@ -40,7 +42,6 @@ extern "C" {
   );
   fn clipper2_get_output_coords() -> Vec<f64>;
   fn clipper2_get_output_path_lengths() -> Vec<u32>;
-  fn clipper2_get_output_critical_t_values() -> Vec<f64>;
   fn clipper2_clear_output();
 }
 
@@ -207,7 +208,6 @@ fn run_clipper_offset(
 
   let out_coords = clipper2_get_output_coords();
   let out_lengths = clipper2_get_output_path_lengths();
-  let critical_t_values = clipper2_get_output_critical_t_values();
   clipper2_clear_output();
 
   let mut paths = Vec::with_capacity(out_lengths.len());
@@ -228,7 +228,7 @@ fn run_clipper_offset(
     }
   }
 
-  let critical_t_values = critical_t_values.into_iter().map(|t| t as f32).collect();
+  let critical_t_values = detect_critical_points(&paths, &CriticalPointConfig::default(), None);
 
   Ok(OffsetResult {
     paths,

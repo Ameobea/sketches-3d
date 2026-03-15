@@ -110,31 +110,7 @@ const extractPathsD = (paths: any): { coords: Float64Array; pathLengths: Uint32A
   return { coords, pathLengths };
 };
 
-const extractVectorDouble = (Clipper2: any, vec: any): Float64Array => {
-  if (!vec) {
-    return new Float64Array();
-  }
-  if (Array.isArray(vec)) {
-    return Float64Array.from(vec);
-  }
-  if (typeof vec.size === 'function' && typeof vec.data === 'function') {
-    const length = vec.size();
-    const ptr = vec.data();
-    const HEAPF64 = Clipper2.HEAPF64 as Float64Array;
-    const result = HEAPF64.subarray(ptr / 8, ptr / 8 + length).slice();
-    if (typeof vec.delete === 'function') {
-      vec.delete();
-    }
-    return result;
-  }
-  if (typeof vec.length === 'number') {
-    return Float64Array.from(vec);
-  }
-  return new Float64Array();
-};
-
 let OutputPaths: { coords: Float64Array; pathLengths: Uint32Array } | null = null;
-let OutputCriticalTValues: Float64Array | null = null;
 
 export const clipper2_get_output_coords = (): Float64Array => {
   if (!OutputPaths) {
@@ -152,14 +128,6 @@ export const clipper2_get_output_path_lengths = (): Uint32Array => {
 
 export const clipper2_clear_output = (): void => {
   OutputPaths = null;
-  OutputCriticalTValues = null;
-};
-
-export const clipper2_get_output_critical_t_values = (): Float64Array => {
-  if (!OutputCriticalTValues) {
-    return new Float64Array();
-  }
-  return OutputCriticalTValues;
 };
 
 /**
@@ -200,9 +168,6 @@ const simplifyPathD = (Clipper2: any, path: any, epsilon: number, isClosed: bool
  * @param joinType - How to join path segments at corners
  * @param endType - How to cap the ends of open paths (ignored for closed paths which use Polygon end type)
  * @param joinAngleThreshold - Minimum join angle in radians for special joins; 0 disables
- * @param criticalAngleThreshold - Angle threshold in radians for critical point detection
- * @param criticalSegmentFraction - Endpoints of non-colinear segments longer than `(path_perimeter * criticalSegmentFraction)`
- *                                  are considered critical regardless of angle. Set to 1 to disable; 0 = auto.
  * @param simplifyEpsilon - Epsilon for pre-offset simplification. Set to 0 to disable simplification.
  *                          Defaults to 0.01. Clipper2 docs strongly recommend simplifying before offset.
  */
@@ -224,10 +189,7 @@ export const clipper2_offset_paths = (
   teardropPinch: number = 0.5,
   joinAngleThreshold: number = 0.0, // radians
   chebyshevSpacing: boolean = false,
-  simplifyEpsilon: number = 0.0001,
-  // TODO: these are not routed through yet from the Rust side
-  criticalAngleThreshold: number = 0.35, // radians
-  criticalSegmentFraction: number = 0.15 // input units (0 = auto)
+  simplifyEpsilon: number = 0.0001
 ): void => {
   // console.log({
   //   coords: [...coords],
@@ -248,8 +210,6 @@ export const clipper2_offset_paths = (
   //   joinAngleThreshold,
   //   chebyshevSpacing,
   //   simplifyEpsilon,
-  //   criticalAngleThreshold,
-  //   criticalSegmentFraction,
   // });
   const Clipper2 = Clipper2Wasm.getSync();
 
@@ -272,15 +232,6 @@ export const clipper2_offset_paths = (
   clipperOffset.SetTeardropPinch(teardropPinch);
   clipperOffset.SetJoinAngleThreshold(joinAngleThreshold);
   clipperOffset.SetChebyshevSpacing(chebyshevSpacing);
-  if (typeof clipperOffset.SetAngleThreshold === 'function') {
-    clipperOffset.SetAngleThreshold(criticalAngleThreshold);
-  }
-  if (typeof clipperOffset.SetCriticalSegmentFraction === 'function') {
-    clipperOffset.SetCriticalSegmentFraction(criticalSegmentFraction);
-  }
-  if (typeof clipperOffset.SetNormalizeStart === 'function') {
-    clipperOffset.SetNormalizeStart(true); // TODO is this even necessary with our fancy ring alignment stuff on the rust side?
-  }
 
   let offset = 0;
   for (let i = 0; i < pathLengths.length; i++) {
@@ -310,10 +261,6 @@ export const clipper2_offset_paths = (
   const result = clipperOffset.Execute(delta);
 
   OutputPaths = extractPathsD(result);
-  OutputCriticalTValues =
-    typeof clipperOffset.GetCriticalTValues === 'function'
-      ? extractVectorDouble(Clipper2, clipperOffset.GetCriticalTValues())
-      : new Float64Array();
   clipperOffset.delete();
   result.delete();
 };
@@ -342,7 +289,6 @@ export const clipper2_simplify_paths = (
   paths.delete();
 
   OutputPaths = extractPathsD(result);
-  OutputCriticalTValues = new Float64Array();
   result.delete();
 };
 
@@ -389,7 +335,6 @@ export const clipper2_trim_collinear = (
   }
 
   OutputPaths = { coords: combinedCoords, pathLengths: new Uint32Array(resultLengths) };
-  OutputCriticalTValues = new Float64Array();
 };
 
 /**
@@ -420,7 +365,6 @@ export const clipper2_union_paths = (
   clips.delete();
 
   OutputPaths = extractPathsD(result);
-  OutputCriticalTValues = new Float64Array();
   result.delete();
 };
 
@@ -446,7 +390,6 @@ export const clipper2_union_self = (
   subjects.delete();
 
   OutputPaths = extractPathsD(result);
-  OutputCriticalTValues = new Float64Array();
   result.delete();
 };
 
@@ -478,7 +421,6 @@ export const clipper2_intersect_paths = (
   clips.delete();
 
   OutputPaths = extractPathsD(result);
-  OutputCriticalTValues = new Float64Array();
   result.delete();
 };
 
@@ -510,7 +452,6 @@ export const clipper2_difference_paths = (
   clips.delete();
 
   OutputPaths = extractPathsD(result);
-  OutputCriticalTValues = new Float64Array();
   result.delete();
 };
 
@@ -542,6 +483,5 @@ export const clipper2_xor_paths = (
   clips.delete();
 
   OutputPaths = extractPathsD(result);
-  OutputCriticalTValues = new Float64Array();
   result.delete();
 };

@@ -4,6 +4,10 @@ use fxhash::FxHashMap;
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
+use crate::builtins::path_critical_points::{
+  collect_vertex_set, collect_vertex_set_multi, detect_critical_points, CriticalPointConfig,
+};
+#[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
   build_topology_samples, sample_subpath_points, DrawCommand, FillRule, PathTracerCallable,
 };
@@ -88,6 +92,12 @@ fn build_draw_commands(paths: Vec<Vec<Vec2>>) -> Vec<DrawCommand> {
 }
 
 #[cfg(target_arch = "wasm32")]
+struct BooleanResult {
+  paths: Vec<Vec<Vec2>>,
+  critical_t_values: Vec<f32>,
+}
+
+#[cfg(target_arch = "wasm32")]
 fn run_clipper_boolean(
   subject_coords: &[f64],
   subject_path_lengths: &[u32],
@@ -95,14 +105,26 @@ fn run_clipper_boolean(
   clip_path_lengths: &[u32],
   fill_rule: u32,
   op: BooleanOp,
-) -> Vec<Vec<Vec2>> {
+) -> BooleanResult {
   if subject_coords.is_empty() || subject_path_lengths.is_empty() {
-    return Vec::new();
+    return BooleanResult {
+      paths: Vec::new(),
+      critical_t_values: Vec::new(),
+    };
   }
+
+  let is_self_union = op == BooleanOp::Union
+    && subject_coords == clip_coords
+    && subject_path_lengths == clip_path_lengths;
+  let pre_op_vertices = if is_self_union {
+    collect_vertex_set(subject_coords)
+  } else {
+    collect_vertex_set_multi(subject_coords, clip_coords)
+  };
 
   match op {
     BooleanOp::Union => {
-      if subject_coords == clip_coords && subject_path_lengths == clip_path_lengths {
+      if is_self_union {
         clipper2_union_self(subject_coords, subject_path_lengths, fill_rule);
       } else {
         clipper2_union_paths(
@@ -159,7 +181,16 @@ fn run_clipper_boolean(
     }
   }
 
-  paths
+  let critical_t_values = detect_critical_points(
+    &paths,
+    &CriticalPointConfig::default(),
+    Some(&pre_op_vertices),
+  );
+
+  BooleanResult {
+    paths,
+    critical_t_values,
+  }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -316,7 +347,7 @@ pub fn path_boolean_impl(
         fn_name,
       )?;
 
-      let output_paths = run_clipper_boolean(
+      let boolean_result = run_clipper_boolean(
         &subject_coords,
         &subject_lengths,
         &clip_coords,
@@ -325,7 +356,13 @@ pub fn path_boolean_impl(
         op,
       );
 
-      let draw_cmds = build_draw_commands(output_paths);
+      let critical_points = if boolean_result.paths.len() == 1 {
+        Some(boolean_result.critical_t_values)
+      } else {
+        None
+      };
+
+      let draw_cmds = build_draw_commands(boolean_result.paths);
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
       let mut tracer = PathTracerCallable::new_with_critical_points(
@@ -334,7 +371,7 @@ pub fn path_boolean_impl(
         false,
         draw_cmds,
         interned_t_kwarg,
-        None,
+        critical_points,
       );
       // The output has been resolved by Clipper2 using this fill rule, so carry it forward.
       tracer.fill_rule = Some(fill_rule_enum);

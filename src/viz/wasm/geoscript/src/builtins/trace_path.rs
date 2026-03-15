@@ -217,6 +217,44 @@ pub(crate) fn normalize_guides(guides: &[f32]) -> Vec<f32> {
   out
 }
 
+/// Normalizes a path sampler's critical t-values for use as adaptive sampling guides.
+///
+/// For a single closed subpath, rotates the parameterization so the earliest critical
+/// point aligns to t=0, eliminating the wasted mandatory sample at an arbitrary seam.
+///
+/// Returns `(normalized_guides, rotation_offset)`. When `rotation_offset > 0`, callers
+/// must invoke the underlying sampler at `(t + rotation_offset).rem_euclid(1.0)` to
+/// convert from rotated t-space back to the sampler's original t-space.
+pub(crate) fn normalize_path_sampler_guides(sampler: &dyn PathSampler) -> (Vec<f32>, f32) {
+  let raw_cps = sampler.critical_t_values();
+  let is_closed_single = sampler
+    .subpath_topology()
+    .map(|t| t.len() == 1 && t[0].closed)
+    .unwrap_or(false);
+
+  if !is_closed_single {
+    return (normalize_guides(&raw_cps), 0.0);
+  }
+
+  // Find the earliest critical point. If it's already at (or very near) 0, no rotation needed.
+  let t_min = raw_cps
+    .iter()
+    .copied()
+    .filter(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0)
+    .fold(f32::INFINITY, f32::min);
+
+  if t_min.is_infinite() || t_min <= GUIDE_EPSILON {
+    return (normalize_guides(&raw_cps), 0.0);
+  }
+
+  // Rotate: t' = (t - t_min) mod 1.0. After rotation, t_min maps to 0.0.
+  let rotated: Vec<f32> = raw_cps
+    .iter()
+    .map(|&t| (t - t_min).rem_euclid(1.0))
+    .collect();
+  (normalize_guides(&rotated), t_min)
+}
+
 pub(crate) struct SubpathTopology {
   pub closed: bool,
   pub segment_count: usize,
@@ -255,7 +293,7 @@ fn parse_path_sampler_t_arg<'a>(
     }
     kwargs.get(&interned_t_kwarg).unwrap()
   } else {
-    if args.len() != 1 {
+    if args.len() < 1 {
       return Err(ErrorStack::new("Expected argument `t`"));
     }
     &args[0]

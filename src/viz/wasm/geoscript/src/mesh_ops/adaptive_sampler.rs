@@ -25,9 +25,25 @@
 //! ### Budget Allocation and Placement
 //!
 //! The free budget (`target_count - mandatory_count`) is distributed across spans proportional to
-//! their metric mass using the largest-remainder method. Within each span, `k` interior points are
-//! placed at cumulative-mass quantiles `j/(k+1)`, guaranteeing no point can be placed adjacent to
-//! a span endpoint unless the budget is extremely large.
+//! their *effective mass* using the largest-remainder method.
+//!
+//! Effective mass is computed per-span as:
+//!
+//! ```text
+//! effective_mass = curvature_mass + baseline_factor * arc_length_mass
+//! ```
+//!
+//! The `baseline_factor` (in `[0, 1]`) is derived from the global curvature ratio — the fraction
+//! of total mass attributable to curvature.  When the path is mostly straight with isolated curves,
+//! the curvature ratio is high and `baseline_factor` is suppressed toward 0, preventing the
+//! arc-length baseline from wasting samples on straight spans.  When the path is uniformly curved
+//! (e.g. a circle), the curvature ratio is low and `baseline_factor` stays near 1, preserving the
+//! current uniform-like fallback.  The transition uses a smoothstep between
+//! `BASELINE_SUPPRESSION_LOW` and `BASELINE_SUPPRESSION_HIGH`.
+//!
+//! Within each span, `k` interior points are placed at cumulative-mass quantiles `j/(k+1)`,
+//! guaranteeing no point can be placed adjacent to a span endpoint unless the budget is extremely
+//! large.
 
 use std::cmp::Ordering;
 use std::ops::Sub;
@@ -50,6 +66,24 @@ const MIN_DENSE_SAMPLES: usize = 64;
 /// Higher values concentrate more samples at high-curvature regions at the cost of uniformity
 /// in low-curvature regions.
 const CURVATURE_WEIGHT: f32 = 70.0;
+
+/// Controls when the arc-length baseline starts being suppressed in budget allocation.
+///
+/// When the fraction of total mass attributable to curvature exceeds this threshold, the
+/// arc-length baseline begins to fade out, redirecting samples from straight spans to curved ones.
+/// Below this ratio the baseline is fully retained (uniform-like fallback).
+const BASELINE_SUPPRESSION_LOW: f32 = 0.05;
+
+/// Controls when the arc-length baseline is fully suppressed.
+///
+/// When the curvature fraction reaches this threshold, the arc-length component of span mass is
+/// zeroed for budget allocation, so straight spans receive no extra samples at all.
+const BASELINE_SUPPRESSION_HIGH: f32 = 0.20;
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+  let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+  t * t * (3.0 - 2.0 * t)
+}
 
 /// Trait for point types that can be used with adaptive sampling.
 ///
@@ -156,8 +190,12 @@ where
 struct SpanData {
   t_start: f32,
   t_end: f32,
-  /// Total metric mass (sum of all densities in this span).
+  /// sum of all densities (arc_length_mass + curvature_mass)
   mass: f32,
+  /// Sum of pure arc-length contributions across all sub-segments.
+  arc_length_mass: f32,
+  /// Sum of curvature (weighted chord-deviation) contributions across all sub-segments.
+  curvature_mass: f32,
   /// Uniformly-spaced t-values including both endpoints; len = n_dense + 1.
   dense_ts: Vec<f32>,
   /// Per-sub-segment density values; len = n_dense.
@@ -240,11 +278,17 @@ where
   }
 
   // Per-sub-segment density: arc length baseline + curvature contribution.
+  // Track both components separately for budget-allocation reweighting.
   let mut densities: Vec<f32> = Vec::with_capacity(n_dense);
+  let mut total_arc_len: f32 = 0.0;
+  let mut total_curv: f32 = 0.0;
   for i in 0..n_dense {
     let arc_len = (dense_pts[i + 1] - dense_pts[i]).norm();
     let curvature_avg = (chord_devs[i] + chord_devs[i + 1]) * 0.5;
-    densities.push(arc_len + CURVATURE_WEIGHT * curvature_avg);
+    let curv_component = CURVATURE_WEIGHT * curvature_avg;
+    total_arc_len += arc_len;
+    total_curv += curv_component;
+    densities.push(arc_len + curv_component);
   }
 
   // Cumulative prefix sum: cumulative[i] = sum of densities[0..i].
@@ -261,32 +305,35 @@ where
     t_start,
     t_end,
     mass,
+    arc_length_mass: total_arc_len,
+    curvature_mass: total_curv,
     dense_ts,
     densities,
     cumulative,
   })
 }
 
-/// Distributes `free_budget` samples across spans proportional to their metric mass.
+/// Distributes `free_budget` samples across spans proportional to their effective mass.
 ///
 /// Uses the largest-remainder (Hamilton) method to ensure the integer allocations sum exactly
-/// to `free_budget`, minimising rounding bias across spans.
-fn distribute_budget(free_budget: usize, spans: &[SpanData], total_mass: f32) -> Vec<usize> {
-  let n = spans.len();
+/// to `free_budget`, minimizing rounding bias across spans.
+fn distribute_budget(free_budget: usize, effective_masses: &[f32]) -> Vec<usize> {
+  let n = effective_masses.len();
   if n == 0 {
     return Vec::new();
   }
 
   let mut allocations = vec![0usize; n];
 
+  let total_mass: f64 = effective_masses.iter().map(|&m| m as f64).sum();
   if total_mass <= 0.0 || free_budget == 0 {
     return allocations;
   }
 
   // Raw proportional allocation (floating-point).
-  let raw: Vec<f64> = spans
+  let raw: Vec<f64> = effective_masses
     .iter()
-    .map(|s| s.mass as f64 / total_mass as f64 * free_budget as f64)
+    .map(|&m| m as f64 / total_mass * free_budget as f64)
     .collect();
 
   // Floor each allocation; distribute the shortfall via largest-remainder method.
@@ -358,12 +405,12 @@ where
   let mut boundaries: Vec<f32> = initial_ts
     .iter()
     .copied()
-    .filter(|t| t.is_finite() && *t >= 0.0 && *t <= 1.0)
+    .filter(|t| t.is_finite() && *t >= 0. && *t <= 1.)
     .collect();
   if boundaries.iter().all(|&t| t > 1e-6) {
     boundaries.push(0.0);
   }
-  if boundaries.iter().all(|&t| t < 1.0 - 1e-6) {
+  if boundaries.iter().all(|&t| t < 1. - 1e-6) {
     boundaries.push(1.0);
   }
   boundaries.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
@@ -406,9 +453,37 @@ where
     spans.push(span);
   }
 
-  // --- Step 4: Budget allocation ---
-  let total_mass: f32 = spans.iter().map(|s| s.mass).sum();
-  let allocations = distribute_budget(free_budget, &spans, total_mass);
+  // --- Step 4: Budget allocation with baseline suppression ---
+  // Compute the fraction of total mass attributable to curvature.  When this is high, it means
+  // the path has a mix of curved and straight regions and the arc-length baseline would waste
+  // samples on the straight parts.  We smoothly suppress the baseline contribution to budget
+  // allocation so that tight budgets send all free samples to curved spans.
+  let total_arc_length_mass: f32 = spans.iter().map(|s| s.arc_length_mass).sum();
+  let total_curvature_mass: f32 = spans.iter().map(|s| s.curvature_mass).sum();
+  let total_mass = total_arc_length_mass + total_curvature_mass;
+
+  let curvature_ratio = if total_mass > 0.0 {
+    total_curvature_mass / total_mass
+  } else {
+    0.0
+  };
+
+  // baseline_factor: 1.0 = keep full arc-length baseline (current behavior),
+  //                  0.0 = fully suppress it (curvature-only allocation).
+  // Smoothstep transitions between LOW and HIGH curvature ratios.
+  let baseline_factor = 1.0
+    - smoothstep(
+      BASELINE_SUPPRESSION_LOW,
+      BASELINE_SUPPRESSION_HIGH,
+      curvature_ratio,
+    );
+
+  let effective_masses: Vec<f32> = spans
+    .iter()
+    .map(|s| s.curvature_mass + baseline_factor * s.arc_length_mass)
+    .collect();
+
+  let allocations = distribute_budget(free_budget, &effective_masses);
 
   // --- Step 5: Emit output ---
   // Each span contributes: its start t (mandatory) + interior samples from center-of-mass
@@ -688,7 +763,6 @@ mod tests {
       adaptive_sample_fallible(ring_resolution, &initial_ts, sample_fn, min_segment_length)
         .unwrap();
 
-    // Verify basic properties
     assert_eq!(
       samples.len(),
       ring_resolution,
@@ -715,6 +789,133 @@ mod tests {
       "Max consecutive gap {max_consecutive_gap:.4} exceeds 4x average {:.4} (old algorithm \
        produced 0.1 gap at the start)",
       avg_gap * 4.0
+    );
+  }
+
+  /// Simulates a circle-union-skinny-rectangle path: two semicircular arcs connected by two
+  /// long straight segments ("wings").  With a tight budget (16 samples, 8 critical points),
+  /// the straight wings should receive zero extra samples — all free budget should go to the
+  /// arcs where curvature actually exists.
+  #[test]
+  fn test_baseline_suppression_straight_wings_get_no_extras() {
+    // Critical points at 0/8, 1/8, ..., 7/8 (plus implicit 1.0 = 0.0 wrap).
+    let cps: Vec<f32> = (0..8).map(|i| i as f32 / 8.0).collect();
+
+    // Path: alternating arc and straight segments.
+    // Spans [0, 1/8], [2/8, 3/8], [4/8, 5/8], [6/8, 7/8] are semicircular arcs.
+    // Spans [1/8, 2/8], [3/8, 4/8], [5/8, 6/8], [7/8, 1.0] are straight lines.
+    fn arc_straight_path(t: f32) -> Vec2 {
+      let phase = t * 8.0; // 0..8
+      let span = (phase.floor() as usize).min(7);
+      let local = phase - span as f32; // 0..1 within span
+
+      match span {
+        // Arc spans: semicircle with radius 0.5, different center per arc
+        0 => {
+          // Top-right arc: from (1, 0.5) curving to (0.5, 1)
+          let angle = local * std::f32::consts::FRAC_PI_2;
+          Vec2::new(1.0 - 0.5 * angle.sin(), 0.5 + 0.5 * angle.cos())
+        }
+        2 => {
+          // Top-left arc: from (-0.5, 1) curving to (-1, 0.5)
+          let angle = local * std::f32::consts::FRAC_PI_2;
+          Vec2::new(-0.5 - 0.5 * angle.cos(), 1.0 - 0.5 * angle.sin())
+        }
+        4 => {
+          // Bottom-left arc: from (-1, -0.5) curving to (-0.5, -1)
+          let angle = local * std::f32::consts::FRAC_PI_2;
+          Vec2::new(-1.0 + 0.5 * angle.sin(), -0.5 - 0.5 * angle.cos())
+        }
+        6 => {
+          // Bottom-right arc: from (0.5, -1) curving to (1, -0.5)
+          let angle = local * std::f32::consts::FRAC_PI_2;
+          Vec2::new(0.5 + 0.5 * angle.cos(), -1.0 + 0.5 * angle.sin())
+        }
+        // Straight spans: linear interpolation
+        1 => {
+          // From end of arc0 to start of arc2
+          let start = Vec2::new(0.5, 1.0);
+          let end = Vec2::new(-0.5, 1.0);
+          start + (end - start) * local
+        }
+        3 => {
+          // From end of arc2 to start of arc4
+          let start = Vec2::new(-1.0, 0.5);
+          let end = Vec2::new(-1.0, -0.5);
+          start + (end - start) * local
+        }
+        5 => {
+          // From end of arc4 to start of arc6
+          let start = Vec2::new(-0.5, -1.0);
+          let end = Vec2::new(0.5, -1.0);
+          start + (end - start) * local
+        }
+        7 => {
+          // From end of arc6 to start of arc0
+          let start = Vec2::new(1.0, -0.5);
+          let end = Vec2::new(1.0, 0.5);
+          start + (end - start) * local
+        }
+        _ => unreachable!(),
+      }
+    }
+
+    let target = 16;
+    let result = adaptive_sample(target, &cps, arc_straight_path, 1e-5);
+
+    assert_eq!(
+      result.len(),
+      target,
+      "Should return exactly {target} samples"
+    );
+
+    // With 8 CPs (boundaries at 0/8..7/8 + 1.0), there are 8 spans and 8 mandatory samples.
+    // Free budget = 16 - 8 = 8.  The 4 arc spans have curvature; the 4 straight spans don't.
+    //
+    // With baseline suppression, the straight spans should get 0 extra samples.
+    // Count samples that fall strictly inside each straight span.
+    let straight_spans = [
+      (1.0 / 8.0, 2.0 / 8.0),
+      (3.0 / 8.0, 4.0 / 8.0),
+      (5.0 / 8.0, 6.0 / 8.0),
+      (7.0 / 8.0, 1.0),
+    ];
+
+    let mut extras_in_straight = 0;
+    for &(lo, hi) in &straight_spans {
+      for &t in &result {
+        if t > lo + 1e-5 && t < hi - 1e-5 {
+          extras_in_straight += 1;
+        }
+      }
+    }
+
+    assert_eq!(
+      extras_in_straight, 0,
+      "Straight spans should receive no extra samples when budget is tight, but got \
+       {extras_in_straight}"
+    );
+
+    // Verify the arcs each got ~2 extra samples (8 free / 4 arcs = 2 each)
+    let arc_spans = [
+      (0.0, 1.0 / 8.0),
+      (2.0 / 8.0, 3.0 / 8.0),
+      (4.0 / 8.0, 5.0 / 8.0),
+      (6.0 / 8.0, 7.0 / 8.0),
+    ];
+
+    let mut extras_in_arcs = 0;
+    for &(lo, hi) in &arc_spans {
+      for &t in &result {
+        if t > lo + 1e-5 && t < hi - 1e-5 {
+          extras_in_arcs += 1;
+        }
+      }
+    }
+
+    assert_eq!(
+      extras_in_arcs, 8,
+      "All 8 free samples should go to arc spans, but got {extras_in_arcs}"
     );
   }
 }
