@@ -633,8 +633,12 @@
       await new Promise(resolve => setTimeout(resolve, 10));
     }
 
-    viz.camera.position.set(...view.cameraPosition);
-    viz.orbitControls.target.set(...view.target);
+    if (view.cameraPosition) {
+      viz.camera.position.set(...view.cameraPosition);
+    }
+    if (view.target) {
+      viz.orbitControls.target.set(...view.target);
+    }
     if ('fov' in viz.camera && view.fov !== undefined) {
       viz.camera.fov = view.fov;
       viz.camera.updateProjectionMatrix();
@@ -670,7 +674,9 @@
       materialDefinitions = { ...serverState.materials };
     });
 
-    setView(serverState.view);
+    if (serverState.view) {
+      setView(serverState.view);
+    }
     preludeEjected = serverState.preludeEjected;
 
     run(serverState.code);
