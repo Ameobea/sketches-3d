@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
+import { generateParkourPlatforms, jumpSimParamsFromSceneConfig } from 'src/viz/parkour/platformGen';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/TimeDisplay.svelte';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import type { SceneConfig } from '..';
@@ -39,7 +40,7 @@ const addZoneVisual = (viz: Viz, pos: THREE.Vector3, halfExtents: THREE.Vector3,
   viz.scene.add(visual);
 };
 
-const initLevel = (viz: Viz) => {
+const initLevel = (viz: Viz, sceneConfig: SceneConfig) => {
   const fpCtx = viz.fpCtx!;
 
   const floorMat = new THREE.MeshStandardMaterial({ color: 0x515763, roughness: 0.95, metalness: 0.04 });
@@ -65,7 +66,7 @@ const initLevel = (viz: Viz) => {
       halfExtents: new THREE.Vector3(3.2, 1.2, 3.2),
     },
     {
-      baseImpulse: 66,
+      baseImpulse: 106,
       speedScaling: 0.28,
       cooldownSeconds: 0.15,
       direction: new THREE.Vector3(0, 1, 0),
@@ -79,7 +80,7 @@ const initLevel = (viz: Viz) => {
       halfExtents: new THREE.Vector3(3.2, 1.2, 3.2),
     },
     {
-      baseImpulse: 40,
+      baseImpulse: 110,
       speedScaling: 0.2,
       cooldownSeconds: 0.15,
       direction: new THREE.Vector3(0.45, 1, 0.15).normalize(),
@@ -116,6 +117,36 @@ const initLevel = (viz: Viz) => {
   addZoneVisual(viz, new THREE.Vector3(16, 12.2, 78), new THREE.Vector3(14, 1.2, 6), 0x88ff88);
   addZoneVisual(viz, new THREE.Vector3(0, 1.1, 18), new THREE.Vector3(3.2, 1.2, 3.2), 0x5db9ff);
   addZoneVisual(viz, new THREE.Vector3(0, 12.1, 68), new THREE.Vector3(3.2, 1.2, 3.2), 0x5db9ff);
+
+  // Generated jump platforms along a smooth half-circle arc
+  {
+    // Half-circle from near spawn, sweeping east, ending north — slight elevation gain
+    const spline = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 1, -22),
+      new THREE.Vector3(-30, 12, -5),
+      new THREE.Vector3(-42, 23, 20),
+      new THREE.Vector3(-330, 34, 45),
+      new THREE.Vector3(0, 45, 62),
+    ]);
+
+    const jumpParams = jumpSimParamsFromSceneConfig(sceneConfig);
+
+    const positions = generateParkourPlatforms(spline, jumpParams, 1.04);
+    console.log(`[platformGen] Generated ${positions.length} platforms`);
+
+    const platHeight = 0.4;
+    const genMat = new THREE.MeshStandardMaterial({ color: 0x44aa66, roughness: 0.7, metalness: 0.1 });
+
+    for (const pos of positions) {
+      // CylinderGeometry is origin-centered; shift down half-height so top surface is at pos.y
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, platHeight, 24), genMat);
+      mesh.position.set(pos.x, pos.y - platHeight / 2, pos.z);
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      viz.scene.add(mesh);
+      fpCtx.addTriMesh(mesh);
+    }
+  }
 };
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
@@ -157,21 +188,28 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     'jump_pad_speedup_test',
     true,
     {
-      gravity: 60,
+      gravity: 80,
       gravityShaping: {
         riseMultiplier: 1.0,
-        apexMultiplier: 0.85,
+        apexMultiplier: 1.4,
         fallMultiplier: 1.5,
         apexThreshold: 4.0,
         kneeWidth: 0.5,
       },
       player: {
-        jumpVelocity: 36,
+        moveSpeed: { onGround: 18, inAir: 26 },
+        jumpVelocity: 40,
         terminalVelocity: 80,
-        dashConfig: { chargeConfig: { curCharges: rwritable(Infinity) } },
+        dashConfig: {
+          chargeConfig: { curCharges: rwritable(Infinity) },
+          dashMagnitude: 30,
+          useExternalVelocity: true,
+        },
       },
     }
   );
+
+  const sceneConfig = pkManager.buildSceneConfig();
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.62);
   viz.scene.add(ambientLight);
@@ -195,7 +233,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   sunLight.shadow.camera.updateProjectionMatrix();
   viz.scene.add(sunLight);
 
-  viz.collisionWorldLoadedCbs.push(() => initLevel(viz));
+  viz.collisionWorldLoadedCbs.push(() => initLevel(viz, sceneConfig));
 
   configureDefaultPostprocessingPipeline({
     viz,
@@ -203,5 +241,5 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     autoUpdateShadowMap: true,
   });
 
-  return pkManager.buildSceneConfig();
+  return sceneConfig;
 };

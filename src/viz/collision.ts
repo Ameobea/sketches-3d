@@ -690,10 +690,16 @@ export class BulletPhysics {
   public updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
     const wasOnGround = this.playerController.onGround();
 
+    const lastJumpTimeBefore = this.lastJumpTimeSeconds;
     this.handleInput(curTimeSeconds);
+    const jumpFiredThisFrame = this.lastJumpTimeSeconds !== lastJumpTimeBefore;
 
     const playerMoveSpeed = this.viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
-    const moveSpeedPerSecond = wasOnGround ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
+    // If a jump fired during handleInput, use inAir speed immediately rather than onGround
+    // speed for this frame's substeps.  Without this, a standing jump always wastes one
+    // animation frame at onGround speed before switching — a real-time duration that varies
+    // with host frame rate.
+    const moveSpeedPerSecond = wasOnGround && !jumpFiredThisFrame ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
     const walkDirBulletVector = this.btvec3(
       this.moveDirection.x * moveSpeedPerSecond,
       this.moveDirection.y * moveSpeedPerSecond,
@@ -705,26 +711,63 @@ export class BulletPhysics {
     const fixedTimeStep = 1 / this.simulationTickRate;
     const maxSubSteps = 20;
 
+    // Track ground state per-substep so we can detect landing within the substep
+    // loop itself.  On low-framerate devices many substeps run per animation frame,
+    // so checking only after all substeps would leave a variable-length dead zone
+    // inside the loop during which the player can't jump.
+    let prevSubStepOnGround = wasOnGround;
     const numSubSteps = this.collisionWorld.beginStepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
     for (let i = 0; i < numSubSteps; i++) {
       this.physicsElapsedTime += fixedTimeStep;
       this.tickPhysicsTickers(fixedTimeStep);
       this.collisionWorld.substepSimulation();
       this.drainZoneEvents();
+
+      const subStepOnGround = this.playerController.onGround();
+      if (!prevSubStepOnGround && subStepOnGround) {
+        const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
+        const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
+        const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
+        this.viz.sfxManager.onPlayerLand(materialClass);
+
+        // handleInput already called dashManager.tick with wasOnGround=false (player was
+        // in air pre-physics), so the dash manager never saw this ground touch.  Tick it
+        // now so a mid-substep landing correctly unlocks the next dash.
+        this.dashManager.tick(curTimeSeconds, true);
+
+        // If Space is already held when we land and the jump delay has elapsed, fire a jump
+        // immediately.  Doing this inside the substep loop means remaining substeps in this
+        // frame execute with the jump velocity already applied, eliminating any intra-frame
+        // dead zone that would otherwise grow with substep count on low-framerate devices.
+        if (
+          this.viz.controlState.movementEnabled &&
+          this.viz.keyStates['Space'] &&
+          curTimeSeconds - this.lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS
+        ) {
+          this.playerController.jump(
+            this.btvec3(
+              this.moveDirection.x * (this.jumpSpeed * 0.18),
+              this.jumpSpeed,
+              this.moveDirection.z * (this.jumpSpeed * 0.18)
+            )
+          );
+          this.lastJumpTimeSeconds = curTimeSeconds;
+          this.lastGroundedTimeSeconds = -Infinity;
+          for (const cb of this.jumpCbs) {
+            cb(curTimeSeconds);
+          }
+          // Clear the ground flag so the next frame (and the next substep's m_wasOnGround)
+          // sees the player as airborne, immediately switching to inAir movement speed.
+          this.playerController.setOnGround(false);
+        }
+      }
+      prevSubStepOnGround = this.playerController.onGround();
     }
     this.collisionWorld.finishStepSimulation();
     this.syncPhysicsTickerVisuals();
 
     const newPlayerTransform = this.playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
-
-    const nowOnGround = this.playerController.onGround();
-    if (!wasOnGround && nowOnGround) {
-      const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
-      const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
-      const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
-      this.viz.sfxManager.onPlayerLand(materialClass);
-    }
 
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
