@@ -196,7 +196,6 @@ impl FillRule {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SegmentInterval {
-  pub start: f32,
   pub end: f32,
   pub has_detail: bool,
 }
@@ -263,9 +262,6 @@ pub(crate) struct SubpathTopology {
 pub(crate) trait PathSampler: Any {
   fn interned_t_kwarg(&self) -> Sym;
   fn critical_t_values(&self) -> Vec<f32>;
-  fn segment_intervals(&self) -> Vec<SegmentInterval> {
-    Vec::new()
-  }
   fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
     None
   }
@@ -718,16 +714,12 @@ impl PathSubpath {
     }
 
     let mut intervals = Vec::with_capacity(self.segments.len());
-    let mut prev = 0.0f32;
     for (seg, cum_len) in self.segments.iter().zip(self.cumulative_lengths.iter()) {
       let end = (cum_len / self.total_length).clamp(0., 1.);
-      let start = prev.clamp(0., 1.);
       intervals.push(SegmentInterval {
-        start,
         end,
         has_detail: seg.has_detail(),
       });
-      prev = end;
     }
 
     intervals
@@ -1130,45 +1122,6 @@ impl PathTracerCallable {
     out
   }
 
-  pub(crate) fn segment_intervals(&self) -> Vec<SegmentInterval> {
-    if self.subpaths.is_empty() || self.total_length <= LENGTH_EPSILON {
-      return Vec::new();
-    }
-
-    let mut intervals = Vec::new();
-    let mut prev = 0.0f32;
-    let mut offset = 0.0f32;
-    for subpath in &self.subpaths {
-      for (seg, cum_len) in subpath
-        .segments
-        .iter()
-        .zip(subpath.cumulative_lengths.iter())
-      {
-        let end = ((offset + cum_len) / self.total_length).clamp(0.0, 1.0);
-        let start = prev.clamp(0.0, 1.0);
-        intervals.push(SegmentInterval {
-          start,
-          end,
-          has_detail: seg.has_detail(),
-        });
-        prev = end;
-      }
-      offset += subpath.total_length;
-    }
-
-    if self.reverse {
-      for interval in &mut intervals {
-        let start = (1.0 - interval.end).clamp(0.0, 1.0);
-        let end = (1.0 - interval.start).clamp(0.0, 1.0);
-        interval.start = start;
-        interval.end = end;
-      }
-      intervals.reverse();
-    }
-
-    intervals
-  }
-
   fn sample(&self, t: f32) -> Result<Vec2, ErrorStack> {
     if self.subpaths.is_empty() || self.total_length <= LENGTH_EPSILON {
       return Err(ErrorStack::new(
@@ -1363,10 +1316,6 @@ impl PathSampler for PathTracerCallable {
 
   fn critical_t_values(&self) -> Vec<f32> {
     PathTracerCallable::critical_t_values(self)
-  }
-
-  fn segment_intervals(&self) -> Vec<SegmentInterval> {
-    PathTracerCallable::segment_intervals(self)
   }
 
   fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
@@ -2345,31 +2294,6 @@ mod tests {
     assert!((samples[0] - 0.0).abs() < 1e-6);
     assert!((samples[1] - 0.5).abs() < 1e-6);
     assert!((samples[2] - 1.0).abs() < 1e-6);
-  }
-
-  #[test]
-  fn test_path_tracer_segment_intervals_detail_order() {
-    let cmds = vec![
-      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
-      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
-      DrawCommand::QuadraticBezier {
-        ctrl: Vec2::new(1.0, 1.0),
-        to: Vec2::new(2.0, 0.0),
-      },
-    ];
-    let tracer = PathTracerCallable::new(false, false, false, cmds.clone(), Sym(0));
-    let intervals = tracer.segment_intervals();
-
-    assert_eq!(intervals.len(), 2);
-    assert!(!intervals[0].has_detail);
-    assert!(intervals[1].has_detail);
-
-    let reverse_tracer = PathTracerCallable::new(false, false, true, cmds, Sym(0));
-    let reverse_intervals = reverse_tracer.segment_intervals();
-
-    assert_eq!(reverse_intervals.len(), 2);
-    assert!(reverse_intervals[0].has_detail);
-    assert!(!reverse_intervals[1].has_detail);
   }
 
   #[test]

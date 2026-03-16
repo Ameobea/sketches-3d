@@ -8,11 +8,10 @@ use nalgebra::Matrix4;
 
 use crate::{
   builtins::trace_path::{
-    as_path_sampler, build_interval_weights, build_topology_samples, normalize_guides,
-    normalize_path_sampler_guides, SegmentInterval,
+    as_path_sampler, build_topology_samples, normalize_guides, normalize_path_sampler_guides,
   },
-  ArgRef, Callable, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value, Vec2,
-  EMPTY_KWARGS,
+  ArgRef, Callable, DynamicCallable, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value,
+  Vec2, EMPTY_KWARGS,
 };
 
 use super::adaptive_sampler::adaptive_sample_fallible;
@@ -24,9 +23,6 @@ use super::helpers::{compute_centroid, vertices_are_collapsed};
 
 const FRAME_EPSILON: f32 = 1e-6;
 const COLLAPSE_EPSILON: f32 = 1e-5;
-/// Maximum allowed deviation from a straight line (as a fraction of total spine length) before
-/// disabling the topology-aware sampling optimization.
-const SPINE_STRAIGHTNESS_THRESHOLD: f32 = 0.035;
 /// Epsilon for comparing twist values to determine if they're effectively constant.
 const TWIST_CONST_EPSILON: f32 = 1e-6;
 
@@ -178,46 +174,6 @@ fn apply_twist(normal: Vec3, binormal: Vec3, twist: f32) -> (Vec3, Vec3) {
   let rotated_normal = normal * cos + binormal * sin;
   let rotated_binormal = binormal * cos - normal * sin;
   (rotated_normal, rotated_binormal)
-}
-
-/// Checks whether the spine points lie approximately on a straight line.
-///
-/// Returns `true` if the maximum perpendicular distance of any point from the line connecting the
-/// first and last points is within `SPINE_STRAIGHTNESS_THRESHOLD` times the total spine length.
-fn spine_is_approximately_straight(points: &[Vec3]) -> bool {
-  if points.len() < 3 {
-    return true;
-  }
-
-  let start = points[0];
-  let end = points[points.len() - 1];
-  let line_dir = end - start;
-  let line_len_sq = line_dir.norm_squared();
-
-  // degenerate case
-  if line_len_sq < FRAME_EPSILON {
-    let threshold_sq = SPINE_STRAIGHTNESS_THRESHOLD * SPINE_STRAIGHTNESS_THRESHOLD;
-    return points
-      .iter()
-      .all(|p| (*p - start).norm_squared() < threshold_sq);
-  }
-
-  let line_len = line_len_sq.sqrt();
-  let line_dir_normalized = line_dir / line_len;
-
-  let mut max_deviation = 0.0f32;
-  for point in &points[1..points.len() - 1] {
-    let to_point = *point - start;
-    // Project onto line direction
-    let proj_len = to_point.dot(&line_dir_normalized);
-    let proj = line_dir_normalized * proj_len;
-    // Perpendicular distance
-    let perp = to_point - proj;
-    let deviation = perp.norm();
-    max_deviation = max_deviation.max(deviation);
-  }
-
-  max_deviation <= line_len * SPINE_STRAIGHTNESS_THRESHOLD
 }
 
 struct RingInfo {
@@ -606,7 +562,7 @@ pub fn rail_sweep(
     // CGAL's triangulation can't handle these cases and returns an error, but we should be able to
     // do something intelligent for this case.
 
-    if is_end && vertices_are_collapsed(&ring) {
+    if vertices_are_collapsed(&ring) {
       let start = verts.len();
       verts.push(compute_centroid(&ring));
       ring_infos.push(RingInfo {
@@ -643,12 +599,29 @@ pub fn rail_sweep(
   }
 
   if closed {
-    stitch_rings(
-      &mut indices,
-      &ring_infos[ring_infos.len() - 1],
-      &ring_infos[0],
-      ring_resolution,
-    );
+    let r_last = &ring_infos[ring_infos.len() - 1];
+    let r_first = &ring_infos[0];
+    if r_last.count > 1 && r_first.count > 1 {
+      // Use DP stitching to find the optimal rotational alignment between the last and
+      // first rings.  Without this, any RMF phase accumulated over the closed loop causes
+      // twisted / backwards-facing triangles at the seam.
+      let pts_last = &verts[r_last.start..r_last.start + r_last.count];
+      let pts_first = &verts[r_first.start..r_first.start + r_first.count];
+      dp_stitch_presampled(
+        pts_last,
+        pts_first,
+        None,
+        None,
+        None,
+        None,
+        r_last.start,
+        r_first.start,
+        true,
+        &mut indices,
+      );
+    } else {
+      stitch_rings(&mut indices, r_last, r_first, ring_resolution);
+    }
   }
 
   if capped && !closed {
@@ -1183,6 +1156,119 @@ fn compute_spine_t_values(
   }
 }
 
+struct StaticProfileOuter {
+  profile: Rc<Callable>,
+  profile_samplers: Option<Rc<Callable>>,
+}
+
+impl DynamicCallable for StaticProfileOuter {
+  fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+  fn is_side_effectful(&self) -> bool {
+    false
+  }
+  fn is_rng_dependent(&self) -> bool {
+    false
+  }
+  fn invoke(
+    &self,
+    args: &[Value],
+    _kwargs: &FxHashMap<Sym, Value>,
+    _ctx: &EvalCtx,
+  ) -> Result<Value, ErrorStack> {
+    let u = match args.first() {
+      Some(Value::Float(f)) => *f,
+      Some(Value::Int(i)) => *i as f32,
+      other => {
+        return Err(ErrorStack::new(format!(
+          "static_profile_adapter: expected float `u`, found: {other:?}"
+        )))
+      }
+    };
+    // If profile is itself a path sampler (|v| -> vec2), use it directly as both sampler and
+    // path_samplers so critical t values flow through to the dynamic profile machinery.
+    if as_path_sampler(&self.profile).is_some() {
+      let mut map = FxHashMap::default();
+      map.insert(
+        "sampler".to_owned(),
+        Value::Callable(Rc::clone(&self.profile)),
+      );
+      map.insert(
+        "path_samplers".to_owned(),
+        Value::Callable(Rc::clone(&self.profile)),
+      );
+      return Ok(Value::Map(Rc::new(map)));
+    }
+    // Regular |u, v| -> vec2 callable: wrap in an inner sampler that captures u.
+    let inner = Rc::new(Callable::Dynamic {
+      name: "static_profile_inner".to_owned(),
+      inner: Box::new(StaticProfileInner {
+        profile: Rc::clone(&self.profile),
+        u,
+      }),
+    });
+    match &self.profile_samplers {
+      Some(ps_cb) => {
+        let mut map = FxHashMap::default();
+        map.insert("sampler".to_owned(), Value::Callable(inner));
+        map.insert(
+          "path_samplers".to_owned(),
+          Value::Callable(Rc::clone(ps_cb)),
+        );
+        Ok(Value::Map(Rc::new(map)))
+      }
+      None => Ok(Value::Callable(inner)),
+    }
+  }
+  fn get_return_type_hint(&self) -> Option<crate::ArgType> {
+    None
+  }
+}
+
+struct StaticProfileInner {
+  profile: Rc<Callable>,
+  u: f32,
+}
+
+impl DynamicCallable for StaticProfileInner {
+  fn as_any(&self) -> &dyn std::any::Any {
+    self
+  }
+  fn is_side_effectful(&self) -> bool {
+    false
+  }
+  fn is_rng_dependent(&self) -> bool {
+    false
+  }
+  fn invoke(
+    &self,
+    args: &[Value],
+    _kwargs: &FxHashMap<Sym, Value>,
+    ctx: &EvalCtx,
+  ) -> Result<Value, ErrorStack> {
+    let v = match args.first() {
+      Some(Value::Float(f)) => *f,
+      Some(Value::Int(i)) => *i as f32,
+      other => {
+        return Err(ErrorStack::new(format!(
+          "static_profile_adapter: expected float `v`, found: {other:?}"
+        )))
+      }
+    };
+    ctx
+      .invoke_callable(
+        &self.profile,
+        &[Value::Float(self.u), Value::Float(v)],
+        EMPTY_KWARGS,
+      )
+      .map_err(|err| err.wrap("Error calling user-provided `profile` callable in `rail_sweep`"))
+  }
+  fn get_return_type_hint(&self) -> Option<crate::ArgType> {
+    Some(crate::ArgType::Vec2)
+  }
+}
+
 pub(crate) fn rail_sweep_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -1243,94 +1329,6 @@ pub(crate) fn rail_sweep_impl(
            are extracted from the dynamic profile's return value",
         ));
       }
-
-      struct ProfileGuideData {
-        guides: Vec<f32>,
-        interval_weights: Option<Vec<f32>>,
-      }
-
-      fn collect_profile_guides(
-        ctx: &EvalCtx,
-        value: &Value,
-      ) -> Result<Option<ProfileGuideData>, ErrorStack> {
-        struct SamplerData {
-          guides: Vec<f32>,
-          intervals: Vec<SegmentInterval>,
-        }
-
-        fn sampler_data(callable: &Callable) -> Option<SamplerData> {
-          as_path_sampler(callable).map(|s| SamplerData {
-            guides: s.critical_t_values(),
-            intervals: s.segment_intervals(),
-          })
-        }
-
-        let err_expected = || {
-          ErrorStack::new(format!(
-            "Invalid profile_samplers argument for `rail_sweep`; expected a path sampler, a \
-             sequence of samplers, or a function of `|u: float|: Seq<PathSampler> | PathSampler`",
-          ))
-        };
-
-        let mut samplers = Vec::new();
-        match value {
-          Value::Nil => return Ok(None),
-          Value::Callable(callable) => {
-            let data = sampler_data(callable).ok_or_else(err_expected)?;
-            if data.guides.is_empty() {
-              return Ok(None);
-            }
-            samplers.push(data);
-          }
-          Value::Sequence(seq) => {
-            for (ix, res) in seq.consume(ctx).enumerate() {
-              let val = res?;
-              let cb = val.as_callable().ok_or_else(|| {
-                ErrorStack::new(format!(
-                  "Expected trace_path sampler in profile_samplers sequence for `rail_sweep` at \
-                   index {ix}, found: {val:?}"
-                ))
-              })?;
-              let data = sampler_data(cb).ok_or_else(err_expected)?;
-              if data.guides.is_empty() {
-                return Ok(None);
-              }
-              samplers.push(data);
-            }
-          }
-          _ => {
-            return Err(ErrorStack::new(format!(
-              "Invalid profile_samplers argument for `rail_sweep`; expected a trace_path sampler \
-               or sequence of samplers, found: {value:?}"
-            )))
-          }
-        }
-
-        if samplers.is_empty() {
-          return Ok(None);
-        }
-
-        let mut raw_guides = Vec::new();
-        let mut intervals = Vec::new();
-        for sampler in samplers {
-          raw_guides.extend(sampler.guides);
-          intervals.push(sampler.intervals);
-        }
-
-        let guides = normalize_guides(&raw_guides);
-        let interval_weights = build_interval_weights(&guides, &intervals);
-
-        Ok(Some(ProfileGuideData {
-          guides,
-          interval_weights,
-        }))
-      }
-
-      let profile_guide_data = if has_profile {
-        collect_profile_guides(ctx, &profile_samplers_val)?
-      } else {
-        None
-      };
 
       /// Resamples spine points along the path at the specified t values.
       /// Each t value in [0, 1] represents a position along the arc length of the path.
@@ -1574,121 +1572,41 @@ pub(crate) fn rail_sweep_impl(
         )));
       };
 
-      let profile = if has_profile {
-        Some(profile_val.as_callable().ok_or_else(|| {
-          ErrorStack::new(format!(
-            "Invalid profile argument for `rail_sweep`; expected Callable, found: {profile_val:?}"
-          ))
-        })?)
-      } else {
-        None
-      };
-
-      fn build_profile_callable<'a>(
-        ctx: &'a EvalCtx,
-        profile: &'a Rc<Callable>,
-      ) -> impl Fn(f32, f32, usize, usize, Vec3) -> Result<Vec2, ErrorStack> + 'a {
-        move |u, v, u_ix, v_ix, center| {
-          let out = ctx
-            .invoke_callable(
-              profile,
-              &[
-                Value::Float(u),
-                Value::Float(v),
-                Value::Int(u_ix as i64),
-                Value::Int(v_ix as i64),
-                Value::Vec3(center),
-              ],
-              EMPTY_KWARGS,
-            )
-            .map_err(|err| {
-              err.wrap("Error calling user-provided cb passed to `profile` arg in `rail_sweep`")
-            })?;
-          out.as_vec2().copied().ok_or_else(|| {
-            ErrorStack::new(format!(
-              "Expected Vec2 from user-provided cb passed to `profile` arg in `rail_sweep`, \
-               found: {out:?}"
-            ))
-          })
-        }
-      }
-
-      let (profile_guides, profile_weights) = match profile_guide_data.as_ref() {
-        Some(data) => (
-          Some(data.guides.as_slice()),
-          data.interval_weights.as_deref(),
-        ),
-        None => (None, None),
-      };
-
-      // Disable topology-aware sampling optimization when conditions might cause artifacts:
-      // 1. Non-constant twist can distort "straight" segments in ways that require more detail
-      // 2. Non-straight spines can bend segments, causing shading artifacts with reduced detail
-      //
-      // TODO: With the new DP-based stitching algorithm, we may be able to re-enable these
-      // optimizations even in curved/twisted cases, since the DP algorithm can absorb the
-      // resulting vertex drift. This should be investigated after the DP stitching is proven
-      // to work well in practice.
-      let has_varying_twist = matches!(twist, Twist::Presampled(_));
-      let spine_is_straight = spine_is_approximately_straight(&spine_points);
-      let should_disable_optimization = has_varying_twist || !spine_is_straight;
-
-      let effective_profile_weights = if should_disable_optimization {
-        None
-      } else {
-        profile_weights
-      };
-
-      let mesh = if has_dynamic_profile {
-        let dynamic_profile_cb = dynamic_profile_val.as_callable().ok_or_else(|| {
+      let dynamic_profile_cb = if has_dynamic_profile {
+        Rc::clone(dynamic_profile_val.as_callable().ok_or_else(|| {
           ErrorStack::new(format!(
             "Invalid dynamic_profile argument for `rail_sweep`; expected Callable, found: \
              {dynamic_profile_val:?}"
           ))
-        })?;
-        rail_sweep_dynamic(
-          ctx,
-          &spine_points,
-          ring_resolution,
-          frame_mode,
-          closed,
-          capped,
-          &twist,
-          dynamic_profile_cb,
-          fku_stitching,
-          Some(&spine_t_values),
-          adaptive_profile_sampling,
-        )?
+        })?)
       } else {
-        let profile =
-          profile.expect("profile should be available when dynamic_profile is not used");
-        match twist {
-          Twist::Const(twist_val) => rail_sweep(
-            &spine_points,
-            ring_resolution,
-            frame_mode,
-            closed,
-            capped,
-            |_, _| Ok(twist_val),
-            build_profile_callable(ctx, profile),
-            profile_guides,
-            effective_profile_weights,
-            Some(&spine_t_values),
-          )?,
-          Twist::Presampled(twist_values) => rail_sweep(
-            &spine_points,
-            ring_resolution,
-            frame_mode,
-            closed,
-            capped,
-            |i, _| Ok(twist_values[i]),
-            build_profile_callable(ctx, profile),
-            profile_guides,
-            effective_profile_weights,
-            Some(&spine_t_values),
-          )?,
-        }
+        let profile_cb = profile_val.as_callable().ok_or_else(|| {
+          ErrorStack::new(format!(
+            "Invalid profile argument for `rail_sweep`; expected Callable, found: {profile_val:?}"
+          ))
+        })?;
+        Rc::new(Callable::Dynamic {
+          name: "static_profile_adapter".to_owned(),
+          inner: Box::new(StaticProfileOuter {
+            profile: Rc::clone(profile_cb),
+            profile_samplers: profile_samplers_val.as_callable().map(Rc::clone),
+          }),
+        })
       };
+
+      let mesh = rail_sweep_dynamic(
+        ctx,
+        &spine_points,
+        ring_resolution,
+        frame_mode,
+        closed,
+        capped,
+        &twist,
+        &dynamic_profile_cb,
+        fku_stitching,
+        Some(&spine_t_values),
+        adaptive_profile_sampling,
+      )?;
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
@@ -2014,83 +1932,6 @@ mod tests {
     // Also verify mesh was created successfully
     assert!(mesh.vertices.len() > 0);
     assert!(mesh.faces.len() > 0);
-  }
-
-  // Note: DP stitching tests have been moved to fku_stitch.rs module
-
-  #[test]
-  fn test_spine_is_approximately_straight_with_straight_spine() {
-    use super::spine_is_approximately_straight;
-
-    // Perfectly straight spine
-    let straight = vec![
-      Vec3::new(0., 0., 0.),
-      Vec3::new(0., 0., 1.),
-      Vec3::new(0., 0., 2.),
-    ];
-    assert!(spine_is_approximately_straight(&straight));
-
-    // Straight spine with more points
-    let longer_straight = vec![
-      Vec3::new(0., 0., 0.),
-      Vec3::new(1., 1., 1.),
-      Vec3::new(2., 2., 2.),
-      Vec3::new(3., 3., 3.),
-      Vec3::new(4., 4., 4.),
-    ];
-    assert!(spine_is_approximately_straight(&longer_straight));
-
-    // Two-point spine is always straight
-    let two_points = vec![Vec3::new(0., 0., 0.), Vec3::new(5., 5., 5.)];
-    assert!(spine_is_approximately_straight(&two_points));
-  }
-
-  #[test]
-  fn test_spine_is_approximately_straight_with_curved_spine() {
-    use super::spine_is_approximately_straight;
-
-    // Significantly curved spine (should fail the straightness check)
-    let curved = vec![
-      Vec3::new(0., 0., 0.),
-      Vec3::new(5., 0., 5.), // Large deviation from straight line
-      Vec3::new(0., 0., 10.),
-    ];
-    assert!(!spine_is_approximately_straight(&curved));
-
-    // Arc-like spine
-    let arc = vec![
-      Vec3::new(0., 0., 0.),
-      Vec3::new(0.5, 1., 0.),
-      Vec3::new(1., 1.5, 0.),
-      Vec3::new(1.5, 1., 0.),
-      Vec3::new(2., 0., 0.),
-    ];
-    assert!(!spine_is_approximately_straight(&arc));
-  }
-
-  #[test]
-  fn test_spine_is_approximately_straight_within_threshold() {
-    use super::{spine_is_approximately_straight, SPINE_STRAIGHTNESS_THRESHOLD};
-
-    // Spine with small deviation just within threshold
-    // For a line of length 10, 1% threshold means 0.1 max deviation
-    let spine_len = 10.0;
-    let small_deviation = spine_len * SPINE_STRAIGHTNESS_THRESHOLD * 0.5; // Half the threshold
-    let within_threshold = vec![
-      Vec3::new(0., 0., 0.),
-      Vec3::new(0., small_deviation, 5.),
-      Vec3::new(0., 0., 10.),
-    ];
-    assert!(spine_is_approximately_straight(&within_threshold));
-
-    // Spine with deviation just beyond threshold
-    let large_deviation = spine_len * SPINE_STRAIGHTNESS_THRESHOLD * 2.0; // Double the threshold
-    let beyond_threshold = vec![
-      Vec3::new(0., 0., 0.),
-      Vec3::new(0., large_deviation, 5.),
-      Vec3::new(0., 0., 10.),
-    ];
-    assert!(!spine_is_approximately_straight(&beyond_threshold));
   }
 
   #[test]

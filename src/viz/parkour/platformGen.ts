@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import type { SceneConfig } from '../scenes';
-import { DefaultMoveSpeed } from '../scenes';
+import { DefaultExternalVelocityAirDampingFactor, DefaultMoveSpeed } from '../scenes';
 import { DefaultGravity, DefaultJumpSpeed } from '../conf';
 
 export interface JumpSimParams {
@@ -53,6 +53,25 @@ export interface JumpSimParams {
     /** If true, shaping only applies during jumps (not walk-off-ledge falls). Default: false */
     onlyJumps?: boolean;
   };
+  /**
+   * Initial horizontal magnitude of external velocity at the start of the path, in units/s.
+   *
+   * External velocity is redirected toward the player's movement direction in the air, so only
+   * its horizontal magnitude matters for platform placement. It decays each jump according to
+   * `externalVelocityAirDampingFactor`. With jump held, `setOnGround(false)` is called
+   * immediately on landing, so ground damping never applies between consecutive jumps.
+   *
+   * Default: 0 (no initial external velocity).
+   */
+  initialExternalVelocity?: number;
+  /**
+   * Fraction of horizontal external velocity lost per second while airborne (0–1).
+   * Corresponds to `SceneConfig.player.externalVelocityAirDampingFactor.x` (the X/Z horizontal
+   * component — X and Z are assumed equal for isotropic horizontal damping).
+   *
+   * Default: `DefaultExternalVelocityAirDampingFactor.x` (0.12).
+   */
+  externalVelocityAirDampingFactor?: number;
 }
 
 export interface ArcSample {
@@ -181,10 +200,11 @@ const DEFAULT_SIMULATION_TICK_RATE_HZ = 160;
 
 /**
  * Builds a `JumpSimParams` from a `SceneConfig` (as returned by `ParkourManager.buildSceneConfig()`),
- * pulling gravity, jump velocity, in-air speed, tick rate, terminal velocity, and gravity shaping
- * from the same fields the physics engine reads at runtime.
+ * pulling gravity, jump velocity, in-air speed, tick rate, terminal velocity, gravity shaping,
+ * and external velocity air damping from the same fields the physics engine reads at runtime.
  *
  * Any field not set in the `SceneConfig` falls back to the engine defaults.
+ * `initialExternalVelocity` is not included — it is level-specific context, not a physics config.
  */
 export function jumpSimParamsFromSceneConfig(sceneConfig: SceneConfig): JumpSimParams {
   return {
@@ -194,6 +214,9 @@ export function jumpSimParamsFromSceneConfig(sceneConfig: SceneConfig): JumpSimP
     tickRate: sceneConfig.simulationTickRate ?? DEFAULT_SIMULATION_TICK_RATE_HZ,
     terminalVelocity: sceneConfig.player?.terminalVelocity ?? DEFAULT_TERMINAL_VELOCITY,
     gravityShaping: sceneConfig.gravityShaping,
+    externalVelocityAirDampingFactor: (
+      sceneConfig.player?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor
+    ).x,
   };
 }
 
@@ -231,6 +254,25 @@ export function generateParkourPlatforms(
   // Effective horizontal speed including moveDirMag scale
   const effectiveAirSpeed = params.inAirSpeed * moveDirMag;
 
+  const airDamping = params.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor.x;
+  // External velocity state, tracked across jumps. With jump held, setOnGround(false) is called
+  // immediately on landing, so ground damping never fires between consecutive jumps — only air
+  // damping applies, over the duration of each jump.
+  let currentExtVel = params.initialExternalVelocity ?? 0;
+
+  // Extra horizontal distance from external velocity over a jump of duration T seconds.
+  // The player redirects horizontal external velocity toward their movement direction, so it
+  // contributes purely as a forward speed boost. The velocity decays as V*(1-d)^t, giving:
+  //   integral_0^T V*(1-d)^t dt = V*(1-(1-d)^T) / (-ln(1-d))
+  // Special case: d=0 means no decay, contribution is simply V*T.
+  const extVelHorizContrib = (V: number, T: number): number => {
+    if (V === 0) return 0;
+    if (airDamping <= 0) return V * T;
+    const decay = 1 - airDamping;
+    if (decay <= 0) return 0;
+    return (V * (1 - Math.pow(decay, T))) / -Math.log(decay);
+  };
+
   const platforms: THREE.Vector3[] = [spline.getPointAt(0)];
 
   const EPSILON = 1e-5;
@@ -243,17 +285,19 @@ export function generateParkourPlatforms(
     const airTime = getAirTime(arc, maxArcHeight, deltaH);
     if (airTime === null) return false;
 
-    // Total horizontal range = walkDir contribution + jump axis tilt contribution.
+    // Total horizontal range = walkDir contribution + jump axis tilt contribution + external velocity.
     // The tilt bonus is constant regardless of deltaH (always accumulated over the full rise).
-    const maxHorizRange = (effectiveAirSpeed * airTime + jumpTiltHorizBonus) * fudgeFactor;
+    const maxHorizRange =
+      (effectiveAirSpeed * airTime + jumpTiltHorizBonus + extVelHorizContrib(currentExtVel, airTime)) * fudgeFactor;
     const horizDist = Math.sqrt((candidate.x - current.x) ** 2 + (candidate.z - current.z) ** 2);
     return horizDist <= maxHorizRange;
   };
 
-  // Compute flat-ground max jump range to use as the minimum gap threshold.
-  // If the final platform would be closer than this to the previous one, skip it.
+  // Flat-ground air time, used for the end-of-path proximity check.
   const flatAirTime = getAirTime(arc, maxArcHeight, 0)!;
-  const fullJumpSpan = (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus) * fudgeFactor;
+
+  // extVel recorded before decaying, indexed by jump (extVelAtJump[i] = extVel when leaving platforms[i])
+  const extVelAtJump: number[] = [];
 
   let u = 0;
 
@@ -290,14 +334,60 @@ export function generateParkourPlatforms(
 
     // Skip the final platform if it's less than a full jump span from the last placed one.
     // This avoids placing two platforms awkwardly close together at the end of the path.
+    // Use the current external velocity state for an accurate threshold at this point in the path.
     const dx = candidate.x - current.x;
     const dz = candidate.z - current.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
+    const fullJumpSpan =
+      (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus + extVelHorizContrib(currentExtVel, flatAirTime)) *
+      fudgeFactor;
     if (u >= 1 - EPSILON && dist < fullJumpSpan) {
       break;
     }
 
     platforms.push(candidate);
+
+    // Record extVel before decaying — this is what the player has when jumping from this platform.
+    extVelAtJump.push(currentExtVel);
+
+    // Decay external velocity over the air time of this jump. Ground damping is skipped because
+    // setOnGround(false) is called immediately when re-jumping, bypassing the ground-damping branch.
+    const deltaH = candidate.y - current.y;
+    const airTimeToNext = getAirTime(arc, maxArcHeight, deltaH) ?? flatAirTime;
+    currentExtVel *= Math.pow(1 - airDamping, airTimeToNext);
+  }
+
+  // Post-pass: warn about height-constrained jumps.
+  //
+  // A jump is height-constrained when deltaH is close to maxArcHeight, which shortens air time and
+  // therefore reduces horizontal range. At the limit (deltaH = maxArcHeight), the player barely
+  // reaches the platform at the apex of the arc, with minimal time to travel horizontally. If a
+  // jump is height-constrained and the player holds W+Space, they arrive moving fast horizontally
+  // with little room to land cleanly before needing to redirect for the next jump.
+  const HEIGHT_WARN_FRACTION = 0.8;
+  for (let i = 0; i < platforms.length - 1; i++) {
+    const from = platforms[i];
+    const to = platforms[i + 1];
+    const deltaH = to.y - from.y;
+    if (maxArcHeight <= 0 || deltaH / maxArcHeight <= HEIGHT_WARN_FRACTION) continue;
+
+    const airTime = getAirTime(arc, maxArcHeight, deltaH) ?? flatAirTime;
+    const extVel = extVelAtJump[i] ?? 0;
+
+    const horizDist = Math.sqrt((to.x - from.x) ** 2 + (to.z - from.z) ** 2);
+    const actualRange =
+      (effectiveAirSpeed * airTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, airTime)) * fudgeFactor;
+    const flatRange =
+      (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, flatAirTime)) * fudgeFactor;
+
+    console.warn(
+      `[platformGen] height-constrained jump at step ${i}→${i + 1}:` +
+        `\n  from (${from.x.toFixed(2)}, ${from.y.toFixed(2)}, ${from.z.toFixed(2)})` +
+        `\n  to   (${to.x.toFixed(2)}, ${to.y.toFixed(2)}, ${to.z.toFixed(2)})` +
+        `\n  deltaH=${deltaH.toFixed(2)} = ${((deltaH / maxArcHeight) * 100).toFixed(1)}% of maxArcHeight=${maxArcHeight.toFixed(2)}` +
+        `\n  airTime=${airTime.toFixed(3)}s (flat: ${flatAirTime.toFixed(3)}s)` +
+        `\n  horizDist=${horizDist.toFixed(2)}, horizRange=${actualRange.toFixed(2)} (flat jump would allow ${flatRange.toFixed(2)}, deficit=${(flatRange - actualRange).toFixed(2)})`
+    );
   }
 
   return platforms;

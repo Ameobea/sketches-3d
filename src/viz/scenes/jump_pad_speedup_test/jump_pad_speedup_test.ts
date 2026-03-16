@@ -12,7 +12,7 @@ import { rwritable } from 'src/viz/util/TransparentWritable';
 const locations = {
   spawn: {
     pos: new THREE.Vector3(0, 3, -24),
-    rot: new THREE.Vector3(0, 0, 0),
+    rot: new THREE.Vector3(0, Math.PI, 0),
   },
 };
 
@@ -118,34 +118,39 @@ const initLevel = (viz: Viz, sceneConfig: SceneConfig) => {
   addZoneVisual(viz, new THREE.Vector3(0, 1.1, 18), new THREE.Vector3(3.2, 1.2, 3.2), 0x5db9ff);
   addZoneVisual(viz, new THREE.Vector3(0, 12.1, 68), new THREE.Vector3(3.2, 1.2, 3.2), 0x5db9ff);
 
-  // Generated jump platforms along a smooth half-circle arc
-  {
-    // Half-circle from near spawn, sweeping east, ending north — slight elevation gain
-    const spline = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(0, 1, -22),
-      new THREE.Vector3(-30, 12, -5),
-      new THREE.Vector3(-42, 23, 20),
-      new THREE.Vector3(-330, 34, 45),
-      new THREE.Vector3(0, 45, 62),
-    ]);
+  const spline = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 1, -22),
+    new THREE.Vector3(-30, 8, -5),
+    new THREE.Vector3(-52, 16, 20),
+    new THREE.Vector3(-0, 24, 55),
+    new THREE.Vector3(0, 32, 82),
+  ]);
+  // const spline = new THREE.CatmullRomCurve3([
+  //   new THREE.Vector3(0, 1, -22),
+  //   new THREE.Vector3(-30, 5, -5),
+  //   new THREE.Vector3(-42, 10, 20),
+  //   new THREE.Vector3(-30, 15, 45),
+  //   new THREE.Vector3(0, 20, 82),
+  // ]);
 
-    const jumpParams = jumpSimParamsFromSceneConfig(sceneConfig);
+  const jumpParams = jumpSimParamsFromSceneConfig(sceneConfig);
 
-    const positions = generateParkourPlatforms(spline, jumpParams, 1.04);
-    console.log(`[platformGen] Generated ${positions.length} platforms`);
+  const positions = generateParkourPlatforms(
+    spline,
+    { ...jumpParams, initialExternalVelocity: 10 * 1.28 },
+    1.03
+  );
 
-    const platHeight = 0.4;
-    const genMat = new THREE.MeshStandardMaterial({ color: 0x44aa66, roughness: 0.7, metalness: 0.1 });
+  const platHeight = 0.4;
+  const genMat = new THREE.MeshStandardMaterial({ color: 0x44aa66, roughness: 0.7, metalness: 0.1 });
 
-    for (const pos of positions) {
-      // CylinderGeometry is origin-centered; shift down half-height so top surface is at pos.y
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, platHeight, 24), genMat);
-      mesh.position.set(pos.x, pos.y - platHeight / 2, pos.z);
-      mesh.receiveShadow = true;
-      mesh.castShadow = true;
-      viz.scene.add(mesh);
-      fpCtx.addTriMesh(mesh);
-    }
+  for (const pos of positions) {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, platHeight, 24), genMat);
+    mesh.position.set(pos.x, pos.y - platHeight / 2, pos.z);
+    mesh.receiveShadow = true;
+    mesh.castShadow = true;
+    viz.scene.add(mesh);
+    fpCtx.addTriMesh(mesh);
   }
 };
 
@@ -194,16 +199,17 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         apexMultiplier: 1.4,
         fallMultiplier: 1.5,
         apexThreshold: 4.0,
-        kneeWidth: 0.5,
+        kneeWidth: 0.1,
       },
       player: {
-        moveSpeed: { onGround: 18, inAir: 26 },
+        moveSpeed: { onGround: 15, inAir: 20 },
         jumpVelocity: 40,
         terminalVelocity: 80,
         dashConfig: {
           chargeConfig: { curCharges: rwritable(Infinity) },
-          dashMagnitude: 30,
+          dashMagnitude: 10,
           useExternalVelocity: true,
+          minDashDelaySeconds: 0.3,
         },
       },
     }
