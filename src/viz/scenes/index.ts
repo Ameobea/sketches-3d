@@ -70,6 +70,46 @@ export type ViewMode =
       cameraRotation?: THREE.Euler;
       cameraFOV?: number;
       cameraFocusPoint?: { type: 'player' } | { type: 'fixed'; pos: THREE.Vector3 };
+    }
+  | {
+      type: 'thirdPerson';
+      /**
+       * Distance from the player to the camera.  Default: 15
+       */
+      distance?: number;
+      /**
+       * Minimum polar angle (from straight up / positive Y axis) in radians.
+       * Prevents camera from going straight above the player.  Default: 0.15
+       */
+      minPolarAngle?: number;
+      /**
+       * Maximum polar angle (from straight up / positive Y axis) in radians.
+       * Prevents camera from going straight below the player.  Default: Math.PI - 0.15
+       */
+      maxPolarAngle?: number;
+      /**
+       * Initial polar angle when switching to this mode.  Default: Math.PI / 3 (60° from top)
+       */
+      initialPolarAngle?: number;
+      /**
+       * Initial azimuth angle when switching to this mode.  Default: Math.PI (behind player)
+       */
+      initialAzimuthAngle?: number;
+      cameraFOV?: number;
+      /**
+       * Clearance (in world units) kept between the camera and any occluding surface.
+       * Default: 0.25
+       */
+      cameraCollisionBias?: number;
+      /**
+       * Minimum distance the camera can be from the player when occluded.  Default: 1.0
+       */
+      minCameraDistance?: number;
+      /**
+       * Speed (units/sec) at which the camera eases back to full distance after occlusion clears.
+       * Default: 8.0
+       */
+      cameraExtendSpeed?: number;
     };
 
 export const DefaultDashConfig: DashConfig = Object.freeze({
@@ -87,6 +127,16 @@ export const DefaultTopDownCameraOffset = new THREE.Vector3(0, 80, -47);
 export const DefaultTopDownCameraRotation = new THREE.Euler(-1, Math.PI, 0, 'YXZ');
 export const DefaultTopDownCameraFOV = 40;
 export const DefaultTopDownCameraFocusPoint = { type: 'player' as const };
+
+export const DefaultThirdPersonDistance = 15;
+export const DefaultThirdPersonMinPolar = 0.15;
+export const DefaultThirdPersonMaxPolar = Math.PI - 0.15;
+export const DefaultThirdPersonInitialPolar = Math.PI / 3;
+export const DefaultThirdPersonInitialAzimuth = Math.PI;
+export const DefaultThirdPersonFOV = 75;
+export const DefaultThirdPersonCameraCollisionBias = 0.25;
+export const DefaultThirdPersonMinCameraDistance = 1.0;
+export const DefaultThirdPersonCameraExtendSpeed = 8.0;
 
 export interface SceneConfig {
   viewMode?: ViewMode;

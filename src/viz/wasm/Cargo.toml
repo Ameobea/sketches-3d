@@ -28,3 +28,11 @@ lto = "fat"
 
 [profile.dev]
 debug-assertions = true
+
+# Fast-compile profile for local dev: thin LTO + parallel codegen units
+# Skips fat LTO and CGU=1 which dominate the release build time.
+# Use with: cargo build --profile dev-opt
+[profile.dev-opt]
+inherits = "release"
+codegen-units = 16
+lto = "thin"

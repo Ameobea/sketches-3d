@@ -99,6 +99,11 @@ export interface BtKinematicCharacterController {
   getPendingEventId(index: number): number;
   getPendingEventType(index: number): number;
   clearPendingEvents(): void;
+  cameraRayTest(
+    world: BtDiscreteDynamicsWorld,
+    fromX: number, fromY: number, fromZ: number,
+    toX: number,   toY: number,   toZ: number
+  ): number;
 }
 
 export type BtActionInterface = BtKinematicCharacterController;

@@ -129,6 +129,7 @@ export const processLoadedScene = async (
     movementv2: HARD,
     plats: HARD,
     cornered: VERY_HARD,
+    smoke: [212 / 320, 112 / 320, 55 / 320],
   };
 
   for (const portal of portals) {
@@ -260,6 +261,8 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     basalt: { scene: '/basalt', displayName: 'BASALT' },
     stronghold: { scene: '/stronghold', displayName: 'STRONGHOLD' },
     pinklights: { scene: '/pinklights', displayName: 'PINKLIGHTS' },
+    smoke: { scene: '/smoke', displayName: 'SMOKE' },
+    bridge2: { scene: '/bridge2', displayName: 'BRIDGE' },
   };
 
   for (const portalFrame of portalFrames) {

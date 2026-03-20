@@ -8,6 +8,7 @@ import { Score, type ScoreThresholds } from 'src/viz/parkour/TimeDisplay.svelte'
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import type { SceneConfig } from '..';
 import { rwritable } from 'src/viz/util/TransparentWritable';
+import { buildCustomShader } from 'src/viz/shaders/customShader';
 
 const locations = {
   spawn: {
@@ -171,6 +172,19 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   dashToken.add(dashTokenCore, dashTokenRing);
   loadedWorld.add(dashToken);
 
+  const playerHeight = 2.2;
+  const playerRadius = 0.5;
+  const playerMesh = new THREE.Mesh(
+    new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
+    buildCustomShader({
+      color: new THREE.Color(0xad6dcf),
+      metalness: 0.18,
+      roughness: 0.82,
+    })
+  );
+  playerMesh.castShadow = true;
+  playerMesh.receiveShadow = true;
+
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: Infinity,
     [Score.S]: Infinity,
@@ -202,8 +216,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         kneeWidth: 0.1,
       },
       player: {
+        playerColliderShape: 'capsule',
+        mesh: playerMesh,
         moveSpeed: { onGround: 15, inAir: 20 },
-        jumpVelocity: 40,
+        jumpVelocity: 30,
         terminalVelocity: 80,
         dashConfig: {
           chargeConfig: { curCharges: rwritable(Infinity) },
@@ -211,6 +227,12 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           useExternalVelocity: true,
           minDashDelaySeconds: 0.3,
         },
+        coyoteTimeSeconds: 0.1,
+      },
+      viewMode: {
+        type: 'thirdPerson',
+        distance: 18,
+        cameraFOV: 75,
       },
     }
   );

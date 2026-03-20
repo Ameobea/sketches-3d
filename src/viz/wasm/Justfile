@@ -104,6 +104,13 @@ build-csg-sandbox:
   cp ./build/csg_sandbox* ../wasmComp
 
 build-geoscript-repl:
+  RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl
+  wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
+  cp ./build/geoscript_repl* ../wasmComp
+  cp ./build/geoscript_repl_bg.wasm ../../../static
+
+build-geoscript-repl-release:
   RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package geoscript_repl
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
   wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory

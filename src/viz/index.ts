@@ -19,6 +19,8 @@ import {
   ScenesByName,
   DefaultTopDownCameraFOV,
   DefaultTopDownCameraRotation,
+  DefaultThirdPersonFOV,
+  type ViewMode,
 } from './scenes';
 import { setDefaultDistanceAmpParams } from './shaders/customShader';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
@@ -360,7 +362,7 @@ export class Viz {
   };
 
   public setViewMode = (
-    newViewMode: NonNullable<SceneConfig['viewMode']>,
+    newViewMode: ViewMode,
     easingFnType: EasingFnType = EasingFnType.Linear,
     transitionTimeSeconds = 0
   ): Promise<void> => {
@@ -381,26 +383,57 @@ export class Viz {
     const endFOV =
       newViewMode.type === 'top-down'
         ? (newViewMode.cameraFOV ?? DefaultTopDownCameraFOV)
-        : this.vizConfig.current.graphics.fov;
+        : newViewMode.type === 'thirdPerson'
+          ? (newViewMode.cameraFOV ?? DefaultThirdPersonFOV)
+          : this.vizConfig.current.graphics.fov;
+
     const playerPos = this.fpCtx!.playerStateGetters.getPlayerPos();
-    const endCameraPos = this.fpCtx!.computeCameraPos(
-      new THREE.Vector3(playerPos[0], playerPos[1], playerPos[2]),
-      newViewMode
-    );
-    const endCameraRot =
-      newViewMode.type === 'top-down'
-        ? (newViewMode.cameraRotation ?? DefaultTopDownCameraRotation).clone()
-        : (() => {
-            switch (this.sceneConf.viewMode!.type) {
-              case 'top-down':
-                return new THREE.Euler(0, Math.PI, 0, 'YXZ');
-              default:
-                const spawnRot = this.spawnPos.rot;
-                return new THREE.Euler(0, 0, 0, 'YXZ').setFromVector3(spawnRot);
-            }
-          })();
+    const playerFeetPos = new THREE.Vector3(playerPos[0], playerPos[1], playerPos[2]);
+
+    let endCameraPos: THREE.Vector3;
+    let endCameraRot: THREE.Euler;
+
+    if (newViewMode.type === 'thirdPerson') {
+      this.fpCtx!.initThirdPersonAngles(newViewMode);
+
+      // TODO: currently placing eye position at midpoint of player collider; may want to change this
+      const playerEyePos = playerFeetPos.clone();
+      playerEyePos.y += 0.5 * this.fpCtx!.playerColliderHeight;
+
+      endCameraPos = this.fpCtx!.computeThirdPersonCameraPos(playerEyePos, newViewMode);
+
+      // Derive a lookAt rotation so the transition ends pointing toward the player.
+      const lookAtMatrix = new THREE.Matrix4().lookAt(endCameraPos, playerEyePos, new THREE.Vector3(0, 1, 0));
+      endCameraRot = new THREE.Euler().setFromQuaternion(
+        new THREE.Quaternion().setFromRotationMatrix(lookAtMatrix),
+        'YXZ'
+      );
+    } else if (newViewMode.type === 'top-down') {
+      endCameraPos = this.fpCtx!.computeCameraPos(playerFeetPos.clone(), newViewMode);
+      endCameraRot = (newViewMode.cameraRotation ?? DefaultTopDownCameraRotation).clone();
+    } else {
+      // firstPerson
+      endCameraPos = this.fpCtx!.computeCameraPos(playerFeetPos.clone(), newViewMode);
+      switch (this.sceneConf.viewMode!.type) {
+        case 'top-down':
+          endCameraRot = new THREE.Euler(0, Math.PI, 0, 'YXZ');
+          break;
+        case 'thirdPerson': {
+          // Preserve the horizontal facing direction derived from the orbit azimuth angle.
+          const { theta } = this.fpCtx!.getThirdPersonAngles();
+          endCameraRot = new THREE.Euler(0, theta, 0, 'YXZ');
+          break;
+        }
+        default: {
+          const spawnRot = this.spawnPos.rot;
+          endCameraRot = new THREE.Euler(0, 0, 0, 'YXZ').setFromVector3(spawnRot);
+          break;
+        }
+      }
+    }
 
     if (transitionTimeSeconds === 0) {
+      this.sceneConf.viewMode = newViewMode;
       this.camera.fov = endFOV;
       this.camera.updateProjectionMatrix();
       return Promise.resolve();
@@ -480,7 +513,9 @@ export class Viz {
     }
 
     if (
-      (this.viewMode.type === 'firstPerson' || this.viewMode.type === 'top-down') &&
+      (this.viewMode.type === 'firstPerson' ||
+        this.viewMode.type === 'top-down' ||
+        this.viewMode.type === 'thirdPerson') &&
       !document.pointerLockElement &&
       this.didManuallyLockPointer
     ) {
@@ -541,7 +576,12 @@ export class Viz {
   };
 
   private handleMouseDown = async (_evt: MouseEvent) => {
-    if ((this.viewMode.type === 'firstPerson' || this.viewMode.type === 'top-down') && !this.paused.current) {
+    if (
+      (this.viewMode.type === 'firstPerson' ||
+        this.viewMode.type === 'top-down' ||
+        this.viewMode.type === 'thirdPerson') &&
+      !this.paused.current
+    ) {
       this.didManuallyLockPointer = true;
       // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
       // that happen in some cases when using high polling rate mice or something like that
@@ -813,6 +853,9 @@ export const initViz = (
     if (sceneConf.viewMode.type === 'top-down') {
       viz.camera.fov = sceneConf.viewMode.cameraFOV ?? DefaultTopDownCameraFOV;
       viz.camera.updateProjectionMatrix();
+    } else if (sceneConf.viewMode.type === 'thirdPerson') {
+      viz.camera.fov = sceneConf.viewMode.cameraFOV ?? DefaultThirdPersonFOV;
+      viz.camera.updateProjectionMatrix();
     }
 
     if (sceneConf.renderOverride) {
@@ -837,7 +880,11 @@ export const initViz = (
       viz.sfxManager.tick(tDiffSeconds, curTimeSeconds)
     );
 
-    if (sceneConf.viewMode.type === 'firstPerson' || sceneConf.viewMode.type === 'top-down') {
+    if (
+      sceneConf.viewMode.type === 'firstPerson' ||
+      sceneConf.viewMode.type === 'top-down' ||
+      sceneConf.viewMode.type === 'thirdPerson'
+    ) {
       const initialSpawnPos = (window as any).lastPos
         ? (() => {
             try {
@@ -858,6 +905,8 @@ export const initViz = (
       } else if (sceneConf.viewMode.type === 'top-down') {
         // camera looks towards negative Y.  negative X is left, negative Z is down
         viz.camera.rotation.copy(sceneConf.viewMode.cameraRotation ?? DefaultTopDownCameraRotation);
+      } else if (sceneConf.viewMode.type === 'thirdPerson') {
+        // camera rotation will be set on the first tick via camera.lookAt(); nothing to do here
       } else {
         sceneConf.viewMode satisfies never;
         throw new Error(`Unhandled view mode: ${(sceneConf.viewMode as any).type}`);

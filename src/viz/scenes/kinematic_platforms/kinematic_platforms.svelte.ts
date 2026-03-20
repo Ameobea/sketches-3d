@@ -290,6 +290,22 @@ export const processLoadedScene = async (
           );
         },
       },
+      {
+        label: 'Third-Person Orbit View Mode',
+        key: '4',
+        action: () => {
+          viz.sceneConf.player!.moveSpeed = { onGround: 16, inAir: 16 };
+          viz.setViewMode(
+            {
+              type: 'thirdPerson',
+              distance: 18,
+              cameraFOV: 75,
+            },
+            EasingFnType.InOutCubic,
+            1.2
+          );
+        },
+      },
     ],
   };
 };
