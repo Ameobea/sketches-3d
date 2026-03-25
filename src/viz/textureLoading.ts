@@ -3,7 +3,7 @@ import * as THREE from 'three';
 
 import { getNormalGenWorkers, getTextureCrossfadeWorkers } from './workerPool';
 
-interface TextureArgs {
+export interface TextureArgs {
   mapping?: THREE.Mapping | undefined;
   wrapS?: THREE.Wrapping | undefined;
   wrapT?: THREE.Wrapping | undefined;

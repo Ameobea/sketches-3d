@@ -134,6 +134,10 @@ const buildPhysicalShader = (
   roughnessMap: THREE.Texture | undefined,
   clearcoatNormalMap: THREE.Texture | undefined
 ) => {
+  if (map) {
+    map.colorSpace = THREE.SRGBColorSpace;
+  }
+
   const defaultShaders = buildDefaultShaders();
   const customShaders: Partial<CustomShaderShaders> = {};
 

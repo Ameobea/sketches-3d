@@ -103,7 +103,7 @@ export const processLoadedScene = async (
         }
       },
       autoUpdateShadowMap: !userData?.renderMode,
-      // enableAntiAliasing: !userData?.renderMode,
+      toneMapping: { mode: 'neutral', exposure: 1 },
     });
   }
 
