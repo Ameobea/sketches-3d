@@ -27,6 +27,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { API, refetchUser, setUserLoggedOut } from 'src/api/client';
+  import { ResponseError } from 'src/api/runtime';
   import type { AuthAPI } from './AuthAPI';
   import { APIError, login, logout, me, register } from 'src/geoscript/geotoyAPIClient';
 
@@ -62,16 +63,29 @@
 
   $: isGeotoy = page.url.pathname.includes('geotoy');
 
+  const isAuthError = (status: number) => status === 401 || status === 403;
+
   const getGeotoyPlayer = async () => {
     try {
       const player = await me();
       return player;
     } catch (error) {
-      if (error instanceof APIError && error.status === 401) {
+      if (error instanceof APIError && isAuthError(error.status)) {
         return null;
       } else {
         throw error;
       }
+    }
+  };
+
+  const getParkourPlayer = async () => {
+    try {
+      return await API.getPlayer();
+    } catch (error) {
+      if (error instanceof ResponseError && isAuthError(error.response.status)) {
+        return null;
+      }
+      throw error;
     }
   };
 
@@ -93,7 +107,7 @@
     createPlayer: req => API.createPlayer(req),
     login: req => API.login(req),
     logOutPlayer: () => API.logOutPlayer(),
-    getPlayer: () => API.getPlayer(),
+    getPlayer: getParkourPlayer,
     refetchUser,
     setUserLoggedOut,
   };

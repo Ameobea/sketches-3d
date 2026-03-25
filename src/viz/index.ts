@@ -32,6 +32,11 @@ import { unmount } from 'svelte';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { LoadOrbitControls } from './preloadCache';
 
+export interface PostprocessingController {
+  setGamma(value: number): void;
+  readonly hasFinalPass: boolean;
+}
+
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
   getVerticalOffset: () => number;
@@ -69,6 +74,7 @@ export const applyGraphicsSettings = (viz: Viz, graphics: Conf.GraphicsSettings)
   viz.camera.fov = graphics.fov;
   viz.camera.updateProjectionMatrix();
   viz.setStatsEnabled(graphics.showFPSStats);
+  viz.postprocessingController?.setGamma(graphics.gamma);
 };
 
 export const applyAudioSettings = (audio: Conf.AudioSettings) => {
@@ -112,6 +118,7 @@ export class Viz {
    * Persistent user-configurable settings, mostly set via the pause menu.
    */
   public vizConfig: TransparentWritable<Conf.VizConfig> = rwritable(Conf.loadVizConfig());
+  public postprocessingController: PostprocessingController | null = null;
   public sceneConf!: SceneConfig;
   public keyStates: Record<string, boolean> = {};
   /**
@@ -277,6 +284,7 @@ export class Viz {
 
   public setRenderOverride = (cb: ((timeDiffSeconds: number) => void) | null) => {
     this.renderOverride = cb;
+    this.postprocessingController = null;
   };
 
   public registerResizeCb = (cb: () => void) => this.resizeCbs.push(cb);
@@ -543,7 +551,7 @@ export class Viz {
   };
 
   private handleKeyDown = (evt: KeyboardEvent) => {
-    if (evt.code === 'Escape') {
+    if (evt.code === 'Escape' && this.controlState.cameraControlEnabled) {
       this.paused.update(p => !p);
       if (this.paused.current) {
         this.maybePauseViz();
@@ -580,7 +588,8 @@ export class Viz {
       (this.viewMode.type === 'firstPerson' ||
         this.viewMode.type === 'top-down' ||
         this.viewMode.type === 'thirdPerson') &&
-      !this.paused.current
+      !this.paused.current &&
+      this.controlState.cameraControlEnabled
     ) {
       this.didManuallyLockPointer = true;
       // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
@@ -599,7 +608,7 @@ export class Viz {
   };
 
   private handlePointerLockChange = (_evt: Event) => {
-    if (this.isBlurred) {
+    if (this.isBlurred || !this.controlState.cameraControlEnabled) {
       return;
     }
     this.paused.set(!document.pointerLockElement);
@@ -808,7 +817,13 @@ export const initViz = (
     throw new Error(`No scene found for name ${providedSceneName}`);
   }
 
-  const { sceneName, sceneLoader: getSceneLoader, gltfName: providedGLTFName, extension = 'gltf' } = sceneDef;
+  const {
+    sceneName,
+    sceneLoader: getSceneLoader,
+    gltfName: providedGLTFName,
+    extension = 'gltf',
+    useLevelDef = false,
+  } = sceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 
   const scenePromises = Promise.all([getSceneLoader(), Conf.getVizConfig()]);
@@ -925,7 +940,10 @@ export const initViz = (
       });
     }
 
-    viz.scene.add(scene);
+    if (!useLevelDef) {
+      // Legacy mode: the gltf group is the scene; add it wholesale and auto-traverse for physics + shadows.
+      viz.scene.add(scene);
+    }
 
     let vOffset = 0;
     const mountedElements: any[] = [];
@@ -957,29 +975,32 @@ export const initViz = (
     });
 
     if (viz.fpCtx) {
-      const traverseCollidable = function (obj: THREE.Object3D, cb: (obj: THREE.Object3D) => void) {
-        if (obj.name.includes('nocollide') || obj.name.endsWith('far') || obj.userData.nocollide) {
-          return;
-        }
+      if (!useLevelDef) {
+        // Legacy mode: auto-register physics for all meshes in the gltf scene group.
+        const traverseCollidable = function (obj: THREE.Object3D, cb: (obj: THREE.Object3D) => void) {
+          if (obj.name.includes('nocollide') || obj.name.endsWith('far') || obj.userData.nocollide) {
+            return;
+          }
 
-        cb(obj);
+          cb(obj);
 
-        const children = obj.children;
+          const children = obj.children;
 
-        for (let i = 0, l = children.length; i < l; i++) {
-          traverseCollidable(children[i], cb);
-        }
-      };
+          for (let i = 0, l = children.length; i < l; i++) {
+            traverseCollidable(children[i], cb);
+          }
+        };
 
-      const traverseCb = (obj: THREE.Object3D) => {
-        const children = obj.children;
-        obj.children = [];
-        if (obj instanceof THREE.Mesh) {
-          viz.fpCtx!.addTriMesh(obj);
-        }
-        obj.children = children;
-      };
-      traverseCollidable(scene, traverseCb);
+        const traverseCb = (obj: THREE.Object3D) => {
+          const children = obj.children;
+          obj.children = [];
+          if (obj instanceof THREE.Mesh) {
+            viz.fpCtx!.addTriMesh(obj);
+          }
+          obj.children = children;
+        };
+        traverseCollidable(scene, traverseCb);
+      }
 
       for (const cb of viz.collisionWorldLoadedCbs) {
         cb(viz.fpCtx);
@@ -992,23 +1013,42 @@ export const initViz = (
       viz.scene.add(sceneConf.player.mesh);
     }
 
-    scene.traverse(child => {
-      if (child instanceof THREE.Mesh && !child.name.includes('background')) {
-        if (child.userData.noLight) {
-          child.castShadow = false;
-          child.receiveShadow = false;
-        } else {
-          child.castShadow = true;
-          child.receiveShadow = true;
+    if (!useLevelDef) {
+      // Legacy mode: auto-set shadow flags from gltf scene userData conventions.
+      scene.traverse(child => {
+        if (child instanceof THREE.Mesh && !child.name.includes('background')) {
+          if (child.userData.noLight) {
+            child.castShadow = false;
+            child.receiveShadow = false;
+          } else {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+          if (child.userData.noCastShadow || child.userData.castShadow === false) {
+            child.castShadow = false;
+          }
+          if (child.userData.noReceiveShadow || child.userData.receiveShadow === false) {
+            child.receiveShadow = false;
+          }
         }
-        if (child.userData.noCastShadow || child.userData.castShadow === false) {
-          child.castShadow = false;
-        }
-        if (child.userData.noReceiveShadow || child.userData.receiveShadow === false) {
-          child.receiveShadow = false;
-        }
-      }
-    });
+      });
+    }
+
+    if (sceneConf.loadingComplete) {
+      viz.controlState.movementEnabled = false;
+
+      const overlay = document.createElement('div');
+      overlay.style.cssText =
+        'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;' +
+        'background:rgba(0,0,0,0.55);color:#fff;font:16px monospace;z-index:9999;pointer-events:none;';
+      overlay.textContent = 'Loading...';
+      container.appendChild(overlay);
+
+      sceneConf.loadingComplete.then(() => {
+        viz.controlState.movementEnabled = true;
+        overlay.remove();
+      });
+    }
 
     setTimeout(() => viz.animate(), 0);
   };

@@ -21,7 +21,7 @@ export interface ParkourMaterials {
     core: THREE.Material;
     ring: THREE.Material;
   };
-  checkpoint: THREE.Material;
+  checkpoint: THREE.Material | (() => THREE.Material);
 }
 
 interface MakeSliderArgs {

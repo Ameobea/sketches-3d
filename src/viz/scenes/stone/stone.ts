@@ -4,6 +4,7 @@ import * as THREE from 'three';
 
 import { getSentry } from 'src/sentry';
 import type { Viz } from 'src/viz';
+import { configureShadowMap } from 'src/viz/helpers/lights';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomBasicShader } from 'src/viz/shaders/customBasicShader';
@@ -90,6 +91,7 @@ const initTerrain = async (
       {},
       {
         useGeneratedUVs: true,
+        useWorldSpaceGeneratedUVs: true,
         randomizeUVOffset: false,
         tileBreaking: { type: 'neyret', patchScale: 1.3 },
       }
@@ -130,8 +132,12 @@ export const processLoadedScene = async (
   viz.scene.add(new THREE.AmbientLight(0xffffff, 0.8 * 3));
   const sun = new THREE.DirectionalLight(0x4488bb, 1.6 * 6);
   sun.castShadow = true;
-  sun.shadow.mapSize.width = 2048 * 4;
-  sun.shadow.mapSize.height = 2048 * 4;
+  configureShadowMap({
+    light: sun,
+    renderer: viz.renderer,
+    quality: vizConf.graphics.quality,
+    mapSize: { low: 2048, medium: 4096, high: 8192 },
+  });
   sun.shadow.camera.near = 0.5;
   sun.shadow.camera.far = 1000;
   sun.shadow.camera.left = -500;
@@ -140,8 +146,6 @@ export const processLoadedScene = async (
   sun.shadow.camera.bottom = -100;
   sun.shadow.bias = 0.0002;
   // sun.shadow.normalBias = 0.2;
-  sun.shadow.radius = 4;
-  sun.shadow.blurSamples = 64;
   sun.position.set(-330, 110, 330);
   sun.shadow.camera.position.copy(sun.position);
   sun.target.position.set(100, 0, 0);
@@ -166,19 +170,19 @@ export const processLoadedScene = async (
   const loader = new THREE.ImageBitmapLoader();
   const texturesPromise = loadNamedTextures(loader, {
     cloudsBackground: 'https://i.ameo.link/ame.jpg',
-    gemTexture: 'https://i.ameo.link/bfy.jpg',
+    gemTexture: ['https://i.ameo.link/bfy.jpg', { colorSpace: THREE.SRGBColorSpace }],
     gemRoughness: 'https://i.ameo.link/bfz.jpg',
     gemNormal: 'https://i.ameo.link/bg0.jpg',
-    glossyBlackBricksColor: 'https://i.ameo.link/d1m.avif',
+    glossyBlackBricksColor: ['https://i.ameo.link/d1m.avif', { colorSpace: THREE.SRGBColorSpace }],
     glossyBlackBricksNormal: 'https://i.ameo.link/biq.jpg',
     glossyBlackBricksRoughness: 'https://i.ameo.link/bir.jpg',
-    goldFleckedObsidianColor: 'https://i.ameo.link/biv.jpg',
+    goldFleckedObsidianColor: ['https://i.ameo.link/biv.jpg', { colorSpace: THREE.SRGBColorSpace }],
     goldFleckedObsidianNormal: 'https://i.ameo.link/biw.jpg',
     goldFleckedObsidianRoughness: 'https://i.ameo.link/bix.jpg',
-    goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
+    goldTextureAlbedo: ['https://i.ameo.link/be0.jpg', { colorSpace: THREE.SRGBColorSpace }],
     goldTextureNormal: 'https://i.ameo.link/be2.jpg',
     goldTextureRoughness: 'https://i.ameo.link/bdz.jpg',
-    totemAlbedo: 'https://i.ameo.link/bl9.jpg',
+    totemAlbedo: ['https://i.ameo.link/bl9.jpg', { colorSpace: THREE.SRGBColorSpace }],
     totemNormal: 'https://i.ameo.link/bla.jpg',
     totemRoughness: 'https://i.ameo.link/blb.jpg',
   });
@@ -247,7 +251,7 @@ export const processLoadedScene = async (
       metalness: 0.7,
       roughness: 0.7,
       uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
-      iridescence: 0.4,
+      iridescence: 0.2,
     },
     {},
     {
@@ -277,7 +281,7 @@ export const processLoadedScene = async (
       metalness: 0.99,
       roughness: 0.87,
       uvTransform: new THREE.Matrix3().scale(10.35, 10.35),
-      iridescence: 0.2,
+      iridescence: 0.1,
       mapDisableDistance: null,
       color: new THREE.Color(0xaaaaaa),
       ambientLightScale: 30,
@@ -323,7 +327,7 @@ export const processLoadedScene = async (
       metalness: 0.9,
       roughness: 1.5,
       uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
-      iridescence: 0.6,
+      iridescence: 0.4,
       color: new THREE.Color(stairsPointLight.color),
       ambientLightScale: 80,
     },
@@ -364,7 +368,7 @@ export const processLoadedScene = async (
       metalness: 0.99,
       roughness: 0.87,
       uvTransform: new THREE.Matrix3().scale(10.35, 10.35),
-      iridescence: 0.2,
+      iridescence: 0.1,
       mapDisableDistance: null,
       color: new THREE.Color(0xaaaaaa),
       ambientLightScale: 30,
@@ -383,14 +387,15 @@ export const processLoadedScene = async (
   ];
   const totemMaterial = buildCustomShader(
     {
+      color: 0xdd8888a,
       map: totemAlbedo,
       normalMap: totemNormal,
-      roughnessMap: totemRoughness,
+      // roughnessMap: totemRoughness,
       metalness: 0.2,
-      roughness: 1,
+      roughness: 0.8,
       uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
-      ambientLightScale: 1,
-      ambientDistanceAmp: { ampFactor: -0.8, exponent: 1, falloffStartDistance: 50, falloffEndDistance: 150 },
+      ambientLightScale: 4,
+      // ambientDistanceAmp: { ampFactor: -0.8, exponent: 1, falloffStartDistance: 50, falloffEndDistance: 150 },
     },
     {},
     { useTriplanarMapping: true }
@@ -475,7 +480,7 @@ export const processLoadedScene = async (
       metalness: 0.9,
       roughness: 1.5,
       uvTransform: new THREE.Matrix3().scale(0.9, 0.9),
-      iridescence: 0.6,
+      iridescence: 0.3,
       color: new THREE.Color(0xee1111),
       ambientLightScale: 30,
     },
@@ -639,7 +644,7 @@ export const processLoadedScene = async (
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
 
       const selectiveBloomEffect = new SelectiveBloomEffect(viz.scene, viz.camera, {
-        intensity: 2,
+        intensity: 4,
         // blendFunction: BlendFunction.LINEAR_DODGE,
         luminanceThreshold: 0,
         kernelSize: KernelSize.LARGE,
@@ -652,7 +657,7 @@ export const processLoadedScene = async (
       selectiveBloomEffect.selection.set([...monolithLightBeams, ...totems, ...doorLights, exitPortal]);
       composer.addPass(new EffectPass(viz.camera, selectiveBloomEffect));
     },
-    extraParams: { toneMappingExposure: 1.2 },
+    toneMapping: { mode: 'aces', exposure: 0.5 },
   });
 
   return {

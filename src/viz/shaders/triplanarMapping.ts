@@ -122,7 +122,7 @@ export const buildTriplanarDefsFragment = ({
     ${
       contrastPreservationFactor > 0
         ? `
-      vec4 meanTextureColor = srgb2rgb(texture(map, vec2(0.5, 0.5), 99.));
+      vec4 meanTextureColor = texture(map, vec2(0.5, 0.5), 99.);
       // contrast preserving interp. cf https://www.shadertoy.com/view/4dcSDr
       float divisor = sqrt(weights.x * weights.x + weights.y * weights.y + weights.z * weights.z);
       vec4 contrastCorrected = meanTextureColor + (outColor - meanTextureColor) * divisor;

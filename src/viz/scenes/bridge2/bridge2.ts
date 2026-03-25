@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import type { SceneConfig } from '..';
 import type { Viz } from '../../../viz';
+import { configureShadowMap } from '../../../viz/helpers/lights';
 import { buildCustomBasicShader } from '../../../viz/shaders/customBasicShader';
 import { buildCustomShader } from '../../../viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from '../../../viz/textureLoading';
@@ -11,7 +12,7 @@ import { initWebSynth } from '../../../viz/webSynth';
 import { CustomSky as Sky } from '../../CustomSky';
 import BackgroundColorShader from '../../shaders/bridge2/background/color.frag?raw';
 import BridgeTopRoughnessShader from '../../shaders/bridge2/bridge_top/roughness.frag?raw';
-import BridgeMistColorShader from '../../shaders/bridge2/bridge_top_mist/color.frag?raw';
+import { buildCheckpointMaterial } from 'src/viz/materials/Checkpoint/CheckpointMaterial';
 import PlatformColorShader from '../../shaders/bridge2/platform/color.frag?raw';
 import PlatformRoughnessShader from '../../shaders/bridge2/platform/roughness.frag?raw';
 import Rock1RoughnessShader from '../../shaders/bridge2/rock1/roughness.frag?raw';
@@ -209,8 +210,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   dLight.updateMatrixWorld();
   dLight.target.updateMatrixWorld();
 
-  dLight.shadow.mapSize.width = 2048 * 2;
-  dLight.shadow.mapSize.height = 2048 * 2;
+  configureShadowMap({ light: dLight, renderer: viz.renderer, quality: viz.vizConfig.current.graphics.quality });
 
   dLight.shadow.camera.near = 200;
   dLight.shadow.camera.far = 800;
@@ -348,14 +348,9 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   bridgeSupports.material = bridgeSupportsMaterial;
 
   const bridgeTopMist = getMesh(loadedWorld, 'bridge_top_mistnocollide');
-  const bridgeTopMistMat = buildCustomShader(
-    { metalness: 0, alphaTest: 0.05, transparent: true },
-    { colorShader: BridgeMistColorShader },
-    { disableToneMapping: true }
-  );
+  const bridgeTopMistMat = buildCheckpointMaterial(viz, [0.8, 0.5, 0.6], {}, { xFadeLo: 92, xFadeHi: 112 });
   bridgeTopMist.material = bridgeTopMistMat;
   // bridgeTopMist.material.blending = THREE.AdditiveBlending;
-  viz.registerBeforeRenderCb(curTimeSeconds => bridgeTopMistMat.setCurTimeSeconds(curTimeSeconds));
   viz.registerDistanceMaterialSwap(
     bridgeTopMist,
     new THREE.MeshBasicMaterial({ color: new THREE.Color(0x0), transparent: true, opacity: 0 }),

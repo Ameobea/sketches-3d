@@ -13,16 +13,30 @@ export interface VolumetricPassCompositorParams {}
 
 interface VolumetricCompositorMaterialProps {
   /**
-   * Output of the volumetric pass
+   * Output of the volumetric pass (rgb = fog color, a = density)
    */
   fogTexture: THREE.Texture;
+  /**
+   * Raw scene depth captured by the volumetric pass at half resolution.
+   * Used by the JBU instead of re-sampling the full-res depth buffer, ensuring
+   * the depth reference for each low-res texel matches exactly what the volumetric
+   * pass saw when it raymarched that pixel.
+   */
+  fogDepthTexture: THREE.Texture;
   camera: THREE.PerspectiveCamera;
+  /** See `VolumetricPassParams.jbuExtent`. Default: 1 */
+  jbuExtent?: number;
+  /** See `VolumetricPassParams.jbuSpatialSigma`. Default: 1.8 */
+  jbuSpatialSigma?: number;
+  /** See `VolumetricPassParams.jbuDepthSigma`. Default: 0.034 */
+  jbuDepthSigma?: number;
 }
 
 export class VolumetricCompositorMaterial extends THREE.ShaderMaterial implements Resizable {
-  constructor({ fogTexture, camera }: VolumetricCompositorMaterialProps) {
+  constructor({ fogTexture, fogDepthTexture, camera, jbuExtent, jbuSpatialSigma, jbuDepthSigma }: VolumetricCompositorMaterialProps) {
     const uniforms = {
       fogTexture: { value: fogTexture },
+      fogDepthTexture: { value: fogDepthTexture },
       sceneDiffuse: { value: null },
       sceneDepth: { value: null },
       near: { value: 0.1 },
@@ -39,9 +53,9 @@ export class VolumetricCompositorMaterial extends THREE.ShaderMaterial implement
       fragmentShader: VolumetricCompositorFragmentShader,
       vertexShader: VolumetricCompositorVertexShader,
       defines: {
-        JBU_EXTENT: '1',
-        JBU_SPATIAL_SIGMA: '1.0',
-        JBU_DEPTH_SIGMA: '0.02',
+        JBU_EXTENT: String(jbuExtent ?? 1),
+        JBU_SPATIAL_SIGMA: String(jbuSpatialSigma ?? 1.8),
+        JBU_DEPTH_SIGMA: String(jbuDepthSigma ?? 0.034),
       },
     });
 
@@ -68,8 +82,6 @@ export class VolumetricCompositorPass extends Pass {
   private depthTextureCopyPass: CopyPass | null = null;
 
   constructor(props: VolumetricCompositorMaterialProps) {
-    // version >= 6.38 of pmndrs/postprocessing uses an orthographic camera as default when
-    // constructing a `Pass`.  The compositor code expects a default `THREE.Camera`.
     super('VolumetricCompositorPass', undefined, new THREE.Camera());
     this.fullscreenMaterial = new VolumetricCompositorMaterial(props);
     this.sceneCamera = props.camera;

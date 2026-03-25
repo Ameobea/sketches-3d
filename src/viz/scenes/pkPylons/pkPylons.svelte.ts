@@ -30,7 +30,7 @@ export const processLoadedScene = async (
   const { checkpointMat, greenMosaic2Material, goldMaterial } = await buildPylonsMaterials(viz, loadedWorld);
 
   const sunPos = new THREE.Vector3(200, 290, -135);
-  const sunLight = new THREE.DirectionalLight(0xffffff, 3.6);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 1.6);
   sunLight.position.copy(sunPos);
   viz.scene.add(sunLight);
 

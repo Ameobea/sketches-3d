@@ -8,6 +8,12 @@
 
 in vec2 vUv;
 
+#ifdef NEEDS_COMPOSITING
+// Raw scene depth captured at each half-res pixel so the compositor can use it
+// for joint bilateral upsampling without re-sampling the full-res depth buffer.
+layout(location = 1) out float outSceneDepth;
+#endif
+
 uniform sampler2D sceneDiffuse;
 uniform sampler2D sceneDepth;
 uniform lowp sampler3D noiseTexture;
@@ -18,7 +24,9 @@ uniform float curTimeSeconds;
 
 #define DO_LIGHTING 0
 #define USE_LIGHT_FALLOFF 1
+#ifndef OCTAVE_COUNT
 #define OCTAVE_COUNT 6
+#endif
 
 // params
 uniform float ambientLightIntensity;
@@ -305,5 +313,14 @@ void main() {
   gl_FragColor = vec4(mix(diffuse, fogColor.rgb, fogColor.a), 1.0);
   #else
   gl_FragColor = fogColor.rgba;
+  #ifdef NEEDS_COMPOSITING
+  // Pre-linearize before storing so the compositor JBU gets uniform precision.
+  // Raw NDC depth in HalfFloat loses too much precision for distant values
+  // (they cluster near 1.0), causing quantization banding in the depth comparison.
+  // Linear depth is uniformly distributed so HalfFloat is more than adequate.
+  vec4 ndcForDepth = vec4(0.0, 0.0, depth * 2.0 - 1.0, 1.0);
+  vec4 viewPosForDepth = cameraProjectionMatrixInv * ndcForDepth;
+  outSceneDepth = -viewPosForDepth.z / viewPosForDepth.w;
+  #endif
   #endif
 }

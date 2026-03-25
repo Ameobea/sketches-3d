@@ -1,0 +1,261 @@
+{
+  "$schema": "../schema.json",
+  "version": 1,
+  "textures": {
+    "obsidian_color": {
+      "url": "https://i.ameo.link/biv.jpg"
+    },
+    "obsidian_normal": {
+      "url": "https://i.ameo.link/biw.jpg"
+    },
+    "obsidian_roughness": {
+      "url": "https://i.ameo.link/bix.jpg"
+    },
+    "bricks_color": {
+      "url": "https://i.ameo.link/d1m.avif"
+    },
+    "bricks_normal": {
+      "url": "https://i.ameo.link/biq.jpg"
+    },
+    "bricks_roughness": {
+      "url": "https://i.ameo.link/bir.jpg"
+    },
+    "gold_albedo": {
+      "url": "https://i.ameo.link/be0.jpg"
+    },
+    "gold_normal": {
+      "url": "https://i.ameo.link/be2.jpg"
+    },
+    "gold_roughness": {
+      "url": "https://i.ameo.link/bdz.jpg"
+    }
+  },
+  "materials": {
+    "ground_mat": {
+      "type": "customShader",
+      "props": {
+        "color": 11184810,
+        "roughness": 1,
+        "metalness": 0.3,
+        "iridescence": 0.2,
+        "mapDisableDistance": null,
+        "uvScale": [
+          0.35,
+          0.35
+        ],
+        "map": "obsidian_color",
+        "normalMap": "obsidian_normal",
+        "roughnessMap": "obsidian_roughness"
+      },
+      "options": {
+        "useGeneratedUVs": true,
+        "tileBreaking": {
+          "type": "neyret",
+          "patchScale": 1.3
+        },
+        "randomizeUVOffset": false
+      }
+    },
+    "platform_mat": {
+      "type": "customShader",
+      "props": {
+        "roughness": 0.65,
+        "metalness": 0.49,
+        "iridescence": 0.4,
+        "uvScale": [
+          0.1,
+          0.1
+        ],
+        "map": "bricks_color",
+        "normalMap": "bricks_normal",
+        "roughnessMap": "bricks_roughness",
+        "normalScale": 0.54
+      },
+      "options": {
+        "useGeneratedUVs": true,
+        "tileBreaking": {
+          "type": "neyret",
+          "patchScale": 0.3
+        },
+        "randomizeUVOffset": false
+      }
+    },
+    "gold_mat": {
+      "type": "customShader",
+      "props": {
+        "roughness": 0.87,
+        "metalness": 0.99,
+        "uvScale": [
+          0.1,
+          0.1
+        ],
+        "map": "gold_albedo",
+        "normalMap": "gold_normal",
+        "roughnessMap": "gold_roughness"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    }
+  },
+  "assets": {
+    "ground": {
+      "type": "geoscript",
+      "code": "box(30, 1, 30) | render"
+    },
+    "platform_small": {
+      "type": "geoscript",
+      "code": "box(4, 0.5, 4) | render"
+    },
+    "platform_long": {
+      "type": "geoscript",
+      "code": "box(10, 0.5, 3) | render"
+    },
+    "coil": {
+      "type": "geoscript",
+      "file": "coil.geo"
+    }
+  },
+  "objects": [
+    {
+      "id": "ground",
+      "asset": "ground",
+      "material": "ground_mat",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1.4115,
+        1
+      ]
+    },
+    {
+      "id": "plat_a",
+      "asset": "platform_small",
+      "material": "platform_mat",
+      "position": [
+        0.024,
+        2.3451,
+        4.809
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "plat_c",
+      "asset": "platform_long",
+      "material": "platform_mat",
+      "position": [
+        -4,
+        1.3541,
+        -18
+      ],
+      "rotation": [
+        0,
+        0.4,
+        0
+      ],
+      "scale": [
+        1.5868,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "plat_d",
+      "asset": "platform_small",
+      "material": "gold_mat",
+      "position": [
+        3,
+        8,
+        -24
+      ]
+    },
+    {
+      "id": "plat_e",
+      "asset": "platform_small",
+      "material": "platform_mat",
+      "position": [
+        -3,
+        10,
+        -30
+      ]
+    },
+    {
+      "id": "coil",
+      "asset": "coil",
+      "position": [
+        -34.1317,
+        16.1207,
+        -5.3549
+      ],
+      "rotation": [
+        0,
+        0,
+        0.6687
+      ],
+      "scale": [
+        7.6205,
+        7.0692,
+        11.5447
+      ],
+      "material": "gold_mat"
+    },
+    {
+      "id": "plat_b",
+      "asset": "platform_small",
+      "position": [
+        8.4858,
+        3.0573,
+        9.1142
+      ],
+      "rotation": [
+        0,
+        0,
+        0.2734
+      ],
+      "scale": [
+        3.2492,
+        1.713,
+        1
+      ],
+      "material": "gold_mat"
+    },
+    {
+      "id": "coil_1",
+      "asset": "coil",
+      "position": [
+        -94.0911,
+        27.8834,
+        -5.3549
+      ],
+      "rotation": [
+        0,
+        0,
+        0.6687
+      ],
+      "scale": [
+        7.6205,
+        7.0692,
+        11.5447
+      ],
+      "material": "ground_mat"
+    }
+  ]
+}

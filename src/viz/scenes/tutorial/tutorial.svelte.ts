@@ -30,7 +30,7 @@ const setupScene = (
   viz.scene.add(ambientLight);
 
   const sunPos = new THREE.Vector3(0, 80, 0);
-  const sunLight = new THREE.DirectionalLight(0xffffff, 3.6);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 1.6);
   const shadowMapSize = {
     [GraphicsQuality.Low]: 1024,
     [GraphicsQuality.Medium]: 2048,

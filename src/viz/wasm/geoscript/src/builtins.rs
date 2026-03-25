@@ -24,7 +24,7 @@ use rand::Rng;
 use rand::{RngCore, SeedableRng};
 
 use crate::builtins::trace_path::{
-  build_topology_samples, sample_subpath_points, PathTracerCallable, SubpathsSeq,
+  as_path_sampler, build_topology_samples, sample_subpath_points, PathTracerCallable, SubpathsSeq,
 };
 use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
@@ -3422,8 +3422,10 @@ fn render_impl(
           .map(|res| -> Result<Vec3, ErrorStack> {
             match res {
               Ok(Value::Vec3(v)) => Ok(v),
+              Ok(Value::Vec2(v)) => Ok(Vec3::new(v.x, 0., v.y)),
               Ok(other) => Err(ErrorStack::new(format!(
-                "Inner sequence yielded a value of {other:?}; expected a sequence of `Vec3`",
+                "Inner sequence yielded a value of {other:?}; expected a sequence of `Vec3` or \
+                 `Vec2`",
               ))),
               Err(err) => Err(err.wrap("Error evaluating inner sequence in render")),
             }
@@ -3463,15 +3465,15 @@ fn render_impl(
       match iter.peek() {
         // rendering a sequence of meshes and/or paths
         Some(Ok(Value::Mesh(_) | Value::Sequence(_))) | Some(Err(_)) => (),
-        // rendering a single top-level path
-        Some(Ok(Value::Vec3(_))) => {
+        // rendering a single top-level path (Vec3 or Vec2 projected to the XZ plane)
+        Some(Ok(Value::Vec3(_) | Value::Vec2(_))) => {
           render_path(ctx, iter)?;
           return Ok(Value::Nil);
         }
         Some(Ok(other)) => {
           return Err(ErrorStack::new(format!(
             "Invalid type yielded from sequence passed to `render`; expected sequence of meshes \
-             and/or paths (`seq<Mesh | seq<Vec3>>`), found: {other:?}",
+             and/or paths (`seq<Mesh | seq<Vec3 | Vec2>>`), found: {other:?}",
           )));
         }
         None => {
@@ -3482,6 +3484,29 @@ fn render_impl(
       for res in iter {
         render_single(res)?;
       }
+      Ok(Value::Nil)
+    }
+    3 => {
+      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let Some(sampler) = as_path_sampler(callable) else {
+        return Err(ErrorStack::new(
+          "Callable passed to `render` does not implement `PathSampler`; only path samplers (e.g. \
+           from `trace_svg_path`, `trace_path`, `lerp_path`) can be rendered directly",
+        ));
+      };
+
+      const SAMPLE_COUNT: usize = 10_000;
+      let mut path = Vec::with_capacity(SAMPLE_COUNT + 1);
+      for i in 0..SAMPLE_COUNT {
+        let t = i as f32 / SAMPLE_COUNT as f32;
+        let v = sampler.eval_at(t, ctx)?;
+        path.push(Vec3::new(v.x, 0., v.y));
+      }
+      // Close the path by appending the start point
+      if let Some(&first) = path.first() {
+        path.push(first);
+      }
+      ctx.rendered_paths.push(path);
       Ok(Value::Nil)
     }
     _ => unimplemented!(),

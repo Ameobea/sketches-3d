@@ -8,13 +8,13 @@ import {
   type CustomShaderProps,
   type CustomShaderShaders,
 } from 'src/viz/shaders/customShader';
-import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
+import { buildCheckpointMaterial } from 'src/viz/materials/Checkpoint/CheckpointMaterial';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
 import { getNormalGenWorkers } from 'src/viz/workerPool';
 
 const GreenMosaic2Textures = new AsyncOnce((loader: THREE.ImageBitmapLoader) =>
   loadNamedTextures(loader, {
-    greenMosaic2Albedo: 'https://i.ameo.link/ccn.avif',
+    greenMosaic2Albedo: ['https://i.ameo.link/ccn.avif', { colorSpace: THREE.SRGBColorSpace }],
     greenMosaic2Normal: 'https://i.ameo.link/cwb.avif',
     greenMosaic2Roughness: 'https://i.ameo.link/cwc.avif',
   })
@@ -53,7 +53,7 @@ export const buildGoldMaterial = async (
   shaderPropOverrides: Partial<CustomShaderProps> = {}
 ) => {
   const { goldTextureAlbedo, goldTextureNormal, goldTextureRoughness } = await loadNamedTextures(loader, {
-    goldTextureAlbedo: 'https://i.ameo.link/be0.jpg',
+    goldTextureAlbedo: ['https://i.ameo.link/be0.jpg', { colorSpace: THREE.SRGBColorSpace }],
     goldTextureNormal: 'https://i.ameo.link/be2.jpg',
     goldTextureRoughness: 'https://i.ameo.link/bdz.jpg',
   });
@@ -78,7 +78,9 @@ const buildTowerPlinthPedestalTextureCombinedDiffuseNormalTextureP = (
   providedLoader?: THREE.ImageBitmapLoader
 ): Promise<THREE.Texture> => {
   const loader = providedLoader ?? new THREE.ImageBitmapLoader();
-  const towerPlinthPedestalTextureP = loadTexture(loader, 'https://i.ameo.link/cul.png');
+  const towerPlinthPedestalTextureP = loadTexture(loader, 'https://i.ameo.link/cul.png', {
+    colorSpace: THREE.SRGBColorSpace,
+  });
   return towerPlinthPedestalTextureP.then(towerPlinthPedestalTexture =>
     generateNormalMapFromTexture(towerPlinthPedestalTexture, {}, true)
   );
@@ -87,7 +89,7 @@ const buildTowerPlinthPedestalTextureCombinedDiffuseNormalTextureP = (
 export const buildPylonMaterial = async (loader?: THREE.ImageBitmapLoader) =>
   buildCustomShader(
     {
-      color: new THREE.Color(0x898989),
+      color: new THREE.Color(0x7a7a7a),
       metalness: 0.18,
       roughness: 0.82,
       map: await buildTowerPlinthPedestalTextureCombinedDiffuseNormalTextureP(loader),
@@ -106,7 +108,7 @@ export const buildPylonMaterial = async (loader?: THREE.ImageBitmapLoader) =>
 
 export const ShinyPatchworkStoneTextures = new AsyncOnce((loader: THREE.ImageBitmapLoader) =>
   loadNamedTextures(loader, {
-    shinyPatchworkStoneAlbedo: 'https://i.ameo.link/bqk.jpg',
+    shinyPatchworkStoneAlbedo: ['https://i.ameo.link/bqk.jpg', { colorSpace: THREE.SRGBColorSpace }],
     shinyPatchworkStoneNormal: 'https://i.ameo.link/bqm.jpg',
     shinyPatchworkStoneRoughness: 'https://i.ameo.link/bql.jpg',
   })
@@ -122,7 +124,18 @@ export const buildPylonsMaterials = async (
 
   const bgTextureP = (async () => {
     const bgImage = await loader.loadAsync('https://i.ameo.link/bqn.jpg');
-    const bgTexture = new THREE.Texture(bgImage);
+    const bgTexture = new THREE.Texture(
+      bgImage,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      THREE.SRGBColorSpace
+    );
     bgTexture.mapping = THREE.EquirectangularRefractionMapping;
     bgTexture.needsUpdate = true;
     return bgTexture;
@@ -142,12 +155,43 @@ export const buildPylonsMaterials = async (
     buildGoldMaterial(loader),
   ]);
 
-  const checkpointMat = buildCustomShader(
-    { metalness: 0, alphaTest: 0.05, transparent: true },
-    { colorShader: BridgeMistColorShader },
-    { disableToneMapping: true }
-  );
-  viz.registerBeforeRenderCb(curTimeSeconds => checkpointMat.setCurTimeSeconds(curTimeSeconds));
+  const checkpointMat = () =>
+    buildCheckpointMaterial(
+      viz,
+      [0.13, 0.015, 0.645],
+      {},
+      {
+        noiseQuantize: 0.01,
+        noisePosQuantize: 0.01,
+        noiseBias: 0.12,
+        noisePow: 1.2,
+        noiseMultiplier: 3,
+        noiseDir: [0, 1, -2],
+        noiseRotation: [0, 0.28, 0],
+        fadeTopDist: 0.1,
+        fadeTopSteepness: 1,
+        fadeBottomDist: 0,
+        fadeBottomSteepness: 1,
+        fadeEdgeFreq: 1.2,
+        fadeEdgeSpeed: [3.1, 3.1],
+        fadeEdgeAmp: 0.1,
+        noiseVertBiasLo: 0.4,
+        noiseVertBiasHi: 1,
+        noiseVertBiasAmtLo: 0,
+        noiseVertBiasAmtHi: -0.5,
+        // Breeze
+        breezeTimeFreq: 0.85,
+        breezeThreshold: 0.3,
+        breezeThresholdHi: 0.8,
+        breezeModScale: 0.4,
+        breezePmDepth: 1,
+        breezeAmpMult: 2,
+        breezeHotColor: [0.08, 0.018, 1.545],
+        breezeColorMix: 1,
+        // breezeBiasDelta: -0.0854,
+        breezeNoiseAmpMult: 0,
+      }
+    );
 
   const shinyPatchworkStoneMaterial = buildCustomShader(
     {

@@ -11,7 +11,7 @@ import { loadNamedTextures } from 'src/viz/textureLoading';
 
 export const GrayFossilRockTextures = new AsyncOnce((loader: THREE.ImageBitmapLoader) =>
   loadNamedTextures(loader, {
-    platformDiffuse: 'https://i.ameo.link/cce.avif',
+    platformDiffuse: ['https://i.ameo.link/cce.avif', { colorSpace: THREE.SRGBColorSpace }],
     platformNormal: 'https://i.ameo.link/ccf.avif',
   })
 );

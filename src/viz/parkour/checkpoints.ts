@@ -19,7 +19,7 @@ import type { TransparentWritable } from '../util/TransparentWritable';
 export const initCheckpoints = (
   viz: Viz,
   loadedWorld: THREE.Group<THREE.Object3DEventMap>,
-  checkpointMat: THREE.Material,
+  checkpointMat: THREE.Material | (() => THREE.Material),
   dashTokensCtx: CollectablesCtx,
   curDashCharges: TransparentWritable<number>,
   onComplete: () => void

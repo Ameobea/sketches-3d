@@ -29,10 +29,18 @@ interface InitCollectablesArgs {
   collectableName: string;
   replacementObject?: THREE.Object3D;
   onCollect: (obj: THREE.Object3D) => void;
-  material?: THREE.Material;
+  material?: THREE.Material | (() => THREE.Material);
   collisionRegionScale?: THREE.Vector3;
   type?: 'mesh' | 'convexHull' | 'aabb';
 }
+
+const applyMaterial = (mesh: THREE.Mesh, material: THREE.Material | (() => THREE.Material)) => {
+  const mat = typeof material === 'function' ? material() : material;
+  mesh.material = mat;
+  if (typeof (mat as any).setMesh === 'function') {
+    (mat as any).setMesh(mesh);
+  }
+};
 
 export const initCollectables = ({
   viz,
@@ -54,12 +62,9 @@ export const initCollectables = ({
         clone.position.copy(obj.position);
 
         if (material) {
-          if (clone instanceof THREE.Mesh) {
-            clone.material = material;
-          }
           clone.traverse(obj => {
             if (obj instanceof THREE.Mesh) {
-              obj.material = material;
+              applyMaterial(obj, material);
             }
           });
         }
@@ -98,7 +103,7 @@ export const initCollectables = ({
 
         collectables.push(obj);
         if (material) {
-          obj.material = material;
+          applyMaterial(obj, material);
         }
       }
     }

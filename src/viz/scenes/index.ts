@@ -136,7 +136,7 @@ export const DefaultThirdPersonInitialAzimuth = Math.PI;
 export const DefaultThirdPersonFOV = 75;
 export const DefaultThirdPersonCameraCollisionBias = 0.25;
 export const DefaultThirdPersonMinCameraDistance = 1.0;
-export const DefaultThirdPersonCameraExtendSpeed = 8.0;
+export const DefaultThirdPersonCameraExtendSpeed = 220.0;
 
 export interface SceneConfig {
   viewMode?: ViewMode;
@@ -230,6 +230,11 @@ export interface SceneConfig {
    * start at arbitrary points in the scene.
    */
   goBackOnLoad?: boolean;
+  /**
+   * If provided, player movement is disabled until this promise resolves. Use this to gate
+   * the player from moving until async scene loading (textures, materials, geoscript) is complete.
+   */
+  loadingComplete?: Promise<void>;
 }
 
 export const buildDefaultSceneConfig = () => ({
@@ -251,6 +256,12 @@ export interface SceneDef {
   extension?: 'gltf' | 'glb';
   needsDraco?: boolean;
   legacyLights?: boolean;
+  /**
+   * If true, the scene uses the level definition system.  The gltf file (if any) is treated as a
+   * mesh asset library rather than being automatically added to the scene and physics world.
+   * The `loadLevelDef` loader handles scene population and physics registration instead.
+   */
+  useLevelDef?: boolean;
 }
 
 const ParticleConduit: SceneDef = {
@@ -548,5 +559,13 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     gltfName: null,
     legacyLights: false,
     metadata: { title: 'geoscript ' },
+  },
+  scene_def_test: {
+    sceneName: null,
+    gltfName: null,
+    sceneLoader: () => import('./scene_def_test/scene_def_test').then(mod => mod.processLoadedScene),
+    metadata: { title: 'scene_def_test' },
+    legacyLights: false,
+    useLevelDef: true,
   },
 };

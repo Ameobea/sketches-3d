@@ -14,10 +14,17 @@
     "paths": {
       "src/*": ["./src/*"]
     }
-  }
-  // Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
-  // except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
-  //
-  // If you want to overwrite includes/excludes, make sure to copy over the relevant includes/excludes
-  // from the referenced tsconfig.json - TypeScript does not merge them in
+  },
+  // Excludes must be listed here explicitly — TypeScript does not merge them with the extended config.
+  // Copied from .svelte-kit/tsconfig.json and extended with wasm build artifact directories.
+  "exclude": [
+    "node_modules/**",
+    "src/service-worker.js",
+    "src/service-worker/**/*.js",
+    "src/service-worker.ts",
+    "src/service-worker/**/*.ts",
+    "src/service-worker.d.ts",
+    "src/service-worker/**/*.d.ts",
+    "src/viz/wasm/**/build/**"
+  ]
 }

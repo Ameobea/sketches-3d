@@ -24,11 +24,11 @@ const locations = {
 };
 
 const setupScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig) => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.3);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
   viz.scene.add(ambientLight);
 
   const sunPos = new THREE.Vector3(20, 50, -20);
-  const sunLight = new THREE.DirectionalLight(0xffffff, 4.6);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 2.8);
   const shadowMapSize = {
     [GraphicsQuality.Low]: 1024,
     [GraphicsQuality.Medium]: 2048,
@@ -69,7 +69,9 @@ const setupScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig) => {
 
 const loadLevelMats = async () => {
   const loader = new THREE.ImageBitmapLoader();
-  return loadNamedTextures(loader, { buildingTexture: 'https://i.ameo.link/bdu.jpg' });
+  return loadNamedTextures(loader, {
+    buildingTexture: ['https://i.ameo.link/bdu.jpg', { colorSpace: THREE.SRGBColorSpace }],
+  });
 };
 
 export const processLoadedScene = async (
@@ -107,13 +109,15 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
   const ridgesMat = buildCustomShader(
     {
+      color: new THREE.Color(0xffffff),
       metalness: 0.89,
-      iridescence: 0.2,
+      iridescence: 0.1,
     },
     {
       colorShader: RidgesColorShader,
       roughnessShader: RidgesRoughnessShader,
-    }
+    },
+    { antialiasColorShader: true }
   );
 
   loadedWorld.traverse(obj => {

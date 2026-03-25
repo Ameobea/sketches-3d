@@ -4,11 +4,11 @@ use fxhash::FxHashMap;
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
+use crate::builtins::path_critical_points::{detect_critical_points, CriticalPointConfig};
+#[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
   build_topology_samples, sample_subpath_points, DrawCommand, PathTracerCallable,
 };
-#[cfg(target_arch = "wasm32")]
-use crate::builtins::path_critical_points::{detect_critical_points, CriticalPointConfig};
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
 use crate::{Callable, Vec2, EMPTY_KWARGS};
@@ -228,6 +228,10 @@ fn run_clipper_offset(
     }
   }
 
+  log::info!(
+    "detecting critical points after offset with delta={:.3}",
+    opts.delta
+  );
   let critical_t_values = detect_critical_points(&paths, &CriticalPointConfig::default(), None);
 
   Ok(OffsetResult {

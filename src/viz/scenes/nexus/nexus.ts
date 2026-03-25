@@ -7,16 +7,17 @@ import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
-import { BlendFunction, BloomEffect, EffectPass, ToneMappingEffect, ToneMappingMode } from 'postprocessing';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import {
   buildGrayFossilRockMaterial,
   GrayFossilRockTextures,
 } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
 import { createSignboard, type CreateSignboardArgs } from 'src/viz/helpers/signboardBuilder';
+import { configureShadowMap } from 'src/viz/helpers/lights';
 import { mix, smoothstep } from 'src/viz/util/util';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildCheckpointMaterial } from 'src/viz/materials/Checkpoint/CheckpointMaterial';
+import type { CheckpointMaterialOptions } from 'src/viz/materials/Checkpoint/CheckpointMaterial';
 import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
 import { getAmmoJS } from 'src/viz/collision';
 import { MetricsAPI } from 'src/api/client';
@@ -30,7 +31,18 @@ const loadTextures = async () => {
 
   const bgTextureP = (async () => {
     const bgImage = await loader.loadAsync('https://i.ameo.link/ccl.avif');
-    const bgTexture = new THREE.Texture(bgImage);
+    const bgTexture = new THREE.Texture(
+      bgImage,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      THREE.SRGBColorSpace
+    );
     bgTexture.rotation = Math.PI;
     bgTexture.mapping = THREE.EquirectangularReflectionMapping;
     bgTexture.needsUpdate = true;
@@ -38,7 +50,13 @@ const loadTextures = async () => {
   })();
 
   const platformTexsP = GrayFossilRockTextures.get(loader);
-  const platformMatP = buildGrayFossilRockMaterial(loader);
+  const platformMatP = buildGrayFossilRockMaterial(loader, {
+    color: 0x575a5d,
+    ambientLightScale: 1,
+    // normalScale: 1.15,
+    roughness: 0.97,
+    // metalness: 0.9,
+  });
 
   const [platformMat, bgTexture, { platformDiffuse, platformNormal }] = await Promise.all([
     platformMatP,
@@ -58,19 +76,21 @@ export const processLoadedScene = async (
   // this function returns, but we know we're going to be first-person so we can start it now
   getAmmoJS();
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 6.4);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2.8);
   viz.scene.add(ambientLight);
 
-  const dirLight = new THREE.DirectionalLight(0xdde6f1, 3.2);
+  const dirLight = new THREE.DirectionalLight(0xdde6f1, 2.2);
   dirLight.position.set(-160, 163, -80);
   dirLight.target.position.set(0, 0, 0);
 
   dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 2048 * 2;
-  dirLight.shadow.mapSize.height = 2048 * 2;
-  dirLight.shadow.radius = 4;
-  dirLight.shadow.blurSamples = 16;
-  viz.renderer.shadowMap.type = THREE.VSMShadowMap;
+  configureShadowMap({
+    light: dirLight,
+    renderer: viz.renderer,
+    quality: vizConf.graphics.quality,
+    mapSize: { low: 1024, medium: 4096, high: 4096 },
+    useVsm: true,
+  });
   dirLight.shadow.bias = -0.0001;
 
   dirLight.shadow.camera.near = 8;
@@ -98,7 +118,7 @@ export const processLoadedScene = async (
 
   viz.registerBeforeRenderCb(() => {
     const pointLightActivation = 1 - smoothstep(-20, 0, viz.camera.position.y);
-    pointLight.intensity = 13 * pointLightActivation;
+    pointLight.intensity = 4 * pointLightActivation;
     pointLight.position.x = mix(pointLightPos.x, viz.camera.position.x, 0.9);
     pointLight.position.z = mix(pointLightPos.z, viz.camera.position.z, 0.9);
   });
@@ -118,9 +138,13 @@ export const processLoadedScene = async (
   });
 
   const EASY = [0.4, 0.7, 0.4] as [number, number, number];
-  const NORMAL = [0.15, 0.51, 0.9] as [number, number, number];
+  const NORMAL = [0.05, 0.24, 0.98] as [number, number, number];
   const HARD = [0.7, 0.5, 0.04] as [number, number, number];
-  const VERY_HARD = [1.3, 0.3, 0.12] as [number, number, number];
+  const DIFFICULT = [0.8, 0.2, 0.6] as [number, number, number];
+  const CHALLENGING = [1.3, 0.3, 0.12] as [number, number, number];
+  const BASEMENT_DEFAULT = [0.05, 0.35, 0.4] as [number, number, number];
+  const SMOKE_ORANGE = [312 / 320, 112 / 320, 55 / 320] as [number, number, number];
+  const BASALT_PURPLE = [0.05, 0.02, 0.7] as [number, number, number];
 
   const PortalColorByName: Record<string, [number, number, number]> = {
     tutorial: EASY,
@@ -128,23 +152,106 @@ export const processLoadedScene = async (
     pylons: NORMAL,
     movementv2: HARD,
     plats: HARD,
-    cornered: VERY_HARD,
-    smoke: [212 / 320, 112 / 320, 55 / 320],
+    cornered: CHALLENGING,
+    stronghold: DIFFICULT,
+    smoke: SMOKE_ORANGE,
+    // Basement portals
+    basalt: BASALT_PURPLE,
+    pinklights: DIFFICULT,
+    bridge2: BASEMENT_DEFAULT,
   };
+
+  // ambientLightScale compensates for perceived-luminance differences between portal colors.
+  // Rec. 709 luma weights green ~72% and blue only ~7%, so blue-heavy colors need a much
+  // larger scale to cross the luminance threshold in the bloom pass. Values are hand-tuned.
+  const PortalAmbientScale = new Map<[number, number, number], number>([
+    [EASY, 1.86],
+    [NORMAL, 12.3], // blue-heavy → very low Rec.709 luma → needs large boost
+    [HARD, 2.38],
+    [DIFFICULT, 4.4],
+    [CHALLENGING, 4.8],
+    [BASEMENT_DEFAULT, 2.3],
+    [SMOKE_ORANGE, 4.7],
+    [BASALT_PURPLE, 22],
+  ]);
+
+  // Per-portal noise animation direction overrides. Only needed when the default vec3(0, 1, -3) looks wrong.
+  const PortalNoiseDirByName: Record<string, CheckpointMaterialOptions['noiseDir']> = {
+    // stone: [-1.5, 0.5, 2],
+  };
+
+  // Per-portal noise frequency overrides. Default vec3(3.6, 0.3, 0.6).
+  // Lower X to loosen horizontally cramped patterns; raise Y/Z for finer vertical/depth detail.
+  const PortalNoiseFreqByName: Record<string, CheckpointMaterialOptions['noiseFreq']> = {
+    stone: [2.4, 0.3, 0.6],
+  };
+
+  // Euler rotation (XYZ, radians) applied to noise sampling coords for axis-aligned portals.
+  // Tilts the noise field so it's never perfectly parallel to the portal quad's world axes,
+  // breaking up the flat/degenerate cross-section without needing the portal's actual transform.
+  const PortalNoiseRotationByName: Record<string, CheckpointMaterialOptions['noiseRotation']> = {
+    stone: [0, 0.8, 0],
+    cornered: [0, 0.28, 0],
+    stronghold: [0, 0.27, 0],
+  };
+
+  // Populated below; used for both bloom proximity and the portal point light.
+  // isBasement: portal is in the lower level — excluded from proximity when player is at upper level.
+  const portalLightEntries: Array<{ pos: THREE.Vector3; col: THREE.Color; isBasement: boolean }> = [];
 
   for (const portal of portals) {
     portal.userData.nocollide = true;
-    portal.material = buildCheckpointMaterial(viz, PortalColorByName[portal.name.split('_')[1]]);
+
+    const portalKey = portal.name.split('_')[1];
+    const unmappedColor = PortalColorByName[portalKey];
+    let color = unmappedColor;
+    if (color) {
+      // hacky psuedo-saturation
+      const intensity = Math.pow(Math.max(...color), 1.8);
+      color = color.map(c => (Math.pow(c, 1.8) / intensity) * 1.8) as [number, number, number];
+    }
+    portal.material = buildCheckpointMaterial(
+      viz,
+      color,
+      { ambientLightScale: PortalAmbientScale.get(unmappedColor) ?? 2 },
+      {
+        noiseDir: PortalNoiseDirByName[portalKey],
+        noiseFreq: PortalNoiseFreqByName[portalKey],
+        noiseRotation: PortalNoiseRotationByName[portalKey],
+      }
+    );
     // it would be good to eventually be able to handle these transparent portals correctly so that the
     // volumetrics show up behind them, but that makes things very complicated with the depth pre-pass
     // and other render passes so isn't worth it for now
     // portal.material.depthWrite = false;
     portal.userData.noLight = true;
 
-    if (!portal.name.includes('_')) {
+    if (!portal.name.includes('_') || !unmappedColor) {
       portal.visible = false;
+      continue;
     }
+
+    // Collect position + light color for this visible portal.
+    // Normalize saturation-boosted color to max-channel = 1 so the hue is fully saturated
+    // regardless of the original channel magnitudes.
+    const worldPos = portal.getWorldPosition(new THREE.Vector3());
+    const finalColor = color ?? ([0.8, 0.5, 0.6] as [number, number, number]);
+    const maxCh = Math.max(...finalColor);
+    portalLightEntries.push({
+      pos: worldPos,
+      col: new THREE.Color(finalColor[0] / maxCh, finalColor[1] / maxCh, finalColor[2] / maxCh),
+      // Portals significantly below the upper platform are basement portals.
+      // They're excluded from proximity detection when the player is at upper level
+      // to prevent their depth below from triggering effects at the surface.
+      isBasement: worldPos.y < -10,
+    });
   }
+
+  // Single unshadowed point light that snaps to the nearest portal and tints to its color.
+  // Starts at zero intensity; proximity callback below drives it.
+  const portalPointLight = new THREE.PointLight(0xffffff, 0, 0, 2);
+  portalPointLight.castShadow = false;
+  viz.scene.add(portalPointLight);
 
   const { platformMat, bgTexture, platformDiffuse, platformNormal, loader } = await loadTextures();
   viz.scene.background = bgTexture;
@@ -160,6 +267,7 @@ export const processLoadedScene = async (
       uvTransform: new THREE.Matrix3().scale(0.148, 0.148),
       metalness: 0.513,
       mapDisableDistance: null,
+      ambientLightScale: 0.3,
     },
     {
       colorShader: PlatformColorShader,
@@ -172,16 +280,16 @@ export const processLoadedScene = async (
 
   const spawnPlatformMat = buildCustomShader(
     {
-      color: 0x474a4d,
+      color: 0x373a3d,
       map: platformDiffuse,
-      roughness: 0.9,
+      roughness: 0.95,
       metalness: 0.5,
       uvTransform: new THREE.Matrix3().scale(28.2073, 28.2073),
       normalMap: platformNormal,
-      normalScale: 0.95,
+      normalScale: 1.85,
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
-      ambientLightScale: 1.8,
+      ambientLightScale: 1,
     },
     {},
     { tileBreaking: { type: 'neyret', patchScale: 2 } }
@@ -189,22 +297,21 @@ export const processLoadedScene = async (
 
   const spawnPlatformDarkMat = buildCustomShader(
     {
-      color: 0x474a4d,
+      color: 0x505558,
       map: platformDiffuse,
-      roughness: 0.9,
-      metalness: 0.5,
+      roughness: 1,
+      metalness: 0.8,
       uvTransform: new THREE.Matrix3().scale(8.2073, 8.2073),
       normalMap: platformNormal,
-      normalScale: 0.95,
+      normalScale: 1.05,
       normalMapType: THREE.TangentSpaceNormalMap,
       mapDisableDistance: null,
-      ambientLightScale: 1.2,
     },
     {
       roughnessShader: `
 float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
-  float shinyness = pow(ctx.diffuseColor.r * 27.5, 2.5) * 0.6;
-  shinyness = clamp(shinyness, 0.0, 0.6);
+  float shinyness = pow(ctx.diffuseColor.b * 43.5, 2.5) * 0.6;
+  shinyness = clamp(shinyness, 0.12, 0.58);
   return 1. - shinyness;
 }`,
     },
@@ -314,18 +421,23 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
   const totemMat = buildCustomShader(
     {
-      color: 0xcccccc,
+      color: 0x242424,
       map: platformDiffuse,
       uvTransform: new THREE.Matrix3().scale(0.24073, 0.24073),
       normalMap: platformNormal,
-      normalScale: 1,
-      metalness: 1,
+      normalScale: 0.8,
+      metalness: 0.97,
+      roughness: 0.3,
     },
     {
-      colorShader: PlatformColorShader,
-      roughnessShader: PlatformRoughnessShader,
+      roughnessShader: /* glsl */ `
+float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
+  float shinyness = pow(ctx.diffuseColor.b * 645.5, 2.5) * 0.4;
+  shinyness = clamp(shinyness, 0.0, 0.9);
+  return 1. - shinyness;
+}`,
     },
-    { useTriplanarMapping: true }
+    { useTriplanarMapping: true, antialiasRoughnessShader: true }
   );
 
   const totem0 = loadedWorld.getObjectByName('totem') as THREE.Mesh;
@@ -333,16 +445,16 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   totem0.material = totemMat;
   totem1.material = totemMat;
 
-  configureDefaultPostprocessingPipeline({
+  const pipeline = configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
     addMiddlePasses: (composer, viz, quality) => {
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -90,
         fogMaxY: -40,
-        fogColorHighDensity: new THREE.Vector3(0.034, 0.024, 0.03).addScalar(0.014),
-        fogColorLowDensity: new THREE.Vector3(0.08, 0.08, 0.1).addScalar(0.014),
-        ambientLightColor: new THREE.Color(0x6d4444),
+        fogColorHighDensity: new THREE.Vector3(0.024, 0.024, 0.01).multiplyScalar(0.3),
+        fogColorLowDensity: new THREE.Vector3(0.035, 0.03, 0.04).multiplyScalar(0.8),
+        ambientLightColor: new THREE.Color(0x5d4444),
         ambientLightIntensity: 2.2,
         heightFogStartY: -90,
         heightFogEndY: -55,
@@ -353,13 +465,25 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
         noisePow: 2.4,
         fogFadeOutRangeY: 38,
         fogFadeOutPow: 0.6,
-        fogDensityMultiplier: 0.32,
+        fogDensityMultiplier: 0.82,
         postDensityMultiplier: 1.7,
         noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
         globalScale: 1,
-        halfRes: true,
+        halfRes: quality <= GraphicsQuality.Medium,
         ...{
-          [GraphicsQuality.Low]: { baseRaymarchStepCount: 20 },
+          [GraphicsQuality.Low]: {
+            baseRaymarchStepCount: 40,
+            octaveCount: 3,
+            renderScale: 0.25,
+            fogFadeOutRangeY: 8,
+            fogFadeOutPow: 1.6,
+            globalScale: 1.4,
+            noisePow: 1.5,
+            noiseBias: 0.5,
+            jbuExtent: 1,
+            jbuSpatialSigma: 1.3,
+            jbuDepthSigma: 0.05,
+          },
           [GraphicsQuality.Medium]: { baseRaymarchStepCount: 30 },
           [GraphicsQuality.High]: { baseRaymarchStepCount: 60 },
         }[quality],
@@ -367,52 +491,129 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
 
-      const n8aoPass = new N8AOPostPass(
-        viz.scene,
-        viz.camera,
-        viz.renderer.domElement.width,
-        viz.renderer.domElement.height
-      );
-      composer.addPass(n8aoPass);
-      n8aoPass.gammaCorrection = false;
-      n8aoPass.enabled = vizConf.graphics.quality > GraphicsQuality.Medium;
-      n8aoPass.configuration.intensity = 2;
-      n8aoPass.configuration.aoRadius = 5;
-      // \/ this breaks rendering and makes the background black if enabled
-      n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Medium;
-      n8aoPass.setQualityMode(
-        {
-          [GraphicsQuality.Low]: 'Performance',
-          [GraphicsQuality.Medium]: 'Low',
-          [GraphicsQuality.High]: 'High',
-        }[vizConf.graphics.quality]
-      );
-
-      const bloomEffect = new BloomEffect({
-        intensity: 4,
-        mipmapBlur: true,
-        luminanceThreshold: 0.53,
-        blendFunction: BlendFunction.ADD,
-        luminanceSmoothing: 0.05,
-        radius: 0.186,
-      });
-      const bloomPass = new EffectPass(viz.camera, bloomEffect);
-      bloomPass.dithering = false;
-
-      composer.addPass(bloomPass);
+      if (vizConf.graphics.quality > GraphicsQuality.Low) {
+        const n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        composer.addPass(n8aoPass);
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.enabled = vizConf.graphics.quality > GraphicsQuality.Medium;
+        n8aoPass.configuration.intensity = 2;
+        n8aoPass.configuration.aoRadius = 5;
+        n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Medium;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Low',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'High',
+          }[vizConf.graphics.quality]
+        );
+      }
     },
-    extraParams: {
-      toneMappingExposure: 1.3,
-    },
-    postEffects: (() => {
-      const toneMappingEffect = new ToneMappingEffect({
-        mode: ToneMappingMode.LINEAR,
-      });
-
-      // return [];
-      return [toneMappingEffect];
-    })(),
+    toneMapping: { exposure: 0.5, mode: 'agx' },
+    // toneMapping: { exposure: 1, mode: 'aces' },
     autoUpdateShadowMap: true,
+    emissiveBypass: true,
+    emissiveBypassAmbientIntensity: vizConf.graphics.quality > GraphicsQuality.Low ? 2.8 : 3,
+    emissiveBloom:
+      vizConf.graphics.quality > GraphicsQuality.Low
+        ? { luminanceThreshold: 1.1, luminanceSmoothing: 0 }
+        : null,
+  });
+
+  // Ramp up bloom radius + intensity as the player approaches any portal.
+  // At distance >= FAR the bloom is at its resting values; at distance <= NEAR it peaks.
+  // Basement portals are closer together so use tighter ranges there.
+  const BLOOM_NEAR_UPPER = 5;
+  const BLOOM_FAR_UPPER = 30;
+  const BLOOM_NEAR_BASEMENT = 5;
+  const BLOOM_FAR_BASEMENT = 18;
+
+  const BLOOM_RADIUS_REST = 0.35;
+  const BLOOM_RADIUS_PEAK = 0.15;
+  const BLOOM_INTENSITY_REST = 0.8;
+  const BLOOM_INTENSITY_PEAK = 1.3;
+  const BLOOM_LUMINANCE_THRESHOLD_REST = 1.1;
+  const BLOOM_LUMINANCE_THRESHOLD_PEAK = 1.1;
+  const BLOOM_LUMINANCE_SMOOTHING_REST = 0.0;
+  const BLOOM_LUMINANCE_SMOOTHING_PEAK = 0.1;
+
+  const PORTAL_LIGHT_NEAR_UPPER = 6;
+  const PORTAL_LIGHT_FAR_UPPER = 20;
+  const PORTAL_LIGHT_NEAR_BASEMENT = 4;
+  const PORTAL_LIGHT_FAR_BASEMENT = 14;
+  const PORTAL_LIGHT_INTENSITY_PEAK = 1000;
+
+  // How much to dim ambient + directional lights when right next to a portal.
+  // Each has independent min/max so they can be tuned separately.
+  const AMBIENT_INTENSITY_BASE = 2.8;
+  const AMBIENT_INTENSITY_NEAR = 0.6;
+  const DIR_LIGHT_INTENSITY_BASE = 2.2;
+  const DIR_LIGHT_INTENSITY_NEAR = 0.3;
+
+  const _playerPos = new THREE.Vector3();
+  viz.registerBeforeRenderCb(() => {
+    viz.camera.getWorldPosition(_playerPos);
+
+    // Mirror the basement point-light condition: 1 when in basement (y <= -20), 0 at surface (y >= 0).
+    const inBasementT = 1 - smoothstep(-20, 0, _playerPos.y);
+
+    // Exclude basement portals when the player is at the upper level; they sit directly
+    // beneath parts of the upper platform and would otherwise trigger effects from above.
+    const activeEntries = portalLightEntries.filter(e => !e.isBasement || inBasementT > 0);
+
+    // Use full 3D distance to pick the nearest portal...
+    let minDist3D = Infinity;
+    let nearestEntry = activeEntries[0] ?? portalLightEntries[0];
+    for (const entry of activeEntries) {
+      const d = _playerPos.distanceTo(entry.pos);
+      if (d < minDist3D) {
+        minDist3D = d;
+        nearestEntry = entry;
+      }
+    }
+
+    // ...but use horizontal distance for all proximity T values so that
+    // walking over a portal (vertical separation) doesn't kill the effect.
+    const dx = _playerPos.x - nearestEntry.pos.x;
+    const dz = _playerPos.z - nearestEntry.pos.z;
+    const hDist = Math.sqrt(dx * dx + dz * dz);
+
+    // Lerp near/far ranges between upper and basement values as the player descends.
+    const bloomNear = BLOOM_NEAR_UPPER + inBasementT * (BLOOM_NEAR_BASEMENT - BLOOM_NEAR_UPPER);
+    const bloomFar = BLOOM_FAR_UPPER + inBasementT * (BLOOM_FAR_BASEMENT - BLOOM_FAR_UPPER);
+    const lightNear =
+      PORTAL_LIGHT_NEAR_UPPER + inBasementT * (PORTAL_LIGHT_NEAR_BASEMENT - PORTAL_LIGHT_NEAR_UPPER);
+    const lightFar =
+      PORTAL_LIGHT_FAR_UPPER + inBasementT * (PORTAL_LIGHT_FAR_BASEMENT - PORTAL_LIGHT_FAR_UPPER);
+
+    // Bloom proximity
+    const bloomT = 1 - Math.min(1, Math.max(0, (hDist - bloomNear) / (bloomFar - bloomNear)));
+    pipeline.setEmissiveBloom({
+      radius: BLOOM_RADIUS_REST + bloomT * (BLOOM_RADIUS_PEAK - BLOOM_RADIUS_REST),
+      intensity: BLOOM_INTENSITY_REST + bloomT * (BLOOM_INTENSITY_PEAK - BLOOM_INTENSITY_REST),
+      luminanceThreshold:
+        BLOOM_LUMINANCE_THRESHOLD_REST +
+        bloomT * (BLOOM_LUMINANCE_THRESHOLD_PEAK - BLOOM_LUMINANCE_THRESHOLD_REST),
+      luminanceSmoothing:
+        BLOOM_LUMINANCE_SMOOTHING_REST +
+        bloomT * (BLOOM_LUMINANCE_SMOOTHING_PEAK - BLOOM_LUMINANCE_SMOOTHING_REST),
+    });
+
+    // Portal point light: snaps to nearest portal, tints to its color
+    const lightT = 1 - Math.min(1, Math.max(0, (hDist - lightNear) / (lightFar - lightNear)));
+    portalPointLight.position.copy(nearestEntry.pos);
+    portalPointLight.color.copy(nearestEntry.col);
+    portalPointLight.intensity = lightT * PORTAL_LIGHT_INTENSITY_PEAK;
+
+    // Dim scene lights as the portal light ramps up to keep overall brightness balanced.
+    ambientLight.intensity =
+      AMBIENT_INTENSITY_BASE + lightT * (AMBIENT_INTENSITY_NEAR - AMBIENT_INTENSITY_BASE);
+    dirLight.intensity =
+      DIR_LIGHT_INTENSITY_BASE + lightT * (DIR_LIGHT_INTENSITY_NEAR - DIR_LIGHT_INTENSITY_BASE);
   });
 
   const locations = {

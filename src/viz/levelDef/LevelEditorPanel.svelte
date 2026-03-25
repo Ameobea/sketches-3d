@@ -1,0 +1,185 @@
+<script lang="ts">
+  interface Props {
+    assetIds: string[];
+    materialIds: string[];
+    selectedObjectId: string | null;
+    selectedMaterialId: string | null;
+    materialEditorOpen: boolean;
+    onadd: (assetId: string, materialId: string | undefined) => void;
+    onmaterialchange: (matId: string | null) => void;
+    ontoggleMaterialEditor: () => void;
+  }
+
+  let {
+    assetIds,
+    materialIds,
+    selectedObjectId,
+    selectedMaterialId,
+    materialEditorOpen,
+    onadd,
+    onmaterialchange,
+    ontoggleMaterialEditor,
+  }: Props = $props();
+
+  let selectedAssetOverride = $state<string | null>(null);
+  let selectedAsset = $derived(
+    selectedAssetOverride && assetIds.includes(selectedAssetOverride)
+      ? selectedAssetOverride
+      : (assetIds[0] ?? '')
+  );
+  let selectedMaterial = $state('');
+
+  const handleAdd = () => {
+    if (!selectedAsset) return;
+    onadd(selectedAsset, selectedMaterial || undefined);
+  };
+</script>
+
+<div class="panel">
+  <!-- Add section -->
+  <div class="add-section">
+    <div class="row">
+      <span class="field-label">asset:</span>
+      <select
+        class="field-select"
+        value={selectedAsset}
+        onchange={(e) => { selectedAssetOverride = (e.target as HTMLSelectElement).value; }}
+      >
+        {#each assetIds as id (id)}
+          <option value={id}>{id}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="row">
+      <span class="field-label">material:</span>
+      <select class="field-select" bind:value={selectedMaterial}>
+        <option value="">(none)</option>
+        {#each materialIds as id (id)}
+          <option value={id}>{id}</option>
+        {/each}
+      </select>
+    </div>
+
+    <button class="add-btn" onclick={handleAdd}>add object</button>
+  </div>
+
+  <!-- Divider -->
+  <div class="divider"></div>
+
+  <!-- Edit Materials toggle -->
+  <button class="edit-mats-btn" onclick={ontoggleMaterialEditor}>
+    {materialEditorOpen ? 'close materials' : 'edit materials'}
+  </button>
+
+  <!-- Selected object info -->
+  <span class="selected-label">
+    Selected: {selectedObjectId ?? '(none)'}
+  </span>
+
+  {#if selectedObjectId !== null}
+    <div class="row selected-mat-row">
+      <span class="field-label">material:</span>
+      <select
+        class="field-select"
+        value={selectedMaterialId ?? ''}
+        onchange={(e) => {
+          const v = (e.target as HTMLSelectElement).value;
+          onmaterialchange(v || null);
+        }}
+      >
+        <option value="">(none)</option>
+        {#each materialIds as id (id)}
+          <option value={id}>{id}</option>
+        {/each}
+      </select>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .panel {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    background: #1a1a1a;
+    color: #e8e8e8;
+    font: 13px monospace;
+    padding: 10px 14px;
+    border: 1px solid #444;
+    z-index: 9998;
+    min-width: 240px;
+    pointer-events: auto;
+    user-select: none;
+  }
+
+  .add-section {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .field-label {
+    width: 70px;
+  }
+
+  .field-select {
+    flex: 1;
+    background: #1a1a1a;
+    color: #e8e8e8;
+    border: 1px solid #555;
+    padding: 2px 4px;
+    font: 12px monospace;
+  }
+
+  .add-btn {
+    margin-top: 2px;
+    background: #1a1a1a;
+    color: #e8e8e8;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    cursor: pointer;
+    font: 12px monospace;
+  }
+
+  .add-btn:hover {
+    background: #252525;
+  }
+
+  .divider {
+    border-top: 1px solid #444;
+    margin: 10px 0;
+  }
+
+  .edit-mats-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    margin-bottom: 6px;
+    background: #1a1a1a;
+    color: #e8e8e8;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    cursor: pointer;
+    font: 12px monospace;
+  }
+
+  .edit-mats-btn:hover {
+    background: #252525;
+  }
+
+  .selected-label {
+    color: #aaa;
+    font-size: 12px;
+  }
+
+  .selected-mat-row {
+    margin-top: 4px;
+  }
+</style>

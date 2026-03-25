@@ -22,7 +22,7 @@ export const processLoadedScene = async (
     wsCtx.startAll();
   });
 
-  viz.scene.add(new THREE.AmbientLight(0xffffff, 3.5));
+  viz.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
   viz.renderer.shadowMap.enabled = false;
 

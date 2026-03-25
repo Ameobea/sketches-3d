@@ -9,19 +9,22 @@
     "package": "svelte-kit package",
     "preview": "vite preview",
     "lint": "oxfmt --check && oxlint",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "gen:level-schema": "tsx src/viz/levelDef/genSchema.ts"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.4.0",
     "@sveltejs/kit": "^2.49.1",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@tanstack/svelte-query": "^5.67.2",
+    "@types/node": "^25.5.0",
     "@types/three": "^0.159.0",
     "eslint": "^10.0.3",
     "eslint-plugin-svelte": "^3.13.1",
     "oxfmt": "^0.36.0",
     "oxlint": "^1.51.0",
     "svelte": "^5.45.6",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^6.3.5",
     "vite-plugin-cross-origin-isolation": "^0.1.6",

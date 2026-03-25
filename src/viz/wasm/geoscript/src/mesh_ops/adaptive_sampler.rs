@@ -55,9 +55,15 @@ use crate::Vec2;
 /// Minimum segment length to prevent infinite subdivision on degenerate geometry.
 const DEFAULT_MIN_SEGMENT_LENGTH: f32 = 1e-5;
 
+/// Set to `true` to enable verbose per-span logging for the adaptive sampler.
+/// Logs curvature/arc-length mass breakdown, baseline suppression factors, and
+/// per-span budget allocations.  Flip back to `false` before committing.
+#[allow(dead_code)]
+const ADAPTIVE_SAMPLER_DEBUG: bool = true;
+
 /// Oversampling factor for Phase 1. Dense enough to catch features missed by a single midpoint
 /// check, while remaining practical for WASM execution in a browser.
-const OVERSAMPLE_FACTOR: usize = 25;
+const OVERSAMPLE_FACTOR: usize = 55;
 
 /// Hard minimum for the number of dense samples regardless of target_count.
 const MIN_DENSE_SAMPLES: usize = 64;
@@ -65,20 +71,20 @@ const MIN_DENSE_SAMPLES: usize = 64;
 /// Multiplier for the curvature contribution to the density field.
 /// Higher values concentrate more samples at high-curvature regions at the cost of uniformity
 /// in low-curvature regions.
-const CURVATURE_WEIGHT: f32 = 70.0;
+const CURVATURE_WEIGHT: f32 = 400.0;
 
 /// Controls when the arc-length baseline starts being suppressed in budget allocation.
 ///
 /// When the fraction of total mass attributable to curvature exceeds this threshold, the
 /// arc-length baseline begins to fade out, redirecting samples from straight spans to curved ones.
 /// Below this ratio the baseline is fully retained (uniform-like fallback).
-const BASELINE_SUPPRESSION_LOW: f32 = 0.05;
+const BASELINE_SUPPRESSION_LOW: f32 = 0.03;
 
 /// Controls when the arc-length baseline is fully suppressed.
 ///
 /// When the curvature fraction reaches this threshold, the arc-length component of span mass is
 /// zeroed for budget allocation, so straight spans receive no extra samples at all.
-const BASELINE_SUPPRESSION_HIGH: f32 = 0.20;
+const BASELINE_SUPPRESSION_HIGH: f32 = 0.12;
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
   let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -212,7 +218,7 @@ impl SpanData {
   /// Candidates too close to the previous sample or to `t_end` are filtered out.
   fn sample_internal(&self, k: usize, min_seg_len: f32) -> Vec<f32> {
     let mut result = Vec::with_capacity(k);
-    if k == 0 || self.mass <= 0.0 {
+    if k == 0 || self.mass <= 0. {
       return result;
     }
     let mut last_t = self.t_start;
@@ -484,6 +490,39 @@ where
     .collect();
 
   let allocations = distribute_budget(free_budget, &effective_masses);
+
+  if ADAPTIVE_SAMPLER_DEBUG {
+    ::log::info!(
+      "adaptive_sampler: target={} mandatory={} free_budget={} n_spans={}",
+      target_count,
+      mandatory_count,
+      free_budget,
+      n_spans
+    );
+    ::log::info!(
+      "  total_arc_mass={total_arc_length_mass:.4} total_curv_mass={total_curvature_mass:.4} \
+       curvature_ratio={curvature_ratio:.4} baseline_factor={baseline_factor:.4}",
+    );
+    for (i, (span, (&eff_mass, &alloc))) in spans
+      .iter()
+      .zip(effective_masses.iter().zip(allocations.iter()))
+      .enumerate()
+    {
+      let span_curv_ratio = if span.mass > 0.0 {
+        span.curvature_mass / span.mass
+      } else {
+        0.0
+      };
+      ::log::info!(
+        "  span[{i:02}] t=[{:.4},{:.4}] arc={:.4} curv={:.4} curv_ratio={span_curv_ratio:.3} \
+         eff_mass={eff_mass:.4} alloc={alloc}",
+        span.t_start,
+        span.t_end,
+        span.arc_length_mass,
+        span.curvature_mass,
+      );
+    }
+  }
 
   // --- Step 5: Emit output ---
   // Each span contributes: its start t (mandatory) + interior samples from center-of-mass

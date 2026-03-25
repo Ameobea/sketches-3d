@@ -16,6 +16,10 @@
 
 // The output of the volumetric pass (rgb = fog color, a = density)
 uniform sampler2D fogTexture;
+// Raw scene depth captured by the volumetric pass at half resolution (r channel).
+// Using this instead of re-sampling the full-res sceneDepth guarantees the depth
+// reference for each low-res texel is exactly what was used during raymarching.
+uniform sampler2D fogDepthTexture;
 uniform sampler2D sceneDiffuse;
 uniform sampler2D sceneDepth;
 uniform vec2 resolution;
@@ -23,9 +27,6 @@ uniform vec2 fogResolution;
 uniform float near;
 uniform float far;
 varying vec2 vUv;
-
-#define DITHERING
-#include <dithering_pars_fragment>
 
 float linearize_depth(float d, float zNear, float zFar) {
   return zNear * zFar / (zFar + d * (zNear - zFar));
@@ -57,9 +58,11 @@ void main() {
       vec2 sampleUv = (base + vec2(float(x), float(y)) + 0.5) * texelSize;
       vec4 data = texture2D(fogTexture, sampleUv);
 
-      // Sample scene depth at the low-res texel center and linearize it
-      float sampleDepth = texture2D(sceneDepth, sampleUv).x;
-      sampleDepth = linearize_depth(sampleDepth, near, far);
+      // Read the raw scene depth captured by the volumetric pass at this half-res texel.
+      // This is the same depth the raymarcher used, so it is spatially consistent with
+      // the fog values in `data` — exactly the same approach three-good-godrays uses by
+      // storing linearized depth in its godrays texture alpha channel.
+      float sampleDepth = texture2D(fogDepthTexture, sampleUv).r; // already linearized by volumetric.frag
 
       // Gaussian spatial weight based on distance in texel units
       vec2 d = vec2(float(x), float(y)) - f;
@@ -81,6 +84,4 @@ void main() {
 
   vec3 sceneColor = texture2D(sceneDiffuse, vUv).rgb;
   gl_FragColor = vec4(mix(sceneColor, fogColor, fogDensity), 1.0);
-
-  #include <dithering_fragment>
 }

@@ -102,8 +102,6 @@ export const processLoadedScene = async (
           );
         }
       },
-      extraParams: undefined,
-      postEffects: undefined,
       autoUpdateShadowMap: !userData?.renderMode,
       // enableAntiAliasing: !userData?.renderMode,
     });

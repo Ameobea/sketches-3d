@@ -105,6 +105,160 @@ const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   return NonAntialiasedRoughnessShaderFragment;
 };
 
+const buildUnpackDiffuseNormalGBAFragment = (params: true | { lut: Uint8Array }): string => {
+  if (params === true) {
+    return `
+    mapN = sampledDiffuseColor_.gba;
+    sampledDiffuseColor_ = vec4(sampledDiffuseColor_.rrr, 1.);
+  `;
+  } else {
+    return `
+    mapN = sampledDiffuseColor_.gba;
+    float index = sampledDiffuseColor_.r;
+    vec4 lutEntry = texelFetch(diffuseLUT, ivec2(index * 255., 0), 0);
+    sampledDiffuseColor_ = lutEntry;
+      `;
+  }
+};
+
+const buildUVVertexFragment = (randomizeUVOffset: boolean | undefined): string => {
+  if (randomizeUVOffset) {
+    return `
+      #ifdef USE_UV
+        float modelWorldX = modelMatrix[3][0];
+        float modelWorldY = modelMatrix[3][1];
+        float modelWorldZ = modelMatrix[3][2];
+        vec3 modelWorld = vec3(modelWorldX, modelWorldY, modelWorldZ);
+
+        // hash x, y, z
+        float hash = fract(sin(dot(modelWorld, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+
+        vec2 uvOffset = vec2(
+          fract(hash * 3502.2),
+          fract(hash * 3200.)
+        );
+
+        // Add \`uvUffset\` to \`vUv\` to randomize the UVs.
+        float uvScaleX = uvTransform[0][0];
+        float uvScaleY = uvTransform[1][1];
+        mat3 newUVTransform = mat3(
+          uvScaleX, 0., 0.,
+          0., uvScaleY, 0.,
+          uvOffset.x, uvOffset.y, uvOffset.x
+        );
+        vUv = ( newUVTransform * vec3( vUv, 1 ) ).xy;
+      #endif
+      `;
+  }
+
+  return '';
+};
+
+const buildRunColorShaderFragment = (
+  colorShader: string | undefined,
+  antialiasColorShader: boolean | undefined
+): string => {
+  if (!colorShader) {
+    return '';
+  }
+
+  if (antialiasColorShader) {
+    return `
+  vec4 acc = vec4(0.);
+  // 2x oversampling
+  for (int i = 0; i < 2; i++) {
+    for (int j = 0; j < 2; j++) {
+      for (int k = 0; k < 2; k++) {
+        vec3 offsetPos = fragPos;
+        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
+        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
+        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
+        acc += getFragColor(diffuseColor.xyz, offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
+      }
+    }
+  }
+  acc /= 8.;
+  diffuseColor = acc;
+  ctx.diffuseColor = diffuseColor;`;
+  } else {
+    return `
+  diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);
+  ctx.diffuseColor = diffuseColor;`;
+  }
+};
+
+const buildRunIridescenceShaderFragment = (iridescenceShader: string | undefined): string => {
+  if (!iridescenceShader) {
+    return '';
+  }
+
+  return `
+material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iridescence, curTimeSeconds, ctx);`;
+};
+
+const buildTextureDisableFragment = (
+  mapDisableDistance: number | null | undefined,
+  mapDisableTransitionThreshold: number
+): string => {
+  if (typeof mapDisableDistance !== 'number') {
+    return '';
+  }
+
+  const startEdge = (mapDisableDistance - mapDisableTransitionThreshold).toFixed(3);
+  const endEdge = mapDisableDistance.toFixed(3);
+
+  return `
+    float textureActivation = 1. - smoothstep(${startEdge}, ${endEdge}, distanceToCamera);
+  `;
+};
+
+const buildLightsFragmentBegin = (
+  disabledDirectionalLightIndices: number[] | undefined,
+  disabledSpotLightIndices: number[] | undefined,
+  ambientLightScale: number,
+  ambientDistanceAmp: AmbientDistanceAmpParams | undefined
+): string => {
+  let frag = CustomLightsFragmentBegin.replace(
+    '__DIR_LIGHTS_DISABLE__',
+    (() => {
+      if (!disabledDirectionalLightIndices) {
+        return '0';
+      }
+
+      return disabledDirectionalLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
+    })()
+  )
+    .replace(
+      '__SPOT_LIGHTS_DISABLE__',
+      (() => {
+        if (!disabledSpotLightIndices) {
+          return '0';
+        }
+
+        return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
+      })()
+    )
+    .replace('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))
+    .replace('__USE_AMBIENT_LIGHT_DISTANCE_AMP__', ambientDistanceAmp ? '1' : '0');
+
+  if (ambientDistanceAmp) {
+    frag = frag
+      .replace(
+        '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_START_DISTANCE__',
+        ambientDistanceAmp.falloffStartDistance.toFixed(4)
+      )
+      .replace(
+        '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_END_DISTANCE__',
+        ambientDistanceAmp.falloffEndDistance.toFixed(4)
+      )
+      .replace('__AMBIENT_LIGHT_DISTANCE_AMP_EXPONENT__', (ambientDistanceAmp.exponent ?? 1).toFixed(4))
+      .replace('__AMBIENT_LIGHT_DISTANCE_AMP_FACTOR__', ambientDistanceAmp.ampFactor.toFixed(4));
+  }
+
+  return frag;
+};
+
 let DefaultDistanceAmpParams: AmbientDistanceAmpParams | undefined;
 
 export const setDefaultDistanceAmpParams = (params: AmbientDistanceAmpParams | null | undefined) => {
@@ -119,7 +273,6 @@ const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
   contrastPreservationFactor: 0.5,
   sharpenFactor: 12.8,
 });
-
 
 export const buildCustomShaderArgs = (
   {
@@ -183,6 +336,7 @@ export const buildCustomShaderArgs = (
     disabledSpotLightIndices,
     randomizeUVOffset,
     useGeneratedUVs,
+    useWorldSpaceGeneratedUVs,
     useTriplanarMapping,
   }: CustomShaderOptions = {}
 ) => {
@@ -315,152 +469,8 @@ export const buildCustomShaderArgs = (
     throw new Error('Cannot use both iridescence shader and iridescence reverse color ramp');
   }
 
-  const buildUVVertexFragment = () => {
-    if (randomizeUVOffset) {
-      return `
-      #ifdef USE_UV
-        float modelWorldX = modelMatrix[3][0];
-        float modelWorldY = modelMatrix[3][1];
-        float modelWorldZ = modelMatrix[3][2];
-        vec3 modelWorld = vec3(modelWorldX, modelWorldY, modelWorldZ);
-
-        // hash x, y, z
-        float hash = fract(sin(dot(modelWorld, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-
-        vec2 uvOffset = vec2(
-          fract(hash * 3502.2),
-          fract(hash * 3200.)
-        );
-
-        // Add \`uvUffset\` to \`vUv\` to randomize the UVs.
-        float uvScaleX = uvTransform[0][0];
-        float uvScaleY = uvTransform[1][1];
-        mat3 newUVTransform = mat3(
-          uvScaleX, 0., 0.,
-          0., uvScaleY, 0.,
-          uvOffset.x, uvOffset.y, uvOffset.x
-        );
-        vUv = ( newUVTransform * vec3( vUv, 1 ) ).xy;
-      #endif
-      `;
-    }
-
-    return '';
-  };
-
-  const buildRunColorShaderFragment = () => {
-    if (!colorShader) {
-      return '';
-    }
-
-    if (antialiasColorShader) {
-      return `
-  vec4 acc = vec4(0.);
-  // 2x oversampling
-  for (int i = 0; i < 2; i++) {
-    for (int j = 0; j < 2; j++) {
-      for (int k = 0; k < 2; k++) {
-        vec3 offsetPos = fragPos;
-        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
-        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getFragColor(diffuseColor.xyz, offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
-      }
-    }
-  }
-  acc /= 8.;
-  diffuseColor = acc;
-  ctx.diffuseColor = diffuseColor;`;
-    } else {
-      return `
-  diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);
-  ctx.diffuseColor = diffuseColor;`;
-    }
-  };
-
-  const buildRunIridescenceShaderFragment = () => {
-    if (!iridescenceShader) {
-      return '';
-    }
-
-    return `
-material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iridescence, curTimeSeconds, ctx);`;
-  };
-
-  const buildLightsFragmentBegin = () => {
-    let frag = CustomLightsFragmentBegin.replace(
-      '__DIR_LIGHTS_DISABLE__',
-      (() => {
-        if (!disabledDirectionalLightIndices) {
-          return '0';
-        }
-
-        return disabledDirectionalLightIndices
-          .map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`)
-          .join(' || ');
-      })()
-    )
-      .replace(
-        '__SPOT_LIGHTS_DISABLE__',
-        (() => {
-          if (!disabledSpotLightIndices) {
-            return '0';
-          }
-
-          return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
-        })()
-      )
-      .replace('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))
-      .replace('__USE_AMBIENT_LIGHT_DISTANCE_AMP__', ambientDistanceAmp ? '1' : '0');
-
-    if (ambientDistanceAmp) {
-      frag = frag
-        .replace(
-          '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_START_DISTANCE__',
-          ambientDistanceAmp.falloffStartDistance.toFixed(4)
-        )
-        .replace(
-          '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_END_DISTANCE__',
-          ambientDistanceAmp.falloffEndDistance.toFixed(4)
-        )
-        .replace('__AMBIENT_LIGHT_DISTANCE_AMP_EXPONENT__', (ambientDistanceAmp.exponent ?? 1).toFixed(4))
-        .replace('__AMBIENT_LIGHT_DISTANCE_AMP_FACTOR__', ambientDistanceAmp.ampFactor.toFixed(4));
-    }
-
-    return frag;
-  };
-
   const mapDisableDistance =
     rawMapDisableDistance === undefined ? DEFAULT_MAP_DISABLE_DISTANCE : rawMapDisableDistance;
-  const buildTextureDisableFragment = () => {
-    if (typeof mapDisableDistance !== 'number') {
-      return '';
-    }
-
-    const startEdge = (mapDisableDistance - mapDisableTransitionThreshold).toFixed(3);
-    const endEdge = mapDisableDistance.toFixed(3);
-
-    return `
-      float textureActivation = 1. - smoothstep(${startEdge}, ${endEdge}, distanceToCamera);
-    `;
-  };
-
-  const buildUnpackDiffuseNormalGBAFragment = (params: true | { lut: Uint8Array }) => {
-    if (params === true) {
-      return `
-    mapN = sampledDiffuseColor_.gba;
-    sampledDiffuseColor_ = vec4(sampledDiffuseColor_.rrr, 1.);
-  `;
-    } else {
-      return `
-    mapN = sampledDiffuseColor_.gba;
-    float index = sampledDiffuseColor_.r;
-    vec4 lutEntry = texelFetch(diffuseLUT, ivec2(index * 255., 0), 0);
-    sampledDiffuseColor_ = lutEntry;
-      `;
-    }
-  };
 
   const buildMapFragment = () => {
     const inner = (() => {
@@ -719,7 +729,7 @@ material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iride
   return {
     fog: true,
     lights: true,
-    dithering: true,
+    dithering: false,
     uniforms,
     vertexShader: `
 #define STANDARD
@@ -803,10 +813,11 @@ void main() {
   #ifdef USE_UV
   ${(() => {
     if (useGeneratedUVs) {
+      const uvPos = useWorldSpaceGeneratedUVs ? 'pos' : 'position';
+      const uvNormal = useWorldSpaceGeneratedUVs ? 'worldNormal' : 'normal';
       return `
-      // convert normal into the world space
       vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
-      vUv = generateUV(position, normal);
+      vUv = generateUV(${uvPos}, ${uvNormal});
       vUv = ( uvTransform * vec3( vUv, 1 ) ).xy;
       `;
     }
@@ -821,7 +832,7 @@ void main() {
   })()}
   #endif
 
-  ${buildUVVertexFragment()}
+  ${buildUVVertexFragment(randomizeUVOffset)}
 
   #if defined(USE_MAP) && defined(USE_UV)
     vMapUv = ( mapTransform * vec3( vUv, 1 ) ).xy;
@@ -908,7 +919,6 @@ uniform mat4 modelMatrix;
 
 #include <common>
 #include <packing>
-#include <dithering_pars_fragment>
 #include <color_pars_fragment>
 #include <uv_pars_fragment>
 #include <map_pars_fragment>
@@ -935,8 +945,6 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 #include <metalnessmap_pars_fragment>
 #include <logdepthbuf_pars_fragment>
 #include <clipping_planes_pars_fragment>
-
-#define srgb2rgb(V) pow( max(V,0.), vec4( 2.2 )  )
 
 uniform float curTimeSeconds;
 varying vec3 pos;
@@ -1001,7 +1009,7 @@ void main() {
   float distanceToCamera = distance(cameraPos, fragPos);
   float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
 
-  ${buildTextureDisableFragment()}
+  ${buildTextureDisableFragment(mapDisableDistance, mapDisableTransitionThreshold)}
 
   vec4 diffuseColor = vec4(diffuse, opacity);
 
@@ -1034,7 +1042,7 @@ void main() {
     ${buildClearcoatNormalMapFragment()}
   #endif
 
-  ${buildRunColorShaderFragment()}
+  ${buildRunColorShaderFragment(colorShader, antialiasColorShader)}
 
   ${
     normalShader
@@ -1066,11 +1074,11 @@ void main() {
 
 	// accumulation
 	#include <lights_physical_fragment>
-  ${iridescenceShader ? buildRunIridescenceShaderFragment() : ''}
+  ${buildRunIridescenceShaderFragment(iridescenceShader)}
   ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(ctx.diffuseColor.rgb);' : ''}
 
 	// #include <lights_fragment_begin>
-  ${buildLightsFragmentBegin()}
+  ${buildLightsFragmentBegin(disabledDirectionalLightIndices, disabledSpotLightIndices, ambientLightScale, ambientDistanceAmp)}
 	#include <lights_fragment_maps>
 	#include <lights_fragment_end>
 
@@ -1109,19 +1117,6 @@ void main() {
   #endif
 
   outFragColor = vec4( outgoingLight, diffuseColor.a );
-  ${
-    !disableToneMapping
-      ? `
-  #if defined( TONE_MAPPING )
-	  outFragColor.rgb = toneMapping( outFragColor.rgb );
-  #endif
-
-  ${usingSSR ? ssrWriteFragment : ''}
-  `
-      : ''
-  }
-	// #include <colorspace_fragment>
-  outFragColor = linearToOutputTexel( outFragColor );
 	${
     enableFog
       ? `
@@ -1145,10 +1140,6 @@ void main() {
 	// #include <premultiplied_alpha_fragment>
   #ifdef PREMULTIPLIED_ALPHA
     outFragColor.rgb *= outFragColor.a;
-  #endif
-	// #include <dithering_fragment>
-  #ifdef DITHERING
-    outFragColor.rgb = dithering( outFragColor.rgb );
   #endif
 }`,
     glslVersion: THREE.GLSL3,
@@ -1335,6 +1326,10 @@ export const buildCustomShader = (
 
   mat.needsUpdate = true;
   mat.uniformsNeedUpdate = true;
+
+  if (opts?.disableToneMapping) {
+    mat.userData.emissiveBypass = true;
+  }
 
   return mat;
 };

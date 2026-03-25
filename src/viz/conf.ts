@@ -28,6 +28,7 @@ export const formatGraphicsQuality = (quality: GraphicsQuality): string =>
 export interface GraphicsSettings {
   quality: GraphicsQuality;
   fov: number;
+  gamma: number;
   showFPSStats: boolean;
 }
 
@@ -98,7 +99,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
 };
 
 const buildDefaultVizConfig = (): VizConfig => ({
-  graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV, showFPSStats: true },
+  graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV, gamma: 1.0, showFPSStats: true },
   audio: { globalVolume: 0.4, musicVolume: 0.4, sfxVolume: 0.4 },
   gameplay: { easyModeMovement: true },
   controls: { mouseSensitivity: 2 },
@@ -117,7 +118,7 @@ const buildInitialVizConfig = async (): Promise<VizConfig> => {
 
   return {
     ...buildDefaultVizConfig(),
-    graphics: { quality: graphicsQuality, fov: DEFAULT_FOV, showFPSStats: true },
+    graphics: { quality: graphicsQuality, fov: DEFAULT_FOV, gamma: 1.0, showFPSStats: true },
   };
 };
 

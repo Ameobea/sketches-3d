@@ -600,6 +600,7 @@ export class BulletPhysics {
       this.thirdPersonCurrentDistance = targetDistance;
     } else {
       this.thirdPersonCurrentDistance = Math.min(
+        targetDistance,
         maxDistance,
         this.thirdPersonCurrentDistance + extendSpeed * tDiffSecs
       );

@@ -60,14 +60,53 @@ export interface VolumetricPassParams {
    */
   postDensityPow?: number;
   /**
+   * @deprecated Use `renderScale: 0.5` instead.
+   *
    * If set, the volumetric pass will render at half resolution and then upscale to full resolution.
-   *
    * Cannot be changed after the pass is created.
-   *
-   * Default: false
    */
   halfRes?: boolean;
+  /**
+   * Render the volumetric pass at this fraction of the full resolution, then upscale with
+   * joint bilateral upsampling.  E.g. 0.5 = half res, 0.25 = quarter res.
+   *
+   * Takes precedence over `halfRes`.  Cannot be changed after the pass is created.
+   *
+   * Default: 1 (full resolution)
+   */
+  renderScale?: number;
   globalScale?: number;
+  /**
+   * Number of noise octaves sampled per raymarch step.  Fewer octaves = smoother fog with less
+   * fine detail, but dramatically cheaper.  Use 2 for low-spec mode to avoid aliasing when
+   * `baseRaymarchStepCount` is also low.
+   *
+   * Default: 6
+   */
+  octaveCount?: number;
+  /**
+   * Half-size of the JBU neighborhood in low-res texel units.
+   * `0` → 2×2 (4 taps), `1` → 4×4 (16 taps), `2` → 6×6 (36 taps).
+   * Increase for very low render scales (e.g. 0.25) to soften the pixel grid.
+   *
+   * Default: 1
+   */
+  jbuExtent?: number;
+  /**
+   * Spatial Gaussian sigma for the JBU, in low-res texel units.
+   * Larger values blend more aggressively across neighboring texels.
+   * Scale roughly proportional to `1 / renderScale` relative to the 0.5× baseline of 1.8.
+   *
+   * Default: 1.8
+   */
+  jbuSpatialSigma?: number;
+  /**
+   * Depth Gaussian sigma for the JBU, as a fraction of the pixel's linearized depth.
+   * Lower values make depth-edge preservation stricter, reducing fog bleed across edges.
+   *
+   * Default: 0.034
+   */
+  jbuDepthSigma?: number;
 }
 
 class VolumetricMaterial extends THREE.ShaderMaterial {
@@ -115,7 +154,12 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       uniforms,
       fragmentShader: VolumetricFragmentShader,
       vertexShader: VolumetricVertexShader,
-      defines: params.halfRes ? {} : { DO_DIRECT_COMPOSITING: '1' },
+      defines: {
+        ...((params.renderScale ?? (params.halfRes ? 0.5 : 1)) < 1
+          ? { NEEDS_COMPOSITING: '1' }
+          : { DO_DIRECT_COMPOSITING: '1' }),
+        OCTAVE_COUNT: String(params.octaveCount ?? 6),
+      },
     });
   }
 }
@@ -132,10 +176,12 @@ export class VolumetricPass extends Pass implements Disposable {
   private compositorPass?: VolumetricCompositorPass;
   private fogRenderTarget: THREE.WebGLRenderTarget | null = null;
   private noiseTexture3D: THREE.Data3DTexture;
+  private renderScale: number;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, params: VolumetricPassParams) {
     super('VolumetricPass', undefined, new THREE.Camera());
     this.params = params;
+    this.renderScale = params.renderScale ?? (params.halfRes ? 0.5 : 1);
 
     // Indicate to the composer that this pass needs depth information from the previous pass
     this.needsDepthTexture = true;
@@ -143,13 +189,23 @@ export class VolumetricPass extends Pass implements Disposable {
     this.playerCamera = camera;
     this.material = new VolumetricMaterial(params);
     this.fullscreenMaterial = this.material;
-    if (params.halfRes) {
+    if (this.renderScale < 1) {
       this.fogRenderTarget = new THREE.WebGLRenderTarget(1, 1, {
+        count: 2,
         type: THREE.HalfFloatType,
       });
+      // textures[0]: fog color (rgb) + density (a) — inherits defaults above
+      // textures[1]: raw scene depth (r channel), nearest filter so no depth interpolation
+      this.fogRenderTarget.textures[1].format = THREE.RedFormat;
+      this.fogRenderTarget.textures[1].minFilter = THREE.NearestFilter;
+      this.fogRenderTarget.textures[1].magFilter = THREE.NearestFilter;
       this.compositorPass = new VolumetricCompositorPass({
         camera,
-        fogTexture: this.fogRenderTarget.texture,
+        fogTexture: this.fogRenderTarget.textures[0],
+        fogDepthTexture: this.fogRenderTarget.textures[1],
+        jbuExtent: params.jbuExtent,
+        jbuSpatialSigma: params.jbuSpatialSigma,
+        jbuDepthSigma: params.jbuDepthSigma,
       });
     }
 
@@ -207,14 +263,14 @@ export class VolumetricPass extends Pass implements Disposable {
 
     if (this.compositorPass) {
       (this.compositorPass.fullscreenMaterial as VolumetricCompositorMaterial).uniforms.fogTexture.value =
-        this.fogRenderTarget!.texture;
+        this.fogRenderTarget!.textures[0];
       this.compositorPass.render(renderer, inputBuffer, this.renderToScreen ? null : outputBuffer);
     }
   }
 
   override setSize(width: number, height: number): void {
-    const fogWidth = Math.ceil(width * (this.params.halfRes ? 0.5 : 1));
-    const fogHeight = Math.ceil(height * (this.params.halfRes ? 0.5 : 1));
+    const fogWidth = Math.ceil(width * this.renderScale);
+    const fogHeight = Math.ceil(height * this.renderScale);
     this.fogRenderTarget?.setSize(fogWidth, fogHeight);
     this.compositorPass?.setSize(width, height);
     this.compositorPass?.setFogResolution(fogWidth, fogHeight);

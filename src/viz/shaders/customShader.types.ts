@@ -141,6 +141,17 @@ export interface CustomShaderOptions {
    * is a better alternative.
    */
   useGeneratedUVs?: boolean;
+  /**
+   * When set alongside `useGeneratedUVs`, UV coordinates are generated from world-space position instead of
+   * object-space position.
+   *
+   * This is necessary for LOD terrain where each tile mesh has a unique local origin — without it, the same
+   * world-space point yields different UVs in different tiles, causing visible texture popping on LOD transitions.
+   *
+   * **Constraint**: do not use this on animated/moving geometry. World-space UV generation causes textures to
+   * slide across the surface as the object moves, which is usually undesirable.
+   */
+  useWorldSpaceGeneratedUVs?: boolean;
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
   /**
    * Material class controls things like the sfx that are played when players land on the surface and

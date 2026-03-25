@@ -22,7 +22,7 @@
  *        No other changes required in the rest of the pipeline.
  */
 
-import { ClearMaskPass, EffectComposer, MaskPass, Pass } from 'postprocessing';
+import { ClearMaskPass, EffectComposer, MaskPass, type Pass } from 'postprocessing';
 import * as THREE from 'three';
 
 class DepthCopyToStable {
@@ -71,6 +71,10 @@ class DepthCopyToStable {
 
 export class StableDepthEffectComposer extends EffectComposer {
   private stableDepth: DepthCopyToStable | null = null;
+
+  get stableDepthTarget(): THREE.WebGLRenderTarget | null {
+    return this.stableDepth?.stableDepthTarget ?? null;
+  }
 
   override addPass(pass: Pass, index?: number): void {
     const hadDepth = !!(this as any).depthTexture;

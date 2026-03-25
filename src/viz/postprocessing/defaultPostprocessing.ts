@@ -1,22 +1,14 @@
-import {
-  ClearMaskPass,
-  type Effect,
-  EffectComposer,
-  EffectPass,
-  MaskPass,
-  RenderPass,
-  SMAAEffect,
-  SMAAPreset,
-  type Timer,
-} from 'postprocessing';
+import { EffectComposer, EffectPass, RenderPass, SMAAEffect, SMAAPreset, type Effect } from 'postprocessing';
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
+import type { PostprocessingController } from 'src/viz';
 import { GraphicsQuality } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
-import { CustomShaderMaterial } from '../shaders/customShader';
-import { SSRCompositorPass } from '../shaders/ssr/compositor/SSRCompositorPass';
-import { filterNils } from '../util/util';
+import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
+import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
+import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
+import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 
 const populateShadowMap = (viz: Viz, autoUpdateShadowMap: boolean) => {
   const shadows: THREE.DirectionalLightShadow[] = [];
@@ -44,243 +36,50 @@ const populateShadowMap = (viz: Viz, autoUpdateShadowMap: boolean) => {
 };
 
 /**
- * Creates a render target (which maps to a framebuffer in WebGL) that contains two bound draw buffers.
- *
- * The first buffer/texture is shared with the default render target/framebuffer created by the the
- * effect composer.
- *
- * The second buffer is used to store data to facilitate screen-space reflections (SSR).
+ * Default emissive bloom configuration (quality-independent params).
+ * `levels` is intentionally excluded — it's set per-quality in the pipeline.
+ * Scenes can override individual fields via the `emissiveBloom` param.
  */
-const createSSRMultiFramebuffer = (
-  renderer: THREE.WebGLRenderer,
-  ssrDataTexture?: THREE.Texture
-): THREE.WebGLMultipleRenderTargets => {
-  const size = renderer === null ? new THREE.Vector2() : renderer.getDrawingBufferSize(new THREE.Vector2());
-  const renderTarget = new THREE.WebGLMultipleRenderTargets(size.width, size.height, 2, {
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    stencilBuffer: false,
-    depthBuffer: true,
-    type: THREE.HalfFloatType,
-    generateMipmaps: false,
-  });
-  // if (multisampling > 0) {
-  //   renderTarget.ignoreDepthForMultisampleCopy = false;
-  //   renderTarget.samples = multisampling;
-  // }
-  // if (type === UnsignedByteType2 && renderer !== null && renderer.outputColorSpace === SRGBColorSpace2) {
-  //   renderTarget.texture.colorSpace = SRGBColorSpace2;
-  // }
-  renderTarget.texture[0].name = 'SHOUlD NOT BE USED; WILL BE REPLACED';
-  renderTarget.texture[0].dispose();
-  if (ssrDataTexture) {
-    renderTarget.texture[1].name = 'OLD SSR BUFFER; WILL BE REPLACED';
-    renderTarget.texture[1].dispose();
-    renderTarget.texture[1] = ssrDataTexture;
-  }
-  renderTarget.texture[1].name = 'EffectComposer.ReflectionBuffer';
-  renderTarget.texture[1].generateMipmaps = false;
-  return renderTarget;
+export const DEFAULT_EMISSIVE_BLOOM_CONFIG: Omit<EmissiveBloomConfig, 'levels'> = {
+  radius: 0.35,
+  intensity: 0.8,
+  luminanceThreshold: 0,
+  luminanceSmoothing: 0,
 };
 
-class CustomEffectComposer extends EffectComposer {
-  public multiInputBuffer: THREE.WebGLMultipleRenderTargets;
-  public multiOutputBuffer: THREE.WebGLMultipleRenderTargets;
-
-  private didUseSSRBuffer = false;
-  private ssrCompositorPass: SSRCompositorPass | null = null;
-
-  /**
-   * This monkey-patches Three.JS's renderer to work around issues when rendering materials that don't
-   * make use of the SSR buffer (all vanilla materials and even the custom shader material if SSR isn't
-   * explicitly enabled for the material).
-   *
-   * WebGL throws errors and renders nothing if a color attachment is bound and not written to.  To work
-   * around this, this function checks if the material being rendered needs the SSR buffer or not.
-   *
-   * If it does, the draw buffer state is left as is (bound to the main color buffer and the SSR buffer).
-   * If it doesn't, the second color attachment is set to `NONE` to avoid the error and then restored to
-   * the original value after rendering.
-   */
-  private maybeHookRenderer(renderer: THREE.WebGLRenderer) {
-    if ((renderer as any).isMultibufferHooked) {
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const composer = this;
-    const baseRenderBufferDirect = renderer.renderBufferDirect;
-    const renderBufferDirect = function (
-      camera: THREE.Camera,
-      scene: THREE.Scene,
-      geometry: THREE.BufferGeometry,
-      material: THREE.Material,
-      object: THREE.Object3D,
-      group: any
-    ) {
-      const ctx = renderer.getContext() as WebGL2RenderingContext;
-      const oldDrawBuffer0 = ctx.getParameter(ctx.DRAW_BUFFER0);
-      const oldDrawBuffer1 = ctx.getParameter(ctx.DRAW_BUFFER1);
-
-      const needsSSRBuffer = material instanceof CustomShaderMaterial && material.needsSSRBuffer;
-
-      const newDrawBuffer0 = ctx.COLOR_ATTACHMENT0;
-      const newDrawBuffer1 = needsSSRBuffer ? ctx.COLOR_ATTACHMENT1 : ctx.NONE;
-      composer.didUseSSRBuffer ||= needsSSRBuffer;
-
-      let didChangeDrawBuffers = false;
-      if (
-        oldDrawBuffer0 === ctx.COLOR_ATTACHMENT0 &&
-        oldDrawBuffer1 !== null &&
-        (oldDrawBuffer0 !== newDrawBuffer0 || oldDrawBuffer1 !== newDrawBuffer1)
-      ) {
-        didChangeDrawBuffers = true;
-        ctx.drawBuffers([newDrawBuffer0, newDrawBuffer1]);
-      }
-
-      baseRenderBufferDirect.call(renderer, camera, scene, geometry, material, object, group);
-
-      if (didChangeDrawBuffers) {
-        ctx.drawBuffers([oldDrawBuffer0, oldDrawBuffer1]);
-      }
-    };
-
-    (renderer as any).isMultibufferHooked = true;
-    renderer.renderBufferDirect = renderBufferDirect;
-  }
-
-  constructor(
-    private viz: Viz,
-    options: {
-      depthBuffer?: boolean;
-      stencilBuffer?: boolean;
-      alpha?: boolean;
-      multisampling?: number;
-      frameBufferType?: number;
-    }
-  ) {
-    super(viz.renderer, options);
-
-    this.multiInputBuffer = createSSRMultiFramebuffer(viz.renderer);
-    this.multiOutputBuffer = createSSRMultiFramebuffer(viz.renderer, this.multiInputBuffer.texture[1]);
-
-    this.maybeHookRenderer(viz.renderer);
-  }
-
-  /**
-   * This is a copy of the base `EffectComposer.render` function with changes to facilitate SSR.
-   */
-  render(deltaTime: number) {
-    const renderer = (this as any).renderer as THREE.WebGLRenderer;
-    const timer = (this as any).timer as Timer;
-
-    let inputBuffer = this.inputBuffer;
-    let outputBuffer = this.outputBuffer;
-    let multiInputBuffer = this.multiInputBuffer;
-    let multiOutputBuffer = this.multiOutputBuffer;
-
-    let stencilTest = false;
-    let buffer, multiBuffer;
-
-    if (deltaTime === undefined) {
-      timer.update();
-      deltaTime = timer.getDelta();
-    }
-
-    this.didUseSSRBuffer = false;
-    for (let passIx = 0; passIx < this.passes.length; passIx++) {
-      const pass = this.passes[passIx];
-      if (pass instanceof SSRCompositorPass && !this.didUseSSRBuffer) {
-        continue;
-      }
-
-      const isLastPass = passIx === this.passes.length - 1;
-      if (isLastPass) {
-        if (pass instanceof MainRenderPass) {
-          this.didUseSSRBuffer = true;
-        }
-        pass.renderToScreen = !this.didUseSSRBuffer;
-      }
-
-      if (pass.enabled) {
-        const needsMultibuffer = pass instanceof MainRenderPass || pass instanceof SSRCompositorPass;
-        if (needsMultibuffer) {
-          multiInputBuffer.texture[0] = inputBuffer.texture;
-          multiInputBuffer.depthTexture = inputBuffer.depthTexture;
-          multiOutputBuffer.texture[0] = outputBuffer.texture;
-          multiOutputBuffer.depthTexture = outputBuffer.depthTexture;
-          pass.render(renderer, multiInputBuffer as any, multiOutputBuffer as any, deltaTime, stencilTest);
-        } else {
-          pass.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
-        }
-
-        if (pass.needsSwap) {
-          if (stencilTest) {
-            throw new Error('Unimplemented');
-            // copyPass.renderToScreen = pass.renderToScreen;
-            // context = renderer.getContext();
-            // stencil = renderer.state.buffers.stencil;
-
-            // // Preserve the unaffected pixels.
-            // stencil.setFunc(context.NOTEQUAL, 1, 0xffffffff);
-            // copyPass.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
-            // stencil.setFunc(context.EQUAL, 1, 0xffffffff);
-          }
-
-          buffer = inputBuffer;
-          inputBuffer = outputBuffer;
-          outputBuffer = buffer;
-
-          multiBuffer = multiInputBuffer;
-          multiInputBuffer = multiOutputBuffer;
-          multiOutputBuffer = multiBuffer;
-        }
-
-        if (pass instanceof MaskPass) {
-          stencilTest = true;
-        } else if (pass instanceof ClearMaskPass) {
-          stencilTest = false;
-        }
-      }
-    }
-
-    if (this.didUseSSRBuffer) {
-      if (!this.ssrCompositorPass) {
-        this.ssrCompositorPass = new SSRCompositorPass(this.viz.scene, this.viz.camera);
-        this.ssrCompositorPass.renderToScreen = true;
-      }
-
-      multiInputBuffer.texture[0] = inputBuffer.texture;
-      multiInputBuffer.depthTexture = inputBuffer.depthTexture;
-      multiOutputBuffer.texture[0] = outputBuffer.texture;
-      multiOutputBuffer.depthTexture = outputBuffer.depthTexture;
-      this.ssrCompositorPass.render(
-        renderer,
-        multiInputBuffer as any,
-        multiOutputBuffer as any,
-        deltaTime,
-        stencilTest
-      );
-    }
-  }
-}
-
-export class PostprocessingPipelineController {
-  public effectComposer: CustomEffectComposer;
+export class PostprocessingPipelineController implements PostprocessingController {
+  public effectComposer: StableDepthEffectComposer;
   public depthPass: DepthPass | null;
   public depthPrePassMaterial: THREE.MeshBasicMaterial | null;
   public renderer: THREE.WebGLRenderer;
+  public readonly emissiveBypassPass: EmissiveBypassPass | null;
+  private readonly emissiveBloomPass: EmissiveBloomPass | null;
+  private readonly finalPass: FinalPass | null;
 
   constructor(
-    effectComposer: CustomEffectComposer,
+    effectComposer: StableDepthEffectComposer,
     depthPass: DepthPass | null,
     depthPrePassMaterial: THREE.MeshBasicMaterial | null,
-    renderer: THREE.WebGLRenderer
+    renderer: THREE.WebGLRenderer,
+    emissiveBypassPass: EmissiveBypassPass | null = null,
+    emissiveBloomPass: EmissiveBloomPass | null = null,
+    finalPass: FinalPass | null = null
   ) {
     this.effectComposer = effectComposer;
     this.depthPass = depthPass;
     this.depthPrePassMaterial = depthPrePassMaterial;
     this.renderer = renderer;
+    this.emissiveBypassPass = emissiveBypassPass;
+    this.emissiveBloomPass = emissiveBloomPass;
+    this.finalPass = finalPass;
+  }
+
+  get hasFinalPass(): boolean {
+    return this.finalPass !== null;
+  }
+
+  setGamma(gamma: number): void {
+    this.finalPass?.setGamma(gamma);
   }
 
   setDepthPrePassEnabled(enabled: boolean) {
@@ -289,34 +88,97 @@ export class PostprocessingPipelineController {
     }
     this.renderer.autoClearDepth = !enabled;
   }
+
+  addEmissiveBypassObject(mesh: THREE.Mesh): void {
+    this.emissiveBypassPass?.addBypassMesh(mesh);
+  }
+
+  /**
+   * Dynamically update emissive bloom parameters. Safe to call every frame.
+   * `radius` controls blur spread (MipmapBlurPass upsampling blend — only touches a uniform).
+   * `intensity` scales the additive bloom contribution in FinalPass.
+   * `luminanceThreshold` and `luminanceSmoothing` control the threshold pass that runs before the blur (if enabled). Higher threshold means fewer pixels contribute to bloom; smoothing controls how gradually pixels near the threshold contribute.
+   */
+  /**
+   * Scan `scene` for any meshes whose material has `userData.emissiveBypass` set
+   * and register them with the emissive bypass pass. Safe to call multiple times —
+   * already-registered meshes are skipped. Use this when bypass meshes are added
+   * to the scene after the initial first-frame auto-scan (e.g. deferred async setup).
+   */
+  rescanBypassMeshes(scene: THREE.Scene): void {
+    if (!this.emissiveBypassPass) return;
+    scene.traverse(obj => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      if (mats.some(m => m?.userData?.emissiveBypass)) {
+        this.emissiveBypassPass!.addBypassMesh(obj);
+      }
+    });
+  }
+
+  setEmissiveBloom({
+    radius,
+    intensity,
+    luminanceThreshold,
+    luminanceSmoothing,
+  }: {
+    radius?: number;
+    intensity?: number;
+    luminanceThreshold?: number;
+    luminanceSmoothing?: number;
+  }): void {
+    if (radius !== undefined) this.emissiveBloomPass?.setRadius(radius);
+    if (intensity !== undefined) this.finalPass?.setBloomIntensity(intensity);
+    if (luminanceThreshold !== undefined) this.emissiveBloomPass?.setLuminanceThreshold(luminanceThreshold);
+    if (luminanceSmoothing !== undefined) this.emissiveBloomPass?.setLuminanceSmoothing(luminanceSmoothing);
+  }
 }
 
-interface ExtraPostprocessingParams {
-  toneMappingExposure?: number;
+export interface ToneMappingConfig {
+  mode?: ToneMappingMode;
+  exposure?: number;
 }
 
 interface ConfigureDefaultPostprocessingPipelineParams {
   viz: Viz;
   quality: GraphicsQuality;
   addMiddlePasses?: (composer: EffectComposer, viz: Viz, quality: GraphicsQuality) => void;
-  extraParams?: Partial<ExtraPostprocessingParams>;
+  toneMapping?: ToneMappingConfig;
   postEffects?: Effect[];
   autoUpdateShadowMap?: boolean;
   enableAntiAliasing?: boolean;
   useDepthPrePass?: boolean;
+  emissiveBypass?: boolean;
+  /**
+   * Config for the emissive bloom pass. Only used when emissiveBypass is true.
+   * `levels` defaults to a quality-dependent value if not set:
+   *   Low → 4, Medium → 6, High → 8.
+   * Pass `null` to disable the bloom pass entirely (emissive bypass compositing still runs).
+   */
+  emissiveBloom?: EmissiveBloomConfig | null;
+  /**
+   * Intensity of the dedicated ambient light used exclusively by the emissive bypass render
+   * (layer 31). Decouples portal/bypass-mesh brightness from the main scene's ambient light
+   * so that dimming scene lights does not affect emissive bypass objects.
+   * Only relevant when emissiveBypass is true. Default: 2.8 (nexus baseline).
+   */
+  emissiveBypassAmbientIntensity?: number;
 }
 
 export const configureDefaultPostprocessingPipeline = ({
   viz,
   quality,
   addMiddlePasses,
-  extraParams = {},
+  toneMapping = {},
   postEffects,
   autoUpdateShadowMap = false,
   enableAntiAliasing = true,
   useDepthPrePass = true,
+  emissiveBypass = false,
+  emissiveBloom = {} as EmissiveBloomConfig | null,
+  emissiveBypassAmbientIntensity = 2.8,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
-  const effectComposer = new CustomEffectComposer(viz, {
+  const effectComposer = new StableDepthEffectComposer(viz.renderer, {
     multisampling: 0,
     frameBufferType: THREE.HalfFloatType,
   });
@@ -344,24 +206,98 @@ export const configureDefaultPostprocessingPipeline = ({
 
   addMiddlePasses?.(effectComposer, viz, quality);
 
-  const smaaEffect = enableAntiAliasing
-    ? new SMAAEffect({
-        preset: {
-          [GraphicsQuality.Low]: SMAAPreset.LOW,
-          [GraphicsQuality.Medium]: SMAAPreset.MEDIUM,
-          [GraphicsQuality.High]: SMAAPreset.HIGH,
-        }[quality],
-      })
-    : null;
-  const fx = filterNils([smaaEffect, ...(postEffects ?? [])]);
-  if (fx.length) {
-    const fxPass = new EffectPass(viz.camera, ...fx);
-    effectComposer.addPass(fxPass);
+  // HDR post effects run before tone mapping
+  if (postEffects?.length) {
+    const hdrFxPass = new EffectPass(viz.camera, ...postEffects);
+    effectComposer.addPass(hdrFxPass);
   }
 
-  viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  if (extraParams.toneMappingExposure) {
-    viz.renderer.toneMappingExposure = extraParams.toneMappingExposure;
+  let emissiveBypassPass: EmissiveBypassPass | null = null;
+  let emissiveBlurPass: EmissiveBloomPass | null = null;
+  if (emissiveBypass) {
+    const { width, height } = viz.renderer.domElement;
+    emissiveBypassPass = new EmissiveBypassPass(
+      viz.scene,
+      viz.camera as THREE.PerspectiveCamera,
+      width,
+      height
+    );
+
+    const stableDepthTgt = effectComposer.stableDepthTarget;
+    if (stableDepthTgt) {
+      emissiveBypassPass.setStableDepthTarget(stableDepthTgt);
+    }
+
+    effectComposer.addPass(emissiveBypassPass);
+
+    if (emissiveBloom !== null) {
+      const qualityLevels = {
+        [GraphicsQuality.Low]: 3,
+        [GraphicsQuality.Medium]: 5,
+        [GraphicsQuality.High]: 6,
+      };
+      const bloomConfig: EmissiveBloomConfig = {
+        levels: qualityLevels[quality],
+        ...DEFAULT_EMISSIVE_BLOOM_CONFIG,
+        ...emissiveBloom,
+      };
+      emissiveBlurPass = new EmissiveBloomPass(emissiveBypassPass.emissiveRT, bloomConfig);
+      effectComposer.addPass(emissiveBlurPass);
+    }
+
+    // Dedicated ambient light for the bypass render only (layer 31).
+    // Using a layer-isolated light keeps portal/emissive-bypass brightness constant
+    // regardless of what the main scene's ambient/directional lights are doing — so
+    // e.g. dimming scene lights for a proximity effect doesn't dim the portals.
+    const bypassAmbientLight = new THREE.AmbientLight(0xffffff, emissiveBypassAmbientIntensity);
+    bypassAmbientLight.layers.disableAll();
+    bypassAmbientLight.layers.enable(EMISSIVE_BYPASS_LAYER);
+    viz.scene.add(bypassAmbientLight);
+
+    // Defer mesh layer assignment to the first render frame. By then viz.scene.add(loadedWorld)
+    // (and any other scene population) has completed, regardless of which setup path was used.
+    let autoAssigned = false;
+    viz.registerBeforeRenderCb(() => {
+      if (autoAssigned) return;
+      autoAssigned = true;
+      viz.scene.traverse(obj => {
+        if (!(obj instanceof THREE.Mesh)) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        if (mats.some(m => m?.userData?.emissiveBypass)) {
+          emissiveBypassPass!.addBypassMesh(obj);
+        }
+      });
+    });
+  }
+
+  // Disable in-shader tone mapping. The FinalPass applies tone mapping + sRGB encoding
+  // to the full composited scene in one place.
+  viz.renderer.toneMapping = THREE.NoToneMapping;
+
+  const finalPass = new FinalPass({
+    toneMapping: toneMapping.mode ?? 'aces',
+    exposure: toneMapping.exposure ?? 1.0,
+    emissiveBuffer: emissiveBypassPass?.emissiveRT.texture ?? null,
+    emissiveBloomBuffer: emissiveBlurPass?.bloomTexture ?? null,
+    bloomIntensity: emissiveBlurPass?.intensity ?? 1.0,
+  });
+  effectComposer.addPass(finalPass);
+
+  // SMAA runs after tone mapping + sRGB encode so edge detection operates in display
+  // space, where luminance contrast matches perception.
+  if (enableAntiAliasing) {
+    const smaaEffect = new SMAAEffect({
+      preset: {
+        [GraphicsQuality.Low]: SMAAPreset.LOW,
+        [GraphicsQuality.Medium]: SMAAPreset.MEDIUM,
+        [GraphicsQuality.High]: SMAAPreset.HIGH,
+      }[quality],
+    });
+    const smaaPass = new EffectPass(viz.camera, smaaEffect);
+    smaaPass.renderToScreen = true;
+    effectComposer.addPass(smaaPass);
+  } else {
+    finalPass.renderToScreen = true;
   }
 
   let didRender = false;
@@ -380,5 +316,16 @@ export const configureDefaultPostprocessingPipeline = ({
     }
   });
 
-  return new PostprocessingPipelineController(effectComposer, depthPass, depthPrePassMaterial, viz.renderer);
+  const controller = new PostprocessingPipelineController(
+    effectComposer,
+    depthPass,
+    depthPrePassMaterial,
+    viz.renderer,
+    emissiveBypassPass,
+    emissiveBlurPass,
+    finalPass
+  );
+  viz.postprocessingController = controller;
+  controller.setGamma(viz.vizConfig.current.graphics.gamma);
+  return controller;
 };

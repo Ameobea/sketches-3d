@@ -4693,3 +4693,57 @@ x = len(m)"#;
   let x = x.as_int().expect("Expected result to be an Int");
   assert_eq!(x, 8);
 }
+
+#[test]
+fn test_render_path_sampler() {
+  // A trace_path callable (which implements PathSampler) should be renderable directly.
+  // It should produce a single closed path with 10001 points (10000 samples + closing repeat).
+  let src = r#"
+p = trace_path(|| {
+  move(0, 0)
+  line(1, 0)
+  line(1, 1)
+  line(0, 1)
+})
+p | render
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let paths = ctx.rendered_paths.into_inner();
+  assert_eq!(paths.len(), 1);
+  let path = &paths[0];
+  // 10000 samples + 1 closing point
+  assert_eq!(path.len(), 10001);
+  // First and last point should be equal (closed)
+  assert_eq!(path[0], path[path.len() - 1]);
+  // All points should be in the XZ plane (y == 0)
+  for pt in path {
+    assert_eq!(pt.y, 0.0);
+  }
+}
+
+#[test]
+fn test_render_vec2_sequence() {
+  // A sequence of Vec2 should be rendered as a path in the XZ plane.
+  let src = r#"
+pts = [vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1)]
+pts | render
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let paths = ctx.rendered_paths.into_inner();
+  assert_eq!(paths.len(), 1);
+  let path = &paths[0];
+  assert_eq!(path.len(), 4);
+  // All points should be in the XZ plane (y == 0)
+  for pt in path {
+    assert_eq!(pt.y, 0.0);
+  }
+  // Check XZ coords match the input
+  assert_eq!(path[0].x, 0.0);
+  assert_eq!(path[0].z, 0.0);
+  assert_eq!(path[1].x, 1.0);
+  assert_eq!(path[1].z, 0.0);
+  assert_eq!(path[2].x, 1.0);
+  assert_eq!(path[2].z, 1.0);
+}

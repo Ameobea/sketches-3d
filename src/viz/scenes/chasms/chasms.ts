@@ -16,6 +16,7 @@ import { ClearDepthPass, DepthPass, MainRenderPass } from 'src/viz/passes/depthP
 import { initWebSynth } from 'src/viz/webSynth';
 import type { SceneConfig } from '..';
 import type { Viz } from '../..';
+import { configureShadowMap } from '../../helpers/lights';
 import { buildMuddyGoldenLoopsMat } from '../../materials/MuddyGoldenLoops/MuddyGoldenLoops';
 import { buildCustomBasicShader } from '../../shaders/customBasicShader';
 import { buildCustomShader } from '../../shaders/customShader';
@@ -299,8 +300,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   dLight.updateMatrixWorld();
   dLight.target.updateMatrixWorld();
 
-  dLight.shadow.mapSize.width = 2048 * 2;
-  dLight.shadow.mapSize.height = 2048 * 2;
+  configureShadowMap({ light: dLight, renderer: viz.renderer, quality: viz.vizConfig.current.graphics.quality });
 
   dLight.shadow.camera.near = 1;
   dLight.shadow.camera.far = 900;

@@ -201,9 +201,6 @@ export const processLoadedScene = async (
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
-    addMiddlePasses: undefined,
-    extraParams: undefined,
-    postEffects: undefined,
     autoUpdateShadowMap: true,
   });
 

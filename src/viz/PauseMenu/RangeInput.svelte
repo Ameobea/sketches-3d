@@ -5,6 +5,8 @@
   export let step: number = 1;
   export let value: number = min;
   export let onChange: (value: number) => void;
+  export let disabled: boolean = false;
+  export let decimals: number = 0;
 
   const updateValue = (event: Event) => {
     const newValue = parseFloat((event.target as HTMLInputElement).value);
@@ -15,8 +17,8 @@
 <div class="root">
   <label for="range-input">{label}</label>
   <div class="range-container">
-    <input type="range" id="range-input" {min} {max} {step} {value} on:input={updateValue} />
-    <span class="value-display">{value}</span>
+    <input type="range" id="range-input" {min} {max} {step} {value} {disabled} on:input={updateValue} />
+    <span class="value-display">{value.toFixed(decimals)}</span>
   </div>
 </div>
 
@@ -69,5 +71,10 @@
     height: 20px;
     background: white;
     cursor: pointer;
+  }
+
+  input[type='range']:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 </style>

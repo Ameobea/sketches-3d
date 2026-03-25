@@ -196,11 +196,11 @@ const setupScene = async (
     viz.collisionWorldLoadedCbs.push(cb);
   }
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 1.58);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.58);
   viz.scene.add(ambientLight);
 
   const sunPos = new THREE.Vector3(20, 50, -20);
-  const sunLight = new THREE.DirectionalLight(0xffffff, 4.3);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 2.3);
   const shadowMapSize = {
     [GraphicsQuality.Low]: 1024,
     [GraphicsQuality.Medium]: 2048,
@@ -225,7 +225,7 @@ const setupScene = async (
   // const shadowCameraHelper = new THREE.CameraHelper(sunLight.shadow.camera);
   // viz.scene.add(shadowCameraHelper);
 
-  const spotlight = new THREE.SpotLight(0xf2dd99, 5.5);
+  const spotlight = new THREE.SpotLight(0xf2dd99, 0.5);
   spotlight.position.set(-75, 100, 75);
   spotlight.angle = Math.PI / 8;
   spotlight.penumbra = 0.5;
@@ -261,16 +261,23 @@ const setupScene = async (
 };
 
 const loadCustomMats = async (loader: THREE.ImageBitmapLoader) => {
-  const towerCeilingTextureP = loadTexture(loader, 'https://i.ameo.link/d1k.avif');
+  const towerCeilingTextureP = loadTexture(loader, 'https://i.ameo.link/d1k.avif', {
+    colorSpace: THREE.SRGBColorSpace,
+  });
   const towerCeilingCombinedDiffuseNormalTextureP = towerCeilingTextureP.then(towerCeilingTexture =>
     generateNormalMapFromTexture(towerCeilingTexture, {}, true)
   );
-  const towerTrimTextureP = loadTexture(loader, 'https://i.ameo.link/d1j.avif');
+  const towerTrimTextureP = loadTexture(loader, 'https://i.ameo.link/d1j.avif', {
+    colorSpace: THREE.SRGBColorSpace,
+  });
   const towerTrimTextureCombinedDiffuseNormalTextureP = towerTrimTextureP.then(towerTrimTexture =>
     generateNormalMapFromTexture(towerTrimTexture, {}, true)
   );
 
-  const towerPlinthArchTextureP = loadTexture(loader, 'https://i.ameo.link/d1m.avif');
+  const towerPlinthArchTextureP = loadTexture(loader, 'https://i.ameo.link/biv.jpg', {
+    colorSpace: THREE.SRGBColorSpace,
+    anisotropy: 2,
+  });
 
   const [
     towerCeilingCombinedDiffuseNormalTexture,
@@ -348,13 +355,13 @@ const loadCustomMats = async (loader: THREE.ImageBitmapLoader) => {
 
   const plinthArchMat = buildCustomShader(
     {
-      color: new THREE.Color(0xcccccc2),
-      metalness: 0.001,
+      color: new THREE.Color(0xcccccc),
+      metalness: 0.3,
       roughness: 0.77,
       map: towerPlinthArchTexture,
-      uvTransform: new THREE.Matrix3().scale(0.05 * 2, 0.1 * 2),
+      uvTransform: new THREE.Matrix3().scale(0.04, 0.04),
       mapDisableDistance: null,
-      normalScale: 4,
+      normalScale: 2,
       ambientLightScale: 1,
     },
     {},
@@ -390,9 +397,14 @@ export const processLoadedScene = async (
   const placeholder = loadedWorld.getObjectByName('placeholder') as THREE.Mesh | undefined;
   placeholder?.removeFromParent();
 
-  setTimeout(() => setupScene(viz, loadedWorld, vizConf, pkManager));
+  const pipeline = initPylonsPostprocessing(viz, vizConf, true);
 
-  initPylonsPostprocessing(viz, vizConf, true);
+  setTimeout(async () => {
+    await setupScene(viz, loadedWorld, vizConf, pkManager);
+    // TODO: this is clunky and it would be better if we did something like add an `addMesh` method
+    // on `viz` or `ParkourManager` that handles this automatically for meshes that need it.
+    pipeline.rescanBypassMeshes(viz.scene);
+  });
 
   return pkManager.buildSceneConfig();
 };

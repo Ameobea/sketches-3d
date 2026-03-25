@@ -1,4 +1,5 @@
 import type { Viz } from 'src/viz';
+import { configureShadowMap } from 'src/viz/helpers/lights';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import * as THREE from 'three';
 import { N8AOPostPass } from 'n8ao';
@@ -7,7 +8,6 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import { loadRawTexture, loadTexture } from 'src/viz/textureLoading';
 import { MaterialClass, buildCustomShader } from 'src/viz/shaders/customShader';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
-import { ToneMappingEffect, ToneMappingMode } from 'postprocessing';
 import crystalEmissiveShader from './shaders/crystal/emissive.frag?raw';
 import { initWebSynth } from 'src/viz/webSynth';
 
@@ -40,7 +40,8 @@ const loadTextures = async () => {
     THREE.NearestMipMapLinearFilter,
     THREE.RGBAFormat,
     THREE.UnsignedByteType,
-    1
+    1,
+    THREE.SRGBColorSpace
   );
   glassNormalMap.generateMipmaps = true;
   glassNormalMap.needsUpdate = true;
@@ -53,7 +54,8 @@ const loadTextures = async () => {
     THREE.NearestMipMapLinearFilter,
     THREE.RGBAFormat,
     THREE.UnsignedByteType,
-    1
+    1,
+    THREE.SRGBColorSpace
   );
   crystalNormalMap.generateMipmaps = true;
   crystalNormalMap.needsUpdate = true;
@@ -64,7 +66,11 @@ const loadTextures = async () => {
     THREE.RepeatWrapping,
     THREE.RepeatWrapping,
     THREE.NearestFilter,
-    THREE.NearestFilter
+    THREE.NearestFilter,
+    undefined,
+    undefined,
+    1,
+    THREE.SRGBColorSpace
   );
   bgTexture.needsUpdate = true;
 
@@ -128,11 +134,11 @@ export const processLoadedScene = async (
     return engine;
   });
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 2.4);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
   viz.scene.add(ambientLight);
 
   // dim pointlight that follows the camera
-  const playerPointLight = new THREE.PointLight(0xd1c9ab, 2.75, 50, 0.7);
+  const playerPointLight = new THREE.PointLight(0xd1c9ab, 2.15, 50, 0.7);
   playerPointLight.castShadow = false;
   viz.scene.add(playerPointLight);
   const pointLightOffset = new THREE.Vector3(0, 2.2, 0);
@@ -306,16 +312,12 @@ return vec4(outColor, 1.);
   standalonePillars.receiveShadow = false;
   viz.scene.add(standalonePillars);
 
-  const dirLight = new THREE.DirectionalLight(0xffe6e1, 3.6);
+  const dirLight = new THREE.DirectionalLight(0xffe6e1, 1.2);
   dirLight.position.set(142 * 1.1, 65 * 1.1, 380 * 1.1);
   dirLight.target.position.set(0, 0, 0);
 
   dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 2048 * 2;
-  dirLight.shadow.mapSize.height = 2048 * 2;
-  dirLight.shadow.radius = 4;
-  dirLight.shadow.blurSamples = 16;
-  viz.renderer.shadowMap.type = THREE.VSMShadowMap;
+  configureShadowMap({ light: dirLight, renderer: viz.renderer, quality: vizConf.graphics.quality, useVsm: true });
   dirLight.shadow.bias = -0.0001;
 
   dirLight.shadow.camera.near = 8;
@@ -363,10 +365,10 @@ return vec4(outColor, 1.);
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -60,
         fogMaxY: -40,
-        fogColorHighDensity: new THREE.Vector3(0.04, 0.024, 0.02),
-        fogColorLowDensity: new THREE.Vector3(0.1, 0.1, 0.1),
+        fogColorHighDensity: new THREE.Vector3(0.04, 0.024, 0.02).multiplyScalar(0.1),
+        fogColorLowDensity: new THREE.Vector3(0.1, 0.1, 0.1).multiplyScalar(0.3),
         ambientLightColor: new THREE.Color(0x4d2424),
-        ambientLightIntensity: 1.2,
+        ambientLightIntensity: 10.2,
         heightFogStartY: -70,
         heightFogEndY: -55,
         heightFogFactor: 0.14,
@@ -390,14 +392,7 @@ return vec4(outColor, 1.);
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
     },
-    extraParams: { toneMappingExposure: 1.48 },
-    postEffects: (() => {
-      const toneMappingEffect = new ToneMappingEffect({
-        mode: ToneMappingMode.LINEAR,
-      });
-
-      return [toneMappingEffect];
-    })(),
+    toneMapping: { exposure: 1, mode: 'agx' },
   });
 
   return {
