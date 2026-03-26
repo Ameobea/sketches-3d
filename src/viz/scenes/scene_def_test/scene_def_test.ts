@@ -63,7 +63,7 @@ export const processLoadedScene = (
       roughness: 0.82,
     })
   );
-  playerMesh.castShadow = true;
+  playerMesh.castShadow = false;
   playerMesh.receiveShadow = true;
 
   const dashToken = new THREE.Group();
@@ -81,15 +81,6 @@ export const processLoadedScene = (
   dashTokenRing.name = 'ring';
   dashToken.add(dashTokenCore, dashTokenRing);
   loadedWorld.add(dashToken);
-
-  // setTimeout(() => {
-  //   // set material of all objects in the scene to a simple lambert material for testing
-  //   viz.scene.traverse(obj => {
-  //     if (obj instanceof THREE.Mesh) {
-  //       obj.material = new THREE.MeshStandardMaterial({ color: 0x111 });
-  //     }
-  //   });
-  // }, 1000);
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: Infinity,
@@ -129,7 +120,9 @@ export const processLoadedScene = (
       player: {
         playerColliderShape: 'capsule',
         mesh: playerMesh,
-        moveSpeed: { onGround: 14, inAir: 18 },
+        colliderSize: { height: playerHeight, radius: playerRadius },
+        playerShadow: { radius: playerRadius, intensity: 0.85 },
+        moveSpeed: { onGround: 8, inAir: 12 },
         jumpVelocity: 36,
         terminalVelocity: 80,
         dashConfig: {
@@ -138,7 +131,7 @@ export const processLoadedScene = (
           useExternalVelocity: true,
           minDashDelaySeconds: 0.3,
         },
-        coyoteTimeSeconds: 0.3,
+        coyoteTimeSeconds: 0.135,
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
       },
       viewMode: {

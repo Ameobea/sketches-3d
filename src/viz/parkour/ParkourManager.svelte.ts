@@ -457,12 +457,13 @@ export class ParkourManager {
   }
 
   public buildSceneConfig = (): SceneConfig => {
+    const playerRadius = 0.8;
     const defaultSceneConfig: SceneConfig = {
       spawnLocation: 'spawn',
       gravity: 30,
       player: {
         moveSpeed: { onGround: 10, inAir: 13 },
-        colliderSize: { height: 2.2, radius: 0.8 },
+        colliderSize: { height: 2.2, radius: playerRadius },
         jumpVelocity: 12,
         oobYThreshold: -10,
         dashConfig: {
@@ -472,6 +473,7 @@ export class ParkourManager {
           minDashDelaySeconds: 0,
           sfx: { play: true, name: 'dash' },
         },
+        playerShadow: { radius: playerRadius, intensity: 0.85 },
         externalVelocityAirDampingFactor: new THREE.Vector3(0.32, 0.3, 0.32),
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.9992, 0.9992, 0.9992),
       },

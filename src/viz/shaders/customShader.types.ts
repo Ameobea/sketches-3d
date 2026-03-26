@@ -3,6 +3,8 @@ import type * as THREE from 'three';
 import type { ReverseColorRampParams } from './reverseColorRamp';
 import type { TriplanarMappingParams } from './triplanarMapping';
 
+export type { PlayerShadowParams } from './customShader';
+
 export interface AmbientDistanceAmpParams {
   falloffStartDistance: number;
   falloffEndDistance: number;

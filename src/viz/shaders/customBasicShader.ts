@@ -52,7 +52,7 @@ const buildCustomBasicShaderArgs = (
       return '';
     }
 
-    return 'diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);';
+    return 'diffuseColor = getFragColor(diffuseColor.xyz, vWorldPos, vObjectNormal, curTimeSeconds, ctx);';
   };
 
   return {
@@ -74,8 +74,8 @@ const buildCustomBasicShaderArgs = (
 varying vec3 vWorldPosition;
 
 uniform float curTimeSeconds;
-varying vec3 pos;
-varying vec3 vNormalAbsolute;
+varying vec3 vWorldPos;
+varying vec3 vObjectNormal;
 
 void main() {
 	#include <uv_vertex>
@@ -100,7 +100,7 @@ void main() {
 
   vec4 worldPositionMine = vec4( transformed, 1.0 );
   worldPositionMine = modelMatrix * worldPositionMine;
-  pos = worldPositionMine.xyz;
+  vWorldPos = worldPositionMine.xyz;
 
   ${vertexShader ?? ''}
 }`,
@@ -128,9 +128,9 @@ uniform float opacity;
 #include <clipping_planes_pars_fragment>
 
 uniform float curTimeSeconds;
-varying vec3 pos;
+varying vec3 vWorldPos;
 varying vec3 vWorldPosition;
-varying vec3 vNormalAbsolute;
+varying vec3 vObjectNormal;
 
 struct SceneCtx {
   vec3 cameraPosition;

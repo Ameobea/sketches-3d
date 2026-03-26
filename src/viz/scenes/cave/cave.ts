@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
-import { buildCustomShader, setDefaultDistanceAmpParams } from 'src/viz/shaders/customShader';
+import { buildCustomShader, configureCustomShaderGlobals } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
 import { delay } from 'src/viz/util/util';
 import { initWebSynth } from 'src/viz/webSynth';
@@ -43,12 +43,12 @@ export const processLoadedScene = async (
   fakeSky.matrixWorldNeedsUpdate = true;
   viz.scene.add(fakeSky);
 
-  setDefaultDistanceAmpParams({
+  configureCustomShaderGlobals({ ambientDistanceAmp: {
     ampFactor: 2,
     falloffEndDistance: 30,
     falloffStartDistance: 0.1,
     exponent: 1.5,
-  });
+  } });
 
   // const spotlightHelper = new THREE.SpotLightHelper(funnelSpotlight);
   // viz.scene.add(spotlightHelper);

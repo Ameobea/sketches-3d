@@ -1,6 +1,6 @@
-// Given the current `pos` of the fragment, determines the UV coordinates by looking at
-// the normal stored in `vNormalAbsolute`.  Picks the axis that the current triangle is
-// most closely aligned with, and uses that axis to determine the UV coordinates.
+// Given the world-space position, determines the UV coordinates by looking at
+// the normal.  Picks the axis that the current triangle is most closely aligned
+// with, and uses that axis to determine the UV coordinates.
 
 vec3 generateTriplanarWeights(vec3 normal) {
   vec3 weights = abs(normal);

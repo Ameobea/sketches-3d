@@ -24,6 +24,16 @@ type UndoEntry =
   | { type: 'add'; levelObj: LevelObject; snapshot: TransformSnapshot }
   | { type: 'delete'; levelObj: LevelObject; snapshot: TransformSnapshot };
 
+/**
+ * Captures the relative change of a transform operation so it can be replayed
+ * on a different object via Shift+R (similar to Blender's "repeat last").
+ */
+interface ReplayableTransformDelta {
+  positionDelta: [number, number, number];
+  rotationDelta: [number, number, number];
+  scaleFactor: [number, number, number];
+}
+
 interface ClipboardEntry {
   assetId: string;
   def: ObjectDef;
@@ -63,6 +73,9 @@ class LevelEditor {
 
   // Copy / paste
   private clipboard: ClipboardEntry | null = null;
+
+  // Repeat last action (Shift+R)
+  private lastReplayableAction: ReplayableTransformDelta | null = null;
 
   // UI panel (reactive state for Svelte component)
   private panelState = $state({
@@ -187,7 +200,10 @@ class LevelEditor {
 
     if (e.key === 'g' || e.key === 'G') {
       this.setTransformMode('translate');
-    } else if (e.key === 'r' || e.key === 'R') {
+    } else if (e.key === 'R' && e.shiftKey) {
+      // Shift+R: repeat last transform action
+      this.replayLastAction();
+    } else if (e.key === 'r') {
       this.setTransformMode('rotate');
     } else if (e.key === 's' || e.key === 'S') {
       this.setTransformMode('scale');
@@ -253,13 +269,33 @@ class LevelEditor {
       } else {
         if (this.selectedObject && this.dragStartSnapshot) {
           const after = this.snapshotTransform(this.selectedObject.object);
+          const before = this.dragStartSnapshot;
           this.pushUndo({
             type: 'transform',
             levelObj: this.selectedObject,
-            before: this.dragStartSnapshot,
+            before,
             after,
           });
           this.dragStartSnapshot = null;
+
+          // Store delta for Shift+R replay
+          this.lastReplayableAction = {
+            positionDelta: [
+              after.position[0] - before.position[0],
+              after.position[1] - before.position[1],
+              after.position[2] - before.position[2],
+            ],
+            rotationDelta: [
+              after.rotation[0] - before.rotation[0],
+              after.rotation[1] - before.rotation[1],
+              after.rotation[2] - before.rotation[2],
+            ],
+            scaleFactor: [
+              before.scale[0] !== 0 ? after.scale[0] / before.scale[0] : 1,
+              before.scale[1] !== 0 ? after.scale[1] / before.scale[1] : 1,
+              before.scale[2] !== 0 ? after.scale[2] / before.scale[2] : 1,
+            ],
+          };
 
           this.saveTransform(this.selectedObject);
           this.syncPhysics(this.selectedObject);
@@ -583,6 +619,47 @@ class LevelEditor {
     if (!entry) return;
     this.undoStack.push(entry);
     this.applyUndoEntry(entry, 'redo');
+  }
+
+  /**
+   * Replay the last transform action on the currently selected object (Shift+R).
+   * The stored delta is applied additively for position/rotation and
+   * multiplicatively for scale, mirroring Blender's "repeat last" behaviour.
+   */
+  private replayLastAction() {
+    if (!this.lastReplayableAction || !this.selectedObject) return;
+
+    const delta = this.lastReplayableAction;
+    const obj = this.selectedObject.object;
+    const before = this.snapshotTransform(obj);
+
+    const after: TransformSnapshot = {
+      position: [
+        before.position[0] + delta.positionDelta[0],
+        before.position[1] + delta.positionDelta[1],
+        before.position[2] + delta.positionDelta[2],
+      ],
+      rotation: [
+        before.rotation[0] + delta.rotationDelta[0],
+        before.rotation[1] + delta.rotationDelta[1],
+        before.rotation[2] + delta.rotationDelta[2],
+      ],
+      scale: [
+        before.scale[0] * delta.scaleFactor[0],
+        before.scale[1] * delta.scaleFactor[1],
+        before.scale[2] * delta.scaleFactor[2],
+      ],
+    };
+
+    this.applySnapshot(obj, after);
+    this.pushUndo({
+      type: 'transform',
+      levelObj: this.selectedObject,
+      before,
+      after,
+    });
+    this.saveTransform(this.selectedObject);
+    this.syncPhysics(this.selectedObject);
   }
 
   private applyUndoEntry(entry: UndoEntry, direction: 'undo' | 'redo') {

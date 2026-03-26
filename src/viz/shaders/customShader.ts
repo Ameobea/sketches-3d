@@ -81,12 +81,12 @@ const AntialiasedRoughnessShaderFragment = `
   for (int i = 0; i < 2; i++) {
     for (int j = 0; j < 2; j++) {
       for (int k = 0; k < 2; k++) {
-        vec3 offsetPos = fragPos;
+        vec3 offsetPos = vWorldPos;
         // TODO use better method, only sample in plane the fragment lies on rather than in 3D
         offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
         offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
         offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        roughnessAcc += getCustomRoughness(offsetPos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);
+        roughnessAcc += getCustomRoughness(offsetPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);
       }
     }
   }
@@ -95,7 +95,7 @@ const AntialiasedRoughnessShaderFragment = `
 `;
 
 const NonAntialiasedRoughnessShaderFragment =
-  'roughnessFactor = getCustomRoughness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);';
+  'roughnessFactor = getCustomRoughness(vWorldPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);';
 
 const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   if (antialiasRoughnessShader) {
@@ -169,12 +169,12 @@ const buildRunColorShaderFragment = (
   for (int i = 0; i < 2; i++) {
     for (int j = 0; j < 2; j++) {
       for (int k = 0; k < 2; k++) {
-        vec3 offsetPos = fragPos;
+        vec3 offsetPos = vWorldPos;
         // TODO use better method, only sample in plane the fragment lies on rather than in 3D
         offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
         offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
         offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getFragColor(diffuseColor.xyz, offsetPos, vNormalAbsolute, curTimeSeconds, ctx);
+        acc += getFragColor(diffuseColor.xyz, offsetPos, vObjectNormal, curTimeSeconds, ctx);
       }
     }
   }
@@ -183,7 +183,7 @@ const buildRunColorShaderFragment = (
   ctx.diffuseColor = diffuseColor;`;
   } else {
     return `
-  diffuseColor = getFragColor(diffuseColor.xyz, pos, vNormalAbsolute, curTimeSeconds, ctx);
+  diffuseColor = getFragColor(diffuseColor.xyz, vWorldPos, vObjectNormal, curTimeSeconds, ctx);
   ctx.diffuseColor = diffuseColor;`;
   }
 };
@@ -194,7 +194,7 @@ const buildRunIridescenceShaderFragment = (iridescenceShader: string | undefined
   }
 
   return `
-material.iridescence = getCustomIridescence(pos, vNormalAbsolute, material.iridescence, curTimeSeconds, ctx);`;
+material.iridescence = getCustomIridescence(vWorldPos, vObjectNormal, material.iridescence, curTimeSeconds, ctx);`;
 };
 
 const buildTextureDisableFragment = (
@@ -259,11 +259,50 @@ const buildLightsFragmentBegin = (
   return frag;
 };
 
-let DefaultDistanceAmpParams: AmbientDistanceAmpParams | undefined;
+export interface PlayerShadowParams {
+  radius: number;
+  /** Shadow darkness. Default: 0.85 */
+  intensity: number;
+}
 
-export const setDefaultDistanceAmpParams = (params: AmbientDistanceAmpParams | null | undefined) => {
-  DefaultDistanceAmpParams = params ?? undefined;
+interface CustomShaderGlobalConfig {
+  ambientDistanceAmp?: AmbientDistanceAmpParams;
+}
+
+let globalConfig: CustomShaderGlobalConfig = {};
+
+export const configureCustomShaderGlobals = (config: Partial<CustomShaderGlobalConfig>) => {
+  if ('ambientDistanceAmp' in config) {
+    globalConfig.ambientDistanceAmp = config.ambientDistanceAmp ?? undefined;
+  }
 };
+
+export const resetCustomShaderGlobals = () => {
+  globalConfig = {};
+  playerShadowPos.set(0, 0, 0);
+  playerShadowParams.set(0, 0, 0, 0);
+  psRingData.identity();
+};
+
+/**
+ * Shared uniforms for player shadow, referenced by all `CustomShaderMaterial` instances.
+ * `playerShadowPos` is updated per-frame with player feet position.
+ * `playerShadowParams` packs (radius, intensity, centerReceiverY, centerDropDistance).
+ * `psRingData` is a mat4 storing per-angle receiverY for 8 angles on 2 concentric rings
+ * (cols 0-1 = outer at radius, cols 2-3 = inner at radius/2), enabling polar bilinear
+ * interpolation for partial overhang shadows.
+ * Left at default zeros to disable (intensity=0 → early-out in shader).
+ */
+const playerShadowPos = new THREE.Vector3();
+const playerShadowParams = new THREE.Vector4(0, 0, 0, 0);
+// mat4 packing: columns 0-1 = outer ring receiverY (angles 0-7), columns 2-3 = inner ring (angles 0-7)
+const psRingData = new THREE.Matrix4();
+
+export const getPlayerShadowUniforms = () => ({
+  playerShadowPos,
+  playerShadowParams,
+  psRingData,
+});
 
 const DefaultReflectionParams: ReflectionParams = Object.freeze({
   alpha: 1,
@@ -305,7 +344,7 @@ export const buildCustomShaderArgs = (
     mapDisableTransitionThreshold = 20,
     fogShadowFactor = 0.1,
     ambientLightScale = 1,
-    ambientDistanceAmp = DefaultDistanceAmpParams,
+    ambientDistanceAmp = globalConfig.ambientDistanceAmp,
     reflection: providedReflectionParams,
   }: CustomShaderProps = {},
   {
@@ -412,6 +451,9 @@ export const buildCustomShaderArgs = (
   if (lightMapIntensity !== undefined) {
     uniforms.lightMapIntensity = { type: 'f', value: lightMapIntensity };
   }
+  uniforms.playerShadowPos = { value: playerShadowPos };
+  uniforms.playerShadowParams = { value: playerShadowParams };
+  uniforms.psRingData = { value: psRingData };
 
   const usingSSR = !!providedReflectionParams;
 
@@ -477,7 +519,7 @@ export const buildCustomShaderArgs = (
       if (useTriplanarMapping) {
         return `
         #ifdef USE_MAP
-          sampledDiffuseColor_ = triplanarTextureFixContrast(map, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal);
+          sampledDiffuseColor_ = triplanarTextureFixContrast(map, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal);
         #endif`;
       }
 
@@ -524,7 +566,7 @@ export const buildCustomShaderArgs = (
     const inner = (() => {
       if (useTriplanarMapping && roughnessMap) {
         return `
-          vec3 texelRoughness = triplanarTexture(roughnessMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal).xyz;
+          vec3 texelRoughness = triplanarTexture(roughnessMap, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal).xyz;
         `;
       }
 
@@ -640,7 +682,7 @@ export const buildCustomShaderArgs = (
     const inner = (() => {
       if (useTriplanarMapping) {
         return `
-          vec3 newWorldNormal = triplanarTextureNormalMap(normalMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, normalScale).xyz;
+          vec3 newWorldNormal = triplanarTextureNormalMap(normalMap, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, normalScale).xyz;
           // Transform \`newWorldNormal\` from world space to view space
           normal = normalize((viewMatrix * vec4(newWorldNormal, 0.)).xyz);
           `;
@@ -678,7 +720,7 @@ export const buildCustomShaderArgs = (
       if (useTriplanarMapping) {
         return `
           // TODO: I'm pretty sure double-applying uv transform is wrong, here and in all others
-          vec3 newClearcoatWorldNormal = triplanarTextureNormalMap(clearcoatNormalMap, pos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, clearcoatNormalScale).xyz;
+          vec3 newClearcoatWorldNormal = triplanarTextureNormalMap(clearcoatNormalMap, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, clearcoatNormalScale).xyz;
           // Transform \`newWorldNormal\` from world space to view space
           clearcoatNormal = normalize((viewMatrix * vec4(newClearcoatWorldNormal, 0.)).xyz);
           `;
@@ -759,8 +801,8 @@ ${displacementShader || ''}
 ${useDisplacementNormals ? 'attribute vec3 displacementNormal;' : ''}
 
 uniform float curTimeSeconds;
-varying vec3 pos;
-varying vec3 vNormalAbsolute;
+varying vec3 vWorldPos;
+varying vec3 vObjectNormal;
 varying vec3 vWorldNormal;
 uniform mat3 uvTransform;
 
@@ -801,19 +843,19 @@ void main() {
 
   vec4 worldPositionMine = vec4( transformed, 1.0 );
   worldPositionMine = modelMatrix * worldPositionMine;
-  pos = worldPositionMine.xyz;
+  vWorldPos = worldPositionMine.xyz;
 
   #ifdef USE_INSTANCING
-    pos = (instanceMatrix * vec4(pos, 1.)).xyz;
+    vWorldPos = (instanceMatrix * vec4(vWorldPos, 1.)).xyz;
   #endif
 
-  vNormalAbsolute = normal;
+  vObjectNormal = normal;
   vWorldNormal = normalize((modelMatrix * vec4(normal, 0.)).xyz);
 
   #ifdef USE_UV
   ${(() => {
     if (useGeneratedUVs) {
-      const uvPos = useWorldSpaceGeneratedUVs ? 'pos' : 'position';
+      const uvPos = useWorldSpaceGeneratedUVs ? 'vWorldPos' : 'position';
       const uvNormal = useWorldSpaceGeneratedUVs ? 'worldNormal' : 'normal';
       return `
       vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
@@ -947,13 +989,17 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 #include <clipping_planes_pars_fragment>
 
 uniform float curTimeSeconds;
-varying vec3 pos;
+varying vec3 vWorldPos;
+
+uniform vec3 playerShadowPos;
+uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=centerDropDist
+uniform mat4 psRingData; // cols 0-1: outer ring receiverY (angles 0-7), cols 2-3: inner ring (angles 0-7)
 
 #ifndef USE_TRANSMISSION
   varying vec3 vWorldPosition;
 #endif
 
-varying vec3 vNormalAbsolute;
+varying vec3 vObjectNormal;
 varying vec3 vWorldNormal;
 uniform mat3 uvTransform;
 
@@ -1004,9 +1050,7 @@ ${usingSSR ? ssrDefsFragment : ''}
 void main() {
 	#include <clipping_planes_fragment>
 
-  vec3 fragPos = pos;
-  vec3 cameraPos = cameraPosition;
-  float distanceToCamera = distance(cameraPos, fragPos);
+  float distanceToCamera = distance(cameraPosition, vWorldPos);
   float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
 
   ${buildTextureDisableFragment(mapDisableDistance, mapDisableTransitionThreshold)}
@@ -1047,7 +1091,7 @@ void main() {
   ${
     normalShader
       ? `
-  normal = getCustomNormal(pos, vNormalAbsolute, curTimeSeconds);
+  normal = getCustomNormal(vWorldPos, vObjectNormal, curTimeSeconds);
   normal = normalize(normalMatrix * normal);
   `
       : ''
@@ -1058,7 +1102,7 @@ void main() {
 
   ${
     metalnessShader
-      ? 'metalnessFactor = getCustomMetalness(pos, vNormalAbsolute, roughnessFactor, curTimeSeconds, ctx);'
+      ? 'metalnessFactor = getCustomMetalness(vWorldPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);'
       : ''
   }
   ${metalnessReverseColorRamp ? 'metalnessFactor = metalnessFromColor(ctx.diffuseColor.rgb);' : ''}
@@ -1067,7 +1111,7 @@ void main() {
   ${
     emissiveShader
       ? `
-    totalEmissiveRadiance = getCustomEmissive(pos, totalEmissiveRadiance, curTimeSeconds, ctx);
+    totalEmissiveRadiance = getCustomEmissive(vWorldPos, totalEmissiveRadiance, curTimeSeconds, ctx);
   `
       : ''
   }
@@ -1087,6 +1131,59 @@ void main() {
 
 	vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
 	vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;
+
+	if (playerShadowParams.y > 0.0) {
+		float psRadius = playerShadowParams.x;
+		float psCenterReceiverY = playerShadowParams.z;
+		float psCenterDropDist = playerShadowParams.w;
+
+		vec2 psDelta = vWorldPos.xz - playerShadowPos.xz;
+		float psDist = length(psDelta);
+		float psCircle = 1.0 - smoothstep(psRadius * 0.6, psRadius, psDist);
+
+		// Polar bilinear interpolation of receiver Y from ring probes
+		// Compute angle index (8 sectors, 45° each)
+		float psAngle = atan(psDelta.y, psDelta.x); // -PI to PI
+		float psSector = fract(psAngle / 6.2831853) * 8.0; // 0 to 8
+		float psSectorFrac = fract(psSector);
+		int psIdx0 = int(mod(floor(psSector), 8.0));
+		int psIdx1 = int(mod(floor(psSector) + 1.0, 8.0));
+
+		// Look up receiverY from ring mat4 by index, using max() to bias toward closest surface
+		// mat4 layout: cols 0-1 = outer ring, cols 2-3 = inner ring
+		// psRingData[col][row] where col = i/4, row = i%4
+		float psOuterY = max(psRingData[psIdx0 / 4][psIdx0 - (psIdx0 / 4) * 4], psRingData[psIdx1 / 4][psIdx1 - (psIdx1 / 4) * 4]);
+		float psInnerY = max(psRingData[2 + psIdx0 / 4][psIdx0 - (psIdx0 / 4) * 4], psRingData[2 + psIdx1 / 4][psIdx1 - (psIdx1 / 4) * 4]);
+
+		// Radial interpolation: center → inner ring → outer ring, biased toward closest surface
+		float psRadialT = clamp(psDist / psRadius, 0.0, 1.0);
+		float psReceiverY;
+		if (psRadialT < 0.5) {
+			psReceiverY = max(psCenterReceiverY, psInnerY);
+		} else {
+			psReceiverY = max(psInnerY, psOuterY);
+		}
+
+		// Drop distance derived from final receiverY
+		float psDropDist = playerShadowPos.y - psReceiverY;
+
+		// Asymmetric surface check: tight above, gradual bleed below
+		float psYDiff = vWorldPos.y - psReceiverY;
+		float psOnSurface = psYDiff > 0.0
+			? 1.0 - smoothstep(0.0, 0.3, psYDiff)
+			: 1.0 - smoothstep(0.0, 1.5, -psYDiff);
+
+		// Skip undersides and vertical walls (vWorldNormal is the actual world-space normal)
+		float psNormalUp = smoothstep(0.2, 0.5, vWorldNormal.y);
+
+		// Fade shadow with height above surface
+		float psHeightFade = 1.0 - smoothstep(0.0, 40.0, psDropDist);
+
+		float psShadow = psCircle * psOnSurface * psNormalUp * psHeightFade * playerShadowParams.y;
+		totalDiffuse *= (1.0 - psShadow);
+		totalSpecular *= (1.0 - psShadow);
+		totalShadow *= (1.0 - psShadow);
+	}
 
 	#include <transmission_fragment>
 

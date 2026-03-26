@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { derived, type Readable } from 'svelte/store';
 
 import type { FpPlayerStateGetters, Viz } from './index.js';
+import { getPlayerShadowUniforms } from './shaders/customShader';
 import {
   DefaultExternalVelocityAirDampingFactor,
   DefaultExternalVelocityGroundDampingFactor,
@@ -49,6 +50,10 @@ import type {
 import { ZoneEventType } from '../ammojs/ammoTypes';
 import { DashManager } from './DashManager.js';
 import { clamp } from './util/util.js';
+
+// Precomputed unit circle offsets for shadow ring probes (8 angles at 45° intervals)
+const SHADOW_PROBE_COS = Array.from({ length: 8 }, (_, i) => Math.cos((i / 8) * Math.PI * 2));
+const SHADOW_PROBE_SIN = Array.from({ length: 8 }, (_, i) => Math.sin((i / 8) * Math.PI * 2));
 
 let ammojs: Promise<AmmoInterface> | null = null;
 
@@ -279,7 +284,7 @@ export class BulletPhysics {
     playerInitialTransform.setOrigin(
       this.btvec3(
         initialSpawnPos.pos.x,
-        initialSpawnPos.pos.y + this.playerColliderHeight,
+        initialSpawnPos.pos.y + this.playerColliderHeight / 2 + this.playerColliderRadius,
         initialSpawnPos.pos.z
       )
     );
@@ -491,6 +496,50 @@ export class BulletPhysics {
         const newPlayerPos = this.updateCollisionWorld(curTimeSecs, tDiffSecs);
         if (this.viz.sceneConf.player?.mesh) {
           this.viz.sceneConf.player.mesh.position.copy(newPlayerPos);
+        }
+        if (this.viz.sceneConf.player?.playerShadow) {
+          const feetY = newPlayerPos.y - this.playerColliderHeight / 2 - this.playerColliderRadius;
+          const shadowUniforms = getPlayerShadowUniforms();
+          shadowUniforms.playerShadowPos.set(newPlayerPos.x, feetY, newPlayerPos.z);
+
+          const shadowRayMaxDist = 50;
+          // Start rays from player center so they clear the surface on slopes
+          const rayOriginY = newPlayerPos.y;
+          const rayEndY = rayOriginY - shadowRayMaxDist;
+          const px = newPlayerPos.x;
+          const pz = newPlayerPos.z;
+          const radius = this.viz.sceneConf.player.playerShadow.radius;
+
+          const castShadowRay = (x: number, z: number): number => {
+            const frac = this.playerController.cameraRayTest(
+              this.collisionWorld,
+              x,
+              rayOriginY,
+              z,
+              x,
+              rayEndY,
+              z
+            );
+            return frac < 1.0 ? rayOriginY - frac * shadowRayMaxDist : feetY - shadowRayMaxDist;
+          };
+
+          // Center ray
+          const centerReceiverY = castShadowRay(px, pz);
+          const centerDrop = feetY - centerReceiverY;
+          shadowUniforms.playerShadowParams.z = centerReceiverY;
+          shadowUniforms.playerShadowParams.w = centerDrop;
+
+          // 8 angles at 45° intervals, two rings (outer=radius, inner=radius/2)
+          // mat4 layout (column-major): cols 0-1 = outer ring (angles 0-7), cols 2-3 = inner ring
+          const ringRadii = [radius, radius * 0.5];
+          const elems = shadowUniforms.psRingData.elements;
+          for (let ring = 0; ring < 2; ring++) {
+            const r = ringRadii[ring];
+            const offset = ring * 8; // 0 for outer, 8 for inner
+            for (let i = 0; i < 8; i++) {
+              elems[offset + i] = castShadowRay(px + SHADOW_PROBE_COS[i] * r, pz + SHADOW_PROBE_SIN[i] * r);
+            }
+          }
         }
 
         if (this.viz.controlState.cameraControlEnabled) {
@@ -1137,8 +1186,8 @@ export class BulletPhysics {
   ) => {
     this.playerController.warp(
       Array.isArray(pos)
-        ? this.btvec3(pos[0], pos[1] + this.playerColliderHeight, pos[2])
-        : this.btvec3(pos.x, pos.y + this.playerColliderHeight, pos.z)
+        ? this.btvec3(pos[0], pos[1] + this.playerColliderHeight / 2 + this.playerColliderRadius, pos[2])
+        : this.btvec3(pos.x, pos.y + this.playerColliderHeight / 2 + this.playerColliderRadius, pos.z)
     );
     if (rot && this.getViewMode().type === 'firstPerson') {
       this.viz.camera.rotation.setFromVector3(

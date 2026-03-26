@@ -22,7 +22,7 @@ import {
   DefaultThirdPersonFOV,
   type ViewMode,
 } from './scenes';
-import { setDefaultDistanceAmpParams } from './shaders/customShader';
+import { resetCustomShaderGlobals, getPlayerShadowUniforms } from './shaders/customShader';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
 import type { BtPairCachingGhostObject } from 'src/ammojs/ammoTypes.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
@@ -848,7 +848,7 @@ export const initViz = (
     viz.vizConfig = vizConfig;
     applyGraphicsSettings(viz, vizConfig.current.graphics);
     applyAudioSettings(vizConfig.current.audio);
-    setDefaultDistanceAmpParams(null);
+    resetCustomShaderGlobals();
     const sceneConf = {
       ...buildDefaultSceneConfig(),
       ...((await sceneLoader(viz, scene, vizConfig.current, userData)) ?? {}),
@@ -1007,6 +1007,12 @@ export const initViz = (
       }
 
       viz.fpCtx.optimize();
+    }
+
+    if (sceneConf.player?.playerShadow) {
+      const { playerShadowParams } = getPlayerShadowUniforms();
+      const ps = sceneConf.player.playerShadow;
+      playerShadowParams.set(ps.radius, ps.intensity, 0, 0);
     }
 
     if (sceneConf.player?.mesh) {

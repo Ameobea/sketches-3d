@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
-import { buildCustomShader, setDefaultDistanceAmpParams } from 'src/viz/shaders/customShader';
+import { buildCustomShader, configureCustomShaderGlobals } from 'src/viz/shaders/customShader';
 import { loadNamedTextures } from 'src/viz/textureLoading';
 import { delay } from 'src/viz/util/util';
 import type { SceneConfig } from '..';
@@ -53,12 +53,12 @@ export const processLoadedScene = async (
     cubesTexture: 'https://i.ameo.link/bey.jpg',
   });
 
-  setDefaultDistanceAmpParams({
+  configureCustomShaderGlobals({ ambientDistanceAmp: {
     ampFactor: 1.6,
     falloffStartDistance: 0,
     falloffEndDistance: 30,
     exponent: 1.34,
-  });
+  } });
 
   initWebSynth({ compositionIDToLoad: 107 }).then(async ctx => {
     await delay(1200);

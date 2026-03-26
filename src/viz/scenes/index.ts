@@ -7,6 +7,7 @@ import type { VizConfig } from '../conf';
 import type { DeepPartial } from '../util/util.ts';
 import type { ComponentProps } from 'svelte';
 import type { TransparentWritable } from '../util/TransparentWritable.ts';
+import type { PlayerShadowParams } from '../shaders/customShader';
 
 type SvelteSEOProps = ComponentProps<SvelteSEO>;
 
@@ -216,6 +217,8 @@ export interface SceneConfig {
      * usually needed in `firstPerson` view mode, but is useful for `top-down` mode.
      */
     mesh?: THREE.Mesh;
+    /** Renders a circular shadow beneath the player on custom shader materials. */
+    playerShadow?: PlayerShadowParams;
   };
   renderOverride?: (timeDiffSeconds: number) => void;
   enableInventory?: boolean;
