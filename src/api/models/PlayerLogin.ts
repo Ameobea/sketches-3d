@@ -12,7 +12,6 @@
  * Do not edit the class manually.
  */
 
-import { mapValues } from '../runtime';
 /**
  * 
  * @export
@@ -72,4 +71,3 @@ export function PlayerLoginToJSONTyped(value?: PlayerLogin | null, ignoreDiscrim
         'password': value['password'],
     };
 }
-

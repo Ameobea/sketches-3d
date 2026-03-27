@@ -86,7 +86,7 @@ export const processLoadedScene = async (
   const indices = csg.csg_sandbox_take_indices(ctx);
   const vertices = csg.csg_sandbox_take_vertices(ctx);
   const normals = csg.csg_sandbox_take_normals(ctx);
-  const displacementNormals = csg.csg_sandbox_take_displacement_normals(ctx);
+  csg.csg_sandbox_take_displacement_normals(ctx);
   csg.csg_sandbox_free(ctx);
 
   const geometry = new THREE.BufferGeometry();

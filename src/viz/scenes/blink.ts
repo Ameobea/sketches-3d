@@ -151,12 +151,12 @@ const buildControls = (
     title: 'reset conf',
   });
   resetButton.on('click', () => {
-    pane.importPreset(defaultConf);
+    (pane as any).importPreset(defaultConf);
     Object.assign(curConf, defaultConf);
     onChange(curConf);
   });
 
-  pane.on('change', evt => {
+  (pane as any).on('change', (evt: any) => {
     if (!evt.presetKey) {
       return;
     }
@@ -214,7 +214,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   const instanceColorBuffer = new Uint8ClampedArray(MAX_PARTICLE_COUNT * 3);
   const instanceColor = new THREE.InstancedBufferAttribute(instanceColorBuffer, 3, true);
   conduitParticles.instanceColor = instanceColor;
-  instanceColor.count = 0;
+  (instanceColor as any).count = 0;
   conduitParticles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   conduitParticles.instanceColor.setUsage(THREE.DynamicDrawUsage);
   viz.scene.add(conduitParticles);
@@ -226,7 +226,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   );
   const instanceColorBuffer2 = new Uint8ClampedArray(MAX_PARTICLE_COUNT * 3);
   const instanceColor2 = new THREE.InstancedBufferAttribute(instanceColorBuffer2, 3, true);
-  instanceColor2.count = 0;
+  (instanceColor2 as any).count = 0;
   conduitParticles2.instanceColor = instanceColor2;
   conduitParticles2.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   conduitParticles2.instanceColor.setUsage(THREE.DynamicDrawUsage);

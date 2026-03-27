@@ -233,7 +233,7 @@ export const processLoadedScene = async (
     goldFleckedObsidianRoughness,
     totemAlbedo,
     totemNormal,
-    totemRoughness,
+    totemRoughness: _totemRoughness,
   } = await texturesPromise;
 
   cloudsBackground.mapping = THREE.EquirectangularReflectionMapping;

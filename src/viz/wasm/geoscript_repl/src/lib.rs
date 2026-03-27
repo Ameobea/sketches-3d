@@ -3,7 +3,8 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 use geoscript::{
   eval_program_with_ctx, materials::Material, optimizer::optimize_ast,
-  parse_program_maybe_with_prelude, traverse_fn_calls, ErrorStack, EvalCtx, Program, Sym, PRELUDE,
+  parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls, ErrorStack, EvalCtx,
+  Program, Sym, PRELUDE,
 };
 use mesh::OwnedIndexedMesh;
 use nanoserde::SerJson;
@@ -125,7 +126,7 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
   };
 
   let mut deps = GeoscriptAsyncDependencies::default();
-  traverse_fn_calls(program, |name: Sym| {
+  let check_dep = |name: Sym, deps: &mut GeoscriptAsyncDependencies| {
     ctx.geo_ctx.with_resolved_sym(name, |name| {
       if name == "trace_geodesic_path" {
         deps.geodesics = true;
@@ -143,7 +144,16 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
         deps.cgal = true;
       }
     })
-  });
+  };
+
+  traverse_fn_calls(program, |name: Sym| check_dep(name, &mut deps));
+
+  // Also scan all registered module sources for async deps
+  for source in ctx.geo_ctx.module_sources.borrow().values() {
+    if let Ok(module_ast) = parse_program_src(&ctx.geo_ctx, source) {
+      traverse_fn_calls(&module_ast, |name: Sym| check_dep(name, &mut deps));
+    }
+  }
 
   deps.serialize_json()
 }
@@ -172,11 +182,13 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   let textures = std::mem::take(&mut ctx.geo_ctx.textures);
   let default_material = std::mem::take(&mut ctx.geo_ctx.default_material);
   let const_eval_cache = std::mem::take(&mut ctx.geo_ctx.const_eval_cache);
+  let module_sources = std::mem::take(&mut ctx.geo_ctx.module_sources);
   *ctx = GeoscriptReplCtx::default();
   ctx.geo_ctx.materials = materials;
   ctx.geo_ctx.textures = textures;
   ctx.geo_ctx.default_material = default_material;
   ctx.geo_ctx.const_eval_cache = const_eval_cache;
+  ctx.geo_ctx.module_sources = module_sources;
 
   // #[cfg(target_arch = "wasm32")]
   // drop_all_mesh_handles();
@@ -192,6 +204,20 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
 
   // TODO: why is this necessary?  Manifold handles are automatically dropped in the `Drop` impl for
   // `ManifoldHandle`, so why do we need to explicitly drop them here?
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_set_module_sources(
+  ctx: *mut GeoscriptReplCtx,
+  module_names: Vec<String>,
+  module_sources: Vec<String>,
+) {
+  let ctx = unsafe { &mut *ctx };
+  let mut sources = ctx.geo_ctx.module_sources.borrow_mut();
+  sources.clear();
+  for (name, source) in module_names.into_iter().zip(module_sources.into_iter()) {
+    sources.insert(name, source);
+  }
 }
 
 #[wasm_bindgen]

@@ -6,6 +6,7 @@
   import { buildCompositionVersionMetadata, saveNewVersion } from './persistence';
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
   import { resolve } from '$app/paths';
+  import { untrack } from 'svelte';
   import ForkCompositionButton from './ForkCompositionButton.svelte';
 
   let {
@@ -28,9 +29,9 @@
     onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
   } = $props();
 
-  let title = $state(comp?.title || '');
-  let description = $state(comp?.description || '');
-  let isShared = $state(comp?.is_shared || false);
+  let title = $state(untrack(() => comp?.title || ''));
+  let description = $state(untrack(() => comp?.description || ''));
+  let isShared = $state(untrack(() => comp?.is_shared || false));
 
   let status = $state<
     { type: 'ok'; msg: string; seq: number } | { type: 'error'; msg: string } | { type: 'loading' } | null

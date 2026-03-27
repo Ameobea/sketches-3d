@@ -4,7 +4,7 @@ import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
 import { generateParkourPlatforms, jumpSimParamsFromSceneConfig } from 'src/viz/parkour/platformGen';
-import { Score, type ScoreThresholds } from 'src/viz/parkour/TimeDisplay.svelte';
+import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import type { SceneConfig } from '..';
 import { rwritable } from 'src/viz/util/TransparentWritable';

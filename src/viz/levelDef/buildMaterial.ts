@@ -39,7 +39,8 @@ const resolveShaderProps = (
   if (propsJson.ior !== undefined) props.ior = propsJson.ior;
   if (propsJson.clearcoat !== undefined) props.clearcoat = propsJson.clearcoat;
   if (propsJson.clearcoatRoughness !== undefined) props.clearcoatRoughness = propsJson.clearcoatRoughness;
-  if (propsJson.clearcoatNormalScale !== undefined) props.clearcoatNormalScale = propsJson.clearcoatNormalScale;
+  if (propsJson.clearcoatNormalScale !== undefined)
+    props.clearcoatNormalScale = propsJson.clearcoatNormalScale;
   if (propsJson.iridescence !== undefined) props.iridescence = propsJson.iridescence;
   if (propsJson.sheen !== undefined) props.sheen = propsJson.sheen;
   if (propsJson.sheenColor !== undefined) props.sheenColor = propsJson.sheenColor;
@@ -78,19 +79,23 @@ const resolveShaderProps = (
 const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptions => {
   const options: CustomShaderOptions = {};
 
-  if (optionsJson.useTriplanarMapping !== undefined) options.useTriplanarMapping = optionsJson.useTriplanarMapping as any;
+  if (optionsJson.useTriplanarMapping !== undefined)
+    options.useTriplanarMapping = optionsJson.useTriplanarMapping as any;
   if (optionsJson.useGeneratedUVs !== undefined) options.useGeneratedUVs = optionsJson.useGeneratedUVs;
   if (optionsJson.tileBreaking !== undefined) options.tileBreaking = optionsJson.tileBreaking;
   if (optionsJson.enableFog !== undefined) options.enableFog = optionsJson.enableFog;
-  if (optionsJson.antialiasColorShader !== undefined) options.antialiasColorShader = optionsJson.antialiasColorShader;
+  if (optionsJson.antialiasColorShader !== undefined)
+    options.antialiasColorShader = optionsJson.antialiasColorShader;
   if (optionsJson.antialiasRoughnessShader !== undefined)
     options.antialiasRoughnessShader = optionsJson.antialiasRoughnessShader;
   if (optionsJson.readRoughnessMapFromRChannel !== undefined)
     options.readRoughnessMapFromRChannel = optionsJson.readRoughnessMapFromRChannel;
-  if (optionsJson.disableToneMapping !== undefined) options.disableToneMapping = optionsJson.disableToneMapping;
+  if (optionsJson.disableToneMapping !== undefined)
+    options.disableToneMapping = optionsJson.disableToneMapping;
   if (optionsJson.randomizeUVOffset !== undefined) options.randomizeUVOffset = optionsJson.randomizeUVOffset;
   if (optionsJson.useNoise2 !== undefined) options.useNoise2 = optionsJson.useNoise2;
-  if (optionsJson.materialClass !== undefined) options.materialClass = MATERIAL_CLASS_MAP[optionsJson.materialClass];
+  if (optionsJson.materialClass !== undefined)
+    options.materialClass = MATERIAL_CLASS_MAP[optionsJson.materialClass];
 
   return options;
 };

@@ -123,7 +123,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group): SceneCon
     viz.scene.add(cube);
   }, 1000);
 
-  viz.registerBeforeRenderCb((curTimeSeconds: number) => {
+  viz.registerBeforeRenderCb((_curTimeSeconds: number) => {
     // if (Math.sin(curTimeSeconds) > 0) {
     //   pointLight.color = new THREE.Color(0xff0000);
     // } else {

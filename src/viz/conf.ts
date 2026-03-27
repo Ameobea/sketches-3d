@@ -11,6 +11,10 @@ export const DefaultPlayerColliderShape = 'capsule' as const;
 export const DEFAULT_FOV = 110;
 export const DefaultGravity = 40;
 export const DefaultJumpSpeed = 20;
+export const DefaultMaxSlopeRadians = 0.8;
+export const DefaultMaxPenetrationDepth = 0.075;
+export const DefaultSimulationTickRateHz = 160;
+export const DefaultMinJumpDelaySeconds = 0.25;
 
 export enum GraphicsQuality {
   Low = 1,

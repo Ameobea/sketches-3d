@@ -19,7 +19,7 @@
   {#each def.examples as example}
     <Example {example} />
   {/each}
-  {#each def.signatures as sig, i}
+  {#each def.signatures as sig}
     <div class="fn-signature">
       <div class="signature-line">
         <span class="sig-name">{name}</span>

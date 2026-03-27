@@ -60,6 +60,7 @@ export interface RunGeoscriptOptions {
   onStart?: () => void;
   onError?: (error: string) => void;
   renderMode?: boolean;
+  modules?: Record<string, string>;
 }
 
 export interface GeoscriptRunResult {

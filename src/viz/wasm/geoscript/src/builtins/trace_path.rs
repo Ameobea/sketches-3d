@@ -247,7 +247,6 @@ pub(crate) fn normalize_path_sampler_guides(sampler: &dyn PathSampler) -> (Vec<f
   }
 
   // Rotate: t' = (t - t_min) mod 1.0. After rotation, t_min maps to 0.0.
-  log::info!("rotating by {t_min:.4} to align earliest critical point to t=0");
   let rotated: Vec<f32> = raw_cps
     .iter()
     .map(|&t| (t - t_min).rem_euclid(1.0))

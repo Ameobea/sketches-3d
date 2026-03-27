@@ -36,11 +36,69 @@ export const GeoscriptAssetDefFileSchema = z.object({
 /** Union of both geoscript asset forms — used when parsing JSON from disk. */
 export const GeoscriptAssetDefRawSchema = z.union([GeoscriptAssetDefSchema, GeoscriptAssetDefFileSchema]);
 
+// ---------------------------------------------------------------------------
+// CSG asset definitions
+// ---------------------------------------------------------------------------
+
+export interface CsgLeafNode {
+  asset: string;
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: [number, number, number];
+}
+
+export interface CsgOpNode {
+  op: 'union' | 'difference' | 'intersection';
+  a: CsgTreeNode;
+  b: CsgTreeNode;
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: [number, number, number];
+}
+
+export type CsgTreeNode = CsgLeafNode | CsgOpNode;
+
+const CsgLeafNodeSchema: z.ZodType<CsgLeafNode> = z.object({
+  asset: z.string(),
+  position: Vec3.optional(),
+  rotation: Vec3.optional(),
+  scale: Vec3.optional(),
+});
+
+const CsgOpNodeSchema: z.ZodType<CsgOpNode> = z.lazy(() =>
+  z.object({
+    op: z.enum(['union', 'difference', 'intersection']),
+    a: CsgTreeNodeSchema,
+    b: CsgTreeNodeSchema,
+    position: Vec3.optional(),
+    rotation: Vec3.optional(),
+    scale: Vec3.optional(),
+  })
+);
+
+const CsgTreeNodeSchema: z.ZodType<CsgTreeNode> = z.union([CsgOpNodeSchema, CsgLeafNodeSchema]);
+
+export const CsgAssetDefSchema = z.object({
+  type: z.literal('csg'),
+  tree: CsgTreeNodeSchema,
+});
+
+export type CsgAssetDef = z.infer<typeof CsgAssetDefSchema>;
+
 /** Return type after server-side inlining: always has `code`. */
-export const AssetDefSchema = z.discriminatedUnion('type', [GltfAssetDefSchema, GeoscriptAssetDefSchema]);
+export const AssetDefSchema = z.discriminatedUnion('type', [
+  GltfAssetDefSchema,
+  GeoscriptAssetDefSchema,
+  CsgAssetDefSchema,
+]);
 
 /** Input type for JSON files on disk: geoscript assets may have `code` or `file`. */
-export const AssetDefRawSchema = z.union([GltfAssetDefSchema, GeoscriptAssetDefSchema, GeoscriptAssetDefFileSchema]);
+export const AssetDefRawSchema = z.union([
+  GltfAssetDefSchema,
+  GeoscriptAssetDefSchema,
+  GeoscriptAssetDefFileSchema,
+  CsgAssetDefSchema,
+]);
 
 export type GltfAssetDef = z.infer<typeof GltfAssetDefSchema>;
 export type GeoscriptAssetDef = z.infer<typeof GeoscriptAssetDefSchema>;
@@ -257,11 +315,49 @@ export const LevelDefSchema = z
       }
     }
 
+    // Validate CSG asset tree references
+    for (const [assetName, assetDef] of Object.entries(def.assets)) {
+      if (assetDef.type !== 'csg') continue;
+
+      const validateNode = (node: CsgTreeNode, path: (string | number)[]) => {
+        if ('asset' in node) {
+          if (!assetKeys.has(node.asset)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['assets', assetName, ...path, 'asset'],
+              message: `CSG leaf references unknown asset "${node.asset}"`,
+            });
+          }
+          const refDef = def.assets[node.asset];
+          if (refDef && refDef.type !== 'geoscript' && refDef.type !== 'csg') {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['assets', assetName, ...path, 'asset'],
+              message: `CSG leaf must reference a geoscript or csg asset, got "${refDef.type}"`,
+            });
+          }
+        } else {
+          validateNode(node.a, [...path, 'a']);
+          validateNode(node.b, [...path, 'b']);
+        }
+      };
+
+      validateNode(assetDef.tree, ['tree']);
+    }
+
     // Each material's texture refs must reference existing texture entries
     for (const [matName, matDef] of Object.entries(def.materials ?? {})) {
       if (matDef.type !== 'customShader' || !matDef.props) continue;
       const p = matDef.props;
-      const texSlots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'lightMap', 'transmissionMap', 'clearcoatNormalMap'] as const;
+      const texSlots = [
+        'map',
+        'normalMap',
+        'roughnessMap',
+        'metalnessMap',
+        'lightMap',
+        'transmissionMap',
+        'clearcoatNormalMap',
+      ] as const;
       for (const slot of texSlots) {
         const ref = p[slot];
         if (ref !== undefined && !texKeys.has(ref)) {

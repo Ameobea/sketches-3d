@@ -1,6 +1,6 @@
 import { EffectComposer, RenderPass } from 'postprocessing';
 import * as THREE from 'three';
-import { GodraysPass, type GodraysPassParams } from 'three-good-godrays';
+import { GodraysPass, GodraysUpsampleQuality, type GodraysPassParams } from 'three-good-godrays';
 
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
@@ -128,13 +128,14 @@ export const processLoadedScene = async (viz: Viz, _loadedWorld: THREE.Group): P
 
   const godraysParams: GodraysPassParams = {
     color: new THREE.Color(0xffffff),
-    edgeRadius: 2,
-    edgeStrength: 2,
     distanceAttenuation: 0.006,
     density: 1 / 126,
     maxDensity: 1,
     blur: false,
     raymarchSteps: 100,
+    gammaCorrection: true,
+    resolutionScale: 1,
+    upsampleQuality: GodraysUpsampleQuality.HIGH,
   };
 
   const godraysEffect = new GodraysPass(pointLight, viz.camera, godraysParams);

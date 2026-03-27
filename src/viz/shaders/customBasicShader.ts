@@ -19,7 +19,12 @@ interface CustomBasicShaderOptions {
 }
 
 const buildCustomBasicShaderArgs = (
-  { color = new THREE.Color(0xffffff), transparent, alphaTest, fogMultiplier }: CustomBasicShaderProps = {},
+  {
+    color = new THREE.Color(0xffffff),
+    transparent: _transparent,
+    alphaTest: _alphaTest,
+    fogMultiplier,
+  }: CustomBasicShaderProps = {},
   { colorShader, vertexShader }: CustomBasicShaderShaders = {},
   { enableFog = true }: CustomBasicShaderOptions = {}
 ) => {
@@ -44,8 +49,8 @@ const buildCustomBasicShaderArgs = (
     },
   ]);
 
-  uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
-  uniforms.diffuse = { type: 'c', value: color };
+  uniforms.curTimeSeconds = { value: 0.0 };
+  uniforms.diffuse = { value: color };
 
   const buildRunColorShaderFragment = () => {
     if (!colorShader) {

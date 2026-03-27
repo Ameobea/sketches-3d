@@ -75,6 +75,7 @@
         <label for="is-shared-checkbox">public</label>
         <input id="is-shared-checkbox" type="checkbox" bind:checked={isShared} />
 
+        <!-- svelte-ignore a11y_label_has_associated_control -->
         <label>method</label>
         <div class="toggle-group">
           <button class:selected={uploadMethod === 'file'} onclick={() => (uploadMethod = 'file')}>

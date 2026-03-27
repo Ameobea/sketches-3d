@@ -211,6 +211,12 @@ export interface SceneConfig {
     playerColliderShape?: 'capsule' | 'cylinder' | 'sphere';
     moveSpeed?: { onGround: number; inAir: number };
     stepHeight?: number;
+    /** Maximum slope angle in radians that the player can walk up. Default: 0.8 */
+    maxSlopeRadians?: number;
+    /** Maximum penetration depth for the character controller. Default: 0.075 */
+    maxPenetrationDepth?: number;
+    /** Minimum delay in seconds between consecutive jumps. Default: 0.25 */
+    minJumpDelaySeconds?: number;
     oobYThreshold?: number;
     /**
      * If provided, this mesh will be added to the world and moved in sync with the player.  This is not

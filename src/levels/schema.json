@@ -440,6 +440,23 @@
               "file"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "csg"
+              },
+              "tree": {
+                "$ref": "#/definitions/__schema0"
+              }
+            },
+            "required": [
+              "type",
+              "tree"
+            ],
+            "additionalProperties": false
           }
         ]
       }
@@ -528,6 +545,133 @@
     "objects"
   ],
   "additionalProperties": false,
+  "definitions": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "union",
+                "difference",
+                "intersection"
+              ]
+            },
+            "a": {
+              "$ref": "#/definitions/__schema0"
+            },
+            "b": {
+              "$ref": "#/definitions/__schema0"
+            },
+            "position": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "rotation": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "scale": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "a",
+            "b"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "asset": {
+              "type": "string"
+            },
+            "position": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "rotation": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "scale": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          },
+          "required": [
+            "asset"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
   "title": "LevelDef",
   "$id": "https://ameo.design/schemas/level-def.json"
 }

@@ -30,7 +30,7 @@ const initRepl = async (
   onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void,
   pipelineController: PostprocessingPipelineController | null
 ) => {
-  const _ui = mount(ReplUi, {
+  mount(ReplUi, {
     target: document.getElementById('viz-container')!,
     props: {
       viz,

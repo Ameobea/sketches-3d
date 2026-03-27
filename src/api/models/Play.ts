@@ -12,7 +12,6 @@
  * Do not edit the class manually.
  */
 
-import { mapValues } from '../runtime';
 /**
  * 
  * @export
@@ -104,4 +103,3 @@ export function PlayToJSONTyped(value?: Omit<Play, 'id'> | null, ignoreDiscrimin
         'timeSubmitted': ((value['timeSubmitted']).toISOString()),
     };
 }
-

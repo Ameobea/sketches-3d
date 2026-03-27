@@ -5,6 +5,7 @@
     type TextureID,
     type User,
   } from 'src/geoscript/geotoyAPIClient';
+  import { untrack } from 'svelte';
   import ItemPicker from './ItemPicker.svelte';
   import { Textures } from './state.svelte';
 
@@ -22,7 +23,7 @@
     me: User | null | undefined;
   } = $props();
 
-  const origSelectedTextureId = selectedTextureId;
+  const origSelectedTextureId = untrack(() => selectedTextureId);
   let textures = $state<TextureDescriptor[]>([]);
   let isLoading = $state(true);
 
@@ -52,12 +53,12 @@
   <div class="loading">loading...</div>
 {:else}
   <ItemPicker title="Select Texture" selectedId={selectedTextureId} {onselect} items={textures} {onclose}>
-    <div slot="footer-start">
+    {#snippet footerStart()}
       {#if me}
         <button class="footer-button" onclick={onupload}>upload new</button>
       {/if}
-    </div>
-    <div slot="footer-end">
+    {/snippet}
+    {#snippet footerEnd()}
       <button
         class="footer-button"
         onclick={() => {
@@ -68,7 +69,7 @@
         cancel
       </button>
       <button class="footer-button" onclick={onclose}>select</button>
-    </div>
+    {/snippet}
   </ItemPicker>
 {/if}
 

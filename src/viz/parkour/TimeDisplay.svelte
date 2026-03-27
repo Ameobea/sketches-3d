@@ -1,13 +1,8 @@
-<script lang="ts" context="module">
-  export enum Score {
-    SPlus = 0,
-    S = 1,
-    A = 2,
-    B = 3,
-    C = 4,
-  }
-
-  export type ScoreThresholds = { [K in Exclude<Score, Score.C>]: number };
+<script lang="ts">
+  import { QueryClientProvider } from '@tanstack/svelte-query';
+  import { Score, type ScoreThresholds } from './timeDisplayTypes';
+  import MiniLeaderboardDisplay from './MiniLeaderboardDisplay.svelte';
+  import { queryClient } from '../queryClient';
 
   const ScoreNames: { [key in Score]: string } = {
     [Score.SPlus]: 'S+',
@@ -32,13 +27,6 @@
     [Score.B]: '40px',
     [Score.C]: '40px',
   };
-</script>
-
-<script lang="ts">
-  import { QueryClientProvider } from '@tanstack/svelte-query';
-
-  import MiniLeaderboardDisplay from './MiniLeaderboardDisplay.svelte';
-  import { queryClient } from '../queryClient';
 
   export let mapID: string;
   export let scoreThresholds: ScoreThresholds;

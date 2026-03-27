@@ -41,8 +41,9 @@ use smallvec::SmallVec;
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
   ast::{
-    bracketify_closures, maybe_init_op_def_shorthands, parse_statement, BinOp, ClosureArg,
-    ClosureBody, DestructurePattern, FunctionCall, MapLiteralEntry, TypeName,
+    bracketify_closures, maybe_init_op_def_shorthands, parse_top_level_statement, BinOp,
+    ClosureArg, ClosureBody, DestructurePattern, FunctionCall, MapLiteralEntry, TopLevelStatement,
+    TypeName,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
@@ -1621,6 +1622,13 @@ pub struct EvalCtx {
   scratch_kwargs: Box<RefCell<ArrayVec<FxHashMap<Sym, Value>, 64>>>,
   /// Maps SourceLoc indices to (line, col) pairs for error reporting.
   pub source_map: RefCell<SourceMap>,
+  /// Source code for registered modules, keyed by module name.
+  pub module_sources: RefCell<FxHashMap<String, String>>,
+  /// Cached export maps for modules that have already been executed.
+  pub module_exports: RefCell<FxHashMap<String, Rc<FxHashMap<String, Value>>>>,
+  /// When evaluating a module body, this holds the export map being built.
+  /// `None` when evaluating the main program.
+  pub current_module_exports: RefCell<Option<FxHashMap<Sym, Value>>>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1645,6 +1653,9 @@ impl Default for EvalCtx {
       scratch_args: Box::new(RefCell::new(ArrayVec::new())),
       scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
       source_map: RefCell::new(SourceMap::new(0)),
+      module_sources: RefCell::new(FxHashMap::default()),
+      module_exports: RefCell::new(FxHashMap::default()),
+      current_module_exports: RefCell::new(None),
     }
   }
 }
@@ -2217,6 +2228,53 @@ impl EvalCtx {
           Value::Nil
         };
         Ok(ControlFlow::Break(value))
+      }
+    }
+  }
+
+  fn eval_top_level_statement(
+    &self,
+    statement: &TopLevelStatement,
+    scope: &Scope,
+  ) -> Result<ControlFlow<Value>, ErrorStack> {
+    match statement {
+      TopLevelStatement::Statement(stmt) => self.eval_statement(stmt, scope),
+      TopLevelStatement::Export {
+        name,
+        expr,
+        type_hint,
+      } => {
+        let (line, col) = self.resolve_loc(expr.loc());
+        let val = match self.eval_expr(expr, scope, Some(*name))? {
+          ControlFlow::Continue(val) => val,
+          early_exit => return Ok(early_exit),
+        };
+        self
+          .eval_assignment(*name, val.clone(), scope, *type_hint)
+          .map_err(|err| err.with_loc(line, col))?;
+
+        // Store in module export map if we're inside a module evaluation
+        if let Some(map) = self.current_module_exports.borrow_mut().as_mut() {
+          map.insert(*name, val);
+        }
+
+        Ok(ControlFlow::Continue(Value::Nil))
+      }
+      TopLevelStatement::Import {
+        bindings,
+        module_name,
+      } => {
+        let exports = self.resolve_module(module_name)?;
+
+        let map_value = Value::Map(exports);
+        bindings
+          .visit_assignments(self, map_value, &mut |sym, val| {
+            self.eval_assignment(sym, val, scope, None)?;
+            Ok(())
+          })
+          .map_err(|err| err.wrap(&format!("Error importing from module \"{module_name}\"")))?;
+
+        Ok(ControlFlow::Continue(Value::Nil))
       }
     }
   }
@@ -2794,6 +2852,83 @@ impl EvalCtx {
     self.interned_symbols.with_resolved(sym, f).unwrap()
   }
 
+  fn resolve_module(&self, module_name: &str) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
+    // Check cache first
+    if let Some(exports) = self.module_exports.borrow().get(module_name) {
+      return Ok(Rc::clone(exports));
+    }
+
+    // Get source code
+    let source = self
+      .module_sources
+      .borrow()
+      .get(module_name)
+      .cloned()
+      .ok_or_else(|| ErrorStack::new(format!("Unknown module \"{module_name}\"")))?;
+
+    // Set up module export context
+    let prev_exports = self
+      .current_module_exports
+      .borrow_mut()
+      .replace(FxHashMap::default());
+
+    // Parse and evaluate the module in a fresh scope (only default globals like pi/tau).
+    // Builtins are resolved by name at eval time, so they're available without being in scope.
+    let module_scope = Scope::default_globals();
+    let mut ast = parse_program_src(self, &source)
+      .map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
+    optimizer::optimize_ast(self, &mut ast)
+      .map_err(|err| err.wrap(&format!("Error optimizing module \"{module_name}\"")))?;
+
+    // Evaluate statements in module scope
+    for statement in &ast.statements {
+      match self.eval_top_level_statement(statement, &module_scope)? {
+        ControlFlow::Continue(_) => {}
+        ControlFlow::Break(_) => {
+          // Restore previous export context before returning error
+          *self.current_module_exports.borrow_mut() = prev_exports;
+          return Err(ErrorStack::new(format!(
+            "`break` in module \"{module_name}\" top level"
+          )));
+        }
+        ControlFlow::Return(_) => {
+          *self.current_module_exports.borrow_mut() = prev_exports;
+          return Err(ErrorStack::new(format!(
+            "`return` in module \"{module_name}\" top level"
+          )));
+        }
+      }
+    }
+
+    // Collect exports
+    let export_map = self
+      .current_module_exports
+      .borrow_mut()
+      .take()
+      .unwrap_or_default();
+
+    // Restore previous export context (for nested module evaluation)
+    *self.current_module_exports.borrow_mut() = prev_exports;
+
+    // Convert Sym keys to String keys for the Value::Map representation
+    let string_map: FxHashMap<String, Value> = export_map
+      .into_iter()
+      .map(|(sym, val)| {
+        let name = self.with_resolved_sym(sym, |s| s.to_owned());
+        (name, val)
+      })
+      .collect();
+    let exports = Rc::new(string_map);
+
+    // Cache for subsequent imports
+    self
+      .module_exports
+      .borrow_mut()
+      .insert(module_name.to_owned(), Rc::clone(&exports));
+
+    Ok(exports)
+  }
+
   #[cold]
   fn desymbolicate_kwargs(&self, kwargs: &FxHashMap<Sym, Value>) -> FxHashMap<String, Value> {
     kwargs
@@ -2809,7 +2944,7 @@ impl EvalCtx {
   }
 }
 
-pub(crate) fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, ErrorStack> {
+pub fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, ErrorStack> {
   maybe_init_op_def_shorthands();
 
   let pairs = GSParser::parse(Rule::program, src)
@@ -2844,7 +2979,7 @@ pub(crate) fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Progr
 
   let statements = program
     .into_inner()
-    .filter_map(|stmt| match parse_statement(ctx, stmt) {
+    .filter_map(|stmt| match parse_top_level_statement(ctx, stmt) {
       Ok(Some(statement)) => Some(Ok(statement)),
       Ok(None) => None,
       Err(err) => Some(Err(err.wrap("Error parsing statement"))),
@@ -2871,7 +3006,7 @@ pub fn parse_program_maybe_with_prelude(
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
   for statement in &ast.statements {
-    let _val = match ctx.eval_statement(statement, &ctx.globals)? {
+    let _val = match ctx.eval_top_level_statement(statement, &ctx.globals)? {
       ControlFlow::Continue(val) => val,
       ControlFlow::Break(_) => {
         return Err(ErrorStack::new(
@@ -2947,7 +3082,7 @@ fn test_const_eval_cache_preserves_loc_across_runs() {
   let mut ast1 = parse_program_src(&ctx, src1).unwrap();
   optimize_ast(&ctx, &mut ast1).unwrap();
   let (seq1, loc1) = match &ast1.statements[0] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         loc,
@@ -2964,7 +3099,7 @@ b = [1, 2]"#;
   let mut ast2 = parse_program_src(&ctx, src2).unwrap();
   optimize_ast(&ctx, &mut ast2).unwrap();
   let (seq2, loc2) = match &ast2.statements[1] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         loc,
@@ -4746,4 +4881,99 @@ pts | render
   assert_eq!(path[1].z, 0.0);
   assert_eq!(path[2].x, 1.0);
   assert_eq!(path[2].z, 1.0);
+}
+
+#[test]
+fn test_module_basic_export_import() {
+  let ctx = EvalCtx::default();
+
+  ctx.module_sources.borrow_mut().insert(
+    "shapes".to_string(),
+    "export width = 10\nexport height = 20".to_string(),
+  );
+
+  let src = r#"
+import { width, height } from "shapes"
+result = width + height
+"#;
+
+  parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).unwrap();
+  assert_eq!(ctx.get_global("result").unwrap().as_int().unwrap(), 30);
+}
+
+#[test]
+fn test_module_import_rename_and_caching() {
+  let ctx = EvalCtx::default();
+
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("math".to_string(), "export val = 42".to_string());
+
+  // Tests renaming on import and that a second import reuses the cached module
+  let src = r#"
+import { val: first } from "math"
+import { val: second } from "math"
+result = first + second
+"#;
+
+  parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).unwrap();
+  assert_eq!(ctx.get_global("result").unwrap().as_int().unwrap(), 84);
+  assert!(ctx.module_exports.borrow().contains_key("math"));
+}
+
+#[test]
+fn test_module_scope_isolation_and_export_in_main() {
+  let ctx = EvalCtx::default();
+
+  // Module should not see the main program's variables
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("isolated".to_string(), "export val = 100".to_string());
+
+  // `export` in main program just acts as assignment (no error, no module context)
+  let src = r#"
+export outer_var = 999
+import { val } from "isolated"
+result = val + outer_var
+"#;
+
+  parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).unwrap();
+  assert_eq!(ctx.get_global("result").unwrap().as_int().unwrap(), 1099);
+  assert_eq!(ctx.get_global("outer_var").unwrap().as_int().unwrap(), 999);
+}
+
+#[test]
+fn test_export_not_allowed_in_closure_or_block() {
+  let ctx = EvalCtx::default();
+
+  // export inside a closure body should be a parse error
+  let src = "fn = || { export x = 1 }";
+  let result = parse_and_eval_program_with_ctx(src.to_string(), &ctx, false);
+  assert!(
+    result.is_err(),
+    "export inside closure should be a parse error"
+  );
+
+  // export inside a block expression should be a parse error
+  let src = "y = { export x = 1\nx }";
+  let result = parse_and_eval_program_with_ctx(src.to_string(), &ctx, false);
+  assert!(
+    result.is_err(),
+    "export inside block should be a parse error"
+  );
+}
+
+#[test]
+fn test_import_unknown_module_error() {
+  let ctx = EvalCtx::default();
+  let src = r#"import { x } from "nonexistent""#;
+  let result = parse_and_eval_program_with_ctx(src.to_string(), &ctx, false);
+  assert!(result.is_err());
+  let err = format!("{}", result.unwrap_err());
+  assert!(
+    err.contains("Unknown module"),
+    "Error should mention unknown module, got: {err}"
+  );
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { MaterialDef, ShaderPropsJson, ShaderOptionsJson } from './types';
   import FormField from 'src/viz/scenes/geoscriptPlayground/materialEditor/FormField.svelte';
 
@@ -20,7 +21,7 @@
     ondelete,
   }: Props = $props();
 
-  let selectedId = $state<string | null>(initialSelectedId ?? null);
+  let selectedId = $state<string | null>(untrack(() => initialSelectedId ?? null));
 
   export const setSelectedId = (id: string | null) => {
     selectedId = id;

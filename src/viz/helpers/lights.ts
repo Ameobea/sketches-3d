@@ -30,7 +30,11 @@ export const configureShadowMap = ({
   mapSize = { low: 1024, medium: 2048, high: 4096 },
   useVsm = false,
 }: ConfigureShadowMapParams): void => {
-  const size = { [GraphicsQuality.Low]: mapSize.low, [GraphicsQuality.Medium]: mapSize.medium, [GraphicsQuality.High]: mapSize.high }[quality];
+  const size = {
+    [GraphicsQuality.Low]: mapSize.low,
+    [GraphicsQuality.Medium]: mapSize.medium,
+    [GraphicsQuality.High]: mapSize.high,
+  }[quality];
   light.shadow.mapSize.width = size;
   light.shadow.mapSize.height = size;
 

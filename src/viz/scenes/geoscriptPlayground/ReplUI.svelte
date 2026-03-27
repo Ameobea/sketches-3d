@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as THREE from 'three';
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import type { EditorView, KeyBinding } from '@codemirror/view';
   import { resolve } from '$app/paths';
 
@@ -68,9 +68,9 @@
     pipelineController?: PostprocessingPipelineController | null;
   } = $props();
 
-  let userData = $state<GeoscriptPlaygroundUserData | undefined>(providedUserData);
+  let userData = $state<GeoscriptPlaygroundUserData | undefined>(untrack(() => providedUserData));
 
-  const { toggleRecording, recordingState } = useRecording(viz, providedUserData);
+  const { toggleRecording, recordingState } = useRecording(untrack(() => viz), untrack(() => providedUserData));
 
   let layoutOrientation = $state<'vertical' | 'horizontal'>(
     (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal') || 'vertical'
@@ -91,9 +91,7 @@
     onSizeChange(size, isEditorCollapsed, layoutOrientation);
   };
 
-  // The `Comlink.Remote` is itself a proxy, and nesting the proxies seems to break things
-  // svelte-ignore non_reactive_update
-  let repl = workerManager.getWorker();
+  let repl = $derived(workerManager.getWorker());
 
   const {
     code: initialCode,
@@ -105,7 +103,7 @@
 
   let ctxPtr = $state<number | null>(null);
 
-  let isDirty = $state(getIsDirty(providedUserData));
+  let isDirty = $state(getIsDirty(untrack(() => providedUserData)));
 
   let innerWidth = $state(window.innerWidth);
   let isEditorCollapsed = $state(
@@ -155,7 +153,7 @@
       ? Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth)
       : Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
   );
-  let lastCode = initialCode;
+  let lastCode = untrack(() => initialCode);
 
   onMount(() => {
     onSizeChange(size, isEditorCollapsed, layoutOrientation);
@@ -378,8 +376,8 @@
   };
 
   let materialEditorOpen = $state(false);
-  let materialDefinitions = $state<MaterialDefinitions>(initialMatDefs);
-  let preludeEjected = $state(initialPreludeEjected);
+  let materialDefinitions = $state<MaterialDefinitions>(untrack(() => initialMatDefs));
+  let preludeEjected = $state(untrack(() => initialPreludeEjected));
 
   onMount(() => {
     const referencedTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);

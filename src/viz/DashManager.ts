@@ -1,3 +1,4 @@
+import type * as THREE from 'three';
 import { DefaultDashConfig, type DashConfig } from './scenes';
 import { mergeDeep } from './util/util';
 import type { Viz } from '.';

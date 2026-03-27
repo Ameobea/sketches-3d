@@ -5,7 +5,7 @@ import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { ParkourManager, type ParkourMaterials } from 'src/viz/parkour/ParkourManager.svelte';
 import { buildPylonsMaterials, ShinyPatchworkStoneTextures } from 'src/viz/parkour/regions/pylons/materials';
-import { Score, type ScoreThresholds } from 'src/viz/parkour/TimeDisplay.svelte';
+import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 import { generateNormalMapFromTexture, loadTexture } from 'src/viz/textureLoading';
 import { buildCustomShader } from 'src/viz/shaders/customShader';

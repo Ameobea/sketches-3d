@@ -28,26 +28,27 @@ const getEngine = async () => {
   return engine;
 };
 
-const malloc = (engine: WebAssembly.Instance, size: number) => (engine.exports.malloc as Function)(size);
+const malloc = (engine: WebAssembly.Instance, size: number) =>
+  (engine.exports.malloc as (size: number) => number)(size);
 
 const free = (engine: WebAssembly.Instance, ptr: number, byteCount: number) =>
-  (engine.exports.free as Function)(ptr, byteCount);
+  (engine.exports.free as (ptr: number, byteCount: number) => void)(ptr, byteCount);
 
 const methods = {
   setTerrainGenWasmBytes: async (bytes: Uint8Array) => {
-    terrainGenEngineP = WebAssembly.compile(bytes).then(module =>
+    terrainGenEngineP = WebAssembly.compile(bytes as Uint8Array<ArrayBuffer>).then(module =>
       WebAssembly.instantiate(module, {
         env: {
           log_error: (ptr: number, len: number) =>
             void getEngine().then(engine => {
-              let memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
+              const memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
               const buf = memory.slice(ptr, ptr + len);
               const str = new TextDecoder().decode(buf);
               console.error(str);
             }),
           log_msg: (ptr: number, len: number) =>
             void getEngine().then(engine => {
-              let memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
+              const memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
               const buf = memory.slice(ptr, ptr + len);
               const str = new TextDecoder().decode(buf);
               console.log(str);
@@ -58,7 +59,7 @@ const methods = {
   },
   createTerrainGenCtx: async () => {
     const engine = await getEngine();
-    return (engine.exports.create_terrain_gen_ctx as Function)();
+    return (engine.exports.create_terrain_gen_ctx as () => number)();
   },
   setTerrainGenParams: async (ctxPtr: number, params: TerrainGenParams) => {
     const engine = await getEngine();
@@ -66,10 +67,14 @@ const methods = {
     const serializedParams = JSON.stringify(params);
     const encoded = new TextEncoder().encode(serializedParams);
     const paramsPtr = malloc(engine, encoded.byteLength);
-    let memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
+    const memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
     memory.set(encoded, paramsPtr);
 
-    (engine.exports.set_params as Function)(ctxPtr, paramsPtr, encoded.byteLength);
+    (engine.exports.set_params as (ctxPtr: number, paramsPtr: number, len: number) => void)(
+      ctxPtr,
+      paramsPtr,
+      encoded.byteLength
+    );
 
     free(engine, paramsPtr, encoded.byteLength);
   },
@@ -80,7 +85,17 @@ const methods = {
   ) => {
     const engine = await getEngine();
 
-    const heightmapPtr = (engine.exports.gen_heightmap as Function)(
+    const heightmapPtr = (
+      engine.exports.gen_heightmap as (
+        ctxPtr: number,
+        resX: number,
+        resY: number,
+        minX: number,
+        minY: number,
+        maxX: number,
+        maxY: number
+      ) => number
+    )(
       ctxPtr,
       resolution[0],
       resolution[1],
@@ -89,7 +104,7 @@ const methods = {
       worldSpaceBounds.maxs[0],
       worldSpaceBounds.maxs[1]
     );
-    let memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
+    const memory = new Uint8Array((engine.exports.memory as WebAssembly.Memory).buffer);
     // this copies the memory from the wasm module into a new buffer
     const heightmapSizeBytes = resolution[0] * resolution[1] * Float32Array.BYTES_PER_ELEMENT;
     const buf = memory.slice(heightmapPtr, heightmapPtr + heightmapSizeBytes);

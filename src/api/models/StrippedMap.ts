@@ -12,7 +12,6 @@
  * Do not edit the class manually.
  */
 
-import { mapValues } from '../runtime';
 /**
  * 
  * @export
@@ -103,4 +102,3 @@ export function StrippedMapToJSONTyped(value?: StrippedMap | null, ignoreDiscrim
         'bTime': value['bTime'],
     };
 }
-

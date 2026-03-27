@@ -317,7 +317,12 @@ return vec4(outColor, 1.);
   dirLight.target.position.set(0, 0, 0);
 
   dirLight.castShadow = true;
-  configureShadowMap({ light: dirLight, renderer: viz.renderer, quality: vizConf.graphics.quality, useVsm: true });
+  configureShadowMap({
+    light: dirLight,
+    renderer: viz.renderer,
+    quality: vizConf.graphics.quality,
+    useVsm: true,
+  });
   dirLight.shadow.bias = -0.0001;
 
   dirLight.shadow.camera.near = 8;

@@ -99,7 +99,7 @@ export class StableDepthEffectComposer extends EffectComposer {
   }
 
   override render(deltaTime?: number): void {
-    const renderer = this.renderer;
+    const renderer = this.getRenderer();
     const stableDepth = this.stableDepth;
 
     if (!renderer || !stableDepth) {

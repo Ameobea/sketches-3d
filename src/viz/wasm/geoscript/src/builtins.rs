@@ -836,16 +836,20 @@ pub(crate) fn translate_impl(
     _ => unimplemented!(),
   };
 
+  // Left-multiply: T * M (translate in world space)
+  let t = Matrix4::new_translation(&translation);
+
   match obj {
     Value::Mesh(mesh) => {
       let mut mesh = (**mesh).clone(true, false, false);
-      mesh.transform.append_translation_mut(&translation);
+      mesh.transform = t * mesh.transform;
 
       Ok(Value::Mesh(Rc::new(mesh)))
     }
     Value::Light(light) => {
       let mut light = (**light).clone();
-      light.transform_mut().append_translation_mut(&translation);
+      let transform = light.transform_mut();
+      *transform = t * *transform;
       Ok(Value::Light(Box::new(light)))
     }
     _ => unreachable!(),
@@ -888,11 +892,53 @@ pub(crate) fn scale_impl(
   };
 
   let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
-  mesh.transform.m11 *= scale.x;
-  mesh.transform.m22 *= scale.y;
-  mesh.transform.m33 *= scale.z;
+
+  // Left-multiply: S * M (scale in world space)
+  let s = Matrix4::new_nonuniform_scaling(&scale);
+  mesh.transform = s * mesh.transform;
 
   Ok(Value::Mesh(mesh.into()))
+}
+
+fn apply_mat4_impl(
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let m00 = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+  let m01 = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+  let m02 = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+  let m03 = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+  let m10 = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+  let m11 = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
+  let m12 = arg_refs[6].resolve(args, kwargs).as_float().unwrap();
+  let m13 = arg_refs[7].resolve(args, kwargs).as_float().unwrap();
+  let m20 = arg_refs[8].resolve(args, kwargs).as_float().unwrap();
+  let m21 = arg_refs[9].resolve(args, kwargs).as_float().unwrap();
+  let m22 = arg_refs[10].resolve(args, kwargs).as_float().unwrap();
+  let m23 = arg_refs[11].resolve(args, kwargs).as_float().unwrap();
+  let m30 = arg_refs[12].resolve(args, kwargs).as_float().unwrap();
+  let m31 = arg_refs[13].resolve(args, kwargs).as_float().unwrap();
+  let m32 = arg_refs[14].resolve(args, kwargs).as_float().unwrap();
+  let m33 = arg_refs[15].resolve(args, kwargs).as_float().unwrap();
+  let mesh_val = arg_refs[16].resolve(args, kwargs);
+
+  // nalgebra Matrix4 is column-major, but we accept row-major order from the
+  // caller (matching Three.js Matrix4.elements which is column-major, but the
+  // codegen emits in row-major for readability).  We construct column-major:
+  let mat = Matrix4::new(
+    m00, m01, m02, m03,
+    m10, m11, m12, m13,
+    m20, m21, m22, m23,
+    m30, m31, m32, m33,
+  );
+
+  let mesh = mesh_val.as_mesh().unwrap();
+  let mut new_mesh = mesh.clone(true, false, false);
+  new_mesh.transform = mat;
+
+  Ok(Value::Mesh(Rc::new(new_mesh)))
 }
 
 fn spot_light_impl(
@@ -4435,18 +4481,15 @@ fn rot_impl(
   };
   let obj_arg = obj_arg.resolve(args, kwargs);
 
-  let apply_rotation = |transform: &Matrix4<f32>| {
-    let back: Matrix4<f32> = Matrix4::new_translation(&transform.column(3).xyz());
-    let to_origin: Matrix4<f32> = Matrix4::new_translation(&-transform.column(3).xyz());
-    back * rotation.to_homogeneous() * to_origin * *transform
-  };
+  // Left-multiply: R * M (rotate in world space)
+  let r = rotation.to_homogeneous();
 
   match obj_type {
     ObjType::Mesh => {
       let mesh = obj_arg.as_mesh().unwrap();
 
       let mut rotated_mesh = mesh.clone(true, false, false);
-      rotated_mesh.transform = apply_rotation(&rotated_mesh.transform);
+      rotated_mesh.transform = r * rotated_mesh.transform;
 
       Ok(Value::Mesh(Rc::new(rotated_mesh)))
     }
@@ -4455,7 +4498,7 @@ fn rot_impl(
 
       let mut rotated_light = (*light).clone();
       let transform = rotated_light.transform_mut();
-      *transform = apply_rotation(transform);
+      *transform = r * *transform;
 
       Ok(Value::Light(Box::new(rotated_light)))
     }
@@ -5556,6 +5599,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, _ctx| {
     apply_transforms_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "apply_mat4" => builtin_fn!(apply_mat4, |def_ix, arg_refs, args, kwargs, _ctx| {
+    apply_mat4_impl(def_ix, arg_refs, args, kwargs)
   }),
   "flip_normals" => builtin_fn!(flip_normals, |def_ix, arg_refs, args, kwargs, _ctx| {
     flip_normals_impl(def_ix, arg_refs, args, kwargs)

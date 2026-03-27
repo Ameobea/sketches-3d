@@ -13,7 +13,7 @@ p = offset_path(p, delta=0.25, end_type='superellipse', join_type='superellipse'
 
 spine_bevel_exponent = 8
 
-rail_sweep(
+export mesh = rail_sweep(
   spine_resolution=7,
   ring_resolution=96,
   spine=|u| v3(0, 0, u * 0.4),
@@ -28,4 +28,3 @@ rail_sweep(
 )
   // | remesh_planar_patches(max_angle_deg=2)
   | simplify(tolerance=0.001)
-  | render

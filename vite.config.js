@@ -1,4 +1,3 @@
-import { resolve } from 'path';
 import wasm from 'vite-plugin-wasm';
 
 import { sveltekit } from '@sveltejs/kit/vite';
@@ -8,11 +7,6 @@ import crossOriginIsolation from 'vite-plugin-cross-origin-isolation';
 
 const config = defineConfig({
   plugins: [wasm(), sveltekit(), devtoolsJson(), crossOriginIsolation()],
-  resolve: {
-    alias: {
-      src: resolve('./src'),
-    },
-  },
   server: {
     port: 4800,
     proxy: {

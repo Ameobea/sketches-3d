@@ -24,9 +24,13 @@ import { MaterialClass } from './shaders/customShader.js';
 import {
   DefaultGravity,
   DefaultJumpSpeed,
+  DefaultMaxPenetrationDepth,
+  DefaultMaxSlopeRadians,
+  DefaultMinJumpDelaySeconds,
   DefaultPlayerColliderHeight,
   DefaultPlayerColliderRadius,
   DefaultPlayerColliderShape,
+  DefaultSimulationTickRateHz,
 } from './conf.js';
 import type {
   AmmoInterface,
@@ -114,13 +118,6 @@ export interface BoostZoneEntry {
 //
 // If it's too big, the player tends to clip through geometry or stuff like that.
 const DEFAULT_STEP_HEIGHT = 0.05;
-const MAX_SLOPE_RADS = 0.8;
-// \/ This is a very important config item for the physics engine.  Setting it too high will result in
-// the player vibrating and janking out when pushing into corners and similar.  Setting too low causes
-// weird issues where the player slides around on the floor or clips through geometry.
-const MAX_PENETRATION_DEPTH = 0.075;
-const DEFAULT_SIMULATION_TICK_RATE_HZ = 160;
-const MIN_JUMP_DELAY_SECONDS = 0.25; // TODO: make configurable
 
 export interface PhysicsTicker {
   tick(physicsTime: number, fixedDt: number): void;
@@ -193,7 +190,7 @@ export class BulletPhysics {
   constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
     this.Ammo = Ammo;
     this.viz = viz;
-    this.simulationTickRate = viz.sceneConf.simulationTickRate ?? DEFAULT_SIMULATION_TICK_RATE_HZ;
+    this.simulationTickRate = viz.sceneConf.simulationTickRate ?? DefaultSimulationTickRateHz;
 
     this.collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
     this.dispatcher = new Ammo.btCollisionDispatcher(this.collisionConfiguration);
@@ -263,6 +260,9 @@ export class BulletPhysics {
   private get jumpSpeed() {
     return this.viz.sceneConf.player?.jumpVelocity ?? 20;
   }
+  private get minJumpDelaySeconds() {
+    return this.viz.sceneConf.player?.minJumpDelaySeconds ?? DefaultMinJumpDelaySeconds;
+  }
   public get playerColliderHeight() {
     return this.viz.sceneConf.player?.colliderSize?.height ?? DefaultPlayerColliderHeight;
   }
@@ -327,8 +327,10 @@ export class BulletPhysics {
       playerStepHeight,
       this.btvec3(0, 1, 0)
     );
-    this.playerController.setMaxPenetrationDepth(MAX_PENETRATION_DEPTH);
-    this.playerController.setMaxSlope(MAX_SLOPE_RADS);
+    this.playerController.setMaxPenetrationDepth(
+      this.viz.sceneConf.player?.maxPenetrationDepth ?? DefaultMaxPenetrationDepth
+    );
+    this.playerController.setMaxSlope(this.viz.sceneConf.player?.maxSlopeRadians ?? DefaultMaxSlopeRadians);
     this.playerController.setStepHeight(playerStepHeight);
     this.playerController.setJumpSpeed(this.viz.sceneConf.player?.jumpVelocity ?? DefaultJumpSpeed);
     if (this.viz.sceneConf.player?.terminalVelocity !== undefined) {
@@ -722,7 +724,7 @@ export class BulletPhysics {
         curTimeSeconds - this.lastJumpTimeSeconds > this.coyoteTimeSeconds);
 
     if (this.viz.controlState.movementEnabled && this.viz.keyStates['Space'] && canJump) {
-      if (curTimeSeconds - this.lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS) {
+      if (curTimeSeconds - this.lastJumpTimeSeconds > this.minJumpDelaySeconds) {
         this.playerController.jump(
           this.btvec3(
             this.moveDirection.x * (this.jumpSpeed * 0.18),
@@ -902,7 +904,7 @@ export class BulletPhysics {
         if (
           this.viz.controlState.movementEnabled &&
           this.viz.keyStates['Space'] &&
-          curTimeSeconds - this.lastJumpTimeSeconds > MIN_JUMP_DELAY_SECONDS
+          curTimeSeconds - this.lastJumpTimeSeconds > this.minJumpDelaySeconds
         ) {
           this.playerController.jump(
             this.btvec3(

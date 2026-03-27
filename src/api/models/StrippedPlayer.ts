@@ -12,7 +12,6 @@
  * Do not edit the class manually.
  */
 
-import { mapValues } from '../runtime';
 /**
  * 
  * @export
@@ -86,4 +85,3 @@ export function StrippedPlayerToJSONTyped(value?: Omit<StrippedPlayer, 'id'> | n
         'lastLoggedIn': value['lastLoggedIn'] == null ? undefined : ((value['lastLoggedIn']).toISOString()),
     };
 }
-

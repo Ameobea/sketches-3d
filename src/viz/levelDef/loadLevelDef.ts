@@ -3,9 +3,10 @@ import * as THREE from 'three';
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import { WorkerManager } from 'src/geoscript/workerManager';
 import type { Viz } from 'src/viz';
-import type { GeoscriptAssetDef, LevelDef, ObjectDef } from './types';
+import type { AssetDef, CsgAssetDef, CsgTreeNode, LevelDef, ObjectDef } from './types';
 import { buildMaterial } from './buildMaterial';
 import { TextureFetchPool } from './texturePool';
+import { generateCsgCode } from './csgCodeGen';
 
 export interface LevelObject {
   id: string;
@@ -98,56 +99,126 @@ const assignMaterial = (object: THREE.Object3D, mat: THREE.Material) => {
 };
 
 /**
- * Run all geoscript assets sequentially in a single worker (sharing context for efficiency).
- * Calls `onResolved` for each asset immediately after it completes.
- *
- * TODO: will probably want to put this in a worker pool at some point
+ * Topological sort of assets: CSG assets are ordered after their dependencies.
  */
-const resolveGeoscriptAssets = async (
-  entries: [string, GeoscriptAssetDef][],
+const topoSortAssets = (assets: Record<string, AssetDef>): string[] => {
+  const visited = new Set<string>();
+  const visiting = new Set<string>(); // cycle detection
+  const order: string[] = [];
+
+  const visit = (id: string) => {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) throw new Error(`Circular asset dependency involving "${id}"`);
+    visiting.add(id);
+
+    const asset = assets[id];
+    if (asset?.type === 'csg') {
+      const visitNode = (node: CsgTreeNode) => {
+        if ('asset' in node) {
+          visit(node.asset);
+        } else {
+          visitNode(node.a);
+          visitNode(node.b);
+        }
+      };
+      visitNode(asset.tree);
+    }
+
+    visiting.delete(id);
+    visited.add(id);
+    order.push(id);
+  };
+
+  for (const id of Object.keys(assets)) visit(id);
+  return order;
+};
+
+/**
+ * Extract a prototype Object3D from a geoscript run result.
+ * Returns null if no meshes were produced.
+ */
+const extractPrototype = (
+  objects: { type: string; geometry?: THREE.BufferGeometry; transform?: THREE.Matrix4 }[]
+): THREE.Object3D | null => {
+  const meshes: THREE.Mesh[] = [];
+  for (const obj of objects) {
+    if (obj.type !== 'mesh') continue;
+    const mesh = new THREE.Mesh(obj.geometry!, PLACEHOLDER_MAT);
+    mesh.applyMatrix4(obj.transform!);
+    meshes.push(mesh);
+  }
+
+  if (meshes.length === 0) return null;
+  if (meshes.length === 1) return meshes[0];
+  const group = new THREE.Group();
+  for (const mesh of meshes) group.add(mesh);
+  return group;
+};
+
+/** The render wrapper imports the asset's exported mesh and pipes it through `render`. */
+const RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | render';
+
+/**
+ * Build the modules map for running a single asset through the render wrapper.
+ * Geoscript assets become a single "code" module. CSG assets generate their own
+ * module tree via `generateCsgCode` and the CSG program itself becomes the "code" module.
+ */
+const buildAssetModules = (
+  id: string,
+  def: AssetDef,
+  allAssets: Record<string, AssetDef>
+): Record<string, string> => {
+  if (def.type === 'geoscript') {
+    return { code: def.code };
+  }
+
+  // CSG asset — generate the CSG program and collect its transitive modules
+  const { modules, code } = generateCsgCode(def as CsgAssetDef, allAssets);
+  return { ...modules, code };
+};
+
+/**
+ * Run all geoscript and CSG assets in dependency order within a single worker context.
+ * Each asset's code is loaded as a module that `export mesh = ...`, then a tiny render
+ * wrapper imports and renders it. This uniform protocol allows assets to be used both
+ * standalone and as CSG inputs interchangeably.
+ */
+const resolveScriptAssets = async (
+  sortedIds: string[],
+  assets: Record<string, AssetDef>,
   onResolved: (id: string, obj: THREE.Object3D) => void
 ): Promise<void> => {
-  if (entries.length === 0) return;
+  const scriptIds = sortedIds.filter(id => assets[id].type === 'geoscript' || assets[id].type === 'csg');
+  if (scriptIds.length === 0) return;
 
   const workerManager = new WorkerManager();
   const repl = workerManager.getWorker();
   const ctxPtr = await repl.init();
   const materials = buildGeoscriptMaterialsProxy();
 
-  for (const [id, def] of entries) {
+  for (const id of scriptIds) {
+    const def = assets[id];
+    const modules = buildAssetModules(id, def, assets);
+    const includePrelude = def.type === 'geoscript' ? (def.includePrelude ?? true) : false;
+
     const runResult = await runGeoscript({
-      code: def.code,
+      code: RENDER_WRAPPER,
       ctxPtr,
       repl,
       materials,
-      includePrelude: def.includePrelude ?? true,
+      includePrelude,
+      modules,
     });
 
     if (runResult.error) {
-      console.error(`[levelDef] Geoscript error for asset "${id}":`, runResult.error);
+      console.error(`[levelDef] ${def.type} error for asset "${id}":`, runResult.error);
       continue;
     }
 
-    const meshes: THREE.Mesh[] = [];
-    for (const obj of runResult.objects) {
-      if (obj.type !== 'mesh') continue;
-      const mesh = new THREE.Mesh(obj.geometry, PLACEHOLDER_MAT);
-      mesh.applyMatrix4(obj.transform);
-      meshes.push(mesh);
-    }
-
-    if (meshes.length === 0) {
-      console.warn(`[levelDef] Geoscript asset "${id}" produced no meshes`);
+    const prototype = extractPrototype(runResult.objects as any);
+    if (!prototype) {
+      console.warn(`[levelDef] Asset "${id}" produced no meshes`);
       continue;
-    }
-
-    let prototype: THREE.Object3D;
-    if (meshes.length === 1) {
-      prototype = meshes[0];
-    } else {
-      const group = new THREE.Group();
-      for (const mesh of meshes) group.add(mesh);
-      prototype = group;
     }
 
     onResolved(id, prototype);
@@ -335,9 +406,14 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     )
   );
 
+  // --- Topo-sort assets for dependency ordering ---
+
+  const sortedAssetIds = topoSortAssets(levelDef.assets);
+
   // --- Resolve gltf assets immediately (sync) ---
 
-  for (const [assetId, assetDef] of Object.entries(levelDef.assets)) {
+  for (const assetId of sortedAssetIds) {
+    const assetDef = levelDef.assets[assetId];
     if (assetDef.type !== 'gltf') continue;
     const src = loadedWorld.getObjectByName(assetDef.meshName);
     if (!src) {
@@ -349,13 +425,9 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     onAssetResolved(assetId, src);
   }
 
-  // --- Resolve geoscript assets async (streaming) ---
+  // --- Resolve geoscript + CSG assets async (streaming, in dependency order) ---
 
-  const geoscriptEntries = Object.entries(levelDef.assets).filter(
-    (e): e is [string, GeoscriptAssetDef] => e[1].type === 'geoscript'
-  ) as [string, GeoscriptAssetDef][];
-
-  const geoscriptDone = resolveGeoscriptAssets(geoscriptEntries, onAssetResolved);
+  const geoscriptDone = resolveScriptAssets(sortedAssetIds, levelDef.assets, onAssetResolved);
 
   // --- Return handle ---
 
@@ -365,5 +437,11 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     () => void 0
   );
 
-  return { objects: objectsPromise, complete: completePromise, prototypes: assetPrototypes, builtMaterials, loadedTextures };
+  return {
+    objects: objectsPromise,
+    complete: completePromise,
+    prototypes: assetPrototypes,
+    builtMaterials,
+    loadedTextures,
+  };
 };

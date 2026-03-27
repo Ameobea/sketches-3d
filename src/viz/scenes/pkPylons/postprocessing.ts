@@ -2,14 +2,39 @@ import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
-import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+import {
+  configureDefaultPostprocessingPipeline,
+  type ConfigureDefaultPostprocessingPipelineParams,
+} from 'src/viz/postprocessing/defaultPostprocessing';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
-export const initPylonsPostprocessing = (viz: Viz, vizConf: VizConfig, autoUpdateShadowMap = false) =>
+export const initPylonsPostprocessing = (
+  viz: Viz,
+  vizConf: VizConfig,
+  autoUpdateShadowMap = false,
+  postprocessingParamOverrides: Partial<ConfigureDefaultPostprocessingPipelineParams> = {}
+) =>
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
     addMiddlePasses: (composer, viz, quality) => {
+      const qualityParams = {
+        [GraphicsQuality.Low]: {
+          baseRaymarchStepCount: 40,
+          octaveCount: 3,
+          renderScale: 0.25,
+          fogFadeOutRangeY: 4,
+          fogFadeOutPow: 1.6,
+          fogDensityMultiplier: 0.32,
+          globalScale: 1.4,
+          jbuExtent: 1,
+          jbuSpatialSigma: 1.3,
+          jbuDepthSigma: 0.05,
+          fogColorHighDensity: new THREE.Vector3(0.3, 0.35, 0.44),
+        },
+        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 130 },
+        [GraphicsQuality.High]: { baseRaymarchStepCount: 240 },
+      }[quality];
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -140,
         fogMaxY: -5,
@@ -31,23 +56,7 @@ export const initPylonsPostprocessing = (viz: Viz, vizConf: VizConfig, autoUpdat
         noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
         globalScale: 1,
         halfRes: true,
-        ...{
-          [GraphicsQuality.Low]: {
-            baseRaymarchStepCount: 40,
-            octaveCount: 3,
-            renderScale: 0.25,
-            fogFadeOutRangeY: 4,
-            fogFadeOutPow: 1.6,
-            fogDensityMultiplier: 0.32,
-            globalScale: 1.4,
-            jbuExtent: 1,
-            jbuSpatialSigma: 1.3,
-            jbuDepthSigma: 0.05,
-            fogColorHighDensity: new THREE.Vector3(0.3, 0.35, 0.44),
-          },
-          [GraphicsQuality.Medium]: { baseRaymarchStepCount: 130 },
-          [GraphicsQuality.High]: { baseRaymarchStepCount: 240 },
-        }[quality],
+        ...qualityParams,
       });
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
@@ -59,4 +68,5 @@ export const initPylonsPostprocessing = (viz: Viz, vizConf: VizConfig, autoUpdat
       vizConf.graphics.quality > GraphicsQuality.Low
         ? { intensity: 2.5, levels: 2, luminanceThreshold: 0.08, radius: 0.1 }
         : null,
+    ...postprocessingParamOverrides,
   });

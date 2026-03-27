@@ -5,9 +5,11 @@
     selectedObjectId: string | null;
     selectedMaterialId: string | null;
     materialEditorOpen: boolean;
+    isCsgAsset: boolean;
     onadd: (assetId: string, materialId: string | undefined) => void;
     onmaterialchange: (matId: string | null) => void;
     ontoggleMaterialEditor: () => void;
+    onconvertToCsg: () => void;
   }
 
   let {
@@ -16,9 +18,11 @@
     selectedObjectId,
     selectedMaterialId,
     materialEditorOpen,
+    isCsgAsset,
     onadd,
     onmaterialchange,
     ontoggleMaterialEditor,
+    onconvertToCsg,
   }: Props = $props();
 
   let selectedAssetOverride = $state<string | null>(null);
@@ -94,6 +98,12 @@
         {/each}
       </select>
     </div>
+
+    {#if !isCsgAsset}
+      <button class="csg-btn" onclick={onconvertToCsg}>convert to CSG</button>
+    {:else}
+      <span class="csg-label">CSG asset</span>
+    {/if}
   {/if}
 </div>
 
@@ -181,5 +191,29 @@
 
   .selected-mat-row {
     margin-top: 4px;
+  }
+
+  .csg-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    margin-top: 6px;
+    background: #1a1a1a;
+    color: #e8e8e8;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    cursor: pointer;
+    font: 12px monospace;
+  }
+
+  .csg-btn:hover {
+    background: #252525;
+  }
+
+  .csg-label {
+    display: block;
+    margin-top: 6px;
+    color: #8f8;
+    font-size: 12px;
   }
 </style>

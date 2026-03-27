@@ -7,9 +7,10 @@ import { loadLevelDef } from 'src/viz/levelDef/loadLevelDef';
 import type { LevelDef } from 'src/viz/levelDef/types';
 import type { SceneConfig } from '..';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
-import { Score, type ScoreThresholds } from 'src/viz/parkour/TimeDisplay.svelte';
+import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
+import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 
 export const processLoadedScene = (
   viz: Viz,
@@ -17,10 +18,10 @@ export const processLoadedScene = (
   vizConf: VizConfig,
   levelDef: LevelDef
 ): SceneConfig => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
   viz.scene.add(ambientLight);
 
-  const sunLight = new THREE.DirectionalLight(0xffffff, 3.0);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
   sunLight.position.set(40, 80, 40);
   sunLight.castShadow = true;
 
@@ -53,12 +54,12 @@ export const processLoadedScene = (
     );
   });
 
-  const playerHeight = 2.2;
-  const playerRadius = 0.5;
+  const playerHeight = 3.5;
+  const playerRadius = 1;
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
     buildCustomShader({
-      color: new THREE.Color(0xad6dcf),
+      color: new THREE.Color(0x8d3d9f),
       metalness: 0.18,
       roughness: 0.82,
     })
@@ -109,11 +110,11 @@ export const processLoadedScene = (
     'jump_pad_speedup_test',
     true,
     {
-      gravity: 90,
+      gravity: 240,
       gravityShaping: {
         riseMultiplier: 1.0,
-        apexMultiplier: 1.4,
-        fallMultiplier: 1.5,
+        apexMultiplier: 0.6,
+        fallMultiplier: 1.25,
         apexThreshold: 4.0,
         kneeWidth: 0.1,
       },
@@ -122,9 +123,9 @@ export const processLoadedScene = (
         mesh: playerMesh,
         colliderSize: { height: playerHeight, radius: playerRadius },
         playerShadow: { radius: playerRadius, intensity: 0.85 },
-        moveSpeed: { onGround: 8, inAir: 12 },
-        jumpVelocity: 36,
-        terminalVelocity: 80,
+        moveSpeed: { onGround: 12.5, inAir: 18 },
+        jumpVelocity: 76,
+        terminalVelocity: 180,
         dashConfig: {
           chargeConfig: { curCharges: rwritable(Infinity) },
           dashMagnitude: 16,
@@ -133,14 +134,17 @@ export const processLoadedScene = (
         },
         coyoteTimeSeconds: 0.135,
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
+        maxSlopeRadians: 1.3,
       },
       viewMode: {
         type: 'thirdPerson',
-        distance: 25,
+        distance: 15,
         cameraFOV: 75,
       },
     }
   );
+
+  initPylonsPostprocessing(viz, vizConf, false, { toneMapping: { mode: 'agx', exposure: 0.9 } });
 
   return pkManager.buildSceneConfig();
 };

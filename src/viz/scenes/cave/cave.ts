@@ -43,12 +43,14 @@ export const processLoadedScene = async (
   fakeSky.matrixWorldNeedsUpdate = true;
   viz.scene.add(fakeSky);
 
-  configureCustomShaderGlobals({ ambientDistanceAmp: {
-    ampFactor: 2,
-    falloffEndDistance: 30,
-    falloffStartDistance: 0.1,
-    exponent: 1.5,
-  } });
+  configureCustomShaderGlobals({
+    ambientDistanceAmp: {
+      ampFactor: 2,
+      falloffEndDistance: 30,
+      falloffStartDistance: 0.1,
+      exponent: 1.5,
+    },
+  });
 
   // const spotlightHelper = new THREE.SpotLightHelper(funnelSpotlight);
   // viz.scene.add(spotlightHelper);

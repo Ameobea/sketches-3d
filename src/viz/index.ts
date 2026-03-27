@@ -163,6 +163,7 @@ export class Viz {
     | ((sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => void)
     | null = null;
   private didManuallyLockPointer = false;
+  private pointerLockRequestInFlight = false;
   private clockStopTime = 0;
   private unsubscribePauseStateChange: Unsubscriber | null = null;
   private customKeyEventMap = new Map<string, () => void>();
@@ -224,7 +225,7 @@ export class Viz {
 
     // backwards compat
     if (sceneDef.legacyLights) {
-      this.renderer.useLegacyLights = true;
+      (this.renderer as any).useLegacyLights = true;
       THREE.ColorManagement.enabled = false;
     } else {
       THREE.ColorManagement.enabled = true;
@@ -525,18 +526,10 @@ export class Viz {
         this.viewMode.type === 'top-down' ||
         this.viewMode.type === 'thirdPerson') &&
       !document.pointerLockElement &&
+      this.controlState.cameraControlEnabled &&
       this.didManuallyLockPointer
     ) {
-      try {
-        await document.body.requestPointerLock({ unadjustedMovement: true });
-      } catch (err) {
-        if (err instanceof Error && err.name === 'NotSupportedError') {
-          // some browsers/operating systems do not support the `unadjustedMovement` option
-          await document.body.requestPointerLock();
-        } else {
-          console.error('Failed to get pointer lock: ', err);
-        }
-      }
+      await this.requestPointerLock();
     }
   };
 
@@ -592,27 +585,64 @@ export class Viz {
       this.controlState.cameraControlEnabled
     ) {
       this.didManuallyLockPointer = true;
-      // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
-      // that happen in some cases when using high polling rate mice or something like that
-      try {
-        await document.body.requestPointerLock({ unadjustedMovement: true });
-      } catch (err) {
-        if (err instanceof Error && err.name === 'NotSupportedError') {
-          // some browsers/operating systems don't support the `unadjustedMovement` option
-          await document.body.requestPointerLock();
-        } else {
-          console.error('Failed to get pointer lock: ', err);
-        }
-      }
+      await this.requestPointerLock();
     }
   };
 
   private handlePointerLockChange = (_evt: Event) => {
+    this.pointerLockRequestInFlight = false;
     if (this.isBlurred || !this.controlState.cameraControlEnabled) {
       return;
     }
     this.paused.set(!document.pointerLockElement);
   };
+
+  private isBenignPointerLockError(err: unknown): boolean {
+    return (
+      err instanceof Error &&
+      (err.name === 'NotAllowedError' ||
+        err.name === 'WrongDocumentError' ||
+        err.name === 'InUseAttributeError' ||
+        err.name === 'InvalidStateError')
+    );
+  }
+
+  private canRequestPointerLock(): boolean {
+    return (
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible' &&
+      document.hasFocus() &&
+      !!document.body &&
+      document.body.isConnected
+    );
+  }
+
+  private async requestPointerLock() {
+    if (document.pointerLockElement || this.pointerLockRequestInFlight || !this.canRequestPointerLock()) {
+      return;
+    }
+
+    this.pointerLockRequestInFlight = true;
+    try {
+      // `unadjustedMovement` is needed to bypass mouse acceleration and prevent bad inputs
+      // that happen in some cases when using high polling rate mice or something like that
+      await document.body.requestPointerLock({ unadjustedMovement: true });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'NotSupportedError') {
+        try {
+          await document.body.requestPointerLock();
+        } catch (fallbackErr) {
+          if (!this.isBenignPointerLockError(fallbackErr)) {
+            console.error('Failed to get pointer lock: ', fallbackErr);
+          }
+        }
+      } else if (!this.isBenignPointerLockError(err)) {
+        console.error('Failed to get pointer lock: ', err);
+      }
+    } finally {
+      this.pointerLockRequestInFlight = false;
+    }
+  }
 
   private handlePauseStateChange = (paused: boolean) => {
     if (paused) {

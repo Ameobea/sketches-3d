@@ -22,13 +22,9 @@ import type {
 } from '../models/index';
 import {
     PlayFromJSON,
-    PlayToJSON,
-    PlayerLoginFromJSON,
     PlayerLoginToJSON,
     StrippedMapFromJSON,
-    StrippedMapToJSON,
     StrippedPlayerFromJSON,
-    StrippedPlayerToJSON,
 } from '../models/index';
 
 export interface AddPlayRequest {

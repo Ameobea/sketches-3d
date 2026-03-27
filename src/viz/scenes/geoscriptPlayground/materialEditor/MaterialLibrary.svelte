@@ -53,10 +53,10 @@
     {onclose}
     showNoneOption={false}
   >
-    <div slot="footer-end">
+    {#snippet footerEnd()}
       <button class="footer-button" onclick={onclose}>cancel</button>
       <button class="footer-button" onclick={handleSubmit} disabled={selectedId === null}>import</button>
-    </div>
+    {/snippet}
   </ItemPicker>
 {/if}
 

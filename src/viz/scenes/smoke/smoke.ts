@@ -53,12 +53,14 @@ export const processLoadedScene = async (
     cubesTexture: 'https://i.ameo.link/bey.jpg',
   });
 
-  configureCustomShaderGlobals({ ambientDistanceAmp: {
-    ampFactor: 1.6,
-    falloffStartDistance: 0,
-    falloffEndDistance: 30,
-    exponent: 1.34,
-  } });
+  configureCustomShaderGlobals({
+    ambientDistanceAmp: {
+      ampFactor: 1.6,
+      falloffStartDistance: 0,
+      falloffEndDistance: 30,
+      exponent: 1.34,
+    },
+  });
 
   initWebSynth({ compositionIDToLoad: 107 }).then(async ctx => {
     await delay(1200);

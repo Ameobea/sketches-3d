@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { type Writable } from 'svelte/store';
-  import type { InfiniteConfig, PopupScreenFocus } from '../util';
+  import type { InfiniteConfig, PopupScreenFocus } from '../util/util';
 
   export let infiniteCtx: InitialInfiniteCtx;
   export let popUpCalled: Writable<PopupScreenFocus>;

@@ -1,4 +1,11 @@
-import { EffectComposer, EffectPass, RenderPass, SMAAEffect, SMAAPreset, type Effect } from 'postprocessing';
+import {
+  type EffectComposer,
+  EffectPass,
+  RenderPass,
+  SMAAEffect,
+  SMAAPreset,
+  type Effect,
+} from 'postprocessing';
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
@@ -139,7 +146,7 @@ export interface ToneMappingConfig {
   exposure?: number;
 }
 
-interface ConfigureDefaultPostprocessingPipelineParams {
+export interface ConfigureDefaultPostprocessingPipelineParams {
   viz: Viz;
   quality: GraphicsQuality;
   addMiddlePasses?: (composer: EffectComposer, viz: Viz, quality: GraphicsQuality) => void;
@@ -326,6 +333,9 @@ export const configureDefaultPostprocessingPipeline = ({
     finalPass
   );
   viz.postprocessingController = controller;
+  viz.registerResizeCb(() => {
+    effectComposer.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
+  });
   controller.setGamma(viz.vizConfig.current.graphics.gamma);
   return controller;
 };

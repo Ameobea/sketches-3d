@@ -449,6 +449,23 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     viz,
     quality: vizConf.graphics.quality,
     addMiddlePasses: (composer, viz, quality) => {
+      const qualityParams = {
+        [GraphicsQuality.Low]: {
+          baseRaymarchStepCount: 40,
+          octaveCount: 3,
+          renderScale: 0.25,
+          fogFadeOutRangeY: 8,
+          fogFadeOutPow: 1.6,
+          globalScale: 1.4,
+          noisePow: 1.5,
+          noiseBias: 0.5,
+          jbuExtent: 1,
+          jbuSpatialSigma: 1.3,
+          jbuDepthSigma: 0.05,
+        },
+        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 30 },
+        [GraphicsQuality.High]: { baseRaymarchStepCount: 60 },
+      }[quality];
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -90,
         fogMaxY: -40,
@@ -470,23 +487,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
         noiseMovementPerSecond: new THREE.Vector2(4.1, 4.1),
         globalScale: 1,
         halfRes: quality <= GraphicsQuality.Medium,
-        ...{
-          [GraphicsQuality.Low]: {
-            baseRaymarchStepCount: 40,
-            octaveCount: 3,
-            renderScale: 0.25,
-            fogFadeOutRangeY: 8,
-            fogFadeOutPow: 1.6,
-            globalScale: 1.4,
-            noisePow: 1.5,
-            noiseBias: 0.5,
-            jbuExtent: 1,
-            jbuSpatialSigma: 1.3,
-            jbuDepthSigma: 0.05,
-          },
-          [GraphicsQuality.Medium]: { baseRaymarchStepCount: 30 },
-          [GraphicsQuality.High]: { baseRaymarchStepCount: 60 },
-        }[quality],
+        ...qualityParams,
       });
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));

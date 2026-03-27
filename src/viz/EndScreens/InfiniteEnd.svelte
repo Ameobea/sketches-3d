@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { InfiniteConfig } from '../util';
+  import type { InfiniteConfig } from '../util/util';
   export let currentConfig: InfiniteConfig;
   export let time: number;
 </script>

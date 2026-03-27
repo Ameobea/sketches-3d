@@ -210,7 +210,11 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   dLight.updateMatrixWorld();
   dLight.target.updateMatrixWorld();
 
-  configureShadowMap({ light: dLight, renderer: viz.renderer, quality: viz.vizConfig.current.graphics.quality });
+  configureShadowMap({
+    light: dLight,
+    renderer: viz.renderer,
+    quality: viz.vizConfig.current.graphics.quality,
+  });
 
   dLight.shadow.camera.near = 200;
   dLight.shadow.camera.far = 800;
@@ -678,11 +682,10 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   const sky = buildSky();
   viz.scene.add(sky);
 
-  const _pillars = new Array(6).fill(null).map((_, i) => {
+  new Array(6).fill(null).forEach((_, i) => {
     const name = `pillar${i + 1}`;
     const obj = getMesh(loadedWorld, name);
     obj.removeFromParent();
-    return obj;
   });
 
   const skyMaterial = sky.material as THREE.ShaderMaterial;

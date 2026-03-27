@@ -97,6 +97,11 @@ const methods = {
   ) => {
     await initAsyncDeps(deps, argsByKey);
   },
+  setModuleSources: (ctxPtr: number, modules: Record<string, string>) => {
+    const names = Object.keys(modules);
+    const sources = Object.values(modules);
+    Geoscript.geoscript_repl_set_module_sources(ctxPtr, names, sources);
+  },
   eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
     Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
     if (Geoscript.geoscript_repl_has_err(ctxPtr)) {

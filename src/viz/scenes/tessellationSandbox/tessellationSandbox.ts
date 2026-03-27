@@ -65,7 +65,6 @@ export const processLoadedScene = async (
     }
   );
   viz.registerBeforeRenderCb(curTimeSeconds => pylonMaterial.setCurTimeSeconds(curTimeSeconds));
-  const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
   const normalMat = new THREE.MeshNormalMaterial({
     // side: THREE.DoubleSide,
   });
@@ -217,7 +216,7 @@ export const processLoadedScene = async (
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
-    addMiddlePasses: (composer, viz, quality) => {
+    addMiddlePasses: (composer, viz, _quality) => {
       if (vizConf.graphics.quality > GraphicsQuality.Low) {
         const n8aoPass = new N8AOPostPass(
           viz.scene,

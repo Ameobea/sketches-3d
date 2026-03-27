@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { Score, type ScoreThresholds } from '../../parkour/TimeDisplay.svelte';
+import { Score, type ScoreThresholds } from '../../parkour/timeDisplayTypes';
 import { buildPylonsMaterials } from '../../parkour/regions/pylons/materials';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 import { ParkourManager } from '../../parkour/ParkourManager.svelte';

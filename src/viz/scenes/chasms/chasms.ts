@@ -300,7 +300,11 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   dLight.updateMatrixWorld();
   dLight.target.updateMatrixWorld();
 
-  configureShadowMap({ light: dLight, renderer: viz.renderer, quality: viz.vizConfig.current.graphics.quality });
+  configureShadowMap({
+    light: dLight,
+    renderer: viz.renderer,
+    quality: viz.vizConfig.current.graphics.quality,
+  });
 
   dLight.shadow.camera.near = 1;
   dLight.shadow.camera.far = 900;

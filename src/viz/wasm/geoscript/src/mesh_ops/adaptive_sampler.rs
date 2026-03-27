@@ -59,7 +59,7 @@ const DEFAULT_MIN_SEGMENT_LENGTH: f32 = 1e-5;
 /// Logs curvature/arc-length mass breakdown, baseline suppression factors, and
 /// per-span budget allocations.  Flip back to `false` before committing.
 #[allow(dead_code)]
-const ADAPTIVE_SAMPLER_DEBUG: bool = true;
+const ADAPTIVE_SAMPLER_DEBUG: bool = false;
 
 /// Oversampling factor for Phase 1. Dense enough to catch features missed by a single midpoint
 /// check, while remaining practical for WASM execution in a browser.

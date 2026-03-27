@@ -9,8 +9,6 @@ import type { PerspectiveCamera } from 'three';
 import VolumetricCompositorFragmentShader from './compositor.frag?raw';
 import VolumetricCompositorVertexShader from './compositor.vert?raw';
 
-export interface VolumetricPassCompositorParams {}
-
 interface VolumetricCompositorMaterialProps {
   /**
    * Output of the volumetric pass (rgb = fog color, a = density)
@@ -33,7 +31,14 @@ interface VolumetricCompositorMaterialProps {
 }
 
 export class VolumetricCompositorMaterial extends THREE.ShaderMaterial implements Resizable {
-  constructor({ fogTexture, fogDepthTexture, camera, jbuExtent, jbuSpatialSigma, jbuDepthSigma }: VolumetricCompositorMaterialProps) {
+  constructor({
+    fogTexture,
+    fogDepthTexture,
+    camera,
+    jbuExtent,
+    jbuSpatialSigma,
+    jbuDepthSigma,
+  }: VolumetricCompositorMaterialProps) {
     const uniforms = {
       fogTexture: { value: fogTexture },
       fogDepthTexture: { value: fogDepthTexture },
@@ -112,16 +117,13 @@ export class VolumetricCompositorPass extends Pass {
     const sceneDepth = (this.fullscreenMaterial as VolumetricCompositorMaterial).uniforms.sceneDepth.value;
     if (sceneDepth && outputBuffer && sceneDepth === outputBuffer.depthTexture) {
       if (!this.depthCopyRenderTexture) {
-        this.depthCopyRenderTexture = new THREE.WebGLRenderTarget(
-          outputBuffer.depthTexture.image.width,
-          outputBuffer.depthTexture.image.height,
-          {
-            minFilter: outputBuffer.depthTexture.minFilter,
-            magFilter: outputBuffer.depthTexture.magFilter,
-            format: outputBuffer.depthTexture.format,
-            generateMipmaps: outputBuffer.depthTexture.generateMipmaps,
-          }
-        );
+        const dt = outputBuffer.depthTexture!;
+        this.depthCopyRenderTexture = new THREE.WebGLRenderTarget(dt.image.width, dt.image.height, {
+          minFilter: dt.minFilter,
+          magFilter: dt.magFilter,
+          format: dt.format,
+          generateMipmaps: dt.generateMipmaps,
+        });
       }
       if (!this.depthTextureCopyPass) {
         this.depthTextureCopyPass = new CopyPass();

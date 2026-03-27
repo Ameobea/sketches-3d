@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { createMaterial } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDef } from 'src/geoscript/materials';
 
@@ -12,7 +13,7 @@
     onsave: () => void;
   } = $props();
 
-  let name = $state(material.name);
+  let name = $state(untrack(() => material.name));
   let isShared = $state(false);
   let isSaving = $state(false);
   let error = $state<string | null>(null);

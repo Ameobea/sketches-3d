@@ -9,12 +9,7 @@ import noiseShaders from './noise.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 import { buildTriplanarDefsFragment, type TriplanarMappingParams } from './triplanarMapping';
 import ssrDefsFragment from './ssr/ssrDefs.frag?raw';
-import ssrWriteFragment from './ssr/ssrWrite.frag?raw';
-import {
-  buildReverseColorRampGenerator,
-  ReverseColorRampCommonFunctions,
-  type ReverseColorRampParams,
-} from './reverseColorRamp';
+import { buildReverseColorRampGenerator, ReverseColorRampCommonFunctions } from './reverseColorRamp';
 import { MaterialClass } from './customShader.types';
 import type {
   AmbientDistanceAmpParams,
@@ -336,7 +331,7 @@ export const buildCustomShaderArgs = (
     normalMapType,
     useDisplacementNormals,
     roughnessMap,
-    metalnessMap,
+    metalnessMap: _metalnessMap,
     emissiveIntensity,
     lightMapIntensity,
     fogMultiplier,
@@ -370,7 +365,7 @@ export const buildCustomShaderArgs = (
     useComputedNormalMap,
     usePackedDiffuseNormalGBA,
     readRoughnessMapFromRChannel,
-    disableToneMapping,
+    disableToneMapping: _disableToneMapping,
     disabledDirectionalLightIndices,
     disabledSpotLightIndices,
     randomizeUVOffset,
@@ -399,57 +394,55 @@ export const buildCustomShaderArgs = (
       // envMapIntensity: { value: 1 },
     },
   ]);
-  uniforms.normalScale = { type: 'v2', value: new THREE.Vector2(normalScale, normalScale) };
+  uniforms.normalScale = { value: new THREE.Vector2(normalScale, normalScale) };
 
   if (tileBreaking?.type === 'fastFixMipmap') {
-    uniforms.noiseSampler = { type: 't', value: buildNoiseTexture() };
+    uniforms.noiseSampler = { value: buildNoiseTexture() };
   }
 
-  uniforms.roughness = { type: 'f', value: roughness };
-  uniforms.metalness = { type: 'f', value: metalness };
-  uniforms.ior = { type: 'f', value: ior };
-  uniforms.clearcoat = { type: 'f', value: clearcoat };
-  uniforms.clearcoatRoughness = { type: 'f', value: clearcoatRoughness };
-  uniforms.clearcoatNormalMap = { type: 't', value: clearcoatNormalMap };
+  uniforms.roughness = { value: roughness };
+  uniforms.metalness = { value: metalness };
+  uniforms.ior = { value: ior };
+  uniforms.clearcoat = { value: clearcoat };
+  uniforms.clearcoatRoughness = { value: clearcoatRoughness };
+  uniforms.clearcoatNormalMap = { value: clearcoatNormalMap };
   uniforms.clearcoatNormalScale = {
-    type: 'v2',
     value: new THREE.Vector2(clearcoatNormalScale, clearcoatNormalScale),
   };
-  uniforms.clearcoatNormalMapTransform = { type: 'mat3', value: clearcoatNormalMap?.matrix };
-  uniforms.iridescence = { type: 'f', value: iridescence };
-  uniforms.iridescenceIOR = { type: 'f', value: 1.3 };
-  uniforms.iridescenceThicknessMinimum = { type: 'f', value: 100 };
-  uniforms.iridescenceThicknessMaximum = { type: 'f', value: 400 };
-  uniforms.iridescenceThicknessMapTransform = { type: 'mat3', value: new THREE.Matrix3() };
+  uniforms.clearcoatNormalMapTransform = { value: clearcoatNormalMap?.matrix };
+  uniforms.iridescence = { value: iridescence };
+  uniforms.iridescenceIOR = { value: 1.3 };
+  uniforms.iridescenceThicknessMinimum = { value: 100 };
+  uniforms.iridescenceThicknessMaximum = { value: 400 };
+  uniforms.iridescenceThicknessMapTransform = { value: new THREE.Matrix3() };
   if (sheen !== 0) {
     uniforms.sheenColor = {
-      type: 'c',
       value: (() => {
         const col = typeof sheenColor === 'number' ? new THREE.Color(sheenColor) : sheenColor;
         return col.multiplyScalar(sheen);
       })(),
     };
-    uniforms.sheenRoughness = { type: 'f', value: sheenRoughness };
+    uniforms.sheenRoughness = { value: sheenRoughness };
   }
-  uniforms.transmission = { type: 'f', value: transmission };
-  uniforms.transmissionMap = { type: 't', value: transmissionMap };
-  uniforms.transmissionSamplerSize = { type: 'v2', value: new THREE.Vector2() };
-  uniforms.transmissionSamplerMap = { type: 't', value: null };
+  uniforms.transmission = { value: transmission };
+  uniforms.transmissionMap = { value: transmissionMap };
+  uniforms.transmissionSamplerSize = { value: new THREE.Vector2() };
+  uniforms.transmissionSamplerMap = { value: null };
 
-  uniforms.curTimeSeconds = { type: 'f', value: 0.0 };
-  uniforms.diffuse = { type: 'c', value: typeof color === 'number' ? new THREE.Color(color) : color };
-  uniforms.mapTransform = { type: 'mat3', value: new THREE.Matrix3().identity() };
+  uniforms.curTimeSeconds = { value: 0.0 };
+  uniforms.diffuse = { value: typeof color === 'number' ? new THREE.Color(color) : color };
+  uniforms.mapTransform = { value: new THREE.Matrix3().identity() };
   if (uvTransform) {
-    uniforms.uvTransform = { type: 'm3', value: uvTransform };
+    uniforms.uvTransform = { value: uvTransform };
   }
   if (emissiveIntensity !== undefined) {
-    uniforms.emissiveIntensity = { type: 'f', value: emissiveIntensity };
+    uniforms.emissiveIntensity = { value: emissiveIntensity };
   }
-  uniforms.specularIntensity = { type: 'f', value: 1 };
-  uniforms.specularColor = { type: 'c', value: new THREE.Color(0xffffff) };
+  uniforms.specularIntensity = { value: 1 };
+  uniforms.specularColor = { value: new THREE.Color(0xffffff) };
   // TODO: Need to handle swapping uvs to `uv2` if light map is provided
   if (lightMapIntensity !== undefined) {
-    uniforms.lightMapIntensity = { type: 'f', value: lightMapIntensity };
+    uniforms.lightMapIntensity = { value: lightMapIntensity };
   }
   uniforms.playerShadowPos = { value: playerShadowPos };
   uniforms.playerShadowParams = { value: playerShadowParams };

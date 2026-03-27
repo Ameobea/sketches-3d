@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import type { EditorView } from 'codemirror';
   import type { KeyBinding } from '@codemirror/view';
+  import { untrack } from 'svelte';
   import { buildEditor, buildGLSLLanguage } from 'src/geoscript/editor';
   import {
     buildDefaultShaders,
@@ -29,8 +30,8 @@
 
   let activeShader = $state<(typeof shaderTypes.physical)[number]>('color');
 
-  let localShaders = $state({ ...shaderState.shaders });
-  const initialShaders = { ...shaderState.shaders };
+  let localShaders = $state(untrack(() => ({ ...shaderState.shaders })));
+  const initialShaders = untrack(() => ({ ...shaderState.shaders }));
 
   const getCode = () => (localShaders as any)?.[activeShader] ?? buildDefaultShaders()[activeShader];
 

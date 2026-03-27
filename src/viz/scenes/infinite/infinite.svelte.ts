@@ -90,7 +90,7 @@ const initLevel = async (viz: Viz) => {
         const target = document.createElement('div');
         document.body.appendChild(target);
         const infiniteEndProps = { currentConfig, time: viz.clock.oldTime };
-        const _endDisplay = mount(InfiniteEndSvelte, { target, props: infiniteEndProps });
+        mount(InfiniteEndSvelte, { target, props: infiniteEndProps });
       }
     }
   }, 250);

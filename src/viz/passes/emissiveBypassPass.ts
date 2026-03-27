@@ -32,7 +32,7 @@ export class EmissiveBypassPass extends Pass {
   private readonly bypassCamera: THREE.PerspectiveCamera;
   readonly emissiveRT: THREE.WebGLRenderTarget;
   private stableDepthTarget: THREE.WebGLRenderTarget | null = null;
-  private readonly mainCamera: THREE.PerspectiveCamera;
+  private readonly _mainCamera: THREE.PerspectiveCamera;
   public readonly scene: THREE.Scene;
   private readonly bypassEntries: BypassEntry[] = [];
   private readonly _registeredMeshes = new Set<THREE.Mesh>();
@@ -46,7 +46,7 @@ export class EmissiveBypassPass extends Pass {
   constructor(scene: THREE.Scene, mainCamera: THREE.PerspectiveCamera, width: number, height: number) {
     super('EmissiveBypassPass');
     this.scene = scene;
-    this.mainCamera = mainCamera;
+    this._mainCamera = mainCamera;
     this.needsSwap = false;
 
     this.bypassCamera = mainCamera.clone() as THREE.PerspectiveCamera;
@@ -107,8 +107,8 @@ export class EmissiveBypassPass extends Pass {
     // Frustum cull: skip the entire pass if no bypass mesh is within the camera frustum.
     // This avoids the depth blit, clear, and scene render when all portals are off-screen.
     this._projScreenMatrix.multiplyMatrices(
-      this.mainCamera.projectionMatrix,
-      this.mainCamera.matrixWorldInverse
+      this._mainCamera.projectionMatrix,
+      this._mainCamera.matrixWorldInverse
     );
     this._frustum.setFromProjectionMatrix(this._projScreenMatrix);
     const anyVisible = this.bypassEntries.some(({ mesh }) => {
@@ -132,10 +132,10 @@ export class EmissiveBypassPass extends Pass {
     // Sync bypass camera to current main camera pose.
     // matrixWorldNeedsUpdate = false prevents Three.js from overwriting matrixWorld
     // with a recomputation from position/rotation during renderer.render().
-    this.bypassCamera.matrixWorld.copy(this.mainCamera.matrixWorld);
-    this.bypassCamera.matrixWorldInverse.copy(this.mainCamera.matrixWorldInverse);
-    this.bypassCamera.projectionMatrix.copy(this.mainCamera.projectionMatrix);
-    this.bypassCamera.projectionMatrixInverse.copy(this.mainCamera.projectionMatrixInverse);
+    this.bypassCamera.matrixWorld.copy(this._mainCamera.matrixWorld);
+    this.bypassCamera.matrixWorldInverse.copy(this._mainCamera.matrixWorldInverse);
+    this.bypassCamera.projectionMatrix.copy(this._mainCamera.projectionMatrix);
+    this.bypassCamera.projectionMatrixInverse.copy(this._mainCamera.projectionMatrixInverse);
     this.bypassCamera.matrixWorldNeedsUpdate = false;
 
     // Ensure emissiveRT's WebGL FBO exists before blit

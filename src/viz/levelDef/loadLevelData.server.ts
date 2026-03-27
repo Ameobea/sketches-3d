@@ -33,9 +33,7 @@ export const loadLevelData = (name: string): LevelDef => {
   // Parse with the raw schema, which accepts both `code` and `file` geoscript assets.
   const rawResult = LevelDefRawSchema.safeParse(json);
   if (!rawResult.success) {
-    const msg = rawResult.error.issues
-      .map(i => `  ${i.path.join('.')}: ${i.message}`)
-      .join('\n');
+    const msg = rawResult.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`[loadLevelData] Invalid level def "${name}":\n${msg}`);
   }
 
@@ -55,9 +53,7 @@ export const loadLevelData = (name: string): LevelDef => {
   // Validate the fully-inlined def (includes cross-reference checks).
   const result = LevelDefSchema.safeParse(inlinedDef);
   if (!result.success) {
-    const msg = result.error.issues
-      .map(i => `  ${i.path.join('.')}: ${i.message}`)
-      .join('\n');
+    const msg = result.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`[loadLevelData] Invalid level def "${name}" (after inlining):\n${msg}`);
   }
 

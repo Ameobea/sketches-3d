@@ -1,3 +1,4 @@
+import type * as THREE from 'three';
 import { getMultipleTextures, type TextureID } from 'src/geoscript/geotoyAPIClient';
 import { buildMaterial, LoadedTextures, type MaterialDef } from 'src/geoscript/materials';
 import type { MatEntry } from 'src/geoscript/runner/types';

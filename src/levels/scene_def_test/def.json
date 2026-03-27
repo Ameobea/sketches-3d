@@ -3,7 +3,8 @@
   "version": 1,
   "textures": {
     "obsidian_color": {
-      "url": "https://i.ameo.link/biv.jpg"
+      "url": "https://i.ameo.link/biv.jpg",
+      "colorSpace": "srgb"
     },
     "obsidian_normal": {
       "url": "https://i.ameo.link/biw.jpg"
@@ -12,7 +13,8 @@
       "url": "https://i.ameo.link/bix.jpg"
     },
     "bricks_color": {
-      "url": "https://i.ameo.link/d1m.avif"
+      "url": "https://i.ameo.link/d1m.avif",
+      "colorSpace": "srgb"
     },
     "bricks_normal": {
       "url": "https://i.ameo.link/biq.jpg"
@@ -21,7 +23,8 @@
       "url": "https://i.ameo.link/bir.jpg"
     },
     "gold_albedo": {
-      "url": "https://i.ameo.link/be0.jpg"
+      "url": "https://i.ameo.link/be0.jpg",
+      "colorSpace": "srgb"
     },
     "gold_normal": {
       "url": "https://i.ameo.link/be2.jpg"
@@ -101,19 +104,133 @@
   "assets": {
     "ground": {
       "type": "geoscript",
-      "code": "box(30, 1, 30) | render"
+      "code": "export mesh = box(30, 1, 30)"
     },
     "platform_small": {
       "type": "geoscript",
-      "code": "box(4, 0.5, 4) | render"
+      "code": "export mesh = box(4, 0.5, 4)"
     },
     "platform_long": {
       "type": "geoscript",
-      "code": "box(10, 0.5, 3) | render"
+      "code": "export mesh = box(10, 0.5, 3)"
     },
     "coil": {
       "type": "geoscript",
       "file": "coil.geo"
+    },
+    "csg_coil_1": {
+      "type": "csg",
+      "tree": {
+        "op": "union",
+        "a": {
+          "op": "difference",
+          "a": {
+            "asset": "platform_small",
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "b": {
+            "op": "difference",
+            "a": {
+              "asset": "platform_small",
+              "position": [
+                -0.0381,
+                0.1553,
+                -0.1212
+              ],
+              "rotation": [
+                -1.0259,
+                -2.3266,
+                1.4592
+              ],
+              "scale": [
+                0.8492,
+                1,
+                1
+              ]
+            },
+            "b": {
+              "asset": "ground",
+              "position": [
+                0.0025,
+                0.0012,
+                -0.1565
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                0.2012,
+                0.1723,
+                0.0639
+              ]
+            },
+            "position": [
+              0.0021,
+              0.0012,
+              -0.122
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "b": {
+          "asset": "coil",
+          "position": [
+            -1.0334,
+            -0.4951,
+            -0.0141
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
     }
   },
   "objects": [
@@ -143,8 +260,8 @@
       "material": "platform_mat",
       "position": [
         0.024,
-        2.3451,
-        4.809
+        8.7629,
+        7.315
       ],
       "rotation": [
         0,
@@ -152,7 +269,7 @@
         0
       ],
       "scale": [
-        1,
+        3.5082,
         1,
         1
       ]
@@ -182,9 +299,9 @@
       "asset": "platform_small",
       "material": "gold_mat",
       "position": [
-        3,
-        8,
-        -24
+        2.9152,
+        7.8787,
+        -34.3021
       ],
       "rotation": [
         0,
@@ -202,9 +319,9 @@
       "asset": "platform_small",
       "material": "platform_mat",
       "position": [
-        -3,
-        10,
-        -30
+        -3.0575,
+        9.6833,
+        -52.8428
       ],
       "rotation": [
         0,
@@ -241,7 +358,7 @@
       "id": "plat_b",
       "asset": "platform_small",
       "position": [
-        8.4858,
+        27.5189,
         3.0573,
         9.1142
       ],
@@ -294,6 +411,86 @@
         7.6205,
         7.0692,
         11.5447
+      ],
+      "material": "gold_mat"
+    },
+    {
+      "id": "platform_small",
+      "asset": "platform_small",
+      "position": [
+        0.024,
+        20.7854,
+        7.315
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        3.5082,
+        1,
+        1
+      ],
+      "material": "platform_mat"
+    },
+    {
+      "id": "coil_3",
+      "asset": "coil",
+      "position": [
+        -35.1175,
+        41.0563,
+        10.7823
+      ],
+      "rotation": [
+        -0.0016,
+        -1.5258,
+        0.1105
+      ],
+      "scale": [
+        7.6205,
+        7.0692,
+        11.5447
+      ],
+      "material": "gold_mat"
+    },
+    {
+      "id": "coil_4",
+      "asset": "coil",
+      "position": [
+        -34.4426,
+        53.7974,
+        25.602
+      ],
+      "rotation": [
+        -0.0016,
+        -1.5258,
+        0.1105
+      ],
+      "scale": [
+        7.6205,
+        7.0692,
+        11.5447
+      ],
+      "material": "gold_mat"
+    },
+    {
+      "id": "coil_5",
+      "asset": "csg_coil_1",
+      "position": [
+        64.7195,
+        1.7224,
+        -3.791
+      ],
+      "rotation": [
+        -0.0132,
+        -3.1271,
+        0.2139
+      ],
+      "scale": [
+        -7.3804,
+        -7.3804,
+        -7.3804
       ],
       "material": "gold_mat"
     }

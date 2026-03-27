@@ -8,7 +8,7 @@ use crate::{
     eval_range, get_dyn_type, maybe_pre_resolve_bulitin_call_signature, pre_resolve_binop_def_ix,
     pre_resolve_expr_type, BinOp, ClosureArg, ClosureBody, DestructurePattern, DynType, Expr,
     FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, SourceLoc, Statement,
-    TrackedValue, TrackedValueRef, TypeName,
+    TopLevelStatement, TrackedValue, TrackedValueRef, TypeName,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -1872,6 +1872,74 @@ fn optimize_statement<'a>(
   }
 }
 
+fn optimize_top_level_statement<'a>(
+  ctx: &EvalCtx,
+  local_scope: &'a mut ScopeTracker,
+  stmt: &mut TopLevelStatement,
+  allow_rng_const_eval: bool,
+) -> Result<(), ErrorStack> {
+  match stmt {
+    TopLevelStatement::Statement(inner) => {
+      optimize_statement(ctx, local_scope, inner, allow_rng_const_eval)
+    }
+    TopLevelStatement::Export {
+      name,
+      expr,
+      type_hint,
+    } => {
+      // Handle identically to Assignment
+      if !local_scope.has(*name) {
+        local_scope.set(
+          *name,
+          TrackedValue::Dyn {
+            type_hint: *type_hint,
+          },
+        );
+      }
+
+      optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
+
+      local_scope.set(
+        *name,
+        match expr.as_literal() {
+          Some(val) => TrackedValue::Const(val.clone()),
+          None => {
+            let dyn_type = get_dyn_type(expr, local_scope);
+            let pre_resolved_ty = match *type_hint {
+              Some(hint) => Some(hint),
+              None => match pre_resolve_expr_type(ctx, local_scope, expr) {
+                Some(ty) => ty.into(),
+                None => None,
+              },
+            };
+            match dyn_type {
+              DynType::Arg => TrackedValue::Arg(ClosureArg {
+                ident: DestructurePattern::Ident(*name),
+                type_hint: pre_resolved_ty,
+                default_val: None,
+              }),
+              DynType::Const | DynType::Dyn => TrackedValue::Dyn {
+                type_hint: pre_resolved_ty,
+              },
+            }
+          }
+        },
+      );
+      Ok(())
+    }
+    TopLevelStatement::Import { bindings, .. } => {
+      // Cannot const-fold imports; mark all bound names as dynamic
+      for name in bindings.iter_idents() {
+        local_scope.set(
+          name,
+          TrackedValue::Dyn { type_hint: None },
+        );
+      }
+      Ok(())
+    }
+  }
+}
+
 struct OptimizationPass {
   #[allow(dead_code)]
   name: &'static str,
@@ -1910,7 +1978,7 @@ fn default_optimizer_pipeline() -> OptimizerPipeline {
 fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
   let mut local_scope = ScopeTracker::default();
   for stmt in &mut ast.statements {
-    optimize_statement(ctx, &mut local_scope, stmt, true)?;
+    optimize_top_level_statement(ctx, &mut local_scope, stmt, true)?;
   }
   Ok(())
 }
@@ -1954,7 +2022,7 @@ fn test_vec3_const_folding() {
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&ctx, &mut ast).unwrap();
   let val = match &ast.statements[0] {
-    Statement::Expr(expr) => expr.as_literal().unwrap(),
+    TopLevelStatement::Statement(Statement::Expr(expr)) => expr.as_literal().unwrap(),
     _ => unreachable!(),
   };
   assert!(matches!(val, Value::Vec3(v) if v.x == 4. && v.y == 2. && v.z == 3.));
@@ -1990,7 +2058,7 @@ y = fn(2)
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
-  let Statement::Assignment { name, expr, .. } = &ast.statements[1] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[1] else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
@@ -2015,7 +2083,7 @@ y = fn(2, a)
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
-  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2] else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
@@ -2043,7 +2111,7 @@ x = [
   optimize_ast(&ctx, &mut ast).unwrap();
 
   // the whole thing should get const-eval'd to a mesh at the AST level
-  let Statement::Assignment { expr, .. } = &ast.statements[1] else {
+  let TopLevelStatement::Statement(Statement::Assignment { expr, .. }) = &ast.statements[1] else {
     unreachable!();
   };
   assert!(
@@ -2075,7 +2143,7 @@ y = fn(2)
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
-  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2] else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
@@ -2103,7 +2171,7 @@ fn test_block_const_folding() {
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&ctx, &mut ast).unwrap();
 
-  let Statement::Expr(expr) = &ast.statements[0] else {
+  let TopLevelStatement::Statement(Statement::Expr(expr)) = &ast.statements[0] else {
     panic!("Expected first statement to be an expression");
   };
   let Expr::Literal {
@@ -2128,7 +2196,7 @@ y = cb(2)
 
   let st1 = ast.statements[0].clone();
   let closure_body = match st1 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2189,7 +2257,7 @@ y = fn(2)
   let mut ast = crate::parse_program_src(&ctx, src).unwrap();
   optimize_ast(&ctx, &mut ast).unwrap();
 
-  let Statement::Assignment { name, expr, .. } = &ast.statements[2] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2] else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
@@ -2215,7 +2283,7 @@ x = f(2, 3)
 
   let st1 = ast.statements[0].clone();
   let closure_body = match st1 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2265,7 +2333,7 @@ fn = || {
 
   let st1 = ast.statements[0].clone();
   let closure_body = match st1 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2404,7 +2472,7 @@ fn = |x| 1 + (1 + (1 + x))
 
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2452,7 +2520,7 @@ fn = |x| (x + 1) + 1
 
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2499,7 +2567,7 @@ fn = |x| 1.5 + (2.5 + x)
 
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2546,7 +2614,7 @@ fn = |v: vec2| vec2(1, 2) + (vec2(3, 4) + v)
 
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2596,7 +2664,7 @@ fn = |v: vec3| 2. * (3. * v)
 
   let st0 = ast.statements[0].clone();
   let closure_body = match st0 {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2640,7 +2708,7 @@ fn test_rng_const_folding_top_level() {
   optimize_ast(&ctx, &mut ast).unwrap();
 
   match &ast.statements[0] {
-    Statement::Assignment { expr, .. } => {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => {
       assert!(matches!(
         expr,
         Expr::Literal {
@@ -2662,7 +2730,7 @@ fn test_const_eval_cache_persists_across_runs() {
   optimize_ast(&ctx, &mut ast1).unwrap();
 
   let mesh1 = match &ast1.statements[0] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Mesh(mesh),
         ..
@@ -2676,7 +2744,7 @@ fn test_const_eval_cache_persists_across_runs() {
   optimize_ast(&ctx, &mut ast2).unwrap();
 
   let mesh2 = match &ast2.statements[0] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Mesh(mesh),
         ..
@@ -2698,7 +2766,7 @@ fn test_const_eval_cache_persists_across_runs_with_closure_map() {
   optimize_ast(&ctx, &mut ast1).unwrap();
 
   let seq1 = match &ast1.statements[0] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         ..
@@ -2712,7 +2780,7 @@ fn test_const_eval_cache_persists_across_runs_with_closure_map() {
   optimize_ast(&ctx, &mut ast2).unwrap();
 
   let seq2 = match &ast2.statements[0] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         ..
@@ -2737,7 +2805,7 @@ a = 0..4 -> |x| x + offset
   optimize_ast(&ctx, &mut ast1).unwrap();
 
   let seq1 = match &ast1.statements[1] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         ..
@@ -2751,7 +2819,7 @@ a = 0..4 -> |x| x + offset
   optimize_ast(&ctx, &mut ast2).unwrap();
 
   let seq2 = match &ast2.statements[1] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         ..
@@ -2780,7 +2848,7 @@ path_sampler = trace_path(|| {
   optimize_ast(&ctx, &mut ast1).unwrap();
 
   let sampler1 = match &ast1.statements[1] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2794,7 +2862,7 @@ path_sampler = trace_path(|| {
   optimize_ast(&ctx, &mut ast2).unwrap();
 
   let sampler2 = match &ast2.statements[1] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Callable(callable),
         ..
@@ -2858,7 +2926,7 @@ fn optimize_and_get_mesh(ctx: &EvalCtx, code: &str, stmt_index: usize) -> Rc<cra
   let mut ast = crate::parse_program_src(ctx, code).unwrap();
   optimize_ast(ctx, &mut ast).unwrap();
   match &ast.statements[stmt_index] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Mesh(mesh),
         ..
@@ -2878,7 +2946,7 @@ fn optimize_and_get_sequence(
   let mut ast = crate::parse_program_src(ctx, code).unwrap();
   optimize_ast(ctx, &mut ast).unwrap();
   match &ast.statements[stmt_index] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         ..
@@ -2956,7 +3024,7 @@ fn test_closure_hash_distinguishes_body() {
   let mut ast1 = crate::parse_program_src(&ctx, code1).unwrap();
   optimize_ast(&ctx, &mut ast1).unwrap();
   let seq1 = match &ast1.statements[0] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         ..
@@ -2970,7 +3038,7 @@ fn test_closure_hash_distinguishes_body() {
   let mut ast2 = crate::parse_program_src(&ctx, code2).unwrap();
   optimize_ast(&ctx, &mut ast2).unwrap();
   let seq2 = match &ast2.statements[0] {
-    Statement::Assignment { expr, .. } => match expr {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
         value: Value::Sequence(seq),
         ..

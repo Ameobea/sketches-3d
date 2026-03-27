@@ -228,10 +228,6 @@ fn run_clipper_offset(
     }
   }
 
-  log::info!(
-    "detecting critical points after offset with delta={:.3}",
-    opts.delta
-  );
   let critical_t_values = detect_critical_points(&paths, &CriticalPointConfig::default(), None);
 
   Ok(OffsetResult {

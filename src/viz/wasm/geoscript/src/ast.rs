@@ -22,7 +22,7 @@ pub struct SourceLoc(pub u32);
 
 #[derive(Debug)]
 pub struct Program {
-  pub statements: Vec<Statement>,
+  pub statements: Vec<TopLevelStatement>,
 }
 
 // TODO: probably should de-dupe this with `ArgType`
@@ -258,6 +258,48 @@ pub enum Statement {
   Break {
     value: Option<Expr>,
   },
+}
+
+/// A statement that can appear at the top level of a program or module.
+/// Includes everything from `Statement` plus `Export` and `Import` which are
+/// only valid at the top level.
+#[derive(Clone, Debug)]
+pub enum TopLevelStatement {
+  Statement(Statement),
+  Export {
+    name: Sym,
+    expr: Expr,
+    type_hint: Option<TypeName>,
+  },
+  Import {
+    bindings: DestructurePattern,
+    module_name: String,
+  },
+}
+
+impl TopLevelStatement {
+  pub fn as_statement(&self) -> Option<&Statement> {
+    match self {
+      TopLevelStatement::Statement(stmt) => Some(stmt),
+      _ => None,
+    }
+  }
+
+  pub fn traverse_exprs(&self, cb: &mut impl FnMut(&Expr)) {
+    match self {
+      TopLevelStatement::Statement(stmt) => stmt.traverse_exprs(cb),
+      TopLevelStatement::Export { expr, .. } => expr.traverse(cb),
+      TopLevelStatement::Import { .. } => {}
+    }
+  }
+
+  pub fn traverse_exprs_mut(&mut self, cb: &mut impl FnMut(&mut Expr)) {
+    match self {
+      TopLevelStatement::Statement(stmt) => stmt.traverse_exprs_mut(cb),
+      TopLevelStatement::Export { expr, .. } => expr.traverse_mut(cb),
+      TopLevelStatement::Import { .. } => {}
+    }
+  }
 }
 
 impl Statement {
@@ -2359,6 +2401,62 @@ fn parse_break_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<State
   Ok(Statement::Break { value })
 }
 
+fn parse_export_statement(
+  ctx: &EvalCtx,
+  stmt: Pair<Rule>,
+) -> Result<TopLevelStatement, ErrorStack> {
+  let (line, col) = stmt.line_col();
+  let mut inner = stmt.into_inner();
+  let name = ctx.interned_symbols.intern(inner.next().unwrap().as_str());
+
+  let mut next = inner.next().unwrap();
+  let type_hint = if next.as_rule() == Rule::type_hint {
+    let type_hint = TypeName::from_str(next.into_inner().next().unwrap().as_str())
+      .map_err(|err| ErrorStack::new(err).with_loc(line as u32, col as u32))?;
+    next = inner.next().unwrap();
+    Some(type_hint)
+  } else {
+    None
+  };
+
+  let expr = parse_expr(ctx, next)?;
+
+  Ok(TopLevelStatement::Export {
+    name,
+    expr,
+    type_hint,
+  })
+}
+
+fn parse_string_literal(pair: Pair<Rule>) -> String {
+  match pair.as_rule() {
+    Rule::double_quote_string_literal => {
+      parse_double_quote_string_inner(pair.into_inner().next().unwrap()).unwrap()
+    }
+    Rule::single_quote_string_literal => {
+      parse_single_quote_string_inner(pair.into_inner().next().unwrap()).unwrap()
+    }
+    _ => unreachable!("Unexpected rule for string literal in import statement: {pair:?}",),
+  }
+}
+
+fn parse_import_statement(
+  ctx: &EvalCtx,
+  stmt: Pair<Rule>,
+) -> Result<TopLevelStatement, ErrorStack> {
+  let mut inner = stmt.into_inner();
+  let map_destructure_pair = inner.next().unwrap();
+  let bindings = parse_map_destructure(ctx, map_destructure_pair)?;
+
+  let string_pair = inner.next().unwrap();
+  let module_name = parse_string_literal(string_pair);
+
+  Ok(TopLevelStatement::Import {
+    bindings,
+    module_name,
+  })
+}
+
 pub(crate) fn parse_statement(
   ctx: &EvalCtx,
   stmt: Pair<Rule>,
@@ -2371,6 +2469,18 @@ pub(crate) fn parse_statement(
     Rule::break_statement => Ok(Some(parse_break_statement(ctx, stmt)?)),
     Rule::EOI => Ok(None),
     _ => unreachable!("Unexpected statement rule: {:?}", stmt.as_rule()),
+  }
+}
+
+pub(crate) fn parse_top_level_statement(
+  ctx: &EvalCtx,
+  stmt: Pair<Rule>,
+) -> Result<Option<TopLevelStatement>, ErrorStack> {
+  match stmt.as_rule() {
+    Rule::export_statement => parse_export_statement(ctx, stmt).map(|s| Some(s)),
+    Rule::import_statement => parse_import_statement(ctx, stmt).map(|s| Some(s)),
+    Rule::EOI => Ok(None),
+    _ => parse_statement(ctx, stmt).map(|opt| opt.map(TopLevelStatement::Statement)),
   }
 }
 

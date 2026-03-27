@@ -33,8 +33,13 @@ export const runGeoscript = async ({
   includePrelude,
   materialOverride,
   renderMode = false,
+  modules,
 }: RunGeoscriptOptions): Promise<GeoscriptRunResult> => {
   await repl.reset(ctxPtr);
+
+  if (modules && Object.keys(modules).length > 0) {
+    await repl.setModuleSources(ctxPtr, modules);
+  }
 
   const startTime = performance.now();
   try {
@@ -82,6 +87,7 @@ export const runGeoscript = async ({
         includePrelude,
         materialOverride,
         renderMode,
+        modules,
       });
     }
 

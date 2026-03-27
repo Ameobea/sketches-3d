@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
+
   type Item = {
     id: string | number;
     name: string;
@@ -13,6 +15,8 @@
     onclose = () => {},
     title = 'Select an item',
     showNoneOption = true,
+    footerStart,
+    footerEnd,
   }: {
     items: Item[];
     selectedId: string | number | null | undefined;
@@ -20,6 +24,8 @@
     onclose: () => void;
     title: string;
     showNoneOption?: boolean;
+    footerStart?: Snippet;
+    footerEnd?: Snippet;
   } = $props();
 
   let filteredItems = $state<Item[]>([]);
@@ -112,11 +118,13 @@
     </div>
   </div>
   <div class="buttons">
-    <slot name="footer-start" />
+    {@render footerStart?.()}
     <div style="flex-grow: 1"></div>
-    <slot name="footer-end">
+    {#if footerEnd}
+      {@render footerEnd()}
+    {:else}
       <button class="footer-button" onclick={onclose}>close</button>
-    </slot>
+    {/if}
   </div>
 </div>
 

@@ -288,7 +288,8 @@ export function generateParkourPlatforms(
     // Total horizontal range = walkDir contribution + jump axis tilt contribution + external velocity.
     // The tilt bonus is constant regardless of deltaH (always accumulated over the full rise).
     const maxHorizRange =
-      (effectiveAirSpeed * airTime + jumpTiltHorizBonus + extVelHorizContrib(currentExtVel, airTime)) * fudgeFactor;
+      (effectiveAirSpeed * airTime + jumpTiltHorizBonus + extVelHorizContrib(currentExtVel, airTime)) *
+      fudgeFactor;
     const horizDist = Math.sqrt((candidate.x - current.x) ** 2 + (candidate.z - current.z) ** 2);
     return horizDist <= maxHorizRange;
   };
@@ -339,7 +340,9 @@ export function generateParkourPlatforms(
     const dz = candidate.z - current.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
     const fullJumpSpan =
-      (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus + extVelHorizContrib(currentExtVel, flatAirTime)) *
+      (effectiveAirSpeed * flatAirTime +
+        jumpTiltHorizBonus +
+        extVelHorizContrib(currentExtVel, flatAirTime)) *
       fudgeFactor;
     if (u >= 1 - EPSILON && dist < fullJumpSpan) {
       break;
@@ -378,7 +381,8 @@ export function generateParkourPlatforms(
     const actualRange =
       (effectiveAirSpeed * airTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, airTime)) * fudgeFactor;
     const flatRange =
-      (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, flatAirTime)) * fudgeFactor;
+      (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, flatAirTime)) *
+      fudgeFactor;
 
     console.warn(
       `[platformGen] height-constrained jump at step ${i}→${i + 1}:` +
