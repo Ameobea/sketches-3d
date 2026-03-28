@@ -6,6 +6,7 @@ import { getPlayerShadowUniforms } from './shaders/customShader';
 import {
   DefaultExternalVelocityAirDampingFactor,
   DefaultExternalVelocityGroundDampingFactor,
+  DefaultDashConfig,
   DefaultMoveSpeed,
   DefaultOOBThreshold,
   DefaultTopDownCameraOffset,
@@ -46,6 +47,7 @@ import type {
 } from '../ammojs/ammoTypes';
 import { ZoneEventType } from '../ammojs/ammoTypes';
 import { DashManager } from './DashManager.js';
+import { FlightRecorder, type FlightPlayer, packKeyFlags, RecorderEventType } from './flightRecorder.js';
 
 // Precomputed unit circle offsets for shadow ring probes (8 angles at 45° intervals)
 const SHADOW_PROBE_COS = Array.from({ length: 8 }, (_, i) => Math.cos((i / 8) * Math.PI * 2));
@@ -63,7 +65,12 @@ export const getAmmoJS = async () => {
 };
 
 export type ContactRegion =
-  | { type: 'box'; pos: THREE.Vector3; halfExtents: THREE.Vector3; quat?: THREE.Quaternion }
+  | {
+      type: 'box';
+      pos: THREE.Vector3;
+      halfExtents: THREE.Vector3;
+      quat?: THREE.Quaternion;
+    }
   | { type: 'mesh'; mesh: THREE.Mesh; margin?: number; scale?: THREE.Vector3 }
   | { type: 'convexHull'; mesh: THREE.Mesh; scale?: THREE.Vector3 }
   | { type: 'aabb'; mesh: THREE.Mesh; scale?: THREE.Vector3 }
@@ -152,8 +159,8 @@ export class BulletPhysics {
   public easyModeMovement: Readable<boolean>;
 
   private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
-  private lastJumpTimeSeconds = 0;
-  private lastGroundedTimeSeconds = 0;
+  private lastJumpPhysicsTime = 0;
+  private lastGroundedPhysicsTime = 0;
   private coyoteTimeSeconds = 0;
   private moveDirection = new THREE.Vector3();
   private isWalking = false;
@@ -174,6 +181,11 @@ export class BulletPhysics {
   private scratchQuat: BtQuaternion | null = null;
   private hasStartedMainGameTick = false;
   private readonly playerEyePosScratch = new THREE.Vector3();
+  public flightRecorder: FlightRecorder = new FlightRecorder();
+  private ammoStatePtr = 0;
+  private replayPlayer: FlightPlayer | null = null;
+  private replaySubtickIndex = 0;
+  private replayActive = false;
 
   constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
     this.Ammo = Ammo;
@@ -227,9 +239,9 @@ export class BulletPhysics {
         return [externalVelocity.x(), externalVelocity.y(), externalVelocity.z()];
       },
       getIsJumping: () =>
-        this.playerController.isJumping() && this.lastJumpTimeSeconds > this.dashManager.lastDashTimeSeconds,
+        this.playerController.isJumping() && this.lastJumpPhysicsTime > this.dashManager.lastDashTimeSeconds,
       getIsDashing: () =>
-        this.playerController.isJumping() && this.dashManager.lastDashTimeSeconds > this.lastJumpTimeSeconds,
+        this.playerController.isJumping() && this.dashManager.lastDashTimeSeconds > this.lastJumpPhysicsTime,
     };
   }
 
@@ -245,7 +257,7 @@ export class BulletPhysics {
   public get playerColliderHeight() {
     return this.viz.sceneConf.player?.colliderSize?.height ?? DefaultPlayerColliderHeight;
   }
-  private get playerColliderRadius() {
+  public get playerColliderRadius() {
     return this.viz.sceneConf.player?.colliderSize?.radius ?? DefaultPlayerColliderRadius;
   }
 
@@ -456,8 +468,22 @@ export class BulletPhysics {
     }
     this.hasStartedMainGameTick = true;
 
+    // Allocate a persistent buffer in Ammo's heap for packState (10 floats = 40 bytes)
+    this.ammoStatePtr = this.Ammo._malloc(40);
+
+    // Initialize flight recorder asynchronously
+    this.flightRecorder
+      .init()
+      .then(() => {
+        this.initFlightRecorderHeader();
+      })
+      .catch(err => {
+        console.warn('Flight recorder failed to load:', err);
+      });
+
     const teleportPlayerIfOOB = () => {
       if (this.viz.camera.position.y <= (this.viz.sceneConf.player?.oobYThreshold ?? DefaultOOBThreshold)) {
+        this.flightRecorder.recordEvent(RecorderEventType.OOBRespawn);
         this.viz.respawnPlayer();
       }
     };
@@ -537,6 +563,35 @@ export class BulletPhysics {
     );
   };
 
+  private initFlightRecorderHeader = () => {
+    const conf = this.viz.sceneConf;
+    const playerConf = conf.player;
+    const moveSpeed = playerConf?.moveSpeed ?? DefaultMoveSpeed;
+    const extAirDamp =
+      playerConf?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor;
+    const extGndDamp =
+      playerConf?.externalVelocityGroundDampingFactor ?? DefaultExternalVelocityGroundDampingFactor;
+    const gs = conf.gravityShaping;
+
+    this.flightRecorder.setHeader({
+      tickRateHz: this.simulationTickRate,
+      gravity: conf.gravity ?? DefaultGravity,
+      jumpSpeed: playerConf?.jumpVelocity ?? DefaultJumpSpeed,
+      moveSpeedGround: moveSpeed.onGround,
+      moveSpeedAir: moveSpeed.inAir,
+      colliderHeight: this.playerColliderHeight,
+      colliderRadius: this.playerColliderRadius,
+      extVelAirDamping: [extAirDamp.x, extAirDamp.y, extAirDamp.z],
+      extVelGroundDamping: [extGndDamp.x, extGndDamp.y, extGndDamp.z],
+      gravityShapeRiseMult: gs?.riseMultiplier ?? 1.0,
+      gravityShapeApexMult: gs?.apexMultiplier ?? 1.0,
+      gravityShapeFallMult: gs?.fallMultiplier ?? 1.0,
+      gravityShapeApexThreshold: gs?.apexThreshold ?? 3.0,
+      gravityShapeKneeWidth: gs?.kneeWidth ?? 2.0,
+      gravityShapeOnlyJumps: gs?.onlyJumps ?? false,
+    });
+  };
+
   public computeTopDownCameraPos = (
     newPlayerPos: THREE.Vector3,
     viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'top-down' }>
@@ -574,18 +629,13 @@ export class BulletPhysics {
     if (this.viz.keyStates['KeyD']) this.moveDirection.add(new THREE.Vector3(-1, 0, 0));
   };
 
-  private handleInput = (curTimeSeconds: number) => {
-    const cameraDir = this.viz.camera.getWorldDirection(this.forwardDir).normalize().clone();
-    const wasOnGround = this.playerController.onGround();
-
+  private handleInput = () => {
     this.moveDirection.set(0, 0, 0);
     if (this.viz.controlState.movementEnabled) {
       const viewMode = this.getViewMode();
       switch (viewMode.type) {
         case 'firstPerson':
         case 'thirdPerson':
-          // Third-person uses camera-relative WASD just like first-person, since
-          // camera.lookAt(player) makes the camera's forward direction point toward the player.
           this.handleFirstPersonInput();
           break;
         case 'top-down':
@@ -605,34 +655,6 @@ export class BulletPhysics {
       }
     }
 
-    if (wasOnGround) {
-      this.lastGroundedTimeSeconds = curTimeSeconds;
-    }
-
-    const canJump =
-      wasOnGround ||
-      (this.coyoteTimeSeconds > 0 &&
-        curTimeSeconds - this.lastGroundedTimeSeconds <= this.coyoteTimeSeconds &&
-        curTimeSeconds - this.lastJumpTimeSeconds > this.coyoteTimeSeconds);
-
-    if (this.viz.controlState.movementEnabled && this.viz.keyStates['Space'] && canJump) {
-      if (curTimeSeconds - this.lastJumpTimeSeconds > this.minJumpDelaySeconds) {
-        this.playerController.jump(
-          this.btvec3(
-            this.moveDirection.x * (this.jumpSpeed * 0.18),
-            this.jumpSpeed,
-            this.moveDirection.z * (this.jumpSpeed * 0.18)
-          )
-        );
-        this.lastJumpTimeSeconds = curTimeSeconds;
-        // Consume coyote time so it can't be used again until next grounding
-        this.lastGroundedTimeSeconds = -Infinity;
-        for (const cb of this.jumpCbs) {
-          cb(curTimeSeconds);
-        }
-      }
-    }
-
     const wasWalking = this.isWalking;
     this.isWalking = this.moveDirection.x !== 0 || this.moveDirection.y !== 0 || this.moveDirection.z !== 0;
     if (wasWalking && !this.isWalking) {
@@ -640,13 +662,80 @@ export class BulletPhysics {
     } else if (!wasWalking && this.isWalking) {
       this.viz.sfxManager.onWalkStart(MaterialClass.Default);
     }
+  };
 
-    this.dashManager.tick(curTimeSeconds, wasOnGround);
-
-    if (this.viz.keyStates['ShiftLeft'] || this.viz.keyStates['ShiftRight']) {
-      const dashDir = this.getDashDir(this.getViewMode().type, cameraDir);
-      this.dashManager.tryDash(curTimeSeconds, this.isFlyMode, dashDir);
+  /**
+   * Attempts to fire a jump using physics time for all timing checks.
+   * Called once per subtick so jumps can fire between substeps (e.g. on mid-substep landing).
+   */
+  /**
+   * Must be called every subtick (unconditionally) so that coyote time
+   * tracking stays up-to-date even when the player isn't pressing Space.
+   */
+  private updateGroundedTime = () => {
+    if (this.playerController.onGround()) {
+      this.lastGroundedPhysicsTime = this.physicsElapsedTime;
     }
+  };
+
+  private tryJump = (): boolean => {
+    if (!this.viz.controlState.movementEnabled || !this.viz.keyStates['Space']) {
+      return false;
+    }
+
+    const onGround = this.playerController.onGround();
+
+    const canJump =
+      onGround ||
+      (this.coyoteTimeSeconds > 0 &&
+        this.physicsElapsedTime - this.lastGroundedPhysicsTime <= this.coyoteTimeSeconds &&
+        this.physicsElapsedTime - this.lastJumpPhysicsTime > this.coyoteTimeSeconds);
+
+    if (!canJump) {
+      return false;
+    }
+
+    if (this.physicsElapsedTime - this.lastJumpPhysicsTime <= this.minJumpDelaySeconds) {
+      return false;
+    }
+
+    this.playerController.jump(
+      this.btvec3(
+        this.moveDirection.x * (this.jumpSpeed * 0.18),
+        this.jumpSpeed,
+        this.moveDirection.z * (this.jumpSpeed * 0.18)
+      )
+    );
+    this.lastJumpPhysicsTime = this.physicsElapsedTime;
+    // Consume coyote time so it can't be used again until next grounding
+    this.lastGroundedPhysicsTime = -Infinity;
+    for (const cb of this.jumpCbs) {
+      cb(this.physicsElapsedTime);
+    }
+    this.flightRecorder.recordEvent(RecorderEventType.Jump, [
+      this.moveDirection.x,
+      this.moveDirection.y,
+      this.moveDirection.z,
+    ]);
+    return true;
+  };
+
+  /**
+   * Attempts to fire a dash using physics time for all timing checks.
+   * Called once per subtick so dashes can fire between substeps.
+   */
+  private tryDashSubtick = (): boolean => {
+    if (!(this.viz.keyStates['ShiftLeft'] || this.viz.keyStates['ShiftRight'])) {
+      return false;
+    }
+
+    const cameraDir = this.viz.camera.getWorldDirection(this.forwardDir).normalize().clone();
+    const dashDir = this.getDashDir(this.getViewMode().type, cameraDir);
+    const dashed = this.dashManager.tryDash(this.physicsElapsedTime, this.isFlyMode, dashDir);
+    if (dashed) {
+      this.flightRecorder.recordEvent(RecorderEventType.Dash, [dashDir.x, dashDir.y, dashDir.z]);
+    }
+    return dashed;
   };
 
   private getDashDir = (
@@ -737,83 +826,100 @@ export class BulletPhysics {
     this.playerController.clearPendingEvents();
   };
 
+  public startReplay = (player: FlightPlayer): void => {
+    this.replayPlayer = player;
+    this.replaySubtickIndex = 0;
+    this.replayActive = true;
+    this.viz.controlState.movementEnabled = false;
+    // Keep cameraControlEnabled=true so the camera update() still positions the camera.
+    // Mouse input won't matter because we overwrite angles every subtick.
+  };
+
+  public stopReplay = (): void => {
+    this.replayActive = false;
+    this.replayPlayer = null;
+    this.viz.controlState.movementEnabled = true;
+  };
+
+  public get isReplayActive(): boolean {
+    return this.replayActive;
+  }
+
   /**
    * Returns the new position of the player.
    */
   public updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
-    const wasOnGround = this.playerController.onGround();
-
-    const lastJumpTimeBefore = this.lastJumpTimeSeconds;
-    this.handleInput(curTimeSeconds);
-    const jumpFiredThisFrame = this.lastJumpTimeSeconds !== lastJumpTimeBefore;
-
-    const playerMoveSpeed = this.viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
-    // If a jump fired during handleInput, use inAir speed immediately rather than onGround
-    // speed for this frame's substeps.  Without this, a standing jump always wastes one
-    // animation frame at onGround speed before switching — a real-time duration that varies
-    // with host frame rate.
-    const moveSpeedPerSecond =
-      wasOnGround && !jumpFiredThisFrame ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
-    const walkDirBulletVector = this.btvec3(
-      this.moveDirection.x * moveSpeedPerSecond,
-      this.moveDirection.y * moveSpeedPerSecond,
-      this.moveDirection.z * moveSpeedPerSecond
-    );
-    this.playerController.setWalkDirection(walkDirBulletVector);
+    if (this.replayActive) {
+      return this.updateCollisionWorldReplay(tDiffSeconds);
+    }
+    this.handleInput();
     this.playerController.resetForcedRotation();
 
+    const playerMoveSpeed = this.viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
     const fixedTimeStep = 1 / this.simulationTickRate;
     const maxSubSteps = 20;
 
-    // Track ground state per-substep so we can detect landing within the substep
-    // loop itself.  On low-framerate devices many substeps run per animation frame,
-    // so checking only after all substeps would leave a variable-length dead zone
-    // inside the loop during which the player can't jump.
-    let prevSubStepOnGround = wasOnGround;
+    let prevSubStepOnGround = this.playerController.onGround();
     const numSubSteps = this.collisionWorld.beginStepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
     for (let i = 0; i < numSubSteps; i++) {
       this.physicsElapsedTime += fixedTimeStep;
+
+      // Track ground state every subtick so coyote time works even when
+      // Space isn't held yet.
+      this.updateGroundedTime();
+
+      // Check jump and dash at the start of each subtick so they can fire
+      // between substeps (e.g. on mid-substep landing).
+      const jumpFired = this.tryJump();
+      this.tryDashSubtick();
+      this.dashManager.tick(this.physicsElapsedTime, this.playerController.onGround());
+
+      // Update walk direction per-subtick based on current ground/air state
+      const onGround = this.playerController.onGround();
+      const moveSpeed = onGround && !jumpFired ? playerMoveSpeed.onGround : playerMoveSpeed.inAir;
+      this.playerController.setWalkDirection(
+        this.btvec3(
+          this.moveDirection.x * moveSpeed,
+          this.moveDirection.y * moveSpeed,
+          this.moveDirection.z * moveSpeed
+        )
+      );
+
+      if (jumpFired) {
+        // Clear the ground flag so the next substep sees the player as airborne
+        this.playerController.setOnGround(false);
+      }
+
       this.tickPhysicsTickers(fixedTimeStep);
       this.collisionWorld.substepSimulation();
       this.drainZoneEvents();
 
+      // Record subtick snapshot for flight recorder
+      if (this.flightRecorder.isReady) {
+        this.playerController.packState(this.ammoStatePtr);
+        const angles = this.viz.cameraController?.angles ?? {
+          phi: 0,
+          theta: 0,
+        };
+        this.flightRecorder.recordSubtick(
+          this.ammoStatePtr,
+          this.Ammo.HEAPF32,
+          this.moveDirection.x * moveSpeed,
+          this.moveDirection.y * moveSpeed,
+          this.moveDirection.z * moveSpeed,
+          angles.phi,
+          angles.theta,
+          packKeyFlags(this.viz.keyStates)
+        );
+      }
+
+      // Detect landing for SFX
       const subStepOnGround = this.playerController.onGround();
       if (!prevSubStepOnGround && subStepOnGround) {
         const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
         const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
         const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
         this.viz.sfxManager.onPlayerLand(materialClass);
-
-        // handleInput already called dashManager.tick with wasOnGround=false (player was
-        // in air pre-physics), so the dash manager never saw this ground touch.  Tick it
-        // now so a mid-substep landing correctly unlocks the next dash.
-        this.dashManager.tick(curTimeSeconds, true);
-
-        // If Space is already held when we land and the jump delay has elapsed, fire a jump
-        // immediately.  Doing this inside the substep loop means remaining substeps in this
-        // frame execute with the jump velocity already applied, eliminating any intra-frame
-        // dead zone that would otherwise grow with substep count on low-framerate devices.
-        if (
-          this.viz.controlState.movementEnabled &&
-          this.viz.keyStates['Space'] &&
-          curTimeSeconds - this.lastJumpTimeSeconds > this.minJumpDelaySeconds
-        ) {
-          this.playerController.jump(
-            this.btvec3(
-              this.moveDirection.x * (this.jumpSpeed * 0.18),
-              this.jumpSpeed,
-              this.moveDirection.z * (this.jumpSpeed * 0.18)
-            )
-          );
-          this.lastJumpTimeSeconds = curTimeSeconds;
-          this.lastGroundedTimeSeconds = -Infinity;
-          for (const cb of this.jumpCbs) {
-            cb(curTimeSeconds);
-          }
-          // Clear the ground flag so the next frame (and the next substep's m_wasOnGround)
-          // sees the player as airborne, immediately switching to inAir movement speed.
-          this.playerController.setOnGround(false);
-        }
       }
       prevSubStepOnGround = this.playerController.onGround();
     }
@@ -823,6 +929,88 @@ export class BulletPhysics {
     const newPlayerTransform = this.playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
 
+    return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
+  };
+
+  private updateCollisionWorldReplay = (tDiffSeconds: number): THREE.Vector3 => {
+    const player = this.replayPlayer!;
+    this.playerController.resetForcedRotation();
+
+    const fixedTimeStep = 1 / this.simulationTickRate;
+    const maxSubSteps = 20;
+
+    const numSubSteps = this.collisionWorld.beginStepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
+    for (let i = 0; i < numSubSteps; i++) {
+      this.physicsElapsedTime += fixedTimeStep;
+
+      if (this.replaySubtickIndex >= player.subtickCount) {
+        this.stopReplay();
+        break;
+      }
+
+      const snapshot = player.getSubtick(this.replaySubtickIndex);
+
+      // Set walk direction directly from recorded data (already includes moveSpeed)
+      this.playerController.setWalkDirection(
+        this.btvec3(snapshot.walkDir[0], snapshot.walkDir[1], snapshot.walkDir[2])
+      );
+
+      // Set camera angles from recorded data
+      this.viz.cameraController?.setAngles(snapshot.phi, snapshot.theta);
+
+      // Fire events at this subtick
+      const events = player.getEventsAtSubtick(this.replaySubtickIndex);
+      for (const evt of events) {
+        switch (evt.type) {
+          case RecorderEventType.Jump: {
+            // evt.data = [moveDir.x, moveDir.y, moveDir.z]
+            this.playerController.jump(
+              this.btvec3(
+                evt.data[0] * (this.jumpSpeed * 0.18),
+                this.jumpSpeed,
+                evt.data[2] * (this.jumpSpeed * 0.18)
+              )
+            );
+            this.lastJumpPhysicsTime = this.physicsElapsedTime;
+            this.lastGroundedPhysicsTime = -Infinity;
+            this.playerController.setOnGround(false);
+            break;
+          }
+          case RecorderEventType.Dash: {
+            // evt.data = [dashDir.x, dashDir.y, dashDir.z]
+            // Bypass tryDash checks — the recorded data already passed them.
+            // Merge with DefaultDashConfig same as DashManager does.
+            const dashConf = { ...DefaultDashConfig, ...(this.viz.sceneConf.player?.dashConfig ?? {}) };
+            const dashMag = dashConf.dashMagnitude;
+            if (dashConf.useExternalVelocity) {
+              const mag = dashMag * 1.28;
+              this.playerController.setExternalVelocity(
+                this.btvec3(evt.data[0] * mag, evt.data[1] * mag, evt.data[2] * mag)
+              );
+              this.playerController.resetFall();
+            } else {
+              this.playerController.jump(
+                this.btvec3(evt.data[0] * dashMag, evt.data[1] * dashMag, evt.data[2] * dashMag)
+              );
+            }
+            this.dashManager.lastDashTimeSeconds = this.physicsElapsedTime;
+            break;
+          }
+        }
+      }
+
+      this.dashManager.tick(this.physicsElapsedTime, this.playerController.onGround());
+      this.tickPhysicsTickers(fixedTimeStep);
+      this.collisionWorld.substepSimulation();
+      this.drainZoneEvents();
+
+      this.replaySubtickIndex++;
+    }
+    this.collisionWorld.finishStepSimulation();
+    this.syncPhysicsTickerVisuals();
+
+    const newPlayerTransform = this.playerGhostObject.getWorldTransform();
+    const newPlayerPos = newPlayerTransform.getOrigin();
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
 
@@ -1165,7 +1353,12 @@ export class BulletPhysics {
 
   public addJumpPad = (
     region: ContactRegion,
-    config: { baseImpulse: number; speedScaling: number; cooldownSeconds: number; direction: THREE.Vector3 },
+    config: {
+      baseImpulse: number;
+      speedScaling: number;
+      cooldownSeconds: number;
+      direction: THREE.Vector3;
+    },
     onTrigger?: () => void
   ): JumpPadEntry => {
     const ghostObj = this.createZoneGhostObject(region);
@@ -1204,7 +1397,11 @@ export class BulletPhysics {
 
   public addBoostZone = (
     region: ContactRegion,
-    config: { strength: number; directionalBias: number; direction: THREE.Vector3 },
+    config: {
+      strength: number;
+      directionalBias: number;
+      direction: THREE.Vector3;
+    },
     onEnter?: () => void,
     onExit?: () => void
   ): BoostZoneEntry => {

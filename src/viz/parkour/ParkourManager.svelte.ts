@@ -9,12 +9,14 @@ import TimerDisplay from './TimerDisplay.svelte';
 import TimeDisplay from './TimeDisplay.svelte';
 import type { ScoreThresholds } from './timeDisplayTypes';
 import type { SceneConfig } from '../scenes';
-import { API, MetricsAPI } from 'src/api/client';
+import { MetricsAPI } from 'src/api/client';
+import type { PlayResponse } from 'src/api/models/PlayResponse';
 import { mergeDeep, type DeepPartial } from '../util/util';
 import { rwritable, type TransparentWritable } from '../util/TransparentWritable';
 import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { Scheduler, type SchedulerHandle } from '../bulletHell/Scheduler';
 import { getAmmoJS, type PhysicsTicker, type PhysicsTickerHandle } from '../collision';
+import { RecorderEventType } from '../flightRecorder';
 
 export interface ParkourMaterials {
   dashToken: {
@@ -46,7 +48,7 @@ export class ParkourManager {
   private curDashCharges: TransparentWritable<number> = rwritable(0);
   private lastResetPhysicsTime: number = 0;
   private curRunStartTimeSeconds: number | null = null;
-  private winState: { winTimeSeconds: number; displayComp: any } | null = null;
+  private winState: { winTimeSeconds: number; displayComp: any; replayBlob: Uint8Array | null } | null = null;
   private managerTickerHandle: PhysicsTickerHandle | null = null;
   private pendingPhysicsActions: (() => void)[] = [];
   private resetLifecycleCbs: (() => boolean | void)[] = [];
@@ -98,6 +100,7 @@ export class ParkourManager {
       fpCtx.registerJumpCb(() => {
         if (this.curRunStartTimeSeconds === null) {
           this.curRunStartTimeSeconds = fpCtx.getPhysicsTime();
+          fpCtx.flightRecorder.recordEvent(RecorderEventType.RunStart);
         }
       });
 
@@ -231,6 +234,12 @@ export class ParkourManager {
     this.resetCheckpoints();
     fpCtx.teleportPlayer(this.locations.spawn.pos, this.locations.spawn.rot);
     fpCtx.reset();
+
+    // Reset flight recorder and record teleport to spawn
+    const recorder = fpCtx.flightRecorder;
+    recorder.reset();
+    const sp = this.locations.spawn.pos;
+    recorder.recordEvent(RecorderEventType.Teleport, [sp.x, sp.y, sp.z]);
     const wasStarted = this.curRunStartTimeSeconds !== null;
     this.curRunStartTimeSeconds = null;
     this.lastResetPhysicsTime = physicsTime;
@@ -261,11 +270,25 @@ export class ParkourManager {
   };
 
   private onWin = () => {
-    const physicsTime = this.viz.fpCtx!.getPhysicsTime();
+    const fpCtx = this.viz.fpCtx!;
+    if (fpCtx.isReplayActive) return;
+    const physicsTime = fpCtx.getPhysicsTime();
+
+    // Record run end, set metadata, and serialize the replay
+    const recorder = fpCtx.flightRecorder;
+    recorder.recordEvent(RecorderEventType.RunEnd);
+    recorder.setMetadataString('map_id', this.mapID);
+    const time = physicsTime - (this.curRunStartTimeSeconds ?? 0);
+    recorder.setMetadataString('timestamp', Date.now().toString());
+    const replayBlob = recorder.serialize();
+    if (replayBlob) {
+      console.log(
+        `Flight recorder: ${recorder.subtickCount} subticks, ${replayBlob.byteLength} bytes serialized`
+      );
+    }
 
     const target = document.createElement('div');
     document.body.appendChild(target);
-    const time = physicsTime - (this.curRunStartTimeSeconds ?? 0);
     const timeDisplayProps = $state({
       scoreThresholds: this.scoreThresholds,
       time,
@@ -277,11 +300,18 @@ export class ParkourManager {
       target,
       props: timeDisplayProps,
     });
-    this.winState = { winTimeSeconds: physicsTime, displayComp };
+    this.winState = { winTimeSeconds: physicsTime, displayComp, replayBlob };
 
     this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
 
-    API.addPlay({ mapId: this.mapID, timeLength: time })
+    const formData = new FormData();
+    formData.append('mapId', this.mapID);
+    formData.append('timeLength', time.toString());
+    if (replayBlob) {
+      formData.append('replay', new Blob([replayBlob as unknown as BlobPart]), 'replay.frec');
+    }
+    fetch('/api/play', { method: 'POST', credentials: 'include', body: formData })
+      .then(res => res.json() as Promise<PlayResponse>)
       .then(res => {
         timeDisplayProps.userPlayID = res.id ?? null;
         timeDisplayProps.userID = res.playerId ?? null;

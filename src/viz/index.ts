@@ -6,6 +6,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { initSentry } from 'src/sentry';
 import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
 import { getAmmoJS, BulletPhysics } from './collision';
+import { FlightPlayer, fetchReplayForPlay } from './flightRecorder';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger.svelte.ts';
@@ -1022,6 +1023,28 @@ export const initViz = (
           obj.children = children;
         };
         traverseCollidable(scene, traverseCb);
+      }
+
+      // Check for ?playId= query param for generic replay loading
+      const replayPlayId = new URLSearchParams(window.location.search).get('playId');
+      if (replayPlayId && viz.fpCtx) {
+        viz.collisionWorldLoadedCbs.push(fpCtx => {
+          fetchReplayForPlay(replayPlayId)
+            .then(async data => {
+              if (!data) { console.error('Replay not found'); return; }
+              const player = new FlightPlayer();
+              const ok = await player.load(data);
+              if (!ok) { console.error('Failed to decode replay'); return; }
+              if (player.subtickCount > 0) {
+                const [px, py, pz] = player.getSubtickPos(0);
+                fpCtx.teleportPlayer(
+                  new THREE.Vector3(px, py - fpCtx.playerColliderHeight / 2 - fpCtx.playerColliderRadius, pz)
+                );
+              }
+              fpCtx.startReplay(player);
+            })
+            .catch(err => console.error('Replay load error:', err));
+        });
       }
 
       for (const cb of viz.collisionWorldLoadedCbs) {

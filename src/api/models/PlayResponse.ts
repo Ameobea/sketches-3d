@@ -16,62 +16,59 @@ import { mapValues } from '../runtime';
 /**
  * 
  * @export
- * @interface Play
+ * @interface PlayResponse
  */
-export interface Play {
+export interface PlayResponse {
     /**
      * 
      * @type {string}
-     * @memberof Play
+     * @memberof PlayResponse
      */
-    readonly id?: string | null;
+    id?: string | null;
     /**
      * 
      * @type {string}
-     * @memberof Play
+     * @memberof PlayResponse
      */
     playerId?: string | null;
     /**
      * 
      * @type {string}
-     * @memberof Play
+     * @memberof PlayResponse
      */
     playerUserName?: string | null;
     /**
      * 
      * @type {string}
-     * @memberof Play
+     * @memberof PlayResponse
      */
-    mapId: string | null;
+    mapId?: string | null;
     /**
      * 
      * @type {number}
-     * @memberof Play
+     * @memberof PlayResponse
      */
-    playLength: number;
+    playLength?: number;
     /**
      * 
      * @type {Date}
-     * @memberof Play
+     * @memberof PlayResponse
      */
-    timeSubmitted: Date;
+    timeSubmitted?: Date;
 }
 
 /**
- * Check if a given object implements the Play interface.
+ * Check if a given object implements the PlayResponse interface.
  */
-export function instanceOfPlay(value: object): value is Play {
-    if (!('mapId' in value) || value['mapId'] === undefined) return false;
-    if (!('playLength' in value) || value['playLength'] === undefined) return false;
-    if (!('timeSubmitted' in value) || value['timeSubmitted'] === undefined) return false;
+export function instanceOfPlayResponse(value: object): value is PlayResponse {
     return true;
 }
 
-export function PlayFromJSON(json: any): Play {
-    return PlayFromJSONTyped(json, false);
+export function PlayResponseFromJSON(json: any): PlayResponse {
+    return PlayResponseFromJSONTyped(json, false);
 }
 
-export function PlayFromJSONTyped(json: any, ignoreDiscriminator: boolean): Play {
+export function PlayResponseFromJSONTyped(json: any, ignoreDiscriminator: boolean): PlayResponse {
     if (json == null) {
         return json;
     }
@@ -80,28 +77,29 @@ export function PlayFromJSONTyped(json: any, ignoreDiscriminator: boolean): Play
         'id': json['id'] == null ? undefined : json['id'],
         'playerId': json['playerId'] == null ? undefined : json['playerId'],
         'playerUserName': json['playerUserName'] == null ? undefined : json['playerUserName'],
-        'mapId': json['mapId'],
-        'playLength': json['playLength'],
-        'timeSubmitted': (new Date(json['timeSubmitted'])),
+        'mapId': json['mapId'] == null ? undefined : json['mapId'],
+        'playLength': json['playLength'] == null ? undefined : json['playLength'],
+        'timeSubmitted': json['timeSubmitted'] == null ? undefined : (new Date(json['timeSubmitted'])),
     };
 }
 
-export function PlayToJSON(json: any): Play {
-    return PlayToJSONTyped(json, false);
+export function PlayResponseToJSON(json: any): PlayResponse {
+    return PlayResponseToJSONTyped(json, false);
 }
 
-export function PlayToJSONTyped(value?: Omit<Play, 'id'> | null, ignoreDiscriminator: boolean = false): any {
+export function PlayResponseToJSONTyped(value?: PlayResponse | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
 
     return {
         
+        'id': value['id'],
         'playerId': value['playerId'],
         'playerUserName': value['playerUserName'],
         'mapId': value['mapId'],
         'playLength': value['playLength'],
-        'timeSubmitted': ((value['timeSubmitted']).toISOString()),
+        'timeSubmitted': value['timeSubmitted'] == null ? undefined : ((value['timeSubmitted']).toISOString()),
     };
 }
 

@@ -12,10 +12,13 @@
  * Do not edit the class manually.
  */
 
+import { mapValues } from '../runtime';
 import type { Play } from './Play';
 import {
     PlayFromJSON,
+    PlayFromJSONTyped,
     PlayToJSON,
+    PlayToJSONTyped,
 } from './Play';
 
 /**
@@ -116,3 +119,4 @@ export function ModelMapToJSONTyped(value?: ModelMap | null, ignoreDiscriminator
         'leaderboard': value['leaderboard'] == null ? undefined : ((value['leaderboard'] as Array<any>).map(PlayToJSON)),
     };
 }
+

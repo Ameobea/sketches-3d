@@ -44,3 +44,4 @@ src/viz/wasm/clipper2/*
 !src/viz/wasm/clipper2/clipper2.ts
 !src/viz/wasm/clipper2/clipper2z.d.ts
 rustc-ice-*.txt
+static/flight_recorder.wasm

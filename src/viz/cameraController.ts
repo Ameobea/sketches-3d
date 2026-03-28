@@ -240,6 +240,11 @@ export class CameraController {
     this.applyFOV();
   }
 
+  public setAngles(phi: number, theta: number): void {
+    this.phi = phi;
+    this.theta = theta;
+  }
+
   public destroy(): void {
     document.body.removeEventListener('mousemove', this.handleMouseMove);
     document.body.removeEventListener('wheel', this.handleWheel);

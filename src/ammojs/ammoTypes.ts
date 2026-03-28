@@ -104,6 +104,7 @@ export interface BtKinematicCharacterController {
     fromX: number, fromY: number, fromZ: number,
     toX: number,   toY: number,   toZ: number
   ): number;
+  packState(outBuffer: number): number;
 }
 
 export type BtActionInterface = BtKinematicCharacterController;
@@ -286,6 +287,7 @@ export interface AmmoInterface {
   ) => BtCollisionShape;
   btConvexHullShape: new () => BtConvexHullShape;
   _malloc: (size: number) => number;
+  _free: (ptr: number) => void;
   HEAPF32: Float32Array;
   btHeightfieldTerrainShape: new (
     gridResolutionX: number,

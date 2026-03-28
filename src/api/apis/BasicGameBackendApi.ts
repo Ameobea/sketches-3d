@@ -15,22 +15,21 @@
 
 import * as runtime from '../runtime';
 import type {
-  Play,
+  PlayResponse,
   PlayerLogin,
   StrippedMap,
   StrippedPlayer,
 } from '../models/index';
 import {
-    PlayFromJSON,
+    PlayResponseFromJSON,
+    PlayResponseToJSON,
+    PlayerLoginFromJSON,
     PlayerLoginToJSON,
     StrippedMapFromJSON,
+    StrippedMapToJSON,
     StrippedPlayerFromJSON,
+    StrippedPlayerToJSON,
 } from '../models/index';
-
-export interface AddPlayRequest {
-    mapId: string;
-    timeLength: number;
-}
 
 export interface CreatePlayerRequest {
     playerLogin: PlayerLogin;
@@ -44,6 +43,10 @@ export interface GetLeaderboardByIndexRequest {
 
 export interface GetMapRequest {
     mapId: string;
+}
+
+export interface GetPlayReplayRequest {
+    playId: string;
 }
 
 export interface GetPlaysRequest {
@@ -61,30 +64,8 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
 
     /**
      */
-    async addPlayRaw(requestParameters: AddPlayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Play>> {
-        if (requestParameters['mapId'] == null) {
-            throw new runtime.RequiredError(
-                'mapId',
-                'Required parameter "mapId" was null or undefined when calling addPlay().'
-            );
-        }
-
-        if (requestParameters['timeLength'] == null) {
-            throw new runtime.RequiredError(
-                'timeLength',
-                'Required parameter "timeLength" was null or undefined when calling addPlay().'
-            );
-        }
-
+    async addPlayRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<PlayResponse>> {
         const queryParameters: any = {};
-
-        if (requestParameters['mapId'] != null) {
-            queryParameters['mapId'] = requestParameters['mapId'];
-        }
-
-        if (requestParameters['timeLength'] != null) {
-            queryParameters['timeLength'] = requestParameters['timeLength'];
-        }
 
         const headerParameters: runtime.HTTPHeaders = {};
 
@@ -95,13 +76,13 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
             query: queryParameters,
         }, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => PlayFromJSON(jsonValue));
+        return new runtime.JSONApiResponse(response, (jsonValue) => PlayResponseFromJSON(jsonValue));
     }
 
     /**
      */
-    async addPlay(requestParameters: AddPlayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Play> {
-        const response = await this.addPlayRaw(requestParameters, initOverrides);
+    async addPlay(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<PlayResponse> {
+        const response = await this.addPlayRaw(initOverrides);
         return await response.value();
     }
 
@@ -140,7 +121,7 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
 
     /**
      */
-    async getLeaderboardByIndexRaw(requestParameters: GetLeaderboardByIndexRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<Play>>> {
+    async getLeaderboardByIndexRaw(requestParameters: GetLeaderboardByIndexRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<PlayResponse>>> {
         if (requestParameters['mapId'] == null) {
             throw new runtime.RequiredError(
                 'mapId',
@@ -185,12 +166,12 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
             query: queryParameters,
         }, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => jsonValue.map(PlayFromJSON));
+        return new runtime.JSONApiResponse(response, (jsonValue) => jsonValue.map(PlayResponseFromJSON));
     }
 
     /**
      */
-    async getLeaderboardByIndex(requestParameters: GetLeaderboardByIndexRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<Play>> {
+    async getLeaderboardByIndex(requestParameters: GetLeaderboardByIndexRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<PlayResponse>> {
         const response = await this.getLeaderboardByIndexRaw(requestParameters, initOverrides);
         return await response.value();
     }
@@ -260,6 +241,37 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
 
     /**
      */
+    async getPlayReplayRaw(requestParameters: GetPlayReplayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<object>> {
+        if (requestParameters['playId'] == null) {
+            throw new runtime.RequiredError(
+                'playId',
+                'Required parameter "playId" was null or undefined when calling getPlayReplay().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        const response = await this.request({
+            path: `/plays/{playId}/replay`.replace(`{${"playId"}}`, encodeURIComponent(String(requestParameters['playId']))),
+            method: 'GET',
+            headers: headerParameters,
+            query: queryParameters,
+        }, initOverrides);
+
+        return new runtime.JSONApiResponse<any>(response);
+    }
+
+    /**
+     */
+    async getPlayReplay(requestParameters: GetPlayReplayRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<object> {
+        const response = await this.getPlayReplayRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     */
     async getPlayerRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<StrippedPlayer>> {
         const queryParameters: any = {};
 
@@ -284,7 +296,7 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
 
     /**
      */
-    async getPlaysRaw(requestParameters: GetPlaysRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<Play>>> {
+    async getPlaysRaw(requestParameters: GetPlaysRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<Array<PlayResponse>>> {
         const queryParameters: any = {};
 
         if (requestParameters['playerId'] != null) {
@@ -300,12 +312,12 @@ export class BasicGameBackendApi extends runtime.BaseAPI {
             query: queryParameters,
         }, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => jsonValue.map(PlayFromJSON));
+        return new runtime.JSONApiResponse(response, (jsonValue) => jsonValue.map(PlayResponseFromJSON));
     }
 
     /**
      */
-    async getPlays(requestParameters: GetPlaysRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<Play>> {
+    async getPlays(requestParameters: GetPlaysRequest = {}, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<Array<PlayResponse>> {
         const response = await this.getPlaysRaw(requestParameters, initOverrides);
         return await response.value();
     }

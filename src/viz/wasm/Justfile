@@ -8,6 +8,7 @@ copy-files:
   cp -r ./geodesics/build/bin/* ../../../static/
   cp ./build/geoscript_repl_bg.wasm ../../../static
   cp ./build/path_tessellate_bg.wasm ../../../static
+  cp ./build2/flight_recorder.wasm ../../../static
 
 bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/bridge2.wasm --target web --remove-producers-section --out-dir ./build
@@ -24,6 +25,7 @@ bindgen:
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/point_distribute.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/terrain.wasm ./build2
+  cp ./target/wasm32-unknown-unknown/release/flight_recorder.wasm ./build2
 
 opt:
   #!/usr/bin/env -S parallel --shebang --ungroup --jobs 6
@@ -41,6 +43,7 @@ opt:
   wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/csg_sandbox_bg.wasm --enable-bulk-memory
   wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
   wasm-opt ./build/path_tessellate_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/path_tessellate_bg.wasm --enable-bulk-memory
+  wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
 
 build:
   #!/bin/bash
@@ -119,3 +122,9 @@ build-geoscript-repl-release:
 
 build-geoscript:
   just build-geoscript-repl
+
+build-flight-recorder:
+  RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package flight_recorder
+  cp ./target/wasm32-unknown-unknown/release/flight_recorder.wasm ./build2
+  wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
+  cp ./build2/flight_recorder.wasm ../../../static

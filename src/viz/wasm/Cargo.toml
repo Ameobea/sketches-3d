@@ -16,6 +16,7 @@ members = [
   "geoscript",
   "geoscript_repl",
   "path_tessellate",
+  "flight_recorder",
 ]
 resolver = "2"
 

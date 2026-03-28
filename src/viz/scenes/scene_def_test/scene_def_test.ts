@@ -110,11 +110,11 @@ export const processLoadedScene = (
     'jump_pad_speedup_test',
     true,
     {
-      gravity: 240,
+      gravity: 220,
       gravityShaping: {
         riseMultiplier: 1.0,
         apexMultiplier: 0.6,
-        fallMultiplier: 1.25,
+        fallMultiplier: 1.2,
         apexThreshold: 4.0,
         kneeWidth: 0.1,
       },

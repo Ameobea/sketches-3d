@@ -3,6 +3,7 @@ apis/index.ts
 index.ts
 models/ModelMap.ts
 models/Play.ts
+models/PlayResponse.ts
 models/PlayerLogin.ts
 models/StrippedMap.ts
 models/StrippedPlayer.ts

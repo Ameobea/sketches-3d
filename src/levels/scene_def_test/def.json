@@ -31,6 +31,13 @@
     },
     "gold_roughness": {
       "url": "https://i.ameo.link/bdz.jpg"
+    },
+    "plastered_concrete_color": {
+      "url": "https://geotoy.b-cdn.net/textures/1/0a2fce65-f2dd-4cab-8f16-86d35175007b.avif",
+      "colorSpace": "srgb"
+    },
+    "plastered_concrete_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/12b9751a-845f-4d5a-b971-98cd62d572e9.avif"
     }
   },
   "materials": {
@@ -66,8 +73,8 @@
         "metalness": 0.49,
         "iridescence": 0.4,
         "uvScale": [
-          0.1,
-          0.1
+          0.003,
+          0.003
         ],
         "map": "bricks_color",
         "normalMap": "bricks_normal",
@@ -75,12 +82,8 @@
         "normalScale": 0.54
       },
       "options": {
-        "useGeneratedUVs": true,
-        "tileBreaking": {
-          "type": "neyret",
-          "patchScale": 0.3
-        },
-        "randomizeUVOffset": false
+        "useTriplanarMapping": true,
+        "randomizeUVOffset": true
       }
     },
     "gold_mat": {
@@ -95,6 +98,23 @@
         "map": "gold_albedo",
         "normalMap": "gold_normal",
         "roughnessMap": "gold_roughness"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "plastered_concrete": {
+      "type": "customShader",
+      "props": {
+        "color": 14671839,
+        "roughness": 0.9,
+        "metalness": 0.4,
+        "uvScale": [
+          0.04,
+          0.04
+        ],
+        "map": "plastered_concrete_color",
+        "normalMap": "plastered_concrete_normal"
       },
       "options": {
         "useTriplanarMapping": true
@@ -124,53 +144,17 @@
         "op": "union",
         "children": [
           {
-            "op": "difference",
+            "op": "union",
             "children": [
-              {
-                "asset": "platform_small",
-                "position": [
-                  0,
-                  0,
-                  0
-                ],
-                "rotation": [
-                  0,
-                  0,
-                  0
-                ],
-                "scale": [
-                  1,
-                  1,
-                  1
-                ]
-              },
               {
                 "op": "difference",
                 "children": [
                   {
                     "asset": "platform_small",
                     "position": [
-                      -0.0381,
-                      0.1553,
-                      -0.1212
-                    ],
-                    "rotation": [
-                      -1.0259,
-                      -2.3266,
-                      1.4592
-                    ],
-                    "scale": [
-                      0.8492,
-                      1,
-                      1
-                    ]
-                  },
-                  {
-                    "asset": "ground",
-                    "position": [
-                      0.0025,
-                      0.0012,
-                      -0.1565
+                      0,
+                      0,
+                      0
                     ],
                     "rotation": [
                       0,
@@ -178,16 +162,90 @@
                       0
                     ],
                     "scale": [
-                      0.2012,
-                      0.1723,
-                      0.0639
+                      1,
+                      1,
+                      1
+                    ]
+                  },
+                  {
+                    "op": "difference",
+                    "children": [
+                      {
+                        "asset": "platform_small",
+                        "position": [
+                          -0.0381,
+                          0.1553,
+                          -0.1212
+                        ],
+                        "rotation": [
+                          -1.0259,
+                          -2.3266,
+                          1.4592
+                        ],
+                        "scale": [
+                          0.8492,
+                          1,
+                          1
+                        ]
+                      },
+                      {
+                        "asset": "ground",
+                        "position": [
+                          -0.0123,
+                          -0.0074,
+                          0.7177
+                        ],
+                        "rotation": [
+                          0,
+                          0,
+                          0
+                        ],
+                        "scale": [
+                          0.2012,
+                          0.1723,
+                          0.0639
+                        ]
+                      }
+                    ],
+                    "position": [
+                      0.0101,
+                      0.038,
+                      -0.1215
+                    ],
+                    "rotation": [
+                      0,
+                      0,
+                      0
+                    ],
+                    "scale": [
+                      1,
+                      1,
+                      1
+                    ]
+                  },
+                  {
+                    "asset": "coil",
+                    "position": [
+                      0.029,
+                      0.0168,
+                      -1.7094
+                    ],
+                    "rotation": [
+                      0,
+                      0,
+                      0
+                    ],
+                    "scale": [
+                      1,
+                      1,
+                      1
                     ]
                   }
                 ],
                 "position": [
-                  0.0101,
-                  0.038,
-                  -0.1215
+                  0,
+                  0,
+                  0
                 ],
                 "rotation": [
                   0,
@@ -203,9 +261,9 @@
               {
                 "asset": "coil",
                 "position": [
-                  0.029,
-                  0.0168,
-                  -1.7094
+                  -1.0334,
+                  -0.4951,
+                  -0.0141
                 ],
                 "rotation": [
                   0,
@@ -218,11 +276,52 @@
                   1
                 ]
               }
+            ]
+          },
+          {
+            "op": "difference",
+            "children": [
+              {
+                "asset": "capsule",
+                "position": [
+                  1.0263,
+                  -0.7039,
+                  3.0923
+                ],
+                "rotation": [
+                  0.4093,
+                  2.4774,
+                  2.0306
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "asset": "capsule",
+                "position": [
+                  1.9256,
+                  -1.6843,
+                  3.9122
+                ],
+                "rotation": [
+                  -0.3268,
+                  0.2598,
+                  -1.2944
+                ],
+                "scale": [
+                  1.0469,
+                  1,
+                  1.128
+                ]
+              }
             ],
             "position": [
-              0,
-              0,
-              0
+              0.0003,
+              0.0002,
+              -0.0171
             ],
             "rotation": [
               0,
@@ -234,13 +333,36 @@
               1,
               1
             ]
+          }
+        ]
+      }
+    },
+    "capsule": {
+      "type": "geoscript",
+      "code": "export mesh = capsule(height=4)"
+    },
+    "t1": {
+      "type": "geoscript",
+      "file": "t_1.geo"
+    },
+    "ring": {
+      "type": "geoscript",
+      "file": "ring.geo"
+    },
+    "csg_t1": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "t1"
           },
           {
-            "asset": "coil",
+            "asset": "capsule",
             "position": [
-              -1.0334,
-              -0.4951,
-              -0.0141
+              39.0224,
+              10.8949,
+              0
             ],
             "rotation": [
               0,
@@ -248,9 +370,38 @@
               0
             ],
             "scale": [
-              1,
-              1,
-              1
+              8.3449,
+              8.3449,
+              8.3449
+            ]
+          }
+        ]
+      }
+    },
+    "csg_ring": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "ring"
+          },
+          {
+            "asset": "capsule",
+            "position": [
+              -11.7315,
+              0,
+              -87.0651
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              -15.0835,
+              -7.5788,
+              -15.8001
             ]
           }
         ]
@@ -382,7 +533,7 @@
       "id": "plat_b",
       "asset": "platform_small",
       "position": [
-        27.5189,
+        29.1819,
         3.0573,
         9.1142
       ],
@@ -517,6 +668,46 @@
         -7.3804
       ],
       "material": "gold_mat"
+    },
+    {
+      "id": "t1",
+      "asset": "csg_t1",
+      "position": [
+        -4.645,
+        25.085,
+        21.3123
+      ],
+      "rotation": [
+        1.392,
+        0.6246,
+        1.4632
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "ring",
+      "asset": "csg_ring",
+      "position": [
+        70.6811,
+        51.3362,
+        171.8815
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1.0791,
+        1
+      ],
+      "material": "plastered_concrete"
     }
   ]
 }
