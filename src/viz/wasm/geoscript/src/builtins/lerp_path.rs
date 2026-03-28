@@ -2,6 +2,8 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 
+use nalgebra::Matrix3;
+
 use crate::{
   builtins::trace_path::{as_path_sampler, normalize_guides, PathSampler},
   seq::EagerSeq,
@@ -12,20 +14,30 @@ pub(crate) struct LerpPathCallable {
   path_a: Rc<Callable>,
   path_b: Rc<Callable>,
   mix: f32,
-  interned_t_kwarg: Sym,
   merged_critical_points: Vec<f32>,
+  transform: Matrix3<f32>,
 }
 
 impl PathSampler for LerpPathCallable {
-  fn interned_t_kwarg(&self) -> Sym {
-    self.interned_t_kwarg
-  }
-
   fn critical_t_values(&self) -> Vec<f32> {
     self.merged_critical_points.clone()
   }
 
-  fn eval_at(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
+  fn transform(&self) -> &Matrix3<f32> {
+    &self.transform
+  }
+
+  fn with_transform(&self, t: Matrix3<f32>) -> Box<dyn crate::DynamicCallable> {
+    Box::new(LerpPathCallable {
+      path_a: Rc::clone(&self.path_a),
+      path_b: Rc::clone(&self.path_b),
+      mix: self.mix,
+      merged_critical_points: self.merged_critical_points.clone(),
+      transform: t * self.transform,
+    })
+  }
+
+  fn eval_at_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
     if self.mix <= 0.0 {
       let val_a = ctx
         .invoke_callable(&self.path_a, &[Value::Float(t)], EMPTY_KWARGS)
@@ -64,7 +76,7 @@ impl PathSampler for LerpPathCallable {
 }
 
 pub fn lerp_paths_impl(
-  ctx: &EvalCtx,
+  _ctx: &EvalCtx,
   _def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -110,16 +122,14 @@ pub fn lerp_paths_impl(
     }
   };
 
-  let interned_t_kwarg = ctx.interned_symbols.intern("t");
-
   Ok(Value::Callable(Rc::new(Callable::Dynamic {
     name: "lerp_paths".to_owned(),
     inner: Box::new(LerpPathCallable {
       path_a: Rc::clone(&path_a),
       path_b: Rc::clone(&path_b),
       mix,
-      interned_t_kwarg,
       merged_critical_points,
+      transform: Matrix3::identity(),
     }),
   })))
 }

@@ -7,7 +7,7 @@ use std::rc::Rc;
 use crate::builtins::path_critical_points::{detect_critical_points, CriticalPointConfig};
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
-  build_topology_samples, sample_subpath_points, DrawCommand, PathTracerCallable,
+  build_topology_samples, DrawCommand, PathTracerCallable,
 };
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
@@ -341,19 +341,12 @@ pub fn offset_path_impl(
         }
       };
 
-      let tracer = match &**path_callable {
-        Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-        _ => None,
-      };
+      let sampler = crate::builtins::trace_path::as_path_sampler(path_callable);
+      let subpath_data = sampler.and_then(|s| s.sample_subpaths(curve_angle_radians));
 
-      if let Some(tracer) = tracer {
-        for subpath in &tracer.subpaths {
-          let is_closed = closed_override.unwrap_or(subpath.is_closed());
-          let include_end = !is_closed;
-          let mut points = sample_subpath_points(subpath, curve_angle_radians, include_end);
-          if tracer.reverse {
-            points.reverse();
-          }
+      if let Some(subpath_data) = subpath_data {
+        for (points, is_closed) in subpath_data {
+          let is_closed = closed_override.unwrap_or(is_closed);
           push_path(points, is_closed);
         }
       } else {

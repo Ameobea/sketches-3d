@@ -9,7 +9,7 @@ use crate::builtins::path_critical_points::{
 };
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
-  build_topology_samples, sample_subpath_points, DrawCommand, FillRule, PathTracerCallable,
+  build_topology_samples, DrawCommand, FillRule, PathTracerCallable,
 };
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
@@ -202,22 +202,16 @@ fn sample_path_to_coords(
   closed_override: Option<bool>,
   fn_name: &str,
 ) -> Result<(Vec<f64>, Vec<u32>), ErrorStack> {
+  use crate::builtins::trace_path::as_path_sampler;
+
   let mut coords = Vec::new();
   let mut lengths = Vec::new();
 
-  let tracer = match &**path_callable {
-    Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-    _ => None,
-  };
+  let sampler = as_path_sampler(path_callable);
+  let subpath_data = sampler.and_then(|s| s.sample_subpaths(curve_angle_radians));
 
-  if let Some(tracer) = tracer {
-    for subpath in &tracer.subpaths {
-      let is_closed = closed_override.unwrap_or(subpath.is_closed());
-      let include_end = !is_closed;
-      let mut points = sample_subpath_points(subpath, curve_angle_radians, include_end);
-      if tracer.reverse {
-        points.reverse();
-      }
+  if let Some(subpath_data) = subpath_data {
+    for (points, _is_closed) in subpath_data {
       if points.len() >= 2 {
         lengths.push(points.len() as u32);
         for pt in &points {

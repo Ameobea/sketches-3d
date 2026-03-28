@@ -790,6 +790,7 @@ mod tests {
       reverse: false,
       override_critical_points: Some(Vec::new()),
       fill_rule: None,
+      transform: nalgebra::Matrix3::identity(),
     };
     let ring_resolution = 80;
     let min_segment_length = 0.00001;

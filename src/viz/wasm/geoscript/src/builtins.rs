@@ -24,7 +24,7 @@ use rand::Rng;
 use rand::{RngCore, SeedableRng};
 
 use crate::builtins::trace_path::{
-  as_path_sampler, build_topology_samples, sample_subpath_points, PathTracerCallable, SubpathsSeq,
+  as_path_sampler, build_topology_samples, PathTracerCallable, SubpathsSeq,
 };
 use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
@@ -928,10 +928,7 @@ fn apply_mat4_impl(
   // caller (matching Three.js Matrix4.elements which is column-major, but the
   // codegen emits in row-major for readability).  We construct column-major:
   let mat = Matrix4::new(
-    m00, m01, m02, m03,
-    m10, m11, m12, m13,
-    m20, m21, m22, m23,
-    m30, m31, m32, m33,
+    m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33,
   );
 
   let mesh = mesh_val.as_mesh().unwrap();
@@ -1986,19 +1983,11 @@ fn tessellate_path_impl(
           push_clean_path(flat_points, "path sequence")?;
         }
       } else if let Some(cb) = path_val.as_callable() {
-        let tracer = match &**cb {
-          Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-          _ => None,
-        };
+        let sampler = as_path_sampler(cb);
+        let subpath_data = sampler.and_then(|s| s.sample_subpaths(curve_angle_radians));
 
-        if let Some(tracer) = tracer {
-          for (ix, subpath) in tracer.subpaths.iter().enumerate() {
-            let actual_closed = subpath.is_closed();
-            let include_end = !actual_closed;
-            let mut points = sample_subpath_points(subpath, curve_angle_radians, include_end);
-            if tracer.reverse {
-              points.reverse();
-            }
+        if let Some(subpath_data) = subpath_data {
+          for (ix, (points, _closed)) in subpath_data.into_iter().enumerate() {
             push_clean_path(points, &format!("subpath {ix}"))?;
           }
         } else {
@@ -4628,6 +4617,68 @@ fn origin_to_geometry_impl(
         material: mesh.material.clone(),
       })))
     }
+    1 => {
+      // origin_to_geometry for paths
+      let path_val = arg_refs[0].resolve(args, kwargs);
+      let cb = path_val.as_callable().ok_or_else(|| {
+        ErrorStack::new(format!(
+          "origin_to_geometry: expected a path callable, got {path_val:?}"
+        ))
+      })?;
+      let tracer = match &**cb {
+        Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
+        _ => None,
+      };
+      let Some(tracer) = tracer else {
+        return Err(ErrorStack::new(
+          "origin_to_geometry for paths requires a trace_path/trace_svg_path path sampler.",
+        ));
+      };
+
+      // Compute centroid from all segment endpoints
+      let mut sum = Vec2::new(0.0, 0.0);
+      let mut count = 0usize;
+      for subpath in &tracer.subpaths {
+        for seg in &subpath.segments {
+          sum += seg.end();
+          count += 1;
+        }
+      }
+      if count == 0 {
+        return Ok(path_val.clone());
+      }
+      let centroid = sum / count as f32;
+      let offset = -centroid;
+
+      // Clone subpaths and translate all segment control points
+      let mut new_subpaths = tracer.subpaths.clone();
+      for subpath in &mut new_subpaths {
+        for seg in &mut subpath.segments {
+          seg.translate(offset);
+        }
+      }
+
+      let mut subpath_cumulative_lengths = Vec::with_capacity(new_subpaths.len());
+      let mut total_length = 0.0;
+      for subpath in &new_subpaths {
+        total_length += subpath.total_length;
+        subpath_cumulative_lengths.push(total_length);
+      }
+
+      Ok(Value::Callable(Rc::new(Callable::Dynamic {
+        name: "trace_path".to_owned(),
+        inner: Box::new(PathTracerCallable {
+          interned_t_kwarg: tracer.interned_t_kwarg,
+          subpaths: new_subpaths,
+          subpath_cumulative_lengths,
+          total_length,
+          reverse: tracer.reverse,
+          override_critical_points: tracer.override_critical_points.clone(),
+          fill_rule: tracer.fill_rule,
+          transform: tracer.transform, // preserve existing transform
+        }),
+      })))
+    }
     _ => unimplemented!(),
   }
 }
@@ -4654,8 +4705,172 @@ fn apply_transforms_impl(
         material: mesh.material.clone(),
       })))
     }
+    1 => {
+      // apply_transforms for paths
+      let path_val = arg_refs[0].resolve(args, kwargs);
+      let cb = path_val.as_callable().ok_or_else(|| {
+        ErrorStack::new(format!(
+          "apply_transforms: expected a path callable, got {path_val:?}"
+        ))
+      })?;
+      let tracer = match &**cb {
+        Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
+        _ => None,
+      };
+      let Some(tracer) = tracer else {
+        return Err(ErrorStack::new(
+          "apply_transforms for paths requires a trace_path/trace_svg_path path sampler. Generic \
+           callables do not have geometry to bake transforms into.",
+        ));
+      };
+
+      if tracer.transform == nalgebra::Matrix3::identity() {
+        return Ok(path_val.clone());
+      }
+
+      let m = &tracer.transform;
+
+      let mut new_subpaths = Vec::with_capacity(tracer.subpaths.len());
+      for subpath in &tracer.subpaths {
+        let mut new_segments = Vec::with_capacity(subpath.segments.len());
+        for seg in &subpath.segments {
+          new_segments.push(trace_path::transform_segment(seg, m)?);
+        }
+        if let Some(new_subpath) = trace_path::PathSubpath::new(new_segments, subpath.closed) {
+          new_subpaths.push(new_subpath);
+        }
+      }
+
+      let mut subpath_cumulative_lengths = Vec::with_capacity(new_subpaths.len());
+      let mut total_length = 0.0;
+      for subpath in &new_subpaths {
+        total_length += subpath.total_length;
+        subpath_cumulative_lengths.push(total_length);
+      }
+
+      Ok(Value::Callable(Rc::new(Callable::Dynamic {
+        name: "trace_path".to_owned(),
+        inner: Box::new(PathTracerCallable {
+          interned_t_kwarg: tracer.interned_t_kwarg,
+          subpaths: new_subpaths,
+          subpath_cumulative_lengths,
+          total_length,
+          reverse: tracer.reverse,
+          override_critical_points: tracer.override_critical_points.clone(),
+          fill_rule: tracer.fill_rule,
+          transform: nalgebra::Matrix3::identity(),
+        }),
+      })))
+    }
     _ => unimplemented!(),
   }
+}
+
+/// Applies a 2D transform matrix to a path sampler, returning a new callable with the
+/// transform composed onto the path.
+fn apply_path_transform(
+  cb: &Rc<Callable>,
+  transform_matrix: nalgebra::Matrix3<f32>,
+) -> Result<Value, ErrorStack> {
+  if let Some(sampler) = as_path_sampler(cb) {
+    let transformed = sampler.with_transform(transform_matrix);
+    Ok(Value::Callable(Rc::new(Callable::Dynamic {
+      name: "trace_path".to_owned(),
+      inner: transformed,
+    })))
+  } else {
+    // Black-box callable: wrap in TransformedCallableSampler
+    Ok(Value::Callable(Rc::new(Callable::Dynamic {
+      name: "trace_path".to_owned(),
+      inner: Box::new(trace_path::TransformedCallableSampler {
+        inner: Rc::clone(cb),
+        transform: transform_matrix,
+        cached_critical_points: Vec::new(),
+      }),
+    })))
+  }
+}
+
+fn path_trans_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (offset, path_arg) = match def_ix {
+    0 => {
+      let offset = *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      (offset, &arg_refs[1])
+    }
+    1 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      (Vec2::new(x, y), &arg_refs[2])
+    }
+    _ => unimplemented!(),
+  };
+
+  let cb = path_arg
+    .resolve(args, kwargs)
+    .as_callable()
+    .ok_or_else(|| ErrorStack::new("path_trans: expected a callable path sampler"))?;
+
+  let t = nalgebra::Matrix3::new(1.0, 0.0, offset.x, 0.0, 1.0, offset.y, 0.0, 0.0, 1.0);
+  apply_path_transform(&cb, t)
+}
+
+fn path_rot_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+  let cb = arg_refs[1]
+    .resolve(args, kwargs)
+    .as_callable()
+    .ok_or_else(|| ErrorStack::new("path_rot: expected a callable path sampler"))?;
+
+  let cos = angle.cos();
+  let sin = angle.sin();
+  let r = nalgebra::Matrix3::new(cos, -sin, 0.0, sin, cos, 0.0, 0.0, 0.0, 1.0);
+  apply_path_transform(&cb, r)
+}
+
+fn path_scale_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (sx, sy, path_arg) = match def_ix {
+    0 => {
+      let scale_val = arg_refs[0].resolve(args, kwargs);
+      let (sx, sy) = if let Some(v) = scale_val.as_vec2() {
+        (v.x, v.y)
+      } else if let Some(f) = scale_val.as_float() {
+        (f, f)
+      } else {
+        return Err(ErrorStack::new(format!(
+          "path_scale: expected Vec2 or number for scale, found: {scale_val:?}"
+        )));
+      };
+      (sx, sy, &arg_refs[1])
+    }
+    1 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      (x, y, &arg_refs[2])
+    }
+    _ => unimplemented!(),
+  };
+
+  let cb = path_arg
+    .resolve(args, kwargs)
+    .as_callable()
+    .ok_or_else(|| ErrorStack::new("path_scale: expected a callable path sampler"))?;
+
+  let s = nalgebra::Matrix3::new(sx, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 1.0);
+  apply_path_transform(&cb, s)
 }
 
 fn flip_normals_impl(
@@ -6060,6 +6275,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "path_xor" => builtin_fn!(path_xor, |def_ix, arg_refs, args, kwargs, ctx| {
     path_boolean::path_xor_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "path_trans" => builtin_fn!(path_trans, |def_ix, arg_refs, args, kwargs, _ctx| {
+    path_trans_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "path_rot" => builtin_fn!(path_rot, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    path_rot_impl(arg_refs, args, kwargs)
+  }),
+  "path_scale" => builtin_fn!(path_scale, |def_ix, arg_refs, args, kwargs, _ctx| {
+    path_scale_impl(def_ix, arg_refs, args, kwargs)
   }),
   "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_impl(ctx, def_ix, arg_refs, args, kwargs)

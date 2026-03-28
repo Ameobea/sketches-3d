@@ -487,6 +487,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Moves the mesh so that its origin is at the center of its geometry (averge of all its vertices), returning a new mesh.\n\nThis will actually modify the vertex positions and preserve any existing transforms.",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable to center."
+          },
+        ],
+        description: "Moves a 2D path so that its origin is at the centroid of its segment endpoints, returning a new path sampler. Preserves any existing transforms.",
+        return_type: &[ArgType::Callable],
+      },
     ],
   },
   "apply_transforms" => FnDef {
@@ -505,6 +518,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies rotation, translation, and scale transforms to the vertices of a mesh, resetting the transforms to identity",
         return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable whose transform will be baked into its geometry."
+          },
+        ],
+        description: "Bakes the 2D affine transform into the path's segment control points, resetting the transform to identity. Only works with trace_path/trace_svg_path paths.",
+        return_type: &[ArgType::Callable],
       },
     ],
   },
@@ -7974,6 +8000,138 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         return_type: &[ArgType::Callable],
       }
     ]
+  },
+  "path_trans" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Translation offset as a vec2."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Translates a 2D path by the given offset, returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X translation."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y translation."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Translates a 2D path by (x, y), returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "path_rot" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "angle",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation angle in radians."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Rotates a 2D path around the origin by the given angle (radians), returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "path_scale" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Scale factor as a vec2 (non-uniform) or number (uniform)."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Scales a 2D path, returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X scale factor."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y scale factor."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Scales a 2D path by (x, y), returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
   },
   "move" => FnDef {
     module: "trace_path",

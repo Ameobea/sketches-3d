@@ -6,6 +6,8 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 use svgtypes::PathParser;
 
+use nalgebra::{Matrix3, Vector3};
+
 use crate::{
   ast::{ClosureBody, Expr, FunctionCall, FunctionCallTarget},
   builtins::{
@@ -260,7 +262,6 @@ pub(crate) struct SubpathTopology {
 }
 
 pub(crate) trait PathSampler: Any {
-  fn interned_t_kwarg(&self) -> Sym;
   fn critical_t_values(&self) -> Vec<f32>;
   fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
     None
@@ -268,7 +269,42 @@ pub(crate) trait PathSampler: Any {
   fn fill_rule(&self) -> Option<FillRule> {
     None
   }
-  fn eval_at(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack>;
+  fn is_reversed(&self) -> bool {
+    false
+  }
+
+  /// Returns the 2D affine transform matrix for this path sampler.
+  fn transform(&self) -> &Matrix3<f32>;
+
+  /// Returns a new path sampler (as a DynamicCallable) with the given transform composed
+  /// (left-multiplied) onto the existing transform.
+  fn with_transform(&self, t: Matrix3<f32>) -> Box<dyn DynamicCallable>;
+
+  /// Evaluates the path at parameter `t` in local (untransformed) space.
+  fn eval_at_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack>;
+
+  /// Evaluates the path at parameter `t` with the transform applied.
+  fn eval_at(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
+    let p = self.eval_at_raw(t, ctx)?;
+    Ok(apply_transform_to_point(self.transform(), p))
+  }
+
+  /// Fast-path: sample all subpath points with topology-aware adaptive subdivision.
+  /// Returns `None` if not supported (e.g. black-box callables).
+  /// Each entry is (points, is_closed).  Points are in world (transformed) space.
+  fn sample_subpaths(&self, _angle_tolerance: f32) -> Option<Vec<(Vec<Vec2>, bool)>> {
+    None
+  }
+}
+
+/// Applies a 2D affine transform (3x3 homogeneous matrix) to a point.
+/// Returns the point unchanged if the matrix is identity.
+pub(crate) fn apply_transform_to_point(m: &Matrix3<f32>, p: Vec2) -> Vec2 {
+  if *m == Matrix3::identity() {
+    return p;
+  }
+  let tp = m * Vector3::new(p.x, p.y, 1.0);
+  Vec2::new(tp.x, tp.y)
 }
 
 fn parse_path_sampler_t_arg<'a>(
@@ -313,7 +349,8 @@ impl<T: PathSampler + 'static> DynamicCallable for T {
     kwargs: &FxHashMap<Sym, Value>,
     ctx: &EvalCtx,
   ) -> Result<Value, ErrorStack> {
-    let t = parse_path_sampler_t_arg(args, kwargs, self.interned_t_kwarg())?;
+    let interned_t = ctx.interned_symbols.intern("t");
+    let t = parse_path_sampler_t_arg(args, kwargs, interned_t)?;
     let pos = self.eval_at(t, ctx)?;
     Ok(Value::Vec2(pos))
   }
@@ -343,8 +380,50 @@ pub(crate) fn as_path_sampler(callable: &Callable) -> Option<&dyn PathSampler> {
             .downcast_ref::<super::lerp_path::LerpPathCallable>()
             .map(|t| t as &dyn PathSampler)
         })
+        .or_else(|| {
+          any
+            .downcast_ref::<TransformedCallableSampler>()
+            .map(|t| t as &dyn PathSampler)
+        })
     }
     _ => None,
+  }
+}
+
+/// Wraps any `Callable` (including arbitrary `|t| -> Vec2` functions) with a 2D affine transform.
+/// This allows transforms to be applied to black-box path functions that don't implement
+/// `PathSampler` natively.
+pub(crate) struct TransformedCallableSampler {
+  pub inner: Rc<Callable>,
+  pub transform: Matrix3<f32>,
+  pub cached_critical_points: Vec<f32>,
+}
+
+impl PathSampler for TransformedCallableSampler {
+  fn critical_t_values(&self) -> Vec<f32> {
+    self.cached_critical_points.clone()
+  }
+
+  fn transform(&self) -> &Matrix3<f32> {
+    &self.transform
+  }
+
+  fn with_transform(&self, t: Matrix3<f32>) -> Box<dyn DynamicCallable> {
+    Box::new(TransformedCallableSampler {
+      inner: Rc::clone(&self.inner),
+      transform: t * self.transform,
+      cached_critical_points: self.cached_critical_points.clone(),
+    })
+  }
+
+  fn eval_at_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
+    let val = ctx
+      .invoke_callable(&self.inner, &[Value::Float(t)], EMPTY_KWARGS)
+      .map_err(|e| e.wrap("Error invoking callable in TransformedCallableSampler"))?;
+    val
+      .as_vec2()
+      .copied()
+      .ok_or_else(|| ErrorStack::new("TransformedCallableSampler: callable did not return a Vec2"))
   }
 }
 
@@ -505,7 +584,7 @@ pub(crate) fn build_interval_weights(
 }
 
 impl PathSegment {
-  fn translate(&mut self, offset: Vec2) {
+  pub(crate) fn translate(&mut self, offset: Vec2) {
     match self {
       PathSegment::Line { start, end, .. } => {
         *start = *start + offset;
@@ -550,7 +629,7 @@ impl PathSegment {
     !matches!(self, PathSegment::Line { .. })
   }
 
-  fn end(&self) -> Vec2 {
+  pub(crate) fn end(&self) -> Vec2 {
     match self {
       PathSegment::Line { end, .. } => *end,
       PathSegment::Quadratic { end, .. } => *end,
@@ -618,6 +697,135 @@ impl PathSegment {
   }
 }
 
+fn is_uniform_transform(m: &Matrix3<f32>) -> bool {
+  let a = m[(0, 0)];
+  let b = m[(0, 1)];
+  let c = m[(1, 0)];
+  let d = m[(1, 1)];
+  let eps = 1e-5;
+  // For a scaled rotation: a == d && b == -c
+  (a - d).abs() < eps && (b + c).abs() < eps
+}
+
+pub(crate) fn transform_segment(
+  seg: &PathSegment,
+  m: &Matrix3<f32>,
+) -> Result<PathSegment, ErrorStack> {
+  match seg {
+    PathSegment::Line { start, end, .. } => {
+      let new_start = apply_transform_to_point(m, *start);
+      let new_end = apply_transform_to_point(m, *end);
+      let length = (new_end - new_start).norm();
+      Ok(PathSegment::Line {
+        start: new_start,
+        end: new_end,
+        length,
+      })
+    }
+    PathSegment::Quadratic {
+      start, ctrl, end, ..
+    } => {
+      let new_start = apply_transform_to_point(m, *start);
+      let new_ctrl = apply_transform_to_point(m, *ctrl);
+      let new_end = apply_transform_to_point(m, *end);
+      let (table, _, _) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+        quadratic_bezier(new_start, new_ctrl, new_end, t)
+      });
+      Ok(PathSegment::Quadratic {
+        start: new_start,
+        ctrl: new_ctrl,
+        end: new_end,
+        table,
+      })
+    }
+    PathSegment::Cubic {
+      start,
+      ctrl1,
+      ctrl2,
+      end,
+      ..
+    } => {
+      let new_start = apply_transform_to_point(m, *start);
+      let new_ctrl1 = apply_transform_to_point(m, *ctrl1);
+      let new_ctrl2 = apply_transform_to_point(m, *ctrl2);
+      let new_end = apply_transform_to_point(m, *end);
+      let (table, _, _) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+        cubic_bezier(new_start, new_ctrl1, new_ctrl2, new_end, t)
+      });
+      Ok(PathSegment::Cubic {
+        start: new_start,
+        ctrl1: new_ctrl1,
+        ctrl2: new_ctrl2,
+        end: new_end,
+        table,
+      })
+    }
+    PathSegment::Arc {
+      end,
+      center,
+      rx,
+      ry,
+      cos_phi,
+      sin_phi,
+      theta_start,
+      theta_delta,
+      ..
+    } => {
+      if !is_uniform_transform(m) {
+        return Err(ErrorStack::new(
+          "apply_transforms: cannot bake a non-uniform transform (e.g. non-uniform scale or skew) \
+           into a path that contains arc segments. Arc segments can only be exactly preserved \
+           under uniform transforms (translation, rotation, uniform scale). Consider using \
+           `path_scale` with a uniform factor, or convert arcs to cubic beziers first.",
+        ));
+      }
+
+      // Uniform similarity transform: preserves arcs exactly.
+      // Extract the uniform scale and rotation angle from the 2x2 block.
+      let a = m[(0, 0)];
+      let b = m[(0, 1)];
+      let scale = (a * a + b * b).sqrt();
+      let rot_angle = b.atan2(a);
+
+      let new_center = apply_transform_to_point(m, *center);
+      let new_end = apply_transform_to_point(m, *end);
+      let new_rx = rx * scale;
+      let new_ry = ry * scale;
+
+      // Compose the rotation into the existing ellipse rotation (phi)
+      let old_phi = sin_phi.atan2(*cos_phi);
+      let new_phi = old_phi + rot_angle;
+      let new_cos_phi = new_phi.cos();
+      let new_sin_phi = new_phi.sin();
+
+      let (table, _, _) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+        arc_point(
+          new_center,
+          new_rx,
+          new_ry,
+          new_cos_phi,
+          new_sin_phi,
+          *theta_start,
+          *theta_delta,
+          t,
+        )
+      });
+
+      Ok(PathSegment::Arc {
+        end: new_end,
+        center: new_center,
+        rx: new_rx,
+        ry: new_ry,
+        cos_phi: new_cos_phi,
+        sin_phi: new_sin_phi,
+        theta_start: *theta_start,
+        theta_delta: *theta_delta,
+        table,
+      })
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PathSubpath {
   pub(crate) segments: Vec<PathSegment>,
@@ -649,7 +857,7 @@ impl SubpathBuilder {
 }
 
 impl PathSubpath {
-  fn new(segments: Vec<PathSegment>, closed: bool) -> Option<Self> {
+  pub(crate) fn new(segments: Vec<PathSegment>, closed: bool) -> Option<Self> {
     if segments.is_empty() {
       return None;
     }
@@ -743,6 +951,7 @@ pub struct PathTracerCallable {
   pub reverse: bool,
   pub override_critical_points: Option<Vec<f32>>,
   pub fill_rule: Option<FillRule>,
+  pub transform: Matrix3<f32>,
 }
 
 impl PathTracerCallable {
@@ -1052,6 +1261,7 @@ impl PathTracerCallable {
       reverse,
       override_critical_points: None,
       fill_rule: None,
+      transform: Matrix3::identity(),
     }
   }
 
@@ -1163,6 +1373,7 @@ impl PathTracerCallable {
       reverse,
       override_critical_points: None,
       fill_rule: None,
+      transform: Matrix3::identity(),
     }
   }
 }
@@ -1217,13 +1428,15 @@ impl Sequence for SubpathsSeq {
     };
     let interned_t_kwarg = tracer.interned_t_kwarg;
     let reverse = tracer.reverse;
+    let transform = tracer.transform;
     let subpaths = tracer.subpaths.clone();
 
     Box::new(subpaths.into_iter().map(move |subpath| {
-      let tracer = PathTracerCallable::from_subpath(subpath, interned_t_kwarg, reverse);
+      let mut child = PathTracerCallable::from_subpath(subpath, interned_t_kwarg, reverse);
+      child.transform = transform;
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_path".to_owned(),
-        inner: Box::new(tracer),
+        inner: Box::new(child),
       })))
     }))
   }
@@ -1310,10 +1523,6 @@ pub(crate) fn sample_subpath_points(
 }
 
 impl PathSampler for PathTracerCallable {
-  fn interned_t_kwarg(&self) -> Sym {
-    self.interned_t_kwarg
-  }
-
   fn critical_t_values(&self) -> Vec<f32> {
     PathTracerCallable::critical_t_values(self)
   }
@@ -1335,8 +1544,49 @@ impl PathSampler for PathTracerCallable {
     self.fill_rule
   }
 
-  fn eval_at(&self, t: f32, _ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
+  fn is_reversed(&self) -> bool {
+    self.reverse
+  }
+
+  fn transform(&self) -> &Matrix3<f32> {
+    &self.transform
+  }
+
+  fn with_transform(&self, t: Matrix3<f32>) -> Box<dyn DynamicCallable> {
+    Box::new(PathTracerCallable {
+      interned_t_kwarg: self.interned_t_kwarg,
+      subpaths: self.subpaths.clone(),
+      subpath_cumulative_lengths: self.subpath_cumulative_lengths.clone(),
+      total_length: self.total_length,
+      reverse: self.reverse,
+      override_critical_points: self.override_critical_points.clone(),
+      fill_rule: self.fill_rule,
+      transform: t * self.transform,
+    })
+  }
+
+  fn eval_at_raw(&self, t: f32, _ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
     self.sample(t)
+  }
+
+  fn sample_subpaths(&self, angle_tolerance: f32) -> Option<Vec<(Vec<Vec2>, bool)>> {
+    let transform = &self.transform;
+    let mut result = Vec::with_capacity(self.subpaths.len());
+    for subpath in &self.subpaths {
+      let is_closed = subpath.is_closed();
+      let include_end = !is_closed;
+      let mut points = sample_subpath_points(subpath, angle_tolerance, include_end);
+      if self.reverse {
+        points.reverse();
+      }
+      if *transform != Matrix3::identity() {
+        for p in &mut points {
+          *p = apply_transform_to_point(transform, *p);
+        }
+      }
+      result.push((points, is_closed));
+    }
+    Some(result)
   }
 }
 
@@ -2752,5 +3002,155 @@ cps = critical_points(f)
       msg.contains("path sampler"),
       "Expected path sampler error, got: {msg}"
     );
+  }
+
+  #[test]
+  fn test_path_tracer_transform_eval_at() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(10.0, 0.0)),
+    ];
+    let mut tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+
+    // Without transform, eval_at_raw and sample should give same results
+    let ctx = crate::EvalCtx::default();
+    let p_raw = tracer.eval_at_raw(0.0, &ctx).unwrap();
+    assert_vec2_close(p_raw, Vec2::new(0.0, 0.0));
+
+    let p_end_raw = tracer.eval_at_raw(1.0, &ctx).unwrap();
+    assert_vec2_close(p_end_raw, Vec2::new(10.0, 0.0));
+
+    // Apply a translation of (5, 3)
+    tracer.transform = nalgebra::Matrix3::new(1.0, 0.0, 5.0, 0.0, 1.0, 3.0, 0.0, 0.0, 1.0);
+
+    // eval_at_raw should still return untransformed points
+    let p_raw = tracer.eval_at_raw(0.0, &ctx).unwrap();
+    assert_vec2_close(p_raw, Vec2::new(0.0, 0.0));
+
+    // eval_at should return transformed points
+    let p_transformed = tracer.eval_at(0.0, &ctx).unwrap();
+    assert_vec2_close(p_transformed, Vec2::new(5.0, 3.0));
+
+    let p_end_transformed = tracer.eval_at(1.0, &ctx).unwrap();
+    assert_vec2_close(p_end_transformed, Vec2::new(15.0, 3.0));
+
+    // Test transform composition: apply a 90-degree rotation on top
+    let cos = std::f32::consts::FRAC_PI_2.cos();
+    let sin = std::f32::consts::FRAC_PI_2.sin();
+    let rot = nalgebra::Matrix3::new(cos, -sin, 0.0, sin, cos, 0.0, 0.0, 0.0, 1.0);
+    let new_tracer_box = tracer.with_transform(rot);
+    let new_tracer = new_tracer_box
+      .as_any()
+      .downcast_ref::<PathTracerCallable>()
+      .unwrap();
+
+    // Point at t=0 was (0,0) in local space, translated to (5,3), then rotated 90deg
+    // Rotation of (5,3) by 90deg = (-3, 5)
+    let p = new_tracer.eval_at(0.0, &ctx).unwrap();
+    assert_vec2_close(p, Vec2::new(-3.0, 5.0));
+  }
+
+  #[test]
+  fn test_path_trans_rot_scale_e2e() {
+    // Test path_trans with vec2 offset
+    let src = r#"
+path = trace_svg_path("M 0 0 L 10 0 L 10 10 L 0 10 Z")
+moved = path_trans(vec2(5, 3), path)
+p0 = moved(0)
+p_mid = moved(0.25)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0 = ctx.get_global("p0").unwrap();
+    assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(5.0, 3.0));
+    let p_mid = ctx.get_global("p_mid").unwrap();
+    assert_vec2_close(*p_mid.as_vec2().unwrap(), Vec2::new(15.0, 3.0));
+
+    // Test path_trans with x, y args
+    let src = r#"
+path = trace_svg_path("M 0 0 L 10 0")
+moved = path_trans(100, 200, path)
+p0 = moved(0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0 = ctx.get_global("p0").unwrap();
+    assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(100.0, 200.0));
+
+    // Test path_scale with uniform factor
+    let src = r#"
+path = trace_svg_path("M 0 0 L 10 0")
+scaled = path_scale(2, path)
+p0 = scaled(0)
+p1 = scaled(1)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0 = ctx.get_global("p0").unwrap();
+    assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(0.0, 0.0));
+    let p1 = ctx.get_global("p1").unwrap();
+    assert_vec2_close(*p1.as_vec2().unwrap(), Vec2::new(20.0, 0.0));
+
+    // Test path_rot — rotate a point (10, 0) by 90 degrees
+    let src = r#"
+path = trace_svg_path("M 0 0 L 10 0")
+rotated = path_rot(pi / 2, path)
+p_end = rotated(1)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p_end = ctx.get_global("p_end").unwrap();
+    assert_vec2_close(*p_end.as_vec2().unwrap(), Vec2::new(0.0, 10.0));
+
+    // Test chaining: translate then rotate
+    let src = r#"
+path = trace_svg_path("M 0 0 L 10 0")
+result = path_rot(pi / 2, path_trans(vec2(5, 0), path))
+p0 = result(0)
+p1 = result(1)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0 = ctx.get_global("p0").unwrap();
+    assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(0.0, 5.0));
+    let p1 = ctx.get_global("p1").unwrap();
+    assert_vec2_close(*p1.as_vec2().unwrap(), Vec2::new(0.0, 15.0));
+  }
+
+  #[test]
+  fn test_apply_transforms_and_origin_to_geometry_for_paths() {
+    // Test apply_transforms: bake transform into geometry
+    let src = r#"
+path = trace_svg_path("M 0 0 L 10 0 L 10 10 L 0 10 Z")
+moved = path_trans(vec2(100, 200), path)
+baked = apply_transforms(moved)
+p0 = baked(0)
+p1 = baked(0.25)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0 = ctx.get_global("p0").unwrap();
+    // After baking, same world-space position
+    assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(100.0, 200.0));
+    let p1 = ctx.get_global("p1").unwrap();
+    assert_vec2_close(*p1.as_vec2().unwrap(), Vec2::new(110.0, 200.0));
+
+    // Verify the baked path has identity transform by translating it again
+    let src = r#"
+path = trace_svg_path("M 0 0 L 10 0 L 10 10 L 0 10 Z")
+moved = path_trans(vec2(100, 200), path)
+baked = apply_transforms(moved)
+moved_again = path_trans(vec2(1, 1), baked)
+p0 = moved_again(0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0 = ctx.get_global("p0").unwrap();
+    assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(101.0, 201.0));
+
+    // Test origin_to_geometry: centers path geometry
+    let src = r#"
+path = trace_svg_path("M 10 10 L 20 10 L 20 20 L 10 20 Z")
+centered = origin_to_geometry(path)
+p0 = centered(0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let p0 = ctx.get_global("p0").unwrap();
+    // Original first point was (10, 10), centroid of endpoints is (15, 15),
+    // so centered first point should be (10-15, 10-15) = (-5, -5)
+    assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(-5.0, -5.0));
   }
 }
