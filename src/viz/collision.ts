@@ -9,16 +9,9 @@ import {
   DefaultMoveSpeed,
   DefaultOOBThreshold,
   DefaultTopDownCameraOffset,
-  DefaultThirdPersonDistance,
-  DefaultThirdPersonInitialAzimuth,
-  DefaultThirdPersonInitialPolar,
-  DefaultThirdPersonMinPolar,
-  DefaultThirdPersonMaxPolar,
-  DefaultThirdPersonCameraCollisionBias,
-  DefaultThirdPersonMinCameraDistance,
-  DefaultThirdPersonCameraExtendSpeed,
   type SceneConfig,
 } from './scenes/index.js';
+import { CameraController } from './cameraController.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
 import {
@@ -53,7 +46,6 @@ import type {
 } from '../ammojs/ammoTypes';
 import { ZoneEventType } from '../ammojs/ammoTypes';
 import { DashManager } from './DashManager.js';
-import { clamp } from './util/util.js';
 
 // Precomputed unit circle offsets for shadow ring probes (8 angles at 45° intervals)
 const SHADOW_PROBE_COS = Array.from({ length: 8 }, (_, i) => Math.cos((i / 8) * Math.PI * 2));
@@ -180,12 +172,8 @@ export class BulletPhysics {
   private physicsElapsedTime = 0;
   private physicsTickerEntries: PhysicsTickerEntry[] = [];
   private scratchQuat: BtQuaternion | null = null;
-  private thirdPersonPhi = DefaultThirdPersonInitialPolar;
-  private thirdPersonTheta = DefaultThirdPersonInitialAzimuth;
-  private thirdPersonCurrentDistance = DefaultThirdPersonDistance;
-  private readonly thirdPersonSpherical = new THREE.Spherical();
-  private readonly thirdPersonOffset = new THREE.Vector3();
-  private readonly thirdPersonEyePos = new THREE.Vector3();
+  private hasStartedMainGameTick = false;
+  private readonly playerEyePosScratch = new THREE.Vector3();
 
   constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
     this.Ammo = Ammo;
@@ -206,14 +194,7 @@ export class BulletPhysics {
     this.initBtvec3Scratch(Ammo);
 
     this.setupPlayerController(initialSpawnPos);
-
-    // Initialize third-person orbit angles from the scene's initial view mode config
-    const initialViewMode = viz.sceneConf.viewMode;
-    if (initialViewMode?.type === 'thirdPerson') {
-      this.thirdPersonPhi = initialViewMode.initialPolarAngle ?? DefaultThirdPersonInitialPolar;
-      this.thirdPersonTheta = initialViewMode.initialAzimuthAngle ?? DefaultThirdPersonInitialAzimuth;
-    }
-
+    this.createCameraController();
     this.installMouseInputHandlers();
 
     this.initGlobalConsoleHelpers();
@@ -250,8 +231,6 @@ export class BulletPhysics {
       getIsDashing: () =>
         this.playerController.isJumping() && this.dashManager.lastDashTimeSeconds > this.lastJumpTimeSeconds,
     };
-
-    this.startMainGameTick();
   }
 
   private get gravity() {
@@ -391,6 +370,25 @@ export class BulletPhysics {
     this.coyoteTimeSeconds = this.viz.sceneConf.player?.coyoteTimeSeconds ?? 0;
   };
 
+  private createCameraController = () => {
+    const { viz } = this;
+    const viewMode = viz.sceneConf.viewMode!;
+
+    viz.cameraController = new CameraController({
+      camera: viz.camera,
+      getMouseSensitivity: () => viz.vizConfig.current.controls.mouseSensitivity,
+      getCameraControlEnabled: () => viz.controlState.cameraControlEnabled,
+      getPointerLocked: () => document.pointerLockElement === document.body,
+      getFirstPersonFOV: () => viz.vizConfig.current.graphics.fov,
+      cameraRayTest: (fx, fy, fz, tx, ty, tz) =>
+        this.playerController.cameraRayTest(this.collisionWorld, fx, fy, fz, tx, ty, tz),
+    });
+
+    if (viewMode.type === 'firstPerson' || viewMode.type === 'thirdPerson') {
+      viz.cameraController.configure(viewMode);
+    }
+  };
+
   private installMouseInputHandlers = () => {
     if (window.location?.href.includes('localhost')) {
       document.body.addEventListener('mousedown', evt => {
@@ -399,40 +397,6 @@ export class BulletPhysics {
         }
       });
     }
-
-    const cameraEulerScratch = new THREE.Euler();
-    document.body.addEventListener('mousemove', evt => {
-      if (document.pointerLockElement !== document.body || !this.viz.controlState.cameraControlEnabled) {
-        return;
-      }
-
-      const viewMode = this.viz.sceneConf.viewMode!;
-      const mouseSensitivity = this.viz.vizConfig.current.controls.mouseSensitivity;
-
-      if (viewMode.type === 'firstPerson') {
-        cameraEulerScratch.setFromQuaternion(this.viz.camera.quaternion, 'YXZ');
-
-        // sometimes some freak shit happens where large mouse movements get reported twice ... ...
-        // if (Math.abs(evt.movementX) > 100 || Math.abs(evt.movementY) > 100) {
-        //   console.warn(evt.movementX, evt.movementY, handlerID);
-        // }
-        cameraEulerScratch.y -= evt.movementX * mouseSensitivity * 0.001;
-        cameraEulerScratch.x -= evt.movementY * mouseSensitivity * 0.001;
-
-        // Clamp the camera's rotation to the range of -PI/2 to PI/2
-        // This is so the camera doesn't flip upside down
-        cameraEulerScratch.x = clamp(cameraEulerScratch.x, -Math.PI / 2 + 0.1, Math.PI / 2 - 0.001);
-
-        this.viz.camera.quaternion.setFromEuler(cameraEulerScratch);
-      } else if (viewMode.type === 'thirdPerson') {
-        const minPolar = viewMode.minPolarAngle ?? DefaultThirdPersonMinPolar;
-        const maxPolar = viewMode.maxPolarAngle ?? DefaultThirdPersonMaxPolar;
-
-        this.thirdPersonTheta -= evt.movementX * mouseSensitivity * 0.001;
-        this.thirdPersonPhi -= evt.movementY * mouseSensitivity * 0.001;
-        this.thirdPersonPhi = clamp(this.thirdPersonPhi, minPolar, maxPolar);
-      }
-    });
   };
 
   private initGlobalConsoleHelpers = () => {
@@ -486,7 +450,12 @@ export class BulletPhysics {
     };
   };
 
-  private startMainGameTick = () => {
+  public startMainGameTick = () => {
+    if (this.hasStartedMainGameTick) {
+      return;
+    }
+    this.hasStartedMainGameTick = true;
+
     const teleportPlayerIfOOB = () => {
       if (this.viz.camera.position.y <= (this.viz.sceneConf.player?.oobYThreshold ?? DefaultOOBThreshold)) {
         this.viz.respawnPlayer();
@@ -546,16 +515,15 @@ export class BulletPhysics {
 
         if (this.viz.controlState.cameraControlEnabled) {
           const viewMode = this.viz.sceneConf.viewMode!;
-          if (viewMode.type === 'thirdPerson') {
-            this.thirdPersonEyePos.set(
+          if (viewMode.type === 'firstPerson' || viewMode.type === 'thirdPerson') {
+            this.playerEyePosScratch.set(
               newPlayerPos.x,
               newPlayerPos.y + 0.5 * this.playerColliderHeight,
               newPlayerPos.z
             );
-            this.viz.camera.position.copy(this.applyThirdPersonCameraCollision(viewMode, tDiffSecs));
-            this.viz.camera.lookAt(this.thirdPersonEyePos);
-          } else {
-            const cameraPos = this.computeCameraPos(newPlayerPos, viewMode as any);
+            this.viz.cameraController!.update(this.playerEyePosScratch, tDiffSecs);
+          } else if (viewMode.type === 'top-down') {
+            const cameraPos = this.computeTopDownCameraPos(newPlayerPos, viewMode);
             this.viz.camera.position.copy(cameraPos);
           }
         }
@@ -569,97 +537,21 @@ export class BulletPhysics {
     );
   };
 
-  public computeCameraPos = (
+  public computeTopDownCameraPos = (
     newPlayerPos: THREE.Vector3,
-    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'firstPerson' | 'top-down' }>
-  ) => {
-    newPlayerPos.y += 0.5 * this.playerColliderHeight;
-    switch (viewMode.type) {
-      case 'firstPerson':
-        return newPlayerPos;
-      case 'top-down':
-        switch (viewMode.cameraFocusPoint?.type) {
-          case undefined:
-          case null:
-          case 'player':
-            return newPlayerPos.add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
-          case 'fixed':
-            return viewMode.cameraFocusPoint.pos
-              .clone()
-              .add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
-          default:
-            viewMode.cameraFocusPoint satisfies never;
-            throw new Error('Unknown camera focus point type');
-        }
-
+    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'top-down' }>
+  ): THREE.Vector3 => {
+    switch (viewMode.cameraFocusPoint?.type) {
+      case undefined:
+      case null:
+      case 'player':
+        return newPlayerPos.clone().add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
+      case 'fixed':
+        return viewMode.cameraFocusPoint.pos.clone().add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
       default:
-        viewMode satisfies never;
-        throw new Error('Unsupported view mode');
+        viewMode.cameraFocusPoint satisfies never;
+        throw new Error('Unknown camera focus point type');
     }
-  };
-
-  public computeThirdPersonCameraPos = (
-    playerEyePos: THREE.Vector3,
-    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'thirdPerson' }>
-  ): THREE.Vector3 => {
-    const distance = viewMode.distance ?? DefaultThirdPersonDistance;
-    this.thirdPersonSpherical.set(distance, this.thirdPersonPhi, this.thirdPersonTheta);
-    this.thirdPersonOffset.setFromSpherical(this.thirdPersonSpherical);
-    return playerEyePos.clone().add(this.thirdPersonOffset);
-  };
-
-  public initThirdPersonAngles = (
-    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'thirdPerson' }>
-  ) => {
-    this.thirdPersonPhi = viewMode.initialPolarAngle ?? DefaultThirdPersonInitialPolar;
-    this.thirdPersonTheta = viewMode.initialAzimuthAngle ?? DefaultThirdPersonInitialAzimuth;
-    this.thirdPersonCurrentDistance = viewMode.distance ?? DefaultThirdPersonDistance;
-  };
-
-  public getThirdPersonAngles = () => ({ phi: this.thirdPersonPhi, theta: this.thirdPersonTheta });
-
-  private applyThirdPersonCameraCollision = (
-    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'thirdPerson' }>,
-    tDiffSecs: number
-  ): THREE.Vector3 => {
-    const maxDistance = viewMode.distance ?? DefaultThirdPersonDistance;
-    const bias = viewMode.cameraCollisionBias ?? DefaultThirdPersonCameraCollisionBias;
-    const minDist = viewMode.minCameraDistance ?? DefaultThirdPersonMinCameraDistance;
-    const extendSpeed = viewMode.cameraExtendSpeed ?? DefaultThirdPersonCameraExtendSpeed;
-
-    this.thirdPersonSpherical.set(maxDistance, this.thirdPersonPhi, this.thirdPersonTheta);
-    this.thirdPersonOffset.setFromSpherical(this.thirdPersonSpherical);
-    const idealCamPos = this.thirdPersonEyePos.clone().add(this.thirdPersonOffset);
-
-    const hitFraction = this.playerController.cameraRayTest(
-      this.collisionWorld,
-      this.thirdPersonEyePos.x,
-      this.thirdPersonEyePos.y,
-      this.thirdPersonEyePos.z,
-      idealCamPos.x,
-      idealCamPos.y,
-      idealCamPos.z
-    );
-
-    // hitFraction == 1.0 means no hit; < 1.0 means hit at that fraction of maxDistance
-    const targetDistance =
-      hitFraction < 1.0 ? Math.max(minDist, hitFraction * maxDistance - bias) : maxDistance;
-
-    // we snap immediately to shorter distances to avoid the camera clipping through scene geometry, but use
-    // a smoother transition when extending out when we can afford to
-    if (targetDistance < this.thirdPersonCurrentDistance) {
-      this.thirdPersonCurrentDistance = targetDistance;
-    } else {
-      this.thirdPersonCurrentDistance = Math.min(
-        targetDistance,
-        maxDistance,
-        this.thirdPersonCurrentDistance + extendSpeed * tDiffSecs
-      );
-    }
-
-    this.thirdPersonSpherical.radius = this.thirdPersonCurrentDistance;
-    this.thirdPersonOffset.setFromSpherical(this.thirdPersonSpherical);
-    return this.thirdPersonEyePos.clone().add(this.thirdPersonOffset);
   };
 
   private handleFirstPersonInput = () => {

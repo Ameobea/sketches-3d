@@ -122,68 +122,107 @@
       "type": "csg",
       "tree": {
         "op": "union",
-        "a": {
-          "op": "difference",
-          "a": {
-            "asset": "platform_small",
-            "position": [
-              0,
-              0,
-              0
-            ],
-            "rotation": [
-              0,
-              0,
-              0
-            ],
-            "scale": [
-              1,
-              1,
-              1
-            ]
-          },
-          "b": {
+        "children": [
+          {
             "op": "difference",
-            "a": {
-              "asset": "platform_small",
-              "position": [
-                -0.0381,
-                0.1553,
-                -0.1212
-              ],
-              "rotation": [
-                -1.0259,
-                -2.3266,
-                1.4592
-              ],
-              "scale": [
-                0.8492,
-                1,
-                1
-              ]
-            },
-            "b": {
-              "asset": "ground",
-              "position": [
-                0.0025,
-                0.0012,
-                -0.1565
-              ],
-              "rotation": [
-                0,
-                0,
-                0
-              ],
-              "scale": [
-                0.2012,
-                0.1723,
-                0.0639
-              ]
-            },
+            "children": [
+              {
+                "asset": "platform_small",
+                "position": [
+                  0,
+                  0,
+                  0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "op": "difference",
+                "children": [
+                  {
+                    "asset": "platform_small",
+                    "position": [
+                      -0.0381,
+                      0.1553,
+                      -0.1212
+                    ],
+                    "rotation": [
+                      -1.0259,
+                      -2.3266,
+                      1.4592
+                    ],
+                    "scale": [
+                      0.8492,
+                      1,
+                      1
+                    ]
+                  },
+                  {
+                    "asset": "ground",
+                    "position": [
+                      0.0025,
+                      0.0012,
+                      -0.1565
+                    ],
+                    "rotation": [
+                      0,
+                      0,
+                      0
+                    ],
+                    "scale": [
+                      0.2012,
+                      0.1723,
+                      0.0639
+                    ]
+                  }
+                ],
+                "position": [
+                  0.0101,
+                  0.038,
+                  -0.1215
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              {
+                "asset": "coil",
+                "position": [
+                  0.029,
+                  0.0168,
+                  -1.7094
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              }
+            ],
             "position": [
-              0.0021,
-              0.0012,
-              -0.122
+              0,
+              0,
+              0
             ],
             "rotation": [
               0,
@@ -196,40 +235,25 @@
               1
             ]
           },
-          "position": [
-            0,
-            0,
-            0
-          ],
-          "rotation": [
-            0,
-            0,
-            0
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        },
-        "b": {
-          "asset": "coil",
-          "position": [
-            -1.0334,
-            -0.4951,
-            -0.0141
-          ],
-          "rotation": [
-            0,
-            0,
-            0
-          ],
-          "scale": [
-            1,
-            1,
-            1
-          ]
-        }
+          {
+            "asset": "coil",
+            "position": [
+              -1.0334,
+              -0.4951,
+              -0.0141
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        ]
       }
     }
   },
@@ -479,8 +503,8 @@
       "asset": "csg_coil_1",
       "position": [
         64.7195,
-        1.7224,
-        -3.791
+        5.483,
+        -3.9608
       ],
       "rotation": [
         -0.0132,

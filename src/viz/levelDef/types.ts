@@ -49,8 +49,7 @@ export interface CsgLeafNode {
 
 export interface CsgOpNode {
   op: 'union' | 'difference' | 'intersection';
-  a: CsgTreeNode;
-  b: CsgTreeNode;
+  children: CsgTreeNode[];
   position?: [number, number, number];
   rotation?: [number, number, number];
   scale?: [number, number, number];
@@ -68,8 +67,7 @@ const CsgLeafNodeSchema: z.ZodType<CsgLeafNode> = z.object({
 const CsgOpNodeSchema: z.ZodType<CsgOpNode> = z.lazy(() =>
   z.object({
     op: z.enum(['union', 'difference', 'intersection']),
-    a: CsgTreeNodeSchema,
-    b: CsgTreeNodeSchema,
+    children: z.array(CsgTreeNodeSchema).min(2),
     position: Vec3.optional(),
     rotation: Vec3.optional(),
     scale: Vec3.optional(),
@@ -337,8 +335,9 @@ export const LevelDefSchema = z
             });
           }
         } else {
-          validateNode(node.a, [...path, 'a']);
-          validateNode(node.b, [...path, 'b']);
+          for (let i = 0; i < node.children.length; i++) {
+            validateNode(node.children[i], [...path, 'children', i]);
+          }
         }
       };
 

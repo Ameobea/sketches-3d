@@ -11,7 +11,7 @@ const GeodesicsModule = new AsyncOnce(() =>
     .then(mod => mod({ locateFile: (path: string) => `/${path}` }))
 );
 
-export const initGeodesics = () => GeodesicsModule.get();
+export const initGeodesics = (): Promise<void> => GeodesicsModule.get().then(() => {});
 
 export const get_geodesics_loaded = (): boolean => GeodesicsModule.isSome();
 

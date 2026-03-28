@@ -67,8 +67,9 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
         error(400, `CSG leaf must reference a geoscript or csg asset, got "${refDef.type}"`);
       }
     } else {
-      validateNode(node.a);
-      validateNode(node.b);
+      for (const child of node.children) {
+        validateNode(child);
+      }
     }
   };
   validateNode(body.tree);

@@ -11,7 +11,7 @@ export const getNodeAtPath = (root: CsgTreeNode, path: string): CsgTreeNode => {
   let node = root;
   for (const p of parts) {
     if (!isOpNode(node)) throw new Error('Invalid path');
-    node = p === 'a' ? node.a : node.b;
+    node = node.children[Number(p)];
   }
   return node;
 };
@@ -23,10 +23,10 @@ export const setNodeAtPath = (root: CsgTreeNode, path: string, value: CsgTreeNod
   let parent = newRoot;
   for (let i = 0; i < parts.length - 1; i++) {
     if (!isOpNode(parent)) throw new Error('Invalid path');
-    parent = parts[i] === 'a' ? parent.a : parent.b;
+    parent = parent.children[Number(parts[i])];
   }
   if (!isOpNode(parent)) throw new Error('Invalid path');
-  parent[parts[parts.length - 1] as 'a' | 'b'] = value;
+  parent.children[Number(parts[parts.length - 1])] = value;
   return newRoot;
 };
 
@@ -34,12 +34,21 @@ export const deleteAtPath = (root: CsgTreeNode, path: string): CsgTreeNode | nul
   if (!path) return null;
   const parts = path.split('.');
   const parentPath = parts.slice(0, -1).join('.');
-  const side = parts[parts.length - 1] as 'a' | 'b';
-  const siblingSide = side === 'a' ? 'b' : 'a';
+  const index = Number(parts[parts.length - 1]);
 
-  const parentNode = getNodeAtPath(cloneTree(root), parentPath);
+  const newRoot = cloneTree(root);
+  const parentNode = parentPath ? getNodeAtPath(newRoot, parentPath) : newRoot;
   if (!isOpNode(parentNode)) return root;
-  const sibling = parentNode[siblingSide];
+
+  if (parentNode.children.length > 2) {
+    // More than 2 children — just splice out the deleted child
+    parentNode.children.splice(index, 1);
+    return newRoot;
+  }
+
+  // Exactly 2 children — collapse: promote sibling to replace the parent
+  const siblingIndex = index === 0 ? 1 : 0;
+  const sibling = parentNode.children[siblingIndex];
 
   if (!parentPath) return sibling;
   return setNodeAtPath(root, parentPath, sibling);
@@ -47,7 +56,7 @@ export const deleteAtPath = (root: CsgTreeNode, path: string): CsgTreeNode | nul
 
 /**
  * Compute polarity for every node in the tree.
- * Root is positive. Union/intersection: children inherit. Difference: a inherits, b flips.
+ * Root is positive. Union/intersection: children inherit. Difference: first child inherits, rest flip.
  */
 export const computeNodePolarities = (tree: CsgTreeNode): Map<string, 'positive' | 'negative'> => {
   const out = new Map<string, 'positive' | 'negative'>();
@@ -56,12 +65,14 @@ export const computeNodePolarities = (tree: CsgTreeNode): Map<string, 'positive'
     out.set(path, polarity);
 
     if (isOpNode(node)) {
-      const aPath = path ? `${path}.a` : 'a';
-      const bPath = path ? `${path}.b` : 'b';
-      const bPolarity =
-        node.op === 'difference' ? (polarity === 'positive' ? 'negative' : 'positive') : polarity;
-      walk(node.a, polarity, aPath);
-      walk(node.b, bPolarity, bPath);
+      for (let i = 0; i < node.children.length; i++) {
+        const childPath = path ? `${path}.${i}` : `${i}`;
+        let childPolarity = polarity;
+        if (node.op === 'difference' && i > 0) {
+          childPolarity = polarity === 'positive' ? 'negative' : 'positive';
+        }
+        walk(node.children[i], childPolarity, childPath);
+      }
     }
   };
 
@@ -76,8 +87,9 @@ export const collectLeafPaths = (tree: CsgTreeNode): string[] => {
     if (isLeafNode(node)) {
       paths.push(path);
     } else {
-      walk(node.a, path ? `${path}.a` : 'a');
-      walk(node.b, path ? `${path}.b` : 'b');
+      for (let i = 0; i < node.children.length; i++) {
+        walk(node.children[i], path ? `${path}.${i}` : `${i}`);
+      }
     }
   };
   walk(tree, '');

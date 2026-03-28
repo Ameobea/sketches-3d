@@ -358,7 +358,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     viz.scene.add(sign);
   };
 
-  const PortalDefs: Record<string, { scene: RouteId; displayName: string }> = {
+  const PortalDefs = {
     tutorial: { scene: '/tutorial', displayName: 'TUTORIAL' },
     pylons: { scene: '/pk_pylons', displayName: 'PYLONS' },
     movementv2: { scene: '/movement_v2', displayName: 'MOVEMENT V2' },
@@ -370,13 +370,15 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     pinklights: { scene: '/pinklights', displayName: 'PINKLIGHTS' },
     smoke: { scene: '/smoke', displayName: 'SMOKE' },
     bridge2: { scene: '/bridge2', displayName: 'BRIDGE' },
-  };
+  } as const satisfies Record<string, { scene: RouteId; displayName: string }>;
+  type PortalKey = keyof typeof PortalDefs;
+  const isPortalKey = (key: string): key is PortalKey => key in PortalDefs;
 
   for (const portalFrame of portalFrames) {
     portalFrame.material = portalFrameMat;
 
     const portalKey = portalFrame.name.split('_')[1];
-    const portal = PortalDefs[portalKey];
+    const portal = isPortalKey(portalKey) ? PortalDefs[portalKey] : undefined;
     if (portal) {
       addPortalFrameSign(portalFrame, { text: portal.displayName });
     }
@@ -385,12 +387,12 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     for (const portal of portals) {
       const key = portal.name.split('_')[1];
-      const def = PortalDefs[key];
+      const def = isPortalKey(key) ? PortalDefs[key] : undefined;
 
       if (def) {
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
           MetricsAPI.recordPortalTravel(def.scene.slice(1));
-          goto(resolve(def.scene as `/${string}`), { keepFocus: true });
+          goto(resolve(def.scene), { keepFocus: true });
         });
       } else {
         portal.visible = false;

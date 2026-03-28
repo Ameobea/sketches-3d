@@ -140,6 +140,8 @@ export const processLoadedScene = (
         type: 'thirdPerson',
         distance: 15,
         cameraFOV: 75,
+        zoomEnabled: true,
+        maxZoomDistance: 50,
       },
     }
   );

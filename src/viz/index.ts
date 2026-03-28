@@ -19,9 +19,9 @@ import {
   ScenesByName,
   DefaultTopDownCameraFOV,
   DefaultTopDownCameraRotation,
-  DefaultThirdPersonFOV,
   type ViewMode,
 } from './scenes';
+import type { CameraController } from './cameraController';
 import { resetCustomShaderGlobals, getPlayerShadowUniforms } from './shaders/customShader';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
 import type { BtPairCachingGhostObject } from 'src/ammojs/ammoTypes.ts';
@@ -127,6 +127,11 @@ export class Viz {
   public spawnPos!: { pos: THREE.Vector3; rot: THREE.Vector3 };
   public controlState: ControlState = { cameraControlEnabled: true, movementEnabled: true };
   /**
+   * Camera controller for first-person and third-person modes.
+   * Created when BulletPhysics initializes; undefined for orbit-only scenes.
+   */
+  public cameraController: CameraController | undefined;
+  /**
    * Only set if view mode is 'orbit'
    */
   public orbitControls: OrbitControls | null = null;
@@ -153,6 +158,7 @@ export class Viz {
    */
   private viewModeInterpolationState: ViewModeInterpolationState | null = null;
   private onRespawnCBs: (() => void)[] = [];
+  private physicsStartupBarriers: Promise<void>[] = [];
   private inlineConsole =
     window.location.href.includes('localhost') &&
     !window.location.href.includes('geoscript') &&
@@ -389,56 +395,34 @@ export class Viz {
       return Promise.resolve();
     }
 
-    const endFOV =
-      newViewMode.type === 'top-down'
-        ? (newViewMode.cameraFOV ?? DefaultTopDownCameraFOV)
-        : newViewMode.type === 'thirdPerson'
-          ? (newViewMode.cameraFOV ?? DefaultThirdPersonFOV)
-          : this.vizConfig.current.graphics.fov;
-
     const playerPos = this.fpCtx!.playerStateGetters.getPlayerPos();
     const playerFeetPos = new THREE.Vector3(playerPos[0], playerPos[1], playerPos[2]);
+    const playerEyePos = playerFeetPos.clone();
+    playerEyePos.y += 0.5 * this.fpCtx!.playerColliderHeight;
 
     let endCameraPos: THREE.Vector3;
     let endCameraRot: THREE.Euler;
+    let endFOV: number;
 
-    if (newViewMode.type === 'thirdPerson') {
-      this.fpCtx!.initThirdPersonAngles(newViewMode);
-
-      // TODO: currently placing eye position at midpoint of player collider; may want to change this
-      const playerEyePos = playerFeetPos.clone();
-      playerEyePos.y += 0.5 * this.fpCtx!.playerColliderHeight;
-
-      endCameraPos = this.fpCtx!.computeThirdPersonCameraPos(playerEyePos, newViewMode);
-
-      // Derive a lookAt rotation so the transition ends pointing toward the player.
-      const lookAtMatrix = new THREE.Matrix4().lookAt(endCameraPos, playerEyePos, new THREE.Vector3(0, 1, 0));
-      endCameraRot = new THREE.Euler().setFromQuaternion(
-        new THREE.Quaternion().setFromRotationMatrix(lookAtMatrix),
-        'YXZ'
-      );
-    } else if (newViewMode.type === 'top-down') {
-      endCameraPos = this.fpCtx!.computeCameraPos(playerFeetPos.clone(), newViewMode);
-      endCameraRot = (newViewMode.cameraRotation ?? DefaultTopDownCameraRotation).clone();
-    } else {
-      // firstPerson
-      endCameraPos = this.fpCtx!.computeCameraPos(playerFeetPos.clone(), newViewMode);
-      switch (this.sceneConf.viewMode!.type) {
-        case 'top-down':
-          endCameraRot = new THREE.Euler(0, Math.PI, 0, 'YXZ');
-          break;
-        case 'thirdPerson': {
-          // Preserve the horizontal facing direction derived from the orbit azimuth angle.
-          const { theta } = this.fpCtx!.getThirdPersonAngles();
-          endCameraRot = new THREE.Euler(0, theta, 0, 'YXZ');
-          break;
-        }
-        default: {
-          const spawnRot = this.spawnPos.rot;
-          endCameraRot = new THREE.Euler(0, 0, 0, 'YXZ').setFromVector3(spawnRot);
-          break;
-        }
+    if (newViewMode.type === 'firstPerson' || newViewMode.type === 'thirdPerson') {
+      // For top-down to first person view transitions, the existing camera orientation doesn't
+      // map to a meaningful FP look direction, so we use a default
+      let overrideAngles: { phi: number; theta: number } | undefined;
+      if (newViewMode.type === 'firstPerson' && this.sceneConf.viewMode!.type === 'top-down') {
+        overrideAngles = { phi: Math.PI / 2, theta: Math.PI };
       }
+
+      this.cameraController!.configure(newViewMode, overrideAngles);
+      endCameraPos = this.cameraController!.computeIdealCameraPos(playerEyePos);
+      endCameraRot = this.cameraController!.computeLookRotation();
+      endFOV = this.cameraController!.currentFOV;
+    } else if (newViewMode.type === 'top-down') {
+      this.cameraController?.deactivate();
+      endCameraPos = this.fpCtx!.computeTopDownCameraPos(playerFeetPos.clone(), newViewMode);
+      endCameraRot = (newViewMode.cameraRotation ?? DefaultTopDownCameraRotation).clone();
+      endFOV = newViewMode.cameraFOV ?? DefaultTopDownCameraFOV;
+    } else {
+      throw new Error(`Unsupported dynamic view mode: ${(newViewMode as any).type}`);
     }
 
     if (transitionTimeSeconds === 0) {
@@ -749,6 +733,15 @@ export class Viz {
     }
   };
 
+  public registerPhysicsStartupBarrier = (barrier: Promise<unknown>) => {
+    this.physicsStartupBarriers.push(Promise.resolve(barrier).then(() => void 0));
+  };
+
+  public awaitPhysicsStartupBarriers = async () => {
+    const barriers = this.physicsStartupBarriers.splice(0);
+    await Promise.all(barriers);
+  };
+
   public registerDestroyedCb = (cb: () => void) => {
     this.onDestroyedCbs.push(cb);
   };
@@ -784,6 +777,7 @@ export class Viz {
     this.renderOverride = null;
 
     this.deregisterEventHandlers();
+    this.cameraController?.destroy();
 
     for (const cb of this.onDestroyedCbs) {
       cb();
@@ -898,10 +892,8 @@ export const initViz = (
     if (sceneConf.viewMode.type === 'top-down') {
       viz.camera.fov = sceneConf.viewMode.cameraFOV ?? DefaultTopDownCameraFOV;
       viz.camera.updateProjectionMatrix();
-    } else if (sceneConf.viewMode.type === 'thirdPerson') {
-      viz.camera.fov = sceneConf.viewMode.cameraFOV ?? DefaultThirdPersonFOV;
-      viz.camera.updateProjectionMatrix();
     }
+    // FP and TP FOV is managed by the CameraController (created in BulletPhysics init)
 
     if (sceneConf.renderOverride) {
       viz.setRenderOverride(sceneConf.renderOverride);
@@ -1036,7 +1028,13 @@ export const initViz = (
         cb(viz.fpCtx);
       }
 
+      await viz.awaitPhysicsStartupBarriers();
+      if (viz.destroyed || !viz.fpCtx) {
+        return;
+      }
+
       viz.fpCtx.optimize();
+      viz.fpCtx.startMainGameTick();
     }
 
     if (sceneConf.player?.playerShadow) {

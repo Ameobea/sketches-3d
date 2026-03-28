@@ -7015,6 +7015,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "capsule" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Radius of the capsule"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Height of the cylindrical middle section.  The total height of the capsule is `height + 2 * radius`."
+          },
+          ArgDef {
+            name: "cap_segments",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Number of curve segments used to build each hemispherical cap"
+          },
+          ArgDef {
+            name: "radial_segments",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(8)),
+            description: "Number of segmented faces around the circumference"
+          },
+          ArgDef {
+            name: "height_segments",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(1)),
+            description: "Number of rows of faces along the height of the middle section"
+          },
+        ],
+        description: "Generates a capsule mesh (cylinder with hemispherical caps)",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "cone" => FnDef {
     module: "mesh",
     examples: &[],

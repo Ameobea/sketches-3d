@@ -54,7 +54,12 @@ export interface RunGeoscriptOptions {
   // TODO: maybe make this optional
   ctxPtr: number;
   repl: Comlink.Remote<GeoscriptWorkerMethods>;
-  materials: Record<string, { def: MaterialDef; mat: MatEntry | THREE.Material }>;
+  /**
+   * Map of material name → material entry. When a geoscript mesh references a material name
+   * not present in this map, the runner automatically falls back to `FallbackMat`.
+   * Defaults to `{}` when omitted.
+   */
+  materials?: Record<string, { def: MaterialDef; mat: MatEntry | THREE.Material }>;
   includePrelude: boolean;
   materialOverride?: 'wireframe' | 'wireframe-xray' | 'normal' | null;
   onStart?: () => void;

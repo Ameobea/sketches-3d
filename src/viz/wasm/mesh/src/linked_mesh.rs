@@ -2742,6 +2742,75 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
   }
 
+  /// Generates a capsule mesh (cylinder with hemispherical caps).  The capsule is centered at the
+  /// origin and extends along the Y axis.  `height` is the height of the cylindrical middle
+  /// section; the total height is `height + 2 * radius`.
+  ///
+  /// Matches the semantics of Three.js `CapsuleGeometry`.
+  pub fn new_capsule(
+    radius: f32,
+    height: f32,
+    cap_segments: usize,
+    radial_segments: usize,
+    height_segments: usize,
+  ) -> Self {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    let half_height = height / 2.;
+    // Number of vertex rings (excluding the two pole vertices)
+    let total_rings = 2 * (cap_segments - 1) + height_segments + 1;
+
+    for ring in 0..total_rings {
+      let (y, r) = if ring < cap_segments - 1 {
+        // Bottom hemisphere rings (excluding pole and equator)
+        let angle = ((ring + 1) as f32 / cap_segments as f32) * (PI / 2.);
+        (
+          -half_height - radius * angle.cos(),
+          radius * angle.sin(),
+        )
+      } else if ring < cap_segments - 1 + height_segments + 1 {
+        // Cylinder section (including both equator rings)
+        let t = (ring - (cap_segments - 1)) as f32 / height_segments as f32;
+        (-half_height + t * height, radius)
+      } else {
+        // Top hemisphere rings (excluding pole and equator)
+        let j = ring - (cap_segments - 1) - height_segments;
+        let angle = (j as f32 / cap_segments as f32) * (PI / 2.);
+        (
+          half_height + radius * angle.sin(),
+          radius * angle.cos(),
+        )
+      };
+
+      for seg in 0..radial_segments {
+        let theta = (seg as f32 / radial_segments as f32) * 2. * PI;
+        vertices.push(Vec3::new(r * theta.cos(), y, r * theta.sin()));
+      }
+    }
+
+    // Connect adjacent rings with quad strips
+    generate_radial_side_indices(&mut indices, radial_segments, total_rings - 1);
+
+    // Add pole vertices and connect with triangle fans
+    let bottom_pole_ix = vertices.len() as u32;
+    vertices.push(Vec3::new(0., -half_height - radius, 0.));
+    let top_pole_ix = vertices.len() as u32;
+    vertices.push(Vec3::new(0., half_height + radius, 0.));
+
+    generate_cap_indices(&mut indices, bottom_pole_ix, radial_segments, 0, false);
+    let last_ring_offset = (total_rings - 1) * radial_segments;
+    generate_cap_indices(
+      &mut indices,
+      top_pole_ix,
+      radial_segments,
+      last_ring_offset,
+      true,
+    );
+
+    LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
+  }
+
   /// Generates a cone mesh.  The base of the cone is centered at the origin, and the cone extends
   /// upwards along the positive Y axis.  The apex (point) of the cone is at the top.
   pub fn new_cone(
@@ -3558,5 +3627,32 @@ mod tests {
       centroid_after.magnitude() < 1e-5,
       "Mesh should be centered after origin_to_geometry, got {centroid_after:?}",
     );
+  }
+
+  #[test]
+  fn capsule_is_manifold_and_centered() {
+    let mesh: LinkedMesh<()> = LinkedMesh::new_capsule(1., 2., 4, 8, 1);
+
+    mesh
+      .check_is_manifold::<true>()
+      .expect("Capsule should be 2-manifold");
+
+    let centroid = mesh.compute_volume_centroid();
+    assert!(centroid.is_some(), "Capsule should be 2-manifold (volume centroid)");
+
+    let centroid = centroid.unwrap();
+    assert!(
+      centroid.magnitude() < 1e-4,
+      "Centroid of centered capsule should be at origin, got {centroid:?}",
+    );
+  }
+
+  #[test]
+  fn capsule_minimal_cap_segments() {
+    let mesh: LinkedMesh<()> = LinkedMesh::new_capsule(0.5, 1., 1, 6, 1);
+
+    mesh
+      .check_is_manifold::<true>()
+      .expect("Capsule with cap_segments=1 should be 2-manifold");
   }
 }

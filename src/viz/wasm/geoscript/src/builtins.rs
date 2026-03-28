@@ -4335,6 +4335,42 @@ fn cylinder_impl(
   }
 }
 
+fn capsule_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let radius = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let height = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let cap_segments = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
+      let radial_segments = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
+      let height_segments = arg_refs[4].resolve(args, kwargs).as_int().unwrap();
+
+      if cap_segments < 1 {
+        return Err(ErrorStack::new("`cap_segments` must be >= 1"));
+      } else if radial_segments < 3 {
+        return Err(ErrorStack::new("`radial_segments` must be >= 3"));
+      } else if height_segments < 1 {
+        return Err(ErrorStack::new("`height_segments` must be >= 1"));
+      }
+
+      Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
+        LinkedMesh::new_capsule(
+          radius,
+          height,
+          cap_segments as usize,
+          radial_segments as usize,
+          height_segments as usize,
+        ),
+      )))))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn cone_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -5566,6 +5602,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "cylinder" => builtin_fn!(cylinder, |def_ix, arg_refs, args, kwargs, _ctx| {
     cylinder_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "capsule" => builtin_fn!(capsule, |def_ix, arg_refs, args, kwargs, _ctx| {
+    capsule_impl(def_ix, arg_refs, args, kwargs)
   }),
   "cone" => builtin_fn!(cone, |def_ix, arg_refs, args, kwargs, _ctx| {
     cone_impl(def_ix, arg_refs, args, kwargs)

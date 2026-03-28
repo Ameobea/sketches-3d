@@ -111,6 +111,33 @@ export type ViewMode =
        * Default: 8.0
        */
       cameraExtendSpeed?: number;
+      /**
+       * Enable scroll-wheel zoom to adjust camera distance at runtime.
+       * Default: false
+       */
+      zoomEnabled?: boolean;
+      /**
+       * Maximum distance the camera can be zoomed out to.
+       * Default: same as `distance`
+       */
+      maxZoomDistance?: number;
+      /**
+       * Minimum distance the camera can be zoomed in to.
+       * Set to 0 to allow seamless first-person transition.
+       * Default: 0
+       */
+      minZoomDistance?: number;
+      /**
+       * How fast the scroll wheel adjusts distance (world units per scroll step).
+       * Default: 2.0
+       */
+      zoomSpeed?: number;
+      /**
+       * Distance at which the FOV begins transitioning between first-person and
+       * third-person values during zoom.  Only relevant when `zoomEnabled` is true.
+       * Default: 3.0
+       */
+      fovTransitionDistance?: number;
     };
 
 export const DefaultDashConfig: DashConfig = Object.freeze({

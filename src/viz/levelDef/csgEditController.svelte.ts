@@ -9,6 +9,23 @@ import { generateCsgCode, generateComplementCode, generateSubtreeCode } from './
 import { isOpNode, getNodeAtPath, cloneTree, computeNodePolarities } from './csgTreeUtils';
 import CsgTreeEditor from './CsgTreeEditor.svelte';
 import type { LevelEditor } from './LevelEditor.svelte';
+import { UndoSystem } from './undoSystem';
+
+type TransformTuple = [number, number, number];
+
+interface CsgTreeUndoEntry {
+  type: 'tree';
+  before: CsgTreeNode;
+  after: CsgTreeNode;
+}
+
+interface CsgRootTransformUndoEntry {
+  type: 'rootTransform';
+  before: { position: TransformTuple; rotation: TransformTuple; scale: TransformTuple };
+  after: { position: TransformTuple; rotation: TransformTuple; scale: TransformTuple };
+}
+
+type CsgUndoEntry = CsgTreeUndoEntry | CsgRootTransformUndoEntry;
 
 const PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
 const CSG_NEGATIVE_MAT = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.4 });
@@ -23,7 +40,6 @@ const CSG_PICK_MAT = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0
 export class CsgEditController {
   private editor: LevelEditor;
 
-  // CSG panel state (reactive, for Svelte component props)
   private csgPanelState = $state({
     editorOpen: false,
     assetName: null as string | null,
@@ -32,11 +48,9 @@ export class CsgEditController {
     nodePolarities: new Map<string, 'positive' | 'negative'>(),
   });
 
-  // CSG editor UI
   private csgEditorComponent: Record<string, any> | null = null;
   private csgEditorTarget: HTMLDivElement | null = null;
 
-  // CSG edit mode state
   private _isActive = false;
   private editLevelObj: LevelObject | null = null;
   private editGroup: THREE.Group | null = null;
@@ -62,6 +76,14 @@ export class CsgEditController {
   private assetResolveQueuedAssetId: string | null = null;
   private assetResolveDrainPromise: Promise<void> | null = null;
 
+  private undoSystem = new UndoSystem<CsgUndoEntry>();
+  private treeBeforeDrag: CsgTreeNode | null = null;
+  private rootTransformBeforeDrag: {
+    position: TransformTuple;
+    rotation: TransformTuple;
+    scale: TransformTuple;
+  } | null = null;
+
   constructor(editor: LevelEditor) {
     this.editor = editor;
   }
@@ -78,9 +100,73 @@ export class CsgEditController {
     return this.csgPanelState.editorOpen;
   }
 
-  // ---------------------------------------------------------------------------
-  // Delegation entry points (called by LevelEditor)
-  // ---------------------------------------------------------------------------
+  undo(): boolean {
+    return this.undoSystem.undo(entry => {
+      if (entry.type === 'tree') {
+        this.onTreeChange(cloneTree(entry.before), false);
+      } else {
+        this.applyRootTransform(entry.before);
+      }
+    });
+  }
+
+  redo(): boolean {
+    return this.undoSystem.redo(entry => {
+      if (entry.type === 'tree') {
+        this.onTreeChange(cloneTree(entry.after), false);
+      } else {
+        this.applyRootTransform(entry.after);
+      }
+    });
+  }
+
+  private applyRootTransform(snap: {
+    position: TransformTuple;
+    rotation: TransformTuple;
+    scale: TransformTuple;
+  }) {
+    if (!this.editLevelObj) return;
+    const obj = this.editLevelObj.object;
+    obj.position.set(...snap.position);
+    obj.rotation.set(...snap.rotation, 'YXZ');
+    obj.scale.set(...snap.scale);
+    this.editLevelObj.def.position = [...snap.position];
+    this.editLevelObj.def.rotation = [...snap.rotation];
+    this.editLevelObj.def.scale = [...snap.scale];
+    this.editor.api.saveTransform(this.editLevelObj);
+    this.editor.syncPhysics(this.editLevelObj);
+    if (this.editGroup) {
+      this.editGroup.position.copy(obj.position);
+      this.editGroup.rotation.copy(obj.rotation);
+      this.editGroup.scale.copy(obj.scale);
+    }
+    if (this.selectedNodePath === '') {
+      this.editor.transformControls?.attach(obj);
+    }
+  }
+
+  private snapshotRootTransform(): {
+    position: TransformTuple;
+    rotation: TransformTuple;
+    scale: TransformTuple;
+  } | null {
+    if (!this.editLevelObj) return null;
+    const d = this.editLevelObj.def;
+    return {
+      position: [...(d.position ?? [0, 0, 0])] as TransformTuple,
+      rotation: [...(d.rotation ?? [0, 0, 0])] as TransformTuple,
+      scale: [...(d.scale ?? [1, 1, 1])] as TransformTuple,
+    };
+  }
+
+  /** Handle start of a transform drag in CSG edit mode — snapshot for undo. */
+  onDragStart() {
+    if (this.selectedNodePath === '') {
+      this.rootTransformBeforeDrag = this.snapshotRootTransform();
+    } else if (this.csgPanelState.tree) {
+      this.treeBeforeDrag = cloneTree(this.csgPanelState.tree);
+    }
+  }
 
   /** Handle end of a transform drag in CSG edit mode. */
   onDragEnd() {
@@ -102,10 +188,28 @@ export class CsgEditController {
         this.editLevelObj.def.scale = obj.scale.toArray().map(round) as [number, number, number];
         this.editor.api.saveTransform(this.editLevelObj);
         this.editor.syncPhysics(this.editLevelObj);
+
+        if (this.rootTransformBeforeDrag) {
+          const after = this.snapshotRootTransform();
+          if (after) {
+            this.undoSystem.push({ type: 'rootTransform', before: this.rootTransformBeforeDrag, after });
+          }
+          this.rootTransformBeforeDrag = null;
+        }
       }
     } else {
       this.onNodeTransformUpdate(); // final update
       this.editor.api.saveCsgTree(this.csgPanelState.assetName, this.csgPanelState.tree);
+
+      // Push undo entry for the transform
+      if (this.treeBeforeDrag) {
+        this.undoSystem.push({
+          type: 'tree',
+          before: this.treeBeforeDrag,
+          after: cloneTree(this.csgPanelState.tree),
+        });
+        this.treeBeforeDrag = null;
+      }
     }
   }
 
@@ -124,10 +228,6 @@ export class CsgEditController {
     }
   }
 
-  /**
-   * Handle Escape key when CSG edit mode is active.
-   * Returns true if the key was consumed (CSG mode handled it).
-   */
   handleEscape(): boolean {
     if (!this._isActive) return false;
 
@@ -172,6 +272,7 @@ export class CsgEditController {
     if (this._isActive) this.exit();
 
     this._isActive = true;
+    this.undoSystem.clear();
     this.editLevelObj = levelObj;
     this.editor.selectedObject = levelObj;
     this.editor.transformControls?.detach();
@@ -325,7 +426,8 @@ export class CsgEditController {
   }
 
   /**
-   * Collect paths of b-side children of difference ops within a subtree.
+   * Collect paths of negative children of difference ops within a subtree.
+   * For difference ops, children at index > 0 are negative.
    * If `rootPath` is empty, walks the whole tree.
    */
   private collectNegativeSubtreePaths(tree: CsgTreeNode, rootPath: string): string[] {
@@ -333,11 +435,11 @@ export class CsgEditController {
     const paths: string[] = [];
     const walk = (n: CsgTreeNode, path: string) => {
       if (!isOpNode(n)) return;
-      const aPath = path ? `${path}.a` : 'a';
-      const bPath = path ? `${path}.b` : 'b';
-      if (n.op === 'difference') paths.push(bPath);
-      walk(n.a, aPath);
-      walk(n.b, bPath);
+      for (let i = 0; i < n.children.length; i++) {
+        const childPath = path ? `${path}.${i}` : `${i}`;
+        if (n.op === 'difference' && i > 0) paths.push(childPath);
+        walk(n.children[i], childPath);
+      }
     };
     walk(node, rootPath);
     return paths;
@@ -352,10 +454,10 @@ export class CsgEditController {
         paths.push(path);
       }
       if (!isOpNode(n)) return;
-      const aPath = path ? `${path}.a` : 'a';
-      const bPath = path ? `${path}.b` : 'b';
-      walk(n.a, aPath);
-      walk(n.b, bPath);
+      for (let i = 0; i < n.children.length; i++) {
+        const childPath = path ? `${path}.${i}` : `${i}`;
+        walk(n.children[i], childPath);
+      }
     };
     walk(node, rootPath);
     return paths;
@@ -629,7 +731,6 @@ export class CsgEditController {
           code: renderWrapper,
           ctxPtr,
           repl,
-          materials: CsgEditController.buildMaterialsProxy(),
           includePrelude: false,
           modules,
         });
@@ -728,7 +829,6 @@ export class CsgEditController {
           code: renderWrapper,
           ctxPtr,
           repl,
-          materials: CsgEditController.buildMaterialsProxy(),
           includePrelude: false,
           modules,
         });
@@ -784,11 +884,16 @@ export class CsgEditController {
   // Tree changes and live resolve
   // ---------------------------------------------------------------------------
 
-  private async onTreeChange(tree: CsgTreeNode) {
+  private async onTreeChange(tree: CsgTreeNode, pushUndo = true) {
     const assetName = this.csgPanelState.assetName;
     if (!assetName) return;
 
+    // Push undo entry for structural changes
     const csgDef = this.editor.levelDef.assets[assetName] as CsgAssetDef;
+    if (pushUndo && csgDef.tree) {
+      this.undoSystem.push({ type: 'tree', before: cloneTree(csgDef.tree), after: cloneTree(tree) });
+    }
+
     csgDef.tree = tree;
     this.csgPanelState.tree = tree;
 
@@ -850,10 +955,6 @@ export class CsgEditController {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Convert to CSG
-  // ---------------------------------------------------------------------------
-
   async convertToCsg(objectId: string) {
     const result = await this.editor.api.convertToCsg(objectId);
     if (!result) return;
@@ -874,19 +975,6 @@ export class CsgEditController {
 
       this.editor.select(levelObj);
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Re-resolve CSG asset
-  // ---------------------------------------------------------------------------
-
-  private static buildMaterialsProxy() {
-    return new Proxy({} as Record<string, any>, {
-      get: () => ({
-        def: null,
-        mat: { resolved: PLACEHOLDER_MAT, promise: Promise.resolve(PLACEHOLDER_MAT) },
-      }),
-    }) as any;
   }
 
   async reResolveCsgAsset(assetId: string) {
@@ -926,7 +1014,6 @@ export class CsgEditController {
         code: renderWrapper,
         ctxPtr,
         repl,
-        materials: CsgEditController.buildMaterialsProxy(),
         includePrelude: false,
         modules,
       });

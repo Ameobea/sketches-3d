@@ -8,6 +8,8 @@ import { buildMaterial } from './buildMaterial';
 import { TextureFetchPool } from './texturePool';
 import { generateCsgCode } from './csgCodeGen';
 
+type PhysicsContext = NonNullable<Viz['fpCtx']>;
+
 export interface LevelObject {
   id: string;
   assetId: string;
@@ -59,17 +61,6 @@ export interface LevelLoadHandle {
 // Shared placeholder used until real materials are built.
 const PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
 
-const buildGeoscriptMaterialsProxy = () =>
-  new Proxy(
-    {} as Record<string, { def: null; mat: { resolved: THREE.Material; promise: Promise<THREE.Material> } }>,
-    {
-      get: () => ({
-        def: null,
-        mat: { resolved: PLACEHOLDER_MAT, promise: Promise.resolve(PLACEHOLDER_MAT) },
-      }),
-    }
-  ) as any;
-
 const applyTransform = (object: THREE.Object3D, def: ObjectDef) => {
   const [px = 0, py = 0, pz = 0] = def.position ?? [];
   const [rx = 0, ry = 0, rz = 0] = def.rotation ?? [];
@@ -117,8 +108,9 @@ const topoSortAssets = (assets: Record<string, AssetDef>): string[] => {
         if ('asset' in node) {
           visit(node.asset);
         } else {
-          visitNode(node.a);
-          visitNode(node.b);
+          for (const child of node.children) {
+            visitNode(child);
+          }
         }
       };
       visitNode(asset.tree);
@@ -194,7 +186,6 @@ const resolveScriptAssets = async (
   const workerManager = new WorkerManager();
   const repl = workerManager.getWorker();
   const ctxPtr = await repl.init();
-  const materials = buildGeoscriptMaterialsProxy();
 
   for (const id of scriptIds) {
     const def = assets[id];
@@ -205,7 +196,6 @@ const resolveScriptAssets = async (
       code: RENDER_WRAPPER,
       ctxPtr,
       repl,
-      materials,
       includePrelude,
       modules,
     });
@@ -289,23 +279,33 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   const loadedTextures = new Map<string, THREE.Texture>();
   const assetPrototypes = new Map<string, THREE.Object3D>();
   const allLevelObjects: LevelObject[] = [];
+  const registeredPhysicsObjects = new Set<string>();
 
   // --- Physics registration ---
 
   // Track physics: push one callback to collisionWorldLoadedCbs; for objects placed
   // after physics is ready, register directly.
   let physicsReady = false;
-  const registerPhysics = (fpCtx: typeof viz.fpCtx, levelObj: LevelObject) => {
-    if (levelObj.def.userData?.nocollide) return;
+  let resolvePhysicsWorldReady!: (fpCtx: PhysicsContext) => void;
+  const physicsWorldReady = new Promise<PhysicsContext>(resolve => {
+    resolvePhysicsWorldReady = resolve;
+  });
+
+  const registerPhysics = (fpCtx: PhysicsContext, levelObj: LevelObject) => {
+    if (registeredPhysicsObjects.has(levelObj.id) || levelObj.def.userData?.nocollide) {
+      return;
+    }
     levelObj.object.traverse(child => {
       if (child instanceof THREE.Mesh) {
-        fpCtx!.addTriMesh(child);
+        fpCtx.addTriMesh(child);
       }
     });
+    registeredPhysicsObjects.add(levelObj.id);
   };
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     physicsReady = true;
+    resolvePhysicsWorldReady(fpCtx);
     for (const levelObj of allLevelObjects) {
       registerPhysics(fpCtx, levelObj);
     }
@@ -327,7 +327,7 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
 
     // Physics: register immediately if physics is already up, otherwise the batch callback covers it
     if (physicsReady) {
-      registerPhysics(viz.fpCtx, levelObj);
+      registerPhysics(viz.fpCtx!, levelObj);
     }
 
     // Material: assign if already built
@@ -432,6 +432,14 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   // --- Return handle ---
 
   const objectsPromise: Promise<LevelObject[]> = geoscriptDone.then(() => allLevelObjects);
+  const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(
+    ([levelObjects, fpCtx]) => {
+      for (const levelObj of levelObjects) {
+        registerPhysics(fpCtx, levelObj);
+      }
+    }
+  );
+  viz.registerPhysicsStartupBarrier(physicsRegistrationComplete);
 
   const completePromise: Promise<void> = Promise.all([objectsPromise, ...textureFetchPromises]).then(
     () => void 0

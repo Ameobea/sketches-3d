@@ -88,19 +88,25 @@ const generateNode = (node: CsgTreeNode, state: TreeGenState): string => {
     return varName;
   }
 
-  // Op node
-  const leftVar = generateNode(node.a, state);
-  const rightVar = generateNode(node.b, state);
-
+  // Op node — left-fold over children
   const opFn = node.op === 'union' ? 'union' : node.op === 'difference' ? 'difference' : 'intersect';
 
-  const opVarName = `__t_${state.letCounter++}`;
-  const opExpr = `${opFn}(${leftVar}, ${rightVar})`;
+  let accVar = generateNode(node.children[0], state);
+  for (let i = 1; i < node.children.length; i++) {
+    const rightVar = generateNode(node.children[i], state);
+    const opVarName = `__t_${state.letCounter++}`;
+    state.lets.push(`${opVarName} = ${opFn}(${accVar}, ${rightVar})`);
+    accVar = opVarName;
+  }
 
   // Apply op node transform if present
-  state.lets.push(`${opVarName} = ${buildTransformExpr(opExpr, node)}`);
+  if (!isIdentityTransform(node)) {
+    const transformedVar = `__t_${state.letCounter++}`;
+    state.lets.push(`${transformedVar} = ${buildTransformExpr(accVar, node)}`);
+    return transformedVar;
+  }
 
-  return opVarName;
+  return accVar;
 };
 
 const collectModules = (state: TreeGenState, allAssets: Record<string, AssetDef>): Record<string, string> => {

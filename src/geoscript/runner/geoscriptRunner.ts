@@ -29,7 +29,7 @@ export const runGeoscript = async ({
   code,
   ctxPtr,
   repl,
-  materials,
+  materials = {},
   includePrelude,
   materialOverride,
   renderMode = false,
@@ -116,7 +116,11 @@ export const runGeoscript = async ({
     let verts = initialVerts;
     let indices = initialIndices;
     let uvs: Float32Array | null = null;
-    const { def: matDef, mat: mat } = materials[materialName];
+    const matLookup = materials[materialName] ?? {
+      def: null,
+      mat: { resolved: FallbackMat, promise: Promise.resolve(FallbackMat) },
+    };
+    const { def: matDef, mat: mat } = matLookup;
 
     const uvUnwrapParams = (() => {
       if (!!overrideMat || matDef?.textureMapping?.type !== 'uv') {

@@ -58,6 +58,7 @@ export class LevelEditor {
   transformControls: TransformControls | null = null;
   selectedObject: LevelObject | null = null;
   private transformMode: TransformMode = 'translate';
+  private transformSpace: 'world' | 'local' = 'world';
 
   private raycaster = new THREE.Raycaster();
   private selectableMeshes: THREE.Mesh[] = [];
@@ -70,16 +71,12 @@ export class LevelEditor {
   private originalSetPointerCapture: ((pointerId: number) => void) | null = null;
   private originalReleasePointerCapture: ((pointerId: number) => void) | null = null;
 
-  // Drag state
   private dragStartSnapshot: TransformSnapshot | null = null;
 
-  // Copy / paste
   private clipboard: ClipboardEntry | null = null;
 
-  // Repeat last action (Shift+R)
   private lastReplayableAction: ReplayableTransformDelta | null = null;
 
-  // UI panel (reactive state for Svelte component)
   private panelState = $state({
     selectedObjectId: null as string | null,
     selectedMaterialId: null as string | null,
@@ -87,7 +84,6 @@ export class LevelEditor {
   private panelComponent: Record<string, any> | null = null;
   private panelTarget: HTMLDivElement | null = null;
 
-  // CSG edit mode controller
   private csgController = new CsgEditController(this);
 
   constructor(
@@ -182,12 +178,12 @@ export class LevelEditor {
     const activeTag = (document.activeElement as HTMLElement | null)?.tagName?.toLowerCase();
     const isTypingInput = activeTag === 'input' || activeTag === 'textarea';
 
-    // Undo / Redo (allow even from inputs so browser-native text undo is not pre-empted —
-    // we only handle it when focus is NOT in a text field).
+    // Undo / Redo
     if (!isTypingInput) {
       if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
         e.preventDefault();
-        this.undoSystem.undo(this.applyUndoEntry);
+        if (this.csgController.isActive) this.csgController.undo();
+        else this.undoSystem.undo(this.applyUndoEntry);
         return;
       }
       if (
@@ -195,7 +191,8 @@ export class LevelEditor {
         (e.key === 'y' && (e.ctrlKey || e.metaKey))
       ) {
         e.preventDefault();
-        this.undoSystem.redo(this.applyUndoEntry);
+        if (this.csgController.isActive) this.csgController.redo();
+        else this.undoSystem.redo(this.applyUndoEntry);
         return;
       }
     }
@@ -226,6 +223,8 @@ export class LevelEditor {
       this.setTransformMode('rotate');
     } else if (e.key === 's' || e.key === 'S') {
       this.setTransformMode('scale');
+    } else if (e.key === 'l') {
+      this.toggleTransformSpace();
     } else if (e.key === '.') {
       this.focusSelected();
     } else if (e.key === 'Escape') {
@@ -243,6 +242,11 @@ export class LevelEditor {
   private setTransformMode(mode: TransformMode) {
     this.transformMode = mode;
     this.transformControls?.setMode(mode);
+  }
+
+  private toggleTransformSpace() {
+    this.transformSpace = this.transformSpace === 'world' ? 'local' : 'world';
+    this.transformControls?.setSpace(this.transformSpace);
   }
 
   private toggleEditMode() {
@@ -280,13 +284,15 @@ export class LevelEditor {
 
     this.transformControls = new TransformControls(this.viz.camera, this.viz.renderer.domElement);
     this.transformControls.setMode(this.transformMode);
+    this.transformControls.setSpace(this.transformSpace);
     this.transformControls.addEventListener('dragging-changed', (e: any) => {
       if (this.orbitControls) {
         this.orbitControls.enabled = !e.value;
       }
 
       if (this.csgController.isActive) {
-        if (!e.value) this.csgController.onDragEnd();
+        if (e.value) this.csgController.onDragStart();
+        else this.csgController.onDragEnd();
         return;
       }
 
@@ -379,10 +385,6 @@ export class LevelEditor {
     this.destroyPanel();
   }
 
-  // ---------------------------------------------------------------------------
-  // UI panel
-  // ---------------------------------------------------------------------------
-
   private createPanel() {
     const target = document.createElement('div');
     document.body.appendChild(target);
@@ -443,17 +445,9 @@ export class LevelEditor {
     this.panelState.selectedMaterialId = this.selectedObject?.def?.material ?? null;
   }
 
-  // ---------------------------------------------------------------------------
-  // Orbit controls tick
-  // ---------------------------------------------------------------------------
-
   private tickOrbitControls = () => {
     this.orbitControls?.update();
   };
-
-  // ---------------------------------------------------------------------------
-  // Pointer / raycast
-  // ---------------------------------------------------------------------------
 
   private onPointerDown = (e: PointerEvent) => {
     this.pointerDownPos.set(e.clientX, e.clientY);
@@ -546,12 +540,7 @@ export class LevelEditor {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Select / deselect
-  // ---------------------------------------------------------------------------
-
   select(levelObj: LevelObject) {
-    // If switching away from a CSG object, exit CSG edit mode first
     if (this.csgController.isActive && this.csgController.editingLevelObj !== levelObj) {
       this.csgController.exit();
     }
@@ -563,7 +552,6 @@ export class LevelEditor {
       this.materialEditor.setSelectedId(levelObj.def.material);
     }
 
-    // CSG detection — enter CSG edit mode
     const assetDef = this.levelDef.assets[levelObj.assetId];
     if (assetDef?.type === 'csg') {
       if (!this.csgController.isActive || this.csgController.editingLevelObj !== levelObj) {
@@ -595,16 +583,15 @@ export class LevelEditor {
     const box = new THREE.Box3().setFromObject(obj);
     const center = box.getCenter(new THREE.Vector3());
 
-    // Keep the current camera-to-target distance so we only re-center, not zoom.
+    // currently, keeping the current camera-to-target distance so we only re-center, not zoom.
+    //
+    // TODO: select a good zoom distance based on object bounding box and maybe add a quick animation between
+    // old and new camera pos
     const offset = this.viz.camera.position.clone().sub(this.orbitControls.target);
     this.orbitControls.target.copy(center);
     this.viz.camera.position.copy(center).add(offset);
     this.orbitControls.update();
   }
-
-  // ---------------------------------------------------------------------------
-  // Undo / redo helpers
-  // ---------------------------------------------------------------------------
 
   /**
    * Replay the last transform action on the currently selected object (Shift+R).
@@ -656,31 +643,24 @@ export class LevelEditor {
       this.syncPhysics(entry.levelObj);
     } else if (entry.type === 'add') {
       if (direction === 'undo') {
-        // Un-add: remove from scene and server
         this.removeFromScene(entry.levelObj);
         this.api.sendDelete(entry.levelObj.id);
       } else {
-        // Re-add: restore to scene and server
         this.addToScene(entry.levelObj, entry.snapshot);
         this.api.sendRestore(entry.levelObj, entry.snapshot);
+      }
+    } else if (entry.type === 'delete') {
+      if (direction === 'undo') {
+        this.addToScene(entry.levelObj, entry.snapshot);
+        this.api.sendRestore(entry.levelObj, entry.snapshot);
+      } else {
+        this.removeFromScene(entry.levelObj);
+        this.api.sendDelete(entry.levelObj.id);
       }
     } else {
-      // type === 'delete'
-      if (direction === 'undo') {
-        // Un-delete: restore to scene and server
-        this.addToScene(entry.levelObj, entry.snapshot);
-        this.api.sendRestore(entry.levelObj, entry.snapshot);
-      } else {
-        // Re-delete: remove from scene and server
-        this.removeFromScene(entry.levelObj);
-        this.api.sendDelete(entry.levelObj.id);
-      }
+      entry satisfies never;
     }
   };
-
-  // ---------------------------------------------------------------------------
-  // Scene add / remove (without server calls)
-  // ---------------------------------------------------------------------------
 
   private removeFromScene(levelObj: LevelObject) {
     if (this.selectedObject === levelObj) this.deselect();
@@ -700,10 +680,6 @@ export class LevelEditor {
     this.select(levelObj);
   }
 
-  // ---------------------------------------------------------------------------
-  // Delete object (user-initiated)
-  // ---------------------------------------------------------------------------
-
   private deleteObject(levelObj: LevelObject) {
     const snapshot = this.snapshotTransform(levelObj.object);
     this.removeFromScene(levelObj);
@@ -712,10 +688,6 @@ export class LevelEditor {
     this.undoSystem.push({ type: 'delete', levelObj, snapshot });
     this.api.sendDelete(levelObj.id);
   }
-
-  // ---------------------------------------------------------------------------
-  // Add / paste object (user-initiated)
-  // ---------------------------------------------------------------------------
 
   private async onAddClick(assetId: string, materialId: string | undefined) {
     if (!this.prototypes.has(assetId)) {
@@ -758,7 +730,6 @@ export class LevelEditor {
     if (newDef) this.finalizeSpawn(assetId, newDef);
   }
 
-  /** Shared final step for add and paste: clone prototype, place in scene, push undo, select. */
   private finalizeSpawn(assetId: string, newDef: ObjectDef) {
     const prototype = this.prototypes.get(assetId)!;
     const clone = prototype.clone();
@@ -796,10 +767,6 @@ export class LevelEditor {
     this.select(levelObj);
   }
 
-  // ---------------------------------------------------------------------------
-  // Object material change (user-initiated)
-  // ---------------------------------------------------------------------------
-
   private onObjectMaterialChange(matId: string | null) {
     const levelObj = this.selectedObject;
     if (!levelObj) return;
@@ -820,10 +787,6 @@ export class LevelEditor {
     this.panelState.selectedMaterialId = matId;
     void this.api.saveMaterialAssignment(levelObj.id, matId);
   }
-
-  // ---------------------------------------------------------------------------
-  // Physics
-  // ---------------------------------------------------------------------------
 
   syncPhysics(levelObj: LevelObject) {
     const fpCtx: BulletPhysics | undefined = this.viz.fpCtx;
@@ -871,10 +834,6 @@ export class LevelEditor {
       }
     });
   }
-
-  // ---------------------------------------------------------------------------
-  // Cleanup
-  // ---------------------------------------------------------------------------
 
   private destroy() {
     window.removeEventListener('keydown', this.onKeyDown);

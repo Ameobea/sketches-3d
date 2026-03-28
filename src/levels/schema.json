@@ -559,11 +559,12 @@
                 "intersection"
               ]
             },
-            "a": {
-              "$ref": "#/definitions/__schema0"
-            },
-            "b": {
-              "$ref": "#/definitions/__schema0"
+            "children": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/__schema0"
+              }
             },
             "position": {
               "type": "array",
@@ -610,8 +611,7 @@
           },
           "required": [
             "op",
-            "a",
-            "b"
+            "children"
           ],
           "additionalProperties": false
         },
