@@ -929,59 +929,104 @@ fn chebyshev_nodes(n: usize) -> Vec<f32> {
     .collect()
 }
 
-/// Computes superellipse-adapted sampling nodes for `n` points, mapped to [0, 1].
+/// Computes bevel-friendly sampling nodes for `n` points in [0, 1].
 ///
-/// Uses a power-transformed cosine distribution that concentrates samples near endpoints.
-/// The concentration increases with the exponent:
-/// - exponent=2: equivalent to Chebyshev-like (cosine) spacing
-/// - exponent>2: progressively more concentration at endpoints
-/// - exponent<2: samples spread more toward the center
-/// - exponent=1: degenerates toward uniform (with some numerical edge cases)
+/// Splits the domain into three regions: a dense bevel zone at each end and a uniform middle.
+/// Within each bevel zone, samples follow a power-curve distribution that concentrates them
+/// toward the true endpoints (the corners of the bevel), giving a natural density falloff
+/// toward the middle region.
 ///
-/// Like Chebyshev nodes, the first and last samples are near but not exactly 0 and 1.
-/// This is important for superellipse profiles where t=0 or t=1 would give zero radius.
+/// The first and last samples are slightly offset from 0 and 1, which is important for
+/// superellipse profiles where t=0 or t=1 would give zero radius.
 ///
-/// Returns `None` if the computation produces invalid results (NaN/Inf), in which case
-/// the caller should fall back to uniform sampling.
+/// Parameters:
+/// - `n`: total number of samples
+/// - `bevel_fraction`: fraction of domain at each end that is the bevel zone (0..0.5).
+///    Default when called with just an exponent: `(0.5 / exponent).clamp(0.05, 0.25)`.
+/// - `density`: how many times denser the bevel zones are vs the middle (>= 1.0).
+///    Controls both sample allocation and the power-curve concentration within bevel zones.
+///
+/// Returns `None` if parameters are invalid or produce degenerate results.
+fn superellipse_nodes_with_params(
+  n: usize,
+  bevel_fraction: f32,
+  density: f32,
+) -> Option<Vec<f32>> {
+  if n == 0
+    || !bevel_fraction.is_finite()
+    || !density.is_finite()
+    || bevel_fraction <= 0.
+    || bevel_fraction >= 0.5
+    || density < 1.
+  {
+    return None;
+  }
+
+  if n == 1 {
+    return Some(vec![0.5]);
+  }
+
+  // Allocate samples across the three regions proportional to length * density
+  let middle_length = 1. - 2. * bevel_fraction;
+  let effective_length = 2. * bevel_fraction * density + middle_length;
+  let bevel_count_f = (n as f32 * bevel_fraction * density / effective_length).round();
+  let bevel_count = (bevel_count_f as usize).max(1).min((n - 1) / 2);
+  let middle_count = n - 2 * bevel_count;
+
+  // Power curve exponent for non-uniform distribution within bevel zones.
+  // Tied to density so there's no extra parameter: higher density = more concentration at corners.
+  let p = density.sqrt();
+
+  let mut nodes = Vec::with_capacity(n);
+
+  // Small inset to avoid the degenerate t=0 and t=1 endpoints where radius collapses to zero,
+  // but kept tight so the bevel samples capture most of the curvature range.
+  const ENDPOINT_INSET: f32 = 0.1;
+
+  // Start bevel: bevel_count samples in [0, bevel_fraction], concentrated toward 0
+  for k in 0..bevel_count {
+    let local_t = (k as f32 + ENDPOINT_INSET) / bevel_count as f32;
+    let curved_t = local_t.powf(p); // concentrate toward 0 (the corner)
+    nodes.push(curved_t * bevel_fraction);
+  }
+
+  // Middle: middle_count samples uniformly in [bevel_fraction, 1 - bevel_fraction]
+  if middle_count > 0 {
+    for k in 0..middle_count {
+      let t = bevel_fraction + middle_length * (k as f32 + 0.5) / middle_count as f32;
+      nodes.push(t);
+    }
+  }
+
+  // End bevel: bevel_count samples in [1 - bevel_fraction, 1], concentrated toward 1 (mirror)
+  for k in 0..bevel_count {
+    let local_t = (k as f32 + ENDPOINT_INSET) / bevel_count as f32;
+    let curved_t = local_t.powf(p);
+    nodes.push(1. - curved_t * bevel_fraction); // mirror of start: concentrate toward 1
+  }
+
+  // Verify all nodes are finite and in range
+  for t in &mut nodes {
+    if !t.is_finite() {
+      return None;
+    }
+    *t = t.clamp(0., 1.);
+  }
+
+  // Sort to ensure monotonicity (the three regions should already be ordered, but be safe)
+  nodes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+  Some(nodes)
+}
+
+/// Convenience wrapper: derives `bevel_fraction` and `density` from a superellipse exponent.
 fn superellipse_nodes(n: usize, exponent: f32) -> Option<Vec<f32>> {
   if exponent <= 0. || !exponent.is_finite() {
     return None;
   }
-
-  // Hard-coded mixing factor to ensure that we don't undersample the middle of the shape too
-  // severely, even for high exponents.
-  const UNIFORM_MIX: f32 = 0.2;
-
-  let n_f = n as f32;
-  let power = 2. / exponent;
-
-  let mut nodes = Vec::with_capacity(n);
-  for k in 0..n {
-    // chebyshev-style angular sampling which ensures first/last samples are near but not exactly
-    // 0/1.  This is critical for superellipse profiles where t=0 or t=1 gives zero radius.
-    let theta = PI * (2. * k as f32 + 1.) / (2. * n_f);
-    let cos_val = theta.cos();
-
-    let transformed = if cos_val.abs() < 1e-10 {
-      0.
-    } else {
-      let sign = cos_val.signum();
-      let magnitude = cos_val.abs().powf(power);
-      sign * magnitude.clamp(-1., 1.)
-    };
-
-    let t_super = 0.5 * (1. - transformed);
-    let t_uniform = (2. * k as f32 + 1.) / (2. * n_f);
-
-    let t = t_super * (1. - UNIFORM_MIX) + t_uniform * UNIFORM_MIX;
-    if !t.is_finite() {
-      return None;
-    }
-
-    nodes.push(t.clamp(0., 1.));
-  }
-
-  Some(nodes)
+  let bevel_fraction = (0.5 / exponent).clamp(0.05, 0.25);
+  let density = 3.0_f32;
+  superellipse_nodes_with_params(n, bevel_fraction, density)
 }
 
 fn compute_spine_t_values(
@@ -1051,10 +1096,10 @@ fn compute_spine_t_values(
         }
         "superellipse" | "bevel" => {
           for key in map.keys() {
-            if key != "type" && key != "exponent" {
+            if key != "type" && key != "exponent" && key != "bevel_fraction" && key != "density" {
               return Err(ErrorStack::new(format!(
                 "Unknown key '{key}' in spine_sampling_scheme map for type \"{type_str}\"; \
-                 allowed keys are 'type' and 'exponent'"
+                 allowed keys are 'type', 'exponent', 'bevel_fraction', and 'density'"
               )));
             }
           }
@@ -1070,7 +1115,29 @@ fn compute_spine_t_values(
             None => 5.,
           };
 
-          match superellipse_nodes(spine_resolution, exponent) {
+          let bevel_fraction = match map.get("bevel_fraction") {
+            Some(Value::Float(f)) => *f,
+            Some(Value::Int(i)) => *i as f32,
+            Some(other) => {
+              return Err(ErrorStack::new(format!(
+                "spine_sampling_scheme 'bevel_fraction' must be numeric, found: {other:?}"
+              )))
+            }
+            None => (0.5 / exponent).clamp(0.05, 0.25),
+          };
+
+          let density = match map.get("density") {
+            Some(Value::Float(f)) => *f,
+            Some(Value::Int(i)) => *i as f32,
+            Some(other) => {
+              return Err(ErrorStack::new(format!(
+                "spine_sampling_scheme 'density' must be numeric, found: {other:?}"
+              )))
+            }
+            None => 3.0,
+          };
+
+          match superellipse_nodes_with_params(spine_resolution, bevel_fraction, density) {
             Some(nodes) => Ok(nodes),
             // fall back to uniform sampling for degenerate cases
             None => Ok(uniform_nodes(spine_resolution)),
@@ -1624,7 +1691,8 @@ pub(crate) fn rail_sweep_impl(
 #[cfg(test)]
 mod tests {
   use super::{
-    chebyshev_nodes, rail_sweep, rail_sweep_dynamic, superellipse_nodes, FrameMode, Twist,
+    chebyshev_nodes, rail_sweep, rail_sweep_dynamic, superellipse_nodes,
+    superellipse_nodes_with_params, FrameMode, Twist,
   };
   use crate::builtins::trace_path::build_topology_samples;
   use crate::{Callable, DynamicCallable, ErrorStack, EvalCtx, Sym, Value, Vec2};
@@ -1754,113 +1822,155 @@ mod tests {
   }
 
   #[test]
-  fn test_superellipse_nodes_properties() {
-    // Test superellipse nodes with exponent=2 should be similar to Chebyshev
-    let nodes_exp2 = superellipse_nodes(10, 2.0).expect("exponent=2 should work");
-    assert_eq!(nodes_exp2.len(), 10);
+  fn test_superellipse_nodes_basic_properties() {
+    let nodes = superellipse_nodes(10, 5.0).expect("exponent=5 should work");
+    assert_eq!(nodes.len(), 10);
 
-    // Like Chebyshev, first/last nodes should be near but NOT exactly 0/1
-    // This is critical for superellipse profiles where t=0 or t=1 gives zero radius
-    assert!(nodes_exp2[0] > 0.0, "First node should be > 0");
-    assert!(nodes_exp2[0] < 0.1, "First node should be close to 0");
-    assert!(nodes_exp2[9] < 1.0, "Last node should be < 1");
-    assert!(nodes_exp2[9] > 0.9, "Last node should be close to 1");
+    // First/last nodes should be near but NOT exactly 0/1
+    assert!(nodes[0] > 0.0, "First node should be > 0");
+    assert!(nodes[0] < 0.05, "First node should be close to 0");
+    assert!(*nodes.last().unwrap() < 1.0, "Last node should be < 1");
+    assert!(*nodes.last().unwrap() > 0.95, "Last node should be close to 1");
 
-    // Verify nodes are in valid range and strictly increasing
-    for (i, &node) in nodes_exp2.iter().enumerate() {
-      assert!(
-        node >= 0.0 && node <= 1.0,
-        "Node {} out of range: {}",
-        i,
-        node
-      );
+    // All nodes in range and strictly increasing
+    for (i, &node) in nodes.iter().enumerate() {
+      assert!(node >= 0.0 && node <= 1.0, "Node {} out of range: {}", i, node);
       if i > 0 {
-        assert!(
-          node > nodes_exp2[i - 1],
-          "Nodes should be strictly increasing"
-        );
+        assert!(node > nodes[i - 1], "Nodes should be strictly increasing at {i}");
       }
     }
+  }
 
-    // Test that higher exponent concentrates samples more at endpoints
-    let nodes_exp2 = superellipse_nodes(10, 2.0).unwrap();
-    let nodes_exp5 = superellipse_nodes(10, 5.0).unwrap();
-    let nodes_exp10 = superellipse_nodes(10, 10.0).unwrap();
+  #[test]
+  fn test_superellipse_nodes_three_region_structure() {
+    // With bevel_fraction=0.1, density=3, n=20:
+    // expect ~4 samples in each bevel zone and ~12 in the middle
+    let nodes = superellipse_nodes_with_params(20, 0.1, 3.0).unwrap();
+    assert_eq!(nodes.len(), 20);
 
-    // Second node (index 1) should be closer to 0 with higher exponent
-    // (First node is always exactly 0)
-    assert!(
-      nodes_exp5[1] < nodes_exp2[1],
-      "Higher exponent should give second node closer to 0: exp5={} vs exp2={}",
-      nodes_exp5[1],
-      nodes_exp2[1]
-    );
-    assert!(
-      nodes_exp10[1] < nodes_exp5[1],
-      "Even higher exponent should give second node even closer to 0: exp10={} vs exp5={}",
-      nodes_exp10[1],
-      nodes_exp5[1]
-    );
+    let in_start_bevel = nodes.iter().filter(|&&t| t < 0.1).count();
+    let in_end_bevel = nodes.iter().filter(|&&t| t > 0.9).count();
+    let in_middle = nodes.iter().filter(|&&t| t >= 0.1 && t <= 0.9).count();
 
-    // Middle node (index 4 or 5 for n=10) should stay at or near 0.5 for all exponents
-    // Note: With even n, the middle is between indices, so we check index 4 and 5
-    let mid_exp2 = (nodes_exp2[4] + nodes_exp2[5]) / 2.0;
-    let mid_exp5 = (nodes_exp5[4] + nodes_exp5[5]) / 2.0;
-    let mid_exp10 = (nodes_exp10[4] + nodes_exp10[5]) / 2.0;
-    assert!(
-      (mid_exp2 - 0.5).abs() < 0.05,
-      "Middle region should be ~0.5 for exp=2, got {}",
-      mid_exp2
-    );
-    assert!(
-      (mid_exp5 - 0.5).abs() < 0.05,
-      "Middle region should be ~0.5 for exp=5, got {}",
-      mid_exp5
-    );
-    assert!(
-      (mid_exp10 - 0.5).abs() < 0.05,
-      "Middle region should be ~0.5 for exp=10, got {}",
-      mid_exp10
-    );
+    assert!(in_start_bevel >= 2, "Should have multiple samples in start bevel, got {in_start_bevel}");
+    assert!(in_end_bevel >= 2, "Should have multiple samples in end bevel, got {in_end_bevel}");
+    assert!(in_middle >= in_start_bevel, "Middle should have at least as many samples as a bevel zone");
+    assert_eq!(in_start_bevel + in_end_bevel + in_middle, 20);
+  }
 
-    // Test edge cases
-    // Exponent < 2 should still work (samples spread more toward center)
-    let nodes_exp1_5 = superellipse_nodes(10, 1.5).expect("exponent=1.5 should work");
-    assert_eq!(nodes_exp1_5.len(), 10);
-    assert!(
-      nodes_exp1_5[1] > nodes_exp2[1],
-      "Lower exponent should give second node further from 0: exp1.5={} vs exp2={}",
-      nodes_exp1_5[1],
-      nodes_exp2[1]
-    );
+  #[test]
+  fn test_superellipse_nodes_bevel_concentration() {
+    // Within the start bevel zone, samples should be denser near 0 (the corner)
+    let nodes = superellipse_nodes_with_params(20, 0.15, 4.0).unwrap();
 
-    // Very high exponent should still produce valid nodes
-    let nodes_exp50 = superellipse_nodes(10, 50.0).expect("exponent=50 should work");
-    assert_eq!(nodes_exp50.len(), 10);
-    for &node in &nodes_exp50 {
+    // Collect start bevel samples
+    let bevel_samples: Vec<f32> = nodes.iter().copied().filter(|&t| t < 0.15).collect();
+    assert!(bevel_samples.len() >= 3, "Need enough bevel samples to test concentration");
+
+    // Gaps should increase as we move away from 0
+    let gaps: Vec<f32> = bevel_samples.windows(2).map(|w| w[1] - w[0]).collect();
+    for i in 1..gaps.len() {
       assert!(
-        node >= 0.0 && node <= 1.0,
-        "Node out of range with high exponent"
+        gaps[i] >= gaps[i - 1] * 0.9, // allow small tolerance
+        "Bevel gaps should generally increase away from corner: gap[{}]={} vs gap[{}]={}",
+        i - 1, gaps[i - 1], i, gaps[i]
       );
     }
+  }
 
-    // Invalid exponent should return None
+  #[test]
+  fn test_superellipse_nodes_middle_is_uniform() {
+    let nodes = superellipse_nodes_with_params(30, 0.1, 3.0).unwrap();
+
+    // Collect middle samples
+    let middle: Vec<f32> = nodes.iter().copied().filter(|&t| t >= 0.1 && t <= 0.9).collect();
+    assert!(middle.len() >= 5);
+
+    // Middle gaps should be approximately equal
+    let gaps: Vec<f32> = middle.windows(2).map(|w| w[1] - w[0]).collect();
+    let avg_gap = gaps.iter().sum::<f32>() / gaps.len() as f32;
+    for (i, &gap) in gaps.iter().enumerate() {
+      assert!(
+        (gap - avg_gap).abs() < avg_gap * 0.15,
+        "Middle gap {} = {} deviates too much from avg {}", i, gap, avg_gap
+      );
+    }
+  }
+
+  #[test]
+  fn test_superellipse_nodes_exponent_affects_distribution() {
+    // Higher exponent -> smaller bevel_fraction -> fewer samples in bevel, more in middle
+    let nodes_exp2 = superellipse_nodes(20, 2.0).unwrap(); // bevel_fraction=0.25
+    let nodes_exp10 = superellipse_nodes(20, 10.0).unwrap(); // bevel_fraction=0.05
+
+    // With exp=10, the bevel zone is [0, 0.05] ∪ [0.95, 1], much smaller than exp=2's [0, 0.25] ∪ [0.75, 1]
+    // So exp=10 should have more samples concentrated in the middle region [0.25, 0.75]
+    let mid_count_exp2 = nodes_exp2.iter().filter(|&&t| t >= 0.25 && t <= 0.75).count();
+    let mid_count_exp10 = nodes_exp10.iter().filter(|&&t| t >= 0.25 && t <= 0.75).count();
     assert!(
-      superellipse_nodes(10, 0.0).is_none(),
-      "exponent=0 should return None"
+      mid_count_exp10 > mid_count_exp2,
+      "Higher exponent should have more samples in center: exp10={} vs exp2={}",
+      mid_count_exp10, mid_count_exp2
     );
-    assert!(
-      superellipse_nodes(10, -1.0).is_none(),
-      "negative exponent should return None"
-    );
-    assert!(
-      superellipse_nodes(10, f32::INFINITY).is_none(),
-      "infinite exponent should return None"
-    );
-    assert!(
-      superellipse_nodes(10, f32::NAN).is_none(),
-      "NaN exponent should return None"
-    );
+  }
+
+  #[test]
+  fn test_superellipse_nodes_symmetry() {
+    let nodes = superellipse_nodes_with_params(21, 0.1, 3.0).unwrap();
+    // Distribution should be symmetric around 0.5
+    for i in 0..nodes.len() {
+      let mirror = nodes.len() - 1 - i;
+      let sum = nodes[i] + nodes[mirror];
+      assert!(
+        (sum - 1.0).abs() < 0.01,
+        "Nodes should be symmetric: nodes[{}]={} + nodes[{}]={} = {} (expected ~1.0)",
+        i, nodes[i], mirror, nodes[mirror], sum
+      );
+    }
+  }
+
+  #[test]
+  fn test_superellipse_nodes_small_n() {
+    // Should work with very few samples
+    let nodes3 = superellipse_nodes(3, 5.0).unwrap();
+    assert_eq!(nodes3.len(), 3);
+    assert!(nodes3[0] > 0.0 && nodes3[0] < 0.2);
+    assert!(nodes3[2] > 0.8 && nodes3[2] < 1.0);
+
+    let nodes2 = superellipse_nodes(2, 5.0).unwrap();
+    assert_eq!(nodes2.len(), 2);
+    assert!(nodes2[0] > 0.0 && nodes2[1] < 1.0);
+
+    let nodes1 = superellipse_nodes(1, 5.0).unwrap();
+    assert_eq!(nodes1.len(), 1);
+    assert!((nodes1[0] - 0.5).abs() < 0.01);
+  }
+
+  #[test]
+  fn test_superellipse_nodes_invalid_params() {
+    // Invalid exponent
+    assert!(superellipse_nodes(10, 0.0).is_none());
+    assert!(superellipse_nodes(10, -1.0).is_none());
+    assert!(superellipse_nodes(10, f32::INFINITY).is_none());
+    assert!(superellipse_nodes(10, f32::NAN).is_none());
+
+    // Invalid bevel_fraction
+    assert!(superellipse_nodes_with_params(10, 0.0, 3.0).is_none());
+    assert!(superellipse_nodes_with_params(10, 0.5, 3.0).is_none());
+    assert!(superellipse_nodes_with_params(10, -0.1, 3.0).is_none());
+
+    // Invalid density
+    assert!(superellipse_nodes_with_params(10, 0.1, 0.5).is_none());
+
+    // n=0
+    assert!(superellipse_nodes_with_params(0, 0.1, 3.0).is_none());
+
+    // Very high exponent should still work
+    let nodes = superellipse_nodes(10, 50.0).expect("exponent=50 should work");
+    assert_eq!(nodes.len(), 10);
+    for &node in &nodes {
+      assert!(node >= 0.0 && node <= 1.0);
+    }
   }
 
   #[test]

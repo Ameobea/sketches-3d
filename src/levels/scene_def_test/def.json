@@ -349,6 +349,10 @@
       "type": "geoscript",
       "file": "ring.geo"
     },
+    "t2": {
+      "type": "geoscript",
+      "file": "t_2.geo"
+    },
     "csg_t1": {
       "type": "csg",
       "tree": {
@@ -553,7 +557,7 @@
       "id": "coil_1",
       "asset": "coil",
       "position": [
-        -94.0911,
+        -108.3522,
         27.8834,
         -5.3549
       ],
@@ -708,6 +712,83 @@
         1
       ],
       "material": "plastered_concrete"
+    },
+    {
+      "id": "t2",
+      "asset": "t2",
+      "position": [
+        111.6355,
+        59.6373,
+        -2.1352
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "platform_small_1",
+      "asset": "platform_small",
+      "position": [
+        -2.459,
+        27.4071,
+        -20.1358
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        0.1887,
+        1,
+        0.1838
+      ]
+    },
+    {
+      "id": "platform_small_2",
+      "asset": "platform_small",
+      "position": [
+        -2.42,
+        24.2454,
+        -7.0317
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        0.3264,
+        1,
+        0.1423
+      ]
+    },
+    {
+      "id": "coil_6",
+      "asset": "coil",
+      "position": [
+        0,
+        2.2334,
+        13.6187
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
     }
   ]
 }

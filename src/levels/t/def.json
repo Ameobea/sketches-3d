@@ -1,0 +1,645 @@
+{
+  "$schema": "../schema.json",
+  "version": 1,
+  "textures": {
+    "gold_albedo": {
+      "url": "https://i.ameo.link/be0.jpg",
+      "colorSpace": "srgb"
+    },
+    "gold_normal": {
+      "url": "https://i.ameo.link/be2.jpg"
+    },
+    "gold_roughness": {
+      "url": "https://i.ameo.link/bdz.jpg"
+    },
+    "plastered_concrete_color": {
+      "url": "https://geotoy.b-cdn.net/textures/1/0a2fce65-f2dd-4cab-8f16-86d35175007b.avif",
+      "colorSpace": "srgb"
+    },
+    "plastered_concrete_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/12b9751a-845f-4d5a-b971-98cd62d572e9.avif"
+    }
+  },
+  "materials": {
+    "gold_mat": {
+      "type": "customShader",
+      "props": {
+        "roughness": 0.87,
+        "metalness": 0.99,
+        "uvScale": [
+          0.1,
+          0.1
+        ],
+        "map": "gold_albedo",
+        "normalMap": "gold_normal",
+        "roughnessMap": "gold_roughness"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "plastered_concrete": {
+      "type": "customShader",
+      "props": {
+        "color": 14671839,
+        "roughness": 0.9,
+        "metalness": 0.4,
+        "uvScale": [
+          0.04,
+          0.04
+        ],
+        "map": "plastered_concrete_color",
+        "normalMap": "plastered_concrete_normal"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    }
+  },
+  "assets": {
+    "box": {
+      "type": "geoscript",
+      "code": "export mesh = box(5)"
+    },
+    "coil": {
+      "type": "geoscript",
+      "file": "coil.geo"
+    },
+    "capsule": {
+      "type": "geoscript",
+      "code": "export mesh = capsule(height=4, radial_segments=16)"
+    },
+    "ring": {
+      "type": "geoscript",
+      "file": "ring.geo"
+    },
+    "plat1": {
+      "type": "geoscript",
+      "file": "plat1.geo"
+    },
+    "plat2": {
+      "type": "geoscript",
+      "file": "plat2.geo"
+    },
+    "puck": {
+      "type": "geoscript",
+      "file": "puck.geo"
+    },
+    "block": {
+      "type": "geoscript",
+      "file": "block.geo"
+    },
+    "telephone_pole": {
+      "type": "geoscript",
+      "file": "telephone_pole.geo"
+    },
+    "csg_plat2": {
+      "type": "csg",
+      "tree": {
+        "op": "union",
+        "children": [
+          {
+            "asset": "plat2",
+            "rotation": [
+              -0.7854,
+              0,
+              1.5708
+            ],
+            "scale": [
+              3,
+              8,
+              3
+            ]
+          },
+          {
+            "asset": "plat1",
+            "position": [
+              0,
+              2.7507,
+              -10.6797
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              1.6172,
+              2.5733,
+              2.0422
+            ]
+          }
+        ]
+      }
+    },
+    "csg_coil": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "op": "union",
+            "children": [
+              {
+                "asset": "coil",
+                "rotation": [
+                  0,
+                  1.5719,
+                  1.1459
+                ],
+                "scale": [
+                  13.3317,
+                  13.3317,
+                  20.3692
+                ]
+              },
+              {
+                "asset": "plat1",
+                "position": [
+                  0,
+                  -8.1731,
+                  25.1741
+                ],
+                "rotation": [
+                  -0.1267,
+                  0.0061,
+                  0.0372
+                ],
+                "scale": [
+                  0.611,
+                  1.447,
+                  2.4598
+                ]
+              }
+            ]
+          },
+          {
+            "op": "difference",
+            "children": [
+              {
+                "asset": "box",
+                "position": [
+                  0,
+                  13.0332,
+                  -11.8403
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  2.3572,
+                  4.4238,
+                  3.3699
+                ]
+              },
+              {
+                "asset": "box",
+                "position": [
+                  2.9063,
+                  12.3621,
+                  -11.5602
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  0.4952,
+                  0.305,
+                  4.4347
+                ]
+              },
+              {
+                "asset": "box",
+                "position": [
+                  -2.9063,
+                  12.3621,
+                  -11.5602
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  0.4952,
+                  0.305,
+                  4.4347
+                ]
+              }
+            ],
+            "position": [
+              0,
+              4.1624,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          {
+            "asset": "box",
+            "position": [
+              -2.1693,
+              11.4398,
+              -41.9362
+            ],
+            "rotation": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              3.0804,
+              11.0172,
+              11.736
+            ]
+          }
+        ]
+      }
+    },
+    "csg_capsule": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "op": "union",
+            "children": [
+              {
+                "op": "difference",
+                "children": [
+                  {
+                    "asset": "capsule"
+                  },
+                  {
+                    "asset": "block",
+                    "position": [
+                      0,
+                      -0.0536,
+                      -0.4872
+                    ],
+                    "rotation": [
+                      1.5708,
+                      0,
+                      0
+                    ],
+                    "scale": [
+                      0.4691,
+                      0.7044,
+                      0.4252
+                    ]
+                  },
+                  {
+                    "asset": "capsule",
+                    "position": [
+                      0,
+                      1.9399,
+                      0.0291
+                    ],
+                    "rotation": [
+                      0,
+                      0,
+                      0
+                    ],
+                    "scale": [
+                      0.6297,
+                      1.0522,
+                      0.7039
+                    ]
+                  }
+                ]
+              },
+              {
+                "asset": "puck",
+                "position": [
+                  0,
+                  1.0931,
+                  0.6033
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  0.2174,
+                  0.2174,
+                  0.1324
+                ]
+              },
+              {
+                "asset": "puck",
+                "position": [
+                  0,
+                  -0.9136,
+                  -0.1477
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0
+                ],
+                "scale": [
+                  0.3014,
+                  0.1897,
+                  0.4279
+                ]
+              }
+            ]
+          },
+          {
+            "asset": "box",
+            "position": [
+              0,
+              2.4844,
+              0
+            ],
+            "rotation": [
+              0.0145,
+              0,
+              0
+            ],
+            "scale": [
+              0.5139,
+              0.2475,
+              0.6032
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "objects": [
+    {
+      "id": "box",
+      "asset": "box",
+      "position": [
+        0,
+        -4.1275,
+        8
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        6,
+        1,
+        6
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "plat1",
+      "asset": "plat1",
+      "position": [
+        35.699,
+        1.0824,
+        8
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        2.5,
+        2.5,
+        2.5
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "plat2",
+      "asset": "csg_plat2",
+      "position": [
+        65.3587,
+        11.9317,
+        7.3643
+      ],
+      "material": "gold_mat",
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "id": "coil",
+      "asset": "csg_coil",
+      "position": [
+        65,
+        38.3216,
+        -71.7555
+      ],
+      "material": "plastered_concrete",
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1.1613,
+        1
+      ]
+    },
+    {
+      "id": "plat1_1",
+      "asset": "plat1",
+      "position": [
+        65,
+        25.6497,
+        -65.9805
+      ],
+      "rotation": [
+        -0.162,
+        0,
+        0
+      ],
+      "scale": [
+        1.0377,
+        1.6015,
+        2.5
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "capsule",
+      "asset": "csg_capsule",
+      "position": [
+        65.8121,
+        31.8515,
+        -83.925
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        7.3976,
+        6.548,
+        7.3976
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "puck",
+      "asset": "puck",
+      "position": [
+        80.244,
+        24.4113,
+        -85.6277
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.7325,
+        1.7325,
+        1.7325
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "puck_1",
+      "asset": "puck",
+      "position": [
+        50.6315,
+        24.6936,
+        -85.7225
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.7325,
+        1.7325,
+        1.7325
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "telephone_pole",
+      "asset": "telephone_pole",
+      "position": [
+        65.1046,
+        66.7013,
+        -0.7458
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.3823,
+        3.2813,
+        2.1435
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "telephone_pole_1",
+      "asset": "telephone_pole",
+      "position": [
+        94.4472,
+        78.1042,
+        18.6448
+      ],
+      "rotation": [
+        0,
+        1.5476,
+        0
+      ],
+      "scale": [
+        1.3823,
+        3.2813,
+        2.1435
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "telephone_pole_2",
+      "asset": "telephone_pole",
+      "position": [
+        110.0098,
+        91.3116,
+        -10.7777
+      ],
+      "rotation": [
+        0,
+        0.0214,
+        0
+      ],
+      "scale": [
+        1.3823,
+        3.2813,
+        2.1435
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "telephone_pole_3",
+      "asset": "telephone_pole",
+      "position": [
+        81.156,
+        104.101,
+        -28.1148
+      ],
+      "rotation": [
+        0,
+        1.5476,
+        0
+      ],
+      "scale": [
+        1.3823,
+        3.2813,
+        2.1435
+      ],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "puck_2",
+      "asset": "puck",
+      "position": [
+        66.1132,
+        48.6118,
+        -93.5004
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1.3936,
+        1.3936,
+        1.3936
+      ],
+      "material": "plastered_concrete"
+    }
+  ]
+}

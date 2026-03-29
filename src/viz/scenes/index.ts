@@ -604,4 +604,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     legacyLights: false,
     useLevelDef: true,
   },
+  t: {
+    sceneName: null,
+    gltfName: null,
+    sceneLoader: () => import('./t/t').then(mod => mod.processLoadedScene),
+    metadata: { title: 'T' },
+    legacyLights: false,
+    useLevelDef: true,
+  },
 };
