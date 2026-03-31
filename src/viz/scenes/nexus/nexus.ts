@@ -24,7 +24,6 @@ import { MetricsAPI } from 'src/api/client';
 import PlatformColorShader from './shaders/platform/color.frag?raw';
 import PlatformRoughnessShader from './shaders/platform/roughness.frag?raw';
 import { resolve } from '$app/paths';
-import type { RouteId } from '$app/types';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -370,7 +369,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     pinklights: { scene: '/pinklights', displayName: 'PINKLIGHTS' },
     smoke: { scene: '/smoke', displayName: 'SMOKE' },
     bridge2: { scene: '/bridge2', displayName: 'BRIDGE' },
-  } as const satisfies Record<string, { scene: RouteId; displayName: string }>;
+  } as const satisfies Record<string, { scene: string; displayName: string }>;
   type PortalKey = keyof typeof PortalDefs;
   const isPortalKey = (key: string): key is PortalKey => key in PortalDefs;
 

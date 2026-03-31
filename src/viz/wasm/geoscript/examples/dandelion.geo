@@ -3,7 +3,7 @@ sph = icosphere(radius=20, resolution=3)
 build_ring = |segment_count: int, ring_radius: num, tube_radius: num = 1|: mesh {
   0..segment_count
     -> |i| {
-      t = i / (segment_count - 1)
+      t = i / (segment_count - 2)
       vec3(sin(t*pi*2) * ring_radius, 0, cos(t*pi*2) * ring_radius)
     }
     | extrude_pipe(radius=tube_radius, resolution=4, twist=pi/4)
@@ -13,7 +13,7 @@ rings = 0..12
   -> || {
     build_ring(segment_count=90, ring_radius=20+14, tube_radius=0.2)
       | scale(1, 8, 1)
-      | rot(randv(-pi*2, pi*2))
+      | rot_global(randv(-pi*2, pi*2))
   }
   | join;
 

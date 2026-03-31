@@ -20,6 +20,11 @@ export class LevelEditorApi {
       scale: object.scale.toArray().map(round) as [number, number, number],
     };
 
+    // Write back to def so clipboard and other consumers see current values
+    levelObj.def.position = body.position;
+    levelObj.def.rotation = body.rotation;
+    levelObj.def.scale = body.scale;
+
     try {
       const res = await fetch(`/level_editor/${this.levelName}`, {
         method: 'PATCH',

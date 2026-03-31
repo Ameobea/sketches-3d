@@ -17,8 +17,8 @@ pillars = pillar + (pillar + v3(25,0,0))
 
 segment = pillars
   | bars
-  | (bars | scale(0.8,1,1) | rot(0,-pi/2,0))
-  | (bars | scale(0.8,1,1) | rot(0,-pi/2,0) | trans(25,0,0))
+  | (bars | scale(0.8,1,1) | rot_global(0,-pi/2,0))
+  | (bars | scale(0.8,1,1) | rot_global(0,-pi/2,0) | trans(25,0,0))
 
 0..4
   -> |i| { segment | trans(0,0,0.8*25*i) }

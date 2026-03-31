@@ -1259,18 +1259,6 @@
     obug "^2.1.0"
     vitefu "^1.1.1"
 
-"@tanstack/query-core@5.80.6":
-  version "5.80.6"
-  resolved "https://registry.yarnpkg.com/@tanstack/query-core/-/query-core-5.80.6.tgz#d2e54fa9eabebc953c675b74b17d6cd45a2a4cb4"
-  integrity sha512-nl7YxT/TAU+VTf+e2zTkObGTyY8YZBMnbgeA1ee66lIVqzKlYursAII6z5t0e6rXgwUMJSV4dshBTNacNpZHbQ==
-
-"@tanstack/svelte-query@^5.67.2":
-  version "5.80.6"
-  resolved "https://registry.yarnpkg.com/@tanstack/svelte-query/-/svelte-query-5.80.6.tgz#14e162531508573a123be4b40627a13955bf8a14"
-  integrity sha512-ULExzbybuLbk8xeSn04ST615ikYCHGa6n8KhelNFRGIBx1b+smDkqw9pGmN+uNGD+3z2wXjnKmtFVaRp3sbDNA==
-  dependencies:
-    "@tanstack/query-core" "5.80.6"
-
 "@tweakpane/core@^2.0.5":
   version "2.0.5"
   resolved "https://registry.yarnpkg.com/@tweakpane/core/-/core-2.0.5.tgz#bae776cd530b31f5e5424641411d4b20c3baed8e"
@@ -2462,11 +2450,6 @@ sade@^1.7.4:
   dependencies:
     mri "^1.1.0"
 
-schema-dts@^1.1.2:
-  version "1.1.5"
-  resolved "https://registry.yarnpkg.com/schema-dts/-/schema-dts-1.1.5.tgz#9237725d305bac3469f02b292a035107595dc324"
-  integrity sha512-RJr9EaCmsLzBX2NDiO5Z3ux2BVosNZN5jo0gWgsyKvxKIUL5R3swNvoorulAeL9kLB0iTSX7V6aokhla2m7xbg==
-
 seed-random@^2.2.0:
   version "2.2.0"
   resolved "https://registry.yarnpkg.com/seed-random/-/seed-random-2.2.0.tgz#2a9b19e250a817099231a5b99a4daf80b7fbed54"
@@ -2579,13 +2562,6 @@ svelte-eslint-parser@^1.4.0:
     postcss "^8.4.49"
     postcss-scss "^4.0.9"
     postcss-selector-parser "^7.0.0"
-
-svelte-seo@1.6.1:
-  version "1.6.1"
-  resolved "https://registry.yarnpkg.com/svelte-seo/-/svelte-seo-1.6.1.tgz#4506c5c32ac1e9f768e9d5d56565a2adf95fdc11"
-  integrity sha512-vTKvOA0rl3HVhgbyoMhwz0P1s+18ldOT+lHlTlrQn7Mn0SBx7Ia7MB+llF4O/mYoiV5idmNu8i3xWsam8COsbw==
-  dependencies:
-    schema-dts "^1.1.2"
 
 svelte@^5.55.0:
   version "5.55.0"

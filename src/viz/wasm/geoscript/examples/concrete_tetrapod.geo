@@ -6,6 +6,6 @@ leg = cyl(radius=4, height=10, radial_segments=32, height_segments=3)
 
 (leg | rot(pi,0,0) | trans(0,1.4,0))
   | (leg | rot(pi,0,pi-pi/3.3) | rot(0,0,0)      | trans(-cos(0*pi/3)*4.,-6.4,-sin(0*pi/3)*4.))
-  | (leg | rot(pi,0,pi-pi/3.3) | rot(0,2*pi/3,0) | trans(-cos(4*pi/3)*4.,-6.4,-sin(4*pi/3)*4.))
-  | (leg | rot(pi,0,pi-pi/3.3) | rot(0,4*pi/3,0) | trans(-cos(2*pi/3)*4.,-6.4,-sin(2*pi/3)*4.))
+  | (leg | rot(pi,0,pi-pi/3.3) | rot_global(0,2*pi/3,0) | trans(-cos(4*pi/3)*4.,-6.4,-sin(4*pi/3)*4.))
+  | (leg | rot(pi,0,pi-pi/3.3) | rot_global(0,4*pi/3,0) | trans(-cos(2*pi/3)*4.,-6.4,-sin(2*pi/3)*4.))
   | render

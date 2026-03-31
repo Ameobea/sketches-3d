@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import type { SceneConfig } from '../scenes';
-import { DefaultExternalVelocityAirDampingFactor, DefaultMoveSpeed } from '../scenes';
+import { DefaultMoveSpeed } from '../sceneDefaults';
+import { DefaultExternalVelocityAirDampingFactor } from '../clientDefaults';
 import { DefaultGravity, DefaultJumpSpeed } from '../conf';
 
 export interface JumpSimParams {

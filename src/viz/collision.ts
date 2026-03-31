@@ -6,12 +6,10 @@ import { getPlayerShadowUniforms } from './shaders/customShader';
 import {
   DefaultExternalVelocityAirDampingFactor,
   DefaultExternalVelocityGroundDampingFactor,
-  DefaultDashConfig,
-  DefaultMoveSpeed,
-  DefaultOOBThreshold,
   DefaultTopDownCameraOffset,
-  type SceneConfig,
-} from './scenes/index.js';
+} from './clientDefaults.js';
+import { DefaultDashConfig, DefaultMoveSpeed, DefaultOOBThreshold } from './sceneDefaults.js';
+import type { SceneConfig } from './scenes/index.js';
 import { CameraController } from './cameraController.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
@@ -1271,10 +1269,9 @@ export class BulletPhysics {
         ? this.btvec3(pos[0], pos[1] + this.playerColliderHeight / 2 + this.playerColliderRadius, pos[2])
         : this.btvec3(pos.x, pos.y + this.playerColliderHeight / 2 + this.playerColliderRadius, pos.z)
     );
-    if (rot && this.getViewMode().type === 'firstPerson') {
-      this.viz.camera.rotation.setFromVector3(
-        Array.isArray(rot) ? new THREE.Vector3(rot[0], rot[1], rot[2]) : rot
-      );
+    if (rot) {
+      const r = Array.isArray(rot) ? rot : [rot.x, rot.y, rot.z];
+      this.viz.cameraController?.setAngles(r[0] + Math.PI / 2, r[1]);
     }
     this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
     this.playerController.setVerticalVelocity(0);

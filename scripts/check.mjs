@@ -98,8 +98,13 @@ if (svelteResult.status !== 0) {
 if (formatResult.error) {
   fail('format', formatResult.error.message);
 }
+let autoFormattedFiles = [];
 if (formatResult.status !== 0) {
-  fail('format', formatResult.stdout || formatResult.stderr, formatResult.status);
+  autoFormattedFiles = formatResult.stdout.trim().split('\n').filter(Boolean);
+  const fixResult = await run(process.execPath, [cliPath('oxfmt', 'bin', 'oxfmt'), ...autoFormattedFiles]);
+  if (fixResult.error || fixResult.status !== 0) {
+    fail('format', `oxfmt auto-fix failed:\n${fixResult.stdout}${fixResult.stderr}`, fixResult.status || 1);
+  }
 }
 
 if (lintResult.error) {
@@ -109,4 +114,9 @@ if (lintResult.status !== 0) {
   fail('lint', `${lintResult.stdout}${lintResult.stderr}`, lintResult.status);
 }
 
+if (autoFormattedFiles.length > 0) {
+  process.stdout.write(
+    `${autoFormattedFiles.length} file(s) auto-formatted by oxfmt:\n${autoFormattedFiles.join('\n')}\n`
+  );
+}
 process.stdout.write('CHECK OK\n');

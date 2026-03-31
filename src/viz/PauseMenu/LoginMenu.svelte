@@ -1,27 +1,41 @@
 <script lang="ts">
-  import { createQuery } from '@tanstack/svelte-query';
   import type { AuthAPI } from './AuthAPI';
+  import { onMount } from 'svelte';
 
   export let onBack: () => void;
   export let API: AuthAPI;
 
-  $: curUser = createQuery({
-    queryKey: ['user'],
-    queryFn: () => API.getPlayer(),
-    refetchInterval: 25 * 60 * 1000,
-  });
+  type UserData = Awaited<ReturnType<typeof API.getPlayer>>;
 
-  $: isLoggedIn = !!$curUser.data;
+  let fetchStatus: 'idle' | 'fetching' = 'fetching';
+  let userData: UserData = null;
+
+  $: isLoggedIn = !!userData;
+
+  const fetchUser = async () => {
+    fetchStatus = 'fetching';
+    try {
+      userData = await API.getPlayer();
+    } catch {
+      userData = null;
+    } finally {
+      fetchStatus = 'idle';
+    }
+  };
+
+  onMount(() => {
+    fetchUser();
+    const interval = setInterval(fetchUser, 25 * 60 * 1000);
+    return () => clearInterval(interval);
+  });
 
   const logout = async () => {
     await API.logOutPlayer();
-
     username = '';
     password = '';
     passwordConfirm = '';
-
     API.setUserLoggedOut?.();
-    $curUser.refetch();
+    fetchUser();
   };
 
   let loginMode: 'Login' | 'Register' | null = null;
@@ -52,7 +66,7 @@
       }
 
       API.refetchUser();
-      $curUser.refetch();
+      fetchUser();
 
       username = '';
       password = '';
@@ -68,13 +82,13 @@
   };
 </script>
 
-{#if $curUser.fetchStatus === 'fetching'}
+{#if fetchStatus === 'fetching'}
   <div class="user-info">
     <span>Loading...</span>
   </div>
 {:else if isLoggedIn}
   <div class="user-info">
-    <span>Logged in as: {$curUser.data?.username ?? null}</span>
+    <span>Logged in as: {userData?.username ?? null}</span>
     <button class="menu-items-stack-item" style="font-size: 15px; padding: 2px 8px" on:click={logout}>
       Logout
     </button>

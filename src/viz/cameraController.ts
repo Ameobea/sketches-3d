@@ -11,8 +11,8 @@ import {
   DefaultThirdPersonCameraCollisionBias,
   DefaultThirdPersonMinCameraDistance,
   DefaultThirdPersonCameraExtendSpeed,
-  type ViewMode,
-} from './scenes/index';
+} from './sceneDefaults';
+import type { ViewMode } from './scenes/index';
 
 const DefaultFirstPersonMinPolar = 0.1;
 const DefaultFirstPersonMaxPolar = Math.PI - 0.001;

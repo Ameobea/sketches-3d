@@ -5,4 +5,4 @@
   export let data: PageData;
 </script>
 
-<Viz sceneName="t" userData={data.levelDef} />
+<Viz sceneName={data.sceneName} userData={data.levelDef ?? undefined} />

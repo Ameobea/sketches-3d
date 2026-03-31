@@ -5,7 +5,7 @@ tile = |n: num| {
     | fan_fill(flipped=true)
     | extrude(up=vec3(0,4,0))
     | trans(0,0,-2)
-    | rot(pi/2,0,0)
+    | rot_around_center(pi/2,0,0)
 
   box(6,15,0.5) - blocker
 }

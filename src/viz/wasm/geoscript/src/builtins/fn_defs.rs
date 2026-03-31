@@ -203,7 +203,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Translates a mesh or light",
+        description: "Translates a mesh or light in local space (right-multiply: M = M * T). The translation is relative to the object's current orientation. Alias: `trans`.",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -237,7 +237,67 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Translates a mesh or light",
+        description: "Translates a mesh or light in local space (right-multiply: M = M * T). Alias: `trans`.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "translate_global" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "translation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a mesh or light in world space (left-multiply: M = T * M). The translation is always along world axes regardless of the object's current orientation. Alias: `trans_global`.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "object",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a mesh or light in world space (left-multiply: M = T * M). Alias: `trans_global`.",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -263,7 +323,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Mesh to rotate"
           },
         ],
-        description: "Rotates a mesh using a Vec3 of Euler angles (radians)",
+        description: "Rotates a mesh in local space using a Vec3 of Euler angles in radians (right-multiply: M = M * R). The rotation is relative to the object's current orientation.",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -297,7 +357,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Mesh to rotate"
           },
         ],
-        description: "Rotates a mesh using individual Euler angle components in radians",
+        description: "Rotates a mesh in local space using individual Euler angle components in radians (right-multiply: M = M * R).",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -317,7 +377,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Light to rotate"
           },
         ],
-        description: "Rotates a light using a Vec3 of Euler angles (radians)",
+        description: "Rotates a light in local space using a Vec3 of Euler angles in radians (right-multiply: M = M * R).",
         return_type: &[ArgType::Light],
       },
       FnSignature {
@@ -351,7 +411,235 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Light to rotate"
           },
         ],
-        description: "Rotates a light using individual Euler angle components in radians",
+        description: "Rotates a light in local space using individual Euler angle components in radians (right-multiply: M = M * R).",
+        return_type: &[ArgType::Light],
+      },
+    ],
+  },
+  "rot_global" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Rotation defined by Euler angles in radians"
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh to rotate"
+          },
+        ],
+        description: "Rotates a mesh in world space around the world origin using a Vec3 of Euler angles in radians (left-multiply: M = R * M). This rotates both the object's orientation and its position around the origin.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about X axis (radians)"
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Y axis (radians)"
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Z axis (radians)"
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh to rotate"
+          },
+        ],
+        description: "Rotates a mesh in world space around the world origin using individual Euler angle components in radians (left-multiply: M = R * M).",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Rotation defined by Euler angles in radians"
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: "Light to rotate"
+          },
+        ],
+        description: "Rotates a light in world space around the world origin using a Vec3 of Euler angles in radians (left-multiply: M = R * M).",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about X axis (radians)"
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Y axis (radians)"
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Z axis (radians)"
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: "Light to rotate"
+          },
+        ],
+        description: "Rotates a light in world space around the world origin using individual Euler angle components in radians (left-multiply: M = R * M).",
+        return_type: &[ArgType::Light],
+      },
+    ],
+  },
+  "rot_around_center" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Rotation defined by Euler angles in radians"
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh to rotate"
+          },
+        ],
+        description: "Rotates a mesh around its current position (the translation component of its transform matrix). The object spins in place without changing its world-space position. Equivalent to: translate to origin, rotate, translate back.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about X axis (radians)"
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Y axis (radians)"
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Z axis (radians)"
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh to rotate"
+          },
+        ],
+        description: "Rotates a mesh around its current position using individual Euler angle components in radians.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Rotation defined by Euler angles in radians"
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: "Light to rotate"
+          },
+        ],
+        description: "Rotates a light around its current position using a Vec3 of Euler angles in radians.",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about X axis (radians)"
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Y axis (radians)"
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation about Z axis (radians)"
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: "Light to rotate"
+          },
+        ],
+        description: "Rotates a light around its current position using individual Euler angle components in radians.",
         return_type: &[ArgType::Light],
       },
     ],
@@ -444,7 +732,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Scales a mesh by separate factors along each axis",
+        description: "Scales a mesh in local space by separate factors along each axis (right-multiply: M = M * S).",
         return_type: &[ArgType::Mesh],
       },
       // TODO: this should be split into two variants
@@ -465,7 +753,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Scales a mesh",
+        description: "Scales a mesh in local space (right-multiply: M = M * S). Accepts a Vec3 for non-uniform scaling or a number for uniform scaling.",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -5433,7 +5721,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "adaptive_path_sampling",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "When true (default), uses curvature-aware adaptive sampling to distribute path points. Concentrates vertices in high-curvature regions of the path, improving mesh quality at bends while using fewer vertices on straight sections. Set to false to use the input points directly without resampling. Note: automatically disabled when a dynamic twist callable is provided, as twist complicates the geometry in ways the adaptive sampler cannot account for."
           }
         ],

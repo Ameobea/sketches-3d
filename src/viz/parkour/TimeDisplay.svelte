@@ -1,8 +1,6 @@
 <script lang="ts">
-  import { QueryClientProvider } from '@tanstack/svelte-query';
   import { Score, type ScoreThresholds } from './timeDisplayTypes';
   import MiniLeaderboardDisplay from './MiniLeaderboardDisplay.svelte';
-  import { queryClient } from '../queryClient';
 
   const ScoreNames: { [key in Score]: string } = {
     [Score.SPlus]: 'S+',
@@ -55,9 +53,7 @@
   </div>
 </div>
 
-<QueryClientProvider client={queryClient}>
-  <MiniLeaderboardDisplay {mapID} {userPlayID} {userID} />
-</QueryClientProvider>
+<MiniLeaderboardDisplay {mapID} {userPlayID} {userID} />
 
 <style lang="css">
   .time-display {

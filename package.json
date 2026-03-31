@@ -13,13 +13,13 @@
     "preview": "vite preview",
     "lint": "oxfmt && oxlint",
     "format": "oxfmt",
-    "gen:level-schema": "tsx src/viz/levelDef/genSchema.ts"
+    "gen:level-schema": "tsx src/viz/levelDef/genSchema.ts",
+    "gen:api:patch": "node ./scripts/patch-api-nocheck.mjs"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.5.4",
     "@sveltejs/kit": "^2.55.0",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
-    "@tanstack/svelte-query": "^5.67.2",
     "@tweakpane/core": "^2.0.5",
     "@types/node": "^25.5.0",
     "@types/three": "^0.165.0",
@@ -53,7 +53,6 @@
     "postprocessing": "^6.38.3",
     "rand-seed": "^2.1.7",
     "seed-random": "^2.2.0",
-    "svelte-seo": "1.6.1",
     "three": "^0.165.0",
     "three-good-godrays": "=0.11.1",
     "tweakpane": "^4.0.5",

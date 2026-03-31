@@ -1,6 +1,4 @@
 <script lang="ts">
-  import SvelteSeo from 'svelte-seo';
-  import { QueryClientProvider } from '@tanstack/svelte-query';
   import { writable, type Writable } from 'svelte/store';
 
   import { initViz, type Viz } from '.';
@@ -10,7 +8,6 @@
   import { type SceneConfig, type SceneDef, ScenesByName } from './scenes';
   import DashChargeUI from './UI/DashChargeUI.svelte';
   import { loadVizConfig, type VizConfig } from './conf';
-  import { queryClient } from './queryClient';
   import InfiniteInitial from './InitialScreens/InfiniteInitial.svelte';
   import { rwritable } from './util/TransparentWritable';
 
@@ -19,7 +16,7 @@
   export let sceneDefOverride: SceneDef | undefined = undefined;
 
   $: sceneDef = sceneDefOverride ?? ScenesByName[sceneName];
-  $: metadata = sceneDef.metadata;
+  $: metadata = sceneDef?.metadata;
 
   const paused = rwritable(false);
   const popUpCalled = rwritable<PopupScreenFocus>({ type: 'pause' });
@@ -36,28 +33,50 @@
   };
 
   $: curDashCharges = sceneConfig?.player?.dashConfig?.chargeConfig?.curCharges;
+
+  // When sceneName changes (same [scene] catch-all route, different scene), reset stale references
+  // so the UI doesn't hold onto the old destroyed viz during the transition.
+  $: sceneName, (viz = null), (sceneConfig = null);
 </script>
 
-<QueryClientProvider client={queryClient}>
+<svelte:head>
   {#if metadata}
-    <SvelteSeo {...metadata} />
+    <title>{metadata.title}</title>
+    {#if metadata.description}
+      <meta name="description" content={metadata.description} />
+    {/if}
+    {#if metadata.openGraph?.title ?? metadata.title}
+      <meta property="og:title" content={metadata.openGraph?.title ?? metadata.title} />
+    {/if}
+    {#if metadata.openGraph?.description ?? metadata.description}
+      <meta property="og:description" content={metadata.openGraph?.description ?? metadata.description} />
+    {/if}
+    {#if metadata.openGraph?.images?.[0]}
+      <meta property="og:image" content={metadata.openGraph.images[0].url} />
+      {#if metadata.openGraph.images[0].alt}
+        <meta property="og:image:alt" content={metadata.openGraph.images[0].alt} />
+      {/if}
+    {/if}
   {/if}
+</svelte:head>
 
+<!-- {#key} forces the action to destroy+reinit when sceneName changes on the same [scene] route -->
+{#key sceneName}
   <!-- svelte-ignore element_invalid_self_closing_tag -->
   <div
     use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData, sceneDefOverride }}
     id="viz-container"
   />
-  {#if $paused && viz}
-    {#if $popUpCalled.type === 'pause'}
-      <PauseMenu ctx={{ onResume }} {viz} {sceneConfig} liveConfig={liveVizConfig} />
-    {/if}
-    {#if $popUpCalled.type === 'infinite'}
-      <InfiniteInitial infiniteCtx={{ onResume }} {popUpCalled} onSubmit={$popUpCalled.cb} />
-    {/if}
+{/key}
+{#if $paused && viz}
+  {#if $popUpCalled.type === 'pause'}
+    <PauseMenu ctx={{ onResume }} {viz} {sceneConfig} liveConfig={liveVizConfig} />
   {/if}
+  {#if $popUpCalled.type === 'infinite'}
+    <InfiniteInitial infiniteCtx={{ onResume }} {popUpCalled} onSubmit={$popUpCalled.cb} />
+  {/if}
+{/if}
 
-  {#if curDashCharges}
-    <DashChargeUI curCharges={$curDashCharges ?? 0} />
-  {/if}
-</QueryClientProvider>
+{#if curDashCharges}
+  <DashChargeUI curCharges={$curDashCharges ?? 0} />
+{/if}

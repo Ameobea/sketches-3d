@@ -29,7 +29,7 @@ spokes = 0..(spoke_count - 1) -> |i| {
 
   spoke_cylinder
     | rot(0, 0, pi/2)
-    | rot(0, angle, 0)
+    | rot_global(0, angle, 0)
 } | join;
 
 (rim | hub | spokes) | render

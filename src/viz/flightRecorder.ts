@@ -28,7 +28,13 @@ interface FlightRecorderExports {
   destroy_player: (ctx: number) => void;
   player_load: (ctx: number, dataPtr: number, len: number) => number;
   player_get_header: (ctx: number, outPtr: number) => void;
-  player_get_metadata: (ctx: number, keyPtr: number, keyLen: number, outPtr: number, outCapacity: number) => number;
+  player_get_metadata: (
+    ctx: number,
+    keyPtr: number,
+    keyLen: number,
+    outPtr: number,
+    outCapacity: number
+  ) => number;
   player_get_subtick: (ctx: number, index: number, outPtr: number) => number;
   player_get_subtick_count: (ctx: number) => number;
   player_get_event_count: (ctx: number) => number;
@@ -338,7 +344,11 @@ export class FlightPlayer {
     new Uint8Array(this.exports.memory.buffer, keyPtr, keyBytes.byteLength).set(keyBytes);
 
     const valLen = this.exports.player_get_metadata(
-      this.ctx, keyPtr, keyBytes.byteLength, this.metadataOutPtr, 1024
+      this.ctx,
+      keyPtr,
+      keyBytes.byteLength,
+      this.metadataOutPtr,
+      1024
     );
     this.exports.fr_free(keyPtr, keyBytes.byteLength);
 

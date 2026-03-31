@@ -13,15 +13,9 @@ import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger
 import { initEulerDebugger, initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
-import {
-  buildDefaultSceneConfig,
-  type SceneConfig,
-  type SceneDef,
-  ScenesByName,
-  DefaultTopDownCameraFOV,
-  DefaultTopDownCameraRotation,
-  type ViewMode,
-} from './scenes';
+import { type SceneConfig, type SceneDef, ScenesByName, type ViewMode } from './scenes';
+import { buildDefaultSceneConfig, DefaultTopDownCameraFOV } from './sceneDefaults';
+import { DefaultTopDownCameraRotation } from './clientDefaults';
 import type { CameraController } from './cameraController';
 import { resetCustomShaderGlobals, getPlayerShadowUniforms } from './shaders/customShader';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
@@ -32,6 +26,8 @@ import type { Unsubscriber } from 'svelte/store';
 import { unmount } from 'svelte';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { LoadOrbitControls } from './preloadCache';
+import { loadLevelDef, type LevelLoadHandle } from './levelDef/loadLevelDef';
+import type { LevelDef } from './levelDef/types';
 
 export interface PostprocessingController {
   setGamma(value: number): void;
@@ -107,10 +103,17 @@ export class Viz {
   public camera!: THREE.PerspectiveCamera;
   public renderer!: THREE.WebGLRenderer;
   public stats: Stats | null = null;
+  public sceneName: string;
   public clock: THREE.Clock = new THREE.Clock();
   public inventory: Inventory = new Inventory();
   public sfxManager: SfxManager = new SfxManager();
   public scene: THREE.Scene = new THREE.Scene();
+  /**
+   * Overlay scene rendered after all postprocessing with a fresh depth buffer.
+   * Use for editor gizmos and other always-on-top overlays that must not be
+   * affected by fog, bloom, or tone mapping.
+   */
+  public overlayScene: THREE.Scene = new THREE.Scene();
   public paused: TransparentWritable<boolean>;
   public popupCalled: TransparentWritable<PopupScreenFocus>;
   public collisionWorldLoadedCbs: ((fpCtx: BulletPhysics) => void)[] = [];
@@ -174,14 +177,17 @@ export class Viz {
   private clockStopTime = 0;
   private unsubscribePauseStateChange: Unsubscriber | null = null;
   private customKeyEventMap = new Map<string, () => void>();
+  public levelLoadHandle: LevelLoadHandle | null = null;
 
   constructor(
     paused: TransparentWritable<boolean>,
     popupCalled: TransparentWritable<PopupScreenFocus>,
-    sceneDef: SceneDef
+    sceneDef: SceneDef,
+    sceneName: string
   ) {
     this.paused = paused;
     this.popupCalled = popupCalled;
+    this.sceneName = sceneName;
 
     this.setupCameraAndRenderer(sceneDef);
 
@@ -267,6 +273,16 @@ export class Viz {
       this.renderOverride(deltaTime);
     } else {
       this.renderer.render(this.scene, this.camera);
+    }
+
+    // Render overlay scene (editor gizmos etc.) on top of everything,
+    // bypassing fog, bloom, and tone mapping.
+    if (this.overlayScene.children.length > 0) {
+      const prevAutoClear = this.renderer.autoClear;
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.overlayScene, this.camera);
+      this.renderer.autoClear = prevAutoClear;
     }
 
     this.afterRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
@@ -847,13 +863,16 @@ export const initViz = (
     sceneLoader: getSceneLoader,
     gltfName: providedGLTFName,
     extension = 'gltf',
-    useLevelDef = false,
+    useLevelDef: useLevelDefFlag = false,
+    useSceneDef = false,
   } = sceneDef;
+  // useSceneDef implies useLevelDef (the GLTF scene is a mesh library, not auto-added to physics)
+  const useLevelDef = useLevelDefFlag || useSceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 
   const scenePromises = Promise.all([getSceneLoader(), Conf.getVizConfig()]);
 
-  const viz = new Viz(paused, popUpCalled, sceneDef);
+  const viz = new Viz(paused, popUpCalled, sceneDef, providedSceneName);
   (window as any).viz = viz;
   (window as any).THREE = THREE;
 
@@ -868,6 +887,12 @@ export const initViz = (
     const scene = sceneName
       ? gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group()
       : new THREE.Group();
+
+    if (useSceneDef) {
+      // TODO: would be ideal to start this before we even load the glTF.  Could update the level def loading
+      // code to accept the asset library glTF as a promise and just await it where needed.
+      viz.levelLoadHandle = loadLevelDef(viz, scene, userData as LevelDef);
+    }
 
     const [sceneLoader, vizConfig] = await scenePromises;
     viz.vizConfig = vizConfig;
@@ -1031,10 +1056,16 @@ export const initViz = (
         viz.collisionWorldLoadedCbs.push(fpCtx => {
           fetchReplayForPlay(replayPlayId)
             .then(async data => {
-              if (!data) { console.error('Replay not found'); return; }
+              if (!data) {
+                console.error('Replay not found');
+                return;
+              }
               const player = new FlightPlayer();
               const ok = await player.load(data);
-              if (!ok) { console.error('Failed to decode replay'); return; }
+              if (!ok) {
+                console.error('Failed to decode replay');
+                return;
+              }
               if (player.subtickCount > 0) {
                 const [px, py, pz] = player.getSubtickPos(0);
                 fpCtx.teleportPlayer(

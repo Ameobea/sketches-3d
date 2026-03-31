@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { dev } from '$app/environment';
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import { WorkerManager } from 'src/geoscript/workerManager';
 import type { Viz } from 'src/viz';
@@ -98,7 +99,9 @@ const topoSortAssets = (assets: Record<string, AssetDef>): string[] => {
   const order: string[] = [];
 
   const visit = (id: string) => {
-    if (visited.has(id)) return;
+    if (visited.has(id)) {
+      return;
+    }
     if (visiting.has(id)) throw new Error(`Circular asset dependency involving "${id}"`);
     visiting.add(id);
 
@@ -121,7 +124,9 @@ const topoSortAssets = (assets: Record<string, AssetDef>): string[] => {
     order.push(id);
   };
 
-  for (const id of Object.keys(assets)) visit(id);
+  for (const id of Object.keys(assets)) {
+    visit(id);
+  }
   return order;
 };
 
@@ -227,8 +232,6 @@ const resolveScriptAssets = async (
  * the render loop can start immediately and textures upload concurrently.
  */
 export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: LevelDef): LevelLoadHandle => {
-  // --- Texture tracking ---
-
   // For each material, the set of texture keys it still needs before it can be built.
   const matTexPending = new Map<string, Set<string>>();
   // For each material, the textures loaded so far.
@@ -254,8 +257,6 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     matTexLoaded.set(matName, new Map());
   }
 
-  // --- Object tracking ---
-
   // Map from assetId → list of ObjectDefs that use it
   const assetToObjDefs = new Map<string, ObjectDef[]>();
   for (const objDef of levelDef.objects) {
@@ -280,8 +281,6 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   const assetPrototypes = new Map<string, THREE.Object3D>();
   const allLevelObjects: LevelObject[] = [];
   const registeredPhysicsObjects = new Set<string>();
-
-  // --- Physics registration ---
 
   // Track physics: push one callback to collisionWorldLoadedCbs; for objects placed
   // after physics is ready, register directly.
@@ -310,8 +309,6 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
       registerPhysics(fpCtx, levelObj);
     }
   });
-
-  // --- Object placement ---
 
   const placeObject = (assetId: string, prototype: THREE.Object3D, objDef: ObjectDef) => {
     const clone = prototype.clone();
@@ -345,8 +342,6 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
       placeObject(assetId, prototype, objDef);
     }
   };
-
-  // --- Material building ---
 
   const tryBuildMaterial = (matName: string) => {
     const pending = matTexPending.get(matName);
@@ -425,11 +420,7 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     onAssetResolved(assetId, src);
   }
 
-  // --- Resolve geoscript + CSG assets async (streaming, in dependency order) ---
-
   const geoscriptDone = resolveScriptAssets(sortedAssetIds, levelDef.assets, onAssetResolved);
-
-  // --- Return handle ---
 
   const objectsPromise: Promise<LevelObject[]> = geoscriptDone.then(() => allLevelObjects);
   const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(
@@ -444,6 +435,22 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   const completePromise: Promise<void> = Promise.all([objectsPromise, ...textureFetchPromises]).then(
     () => void 0
   );
+
+  if (dev) {
+    objectsPromise.then(objects =>
+      import('./LevelEditor.svelte').then(({ initLevelEditor }) =>
+        initLevelEditor(
+          viz,
+          objects,
+          viz.sceneName,
+          assetPrototypes,
+          builtMaterials,
+          loadedTextures,
+          levelDef
+        )
+      )
+    );
+  }
 
   return {
     objects: objectsPromise,

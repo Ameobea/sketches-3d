@@ -44,7 +44,10 @@ export class DepthPass extends RenderPass implements Resizable {
       if (c instanceof THREE.Mesh && c.material.transparent) {
         return;
       }
-
+      const mat = (c as any).material;
+      if (mat?.depthTest === false) {
+        return;
+      }
       selection.push(c);
     });
     if (!this.selection) {

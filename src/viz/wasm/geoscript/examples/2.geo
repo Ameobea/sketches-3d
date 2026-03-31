@@ -18,6 +18,6 @@ all = (all | rot(0,pi,0))
 
 all + vec3(0,-10,0) | render
 
-all | trans(vec3(0,10,0)) | rot(pi, 0, 0) | render
+all | trans(vec3(0,10,0)) | rot_around_center(pi, 0, 0) | render
 
 box(4) | render

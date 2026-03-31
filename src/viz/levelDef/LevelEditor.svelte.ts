@@ -342,7 +342,7 @@ export class LevelEditor {
     this.transformControls.addEventListener('objectChange', () => {
       if (this.csgController.isActive) this.csgController.onObjectChange();
     });
-    this.viz.scene.add(this.transformControls);
+    this.viz.overlayScene.add(this.transformControls);
 
     this.viz.registerBeforeRenderCb(this.tickOrbitControls);
 
@@ -371,7 +371,7 @@ export class LevelEditor {
     this.orbitControls = null;
 
     if (this.transformControls) {
-      this.viz.scene.remove(this.transformControls);
+      this.viz.overlayScene.remove(this.transformControls);
       this.transformControls.dispose();
       this.transformControls = null;
     }
@@ -820,10 +820,14 @@ export class LevelEditor {
 
   removePhysics(levelObj: LevelObject) {
     const fpCtx: BulletPhysics | undefined = this.viz.fpCtx;
-    if (!fpCtx) return;
+    if (!fpCtx) {
+      return;
+    }
 
     levelObj.object.traverse(child => {
-      if (!(child instanceof THREE.Mesh)) return;
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
 
       if (child.userData.rigidBody) {
         fpCtx.removeCollisionObject(child.userData.rigidBody, child.name);

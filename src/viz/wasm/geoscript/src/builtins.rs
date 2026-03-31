@@ -72,6 +72,7 @@ pub(crate) mod trace_path;
 
 pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
+  "trans_global" => "translate_global",
   "v2" => "vec2",
   "v3" => "vec3",
   "subdivide" => "tessellate",
@@ -836,6 +837,49 @@ pub(crate) fn translate_impl(
     _ => unimplemented!(),
   };
 
+  // Right-multiply: M * T (translate in local space)
+  let t = Matrix4::new_translation(&translation);
+
+  match obj {
+    Value::Mesh(mesh) => {
+      let mut mesh = (**mesh).clone(true, false, false);
+      mesh.transform = mesh.transform * t;
+
+      Ok(Value::Mesh(Rc::new(mesh)))
+    }
+    Value::Light(light) => {
+      let mut light = (**light).clone();
+      let transform = light.transform_mut();
+      *transform = *transform * t;
+      Ok(Value::Light(Box::new(light)))
+    }
+    _ => unreachable!(),
+  }
+}
+
+fn translate_global_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (translation, obj) = match def_ix {
+    0 => {
+      let translation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let obj = arg_refs[1].resolve(args, kwargs);
+      (*translation, obj)
+    }
+    1 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let translation = Vec3::new(x, y, z);
+      let obj = arg_refs[3].resolve(args, kwargs);
+      (translation, obj)
+    }
+    _ => unimplemented!(),
+  };
+
   // Left-multiply: T * M (translate in world space)
   let t = Matrix4::new_translation(&translation);
 
@@ -893,9 +937,9 @@ pub(crate) fn scale_impl(
 
   let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
 
-  // Left-multiply: S * M (scale in world space)
+  // Right-multiply: M * S (scale in local space)
   let s = Matrix4::new_nonuniform_scaling(&scale);
-  mesh.transform = s * mesh.transform;
+  mesh.transform = mesh.transform * s;
 
   Ok(Value::Mesh(mesh.into()))
 }
@@ -4506,7 +4550,73 @@ fn rot_impl(
   };
   let obj_arg = obj_arg.resolve(args, kwargs);
 
-  // Left-multiply: R * M (rotate in world space)
+  // Right-multiply: M * R (rotate in local space)
+  let r = rotation.to_homogeneous();
+
+  match obj_type {
+    ObjType::Mesh => {
+      let mesh = obj_arg.as_mesh().unwrap();
+
+      let mut rotated_mesh = mesh.clone(true, false, false);
+      rotated_mesh.transform = rotated_mesh.transform * r;
+
+      Ok(Value::Mesh(Rc::new(rotated_mesh)))
+    }
+    ObjType::Light => {
+      let light = obj_arg.as_light().unwrap();
+
+      let mut rotated_light = (*light).clone();
+      let transform = rotated_light.transform_mut();
+      *transform = *transform * r;
+
+      Ok(Value::Light(Box::new(rotated_light)))
+    }
+  }
+}
+
+fn rot_global_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  enum ObjType {
+    Mesh,
+    Light,
+  }
+
+  let (rotation, obj_arg, obj_type) = match def_ix {
+    0 | 2 => {
+      let rotation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      (
+        UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
+        &arg_refs[1],
+        if def_ix == 0 {
+          ObjType::Mesh
+        } else {
+          ObjType::Light
+        },
+      )
+    }
+    1 | 3 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      (
+        UnitQuaternion::from_euler_angles(x, y, z),
+        &arg_refs[3],
+        if def_ix == 1 {
+          ObjType::Mesh
+        } else {
+          ObjType::Light
+        },
+      )
+    }
+    _ => unimplemented!(),
+  };
+  let obj_arg = obj_arg.resolve(args, kwargs);
+
+  // Left-multiply: R * M (rotate in world space, around world origin)
   let r = rotation.to_homogeneous();
 
   match obj_type {
@@ -4524,6 +4634,79 @@ fn rot_impl(
       let mut rotated_light = (*light).clone();
       let transform = rotated_light.transform_mut();
       *transform = r * *transform;
+
+      Ok(Value::Light(Box::new(rotated_light)))
+    }
+  }
+}
+
+/// Rotates a mesh around its current position (the translation component of its
+/// transform). This preserves the object's world-space position while changing
+/// its orientation.
+fn rot_around_center_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  enum ObjType {
+    Mesh,
+    Light,
+  }
+
+  let (rotation, obj_arg, obj_type) = match def_ix {
+    0 | 2 => {
+      let rotation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      (
+        UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
+        &arg_refs[1],
+        if def_ix == 0 {
+          ObjType::Mesh
+        } else {
+          ObjType::Light
+        },
+      )
+    }
+    1 | 3 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      (
+        UnitQuaternion::from_euler_angles(x, y, z),
+        &arg_refs[3],
+        if def_ix == 1 {
+          ObjType::Mesh
+        } else {
+          ObjType::Light
+        },
+      )
+    }
+    _ => unimplemented!(),
+  };
+  let obj_arg = obj_arg.resolve(args, kwargs);
+
+  let apply_rotation = |transform: &Matrix4<f32>| {
+    let pos = transform.column(3).xyz();
+    let back = Matrix4::new_translation(&pos);
+    let to_origin = Matrix4::new_translation(&-pos);
+    back * rotation.to_homogeneous() * to_origin * *transform
+  };
+
+  match obj_type {
+    ObjType::Mesh => {
+      let mesh = obj_arg.as_mesh().unwrap();
+
+      let mut rotated_mesh = mesh.clone(true, false, false);
+      rotated_mesh.transform = apply_rotation(&rotated_mesh.transform);
+
+      Ok(Value::Mesh(Rc::new(rotated_mesh)))
+    }
+    ObjType::Light => {
+      let light = obj_arg.as_light().unwrap();
+
+      let mut rotated_light = (*light).clone();
+      let transform = rotated_light.transform_mut();
+      *transform = apply_rotation(transform);
 
       Ok(Value::Light(Box::new(rotated_light)))
     }
@@ -5844,6 +6027,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "rot" => builtin_fn!(rot, |def_ix, arg_refs, args, kwargs, _ctx| {
     rot_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "translate_global" => builtin_fn!(translate_global, |def_ix, arg_refs, args, kwargs, _ctx| {
+    translate_global_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "rot_global" => builtin_fn!(rot_global, |def_ix, arg_refs, args, kwargs, _ctx| {
+    rot_global_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "rot_around_center" => builtin_fn!(rot_around_center, |def_ix, arg_refs, args, kwargs, _ctx| {
+    rot_around_center_impl(def_ix, arg_refs, args, kwargs)
   }),
   "look_at" => builtin_fn!(look_at, |def_ix, arg_refs, args, kwargs, _ctx| {
     look_at_impl(def_ix, arg_refs, args, kwargs)

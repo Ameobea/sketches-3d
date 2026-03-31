@@ -200,6 +200,7 @@ export class CsgEditController {
     } else {
       this.onNodeTransformUpdate(); // final update
       this.editor.api.saveCsgTree(this.csgPanelState.assetName, this.csgPanelState.tree);
+      if (this.editLevelObj) this.editor.syncPhysics(this.editLevelObj);
 
       // Push undo entry for the transform
       if (this.treeBeforeDrag) {

@@ -1,15 +1,20 @@
-import * as THREE from 'three';
-import type SvelteSEO from 'svelte-seo';
-
+import type * as THREE from 'three';
 import type { Viz } from '..';
 import type { SfxConfig } from '../audio/SfxManager';
 import type { VizConfig } from '../conf';
 import type { DeepPartial } from '../util/util.ts';
-import type { ComponentProps } from 'svelte';
 import type { TransparentWritable } from '../util/TransparentWritable.ts';
 import type { PlayerShadowParams } from '../shaders/customShader';
 
-type SvelteSEOProps = ComponentProps<SvelteSEO>;
+export interface SceneMetadata {
+  title: string;
+  description?: string;
+  openGraph?: {
+    title?: string;
+    description?: string;
+    images?: Array<{ url: string; alt?: string; width?: number; height?: number }>;
+  };
+}
 
 export interface SceneConfigLocation {
   pos: THREE.Vector3;
@@ -27,11 +32,6 @@ export interface PlayerMoveSpeed {
   onGround: number;
   inAir: number;
 }
-
-export const DefaultMoveSpeed: PlayerMoveSpeed = Object.freeze({
-  onGround: 12,
-  inAir: 12,
-});
 
 export interface DashChargeConfig {
   curCharges: TransparentWritable<number>;
@@ -140,32 +140,6 @@ export type ViewMode =
       fovTransitionDistance?: number;
     };
 
-export const DefaultDashConfig: DashConfig = Object.freeze({
-  enable: true,
-  dashMagnitude: 16,
-  minDashDelaySeconds: 0.85,
-});
-
-export const DefaultOOBThreshold = -55;
-
-export const DefaultExternalVelocityAirDampingFactor = new THREE.Vector3(0.12, 0.55, 0.12);
-export const DefaultExternalVelocityGroundDampingFactor = new THREE.Vector3(0.9992, 0.9992, 0.9992);
-
-export const DefaultTopDownCameraOffset = new THREE.Vector3(0, 80, -47);
-export const DefaultTopDownCameraRotation = new THREE.Euler(-1, Math.PI, 0, 'YXZ');
-export const DefaultTopDownCameraFOV = 40;
-export const DefaultTopDownCameraFocusPoint = { type: 'player' as const };
-
-export const DefaultThirdPersonDistance = 15;
-export const DefaultThirdPersonMinPolar = 0.15;
-export const DefaultThirdPersonMaxPolar = Math.PI - 0.15;
-export const DefaultThirdPersonInitialPolar = Math.PI / 3;
-export const DefaultThirdPersonInitialAzimuth = Math.PI;
-export const DefaultThirdPersonFOV = 75;
-export const DefaultThirdPersonCameraCollisionBias = 0.25;
-export const DefaultThirdPersonMinCameraDistance = 1.0;
-export const DefaultThirdPersonCameraExtendSpeed = 220.0;
-
 export interface SceneConfig {
   viewMode?: ViewMode;
   locations: SceneLocations;
@@ -273,10 +247,6 @@ export interface SceneConfig {
   loadingComplete?: Promise<void>;
 }
 
-export const buildDefaultSceneConfig = () => ({
-  viewMode: { type: 'firstPerson' as const },
-});
-
 type MaybePromise<T> = T | Promise<T>;
 
 export interface SceneDef {
@@ -287,7 +257,7 @@ export interface SceneDef {
   sceneLoader: () => MaybePromise<
     (viz: Viz, loadedWorld: THREE.Group, config: VizConfig, userData?: any) => MaybePromise<SceneConfig>
   >;
-  metadata: SvelteSEOProps;
+  metadata: SceneMetadata;
   gltfName?: string | null;
   extension?: 'gltf' | 'glb';
   needsDraco?: boolean;
@@ -298,6 +268,16 @@ export interface SceneDef {
    * The `loadLevelDef` loader handles scene population and physics registration instead.
    */
   useLevelDef?: boolean;
+  /**
+   * Implies `useLevelDef`. When true, `loadLevelDef` is called automatically by the framework
+   * as early as possible (before the scene module chunk and viz config finish loading), so
+   * texture fetches and geoscript workers start in parallel with those downloads.
+   *
+   * The `userData` passed to the scene (i.e. the `LevelDef` from `+page.server.ts`) is used
+   * as the level definition. The scene's `processLoadedScene` does NOT need to call
+   * `loadLevelDef` itself.
+   */
+  useSceneDef?: boolean;
 }
 
 const ParticleConduit: SceneDef = {
@@ -602,7 +582,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./scene_def_test/scene_def_test').then(mod => mod.processLoadedScene),
     metadata: { title: 'scene_def_test' },
     legacyLights: false,
-    useLevelDef: true,
+    useSceneDef: true,
   },
   t: {
     sceneName: null,
@@ -610,6 +590,6 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     sceneLoader: () => import('./t/t').then(mod => mod.processLoadedScene),
     metadata: { title: 'T' },
     legacyLights: false,
-    useLevelDef: true,
+    useSceneDef: true,
   },
 };

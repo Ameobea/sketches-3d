@@ -1,6 +1,5 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { createQuery } from '@tanstack/svelte-query';
   import { API, getUser, IsLoggedIn } from 'src/api/client';
   import { onMount } from 'svelte';
 
@@ -8,21 +7,31 @@
   export let userPlayID: string | null = null;
   export let userID: string | null = null;
 
-  $: res = createQuery({
-    queryKey: ['leaderboard', mapID, userPlayID],
-    queryFn: async () => API.getLeaderboardByIndex({ mapId: mapID, startIndex: 0, endIndex: 20 }),
-  });
+  type LeaderboardEntry = Awaited<ReturnType<typeof API.getLeaderboardByIndex>>[number];
+
+  let data: LeaderboardEntry[] | null = null;
+  let error: string | null = null;
+
+  const fetchLeaderboard = async () => {
+    try {
+      data = await API.getLeaderboardByIndex({ mapId: mapID, startIndex: 0, endIndex: 20 });
+      error = null;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  };
 
   onMount(() => {
     if (browser) {
       getUser();
+      fetchLeaderboard();
     }
   });
 </script>
 
 <div class="root">
   <h2>Leaderboard</h2>
-  {#if $res.data}
+  {#if data}
     <div style="flex: 1">
       <table class="leaderboard-table">
         <thead>
@@ -33,7 +42,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each $res.data as { playLength, playerUserName, id, playerId }, i}
+          {#each data as { playLength, playerUserName, id, playerId }, i}
             <tr
               class={(() => {
                 if (id === userPlayID) {
@@ -47,14 +56,14 @@
             >
               <td>{i + 1}</td>
               <td>{playerUserName}</td>
-              <td>{playLength.toFixed(3)}</td>
+              <td>{playLength?.toFixed(3)}</td>
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
-  {:else if $res.error}
-    <div style="color: red">Error fetching leaderboard: {$res.error.message}</div>
+  {:else if error}
+    <div style="color: red">Error fetching leaderboard: {error}</div>
   {:else}
     <div>Loading...</div>
   {/if}

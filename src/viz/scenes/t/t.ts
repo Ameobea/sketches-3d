@@ -2,9 +2,6 @@ import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
-import { initLevelEditor } from 'src/viz/levelDef/LevelEditor.svelte';
-import { loadLevelDef } from 'src/viz/levelDef/loadLevelDef';
-import type { LevelDef } from 'src/viz/levelDef/types';
 import type { SceneConfig } from '..';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
@@ -12,12 +9,7 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 
-export const processLoadedScene = (
-  viz: Viz,
-  loadedWorld: THREE.Group,
-  vizConf: VizConfig,
-  levelDef: LevelDef
-): SceneConfig => {
+export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
   viz.scene.add(ambientLight);
 
@@ -39,20 +31,6 @@ export const processLoadedScene = (
   sunLight.shadow.camera.top = 80;
   sunLight.shadow.camera.bottom = -80;
   viz.scene.add(sunLight);
-
-  const handle = loadLevelDef(viz, loadedWorld, levelDef);
-
-  handle.objects.then(objects => {
-    initLevelEditor(
-      viz,
-      objects,
-      't',
-      handle.prototypes,
-      handle.builtMaterials,
-      handle.loadedTextures,
-      levelDef
-    );
-  });
 
   const playerHeight = 3.5;
   const playerRadius = 1;

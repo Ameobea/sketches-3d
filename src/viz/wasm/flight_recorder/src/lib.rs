@@ -39,8 +39,6 @@ struct RecorderEvent {
   data_len: u32,
 }
 
-// ─── Metadata Map ─────────────────────────────────────────────────────────
-
 /// Ordered key-value metadata store. Keys are UTF-8 strings, values are raw bytes.
 #[derive(Clone, Default)]
 struct MetadataMap {
@@ -59,7 +57,11 @@ impl MetadataMap {
   }
 
   fn get(&self, key: &[u8]) -> Option<&[u8]> {
-    self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_slice())
+    self
+      .entries
+      .iter()
+      .find(|(k, _)| k == key)
+      .map(|(_, v)| v.as_slice())
   }
 
   fn set_u32(&mut self, key: &[u8], v: u32) {
@@ -68,7 +70,9 @@ impl MetadataMap {
 
   fn get_u32(&self, key: &[u8]) -> Option<u32> {
     let v = self.get(key)?;
-    if v.len() < 4 { return None; }
+    if v.len() < 4 {
+      return None;
+    }
     Some(u32::from_le_bytes(v[..4].try_into().ok()?))
   }
 
@@ -541,7 +545,9 @@ fn read_metadata(data: &[u8], offset: &mut usize) -> Option<MetadataMap> {
   }
 
   let num_entries = read_u32(data, offset)? as usize;
-  let mut md = MetadataMap { entries: Vec::with_capacity(num_entries) };
+  let mut md = MetadataMap {
+    entries: Vec::with_capacity(num_entries),
+  };
 
   for _ in 0..num_entries {
     let key_len = read_u8(data, offset)? as usize;
@@ -627,7 +633,12 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
       events.push(RecorderEvent {
         event_type: event_types[i],
         subtick: subticks[i],
-        data: [event_data[0][i], event_data[1][i], event_data[2][i], event_data[3][i]],
+        data: [
+          event_data[0][i],
+          event_data[1][i],
+          event_data[2][i],
+          event_data[3][i],
+        ],
         data_len: data_lens[i],
       });
     }
@@ -667,12 +678,16 @@ pub unsafe extern "C" fn player_get_header(ctx: *mut PlayerCtx, out_ptr: *mut f3
 
   let get_f32 = |key: &[u8]| -> f32 {
     md.get(key)
-      .and_then(|v| if v.len() >= 4 { Some(f32::from_le_bytes(v[..4].try_into().unwrap())) } else { None })
+      .and_then(|v| {
+        if v.len() >= 4 {
+          Some(f32::from_le_bytes(v[..4].try_into().unwrap()))
+        } else {
+          None
+        }
+      })
       .unwrap_or(0.0)
   };
-  let get_u32 = |key: &[u8]| -> u32 {
-    md.get_u32(key).unwrap_or(0)
-  };
+  let get_u32 = |key: &[u8]| -> u32 { md.get_u32(key).unwrap_or(0) };
   let get_f32x3 = |key: &[u8]| -> [f32; 3] {
     md.get(key)
       .and_then(|v| {
@@ -682,13 +697,21 @@ pub unsafe extern "C" fn player_get_header(ctx: *mut PlayerCtx, out_ptr: *mut f3
             f32::from_le_bytes(v[4..8].try_into().unwrap()),
             f32::from_le_bytes(v[8..12].try_into().unwrap()),
           ])
-        } else { None }
+        } else {
+          None
+        }
       })
       .unwrap_or([0.0; 3])
   };
   let get_u64 = |key: &[u8]| -> u64 {
     md.get(key)
-      .and_then(|v| if v.len() >= 8 { Some(u64::from_le_bytes(v[..8].try_into().unwrap())) } else { None })
+      .and_then(|v| {
+        if v.len() >= 8 {
+          Some(u64::from_le_bytes(v[..8].try_into().unwrap()))
+        } else {
+          None
+        }
+      })
       .unwrap_or(0)
   };
 
@@ -712,7 +735,11 @@ pub unsafe extern "C" fn player_get_header(ctx: *mut PlayerCtx, out_ptr: *mut f3
   out[15] = get_f32(b"grav_fall_mult");
   out[16] = get_f32(b"grav_apex_thresh");
   out[17] = get_f32(b"grav_knee_width");
-  out[18] = if get_u32(b"grav_only_jumps") != 0 { 1.0 } else { 0.0 };
+  out[18] = if get_u32(b"grav_only_jumps") != 0 {
+    1.0
+  } else {
+    0.0
+  };
   let hash = get_u64(b"map_id_hash");
   let lo = (hash & 0xffffffff) as u32;
   let hi = ((hash >> 32) & 0xffffffff) as u32;
@@ -749,7 +776,11 @@ pub unsafe extern "C" fn player_get_metadata(
 ///   ext_vel[3], vert_vel, vert_offset, flags (bitcast), floor_idx (bitcast)
 /// Returns 0 on success, 1 if index out of range.
 #[no_mangle]
-pub unsafe extern "C" fn player_get_subtick(ctx: *mut PlayerCtx, index: u32, out_ptr: *mut f32) -> u32 {
+pub unsafe extern "C" fn player_get_subtick(
+  ctx: *mut PlayerCtx,
+  index: u32,
+  out_ptr: *mut f32,
+) -> u32 {
   let ctx = &*ctx;
   let idx = index as usize;
   if idx >= ctx.snapshots.len() {
@@ -792,7 +823,11 @@ pub unsafe extern "C" fn player_get_event_count(ctx: *mut PlayerCtx) -> u32 {
 /// Layout: 6 f32s - event_type (u32 bitcast), subtick (u32 bitcast), data[4]
 /// Returns 0 on success, 1 if index out of range.
 #[no_mangle]
-pub unsafe extern "C" fn player_get_event(ctx: *mut PlayerCtx, index: u32, out_ptr: *mut f32) -> u32 {
+pub unsafe extern "C" fn player_get_event(
+  ctx: *mut PlayerCtx,
+  index: u32,
+  out_ptr: *mut f32,
+) -> u32 {
   let ctx = &*ctx;
   let idx = index as usize;
   if idx >= ctx.events.len() {
