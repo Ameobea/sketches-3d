@@ -2,6 +2,7 @@ import type { RenderedObject } from 'src/geoscript/runner/types';
 import type { Viz } from 'src/viz';
 import * as THREE from 'three';
 import { DefaultCameraPos, DefaultCameraTarget } from './types';
+import { focusCamera } from 'src/viz/util/focusCamera';
 
 const computeCompositeBoundingBox = (objects: RenderedObject[]): THREE.Box3 => {
   const box = new THREE.Box3();
@@ -43,40 +44,13 @@ export const centerView = async (viz: Viz, renderedObjects: RenderedObject[]) =>
     radius = 1;
   }
 
-  // try to keep the same look direction
-  const lookDir = new THREE.Vector3();
-  lookDir.copy(viz.camera.position).sub(viz.orbitControls!.target);
-
-  if (lookDir.lengthSq() === 0) {
-    lookDir.set(1, 1, 1);
-  }
-  lookDir.normalize();
-
-  const camera = viz.camera as THREE.PerspectiveCamera;
-  let distance;
-
-  if (!camera.isPerspectiveCamera) {
-    console.warn('centerView only works with PerspectiveCamera, falling back to old method');
-    const size = new THREE.Vector3();
-    compositeBbox.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
-    distance = maxDim * 1.2 + 1;
-  } else {
-    const vfov = THREE.MathUtils.degToRad(camera.fov);
-    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
-    const fov = Math.min(vfov, hfov);
-
-    // Compute distance to fit bounding sphere in view
-    distance = radius / Math.sin(fov / 2);
-
-    // Add a little padding so the object is not touching the screen edge
-    distance *= 1.1;
-  }
-
-  viz.camera.position.copy(center).add(lookDir.multiplyScalar(distance));
-  viz.orbitControls!.target.copy(center);
-  viz.camera.lookAt(center);
-  viz.orbitControls!.update();
+  focusCamera({
+    camera: viz.camera as THREE.PerspectiveCamera,
+    orbitControls: viz.orbitControls!,
+    center,
+    radius,
+    animationDurationMs: 0,
+  });
 };
 
 const AXES = {

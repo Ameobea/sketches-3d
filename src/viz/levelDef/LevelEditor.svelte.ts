@@ -12,6 +12,7 @@ import { LevelEditorApi } from './levelEditorApi';
 import { UndoSystem } from './undoSystem';
 import { MaterialEditorController } from './materialEditorController';
 import { CsgEditController } from './csgEditController.svelte';
+import { focusCamera } from '../util/focusCamera';
 
 type TransformMode = 'translate' | 'rotate' | 'scale';
 
@@ -212,7 +213,9 @@ export class LevelEditor {
       return;
     }
 
-    if (isTypingInput) return;
+    if (isTypingInput) {
+      return;
+    }
 
     if (e.key === 'g' || e.key === 'G') {
       this.setTransformMode('translate');
@@ -340,7 +343,9 @@ export class LevelEditor {
     });
     // Live CSG preview during drag
     this.transformControls.addEventListener('objectChange', () => {
-      if (this.csgController.isActive) this.csgController.onObjectChange();
+      if (this.csgController.isActive) {
+        this.csgController.onObjectChange();
+      }
     });
     this.viz.overlayScene.add(this.transformControls);
 
@@ -582,15 +587,16 @@ export class LevelEditor {
     const obj = this.selectedObject.object;
     const box = new THREE.Box3().setFromObject(obj);
     const center = box.getCenter(new THREE.Vector3());
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    const radius = sphere.radius > 0 ? sphere.radius : 1;
 
-    // currently, keeping the current camera-to-target distance so we only re-center, not zoom.
-    //
-    // TODO: select a good zoom distance based on object bounding box and maybe add a quick animation between
-    // old and new camera pos
-    const offset = this.viz.camera.position.clone().sub(this.orbitControls.target);
-    this.orbitControls.target.copy(center);
-    this.viz.camera.position.copy(center).add(offset);
-    this.orbitControls.update();
+    focusCamera({
+      camera: this.viz.camera as THREE.PerspectiveCamera,
+      orbitControls: this.orbitControls,
+      center,
+      radius,
+    });
   }
 
   /**
@@ -599,7 +605,9 @@ export class LevelEditor {
    * multiplicatively for scale, mirroring Blender's "repeat last" behaviour.
    */
   private replayLastAction() {
-    if (!this.lastReplayableAction || !this.selectedObject) return;
+    if (!this.lastReplayableAction || !this.selectedObject) {
+      return;
+    }
 
     const delta = this.lastReplayableAction;
     const obj = this.selectedObject.object;
