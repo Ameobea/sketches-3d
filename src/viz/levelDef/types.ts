@@ -1,15 +1,7 @@
 import { z } from 'zod';
 
-// ---------------------------------------------------------------------------
-// Primitive / shared
-// ---------------------------------------------------------------------------
-
 const Vec2 = z.tuple([z.number(), z.number()]);
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
-
-// ---------------------------------------------------------------------------
-// Asset definitions
-// ---------------------------------------------------------------------------
 
 export const GltfAssetDefSchema = z.object({
   type: z.literal('gltf'),
@@ -35,10 +27,6 @@ export const GeoscriptAssetDefFileSchema = z.object({
 
 /** Union of both geoscript asset forms — used when parsing JSON from disk. */
 export const GeoscriptAssetDefRawSchema = z.union([GeoscriptAssetDefSchema, GeoscriptAssetDefFileSchema]);
-
-// ---------------------------------------------------------------------------
-// CSG asset definitions
-// ---------------------------------------------------------------------------
 
 export interface CsgLeafNode {
   asset: string;
@@ -105,10 +93,6 @@ export type GeoscriptAssetDefRaw = z.infer<typeof GeoscriptAssetDefRawSchema>;
 export type AssetDef = z.infer<typeof AssetDefSchema>;
 export type AssetDefRaw = z.infer<typeof AssetDefRawSchema>;
 
-// ---------------------------------------------------------------------------
-// Texture definitions
-// ---------------------------------------------------------------------------
-
 export const TextureDefSchema = z.object({
   url: z.string(),
   /** Default: 'repeat' */
@@ -126,10 +110,6 @@ export const TextureDefSchema = z.object({
 });
 
 export type TextureDef = z.infer<typeof TextureDefSchema>;
-
-// ---------------------------------------------------------------------------
-// Material definitions
-// ---------------------------------------------------------------------------
 
 export const AmbientDistanceAmpParamsSchema = z.object({
   falloffStartDistance: z.number(),
@@ -248,10 +228,6 @@ export type CustomShaderMatDef = z.infer<typeof CustomShaderMatDefSchema>;
 export type CustomBasicShaderMatDef = z.infer<typeof CustomBasicShaderMatDefSchema>;
 export type MaterialDef = z.infer<typeof MaterialDefSchema>;
 
-// ---------------------------------------------------------------------------
-// Object definitions
-// ---------------------------------------------------------------------------
-
 export const ObjectDefSchema = z.object({
   id: z.string(),
   /** Key into the top-level `assets` registry */
@@ -274,9 +250,72 @@ export const ObjectDefSchema = z.object({
 
 export type ObjectDef = z.infer<typeof ObjectDefSchema>;
 
-// ---------------------------------------------------------------------------
-// Top-level LevelDef
-// ---------------------------------------------------------------------------
+export interface ObjectGroupDef {
+  id: string;
+  children: (ObjectDef | ObjectGroupDef)[];
+  position?: [number, number, number];
+  rotation?: [number, number, number];
+  scale?: [number, number, number];
+  /** Runtime/editor metadata; generator output uses this to mark generated groups as read-only. */
+  userData?: Record<string, unknown>;
+}
+
+export const ObjectGroupDefSchema: z.ZodType<ObjectGroupDef> = z.lazy(() =>
+  z.object({
+    id: z.string(),
+    children: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])).min(1),
+    position: Vec3.optional(),
+    rotation: Vec3.optional(),
+    scale: Vec3.optional(),
+    userData: z.record(z.string(), z.unknown()).optional(),
+  })
+);
+
+export const ScenePhysicsDefSchema = z.object({
+  gravity: z.number().optional(),
+  simulationTickRate: z.number().optional(),
+  gravityShaping: z
+    .object({
+      riseMultiplier: z.number().optional(),
+      apexMultiplier: z.number().optional(),
+      fallMultiplier: z.number().optional(),
+      apexThreshold: z.number().optional(),
+      kneeWidth: z.number().optional(),
+      onlyJumps: z.boolean().optional(),
+    })
+    .optional(),
+  player: z
+    .object({
+      jumpVelocity: z.number().optional(),
+      moveSpeed: z.object({ onGround: z.number(), inAir: z.number() }).optional(),
+      terminalVelocity: z.number().optional(),
+      externalVelocityAirDampingFactor: Vec3.optional(),
+    })
+    .optional(),
+});
+export type ScenePhysicsDef = z.infer<typeof ScenePhysicsDefSchema>;
+
+const GeneratorDefSchema = z.object({
+  file: z.string(),
+  params: z.record(z.string(), z.unknown()).optional(),
+});
+
+/** Collect all leaf ObjectDefs from a (possibly nested) objects array, with their schema paths. */
+const collectObjectDefs = (
+  nodes: (ObjectDef | ObjectGroupDef)[],
+  prefix: (string | number)[]
+): { obj: ObjectDef; path: (string | number)[] }[] => {
+  const result: { obj: ObjectDef; path: (string | number)[] }[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if ('children' in node) {
+      result.push(...collectObjectDefs(node.children, [...prefix, i, 'children']));
+    } else {
+      result.push({ obj: node, path: [...prefix, i] });
+    }
+  }
+  return result;
+};
 
 export const LevelDefSchema = z
   .object({
@@ -287,7 +326,9 @@ export const LevelDefSchema = z
     /** Named material definitions built once their textures are ready. */
     materials: z.record(z.string(), MaterialDefSchema).optional(),
     assets: z.record(z.string(), AssetDefSchema),
-    objects: z.array(ObjectDefSchema),
+    objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
+    physics: ScenePhysicsDefSchema.optional(),
+    generators: z.array(GeneratorDefSchema).optional(),
   })
   .superRefine((def, ctx) => {
     const assetKeys = new Set(Object.keys(def.assets));
@@ -295,19 +336,19 @@ export const LevelDefSchema = z
     const texKeys = new Set(Object.keys(def.textures ?? {}));
 
     // Each object's asset and material must reference existing registry entries
-    for (let i = 0; i < def.objects.length; i++) {
-      const obj = def.objects[i];
+    const allObjectDefs = collectObjectDefs(def.objects, ['objects']);
+    for (const { obj, path } of allObjectDefs) {
       if (!assetKeys.has(obj.asset)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['objects', i, 'asset'],
+          path: [...path, 'asset'],
           message: `Unknown asset "${obj.asset}". Available: ${[...assetKeys].join(', ') || '(none)'}`,
         });
       }
       if (obj.material !== undefined && !matKeys.has(obj.material)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['objects', i, 'material'],
+          path: [...path, 'material'],
           message: `Unknown material "${obj.material}". Available: ${[...matKeys].join(', ') || '(none)'}`,
         });
       }
@@ -372,10 +413,6 @@ export const LevelDefSchema = z
 
 export type LevelDef = z.infer<typeof LevelDefSchema>;
 
-// ---------------------------------------------------------------------------
-// Raw LevelDef (as it appears on disk — geoscript assets may use `file`)
-// ---------------------------------------------------------------------------
-
 /**
  * Schema for level def JSON files on disk.
  * Geoscript assets may use either `code` (inline) or `file` (path relative to level dir).
@@ -387,7 +424,34 @@ export const LevelDefRawSchema = z.object({
   textures: z.record(z.string(), TextureDefSchema).optional(),
   materials: z.record(z.string(), MaterialDefSchema).optional(),
   assets: z.record(z.string(), AssetDefRawSchema),
-  objects: z.array(ObjectDefSchema),
+  objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
+  physics: ScenePhysicsDefSchema.optional(),
+  generators: z.array(GeneratorDefSchema).optional(),
 });
 
 export type LevelDefRaw = z.infer<typeof LevelDefRawSchema>;
+
+/**
+ * Schema for an optional `materials.json` file alongside `def.json`.
+ * When present, its textures and materials are merged over (and replace) any
+ * same-named entries in `def.json`, allowing the materials layer to live in a
+ * separate file and keeping `def.json` focused on assets and objects.
+ */
+export const MaterialsFileSchema = z.object({
+  $schema: z.string().optional(),
+  textures: z.record(z.string(), TextureDefSchema).optional(),
+  materials: z.record(z.string(), MaterialDefSchema).optional(),
+});
+export type MaterialsFile = z.infer<typeof MaterialsFileSchema>;
+
+/**
+ * Schema for an optional `objects.json` file alongside `def.json`.
+ * When present, its `objects` array is used in place of the one in `def.json`,
+ * so the high-churn placement data can be diffed separately from the rest of
+ * the level definition.
+ */
+export const ObjectsFileSchema = z.object({
+  $schema: z.string().optional(),
+  objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
+});
+export type ObjectsFile = z.infer<typeof ObjectsFileSchema>;

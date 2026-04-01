@@ -1,28 +1,39 @@
 <script lang="ts">
+  import HierarchyPanel from './HierarchyPanel.svelte';
+  import type { LevelSceneNode } from './loadLevelDef';
+
   interface Props {
     assetIds: string[];
     materialIds: string[];
+    rootNodes: LevelSceneNode[];
     selectedObjectId: string | null;
     selectedMaterialId: string | null;
+    isGroupSelected: boolean;
+    isGeneratedSelected: boolean;
     materialEditorOpen: boolean;
     isCsgAsset: boolean;
     onadd: (assetId: string, materialId: string | undefined) => void;
     onmaterialchange: (matId: string | null) => void;
     ontoggleMaterialEditor: () => void;
     onconvertToCsg: () => void;
+    onselectnode: (node: LevelSceneNode) => void;
   }
 
   let {
     assetIds,
     materialIds,
+    rootNodes,
     selectedObjectId,
     selectedMaterialId,
+    isGroupSelected,
+    isGeneratedSelected,
     materialEditorOpen,
     isCsgAsset,
     onadd,
     onmaterialchange,
     ontoggleMaterialEditor,
     onconvertToCsg,
+    onselectnode,
   }: Props = $props();
 
   let selectedAssetOverride = $state<string | null>(null);
@@ -78,10 +89,10 @@
 
   <!-- Selected object info -->
   <span class="selected-label">
-    Selected: {selectedObjectId ?? '(none)'}
+    Selected: {selectedObjectId ?? '(none)'}{isGroupSelected ? ' (group)' : ''}{isGeneratedSelected ? ' (generated)' : ''}
   </span>
 
-  {#if selectedObjectId !== null}
+  {#if selectedObjectId !== null && !isGroupSelected && !isGeneratedSelected}
     <div class="row selected-mat-row">
       <span class="field-label">material:</span>
       <select
@@ -104,7 +115,11 @@
     {:else}
       <span class="csg-label">CSG asset</span>
     {/if}
+  {:else if selectedObjectId !== null && isGeneratedSelected}
+    <span class="generated-note">Generated nodes are read-only.</span>
   {/if}
+
+  <HierarchyPanel {rootNodes} selectedNodeId={selectedObjectId} {onselectnode} />
 </div>
 
 <style>
@@ -191,6 +206,13 @@
 
   .selected-mat-row {
     margin-top: 4px;
+  }
+
+  .generated-note {
+    display: block;
+    margin-top: 4px;
+    color: #cfae62;
+    font-size: 12px;
   }
 
   .csg-btn {

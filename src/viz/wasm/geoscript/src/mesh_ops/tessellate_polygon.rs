@@ -299,6 +299,105 @@ pub fn tessellate_2d_paths(
   ))
 }
 
+/// Tessellates a pre-built lyon `Path` into a flat XZ-plane mesh.
+///
+/// Output vertices are deduplicated by exact float position before building the `LinkedMesh`,
+/// guarding against lyon emitting two vertices at the same coordinate for touching subpaths
+/// or self-intersections.
+pub fn tessellate_lyon_path(
+  lyon_path: &lyon_tessellation::path::Path,
+  fill_rule: lyon_tessellation::FillRule,
+  flipped: bool,
+) -> Result<LinkedMesh<()>, ErrorStack> {
+  use std::collections::HashMap;
+
+  use lyon_tessellation::{geom::Point, geometry_builder::Positions, BuffersBuilder, FillOptions, FillTessellator, VertexBuffers};
+
+  let mut buffers: VertexBuffers<Point<f32>, u32> = VertexBuffers::new();
+  {
+    let mut vertex_builder = BuffersBuilder::new(&mut buffers, Positions);
+    FillTessellator::new()
+      .tessellate_path(
+        lyon_path,
+        &FillOptions::default().with_fill_rule(fill_rule),
+        &mut vertex_builder,
+      )
+      .map_err(|e| ErrorStack::new(format!("Lyon tessellation error: {e:?}")))?;
+  }
+
+  if buffers.indices.is_empty() {
+    return Err(ErrorStack::new("Lyon tessellation produced no triangles"));
+  }
+
+  let mut deduped_verts: Vec<Vec3> = Vec::with_capacity(buffers.vertices.len());
+  let mut vert_remap: Vec<u32> = Vec::with_capacity(buffers.vertices.len());
+  let mut pos_to_idx: HashMap<(u32, u32), u32> = HashMap::new();
+
+  for p in &buffers.vertices {
+    let key = (p.x.to_bits(), p.y.to_bits());
+    let idx = *pos_to_idx.entry(key).or_insert_with(|| {
+      let idx = deduped_verts.len() as u32;
+      deduped_verts.push(Vec3::new(p.x, 0., p.y));
+      idx
+    });
+    vert_remap.push(idx);
+  }
+
+  let mut indices: Vec<u32> = buffers
+    .indices
+    .iter()
+    .map(|&i| vert_remap[i as usize])
+    .collect();
+
+  if flipped {
+    for tri in indices.chunks_mut(3) {
+      tri.swap(0, 2);
+    }
+  }
+
+  Ok(LinkedMesh::from_indexed_vertices(
+    &deduped_verts,
+    &indices,
+    None,
+    None,
+  ))
+}
+
+/// Tessellates one or more closed 2D paths (as `Vec<Vec2>` polylines) into a flat XZ-plane mesh.
+///
+/// Multiple paths are treated as subpaths under the given fill rule. For `PathSampler` callables
+/// (e.g. from `trace_path`), prefer `tessellate_lyon_path` with a path built via
+/// `to_lyon_path_for_tessellation()` which passes curve geometry (beziers, arcs) directly to
+/// lyon rather than pre-discretizing.
+pub fn tessellate_2d_paths_with_lyon(
+  paths: &[Vec<Vec2>],
+  fill_rule: lyon_tessellation::FillRule,
+  flipped: bool,
+) -> Result<LinkedMesh<()>, ErrorStack> {
+  use lyon_tessellation::{geom::Point, path::Path};
+
+  if paths.is_empty() {
+    return Ok(LinkedMesh::default());
+  }
+
+  let mut builder = Path::builder();
+  for path in paths {
+    if path.len() < 3 {
+      return Err(ErrorStack::new(format!(
+        "Cannot tessellate path with fewer than 3 points, found: {}",
+        path.len()
+      )));
+    }
+    builder.begin(Point::new(path[0].x, path[0].y));
+    for pt in &path[1..] {
+      builder.line_to(Point::new(pt.x, pt.y));
+    }
+    builder.end(true);
+  }
+
+  tessellate_lyon_path(&builder.build(), fill_rule, flipped)
+}
+
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
   use super::*;

@@ -1,11 +1,12 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+import geoscriptReplWasmURL from 'src/viz/wasmComp/geoscript_repl_bg.wasm?url';
 import type { PageServerLoad } from './$types';
 import type { BuiltinFnDefs, PopulatedFnExample, UnpopulatedBuiltinFnDefs } from './types';
 import { getComposition, getCompositionLatest } from 'src/geoscript/geotoyAPIClient';
 
 const Geoscript = new AsyncOnce((fetch: typeof window.fetch) =>
   import('src/viz/wasmComp/geoscript_repl').then(async engine => {
-    await engine.default(fetch('/geoscript_repl_bg.wasm'));
+    await engine.default(fetch(geoscriptReplWasmURL));
     return engine;
   })
 );

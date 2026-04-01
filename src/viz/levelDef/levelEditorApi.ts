@@ -1,16 +1,16 @@
 import type { CsgTreeNode, ObjectDef } from './types';
-import type { LevelObject } from './loadLevelDef';
+import type { LevelObject, LevelSceneNode } from './loadLevelDef';
 
 const round = (n: number) => Math.round(n * 10000) / 10000;
 
 export class LevelEditorApi {
   constructor(private levelName: string) {}
 
-  saveTransform = async (levelObj: LevelObject) => {
-    const { object } = levelObj;
+  saveTransform = async (node: LevelSceneNode) => {
+    const { object, id, def } = node;
 
     const body = {
-      id: levelObj.id,
+      id,
       position: object.position.toArray().map(round) as [number, number, number],
       rotation: [object.rotation.x, object.rotation.y, object.rotation.z].map(round) as [
         number,
@@ -21,9 +21,9 @@ export class LevelEditorApi {
     };
 
     // Write back to def so clipboard and other consumers see current values
-    levelObj.def.position = body.position;
-    levelObj.def.rotation = body.rotation;
-    levelObj.def.scale = body.scale;
+    def.position = body.position;
+    def.rotation = body.rotation;
+    def.scale = body.scale;
 
     try {
       const res = await fetch(`/level_editor/${this.levelName}`, {

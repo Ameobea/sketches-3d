@@ -9,7 +9,7 @@ import { getAmmoJS, BulletPhysics } from './collision';
 import { FlightPlayer, fetchReplayForPlay } from './flightRecorder';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
-import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebugger.svelte.ts';
+import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebuggerInit.svelte.ts';
 import { initEulerDebugger, initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
@@ -18,6 +18,7 @@ import { buildDefaultSceneConfig, DefaultTopDownCameraFOV } from './sceneDefault
 import { DefaultTopDownCameraRotation } from './clientDefaults';
 import type { CameraController } from './cameraController';
 import { resetCustomShaderGlobals, getPlayerShadowUniforms } from './shaders/customShader';
+import { clearPhysicsBinding } from './util/physics';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
 import type { BtPairCachingGhostObject } from 'src/ammojs/ammoTypes.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
@@ -808,11 +809,7 @@ export class Viz {
         } else {
           o.material?.dispose();
         }
-        if (o.userData.rigidBody) {
-          this.fpCtx!.removeCollisionObject(o.userData.rigidBody, o.name);
-        } else if (o.userData.collisionObj) {
-          this.fpCtx!.removeCollisionObject(o.userData.collisionObj, o.name);
-        }
+        clearPhysicsBinding(o, this.fpCtx!);
       }
     });
 

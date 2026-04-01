@@ -1,7 +1,22 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 
+import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
 import type { ObjectDef } from 'src/viz/levelDef/types';
-import { guardDev, validateName, readLevel, writeLevel } from '../levelEditorUtils.server';
+import {
+  findNodeById,
+  flattenLeaves,
+  isGeneratedDef,
+  isObjectGroup,
+} from 'src/viz/levelDef/levelDefTreeUtils';
+import { guardDev, openLevel, validateName } from '../levelEditorUtils.server';
+
+const failIfGeneratedNode = async (name: string, id: string) => {
+  const mergedLevel = await loadLevelData(name);
+  const mergedNode = findNodeById(mergedLevel.objects, id);
+  if (mergedNode && isGeneratedDef(mergedNode)) {
+    error(400, `Generated node "${id}" is read-only in the level editor`);
+  }
+};
 
 /** Update the transform of an existing object */
 export const PATCH: RequestHandler = async ({ params, request }) => {
@@ -17,14 +32,17 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
     material?: string | null;
   };
 
-  const { filePath, levelDef } = readLevel(name);
-  const objDef = levelDef.objects.find((o: ObjectDef) => o.id === body.id);
-  if (!objDef) error(404, `Object "${body.id}" not found in level "${name}"`);
+  const level = openLevel(name);
+  const objDef = findNodeById(level.def.objects, body.id);
+  if (!objDef) {
+    await failIfGeneratedNode(name, body.id);
+    error(404, `Object "${body.id}" not found in level "${name}"`);
+  }
 
   if (body.position !== undefined) objDef.position = body.position;
   if (body.rotation !== undefined) objDef.rotation = body.rotation;
   if (body.scale !== undefined) objDef.scale = body.scale;
-  if ('material' in body) {
+  if ('material' in body && !isObjectGroup(objDef)) {
     if (body.material) {
       objDef.material = body.material;
     } else {
@@ -32,7 +50,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
     }
   }
 
-  writeLevel(filePath, levelDef);
+  level.save();
   return new Response(null, { status: 204 });
 };
 
@@ -42,13 +60,39 @@ export const DELETE: RequestHandler = async ({ params, request }) => {
   const name = validateName(params.name);
 
   const { id } = (await request.json()) as { id: string };
-  const { filePath, levelDef } = readLevel(name);
+  const level = openLevel(name);
 
-  const idx = levelDef.objects.findIndex((o: ObjectDef) => o.id === id);
-  if (idx === -1) error(404, `Object "${id}" not found in level "${name}"`);
+  const removeById = (
+    nodes: typeof level.def.objects,
+    targetId: string
+  ): { removed: boolean; nodes: typeof level.def.objects } => {
+    const idx = nodes.findIndex(n => n.id === targetId);
+    if (idx !== -1) {
+      const next = [...nodes];
+      next.splice(idx, 1);
+      return { removed: true, nodes: next };
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if ('children' in node) {
+        const res = removeById(node.children as typeof level.def.objects, targetId);
+        if (res.removed) {
+          const next = [...nodes];
+          next[i] = { ...node, children: res.nodes };
+          return { removed: true, nodes: next };
+        }
+      }
+    }
+    return { removed: false, nodes };
+  };
 
-  levelDef.objects.splice(idx, 1);
-  writeLevel(filePath, levelDef);
+  const { removed, nodes: updatedObjects } = removeById(level.def.objects, id);
+  if (!removed) {
+    await failIfGeneratedNode(name, id);
+    error(404, `Object "${id}" not found in level "${name}"`);
+  }
+  level.def.objects = updatedObjects;
+  level.save();
   return new Response(null, { status: 204 });
 };
 
@@ -67,18 +111,24 @@ export const POST: RequestHandler = async ({ params, request }) => {
     id?: string;
   };
 
-  const { filePath, levelDef } = readLevel(name);
+  const level = openLevel(name);
 
-  if (!levelDef.assets[body.asset]) {
+  if (!level.def.assets[body.asset]) {
     error(400, `Unknown asset "${body.asset}"`);
   }
-  if (body.material && !levelDef.materials?.[body.material]) {
+  if (body.material && !level.def.materials?.[body.material]) {
     error(400, `Unknown material "${body.material}"`);
   }
 
   let id: string;
+  const allNodes = flattenLeaves(level.def.objects);
   if (body.id) {
-    if (levelDef.objects.some(o => o.id === body.id)) {
+    const mergedLevel = await loadLevelData(name);
+    const mergedNode = findNodeById(mergedLevel.objects, body.id);
+    if (mergedNode) {
+      error(409, `Object "${body.id}" already exists in level "${name}"`);
+    }
+    if (allNodes.some(o => o.id === body.id)) {
       error(409, `Object "${body.id}" already exists in level "${name}"`);
     }
     id = body.id;
@@ -86,7 +136,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     // Generate a unique id: <asset>_<n> where n is one past the highest existing suffix
     const prefix = `${body.asset}_`;
     let maxN = -1;
-    for (const o of levelDef.objects) {
+    for (const o of allNodes) {
       if (o.id === body.asset || o.id.startsWith(prefix)) {
         const suffix = o.id === body.asset ? 0 : parseInt(o.id.slice(prefix.length), 10);
         if (!isNaN(suffix) && suffix > maxN) maxN = suffix;
@@ -104,7 +154,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     ...(body.material ? { material: body.material } : {}),
   };
 
-  levelDef.objects.push(newObj);
-  writeLevel(filePath, levelDef);
+  level.def.objects.push(newObj);
+  level.save();
   return json(newObj, { status: 201 });
 };

@@ -11,7 +11,7 @@ in vec2 vUv;
 #ifdef NEEDS_COMPOSITING
 // Raw scene depth captured at each half-res pixel so the compositor can use it
 // for joint bilateral upsampling without re-sampling the full-res depth buffer.
-layout(location = 1) out float outSceneDepth;
+layout (location = 1) out float outSceneDepth;
 #endif
 
 uniform sampler2D sceneDiffuse;
@@ -26,6 +26,53 @@ uniform float curTimeSeconds;
 #define USE_LIGHT_FALLOFF 1
 #ifndef OCTAVE_COUNT
 #define OCTAVE_COUNT 6
+#endif
+
+#ifdef USE_SHADOW_MAP
+#include <packing>
+
+uniform sampler2D shadowMap;
+uniform mat4 shadowMatrix;
+uniform float shadowCameraNear;
+uniform float shadowCameraFar;
+uniform float shadowIntensity;
+uniform float shadowBias;
+
+/**
+ * Projects a world-space position into the directional light's shadow map UV space.
+ * Returns xyz where xy = UV coordinates and z = normalized depth in light space.
+ */
+vec3 projectToShadowMapUV(vec3 worldPos) {
+  vec4 lightSpacePos = shadowMatrix * vec4(worldPos, 1.0);
+  lightSpacePos /= lightSpacePos.w;
+  lightSpacePos = lightSpacePos * 0.5 + 0.5;
+  return lightSpacePos.xyz;
+}
+
+/**
+ * Returns 0.0 if the position is in shadow, 1.0 if lit.
+ *
+ * TODO: Investigate small PCF kernel (2x2) for softer volumetric shadows.
+ * The raymarch integration already provides some natural softening across steps,
+ * so this may not be necessary.
+ */
+float sampleShadow(vec3 worldPos) {
+  vec3 shadowCoord = projectToShadowMapUV(worldPos);
+
+  // Outside the shadow map frustum = fully lit
+  if (shadowCoord.x < 0.0 || shadowCoord.x > 1.0 ||
+    shadowCoord.y < 0.0 || shadowCoord.y > 1.0 ||
+    shadowCoord.z < 0.0 || shadowCoord.z > 1.0) {
+    return 1.0;
+  }
+
+  float shadowMapDepth = unpackRGBAToDepth(texture2D(shadowMap, shadowCoord.xy));
+  float lightSpaceDepth = shadowCameraNear + (shadowCameraFar - shadowCameraNear) * shadowMapDepth;
+  float fragDepth = shadowCameraNear + (shadowCameraFar - shadowCameraNear) * shadowCoord.z;
+
+  float inShadow = float(fragDepth - lightSpaceDepth > shadowBias);
+  return 1.0 - inShadow;
+}
 #endif
 
 // params
@@ -220,6 +267,12 @@ void sampleOneStep(
 
   if (rawDensity > 0.005) {
     vec3 color = computeColor(curPos, rawDensity, gradient);
+
+    #ifdef USE_SHADOW_MAP
+    float shadowFactor = mix(1.0, sampleShadow(curPos), shadowIntensity);
+    color *= shadowFactor;
+    #endif
+
     // We only accumulate within the remaining "space" of the transparency so far
     float remainingOpacity = 1. - accumulatedDensity;
     accumulatedColor += color * density * remainingOpacity;
@@ -268,7 +321,7 @@ vec4 march(in vec3 startPos, in vec3 endPos) {
 
   // jitter using interleaved gradient noise
   float noise = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
-  float jitter = (noise - 0.5) * 0.1;
+  float jitter = (noise - 0.5) * 2.5;
   startPos += rayDir * jitter;
 
   float density = 0.;

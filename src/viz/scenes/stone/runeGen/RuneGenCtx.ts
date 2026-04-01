@@ -1,6 +1,6 @@
 import * as Comlink from 'comlink';
 
-import * as geodesicsMod from '../../../../geodesics/geodesics.js';
+import { getGeodesicsModule } from 'src/geoscript/geodesics';
 import * as stone from '../../../wasmComp/stone';
 
 export class RuneGenCtx {
@@ -15,15 +15,10 @@ export class RuneGenCtx {
   public async init() {
     const [engine, geodesics] = await Promise.all([
       Promise.resolve(stone).then(async engine => {
-        await engine.default('/stone_bg.wasm');
+        await engine.default();
         return engine;
       }),
-      Promise.resolve(geodesicsMod)
-        .then(mod => {
-          (mod.Geodesics as any).locateFile = (path: string) => `/${path}`;
-          return mod.Geodesics;
-        })
-        .then(mod => mod({ locateFile: (path: string) => `/${path}` })),
+      getGeodesicsModule(),
     ]);
 
     this.engine = engine;

@@ -133,6 +133,9 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     {
       fogColorHighDensity: new THREE.Vector3(0.12, 0.15, 0.14).multiplyScalar(0.2),
       fogColorLowDensity: new THREE.Vector3(0.15, 0.2, 0.25).multiplyScalar(0.7),
+      ...(vizConf.graphics.quality >= GraphicsQuality.High
+        ? { shadowLight: sunLight, shadowIntensity: 0.75, shadowBias: 0.05 }
+        : {}),
     }
   );
 

@@ -1,17 +1,20 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+import geodesicsWasmURL from 'src/geodesics/geodesics.wasm?url';
 
 let LastError = '';
 
 const GeodesicsModule = new AsyncOnce(() =>
   import('src/geodesics/geodesics.js')
     .then(mod => {
-      (mod.Geodesics as any).locateFile = (path: string) => `/${path}`;
+      (mod.Geodesics as any).locateFile = (_path: string) => geodesicsWasmURL;
       return mod.Geodesics;
     })
-    .then(mod => mod({ locateFile: (path: string) => `/${path}` }))
+    .then(mod => mod({ locateFile: (_path: string) => geodesicsWasmURL }))
 );
 
 export const initGeodesics = (): Promise<void> => GeodesicsModule.get().then(() => {});
+
+export const getGeodesicsModule = (): Promise<any> => GeodesicsModule.get();
 
 export const get_geodesics_loaded = (): boolean => GeodesicsModule.isSome();
 

@@ -1,13 +1,12 @@
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import { mount, unmount } from 'svelte';
 
 import type { LevelDef, MaterialDef } from './types';
 import type { LevelObject } from './loadLevelDef';
 import type { LevelEditorApi } from './levelEditorApi';
 import { buildMaterial } from './buildMaterial';
+import { LEVEL_PLACEHOLDER_MAT, assignMaterial } from './levelObjectUtils';
 import LevelMaterialEditor from './LevelMaterialEditor.svelte';
-
-const PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
 
 export class MaterialEditorController {
   private component: Record<string, any> | null = null;
@@ -73,11 +72,7 @@ export class MaterialEditorController {
 
     for (const levelObj of this.allLevelObjects) {
       if (levelObj.def.material === id) {
-        levelObj.object.traverse(child => {
-          if (child instanceof THREE.Mesh) {
-            child.material = newMat;
-          }
-        });
+        assignMaterial(levelObj.object, newMat);
       }
     }
 
@@ -115,11 +110,7 @@ export class MaterialEditorController {
 
     for (const levelObj of this.allLevelObjects) {
       if (levelObj.def.material === id) {
-        levelObj.object.traverse(child => {
-          if (child instanceof THREE.Mesh) {
-            child.material = PLACEHOLDER_MAT;
-          }
-        });
+        assignMaterial(levelObj.object, LEVEL_PLACEHOLDER_MAT);
       }
     }
 

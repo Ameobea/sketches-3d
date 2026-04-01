@@ -1,5 +1,8 @@
 import * as Comlink from 'comlink';
 
+import normalMapGenWasmURL from 'src/viz/wasm/build2/normal_map_gen.wasm?url';
+import terrainWasmURL from 'src/viz/wasm/build2/terrain.wasm?url';
+import textureCrossfadeWasmURL from 'src/viz/wasm/build2/texture_crossfade.wasm?url';
 import type { TerrainGenWorker } from './terrain/TerrainGenWorker/TerrainGenWorker.worker';
 import { clamp, hasWasmSIMDSupport } from './util/util';
 
@@ -60,6 +63,11 @@ let threadPoolWorkers: Promise<WorkerPoolManager<any>> | WorkerPoolManager<any> 
 let didInitTerrainGenWasm = false;
 let terrainGenWorker: Comlink.Remote<TerrainGenWorker> | null = null;
 
+const fetchWasmBytes = async (url: string): Promise<Uint8Array> => {
+  const wasmBytesAB = await fetch(url).then(r => r.arrayBuffer());
+  return new Uint8Array(wasmBytesAB);
+};
+
 const buildThreadPoolWorkers = (onInit?: (wrapped: Comlink.Remote<any>) => void | Promise<void>) =>
   new Promise<WorkerPoolManager<any>>(async resolve => {
     const workerMod = await import('./threadpoolWorker.worker?worker');
@@ -81,9 +89,7 @@ const loadNormalGenWasm = async () => {
   if (!simdSupported) {
     throw new Error('WASM SIMD not supported');
   }
-  const url = '/normal_map_gen.wasm';
-  const wasmBytesAB = await fetch(url).then(r => r.arrayBuffer());
-  return new Uint8Array(wasmBytesAB);
+  return fetchWasmBytes(normalMapGenWasmURL);
 };
 
 export const getNormalGenWorkers = async () => {
@@ -114,8 +120,7 @@ export const getTextureCrossfadeWorkers = async () => {
   }
 
   if (!didInitTextureCrossfadeWasm) {
-    const wasmBytesAB = await fetch('/texture_crossfade.wasm').then(r => r.arrayBuffer());
-    const wasmBytes = new Uint8Array(wasmBytesAB);
+    const wasmBytes = await fetchWasmBytes(textureCrossfadeWasmURL);
     didInitTextureCrossfadeWasm = true;
 
     await threadPoolWorkers.submitWorkToAll(worker => worker.setTextureCrossfadeWasmBytes(wasmBytes));
@@ -131,8 +136,7 @@ export const getTerrainGenWorker = async () => {
   }
 
   if (!didInitTerrainGenWasm) {
-    const wasmBytesAB = await fetch('/terrain.wasm').then(r => r.arrayBuffer());
-    const wasmBytes = new Uint8Array(wasmBytesAB);
+    const wasmBytes = await fetchWasmBytes(terrainWasmURL);
     didInitTerrainGenWasm = true;
 
     const workerMod = await import('./terrain/TerrainGenWorker/TerrainGenWorker.worker?worker');

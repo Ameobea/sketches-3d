@@ -3413,6 +3413,32 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "render_path" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler (from `trace_path`, `trace_svg_path`, `text_to_path`, etc.) or any `|t: num|: vec2` callable.",
+          },
+          ArgDef {
+            name: "resolution",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(1000)),
+            description: "Sample count for non-PathSampler callables. PathSampler callables use adaptive sampling instead.",
+          },
+        ],
+        description: "Renders a path callable as a 2D path in the XZ plane. For PathSampler callables (e.g. from `trace_path`, `trace_svg_path`, `text_to_path`), subpaths and topology are handled correctly. For plain callables, uniform sampling is used.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
   "sin" => FnDef {
     module: "math",
     examples: &[],
@@ -6204,6 +6230,128 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "text_to_svg" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "text",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "",
+          },
+          ArgDef {
+            name: "font_family",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("IBM Plex Sans".to_string())),
+            description: "Font family to use for the text. Must exist on Google Fonts.",
+          },
+          ArgDef {
+            name: "font_size",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(24.)),
+            description: "",
+          },
+          ArgDef {
+            name: "font_weight",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil, ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "",
+          },
+          ArgDef {
+            name: "font_style",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Must be one of \"normal\", \"italic\", or \"oblique\". If nil, defaults to \"normal\".",
+          },
+          ArgDef {
+            name: "letter_spacing",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "",
+          },
+        ],
+        description: "Fetches the SVG path data string for the given text in the specified font. Requires an internet connection to fetch from the font server.",
+        return_type: &[ArgType::String],
+      },
+    ],
+  },
+  "text_to_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "text",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "",
+          },
+          ArgDef {
+            name: "font_family",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("IBM Plex Sans".to_string())),
+            description: "Font family to use for the text. Must exist on Google Fonts.",
+          },
+          ArgDef {
+            name: "font_size",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(24.)),
+            description: "",
+          },
+          ArgDef {
+            name: "font_weight",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil, ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "",
+          },
+          ArgDef {
+            name: "font_style",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Must be one of \"normal\", \"italic\", or \"oblique\". If nil, defaults to \"normal\".",
+          },
+          ArgDef {
+            name: "letter_spacing",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "",
+          },
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, centers the path around the origin after parsing.",
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for tessellation: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.",
+          },
+        ],
+        description: "Fetches SVG path data for the given text and returns a path sampler callable of signature `|t: num|: vec2`. Suitable for use with `tessellate_path`, `render_path`, `subpaths`, etc.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
   "alpha_wrap" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 57 }],
@@ -6558,6 +6706,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Optional override for treating the input as closed. Tessellation always closes the path; passing closed=false will return an error."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining the interior of the shape: \"nonzero\" (default) or \"evenodd\". If nil, the fill rule is inherited from the path sampler (e.g. set via `trace_path`), falling back to \"nonzero\". Supports multiple subpaths (holes) when combined with \"evenodd\" or a path carrying subpath topology."
           },
         ],
         description: "Tessellates a 2D path into a triangle mesh in the XZ plane.",

@@ -24,6 +24,7 @@ import {
   DefaultPlayerColliderShape,
   DefaultSimulationTickRateHz,
 } from './conf.js';
+import AmmoWasmURL from '../ammojs/ammo.wasm.wasm?url';
 import type {
   AmmoInterface,
   BtBoostZone,
@@ -58,7 +59,9 @@ export const getAmmoJS = async () => {
     return ammojs;
   }
 
-  ammojs = import('../ammojs/ammo.wasm.js').then(mod => (mod as any).Ammo.apply({}));
+  ammojs = import('../ammojs/ammo.wasm.js').then(mod =>
+    (mod as any).Ammo.apply({}, [{ locateFile: () => AmmoWasmURL }])
+  );
   return ammojs;
 };
 

@@ -77,6 +77,27 @@ export interface VolumetricPassParams {
   renderScale?: number;
   globalScale?: number;
   /**
+   * Directional light whose shadow map will be sampled at each raymarch step to darken
+   * fog in shadowed regions.  Only directional lights are supported.
+   *
+   * The light must have `castShadow = true` and a configured shadow camera.
+   * The shadow map texture is read each frame from `light.shadow.map`.
+   */
+  shadowLight?: THREE.DirectionalLight;
+  /**
+   * How strongly the shadow map darkens the fog.  0 = no effect, 1 = full shadow.
+   *
+   * Default: 0.5
+   */
+  shadowIntensity?: number;
+  /**
+   * Depth bias (in light-space world units) used to prevent self-shadowing artifacts
+   * in the volume.
+   *
+   * Default: 0.05
+   */
+  shadowBias?: number;
+  /**
    * Number of noise octaves sampled per raymarch step.  Fewer octaves = smoother fog with less
    * fine detail, but dramatically cheaper.  Use 2 for low-spec mode to avoid aliasing when
    * `baseRaymarchStepCount` is also low.
@@ -147,6 +168,13 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       postDensityPow: { value: 1 },
       noiseTexture: { value: null },
       globalScale: { value: 1 },
+      // shadow map uniforms (only used when USE_SHADOW_MAP is defined)
+      shadowMap: { value: null },
+      shadowMatrix: { value: new THREE.Matrix4() },
+      shadowCameraNear: { value: 0.1 },
+      shadowCameraFar: { value: 500 },
+      shadowIntensity: { value: 0.5 },
+      shadowBias: { value: 0.05 },
     };
 
     super({
@@ -159,6 +187,7 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
           ? { NEEDS_COMPOSITING: '1' }
           : { DO_DIRECT_COMPOSITING: '1' }),
         OCTAVE_COUNT: String(params.octaveCount ?? 6),
+        ...(params.shadowLight ? { USE_SHADOW_MAP: '1' } : {}),
       },
     });
   }
@@ -177,6 +206,7 @@ export class VolumetricPass extends Pass implements Disposable {
   private fogRenderTarget: THREE.WebGLRenderTarget | null = null;
   private noiseTexture3D: THREE.Data3DTexture;
   private renderScale: number;
+  private shadowLight?: THREE.DirectionalLight;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, params: VolumetricPassParams) {
     super('VolumetricPass', undefined, new THREE.Camera());
@@ -212,6 +242,7 @@ export class VolumetricPass extends Pass implements Disposable {
     this.ambientLight = scene.children.find(child => child instanceof THREE.AmbientLight) as
       | THREE.AmbientLight
       | undefined;
+    this.shadowLight = params.shadowLight;
 
     this.updateUniforms();
 
@@ -294,6 +325,16 @@ export class VolumetricPass extends Pass implements Disposable {
     this.material.uniforms.ambientLightIntensity.value =
       this.params.ambientLightIntensity ?? this.ambientLight?.intensity ?? 0;
     this.material.uniforms.noiseTexture.value = this.noiseTexture3D;
+
+    if (this.shadowLight?.shadow?.map) {
+      const shadow = this.shadowLight.shadow;
+      this.material.uniforms.shadowMap.value = shadow.map!.texture;
+      this.material.uniforms.shadowMatrix.value
+        .copy(shadow.camera.projectionMatrix)
+        .multiply(shadow.camera.matrixWorldInverse);
+      this.material.uniforms.shadowCameraNear.value = shadow.camera.near;
+      this.material.uniforms.shadowCameraFar.value = shadow.camera.far;
+    }
 
     for (const [key, value] of Object.entries(this.params)) {
       if (

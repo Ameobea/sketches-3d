@@ -6,13 +6,18 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
 import type { LevelDef, ObjectDef } from './types';
-import type { LevelObject } from './loadLevelDef';
+import type { LevelObject, LevelSceneNode } from './loadLevelDef';
+import { isLevelGroup } from './loadLevelDef';
+import { isGeneratedDef } from './levelDefTreeUtils';
+import { LEVEL_PLACEHOLDER_MAT, assignMaterial, instantiateLevelObject } from './levelObjectUtils';
 import LevelEditorPanel from './LevelEditorPanel.svelte';
 import { LevelEditorApi } from './levelEditorApi';
 import { UndoSystem } from './undoSystem';
 import { MaterialEditorController } from './materialEditorController';
 import { CsgEditController } from './csgEditController.svelte';
 import { focusCamera } from '../util/focusCamera';
+import { clearPhysicsBinding } from '../util/physics';
+import { withWorldSpaceTransform } from '../util/three';
 
 type TransformMode = 'translate' | 'rotate' | 'scale';
 
@@ -23,7 +28,7 @@ export interface TransformSnapshot {
 }
 
 type UndoEntry =
-  | { type: 'transform'; levelObj: LevelObject; before: TransformSnapshot; after: TransformSnapshot }
+  | { type: 'transform'; levelObj: LevelSceneNode; before: TransformSnapshot; after: TransformSnapshot }
   | { type: 'add'; levelObj: LevelObject; snapshot: TransformSnapshot }
   | { type: 'delete'; levelObj: LevelObject; snapshot: TransformSnapshot };
 
@@ -42,8 +47,6 @@ interface ClipboardEntry {
   def: ObjectDef;
 }
 
-const PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
-
 export class LevelEditor {
   viz: Viz;
   levelDef: LevelDef;
@@ -57,7 +60,11 @@ export class LevelEditor {
   private isEditMode = false;
   private orbitControls: OrbitControls | null = null;
   transformControls: TransformControls | null = null;
-  selectedObject: LevelObject | null = null;
+  selectedNode: LevelSceneNode | null = null;
+  /** Convenience accessor — null when the selected node is a group. */
+  get selectedObject(): LevelObject | null {
+    return this.selectedNode && !isLevelGroup(this.selectedNode) ? this.selectedNode : null;
+  }
   private transformMode: TransformMode = 'translate';
   private transformSpace: 'world' | 'local' = 'world';
 
@@ -65,6 +72,8 @@ export class LevelEditor {
   private selectableMeshes: THREE.Mesh[] = [];
   private meshToLevelObject = new Map<THREE.Mesh, LevelObject>();
   allLevelObjects: LevelObject[];
+  rootNodes: LevelSceneNode[];
+  nodeById: Map<string, LevelSceneNode>;
 
   // Distinguish clicks from drags — skip raycast if pointer moved significantly
   private pointerDownPos = new THREE.Vector2();
@@ -81,6 +90,8 @@ export class LevelEditor {
   private panelState = $state({
     selectedObjectId: null as string | null,
     selectedMaterialId: null as string | null,
+    isGroupSelected: false,
+    isGeneratedSelected: false,
   });
   private panelComponent: Record<string, any> | null = null;
   private panelTarget: HTMLDivElement | null = null;
@@ -94,13 +105,17 @@ export class LevelEditor {
     prototypes: Map<string, THREE.Object3D>,
     builtMaterials: Map<string, THREE.Material>,
     loadedTextures: Map<string, THREE.Texture>,
-    levelDef: LevelDef
+    levelDef: LevelDef,
+    rootNodes: LevelSceneNode[],
+    nodeById: Map<string, LevelSceneNode>
   ) {
     this.viz = viz;
     this.levelDef = levelDef;
     this.prototypes = prototypes;
     this.builtMaterials = builtMaterials;
     this.allLevelObjects = objects;
+    this.rootNodes = rootNodes;
+    this.nodeById = nodeById;
 
     this.api = new LevelEditorApi(levelName);
     this.materialEditor = new MaterialEditorController(
@@ -200,8 +215,9 @@ export class LevelEditor {
 
     // Copy / Paste
     if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !isTypingInput) {
-      if (this.selectedObject) {
-        this.clipboard = { assetId: this.selectedObject.assetId, def: this.selectedObject.def };
+      const selObj = this.selectedObject;
+      if (selObj) {
+        this.clipboard = { assetId: selObj.assetId, def: selObj.def };
       }
       return;
     }
@@ -236,8 +252,15 @@ export class LevelEditor {
       }
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       if (this.selectedObject) {
+        if (isGeneratedDef(this.selectedObject.def)) {
+          console.info('[LevelEditor] Generated objects are read-only in the editor.');
+          return;
+        }
         e.preventDefault();
         this.deleteObject(this.selectedObject);
+      } else if (this.selectedNode) {
+        // Groups cannot be deleted from the editor (they come from the def file).
+        console.info('[LevelEditor] Groups cannot be deleted from the editor.');
       }
     }
   };
@@ -300,12 +323,12 @@ export class LevelEditor {
       }
 
       if (e.value) {
-        if (this.selectedObject) {
-          this.dragStartSnapshot = this.snapshotTransform(this.selectedObject.object);
+        if (this.selectedNode) {
+          this.dragStartSnapshot = this.snapshotTransform(this.selectedNode.object);
         }
       } else {
-        if (this.selectedObject && this.dragStartSnapshot) {
-          const after = this.snapshotTransform(this.selectedObject.object);
+        if (this.selectedNode && this.dragStartSnapshot) {
+          const after = this.snapshotTransform(this.selectedNode.object);
           const before = this.dragStartSnapshot;
           this.dragStartSnapshot = null;
 
@@ -313,31 +336,35 @@ export class LevelEditor {
 
           this.undoSystem.push({
             type: 'transform',
-            levelObj: this.selectedObject,
+            levelObj: this.selectedNode,
             before,
             after,
           });
 
-          this.lastReplayableAction = {
-            positionDelta: [
-              after.position[0] - before.position[0],
-              after.position[1] - before.position[1],
-              after.position[2] - before.position[2],
-            ],
-            rotationDelta: [
-              after.rotation[0] - before.rotation[0],
-              after.rotation[1] - before.rotation[1],
-              after.rotation[2] - before.rotation[2],
-            ],
-            scaleFactor: [
-              before.scale[0] !== 0 ? after.scale[0] / before.scale[0] : 1,
-              before.scale[1] !== 0 ? after.scale[1] / before.scale[1] : 1,
-              before.scale[2] !== 0 ? after.scale[2] / before.scale[2] : 1,
-            ],
-          };
+          // Replay captures direct object edits only, but physics must be synced for both
+          // leaf objects and groups (which affect descendant world transforms).
+          if (!isLevelGroup(this.selectedNode)) {
+            this.lastReplayableAction = {
+              positionDelta: [
+                after.position[0] - before.position[0],
+                after.position[1] - before.position[1],
+                after.position[2] - before.position[2],
+              ],
+              rotationDelta: [
+                after.rotation[0] - before.rotation[0],
+                after.rotation[1] - before.rotation[1],
+                after.rotation[2] - before.rotation[2],
+              ],
+              scaleFactor: [
+                before.scale[0] !== 0 ? after.scale[0] / before.scale[0] : 1,
+                before.scale[1] !== 0 ? after.scale[1] / before.scale[1] : 1,
+                before.scale[2] !== 0 ? after.scale[2] / before.scale[2] : 1,
+              ],
+            };
+          }
 
-          this.api.saveTransform(this.selectedObject);
-          this.syncPhysics(this.selectedObject);
+          this.syncSceneNodePhysics(this.selectedNode);
+          this.api.saveTransform(this.selectedNode);
         }
       }
     });
@@ -404,11 +431,18 @@ export class LevelEditor {
       props: {
         assetIds: Object.keys(this.levelDef.assets),
         materialIds: Object.keys(this.levelDef.materials ?? {}),
+        rootNodes: this.rootNodes,
         get selectedObjectId(): string | null {
           return state.selectedObjectId;
         },
         get selectedMaterialId(): string | null {
           return state.selectedMaterialId;
+        },
+        get isGroupSelected(): boolean {
+          return state.isGroupSelected;
+        },
+        get isGeneratedSelected(): boolean {
+          return state.isGeneratedSelected;
         },
         get materialEditorOpen(): boolean {
           return materialEditorOpen();
@@ -416,6 +450,7 @@ export class LevelEditor {
         get isCsgAsset(): boolean {
           return csgCtrl.isEditorOpen;
         },
+        onselectnode: (node: import('./loadLevelDef').LevelSceneNode) => this.select(node),
         onadd: (assetId: string, materialId: string | undefined) => this.onAddClick(assetId, materialId),
         onmaterialchange: (matId: string | null) => this.onObjectMaterialChange(matId),
         ontoggleMaterialEditor: () => {
@@ -426,7 +461,7 @@ export class LevelEditor {
           }
         },
         onconvertToCsg: () => {
-          if (this.selectedObject) {
+          if (this.selectedObject && !isGeneratedDef(this.selectedObject.def)) {
             void this.csgController.convertToCsg(this.selectedObject.id);
           }
         },
@@ -446,8 +481,10 @@ export class LevelEditor {
   }
 
   updateSelectedLabel() {
-    this.panelState.selectedObjectId = this.selectedObject?.id ?? null;
+    this.panelState.selectedObjectId = this.selectedNode?.id ?? null;
     this.panelState.selectedMaterialId = this.selectedObject?.def?.material ?? null;
+    this.panelState.isGroupSelected = this.selectedNode ? isLevelGroup(this.selectedNode) : false;
+    this.panelState.isGeneratedSelected = this.selectedNode ? isGeneratedDef(this.selectedNode.def) : false;
   }
 
   private tickOrbitControls = () => {
@@ -545,25 +582,39 @@ export class LevelEditor {
     }
   }
 
-  select(levelObj: LevelObject) {
+  select(node: LevelSceneNode) {
+    const levelObj = isLevelGroup(node) ? null : node;
+    const isGenerated = isGeneratedDef(node.def);
+
     if (this.csgController.isActive && this.csgController.editingLevelObj !== levelObj) {
       this.csgController.exit();
     }
 
-    this.selectedObject = levelObj;
+    this.selectedNode = node;
     this.updateSelectedLabel();
 
-    if (this.materialEditor.isOpen && levelObj.def.material) {
-      this.materialEditor.setSelectedId(levelObj.def.material);
+    if (isLevelGroup(node)) {
+      // Groups: attach TransformControls only for editable groups; no CSG/material picker.
+      if (isGenerated) this.transformControls?.detach();
+      else this.transformControls?.attach(node.object);
+      this.csgController.closeEditor();
+      return;
     }
 
-    const assetDef = this.levelDef.assets[levelObj.assetId];
-    if (assetDef?.type === 'csg') {
+    if (this.materialEditor.isOpen && levelObj!.def.material) {
+      this.materialEditor.setSelectedId(levelObj!.def.material);
+    }
+
+    const assetDef = this.levelDef.assets[levelObj!.assetId];
+    if (isGenerated) {
+      this.transformControls?.detach();
+      this.csgController.closeEditor();
+    } else if (assetDef?.type === 'csg') {
       if (!this.csgController.isActive || this.csgController.editingLevelObj !== levelObj) {
-        this.csgController.enter(levelObj);
+        this.csgController.enter(levelObj!);
       }
     } else {
-      this.transformControls?.attach(levelObj.object);
+      this.transformControls?.attach(levelObj!.object);
       this.csgController.closeEditor();
     }
   }
@@ -572,7 +623,7 @@ export class LevelEditor {
     if (this.csgController.isActive) {
       this.csgController.exit();
     }
-    this.selectedObject = null;
+    this.selectedNode = null;
     this.transformControls?.detach();
     this.updateSelectedLabel();
     this.csgController.closeEditor();
@@ -582,9 +633,9 @@ export class LevelEditor {
    * Centers the orbit camera on the selected object (like Blender's numpad '.').
    */
   private focusSelected() {
-    if (!this.selectedObject || !this.orbitControls) return;
+    if (!this.selectedNode || !this.orbitControls) return;
 
-    const obj = this.selectedObject.object;
+    const obj = this.selectedNode.object;
     const box = new THREE.Box3().setFromObject(obj);
     const center = box.getCenter(new THREE.Vector3());
     const sphere = new THREE.Sphere();
@@ -605,12 +656,15 @@ export class LevelEditor {
    * multiplicatively for scale, mirroring Blender's "repeat last" behaviour.
    */
   private replayLastAction() {
-    if (!this.lastReplayableAction || !this.selectedObject) {
+    if (!this.lastReplayableAction || !this.selectedNode) {
+      return;
+    }
+    if (isGeneratedDef(this.selectedNode.def)) {
       return;
     }
 
     const delta = this.lastReplayableAction;
-    const obj = this.selectedObject.object;
+    const obj = this.selectedNode.object;
     const before = this.snapshotTransform(obj);
 
     const after: TransformSnapshot = {
@@ -634,12 +688,12 @@ export class LevelEditor {
     this.applySnapshot(obj, after);
     this.undoSystem.push({
       type: 'transform',
-      levelObj: this.selectedObject,
+      levelObj: this.selectedNode,
       before,
       after,
     });
-    this.api.saveTransform(this.selectedObject);
-    this.syncPhysics(this.selectedObject);
+    this.api.saveTransform(this.selectedNode);
+    this.syncSceneNodePhysics(this.selectedNode);
   }
 
   private applyUndoEntry = (entry: UndoEntry, direction: 'undo' | 'redo') => {
@@ -648,7 +702,7 @@ export class LevelEditor {
       this.applySnapshot(entry.levelObj.object, snap);
       this.select(entry.levelObj);
       this.api.saveTransform(entry.levelObj);
-      this.syncPhysics(entry.levelObj);
+      this.syncSceneNodePhysics(entry.levelObj);
     } else if (entry.type === 'add') {
       if (direction === 'undo') {
         this.removeFromScene(entry.levelObj);
@@ -740,27 +794,9 @@ export class LevelEditor {
 
   private finalizeSpawn(assetId: string, newDef: ObjectDef) {
     const prototype = this.prototypes.get(assetId)!;
-    const clone = prototype.clone();
-    const [px = 0, py = 0, pz = 0] = newDef.position ?? [];
-    const [rx = 0, ry = 0, rz = 0] = newDef.rotation ?? [];
-    const [sx = 1, sy = 1, sz = 1] = newDef.scale ?? [];
-    clone.position.set(px, py, pz);
-    clone.rotation.set(rx, ry, rz, 'YXZ');
-    clone.scale.set(sx, sy, sz);
-    clone.userData = { levelDefId: newDef.id };
-
-    if (newDef.material) {
-      const mat = this.builtMaterials.get(newDef.material) ?? PLACEHOLDER_MAT;
-      clone.traverse(child => {
-        if (child instanceof THREE.Mesh) child.material = mat;
-      });
-    }
-
-    clone.traverse(child => {
-      if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
-      }
+    const clone = instantiateLevelObject(prototype, newDef, {
+      builtMaterials: this.builtMaterials,
+      fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
     });
 
     const levelObj: LevelObject = { id: newDef.id, assetId, object: clone, def: newDef };
@@ -778,18 +814,17 @@ export class LevelEditor {
   private onObjectMaterialChange(matId: string | null) {
     const levelObj = this.selectedObject;
     if (!levelObj) return;
+    if (isGeneratedDef(levelObj.def)) {
+      console.info('[LevelEditor] Generated objects are read-only in the editor.');
+      return;
+    }
 
     if (matId) {
       levelObj.def.material = matId;
-      const mat = this.builtMaterials.get(matId) ?? PLACEHOLDER_MAT;
-      levelObj.object.traverse(child => {
-        if (child instanceof THREE.Mesh) child.material = mat;
-      });
+      assignMaterial(levelObj.object, this.builtMaterials.get(matId) ?? LEVEL_PLACEHOLDER_MAT);
     } else {
       delete levelObj.def.material;
-      levelObj.object.traverse(child => {
-        if (child instanceof THREE.Mesh) child.material = PLACEHOLDER_MAT;
-      });
+      assignMaterial(levelObj.object, LEVEL_PLACEHOLDER_MAT);
     }
 
     this.panelState.selectedMaterialId = matId;
@@ -801,29 +836,24 @@ export class LevelEditor {
     if (!fpCtx) return;
 
     levelObj.object.traverse(child => {
-      if (!(child instanceof THREE.Mesh)) return;
-
-      if (child.userData.rigidBody) {
-        fpCtx.removeCollisionObject(child.userData.rigidBody, child.name);
-        child.userData.rigidBody = undefined;
-      } else if (child.userData.collisionObj) {
-        fpCtx.removeCollisionObject(child.userData.collisionObj, child.name);
-        child.userData.collisionObj = undefined;
+      if (!(child instanceof THREE.Mesh)) {
+        return;
       }
 
-      child.updateWorldMatrix(true, false);
-
-      const origPos = child.position.clone();
-      const origQuat = child.quaternion.clone();
-      const origScale = child.scale.clone();
-
-      child.matrixWorld.decompose(child.position, child.quaternion, child.scale);
-      fpCtx.addTriMesh(child);
-
-      child.position.copy(origPos);
-      child.quaternion.copy(origQuat);
-      child.scale.copy(origScale);
+      clearPhysicsBinding(child, fpCtx);
+      withWorldSpaceTransform(child, mesh => fpCtx.addTriMesh(mesh));
     });
+  }
+
+  private syncSceneNodePhysics(node: LevelSceneNode) {
+    if (isLevelGroup(node)) {
+      for (const child of node.children) {
+        this.syncSceneNodePhysics(child);
+      }
+      return;
+    }
+
+    this.syncPhysics(node);
   }
 
   removePhysics(levelObj: LevelObject) {
@@ -837,13 +867,7 @@ export class LevelEditor {
         return;
       }
 
-      if (child.userData.rigidBody) {
-        fpCtx.removeCollisionObject(child.userData.rigidBody, child.name);
-        child.userData.rigidBody = undefined;
-      } else if (child.userData.collisionObj) {
-        fpCtx.removeCollisionObject(child.userData.collisionObj, child.name);
-        child.userData.collisionObj = undefined;
-      }
+      clearPhysicsBinding(child, fpCtx);
     });
   }
 
@@ -862,6 +886,18 @@ export const initLevelEditor = (
   prototypes: Map<string, THREE.Object3D>,
   builtMaterials: Map<string, THREE.Material>,
   loadedTextures: Map<string, THREE.Texture>,
-  levelDef: LevelDef
+  levelDef: LevelDef,
+  rootNodes: LevelSceneNode[],
+  nodeById: Map<string, LevelSceneNode>
 ): LevelEditor =>
-  new LevelEditor(viz, objects, levelName, prototypes, builtMaterials, loadedTextures, levelDef);
+  new LevelEditor(
+    viz,
+    objects,
+    levelName,
+    prototypes,
+    builtMaterials,
+    loadedTextures,
+    levelDef,
+    rootNodes,
+    nodeById
+  );

@@ -194,6 +194,17 @@ impl FillRule {
       _ => None,
     }
   }
+
+  pub(crate) fn to_lyon_fill_rule(self) -> Result<lyon_tessellation::FillRule, ErrorStack> {
+    match self {
+      FillRule::NonZero => Ok(lyon_tessellation::FillRule::NonZero),
+      FillRule::EvenOdd => Ok(lyon_tessellation::FillRule::EvenOdd),
+      FillRule::Positive | FillRule::Negative => Err(ErrorStack::new(
+        "fill_rule \"positive\" and \"negative\" are Clipper2-only and are not supported for \
+         polygon tessellation; use \"nonzero\" or \"evenodd\"",
+      )),
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -293,6 +304,17 @@ pub(crate) trait PathSampler: Any {
   /// Returns `None` if not supported (e.g. black-box callables).
   /// Each entry is (points, is_closed).  Points are in world (transformed) space.
   fn sample_subpaths(&self, _angle_tolerance: f32) -> Option<Vec<(Vec<Vec2>, bool)>> {
+    None
+  }
+
+  /// Build a lyon `Path` directly from the sampler's curve topology (lines, beziers, arcs),
+  /// with the sampler's transform applied to all control points.
+  ///
+  /// Returns `None` for black-box callables that don't expose curve topology.
+  /// When `Some` is returned, the caller can pass the lyon `Path` directly to the fill
+  /// tessellator, giving lyon visibility into the actual curve geometry for more precise
+  /// intersection detection and fill-rule handling.
+  fn to_lyon_path_for_tessellation(&self) -> Option<lyon_tessellation::path::Path> {
     None
   }
 }
@@ -635,6 +657,31 @@ impl PathSegment {
       PathSegment::Quadratic { end, .. } => *end,
       PathSegment::Cubic { end, .. } => *end,
       PathSegment::Arc { end, .. } => *end,
+    }
+  }
+
+  pub(crate) fn start_point(&self) -> Vec2 {
+    match self {
+      PathSegment::Line { start, .. } => *start,
+      PathSegment::Quadratic { start, .. } => *start,
+      PathSegment::Cubic { start, .. } => *start,
+      PathSegment::Arc {
+        center,
+        rx,
+        ry,
+        cos_phi,
+        sin_phi,
+        theta_start,
+        ..
+      } => {
+        let (sin_theta, cos_theta) = theta_start.sin_cos();
+        let x = rx * cos_theta;
+        let y = ry * sin_theta;
+        Vec2::new(
+          cos_phi * x - sin_phi * y + center.x,
+          sin_phi * x + cos_phi * y + center.y,
+        )
+      }
     }
   }
 
@@ -1548,6 +1595,77 @@ impl PathSampler for PathTracerCallable {
     self.reverse
   }
 
+  fn to_lyon_path_for_tessellation(&self) -> Option<lyon_tessellation::path::Path> {
+    use lyon_tessellation::{
+      geom::{Angle, Arc, Point, Vector},
+      path::Path,
+    };
+
+    let m = &self.transform;
+    // Apply the 2D affine transform stored in self.transform to a Vec2.
+    let tx = |pt: Vec2| -> Point<f32> {
+      let v = m * nalgebra::Vector3::new(pt.x, pt.y, 1.0);
+      Point::new(v.x, v.y)
+    };
+
+    let mut builder = Path::builder();
+
+    for subpath in &self.subpaths {
+      if subpath.segments.is_empty() {
+        continue;
+      }
+
+      builder.begin(tx(subpath.segments[0].start_point()));
+
+      for seg in &subpath.segments {
+        match seg {
+          PathSegment::Line { end, .. } => {
+            builder.line_to(tx(*end));
+          }
+          PathSegment::Quadratic { ctrl, end, .. } => {
+            builder.quadratic_bezier_to(tx(*ctrl), tx(*end));
+          }
+          PathSegment::Cubic { ctrl1, ctrl2, end, .. } => {
+            builder.cubic_bezier_to(tx(*ctrl1), tx(*ctrl2), tx(*end));
+          }
+          PathSegment::Arc {
+            center,
+            rx,
+            ry,
+            cos_phi,
+            sin_phi,
+            theta_start,
+            theta_delta,
+            ..
+          } => {
+            // Convert center-parametric arc to cubic bezier approximations in
+            // untransformed space, then apply the affine transform to the control points.
+            // Affine transforms distribute over bezier interpolation, so this is exact
+            // even for non-uniform scale and shear.
+            let arc = Arc {
+              center: Point::new(center.x, center.y),
+              radii: Vector::new(*rx, *ry),
+              start_angle: Angle::radians(*theta_start),
+              sweep_angle: Angle::radians(*theta_delta),
+              x_rotation: Angle::radians(sin_phi.atan2(*cos_phi)),
+            };
+            arc.for_each_cubic_bezier(&mut |seg| {
+              builder.cubic_bezier_to(
+                tx(Vec2::new(seg.ctrl1.x, seg.ctrl1.y)),
+                tx(Vec2::new(seg.ctrl2.x, seg.ctrl2.y)),
+                tx(Vec2::new(seg.to.x, seg.to.y)),
+              );
+            });
+          }
+        }
+      }
+
+      builder.end(subpath.closed);
+    }
+
+    Some(builder.build())
+  }
+
   fn transform(&self) -> &Matrix3<f32> {
     &self.transform
   }
@@ -2410,6 +2528,106 @@ pub fn trace_svg_path_impl(
       path_tracer.fill_rule = fill_rule;
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "trace_svg_path".to_string(),
+        inner: Box::new(path_tracer),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+pub fn text_to_path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let text = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
+      let font_family = arg_refs[1].resolve(args, kwargs).as_str().unwrap();
+      let font_size = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let font_weight_val = arg_refs[3].resolve(args, kwargs);
+      let font_weight = match font_weight_val {
+        Value::Int(i) => {
+          if *i < 100 || *i > 900 {
+            return Err(ErrorStack::new(format!(
+              "Invalid font_weight argument for `text_to_path`; expected value in range [100, \
+               900], found: {i}"
+            )));
+          }
+          Some(i.to_string())
+        }
+        Value::String(s) => Some(s.as_str().to_string()),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid font_weight argument for `text_to_path`; expected Int, String, or Nil, \
+             found: {font_weight_val:?}"
+          )));
+        }
+      };
+      let font_style_val = arg_refs[4].resolve(args, kwargs);
+      let font_style = match font_style_val {
+        Value::String(s) => Some(s.as_str().to_string()),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid font_style argument for `text_to_path`; expected String or Nil, found: \
+             {font_style_val:?}"
+          )));
+        }
+      };
+      let letter_spacing = match arg_refs[5].resolve(args, kwargs) {
+        Value::Float(f) => *f,
+        Value::Int(i) => *i as f32,
+        Value::Nil => 0.,
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid letter_spacing argument for `text_to_path`; expected Float, Int, or Nil, \
+             found: {other:?}"
+          )));
+        }
+      };
+      let center = arg_refs[6].resolve(args, kwargs).as_bool().unwrap();
+      let fill_rule_val = arg_refs[7].resolve(args, kwargs);
+      let fill_rule = match fill_rule_val {
+        Value::Nil => None,
+        val => Some(FillRule::parse(val, "text_to_path")?),
+      };
+
+      let svg_path = crate::mesh_ops::mesh_ops::get_cached_svg_path_str(
+        &text,
+        &font_family,
+        font_size,
+        font_weight.as_deref().unwrap_or(""),
+        font_style.as_deref().unwrap_or(""),
+        letter_spacing,
+      )?;
+      let Some(svg_path) = svg_path else {
+        let args = [
+          text.to_owned(),
+          font_family.to_owned(),
+          font_size.to_string(),
+          font_weight.unwrap_or_default(),
+          font_style.unwrap_or_default(),
+          letter_spacing.to_string(),
+        ];
+        return Err(ErrorStack::new_uninitialized_module_with_args(
+          "text_to_path",
+          args.into_iter(),
+        ));
+      };
+
+      let draw_cmds = parse_svg_path_to_draw_commands(&svg_path)
+        .map_err(|e| e.wrap("Error parsing SVG path from text_to_path"))?;
+
+      let interned_t_kwarg = ctx.interned_symbols.intern("t");
+      let mut path_tracer = PathTracerCallable::new(false, center, false, draw_cmds, interned_t_kwarg);
+      path_tracer.fill_rule = fill_rule;
+
+      Ok(Value::Callable(Rc::new(Callable::Dynamic {
+        name: "text_to_path".to_string(),
         inner: Box::new(path_tracer),
       })))
     }

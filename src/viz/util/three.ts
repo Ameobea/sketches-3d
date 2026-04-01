@@ -36,3 +36,25 @@ export const getMesh = (group: THREE.Group, name: string): THREE.Mesh => {
     throw new Error(`Expected mesh or group with name ${name}`);
   }
 };
+
+/**
+ * Temporarily exposes an object's transform as world-space position/quaternion/scale
+ * for code that reads those properties directly instead of `matrixWorld`.
+ */
+export const withWorldSpaceTransform = <T extends THREE.Object3D, R>(object: T, cb: (object: T) => R): R => {
+  object.updateWorldMatrix(true, false);
+
+  const origPos = object.position.clone();
+  const origQuat = object.quaternion.clone();
+  const origScale = object.scale.clone();
+
+  object.matrixWorld.decompose(object.position, object.quaternion, object.scale);
+
+  try {
+    return cb(object);
+  } finally {
+    object.position.copy(origPos);
+    object.quaternion.copy(origQuat);
+    object.scale.copy(origScale);
+  }
+};

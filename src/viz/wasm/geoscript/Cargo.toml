@@ -30,3 +30,5 @@ mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }
 tessellation = { path = "../tessellation" }
 svgtypes = "0.16.1"
+lyon_tessellation = "1.0"
+lyon_extra = "1.0"

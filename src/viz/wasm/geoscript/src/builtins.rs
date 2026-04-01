@@ -29,8 +29,9 @@ use crate::builtins::trace_path::{
 use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
-  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_geodesics_loaded,
-  get_text_to_path_cached_mesh, isotropic_remesh, remesh_planar_patches, smooth_mesh, SmoothType,
+  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_cached_svg_path_str,
+  get_geodesics_loaded, isotropic_remesh, remesh_planar_patches, smooth_mesh,
+  tessellate_svg_path_with_lyon, SmoothType,
 };
 use crate::mesh_ops::voxels::sample_voxels;
 use crate::noise::{
@@ -1915,6 +1916,14 @@ fn tessellate_path_impl(
           )))
         }
       };
+      let fill_rule_override_val = arg_refs[5].resolve(args, kwargs);
+      let fill_rule_override = match fill_rule_override_val {
+        Value::Nil => None,
+        val => Some(
+          trace_path::FillRule::parse(val, "tessellate_path")
+            .and_then(|fr| fr.to_lyon_fill_rule())?,
+        ),
+      };
 
       if sample_count < 3 {
         return Err(ErrorStack::new(format!(
@@ -1934,10 +1943,39 @@ fn tessellate_path_impl(
         curve_angle_degrees.to_radians()
       };
 
+      // `lyon` can consume discrete path features directly, so pass those through directly if available
+      if let Some(cb) = path_val.as_callable() {
+        if let Some(sampler) = as_path_sampler(cb) {
+          let sampler_fr = sampler
+            .fill_rule()
+            .and_then(|fr| fr.to_lyon_fill_rule().ok());
+          let fill_rule = fill_rule_override
+            .or(sampler_fr)
+            .unwrap_or(lyon_tessellation::FillRule::NonZero);
+
+          if let Some(lyon_path) = sampler.to_lyon_path_for_tessellation() {
+            let mesh = crate::mesh_ops::tessellate_polygon::tessellate_lyon_path(
+              &lyon_path,
+              fill_rule,
+              flipped,
+            )?;
+            return Ok(Value::Mesh(Rc::new(MeshHandle {
+              mesh: Rc::new(mesh),
+              transform: Matrix4::identity(),
+              manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+              aabb: RefCell::new(None),
+              trimesh: RefCell::new(None),
+              material: None,
+            })));
+          }
+        }
+      }
+
       const DEDUP_EPSILON: f32 = 1e-5;
       let dedup_eps_sq = DEDUP_EPSILON * DEDUP_EPSILON;
 
       let mut paths: Vec<Vec<Vec2>> = Vec::new();
+      let mut sampler_fill_rule: Option<lyon_tessellation::FillRule> = None;
 
       let mut push_clean_path = |points: Vec<Vec2>, label: &str| -> Result<(), ErrorStack> {
         if points.is_empty() {
@@ -2028,6 +2066,15 @@ fn tessellate_path_impl(
         }
       } else if let Some(cb) = path_val.as_callable() {
         let sampler = as_path_sampler(cb);
+
+        if fill_rule_override.is_none() {
+          if let Some(s) = sampler {
+            if let Some(fr) = s.fill_rule() {
+              sampler_fill_rule = fr.to_lyon_fill_rule().ok();
+            }
+          }
+        }
+
         let subpath_data = sampler.and_then(|s| s.sample_subpaths(curve_angle_radians));
 
         if let Some(subpath_data) = subpath_data {
@@ -2066,7 +2113,13 @@ fn tessellate_path_impl(
         )));
       }
 
-      let mesh = crate::mesh_ops::tessellate_polygon::tessellate_2d_paths(&paths, flipped)?;
+      // Priority: explicit arg override > sampler fill_rule > NonZero default
+      let fill_rule = fill_rule_override
+        .or(sampler_fill_rule)
+        .unwrap_or(lyon_tessellation::FillRule::NonZero);
+
+      let mesh =
+        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths_with_lyon(&paths, fill_rule, flipped)?;
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
@@ -2317,18 +2370,15 @@ fn text_to_mesh_impl(
         }
       };
 
-      let mesh = get_text_to_path_cached_mesh(
+      let svg_path = get_cached_svg_path_str(
         &text,
         &font_family,
         font_size,
-        font_weight.as_ref().map(String::as_str).unwrap_or_default(),
-        font_style.as_ref().map(String::as_str).unwrap_or_default(),
+        font_weight.as_deref().unwrap_or(""),
+        font_style.as_deref().unwrap_or(""),
         letter_spacing,
-        width.unwrap_or(0.),
-        height.unwrap_or(0.),
-        depth,
       )?;
-      let Some(mesh) = mesh else {
+      let Some(svg_path) = svg_path else {
         let args = [
           text.to_owned(),
           font_family.to_owned(),
@@ -2336,15 +2386,20 @@ fn text_to_mesh_impl(
           font_weight.unwrap_or_default(),
           font_style.unwrap_or_default(),
           letter_spacing.to_string(),
-          width.unwrap_or(0.).to_string(),
-          height.unwrap_or(0.).to_string(),
-          depth.unwrap_or(0.).to_string(),
         ];
         return Err(ErrorStack::new_uninitialized_module_with_args(
           "text_to_path",
           args.into_iter(),
         ));
       };
+
+      let mut mesh =
+        tessellate_svg_path_with_lyon(&svg_path, width.unwrap_or(0.), height.unwrap_or(0.))?;
+
+      if let Some(depth) = depth.filter(|&d| d != 0.0) {
+        crate::mesh_ops::extrude::extrude(&mut mesh, |_| Ok(Vec3::new(0., depth, 0.)))?;
+      }
+
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
@@ -2353,6 +2408,148 @@ fn text_to_mesh_impl(
         trimesh: RefCell::new(None),
         material: None,
       })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn text_to_svg_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let text = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
+      let font_family = arg_refs[1].resolve(args, kwargs).as_str().unwrap();
+      let font_size = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let font_weight_val = arg_refs[3].resolve(args, kwargs);
+      let font_weight = match font_weight_val {
+        Value::Int(i) => {
+          if *i < 100 || *i > 900 {
+            return Err(ErrorStack::new(format!(
+              "Invalid font_weight argument for `text_to_svg`; expected value in range [100, \
+               900], found: {i}"
+            )));
+          }
+          Some(i.to_string())
+        }
+        Value::String(s) => Some(s.as_str().to_string()),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid font_weight argument for `text_to_svg`; expected Int, String, or Nil, \
+             found: {font_weight_val:?}"
+          )));
+        }
+      };
+      let font_style_val = arg_refs[4].resolve(args, kwargs);
+      let font_style = match font_style_val {
+        Value::String(s) => Some(s.as_str().to_string()),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid font_style argument for `text_to_svg`; expected String or Nil, found: \
+             {font_style_val:?}"
+          )));
+        }
+      };
+      let letter_spacing = match arg_refs[5].resolve(args, kwargs) {
+        Value::Float(f) => *f,
+        Value::Int(i) => *i as f32,
+        Value::Nil => 0.,
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid letter_spacing argument for `text_to_svg`; expected Float, Int, or Nil, \
+             found: {other:?}"
+          )));
+        }
+      };
+
+      let svg_path = get_cached_svg_path_str(
+        &text,
+        &font_family,
+        font_size,
+        font_weight.as_deref().unwrap_or(""),
+        font_style.as_deref().unwrap_or(""),
+        letter_spacing,
+      )?;
+      let Some(svg_path) = svg_path else {
+        let args = [
+          text.to_owned(),
+          font_family.to_owned(),
+          font_size.to_string(),
+          font_weight.unwrap_or_default(),
+          font_style.unwrap_or_default(),
+          letter_spacing.to_string(),
+        ];
+        return Err(ErrorStack::new_uninitialized_module_with_args(
+          "text_to_path",
+          args.into_iter(),
+        ));
+      };
+
+      Ok(Value::String(svg_path))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn render_path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let resolution = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
+
+      // PathSampler path: topology-aware, handles subpaths + closed/open + critical t
+      if let Some(sampler) = as_path_sampler(callable) {
+        if let Some(subpath_data) = sampler.sample_subpaths(1.0_f32.to_radians()) {
+          for (points, is_closed) in subpath_data {
+            if points.is_empty() {
+              continue;
+            }
+            let mut path3d: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, 0., p.y)).collect();
+            if is_closed {
+              path3d.push(path3d[0]);
+            }
+            ctx.rendered_paths.push(path3d);
+          }
+          return Ok(Value::Nil);
+        }
+      }
+
+      // Fallback: uniform sampling for black-box callables
+      let sample = |t: f32| -> Result<Vec2, ErrorStack> {
+        let v = ctx
+          .invoke_callable(callable, &[Value::Float(t)], EMPTY_KWARGS)
+          .map_err(|e| e.wrap("Error sampling callable in `render_path`"))?;
+        v.as_vec2()
+          .map(|p| *p)
+          .ok_or_else(|| ErrorStack::new(format!("render_path: expected vec2, got {v:?}")))
+      };
+
+      let p0 = sample(0.)?;
+      let p1 = sample(1.)?;
+      let is_closed = (p0 - p1).norm() < 1e-4;
+
+      let mut path3d = Vec::with_capacity(resolution + 1);
+      for i in 0..resolution {
+        let p = sample(i as f32 / resolution as f32)?;
+        path3d.push(Vec3::new(p.x, 0., p.y));
+      }
+      if is_closed {
+        path3d.push(path3d[0]);
+      }
+
+      ctx.rendered_paths.push(path3d);
+      Ok(Value::Nil)
     }
     _ => unimplemented!(),
   }
@@ -6488,6 +6685,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "text_to_mesh" => builtin_fn!(text_to_mesh, |def_ix, arg_refs, args, kwargs, _ctx| {
     text_to_mesh_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "text_to_svg" => builtin_fn!(text_to_svg, |def_ix, arg_refs, args, kwargs, _ctx| {
+    text_to_svg_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "text_to_path" => builtin_fn!(text_to_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::text_to_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "render_path" => builtin_fn!(render_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    render_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "alpha_wrap" => builtin_fn!(alpha_wrap, |def_ix, arg_refs, args, kwargs, ctx| {
     alpha_wrap_impl(ctx, def_ix, arg_refs, args, kwargs)

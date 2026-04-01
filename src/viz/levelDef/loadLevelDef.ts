@@ -4,7 +4,15 @@ import { dev } from '$app/environment';
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import { WorkerManager } from 'src/geoscript/workerManager';
 import type { Viz } from 'src/viz';
-import type { AssetDef, CsgAssetDef, CsgTreeNode, LevelDef, ObjectDef } from './types';
+import { withWorldSpaceTransform } from 'src/viz/util/three';
+import {
+  LEVEL_PLACEHOLDER_MAT,
+  applyTransform,
+  assignMaterial,
+  instantiateLevelObject,
+} from './levelObjectUtils';
+import type { AssetDef, CsgAssetDef, CsgTreeNode, LevelDef, ObjectDef, ObjectGroupDef } from './types';
+import { isObjectGroup, flattenLeaves } from './levelDefTreeUtils';
 import { buildMaterial } from './buildMaterial';
 import { TextureFetchPool } from './texturePool';
 import { generateCsgCode } from './csgCodeGen';
@@ -22,6 +30,17 @@ export interface LevelObject {
   object: THREE.Object3D;
   def: ObjectDef;
 }
+
+export interface LevelGroup {
+  id: string;
+  object: THREE.Group;
+  def: ObjectGroupDef;
+  children: LevelSceneNode[];
+}
+
+export type LevelSceneNode = LevelObject | LevelGroup;
+
+export const isLevelGroup = (n: LevelSceneNode): n is LevelGroup => 'children' in n;
 
 /** @deprecated Use LevelLoadHandle instead */
 export interface LoadedLevel {
@@ -57,37 +76,82 @@ export interface LevelLoadHandle {
    * Intended for the level editor's live material rebuild path.
    */
   loadedTextures: Map<string, THREE.Texture>;
+  /**
+   * The top-level scene nodes (LevelObjects and LevelGroups) in the order they appear
+   * in the level def. Available once `objects` has resolved.
+   */
+  rootNodes: LevelSceneNode[];
+  /**
+   * Fast lookup from any node id (group or object) to its LevelSceneNode.
+   * Populated incrementally — safe to read once `objects` has resolved.
+   */
+  nodeById: Map<string, LevelSceneNode>;
 }
 
-// Shared placeholder used until real materials are built.
-const PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
+/**
+ * Builds a reverse-dependency map: for each asset id, the set of CSG asset ids
+ * that directly or transitively depend on it.  Used for hot-reload to find all
+ * assets that need re-running when a geo file changes.
+ */
+const buildReverseDeps = (assets: Record<string, AssetDef>): Map<string, Set<string>> => {
+  const rev = new Map<string, Set<string>>();
+  for (const id of Object.keys(assets)) rev.set(id, new Set());
 
-const applyTransform = (object: THREE.Object3D, def: ObjectDef) => {
-  const [px = 0, py = 0, pz = 0] = def.position ?? [];
-  const [rx = 0, ry = 0, rz = 0] = def.rotation ?? [];
-  const [sx = 1, sy = 1, sz = 1] = def.scale ?? [];
-  object.position.set(px, py, pz);
-  object.rotation.set(rx, ry, rz, 'YXZ');
-  object.scale.set(sx, sy, sz);
+  for (const [id, asset] of Object.entries(assets)) {
+    if (asset.type !== 'csg') continue;
+    const visitNode = (node: CsgTreeNode) => {
+      if ('asset' in node) {
+        rev.get(node.asset)?.add(id);
+      } else {
+        for (const child of node.children) visitNode(child);
+      }
+    };
+    visitNode(asset.tree);
+  }
+  return rev;
 };
 
-const applyShadowFlags = (object: THREE.Object3D, def: ObjectDef) => {
-  const castShadow = def.castShadow ?? true;
-  const receiveShadow = def.receiveShadow ?? true;
-  object.traverse(child => {
-    if (child instanceof THREE.Mesh) {
-      child.castShadow = castShadow;
-      child.receiveShadow = receiveShadow;
-    }
-  });
+/** Returns the set of asset ids that transitively depend on `changedId` (inclusive). */
+const getDownstreamAssets = (changedId: string, reverseDeps: Map<string, Set<string>>): Set<string> => {
+  const affected = new Set<string>();
+  const visit = (id: string) => {
+    if (affected.has(id)) return;
+    affected.add(id);
+    for (const dep of reverseDeps.get(id) ?? []) visit(dep);
+  };
+  visit(changedId);
+  return affected;
 };
 
-const assignMaterial = (object: THREE.Object3D, mat: THREE.Material) => {
-  object.traverse(child => {
-    if (child instanceof THREE.Mesh) {
-      child.material = mat;
+/**
+ * Collects the set of assets transitively reachable from a seed set of directly-referenced
+ * asset IDs (i.e. the assets used by level objects). CSG sub-assets are followed recursively.
+ * Any asset not in the returned set is orphaned and can be skipped.
+ */
+const computeReachableAssets = (
+  assets: Record<string, AssetDef>,
+  directRefs: Iterable<string>
+): Set<string> => {
+  const reachable = new Set<string>();
+
+  const visit = (id: string) => {
+    if (reachable.has(id)) return;
+    reachable.add(id);
+    const asset = assets[id];
+    if (asset?.type === 'csg') {
+      const visitNode = (node: CsgTreeNode) => {
+        if ('asset' in node) {
+          visit(node.asset);
+        } else {
+          for (const child of node.children) visitNode(child);
+        }
+      };
+      visitNode(asset.tree);
     }
-  });
+  };
+
+  for (const id of directRefs) visit(id);
+  return reachable;
 };
 
 /**
@@ -140,7 +204,7 @@ const extractPrototype = (
   const meshes: THREE.Mesh[] = [];
   for (const obj of objects) {
     if (obj.type !== 'mesh') continue;
-    const mesh = new THREE.Mesh(obj.geometry!, PLACEHOLDER_MAT);
+    const mesh = new THREE.Mesh(obj.geometry!, LEVEL_PLACEHOLDER_MAT);
     mesh.applyMatrix4(obj.transform!);
     meshes.push(mesh);
   }
@@ -257,17 +321,32 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     matTexLoaded.set(matName, new Map());
   }
 
+  // Flatten all leaf ObjectDefs for asset/material bookkeeping.
+  const allLeafDefs = flattenLeaves(levelDef.objects);
+
   // Map from assetId → list of ObjectDefs that use it
   const assetToObjDefs = new Map<string, ObjectDef[]>();
-  for (const objDef of levelDef.objects) {
+  for (const objDef of allLeafDefs) {
     const list = assetToObjDefs.get(objDef.asset) ?? [];
     list.push(objDef);
     assetToObjDefs.set(objDef.asset, list);
   }
 
+  // Warn about orphaned assets — assets that are defined but never referenced by any object
+  // (directly or transitively through CSG). In dev, still resolve them so the level editor
+  // can spawn new objects that reference assets not yet used in the scene.
+  const reachableAssets = computeReachableAssets(levelDef.assets, assetToObjDefs.keys());
+  if (dev) {
+    for (const id of Object.keys(levelDef.assets)) {
+      if (!reachableAssets.has(id)) {
+        console.warn(`[levelDef] Asset "${id}" is defined but not referenced by any object`);
+      }
+    }
+  }
+
   // Map from material name → object ids using it
   const matToObjIds = new Map<string, string[]>();
-  for (const objDef of levelDef.objects) {
+  for (const objDef of allLeafDefs) {
     if (objDef.material) {
       const list = matToObjIds.get(objDef.material) ?? [];
       list.push(objDef.id);
@@ -282,6 +361,45 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   const allLevelObjects: LevelObject[] = [];
   const registeredPhysicsObjects = new Set<string>();
 
+  // Pre-create the group hierarchy synchronously before async asset resolution.
+  // Each leaf def gets mapped to its parent Object3D so placeObject can add to the right parent.
+  const parentMap = new Map<string, THREE.Object3D>(); // objectId → parent container
+  const parentGroupForLeaf = new Map<string, { group: LevelGroup; index: number }>();
+  const nodeById = new Map<string, LevelSceneNode>();
+  const rootNodes: LevelSceneNode[] = [];
+
+  const preCreateGroups = (
+    nodes: (ObjectDef | ObjectGroupDef)[],
+    parent: THREE.Object3D,
+    parentGroup: LevelGroup | null = null
+  ): void => {
+    for (let childIx = 0; childIx < nodes.length; childIx += 1) {
+      const node = nodes[childIx];
+      if (isObjectGroup(node)) {
+        const group = new THREE.Group();
+        applyTransform(group, node);
+        parent.add(group);
+        const levelGroup: LevelGroup = { id: node.id, object: group, def: node, children: [] };
+        nodeById.set(node.id, levelGroup);
+        if (parent === viz.scene) rootNodes.push(levelGroup);
+        preCreateGroups(node.children, group, levelGroup);
+        // Populate children after recursion so they're in the nodeById map
+        for (const child of node.children) {
+          const childNode = nodeById.get(child.id);
+          if (childNode) levelGroup.children.push(childNode);
+        }
+      } else {
+        parentMap.set(node.id, parent);
+        if (parentGroup) {
+          parentGroupForLeaf.set(node.id, { group: parentGroup, index: childIx });
+        }
+        // Leaf nodes are added to rootNodes/nodeById when placed (onAssetResolved)
+      }
+    }
+  };
+
+  preCreateGroups(levelDef.objects, viz.scene);
+
   // Track physics: push one callback to collisionWorldLoadedCbs; for objects placed
   // after physics is ready, register directly.
   let physicsReady = false;
@@ -295,9 +413,11 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
       return;
     }
     levelObj.object.traverse(child => {
-      if (child instanceof THREE.Mesh) {
-        fpCtx.addTriMesh(child);
-      }
+      if (!(child instanceof THREE.Mesh)) return;
+
+      // addTriMesh -> addCollisionObject reads mesh.position/quaternion/scale directly,
+      // so temporarily expose the mesh's world-space transform during registration.
+      withWorldSpaceTransform(child, mesh => fpCtx.addTriMesh(mesh));
     });
     registeredPhysicsObjects.add(levelObj.id);
   };
@@ -311,28 +431,47 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   });
 
   const placeObject = (assetId: string, prototype: THREE.Object3D, objDef: ObjectDef) => {
-    const clone = prototype.clone();
-    applyTransform(clone, objDef);
-    applyShadowFlags(clone, objDef);
-    clone.userData = { ...clone.userData, ...(objDef.userData ?? {}), levelDefId: objDef.id };
+    const clone = instantiateLevelObject(prototype, objDef, {
+      builtMaterials,
+      fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
+    });
 
-    viz.scene.add(clone);
+    const parent = parentMap.get(objDef.id) ?? viz.scene;
+    parent.add(clone);
 
     const levelObj: LevelObject = { id: objDef.id, assetId, object: clone, def: objDef };
     allLevelObjects.push(levelObj);
     placedObjects.set(objDef.id, levelObj);
+    nodeById.set(objDef.id, levelObj);
+    const parentGroupEntry = parentGroupForLeaf.get(objDef.id);
+    if (parentGroupEntry) {
+      const insertAt = parentGroupEntry.group.children.findIndex(existingChild => {
+        const existingIx = parentGroupEntry.group.def.children.findIndex(
+          defChild => defChild.id === existingChild.id
+        );
+        return existingIx > parentGroupEntry.index;
+      });
+      if (insertAt === -1) {
+        parentGroupEntry.group.children.push(levelObj);
+      } else {
+        parentGroupEntry.group.children.splice(insertAt, 0, levelObj);
+      }
+    } else if (parent === viz.scene) {
+      const levelObjRootIndex = levelDef.objects.findIndex(rootNode => rootNode.id === levelObj.id);
+      const insertAt = rootNodes.findIndex(existingRootNode => {
+        const existingRootIx = levelDef.objects.findIndex(rootNode => rootNode.id === existingRootNode.id);
+        return existingRootIx > levelObjRootIndex;
+      });
+      if (insertAt === -1) {
+        rootNodes.push(levelObj);
+      } else {
+        rootNodes.splice(insertAt, 0, levelObj);
+      }
+    }
 
     // Physics: register immediately if physics is already up, otherwise the batch callback covers it
     if (physicsReady) {
       registerPhysics(viz.fpCtx!, levelObj);
-    }
-
-    // Material: assign if already built
-    if (objDef.material) {
-      const mat = builtMaterials.get(objDef.material);
-      if (mat) {
-        assignMaterial(clone, mat);
-      }
     }
   };
 
@@ -403,7 +542,9 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
 
   // --- Topo-sort assets for dependency ordering ---
 
-  const sortedAssetIds = topoSortAssets(levelDef.assets);
+  const sortedAssetIds = dev
+    ? topoSortAssets(levelDef.assets)
+    : topoSortAssets(levelDef.assets).filter(id => reachableAssets.has(id));
 
   // --- Resolve gltf assets immediately (sync) ---
 
@@ -437,18 +578,70 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   );
 
   if (dev) {
+    // Mutable shadow of levelDef.assets, kept current as geo files are hot-reloaded.
+    const mutableAssets: Record<string, AssetDef> = { ...levelDef.assets };
+
     objectsPromise.then(objects =>
-      import('./LevelEditor.svelte').then(({ initLevelEditor }) =>
-        initLevelEditor(
+      import('./LevelEditor.svelte').then(({ initLevelEditor }) => {
+        const editor = initLevelEditor(
           viz,
           objects,
           viz.sceneName,
           assetPrototypes,
           builtMaterials,
           loadedTextures,
-          levelDef
-        )
-      )
+          levelDef,
+          rootNodes,
+          nodeById
+        );
+
+        // Subscribe to geo file changes for in-place hot reload.
+        const sse = new EventSource(`/level_editor/${viz.sceneName}/geo-watch`);
+        sse.addEventListener('geo-change', async (event: Event) => {
+          const { assetId, code } = JSON.parse((event as MessageEvent).data) as {
+            assetId: string;
+            code: string;
+          };
+          console.log(`[levelDef] Hot reloading geo asset "${assetId}"`);
+
+          // Update the code in our mutable shadow.
+          const existing = mutableAssets[assetId];
+          if (!existing || existing.type !== 'geoscript') return;
+          mutableAssets[assetId] = { type: 'geoscript', code, includePrelude: existing.includePrelude };
+
+          // Re-run the changed asset and everything that transitively depends on it.
+          const affected = getDownstreamAssets(assetId, buildReverseDeps(mutableAssets));
+          const sortedAffected = topoSortAssets(mutableAssets).filter(
+            id =>
+              affected.has(id) && (mutableAssets[id].type === 'geoscript' || mutableAssets[id].type === 'csg')
+          );
+          if (sortedAffected.length === 0) return;
+
+          await resolveScriptAssets(sortedAffected, mutableAssets, (id, newPrototype) => {
+            assetPrototypes.set(id, newPrototype);
+
+            // Swap every placed object that uses this asset in-place.
+            for (const levelObj of allLevelObjects) {
+              if (levelObj.assetId !== id) continue;
+
+              editor.unregisterMeshes(levelObj);
+              const oldParent = levelObj.object.parent ?? viz.scene;
+              oldParent.remove(levelObj.object);
+
+              const clone = instantiateLevelObject(newPrototype, levelObj.def, {
+                builtMaterials,
+                fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
+              });
+
+              oldParent.add(clone);
+              levelObj.object = clone;
+              editor.registerMeshes(levelObj);
+            }
+          });
+        });
+
+        viz.registerDestroyedCb(() => sse.close());
+      })
     );
   }
 
@@ -458,5 +651,7 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     prototypes: assetPrototypes,
     builtMaterials,
     loadedTextures,
+    rootNodes,
+    nodeById,
   };
 };

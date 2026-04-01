@@ -6,7 +6,7 @@ import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 import { initGeodesics } from './geodesics';
 import { initCGAL } from 'src/viz/wasm/cgal/cgal';
 import { initClipper2 } from 'src/viz/wasm/clipper2/clipper2';
-import { textToPath } from './text_to_path';
+import { textToSvg } from './text_to_path';
 
 const initGeoscript = async () => {
   await Geoscript.default();
@@ -48,9 +48,7 @@ const initAsyncDeps = (
       throw new Error('text_to_path dependency requires arguments');
     }
 
-    const [text, fontFamily, fontSize, fontWeight, fontStyle, letterSpacing, width, height] = args;
-    const widthNum = +(width || 0);
-    const heightNum = +(height || 0);
+    const [text, fontFamily, fontSize, fontWeight, fontStyle, letterSpacing] = args;
 
     const convertedFontWeight = fontWeight
       ? isNaN(Number(fontWeight))
@@ -59,20 +57,13 @@ const initAsyncDeps = (
       : undefined;
 
     promises.push(
-      textToPath(
-        text,
-        {
-          width: width && widthNum !== 0 ? +width : null,
-          height: height && heightNum !== 0 ? +height : null,
-        },
-        {
-          fontFamily,
-          fontSize: fontSize ? +fontSize : undefined,
-          fontWeight: convertedFontWeight,
-          fontStyle: (fontStyle || undefined) as 'normal' | 'italic' | 'oblique' | undefined,
-          letterSpacing: letterSpacing ? +letterSpacing : undefined,
-        }
-      ).then(() => {})
+      textToSvg(text, {
+        fontFamily,
+        fontSize: fontSize ? +fontSize : undefined,
+        fontWeight: convertedFontWeight,
+        fontStyle: (fontStyle || undefined) as 'normal' | 'italic' | 'oblique' | undefined,
+        letterSpacing: letterSpacing ? +letterSpacing : undefined,
+      })
     );
   }
 

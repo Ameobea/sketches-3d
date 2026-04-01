@@ -1,3 +1,5 @@
+import flightRecorderWasmURL from 'src/viz/wasm/build2/flight_recorder.wasm?url';
+
 export const enum RecorderEventType {
   Jump = 0,
   Dash = 1,
@@ -55,6 +57,14 @@ export function packKeyFlags(keyStates: Record<string, boolean>): number {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+const loadFlightRecorderInstance = async (): Promise<FlightRecorderExports> => {
+  const response = await fetch(flightRecorderWasmURL);
+  const bytes = await response.arrayBuffer();
+  const module = await WebAssembly.compile(bytes);
+  const instance = await WebAssembly.instantiate(module, { env: {} });
+  return instance.exports as unknown as FlightRecorderExports;
+};
+
 export class FlightRecorder {
   private exports!: FlightRecorderExports;
   private ctx = 0;
@@ -65,11 +75,7 @@ export class FlightRecorder {
   private ready = false;
 
   async init(): Promise<void> {
-    const response = await fetch('/flight_recorder.wasm');
-    const bytes = await response.arrayBuffer();
-    const module = await WebAssembly.compile(bytes);
-    const instance = await WebAssembly.instantiate(module, { env: {} });
-    this.exports = instance.exports as unknown as FlightRecorderExports;
+    this.exports = await loadFlightRecorderInstance();
 
     this.ctx = this.exports.create_recorder();
 
@@ -271,11 +277,7 @@ export class FlightPlayer {
   private eventsBySubtick: Map<number, ReplayEvent[]> = new Map();
 
   async load(replayData: Uint8Array): Promise<boolean> {
-    const response = await fetch('/flight_recorder.wasm');
-    const bytes = await response.arrayBuffer();
-    const module = await WebAssembly.compile(bytes);
-    const instance = await WebAssembly.instantiate(module, { env: {} });
-    this.exports = instance.exports as unknown as FlightRecorderExports;
+    this.exports = await loadFlightRecorderInstance();
 
     this.ctx = this.exports.create_player();
 

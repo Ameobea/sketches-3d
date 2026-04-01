@@ -1,0 +1,241 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "asset": {
+                "type": "string"
+              },
+              "position": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "rotation": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "scale": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "castShadow": {
+                "type": "boolean"
+              },
+              "receiveShadow": {
+                "type": "boolean"
+              },
+              "userData": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "material": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "asset"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "$ref": "#/definitions/__schema0"
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "objects"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "children": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "asset": {
+                    "type": "string"
+                  },
+                  "position": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "rotation": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "scale": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "castShadow": {
+                    "type": "boolean"
+                  },
+                  "receiveShadow": {
+                    "type": "boolean"
+                  },
+                  "userData": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "material": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "asset"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "$ref": "#/definitions/__schema0"
+              }
+            ]
+          }
+        },
+        "position": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "rotation": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "scale": {
+          "type": "array",
+          "items": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "children"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "title": "ObjectsFile",
+  "$id": "https://ameo.design/schemas/level-objects.json"
+}

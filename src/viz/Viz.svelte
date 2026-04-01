@@ -36,7 +36,11 @@
 
   // When sceneName changes (same [scene] catch-all route, different scene), reset stale references
   // so the UI doesn't hold onto the old destroyed viz during the transition.
-  $: sceneName, (viz = null), (sceneConfig = null);
+  $: {
+    void sceneName;
+    viz = null;
+    sceneConfig = null;
+  }
 </script>
 
 <svelte:head>

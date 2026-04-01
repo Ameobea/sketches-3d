@@ -49,10 +49,7 @@
         "metalness": 0.3,
         "iridescence": 0.2,
         "mapDisableDistance": null,
-        "uvScale": [
-          0.35,
-          0.35
-        ],
+        "uvScale": [0.35, 0.35],
         "map": "obsidian_color",
         "normalMap": "obsidian_normal",
         "roughnessMap": "obsidian_roughness"
@@ -72,10 +69,7 @@
         "roughness": 0.65,
         "metalness": 0.49,
         "iridescence": 0.4,
-        "uvScale": [
-          0.003,
-          0.003
-        ],
+        "uvScale": [0.003, 0.003],
         "map": "bricks_color",
         "normalMap": "bricks_normal",
         "roughnessMap": "bricks_roughness",
@@ -91,10 +85,7 @@
       "props": {
         "roughness": 0.87,
         "metalness": 0.99,
-        "uvScale": [
-          0.1,
-          0.1
-        ],
+        "uvScale": [0.1, 0.1],
         "map": "gold_albedo",
         "normalMap": "gold_normal",
         "roughnessMap": "gold_roughness"
@@ -109,10 +100,7 @@
         "color": 14671839,
         "roughness": 0.9,
         "metalness": 0.4,
-        "uvScale": [
-          0.04,
-          0.04
-        ],
+        "uvScale": [0.04, 0.04],
         "map": "plastered_concrete_color",
         "normalMap": "plastered_concrete_normal"
       },
@@ -151,130 +139,46 @@
                 "children": [
                   {
                     "asset": "platform_small",
-                    "position": [
-                      0,
-                      0,
-                      0
-                    ],
-                    "rotation": [
-                      0,
-                      0,
-                      0
-                    ],
-                    "scale": [
-                      1,
-                      1,
-                      1
-                    ]
+                    "position": [0, 0, 0],
+                    "rotation": [0, 0, 0],
+                    "scale": [1, 1, 1]
                   },
                   {
                     "op": "difference",
                     "children": [
                       {
                         "asset": "platform_small",
-                        "position": [
-                          -0.0381,
-                          0.1553,
-                          -0.1212
-                        ],
-                        "rotation": [
-                          -1.0259,
-                          -2.3266,
-                          1.4592
-                        ],
-                        "scale": [
-                          0.8492,
-                          1,
-                          1
-                        ]
+                        "position": [-0.0381, 0.1553, -0.1212],
+                        "rotation": [-1.0259, -2.3266, 1.4592],
+                        "scale": [0.8492, 1, 1]
                       },
                       {
                         "asset": "ground",
-                        "position": [
-                          -0.0123,
-                          -0.0074,
-                          0.7177
-                        ],
-                        "rotation": [
-                          0,
-                          0,
-                          0
-                        ],
-                        "scale": [
-                          0.2012,
-                          0.1723,
-                          0.0639
-                        ]
+                        "position": [-0.0123, -0.0074, 0.7177],
+                        "rotation": [0, 0, 0],
+                        "scale": [0.2012, 0.1723, 0.0639]
                       }
                     ],
-                    "position": [
-                      0.0101,
-                      0.038,
-                      -0.1215
-                    ],
-                    "rotation": [
-                      0,
-                      0,
-                      0
-                    ],
-                    "scale": [
-                      1,
-                      1,
-                      1
-                    ]
+                    "position": [0.0101, 0.038, -0.1215],
+                    "rotation": [0, 0, 0],
+                    "scale": [1, 1, 1]
                   },
                   {
                     "asset": "coil",
-                    "position": [
-                      0.029,
-                      0.0168,
-                      -1.7094
-                    ],
-                    "rotation": [
-                      0,
-                      0,
-                      0
-                    ],
-                    "scale": [
-                      1,
-                      1,
-                      1
-                    ]
+                    "position": [0.029, 0.0168, -1.7094],
+                    "rotation": [0, 0, 0],
+                    "scale": [1, 1, 1]
                   }
                 ],
-                "position": [
-                  0,
-                  0,
-                  0
-                ],
-                "rotation": [
-                  0,
-                  0,
-                  0
-                ],
-                "scale": [
-                  1,
-                  1,
-                  1
-                ]
+                "position": [0, 0, 0],
+                "rotation": [0, 0, 0],
+                "scale": [1, 1, 1]
               },
               {
                 "asset": "coil",
-                "position": [
-                  -1.0334,
-                  -0.4951,
-                  -0.0141
-                ],
-                "rotation": [
-                  0,
-                  0,
-                  0
-                ],
-                "scale": [
-                  1,
-                  1,
-                  1
-                ]
+                "position": [-1.0334, -0.4951, -0.0141],
+                "rotation": [0, 0, 0],
+                "scale": [1, 1, 1]
               }
             ]
           },
@@ -283,56 +187,20 @@
             "children": [
               {
                 "asset": "capsule",
-                "position": [
-                  1.0263,
-                  -0.7039,
-                  3.0923
-                ],
-                "rotation": [
-                  0.4093,
-                  2.4774,
-                  2.0306
-                ],
-                "scale": [
-                  1,
-                  1,
-                  1
-                ]
+                "position": [1.0263, -0.7039, 3.0923],
+                "rotation": [0.4093, 2.4774, 2.0306],
+                "scale": [1, 1, 1]
               },
               {
                 "asset": "capsule",
-                "position": [
-                  1.9256,
-                  -1.6843,
-                  3.9122
-                ],
-                "rotation": [
-                  -0.3268,
-                  0.2598,
-                  -1.2944
-                ],
-                "scale": [
-                  1.0469,
-                  1,
-                  1.128
-                ]
+                "position": [1.9256, -1.6843, 3.9122],
+                "rotation": [-0.3268, 0.2598, -1.2944],
+                "scale": [1.0469, 1, 1.128]
               }
             ],
-            "position": [
-              0.0003,
-              0.0002,
-              -0.0171
-            ],
-            "rotation": [
-              0,
-              0,
-              0
-            ],
-            "scale": [
-              1,
-              1,
-              1
-            ]
+            "position": [0.0003, 0.0002, -0.0171],
+            "rotation": [0, 0, 0],
+            "scale": [1, 1, 1]
           }
         ]
       }
@@ -363,21 +231,9 @@
           },
           {
             "asset": "capsule",
-            "position": [
-              39.0224,
-              10.8949,
-              0
-            ],
-            "rotation": [
-              0,
-              0,
-              0
-            ],
-            "scale": [
-              8.3449,
-              8.3449,
-              8.3449
-            ]
+            "position": [39.0224, 10.8949, 0],
+            "rotation": [0, 0, 0],
+            "scale": [8.3449, 8.3449, 8.3449]
           }
         ]
       }
@@ -392,21 +248,9 @@
           },
           {
             "asset": "capsule",
-            "position": [
-              -11.7315,
-              0,
-              -87.0651
-            ],
-            "rotation": [
-              0,
-              0,
-              0
-            ],
-            "scale": [
-              -15.0835,
-              -7.5788,
-              -15.8001
-            ]
+            "position": [-11.7315, 0, -87.0651],
+            "rotation": [0, 0, 0],
+            "scale": [-15.0835, -7.5788, -15.8001]
           }
         ]
       }
@@ -417,378 +261,150 @@
       "id": "ground",
       "asset": "ground",
       "material": "ground_mat",
-      "position": [
-        0,
-        0,
-        0
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        1,
-        1.4115,
-        1
-      ]
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1.4115, 1]
     },
     {
       "id": "plat_a",
       "asset": "platform_small",
       "material": "platform_mat",
-      "position": [
-        0.024,
-        8.7629,
-        7.315
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        3.5082,
-        1,
-        1
-      ]
+      "position": [0.024, 8.7629, 7.315],
+      "rotation": [0, 0, 0],
+      "scale": [3.5082, 1, 1]
     },
     {
       "id": "plat_c",
       "asset": "platform_long",
       "material": "platform_mat",
-      "position": [
-        -4,
-        1.3541,
-        -18
-      ],
-      "rotation": [
-        0,
-        2.6063,
-        0
-      ],
-      "scale": [
-        2.4008,
-        1.513,
-        1.513
-      ]
+      "position": [-4, 1.3541, -18],
+      "rotation": [0, 2.6063, 0],
+      "scale": [2.4008, 1.513, 1.513]
     },
     {
       "id": "plat_d",
       "asset": "platform_small",
       "material": "gold_mat",
-      "position": [
-        2.9152,
-        7.8787,
-        -34.3021
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        1.3402,
-        1.3402,
-        1.3402
-      ]
+      "position": [2.9152, 7.8787, -34.3021],
+      "rotation": [0, 0, 0],
+      "scale": [1.3402, 1.3402, 1.3402]
     },
     {
       "id": "plat_e",
       "asset": "platform_small",
       "material": "platform_mat",
-      "position": [
-        -3.0575,
-        9.6833,
-        -52.8428
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        1.3402,
-        1.3402,
-        1.3402
-      ]
+      "position": [-3.0575, 9.6833, -52.8428],
+      "rotation": [0, 0, 0],
+      "scale": [1.3402, 1.3402, 1.3402]
     },
     {
       "id": "coil",
       "asset": "coil",
-      "position": [
-        -34.1317,
-        16.1207,
-        -5.3549
-      ],
-      "rotation": [
-        0,
-        0,
-        0.6687
-      ],
-      "scale": [
-        7.6205,
-        7.0692,
-        11.5447
-      ],
+      "position": [-34.1317, 16.1207, -5.3549],
+      "rotation": [0, 0, 0.6687],
+      "scale": [7.6205, 7.0692, 11.5447],
       "material": "gold_mat"
     },
     {
       "id": "plat_b",
       "asset": "platform_small",
-      "position": [
-        29.1819,
-        3.0573,
-        9.1142
-      ],
-      "rotation": [
-        0,
-        0,
-        0.2734
-      ],
-      "scale": [
-        3.2492,
-        1.713,
-        1
-      ],
+      "position": [29.1819, 3.0573, 9.1142],
+      "rotation": [0, 0, 0.2734],
+      "scale": [3.2492, 1.713, 1],
       "material": "gold_mat"
     },
     {
       "id": "coil_1",
       "asset": "coil",
-      "position": [
-        -108.3522,
-        27.8834,
-        -5.3549
-      ],
-      "rotation": [
-        0,
-        0,
-        0.6687
-      ],
-      "scale": [
-        7.6205,
-        7.0692,
-        11.5447
-      ],
+      "position": [-108.3522, 27.8834, -5.3549],
+      "rotation": [0, 0, 0.6687],
+      "scale": [7.6205, 7.0692, 11.5447],
       "material": "ground_mat"
     },
     {
       "id": "coil_2",
       "asset": "coil",
-      "position": [
-        -1.1608,
-        -0.1286,
-        37.8647
-      ],
-      "rotation": [
-        -1.5229,
-        0.77,
-        -2.9581
-      ],
-      "scale": [
-        7.6205,
-        7.0692,
-        11.5447
-      ],
+      "position": [-1.1608, -0.1286, 37.8647],
+      "rotation": [-1.5229, 0.77, -2.9581],
+      "scale": [7.6205, 7.0692, 11.5447],
       "material": "gold_mat"
     },
     {
       "id": "platform_small",
       "asset": "platform_small",
-      "position": [
-        0.024,
-        20.7854,
-        7.315
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        3.5082,
-        1,
-        1
-      ],
+      "position": [0.024, 20.7854, 7.315],
+      "rotation": [0, 0, 0],
+      "scale": [3.5082, 1, 1],
       "material": "platform_mat"
     },
     {
       "id": "coil_3",
       "asset": "coil",
-      "position": [
-        -35.1175,
-        41.0563,
-        10.7823
-      ],
-      "rotation": [
-        -0.0016,
-        -1.5258,
-        0.1105
-      ],
-      "scale": [
-        7.6205,
-        7.0692,
-        11.5447
-      ],
+      "position": [-35.1175, 41.0563, 10.7823],
+      "rotation": [-0.0016, -1.5258, 0.1105],
+      "scale": [7.6205, 7.0692, 11.5447],
       "material": "gold_mat"
     },
     {
       "id": "coil_4",
       "asset": "coil",
-      "position": [
-        -34.4426,
-        53.7974,
-        25.602
-      ],
-      "rotation": [
-        -0.0016,
-        -1.5258,
-        0.1105
-      ],
-      "scale": [
-        7.6205,
-        7.0692,
-        11.5447
-      ],
+      "position": [-34.4426, 53.7974, 25.602],
+      "rotation": [-0.0016, -1.5258, 0.1105],
+      "scale": [7.6205, 7.0692, 11.5447],
       "material": "gold_mat"
     },
     {
       "id": "coil_5",
       "asset": "csg_coil_1",
-      "position": [
-        64.7195,
-        5.483,
-        -3.9608
-      ],
-      "rotation": [
-        -0.0132,
-        -3.1271,
-        0.2139
-      ],
-      "scale": [
-        -7.3804,
-        -7.3804,
-        -7.3804
-      ],
+      "position": [64.7195, 5.483, -3.9608],
+      "rotation": [-0.0132, -3.1271, 0.2139],
+      "scale": [-7.3804, -7.3804, -7.3804],
       "material": "gold_mat"
     },
     {
       "id": "t1",
       "asset": "csg_t1",
-      "position": [
-        -4.645,
-        25.085,
-        21.3123
-      ],
-      "rotation": [
-        1.392,
-        0.6246,
-        1.4632
-      ],
-      "scale": [
-        1,
-        1,
-        1
-      ],
+      "position": [-4.645, 25.085, 21.3123],
+      "rotation": [1.392, 0.6246, 1.4632],
+      "scale": [1, 1, 1],
       "material": "plastered_concrete"
     },
     {
       "id": "ring",
       "asset": "csg_ring",
-      "position": [
-        70.6811,
-        51.3362,
-        171.8815
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        1,
-        1.0791,
-        1
-      ],
+      "position": [70.6811, 51.3362, 171.8815],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1.0791, 1],
       "material": "plastered_concrete"
     },
     {
       "id": "t2",
       "asset": "t2",
-      "position": [
-        111.6355,
-        59.6373,
-        -2.1352
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        1,
-        1,
-        1
-      ],
+      "position": [111.6355, 59.6373, -2.1352],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
       "material": "plastered_concrete"
     },
     {
       "id": "platform_small_1",
       "asset": "platform_small",
-      "position": [
-        -2.459,
-        27.4071,
-        -20.1358
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        0.1887,
-        1,
-        0.1838
-      ]
+      "position": [-2.459, 27.4071, -20.1358],
+      "rotation": [0, 0, 0],
+      "scale": [0.1887, 1, 0.1838]
     },
     {
       "id": "platform_small_2",
       "asset": "platform_small",
-      "position": [
-        -2.42,
-        24.2454,
-        -7.0317
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        0.3264,
-        1,
-        0.1423
-      ]
+      "position": [-2.42, 24.2454, -7.0317],
+      "rotation": [0, 0, 0],
+      "scale": [0.3264, 1, 0.1423]
     },
     {
       "id": "coil_6",
       "asset": "coil",
-      "position": [
-        0,
-        2.2334,
-        13.6187
-      ],
-      "rotation": [
-        0,
-        0,
-        0
-      ],
-      "scale": [
-        1,
-        1,
-        1
-      ]
+      "position": [0, 2.2334, 13.6187],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     }
   ]
 }

@@ -1,0 +1,380 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "textures": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "wrapS": {
+            "type": "string",
+            "enum": [
+              "repeat",
+              "clamp",
+              "mirror"
+            ]
+          },
+          "wrapT": {
+            "type": "string",
+            "enum": [
+              "repeat",
+              "clamp",
+              "mirror"
+            ]
+          },
+          "magFilter": {
+            "type": "string",
+            "enum": [
+              "nearest",
+              "linear"
+            ]
+          },
+          "minFilter": {
+            "type": "string",
+            "enum": [
+              "nearest",
+              "nearestMipNearest",
+              "nearestMipLinear",
+              "linearMipLinear"
+            ]
+          },
+          "anisotropy": {
+            "type": "number"
+          },
+          "colorSpace": {
+            "type": "string",
+            "enum": [
+              "srgb",
+              ""
+            ]
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "materials": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "customShader"
+              },
+              "props": {
+                "type": "object",
+                "properties": {
+                  "color": {
+                    "type": "number"
+                  },
+                  "roughness": {
+                    "type": "number"
+                  },
+                  "metalness": {
+                    "type": "number"
+                  },
+                  "normalScale": {
+                    "type": "number"
+                  },
+                  "emissiveIntensity": {
+                    "type": "number"
+                  },
+                  "lightMapIntensity": {
+                    "type": "number"
+                  },
+                  "opacity": {
+                    "type": "number"
+                  },
+                  "alphaTest": {
+                    "type": "number"
+                  },
+                  "transparent": {
+                    "type": "boolean"
+                  },
+                  "transmission": {
+                    "type": "number"
+                  },
+                  "ior": {
+                    "type": "number"
+                  },
+                  "clearcoat": {
+                    "type": "number"
+                  },
+                  "clearcoatRoughness": {
+                    "type": "number"
+                  },
+                  "clearcoatNormalScale": {
+                    "type": "number"
+                  },
+                  "iridescence": {
+                    "type": "number"
+                  },
+                  "sheen": {
+                    "type": "number"
+                  },
+                  "sheenColor": {
+                    "type": "number"
+                  },
+                  "sheenRoughness": {
+                    "type": "number"
+                  },
+                  "fogMultiplier": {
+                    "type": "number"
+                  },
+                  "fogShadowFactor": {
+                    "type": "number"
+                  },
+                  "ambientLightScale": {
+                    "type": "number"
+                  },
+                  "mapDisableDistance": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "mapDisableTransitionThreshold": {
+                    "type": "number"
+                  },
+                  "side": {
+                    "type": "string",
+                    "enum": [
+                      "front",
+                      "back",
+                      "double"
+                    ]
+                  },
+                  "uvScale": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "map": {
+                    "type": "string"
+                  },
+                  "normalMap": {
+                    "type": "string"
+                  },
+                  "roughnessMap": {
+                    "type": "string"
+                  },
+                  "metalnessMap": {
+                    "type": "string"
+                  },
+                  "lightMap": {
+                    "type": "string"
+                  },
+                  "transmissionMap": {
+                    "type": "string"
+                  },
+                  "clearcoatNormalMap": {
+                    "type": "string"
+                  },
+                  "ambientDistanceAmp": {
+                    "type": "object",
+                    "properties": {
+                      "falloffStartDistance": {
+                        "type": "number"
+                      },
+                      "falloffEndDistance": {
+                        "type": "number"
+                      },
+                      "exponent": {
+                        "type": "number"
+                      },
+                      "ampFactor": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "falloffStartDistance",
+                      "falloffEndDistance",
+                      "ampFactor"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "reflection": {
+                    "type": "object",
+                    "properties": {
+                      "alpha": {
+                        "type": "number"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "useTriplanarMapping": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "contrastPreservationFactor": {
+                            "type": "number"
+                          },
+                          "sharpenFactor": {
+                            "type": "number"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "useGeneratedUVs": {
+                    "type": "boolean"
+                  },
+                  "tileBreaking": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "neyret"
+                          },
+                          "patchScale": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "fastFixMipmap"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "enableFog": {
+                    "type": "boolean"
+                  },
+                  "antialiasColorShader": {
+                    "type": "boolean"
+                  },
+                  "antialiasRoughnessShader": {
+                    "type": "boolean"
+                  },
+                  "readRoughnessMapFromRChannel": {
+                    "type": "boolean"
+                  },
+                  "disableToneMapping": {
+                    "type": "boolean"
+                  },
+                  "randomizeUVOffset": {
+                    "type": "boolean"
+                  },
+                  "useNoise2": {
+                    "type": "boolean"
+                  },
+                  "materialClass": {
+                    "type": "string",
+                    "enum": [
+                      "default",
+                      "rock",
+                      "crystal",
+                      "instakill"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "customBasicShader"
+              },
+              "props": {
+                "type": "object",
+                "properties": {
+                  "color": {
+                    "type": "number"
+                  },
+                  "transparent": {
+                    "type": "boolean"
+                  },
+                  "alphaTest": {
+                    "type": "number"
+                  },
+                  "fogMultiplier": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "enableFog": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "title": "MaterialsFile",
+  "$id": "https://ameo.design/schemas/level-materials.json"
+}

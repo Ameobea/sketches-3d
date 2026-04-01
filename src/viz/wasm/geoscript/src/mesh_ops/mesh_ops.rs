@@ -570,122 +570,127 @@ pub fn delaunay_remesh(
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "src/geoscript/text_to_path")]
 extern "C" {
-  pub fn get_cached_text_to_path_verts(
+  fn get_cached_text_to_svg_path(
     text: &str,
     font_family: &str,
     font_size: f32,
     font_weight: &str,
     font_style: &str,
     letter_spacing: f32,
-    width: f32,
-    height: f32,
-  ) -> Option<Vec<f32>>;
-  pub fn get_cached_text_to_path_indices(
+  ) -> Option<String>;
+  fn get_cached_text_to_svg_err(
     text: &str,
     font_family: &str,
     font_size: f32,
     font_weight: &str,
     font_style: &str,
     letter_spacing: f32,
-    width: f32,
-    height: f32,
-  ) -> Option<Vec<u32>>;
-  pub fn get_cached_text_to_path_err(
-    text: &str,
-    font_family: &str,
-    font_size: f32,
-    font_weight: &str,
-    font_style: &str,
-    letter_spacing: f32,
-    width: f32,
-    height: f32,
   ) -> Option<String>;
 }
 
+/// Returns `None` if not yet cached, `Err` if fetch failed, `Ok(svg_string)` if ready.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn get_text_to_path_cached_mesh(
+pub(crate) fn get_cached_svg_path_str(
   text: &str,
   font_family: &str,
   font_size: f32,
   font_weight: &str,
   font_style: &str,
   letter_spacing: f32,
-  width: f32,
-  height: f32,
-  depth: Option<f32>,
-) -> Result<Option<LinkedMesh<()>>, ErrorStack> {
-  let maybe_err = get_cached_text_to_path_err(
-    text,
-    font_family,
-    font_size,
-    font_weight,
-    font_style,
-    letter_spacing,
-    width,
-    height,
-  );
-  if let Some(err_str) = maybe_err {
-    return Err(ErrorStack::new(err_str));
+) -> Result<Option<String>, ErrorStack> {
+  if let Some(err) =
+    get_cached_text_to_svg_err(text, font_family, font_size, font_weight, font_style, letter_spacing)
+  {
+    return Err(ErrorStack::new(err));
   }
-
-  let maybe_verts = get_cached_text_to_path_verts(
+  Ok(get_cached_text_to_svg_path(
     text,
     font_family,
     font_size,
     font_weight,
     font_style,
     letter_spacing,
-    width,
-    height,
-  );
-  let maybe_indices = get_cached_text_to_path_indices(
-    text,
-    font_family,
-    font_size,
-    font_weight,
-    font_style,
-    letter_spacing,
-    width,
-    height,
-  );
-
-  // convert from 2d vertices to 3d vertices in the XZ plane
-  let maybe_verts = maybe_verts.map(|verts_2d| {
-    let mut verts_3d = Vec::with_capacity(verts_2d.len() / 2 * 3);
-    for i in 0..(verts_2d.len() / 2) {
-      verts_3d.push(verts_2d[i * 2]);
-      verts_3d.push(0.);
-      verts_3d.push(verts_2d[i * 2 + 1]);
-    }
-    verts_3d
-  });
-
-  let mut mesh = match (maybe_verts, maybe_indices) {
-    (Some(verts), Some(indices)) => LinkedMesh::from_raw_indexed(&verts, &indices, None, None),
-    _ => return Ok(None),
-  };
-
-  let Some(depth) = depth else {
-    return Ok(Some(mesh));
-  };
-
-  crate::mesh_ops::extrude::extrude(&mut mesh, |_| Ok(Vec3::new(0., depth, 0.)))?;
-  Ok(Some(mesh))
+  ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn get_text_to_path_cached_mesh(
+pub(crate) fn get_cached_svg_path_str(
   _text: &str,
   _font_family: &str,
   _font_size: f32,
   _font_weight: &str,
   _font_style: &str,
   _letter_spacing: f32,
-  _width: f32,
-  _height: f32,
-  _depth: Option<f32>,
-) -> Result<Option<LinkedMesh<()>>, ErrorStack> {
+) -> Result<Option<String>, ErrorStack> {
   Err(ErrorStack::new(
-    "Text to path mesh generation is not supported outside of wasm",
+    "text_to_* builtins are not supported outside of wasm",
   ))
+}
+
+pub(crate) fn tessellate_svg_path_with_lyon(
+  svg_path: &str,
+  width: f32,
+  height: f32,
+) -> Result<LinkedMesh<()>, ErrorStack> {
+  use lyon_extra::parser::{ParserOptions, PathParser, Source};
+  use lyon_tessellation::{
+    geom::Point, geometry_builder::Positions, path::Path, BuffersBuilder, FillOptions, FillRule,
+    FillTessellator, VertexBuffers,
+  };
+
+  let mut builder = Path::builder();
+  PathParser::new()
+    .parse(
+      &ParserOptions::DEFAULT,
+      &mut Source::new(svg_path.chars()),
+      &mut builder,
+    )
+    .map_err(|e| ErrorStack::new(format!("Error parsing SVG path: {e:?}")))?;
+  let path = builder.build();
+
+  let mut buffers: VertexBuffers<Point<f32>, u32> = VertexBuffers::new();
+  {
+    let mut vertex_builder = BuffersBuilder::new(&mut buffers, Positions);
+    FillTessellator::new()
+      .tessellate_path(
+        &path,
+        &FillOptions::default().with_fill_rule(FillRule::NonZero),
+        &mut vertex_builder,
+      )
+      .map_err(|e| ErrorStack::new(format!("Lyon tessellation error: {e:?}")))?;
+  }
+
+  if buffers.vertices.is_empty() {
+    return Err(ErrorStack::new("Lyon tessellation produced no vertices"));
+  }
+
+  // Scale to fit width/height
+  if width > 0. || height > 0. {
+    let (min_x, max_x, min_y, max_y) = buffers.vertices.iter().fold(
+      (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY),
+      |(nx, xx, ny, xy), p| (nx.min(p.x), xx.max(p.x), ny.min(p.y), xy.max(p.y)),
+    );
+    let mw = max_x - min_x;
+    let mh = max_y - min_y;
+    let ar = mw / mh;
+    let (sx, sy) = if width > 0. && height > 0. {
+      (width / mw, height / mh)
+    } else if width > 0. {
+      (width / mw, (width / ar) / mh)
+    } else {
+      ((height * ar) / mw, height / mh)
+    };
+    for v in &mut buffers.vertices {
+      v.x = (v.x - min_x) * sx;
+      v.y = (v.y - min_y) * sy;
+    }
+  }
+
+  // Pack as flat XZ-plane vertex buffer (y=0)
+  let mut verts_flat = Vec::with_capacity(buffers.vertices.len() * 3);
+  for p in &buffers.vertices {
+    verts_flat.extend_from_slice(&[p.x, 0., p.y]);
+  }
+
+  Ok(LinkedMesh::from_raw_indexed(&verts_flat, &buffers.indices, None, None))
 }

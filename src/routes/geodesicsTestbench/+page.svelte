@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { getGeodesicsModule } from 'src/geoscript/geodesics';
 
   const initTestbench = (mod: any) => {
     (window as any).Geodesics = mod;
@@ -49,10 +50,7 @@
   };
 
   if (browser) {
-    import('../../geodesics/geodesics.js')
-      .then(mod => mod.Geodesics)
-      .then(mod => mod())
-      .then(initTestbench);
+    getGeodesicsModule().then(initTestbench);
   }
 </script>
 

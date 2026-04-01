@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
 import type { BulletPhysics, ContactRegion } from 'src/viz/collision';
+import { clearPhysicsBindings, withPhysicsContext } from 'src/viz/util/physics';
 
 export class CollectablesCtx {
   public hiddenCollectables: Set<THREE.Object3D> = new Set();
@@ -75,31 +76,7 @@ export const initCollectables = ({
     } else {
       if (obj instanceof THREE.Mesh && obj.name.includes(collectableName)) {
         obj.userData.nocollide = true;
-        if (obj.userData.rigidBody) {
-          const cb = (fpCtx: BulletPhysics) => {
-            fpCtx.removeCollisionObject(obj.userData.rigidBody);
-            delete obj.userData.rigidBody;
-          };
-          if (viz.fpCtx) {
-            cb(viz.fpCtx);
-          } else {
-            viz.collisionWorldLoadedCbs.push(cb);
-          }
-        }
-
-        obj.traverse(child => {
-          if (child.userData.rigidBody) {
-            const cb = (fpCtx: BulletPhysics) => {
-              fpCtx.removeCollisionObject(child.userData.rigidBody);
-              delete child.userData.rigidBody;
-            };
-            if (viz.fpCtx) {
-              cb(viz.fpCtx);
-            } else {
-              viz.collisionWorldLoadedCbs.push(cb);
-            }
-          }
-        });
+        withPhysicsContext(viz, fpCtx => clearPhysicsBindings(obj, fpCtx));
 
         collectables.push(obj);
         if (material) {

@@ -5,6 +5,7 @@ import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import { WorkerManager } from 'src/geoscript/workerManager';
 import type { CsgAssetDef, CsgTreeNode, AssetDef } from './types';
 import type { LevelObject } from './loadLevelDef';
+import { LEVEL_PLACEHOLDER_MAT, instantiateLevelObject } from './levelObjectUtils';
 import { generateCsgCode, generateComplementCode, generateSubtreeCode } from './csgCodeGen';
 import { isOpNode, getNodeAtPath, cloneTree, computeNodePolarities } from './csgTreeUtils';
 import CsgTreeEditor from './CsgTreeEditor.svelte';
@@ -27,7 +28,6 @@ interface CsgRootTransformUndoEntry {
 
 type CsgUndoEntry = CsgTreeUndoEntry | CsgRootTransformUndoEntry;
 
-const PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
 const CSG_NEGATIVE_MAT = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.4 });
 const CSG_SELECTED_MAT = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true });
 const CSG_NESTED_NEGATIVE_MAT = new THREE.MeshBasicMaterial({
@@ -275,7 +275,7 @@ export class CsgEditController {
     this._isActive = true;
     this.undoSystem.clear();
     this.editLevelObj = levelObj;
-    this.editor.selectedObject = levelObj;
+    this.editor.selectedNode = levelObj;
     this.editor.transformControls?.detach();
 
     const assetDef = this.editor.levelDef.assets[levelObj.assetId] as CsgAssetDef;
@@ -852,8 +852,8 @@ export class CsgEditController {
     const meshes: THREE.Mesh[] = [];
     // Apply the level object's material if available
     const levelMat = this.editLevelObj?.def.material
-      ? (this.editor.builtMaterials.get(this.editLevelObj.def.material) ?? PLACEHOLDER_MAT)
-      : PLACEHOLDER_MAT;
+      ? (this.editor.builtMaterials.get(this.editLevelObj.def.material) ?? LEVEL_PLACEHOLDER_MAT)
+      : LEVEL_PLACEHOLDER_MAT;
     for (const obj of result.objects) {
       if (obj.type !== 'mesh') continue;
       const mesh = new THREE.Mesh(obj.geometry, levelMat);
@@ -1036,7 +1036,7 @@ export class CsgEditController {
     const meshes: THREE.Mesh[] = [];
     for (const obj of result.objects) {
       if (obj.type !== 'mesh') continue;
-      const mesh = new THREE.Mesh(obj.geometry, PLACEHOLDER_MAT);
+      const mesh = new THREE.Mesh(obj.geometry, LEVEL_PLACEHOLDER_MAT);
       mesh.applyMatrix4(obj.transform);
       meshes.push(mesh);
     }
@@ -1063,21 +1063,12 @@ export class CsgEditController {
       if (this._isActive && levelObj === this.editLevelObj) {
         const wasVisible = levelObj.object.visible;
         this.editor.viz.scene.remove(levelObj.object);
-        const clone = newPrototype.clone();
-        const [px = 0, py = 0, pz = 0] = levelObj.def.position ?? [];
-        const [rx = 0, ry = 0, rz = 0] = levelObj.def.rotation ?? [];
-        const [sx = 1, sy = 1, sz = 1] = levelObj.def.scale ?? [];
-        clone.position.set(px, py, pz);
-        clone.rotation.set(rx, ry, rz, 'YXZ');
-        clone.scale.set(sx, sy, sz);
-        // Preserve visibility state from current config (hidden in Config 2)
-        clone.visible = wasVisible;
-        if (levelObj.def.material) {
-          const mat = this.editor.builtMaterials.get(levelObj.def.material) ?? PLACEHOLDER_MAT;
-          clone.traverse(child => {
-            if (child instanceof THREE.Mesh) child.material = mat;
-          });
-        }
+        const clone = instantiateLevelObject(newPrototype, levelObj.def, {
+          builtMaterials: this.editor.builtMaterials,
+          fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
+          // Preserve visibility state from current config (hidden in Config 2)
+          visible: wasVisible,
+        });
         levelObj.object = clone;
         this.editor.viz.scene.add(clone);
         if (this.selectedNodePath === '') {
@@ -1090,20 +1081,10 @@ export class CsgEditController {
       this.editor.removePhysics(levelObj);
       this.editor.viz.scene.remove(levelObj.object);
 
-      const clone = newPrototype.clone();
-      const [px = 0, py = 0, pz = 0] = levelObj.def.position ?? [];
-      const [rx = 0, ry = 0, rz = 0] = levelObj.def.rotation ?? [];
-      const [sx = 1, sy = 1, sz = 1] = levelObj.def.scale ?? [];
-      clone.position.set(px, py, pz);
-      clone.rotation.set(rx, ry, rz, 'YXZ');
-      clone.scale.set(sx, sy, sz);
-
-      if (levelObj.def.material) {
-        const mat = this.editor.builtMaterials.get(levelObj.def.material) ?? PLACEHOLDER_MAT;
-        clone.traverse(child => {
-          if (child instanceof THREE.Mesh) child.material = mat;
-        });
-      }
+      const clone = instantiateLevelObject(newPrototype, levelObj.def, {
+        builtMaterials: this.editor.builtMaterials,
+        fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
+      });
 
       levelObj.object = clone;
       this.editor.viz.scene.add(clone);
