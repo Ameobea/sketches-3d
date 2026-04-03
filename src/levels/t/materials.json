@@ -20,6 +20,10 @@
     }
   },
   "materials": {
+    "checkpoint": {
+      "type": "generated",
+      "emissiveBypass": true
+    },
     "gold_mat": {
       "type": "customShader",
       "props": {

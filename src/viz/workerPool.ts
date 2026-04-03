@@ -1,8 +1,8 @@
 import * as Comlink from 'comlink';
 
-import normalMapGenWasmURL from 'src/viz/wasm/build2/normal_map_gen.wasm?url';
-import terrainWasmURL from 'src/viz/wasm/build2/terrain.wasm?url';
-import textureCrossfadeWasmURL from 'src/viz/wasm/build2/texture_crossfade.wasm?url';
+import normalMapGenWasmURL from 'src/viz/wasmComp/normal_map_gen.wasm?url';
+import terrainWasmURL from 'src/viz/wasmComp/terrain.wasm?url';
+import textureCrossfadeWasmURL from 'src/viz/wasmComp/texture_crossfade.wasm?url';
 import type { TerrainGenWorker } from './terrain/TerrainGenWorker/TerrainGenWorker.worker';
 import { clamp, hasWasmSIMDSupport } from './util/util';
 

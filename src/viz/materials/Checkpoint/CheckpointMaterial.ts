@@ -191,7 +191,14 @@ export const buildCheckpointMaterial = (
   const f = (n: number) => n.toFixed(6);
 
   const mat = buildCustomShader(
-    { metalness: 0, alphaTest: 0.05, transparent: true, ambientLightScale: 2, ...extraProps },
+    {
+      metalness: 0,
+      alphaTest: 0.05,
+      transparent: true,
+      ambientLightScale: 2,
+      side: THREE.DoubleSide,
+      ...extraProps,
+    },
     {
       colorShader: BridgeMistColorShader.replace(
         'vec4 outColor = vec4(0.8, 0.5, 0.6, 0.0);',

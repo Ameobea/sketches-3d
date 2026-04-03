@@ -75,6 +75,17 @@
               },
               "material": {
                 "type": "string"
+              },
+              "nocollide": {
+                "type": "boolean"
+              },
+              "parkour": {
+                "type": "object",
+                "properties": {
+                  "checkpoint": { "type": "number" },
+                  "win": { "type": "boolean" }
+                },
+                "additionalProperties": false
               }
             },
             "required": [
@@ -101,8 +112,10 @@
         "id": {
           "type": "string"
         },
+        "generator": {
+          "type": "string"
+        },
         "children": {
-          "minItems": 1,
           "type": "array",
           "items": {
             "anyOf": [
@@ -172,6 +185,17 @@
                   },
                   "material": {
                     "type": "string"
+                  },
+                  "nocollide": {
+                    "type": "boolean"
+                  },
+                  "parkour": {
+                    "type": "object",
+                    "properties": {
+                      "checkpoint": { "type": "number" },
+                      "win": { "type": "boolean" }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -227,6 +251,13 @@
               "type": "number"
             }
           ]
+        },
+        "userData": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         }
       },
       "required": [

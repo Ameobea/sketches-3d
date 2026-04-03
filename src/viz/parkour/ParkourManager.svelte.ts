@@ -23,7 +23,12 @@ export interface ParkourMaterials {
     core: THREE.Material;
     ring: THREE.Material;
   };
-  checkpoint: THREE.Material | (() => THREE.Material);
+  /**
+   * Material for checkpoint / win-zone meshes.
+   * Optional when `checkpointMeshes` is provided to `setMaterials` and the meshes
+   * already have their material assigned by the level def system.
+   */
+  checkpoint?: THREE.Material | (() => THREE.Material);
 }
 
 interface MakeSliderArgs {
@@ -38,7 +43,7 @@ interface MakeSliderArgs {
 
 export class ParkourManager {
   private viz: Viz;
-  private loadedWorld: THREE.Group;
+  public loadedWorld: THREE.Group;
   private locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } };
   private scoreThresholds: ScoreThresholds;
   private mapID: string;
@@ -100,8 +105,24 @@ export class ParkourManager {
       fpCtx.registerJumpCb(() => {
         if (this.curRunStartTimeSeconds === null) {
           this.curRunStartTimeSeconds = fpCtx.getPhysicsTime();
-          fpCtx.flightRecorder.recordEvent(RecorderEventType.RunStart);
+          // Don't record into the flight recorder during replay — the jump
+          // callback fires via the replay loop and we don't want to corrupt
+          // the recorder with new events.
+          if (!fpCtx.isReplayActive) {
+            fpCtx.flightRecorder.setMetadataString(
+              'third_person_xray',
+              this.viz.vizConfig.current.gameplay.thirdPersonXray ? 'true' : 'false'
+            );
+            fpCtx.flightRecorder.recordEvent(RecorderEventType.RunStart);
+          }
         }
+      });
+
+      fpCtx.registerReplayStartCb(() => {
+        // Reset run state so the replay drives the timer from its own first
+        // jump rather than inheriting stale state from a previous run.
+        this.curRunStartTimeSeconds = null;
+        this.winState = null;
       });
 
       let didStart = false;
@@ -120,7 +141,7 @@ export class ParkourManager {
     viz.registerDestroyedCb(this.destroy);
   }
 
-  public setMaterials = (materials: ParkourMaterials) => {
+  public setMaterials = (materials: ParkourMaterials, opts: { checkpointMeshes?: THREE.Mesh[] } = {}) => {
     const {
       ctx: dashTokensCtx,
       dashCharges: curDashCharges,
@@ -138,7 +159,8 @@ export class ParkourManager {
       materials.checkpoint,
       dashTokensCtx,
       curDashCharges,
-      this.onWin
+      this.onWin,
+      opts.checkpointMeshes
     );
     this.resetDashes = resetDashes;
   };
@@ -271,54 +293,67 @@ export class ParkourManager {
 
   private onWin = () => {
     const fpCtx = this.viz.fpCtx!;
-    if (fpCtx.isReplayActive) return;
+    // Idempotent: the win zone may fire multiple times (once per subtick while
+    // the player is inside), and during replay both the zone event and the
+    // replayed RunEnd event could trigger this.
+    if (this.winState) return;
+
     const physicsTime = fpCtx.getPhysicsTime();
-
-    // Record run end, set metadata, and serialize the replay
-    const recorder = fpCtx.flightRecorder;
-    recorder.recordEvent(RecorderEventType.RunEnd);
-    recorder.setMetadataString('map_id', this.mapID);
     const time = physicsTime - (this.curRunStartTimeSeconds ?? 0);
-    recorder.setMetadataString('timestamp', Date.now().toString());
-    const replayBlob = recorder.serialize();
-    if (replayBlob) {
-      console.log(
-        `Flight recorder: ${recorder.subtickCount} subticks, ${replayBlob.byteLength} bytes serialized`
-      );
+
+    let replayBlob: Uint8Array | null = null;
+    let displayComp: any = null;
+
+    if (!fpCtx.isReplayActive) {
+      // Record run end, set metadata, and serialize the replay
+      const recorder = fpCtx.flightRecorder;
+      recorder.recordEvent(RecorderEventType.RunEnd);
+      recorder.setMetadataString('map_id', this.mapID);
+      recorder.setMetadataString('timestamp', Date.now().toString());
+      replayBlob = recorder.serialize();
+      if (replayBlob) {
+        console.log(
+          `Flight recorder: ${recorder.subtickCount} subticks, ${replayBlob.byteLength} bytes serialized`
+        );
+      }
+
+      const target = document.createElement('div');
+      document.body.appendChild(target);
+      const timeDisplayProps = $state({
+        scoreThresholds: this.scoreThresholds,
+        time,
+        mapID: this.mapID,
+        userPlayID: null as string | null,
+        userID: null as string | null,
+      });
+      displayComp = mount(TimeDisplay, {
+        target,
+        props: timeDisplayProps,
+      });
+
+      this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
+
+      const formData = new FormData();
+      formData.append('mapId', this.mapID);
+      formData.append('timeLength', time.toString());
+      if (replayBlob) {
+        formData.append('replay', new Blob([replayBlob as unknown as BlobPart]), 'replay.frec');
+      }
+      fetch('/api/play', { method: 'POST', credentials: 'include', body: formData })
+        .then(res => res.json() as Promise<PlayResponse>)
+        .then(res => {
+          timeDisplayProps.userPlayID = res.id ?? null;
+          timeDisplayProps.userID = res.playerId ?? null;
+        })
+        .catch(() => {});
+
+      MetricsAPI.recordPlayCompletion(this.mapID, true, time);
     }
 
-    const target = document.createElement('div');
-    document.body.appendChild(target);
-    const timeDisplayProps = $state({
-      scoreThresholds: this.scoreThresholds,
-      time,
-      mapID: this.mapID,
-      userPlayID: null as string | null,
-      userID: null as string | null,
-    });
-    const displayComp = mount(TimeDisplay, {
-      target,
-      props: timeDisplayProps,
-    });
+    // Always freeze the timer at the physics win time, even during replay.
+    // During replay this lets the live timer (timerDisplay) show the exact
+    // same elapsed time that was originally submitted to the server.
     this.winState = { winTimeSeconds: physicsTime, displayComp, replayBlob };
-
-    this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
-
-    const formData = new FormData();
-    formData.append('mapId', this.mapID);
-    formData.append('timeLength', time.toString());
-    if (replayBlob) {
-      formData.append('replay', new Blob([replayBlob as unknown as BlobPart]), 'replay.frec');
-    }
-    fetch('/api/play', { method: 'POST', credentials: 'include', body: formData })
-      .then(res => res.json() as Promise<PlayResponse>)
-      .then(res => {
-        timeDisplayProps.userPlayID = res.id ?? null;
-        timeDisplayProps.userID = res.playerId ?? null;
-      })
-      .catch(() => {});
-
-    MetricsAPI.recordPlayCompletion(this.mapID, true, time);
   };
 
   public makeSpinner = (mesh: THREE.Mesh, rpm: number) => {

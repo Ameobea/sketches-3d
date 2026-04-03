@@ -1,12 +1,9 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
+import type { BulletPhysics } from 'src/viz/collision';
 
-type CollisionHandle = unknown;
-
-interface CollisionRemover {
-  removeCollisionObject: (collisionObj: CollisionHandle, meshName?: string) => void;
-}
+type CollisionRemover = Pick<BulletPhysics, 'removeCollisionObject'>;
 
 export const withPhysicsContext = (
   viz: Pick<Viz, 'fpCtx' | 'collisionWorldLoadedCbs'>,

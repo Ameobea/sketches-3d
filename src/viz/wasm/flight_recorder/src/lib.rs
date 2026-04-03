@@ -16,6 +16,7 @@ struct SubtickSnapshot {
   // Input state from JS
   walk_dir: [f32; 3], // walkDirection set this subtick
   look_dir: [f32; 2], // phi, theta from camera controller
+  zoom_distance: f32, // third-person camera zoom distance (0 in first-person)
   key_flags: u32,     // bit 0: W, 1: S, 2: A, 3: D, 4: Space, 5: Shift
 }
 
@@ -29,6 +30,9 @@ enum EventType {
   RunStart = 4,
   RunEnd = 5,
   OOBRespawn = 6,
+  Pause = 7,
+  Unpause = 8,
+  SettingsChanged = 9,
 }
 
 #[derive(Clone)]
@@ -37,6 +41,47 @@ struct RecorderEvent {
   subtick: u32,
   data: [f32; 4], // up to 4 floats of event-specific data
   data_len: u32,
+}
+
+/// Channel IDs for the tagged serialization format.
+///
+/// Each compressed block in the snapshot/event sections is prefixed with a u16
+/// channel ID so that readers can skip unknown channels rather than failing.
+/// New channels can be added in the future without breaking older files, and
+/// older files missing a channel will deserialize with a sensible default.
+///
+/// IDs 0-99: snapshot channels, 100-199: event channels.
+/// Leave gaps between logical groups so related future channels can sit nearby.
+#[repr(u16)]
+#[derive(Clone, Copy)]
+enum ChannelId {
+  // Snapshot physics channels
+  PosX = 0,
+  PosY = 1,
+  PosZ = 2,
+  ExtVelX = 3,
+  ExtVelY = 4,
+  ExtVelZ = 5,
+  VerticalVel = 6,
+  VerticalOffset = 7,
+  Flags = 8,
+  FloorUserIndex = 9,
+  // Snapshot input channels
+  WalkDirX = 10,
+  WalkDirY = 11,
+  WalkDirZ = 12,
+  LookDirPhi = 13,
+  LookDirTheta = 14,
+  ZoomDistance = 15,
+  KeyFlags = 16,
+  // Event channels
+  EventTypes = 100,
+  EventSubticks = 101,
+  EventDataLens = 102,
+  EventData0 = 103,
+  EventData1 = 104,
+  EventData2 = 105,
+  EventData3 = 106,
 }
 
 /// Ordered key-value metadata store. Keys are UTF-8 strings, values are raw bytes.
@@ -217,8 +262,8 @@ pub unsafe extern "C" fn set_metadata_string(
 ///   [0..3]: pos, [3..6]: external_vel, [6]: vertical_vel, [7]: vertical_offset,
 ///   [8]: flags (bitcast u32), [9]: floor_user_index (bitcast i32)
 ///
-/// input_state_ptr: 5 floats
-///   [0..3]: walk_dir, [3]: phi, [4]: theta
+/// input_state_ptr: 6 floats
+///   [0..3]: walk_dir, [3]: phi, [4]: theta, [5]: zoom_distance
 ///
 /// key_flags: packed key bitmask
 #[no_mangle]
@@ -230,7 +275,7 @@ pub unsafe extern "C" fn record_subtick(
 ) {
   let ctx = &mut *ctx;
   let ps = std::slice::from_raw_parts(physics_state_ptr, 10);
-  let is = std::slice::from_raw_parts(input_state_ptr, 5);
+  let is = std::slice::from_raw_parts(input_state_ptr, 6);
 
   ctx.serialized = None; // invalidate cached serialization
 
@@ -243,6 +288,7 @@ pub unsafe extern "C" fn record_subtick(
     floor_user_index: ps[9].to_bits() as i32,
     walk_dir: [is[0], is[1], is[2]],
     look_dir: [is[3], is[4]],
+    zoom_distance: is[5],
     key_flags,
   };
   ctx.snapshots.push(snapshot);
@@ -298,7 +344,12 @@ fn compress_i32_channel(values: &[i32]) -> Vec<u8> {
   pco::standalone::simple_compress(values, &pco::ChunkConfig::default()).unwrap()
 }
 
-fn write_compressed_block(buf: &mut Vec<u8>, data: &[u8]) {
+fn write_u16(buf: &mut Vec<u8>, v: u16) {
+  buf.extend_from_slice(&v.to_le_bytes());
+}
+
+fn write_tagged_block(buf: &mut Vec<u8>, id: ChannelId, data: &[u8]) {
+  write_u16(buf, id as u16);
   write_u32(buf, data.len() as u32);
   buf.extend_from_slice(data);
 }
@@ -348,68 +399,115 @@ fn do_serialize(ctx: &RecorderCtx) -> Vec<u8> {
   write_u32(&mut buf, num_snapshots as u32);
   write_u32(&mut buf, num_events as u32);
 
-  // Columnar snapshot data - extract each channel
+  // Snapshot channels: u32 block count, then (u16 id, u32 len, [data]) per block.
+  // Unknown IDs are skipped by readers, so new channels can be added freely.
   if num_snapshots > 0 {
-    // pos_x, pos_y, pos_z
-    for axis in 0..3 {
-      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.pos[axis]).collect();
-      write_compressed_block(&mut buf, &compress_f32_channel(&col));
+    write_u32(&mut buf, 17);
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.pos[0]).collect();
+      write_tagged_block(&mut buf, ChannelId::PosX, &compress_f32_channel(&col));
     }
-    // external_vel x, y, z
-    for axis in 0..3 {
-      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.external_vel[axis]).collect();
-      write_compressed_block(&mut buf, &compress_f32_channel(&col));
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.pos[1]).collect();
+      write_tagged_block(&mut buf, ChannelId::PosY, &compress_f32_channel(&col));
     }
-    // vertical_vel
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.pos[2]).collect();
+      write_tagged_block(&mut buf, ChannelId::PosZ, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.external_vel[0]).collect();
+      write_tagged_block(&mut buf, ChannelId::ExtVelX, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.external_vel[1]).collect();
+      write_tagged_block(&mut buf, ChannelId::ExtVelY, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.external_vel[2]).collect();
+      write_tagged_block(&mut buf, ChannelId::ExtVelZ, &compress_f32_channel(&col));
+    }
     {
       let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.vertical_vel).collect();
-      write_compressed_block(&mut buf, &compress_f32_channel(&col));
+      write_tagged_block(&mut buf, ChannelId::VerticalVel, &compress_f32_channel(&col));
     }
-    // vertical_offset
     {
       let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.vertical_offset).collect();
-      write_compressed_block(&mut buf, &compress_f32_channel(&col));
+      write_tagged_block(&mut buf, ChannelId::VerticalOffset, &compress_f32_channel(&col));
     }
-    // flags
     {
       let col: Vec<u32> = ctx.snapshots.iter().map(|s| s.flags).collect();
-      write_compressed_block(&mut buf, &compress_u32_channel(&col));
+      write_tagged_block(&mut buf, ChannelId::Flags, &compress_u32_channel(&col));
     }
-    // floor_user_index
     {
       let col: Vec<i32> = ctx.snapshots.iter().map(|s| s.floor_user_index).collect();
-      write_compressed_block(&mut buf, &compress_i32_channel(&col));
+      write_tagged_block(&mut buf, ChannelId::FloorUserIndex, &compress_i32_channel(&col));
     }
-    // walk_dir x, y, z
-    for axis in 0..3 {
-      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.walk_dir[axis]).collect();
-      write_compressed_block(&mut buf, &compress_f32_channel(&col));
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.walk_dir[0]).collect();
+      write_tagged_block(&mut buf, ChannelId::WalkDirX, &compress_f32_channel(&col));
     }
-    // look_dir phi, theta
-    for axis in 0..2 {
-      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.look_dir[axis]).collect();
-      write_compressed_block(&mut buf, &compress_f32_channel(&col));
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.walk_dir[1]).collect();
+      write_tagged_block(&mut buf, ChannelId::WalkDirY, &compress_f32_channel(&col));
     }
-    // key_flags
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.walk_dir[2]).collect();
+      write_tagged_block(&mut buf, ChannelId::WalkDirZ, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.look_dir[0]).collect();
+      write_tagged_block(&mut buf, ChannelId::LookDirPhi, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.look_dir[1]).collect();
+      write_tagged_block(&mut buf, ChannelId::LookDirTheta, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.zoom_distance).collect();
+      write_tagged_block(&mut buf, ChannelId::ZoomDistance, &compress_f32_channel(&col));
+    }
     {
       let col: Vec<u32> = ctx.snapshots.iter().map(|s| s.key_flags).collect();
-      write_compressed_block(&mut buf, &compress_u32_channel(&col));
+      write_tagged_block(&mut buf, ChannelId::KeyFlags, &compress_u32_channel(&col));
     }
+  } else {
+    write_u32(&mut buf, 0);
   }
 
-  // Event data
+  // Event channels: same tagged layout.
   if num_events > 0 {
-    let event_types: Vec<u32> = ctx.events.iter().map(|e| e.event_type).collect();
-    write_compressed_block(&mut buf, &compress_u32_channel(&event_types));
-    let subticks: Vec<u32> = ctx.events.iter().map(|e| e.subtick).collect();
-    write_compressed_block(&mut buf, &compress_u32_channel(&subticks));
-    let data_lens: Vec<u32> = ctx.events.iter().map(|e| e.data_len).collect();
-    write_compressed_block(&mut buf, &compress_u32_channel(&data_lens));
-    // Flatten event data
-    for i in 0..4 {
-      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[i]).collect();
-      write_compressed_block(&mut buf, &compress_f32_channel(&col));
+    write_u32(&mut buf, 7);
+    {
+      let col: Vec<u32> = ctx.events.iter().map(|e| e.event_type).collect();
+      write_tagged_block(&mut buf, ChannelId::EventTypes, &compress_u32_channel(&col));
     }
+    {
+      let col: Vec<u32> = ctx.events.iter().map(|e| e.subtick).collect();
+      write_tagged_block(&mut buf, ChannelId::EventSubticks, &compress_u32_channel(&col));
+    }
+    {
+      let col: Vec<u32> = ctx.events.iter().map(|e| e.data_len).collect();
+      write_tagged_block(&mut buf, ChannelId::EventDataLens, &compress_u32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[0]).collect();
+      write_tagged_block(&mut buf, ChannelId::EventData0, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[1]).collect();
+      write_tagged_block(&mut buf, ChannelId::EventData1, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[2]).collect();
+      write_tagged_block(&mut buf, ChannelId::EventData2, &compress_f32_channel(&col));
+    }
+    {
+      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[3]).collect();
+      write_tagged_block(&mut buf, ChannelId::EventData3, &compress_f32_channel(&col));
+    }
+  } else {
+    write_u32(&mut buf, 0);
   }
 
   buf
@@ -485,6 +583,15 @@ fn read_u8(data: &[u8], offset: &mut usize) -> Option<u8> {
   }
   let v = data[*offset];
   *offset += 1;
+  Some(v)
+}
+
+fn read_u16(data: &[u8], offset: &mut usize) -> Option<u16> {
+  if *offset + 2 > data.len() {
+    return None;
+  }
+  let v = u16::from_le_bytes(data[*offset..*offset + 2].try_into().ok()?);
+  *offset += 2;
   Some(v)
 }
 
@@ -582,64 +689,134 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
   let num_snapshots = read_u32(data, &mut offset)? as usize;
   let num_events = read_u32(data, &mut offset)? as usize;
 
-  // Decompress snapshot channels
+  // Snapshot channels: read tagged blocks, skip unknowns, default missing to zero.
   let mut snapshots = Vec::with_capacity(num_snapshots);
-  if num_snapshots > 0 {
-    let pos_x = read_compressed_f32_block(data, &mut offset)?;
-    let pos_y = read_compressed_f32_block(data, &mut offset)?;
-    let pos_z = read_compressed_f32_block(data, &mut offset)?;
+  {
+    let num_channel_blocks = read_u32(data, &mut offset)? as usize;
 
-    let ext_vel_x = read_compressed_f32_block(data, &mut offset)?;
-    let ext_vel_y = read_compressed_f32_block(data, &mut offset)?;
-    let ext_vel_z = read_compressed_f32_block(data, &mut offset)?;
-    let vertical_vel = read_compressed_f32_block(data, &mut offset)?;
-    let vertical_offset = read_compressed_f32_block(data, &mut offset)?;
-    let flags = read_compressed_u32_block(data, &mut offset)?;
-    let floor_user_index = read_compressed_i32_block(data, &mut offset)?;
-    let walk_dir_x = read_compressed_f32_block(data, &mut offset)?;
-    let walk_dir_y = read_compressed_f32_block(data, &mut offset)?;
-    let walk_dir_z = read_compressed_f32_block(data, &mut offset)?;
-    let look_dir_phi = read_compressed_f32_block(data, &mut offset)?;
-    let look_dir_theta = read_compressed_f32_block(data, &mut offset)?;
-    let key_flags = read_compressed_u32_block(data, &mut offset)?;
+    let mut pos_x: Option<Vec<f32>> = None;
+    let mut pos_y: Option<Vec<f32>> = None;
+    let mut pos_z: Option<Vec<f32>> = None;
+    let mut ext_vel_x: Option<Vec<f32>> = None;
+    let mut ext_vel_y: Option<Vec<f32>> = None;
+    let mut ext_vel_z: Option<Vec<f32>> = None;
+    let mut vertical_vel: Option<Vec<f32>> = None;
+    let mut vertical_offset: Option<Vec<f32>> = None;
+    let mut flags: Option<Vec<u32>> = None;
+    let mut floor_user_index: Option<Vec<i32>> = None;
+    let mut walk_dir_x: Option<Vec<f32>> = None;
+    let mut walk_dir_y: Option<Vec<f32>> = None;
+    let mut walk_dir_z: Option<Vec<f32>> = None;
+    let mut look_dir_phi: Option<Vec<f32>> = None;
+    let mut look_dir_theta: Option<Vec<f32>> = None;
+    let mut zoom_distance: Option<Vec<f32>> = None;
+    let mut key_flags: Option<Vec<u32>> = None;
+
+    for _ in 0..num_channel_blocks {
+      let channel_id = read_u16(data, &mut offset)?;
+      match channel_id {
+        0 => pos_x = Some(read_compressed_f32_block(data, &mut offset)?),
+        1 => pos_y = Some(read_compressed_f32_block(data, &mut offset)?),
+        2 => pos_z = Some(read_compressed_f32_block(data, &mut offset)?),
+        3 => ext_vel_x = Some(read_compressed_f32_block(data, &mut offset)?),
+        4 => ext_vel_y = Some(read_compressed_f32_block(data, &mut offset)?),
+        5 => ext_vel_z = Some(read_compressed_f32_block(data, &mut offset)?),
+        6 => vertical_vel = Some(read_compressed_f32_block(data, &mut offset)?),
+        7 => vertical_offset = Some(read_compressed_f32_block(data, &mut offset)?),
+        8 => flags = Some(read_compressed_u32_block(data, &mut offset)?),
+        9 => floor_user_index = Some(read_compressed_i32_block(data, &mut offset)?),
+        10 => walk_dir_x = Some(read_compressed_f32_block(data, &mut offset)?),
+        11 => walk_dir_y = Some(read_compressed_f32_block(data, &mut offset)?),
+        12 => walk_dir_z = Some(read_compressed_f32_block(data, &mut offset)?),
+        13 => look_dir_phi = Some(read_compressed_f32_block(data, &mut offset)?),
+        14 => look_dir_theta = Some(read_compressed_f32_block(data, &mut offset)?),
+        15 => zoom_distance = Some(read_compressed_f32_block(data, &mut offset)?),
+        16 => key_flags = Some(read_compressed_u32_block(data, &mut offset)?),
+        _ => {
+          // Unknown channel — skip it so future additions don't break us.
+          let block_len = read_u32(data, &mut offset)? as usize;
+          if offset + block_len > data.len() {
+            return None;
+          }
+          offset += block_len;
+        }
+      }
+    }
+
+    let gf = |v: &Option<Vec<f32>>, i: usize| {
+      v.as_deref().and_then(|s| s.get(i)).copied().unwrap_or(0.0)
+    };
+    let gu = |v: &Option<Vec<u32>>, i: usize| {
+      v.as_deref().and_then(|s| s.get(i)).copied().unwrap_or(0)
+    };
+    let gi = |v: &Option<Vec<i32>>, i: usize| {
+      v.as_deref().and_then(|s| s.get(i)).copied().unwrap_or(0)
+    };
 
     for i in 0..num_snapshots {
       snapshots.push(SubtickSnapshot {
-        pos: [pos_x[i], pos_y[i], pos_z[i]],
-        external_vel: [ext_vel_x[i], ext_vel_y[i], ext_vel_z[i]],
-        vertical_vel: vertical_vel[i],
-        vertical_offset: vertical_offset[i],
-        flags: flags[i],
-        floor_user_index: floor_user_index[i],
-        walk_dir: [walk_dir_x[i], walk_dir_y[i], walk_dir_z[i]],
-        look_dir: [look_dir_phi[i], look_dir_theta[i]],
-        key_flags: key_flags[i],
+        pos: [gf(&pos_x, i), gf(&pos_y, i), gf(&pos_z, i)],
+        external_vel: [gf(&ext_vel_x, i), gf(&ext_vel_y, i), gf(&ext_vel_z, i)],
+        vertical_vel: gf(&vertical_vel, i),
+        vertical_offset: gf(&vertical_offset, i),
+        flags: gu(&flags, i),
+        floor_user_index: gi(&floor_user_index, i),
+        walk_dir: [gf(&walk_dir_x, i), gf(&walk_dir_y, i), gf(&walk_dir_z, i)],
+        look_dir: [gf(&look_dir_phi, i), gf(&look_dir_theta, i)],
+        zoom_distance: gf(&zoom_distance, i),
+        key_flags: gu(&key_flags, i),
       });
     }
   }
 
-  // Decompress events
+  // Event channels: same tagged layout.
   let mut events = Vec::with_capacity(num_events);
-  if num_events > 0 {
-    let event_types = read_compressed_u32_block(data, &mut offset)?;
-    let subticks = read_compressed_u32_block(data, &mut offset)?;
-    let data_lens = read_compressed_u32_block(data, &mut offset)?;
-    let mut event_data = [[0f32; 0]; 4].map(|_| Vec::new());
-    for i in 0..4 {
-      event_data[i] = read_compressed_f32_block(data, &mut offset)?;
+  {
+    let num_channel_blocks = read_u32(data, &mut offset)? as usize;
+
+    let mut event_types: Option<Vec<u32>> = None;
+    let mut subticks: Option<Vec<u32>> = None;
+    let mut data_lens: Option<Vec<u32>> = None;
+    let mut event_data: [Option<Vec<f32>>; 4] = [None, None, None, None];
+
+    for _ in 0..num_channel_blocks {
+      let channel_id = read_u16(data, &mut offset)?;
+      match channel_id {
+        100 => event_types = Some(read_compressed_u32_block(data, &mut offset)?),
+        101 => subticks = Some(read_compressed_u32_block(data, &mut offset)?),
+        102 => data_lens = Some(read_compressed_u32_block(data, &mut offset)?),
+        103 => event_data[0] = Some(read_compressed_f32_block(data, &mut offset)?),
+        104 => event_data[1] = Some(read_compressed_f32_block(data, &mut offset)?),
+        105 => event_data[2] = Some(read_compressed_f32_block(data, &mut offset)?),
+        106 => event_data[3] = Some(read_compressed_f32_block(data, &mut offset)?),
+        _ => {
+          let block_len = read_u32(data, &mut offset)? as usize;
+          if offset + block_len > data.len() {
+            return None;
+          }
+          offset += block_len;
+        }
+      }
     }
+
+    let gu = |v: &Option<Vec<u32>>, i: usize| {
+      v.as_deref().and_then(|s| s.get(i)).copied().unwrap_or(0)
+    };
+    let gf = |v: &Option<Vec<f32>>, i: usize| {
+      v.as_deref().and_then(|s| s.get(i)).copied().unwrap_or(0.0)
+    };
 
     for i in 0..num_events {
       events.push(RecorderEvent {
-        event_type: event_types[i],
-        subtick: subticks[i],
+        event_type: gu(&event_types, i),
+        subtick: gu(&subticks, i),
         data: [
-          event_data[0][i],
-          event_data[1][i],
-          event_data[2][i],
-          event_data[3][i],
+          gf(&event_data[0], i),
+          gf(&event_data[1], i),
+          gf(&event_data[2], i),
+          gf(&event_data[3], i),
         ],
-        data_len: data_lens[i],
+        data_len: gu(&data_lens, i),
       });
     }
   }
@@ -772,7 +949,7 @@ pub unsafe extern "C" fn player_get_metadata(
 }
 
 /// Write subtick data for a given index.
-/// Layout: 16 f32s - walk_dir[3], look_dir[2], key_flags (bitcast), pos[3],
+/// Layout: 17 f32s - walk_dir[3], look_dir[2], zoom_distance, key_flags (bitcast), pos[3],
 ///   ext_vel[3], vert_vel, vert_offset, flags (bitcast), floor_idx (bitcast)
 /// Returns 0 on success, 1 if index out of range.
 #[no_mangle]
@@ -787,23 +964,24 @@ pub unsafe extern "C" fn player_get_subtick(
     return 1;
   }
   let s = &ctx.snapshots[idx];
-  let out = std::slice::from_raw_parts_mut(out_ptr, 16);
+  let out = std::slice::from_raw_parts_mut(out_ptr, 17);
   out[0] = s.walk_dir[0];
   out[1] = s.walk_dir[1];
   out[2] = s.walk_dir[2];
   out[3] = s.look_dir[0]; // phi
   out[4] = s.look_dir[1]; // theta
-  out[5] = f32::from_bits(s.key_flags);
-  out[6] = s.pos[0];
-  out[7] = s.pos[1];
-  out[8] = s.pos[2];
-  out[9] = s.external_vel[0];
-  out[10] = s.external_vel[1];
-  out[11] = s.external_vel[2];
-  out[12] = s.vertical_vel;
-  out[13] = s.vertical_offset;
-  out[14] = f32::from_bits(s.flags);
-  out[15] = f32::from_bits(s.floor_user_index as u32);
+  out[5] = s.zoom_distance;
+  out[6] = f32::from_bits(s.key_flags);
+  out[7] = s.pos[0];
+  out[8] = s.pos[1];
+  out[9] = s.pos[2];
+  out[10] = s.external_vel[0];
+  out[11] = s.external_vel[1];
+  out[12] = s.external_vel[2];
+  out[13] = s.vertical_vel;
+  out[14] = s.vertical_offset;
+  out[15] = f32::from_bits(s.flags);
+  out[16] = f32::from_bits(s.floor_user_index as u32);
   0
 }
 

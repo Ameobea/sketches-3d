@@ -2,6 +2,14 @@
   "$schema": "../objects-schema.json",
   "objects": [
     {
+      "id": "gen_platforms",
+      "generator": "platforms",
+      "position": [41.6757, 134.5156, -21.2823],
+      "children": [],
+      "rotation": [0, 2.5817, 0],
+      "scale": [1, 1, 1]
+    },
+    {
       "id": "box",
       "asset": "box",
       "position": [0, -4.1275, 8],
@@ -104,6 +112,32 @@
       "rotation": [0, 0, 0],
       "scale": [1.3936, 1.3936, 1.3936],
       "material": "plastered_concrete"
+    },
+    {
+      "id": "telephone_pole_4",
+      "asset": "telephone_pole",
+      "position": [118.2443, 237.3568, -75.3546],
+      "rotation": [0, 1.6772, 0],
+      "scale": [2.4274, 3.2813, 4.5032],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_1",
+      "asset": "box",
+      "position": [194.1894, 227.2693, -84.1659],
+      "rotation": [0, 0.0864, 0],
+      "scale": [6, 1, 6],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "checkpoint_winpad",
+      "asset": "box",
+      "position": [194.1894, 236.5495, -84.1659],
+      "rotation": [0, 0.0864, 0],
+      "scale": [4.8716, 3.6425, 4.8716],
+      "nocollide": true,
+      "material": "checkpoint",
+      "parkour": { "win": true }
     }
   ]
 }

@@ -114,6 +114,44 @@ export const ShinyPatchworkStoneTextures = new AsyncOnce((loader: THREE.ImageBit
   })
 );
 
+export const buildPylonsCheckpointMaterial = (viz: Viz) =>
+  buildCheckpointMaterial(
+    viz,
+    [0.13, 0.015, 0.645],
+    {},
+    {
+      noiseQuantize: 0.01,
+      noisePosQuantize: 0.01,
+      noiseBias: 0.12,
+      noisePow: 1.2,
+      noiseMultiplier: 3,
+      noiseDir: [0, 1, -2],
+      noiseRotation: [0, 0.28, 0],
+      fadeTopDist: 0.1,
+      fadeTopSteepness: 1,
+      fadeBottomDist: 0,
+      fadeBottomSteepness: 1,
+      fadeEdgeFreq: 1.2,
+      fadeEdgeSpeed: [3.1, 3.1],
+      fadeEdgeAmp: 0.1,
+      noiseVertBiasLo: 0.4,
+      noiseVertBiasHi: 1,
+      noiseVertBiasAmtLo: 0,
+      noiseVertBiasAmtHi: -0.5,
+      // Breeze
+      breezeTimeFreq: 0.85,
+      breezeThreshold: 0.3,
+      breezeThresholdHi: 0.8,
+      breezeModScale: 0.4,
+      breezePmDepth: 1,
+      breezeAmpMult: 2,
+      breezeHotColor: [0.08, 0.018, 1.545],
+      breezeColorMix: 1,
+      // breezeBiasDelta: -0.0854,
+      breezeNoiseAmpMult: 0,
+    }
+  );
+
 export const buildPylonsMaterials = async (
   viz: Viz,
   loadedWorld: THREE.Group,
@@ -155,44 +193,6 @@ export const buildPylonsMaterials = async (
     buildGoldMaterial(loader),
   ]);
 
-  const checkpointMat = () =>
-    buildCheckpointMaterial(
-      viz,
-      [0.13, 0.015, 0.645],
-      {},
-      {
-        noiseQuantize: 0.01,
-        noisePosQuantize: 0.01,
-        noiseBias: 0.12,
-        noisePow: 1.2,
-        noiseMultiplier: 3,
-        noiseDir: [0, 1, -2],
-        noiseRotation: [0, 0.28, 0],
-        fadeTopDist: 0.1,
-        fadeTopSteepness: 1,
-        fadeBottomDist: 0,
-        fadeBottomSteepness: 1,
-        fadeEdgeFreq: 1.2,
-        fadeEdgeSpeed: [3.1, 3.1],
-        fadeEdgeAmp: 0.1,
-        noiseVertBiasLo: 0.4,
-        noiseVertBiasHi: 1,
-        noiseVertBiasAmtLo: 0,
-        noiseVertBiasAmtHi: -0.5,
-        // Breeze
-        breezeTimeFreq: 0.85,
-        breezeThreshold: 0.3,
-        breezeThresholdHi: 0.8,
-        breezeModScale: 0.4,
-        breezePmDepth: 1,
-        breezeAmpMult: 2,
-        breezeHotColor: [0.08, 0.018, 1.545],
-        breezeColorMix: 1,
-        // breezeBiasDelta: -0.0854,
-        breezeNoiseAmpMult: 0,
-      }
-    );
-
   const shinyPatchworkStoneMaterial = buildCustomShader(
     {
       color: new THREE.Color(0xffffff),
@@ -230,7 +230,7 @@ export const buildPylonsMaterials = async (
 
   return {
     pylonMaterial,
-    checkpointMat,
+    checkpointMat: () => buildPylonsCheckpointMaterial(viz),
     bgTexture,
     shinyPatchworkStoneMaterial,
     greenMosaic2Material,

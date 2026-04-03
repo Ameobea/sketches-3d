@@ -21,7 +21,7 @@ export const initPylonsPostprocessing = (
     addMiddlePasses: (composer, viz, quality) => {
       const qualityParams = {
         [GraphicsQuality.Low]: {
-          baseRaymarchStepCount: 50,
+          baseRaymarchStepCount: 40,
           octaveCount: 3,
           renderScale: 0.25,
           fogFadeOutRangeY: 4,
@@ -33,8 +33,8 @@ export const initPylonsPostprocessing = (
           jbuDepthSigma: 0.05,
           fogColorHighDensity: new THREE.Vector3(0.3, 0.35, 0.44),
         },
-        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 100, renderScale: 0.4 },
-        [GraphicsQuality.High]: { baseRaymarchStepCount: 160, renderScale: 0.75 },
+        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 80, renderScale: 0.4 },
+        [GraphicsQuality.High]: { baseRaymarchStepCount: 128, renderScale: 0.75 },
       }[quality];
       const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
         fogMinY: -140,

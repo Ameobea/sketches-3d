@@ -9,12 +9,13 @@
   export let startVizConfig: VizConfig;
 
   let easyModeMovement = viz.fpCtx ? get(viz.fpCtx.easyModeMovement) : false;
+  let thirdPersonXray = startVizConfig.gameplay.thirdPersonXray;
 
   const handleSave = () => {
-    const newGraphicsSettings: GameplaySettings = { easyModeMovement };
+    const newGameplaySettings: GameplaySettings = { easyModeMovement, thirdPersonXray };
     onChange({
       ...startVizConfig,
-      gameplay: newGraphicsSettings,
+      gameplay: newGameplaySettings,
     });
     onBack();
   };
@@ -28,6 +29,11 @@
     bind:checked={easyModeMovement}
   />
   <label for="easy-mode-movement-checkbox">Easy Mode Movement</label>
+</div>
+
+<div class="large-checkbox">
+  <input id="third-person-xray-checkbox" type="checkbox" bind:checked={thirdPersonXray} />
+  <label for="third-person-xray-checkbox">Third-Person X-Ray</label>
 </div>
 
 <button on:click={handleSave}>Save</button>

@@ -96,8 +96,12 @@ export const initDashTokenGraphics = (
   loadedWorld: THREE.Group,
   coreMaterial: THREE.Material,
   ringMaterial: THREE.Material
-): THREE.Object3D => {
+): THREE.Object3D | undefined => {
   const base = loadedWorld.getObjectByName('dash_token')!;
+  if (!base) {
+    return;
+  }
+
   base.visible = false;
   base.traverse(obj => {
     if (!(obj instanceof THREE.Mesh)) {
@@ -120,7 +124,18 @@ export const initDashTokens = (
   ringMaterial: THREE.Material,
   dashCharges = rwritable(0)
 ) => {
-  const base = initDashTokenGraphics(loadedWorld, coreMaterial, ringMaterial);
+  let base = initDashTokenGraphics(loadedWorld, coreMaterial, ringMaterial);
+  if (!base) {
+    base = new THREE.Group();
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.5), coreMaterial);
+    core.name = 'core';
+    base.add(core);
+
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.1, 8, 24), ringMaterial);
+    ring.name = 'ring';
+    base.add(ring);
+  }
+
   const dashTokenBase = new DashToken(viz, base);
   const ctx = initCollectables({
     viz,

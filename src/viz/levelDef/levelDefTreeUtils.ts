@@ -66,3 +66,31 @@ export const flattenAllNodes = (nodes: (ObjectDef | ObjectGroupDef)[]): (ObjectD
   }
   return result;
 };
+
+/**
+ * Removes a node by id from the tree. Returns the updated array and whether the node was found.
+ * Operates immutably: returns new arrays rather than mutating in place.
+ */
+export const removeNodeById = (
+  nodes: (ObjectDef | ObjectGroupDef)[],
+  id: string
+): { removed: boolean; nodes: (ObjectDef | ObjectGroupDef)[] } => {
+  const idx = nodes.findIndex(n => n.id === id);
+  if (idx !== -1) {
+    const next = [...nodes];
+    next.splice(idx, 1);
+    return { removed: true, nodes: next };
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (isObjectGroup(node)) {
+      const res = removeNodeById(node.children, id);
+      if (res.removed) {
+        const next = [...nodes];
+        next[i] = { ...node, children: res.nodes };
+        return { removed: true, nodes: next };
+      }
+    }
+  }
+  return { removed: false, nodes };
+};

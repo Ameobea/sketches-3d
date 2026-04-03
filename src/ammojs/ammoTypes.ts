@@ -104,6 +104,9 @@ export interface BtKinematicCharacterController {
     fromX: number, fromY: number, fromZ: number,
     toX: number,   toY: number,   toZ: number
   ): number;
+  getCameraRayHitNormalX(): number;
+  getCameraRayHitNormalY(): number;
+  getCameraRayHitNormalZ(): number;
   packState(outBuffer: number): number;
 }
 

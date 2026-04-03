@@ -113,7 +113,9 @@ export const buildMaterial = (
     return buildCustomShader(props, {}, options) as unknown as THREE.Material;
   }
 
-  // customBasicShader
+  if (matDef.type !== 'customBasicShader') {
+    throw new Error(`buildMaterial: unhandled material type "${(matDef as { type: string }).type}"`);
+  }
   const p = matDef.props ?? {};
   return buildCustomBasicShader(
     {

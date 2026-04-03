@@ -4,9 +4,9 @@ import type { Viz } from 'src/viz';
 import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
 
-const canvasRecordModule = new AsyncOnce(() => import('canvas-record'));
-const mediaCodecsModule = new AsyncOnce(() => import('media-codecs'));
-const mediabunnyModule = new AsyncOnce(() => import('mediabunny'));
+const canvasRecordModule = import.meta.env.SSR ? null : new AsyncOnce(() => import('canvas-record'));
+const mediaCodecsModule = import.meta.env.SSR ? null : new AsyncOnce(() => import('media-codecs'));
+const mediabunnyModule = import.meta.env.SSR ? null : new AsyncOnce(() => import('mediabunny'));
 
 export type RecordingState = 'not-recording' | 'initializing' | 'recording';
 
@@ -39,6 +39,11 @@ export const useRecording = (
     }
 
     recordingState.set('initializing');
+
+    if (!canvasRecordModule || !mediaCodecsModule || !mediabunnyModule) {
+      recordingState.set('not-recording');
+      throw new Error('Recording is only available in the browser runtime.');
+    }
 
     const { Recorder, RecorderStatus, isWebCodecsSupported } = await canvasRecordModule.get();
     const { AVC, AV } = await mediaCodecsModule.get();

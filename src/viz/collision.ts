@@ -2,13 +2,24 @@ import * as THREE from 'three';
 import { derived, type Readable } from 'svelte/store';
 
 import type { FpPlayerStateGetters, Viz } from './index.js';
-import { getPlayerShadowUniforms } from './shaders/customShader';
+import {
+  getPlayerShadowUniforms,
+  getOcclusionUniforms,
+  setOcclusionBackfaceRendering,
+} from './shaders/customShader';
 import {
   DefaultExternalVelocityAirDampingFactor,
   DefaultExternalVelocityGroundDampingFactor,
   DefaultTopDownCameraOffset,
 } from './clientDefaults.js';
-import { DefaultDashConfig, DefaultMoveSpeed, DefaultOOBThreshold } from './sceneDefaults.js';
+import {
+  DefaultDashConfig,
+  DefaultMoveSpeed,
+  DefaultOOBThreshold,
+  SoftOcclusionRevealRadius,
+  SoftOcclusionRevealFade,
+  SoftOcclusionEyeMargin,
+} from './sceneDefaults.js';
 import type { SceneConfig } from './scenes/index.js';
 import { CameraController } from './cameraController.js';
 import { CustomShaderMaterial } from './shaders/customShader';
@@ -47,6 +58,7 @@ import type {
 import { ZoneEventType } from '../ammojs/ammoTypes';
 import { DashManager } from './DashManager.js';
 import { FlightRecorder, type FlightPlayer, packKeyFlags, RecorderEventType } from './flightRecorder.js';
+import { withWorldSpaceTransform } from './util/three.js';
 
 // Precomputed unit circle offsets for shadow ring probes (8 angles at 45° intervals)
 const SHADOW_PROBE_COS = Array.from({ length: 8 }, (_, i) => Math.cos((i / 8) * Math.PI * 2));
@@ -182,11 +194,14 @@ export class BulletPhysics {
   private scratchQuat: BtQuaternion | null = null;
   private hasStartedMainGameTick = false;
   private readonly playerEyePosScratch = new THREE.Vector3();
+  /** Tracks whether backface rendering was enabled last frame to avoid redundant scene traversals. */
+  private backfaceRenderingEnabled = true;
   public flightRecorder: FlightRecorder = new FlightRecorder();
   private ammoStatePtr = 0;
   private replayPlayer: FlightPlayer | null = null;
   private replaySubtickIndex = 0;
   private replayActive = false;
+  private replayStartCbs: (() => void)[] = [];
 
   constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
     this.Ammo = Ammo;
@@ -393,8 +408,14 @@ export class BulletPhysics {
       getCameraControlEnabled: () => viz.controlState.cameraControlEnabled,
       getPointerLocked: () => document.pointerLockElement === document.body,
       getFirstPersonFOV: () => viz.vizConfig.current.graphics.fov,
+      getThirdPersonXrayEnabled: () => viz.vizConfig.current.gameplay.thirdPersonXray,
       cameraRayTest: (fx, fy, fz, tx, ty, tz) =>
         this.playerController.cameraRayTest(this.collisionWorld, fx, fy, fz, tx, ty, tz),
+      getLastRayHitNormal: () => ({
+        x: this.playerController.getCameraRayHitNormalX(),
+        y: this.playerController.getCameraRayHitNormalY(),
+        z: this.playerController.getCameraRayHitNormalZ(),
+      }),
     });
 
     if (viewMode.type === 'firstPerson' || viewMode.type === 'thirdPerson') {
@@ -542,6 +563,9 @@ export class BulletPhysics {
 
         if (this.viz.controlState.cameraControlEnabled) {
           const viewMode = this.viz.sceneConf.viewMode!;
+          const thirdPersonXrayEnabled = this.viz.vizConfig.current.gameplay.thirdPersonXray;
+          let needBackfaces = false;
+
           if (viewMode.type === 'firstPerson' || viewMode.type === 'thirdPerson') {
             this.playerEyePosScratch.set(
               newPlayerPos.x,
@@ -549,9 +573,37 @@ export class BulletPhysics {
               newPlayerPos.z
             );
             this.viz.cameraController!.update(this.playerEyePosScratch, tDiffSecs);
+
+            if (thirdPersonXrayEnabled) {
+              const isSoftOccluded = this.viz.cameraController!.isSoftOccluded;
+              const { occlusionStart, occlusionEnd, occlusionParams } = getOcclusionUniforms();
+              if (isSoftOccluded) {
+                occlusionStart.copy(this.playerEyePosScratch);
+                occlusionEnd.copy(this.viz.camera.position);
+                occlusionParams.set(
+                  SoftOcclusionRevealRadius,
+                  SoftOcclusionRevealFade,
+                  1,
+                  SoftOcclusionEyeMargin
+                );
+                needBackfaces = viewMode.type === 'thirdPerson';
+              } else {
+                occlusionParams.set(0, 0, 0, 0);
+              }
+            } else {
+              const { occlusionParams } = getOcclusionUniforms();
+              occlusionParams.set(0, 0, 0, 0);
+            }
           } else if (viewMode.type === 'top-down') {
             const cameraPos = this.computeTopDownCameraPos(newPlayerPos, viewMode);
             this.viz.camera.position.copy(cameraPos);
+            const { occlusionParams } = getOcclusionUniforms();
+            occlusionParams.set(0, 0, 0, 0);
+          }
+
+          if (needBackfaces !== this.backfaceRenderingEnabled) {
+            setOcclusionBackfaceRendering(this.viz.scene, needBackfaces);
+            this.backfaceRenderingEnabled = needBackfaces;
           }
         }
 
@@ -786,6 +838,10 @@ export class BulletPhysics {
   public registerJumpCb = (cb: (curTimeSeconds: number) => void) => {
     this.jumpCbs.push(cb);
   };
+
+  public registerReplayStartCb = (cb: () => void) => {
+    this.replayStartCbs.push(cb);
+  };
   public deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
     const ix = this.jumpCbs.indexOf(cb);
     if (ix === -1) {
@@ -834,6 +890,9 @@ export class BulletPhysics {
     this.viz.controlState.movementEnabled = false;
     // Keep cameraControlEnabled=true so the camera update() still positions the camera.
     // Mouse input won't matter because we overwrite angles every subtick.
+    for (const cb of this.replayStartCbs) {
+      cb();
+    }
   };
 
   public stopReplay = (): void => {
@@ -893,9 +952,11 @@ export class BulletPhysics {
 
       this.tickPhysicsTickers(fixedTimeStep);
       this.collisionWorld.substepSimulation();
-      this.drainZoneEvents();
 
-      // Record subtick snapshot for flight recorder
+      // Record subtick snapshot before draining zone events so that the
+      // snapshot count at the moment of win detection matches the number of
+      // subticks the replay will actually play back.  This keeps the replay
+      // win time in exact agreement with the submitted run time.
       if (this.flightRecorder.isReady) {
         this.playerController.packState(this.ammoStatePtr);
         const angles = this.viz.cameraController?.angles ?? {
@@ -910,9 +971,12 @@ export class BulletPhysics {
           this.moveDirection.z * moveSpeed,
           angles.phi,
           angles.theta,
+          this.viz.cameraController?.targetZoomDistance ?? 0,
           packKeyFlags(this.viz.keyStates)
         );
       }
+
+      this.drainZoneEvents();
 
       // Detect landing for SFX
       const subStepOnGround = this.playerController.onGround();
@@ -941,6 +1005,7 @@ export class BulletPhysics {
     const maxSubSteps = 20;
 
     const numSubSteps = this.collisionWorld.beginStepSimulation(tDiffSeconds, maxSubSteps, fixedTimeStep);
+    let prevSubStepOnGround = this.playerController.onGround();
     for (let i = 0; i < numSubSteps; i++) {
       this.physicsElapsedTime += fixedTimeStep;
 
@@ -956,8 +1021,11 @@ export class BulletPhysics {
         this.btvec3(snapshot.walkDir[0], snapshot.walkDir[1], snapshot.walkDir[2])
       );
 
-      // Set camera angles from recorded data
+      // Set camera angles and zoom from recorded data
       this.viz.cameraController?.setAngles(snapshot.phi, snapshot.theta);
+      if (snapshot.zoomDistance > 0) {
+        this.viz.cameraController?.setTargetZoomDistance(snapshot.zoomDistance);
+      }
 
       // Fire events at this subtick
       const events = player.getEventsAtSubtick(this.replaySubtickIndex);
@@ -975,6 +1043,9 @@ export class BulletPhysics {
             this.lastJumpPhysicsTime = this.physicsElapsedTime;
             this.lastGroundedPhysicsTime = -Infinity;
             this.playerController.setOnGround(false);
+            for (const cb of this.jumpCbs) {
+              cb(this.physicsElapsedTime);
+            }
             break;
           }
           case RecorderEventType.Dash: {
@@ -1004,6 +1075,15 @@ export class BulletPhysics {
       this.tickPhysicsTickers(fixedTimeStep);
       this.collisionWorld.substepSimulation();
       this.drainZoneEvents();
+
+      const subStepOnGround = this.playerController.onGround();
+      if (!prevSubStepOnGround && subStepOnGround) {
+        const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
+        const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
+        const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
+        this.viz.sfxManager.onPlayerLand(materialClass);
+      }
+      prevSubStepOnGround = subStepOnGround;
 
       this.replaySubtickIndex++;
     }
@@ -1457,25 +1537,32 @@ export class BulletPhysics {
         }
         case 'mesh': {
           const { mesh } = region;
-          let scale = mesh.scale.clone().multiplyScalar(1 + (region.margin ?? 0));
-          if (region.scale) {
-            scale = scale.multiply(region.scale);
-          }
-          const shape = this.buildCollisionShapeFromMesh(region.mesh, scale);
-          const transform = new this.Ammo.btTransform();
-          transform.setIdentity();
-          transform.setOrigin(this.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-          if (mesh.quaternion) {
-            const rot = new this.Ammo.btQuaternion(
-              mesh.quaternion.x,
-              mesh.quaternion.y,
-              mesh.quaternion.z,
-              mesh.quaternion.w
-            );
-            transform.setRotation(rot);
-            this.Ammo.destroy(rot);
-          }
-          return { shape, transform };
+          return withWorldSpaceTransform(mesh, mesh => {
+            // buildCollisionShapeFromMesh reads mesh.scale (now world-space) internally,
+            // so only pass margin/region.scale as an additional multiplier.
+            let extraScale: THREE.Vector3 | undefined;
+            if (region.margin || region.scale) {
+              extraScale = new THREE.Vector3(1, 1, 1).multiplyScalar(1 + (region.margin ?? 0));
+              if (region.scale) {
+                extraScale = extraScale.multiply(region.scale);
+              }
+            }
+            const shape = this.buildCollisionShapeFromMesh(region.mesh, extraScale);
+            const transform = new this.Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(this.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
+            if (mesh.quaternion) {
+              const rot = new this.Ammo.btQuaternion(
+                mesh.quaternion.x,
+                mesh.quaternion.y,
+                mesh.quaternion.z,
+                mesh.quaternion.w
+              );
+              transform.setRotation(rot);
+              this.Ammo.destroy(rot);
+            }
+            return { shape, transform };
+          });
         }
         case 'sphere': {
           const shape = new this.Ammo.btSphereShape(region.radius);

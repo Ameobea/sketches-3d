@@ -33,6 +33,8 @@ interface InitCollectablesArgs {
   material?: THREE.Material | (() => THREE.Material);
   collisionRegionScale?: THREE.Vector3;
   type?: 'mesh' | 'convexHull' | 'aabb';
+  /** If provided, use these meshes directly instead of traversing `loadedWorld` by name. */
+  meshes?: THREE.Mesh[];
 }
 
 const applyMaterial = (mesh: THREE.Mesh, material: THREE.Material | (() => THREE.Material)) => {
@@ -52,39 +54,52 @@ export const initCollectables = ({
   material,
   collisionRegionScale,
   type = 'mesh',
+  meshes: providedMeshes,
 }: InitCollectablesArgs): CollectablesCtx => {
   const collectables: THREE.Object3D[] = [];
 
-  loadedWorld.traverse(obj => {
-    if (replacementObject) {
-      if (obj.name.includes(collectableName)) {
-        const clone = replacementObject.clone();
-        clone.name = `clone_${obj.name}`;
-        clone.position.copy(obj.position);
-
-        if (material) {
-          clone.traverse(obj => {
-            if (obj instanceof THREE.Mesh) {
-              applyMaterial(obj, material);
-            }
-          });
-        }
-
-        viz.scene.add(clone);
-        collectables.push(clone);
-      }
-    } else {
-      if (obj instanceof THREE.Mesh && obj.name.includes(collectableName)) {
-        obj.userData.nocollide = true;
-        withPhysicsContext(viz, fpCtx => clearPhysicsBindings(obj, fpCtx));
-
-        collectables.push(obj);
-        if (material) {
-          applyMaterial(obj, material);
-        }
+  if (providedMeshes) {
+    // Use pre-collected meshes directly — skip name-based traversal.
+    for (const mesh of providedMeshes) {
+      mesh.userData.nocollide = true;
+      withPhysicsContext(viz, fpCtx => clearPhysicsBindings(mesh, fpCtx));
+      collectables.push(mesh);
+      if (material) {
+        applyMaterial(mesh, material);
       }
     }
-  });
+  } else {
+    loadedWorld.traverse(obj => {
+      if (replacementObject) {
+        if (obj.name.includes(collectableName)) {
+          const clone = replacementObject.clone();
+          clone.name = `clone_${obj.name}`;
+          clone.position.copy(obj.position);
+
+          if (material) {
+            clone.traverse(obj => {
+              if (obj instanceof THREE.Mesh) {
+                applyMaterial(obj, material);
+              }
+            });
+          }
+
+          viz.scene.add(clone);
+          collectables.push(clone);
+        }
+      } else {
+        if (obj instanceof THREE.Mesh && obj.name.includes(collectableName)) {
+          obj.userData.nocollide = true;
+          withPhysicsContext(viz, fpCtx => clearPhysicsBindings(obj, fpCtx));
+
+          collectables.push(obj);
+          if (material) {
+            applyMaterial(obj, material);
+          }
+        }
+      }
+    });
+  } // end else (name-based traversal)
 
   const ctx = new CollectablesCtx();
   const cb = (fpCtx: BulletPhysics) => {

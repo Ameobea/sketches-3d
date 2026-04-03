@@ -8,6 +8,16 @@ import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
+import { loadTexture } from 'src/viz/textureLoading';
+import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
+
+const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
+  const out: THREE.Mesh[] = [];
+  obj.traverse(child => {
+    if (child instanceof THREE.Mesh) out.push(child);
+  });
+  return out;
+};
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
@@ -16,6 +26,14 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   const sunLight = new THREE.DirectionalLight(0xffffff, 1.7);
   sunLight.position.set(40, 80, 40);
   sunLight.castShadow = true;
+
+  const loader = new THREE.ImageBitmapLoader();
+  loadTexture(loader, 'https://i.ameo.link/dlz.avif', {
+    colorSpace: THREE.SRGBColorSpace,
+    mapping: THREE.EquirectangularRefractionMapping,
+  }).then(texture => {
+    viz.scene.background = texture;
+  });
 
   const shadowMapSize = {
     [GraphicsQuality.Low]: 1024,
@@ -36,11 +54,15 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   const playerRadius = 1;
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
-    buildCustomShader({
-      color: new THREE.Color(0x8d3d9f),
-      metalness: 0.18,
-      roughness: 0.82,
-    })
+    buildCustomShader(
+      {
+        color: new THREE.Color(0x8d3d9f),
+        metalness: 0.18,
+        roughness: 0.82,
+      },
+      {},
+      { noOcclusion: true }
+    )
   );
   playerMesh.castShadow = false;
   playerMesh.receiveShadow = true;
@@ -62,10 +84,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   loadedWorld.add(dashToken);
 
   const scoreThresholds: ScoreThresholds = {
-    [Score.SPlus]: Infinity,
-    [Score.S]: Infinity,
-    [Score.A]: Infinity,
-    [Score.B]: Infinity,
+    [Score.SPlus]: 34.2,
+    [Score.S]: 35,
+    [Score.A]: 38,
+    [Score.B]: 45,
   };
   const pkManager = new ParkourManager(
     viz,
@@ -78,14 +100,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       },
     },
     scoreThresholds,
-    {
-      dashToken: {
-        core: new THREE.MeshStandardMaterial({ color: 0x9effe1, emissive: 0x1a322e, roughness: 0.4 }),
-        ring: new THREE.MeshStandardMaterial({ color: 0xffd464, emissive: 0x36290a, roughness: 0.3 }),
-      },
-      checkpoint: new THREE.MeshStandardMaterial({ color: 0x80f0ff, emissive: 0x173845, roughness: 0.32 }),
-    },
-    'jump_pad_speedup_test',
+    undefined,
+    't',
     true,
     {
       gravity: 220,
@@ -129,7 +145,16 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     viz,
     vizConf,
     false,
-    { toneMapping: { mode: 'agx', exposure: 0.9 } },
+    {
+      toneMapping: { mode: 'agx', exposure: 0.9 },
+      useDepthPrePass: true,
+      emissiveBypass: true,
+      emissiveBypassAmbientIntensity: vizConf.graphics.quality > GraphicsQuality.Low ? 2.8 : 3,
+      emissiveBloom:
+        vizConf.graphics.quality > GraphicsQuality.Low
+          ? { luminanceThreshold: 1.1, luminanceSmoothing: 0 }
+          : null,
+    },
     {
       fogColorHighDensity: new THREE.Vector3(0.12, 0.15, 0.14).multiplyScalar(0.2),
       fogColorLowDensity: new THREE.Vector3(0.15, 0.2, 0.25).multiplyScalar(0.7),
@@ -138,6 +163,32 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         : {}),
     }
   );
+
+  const handle = viz.levelLoadHandle!;
+
+  // Register the factory for the checkpoint material so the level def system
+  // builds and assigns it to the win-zone mesh when it's placed.
+  handle.setMaterialFactories({
+    checkpoint: viz => {
+      const mat = buildPylonsCheckpointMaterial(viz);
+      return { material: mat, onAssigned: mesh => mat.setMesh(mesh) };
+    },
+  });
+
+  // Set up parkour collectables once level objects are placed, passing the
+  // win-zone mesh directly instead of relying on name-based traversal.
+  handle.parkourObjects.then(parkourObjs => {
+    const checkpointMeshes = parkourObjs.flatMap(obj => collectMeshes(obj.object));
+    pkManager.setMaterials(
+      {
+        dashToken: {
+          core: new THREE.MeshStandardMaterial({ color: 0x9effe1, emissive: 0x1a322e, roughness: 0.4 }),
+          ring: new THREE.MeshStandardMaterial({ color: 0xffd464, emissive: 0x36290a, roughness: 0.3 }),
+        },
+      },
+      { checkpointMeshes }
+    );
+  });
 
   return pkManager.buildSceneConfig();
 };

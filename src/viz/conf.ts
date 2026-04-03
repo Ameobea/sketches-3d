@@ -1,5 +1,6 @@
 import * as DetectGPU from 'detect-gpu';
 
+import { SoftOcclusionEnabled } from './sceneDefaults';
 import { mergeDeep } from './util/util';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable';
 
@@ -48,6 +49,8 @@ export interface GameplaySettings {
    * diagonally, allowing for easier movement.
    */
   easyModeMovement: boolean;
+  /** Enables the third-person soft occlusion "x-ray" camera behavior. */
+  thirdPersonXray: boolean;
 }
 
 export interface ControlsSettings {
@@ -105,7 +108,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
 const buildDefaultVizConfig = (): VizConfig => ({
   graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV, gamma: 1.0, showFPSStats: true },
   audio: { globalVolume: 0.4, musicVolume: 0.4, sfxVolume: 0.4 },
-  gameplay: { easyModeMovement: true },
+  gameplay: { easyModeMovement: true, thirdPersonXray: SoftOcclusionEnabled },
   controls: { mouseSensitivity: 2 },
 });
 

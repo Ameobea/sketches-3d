@@ -291,7 +291,7 @@ export class CsgEditController {
     this.nodePolarities = computeNodePolarities(assetDef.tree);
     this.openEditor(levelObj.assetId, assetDef.tree);
     this.selectNode('');
-    this.editor.updateSelectedLabel();
+    this.editor.updateSelectionState();
   }
 
   exit() {

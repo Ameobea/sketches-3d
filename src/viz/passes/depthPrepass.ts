@@ -38,14 +38,20 @@ export class DepthPass extends RenderPass implements Resizable {
     deltaTime?: number | undefined,
     stencilTest?: boolean | undefined
   ): void {
-    // Avoid rendering transparent objects
+    // Avoid rendering transparent objects; also skip occlusion-excluded meshes so their depth
+    // is not pre-written (the main pass renders them without dithering and writes depth then).
     const selection: THREE.Object3D[] = [];
+    const occlusionExcluded: THREE.Object3D[] = [];
     this.scene.traverse(c => {
       if (c instanceof THREE.Mesh && c.material.transparent) {
         return;
       }
       const mat = (c as any).material;
       if (mat?.depthTest === false) {
+        return;
+      }
+      if ((c as THREE.Mesh).userData?.occlusionExclude) {
+        occlusionExcluded.push(c);
         return;
       }
       selection.push(c);
@@ -56,6 +62,11 @@ export class DepthPass extends RenderPass implements Resizable {
     this.selection.clear();
     for (const child of selection) {
       this.selection.add(child);
+    }
+
+    // Temporarily hide excluded objects so scene.overrideMaterial doesn't affect them.
+    for (const obj of occlusionExcluded) {
+      obj.visible = false;
     }
 
     const shadowMapWasEnabled = renderer.shadowMap.enabled;
@@ -70,6 +81,11 @@ export class DepthPass extends RenderPass implements Resizable {
     }
 
     renderer.shadowMap.enabled = shadowMapWasEnabled;
+
+    // Restore visibility of excluded objects.
+    for (const obj of occlusionExcluded) {
+      obj.visible = true;
+    }
   }
 
   setSize(width: number, height: number): void {

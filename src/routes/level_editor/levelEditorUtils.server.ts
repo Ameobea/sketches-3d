@@ -5,6 +5,7 @@ import { dev } from '$app/environment';
 import { error } from '@sveltejs/kit';
 
 import { formatLevelJson } from 'src/viz/levelDef/formatLevelJson';
+import { getLevelDir } from 'src/viz/levelDef/levelPaths.server';
 import type { LevelDefRaw } from 'src/viz/levelDef/types';
 
 export const guardDev = () => {
@@ -37,7 +38,7 @@ export interface LevelStore {
  * `save()` writes mutations back to whichever file(s) own each section.
  */
 export const openLevel = (name: string): LevelStore => {
-  const levelDir = join(process.cwd(), 'src', 'levels', name);
+  const levelDir = getLevelDir(name);
   const defPath = join(levelDir, 'def.json');
 
   let def: LevelDefRaw;
@@ -59,10 +60,14 @@ export const openLevel = (name: string): LevelStore => {
     if (mats.materials) def.materials = { ...def.materials, ...mats.materials };
   }
 
-  // Replace def.json objects with objects.json when present
+  // Merge objects.json over def.json objects when present.
+  // objects.json entries win on ID conflict; def.json entries not present in objects.json
+  // are retained (e.g. generator anchor groups that are structural, not editor-placed).
   if (objectsFilePath) {
     const objs = JSON.parse(readFileSync(objectsFilePath, 'utf-8'));
-    def.objects = objs.objects ?? [];
+    const merged = new Map((def.objects ?? []).map(n => [n.id, n]));
+    for (const obj of objs.objects ?? []) merged.set(obj.id, obj);
+    def.objects = [...merged.values()];
   }
 
   // Auto-discover *.geo files from the geo/ subdirectory

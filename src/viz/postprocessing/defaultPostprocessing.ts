@@ -12,6 +12,7 @@ import type { Viz } from 'src/viz';
 import type { PostprocessingController } from 'src/viz';
 import { GraphicsQuality } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
+import { buildOcclusionDepthMaterial } from 'src/viz/shaders/customShader';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
@@ -57,7 +58,7 @@ export const DEFAULT_EMISSIVE_BLOOM_CONFIG: Omit<EmissiveBloomConfig, 'levels'> 
 export class PostprocessingPipelineController implements PostprocessingController {
   public effectComposer: StableDepthEffectComposer;
   public depthPass: DepthPass | null;
-  public depthPrePassMaterial: THREE.MeshBasicMaterial | null;
+  public depthPrePassMaterial: THREE.Material | null;
   public renderer: THREE.WebGLRenderer;
   public readonly emissiveBypassPass: EmissiveBypassPass | null;
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
@@ -66,7 +67,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   constructor(
     effectComposer: StableDepthEffectComposer,
     depthPass: DepthPass | null,
-    depthPrePassMaterial: THREE.MeshBasicMaterial | null,
+    depthPrePassMaterial: THREE.Material | null,
     renderer: THREE.WebGLRenderer,
     emissiveBypassPass: EmissiveBypassPass | null = null,
     emissiveBloomPass: EmissiveBloomPass | null = null,
@@ -191,13 +192,14 @@ export const configureDefaultPostprocessingPipeline = ({
   });
 
   let depthPass: DepthPass | null = null;
-  let depthPrePassMaterial: THREE.MeshBasicMaterial | null = null;
+  let depthPrePassMaterial: THREE.Material | null = null;
 
   if (useDepthPrePass) {
     viz.renderer.autoClear = false;
     viz.renderer.autoClearColor = true;
     viz.renderer.autoClearDepth = false;
-    depthPrePassMaterial = new THREE.MeshBasicMaterial();
+    depthPrePassMaterial = buildOcclusionDepthMaterial();
+    depthPrePassMaterial.side = THREE.FrontSide;
     depthPass = new DepthPass(viz.scene, viz.camera, depthPrePassMaterial);
     depthPass.skipShadowMapUpdate = true;
     effectComposer.addPass(depthPass);
@@ -265,10 +267,16 @@ export const configureDefaultPostprocessingPipeline = ({
     // (and any other scene population) has completed, regardless of which setup path was used.
     let autoAssigned = false;
     viz.registerBeforeRenderCb(() => {
-      if (autoAssigned) return;
+      if (autoAssigned) {
+        return;
+      }
+
       autoAssigned = true;
       viz.scene.traverse(obj => {
-        if (!(obj instanceof THREE.Mesh)) return;
+        if (!(obj instanceof THREE.Mesh)) {
+          return;
+        }
+
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         if (mats.some(m => m?.userData?.emissiveBypass)) {
           emissiveBypassPass!.addBypassMesh(obj);

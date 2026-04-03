@@ -2,6 +2,8 @@ set dotenv-load := true
 
 copy-files:
   cp -r ./build/* ../wasmComp
+  cp ./build2/*.wasm ../wasmComp
+  cp ./build2/flight_recorder.wasm ../wasmComp
   cp -r ./geodesics/build/bin/* ../../../src/geodesics/
 
 bindgen:
@@ -18,6 +20,7 @@ bindgen:
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/terrain.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/flight_recorder.wasm ./build2
+  cp ./build2/*.wasm ../wasmComp
 
 opt:
   #!/usr/bin/env -S parallel --shebang --ungroup --jobs 6
@@ -114,3 +117,4 @@ build-flight-recorder:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package flight_recorder
   cp ./target/wasm32-unknown-unknown/release/flight_recorder.wasm ./build2
   wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
+  cp ./build2/flight_recorder.wasm ../wasmComp

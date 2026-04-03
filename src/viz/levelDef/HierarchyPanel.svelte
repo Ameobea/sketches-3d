@@ -1,8 +1,8 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
 
-  import type { LevelSceneNode } from './loadLevelDef';
-  import { isLevelGroup } from './loadLevelDef';
+  import type { LevelSceneNode } from './levelSceneTypes';
+  import { isLevelGroup } from './levelSceneTypes';
   import { isGeneratedDef } from './levelDefTreeUtils';
 
   interface Props {
@@ -66,11 +66,8 @@
       onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectnode(node); }}
     >
       <span class="node-id">{node.id}</span>
-      {#if node.def.material}
-        <span class="badge mat-badge">{node.def.material}</span>
-      {/if}
       {#if isGeneratedDef(node.def)}
-        <span class="badge generated-badge">generated</span>
+        <span class="badge generated-badge">gen</span>
       {/if}
     </div>
   {/if}
@@ -142,11 +139,6 @@
   .group-badge {
     color: #888;
     border: 1px solid #444;
-  }
-
-  .mat-badge {
-    color: #8bf;
-    border: 1px solid #446;
   }
 
   .generated-badge {

@@ -19,10 +19,11 @@ import type { TransparentWritable } from '../util/TransparentWritable';
 export const initCheckpoints = (
   viz: Viz,
   loadedWorld: THREE.Group<THREE.Object3DEventMap>,
-  checkpointMat: THREE.Material | (() => THREE.Material),
+  checkpointMat: THREE.Material | (() => THREE.Material) | undefined,
   dashTokensCtx: CollectablesCtx,
   curDashCharges: TransparentWritable<number>,
-  onComplete: () => void
+  onComplete: () => void,
+  checkpointMeshes?: THREE.Mesh[]
 ) => {
   let latestReachedCheckpointIx: number | null = 0;
   let dashChargesAtLastCheckpoint = 0;
@@ -42,9 +43,12 @@ export const initCheckpoints = (
     viz,
     loadedWorld,
     collectableName: 'checkpoint',
+    meshes: checkpointMeshes,
     onCollect: checkpoint => {
+      const worldPos = new THREE.Vector3();
+      checkpoint.getWorldPosition(worldPos);
       setSpawnPoint(
-        checkpoint.position,
+        worldPos,
         new THREE.Vector3(viz.camera.rotation.x, viz.camera.rotation.y, viz.camera.rotation.z)
       );
 
@@ -53,7 +57,7 @@ export const initCheckpoints = (
       const checkpointIx = parseCheckpointIx(checkpoint.name);
       latestReachedCheckpointIx = checkpointIx;
       dashChargesAtLastCheckpoint = curDashCharges.current;
-      if (checkpointIx === 1) {
+      if (checkpointIx === 1 || checkpoint.name.includes('win')) {
         onComplete();
       }
     },

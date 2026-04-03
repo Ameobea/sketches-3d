@@ -32,6 +32,9 @@ const config = defineConfig({
   optimizeDeps: {
     exclude: ['codemirror'],
   },
+  ssr: {
+    external: ['esbuild'],
+  },
   build: {
     sourcemap: true,
     target: 'esnext',

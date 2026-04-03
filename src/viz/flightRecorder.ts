@@ -1,4 +1,4 @@
-import flightRecorderWasmURL from 'src/viz/wasm/build2/flight_recorder.wasm?url';
+import flightRecorderWasmURL from 'src/viz/wasmComp/flight_recorder.wasm?url';
 
 export const enum RecorderEventType {
   Jump = 0,
@@ -8,6 +8,9 @@ export const enum RecorderEventType {
   RunStart = 4,
   RunEnd = 5,
   OOBRespawn = 6,
+  Pause = 7,
+  Unpause = 8,
+  SettingsChanged = 9,
 }
 
 interface FlightRecorderExports {
@@ -81,7 +84,7 @@ export class FlightRecorder {
 
     // Allocate persistent scratch buffers in Wasm memory
     this.physicsStatePtr = this.exports.fr_malloc(40); // 10 f32s
-    this.inputStatePtr = this.exports.fr_malloc(20); // 5 f32s
+    this.inputStatePtr = this.exports.fr_malloc(24); // 6 f32s
     this.headerPtr = this.exports.fr_malloc(84); // 21 f32s
     this.eventDataPtr = this.exports.fr_malloc(16); // 4 f32s
 
@@ -174,6 +177,7 @@ export class FlightRecorder {
    * @param walkDirX/Y/Z  The walk direction applied this subtick
    * @param phi           Camera phi angle
    * @param theta         Camera theta angle
+   * @param zoomDistance  Third-person camera zoom distance (0 in first-person)
    * @param keyFlags      Packed key bitmask from packKeyFlags()
    */
   recordSubtick(
@@ -184,6 +188,7 @@ export class FlightRecorder {
     walkDirZ: number,
     phi: number,
     theta: number,
+    zoomDistance: number,
     keyFlags: number
   ): void {
     if (!this.ready) return;
@@ -196,12 +201,13 @@ export class FlightRecorder {
     }
 
     // Write input state
-    const inputView = new Float32Array(this.exports.memory.buffer, this.inputStatePtr, 5);
+    const inputView = new Float32Array(this.exports.memory.buffer, this.inputStatePtr, 6);
     inputView[0] = walkDirX;
     inputView[1] = walkDirY;
     inputView[2] = walkDirZ;
     inputView[3] = phi;
     inputView[4] = theta;
+    inputView[5] = zoomDistance;
 
     this.exports.record_subtick(this.ctx, this.physicsStatePtr, this.inputStatePtr, keyFlags);
   }
@@ -244,7 +250,7 @@ export class FlightRecorder {
   destroy(): void {
     if (!this.ready) return;
     this.exports.fr_free(this.physicsStatePtr, 40);
-    this.exports.fr_free(this.inputStatePtr, 20);
+    this.exports.fr_free(this.inputStatePtr, 24);
     this.exports.fr_free(this.headerPtr, 84);
     this.exports.fr_free(this.eventDataPtr, 16);
     this.exports.destroy_recorder(this.ctx);
@@ -256,6 +262,7 @@ export interface SubtickInput {
   walkDir: [number, number, number];
   phi: number;
   theta: number;
+  zoomDistance: number;
   keyFlags: number;
 }
 
@@ -282,7 +289,7 @@ export class FlightPlayer {
     this.ctx = this.exports.create_player();
 
     // Allocate scratch buffers
-    this.subtickPtr = this.exports.fr_malloc(64); // 16 f32s
+    this.subtickPtr = this.exports.fr_malloc(68); // 17 f32s
     this.eventPtr = this.exports.fr_malloc(24); // 6 f32s
     this.headerPtr = this.exports.fr_malloc(84); // 21 f32s
     this.metadataOutPtr = this.exports.fr_malloc(1024); // 1KB scratch for metadata reads
@@ -366,13 +373,14 @@ export class FlightPlayer {
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 16);
-    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 64);
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 17);
+    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 68);
     return {
       walkDir: [v[0], v[1], v[2]],
       phi: v[3],
       theta: v[4],
-      keyFlags: dv.getUint32(5 * 4, true),
+      zoomDistance: v[5],
+      keyFlags: dv.getUint32(6 * 4, true),
     };
   }
 
@@ -381,8 +389,8 @@ export class FlightPlayer {
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 16);
-    return [v[6], v[7], v[8]];
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 17);
+    return [v[7], v[8], v[9]];
   }
 
   getEventsAtSubtick(subtick: number): ReplayEvent[] {
@@ -391,7 +399,7 @@ export class FlightPlayer {
 
   destroy(): void {
     if (!this.ready) return;
-    this.exports.fr_free(this.subtickPtr, 64);
+    this.exports.fr_free(this.subtickPtr, 68);
     this.exports.fr_free(this.eventPtr, 24);
     this.exports.fr_free(this.headerPtr, 84);
     this.exports.fr_free(this.metadataOutPtr, 1024);

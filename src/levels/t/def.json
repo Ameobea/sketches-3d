@@ -194,8 +194,8 @@
       }
     }
   },
-  "generators": [
-    {
+  "generators": {
+    "platforms": {
       "file": "platforms.gen.ts",
       "params": {
         "asset": "plat1",
@@ -203,11 +203,12 @@
         "fudgeFactor": 1.08,
         "controlPoints": [
           [0, 0, 8],
-          [40, 5, -20],
-          [80, 10, -50]
+          [40, 10, -30],
+          [60, 40, 25],
+          [10, 95, 50]
         ]
       }
     }
-  ],
+  },
   "objects": []
 }

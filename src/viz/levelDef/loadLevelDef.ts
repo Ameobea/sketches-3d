@@ -9,38 +9,19 @@ import {
   LEVEL_PLACEHOLDER_MAT,
   applyTransform,
   assignMaterial,
+  forEachMesh,
   instantiateLevelObject,
 } from './levelObjectUtils';
 import type { AssetDef, CsgAssetDef, CsgTreeNode, LevelDef, ObjectDef, ObjectGroupDef } from './types';
-import { isObjectGroup, flattenLeaves } from './levelDefTreeUtils';
+import { isObjectGroup, flattenLeaves, isGeneratedDef } from './levelDefTreeUtils';
+import { type LevelObject, type LevelGroup, type LevelSceneNode } from './levelSceneTypes';
+export type { LevelObject, LevelGroup, LevelSceneNode } from './levelSceneTypes';
+export { isLevelGroup } from './levelSceneTypes';
 import { buildMaterial } from './buildMaterial';
 import { TextureFetchPool } from './texturePool';
 import { generateCsgCode } from './csgCodeGen';
 
 type PhysicsContext = NonNullable<Viz['fpCtx']>;
-
-export interface LevelObject {
-  id: string;
-  assetId: string;
-  /**
-   * The placed Three.js object. Will be a THREE.Mesh for single-mesh assets
-   * (gltf or single-output geoscript) or a THREE.Group for multi-mesh geoscript output.
-   * Use `.traverse()` to reach individual meshes for material assignment.
-   */
-  object: THREE.Object3D;
-  def: ObjectDef;
-}
-
-export interface LevelGroup {
-  id: string;
-  object: THREE.Group;
-  def: ObjectGroupDef;
-  children: LevelSceneNode[];
-}
-
-export type LevelSceneNode = LevelObject | LevelGroup;
-
-export const isLevelGroup = (n: LevelSceneNode): n is LevelGroup => 'children' in n;
 
 /** @deprecated Use LevelLoadHandle instead */
 export interface LoadedLevel {
@@ -86,7 +67,38 @@ export interface LevelLoadHandle {
    * Populated incrementally — safe to read once `objects` has resolved.
    */
   nodeById: Map<string, LevelSceneNode>;
+  /**
+   * Resolves with all LevelObjects that carry `parkour` metadata in their def.
+   * Available once `objects` has resolved.
+   */
+  parkourObjects: Promise<LevelObject[]>;
+  /**
+   * Resolves (after `complete`) with every THREE.Mesh whose assigned material def
+   * has `emissiveBypass: true`. These are automatically added to
+   * `viz.postprocessingController.emissiveBypassPass` if one is present.
+   */
+  emissiveBypassMeshes: Promise<THREE.Mesh[]>;
+  /**
+   * Register factory functions for `type: "generated"` materials.  Call this synchronously
+   * inside `processLoadedScene` so factories are available before async asset resolution
+   * finishes and objects start being placed.
+   *
+   * Each key must match a material name in the level def whose `type` is `"generated"`.
+   * The factory receives `viz` and returns a `MaterialFactoryResult` — either a plain
+   * `THREE.Material`, or `{ material, onAssigned }` where `onAssigned` is called for every
+   * mesh the material is applied to, after the mesh is placed with its final transform.
+   */
+  setMaterialFactories(factories: Record<string, (viz: Viz) => MaterialFactoryResult>): void;
 }
+
+/**
+ * Return type for generated material factories.  Return a plain `THREE.Material` when no
+ * post-assignment setup is needed, or `{ material, onAssigned }` to receive a callback for
+ * each mesh the material is applied to (useful e.g. for bbox-dependent uniform initialization).
+ */
+export type MaterialFactoryResult =
+  | THREE.Material
+  | { material: THREE.Material; onAssigned: (mesh: THREE.Mesh) => void };
 
 /**
  * Builds a reverse-dependency map: for each asset id, the set of CSG asset ids
@@ -203,16 +215,25 @@ const extractPrototype = (
 ): THREE.Object3D | null => {
   const meshes: THREE.Mesh[] = [];
   for (const obj of objects) {
-    if (obj.type !== 'mesh') continue;
+    if (obj.type !== 'mesh') {
+      continue;
+    }
+
     const mesh = new THREE.Mesh(obj.geometry!, LEVEL_PLACEHOLDER_MAT);
     mesh.applyMatrix4(obj.transform!);
     meshes.push(mesh);
   }
 
-  if (meshes.length === 0) return null;
-  if (meshes.length === 1) return meshes[0];
+  if (meshes.length === 0) {
+    return null;
+  } else if (meshes.length === 1) {
+    return meshes[0];
+  }
+
   const group = new THREE.Group();
-  for (const mesh of meshes) group.add(mesh);
+  for (const mesh of meshes) {
+    group.add(mesh);
+  }
   return group;
 };
 
@@ -279,6 +300,7 @@ const resolveScriptAssets = async (
       console.warn(`[levelDef] Asset "${id}" produced no meshes`);
       continue;
     }
+    prototype.name = id;
 
     onResolved(id, prototype);
   }
@@ -300,7 +322,9 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   const matTexPending = new Map<string, Set<string>>();
   // For each material, the textures loaded so far.
   const matTexLoaded = new Map<string, Map<string, THREE.Texture>>();
-
+  // Generated material names still waiting for a factory to be registered.
+  const pendingGeneratedMats = new Set<string>();
+  const matAssignedCbs = new Map<string, (mesh: THREE.Mesh) => void>();
   const getTextureRefsForMaterial = (matName: string): string[] => {
     const def = levelDef.materials?.[matName];
     if (!def || def.type !== 'customShader' || !def.props) return [];
@@ -317,8 +341,14 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   };
 
   for (const matName of Object.keys(levelDef.materials ?? {})) {
-    matTexPending.set(matName, new Set(getTextureRefsForMaterial(matName)));
-    matTexLoaded.set(matName, new Map());
+    const def = levelDef.materials![matName];
+    if (def.type === 'generated') {
+      // Generated materials are built only when setMaterialFactories() is called.
+      pendingGeneratedMats.add(matName);
+    } else {
+      matTexPending.set(matName, new Set(getTextureRefsForMaterial(matName)));
+      matTexLoaded.set(matName, new Map());
+    }
   }
 
   // Flatten all leaf ObjectDefs for asset/material bookkeeping.
@@ -379,7 +409,13 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
         const group = new THREE.Group();
         applyTransform(group, node);
         parent.add(group);
-        const levelGroup: LevelGroup = { id: node.id, object: group, def: node, children: [] };
+        const levelGroup: LevelGroup = {
+          id: node.id,
+          object: group,
+          def: node,
+          children: [],
+          generated: isGeneratedDef(node),
+        };
         nodeById.set(node.id, levelGroup);
         if (parent === viz.scene) rootNodes.push(levelGroup);
         preCreateGroups(node.children, group, levelGroup);
@@ -408,12 +444,19 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     resolvePhysicsWorldReady = resolve;
   });
 
-  const registerPhysics = (fpCtx: PhysicsContext, levelObj: LevelObject) => {
-    if (registeredPhysicsObjects.has(levelObj.id) || levelObj.def.userData?.nocollide) {
+  const maybeRegisterPhysics = (fpCtx: PhysicsContext, levelObj: LevelObject) => {
+    if (
+      registeredPhysicsObjects.has(levelObj.id) ||
+      levelObj.def.nocollide ||
+      levelObj.def.userData?.nocollide
+    ) {
       return;
     }
+
     levelObj.object.traverse(child => {
-      if (!(child instanceof THREE.Mesh)) return;
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
 
       // addTriMesh -> addCollisionObject reads mesh.position/quaternion/scale directly,
       // so temporarily expose the mesh's world-space transform during registration.
@@ -426,7 +469,7 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     physicsReady = true;
     resolvePhysicsWorldReady(fpCtx);
     for (const levelObj of allLevelObjects) {
-      registerPhysics(fpCtx, levelObj);
+      maybeRegisterPhysics(fpCtx, levelObj);
     }
   });
 
@@ -439,7 +482,13 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     const parent = parentMap.get(objDef.id) ?? viz.scene;
     parent.add(clone);
 
-    const levelObj: LevelObject = { id: objDef.id, assetId, object: clone, def: objDef };
+    const levelObj: LevelObject = {
+      id: objDef.id,
+      assetId,
+      object: clone,
+      def: objDef,
+      generated: isGeneratedDef(objDef),
+    };
     allLevelObjects.push(levelObj);
     placedObjects.set(objDef.id, levelObj);
     nodeById.set(objDef.id, levelObj);
@@ -469,9 +518,15 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
       }
     }
 
+    // Fire onAssigned callback if the material factory registered one.
+    if (objDef.material) {
+      const cb = matAssignedCbs.get(objDef.material);
+      if (cb) forEachMesh(clone, cb);
+    }
+
     // Physics: register immediately if physics is already up, otherwise the batch callback covers it
     if (physicsReady) {
-      registerPhysics(viz.fpCtx!, levelObj);
+      maybeRegisterPhysics(viz.fpCtx!, levelObj);
     }
   };
 
@@ -567,7 +622,7 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
   const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(
     ([levelObjects, fpCtx]) => {
       for (const levelObj of levelObjects) {
-        registerPhysics(fpCtx, levelObj);
+        maybeRegisterPhysics(fpCtx, levelObj);
       }
     }
   );
@@ -645,6 +700,60 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     );
   }
 
+  const parkourObjectsPromise = objectsPromise.then(levelObjects =>
+    levelObjects.filter(obj => obj.def.parkour != null)
+  );
+
+  const emissiveBypassMeshesPromise = completePromise.then(() => {
+    const meshes: THREE.Mesh[] = [];
+    for (const levelObj of allLevelObjects) {
+      const matName = levelObj.def.material;
+      if (!matName) continue;
+      const matDef = levelDef.materials?.[matName];
+      if (!matDef?.emissiveBypass) continue;
+      levelObj.object.traverse(child => {
+        if (child instanceof THREE.Mesh) meshes.push(child);
+      });
+    }
+    if (meshes.length > 0) {
+      const bypassPass = viz.postprocessingController?.emissiveBypassPass;
+      if (bypassPass) {
+        for (const mesh of meshes) {
+          bypassPass.addBypassMesh(mesh);
+        }
+      } else {
+        console.warn(
+          `[loadLevelDef] ${meshes.length} mesh(es) have emissiveBypass=true but no emissive bypass pass is configured. ` +
+            `They will render normally without bypass treatment.`
+        );
+      }
+    }
+    return meshes;
+  });
+
+  const setMaterialFactories = (factories: Record<string, (viz: Viz) => MaterialFactoryResult>) => {
+    for (const matName of [...pendingGeneratedMats]) {
+      const factory = factories[matName];
+      if (!factory) continue;
+      pendingGeneratedMats.delete(matName);
+      const result = factory(viz);
+      const mat = result instanceof THREE.Material ? result : result.material;
+      if (!(result instanceof THREE.Material)) {
+        matAssignedCbs.set(matName, result.onAssigned);
+      }
+      builtMaterials.set(matName, mat);
+      // Assign to any already-placed objects referencing this material
+      for (const objId of matToObjIds.get(matName) ?? []) {
+        const levelObj = placedObjects.get(objId);
+        if (levelObj) {
+          assignMaterial(levelObj.object, mat);
+          const cb = matAssignedCbs.get(matName);
+          if (cb) forEachMesh(levelObj.object, cb);
+        }
+      }
+    }
+  };
+
   return {
     objects: objectsPromise,
     complete: completePromise,
@@ -653,5 +762,8 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     loadedTextures,
     rootNodes,
     nodeById,
+    parkourObjects: parkourObjectsPromise,
+    emissiveBypassMeshes: emissiveBypassMeshesPromise,
+    setMaterialFactories,
   };
 };

@@ -160,4 +160,11 @@ export interface CustomShaderOptions {
    * may also impact physics or other behavior in the future.
    */
   materialClass?: MaterialClass;
+  /**
+   * If true, the soft camera occlusion dither effect will NOT be applied to this material.
+   * Use this for meshes that should always be fully visible (e.g. the player character).
+   * Also sets `userData.occlusionExclude = true` on the built material so the depth pre-pass
+   * can identify and skip these objects.
+   */
+  noOcclusion?: boolean;
 }

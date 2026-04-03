@@ -195,6 +195,7 @@ export const CustomShaderMatDefSchema = z.object({
   type: z.literal('customShader'),
   props: ShaderPropsJsonSchema.optional(),
   options: ShaderOptionsJsonSchema.optional(),
+  emissiveBypass: z.boolean().optional(),
 });
 
 export const CustomBasicShaderMatDefSchema = z.object({
@@ -212,11 +213,22 @@ export const CustomBasicShaderMatDefSchema = z.object({
       enableFog: z.boolean().optional(),
     })
     .optional(),
+  emissiveBypass: z.boolean().optional(),
+});
+
+/**
+ * A material whose `THREE.Material` instance is provided at runtime via `LevelLoadHandle.setMaterialFactories`.
+ * Used for fully custom materials that can't be described in data (e.g. animated or shader-heavy materials).
+ */
+export const GeneratedMatDefSchema = z.object({
+  type: z.literal('generated'),
+  emissiveBypass: z.boolean().optional(),
 });
 
 export const MaterialDefSchema = z.discriminatedUnion('type', [
   CustomShaderMatDefSchema,
   CustomBasicShaderMatDefSchema,
+  GeneratedMatDefSchema,
 ]);
 
 export type AmbientDistanceAmpParams = z.infer<typeof AmbientDistanceAmpParamsSchema>;
@@ -226,7 +238,16 @@ export type ShaderPropsJson = z.infer<typeof ShaderPropsJsonSchema>;
 export type ShaderOptionsJson = z.infer<typeof ShaderOptionsJsonSchema>;
 export type CustomShaderMatDef = z.infer<typeof CustomShaderMatDefSchema>;
 export type CustomBasicShaderMatDef = z.infer<typeof CustomBasicShaderMatDefSchema>;
+export type GeneratedMatDef = z.infer<typeof GeneratedMatDefSchema>;
 export type MaterialDef = z.infer<typeof MaterialDefSchema>;
+
+export const ParkourObjectMetaSchema = z.object({
+  /** Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint. */
+  checkpoint: z.number().optional(),
+  /** If true, reaching this object ends the run. */
+  win: z.boolean().optional(),
+});
+export type ParkourObjectMeta = z.infer<typeof ParkourObjectMetaSchema>;
 
 export const ObjectDefSchema = z.object({
   id: z.string(),
@@ -246,24 +267,34 @@ export const ObjectDefSchema = z.object({
   userData: z.record(z.string(), z.unknown()).optional(),
   /** Key into the top-level `materials` registry. All meshes in this object get this material. */
   material: z.string().optional(),
+  /** If true, this object will not be registered in the collision world */
+  nocollide: z.boolean().optional(),
+  /** Parkour-specific metadata: marks this object as a checkpoint or win zone. */
+  parkour: ParkourObjectMetaSchema.optional(),
 });
 
 export type ObjectDef = z.infer<typeof ObjectDefSchema>;
 
 export interface ObjectGroupDef {
   id: string;
+  /**
+   * Name of a generator (key into the top-level `generators` record) whose output populates
+   * this group's children at load time. The group's own transform is fully editable.
+   */
+  generator?: string;
   children: (ObjectDef | ObjectGroupDef)[];
   position?: [number, number, number];
   rotation?: [number, number, number];
   scale?: [number, number, number];
-  /** Runtime/editor metadata; generator output uses this to mark generated groups as read-only. */
+  /** Runtime/editor metadata; generator output uses this to mark generated nodes as read-only. */
   userData?: Record<string, unknown>;
 }
 
 export const ObjectGroupDefSchema: z.ZodType<ObjectGroupDef> = z.lazy(() =>
   z.object({
     id: z.string(),
-    children: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])).min(1),
+    generator: z.string().optional(),
+    children: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
     position: Vec3.optional(),
     rotation: Vec3.optional(),
     scale: Vec3.optional(),
@@ -300,6 +331,8 @@ const GeneratorDefSchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const GeneratorsRecordSchema = z.record(z.string(), GeneratorDefSchema);
+
 /** Collect all leaf ObjectDefs from a (possibly nested) objects array, with their schema paths. */
 const collectObjectDefs = (
   nodes: (ObjectDef | ObjectGroupDef)[],
@@ -328,7 +361,7 @@ export const LevelDefSchema = z
     assets: z.record(z.string(), AssetDefSchema),
     objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
     physics: ScenePhysicsDefSchema.optional(),
-    generators: z.array(GeneratorDefSchema).optional(),
+    generators: GeneratorsRecordSchema.optional(),
   })
   .superRefine((def, ctx) => {
     const assetKeys = new Set(Object.keys(def.assets));
@@ -426,7 +459,7 @@ export const LevelDefRawSchema = z.object({
   assets: z.record(z.string(), AssetDefRawSchema),
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
   physics: ScenePhysicsDefSchema.optional(),
-  generators: z.array(GeneratorDefSchema).optional(),
+  generators: GeneratorsRecordSchema.optional(),
 });
 
 export type LevelDefRaw = z.infer<typeof LevelDefRawSchema>;

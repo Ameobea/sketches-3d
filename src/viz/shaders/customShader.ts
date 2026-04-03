@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { UniformsLib } from 'three';
 
 import commonShaderCode from './common.frag?raw';
+import softOcclusionPreamble from './softOcclusionPreamble.frag?raw';
+import softOcclusionDiscard from './softOcclusionDiscard.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import GeneratedUVsFragment from './generatedUVs.vert?raw';
@@ -265,6 +267,18 @@ interface CustomShaderGlobalConfig {
 }
 
 let globalConfig: CustomShaderGlobalConfig = {};
+let occlusionBackfaceRenderingEnabled = false;
+
+const setMaterialOcclusionBackfaceRendering = (mat: CustomShaderMaterial, enable: boolean) => {
+  const targetSide = enable ? THREE.DoubleSide : THREE.FrontSide;
+  const targetShadowSide = enable ? THREE.BackSide : null;
+
+  if (mat.side !== targetSide || mat.shadowSide !== targetShadowSide) {
+    mat.side = targetSide;
+    mat.shadowSide = targetShadowSide;
+    mat.needsUpdate = true;
+  }
+};
 
 export const configureCustomShaderGlobals = (config: Partial<CustomShaderGlobalConfig>) => {
   if ('ambientDistanceAmp' in config) {
@@ -272,11 +286,30 @@ export const configureCustomShaderGlobals = (config: Partial<CustomShaderGlobalC
   }
 };
 
+/**
+ * Batch-toggle backface rendering on all CustomShaderMaterial instances in a scene.
+ * When `enable` is true, materials that support occlusion get DoubleSide;
+ * when false, they get FrontSide (saving vertex shader work for backfaces).
+ */
+export const setOcclusionBackfaceRendering = (scene: THREE.Scene, enable: boolean) => {
+  occlusionBackfaceRenderingEnabled = enable;
+  scene.traverse(obj => {
+    const materials = (obj as THREE.Mesh).material;
+    for (const mat of Array.isArray(materials) ? materials : [materials]) {
+      if (mat instanceof CustomShaderMaterial && !mat.userData.occlusionExclude) {
+        setMaterialOcclusionBackfaceRendering(mat, enable);
+      }
+    }
+  });
+};
+
 export const resetCustomShaderGlobals = () => {
   globalConfig = {};
+  occlusionBackfaceRenderingEnabled = false;
   playerShadowPos.set(0, 0, 0);
   playerShadowParams.set(0, 0, 0, 0);
   psRingData.identity();
+  occlusionParams.set(0, 0, 0, 0);
 };
 
 /**
@@ -298,6 +331,60 @@ export const getPlayerShadowUniforms = () => ({
   playerShadowParams,
   psRingData,
 });
+
+/**
+ * Shared uniforms for soft camera occlusion dithering, referenced by all CustomShaderMaterial instances.
+ * `occlusionStart` = player eye position, `occlusionEnd` = camera position.
+ * `occlusionParams`: x=revealRadius, y=revealFade, z=active(0|1), w=unused.
+ * Set z=0 to disable (shader early-outs with no discard).
+ */
+const occlusionStart = new THREE.Vector3();
+const occlusionEnd = new THREE.Vector3();
+const occlusionParams = new THREE.Vector4(0, 0, 0, 0);
+
+export const getOcclusionUniforms = () => ({
+  occlusionStart,
+  occlusionEnd,
+  occlusionParams,
+});
+
+/**
+ * Creates a minimal ShaderMaterial for use as the depth pre-pass override material.
+ * It mirrors the Bayer dither discard logic from the main CustomShaderMaterial so that
+ * the depth buffer matches what the main pass will actually render.
+ *
+ * Shares the same uniform objects as `getOcclusionUniforms()` so updates are automatic.
+ */
+export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
+  new THREE.ShaderMaterial({
+    vertexShader: `
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+      void main() {
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldPos = worldPos.xyz;
+        vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
+        // Use the CPU-precomputed modelViewMatrix to get bit-identical depth values to the main
+        // render pass (which also uses it via #include <project_vertex>). Computing viewMatrix *
+        // modelMatrix in the shader can differ by a ULP and cause z-fighting against the main pass.
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vWorldPos;
+      varying vec3 vWorldNormal;
+      ${softOcclusionPreamble}
+      void main() {
+        ${softOcclusionDiscard}
+        gl_FragColor = vec4(1.0);
+      }
+    `,
+    uniforms: {
+      occlusionStart: { value: occlusionStart },
+      occlusionEnd: { value: occlusionEnd },
+      occlusionParams: { value: occlusionParams },
+    },
+  });
 
 const DefaultReflectionParams: ReflectionParams = Object.freeze({
   alpha: 1,
@@ -372,6 +459,7 @@ export const buildCustomShaderArgs = (
     useGeneratedUVs,
     useWorldSpaceGeneratedUVs,
     useTriplanarMapping,
+    noOcclusion,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -447,6 +535,9 @@ export const buildCustomShaderArgs = (
   uniforms.playerShadowPos = { value: playerShadowPos };
   uniforms.playerShadowParams = { value: playerShadowParams };
   uniforms.psRingData = { value: psRingData };
+  uniforms.occlusionStart = { value: occlusionStart };
+  uniforms.occlusionEnd = { value: occlusionEnd };
+  uniforms.occlusionParams = { value: occlusionParams };
 
   const usingSSR = !!providedReflectionParams;
 
@@ -766,7 +857,7 @@ export const buildCustomShaderArgs = (
     lights: true,
     dithering: false,
     uniforms,
-    vertexShader: `
+    vertexShader: /* glsl */ `
 #define STANDARD
 varying vec3 vViewPosition;
 // #ifdef USE_TRANSMISSION
@@ -988,6 +1079,8 @@ uniform vec3 playerShadowPos;
 uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=centerDropDist
 uniform mat4 psRingData; // cols 0-1: outer ring receiverY (angles 0-7), cols 2-3: inner ring (angles 0-7)
 
+${softOcclusionPreamble}
+
 #ifndef USE_TRANSMISSION
   varying vec3 vWorldPosition;
 #endif
@@ -1043,12 +1136,51 @@ ${usingSSR ? ssrDefsFragment : ''}
 void main() {
 	#include <clipping_planes_fragment>
 
+  ${!noOcclusion ? softOcclusionDiscard : ''}
+
   float distanceToCamera = distance(cameraPosition, vWorldPos);
   float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
 
   ${buildTextureDisableFragment(mapDisableDistance, mapDisableTransitionThreshold)}
 
   vec4 diffuseColor = vec4(diffuse, opacity);
+  ${
+    !noOcclusion
+      ? `
+  if (highlightFactor > 0.) {
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.3, 0.3, 0.3), highlightFactor * 0.7);
+  }
+
+  bool hasBackfaceHit = false;
+  if (!gl_FrontFacing) {
+    // Only render backfaces when the soft occlusion cylinder is active.
+    if (occlusionParams.z < 0.5) {
+      discard;
+    }
+
+    // basline light screen-space dither
+    if (getBayer4x4(gl_FragCoord.xy) > 0.85) {
+      discard;
+    }
+
+    // Smooth distance-based scale keeps checkerboard cell size roughly consistent across distances.
+    float _bf_distMult = round(max(1. / distanceToCamera, 0.1) * 16.) / 16.;
+
+    float worldBayer = getTriplanarBayer(vWorldPos * vec3(30., 50., 30.) * _bf_distMult, normalize(vWorldNormal), 1.3);
+
+    // if our fragment far from the player, fade out the dither into fully transparent backfaces
+    float distanceToPlayer = distance(playerShadowPos, vWorldPos);
+    float farFactor = smoothstep(8., 30., distanceToPlayer) * 1.1;
+
+    if (worldBayer > (1. - farFactor) * 0.5) {
+      discard;
+    } else {
+      hasBackfaceHit = true;
+    }
+  }
+  `
+      : ''
+  }
 
   #if !defined(USE_UV)
     vec2 vUv = vec2(0.);
@@ -1207,6 +1339,13 @@ void main() {
   #endif
 
   outFragColor = vec4( outgoingLight, diffuseColor.a );
+
+  ${
+    !noOcclusion
+      ? `if (hasBackfaceHit) outFragColor.rgb = mix(outFragColor.rgb, vec3(168. / 255., 190. / 255., 155. / 255.), 0.01);`
+      : ''
+  }
+
 	${
     enableFog
       ? `
@@ -1419,6 +1558,12 @@ export const buildCustomShader = (
 
   if (opts?.disableToneMapping) {
     mat.userData.emissiveBypass = true;
+  }
+  if (opts?.noOcclusion) {
+    mat.userData.occlusionExclude = true;
+  } else {
+    // Materials opt into runtime occlusion backface toggling unless explicitly excluded.
+    setMaterialOcclusionBackfaceRendering(mat, occlusionBackfaceRenderingEnabled);
   }
 
   return mat;

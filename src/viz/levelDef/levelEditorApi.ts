@@ -1,4 +1,4 @@
-import type { CsgTreeNode, ObjectDef } from './types';
+import type { CsgTreeNode, ObjectDef, ObjectGroupDef } from './types';
 import type { LevelObject, LevelSceneNode } from './loadLevelDef';
 
 const round = (n: number) => Math.round(n * 10000) / 10000;
@@ -60,6 +60,29 @@ export class LevelEditorApi {
       return await res.json();
     } catch (err) {
       console.error('[LevelEditor] add error:', err);
+      return null;
+    }
+  };
+
+  sendAddGroup = async (body: {
+    position: [number, number, number];
+    rotation?: [number, number, number];
+    scale?: [number, number, number];
+    id?: string;
+  }): Promise<ObjectGroupDef | null> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'group', ...body }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] add group failed:', res.status, await res.text());
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error('[LevelEditor] add group error:', err);
       return null;
     }
   };

@@ -53,6 +53,7 @@ export const instantiateLevelObject = (
   opts: InstantiateLevelObjectOpts = {}
 ) => {
   const clone = prototype.clone();
+  clone.name = def.id;
 
   applyTransform(clone, def);
   applyShadowFlags(clone, def);

@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { initSentry } from 'src/sentry';
 import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
 import { getAmmoJS, BulletPhysics } from './collision';
-import { FlightPlayer, fetchReplayForPlay } from './flightRecorder';
+import { FlightPlayer, RecorderEventType, fetchReplayForPlay } from './flightRecorder';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebuggerInit.svelte.ts';
@@ -33,6 +33,7 @@ import type { LevelDef } from './levelDef/types';
 export interface PostprocessingController {
   setGamma(value: number): void;
   readonly hasFinalPass: boolean;
+  readonly emissiveBypassPass: { addBypassMesh(mesh: THREE.Mesh): void } | null;
 }
 
 export interface FpPlayerStateGetters {
@@ -177,6 +178,8 @@ export class Viz {
   private pointerLockRequestInFlight = false;
   private clockStopTime = 0;
   private unsubscribePauseStateChange: Unsubscriber | null = null;
+  private lastPauseState: boolean | null = null;
+  private pauseConfigSnapshot: string | null = null;
   private customKeyEventMap = new Map<string, () => void>();
   public levelLoadHandle: LevelLoadHandle | null = null;
 
@@ -647,11 +650,46 @@ export class Viz {
   }
 
   private handlePauseStateChange = (paused: boolean) => {
+    if (this.lastPauseState === paused) {
+      return;
+    }
+
+    if (this.lastPauseState === null) {
+      this.lastPauseState = paused;
+      if (paused) {
+        this.pauseConfigSnapshot = JSON.stringify(this.vizConfig.current);
+      }
+    } else {
+      this.recordPauseStateTransition(paused);
+      this.lastPauseState = paused;
+    }
+
     if (paused) {
       this.maybePauseViz();
     } else {
       this.maybeResumeViz();
     }
+  };
+
+  private recordPauseStateTransition = (paused: boolean) => {
+    const fpCtx = this.fpCtx;
+    if (!fpCtx || fpCtx.isReplayActive) {
+      this.pauseConfigSnapshot = paused ? JSON.stringify(this.vizConfig.current) : null;
+      return;
+    }
+
+    if (paused) {
+      this.pauseConfigSnapshot = JSON.stringify(this.vizConfig.current);
+      fpCtx.flightRecorder.recordEvent(RecorderEventType.Pause);
+      return;
+    }
+
+    const currentConfigSnapshot = JSON.stringify(this.vizConfig.current);
+    if (this.pauseConfigSnapshot !== null && this.pauseConfigSnapshot !== currentConfigSnapshot) {
+      fpCtx.flightRecorder.recordEvent(RecorderEventType.SettingsChanged);
+    }
+    this.pauseConfigSnapshot = null;
+    fpCtx.flightRecorder.recordEvent(RecorderEventType.Unpause);
   };
 
   public initEventHandlers = () => {

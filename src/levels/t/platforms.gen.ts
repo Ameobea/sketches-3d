@@ -23,19 +23,14 @@ const fn: GeneratorFn = ({ physics, params }) => {
   const asset = params.asset as string;
   const material = params.material as string | undefined;
 
+  // Return children directly — placement is handled by the generator anchor group in def.json.
   return {
-    objects: [
-      {
-        id: 'gen_platforms',
-        position: [20, 20, 0] as [number, number, number],
-        children: positions.map((pos, i) => ({
-          id: `gen_platform_${i}`,
-          asset,
-          position: [pos.x, pos.y, pos.z] as [number, number, number],
-          ...(material ? { material } : {}),
-        })),
-      },
-    ],
+    objects: positions.map((pos, i) => ({
+      id: `gen_platform_${i}`,
+      asset,
+      position: [pos.x, pos.y, pos.z] as [number, number, number],
+      ...(material ? { material } : {}),
+    })),
   };
 };
 

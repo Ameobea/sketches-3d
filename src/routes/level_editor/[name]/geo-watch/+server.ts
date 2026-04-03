@@ -2,6 +2,7 @@ import { existsSync, readFileSync, watch } from 'fs';
 import { join } from 'path';
 
 import type { RequestHandler } from '@sveltejs/kit';
+import { getLevelDir } from 'src/viz/levelDef/levelPaths.server';
 
 import { guardDev, validateName } from '../../levelEditorUtils.server';
 
@@ -18,7 +19,7 @@ export const GET: RequestHandler = ({ params }) => {
   guardDev();
   const name = validateName(params.name);
 
-  const geoDir = join(process.cwd(), 'src', 'levels', name, 'geo');
+  const geoDir = join(getLevelDir(name), 'geo');
   const encoder = new TextEncoder();
 
   // Per-file debounce: many editors do atomic saves that trigger two rapid events.

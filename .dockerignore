@@ -1,4 +1,15 @@
 node_modules
 backend
 geoscript_backend
+.git
+build
+.svelte-kit
+
+# Local native/wasm build outputs
 src/viz/wasm/target
+src/viz/wasm/**/target
+src/viz/wasm/**/build
+src/viz/wasm/**/build2
+
+# Nested vendored repos under build outputs can carry large git object packs
+src/viz/wasm/**/.git
