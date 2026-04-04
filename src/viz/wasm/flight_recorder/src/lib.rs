@@ -39,7 +39,7 @@ enum EventType {
 struct RecorderEvent {
   event_type: u32,
   subtick: u32,
-  data: [f32; 4], // up to 4 floats of event-specific data
+  data: [f32; 8], // up to 8 floats of event-specific data
   data_len: u32,
 }
 
@@ -82,6 +82,10 @@ enum ChannelId {
   EventData1 = 104,
   EventData2 = 105,
   EventData3 = 106,
+  EventData4 = 107,
+  EventData5 = 108,
+  EventData6 = 109,
+  EventData7 = 110,
 }
 
 /// Ordered key-value metadata store. Keys are UTF-8 strings, values are raw bytes.
@@ -192,24 +196,36 @@ pub unsafe extern "C" fn fr_free(ptr: *mut u8, size: usize) {
 }
 
 /// Set the replay header from a flat f32 buffer.
-/// Layout (21 floats):
-///   [0]: tick_rate_hz (as f32, cast to u32)
-///   [1]: gravity
-///   [2]: jump_speed
-///   [3]: move_speed_ground
-///   [4]: move_speed_air
-///   [5]: collider_height
-///   [6]: collider_radius
+/// Layout (33 floats):
+///   [0]:     tick_rate_hz (as f32, cast to u32)
+///   [1]:     gravity
+///   [2]:     jump_speed
+///   [3]:     move_speed_ground
+///   [4]:     move_speed_air
+///   [5]:     collider_height
+///   [6]:     collider_radius
 ///   [7..10]: ext_vel_air_damping[3]
-///   [10..13]: ext_vel_ground_damping[3]
-///   [13]: gravity_shape_rise_mult
-///   [14]: gravity_shape_apex_mult
-///   [15]: gravity_shape_fall_mult
-///   [16]: gravity_shape_apex_threshold
-///   [17]: gravity_shape_knee_width
-///   [18]: gravity_shape_only_jumps (0.0 or 1.0)
-///   [19]: map_id_hash low bits (f32 bitcast from u32)
-///   [20]: map_id_hash high bits (f32 bitcast from u32)
+///   [10..13]:ext_vel_ground_damping[3]
+///   [13]:    gravity_shape_rise_mult
+///   [14]:    gravity_shape_apex_mult
+///   [15]:    gravity_shape_fall_mult
+///   [16]:    gravity_shape_apex_threshold
+///   [17]:    gravity_shape_knee_width
+///   [18]:    gravity_shape_only_jumps (0.0 or 1.0)
+///   [19]:    map_id_hash low bits (f32 bitcast from u32)
+///   [20]:    map_id_hash high bits (f32 bitcast from u32)
+///   [21]:    step_height
+///   [22]:    terminal_velocity (0 = Bullet default)
+///   [23]:    max_slope_radians
+///   [24]:    max_penetration_depth
+///   [25]:    coyote_time_seconds
+///   [26]:    min_jump_delay_seconds
+///   [27]:    easy_mode_movement (0.0 or 1.0)
+///   [28]:    collider_shape (0=capsule, 1=cylinder, 2=sphere)
+///   [29]:    dash_enabled (0.0 or 1.0)
+///   [30]:    dash_magnitude
+///   [31]:    min_dash_delay_seconds
+///   [32]:    dash_use_external_velocity (0.0 or 1.0)
 #[no_mangle]
 pub unsafe extern "C" fn set_header(ctx: *mut RecorderCtx, header_ptr: *const f32, len: u32) {
   let ctx = &mut *ctx;
@@ -237,6 +253,21 @@ pub unsafe extern "C" fn set_header(ctx: *mut RecorderCtx, header_ptr: *const f3
     let hi = data[20].to_bits();
     let hash = (hi as u64) << 32 | lo as u64;
     md.set_u64(b"map_id_hash", hash);
+  }
+
+  if len >= 33 {
+    md.set_f32(b"step_height", data[21]);
+    md.set_f32(b"terminal_velocity", data[22]);
+    md.set_f32(b"max_slope_radians", data[23]);
+    md.set_f32(b"max_penetration_depth", data[24]);
+    md.set_f32(b"coyote_time_secs", data[25]);
+    md.set_f32(b"min_jump_delay_secs", data[26]);
+    md.set_u32(b"easy_mode_movement", if data[27] > 0.5 { 1 } else { 0 });
+    md.set_u32(b"collider_shape", data[28] as u32);
+    md.set_u32(b"dash_enabled", if data[29] > 0.5 { 1 } else { 0 });
+    md.set_f32(b"dash_magnitude", data[30]);
+    md.set_f32(b"min_dash_delay_secs", data[31]);
+    md.set_u32(b"dash_use_ext_vel", if data[32] > 0.5 { 1 } else { 0 });
   }
 }
 
@@ -304,8 +335,8 @@ pub unsafe extern "C" fn record_event(
   let ctx = &mut *ctx;
   ctx.serialized = None;
 
-  let mut data = [0f32; 4];
-  let len = (data_len as usize).min(4);
+  let mut data = [0f32; 8];
+  let len = (data_len as usize).min(8);
   if !data_ptr.is_null() && len > 0 {
     let src = std::slice::from_raw_parts(data_ptr, len);
     data[..len].copy_from_slice(src);
@@ -388,7 +419,7 @@ fn do_serialize(ctx: &RecorderCtx) -> Vec<u8> {
   // Magic
   buf.extend_from_slice(b"FREC");
   // Version
-  write_u32(&mut buf, 1);
+  write_u32(&mut buf, 2);
 
   // Metadata section
   write_metadata(&mut buf, &ctx.metadata);
@@ -477,7 +508,11 @@ fn do_serialize(ctx: &RecorderCtx) -> Vec<u8> {
 
   // Event channels: same tagged layout.
   if num_events > 0 {
-    write_u32(&mut buf, 7);
+    // Find the max data_len across all events to decide how many data channels to write
+    let max_data_len = ctx.events.iter().map(|e| e.data_len).max().unwrap_or(0) as usize;
+    let num_data_channels = max_data_len.min(8);
+    let num_event_channels = 3 + num_data_channels; // types + subticks + data_lens + data[0..N]
+    write_u32(&mut buf, num_event_channels as u32);
     {
       let col: Vec<u32> = ctx.events.iter().map(|e| e.event_type).collect();
       write_tagged_block(&mut buf, ChannelId::EventTypes, &compress_u32_channel(&col));
@@ -490,21 +525,15 @@ fn do_serialize(ctx: &RecorderCtx) -> Vec<u8> {
       let col: Vec<u32> = ctx.events.iter().map(|e| e.data_len).collect();
       write_tagged_block(&mut buf, ChannelId::EventDataLens, &compress_u32_channel(&col));
     }
-    {
-      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[0]).collect();
-      write_tagged_block(&mut buf, ChannelId::EventData0, &compress_f32_channel(&col));
-    }
-    {
-      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[1]).collect();
-      write_tagged_block(&mut buf, ChannelId::EventData1, &compress_f32_channel(&col));
-    }
-    {
-      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[2]).collect();
-      write_tagged_block(&mut buf, ChannelId::EventData2, &compress_f32_channel(&col));
-    }
-    {
-      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[3]).collect();
-      write_tagged_block(&mut buf, ChannelId::EventData3, &compress_f32_channel(&col));
+    let data_channel_ids = [
+      ChannelId::EventData0, ChannelId::EventData1,
+      ChannelId::EventData2, ChannelId::EventData3,
+      ChannelId::EventData4, ChannelId::EventData5,
+      ChannelId::EventData6, ChannelId::EventData7,
+    ];
+    for d in 0..num_data_channels {
+      let col: Vec<f32> = ctx.events.iter().map(|e| e.data[d]).collect();
+      write_tagged_block(&mut buf, data_channel_ids[d], &compress_f32_channel(&col));
     }
   } else {
     write_u32(&mut buf, 0);
@@ -528,12 +557,13 @@ pub unsafe extern "C" fn get_serialized_len(ctx: *mut RecorderCtx) -> u32 {
   ctx.serialized.as_ref().map_or(0, |v| v.len() as u32)
 }
 
+/// Reset snapshots, events, and initial state but preserve metadata (header, config, etc.).
+/// Use this between runs so the header doesn't need to be re-sent.
 #[no_mangle]
 pub unsafe extern "C" fn reset_recorder(ctx: *mut RecorderCtx) {
   let ctx = &mut *ctx;
   ctx.snapshots.clear();
   ctx.events.clear();
-  ctx.metadata.clear();
   ctx.serialized = None;
 }
 
@@ -679,8 +709,11 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
   }
   let mut offset = 4;
 
-  // Version
-  let _version = read_u32(data, &mut offset)?;
+  // Version — reject old formats
+  let version = read_u32(data, &mut offset)?;
+  if version < 2 {
+    return None;
+  }
 
   // Metadata section
   let metadata = read_metadata(data, &mut offset)?;
@@ -777,7 +810,7 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
     let mut event_types: Option<Vec<u32>> = None;
     let mut subticks: Option<Vec<u32>> = None;
     let mut data_lens: Option<Vec<u32>> = None;
-    let mut event_data: [Option<Vec<f32>>; 4] = [None, None, None, None];
+    let mut event_data: [Option<Vec<f32>>; 8] = [None, None, None, None, None, None, None, None];
 
     for _ in 0..num_channel_blocks {
       let channel_id = read_u16(data, &mut offset)?;
@@ -785,10 +818,7 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
         100 => event_types = Some(read_compressed_u32_block(data, &mut offset)?),
         101 => subticks = Some(read_compressed_u32_block(data, &mut offset)?),
         102 => data_lens = Some(read_compressed_u32_block(data, &mut offset)?),
-        103 => event_data[0] = Some(read_compressed_f32_block(data, &mut offset)?),
-        104 => event_data[1] = Some(read_compressed_f32_block(data, &mut offset)?),
-        105 => event_data[2] = Some(read_compressed_f32_block(data, &mut offset)?),
-        106 => event_data[3] = Some(read_compressed_f32_block(data, &mut offset)?),
+        103..=110 => event_data[(channel_id - 103) as usize] = Some(read_compressed_f32_block(data, &mut offset)?),
         _ => {
           let block_len = read_u32(data, &mut offset)? as usize;
           if offset + block_len > data.len() {
@@ -815,6 +845,10 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
           gf(&event_data[1], i),
           gf(&event_data[2], i),
           gf(&event_data[3], i),
+          gf(&event_data[4], i),
+          gf(&event_data[5], i),
+          gf(&event_data[6], i),
+          gf(&event_data[7], i),
         ],
         data_len: gu(&data_lens, i),
       });
@@ -845,12 +879,12 @@ pub unsafe extern "C" fn player_load(ctx: *mut PlayerCtx, data_ptr: *const u8, l
   }
 }
 
-/// Write header data to the output buffer (21 f32s, same layout as set_header input).
+/// Write header data to the output buffer (33 f32s, same layout as set_header input).
 /// Reads from metadata map entries.
 #[no_mangle]
 pub unsafe extern "C" fn player_get_header(ctx: *mut PlayerCtx, out_ptr: *mut f32) {
   let ctx = &*ctx;
-  let out = std::slice::from_raw_parts_mut(out_ptr, 21);
+  let out = std::slice::from_raw_parts_mut(out_ptr, 33);
   let md = &ctx.metadata;
 
   let get_f32 = |key: &[u8]| -> f32 {
@@ -922,6 +956,19 @@ pub unsafe extern "C" fn player_get_header(ctx: *mut PlayerCtx, out_ptr: *mut f3
   let hi = ((hash >> 32) & 0xffffffff) as u32;
   out[19] = f32::from_bits(lo);
   out[20] = f32::from_bits(hi);
+
+  out[21] = get_f32(b"step_height");
+  out[22] = get_f32(b"terminal_velocity");
+  out[23] = get_f32(b"max_slope_radians");
+  out[24] = get_f32(b"max_penetration_depth");
+  out[25] = get_f32(b"coyote_time_secs");
+  out[26] = get_f32(b"min_jump_delay_secs");
+  out[27] = if get_u32(b"easy_mode_movement") != 0 { 1.0 } else { 0.0 };
+  out[28] = get_u32(b"collider_shape") as f32;
+  out[29] = if get_u32(b"dash_enabled") != 0 { 1.0 } else { 0.0 };
+  out[30] = get_f32(b"dash_magnitude");
+  out[31] = get_f32(b"min_dash_delay_secs");
+  out[32] = if get_u32(b"dash_use_ext_vel") != 0 { 1.0 } else { 0.0 };
 }
 
 /// Get a metadata value by key. Writes value bytes into out_ptr (up to out_capacity).
@@ -998,7 +1045,7 @@ pub unsafe extern "C" fn player_get_event_count(ctx: *mut PlayerCtx) -> u32 {
 }
 
 /// Write event data for a given index.
-/// Layout: 6 f32s - event_type (u32 bitcast), subtick (u32 bitcast), data[4]
+/// Layout: 10 f32s - event_type (u32 bitcast), subtick (u32 bitcast), data[8]
 /// Returns 0 on success, 1 if index out of range.
 #[no_mangle]
 pub unsafe extern "C" fn player_get_event(
@@ -1012,12 +1059,11 @@ pub unsafe extern "C" fn player_get_event(
     return 1;
   }
   let e = &ctx.events[idx];
-  let out = std::slice::from_raw_parts_mut(out_ptr, 6);
+  let out = std::slice::from_raw_parts_mut(out_ptr, 10);
   out[0] = f32::from_bits(e.event_type);
   out[1] = f32::from_bits(e.subtick);
-  out[2] = e.data[0];
-  out[3] = e.data[1];
-  out[4] = e.data[2];
-  out[5] = e.data[3];
+  for i in 0..8 {
+    out[2 + i] = e.data[i];
+  }
   0
 }

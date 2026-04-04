@@ -44,11 +44,6 @@ export interface AudioSettings {
 }
 
 export interface GameplaySettings {
-  /**
-   * If easy mode is true, then magnitude is normalized to what it would be if the user was moving
-   * diagonally, allowing for easier movement.
-   */
-  easyModeMovement: boolean;
   /** Enables the third-person soft occlusion "x-ray" camera behavior. */
   thirdPersonXray: boolean;
 }
@@ -108,7 +103,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
 const buildDefaultVizConfig = (): VizConfig => ({
   graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV, gamma: 1.0, showFPSStats: true },
   audio: { globalVolume: 0.4, musicVolume: 0.4, sfxVolume: 0.4 },
-  gameplay: { easyModeMovement: true, thirdPersonXray: SoftOcclusionEnabled },
+  gameplay: { thirdPersonXray: SoftOcclusionEnabled },
   controls: { mouseSensitivity: 2 },
 });
 
@@ -135,7 +130,9 @@ const buildInitialVizConfig = async (): Promise<VizConfig> => {
  */
 export const loadVizConfig = (): VizConfig => {
   const vizConfig = JSON.parse(globalThis.localStorage?.getItem('vizConfig') ?? '{}') as VizConfig;
-  return mergeDeep(buildDefaultVizConfig(), vizConfig);
+  const merged = mergeDeep(buildDefaultVizConfig(), vizConfig);
+  delete (merged.gameplay as GameplaySettings & { easyModeMovement?: boolean }).easyModeMovement;
+  return merged;
 };
 
 export const getVizConfig = async (): Promise<TransparentWritable<VizConfig>> => {

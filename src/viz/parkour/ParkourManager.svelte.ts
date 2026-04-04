@@ -51,7 +51,6 @@ export class ParkourManager {
   private sceneConfigOverrides: DeepPartial<SceneConfig>;
 
   private curDashCharges: TransparentWritable<number> = rwritable(0);
-  private lastResetPhysicsTime: number = 0;
   private curRunStartTimeSeconds: number | null = null;
   private winState: { winTimeSeconds: number; displayComp: any; replayBlob: Uint8Array | null } | null = null;
   private managerTickerHandle: PhysicsTickerHandle | null = null;
@@ -101,7 +100,6 @@ export class ParkourManager {
     this.initTimer();
 
     viz.collisionWorldLoadedCbs.push(fpCtx => {
-      this.lastResetPhysicsTime = fpCtx.getPhysicsTime();
       fpCtx.registerJumpCb(() => {
         if (this.curRunStartTimeSeconds === null) {
           this.curRunStartTimeSeconds = fpCtx.getPhysicsTime();
@@ -133,7 +131,7 @@ export class ParkourManager {
             didStart = true;
             this.runOnStartCbs();
           }
-          this.scheduler.tick(physicsTime - this.lastResetPhysicsTime);
+          this.scheduler.tick(physicsTime);
         },
       });
     });
@@ -250,21 +248,27 @@ export class ParkourManager {
 
   private reset = () => {
     const fpCtx = this.viz.fpCtx!;
-    const physicsTime = fpCtx.getPhysicsTime();
-    const elapsedTimeSeconds = physicsTime - (this.curRunStartTimeSeconds ?? 0);
+    const elapsedTimeSeconds = fpCtx.getPhysicsTime() - (this.curRunStartTimeSeconds ?? 0);
     this.resetDashes();
     this.resetCheckpoints();
     fpCtx.teleportPlayer(this.locations.spawn.pos, this.locations.spawn.rot);
     fpCtx.reset();
 
-    // Reset flight recorder and record teleport to spawn
-    const recorder = fpCtx.flightRecorder;
-    recorder.reset();
-    const sp = this.locations.spawn.pos;
-    recorder.recordEvent(RecorderEventType.Teleport, [sp.x, sp.y, sp.z]);
     const wasStarted = this.curRunStartTimeSeconds !== null;
     this.curRunStartTimeSeconds = null;
-    this.lastResetPhysicsTime = physicsTime;
+
+    // Reset flight recorder for a clean recording from t=0
+    fpCtx.resetRecorderForNewRun();
+    const sp = this.locations.spawn.pos;
+    const sr = this.locations.spawn.rot;
+    fpCtx.flightRecorder.recordEvent(RecorderEventType.Teleport, [
+      sp.x,
+      sp.y,
+      sp.z,
+      sr?.x ?? 0,
+      sr?.y ?? 0,
+      sr?.z ?? 0,
+    ]);
     if (this.winState?.displayComp) {
       unmount(this.winState.displayComp);
     }
@@ -311,11 +315,6 @@ export class ParkourManager {
       recorder.setMetadataString('map_id', this.mapID);
       recorder.setMetadataString('timestamp', Date.now().toString());
       replayBlob = recorder.serialize();
-      if (replayBlob) {
-        console.log(
-          `Flight recorder: ${recorder.subtickCount} subticks, ${replayBlob.byteLength} bytes serialized`
-        );
-      }
 
       const target = document.createElement('div');
       document.body.appendChild(target);
@@ -378,8 +377,7 @@ export class ParkourManager {
 
     const makeSpinnerTicker = () => ({
       tick: (physicsTime: number) => {
-        const elapsed = physicsTime - this.lastResetPhysicsTime;
-        tfn.setEulerZYX(0, initialRot - rps * elapsed * Math.PI * 2, 0);
+        tfn.setEulerZYX(0, initialRot - rps * physicsTime * Math.PI * 2, 0);
         rigidBody.setWorldTransform(tfn);
       },
     });
@@ -406,8 +404,8 @@ export class ParkourManager {
       throw new Error('fpCtx not initialized');
     }
 
-    // Default spawn time is current elapsed time since last reset
-    const resolvedSpawnTimeSeconds = spawnTimeSeconds ?? fpCtx.getPhysicsTime() - this.lastResetPhysicsTime;
+    // Default spawn time is current physics time (which is time-since-reset)
+    const resolvedSpawnTimeSeconds = spawnTimeSeconds ?? fpCtx.getPhysicsTime();
 
     let rigidBody = mesh.userData.rigidBody as BtRigidBody | undefined;
     if (!rigidBody) {
@@ -470,15 +468,14 @@ export class ParkourManager {
               return;
             }
 
-            const elapsed = physicsTime - this.lastResetPhysicsTime;
-            if (despawnCond?.(mesh, elapsed)) {
+            if (despawnCond?.(mesh, physicsTime)) {
               disposed = true;
               queueCleanup();
               return;
             }
 
-            const secondsSinceSpawn = elapsed - resolvedSpawnTimeSeconds;
-            const newPos = getPos(elapsed, secondsSinceSpawn);
+            const secondsSinceSpawn = physicsTime - resolvedSpawnTimeSeconds;
+            const newPos = getPos(physicsTime, secondsSinceSpawn);
             tfn.setOrigin(fpCtx.btvec3(newPos.x, newPos.y, newPos.z));
             rigidBody.setWorldTransform(tfn);
           },

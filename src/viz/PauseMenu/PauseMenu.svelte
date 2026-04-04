@@ -248,7 +248,6 @@
           }}
           onChange={saveNewConfig}
           {startVizConfig}
-          {viz}
         />
       {:else if activeMenu === Menu.Login}
         <LoginMenu

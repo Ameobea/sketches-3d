@@ -179,7 +179,6 @@ export class Viz {
   private clockStopTime = 0;
   private unsubscribePauseStateChange: Unsubscriber | null = null;
   private lastPauseState: boolean | null = null;
-  private pauseConfigSnapshot: string | null = null;
   private customKeyEventMap = new Map<string, () => void>();
   public levelLoadHandle: LevelLoadHandle | null = null;
 
@@ -656,9 +655,6 @@ export class Viz {
 
     if (this.lastPauseState === null) {
       this.lastPauseState = paused;
-      if (paused) {
-        this.pauseConfigSnapshot = JSON.stringify(this.vizConfig.current);
-      }
     } else {
       this.recordPauseStateTransition(paused);
       this.lastPauseState = paused;
@@ -674,21 +670,14 @@ export class Viz {
   private recordPauseStateTransition = (paused: boolean) => {
     const fpCtx = this.fpCtx;
     if (!fpCtx || fpCtx.isReplayActive) {
-      this.pauseConfigSnapshot = paused ? JSON.stringify(this.vizConfig.current) : null;
       return;
     }
 
     if (paused) {
-      this.pauseConfigSnapshot = JSON.stringify(this.vizConfig.current);
       fpCtx.flightRecorder.recordEvent(RecorderEventType.Pause);
       return;
     }
 
-    const currentConfigSnapshot = JSON.stringify(this.vizConfig.current);
-    if (this.pauseConfigSnapshot !== null && this.pauseConfigSnapshot !== currentConfigSnapshot) {
-      fpCtx.flightRecorder.recordEvent(RecorderEventType.SettingsChanged);
-    }
-    this.pauseConfigSnapshot = null;
     fpCtx.flightRecorder.recordEvent(RecorderEventType.Unpause);
   };
 
@@ -1085,31 +1074,42 @@ export const initViz = (
         traverseCollidable(scene, traverseCb);
       }
 
+      // Ensure flight recorder WASM is loaded before physics starts ticking.
+      // This guarantees no subticks are lost at the start of recording.
+      viz.registerPhysicsStartupBarrier(
+        viz.fpCtx.flightRecorder.init().then(() => {
+          viz.fpCtx!.initFlightRecorderHeader();
+        })
+      );
+
       // Check for ?playId= query param for generic replay loading
       const replayPlayId = new URLSearchParams(window.location.search).get('playId');
       if (replayPlayId && viz.fpCtx) {
         viz.collisionWorldLoadedCbs.push(fpCtx => {
+          // Freeze physics while we fetch + decode the replay so that
+          // physicsElapsedTime doesn't advance and desync timed elements
+          // like spinning platforms.
+          fpCtx.setReplayLoadPending(true);
           fetchReplayForPlay(replayPlayId)
             .then(async data => {
               if (!data) {
                 console.error('Replay not found');
+                fpCtx.setReplayLoadPending(false);
                 return;
               }
               const player = new FlightPlayer();
               const ok = await player.load(data);
               if (!ok) {
                 console.error('Failed to decode replay');
+                fpCtx.setReplayLoadPending(false);
                 return;
-              }
-              if (player.subtickCount > 0) {
-                const [px, py, pz] = player.getSubtickPos(0);
-                fpCtx.teleportPlayer(
-                  new THREE.Vector3(px, py - fpCtx.playerColliderHeight / 2 - fpCtx.playerColliderRadius, pz)
-                );
               }
               fpCtx.startReplay(player);
             })
-            .catch(err => console.error('Replay load error:', err));
+            .catch(err => {
+              console.error('Replay load error:', err);
+              fpCtx.setReplayLoadPending(false);
+            });
         });
       }
 

@@ -72,15 +72,17 @@ export class DashManager {
   /**
    * Attempts to dash if the necessary conditions are met.  Returns `true` if the dash was actually performed.
    */
-  public tryDash(curTimeSeconds: number, isFlyMode: boolean, dashDir: THREE.Vector3): boolean {
-    // this.dashInner(dashDir.clone().normalize(), curTimeSeconds);
-    // return true;
-
+  public tryDash(
+    curTimeSeconds: number,
+    isFlyMode: boolean,
+    dashDir: THREE.Vector3,
+    opts?: { skipMovementEnabledCheck?: boolean }
+  ): boolean {
     if (!this.config.enable) {
       return false;
     }
 
-    if (!this.viz.controlState.movementEnabled) {
+    if (!opts?.skipMovementEnabledCheck && !this.viz.controlState.movementEnabled) {
       return false;
     }
 
@@ -105,6 +107,14 @@ export class DashManager {
     }
 
     return true;
+  }
+
+  public get needsGroundTouch(): boolean {
+    return this.dashNeedsGroundTouch;
+  }
+
+  public set needsGroundTouch(v: boolean) {
+    this.dashNeedsGroundTouch = v;
   }
 
   public resetDashGroundTouch() {

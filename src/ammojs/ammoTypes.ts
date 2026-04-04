@@ -108,6 +108,13 @@ export interface BtKinematicCharacterController {
   getCameraRayHitNormalY(): number;
   getCameraRayHitNormalZ(): number;
   packState(outBuffer: number): number;
+  packFullState(outBuffer: number): number;
+  setWasOnGround(v: boolean): void;
+  setJumpAxis(axis: BtVec3): void;
+  setCurrentStepOffset(offset: number): void;
+  setTotalElapsedTime(t: number): void;
+  resetAllCooldowns(): void;
+  setIsJumping(v: boolean): void;
 }
 
 export type BtActionInterface = BtKinematicCharacterController;
@@ -161,7 +168,7 @@ export interface BtDiscreteDynamicsWorld {
   setGravity(gravity: BtVec3): void;
   stepSimulation(tDiffSeconds: number, maxSubSteps: number, fixedTimeStep: number): number;
   beginStepSimulation(timeStep: number, maxSubSteps: number, fixedTimeStep: number): number;
-  substepSimulation(): void;
+  substepSimulation(fixedTimeStep: number): void;
   finishStepSimulation(): void;
   computeAndSetInterpolationVelocity(
     body: BtCollisionObject,

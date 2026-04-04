@@ -34,9 +34,9 @@ export interface JumpSimParams {
    * In collision.ts, moveDirection is built additively from camera-relative unit vectors:
    *   - Single key (W/A/S/D): magnitude 1
    *   - Diagonal (W+A etc.):  magnitude √2 ≈ 1.414 — a real speed boost
-   *   - With easyModeMovement on: always scaled to √2 regardless of key count
+   *   - With movement normalization: always scaled to √2 regardless of key count
    *
-   * Default: √2, because easyModeMovement is always-on (and even without it, a player
+   * Default: √2, because movement normalization is always-on (and even without it, a player
    * optimizing for speed on a non-axis-aligned path uses diagonal movement anyway).
    */
   moveDirMagnitude?: number;
