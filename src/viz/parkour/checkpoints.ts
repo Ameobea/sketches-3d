@@ -77,7 +77,7 @@ export const initCheckpoints = (
     }
 
     dashTokensCtx.restore(toRestore);
-    viz.fpCtx!.reset();
+    viz.fpCtx!.resetPlayerState();
   });
 
   const reset = () => {

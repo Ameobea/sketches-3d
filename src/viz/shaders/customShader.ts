@@ -364,10 +364,14 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
         vWorldPos = worldPos.xyz;
         vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
-        // Use the CPU-precomputed modelViewMatrix to get bit-identical depth values to the main
-        // render pass (which also uses it via #include <project_vertex>). Computing viewMatrix *
-        // modelMatrix in the shader can differ by a ULP and cause z-fighting against the main pass.
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        // Mirror the evaluation order of Three.js's project_vertex chunk exactly:
+        // two sequential mat4*vec4 ops rather than (projectionMatrix * modelViewMatrix) * pos.
+        // The combined form is left-associative in GLSL, so it computes a mat4*mat4 product first,
+        // which accumulates more floating-point error than two mat4*vec4 steps.  On AMD/Linux the
+        // error stays within LEQUAL tolerance; on NVIDIA/Windows (especially via ANGLE/D3D) it
+        // exceeds it, producing the z-fighting artifacts seen by NVIDIA users.
+        vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPos;
       }
     `,
     fragmentShader: `

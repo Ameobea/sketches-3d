@@ -96,7 +96,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     {
       spawn: {
         pos: new THREE.Vector3(0, 3, 8),
-        rot: new THREE.Vector3(0, Math.PI, 0),
+        rot: new THREE.Vector3(-0.35, -Math.PI / 2, 0),
       },
     },
     scoreThresholds,

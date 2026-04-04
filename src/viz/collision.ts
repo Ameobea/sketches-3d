@@ -1398,13 +1398,28 @@ export class BulletPhysics {
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
 
-  public reset = () => {
+  /**
+   * Resets player velocity, key states, and all cooldowns without touching
+   * physics time. Use this for mid-run respawns (OOB, instakill) so the run
+   * timer keeps ticking and physics-driven objects (spinners, sliders) are
+   * not disturbed.
+   */
+  public resetPlayerState = () => {
     for (const key of Object.keys(this.viz.keyStates)) {
       this.viz.keyStates[key] = false;
     }
     this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
     this.playerController.setVerticalVelocity(0);
     this.playerController.setOnGround(false);
+    this.lastJumpPhysicsTime = -Infinity;
+    this.lastGroundedPhysicsTime = -Infinity;
+    this.dashManager.lastDashTimeSeconds = -Infinity;
+    this.dashManager.needsGroundTouch = false;
+    this.playerController.resetAllCooldowns();
+  };
+
+  public reset = () => {
+    this.resetPlayerState();
     this.resetPhysicsTime();
   };
 

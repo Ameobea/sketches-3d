@@ -59,8 +59,10 @@ export const initPylonsPostprocessing = (
         ...qualityParams,
         ...volumetricParams,
       });
-      composer.addPass(volumetricPass);
-      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
+      if (vizConf.graphics.quality > GraphicsQuality.Low) {
+        composer.addPass(volumetricPass);
+        viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
+      }
     },
     toneMapping: { mode: 'neutral', exposure: 0.85 },
     autoUpdateShadowMap,
