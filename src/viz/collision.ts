@@ -250,8 +250,8 @@ export class BulletPhysics {
   public playerStateGetters: FpPlayerStateGetters;
   public btvec3!: (x: number, y: number, z: number) => BtVec3;
   private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
-  private lastJumpPhysicsTime = 0;
-  private lastGroundedPhysicsTime = 0;
+  private lastJumpPhysicsTime = -Infinity;
+  private lastGroundedPhysicsTime = -Infinity;
   private coyoteTimeSeconds = 0;
   private moveDirection = new THREE.Vector3();
   private isWalking = false;
@@ -1176,8 +1176,21 @@ export class BulletPhysics {
       );
     }
 
-    // Clear residual velocity / grounded state before replay subtick 0.
+    // Teleport player to the recorded spawn position so that the initial
+    // ground-contact state matches what was present during recording.
+    const spawnPosStr = player.getMetadataString('spawn_pos');
+    const spawnRotStr = player.getMetadataString('spawn_rot');
+    if (spawnPosStr) {
+      const [sx, sy, sz] = spawnPosStr.split(',').map(Number);
+      const rot = spawnRotStr ? spawnRotStr.split(',').map(Number) : undefined;
+      this.teleportPlayer([sx, sy, sz], rot ? [rot[0], rot[1], rot[2]] : undefined);
+    }
+
+    // Clear all dynamic state (velocities, flags, floor refs, cooldowns, timing)
+    // to match a freshly-loaded level.
     this.reset();
+
+    this.assertInitialState();
 
     this.replayLoadPending = false;
     this.replayPlayer = player;
@@ -1408,14 +1421,20 @@ export class BulletPhysics {
     for (const key of Object.keys(this.viz.keyStates)) {
       this.viz.keyStates[key] = false;
     }
-    this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
-    this.playerController.setVerticalVelocity(0);
-    this.playerController.setOnGround(false);
+    // Reset all dynamic C++ player controller state to match a freshly-constructed
+    // controller.  This covers velocities, flags, floor refs, jump axis, forced
+    // rotation, cooldowns, and pending events — everything except position (handled
+    // by warp/teleportPlayer) and configuration (gravity, step height, damping, etc.).
+    this.playerController.resetForNewRun();
+    this.playerController.resetCollisionCache(
+      this.collisionWorld,
+      32, // btBroadphaseProxy::CharacterFilter
+      1 | 2 // btBroadphaseProxy::StaticFilter | btBroadphaseProxy::DefaultFilter
+    );
     this.lastJumpPhysicsTime = -Infinity;
     this.lastGroundedPhysicsTime = -Infinity;
     this.dashManager.lastDashTimeSeconds = -Infinity;
     this.dashManager.needsGroundTouch = false;
-    this.playerController.resetAllCooldowns();
   };
 
   public reset = () => {
@@ -1424,8 +1443,56 @@ export class BulletPhysics {
   };
 
   /**
-   * Reset all JS-side and C++-side timing state to zero.
-   * After this call, physicsElapsedTime is 0 and all cooldowns are cleared.
+   * Debug assertion: verify that the player controller state after reset matches
+   * expected initial values.  Warns on mismatch so we catch regressions where
+   * reset doesn't fully clean up.
+   */
+  public assertInitialState = () => {
+    if (!this.ammoStatePtr) return;
+
+    this.playerController.packState(this.ammoStatePtr);
+    const heap = this.Ammo.HEAPF32;
+    const base = this.ammoStatePtr / 4;
+
+    // packed layout: [0-2] pos, [3-5] extVel, [6] vertVel, [7] vertOffset,
+    //                [8] flags (u32 bitcast), [9] floorUserIndex (i32 bitcast)
+    const extVelX = heap[base + 3];
+    const extVelY = heap[base + 4];
+    const extVelZ = heap[base + 5];
+    const vertVel = heap[base + 6];
+    const vertOffset = heap[base + 7];
+    const dv = new DataView(heap.buffer, this.ammoStatePtr, 40);
+    const flags = dv.getUint32(8 * 4, true);
+    const onGround = (flags & 1) !== 0;
+    const isJumping = (flags & 2) !== 0;
+    const floorUserIndex = dv.getInt32(9 * 4, true);
+
+    const problems: string[] = [];
+    if (extVelX !== 0 || extVelY !== 0 || extVelZ !== 0) {
+      problems.push(`externalVelocity=(${extVelX},${extVelY},${extVelZ}), expected (0,0,0)`);
+    }
+    if (vertVel !== 0) problems.push(`verticalVelocity=${vertVel}, expected 0`);
+    if (vertOffset !== 0) problems.push(`verticalOffset=${vertOffset}, expected 0`);
+    if (onGround) problems.push(`onGround=true, expected false`);
+    if (isJumping) problems.push(`isJumping=true, expected false`);
+    if (floorUserIndex !== -1) problems.push(`floorUserIndex=${floorUserIndex}, expected -1`);
+    if (this.physicsElapsedTime !== 0)
+      problems.push(`physicsElapsedTime=${this.physicsElapsedTime}, expected 0`);
+    if (this.physicsSubtickCount !== 0)
+      problems.push(`physicsSubtickCount=${this.physicsSubtickCount}, expected 0`);
+    if (this.localTimeRemainder !== 0)
+      problems.push(`localTimeRemainder=${this.localTimeRemainder}, expected 0`);
+
+    if (problems.length > 0) {
+      console.warn(
+        `[physics] Initial state assertion failed after reset:\n` + problems.map(p => `  ${p}`).join('\n')
+      );
+    }
+  };
+
+  /**
+   * Reset all JS-side timing state to zero.
+   * C++-side cooldowns are already cleared by resetPlayerState → resetForNewRun.
    */
   public resetPhysicsTime = () => {
     this.physicsSubtickCount = 0;
@@ -1435,7 +1502,6 @@ export class BulletPhysics {
     this.lastGroundedPhysicsTime = -Infinity;
     this.dashManager.lastDashTimeSeconds = -Infinity;
     this.dashManager.needsGroundTouch = false;
-    this.playerController.resetAllCooldowns();
   };
 
   /**

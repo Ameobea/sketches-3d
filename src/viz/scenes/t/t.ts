@@ -121,7 +121,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         jumpVelocity: 76,
         terminalVelocity: 180,
         dashConfig: {
-          chargeConfig: { curCharges: rwritable(Infinity) },
+          chargeConfig: { curCharges: rwritable(0) },
           dashMagnitude: 16,
           useExternalVelocity: true,
           minDashDelaySeconds: 0.3,

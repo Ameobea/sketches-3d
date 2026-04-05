@@ -1079,6 +1079,13 @@ export const initViz = (
       viz.registerPhysicsStartupBarrier(
         viz.fpCtx.flightRecorder.init().then(() => {
           viz.fpCtx!.initFlightRecorderHeader();
+          // Record initial spawn position so replays know where to teleport the player.
+          const sp = viz.spawnPos;
+          viz.fpCtx!.flightRecorder.setMetadataString('spawn_pos', `${sp.pos.x},${sp.pos.y},${sp.pos.z}`);
+          viz.fpCtx!.flightRecorder.setMetadataString(
+            'spawn_rot',
+            `${sp.rot?.x ?? 0},${sp.rot?.y ?? 0},${sp.rot?.z ?? 0}`
+          );
         })
       );
 

@@ -238,7 +238,7 @@ const extractPrototype = (
 };
 
 /** The render wrapper imports the asset's exported mesh and pipes it through `render`. */
-const RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | render';
+const RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_transforms | render';
 
 /**
  * Build the modules map for running a single asset through the render wrapper.

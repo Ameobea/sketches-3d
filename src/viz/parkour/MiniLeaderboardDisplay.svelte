@@ -27,6 +27,11 @@
       fetchLeaderboard();
     }
   });
+
+  // Re-fetch leaderboard after the user's play is submitted so their new score appears
+  $: if (userPlayID) {
+    fetchLeaderboard();
+  }
 </script>
 
 <div class="root">

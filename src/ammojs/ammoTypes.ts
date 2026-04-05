@@ -115,6 +115,8 @@ export interface BtKinematicCharacterController {
   setTotalElapsedTime(t: number): void;
   resetAllCooldowns(): void;
   setIsJumping(v: boolean): void;
+  resetForNewRun(): void;
+  resetCollisionCache(world: BtDiscreteDynamicsWorld, filterGroup: number, filterMask: number): void;
 }
 
 export type BtActionInterface = BtKinematicCharacterController;

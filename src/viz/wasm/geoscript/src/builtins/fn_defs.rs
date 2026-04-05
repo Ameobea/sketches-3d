@@ -820,6 +820,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Bakes the 2D affine transform into the path's segment control points, resetting the transform to identity. Only works with trace_path/trace_svg_path paths.",
         return_type: &[ArgType::Callable],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "meshes",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of meshes whose transforms will be baked into their vertices."
+          },
+        ],
+        description: "Applies transforms to each mesh in a sequence, resetting each transform to identity.",
+        return_type: &[ArgType::Sequence],
+      },
     ],
   },
   "apply_mat4" => FnDef {

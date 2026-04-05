@@ -57,8 +57,8 @@ use crate::{
     build_torus_knot_path, cubic_bezier_3d_path, get_superellipse_point, superellipse_path,
   },
   seq::{
-    ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq, PointDistributeSeq,
-    ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
+    ApplyTransformsSeq, ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq,
+    PointDistributeSeq, ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
   },
   seq_as_eager, ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
@@ -5064,6 +5064,7 @@ fn origin_to_geometry_impl(
 }
 
 fn apply_transforms_impl(
+  _ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -5071,7 +5072,12 @@ fn apply_transforms_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let val = arg_refs[0].resolve(args, kwargs);
+      let mesh = val.as_mesh().unwrap();
+      // No-op if the transform is already identity
+      if mesh.transform == Matrix4::identity() {
+        return Ok(val.clone());
+      }
       let mut new_mesh = (*mesh.mesh).clone();
       for vtx in new_mesh.vertices.values_mut() {
         vtx.position = (mesh.transform * vtx.position.push(1.)).xyz();
@@ -5140,6 +5146,12 @@ fn apply_transforms_impl(
           fill_rule: tracer.fill_rule,
           transform: nalgebra::Matrix3::identity(),
         }),
+      })))
+    }
+    2 => {
+      let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
+      Ok(Value::Sequence(Rc::new(ApplyTransformsSeq {
+        inner: sequence,
       })))
     }
     _ => unimplemented!(),
@@ -6240,8 +6252,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "origin_to_geometry" => builtin_fn!(origin_to_geometry, |def_ix, arg_refs, args, kwargs, _ctx| {
     origin_to_geometry_impl(def_ix, arg_refs, args, kwargs)
   }),
-  "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, _ctx| {
-    apply_transforms_impl(def_ix, arg_refs, args, kwargs)
+  "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, ctx| {
+    apply_transforms_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "apply_mat4" => builtin_fn!(apply_mat4, |def_ix, arg_refs, args, kwargs, _ctx| {
     apply_mat4_impl(def_ix, arg_refs, args, kwargs)

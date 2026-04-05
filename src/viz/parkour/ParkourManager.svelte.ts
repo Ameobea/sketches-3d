@@ -253,6 +253,7 @@ export class ParkourManager {
     this.resetCheckpoints();
     fpCtx.teleportPlayer(this.locations.spawn.pos, this.locations.spawn.rot);
     fpCtx.reset();
+    fpCtx.assertInitialState();
 
     const wasStarted = this.curRunStartTimeSeconds !== null;
     this.curRunStartTimeSeconds = null;
@@ -261,6 +262,8 @@ export class ParkourManager {
     fpCtx.resetRecorderForNewRun();
     const sp = this.locations.spawn.pos;
     const sr = this.locations.spawn.rot;
+    fpCtx.flightRecorder.setMetadataString('spawn_pos', `${sp.x},${sp.y},${sp.z}`);
+    fpCtx.flightRecorder.setMetadataString('spawn_rot', `${sr?.x ?? 0},${sr?.y ?? 0},${sr?.z ?? 0}`);
     fpCtx.flightRecorder.recordEvent(RecorderEventType.Teleport, [
       sp.x,
       sp.y,

@@ -95,7 +95,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     vizConf,
     {
       spawn: {
-        pos: new THREE.Vector3(0, 998 , 8),
+        pos: new THREE.Vector3(0, 998, 8),
         rot: new THREE.Vector3(0, Math.PI, 0),
       },
     },
@@ -129,7 +129,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         coyoteTimeSeconds: 0.135,
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
         maxSlopeRadians: 1.3,
-        oobYThreshold: -50,
+        oobYThreshold: 700,
       },
       viewMode: {
         type: 'thirdPerson',

@@ -1,10 +1,12 @@
-use std::{collections::VecDeque, fmt::Debug, iter::Enumerate, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, fmt::Debug, iter::Enumerate, rc::Rc};
 
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::Matrix4;
 use point_distribute::MeshSurfaceSampler;
 
-use crate::{Callable, ErrorStack, EvalCtx, MeshHandle, Sequence, Value, EMPTY_KWARGS};
+use crate::{
+  Callable, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sequence, Value, EMPTY_KWARGS,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct IntRange {
@@ -664,5 +666,42 @@ impl Sequence for ChainSeq {
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
     Box::new(ChainIter::new(ctx, self.inner.clone()))
+  }
+}
+
+#[derive(Debug)]
+pub(crate) struct ApplyTransformsSeq {
+  pub inner: Rc<dyn Sequence>,
+}
+
+impl Sequence for ApplyTransformsSeq {
+  fn consume<'a>(
+    &self,
+    ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    let inner = self.inner.consume(ctx);
+    Box::new(inner.map(|res| {
+      let val = res?;
+      let Value::Mesh(mesh) = &val else {
+        return Err(ErrorStack::new(format!(
+          "apply_transforms: expected Mesh in sequence, got {val:?}"
+        )));
+      };
+      if mesh.transform == Matrix4::identity() {
+        return Ok(val);
+      }
+      let mut new_mesh = (*mesh.mesh).clone();
+      for vtx in new_mesh.vertices.values_mut() {
+        vtx.position = (mesh.transform * vtx.position.push(1.)).xyz();
+      }
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(new_mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: mesh.material.clone(),
+      })))
+    }))
   }
 }
