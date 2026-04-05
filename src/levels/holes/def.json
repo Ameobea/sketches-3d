@@ -70,7 +70,7 @@
                 "asset": "box",
                 "position": [0, -10.2572, 0],
                 "rotation": [0, 0, 0],
-                "scale": [1, 5.6182, 1]
+                "scale": [1, 1.7694, 1]
               }
             ],
             "position": [0, 0, -0.6271],
@@ -147,7 +147,7 @@
             "asset": "box",
             "position": [0, 0, 0],
             "rotation": [0, 0, 0],
-            "scale": [0.9172, 1, 1]
+            "scale": [0.9172, 1.1536, 1]
           },
           {
             "asset": "box",
@@ -239,7 +239,7 @@
     {
       "id": "box_6",
       "asset": "csg_box_6",
-      "position": [16.7218, 973.952, 116.1814],
+      "position": [16.7218, 979.6394, 116.1814],
       "rotation": [0, 0, 0],
       "scale": [0.4345, 3.4269, 2.0052],
       "material": "plastered_concrete"
@@ -247,7 +247,7 @@
     {
       "id": "csg_box_6",
       "asset": "csg_box_6",
-      "position": [21.0777, 977.1911, 126.1594],
+      "position": [21.0777, 978.6199, 126.1594],
       "rotation": [0, 0, 0],
       "scale": [0.3809, 3.4269, 2.0052],
       "material": "plastered_concrete"
@@ -255,7 +255,7 @@
     {
       "id": "csg_box_6_1",
       "asset": "csg_box_6",
-      "position": [25.497, 981.3478, 136.0891],
+      "position": [25.497, 978.445, 136.0891],
       "rotation": [0, 0, 0],
       "scale": [0.3717, 3.4269, 2.0052],
       "material": "plastered_concrete"
@@ -348,8 +348,9 @@
       "scale": [22.6052, 3.2433, 0.7157],
       "nocollide": true,
       "material": "checkpoint",
-      "parkour": { "win": true }
-
+      "parkour": {
+        "win": true
+      }
     }
   ]
 }
