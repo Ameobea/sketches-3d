@@ -592,4 +592,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     legacyLights: false,
     useSceneDef: true,
   },
+  holes: {
+    sceneName: null,
+    gltfName: null,
+    sceneLoader: () => import('./holes/holes').then(mod => mod.processLoadedScene),
+    metadata: { title: 'Holes' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
 };

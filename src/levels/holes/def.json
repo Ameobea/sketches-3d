@@ -1,0 +1,355 @@
+{
+  "$schema": "../schema.json",
+  "version": 1,
+  "assets": {
+    "box": {
+      "type": "geoscript",
+      "code": "export mesh = box(5)"
+    },
+    "cyl": {
+      "type": "geoscript",
+      "code": "export mesh = cylinder(radius=1, height=4, radial_segments=16, height_segments=1)"
+    },
+    "csg_box": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "op": "union",
+            "children": [
+              {
+                "asset": "box",
+                "position": [0, 0, 0],
+                "rotation": [0, 0, 0],
+                "scale": [1, 1.8221, 1]
+              },
+              {
+                "asset": "box",
+                "position": [0, 0, 3.87],
+                "rotation": [0, 0, 0],
+                "scale": [1, 2.3607, 1.0723]
+              }
+            ]
+          },
+          {
+            "asset": "box"
+          }
+        ]
+      }
+    },
+    "csg_box_1": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "op": "union",
+            "children": [
+              {
+                "op": "difference",
+                "children": [
+                  {
+                    "asset": "box",
+                    "position": [0, 0, 0],
+                    "rotation": [0, 0, 0],
+                    "scale": [1.2131, 1, 1.0747]
+                  },
+                  {
+                    "asset": "box",
+                    "position": [0, 0, 0],
+                    "rotation": [0, 0, 0],
+                    "scale": [1.1539, 1.1924, 1.0573]
+                  }
+                ],
+                "position": [0, 21.3632, 0],
+                "rotation": [0, 0, 0],
+                "scale": [0.8414, 17.5562, 0.9216]
+              },
+              {
+                "asset": "box",
+                "position": [0, -10.2572, 0],
+                "rotation": [0, 0, 0],
+                "scale": [1, 5.6182, 1]
+              }
+            ],
+            "position": [0, 0, -0.6271],
+            "rotation": [0, 0, 0],
+            "scale": [1, 1, 0.8982]
+          },
+          {
+            "asset": "box",
+            "position": [0, 4.3399, 0.9514],
+            "rotation": [0, 0, 0],
+            "scale": [0.1779, 44.8524, 0.1243]
+          }
+        ]
+      }
+    },
+    "csg_box_2": {
+      "type": "csg",
+      "tree": {
+        "asset": "box"
+      }
+    },
+    "csg_box_3": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "box",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [1, 0.7955, 1]
+          },
+          {
+            "asset": "box",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [0.6964, 1, 0.6073]
+          }
+        ]
+      }
+    },
+    "csg_box_4": {
+      "type": "csg",
+      "tree": {
+        "asset": "box"
+      }
+    },
+    "csg_box_5": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "box",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [2.6416, 4.663, 0.4205]
+          },
+          {
+            "asset": "box",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [0.4256, 0.7231, 0.7193]
+          }
+        ]
+      }
+    },
+    "csg_box_6": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "box",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [0.9172, 1, 1]
+          },
+          {
+            "asset": "box",
+            "position": [-0.9084, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [1.1785, 0.7521, 0.7664]
+          }
+        ]
+      }
+    },
+    "csg_box_7": {
+      "type": "csg",
+      "tree": {
+        "asset": "box"
+      }
+    },
+    "cursed_steps": {
+      "type": "geoscript",
+      "file": "geo/cursed_steps.geo"
+    }
+  },
+  "physics": {
+    "gravity": 220,
+    "simulationTickRate": 160,
+    "gravityShaping": {
+      "riseMultiplier": 1,
+      "apexMultiplier": 0.6,
+      "fallMultiplier": 1.2,
+      "apexThreshold": 4,
+      "kneeWidth": 0.1
+    },
+    "player": {
+      "jumpVelocity": 76,
+      "moveSpeed": {
+        "onGround": 15.75,
+        "inAir": 18
+      }
+    }
+  },
+  "objects": [
+    {
+      "id": "box",
+      "asset": "csg_box_1",
+      "position": [0, 995.1615, 19.0403],
+      "rotation": [0, 0, 0],
+      "scale": [39.2957, 0.6642, 41.4358],
+      "material": "gold_mat"
+    },
+    {
+      "id": "box_1",
+      "asset": "csg_box_3",
+      "position": [-0.916, 999.6356, 56.6656],
+      "rotation": [0, 0, 0],
+      "scale": [8.9762, 6.9197, 7.2038],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_2",
+      "asset": "box",
+      "position": [-4.1535, 946.8609, 56.6478],
+      "rotation": [0, 0, 0],
+      "scale": [1.4037, 0.6329, 1],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_3",
+      "asset": "box",
+      "position": [2.061, 951.9346, 75.4438],
+      "rotation": [0, 0, 0],
+      "scale": [1.4037, 0.5075, 0.8595],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_4",
+      "asset": "box",
+      "position": [-9.654, 955.4407, 87.566],
+      "rotation": [0, 0, 0],
+      "scale": [1.4037, 0.5559, 1],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_5",
+      "asset": "box",
+      "position": [1.426, 963.6131, 102.7614],
+      "rotation": [0, 0, 0],
+      "scale": [1.4037, 0.4891, 1],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_6",
+      "asset": "csg_box_6",
+      "position": [16.7218, 973.952, 116.1814],
+      "rotation": [0, 0, 0],
+      "scale": [0.4345, 3.4269, 2.0052],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "csg_box_6",
+      "asset": "csg_box_6",
+      "position": [21.0777, 977.1911, 126.1594],
+      "rotation": [0, 0, 0],
+      "scale": [0.3809, 3.4269, 2.0052],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "csg_box_6_1",
+      "asset": "csg_box_6",
+      "position": [25.497, 981.3478, 136.0891],
+      "rotation": [0, 0, 0],
+      "scale": [0.3717, 3.4269, 2.0052],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_7",
+      "asset": "box",
+      "position": [19.3223, 964.1131, 153.7108],
+      "rotation": [0, 0, 0],
+      "scale": [1.4037, 0.4891, 1],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "csg_box_6_2",
+      "asset": "csg_box_6",
+      "position": [15.3445, 979.3307, 172.5507],
+      "rotation": [0, 0, 0],
+      "scale": [0.521, 3.4269, 2.0052],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "csg_box_6_3",
+      "asset": "csg_box_6",
+      "position": [12.8141, 982.1166, 193.4488],
+      "rotation": [0, 3.1029, 0],
+      "scale": [0.5234, 3.4269, 2.0052],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "csg_box_6_4",
+      "asset": "csg_box_6",
+      "position": [18.3994, 985.8207, 210.4362],
+      "rotation": [0, 0, 0],
+      "scale": [0.8703, 3.4269, 2.0052],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "box_8",
+      "asset": "csg_box_7",
+      "position": [8.1242, 984.0162, 223.225],
+      "rotation": [0, 0, 0],
+      "scale": [0.6101, 0.3645, 0.6042],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "csg_box_7",
+      "asset": "csg_box_7",
+      "position": [14.943, 989.7543, 223.225],
+      "rotation": [0, 0, 0],
+      "scale": [0.6101, 0.3645, 0.6042],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "csg_box_7_1",
+      "asset": "csg_box_7",
+      "position": [19.5181, 990.643, 151.578],
+      "rotation": [0, 0, 0],
+      "scale": [0.6101, 0.3645, 0.6042],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "cursed_steps",
+      "asset": "cursed_steps",
+      "position": [-0.8623, 1002.1518, 20.5043],
+      "rotation": [0, 1.527, 0],
+      "scale": [1.4495, 2.1331, 0.7668],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "cursed_steps_1",
+      "asset": "cursed_steps",
+      "position": [-0.8623, 995.2581, 98.4718],
+      "rotation": [0, -0.035, 0],
+      "scale": [1.4495, 2.1331, 0.7668],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "cursed_steps_2",
+      "asset": "cursed_steps",
+      "position": [4.8768, 1023.4169, 87.9277],
+      "rotation": [0, -3.0991, 0],
+      "scale": [1.4495, 2.1331, 0.5583],
+      "material": "plastered_concrete"
+    },
+    {
+      "id": "checkpoint_win",
+      "asset": "cyl",
+      "position": [47.8292, 1044.9715, 84.6202],
+      "rotation": [0, 0, 0],
+      "scale": [22.6052, 3.2433, 0.7157],
+      "nocollide": true,
+      "material": "checkpoint",
+      "parkour": { "win": true }
+
+    }
+  ]
+}

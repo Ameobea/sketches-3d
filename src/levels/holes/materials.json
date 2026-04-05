@@ -1,0 +1,56 @@
+{
+  "$schema": "../materials-schema.json",
+  "textures": {
+    "gold_albedo": {
+      "url": "https://i.ameo.link/be0.jpg",
+      "colorSpace": "srgb"
+    },
+    "gold_normal": {
+      "url": "https://i.ameo.link/be2.jpg"
+    },
+    "gold_roughness": {
+      "url": "https://i.ameo.link/bdz.jpg"
+    },
+    "plastered_concrete_color": {
+      "url": "https://geotoy.b-cdn.net/textures/1/0a2fce65-f2dd-4cab-8f16-86d35175007b.avif",
+      "colorSpace": "srgb"
+    },
+    "plastered_concrete_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/12b9751a-845f-4d5a-b971-98cd62d572e9.avif"
+    }
+  },
+  "materials": {
+    "checkpoint": {
+      "type": "generated",
+      "emissiveBypass": true
+    },
+    "gold_mat": {
+      "type": "customShader",
+      "props": {
+        "roughness": 0.87,
+        "metalness": 0.99,
+        "uvScale": [0.1, 0.1],
+        "map": "gold_albedo",
+        "normalMap": "gold_normal",
+        "roughnessMap": "gold_roughness"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "plastered_concrete": {
+      "type": "customShader",
+      "props": {
+        "color": 14671839,
+        "roughness": 0.9,
+        "metalness": 0.4,
+        "uvScale": [0.04, 0.04],
+        "map": "plastered_concrete_color",
+        "normalMap": "plastered_concrete_normal"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    }
+  }
+}
