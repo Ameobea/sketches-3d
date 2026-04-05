@@ -110,8 +110,8 @@
         </div>
       {/each}
 
-      <!-- Material assignment (leaf non-CSG objects only) -->
-      {#if !isGroup && !isCsgAsset}
+      <!-- Material assignment (leaf objects) -->
+      {#if !isGroup}
         <div class="tf-row">
           <span class="tf-label">mat</span>
           <select

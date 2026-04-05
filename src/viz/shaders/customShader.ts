@@ -358,19 +358,24 @@ export const getOcclusionUniforms = () => ({
 export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
   new THREE.ShaderMaterial({
     vertexShader: `
+      #ifdef USE_INSTANCING
+        attribute mat4 instanceMatrix;
+      #endif
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
       void main() {
-        vec4 worldPos = modelMatrix * vec4(position, 1.0);
-        vWorldPos = worldPos.xyz;
-        vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
-        // Mirror the evaluation order of Three.js's project_vertex chunk exactly:
-        // two sequential mat4*vec4 ops rather than (projectionMatrix * modelViewMatrix) * pos.
-        // The combined form is left-associative in GLSL, so it computes a mat4*mat4 product first,
-        // which accumulates more floating-point error than two mat4*vec4 steps.  On AMD/Linux the
-        // error stays within LEQUAL tolerance; on NVIDIA/Windows (especially via ANGLE/D3D) it
-        // exceeds it, producing the z-fighting artifacts seen by NVIDIA users.
-        vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+        // Apply instance transform first (mat4*vec4), then model/view (mat4*vec4 each).
+        // Keeps all multiplications as mat4*vec4 to match Three.js's project_vertex evaluation
+        // order and avoid the extra precision loss of a mat4*mat4 intermediate product.
+        vec4 localPos = vec4(position, 1.0);
+        vec3 localNormal = normal;
+        #ifdef USE_INSTANCING
+          localPos = instanceMatrix * localPos;
+          localNormal = (instanceMatrix * vec4(localNormal, 0.0)).xyz;
+        #endif
+        vWorldPos = (modelMatrix * localPos).xyz;
+        vWorldNormal = normalize((modelMatrix * vec4(localNormal, 0.0)).xyz);
+        vec4 mvPos = modelViewMatrix * localPos;
         gl_Position = projectionMatrix * mvPos;
       }
     `,

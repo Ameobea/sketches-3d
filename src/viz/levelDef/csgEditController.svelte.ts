@@ -200,7 +200,6 @@ export class CsgEditController {
     } else {
       this.onNodeTransformUpdate(); // final update
       this.editor.api.saveCsgTree(this.csgPanelState.assetName, this.csgPanelState.tree);
-      if (this.editLevelObj) this.editor.syncPhysics(this.editLevelObj);
 
       // Push undo entry for the transform
       if (this.treeBeforeDrag) {
@@ -308,9 +307,10 @@ export class CsgEditController {
     this.configGeneration++;
     this.teardownPreviews();
 
-    // Restore visibility of the level object
+    // Restore visibility and ensure physics is in sync with the final mesh
     if (this.editLevelObj) {
       this.editLevelObj.object.visible = true;
+      this.editor.syncPhysics(this.editLevelObj);
     }
 
     if (this.editGroup) {
@@ -1062,6 +1062,7 @@ export class CsgEditController {
       // In CSG edit mode, don't re-register for normal raycast (previews handle selection)
       if (this._isActive && levelObj === this.editLevelObj) {
         const wasVisible = levelObj.object.visible;
+        this.editor.removePhysics(levelObj);
         this.editor.viz.scene.remove(levelObj.object);
         const clone = instantiateLevelObject(newPrototype, levelObj.def, {
           builtMaterials: this.editor.builtMaterials,
@@ -1071,6 +1072,7 @@ export class CsgEditController {
         });
         levelObj.object = clone;
         this.editor.viz.scene.add(clone);
+        this.editor.syncPhysics(levelObj);
         if (this.selectedNodePath === '') {
           this.editor.transformControls?.attach(clone);
         }
