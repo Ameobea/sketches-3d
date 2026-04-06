@@ -1,32 +1,22 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
-import { initCollectables, type CollectablesCtx } from './collectables';
-import type { TransparentWritable } from '../util/TransparentWritable';
+import { initCollectables } from './collectables';
 
 /**
- * The names of checkpoints and dash tokens must be very particularly set.
- *
  * Checkpoints are named "checkpoint", "checkpoint001", "checkpoint002", etc.
  *
- * Dash tokens are like `dash_token_loc_ck0.001`, `dash_token_loc_ck0`, etc.
- *
- * The `n` in `ck{n}` should be set to the index of the checkpoint that is reached before
- * that dash token can be picked up.  So if the dash token is reachable before any checkpoint
- * is reached, it should be `ck0`.  This controls the respawn behavior of dash tokens when
- * respawning at checkpoints.
+ * Dash token state is now snapshotted in the C++ controller when checkpoints are
+ * reached, and restored from that snapshot on respawn.
  */
 export const initCheckpoints = (
   viz: Viz,
   loadedWorld: THREE.Group<THREE.Object3DEventMap>,
   checkpointMat: THREE.Material | (() => THREE.Material) | undefined,
-  dashTokensCtx: CollectablesCtx,
-  curDashCharges: TransparentWritable<number>,
+  syncDashTokensFromController: () => void,
   onComplete: () => void,
   checkpointMeshes?: THREE.Mesh[]
 ) => {
-  let latestReachedCheckpointIx: number | null = 0;
-  let dashChargesAtLastCheckpoint = 0;
   const setSpawnPoint = (pos: THREE.Vector3, rot: THREE.Vector3) => viz.setSpawnPos(pos, rot);
 
   const parseCheckpointIx = (name: string) => {
@@ -55,8 +45,7 @@ export const initCheckpoints = (
       // TODO: sfx
 
       const checkpointIx = parseCheckpointIx(checkpoint.name);
-      latestReachedCheckpointIx = checkpointIx;
-      dashChargesAtLastCheckpoint = curDashCharges.current;
+      viz.fpCtx?.saveDashCheckpointState();
       if (checkpointIx === 1 || checkpoint.name.includes('win')) {
         onComplete();
       }
@@ -66,24 +55,13 @@ export const initCheckpoints = (
   });
 
   viz.registerOnRespawnCb(() => {
-    curDashCharges.set(dashChargesAtLastCheckpoint);
-
-    const needle = `ck${latestReachedCheckpointIx === null ? 0 : latestReachedCheckpointIx + 1}`;
-    const toRestore: THREE.Object3D[] = [];
-    for (const obj of dashTokensCtx.hiddenCollectables) {
-      if (obj.name.includes(needle)) {
-        toRestore.push(obj);
-      }
-    }
-
-    dashTokensCtx.restore(toRestore);
+    viz.fpCtx?.restoreDashCheckpointState();
+    syncDashTokensFromController();
     viz.fpCtx!.resetPlayerState();
   });
 
   const reset = () => {
     ctx.reset();
-    latestReachedCheckpointIx = null;
-    dashChargesAtLastCheckpoint = 0;
   };
   return reset;
 };

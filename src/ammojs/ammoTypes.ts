@@ -48,57 +48,87 @@ export interface BtSensor {
   setEnabled(enabled: boolean): void;
 }
 
+export interface BtDashToken {
+  getZoneId(): number;
+  setEnabled(enabled: boolean): void;
+  setChargesGranted(chargesGranted: number): void;
+  getChargesGranted(): number;
+  setActive(active: boolean): void;
+  isActive(): boolean;
+}
+
 export enum ZoneEventType {
   SensorEnter = 0,
   SensorLeave = 1,
   JumpPadTriggered = 2,
   BoostZoneEnter = 3,
   BoostZoneExit = 4,
+  JumpFired = 5,
+  DashFired = 6,
+  DashTokenCollected = 7,
 }
 
 export interface BtKinematicCharacterController {
+  setInputState(keyFlags: number, theta: number, phi: number, movementEnabled: boolean): void;
+  setMoveSpeed(ground: number, air: number): void;
+  setTopDownMode(topDown: boolean): void;
+  setMinJumpDelay(seconds: number): void;
+  setCoyoteTime(seconds: number): void;
+  setDashConfig(enabled: boolean, magnitude: number, minDelay: number, useExternalVelocity: boolean): void;
+  setDashCharges(charges: number): void;
+  getLastJumpTime(): number;
+  getLastDashTime(): number;
+  getDashCharges(): number;
+  getWalkDirection(): BtVec3;
+
+  warp(position: BtVec3): void;
+  getPosition(): BtVec3;
+
   setMaxPenetrationDepth(depth: number): void;
   setMaxSlope(slope: number): void;
   setStepHeight(height: number): void;
   setJumpSpeed(speed: number): void;
   setGravity(gravity: BtVec3): void;
   setFallSpeed(fallSpeed: number): void;
+  setExternalVelocity(velocity: BtVec3): void;
   setExternalVelocityAirDampingFactor(factor: BtVec3): void;
   setExternalVelocityGroundDampingFactor(factor: BtVec3): void;
-  onGround(): boolean;
-  jump(velocity: BtVec3): void;
-  setWalkDirection(velocity: BtVec3): void;
-  getFloorUserIndex(): number;
-  warp(position: BtVec3): void;
-  getPosition(): BtVec3;
-  setExternalVelocity(velocity: BtVec3): void;
-  getExternalVelocity(): BtVec3;
-  addExternalVelocity(velocity: BtVec3): void;
-  setVerticalVelocity(velocity: number): void;
   setOnGround(onGround: boolean): void;
-  getVerticalVelocity(): number;
-  getVerticalOffset(): number;
-  getJumpAxis(): BtVec3;
-  isJumping(): boolean;
-  resetFall(): void;
+  setVerticalVelocity(velocity: number): void;
   setGravityShapeRiseMultiplier(v: number): void;
   setGravityShapeApexMultiplier(v: number): void;
   setGravityShapeFallMultiplier(v: number): void;
   setGravityShapeApexThreshold(v: number): void;
   setGravityShapeKneeWidth(v: number): void;
   setGravityShapeOnlyJumps(v: boolean): void;
-  getForcedRotation(): BtQuaternion;
+
+  onGround(): boolean;
+  getVerticalVelocity(): number;
+  getVerticalOffset(): number;
+  getJumpAxis(): BtVec3;
+  getExternalVelocity(): BtVec3;
+  isJumping(): boolean;
+  getFloorUserIndex(): number;
   resetForcedRotation(): void;
+
   addJumpPad(pad: BtJumpPad): void;
   removeJumpPad(pad: BtJumpPad): void;
   addBoostZone(zone: BtBoostZone): void;
   removeBoostZone(zone: BtBoostZone): void;
   addSensor(sensor: BtSensor): void;
   removeSensor(sensor: BtSensor): void;
+  addDashToken(token: BtDashToken): void;
+  removeDashToken(token: BtDashToken): void;
+  captureInitialDashState(): void;
+  saveDashCheckpointState(): void;
+  restoreDashCheckpointState(): void;
+  resetDashStateForNewRun(): void;
+
   getNumPendingEvents(): number;
   getPendingEventId(index: number): number;
   getPendingEventType(index: number): number;
   clearPendingEvents(): void;
+
   cameraRayTest(
     world: BtDiscreteDynamicsWorld,
     fromX: number, fromY: number, fromZ: number,
@@ -107,14 +137,8 @@ export interface BtKinematicCharacterController {
   getCameraRayHitNormalX(): number;
   getCameraRayHitNormalY(): number;
   getCameraRayHitNormalZ(): number;
+
   packState(outBuffer: number): number;
-  packFullState(outBuffer: number): number;
-  setWasOnGround(v: boolean): void;
-  setJumpAxis(axis: BtVec3): void;
-  setCurrentStepOffset(offset: number): void;
-  setTotalElapsedTime(t: number): void;
-  resetAllCooldowns(): void;
-  setIsJumping(v: boolean): void;
   resetForNewRun(): void;
   resetCollisionCache(world: BtDiscreteDynamicsWorld, filterGroup: number, filterMask: number): void;
 }
@@ -133,8 +157,7 @@ export interface BtCollisionObject {
   setWorldTransform(transform: BtTransform): void;
   setCollisionShape(shape: BtCollisionShape): void;
   setCollisionFlags(flags: number): void;
-  setInterpolationLinearVelocity(linvel: BtVec3): void;
-  setInterpolationAngularVelocity(angvel: BtVec3): void;
+
   getNumOverlappingObjects(): number;
   // getOverlappingObject(index: number): BtCollisionObject;
   setActivationState(state: number): void;
@@ -169,15 +192,8 @@ export interface BtDiscreteDynamicsWorld {
   addAction(action: BtActionInterface): void;
   setGravity(gravity: BtVec3): void;
   stepSimulation(tDiffSeconds: number, maxSubSteps: number, fixedTimeStep: number): number;
-  beginStepSimulation(timeStep: number, maxSubSteps: number, fixedTimeStep: number): number;
   substepSimulation(fixedTimeStep: number): void;
-  finishStepSimulation(): void;
-  computeAndSetInterpolationVelocity(
-    body: BtCollisionObject,
-    from: BtTransform,
-    to: BtTransform,
-    dt: number
-  ): void;
+
   addRigidBody(body: BtRigidBody): void;
   // setSynchronizeAllMotionStates(synchronize: boolean): void;
   // getSynchronizeAllMotionStates(): boolean;
@@ -276,6 +292,12 @@ export interface AmmoInterface {
     zoneId: number,
     minPenetrationDepth: number
   ) => BtSensor;
+  btDashToken: new (
+    ghostObject: BtPairCachingGhostObject,
+    zoneId: number,
+    chargesGranted: number,
+    minPenetrationDepth: number
+  ) => BtDashToken;
   btKinematicCharacterController: new (
     ghostObject: BtPairCachingGhostObject,
     shape: BtConvexShape,

@@ -204,7 +204,7 @@ export class FlightRecorder {
    * @param phi           Camera phi angle
    * @param theta         Camera theta angle
    * @param zoomDistance  Third-person camera zoom distance (0 in first-person)
-   * @param keyFlags      Packed key bitmask from packKeyFlags()
+   * @param keyFlags      Packed effective controller key bitmask for this subtick
    */
   recordSubtick(
     ammoStatePtr: number,

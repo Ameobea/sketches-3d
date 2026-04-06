@@ -99,7 +99,7 @@ export const initCollectables = ({
         }
       }
     });
-  } // end else (name-based traversal)
+  }
 
   const ctx = new CollectablesCtx();
   const cb = (fpCtx: BulletPhysics) => {

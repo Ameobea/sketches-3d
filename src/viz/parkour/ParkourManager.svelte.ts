@@ -63,7 +63,7 @@ export class ParkourManager {
   private timerDisplay!: any;
   private scheduler: Scheduler = new Scheduler();
 
-  private resetDashes: () => void = () => {
+  private syncDashTokensFromController: () => void = () => {
     throw new Error('materials not set yet');
   };
   private resetCheckpoints: () => void = () => {
@@ -140,11 +140,7 @@ export class ParkourManager {
   }
 
   public setMaterials = (materials: ParkourMaterials, opts: { checkpointMeshes?: THREE.Mesh[] } = {}) => {
-    const {
-      ctx: dashTokensCtx,
-      dashCharges: curDashCharges,
-      reset: resetDashes,
-    } = initDashTokens(
+    const { syncFromController } = initDashTokens(
       this.viz,
       this.loadedWorld,
       materials.dashToken.core,
@@ -155,12 +151,11 @@ export class ParkourManager {
       this.viz,
       this.loadedWorld,
       materials.checkpoint,
-      dashTokensCtx,
-      curDashCharges,
+      syncFromController,
       this.onWin,
       opts.checkpointMeshes
     );
-    this.resetDashes = resetDashes;
+    this.syncDashTokensFromController = syncFromController;
   };
 
   private initTimer = () => {
@@ -249,10 +244,12 @@ export class ParkourManager {
   private reset = () => {
     const fpCtx = this.viz.fpCtx!;
     const elapsedTimeSeconds = fpCtx.getPhysicsTime() - (this.curRunStartTimeSeconds ?? 0);
-    this.resetDashes();
     this.resetCheckpoints();
     fpCtx.teleportPlayer(this.locations.spawn.pos, this.locations.spawn.rot);
     fpCtx.reset();
+    fpCtx.resetDashStateForNewRun();
+    fpCtx.saveDashCheckpointState();
+    this.syncDashTokensFromController();
     fpCtx.assertInitialState();
 
     const wasStarted = this.curRunStartTimeSeconds !== null;

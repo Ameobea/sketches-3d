@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
-import { initCollectables } from './collectables';
+import type { BtDashToken } from 'src/ammojs/ammoTypes';
 import { rwritable } from '../util/TransparentWritable';
 import { clearPhysicsBindings, withPhysicsContext } from '../util/physics';
+import type { BulletPhysics } from '../collision';
 
 export class DashToken extends THREE.Object3D {
   private viz: Viz;
@@ -137,23 +138,87 @@ export const initDashTokens = (
   }
 
   const dashTokenBase = new DashToken(viz, base);
-  const ctx = initCollectables({
-    viz,
-    loadedWorld,
-    collectableName: 'dash_token_loc',
-    replacementObject: dashTokenBase,
-    onCollect: () => {
-      dashCharges.update(n => n + 1);
-      viz.sfxManager.playSfx('dash_pickup');
-    },
-    type: 'aabb',
+  const entries: { token: BtDashToken | null; visual: THREE.Object3D; halfExtents: THREE.Vector3 }[] = [];
+
+  const computeHalfExtents = (obj: THREE.Object3D): THREE.Vector3 => {
+    const halfExtents = new THREE.Vector3();
+    obj.traverse(child => {
+      if (!(child instanceof THREE.Mesh)) {
+        return;
+      }
+      const box = new THREE.Box3().setFromObject(child);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      halfExtents.max(size.divideScalar(2));
+    });
+    return halfExtents;
+  };
+
+  loadedWorld.traverse(obj => {
+    if (!obj.name.includes('dash_token_loc')) {
+      return;
+    }
+
+    const visual = dashTokenBase.clone();
+    visual.name = `clone_${obj.name}`;
+    visual.position.copy(obj.position);
+    viz.scene.add(visual);
+    entries.push({
+      token: null,
+      visual,
+      halfExtents: computeHalfExtents(visual),
+    });
   });
+
+  const syncFromController = () => {
+    const fpCtx = viz.fpCtx;
+    if (!fpCtx) {
+      return;
+    }
+
+    const charges = fpCtx.getDashCharges();
+    if (dashCharges.current !== charges) {
+      dashCharges.set(charges);
+    }
+    for (const entry of entries) {
+      if (!entry.token) {
+        continue;
+      }
+      const isActive = entry.token.isActive();
+      if (entry.visual.visible !== isActive) {
+        entry.visual.visible = isActive;
+      }
+    }
+  };
+
+  const registerTokens = (fpCtx: BulletPhysics) => {
+    fpCtx.playerController.setDashCharges(dashCharges.current);
+    for (const entry of entries) {
+      const tokenEntry = fpCtx.addDashToken(
+        {
+          type: 'box',
+          halfExtents: entry.halfExtents,
+          pos: entry.visual.position,
+        },
+        { chargesGranted: 1 },
+        () => {
+          entry.visual.visible = false;
+          viz.sfxManager.playSfx('dash_pickup');
+        }
+      );
+      entry.token = tokenEntry.token;
+    }
+
+    fpCtx.captureInitialDashState();
+    fpCtx.saveDashCheckpointState();
+    syncFromController();
+  };
+  withPhysicsContext(viz, registerTokens);
+  viz.registerBeforeRenderCb(() => {
+    syncFromController();
+  });
+
   return {
-    dashCharges,
-    ctx,
-    reset: () => {
-      ctx.reset();
-      dashCharges.set(0);
-    },
+    syncFromController,
   };
 };
