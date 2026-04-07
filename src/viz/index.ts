@@ -1089,35 +1089,28 @@ export const initViz = (
         })
       );
 
-      // Check for ?playId= query param for generic replay loading
+      // Check for ?playId= query param for generic replay loading.
+      // Registered as a startup barrier so physics doesn't start ticking
+      // until the replay is loaded and startReplay has been called.
       const replayPlayId = new URLSearchParams(window.location.search).get('playId');
       if (replayPlayId && viz.fpCtx) {
-        viz.collisionWorldLoadedCbs.push(fpCtx => {
-          // Freeze physics while we fetch + decode the replay so that
-          // physicsElapsedTime doesn't advance and desync timed elements
-          // like spinning platforms.
-          fpCtx.setReplayLoadPending(true);
+        const fpCtx = viz.fpCtx;
+        viz.registerPhysicsStartupBarrier(
           fetchReplayForPlay(replayPlayId)
             .then(async data => {
               if (!data) {
                 console.error('Replay not found');
-                fpCtx.setReplayLoadPending(false);
                 return;
               }
               const player = new FlightPlayer();
-              const ok = await player.load(data);
-              if (!ok) {
+              if (!(await player.load(data))) {
                 console.error('Failed to decode replay');
-                fpCtx.setReplayLoadPending(false);
                 return;
               }
               fpCtx.startReplay(player);
             })
-            .catch(err => {
-              console.error('Replay load error:', err);
-              fpCtx.setReplayLoadPending(false);
-            });
-        });
+            .catch(err => console.error('Replay load error:', err))
+        );
       }
 
       for (const cb of viz.collisionWorldLoadedCbs) {

@@ -80,6 +80,8 @@ export interface BtKinematicCharacterController {
   getLastDashTime(): number;
   getDashCharges(): number;
   getWalkDirection(): BtVec3;
+  getLastMoveDir(): BtVec3;
+  getLastDashDir(): BtVec3;
 
   warp(position: BtVec3): void;
   getPosition(): BtVec3;
@@ -221,11 +223,17 @@ export interface BtMotionState {
 
 export type BtRigidBodyConstructionInfo = Empty;
 
-export interface BtTriangleMesh {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface BtStridingMeshInterface {}
+
+export interface BtTriangleMesh extends BtStridingMeshInterface {
   preallocateIndices(numIndices: number): void;
   preallocateVertices(numVertices: number): void;
   addTriangle(v0: BtVec3, v1: BtVec3, v2: BtVec3): void;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface btTriangleIndexVertexArrayWrapper extends BtStridingMeshInterface {}
 
 export interface BtConvexHullShape extends BtCollisionShape {
   addPoint(point: BtVec3, recalculateLocalAabb?: boolean): void;
@@ -313,9 +321,17 @@ export interface AmmoInterface {
     localInertia?: BtVec3
   ) => BtRigidBodyConstructionInfo;
   btTriangleMesh: new () => BtTriangleMesh;
+  btTriangleIndexVertexArrayWrapper: new (
+    numTriangles: number,
+    triangleIndexBase: number,
+    triangleIndexStride: number,
+    numVertices: number,
+    vertexBase: number,
+    vertexStride: number
+  ) => btTriangleIndexVertexArrayWrapper;
   btVector3: new () => BtVec3;
   btBvhTriangleMeshShape: new (
-    trimesh: BtTriangleMesh,
+    meshInterface: BtStridingMeshInterface,
     useQuantizedAabbCompression: boolean,
     buildBVH: boolean
   ) => BtCollisionShape;

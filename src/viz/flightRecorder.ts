@@ -84,7 +84,7 @@ export class FlightRecorder {
 
     // Allocate persistent scratch buffers in Wasm memory
     this.physicsStatePtr = this.exports.fr_malloc(40); // 10 f32s
-    this.inputStatePtr = this.exports.fr_malloc(24); // 6 f32s
+    this.inputStatePtr = this.exports.fr_malloc(12); // 3 f32s
     this.headerPtr = this.exports.fr_malloc(132); // 33 f32s
     this.eventDataPtr = this.exports.fr_malloc(32); // 8 f32s
 
@@ -118,7 +118,7 @@ export class FlightRecorder {
     coyoteTimeSeconds: number;
     minJumpDelaySeconds: number;
     easyModeMovement: boolean;
-    colliderShape: 'capsule' | 'cylinder' | 'sphere';
+    colliderShape: number; // 0=capsule, 1=cylinder, 2=sphere
     dashEnabled: boolean;
     dashMagnitude: number;
     minDashDelaySeconds: number;
@@ -167,8 +167,7 @@ export class FlightRecorder {
     view[25] = header.coyoteTimeSeconds;
     view[26] = header.minJumpDelaySeconds;
     view[27] = header.easyModeMovement ? 1.0 : 0.0;
-    const shapeMap = { capsule: 0, cylinder: 1, sphere: 2 } as const;
-    view[28] = shapeMap[header.colliderShape];
+    view[28] = header.colliderShape;
     view[29] = header.dashEnabled ? 1.0 : 0.0;
     view[30] = header.dashMagnitude;
     view[31] = header.minDashDelaySeconds;
@@ -200,7 +199,6 @@ export class FlightRecorder {
    *
    * @param ammoStatePtr  Pointer into Ammo's HEAPF32 where packState wrote 10 floats
    * @param ammoHeapF32   Ammo's HEAPF32 buffer
-   * @param walkDirX/Y/Z  The walk direction applied this subtick
    * @param phi           Camera phi angle
    * @param theta         Camera theta angle
    * @param zoomDistance  Third-person camera zoom distance (0 in first-person)
@@ -209,9 +207,6 @@ export class FlightRecorder {
   recordSubtick(
     ammoStatePtr: number,
     ammoHeapF32: Float32Array,
-    walkDirX: number,
-    walkDirY: number,
-    walkDirZ: number,
     phi: number,
     theta: number,
     zoomDistance: number,
@@ -227,13 +222,10 @@ export class FlightRecorder {
     }
 
     // Write input state
-    const inputView = new Float32Array(this.exports.memory.buffer, this.inputStatePtr, 6);
-    inputView[0] = walkDirX;
-    inputView[1] = walkDirY;
-    inputView[2] = walkDirZ;
-    inputView[3] = phi;
-    inputView[4] = theta;
-    inputView[5] = zoomDistance;
+    const inputView = new Float32Array(this.exports.memory.buffer, this.inputStatePtr, 3);
+    inputView[0] = phi;
+    inputView[1] = theta;
+    inputView[2] = zoomDistance;
 
     this.exports.record_subtick(this.ctx, this.physicsStatePtr, this.inputStatePtr, keyFlags);
   }
@@ -276,7 +268,7 @@ export class FlightRecorder {
   destroy(): void {
     if (!this.ready) return;
     this.exports.fr_free(this.physicsStatePtr, 40);
-    this.exports.fr_free(this.inputStatePtr, 24);
+    this.exports.fr_free(this.inputStatePtr, 12);
     this.exports.fr_free(this.headerPtr, 132);
     this.exports.fr_free(this.eventDataPtr, 32);
     this.exports.destroy_recorder(this.ctx);
@@ -322,7 +314,6 @@ export interface ReplayHeaderMismatch {
 }
 
 export interface SubtickInput {
-  walkDir: [number, number, number];
   phi: number;
   theta: number;
   zoomDistance: number;
@@ -348,7 +339,7 @@ export interface ReplayEvent {
 export class FlightPlayer {
   private exports!: FlightRecorderExports;
   private ctx = 0;
-  private subtickPtr = 0; // 16 f32s
+  private subtickPtr = 0; // 14 f32s
   private eventPtr = 0; // 6 f32s
   private headerPtr = 0; // 33 f32s
   private metadataOutPtr = 0; // scratch buffer for metadata reads
@@ -360,7 +351,7 @@ export class FlightPlayer {
   private freeScratchBuffers(): void {
     if (!this.exports) return;
     if (this.subtickPtr !== 0) {
-      this.exports.fr_free(this.subtickPtr, 68);
+      this.exports.fr_free(this.subtickPtr, 56);
       this.subtickPtr = 0;
     }
     if (this.eventPtr !== 0) {
@@ -383,7 +374,7 @@ export class FlightPlayer {
     this.ctx = this.exports.create_player();
 
     // Allocate scratch buffers
-    this.subtickPtr = this.exports.fr_malloc(68); // 17 f32s
+    this.subtickPtr = this.exports.fr_malloc(56); // 14 f32s
     this.eventPtr = this.exports.fr_malloc(40); // 10 f32s (type + subtick + 8 data)
     this.headerPtr = this.exports.fr_malloc(132); // 33 f32s
     this.metadataOutPtr = this.exports.fr_malloc(1024); // 1KB scratch for metadata reads
@@ -503,14 +494,13 @@ export class FlightPlayer {
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 17);
-    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 68);
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 14);
+    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 56);
     return {
-      walkDir: [v[0], v[1], v[2]],
-      phi: v[3],
-      theta: v[4],
-      zoomDistance: v[5],
-      keyFlags: dv.getUint32(6 * 4, true),
+      phi: v[0],
+      theta: v[1],
+      zoomDistance: v[2],
+      keyFlags: dv.getUint32(3 * 4, true),
     };
   }
 
@@ -519,30 +509,30 @@ export class FlightPlayer {
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 17);
-    return [v[7], v[8], v[9]];
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 14);
+    return [v[4], v[5], v[6]];
   }
 
   /**
    * Get the recorded physics snapshot for a subtick.
-   * Layout from Rust player_get_subtick: v[7..16] = physics state from packState.
+   * Layout from Rust player_get_subtick: v[4..13] = physics state from packState.
    */
   getSubtickPhysicsSnapshot(index: number): SubtickPhysicsSnapshot {
     const result = this.exports.player_get_subtick(this.ctx, index, this.subtickPtr);
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 17);
-    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 68);
-    // v[15] is flags bitcast from u32: bit0=onGround, bit1=isJumping
-    const flags = dv.getUint32(15 * 4, true);
-    // v[16] is floor_user_index bitcast from i32
-    const floorUserIndex = dv.getInt32(16 * 4, true);
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 14);
+    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 56);
+    // v[12] is flags bitcast from u32: bit0=onGround, bit1=isJumping
+    const flags = dv.getUint32(12 * 4, true);
+    // v[13] is floor_user_index bitcast from i32
+    const floorUserIndex = dv.getInt32(13 * 4, true);
     return {
-      pos: [v[7], v[8], v[9]],
-      externalVel: [v[10], v[11], v[12]],
-      verticalVel: v[13],
-      verticalOffset: v[14],
+      pos: [v[4], v[5], v[6]],
+      externalVel: [v[7], v[8], v[9]],
+      verticalVel: v[10],
+      verticalOffset: v[11],
       onGround: (flags & 1) !== 0,
       isJumping: (flags & 2) !== 0,
       floorUserIndex,

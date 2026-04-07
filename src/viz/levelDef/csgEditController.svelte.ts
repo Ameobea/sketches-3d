@@ -125,7 +125,10 @@ export class CsgEditController {
     rotation: TransformTuple;
     scale: TransformTuple;
   }) {
-    if (!this.editLevelObj) return;
+    if (!this.editLevelObj) {
+      return;
+    }
+
     const obj = this.editLevelObj.object;
     obj.position.set(...snap.position);
     obj.rotation.set(...snap.rotation, 'YXZ');
@@ -201,7 +204,6 @@ export class CsgEditController {
       this.onNodeTransformUpdate(); // final update
       this.editor.api.saveCsgTree(this.csgPanelState.assetName, this.csgPanelState.tree);
 
-      // Push undo entry for the transform
       if (this.treeBeforeDrag) {
         this.undoSystem.push({
           type: 'tree',
@@ -229,7 +231,9 @@ export class CsgEditController {
   }
 
   handleEscape(): boolean {
-    if (!this._isActive) return false;
+    if (!this._isActive) {
+      return false;
+    }
 
     if (this.selectedNodePath !== null) {
       this.deselectNode();
@@ -263,10 +267,6 @@ export class CsgEditController {
     this.deselectNode();
     return true;
   }
-
-  // ---------------------------------------------------------------------------
-  // Enter / exit
-  // ---------------------------------------------------------------------------
 
   enter(levelObj: LevelObject) {
     if (this._isActive) this.exit();
@@ -333,10 +333,6 @@ export class CsgEditController {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // CSG editor UI
-  // ---------------------------------------------------------------------------
-
   private openEditor(assetName: string, tree: CsgTreeNode) {
     this.closeEditor();
 
@@ -393,10 +389,6 @@ export class CsgEditController {
     this.csgPanelState.nodePolarities = new Map();
   }
 
-  // ---------------------------------------------------------------------------
-  // Node selection
-  // ---------------------------------------------------------------------------
-
   private selectNode(path: string) {
     this.selectedNodePath = path;
     this.csgPanelState.selectedNodePath = path;
@@ -408,10 +400,6 @@ export class CsgEditController {
     this.csgPanelState.selectedNodePath = null;
     this.applyRenderConfig();
   }
-
-  // ---------------------------------------------------------------------------
-  // Previews
-  // ---------------------------------------------------------------------------
 
   private teardownPreviews() {
     if (this.editGroup) {
@@ -555,7 +543,9 @@ export class CsgEditController {
 
   private rebuildPreviews() {
     const assetName = this.csgPanelState.assetName;
-    if (!assetName) return;
+    if (!assetName) {
+      return;
+    }
     const csgDef = this.editor.levelDef.assets[assetName] as CsgAssetDef;
     this.nodePolarities = computeNodePolarities(csgDef.tree);
     this.csgPanelState.nodePolarities = this.nodePolarities;
@@ -565,7 +555,9 @@ export class CsgEditController {
   /** Build the ancestor transform matrix for a subtree path. */
   private buildAncestorMatrix(csgDef: CsgAssetDef, path: string): THREE.Matrix4 {
     const ancestorMatrix = new THREE.Matrix4();
-    if (!path) return ancestorMatrix;
+    if (!path) {
+      return ancestorMatrix;
+    }
 
     const parts = path.split('.');
     for (let i = 0; i < parts.length; i++) {
@@ -742,7 +734,9 @@ export class CsgEditController {
       return;
     }
 
-    if (!result) return;
+    if (!result) {
+      return;
+    }
 
     if (result.error) {
       console.error(`[CsgEditController] Subtree resolve failed for "${path}":`, result.error);
@@ -750,7 +744,9 @@ export class CsgEditController {
     }
 
     // Bail if the config changed while we were resolving
-    if (generation !== this.configGeneration || !this._isActive || !this.editGroup) return;
+    if (generation !== this.configGeneration || !this._isActive || !this.editGroup) {
+      return;
+    }
 
     const meshes: THREE.Mesh[] = [];
     for (const obj of result.objects) {
@@ -759,7 +755,9 @@ export class CsgEditController {
       mesh.applyMatrix4(obj.transform);
       meshes.push(mesh);
     }
-    if (meshes.length === 0) return;
+    if (meshes.length === 0) {
+      return;
+    }
 
     const preview =
       meshes.length === 1
@@ -808,11 +806,16 @@ export class CsgEditController {
   private async resolveComplementPreview(excludePath: string) {
     const generation = this.configGeneration;
     const assetName = this.csgPanelState.assetName;
-    if (!assetName || !this.editGroup) return;
+    if (!assetName || !this.editGroup) {
+      return;
+    }
 
     const csgDef = this.editor.levelDef.assets[assetName] as CsgAssetDef;
     const complementResult = generateComplementCode(csgDef, excludePath, this.editor.levelDef.assets);
-    if (!complementResult) return; // selected root — no complement
+    if (!complementResult) {
+      // selected root — no complement
+      return;
+    }
 
     const modules = { ...complementResult.modules, code: complementResult.code };
     const renderWrapper = 'import { mesh } from "code"\nmesh | render';
@@ -840,17 +843,18 @@ export class CsgEditController {
       return;
     }
 
-    if (!result) return;
+    if (!result) {
+      return;
+    }
 
     if (result.error) {
       console.error(`[CsgEditController] Complement resolve failed:`, result.error);
       return;
+    } else if (generation !== this.configGeneration || !this._isActive || !this.editGroup) {
+      return;
     }
 
-    if (generation !== this.configGeneration || !this._isActive || !this.editGroup) return;
-
     const meshes: THREE.Mesh[] = [];
-    // Apply the level object's material if available
     const levelMat = this.editLevelObj?.def.material
       ? (this.editor.builtMaterials.get(this.editLevelObj.def.material) ?? LEVEL_PLACEHOLDER_MAT)
       : LEVEL_PLACEHOLDER_MAT;
@@ -862,7 +866,6 @@ export class CsgEditController {
     }
     if (meshes.length === 0) return;
 
-    // Remove old complement if any
     if (this.complementPreview) {
       this.editGroup.remove(this.complementPreview);
     }
@@ -881,10 +884,6 @@ export class CsgEditController {
     // Complement is not selectable — purely visual context
   }
 
-  // ---------------------------------------------------------------------------
-  // Tree changes and live resolve
-  // ---------------------------------------------------------------------------
-
   private async onTreeChange(tree: CsgTreeNode, pushUndo = true) {
     const assetName = this.csgPanelState.assetName;
     if (!assetName) return;
@@ -898,13 +897,10 @@ export class CsgEditController {
     csgDef.tree = tree;
     this.csgPanelState.tree = tree;
 
-    // Structural change — rebuild previews
     this.rebuildPreviews();
 
-    // Save to server
     this.editor.api.saveCsgTree(assetName, tree);
 
-    // Re-resolve the result mesh
     await this.reResolveCsgAsset(assetName);
   }
 
@@ -958,7 +954,9 @@ export class CsgEditController {
 
   async convertToCsg(objectId: string) {
     const result = await this.editor.api.convertToCsg(objectId);
-    if (!result) return;
+    if (!result) {
+      return;
+    }
 
     const { csgAssetName, tree } = result;
     this.editor.levelDef.assets[csgAssetName] = { type: 'csg', tree } as any;

@@ -57,13 +57,11 @@ import { ZoneEventType } from '../ammojs/ammoTypes';
 import {
   FlightRecorder,
   type FlightPlayer,
-  type ReplayHeaderMismatch,
   type ReplayValidationConfig,
-  type SubtickPhysicsSnapshot,
   packKeyFlags,
   RecorderEventType,
-  validateReplayHeader,
 } from './flightRecorder.js';
+import { ReplayController } from './replayController.js';
 import { withWorldSpaceTransform } from './util/three.js';
 
 // ─── Subtick Input Provider ───────────────────────────────────────────────
@@ -72,7 +70,7 @@ import { withWorldSpaceTransform } from './util/three.js';
 // deterministic replay can share the same subtick execution path.
 
 /** Per-subtick input state consumed by the shared subtick execution path. */
-interface SubtickInputState {
+export interface SubtickInputState {
   /** Key flags: bit 0=W, 1=S, 2=A, 3=D, 4=Space, 5=Shift */
   keyFlags: number;
   /** Camera phi angle */
@@ -84,53 +82,6 @@ interface SubtickInputState {
   /** Whether movement input is enabled (false = no WASD/jump/dash) */
   movementEnabled: boolean;
 }
-
-/** A single field mismatch detected during replay validation. */
-interface ReplayFieldMismatch {
-  field: string;
-  recorded: number | boolean;
-  replayed: number | boolean;
-  absDiff?: number;
-}
-
-/** First-divergence report from deterministic replay validation. */
-interface ReplayDivergence {
-  subtickIndex: number;
-  physicsTime: number;
-  mismatches: ReplayFieldMismatch[];
-}
-
-// The deterministic replay path depends on these fields matching the live
-// controller configuration; if they differ, playback is not authoritative.
-const FATAL_REPLAY_HEADER_FIELDS = new Set<keyof ReplayValidationConfig>([
-  'tickRateHz',
-  'gravity',
-  'jumpSpeed',
-  'moveSpeedGround',
-  'moveSpeedAir',
-  'colliderHeight',
-  'colliderRadius',
-  'extVelAirDamping',
-  'extVelGroundDamping',
-  'gravityShapeRiseMult',
-  'gravityShapeApexMult',
-  'gravityShapeFallMult',
-  'gravityShapeApexThreshold',
-  'gravityShapeKneeWidth',
-  'gravityShapeOnlyJumps',
-  'stepHeight',
-  'terminalVelocity',
-  'maxSlopeRadians',
-  'maxPenetrationDepth',
-  'coyoteTimeSeconds',
-  'minJumpDelaySeconds',
-  'easyModeMovement',
-  'colliderShape',
-  'dashEnabled',
-  'dashMagnitude',
-  'minDashDelaySeconds',
-  'dashUseExternalVelocity',
-]);
 
 const MAX_SUBSTEPS_PER_FRAME = 120;
 
@@ -246,8 +197,7 @@ export class BulletPhysics {
   private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
   private dashCbs: ((curTimeSeconds: number) => void)[] = [];
   private isWalking = false;
-  private upDir = new THREE.Vector3(0, 1, 0);
-  private simulationTickRate: number;
+  public simulationTickRate: number;
   private nextCollisionObjectRefId = 0;
   private collisionObjectRefs: Map<number, CollisionObjectRef> = new Map();
   private nextZoneId = 1;
@@ -256,8 +206,10 @@ export class BulletPhysics {
   private jumpPads: JumpPadEntry[] = [];
   private boostZones: BoostZoneEntry[] = [];
   private dashTokens: DashTokenEntry[] = [];
-  private physicsElapsedTime = 0;
   private physicsSubtickCount = 0;
+  private get physicsElapsedTime(): number {
+    return this.physicsSubtickCount / this.simulationTickRate;
+  }
   /** Fractional time remainder from the last frame, used to compute how many fixed substeps to run. */
   private localTimeRemainder = 0;
   private physicsTickerEntries: PhysicsTickerEntry[] = [];
@@ -266,30 +218,8 @@ export class BulletPhysics {
   /** Tracks whether backface rendering was enabled last frame to avoid redundant scene traversals. */
   private backfaceRenderingEnabled = true;
   public flightRecorder: FlightRecorder = new FlightRecorder();
-  private ammoStatePtr = 0;
-  private replayPlayer: FlightPlayer | null = null;
-  private replaySubtickIndex = 0;
-  private replayActive = false;
-  private replayStartCbs: (() => void)[] = [];
-  /**
-   * When true, the physics loop is paused waiting for a replay to finish loading.
-   * This prevents physicsElapsedTime from advancing before replay start,
-   * which would desync physics-time-driven elements like spinning platforms.
-   */
-  private replayLoadPending = false;
-  /** Tracks the first divergence found during deterministic replay validation. */
-  private replayFirstDivergence: ReplayDivergence | null = null;
-  /** Maximum position divergence observed so far during replay validation. */
-  private replayMaxPosDivergence = 0;
-  /** Subtick index of the maximum position divergence. */
-  private replayMaxPosDivergenceSubtick = 0;
-
-  private releaseReplayPlayer = () => {
-    if (this.replayPlayer) {
-      this.replayPlayer.destroy();
-      this.replayPlayer = null;
-    }
-  };
+  public packStateBufPtr = 0;
+  public readonly replayController: ReplayController;
 
   constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
     this.Ammo = Ammo;
@@ -321,6 +251,8 @@ export class BulletPhysics {
     } else {
       this.teleportPlayer(viz.spawnPos.pos, viz.spawnPos.rot);
     }
+
+    this.replayController = new ReplayController(this);
 
     this.playerStateGetters = {
       getPlayerPos: () => {
@@ -415,7 +347,6 @@ export class BulletPhysics {
       this.viz.sceneConf.player?.maxPenetrationDepth ?? DefaultMaxPenetrationDepth
     );
     this.playerController.setMaxSlope(this.viz.sceneConf.player?.maxSlopeRadians ?? DefaultMaxSlopeRadians);
-    this.playerController.setStepHeight(playerStepHeight);
     this.playerController.setJumpSpeed(this.viz.sceneConf.player?.jumpVelocity ?? DefaultJumpSpeed);
     if (this.viz.sceneConf.player?.terminalVelocity !== undefined) {
       this.playerController.setFallSpeed(this.viz.sceneConf.player.terminalVelocity);
@@ -472,7 +403,25 @@ export class BulletPhysics {
       )
     );
 
-    this.syncInputDrivenControllerConfig();
+    // Static controller config — values that come from scene config and don't
+    // change at runtime.  Set once here so the per-subtick path stays lean.
+    const { player: playerConf } = this.viz.sceneConf;
+    this.playerController.setJumpSpeed(playerConf?.jumpVelocity ?? DefaultJumpSpeed);
+    this.playerController.setMinJumpDelay(playerConf?.minJumpDelaySeconds ?? DefaultMinJumpDelaySeconds);
+    this.playerController.setCoyoteTime(playerConf?.coyoteTimeSeconds ?? 0);
+    const dashConf = { ...DefaultDashConfig, ...(playerConf?.dashConfig ?? {}) };
+    this.playerController.setDashConfig(
+      dashConf.enable,
+      dashConf.dashMagnitude,
+      dashConf.minDashDelaySeconds,
+      dashConf.useExternalVelocity ?? false
+    );
+    // Initial charge count — authoritative starting value before any tokens are collected.
+    // C++ owns charge state after this; the JS store is a read-only UI mirror.
+    this.playerController.setDashCharges(dashConf.chargeConfig?.curCharges.current ?? Infinity);
+
+    // Dynamic config (viewMode / moveSpeed) is picked up each subtick.
+    this.syncDynamicControllerConfig();
   };
 
   private createCameraController = () => {
@@ -560,29 +509,19 @@ export class BulletPhysics {
   };
 
   /**
-   * Keep the C++ input-driven controller config in sync with scene config.
-   * This runs every subtick so runtime scene mutations preserve prior behavior.
+   * Sync the C++ controller config fields that can change at runtime.
+   * Called every subtick so mutations to sceneConf.player.moveSpeed (stone level,
+   * kinematic_platforms) and sceneConf.viewMode (setViewMode transitions) take
+   * effect within one fixed timestep.
+   *
+   * Static config (jumpSpeed, dashConfig, etc.) is set once in setupPlayerController.
    */
-  private syncInputDrivenControllerConfig = () => {
+  private syncDynamicControllerConfig = () => {
     const viewMode = this.viz.sceneConf.viewMode!;
     this.playerController.setTopDownMode(viewMode.type === 'top-down');
 
     const moveSpeed = this.viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
     this.playerController.setMoveSpeed(moveSpeed.onGround, moveSpeed.inAir);
-    this.playerController.setJumpSpeed(this.viz.sceneConf.player?.jumpVelocity ?? DefaultJumpSpeed);
-    this.playerController.setMinJumpDelay(
-      this.viz.sceneConf.player?.minJumpDelaySeconds ?? DefaultMinJumpDelaySeconds
-    );
-    this.playerController.setCoyoteTime(this.viz.sceneConf.player?.coyoteTimeSeconds ?? 0);
-
-    const dashConf = { ...DefaultDashConfig, ...(this.viz.sceneConf.player?.dashConfig ?? {}) };
-    this.playerController.setDashConfig(
-      dashConf.enable,
-      dashConf.dashMagnitude,
-      dashConf.minDashDelaySeconds,
-      dashConf.useExternalVelocity ?? false
-    );
-    this.playerController.setDashCharges(dashConf.chargeConfig?.curCharges.current ?? Infinity);
   };
 
   private syncDashChargeStoreFromController = () => {
@@ -601,7 +540,7 @@ export class BulletPhysics {
    * This is what must be recorded for deterministic replay.
    */
   private getEffectiveKeyFlags = (input: SubtickInputState): number => {
-    if (this.replayActive) {
+    if (this.replayController.isActive) {
       return input.keyFlags;
     }
 
@@ -614,12 +553,11 @@ export class BulletPhysics {
     }
     this.hasStartedMainGameTick = true;
 
-    // Allocate a persistent buffer in Ammo's heap for packState (10 floats = 40 bytes)
-    this.ammoStatePtr = this.Ammo._malloc(40);
+    this.packStateBufPtr = this.Ammo._malloc(40);
 
     this.viz.registerBeforeRenderCb(
-      (curTimeSecs, tDiffSecs) => {
-        const newPlayerPos = this.updateCollisionWorld(curTimeSecs, tDiffSecs);
+      (_curTimeSecs, tDiffSecs) => {
+        const newPlayerPos = this.updateCollisionWorld(tDiffSecs);
         if (this.viz.sceneConf.player?.mesh) {
           this.viz.sceneConf.player.mesh.position.copy(newPlayerPos);
         }
@@ -721,338 +659,7 @@ export class BulletPhysics {
     );
   };
 
-  public initFlightRecorderHeader = () => {
-    const conf = this.viz.sceneConf;
-    const playerConf = conf.player;
-    const moveSpeed = playerConf?.moveSpeed ?? DefaultMoveSpeed;
-    const extAirDamp =
-      playerConf?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor;
-    const extGndDamp =
-      playerConf?.externalVelocityGroundDampingFactor ?? DefaultExternalVelocityGroundDampingFactor;
-    const gs = conf.gravityShaping;
-    const dashConf = { ...DefaultDashConfig, ...(playerConf?.dashConfig ?? {}) };
-
-    this.flightRecorder.setHeader({
-      tickRateHz: this.simulationTickRate,
-      gravity: conf.gravity ?? DefaultGravity,
-      jumpSpeed: playerConf?.jumpVelocity ?? DefaultJumpSpeed,
-      moveSpeedGround: moveSpeed.onGround,
-      moveSpeedAir: moveSpeed.inAir,
-      colliderHeight: this.playerColliderHeight,
-      colliderRadius: this.playerColliderRadius,
-      extVelAirDamping: [extAirDamp.x, extAirDamp.y, extAirDamp.z],
-      extVelGroundDamping: [extGndDamp.x, extGndDamp.y, extGndDamp.z],
-      gravityShapeRiseMult: gs?.riseMultiplier ?? 1.0,
-      gravityShapeApexMult: gs?.apexMultiplier ?? 1.0,
-      gravityShapeFallMult: gs?.fallMultiplier ?? 1.0,
-      gravityShapeApexThreshold: gs?.apexThreshold ?? 3.0,
-      gravityShapeKneeWidth: gs?.kneeWidth ?? 2.0,
-      gravityShapeOnlyJumps: gs?.onlyJumps ?? false,
-      stepHeight: playerConf?.stepHeight ?? DEFAULT_STEP_HEIGHT,
-      terminalVelocity: playerConf?.terminalVelocity ?? 55,
-      maxSlopeRadians: playerConf?.maxSlopeRadians ?? DefaultMaxSlopeRadians,
-      maxPenetrationDepth: playerConf?.maxPenetrationDepth ?? DefaultMaxPenetrationDepth,
-      coyoteTimeSeconds: playerConf?.coyoteTimeSeconds ?? 0,
-      minJumpDelaySeconds: playerConf?.minJumpDelaySeconds ?? DefaultMinJumpDelaySeconds,
-      // Easy mode movement is always enabled.
-      easyModeMovement: true,
-      colliderShape: playerConf?.playerColliderShape ?? DefaultPlayerColliderShape,
-      dashEnabled: dashConf.enable,
-      dashMagnitude: dashConf.dashMagnitude,
-      minDashDelaySeconds: dashConf.minDashDelaySeconds,
-      dashUseExternalVelocity: dashConf.useExternalVelocity ?? false,
-    });
-  };
-
-  public computeTopDownCameraPos = (
-    newPlayerPos: THREE.Vector3,
-    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'top-down' }>
-  ): THREE.Vector3 => {
-    switch (viewMode.cameraFocusPoint?.type) {
-      case undefined:
-      case null:
-      case 'player':
-        return newPlayerPos.clone().add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
-      case 'fixed':
-        return viewMode.cameraFocusPoint.pos.clone().add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
-      default:
-        viewMode.cameraFocusPoint satisfies never;
-        throw new Error('Unknown camera focus point type');
-    }
-  };
-
-  // ─── Shared subtick execution path ──────────────────────────────────────
-  //
-  // Both live gameplay and deterministic replay drive the same physics logic
-  // through these methods using SubtickInputState.
-  //
-
-  /**
-   * Build a SubtickInputState from the current live input sources.
-   * This is the live-play counterpart to reading recorded subtick data during replay.
-   */
-  private buildLiveInput = (): SubtickInputState => ({
-    keyFlags: packKeyFlags(this.viz.keyStates),
-    // Math.fround quantizes f64 → f32 so that the values used during live play
-    // are byte-identical to what the flight recorder stores (which uses Float32Array).
-    // Without this, deterministic replay re-derives walk direction from the f32-rounded
-    // theta/phi, producing a slightly different result that accumulates into drift.
-    phi: Math.fround(this.viz.cameraController?.angles.phi ?? 0),
-    theta: Math.fround(this.viz.cameraController?.angles.theta ?? 0),
-    zoomDistance: Math.fround(this.viz.cameraController?.targetZoomDistance ?? 0),
-    movementEnabled: this.viz.controlState.movementEnabled,
-  });
-
-  /**
-   * Reconstruct the normalized horizontal move direction from input, mirroring the
-   * C++ processInputPreamble logic.  Used only for flight recorder event data.
-   */
-  private reconstructMoveDir = (input: SubtickInputState): THREE.Vector3 => {
-    const dir = new THREE.Vector3();
-    if (!input.movementEnabled) {
-      return dir;
-    }
-    const viewModeType = this.viz.sceneConf.viewMode?.type;
-    if (viewModeType === 'top-down') {
-      if (input.keyFlags & 1) {
-        dir.z += 1;
-      }
-      if (input.keyFlags & 2) {
-        dir.z -= 1;
-      }
-      if (input.keyFlags & 4) {
-        dir.x += 1;
-      }
-      if (input.keyFlags & 8) {
-        dir.x -= 1;
-      }
-    } else {
-      const sinTheta = Math.sin(input.theta);
-      const cosTheta = Math.cos(input.theta);
-      if (input.keyFlags & 1) {
-        dir.x -= sinTheta;
-        dir.z -= cosTheta;
-      }
-      if (input.keyFlags & 2) {
-        dir.x += sinTheta;
-        dir.z += cosTheta;
-      }
-      if (input.keyFlags & 4) {
-        dir.x -= cosTheta;
-        dir.z += sinTheta;
-      }
-      if (input.keyFlags & 8) {
-        dir.x += cosTheta;
-        dir.z -= sinTheta;
-      }
-    }
-    const mag = dir.length();
-    if (mag > 0) {
-      dir.multiplyScalar(Math.SQRT2 / mag);
-    }
-    return dir;
-  };
-
-  /**
-   * Reconstruct the dash direction from input, mirroring the C++ processInputPreamble
-   * logic.  Used only for flight recorder event data.
-   */
-  private reconstructDashDir = (input: SubtickInputState): THREE.Vector3 => {
-    const viewModeType = this.viz.sceneConf.viewMode?.type;
-    if (viewModeType === 'top-down') {
-      const moveDir = this.reconstructMoveDir(input);
-      return moveDir.lerp(this.upDir, 0.5).normalize();
-    }
-    const euler = new THREE.Euler(input.phi - Math.PI / 2, input.theta, 0, 'YXZ');
-    return new THREE.Vector3(0, 0, -1).applyEuler(euler).normalize();
-  };
-
-  /**
-   * Advance the physics simulation by one subtick using the provided input state.
-   * This is the shared core used by both live gameplay and deterministic replay.
-   */
-  private advanceOneSubtick = (
-    input: SubtickInputState,
-    fixedTimeStep: number,
-    prevOnGround: boolean
-  ): { nowOnGround: boolean } => {
-    this.physicsSubtickCount++;
-    this.physicsElapsedTime = this.physicsSubtickCount * fixedTimeStep;
-
-    // Apply camera state from input
-    this.viz.cameraController?.setAngles(input.phi, input.theta);
-    if (input.zoomDistance > 0) {
-      this.viz.cameraController?.setTargetZoomDistance(input.zoomDistance);
-    }
-
-    this.syncInputDrivenControllerConfig();
-    const effectiveInput = { ...input, keyFlags: this.getEffectiveKeyFlags(input) };
-
-    // Walk SFX tracking — only during live play (not replay)
-    if (!this.replayActive) {
-      const wasWalking = this.isWalking;
-      this.isWalking = this.reconstructMoveDir(effectiveInput).lengthSq() > 0;
-      if (wasWalking && !this.isWalking) {
-        this.viz.sfxManager.onWalkStop();
-      } else if (!wasWalking && this.isWalking) {
-        this.viz.sfxManager.onWalkStart(MaterialClass.Default);
-      }
-    }
-
-    // Set input state — C++ handles all walk direction computation, jump validation
-    // (including coyote time), and dash validation internally.
-    this.playerController.setInputState(
-      effectiveInput.keyFlags,
-      effectiveInput.theta,
-      effectiveInput.phi,
-      effectiveInput.movementEnabled
-    );
-
-    // Step physics
-    this.tickPhysicsTickers(fixedTimeStep);
-    this.collisionWorld.substepSimulation(fixedTimeStep);
-
-    // Drain zone events — handles JumpFired, DashFired, and zone enter/exit
-    this.drainZoneEvents(effectiveInput);
-
-    // Record subtick snapshot after draining events so events generated by this
-    // substep are stamped onto the same subtick rather than the next one.
-    if (this.flightRecorder.isReady && !this.replayActive) {
-      this.playerController.packState(this.ammoStatePtr);
-      const walkDir = this.playerController.getWalkDirection();
-      this.flightRecorder.recordSubtick(
-        this.ammoStatePtr,
-        this.Ammo.HEAPF32,
-        walkDir.x(),
-        walkDir.y(),
-        walkDir.z(),
-        input.phi,
-        input.theta,
-        input.zoomDistance,
-        effectiveInput.keyFlags
-      );
-    }
-
-    // OOB check — teleport player back to spawn if they fall below the threshold
-    const oobThreshold = this.viz.sceneConf.player?.oobYThreshold ?? DefaultOOBThreshold;
-    const playerY = this.playerController.getPosition().y();
-    if (playerY <= oobThreshold) {
-      if (!this.replayActive) {
-        const sp = this.viz.spawnPos;
-        this.flightRecorder.recordEvent(RecorderEventType.OOBRespawn, [
-          sp.pos.x,
-          sp.pos.y,
-          sp.pos.z,
-          sp.rot?.x ?? 0,
-          sp.rot?.y ?? 0,
-          sp.rot?.z ?? 0,
-        ]);
-      }
-      this.viz.respawnPlayer();
-    }
-
-    // Landing SFX
-    const nowOnGround = this.playerController.onGround();
-    if (!prevOnGround && nowOnGround) {
-      const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
-      const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
-      const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
-      this.viz.sfxManager.onPlayerLand(materialClass);
-    }
-
-    return { nowOnGround };
-  };
-
-  public setGravity = (gravity: number) => {
-    this.collisionWorld.setGravity(this.btvec3(0, -gravity, 0));
-    this.playerController.setGravity(this.btvec3(0, -gravity, 0));
-  };
-
-  public registerJumpCb = (cb: (curTimeSeconds: number) => void) => {
-    this.jumpCbs.push(cb);
-  };
-
-  public registerReplayStartCb = (cb: () => void) => {
-    this.replayStartCbs.push(cb);
-  };
-  public deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
-    const ix = this.jumpCbs.indexOf(cb);
-    if (ix === -1) {
-      throw new Error('cb not registered');
-    }
-    this.jumpCbs[ix] = this.jumpCbs[this.jumpCbs.length - 1];
-    this.jumpCbs.pop();
-  };
-
-  /**
-   * Drains the event queue from the character controller and dispatches
-   * callbacks via the unified zoneCallbacks map.
-   */
-  private drainZoneEvents = (input: SubtickInputState) => {
-    const numEvents = this.playerController.getNumPendingEvents();
-    for (let i = 0; i < numEvents; i++) {
-      const zoneId = this.playerController.getPendingEventId(i);
-      const eventType = this.playerController.getPendingEventType(i);
-
-      if (eventType === ZoneEventType.JumpFired) {
-        const dir = this.reconstructMoveDir(input);
-        for (const cb of this.jumpCbs) {
-          cb(this.physicsElapsedTime);
-        }
-        if (this.flightRecorder.isReady && !this.replayActive) {
-          this.flightRecorder.recordEvent(RecorderEventType.Jump, [dir.x, dir.y, dir.z]);
-        }
-        continue;
-      }
-
-      if (eventType === ZoneEventType.DashFired) {
-        const dir = this.reconstructDashDir(input);
-        for (const cb of this.dashCbs) {
-          cb(this.physicsElapsedTime);
-        }
-        const dashConf = this.viz.sceneConf.player?.dashConfig;
-        if (dashConf?.sfx?.play) {
-          this.viz.sfxManager.playSfx(dashConf.sfx.name ?? 'dash');
-        }
-        this.syncDashChargeStoreFromController();
-        if (this.flightRecorder.isReady && !this.replayActive) {
-          this.flightRecorder.recordEvent(RecorderEventType.Dash, [dir.x, dir.y, dir.z]);
-        }
-        continue;
-      }
-
-      if (eventType === ZoneEventType.DashTokenCollected) {
-        this.syncDashChargeStoreFromController();
-        const cbs = this.zoneCallbacks.get(zoneId);
-        cbs?.onEnter?.();
-        continue;
-      }
-
-      const cbs = this.zoneCallbacks.get(zoneId);
-      if (!cbs) {
-        continue;
-      }
-
-      switch (eventType) {
-        case ZoneEventType.JumpPadTriggered:
-          cbs.onEnter?.();
-          break;
-        case ZoneEventType.SensorEnter:
-        case ZoneEventType.BoostZoneEnter:
-          cbs.onEnter?.();
-          break;
-        case ZoneEventType.SensorLeave:
-        case ZoneEventType.BoostZoneExit:
-          cbs.onLeave?.();
-          break;
-      }
-    }
-    this.playerController.clearPendingEvents();
-  };
-
-  // ─── Replay ────────────────────────────────────────────────────────────
-
-  private buildReplayValidationConfig = (): ReplayValidationConfig => {
+  public buildPhysicsSimConfig = (): ReplayValidationConfig => {
     const conf = this.viz.sceneConf;
     const playerConf = conf.player;
     const moveSpeed = playerConf?.moveSpeed ?? DefaultMoveSpeed;
@@ -1094,108 +701,219 @@ export class BulletPhysics {
     };
   };
 
-  /**
-   * Start replay playback.
-   */
-  public startReplay = (player: FlightPlayer): void => {
-    this.releaseReplayPlayer();
-    const header = player.getHeader();
-    const mismatches = validateReplayHeader(header, this.buildReplayValidationConfig());
-    const formatHeaderMismatch = (m: ReplayHeaderMismatch) => {
-      const diff = m.absDiff !== undefined ? ` (Δ${m.absDiff.toExponential(4)})` : '';
-      return `${m.field}: replay=${m.recorded}, current=${m.current}${diff}`;
-    };
-    const fatalMismatches = mismatches.filter(m => FATAL_REPLAY_HEADER_FIELDS.has(m.field));
-    if (fatalMismatches.length > 0) {
-      player.destroy();
-      throw new Error(
-        `Cannot replay: incompatible physics configuration\n` +
-          fatalMismatches.map(m => `  ${formatHeaderMismatch(m)}`).join('\n')
-      );
+  public initFlightRecorderHeader = () => this.flightRecorder.setHeader(this.buildPhysicsSimConfig());
+
+  public computeTopDownCameraPos = (
+    newPlayerPos: THREE.Vector3,
+    viewMode: Extract<NonNullable<SceneConfig['viewMode']>, { type: 'top-down' }>
+  ): THREE.Vector3 => {
+    switch (viewMode.cameraFocusPoint?.type) {
+      case undefined:
+      case null:
+      case 'player':
+        return newPlayerPos.clone().add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
+      case 'fixed':
+        return viewMode.cameraFocusPoint.pos.clone().add(viewMode.cameraOffset ?? DefaultTopDownCameraOffset);
+      default:
+        viewMode.cameraFocusPoint satisfies never;
+        throw new Error('Unknown camera focus point type');
     }
-    if (mismatches.length > 0) {
-      console.warn(
-        `Replay header mismatches (${mismatches.length}):\n` +
-          mismatches.map(m => `  ${formatHeaderMismatch(m)}`).join('\n')
-      );
-    }
-
-    // Teleport player to the recorded spawn position so that the initial
-    // ground-contact state matches what was present during recording.
-    const spawnPosStr = player.getMetadataString('spawn_pos');
-    const spawnRotStr = player.getMetadataString('spawn_rot');
-    if (spawnPosStr) {
-      const [sx, sy, sz] = spawnPosStr.split(',').map(Number);
-      const rot = spawnRotStr ? spawnRotStr.split(',').map(Number) : undefined;
-      this.teleportPlayer([sx, sy, sz], rot ? [rot[0], rot[1], rot[2]] : undefined);
-    }
-
-    // Clear all dynamic state (velocities, flags, floor refs, cooldowns, timing)
-    // to match a freshly-loaded level.
-    this.reset();
-    this.resetDashStateForNewRun();
-
-    this.assertInitialState();
-
-    this.replayLoadPending = false;
-    this.replayPlayer = player;
-    this.replaySubtickIndex = 0;
-    this.replayActive = true;
-    this.replayFirstDivergence = null;
-    this.replayMaxPosDivergence = 0;
-    this.replayMaxPosDivergenceSubtick = 0;
-    this.viz.controlState.movementEnabled = false;
-    for (const cb of this.replayStartCbs) {
-      cb();
-    }
-  };
-
-  public stopReplay = (): void => {
-    if (this.replayFirstDivergence) {
-      const d = this.replayFirstDivergence;
-      const fields = d.mismatches.map(m => {
-        const diff = m.absDiff !== undefined ? ` (Δ${m.absDiff.toExponential(4)})` : '';
-        return `    ${m.field}: recorded=${m.recorded}, replayed=${m.replayed}${diff}`;
-      });
-      console.warn(
-        `[replay-validation] Summary: first divergence at subtick ${d.subtickIndex} ` +
-          `(t=${d.physicsTime.toFixed(4)}s), ` +
-          `max pos drift=${this.replayMaxPosDivergence.toExponential(4)} at subtick ${this.replayMaxPosDivergenceSubtick}\n` +
-          `  First divergence fields:\n${fields.join('\n')}`
-      );
-    }
-
-    this.replayActive = false;
-    this.releaseReplayPlayer();
-    this.viz.controlState.movementEnabled = true;
   };
 
   /**
-   * Pause physics ticking while waiting for a replay to load.
-   * Call this before starting an async replay fetch so that physics time
-   * doesn't advance and desync platforms/timers.
+   * Build a SubtickInputState from the current live input sources.
+   * This is the live-play counterpart to reading recorded subtick data during replay.
    */
-  public setReplayLoadPending = (pending: boolean) => {
-    this.replayLoadPending = pending;
+  private buildLiveInput = (): SubtickInputState => ({
+    keyFlags: packKeyFlags(this.viz.keyStates),
+    // `Math.fround` is used here because the flight recorder stores camera angles as f32, so in order to get
+    // bit-identical behavior during replay we need to quantize the input angles to f32 precision here as well.
+    phi: Math.fround(this.viz.cameraController?.angles.phi ?? 0),
+    theta: Math.fround(this.viz.cameraController?.angles.theta ?? 0),
+    zoomDistance: Math.fround(this.viz.cameraController?.targetZoomDistance ?? 0),
+    movementEnabled: this.viz.controlState.movementEnabled,
+  });
+
+  public advanceOneSubtick = (
+    input: SubtickInputState,
+    fixedTimeStep: number,
+    prevOnGround: boolean
+  ): { nowOnGround: boolean } => {
+    this.physicsSubtickCount++;
+
+    this.viz.cameraController?.setAngles(input.phi, input.theta);
+    if (input.zoomDistance > 0) {
+      this.viz.cameraController?.setTargetZoomDistance(input.zoomDistance);
+    }
+
+    this.syncDynamicControllerConfig();
+    const effectiveInput = { ...input, keyFlags: this.getEffectiveKeyFlags(input) };
+
+    const wasWalking = this.isWalking;
+    this.isWalking = (effectiveInput.keyFlags & 0x0f) !== 0;
+    if (wasWalking && !this.isWalking) {
+      this.viz.sfxManager.onWalkStop();
+    } else if (!wasWalking && this.isWalking) {
+      this.viz.sfxManager.onWalkStart(MaterialClass.Default);
+    }
+
+    this.playerController.setInputState(
+      effectiveInput.keyFlags,
+      effectiveInput.theta,
+      effectiveInput.phi,
+      effectiveInput.movementEnabled
+    );
+
+    this.tickPhysicsTickers(fixedTimeStep);
+    this.collisionWorld.substepSimulation(fixedTimeStep);
+
+    this.drainZoneEvents();
+
+    // Record subtick snapshot after draining events so events generated by this
+    // substep are stamped onto the same subtick rather than the next one.
+    if (this.flightRecorder.isReady && !this.replayController.isActive) {
+      this.playerController.packState(this.packStateBufPtr);
+      this.flightRecorder.recordSubtick(
+        this.packStateBufPtr,
+        this.Ammo.HEAPF32,
+        input.phi,
+        input.theta,
+        input.zoomDistance,
+        effectiveInput.keyFlags
+      );
+    }
+
+    // OOB check — teleport player back to spawn if they fall below the threshold
+    const oobThreshold = this.viz.sceneConf.player?.oobYThreshold ?? DefaultOOBThreshold;
+    const playerY = this.playerController.getPosition().y();
+    if (playerY <= oobThreshold) {
+      if (!this.replayController.isActive) {
+        const sp = this.viz.spawnPos;
+        this.flightRecorder.recordEvent(RecorderEventType.OOBRespawn, [
+          sp.pos.x,
+          sp.pos.y,
+          sp.pos.z,
+          sp.rot?.x ?? 0,
+          sp.rot?.y ?? 0,
+          sp.rot?.z ?? 0,
+        ]);
+      }
+      this.viz.respawnPlayer();
+    }
+
+    // Landing SFX
+    const nowOnGround = this.playerController.onGround();
+    if (!prevOnGround && nowOnGround) {
+      const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
+      const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
+      const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
+      this.viz.sfxManager.onPlayerLand(materialClass);
+    }
+
+    return { nowOnGround };
   };
+
+  public setGravity = (gravity: number) => {
+    this.collisionWorld.setGravity(this.btvec3(0, -gravity, 0));
+    this.playerController.setGravity(this.btvec3(0, -gravity, 0));
+  };
+
+  public registerJumpCb = (cb: (curTimeSeconds: number) => void) => {
+    this.jumpCbs.push(cb);
+  };
+
+  public registerReplayStartCb = (cb: () => void) => {
+    this.replayController.registerStartCb(cb);
+  };
+  public deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
+    const ix = this.jumpCbs.indexOf(cb);
+    if (ix === -1) {
+      throw new Error('cb not registered');
+    }
+    this.jumpCbs[ix] = this.jumpCbs[this.jumpCbs.length - 1];
+    this.jumpCbs.pop();
+  };
+
+  /**
+   * Drains the event queue from the character controller and dispatches
+   * callbacks via the unified zoneCallbacks map.
+   */
+  private drainZoneEvents = () => {
+    const numEvents = this.playerController.getNumPendingEvents();
+    for (let i = 0; i < numEvents; i++) {
+      const zoneId = this.playerController.getPendingEventId(i);
+      const eventType = this.playerController.getPendingEventType(i);
+
+      if (eventType === ZoneEventType.JumpFired) {
+        for (const cb of this.jumpCbs) {
+          cb(this.physicsElapsedTime);
+        }
+        if (this.flightRecorder.isReady && !this.replayController.isActive) {
+          const d = this.playerController.getLastMoveDir();
+          this.flightRecorder.recordEvent(RecorderEventType.Jump, [d.x(), d.y(), d.z()]);
+        }
+        continue;
+      }
+
+      if (eventType === ZoneEventType.DashFired) {
+        for (const cb of this.dashCbs) {
+          cb(this.physicsElapsedTime);
+        }
+        const dashConf = this.viz.sceneConf.player?.dashConfig;
+        if (dashConf?.sfx?.play) {
+          this.viz.sfxManager.playSfx(dashConf.sfx.name ?? 'dash');
+        }
+        this.syncDashChargeStoreFromController();
+        if (this.flightRecorder.isReady && !this.replayController.isActive) {
+          const d = this.playerController.getLastDashDir();
+          this.flightRecorder.recordEvent(RecorderEventType.Dash, [d.x(), d.y(), d.z()]);
+        }
+        continue;
+      }
+
+      if (eventType === ZoneEventType.DashTokenCollected) {
+        this.syncDashChargeStoreFromController();
+        const cbs = this.zoneCallbacks.get(zoneId);
+        cbs?.onEnter?.();
+        continue;
+      }
+
+      const cbs = this.zoneCallbacks.get(zoneId);
+      if (!cbs) {
+        continue;
+      }
+
+      switch (eventType) {
+        case ZoneEventType.JumpPadTriggered:
+          cbs.onEnter?.();
+          break;
+        case ZoneEventType.SensorEnter:
+        case ZoneEventType.BoostZoneEnter:
+          cbs.onEnter?.();
+          break;
+        case ZoneEventType.SensorLeave:
+        case ZoneEventType.BoostZoneExit:
+          cbs.onLeave?.();
+          break;
+      }
+    }
+    this.playerController.clearPendingEvents();
+  };
+
+  public startReplay = (player: FlightPlayer): void => this.replayController.start(player);
+
+  public stopReplay = (): void => this.replayController.stop();
 
   public get isReplayActive(): boolean {
-    return this.replayActive;
+    return this.replayController.isActive;
   }
 
   /**
    * Returns the new position of the player.
    */
-  public updateCollisionWorld = (curTimeSeconds: number, tDiffSeconds: number): THREE.Vector3 => {
-    // While waiting for a replay to load, freeze physics so that
-    // physicsElapsedTime doesn't advance and desync timed elements.
-    if (this.replayLoadPending) {
-      const t = this.playerGhostObject.getWorldTransform().getOrigin();
-      return new THREE.Vector3(t.x(), t.y(), t.z());
-    }
-
-    if (this.replayActive) {
-      return this.updateCollisionWorldDeterministicReplay(tDiffSeconds);
+  public updateCollisionWorld = (tDiffSeconds: number): THREE.Vector3 => {
+    if (this.replayController.isActive) {
+      return this.replayController.tick(tDiffSeconds);
     }
     this.playerController.resetForcedRotation();
     const input = this.buildLiveInput();
@@ -1214,145 +932,6 @@ export class BulletPhysics {
     const newPlayerTransform = this.playerGhostObject.getWorldTransform();
     const newPlayerPos = newPlayerTransform.getOrigin();
 
-    return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
-  };
-
-  private validateSubtickAgainstSnapshot = (
-    subtickIndex: number,
-    recorded: SubtickPhysicsSnapshot
-  ): ReplayDivergence | null => {
-    this.playerController.packState(this.ammoStatePtr);
-    const heap = this.Ammo.HEAPF32;
-    const base = this.ammoStatePtr / 4;
-
-    // Read current state from Ammo heap (same layout as packState: 10 floats)
-    const curPosX = heap[base];
-    const curPosY = heap[base + 1];
-    const curPosZ = heap[base + 2];
-    const curExtVelX = heap[base + 3];
-    const curExtVelY = heap[base + 4];
-    const curExtVelZ = heap[base + 5];
-    const curVertVel = heap[base + 6];
-    const curVertOffset = heap[base + 7];
-
-    // Flags are bitcast u32 at [8]
-    const flagsU32 = new DataView(heap.buffer, this.ammoStatePtr + 32, 4).getUint32(0, true);
-    const curOnGround = (flagsU32 & 1) !== 0;
-    const curIsJumping = (flagsU32 & 2) !== 0;
-
-    // Floor user index is bitcast i32 at [9]
-    const curFloorIdx = new DataView(heap.buffer, this.ammoStatePtr + 36, 4).getInt32(0, true);
-
-    const mismatches: ReplayFieldMismatch[] = [];
-    const TOL = 1e-4;
-
-    const checkFloat = (field: string, rec: number, cur: number) => {
-      const diff = Math.abs(rec - cur);
-      if (diff > TOL) {
-        mismatches.push({ field, recorded: rec, replayed: cur, absDiff: diff });
-      }
-    };
-    const checkBool = (field: string, rec: boolean, cur: boolean) => {
-      if (rec !== cur) {
-        mismatches.push({ field, recorded: rec, replayed: cur });
-      }
-    };
-    const checkInt = (field: string, rec: number, cur: number) => {
-      if (rec !== cur) {
-        mismatches.push({ field, recorded: rec, replayed: cur, absDiff: Math.abs(rec - cur) });
-      }
-    };
-
-    checkFloat('pos.x', recorded.pos[0], curPosX);
-    checkFloat('pos.y', recorded.pos[1], curPosY);
-    checkFloat('pos.z', recorded.pos[2], curPosZ);
-    checkFloat('extVel.x', recorded.externalVel[0], curExtVelX);
-    checkFloat('extVel.y', recorded.externalVel[1], curExtVelY);
-    checkFloat('extVel.z', recorded.externalVel[2], curExtVelZ);
-    checkFloat('verticalVel', recorded.verticalVel, curVertVel);
-    checkFloat('verticalOffset', recorded.verticalOffset, curVertOffset);
-    checkBool('onGround', recorded.onGround, curOnGround);
-    checkBool('isJumping', recorded.isJumping, curIsJumping);
-    checkInt('floorUserIndex', recorded.floorUserIndex, curFloorIdx);
-
-    if (mismatches.length === 0) return null;
-    return { subtickIndex, physicsTime: this.physicsElapsedTime, mismatches };
-  };
-
-  /**
-   * Deterministic replay: drives the game through the same gameplay logic as live
-   * play, using recorded per-subtick input (key flags + camera angles) instead of
-   * live input.  Jump/dash decisions are made by the same code paths as live play
-   * rather than being force-injected from recorded events.
-   *
-   * After each substep, validates the resulting physics state against the recorded
-   * snapshot and tracks the first divergence and maximum position drift.
-   */
-  private updateCollisionWorldDeterministicReplay = (tDiffSeconds: number): THREE.Vector3 => {
-    const player = this.replayPlayer!;
-    this.playerController.resetForcedRotation();
-
-    const fixedTimeStep = 1 / this.simulationTickRate;
-    const maxSubSteps = MAX_SUBSTEPS_PER_FRAME;
-
-    const numSubSteps = this.computeSubstepCount(tDiffSeconds, fixedTimeStep, maxSubSteps);
-    let prevOnGround = this.playerController.onGround();
-    for (let i = 0; i < numSubSteps; i++) {
-      if (this.replaySubtickIndex >= player.subtickCount) {
-        this.stopReplay();
-        break;
-      }
-
-      // Build input state from the recorded subtick data
-      const subtick = player.getSubtick(this.replaySubtickIndex);
-      const input: SubtickInputState = {
-        keyFlags: subtick.keyFlags,
-        phi: subtick.phi,
-        theta: subtick.theta,
-        zoomDistance: subtick.zoomDistance,
-        // Recorded key flags already reflect the effective controller input
-        // consumed during live play, including any JS-side gating.
-        movementEnabled: true,
-      };
-
-      const result = this.advanceOneSubtick(input, fixedTimeStep, prevOnGround);
-
-      // ── Per-subtick validation ──
-      const recorded = player.getSubtickPhysicsSnapshot(this.replaySubtickIndex);
-      const divergence = this.validateSubtickAgainstSnapshot(this.replaySubtickIndex, recorded);
-      if (divergence) {
-        // Track first divergence
-        if (!this.replayFirstDivergence) {
-          this.replayFirstDivergence = divergence;
-          console.warn(
-            `[replay-validation] First divergence at subtick ${divergence.subtickIndex} ` +
-              `(t=${divergence.physicsTime.toFixed(4)}s):`,
-            divergence.mismatches
-          );
-        }
-
-        // Track max position divergence
-        const posMismatch = divergence.mismatches.find(m => m.field.startsWith('pos.'));
-        if (posMismatch && posMismatch.absDiff !== undefined) {
-          // Compute full 3D position distance for this subtick
-          const dx = recorded.pos[0] - this.playerController.getPosition().x();
-          const dy = recorded.pos[1] - this.playerController.getPosition().y();
-          const dz = recorded.pos[2] - this.playerController.getPosition().z();
-          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          if (dist > this.replayMaxPosDivergence) {
-            this.replayMaxPosDivergence = dist;
-            this.replayMaxPosDivergenceSubtick = this.replaySubtickIndex;
-          }
-        }
-      }
-
-      prevOnGround = result.nowOnGround;
-      this.replaySubtickIndex++;
-    }
-    this.syncPhysicsTickerVisuals();
-
-    const newPlayerTransform = this.playerGhostObject.getWorldTransform();
-    const newPlayerPos = newPlayerTransform.getOrigin();
     return new THREE.Vector3(newPlayerPos.x(), newPlayerPos.y(), newPlayerPos.z());
   };
 
@@ -1389,11 +968,11 @@ export class BulletPhysics {
    * reset doesn't fully clean up.
    */
   public assertInitialState = () => {
-    if (!this.ammoStatePtr) return;
+    if (!this.packStateBufPtr) return;
 
-    this.playerController.packState(this.ammoStatePtr);
+    this.playerController.packState(this.packStateBufPtr);
     const heap = this.Ammo.HEAPF32;
-    const base = this.ammoStatePtr / 4;
+    const base = this.packStateBufPtr / 4;
 
     // packed layout: [0-2] pos, [3-5] extVel, [6] vertVel, [7] vertOffset,
     //                [8] flags (u32 bitcast), [9] floorUserIndex (i32 bitcast)
@@ -1402,7 +981,7 @@ export class BulletPhysics {
     const extVelZ = heap[base + 5];
     const vertVel = heap[base + 6];
     const vertOffset = heap[base + 7];
-    const dv = new DataView(heap.buffer, this.ammoStatePtr, 40);
+    const dv = new DataView(heap.buffer, this.packStateBufPtr, 40);
     const flags = dv.getUint32(8 * 4, true);
     const onGround = (flags & 1) !== 0;
     const isJumping = (flags & 2) !== 0;
@@ -1437,7 +1016,6 @@ export class BulletPhysics {
    */
   public resetPhysicsTime = () => {
     this.physicsSubtickCount = 0;
-    this.physicsElapsedTime = 0;
     this.localTimeRemainder = 0;
   };
 
@@ -1446,11 +1024,7 @@ export class BulletPhysics {
    * Accumulates the frame delta into localTimeRemainder and returns the
    * number of whole fixed-timestep intervals, clamped to maxSubSteps.
    */
-  private computeSubstepCount = (
-    tDiffSeconds: number,
-    fixedTimeStep: number,
-    maxSubSteps: number
-  ): number => {
+  public computeSubstepCount = (tDiffSeconds: number, fixedTimeStep: number, maxSubSteps: number): number => {
     this.localTimeRemainder += tDiffSeconds;
     if (this.localTimeRemainder < fixedTimeStep) {
       return 0;
@@ -1521,7 +1095,7 @@ export class BulletPhysics {
     }
   };
 
-  private syncPhysicsTickerVisuals = () => {
+  public syncPhysicsTickerVisuals = () => {
     for (const entry of this.physicsTickerEntries) {
       if (!entry.body || !entry.mesh) {
         continue;
@@ -1617,34 +1191,46 @@ export class BulletPhysics {
     vertices: Float32Array,
     scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
   ) => {
-    // TODO: update IDL and use native indexed triangle mesh
-    const trimesh = new this.Ammo.btTriangleMesh();
-    trimesh.preallocateIndices((indices ?? vertices).length);
-    trimesh.preallocateVertices(vertices.length);
+    const numVertices = vertices.length / 3;
+    const numTriangles = indices ? indices.length / 3 : numVertices / 3;
 
-    const v0 = new this.Ammo.btVector3();
-    const v1 = new this.Ammo.btVector3();
-    const v2 = new this.Ammo.btVector3();
-
-    for (let i = 0; i < (indices ?? vertices).length; i += 3) {
-      const i0 = indices ? indices[i] * 3 : i * 3;
-      const i1 = indices ? indices[i + 1] * 3 : i * 3 + 3;
-      const i2 = indices ? indices[i + 2] * 3 : i * 3 + 6;
-      v0.setValue(vertices[i0] * scale.x, vertices[i0 + 1] * scale.y, vertices[i0 + 2] * scale.z);
-      v1.setValue(vertices[i1] * scale.x, vertices[i1 + 1] * scale.y, vertices[i1 + 2] * scale.z);
-      v2.setValue(vertices[i2] * scale.x, vertices[i2 + 1] * scale.y, vertices[i2 + 2] * scale.z);
-
-      // TODO: compute triangle area and log about ones that are too big or too small
-      // Area of triangles should be <10 units, as suggested by user guide
-      // Should be greater than 0.05 or something like that too probably
-      trimesh.addTriangle(v0, v1, v2);
+    // Write scaled vertex positions into an Ammo heap buffer (float32, 12-byte stride).
+    // `BtTriangleIndexVertexArrayWrappe`r holds a raw pointer and must not be freed while the shape lives.
+    const vertexPtr = this.Ammo._malloc(numVertices * 3 * 4);
+    const vertexHeap = new Float32Array(this.Ammo.HEAPF32.buffer, vertexPtr, numVertices * 3);
+    if (scale.x === 1 && scale.y === 1 && scale.z === 1) {
+      vertexHeap.set(vertices);
+    } else {
+      for (let i = 0; i < vertices.length; i += 3) {
+        vertexHeap[i] = vertices[i] * scale.x;
+        vertexHeap[i + 1] = vertices[i + 1] * scale.y;
+        vertexHeap[i + 2] = vertices[i + 2] * scale.z;
+      }
     }
-    this.Ammo.destroy(v0);
-    this.Ammo.destroy(v1);
-    this.Ammo.destroy(v2);
 
-    const shape = new this.Ammo.btBvhTriangleMeshShape(trimesh, true, true);
-    return shape;
+    // Write int32 indices (`btTriangleIndexVertexArrayWrapper` defaults to `PHY_INTEGER`).
+    const numIndexInts = numTriangles * 3;
+    const indexPtr = this.Ammo._malloc(numIndexInts * 4);
+    const indexHeap = new Int32Array(this.Ammo.HEAPF32.buffer, indexPtr, numIndexInts);
+    if (indices) {
+      for (let i = 0; i < indices.length; i++) {
+        indexHeap[i] = indices[i];
+      }
+    } else {
+      for (let i = 0; i < numIndexInts; i++) {
+        indexHeap[i] = i;
+      }
+    }
+
+    const indexedArray = new this.Ammo.btTriangleIndexVertexArrayWrapper(
+      numTriangles,
+      indexPtr,
+      3 * 4, // triangle index stride: 3 × int32
+      numVertices,
+      vertexPtr,
+      3 * 4 // vertex stride: 3 × float32
+    );
+    return new this.Ammo.btBvhTriangleMeshShape(indexedArray, true, true);
   };
 
   private buildCollisionShapeFromMesh = (mesh: THREE.Mesh, extraScale?: THREE.Vector3) => {
@@ -2095,7 +1681,7 @@ export class BulletPhysics {
   };
 
   public destroy = () => {
-    this.releaseReplayPlayer();
+    this.replayController.destroy();
     this.flightRecorder.destroy();
     this.physicsTickerEntries = [];
 
@@ -2196,9 +1782,11 @@ export class BulletPhysics {
     this.dashCbs.push(cb);
   };
   public deregisterDashCb = (cb: (curTimeSeconds: number) => void) => {
-    const idx = this.dashCbs.indexOf(cb);
-    if (idx !== -1) {
-      this.dashCbs.splice(idx, 1);
+    const ix = this.dashCbs.indexOf(cb);
+    if (ix === -1) {
+      throw new Error('cb not registered');
     }
+    this.dashCbs[ix] = this.dashCbs[this.dashCbs.length - 1];
+    this.dashCbs.pop();
   };
 }
