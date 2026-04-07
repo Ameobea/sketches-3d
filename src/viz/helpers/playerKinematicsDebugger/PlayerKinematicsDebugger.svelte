@@ -10,7 +10,6 @@
 
 <script lang="ts">
   export let verticalVelocity: number;
-  export let verticalOffset: number;
   export let isJumping: boolean;
   export let jumpAxis: [number, number, number];
   export let externalVelocity: [number, number, number];
@@ -18,7 +17,6 @@
   export let isOnGround: boolean;
 
   $: formattedVerticalVelocity = formatNumber(verticalVelocity);
-  $: formattedVerticalOffset = formatNumber(verticalOffset);
 
   const getBoolColor = (bool: boolean) => (bool ? 'green' : 'red');
 
@@ -28,9 +26,6 @@
 <div class="root">
   <div>
     m_verticalVelocity: <pre>{formattedVerticalVelocity}</pre>
-  </div>
-  <div>
-    m_verticalOffset: <pre>{formattedVerticalOffset}</pre>
   </div>
   <div>
     isJumping: <pre style="color: {getBoolColor(isJumping)}"> {formatBool(isJumping)}</pre>

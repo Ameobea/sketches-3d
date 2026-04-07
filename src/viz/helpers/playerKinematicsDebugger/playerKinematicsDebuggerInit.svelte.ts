@@ -13,7 +13,6 @@ export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, t
 
   const props = $state({
     verticalVelocity: 0,
-    verticalOffset: 0,
     isJumping: false,
     jumpAxis: [0, 0, 0] as [number, number, number],
     externalVelocity: [0, 0, 0] as [number, number, number],
@@ -25,7 +24,6 @@ export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, t
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     viz.registerBeforeRenderCb(() => {
       props.verticalVelocity = fpCtx.playerStateGetters.getVerticalVelocity();
-      props.verticalOffset = fpCtx.playerStateGetters.getVerticalOffset();
       props.isJumping = fpCtx.playerStateGetters.getIsJumping();
       props.jumpAxis = fpCtx.playerStateGetters.getJumpAxis();
       props.externalVelocity = fpCtx.playerStateGetters.getExternalVelocity();

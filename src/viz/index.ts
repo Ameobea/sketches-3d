@@ -38,7 +38,6 @@ export interface PostprocessingController {
 
 export interface FpPlayerStateGetters {
   getVerticalVelocity: () => number;
-  getVerticalOffset: () => number;
   getIsJumping: () => boolean;
   getJumpAxis: () => [number, number, number];
   getExternalVelocity: () => [number, number, number];

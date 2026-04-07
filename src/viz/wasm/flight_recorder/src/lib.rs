@@ -5,11 +5,10 @@ use std::mem;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct SubtickSnapshot {
-  // Physics state from C++ packState (10 f32s)
+  // Physics state from C++ packState (9 f32s)
   pos: [f32; 3],
   external_vel: [f32; 3],
   vertical_vel: f32,
-  vertical_offset: f32,
   flags: u32, // bit 0: on_ground, bit 1: is_jumping
   floor_user_index: i32,
 
@@ -62,7 +61,6 @@ enum ChannelId {
   ExtVelY = 4,
   ExtVelZ = 5,
   VerticalVel = 6,
-  VerticalOffset = 7,
   Flags = 8,
   FloorUserIndex = 9,
   // Snapshot input channels
@@ -285,9 +283,9 @@ pub unsafe extern "C" fn set_metadata_string(
 
 /// Record a single subtick snapshot.
 ///
-/// physics_state_ptr: 10 floats from C++ packState
-///   [0..3]: pos, [3..6]: external_vel, [6]: vertical_vel, [7]: vertical_offset,
-///   [8]: flags (bitcast u32), [9]: floor_user_index (bitcast i32)
+/// physics_state_ptr: 9 floats from C++ packState
+///   [0..3]: pos, [3..6]: external_vel, [6]: vertical_vel,
+///   [7]: flags (bitcast u32), [8]: floor_user_index (bitcast i32)
 ///
 /// input_state_ptr: 3 floats
 ///   [0]: phi, [1]: theta, [2]: zoom_distance
@@ -301,7 +299,7 @@ pub unsafe extern "C" fn record_subtick(
   key_flags: u32,
 ) {
   let ctx = &mut *ctx;
-  let ps = std::slice::from_raw_parts(physics_state_ptr, 10);
+  let ps = std::slice::from_raw_parts(physics_state_ptr, 9);
   let is = std::slice::from_raw_parts(input_state_ptr, 3);
 
   ctx.serialized = None; // invalidate cached serialization
@@ -310,9 +308,8 @@ pub unsafe extern "C" fn record_subtick(
     pos: [ps[0], ps[1], ps[2]],
     external_vel: [ps[3], ps[4], ps[5]],
     vertical_vel: ps[6],
-    vertical_offset: ps[7],
-    flags: ps[8].to_bits(),
-    floor_user_index: ps[9].to_bits() as i32,
+    flags: ps[7].to_bits(),
+    floor_user_index: ps[8].to_bits() as i32,
     look_dir: [is[0], is[1]],
     zoom_distance: is[2],
     key_flags,
@@ -456,10 +453,6 @@ fn do_serialize(ctx: &RecorderCtx) -> Vec<u8> {
     {
       let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.vertical_vel).collect();
       write_tagged_block(&mut buf, ChannelId::VerticalVel, &compress_f32_channel(&col));
-    }
-    {
-      let col: Vec<f32> = ctx.snapshots.iter().map(|s| s.vertical_offset).collect();
-      write_tagged_block(&mut buf, ChannelId::VerticalOffset, &compress_f32_channel(&col));
     }
     {
       let col: Vec<u32> = ctx.snapshots.iter().map(|s| s.flags).collect();
@@ -717,7 +710,6 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
     let mut ext_vel_y: Option<Vec<f32>> = None;
     let mut ext_vel_z: Option<Vec<f32>> = None;
     let mut vertical_vel: Option<Vec<f32>> = None;
-    let mut vertical_offset: Option<Vec<f32>> = None;
     let mut flags: Option<Vec<u32>> = None;
     let mut floor_user_index: Option<Vec<i32>> = None;
     let mut look_dir_phi: Option<Vec<f32>> = None;
@@ -735,7 +727,6 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
         4 => ext_vel_y = Some(read_compressed_f32_block(data, &mut offset)?),
         5 => ext_vel_z = Some(read_compressed_f32_block(data, &mut offset)?),
         6 => vertical_vel = Some(read_compressed_f32_block(data, &mut offset)?),
-        7 => vertical_offset = Some(read_compressed_f32_block(data, &mut offset)?),
         8 => flags = Some(read_compressed_u32_block(data, &mut offset)?),
         9 => floor_user_index = Some(read_compressed_i32_block(data, &mut offset)?),
         13 => look_dir_phi = Some(read_compressed_f32_block(data, &mut offset)?),
@@ -768,7 +759,6 @@ fn do_deserialize(data: &[u8]) -> Option<PlayerCtx> {
         pos: [gf(&pos_x, i), gf(&pos_y, i), gf(&pos_z, i)],
         external_vel: [gf(&ext_vel_x, i), gf(&ext_vel_y, i), gf(&ext_vel_z, i)],
         vertical_vel: gf(&vertical_vel, i),
-        vertical_offset: gf(&vertical_offset, i),
         flags: gu(&flags, i),
         floor_user_index: gi(&floor_user_index, i),
         look_dir: [gf(&look_dir_phi, i), gf(&look_dir_theta, i)],
@@ -972,8 +962,8 @@ pub unsafe extern "C" fn player_get_metadata(
 }
 
 /// Write subtick data for a given index.
-/// Layout: 14 f32s - look_dir[2], zoom_distance, key_flags (bitcast), pos[3],
-///   ext_vel[3], vert_vel, vert_offset, flags (bitcast), floor_idx (bitcast)
+/// Layout: 13 f32s - look_dir[2], zoom_distance, key_flags (bitcast), pos[3],
+///   ext_vel[3], vert_vel, flags (bitcast), floor_idx (bitcast)
 /// Returns 0 on success, 1 if index out of range.
 #[no_mangle]
 pub unsafe extern "C" fn player_get_subtick(
@@ -987,7 +977,7 @@ pub unsafe extern "C" fn player_get_subtick(
     return 1;
   }
   let s = &ctx.snapshots[idx];
-  let out = std::slice::from_raw_parts_mut(out_ptr, 14);
+  let out = std::slice::from_raw_parts_mut(out_ptr, 13);
   out[0] = s.look_dir[0]; // phi
   out[1] = s.look_dir[1]; // theta
   out[2] = s.zoom_distance;
@@ -999,9 +989,8 @@ pub unsafe extern "C" fn player_get_subtick(
   out[8] = s.external_vel[1];
   out[9] = s.external_vel[2];
   out[10] = s.vertical_vel;
-  out[11] = s.vertical_offset;
-  out[12] = f32::from_bits(s.flags);
-  out[13] = f32::from_bits(s.floor_user_index as u32);
+  out[11] = f32::from_bits(s.flags);
+  out[12] = f32::from_bits(s.floor_user_index as u32);
   0
 }
 

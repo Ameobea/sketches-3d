@@ -320,12 +320,11 @@ export interface SubtickInput {
   keyFlags: number;
 }
 
-/** Recorded physics state from a subtick (from C++ packState, 10 floats). */
+/** Recorded physics state from a subtick (from C++ packState, 9 floats). */
 export interface SubtickPhysicsSnapshot {
   pos: [number, number, number];
   externalVel: [number, number, number];
   verticalVel: number;
-  verticalOffset: number;
   onGround: boolean;
   isJumping: boolean;
   floorUserIndex: number;
@@ -339,7 +338,7 @@ export interface ReplayEvent {
 export class FlightPlayer {
   private exports!: FlightRecorderExports;
   private ctx = 0;
-  private subtickPtr = 0; // 14 f32s
+  private subtickPtr = 0; // 13 f32s
   private eventPtr = 0; // 6 f32s
   private headerPtr = 0; // 33 f32s
   private metadataOutPtr = 0; // scratch buffer for metadata reads
@@ -351,7 +350,7 @@ export class FlightPlayer {
   private freeScratchBuffers(): void {
     if (!this.exports) return;
     if (this.subtickPtr !== 0) {
-      this.exports.fr_free(this.subtickPtr, 56);
+      this.exports.fr_free(this.subtickPtr, 52);
       this.subtickPtr = 0;
     }
     if (this.eventPtr !== 0) {
@@ -374,7 +373,7 @@ export class FlightPlayer {
     this.ctx = this.exports.create_player();
 
     // Allocate scratch buffers
-    this.subtickPtr = this.exports.fr_malloc(56); // 14 f32s
+    this.subtickPtr = this.exports.fr_malloc(52); // 13 f32s
     this.eventPtr = this.exports.fr_malloc(40); // 10 f32s (type + subtick + 8 data)
     this.headerPtr = this.exports.fr_malloc(132); // 33 f32s
     this.metadataOutPtr = this.exports.fr_malloc(1024); // 1KB scratch for metadata reads
@@ -494,8 +493,8 @@ export class FlightPlayer {
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 14);
-    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 56);
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 13);
+    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 52);
     return {
       phi: v[0],
       theta: v[1],
@@ -509,30 +508,29 @@ export class FlightPlayer {
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 14);
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 13);
     return [v[4], v[5], v[6]];
   }
 
   /**
    * Get the recorded physics snapshot for a subtick.
-   * Layout from Rust player_get_subtick: v[4..13] = physics state from packState.
+   * Layout from Rust player_get_subtick: v[4..12] = physics state from packState.
    */
   getSubtickPhysicsSnapshot(index: number): SubtickPhysicsSnapshot {
     const result = this.exports.player_get_subtick(this.ctx, index, this.subtickPtr);
     if (result !== 0) {
       throw new Error(`Subtick index ${index} out of range`);
     }
-    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 14);
-    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 56);
-    // v[12] is flags bitcast from u32: bit0=onGround, bit1=isJumping
-    const flags = dv.getUint32(12 * 4, true);
-    // v[13] is floor_user_index bitcast from i32
-    const floorUserIndex = dv.getInt32(13 * 4, true);
+    const v = new Float32Array(this.exports.memory.buffer, this.subtickPtr, 13);
+    const dv = new DataView(this.exports.memory.buffer, this.subtickPtr, 52);
+    // v[11] is flags bitcast from u32: bit0=onGround, bit1=isJumping
+    const flags = dv.getUint32(11 * 4, true);
+    // v[12] is floor_user_index bitcast from i32
+    const floorUserIndex = dv.getInt32(12 * 4, true);
     return {
       pos: [v[4], v[5], v[6]],
       externalVel: [v[7], v[8], v[9]],
       verticalVel: v[10],
-      verticalOffset: v[11],
       onGround: (flags & 1) !== 0,
       isJumping: (flags & 2) !== 0,
       floorUserIndex,

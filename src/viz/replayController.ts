@@ -172,7 +172,7 @@ export class ReplayController {
     const heap = physics.Ammo.HEAPF32;
     const base = physics.packStateBufPtr / 4;
 
-    // Read current state from Ammo heap (same layout as packState: 10 floats)
+    // Read current state from Ammo heap (same layout as packState: 9 floats)
     const curPosX = heap[base];
     const curPosY = heap[base + 1];
     const curPosZ = heap[base + 2];
@@ -180,15 +180,14 @@ export class ReplayController {
     const curExtVelY = heap[base + 4];
     const curExtVelZ = heap[base + 5];
     const curVertVel = heap[base + 6];
-    const curVertOffset = heap[base + 7];
 
-    // Flags are bitcast u32 at [8]
-    const flagsU32 = new DataView(heap.buffer, physics.packStateBufPtr + 32, 4).getUint32(0, true);
+    // Flags are bitcast u32 at [7]
+    const flagsU32 = new DataView(heap.buffer, physics.packStateBufPtr + 28, 4).getUint32(0, true);
     const curOnGround = (flagsU32 & 1) !== 0;
     const curIsJumping = (flagsU32 & 2) !== 0;
 
-    // Floor user index is bitcast i32 at [9]
-    const curFloorIdx = new DataView(heap.buffer, physics.packStateBufPtr + 36, 4).getInt32(0, true);
+    // Floor user index is bitcast i32 at [8]
+    const curFloorIdx = new DataView(heap.buffer, physics.packStateBufPtr + 32, 4).getInt32(0, true);
 
     const mismatches: ReplayFieldMismatch[] = [];
     const TOL = 1e-4;
@@ -217,7 +216,6 @@ export class ReplayController {
     checkFloat('extVel.y', recorded.externalVel[1], curExtVelY);
     checkFloat('extVel.z', recorded.externalVel[2], curExtVelZ);
     checkFloat('verticalVel', recorded.verticalVel, curVertVel);
-    checkFloat('verticalOffset', recorded.verticalOffset, curVertOffset);
     checkBool('onGround', recorded.onGround, curOnGround);
     checkBool('isJumping', recorded.isJumping, curIsJumping);
     checkInt('floorUserIndex', recorded.floorUserIndex, curFloorIdx);
@@ -241,8 +239,6 @@ export class ReplayController {
   public tick = (tDiffSeconds: number): THREE.Vector3 => {
     const { physics } = this;
     const player = this.player!;
-    physics.playerController.resetForcedRotation();
-
     const fixedTimeStep = 1 / physics.simulationTickRate;
 
     const numSubSteps = physics.computeSubstepCount(tDiffSeconds, fixedTimeStep, MAX_SUBSTEPS_PER_FRAME);

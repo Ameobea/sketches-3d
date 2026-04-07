@@ -79,7 +79,6 @@ export interface BtKinematicCharacterController {
   getLastJumpTime(): number;
   getLastDashTime(): number;
   getDashCharges(): number;
-  getWalkDirection(): BtVec3;
   getLastMoveDir(): BtVec3;
   getLastDashDir(): BtVec3;
 
@@ -106,12 +105,10 @@ export interface BtKinematicCharacterController {
 
   onGround(): boolean;
   getVerticalVelocity(): number;
-  getVerticalOffset(): number;
   getJumpAxis(): BtVec3;
   getExternalVelocity(): BtVec3;
   isJumping(): boolean;
   getFloorUserIndex(): number;
-  resetForcedRotation(): void;
 
   addJumpPad(pad: BtJumpPad): void;
   removeJumpPad(pad: BtJumpPad): void;
