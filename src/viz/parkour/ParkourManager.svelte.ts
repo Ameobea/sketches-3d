@@ -116,13 +116,6 @@ export class ParkourManager {
         }
       });
 
-      fpCtx.registerReplayStartCb(() => {
-        // Reset run state so the replay drives the timer from its own first
-        // jump rather than inheriting stale state from a previous run.
-        this.curRunStartTimeSeconds = null;
-        this.winState = null;
-      });
-
       let didStart = false;
       this.managerTickerHandle = fpCtx.registerPhysicsTicker({
         tick: (physicsTime: number) => {
@@ -297,10 +290,9 @@ export class ParkourManager {
 
   private onWin = () => {
     const fpCtx = this.viz.fpCtx!;
-    // Idempotent: the win zone may fire multiple times (once per subtick while
-    // the player is inside), and during replay both the zone event and the
-    // replayed RunEnd event could trigger this.
-    if (this.winState) return;
+    if (this.winState) {
+      return;
+    }
 
     const physicsTime = fpCtx.getPhysicsTime();
     const time = physicsTime - (this.curRunStartTimeSeconds ?? 0);
@@ -308,8 +300,7 @@ export class ParkourManager {
     let replayBlob: Uint8Array | null = null;
     let displayComp: any = null;
 
-    if (!fpCtx.isReplayActive) {
-      // Record run end, set metadata, and serialize the replay
+    if (!fpCtx.isReplayActive && !fpCtx.flightRecorder.isExternalReplay) {
       const recorder = fpCtx.flightRecorder;
       recorder.recordEvent(RecorderEventType.RunEnd);
       recorder.setMetadataString('map_id', this.mapID);
@@ -349,9 +340,6 @@ export class ParkourManager {
       MetricsAPI.recordPlayCompletion(this.mapID, true, time);
     }
 
-    // Always freeze the timer at the physics win time, even during replay.
-    // During replay this lets the live timer (timerDisplay) show the exact
-    // same elapsed time that was originally submitted to the server.
     this.winState = { winTimeSeconds: physicsTime, displayComp, replayBlob };
   };
 
@@ -404,7 +392,6 @@ export class ParkourManager {
       throw new Error('fpCtx not initialized');
     }
 
-    // Default spawn time is current physics time (which is time-since-reset)
     const resolvedSpawnTimeSeconds = spawnTimeSeconds ?? fpCtx.getPhysicsTime();
 
     let rigidBody = mesh.userData.rigidBody as BtRigidBody | undefined;
@@ -501,9 +488,7 @@ export class ParkourManager {
       return true;
     });
 
-    this.registerDestroyLifecycleCb(() => {
-      this.viz.fpCtx!.Ammo.destroy(tfn);
-    });
+    this.registerDestroyLifecycleCb(() => void this.viz.fpCtx!.Ammo.destroy(tfn));
   };
 
   /**

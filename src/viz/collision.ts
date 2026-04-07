@@ -815,8 +815,6 @@ export class BulletPhysics {
 
   public registerJumpCb = (cb: (curTimeSeconds: number) => void) => this.jumpCbs.push(cb);
 
-  public registerReplayStartCb = (cb: () => void) => this.replayController.registerStartCb(cb);
-
   public deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
     const ix = this.jumpCbs.indexOf(cb);
     if (ix === -1) {
@@ -893,8 +891,6 @@ export class BulletPhysics {
 
   public startReplay = (player: FlightPlayer): void => this.replayController.start(player);
 
-  public stopReplay = (): void => this.replayController.stop();
-
   public get isReplayActive(): boolean {
     return this.replayController.isActive;
   }
@@ -950,7 +946,9 @@ export class BulletPhysics {
    * reset doesn't fully clean up.
    */
   public assertInitialState = () => {
-    if (!this.packStateBufPtr) return;
+    if (!this.packStateBufPtr) {
+      return;
+    }
 
     this.playerController.packState(this.packStateBufPtr);
     const heap = this.Ammo.HEAPF32;

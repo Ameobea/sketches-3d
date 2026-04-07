@@ -29,4 +29,4 @@ export mesh = rail_sweep(
 )
   | remesh_planar_patches(max_angle_deg=2)
   | origin_to_geometry
-  | scale(1, 0.8, 1.5)
+  // | scale(1, 0.8, 1.5)

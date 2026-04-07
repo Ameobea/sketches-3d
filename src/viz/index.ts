@@ -777,18 +777,15 @@ export class Viz {
     }
   };
 
-  public registerPhysicsStartupBarrier = (barrier: Promise<unknown>) => {
+  public registerPhysicsStartupBarrier = (barrier: Promise<unknown>) =>
     this.physicsStartupBarriers.push(Promise.resolve(barrier).then(() => void 0));
-  };
 
   public awaitPhysicsStartupBarriers = async () => {
     const barriers = this.physicsStartupBarriers.splice(0);
     await Promise.all(barriers);
   };
 
-  public registerDestroyedCb = (cb: () => void) => {
-    this.onDestroyedCbs.push(cb);
-  };
+  public registerDestroyedCb = (cb: () => void) => this.onDestroyedCbs.push(cb);
 
   public get destroyed() {
     return this.isDestroyed;

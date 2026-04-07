@@ -72,7 +72,6 @@ export class ReplayController {
   private firstDivergence: ReplayDivergence | null = null;
   private maxPosDivergence = 0;
   private maxPosDivergenceSubtick = 0;
-  private startCbs: (() => void)[] = [];
 
   constructor(physics: BulletPhysics) {
     this.physics = physics;
@@ -82,8 +81,6 @@ export class ReplayController {
     return this.active;
   }
 
-  public registerStartCb = (cb: () => void) => this.startCbs.push(cb);
-
   public destroy = () => {
     if (this.player) {
       this.player.destroy();
@@ -92,6 +89,7 @@ export class ReplayController {
   };
 
   public start = (player: FlightPlayer): void => {
+    this.physics.flightRecorder.markAsExternalReplay();
     this.destroy();
     const header = player.getHeader();
     const mismatches = validateReplayHeader(header, this.physics.buildPhysicsSimConfig());
@@ -114,8 +112,6 @@ export class ReplayController {
       );
     }
 
-    // Teleport player to the recorded spawn position so that the initial
-    // ground-contact state matches what was present during recording.
     const spawnPosStr = player.getMetadataString('spawn_pos');
     const spawnRotStr = player.getMetadataString('spawn_rot');
     if (spawnPosStr) {
@@ -124,11 +120,8 @@ export class ReplayController {
       this.physics.teleportPlayer([sx, sy, sz], rot ? [rot[0], rot[1], rot[2]] : undefined);
     }
 
-    // Clear all dynamic state (velocities, flags, floor refs, cooldowns, timing)
-    // to match a freshly-loaded level.
     this.physics.reset();
     this.physics.resetDashStateForNewRun();
-
     this.physics.assertInitialState();
 
     this.player = player;
@@ -138,9 +131,6 @@ export class ReplayController {
     this.maxPosDivergence = 0;
     this.maxPosDivergenceSubtick = 0;
     this.physics.viz.controlState.movementEnabled = false;
-    for (const cb of this.startCbs) {
-      cb();
-    }
   };
 
   public stop = (): void => {
@@ -230,8 +220,7 @@ export class ReplayController {
   /**
    * Deterministic replay: drives the game through the same gameplay logic as live
    * play, using recorded per-subtick input (key flags + camera angles) instead of
-   * live input.  Jump/dash decisions are made by the same code paths as live play
-   * rather than being force-injected from recorded events.
+   * live input.
    *
    * After each substep, validates the resulting physics state against the recorded
    * snapshot and tracks the first divergence and maximum position drift.
@@ -249,7 +238,6 @@ export class ReplayController {
         break;
       }
 
-      // Build input state from the recorded subtick data
       const subtick = player.getSubtick(this.subtickIndex);
       const input: SubtickInputState = {
         keyFlags: subtick.keyFlags,

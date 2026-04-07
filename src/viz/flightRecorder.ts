@@ -26,9 +26,10 @@ interface FlightRecorderExports {
   serialize: (ctx: number) => number;
   get_serialized_len: (ctx: number) => number;
   reset_recorder: (ctx: number) => void;
+  mark_as_external_replay: (ctx: number) => void;
+  recorder_is_external_replay: (ctx: number) => number;
   get_subtick_count: (ctx: number) => number;
 
-  // Player (deserialization) exports
   create_player: () => number;
   destroy_player: (ctx: number) => void;
   player_load: (ctx: number, dataPtr: number, len: number) => number;
@@ -82,7 +83,6 @@ export class FlightRecorder {
 
     this.ctx = this.exports.create_recorder();
 
-    // Allocate persistent scratch buffers in Wasm memory
     this.physicsStatePtr = this.exports.fr_malloc(40); // 10 f32s
     this.inputStatePtr = this.exports.fr_malloc(12); // 3 f32s
     this.headerPtr = this.exports.fr_malloc(132); // 33 f32s
@@ -125,7 +125,9 @@ export class FlightRecorder {
     dashUseExternalVelocity: boolean;
     mapIdHash?: bigint;
   }): void {
-    if (!this.ready) return;
+    if (!this.ready) {
+      return;
+    }
 
     const HEADER_FLOATS = 33;
     const view = new Float32Array(this.exports.memory.buffer, this.headerPtr, HEADER_FLOATS);
@@ -177,7 +179,9 @@ export class FlightRecorder {
   }
 
   setMetadataString(key: string, value: string): void {
-    if (!this.ready) return;
+    if (!this.ready) {
+      return;
+    }
 
     const keyBytes = textEncoder.encode(key);
     const valBytes = textEncoder.encode(value);
@@ -194,16 +198,6 @@ export class FlightRecorder {
     this.exports.fr_free(valPtr, valBytes.byteLength);
   }
 
-  /**
-   * Record a subtick snapshot. Called once per physics substep.
-   *
-   * @param ammoStatePtr  Pointer into Ammo's HEAPF32 where packState wrote 10 floats
-   * @param ammoHeapF32   Ammo's HEAPF32 buffer
-   * @param phi           Camera phi angle
-   * @param theta         Camera theta angle
-   * @param zoomDistance  Third-person camera zoom distance (0 in first-person)
-   * @param keyFlags      Packed effective controller key bitmask for this subtick
-   */
   recordSubtick(
     ammoStatePtr: number,
     ammoHeapF32: Float32Array,
@@ -212,16 +206,16 @@ export class FlightRecorder {
     zoomDistance: number,
     keyFlags: number
   ): void {
-    if (!this.ready) return;
+    if (!this.ready) {
+      return;
+    }
 
-    // Copy 10 floats from Ammo's heap into our Wasm's heap
     const physView = new Float32Array(this.exports.memory.buffer, this.physicsStatePtr, 10);
     const ammoFloatOffset = ammoStatePtr / 4; // byte offset to float index
     for (let i = 0; i < 10; i++) {
       physView[i] = ammoHeapF32[ammoFloatOffset + i];
     }
 
-    // Write input state
     const inputView = new Float32Array(this.exports.memory.buffer, this.inputStatePtr, 3);
     inputView[0] = phi;
     inputView[1] = theta;
@@ -231,7 +225,9 @@ export class FlightRecorder {
   }
 
   recordEvent(eventType: RecorderEventType, data?: number[]): void {
-    if (!this.ready) return;
+    if (!this.ready) {
+      return;
+    }
 
     const len = data?.length ?? 0;
     if (data && len > 0) {
@@ -244,29 +240,57 @@ export class FlightRecorder {
     this.exports.record_event(this.ctx, eventType, len > 0 ? this.eventDataPtr : 0, len);
   }
 
-  serialize(): Uint8Array | null {
-    if (!this.ready) return null;
+  public serialize(): Uint8Array | null {
+    if (!this.ready) {
+      return null;
+    }
 
     const ptr = this.exports.serialize(this.ctx);
     const len = this.exports.get_serialized_len(this.ctx);
-    if (len === 0) return null;
+    if (len === 0) {
+      return null;
+    }
 
-    // Copy from Wasm memory so the caller owns the buffer
     return new Uint8Array(this.exports.memory.buffer, ptr, len).slice();
   }
 
-  reset(): void {
-    if (!this.ready) return;
+  public reset(): void {
+    if (!this.ready) {
+      return;
+    }
+
     this.exports.reset_recorder(this.ctx);
   }
 
+  public markAsExternalReplay(): void {
+    if (!this.ready) {
+      return;
+    }
+
+    this.exports.mark_as_external_replay(this.ctx);
+  }
+
+  get isExternalReplay(): boolean {
+    if (!this.ready) {
+      return false;
+    }
+
+    return this.exports.recorder_is_external_replay(this.ctx) !== 0;
+  }
+
   get subtickCount(): number {
-    if (!this.ready) return 0;
+    if (!this.ready) {
+      return 0;
+    }
+
     return this.exports.get_subtick_count(this.ctx);
   }
 
   destroy(): void {
-    if (!this.ready) return;
+    if (!this.ready) {
+      return;
+    }
+
     this.exports.fr_free(this.physicsStatePtr, 40);
     this.exports.fr_free(this.inputStatePtr, 12);
     this.exports.fr_free(this.headerPtr, 132);
@@ -320,7 +344,6 @@ export interface SubtickInput {
   keyFlags: number;
 }
 
-/** Recorded physics state from a subtick (from C++ packState, 9 floats). */
 export interface SubtickPhysicsSnapshot {
   pos: [number, number, number];
   externalVel: [number, number, number];
@@ -344,7 +367,6 @@ export class FlightPlayer {
   private metadataOutPtr = 0; // scratch buffer for metadata reads
   private ready = false;
 
-  // Pre-built event index: eventsBySubtick[subtickIndex] = array of events
   private eventsBySubtick: Map<number, ReplayEvent[]> = new Map();
 
   private freeScratchBuffers(): void {
@@ -372,13 +394,11 @@ export class FlightPlayer {
 
     this.ctx = this.exports.create_player();
 
-    // Allocate scratch buffers
     this.subtickPtr = this.exports.fr_malloc(52); // 13 f32s
     this.eventPtr = this.exports.fr_malloc(40); // 10 f32s (type + subtick + 8 data)
     this.headerPtr = this.exports.fr_malloc(132); // 33 f32s
     this.metadataOutPtr = this.exports.fr_malloc(1024); // 1KB scratch for metadata reads
 
-    // Copy replay data into Wasm memory and load
     const dataPtr = this.exports.fr_malloc(replayData.byteLength);
     const wasmBuf = new Uint8Array(this.exports.memory.buffer, dataPtr, replayData.byteLength);
     wasmBuf.set(replayData);
@@ -393,7 +413,6 @@ export class FlightPlayer {
       return false;
     }
 
-    // Build event index
     this.buildEventIndex();
 
     this.ready = true;
@@ -456,17 +475,25 @@ export class FlightPlayer {
   }
 
   get subtickCount(): number {
-    if (!this.ready) return 0;
+    if (!this.ready) {
+      return 0;
+    }
+
     return this.exports.player_get_subtick_count(this.ctx);
   }
 
   get eventCount(): number {
-    if (!this.ready) return 0;
+    if (!this.ready) {
+      return 0;
+    }
+
     return this.exports.player_get_event_count(this.ctx);
   }
 
   getMetadataString(key: string): string | null {
-    if (!this.ready) return null;
+    if (!this.ready) {
+      return null;
+    }
 
     const keyBytes = textEncoder.encode(key);
     const keyPtr = this.exports.fr_malloc(keyBytes.byteLength);
@@ -481,7 +508,9 @@ export class FlightPlayer {
     );
     this.exports.fr_free(keyPtr, keyBytes.byteLength);
 
-    if (valLen < 0) return null;
+    if (valLen < 0) {
+      return null;
+    }
 
     const readLen = Math.min(valLen, 1024);
     const valBytes = new Uint8Array(this.exports.memory.buffer, this.metadataOutPtr, readLen);
@@ -512,10 +541,6 @@ export class FlightPlayer {
     return [v[4], v[5], v[6]];
   }
 
-  /**
-   * Get the recorded physics snapshot for a subtick.
-   * Layout from Rust player_get_subtick: v[4..12] = physics state from packState.
-   */
   getSubtickPhysicsSnapshot(index: number): SubtickPhysicsSnapshot {
     const result = this.exports.player_get_subtick(this.ctx, index, this.subtickPtr);
     if (result !== 0) {
@@ -537,12 +562,11 @@ export class FlightPlayer {
     };
   }
 
-  getEventsAtSubtick(subtick: number): ReplayEvent[] {
-    return this.eventsBySubtick.get(subtick) ?? [];
-  }
-
   destroy(): void {
-    if (!this.ready) return;
+    if (!this.ready) {
+      return;
+    }
+
     this.freeScratchBuffers();
     this.exports.destroy_player(this.ctx);
     this.ctx = 0;
@@ -550,8 +574,6 @@ export class FlightPlayer {
     this.eventsBySubtick.clear();
   }
 }
-
-// ─── Replay Validation ──────────────────────────────────────────────────
 
 /** Current scene config values needed for replay header validation. */
 export interface ReplayValidationConfig {
@@ -654,6 +676,8 @@ export function validateReplayHeader(
 
 export async function fetchReplayForPlay(playId: string): Promise<Uint8Array | null> {
   const res = await fetch(`/api/plays/${encodeURIComponent(playId)}/replay`, { credentials: 'include' });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    return null;
+  }
   return new Uint8Array(await res.arrayBuffer());
 }
