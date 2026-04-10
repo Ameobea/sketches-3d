@@ -4,9 +4,10 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import devtoolsJson from 'vite-plugin-devtools-json';
 import crossOriginIsolation from 'vite-plugin-cross-origin-isolation';
+import { behaviorsPlugin } from './src/viz/sceneRuntime/viteBehaviorsPlugin';
 
 const config = defineConfig({
-  plugins: [wasm(), sveltekit(), devtoolsJson(), crossOriginIsolation()],
+  plugins: [wasm(), sveltekit(), devtoolsJson(), crossOriginIsolation(), behaviorsPlugin()],
   server: {
     port: 4800,
     proxy: {

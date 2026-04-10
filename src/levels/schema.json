@@ -564,7 +564,12 @@
                   "win": { "type": "boolean" }
                 },
                 "additionalProperties": false
-              }
+              },
+              "behaviors": {
+                "type": "array",
+                "items": { "$ref": "#/definitions/behaviorSpec" }
+              },
+              "spawner": { "$ref": "#/definitions/spawnerDef" }
             },
             "required": [
               "id",
@@ -689,6 +694,32 @@
   ],
   "additionalProperties": false,
   "definitions": {
+    "behaviorSpec": {
+      "type": "object",
+      "properties": {
+        "fn": { "type": "string" },
+        "params": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": {}
+        }
+      },
+      "required": ["fn"],
+      "additionalProperties": false
+    },
+    "spawnerDef": {
+      "type": "object",
+      "properties": {
+        "interval": { "type": "number" },
+        "initialDelay": { "type": "number" },
+        "behaviors": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/behaviorSpec" }
+        }
+      },
+      "required": ["interval"],
+      "additionalProperties": false
+    },
     "__schema0": {
       "anyOf": [
         {
@@ -904,7 +935,12 @@
                       "win": { "type": "boolean" }
                     },
                     "additionalProperties": false
-                  }
+                  },
+                  "behaviors": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/behaviorSpec" }
+                  },
+                  "spawner": { "$ref": "#/definitions/spawnerDef" }
                 },
                 "required": [
                   "id",

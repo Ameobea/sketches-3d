@@ -9,6 +9,7 @@ import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { makeSpinner, makeSlider } from 'src/viz/sceneRuntime/legacyHelpers';
 
 const locations = {
   spawn: {
@@ -102,9 +103,11 @@ export const processLoadedScene = async (
     true
   );
 
+  const rt = pkManager.runtime;
+
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     const spinner1 = loadedWorld.getObjectByName('spinner1')! as THREE.Mesh;
-    pkManager.registerOnStartCb(() => pkManager.makeSpinner(spinner1, 6.6));
+    rt.registerOnStartCb(() => makeSpinner(rt, spinner1, 6.6));
 
     const sliders: THREE.Mesh[] = [];
     const sideSliders: THREE.Mesh[] = [];
@@ -126,8 +129,8 @@ export const processLoadedScene = async (
       slider.removeFromParent();
       fpCtx.removeCollisionObject(slider.userData.rigidBody as BtRigidBody);
 
-      pkManager.registerOnStartCb(() => {
-        pkManager.schedulePeriodic(
+      rt.registerOnStartCb(() => {
+        rt.schedulePeriodic(
           (invokeTimeSeconds: number) => {
             const sliderClone = slider.clone();
             viz.scene.add(sliderClone);
@@ -135,7 +138,7 @@ export const processLoadedScene = async (
 
             const startPos = slider.position.clone();
             const moveDir = new THREE.Vector3(0, 0, 15.8);
-            pkManager.makeSlider(sliderClone, {
+            makeSlider(rt, sliderClone, {
               getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
                 startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
               despawnCond: (mesh, _curTimeSeconds) => mesh.position.z > 279,
@@ -152,8 +155,8 @@ export const processLoadedScene = async (
       slider.removeFromParent();
       fpCtx.removeCollisionObject(slider.userData.rigidBody as BtRigidBody);
 
-      pkManager.registerOnStartCb(() => {
-        pkManager.schedulePeriodic(
+      rt.registerOnStartCb(() => {
+        rt.schedulePeriodic(
           (invokeTimeSeconds: number) => {
             const sliderClone = slider.clone();
             viz.scene.add(sliderClone);
@@ -161,7 +164,7 @@ export const processLoadedScene = async (
 
             const startPos = slider.position.clone();
             const moveDir = new THREE.Vector3(14, 0, 0);
-            pkManager.makeSlider(sliderClone, {
+            makeSlider(rt, sliderClone, {
               getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
                 startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
               despawnCond: (mesh, _curTimeSeconds) => mesh.position.x > -165,
@@ -178,8 +181,8 @@ export const processLoadedScene = async (
       slider.removeFromParent();
       fpCtx.removeCollisionObject(slider.userData.rigidBody as BtRigidBody);
 
-      pkManager.registerOnStartCb(() => {
-        pkManager.schedulePeriodic(
+      rt.registerOnStartCb(() => {
+        rt.schedulePeriodic(
           (invokeTimeSeconds: number) => {
             const sliderClone = slider.clone();
             viz.scene.add(sliderClone);
@@ -187,7 +190,7 @@ export const processLoadedScene = async (
 
             const startPos = slider.position.clone();
             const moveDir = new THREE.Vector3(-14, 0, 0);
-            pkManager.makeSlider(sliderClone, {
+            makeSlider(rt, sliderClone, {
               getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
                 startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
               despawnCond: (mesh, _curTimeSeconds) => mesh.position.x < -209,

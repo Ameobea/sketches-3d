@@ -4,6 +4,7 @@ import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { ParkourManager, type ParkourMaterials } from 'src/viz/parkour/ParkourManager.svelte';
+import { makeSlider } from 'src/viz/sceneRuntime/legacyHelpers';
 import { buildPylonsMaterials, ShinyPatchworkStoneTextures } from 'src/viz/parkour/regions/pylons/materials';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
@@ -36,6 +37,8 @@ const makeRotatingPlatforms = (
   baseMesh: THREE.Mesh,
   adjustPos?: (basePos: THREE.Vector3, secondsSinceSpawn: number, entityIx: number) => THREE.Vector3
 ) => {
+  const rt = pkMgr.runtime;
+
   // platforms rotate around the center point in a square, repeating their motion infinitely
   const circumference = radius * 2 * 4;
   const secondsPerLap = circumference / speed;
@@ -64,7 +67,7 @@ const makeRotatingPlatforms = (
     const mesh = baseMesh.clone();
     mesh.position.copy(getPos(startPhase, 0));
     viz.scene.add(mesh);
-    pkMgr.makeSlider(mesh, {
+    makeSlider(rt, mesh, {
       getPos: (curTimeSeconds: number, secondsSinceSpawn: number) => {
         const basePos = getPos(startPhase, secondsSinceSpawn);
         if (adjustPos) {

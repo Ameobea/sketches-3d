@@ -12,7 +12,17 @@ import {
   forEachMesh,
   instantiateLevelObject,
 } from './levelObjectUtils';
-import type { AssetDef, CsgAssetDef, CsgTreeNode, LevelDef, ObjectDef, ObjectGroupDef } from './types';
+import type {
+  AssetDef,
+  BehaviorSpec,
+  CsgAssetDef,
+  CsgTreeNode,
+  LevelDef,
+  ObjectDef,
+  ObjectGroupDef,
+} from './types';
+import type { SceneRuntime } from '../sceneRuntime';
+import type { BehaviorFn } from '../sceneRuntime/types';
 import { isObjectGroup, flattenLeaves, isGeneratedDef } from './levelDefTreeUtils';
 import { type LevelObject, type LevelGroup, type LevelSceneNode } from './levelSceneTypes';
 export type { LevelObject, LevelGroup, LevelSceneNode } from './levelSceneTypes';
@@ -89,6 +99,14 @@ export interface LevelLoadHandle {
    * mesh the material is applied to, after the mesh is placed with its final transform.
    */
   setMaterialFactories(factories: Record<string, (viz: Viz) => MaterialFactoryResult>): void;
+  /**
+   * Connect a SceneRuntime to the level def system.  Objects with `behaviors` or `spawner`
+   * fields in the level def will have entities created and behaviors attached automatically
+   * once objects are placed and physics is ready.
+   *
+   * @param sceneName — used to resolve level-local behaviors (e.g. `holes__myBehavior`)
+   */
+  setSceneRuntime(runtime: SceneRuntime, sceneName: string): void;
 }
 
 /**
@@ -784,6 +802,91 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     }
   };
 
+  // --- Behavior / entity wiring ---
+
+  const setSceneRuntime = (runtime: SceneRuntime, sceneName: string) => {
+    // Collect all leaf ObjectDefs that have behaviors or spawner defined
+    const behaviorDefs = allLeafDefs.filter(d => d.behaviors?.length || d.spawner);
+
+    // Lazy-load the virtual behaviors module only when actually needed. If there are no
+    // behaviors to wire this turns into a no-op, but we still register the barrier so
+    // the "scene runtime is fully wired before physics ticks" invariant holds uniformly.
+    const behaviorsModuleP =
+      behaviorDefs.length === 0
+        ? Promise.resolve({} as Record<string, BehaviorFn>)
+        : import('virtual:behaviors').then(m => m.default as Record<string, BehaviorFn>);
+
+    const behaviorWiringComplete = Promise.all([objectsPromise, physicsWorldReady, behaviorsModuleP]).then(
+      ([, , behaviorsModule]) => {
+        const resolveBehaviorFn = (fnName: string): BehaviorFn | null => {
+          // Try level-local first, then shared
+          return behaviorsModule[`${sceneName}__${fnName}`] ?? behaviorsModule[fnName] ?? null;
+        };
+
+        const resolveBehaviorSpecs = (
+          specs: BehaviorSpec[]
+        ): { fn: BehaviorFn; params: Record<string, unknown> }[] => {
+          const resolved: { fn: BehaviorFn; params: Record<string, unknown> }[] = [];
+          for (const spec of specs) {
+            const fn = resolveBehaviorFn(spec.fn);
+            if (!fn) {
+              console.warn(`[loadLevelDef] Unknown behavior "${spec.fn}" — skipping`);
+              continue;
+            }
+            resolved.push({ fn, params: spec.params ?? {} });
+          }
+          return resolved;
+        };
+
+        for (const objDef of behaviorDefs) {
+          const levelObj = placedObjects.get(objDef.id);
+          if (!levelObj) {
+            console.warn(`[loadLevelDef] Object "${objDef.id}" has behaviors but was not placed — skipping`);
+            continue;
+          }
+
+          if (objDef.spawner) {
+            const childBehaviors = resolveBehaviorSpecs(objDef.spawner.behaviors ?? []);
+            runtime.registerSpawner(objDef.id, levelObj.object, {
+              interval: objDef.spawner.interval,
+              initialDelay: objDef.spawner.initialDelay,
+              behaviors: childBehaviors,
+            });
+          } else if (objDef.behaviors) {
+            const resolved = resolveBehaviorSpecs(objDef.behaviors);
+            if (resolved.length === 0) continue;
+
+            // Set the rigid body to kinematic if it has one
+            const rigidBody = (() => {
+              let rb: import('src/ammojs/ammoTypes').BtRigidBody | undefined;
+              levelObj.object.traverse(child => {
+                if (child instanceof THREE.Mesh && child.userData.rigidBody && !rb) {
+                  rb = child.userData.rigidBody;
+                }
+              });
+              return rb;
+            })();
+
+            if (rigidBody) {
+              rigidBody.setCollisionFlags(2); // CF_KINEMATIC_OBJECT
+              rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
+            }
+
+            const entity = runtime.createEntity(objDef.id, levelObj.object, rigidBody);
+
+            for (const { fn, params } of resolved) {
+              const behavior = fn(params, entity, runtime);
+              entity.addBehavior(behavior);
+            }
+          }
+        }
+      }
+    );
+
+    // Register as a startup barrier so physics doesn't tick until behaviors are wired
+    viz.registerPhysicsStartupBarrier(behaviorWiringComplete);
+  };
+
   return {
     objects: objectsPromise,
     complete: completePromise,
@@ -795,5 +898,6 @@ export const loadLevelDef = (viz: Viz, loadedWorld: THREE.Group, levelDef: Level
     parkourObjects: parkourObjectsPromise,
     emissiveBypassMeshes: emissiveBypassMeshesPromise,
     setMaterialFactories,
+    setSceneRuntime,
   };
 };

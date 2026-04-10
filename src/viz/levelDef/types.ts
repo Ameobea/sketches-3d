@@ -241,6 +241,26 @@ export type CustomBasicShaderMatDef = z.infer<typeof CustomBasicShaderMatDefSche
 export type GeneratedMatDef = z.infer<typeof GeneratedMatDefSchema>;
 export type MaterialDef = z.infer<typeof MaterialDefSchema>;
 
+/** A reference to a behavior function resolved from the virtual:behaviors module. */
+export const BehaviorSpecSchema = z.object({
+  /** Name of the behavior function (resolved from shared or level-local behaviors). */
+  fn: z.string(),
+  /** Parameters passed to the behavior function. */
+  params: z.record(z.string(), z.unknown()).optional(),
+});
+export type BehaviorSpec = z.infer<typeof BehaviorSpecSchema>;
+
+/** Spawner config: the object acts as a template that periodically creates clones. */
+export const SpawnerDefSchema = z.object({
+  /** Seconds between spawns. */
+  interval: z.number(),
+  /** Seconds before the first spawn. Default: 0 */
+  initialDelay: z.number().optional(),
+  /** Behaviors attached to each spawned clone. */
+  behaviors: z.array(BehaviorSpecSchema).optional(),
+});
+export type SpawnerDef = z.infer<typeof SpawnerDefSchema>;
+
 export const ParkourObjectMetaSchema = z.object({
   /** Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint. */
   checkpoint: z.number().optional(),
@@ -249,29 +269,38 @@ export const ParkourObjectMetaSchema = z.object({
 });
 export type ParkourObjectMeta = z.infer<typeof ParkourObjectMetaSchema>;
 
-export const ObjectDefSchema = z.object({
-  id: z.string(),
-  /** Key into the top-level `assets` registry */
-  asset: z.string(),
-  /** World-space position. Default: [0, 0, 0] */
-  position: Vec3.optional(),
-  /** Euler rotation in radians, YXZ order. Default: [0, 0, 0] */
-  rotation: Vec3.optional(),
-  /** Per-axis scale. Default: [1, 1, 1] */
-  scale: Vec3.optional(),
-  /** Default: true */
-  castShadow: z.boolean().optional(),
-  /** Default: true */
-  receiveShadow: z.boolean().optional(),
-  /** Passed through to object.userData; also checked for flags like `nocollide` */
-  userData: z.record(z.string(), z.unknown()).optional(),
-  /** Key into the top-level `materials` registry. All meshes in this object get this material. */
-  material: z.string().optional(),
-  /** If true, this object will not be registered in the collision world */
-  nocollide: z.boolean().optional(),
-  /** Parkour-specific metadata: marks this object as a checkpoint or win zone. */
-  parkour: ParkourObjectMetaSchema.optional(),
-});
+export const ObjectDefSchema = z
+  .object({
+    id: z.string(),
+    /** Key into the top-level `assets` registry */
+    asset: z.string(),
+    /** World-space position. Default: [0, 0, 0] */
+    position: Vec3.optional(),
+    /** Euler rotation in radians, YXZ order. Default: [0, 0, 0] */
+    rotation: Vec3.optional(),
+    /** Per-axis scale. Default: [1, 1, 1] */
+    scale: Vec3.optional(),
+    /** Default: true */
+    castShadow: z.boolean().optional(),
+    /** Default: true */
+    receiveShadow: z.boolean().optional(),
+    /** Passed through to object.userData; also checked for flags like `nocollide` */
+    userData: z.record(z.string(), z.unknown()).optional(),
+    /** Key into the top-level `materials` registry. All meshes in this object get this material. */
+    material: z.string().optional(),
+    /** If true, this object will not be registered in the collision world */
+    nocollide: z.boolean().optional(),
+    /** Parkour-specific metadata: marks this object as a checkpoint or win zone. */
+    parkour: ParkourObjectMetaSchema.optional(),
+    /** Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`. */
+    behaviors: z.array(BehaviorSpecSchema).optional(),
+    /** Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`. */
+    spawner: SpawnerDefSchema.optional(),
+  })
+  .refine(def => !(def.behaviors && def.spawner), {
+    message: '"behaviors" and "spawner" are mutually exclusive on an object',
+    path: ['spawner'],
+  });
 
 export type ObjectDef = z.infer<typeof ObjectDefSchema>;
 

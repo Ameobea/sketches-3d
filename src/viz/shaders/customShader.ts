@@ -1576,4 +1576,3 @@ export const buildCustomShader = (
 
   return mat;
 };
-

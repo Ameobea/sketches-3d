@@ -126,5 +126,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
 
   initPylonsPostprocessing(viz, vizConf, false, { toneMapping: { mode: 'agx', exposure: 0.9 } });
 
+  const handle = viz.levelLoadHandle;
+  if (handle) {
+    handle.setSceneRuntime(pkManager.runtime, 'scene_def_test');
+  }
+
   return pkManager.buildSceneConfig();
 };

@@ -13,9 +13,7 @@ import { MetricsAPI } from 'src/api/client';
 import type { PlayResponse } from 'src/api/models/PlayResponse';
 import { mergeDeep, type DeepPartial } from '../util/util';
 import { rwritable, type TransparentWritable } from '../util/TransparentWritable';
-import type { BtRigidBody } from 'src/ammojs/ammoTypes';
-import { Scheduler, type SchedulerHandle } from '../bulletHell/Scheduler';
-import { getAmmoJS, type PhysicsTicker, type PhysicsTickerHandle } from '../collision';
+import { SceneRuntime } from '../sceneRuntime';
 import { RecorderEventType } from '../flightRecorder';
 
 export interface ParkourMaterials {
@@ -31,19 +29,10 @@ export interface ParkourMaterials {
   checkpoint?: THREE.Material | (() => THREE.Material);
 }
 
-interface MakeSliderArgs {
-  getPos: (curTimeSeconds: number, secondsSinceSpawn: number) => THREE.Vector3;
-  despawnCond?: (mesh: THREE.Mesh, curTimeSeconds: number) => boolean;
-  /**
-   * default true
-   */
-  removeOnReset?: boolean;
-  spawnTimeSeconds?: number;
-}
-
 export class ParkourManager {
   private viz: Viz;
   public loadedWorld: THREE.Group;
+  public readonly runtime: SceneRuntime;
   private locations: { [key: string]: { pos: THREE.Vector3; rot: THREE.Vector3 } };
   private scoreThresholds: ScoreThresholds;
   private mapID: string;
@@ -53,15 +42,7 @@ export class ParkourManager {
   private curDashCharges: TransparentWritable<number> = rwritable(0);
   private curRunStartTimeSeconds: number | null = null;
   private winState: { winTimeSeconds: number; displayComp: any; replayBlob: Uint8Array | null } | null = null;
-  private managerTickerHandle: PhysicsTickerHandle | null = null;
-  private pendingPhysicsActions: (() => void)[] = [];
-  private resetLifecycleCbs: (() => boolean | void)[] = [];
-  private destroyLifecycleCbs: (() => void)[] = [];
-  private physicsTickerHandles: PhysicsTickerHandle[] = [];
-  private initializedSpinners = new WeakSet<THREE.Mesh>();
-  private onStartCbs: (() => void)[] = [];
   private timerDisplay!: any;
-  private scheduler: Scheduler = new Scheduler();
 
   private syncDashTokensFromController: () => void = () => {
     throw new Error('materials not set yet');
@@ -81,10 +62,6 @@ export class ParkourManager {
     useExternalVelocity: boolean,
     sceneConfigOverrides: DeepPartial<SceneConfig> = {}
   ) {
-    // pre-load physics engine since we know we'll need it and the viz can't start loading that until we return from
-    // `processLoadedScene` function
-    getAmmoJS();
-
     this.viz = viz;
     this.loadedWorld = loadedWorld;
     this.locations = locations;
@@ -92,6 +69,8 @@ export class ParkourManager {
     this.mapID = mapID;
     this.useExternalVelocity = useExternalVelocity;
     this.sceneConfigOverrides = sceneConfigOverrides;
+
+    this.runtime = new SceneRuntime(viz);
 
     if (materials) {
       this.setMaterials(materials);
@@ -103,9 +82,6 @@ export class ParkourManager {
       fpCtx.registerJumpCb(() => {
         if (this.curRunStartTimeSeconds === null) {
           this.curRunStartTimeSeconds = fpCtx.getPhysicsTime();
-          // Don't record into the flight recorder during replay — the jump
-          // callback fires via the replay loop and we don't want to corrupt
-          // the recorder with new events.
           if (!fpCtx.isReplayActive) {
             fpCtx.flightRecorder.setMetadataString(
               'third_person_xray',
@@ -115,21 +91,11 @@ export class ParkourManager {
           }
         }
       });
-
-      let didStart = false;
-      this.managerTickerHandle = fpCtx.registerPhysicsTicker({
-        tick: (physicsTime: number) => {
-          this.flushPendingPhysicsActions();
-          if (!didStart) {
-            didStart = true;
-            this.runOnStartCbs();
-          }
-          this.scheduler.tick(physicsTime);
-        },
-      });
     });
 
-    viz.registerDestroyedCb(this.destroy);
+    // Register our reset as a callback on the runtime so it runs when the runtime resets
+    this.runtime.registerResetCb(() => this.onRuntimeReset());
+    this.runtime.registerDestroyCb(() => this.onRuntimeDestroy());
   }
 
   public setMaterials = (materials: ParkourMaterials, opts: { checkpointMeshes?: THREE.Mesh[] } = {}) => {
@@ -176,67 +142,11 @@ export class ParkourManager {
     });
   };
 
-  public registerOnStartCb = (cb: () => void) => {
-    this.onStartCbs.push(cb);
-  };
-
-  private runOnStartCbs = () => {
-    for (const cb of this.onStartCbs) {
-      cb();
-    }
-  };
-
-  private registerManagedPhysicsTicker = (
-    ticker: PhysicsTicker,
-    opts?: { mesh?: THREE.Object3D; body?: BtRigidBody }
-  ): PhysicsTickerHandle => {
-    const fpCtx = this.viz.fpCtx;
-    if (!fpCtx) {
-      throw new Error('fpCtx not initialized');
-    }
-    const handle = fpCtx.registerPhysicsTicker(ticker, opts);
-    this.physicsTickerHandles.push(handle);
-    return handle;
-  };
-
-  private unregisterManagedPhysicsTicker = (handle: PhysicsTickerHandle) => {
-    handle.unregister();
-    const handleIx = this.physicsTickerHandles.indexOf(handle);
-    if (handleIx !== -1) {
-      this.physicsTickerHandles[handleIx] = this.physicsTickerHandles[this.physicsTickerHandles.length - 1];
-      this.physicsTickerHandles.pop();
-    }
-  };
-
-  private unregisterAllManagedPhysicsTickers = () => {
-    for (const handle of this.physicsTickerHandles) {
-      handle.unregister();
-    }
-    this.physicsTickerHandles = [];
-  };
-
-  private registerResetLifecycleCb = (cb: () => boolean | void) => {
-    this.resetLifecycleCbs.push(cb);
-  };
-
-  private registerDestroyLifecycleCb = (cb: () => void) => {
-    this.destroyLifecycleCbs.push(cb);
-  };
-
-  private queuePhysicsAction = (cb: () => void) => {
-    this.pendingPhysicsActions.push(cb);
-  };
-
-  private flushPendingPhysicsActions = () => {
-    while (this.pendingPhysicsActions.length > 0) {
-      const cb = this.pendingPhysicsActions.shift();
-      cb?.();
-    }
-  };
-
-  private reset = () => {
+  public reset = () => {
     const fpCtx = this.viz.fpCtx!;
     const elapsedTimeSeconds = fpCtx.getPhysicsTime() - (this.curRunStartTimeSeconds ?? 0);
+    const wasStarted = this.curRunStartTimeSeconds !== null;
+
     this.resetCheckpoints();
     fpCtx.teleportPlayer(this.locations.spawn.pos, this.locations.spawn.rot);
     fpCtx.reset();
@@ -245,7 +155,6 @@ export class ParkourManager {
     this.syncDashTokensFromController();
     fpCtx.assertInitialState();
 
-    const wasStarted = this.curRunStartTimeSeconds !== null;
     this.curRunStartTimeSeconds = null;
 
     // Reset flight recorder for a clean recording from t=0
@@ -269,23 +178,19 @@ export class ParkourManager {
     this.winState = null;
     this.viz.setSpawnPos(this.locations.spawn.pos, this.locations.spawn.rot);
 
-    this.flushPendingPhysicsActions();
-    this.unregisterAllManagedPhysicsTickers();
-
-    const newResetLifecycleCbs: (() => boolean | void)[] = [];
-    for (const cb of this.resetLifecycleCbs) {
-      const retain = cb();
-      if (retain !== false) {
-        newResetLifecycleCbs.push(cb);
-      }
-    }
-    this.resetLifecycleCbs = newResetLifecycleCbs;
-    this.scheduler.clear();
-    this.runOnStartCbs();
+    // Delegate entity/ticker/scheduler reset to the runtime
+    this.runtime.reset();
 
     if (!wasWin && wasStarted) {
       MetricsAPI.recordRestart(this.mapID, elapsedTimeSeconds);
     }
+  };
+
+  /** Called by the runtime's reset — handles any additional parkour-specific reset logic. */
+  private onRuntimeReset = () => {
+    // Currently all parkour reset logic lives in this.reset() which calls runtime.reset().
+    // This callback exists for any future parkour-specific logic that should run
+    // as part of the runtime's reset cycle.
   };
 
   private onWin = () => {
@@ -343,166 +248,6 @@ export class ParkourManager {
     this.winState = { winTimeSeconds: physicsTime, displayComp, replayBlob };
   };
 
-  public makeSpinner = (mesh: THREE.Mesh, rpm: number) => {
-    if (this.initializedSpinners.has(mesh)) {
-      return;
-    }
-    this.initializedSpinners.add(mesh);
-
-    const fpCtx = this.viz.fpCtx;
-    if (!fpCtx) {
-      throw new Error('fpCtx not initialized');
-    }
-
-    const rigidBody = mesh.userData.rigidBody as BtRigidBody;
-    rigidBody.setCollisionFlags(2); // btCollisionObject::CF_KINEMATIC_OBJECT
-    rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
-    const tfn = new fpCtx.Ammo.btTransform();
-    tfn.setIdentity();
-    tfn.setOrigin(fpCtx.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-    const initialRot = mesh.rotation.y;
-    const rps = rpm / 60;
-
-    const makeSpinnerTicker = () => ({
-      tick: (physicsTime: number) => {
-        tfn.setEulerZYX(0, initialRot - rps * physicsTime * Math.PI * 2, 0);
-        rigidBody.setWorldTransform(tfn);
-      },
-    });
-
-    this.registerManagedPhysicsTicker(makeSpinnerTicker(), { mesh, body: rigidBody });
-    this.registerResetLifecycleCb(() => {
-      tfn.setEulerZYX(0, initialRot, 0);
-      rigidBody.setWorldTransform(tfn);
-      this.registerManagedPhysicsTicker(makeSpinnerTicker(), { mesh, body: rigidBody });
-      return true;
-    });
-
-    this.registerDestroyLifecycleCb(() => {
-      this.viz.fpCtx!.Ammo.destroy(tfn);
-    });
-  };
-
-  public makeSlider = (
-    mesh: THREE.Mesh,
-    { getPos, despawnCond, spawnTimeSeconds, removeOnReset = true }: MakeSliderArgs
-  ) => {
-    const fpCtx = this.viz.fpCtx;
-    if (!fpCtx) {
-      throw new Error('fpCtx not initialized');
-    }
-
-    const resolvedSpawnTimeSeconds = spawnTimeSeconds ?? fpCtx.getPhysicsTime();
-
-    let rigidBody = mesh.userData.rigidBody as BtRigidBody | undefined;
-    if (!rigidBody) {
-      if (mesh.userData.collisionObj) {
-        throw new Error('Unhandled case where slider has collision object but no rigid body');
-      }
-
-      fpCtx.addTriMesh(mesh, 'kinematic');
-      rigidBody = mesh.userData.rigidBody as BtRigidBody;
-    } else {
-      rigidBody.setCollisionFlags(2); // btCollisionObject::CF_KINEMATIC_OBJECT
-      rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
-    }
-
-    const tfn = new fpCtx.Ammo.btTransform();
-    tfn.setIdentity();
-    tfn.setOrigin(fpCtx.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-    tfn.setEulerZYX(mesh.rotation.x, mesh.rotation.y, mesh.rotation.z);
-
-    let disposed = false;
-    let removedFromWorld = false;
-    let cleanupQueued = false;
-    let handle: PhysicsTickerHandle;
-
-    const removeSliderFromWorld = () => {
-      if (removedFromWorld) {
-        return;
-      }
-      this.viz.scene.remove(mesh);
-      fpCtx.removeCollisionObject(rigidBody);
-      removedFromWorld = true;
-    };
-
-    const queueCleanup = () => {
-      if (cleanupQueued) {
-        return;
-      }
-      cleanupQueued = true;
-      this.queuePhysicsAction(() => {
-        cleanupQueued = false;
-        this.unregisterManagedPhysicsTicker(handle);
-        if (removeOnReset) {
-          removeSliderFromWorld();
-          return;
-        }
-        const startPos = getPos(resolvedSpawnTimeSeconds, 0);
-        mesh.position.copy(startPos);
-        tfn.setOrigin(fpCtx.btvec3(startPos.x, startPos.y, startPos.z));
-        rigidBody.setWorldTransform(tfn);
-        handle = registerSliderTicker();
-      });
-    };
-
-    const registerSliderTicker = (): PhysicsTickerHandle => {
-      disposed = false;
-      return this.registerManagedPhysicsTicker(
-        {
-          tick: physicsTime => {
-            if (disposed) {
-              return;
-            }
-
-            if (despawnCond?.(mesh, physicsTime)) {
-              disposed = true;
-              queueCleanup();
-              return;
-            }
-
-            const secondsSinceSpawn = physicsTime - resolvedSpawnTimeSeconds;
-            const newPos = getPos(physicsTime, secondsSinceSpawn);
-            tfn.setOrigin(fpCtx.btvec3(newPos.x, newPos.y, newPos.z));
-            rigidBody.setWorldTransform(tfn);
-          },
-        },
-        { mesh, body: rigidBody }
-      );
-    };
-
-    handle = registerSliderTicker();
-
-    this.registerResetLifecycleCb(() => {
-      disposed = false;
-      cleanupQueued = false;
-      if (removeOnReset) {
-        removeSliderFromWorld();
-        return false;
-      }
-      const startPos = getPos(resolvedSpawnTimeSeconds, 0);
-      mesh.position.copy(startPos);
-      tfn.setOrigin(fpCtx.btvec3(startPos.x, startPos.y, startPos.z));
-      rigidBody.setWorldTransform(tfn);
-      handle = registerSliderTicker();
-      return true;
-    });
-
-    this.registerDestroyLifecycleCb(() => void this.viz.fpCtx!.Ammo.destroy(tfn));
-  };
-
-  /**
-   * Registers a periodic callback that will be executed at `initialTimeSeconds` and then repeatedly every
-   * `intervalSeconds` after that.
-   */
-  public schedulePeriodic(
-    callback: (invokeTimeSeconds: number) => void,
-    initialTimeSeconds: number,
-    intervalSeconds: number
-  ): SchedulerHandle {
-    return this.scheduler.schedule(callback, initialTimeSeconds, intervalSeconds);
-  }
-
   public buildSceneConfig = (): SceneConfig => {
     const playerRadius = 0.8;
     const defaultSceneConfig: SceneConfig = {
@@ -538,17 +283,7 @@ export class ParkourManager {
     return mergeDeep(defaultSceneConfig, this.sceneConfigOverrides);
   };
 
-  private destroy = () => {
-    this.flushPendingPhysicsActions();
-    this.unregisterAllManagedPhysicsTickers();
-    this.managerTickerHandle?.unregister();
-    this.managerTickerHandle = null;
-    for (const cb of this.destroyLifecycleCbs) {
-      cb();
-    }
-    this.destroyLifecycleCbs = [];
-    this.resetLifecycleCbs = [];
-
+  private onRuntimeDestroy = () => {
     unmount(this.timerDisplay);
     if (this.winState?.displayComp) {
       unmount(this.winState.displayComp);

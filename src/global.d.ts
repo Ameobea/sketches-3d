@@ -16,3 +16,8 @@ declare module 'three/examples/jsm/exporters/GLTFExporter' {
 declare module 'https://ameo.dev/web-synth-headless/headless.js' {
   export function initHeadlessWebSynth(args: unknown): Promise<any>;
 }
+declare module 'virtual:behaviors' {
+  import type { BehaviorFn } from 'src/viz/sceneRuntime/types';
+  const behaviors: Record<string, BehaviorFn>;
+  export default behaviors;
+}

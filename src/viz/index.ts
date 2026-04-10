@@ -898,6 +898,11 @@ export const initViz = (
 
   container.appendChild(viz.renderer.domElement);
 
+  // set the clock to 0 since there could be some time in between page load and when we
+  // actually start ticking the main loop
+  viz.clock.start();
+  setTimeout(() => viz.animate(), 0);
+
   const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
     if (viz.destroyed) {
       return;
@@ -1168,8 +1173,6 @@ export const initViz = (
         overlay.remove();
       });
     }
-
-    setTimeout(() => viz.animate(), 0);
   };
 
   if (gltfName) {
