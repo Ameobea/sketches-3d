@@ -8,7 +8,7 @@ import { dev } from '$app/environment';
 import { formatLevelJson } from './formatLevelJson';
 import type { GeneratorFn } from './generatorTypes';
 import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils';
-import { getLevelDir } from './levelPaths.server';
+import { getAssetsDir, getLevelDir } from './levelPaths.server';
 import { LevelDefSchema, LevelDefRawSchema } from './types';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 
@@ -200,10 +200,14 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
   }
 
   // Inline any `file` geoscript assets: read the file and substitute `code`.
+  // Paths starting with `__ASSETS__/` are resolved relative to getAssetsDir();
+  // all other paths are relative to the level directory.
   const resolvedAssets = Object.fromEntries(
     Object.entries(rawResult.data.assets).map(([assetId, assetDef]) => {
       if (assetDef.type === 'geoscript' && 'file' in assetDef) {
-        const codePath = join(levelDir, assetDef.file);
+        const codePath = assetDef.file.startsWith('__ASSETS__/')
+          ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
+          : join(levelDir, assetDef.file);
         const code = readFileSync(codePath, 'utf-8');
         return [assetId, { type: 'geoscript' as const, code, includePrelude: assetDef.includePrelude }];
       }

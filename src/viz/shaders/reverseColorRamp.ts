@@ -7,6 +7,7 @@ export type ReverseColorRampParams = {
   curveOffset: number; // [0, 1]
   perpSigma: number;
   baseFallback: number;
+  colorSpace?: 'srgb' | 'linear';
 };
 
 const srgbToLinear = (c: number): number => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
@@ -21,6 +22,7 @@ vec3 srgb_to_linear(vec3 c) {
 `;
 
 export const buildReverseColorRampGenerator = (fnName: string, p: ReverseColorRampParams): string => {
+  const colorSpace = p.colorSpace ?? 'srgb';
   const A_lin = p.colorA_srgb.map(srgbToLinear) as [number, number, number];
   const B_lin = p.colorB_srgb.map(srgbToLinear) as [number, number, number];
 
@@ -42,8 +44,8 @@ export const buildReverseColorRampGenerator = (fnName: string, p: ReverseColorRa
   const base = p.baseFallback;
 
   return `
-float ${fnName}(vec3 baseColor_srgb) {
-  vec3 c = srgb_to_linear(baseColor_srgb);
+float ${fnName}(vec3 baseColor${colorSpace === 'srgb' ? '_srgb' : '_linear'}) {
+  ${colorSpace === 'srgb' ? 'vec3 c = srgb_to_linear(baseColor_srgb);' : 'vec3 c = baseColor_linear;'}
 
   const vec3 A = vec3(${A_lin[0]}, ${A_lin[1]}, ${A_lin[2]});
   const vec3 U = vec3(${u[0]}, ${u[1]}, ${u[2]});

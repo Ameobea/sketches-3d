@@ -630,7 +630,6 @@ export const buildCustomShaderArgs = (
     if (typeof mapDisableDistance !== 'number') {
       return `
       #ifdef USE_MAP
-        vec4 sampledDiffuseColor_ = vec4(0.);
         ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
         ${inner}
         ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment(usePackedDiffuseNormalGBA) : ''}
@@ -640,7 +639,6 @@ export const buildCustomShaderArgs = (
 
     return `
     #ifdef USE_MAP
-      vec4 sampledDiffuseColor_ = vec4(0.);
       ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
 
       vec4 averageTextureColor = texture(map, vec2(0.5, 0.5), 99.);
@@ -1117,7 +1115,7 @@ ${normalShader ?? ''}
 ${roughnessShader ?? ''}
 ${metalnessShader ?? ''}
 ${emissiveShader ?? ''}
-${!!roughnessReverseColorRamp || !!metalnessReverseColorRamp || !!iridescenceReverseColorRamp ? ReverseColorRampCommonFunctions : ''}
+${[roughnessReverseColorRamp, metalnessReverseColorRamp, iridescenceReverseColorRamp].some(p => p && (p.colorSpace ?? 'srgb') === 'srgb') ? ReverseColorRampCommonFunctions : ''}
 ${roughnessReverseColorRamp ? buildReverseColorRampGenerator('roughnessFromColor', roughnessReverseColorRamp) : ''}
 ${metalnessReverseColorRamp ? buildReverseColorRampGenerator('metalnessFromColor', metalnessReverseColorRamp) : ''}
 ${iridescenceShader ?? ''}
@@ -1203,6 +1201,7 @@ void main() {
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
 	#include <logdepthbuf_fragment>
+  vec4 sampledDiffuseColor_ = diffuseColor;
 	${buildMapFragment()}
 
 	#include <color_fragment>
@@ -1232,14 +1231,14 @@ void main() {
   }
 
   ${roughnessShader ? buildRoughnessShaderFragment(antialiasRoughnessShader) : ''}
-  ${roughnessReverseColorRamp ? 'roughnessFactor = roughnessFromColor(ctx.diffuseColor.rgb);' : ''}
+  ${roughnessReverseColorRamp ? 'roughnessFactor = roughnessFromColor(sampledDiffuseColor_.rgb);' : ''}
 
   ${
     metalnessShader
       ? 'metalnessFactor = getCustomMetalness(vWorldPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);'
       : ''
   }
-  ${metalnessReverseColorRamp ? 'metalnessFactor = metalnessFromColor(ctx.diffuseColor.rgb);' : ''}
+  ${metalnessReverseColorRamp ? 'metalnessFactor = metalnessFromColor(sampledDiffuseColor_.rgb);' : ''}
 
 	#include <emissivemap_fragment>
   ${
@@ -1253,7 +1252,7 @@ void main() {
 	// accumulation
 	#include <lights_physical_fragment>
   ${buildRunIridescenceShaderFragment(iridescenceShader)}
-  ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(ctx.diffuseColor.rgb);' : ''}
+  ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(sampledDiffuseColor_.rgb);' : ''}
 
 	// #include <lights_fragment_begin>
   ${buildLightsFragmentBegin(disabledDirectionalLightIndices, disabledSpotLightIndices, ambientLightScale, ambientDistanceAmp)}
@@ -1577,3 +1576,4 @@ export const buildCustomShader = (
 
   return mat;
 };
+

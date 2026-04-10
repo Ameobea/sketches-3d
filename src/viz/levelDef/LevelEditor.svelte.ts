@@ -5,10 +5,12 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
+import type { AssetLibFolder } from './assetLibTypes';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 import type { LevelGroup, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
 import { LEVEL_PLACEHOLDER_MAT, assignMaterial, instantiateLevelObject } from './levelObjectUtils';
+import { resolveGeoscriptAsset } from './loadLevelDef';
 import LevelEditorPanel from './LevelEditorPanel.svelte';
 import { LevelEditorApi } from './levelEditorApi';
 import { UndoSystem } from './undoSystem';
@@ -97,6 +99,10 @@ export class LevelEditor {
     scale: [1, 1, 1] as [number, number, number],
     /** Incremented whenever rootNodes changes — triggers hierarchy panel re-render. */
     treeVersion: 0,
+    /** Incremented when a new asset is added — triggers asset list re-render in panel. */
+    assetsVersion: 0,
+    /** Asset library folder tree, populated after fetch on editor open. */
+    libFolders: [] as AssetLibFolder[],
   });
   private panelComponent: Record<string, any> | null = null;
   private panelTarget: HTMLDivElement | null = null;
@@ -394,6 +400,11 @@ export class LevelEditor {
     canvas.addEventListener('pointerup', this.onPointerUp);
 
     this.createPanel();
+
+    // Fetch the asset library tree in the background; update the panel once it arrives.
+    this.api.fetchAssetLibrary().then(folders => {
+      this.selectionState.libFolders = folders;
+    });
   }
 
   private exitEditMode() {
@@ -439,8 +450,14 @@ export class LevelEditor {
     this.panelComponent = mount(LevelEditorPanel, {
       target,
       props: {
-        assetIds: Object.keys(this.levelDef.assets),
+        get assetIds() {
+          void state.assetsVersion;
+          return Object.keys(self.levelDef.assets);
+        },
         materialIds: Object.keys(this.levelDef.materials ?? {}),
+        get libFolders() {
+          return state.libFolders;
+        },
         get rootNodes() {
           void state.treeVersion;
           return self.rootNodes;
@@ -474,7 +491,14 @@ export class LevelEditor {
         },
         onselectnode: (node: import('./loadLevelDef').LevelSceneNode) => this.select(node),
         onadd: (assetId: string, materialId: string | undefined) => this.onAddClick(assetId, materialId),
+        onaddlibrary: (libPath: string, materialId: string | undefined) =>
+          void this.onAddLibraryClick(libPath, materialId),
         onaddgroup: () => void this.onAddGroupClick(),
+        onrename: (newId: string) => {
+          if (this.selectedNode && !this.selectedNode.generated) {
+            void this.renameNode(this.selectedNode, newId);
+          }
+        },
         onmaterialchange: (matId: string | null) => this.onObjectMaterialChange(matId),
         onapplytransform: (snap: Partial<TransformSnapshot>) => this.applyTransformInput(snap),
         ondelete: () => {
@@ -892,6 +916,32 @@ export class LevelEditor {
     this.select(levelGroup);
   }
 
+  private async renameNode(node: LevelSceneNode, newId: string) {
+    const oldId = node.id;
+    if (newId === oldId) return;
+
+    const result = await this.api.renameNode(oldId, newId);
+    if (!result) return;
+
+    const { resolvedId } = result;
+
+    // Update the in-memory node and its def.
+    node.id = resolvedId;
+    node.def.id = resolvedId;
+
+    // Re-key the nodeById map.
+    this.nodeById.delete(oldId);
+    this.nodeById.set(resolvedId, node);
+
+    // Sync the selection display.
+    if (this.selectionState.nodeId === oldId) {
+      this.selectionState.nodeId = resolvedId;
+    }
+
+    // Trigger hierarchy panel re-render.
+    this.selectionState.treeVersion++;
+  }
+
   private deleteObject(levelObj: LevelObject) {
     const snapshot = this.snapshotTransform(levelObj.object);
     this.removeFromScene(levelObj);
@@ -899,6 +949,29 @@ export class LevelEditor {
     this.undoSystem.purge(e => e.type === 'transform' && e.levelObj === levelObj);
     this.undoSystem.push({ type: 'delete', levelObj, snapshot });
     this.api.sendDelete(levelObj.id);
+  }
+
+  private async onAddLibraryClick(libPath: string, materialId: string | undefined) {
+    // Register the file as an asset in the level def (idempotent if already registered).
+    const result = await this.api.registerLibraryAsset(libPath);
+    if (!result) return;
+
+    const { id, code } = result;
+
+    // Build a prototype if we don't already have one for this id.
+    if (!this.prototypes.has(id)) {
+      const prototype = await resolveGeoscriptAsset(code);
+      if (!prototype) {
+        console.error(`[LevelEditor] Failed to resolve library asset "${libPath}"`);
+        return;
+      }
+      prototype.name = id;
+      this.prototypes.set(id, prototype);
+      this.levelDef.assets[id] = { type: 'geoscript', code };
+      this.selectionState.assetsVersion++;
+    }
+
+    await this.onAddClick(id, materialId);
   }
 
   private async onAddClick(assetId: string, materialId: string | undefined) {

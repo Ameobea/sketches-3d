@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AssetTreePicker from './AssetTreePicker.svelte';
   import type { TransformSnapshot } from './LevelEditor.svelte';
 
   interface Props {
@@ -12,6 +13,7 @@
     rotation: [number, number, number];
     scale: [number, number, number];
     onapplytransform: (snap: Partial<TransformSnapshot>) => void;
+    onrename: (newId: string) => void;
     onmaterialchange: (matId: string | null) => void;
     onconvertToCsg: () => void;
     ondelete: () => void;
@@ -28,10 +30,32 @@
     rotation,
     scale,
     onapplytransform,
+    onrename,
     onmaterialchange,
     onconvertToCsg,
     ondelete,
   }: Props = $props();
+
+  // Editable node ID
+  let idDraft = $state('');
+  let idFocused = $state(false);
+
+  $effect(() => {
+    // Reset draft whenever the selected node changes.
+    if (!idFocused) idDraft = nodeId ?? '';
+  });
+
+  const commitRename = () => {
+    const trimmed = idDraft.trim();
+    if (trimmed && trimmed !== nodeId) onrename(trimmed);
+    else idDraft = nodeId ?? ''; // revert if empty or unchanged
+    idFocused = false;
+  };
+
+  const onIdKeydown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }
+    if (e.key === 'Escape') { idDraft = nodeId ?? ''; (e.target as HTMLInputElement).blur(); }
+  };
 
   const fmt = (n: number) => {
     const s = n.toFixed(4);
@@ -85,7 +109,19 @@
 {#if nodeId !== null}
   <div class="info-panel">
     <div class="node-header">
-      <span class="node-id">{nodeId}</span>
+      {#if isGenerated}
+        <span class="node-id">{nodeId}</span>
+      {:else}
+        <input
+          class="node-id-input"
+          type="text"
+          value={idFocused ? idDraft : (nodeId ?? '')}
+          oninput={(e) => { idDraft = (e.target as HTMLInputElement).value; }}
+          onfocus={(e) => { idDraft = nodeId ?? ''; idFocused = true; (e.target as HTMLInputElement).select(); }}
+          onblur={commitRename}
+          onkeydown={onIdKeydown}
+        />
+      {/if}
       {#if isGroup}<span class="badge group-badge">group</span>{/if}
       {#if isGenerated}<span class="badge gen-badge">generated</span>{/if}
     </div>
@@ -112,21 +148,16 @@
 
       <!-- Material assignment (leaf objects) -->
       {#if !isGroup}
-        <div class="tf-row">
+        <div class="mat-row">
           <span class="tf-label">mat</span>
-          <select
-            class="mat-select"
-            value={materialId ?? ''}
-            onchange={(e) => {
-              const v = (e.target as HTMLSelectElement).value;
-              onmaterialchange(v || null);
-            }}
-          >
-            <option value="">(none)</option>
-            {#each materialIds as id (id)}
-              <option value={id}>{id}</option>
-            {/each}
-          </select>
+          <div class="mat-picker-wrap">
+            <AssetTreePicker
+              localItems={materialIds}
+              selected={materialId}
+              allowNone={true}
+              onselect={(v) => onmaterialchange(v)}
+            />
+          </div>
         </div>
       {/if}
 
@@ -173,6 +204,27 @@
     white-space: nowrap;
   }
 
+  .node-id-input {
+    flex: 1;
+    min-width: 0;
+    font: 12px monospace;
+    color: #ccc;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 0 2px;
+    outline: none;
+  }
+
+  .node-id-input:hover {
+    border-color: #555;
+  }
+
+  .node-id-input:focus {
+    border-color: #7a7;
+    background: #111;
+    color: #ddd;
+  }
+
   .badge {
     font-size: 10px;
     border-radius: 2px;
@@ -194,6 +246,18 @@
     display: flex;
     align-items: center;
     gap: 3px;
+  }
+
+  .mat-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 3px;
+    margin-top: 2px;
+  }
+
+  .mat-picker-wrap {
+    flex: 1;
+    min-width: 0;
   }
 
   .tf-label {
@@ -223,15 +287,6 @@
   .tf-input:focus {
     outline: none;
     border-color: #7a7;
-  }
-
-  .mat-select {
-    flex: 1;
-    background: #1a1a1a;
-    color: #e8e8e8;
-    border: 1px solid #555;
-    padding: 1px 3px;
-    font: 11px monospace;
   }
 
   .action-btn {

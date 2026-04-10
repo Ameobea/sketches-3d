@@ -19,13 +19,15 @@ const failIfGeneratedNode = async (name: string, id: string) => {
   }
 };
 
-/** Update the transform of an existing object */
+/** Update the transform, material, and/or id of an existing object or group. */
 export const PATCH: RequestHandler = async ({ params, request }) => {
   guardDev();
   const name = validateName(params.name);
 
   const body = (await request.json()) as {
     id: string;
+    /** If provided, rename the node. Conflicts are resolved by appending `_N`. */
+    newId?: string;
     position?: [number, number, number];
     rotation?: [number, number, number];
     scale?: [number, number, number];
@@ -49,6 +51,21 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
     } else {
       delete objDef.material;
     }
+  }
+
+  if (body.newId !== undefined && body.newId !== body.id) {
+    const allIds = new Set(flattenAllNodes(level.def.objects).map(n => n.id));
+    allIds.delete(body.id); // the current node's own id is not a conflict
+    let resolvedId = body.newId;
+    if (allIds.has(resolvedId)) {
+      const prefix = `${resolvedId}_`;
+      let n = 1;
+      while (allIds.has(`${prefix}${n}`)) n++;
+      resolvedId = `${prefix}${n}`;
+    }
+    objDef.id = resolvedId;
+    level.save();
+    return json({ resolvedId });
   }
 
   level.save();

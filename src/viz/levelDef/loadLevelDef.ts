@@ -241,6 +241,36 @@ const extractPrototype = (
 const RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_transforms | render';
 
 /**
+ * Runs a single geoscript code string through the geoscript worker and returns the
+ * resulting prototype Object3D, or null if no meshes were produced or an error occurred.
+ *
+ * Used by the level editor to resolve newly-registered asset library entries without
+ * requiring a full page reload.
+ */
+export const resolveGeoscriptAsset = async (code: string): Promise<THREE.Object3D | null> => {
+  const workerManager = new WorkerManager();
+  const repl = workerManager.getWorker();
+  const ctxPtr = await repl.init();
+
+  const runResult = await runGeoscript({
+    code: RENDER_WRAPPER,
+    ctxPtr,
+    repl,
+    includePrelude: false,
+    modules: { code },
+  });
+
+  workerManager.terminate();
+
+  if (runResult.error) {
+    console.error('[levelDef] resolveGeoscriptAsset error:', runResult.error);
+    return null;
+  }
+
+  return extractPrototype(runResult.objects as any);
+};
+
+/**
  * Build the modules map for running a single asset through the render wrapper.
  * Geoscript assets become a single "code" module. CSG assets generate their own
  * module tree via `generateCsgCode` and the CSG program itself becomes the "code" module.

@@ -24,6 +24,7 @@ WORKDIR /app
 # Runtime level loading reads JSON/geo assets directly from disk.
 ENV NODE_ENV=production
 ENV LEVELS_DIR=/app/src/levels
+ENV ASSETS_DIR=/app/src/assets
 COPY --from=builder /app/build build/
 COPY --from=prod-deps /app/node_modules node_modules/
 # Keep the source tree available for runtime generator modules imported from `src/...`.

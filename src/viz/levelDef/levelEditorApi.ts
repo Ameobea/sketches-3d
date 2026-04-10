@@ -1,3 +1,4 @@
+import type { AssetLibFolder } from './assetLibTypes';
 import type { CsgTreeNode, ObjectDef, ObjectGroupDef } from './types';
 import type { LevelObject, LevelSceneNode } from './loadLevelDef';
 
@@ -120,6 +121,24 @@ export class LevelEditorApi {
     });
   };
 
+  renameNode = async (id: string, newId: string): Promise<{ resolvedId: string } | null> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, newId }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] rename failed:', res.status, await res.text());
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error('[LevelEditor] rename error:', err);
+      return null;
+    }
+  };
+
   saveMaterialAssignment = async (id: string, material: string | null) => {
     try {
       const res = await fetch(`/level_editor/${this.levelName}`, {
@@ -162,6 +181,39 @@ export class LevelEditorApi {
       }
     } catch (err) {
       console.error('[LevelEditor] material delete error:', err);
+    }
+  };
+
+  fetchAssetLibrary = async (): Promise<AssetLibFolder[]> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}/asset-library`);
+      if (!res.ok) {
+        console.error('[LevelEditor] asset library fetch failed:', res.status, await res.text());
+        return [];
+      }
+      const data = (await res.json()) as { folders: AssetLibFolder[] };
+      return data.folders;
+    } catch (err) {
+      console.error('[LevelEditor] asset library fetch error:', err);
+      return [];
+    }
+  };
+
+  registerLibraryAsset = async (file: string): Promise<{ id: string; code: string } | null> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}/assets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] register library asset failed:', res.status, await res.text());
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error('[LevelEditor] register library asset error:', err);
+      return null;
     }
   };
 

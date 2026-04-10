@@ -6727,6 +6727,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Fill rule for determining the interior of the shape: \"nonzero\" (default) or \"evenodd\". If nil, the fill rule is inherited from the path sampler (e.g. set via `trace_path`), falling back to \"nonzero\". Supports multiple subpaths (holes) when combined with \"evenodd\" or a path carrying subpath topology."
           },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Tessellation engine to use: \"cgal\" or \"lyon\". If nil (default), the engine is chosen automatically: CGAL is used when no special fill rule is in play (producing cleaner topology with no T-junctions, better for extrusion), and lyon is used when an explicit fill_rule argument is provided or the path sampler carries a non-default fill rule. Specifying engine=\"cgal\" with a non-default fill rule is a runtime error."
+          },
         ],
         description: "Tessellates a 2D path into a triangle mesh in the XZ plane.",
         return_type: &[ArgType::Mesh],

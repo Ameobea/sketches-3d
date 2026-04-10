@@ -1917,13 +1917,49 @@ fn tessellate_path_impl(
         }
       };
       let fill_rule_override_val = arg_refs[5].resolve(args, kwargs);
-      let fill_rule_override = match fill_rule_override_val {
+      let fill_rule_override: Option<trace_path::FillRule> = match fill_rule_override_val {
         Value::Nil => None,
-        val => Some(
-          trace_path::FillRule::parse(val, "tessellate_path")
-            .and_then(|fr| fr.to_lyon_fill_rule())?,
-        ),
+        val => Some(trace_path::FillRule::parse(val, "tessellate_path")?),
       };
+
+      #[derive(Clone, Copy, PartialEq, Eq)]
+      enum TessEngine {
+        Auto,
+        Lyon,
+        Cgal,
+      }
+
+      let engine_val = arg_refs[6].resolve(args, kwargs);
+      let requested_engine = match engine_val {
+        Value::Nil => TessEngine::Auto,
+        Value::String(s) => match s.as_str() {
+          "lyon" => TessEngine::Lyon,
+          "cgal" => TessEngine::Cgal,
+          other => {
+            return Err(ErrorStack::new(format!(
+              "Invalid engine argument for `tessellate_path`; expected \"lyon\", \"cgal\", or \
+               nil, found: \"{other}\""
+            )))
+          }
+        },
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid engine argument for `tessellate_path`; expected String or Nil, found: \
+             {other:?}"
+          )))
+        }
+      };
+
+      if requested_engine == TessEngine::Cgal {
+        if let Some(fr) = fill_rule_override {
+          if fr != trace_path::FillRule::NonZero {
+            return Err(ErrorStack::new(format!(
+              "`tessellate_path` with engine=\"cgal\" does not support the \"{fr:?}\" fill rule; \
+               use engine=\"lyon\" or omit the fill_rule argument"
+            )));
+          }
+        }
+      }
 
       if sample_count < 3 {
         return Err(ErrorStack::new(format!(
@@ -1943,30 +1979,39 @@ fn tessellate_path_impl(
         curve_angle_degrees.to_radians()
       };
 
-      // `lyon` can consume discrete path features directly, so pass those through directly if available
-      if let Some(cb) = path_val.as_callable() {
-        if let Some(sampler) = as_path_sampler(cb) {
-          let sampler_fr = sampler
-            .fill_rule()
-            .and_then(|fr| fr.to_lyon_fill_rule().ok());
-          let fill_rule = fill_rule_override
-            .or(sampler_fr)
-            .unwrap_or(lyon_tessellation::FillRule::NonZero);
+      // `lyon` can consume discrete path features directly
+      if requested_engine != TessEngine::Cgal {
+        if let Some(cb) = path_val.as_callable() {
+          if let Some(sampler) = as_path_sampler(cb) {
+            let sampler_fr = sampler.fill_rule();
+            let sampler_lyon_fr = sampler_fr.and_then(|fr| fr.to_lyon_fill_rule().ok());
 
-          if let Some(lyon_path) = sampler.to_lyon_path_for_tessellation() {
-            let mesh = crate::mesh_ops::tessellate_polygon::tessellate_lyon_path(
-              &lyon_path,
-              fill_rule,
-              flipped,
-            )?;
-            return Ok(Value::Mesh(Rc::new(MeshHandle {
-              mesh: Rc::new(mesh),
-              transform: Matrix4::identity(),
-              manifold_handle: Rc::new(ManifoldHandle::new_empty()),
-              aabb: RefCell::new(None),
-              trimesh: RefCell::new(None),
-              material: None,
-            })));
+            let is_non_default_sampler_fr = sampler_fr
+              .map(|fr| fr != trace_path::FillRule::NonZero)
+              .unwrap_or(false);
+            let should_use_lyon = requested_engine == TessEngine::Lyon
+              || fill_rule_override.is_some()
+              || is_non_default_sampler_fr;
+
+            if should_use_lyon {
+              if let Some(lyon_path) = sampler.to_lyon_path_for_tessellation() {
+                let fill_rule = fill_rule_override
+                  .and_then(|fr| fr.to_lyon_fill_rule().ok())
+                  .or(sampler_lyon_fr)
+                  .unwrap_or(lyon_tessellation::FillRule::NonZero);
+                let mesh = crate::mesh_ops::tessellate_polygon::tessellate_lyon_path(
+                  &lyon_path, fill_rule, flipped,
+                )?;
+                return Ok(Value::Mesh(Rc::new(MeshHandle {
+                  mesh: Rc::new(mesh),
+                  transform: Matrix4::identity(),
+                  manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+                  aabb: RefCell::new(None),
+                  trimesh: RefCell::new(None),
+                  material: None,
+                })));
+              }
+            }
           }
         }
       }
@@ -1975,7 +2020,7 @@ fn tessellate_path_impl(
       let dedup_eps_sq = DEDUP_EPSILON * DEDUP_EPSILON;
 
       let mut paths: Vec<Vec<Vec2>> = Vec::new();
-      let mut sampler_fill_rule: Option<lyon_tessellation::FillRule> = None;
+      let mut sampler_fill_rule: Option<trace_path::FillRule> = None;
 
       let mut push_clean_path = |points: Vec<Vec2>, label: &str| -> Result<(), ErrorStack> {
         if points.is_empty() {
@@ -2069,9 +2114,7 @@ fn tessellate_path_impl(
 
         if fill_rule_override.is_none() {
           if let Some(s) = sampler {
-            if let Some(fr) = s.fill_rule() {
-              sampler_fill_rule = fr.to_lyon_fill_rule().ok();
-            }
+            sampler_fill_rule = s.fill_rule();
           }
         }
 
@@ -2113,13 +2156,40 @@ fn tessellate_path_impl(
         )));
       }
 
-      // Priority: explicit arg override > sampler fill_rule > NonZero default
-      let fill_rule = fill_rule_override
-        .or(sampler_fill_rule)
-        .unwrap_or(lyon_tessellation::FillRule::NonZero);
+      // Validate: cgal engine cannot handle a non-default fill rule from the path sampler
+      if requested_engine == TessEngine::Cgal {
+        if let Some(fr) = sampler_fill_rule {
+          if fr != trace_path::FillRule::NonZero {
+            return Err(ErrorStack::new(format!(
+              "`tessellate_path` with engine=\"cgal\" does not support the \"{fr:?}\" fill rule \
+               embedded in this path sampler; use engine=\"lyon\" or remove the fill rule"
+            )));
+          }
+        }
+      }
 
-      let mesh =
-        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths_with_lyon(&paths, fill_rule, flipped)?;
+      // Determine final engine: Lyon if explicitly requested, or if any non-default fill rule is
+      // in play; CGAL otherwise (explicit or auto with no fill rule).
+      let is_non_default_sampler_fr = sampler_fill_rule
+        .map(|fr| fr != trace_path::FillRule::NonZero)
+        .unwrap_or(false);
+      let use_lyon = requested_engine == TessEngine::Lyon
+        || (requested_engine == TessEngine::Auto
+          && (fill_rule_override.is_some() || is_non_default_sampler_fr));
+
+      let mesh = if use_lyon {
+        let lyon_fill_rule = fill_rule_override
+          .and_then(|fr| fr.to_lyon_fill_rule().ok())
+          .or_else(|| sampler_fill_rule.and_then(|fr| fr.to_lyon_fill_rule().ok()))
+          .unwrap_or(lyon_tessellation::FillRule::NonZero);
+        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths_with_lyon(
+          &paths,
+          lyon_fill_rule,
+          flipped,
+        )?
+      } else {
+        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths(&paths, flipped)?
+      };
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
@@ -2439,8 +2509,8 @@ fn text_to_svg_impl(
         Value::Nil => None,
         _ => {
           return Err(ErrorStack::new(format!(
-            "Invalid font_weight argument for `text_to_svg`; expected Int, String, or Nil, \
-             found: {font_weight_val:?}"
+            "Invalid font_weight argument for `text_to_svg`; expected Int, String, or Nil, found: \
+             {font_weight_val:?}"
           )));
         }
       };

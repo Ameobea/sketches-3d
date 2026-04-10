@@ -10,34 +10,6 @@
       "type": "geoscript",
       "code": "export mesh = cylinder(radius=1, height=4, radial_segments=16, height_segments=1)"
     },
-    "csg_box": {
-      "type": "csg",
-      "tree": {
-        "op": "difference",
-        "children": [
-          {
-            "op": "union",
-            "children": [
-              {
-                "asset": "box",
-                "position": [0, 0, 0],
-                "rotation": [0, 0, 0],
-                "scale": [1, 1.8221, 1]
-              },
-              {
-                "asset": "box",
-                "position": [0, 0, 3.87],
-                "rotation": [0, 0, 0],
-                "scale": [1, 2.3607, 1.0723]
-              }
-            ]
-          },
-          {
-            "asset": "box"
-          }
-        ]
-      }
-    },
     "csg_box_1": {
       "type": "csg",
       "tree": {
@@ -86,12 +58,6 @@
         ]
       }
     },
-    "csg_box_2": {
-      "type": "csg",
-      "tree": {
-        "asset": "box"
-      }
-    },
     "csg_box_3": {
       "type": "csg",
       "tree": {
@@ -108,32 +74,6 @@
             "position": [0, 0, 0],
             "rotation": [0, 0, 0],
             "scale": [0.6964, 1, 0.6073]
-          }
-        ]
-      }
-    },
-    "csg_box_4": {
-      "type": "csg",
-      "tree": {
-        "asset": "box"
-      }
-    },
-    "csg_box_5": {
-      "type": "csg",
-      "tree": {
-        "op": "difference",
-        "children": [
-          {
-            "asset": "box",
-            "position": [0, 0, 0],
-            "rotation": [0, 0, 0],
-            "scale": [2.6416, 4.663, 0.4205]
-          },
-          {
-            "asset": "box",
-            "position": [0, 0, 0],
-            "rotation": [0, 0, 0],
-            "scale": [0.4256, 0.7231, 0.7193]
           }
         ]
       }
