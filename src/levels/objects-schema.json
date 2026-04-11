@@ -82,9 +82,72 @@
               "parkour": {
                 "type": "object",
                 "properties": {
-                  "checkpoint": { "type": "number" },
-                  "win": { "type": "boolean" }
+                  "checkpoint": {
+                    "type": "number"
+                  },
+                  "win": {
+                    "type": "boolean"
+                  }
                 },
+                "additionalProperties": false
+              },
+              "behaviors": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "fn": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "fn"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "spawner": {
+                "type": "object",
+                "properties": {
+                  "interval": {
+                    "type": "number"
+                  },
+                  "initialDelay": {
+                    "type": "number"
+                  },
+                  "behaviors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "fn": {
+                          "type": "string"
+                        },
+                        "params": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "fn"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "interval"
+                ],
                 "additionalProperties": false
               }
             },
@@ -192,9 +255,72 @@
                   "parkour": {
                     "type": "object",
                     "properties": {
-                      "checkpoint": { "type": "number" },
-                      "win": { "type": "boolean" }
+                      "checkpoint": {
+                        "type": "number"
+                      },
+                      "win": {
+                        "type": "boolean"
+                      }
                     },
+                    "additionalProperties": false
+                  },
+                  "behaviors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "fn": {
+                          "type": "string"
+                        },
+                        "params": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "fn"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "spawner": {
+                    "type": "object",
+                    "properties": {
+                      "interval": {
+                        "type": "number"
+                      },
+                      "initialDelay": {
+                        "type": "number"
+                      },
+                      "behaviors": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "fn": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "fn"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "interval"
+                    ],
                     "additionalProperties": false
                   }
                 },

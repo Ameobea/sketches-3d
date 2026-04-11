@@ -166,8 +166,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
 
   const handle = viz.levelLoadHandle!;
 
-  // Register the factory for the checkpoint material so the level def system
-  // builds and assigns it to the win-zone mesh when it's placed.
   handle.setMaterialFactories({
     checkpoint: viz => {
       const mat = buildPylonsCheckpointMaterial(viz);
@@ -175,8 +173,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     },
   });
 
-  // Set up parkour collectables once level objects are placed, passing the
-  // win-zone mesh directly instead of relying on name-based traversal.
   handle.parkourObjects.then(parkourObjs => {
     const checkpointMeshes = parkourObjs.flatMap(obj => collectMeshes(obj.object));
     pkManager.setMaterials(

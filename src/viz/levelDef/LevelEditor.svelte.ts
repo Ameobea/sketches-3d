@@ -6,8 +6,8 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
 import type { AssetLibFolder } from './assetLibTypes';
-import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
-import type { LevelGroup, LevelObject, LevelSceneNode } from './levelSceneTypes';
+import type { LevelDef, LightDef, ObjectDef, ObjectGroupDef } from './types';
+import type { LevelGroup, LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
 import { LEVEL_PLACEHOLDER_MAT, assignMaterial, instantiateLevelObject } from './levelObjectUtils';
 import { resolveGeoscriptAsset } from './loadLevelDef';
@@ -88,6 +88,18 @@ export class LevelEditor {
 
   private lastReplayableAction: ReplayableTransformDelta | null = null;
 
+  // --- Light support ---
+  allLevelLights: LevelLight[];
+  selectedLight: LevelLight | null = null;
+  private lightProxyMeshes: THREE.Mesh[] = [];
+  private meshToLevelLight = new Map<THREE.Mesh, LevelLight>();
+  private lightToProxy = new Map<string, THREE.Mesh>();
+  private lightProxyGeometry = new THREE.OctahedronGeometry(0.4);
+  /** True while a TransformControls drag is in progress for a light. */
+  private lightIsDragging = false;
+  /** Transform mode that was active before a light was selected (restored on deselect). */
+  private preLightTransformMode: TransformMode | null = null;
+
   private selectionState = $state({
     nodeId: null as string | null,
     materialId: null as string | null,
@@ -97,6 +109,10 @@ export class LevelEditor {
     position: [0, 0, 0] as [number, number, number],
     rotation: [0, 0, 0] as [number, number, number],
     scale: [1, 1, 1] as [number, number, number],
+    /** When non-null, a light is selected instead of a scene node. */
+    selectedLightDef: null as LightDef | null,
+    /** Position of the selected light, synced from TransformControls. */
+    lightPosition: [0, 0, 0] as [number, number, number],
     /** Incremented whenever rootNodes changes — triggers hierarchy panel re-render. */
     treeVersion: 0,
     /** Incremented when a new asset is added — triggers asset list re-render in panel. */
@@ -118,7 +134,8 @@ export class LevelEditor {
     loadedTextures: Map<string, THREE.Texture>,
     levelDef: LevelDef,
     rootNodes: LevelSceneNode[],
-    nodeById: Map<string, LevelSceneNode>
+    nodeById: Map<string, LevelSceneNode>,
+    levelLights: LevelLight[]
   ) {
     this.viz = viz;
     this.levelDef = levelDef;
@@ -127,6 +144,7 @@ export class LevelEditor {
     this.allLevelObjects = objects;
     this.rootNodes = rootNodes;
     this.nodeById = nodeById;
+    this.allLevelLights = levelLights;
 
     this.api = new LevelEditorApi(levelName);
     this.materialEditor = new MaterialEditorController(
@@ -262,7 +280,10 @@ export class LevelEditor {
         this.deselect();
       }
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (this.selectedNode) {
+      if (this.selectedLight) {
+        e.preventDefault();
+        this.deleteLight(this.selectedLight);
+      } else if (this.selectedNode) {
         if (this.selectedNode.generated) {
           console.info('[LevelEditor] Generated nodes are read-only in the editor.');
           return;
@@ -335,11 +356,16 @@ export class LevelEditor {
       }
 
       if (e.value) {
-        if (this.selectedNode) {
+        if (this.selectedLight) {
+          this.lightIsDragging = true;
+        } else if (this.selectedNode) {
           this.dragStartSnapshot = this.snapshotTransform(this.selectedNode.object);
         }
       } else {
-        if (this.selectedNode && this.dragStartSnapshot) {
+        if (this.selectedLight && this.lightIsDragging) {
+          this.lightIsDragging = false;
+          this.saveLightPosition(this.selectedLight);
+        } else if (this.selectedNode && this.dragStartSnapshot) {
           const after = this.snapshotTransform(this.selectedNode.object);
           const before = this.dragStartSnapshot;
           this.dragStartSnapshot = null;
@@ -385,6 +411,8 @@ export class LevelEditor {
     this.transformControls.addEventListener('objectChange', () => {
       if (this.csgController.isActive) {
         this.csgController.onObjectChange();
+      } else if (this.selectedLight) {
+        this.syncLightPositionFromObject();
       } else {
         this.syncTransformFromNode();
       }
@@ -399,6 +427,7 @@ export class LevelEditor {
     canvas.addEventListener('pointermove', this.onPointerMove);
     canvas.addEventListener('pointerup', this.onPointerUp);
 
+    this.createLightProxies();
     this.createPanel();
 
     // Fetch the asset library tree in the background; update the panel once it arrives.
@@ -434,6 +463,7 @@ export class LevelEditor {
     canvas.removeEventListener('pointermove', this.onPointerMove);
     canvas.removeEventListener('pointerup', this.onPointerUp);
 
+    this.destroyLightProxies();
     this.destroyPanel();
   }
 
@@ -461,6 +491,19 @@ export class LevelEditor {
         get rootNodes() {
           void state.treeVersion;
           return self.rootNodes;
+        },
+        get lights() {
+          void state.treeVersion;
+          return self.allLevelLights;
+        },
+        get selectedLightId(): string | null {
+          return state.selectedLightDef?.id ?? null;
+        },
+        get selectedLightDef() {
+          return state.selectedLightDef;
+        },
+        get lightPosition(): [number, number, number] {
+          return state.lightPosition;
         },
         get selectedNodeId(): string | null {
           return state.nodeId;
@@ -490,6 +533,14 @@ export class LevelEditor {
           return state.scale;
         },
         onselectnode: (node: import('./loadLevelDef').LevelSceneNode) => this.select(node),
+        onselectlight: (light: import('./levelSceneTypes').LevelLight) => this.selectLight(light),
+        onaddlight: (lightType: import('./types').LightDef['type']) => void this.onAddLightClick(lightType),
+        onlightpositionchange: (pos: [number, number, number]) => this.applyLightPositionInput(pos),
+        onlightpropertychange: (update: Partial<import('./types').LightDef>) =>
+          this.applyLightPropertyChange(update),
+        ondeletelight: () => {
+          if (this.selectedLight) this.deleteLight(this.selectedLight);
+        },
         onadd: (assetId: string, materialId: string | undefined) => this.onAddClick(assetId, materialId),
         onaddlibrary: (libPath: string, materialId: string | undefined) =>
           void this.onAddLibraryClick(libPath, materialId),
@@ -534,12 +585,23 @@ export class LevelEditor {
   }
 
   updateSelectionState() {
+    if (this.selectedLight) {
+      this.selectionState.nodeId = null;
+      this.selectionState.materialId = null;
+      this.selectionState.isGroup = false;
+      this.selectionState.isGenerated = false;
+      this.selectionState.isCsgAsset = false;
+      this.selectionState.selectedLightDef = this.selectedLight.def;
+      this.syncLightPositionFromObject();
+      return;
+    }
     const node = this.selectedNode;
     this.selectionState.nodeId = node?.id ?? null;
     this.selectionState.materialId = this.selectedObject?.def?.material ?? null;
     this.selectionState.isGroup = node ? isLevelGroup(node) : false;
     this.selectionState.isGenerated = node ? node.generated : false;
     this.selectionState.isCsgAsset = this.csgController.isEditorOpen;
+    this.selectionState.selectedLightDef = null;
     this.syncTransformFromNode();
   }
 
@@ -623,6 +685,16 @@ export class LevelEditor {
 
     if (this.csgController.doRaycast(this.raycaster)) {
       return;
+    }
+
+    // Check light proxies first (they're small so prioritize proximity)
+    const lightHits = this.raycaster.intersectObjects(this.lightProxyMeshes, false);
+    if (lightHits.length > 0) {
+      const levelLight = this.meshToLevelLight.get(lightHits[0].object as THREE.Mesh);
+      if (levelLight) {
+        this.selectLight(levelLight);
+        return;
+      }
     }
 
     const hits = this.raycaster.intersectObjects(this.selectableMeshes, false);
@@ -726,6 +798,10 @@ export class LevelEditor {
     if (this.csgController.isActive) {
       this.csgController.exit();
     }
+    if (this.selectedLight) {
+      this.deselectLight();
+      return;
+    }
     this.selectedNode = null;
     this.transformControls?.detach();
     this.updateSelectionState();
@@ -752,6 +828,256 @@ export class LevelEditor {
       radius,
     });
   }
+
+  // ---- Light methods ----
+
+  private createLightProxies() {
+    for (const levelLight of this.allLevelLights) {
+      if (levelLight.def.type === 'ambient') continue; // no position to show
+      const mat = new THREE.MeshBasicMaterial({
+        color: levelLight.def.color ?? 0xffffff,
+        transparent: true,
+        opacity: 0.75,
+        depthTest: false,
+      });
+      const proxy = new THREE.Mesh(this.lightProxyGeometry, mat);
+      if (levelLight.def.position) proxy.position.fromArray(levelLight.def.position);
+      proxy.renderOrder = 999;
+      this.viz.scene.add(proxy);
+      this.lightProxyMeshes.push(proxy);
+      this.meshToLevelLight.set(proxy, levelLight);
+      this.lightToProxy.set(levelLight.id, proxy);
+    }
+  }
+
+  private destroyLightProxies() {
+    for (const proxy of this.lightProxyMeshes) {
+      this.viz.scene.remove(proxy);
+      (proxy.material as THREE.Material).dispose();
+    }
+    this.lightProxyMeshes = [];
+    this.meshToLevelLight.clear();
+    this.lightToProxy.clear();
+  }
+
+  selectLight(levelLight: LevelLight) {
+    // Deselect any active scene node / CSG first
+    if (this.csgController.isActive) this.csgController.exit();
+    this.csgController.closeEditor();
+    this.selectedNode = null;
+
+    this.selectedLight = levelLight;
+
+    // Force translate mode for lights (only position is meaningful)
+    if (levelLight.def.type !== 'ambient') {
+      this.preLightTransformMode = this.transformMode;
+      this.setTransformMode('translate');
+      this.transformControls?.attach(levelLight.light);
+    } else {
+      this.transformControls?.detach();
+    }
+
+    this.updateSelectionState();
+  }
+
+  private deselectLight() {
+    this.selectedLight = null;
+    this.transformControls?.detach();
+    // Restore previous transform mode
+    if (this.preLightTransformMode) {
+      this.setTransformMode(this.preLightTransformMode);
+      this.preLightTransformMode = null;
+    }
+    this.selectionState.selectedLightDef = null;
+    this.syncTransformFromNode();
+  }
+
+  private syncLightPositionFromObject() {
+    if (!this.selectedLight) return;
+    const pos = this.selectedLight.light.position;
+    this.selectionState.lightPosition = [pos.x, pos.y, pos.z];
+    // Keep proxy in sync
+    const proxy = this.lightToProxy.get(this.selectedLight.id);
+    if (proxy) proxy.position.copy(pos);
+  }
+
+  private saveLightPosition(levelLight: LevelLight) {
+    if (levelLight.def.type === 'ambient') return;
+    const round = (n: number) => Math.round(n * 10000) / 10000;
+    const pos = levelLight.light.position;
+    const position: [number, number, number] = [round(pos.x), round(pos.y), round(pos.z)];
+    levelLight.def = { ...levelLight.def, position } as LightDef;
+    this.updateLevelDefLight(levelLight);
+    void this.api.saveLight(levelLight.def);
+    this.selectionState.selectedLightDef = levelLight.def;
+  }
+
+  /** Apply a position change from the info panel inputs. */
+  applyLightPositionInput(pos: [number, number, number]) {
+    const light = this.selectedLight;
+    if (!light || light.def.type === 'ambient') return;
+    light.light.position.fromArray(pos);
+    const proxy = this.lightToProxy.get(light.id);
+    if (proxy) proxy.position.fromArray(pos);
+    this.saveLightPosition(light);
+    this.selectionState.lightPosition = pos;
+  }
+
+  /** Apply property changes (color, intensity, type-specific params) from the info panel. */
+  applyLightPropertyChange(update: Partial<LightDef>) {
+    const light = this.selectedLight;
+    if (!light) return;
+    light.def = { ...light.def, ...update } as LightDef;
+    this.updateLevelDefLight(light);
+    void this.api.saveLight(light.def);
+    this.selectionState.selectedLightDef = light.def;
+
+    // Apply live to the Three.js light
+    const l = light.light;
+    if ('color' in update && update.color !== undefined) {
+      l.color.setHex(update.color);
+      const proxy = this.lightToProxy.get(light.id);
+      if (proxy) (proxy.material as THREE.MeshBasicMaterial).color.setHex(update.color);
+    }
+    if ('intensity' in update && update.intensity !== undefined) {
+      l.intensity = update.intensity;
+    }
+    if ('castShadow' in update && update.castShadow !== undefined) {
+      l.castShadow = update.castShadow;
+    }
+    if ('distance' in update && update.distance !== undefined && 'distance' in l) {
+      (l as THREE.PointLight | THREE.SpotLight).distance = update.distance;
+    }
+    if ('decay' in update && update.decay !== undefined && 'decay' in l) {
+      (l as THREE.PointLight | THREE.SpotLight).decay = update.decay as number;
+    }
+    if ('angle' in update && update.angle !== undefined && l instanceof THREE.SpotLight) {
+      l.angle = update.angle;
+    }
+    if ('penumbra' in update && update.penumbra !== undefined && l instanceof THREE.SpotLight) {
+      l.penumbra = update.penumbra;
+    }
+  }
+
+  private updateLevelDefLight(levelLight: LevelLight) {
+    if (!this.levelDef.lights) return;
+    const idx = this.levelDef.lights.findIndex(l => l.id === levelLight.id);
+    if (idx !== -1) this.levelDef.lights[idx] = levelLight.def;
+  }
+
+  private deleteLight(levelLight: LevelLight) {
+    if (this.selectedLight === levelLight) this.deselectLight();
+
+    // Remove from scene
+    this.viz.scene.remove(levelLight.light);
+
+    // Remove proxy
+    const proxy = this.lightToProxy.get(levelLight.id);
+    if (proxy) {
+      this.viz.scene.remove(proxy);
+      (proxy.material as THREE.Material).dispose();
+      const proxyIdx = this.lightProxyMeshes.indexOf(proxy);
+      if (proxyIdx !== -1) this.lightProxyMeshes.splice(proxyIdx, 1);
+      this.meshToLevelLight.delete(proxy);
+      this.lightToProxy.delete(levelLight.id);
+    }
+
+    // Remove from allLevelLights and levelDef
+    const idx = this.allLevelLights.indexOf(levelLight);
+    if (idx !== -1) this.allLevelLights.splice(idx, 1);
+    if (this.levelDef.lights) {
+      const defIdx = this.levelDef.lights.findIndex(l => l.id === levelLight.id);
+      if (defIdx !== -1) this.levelDef.lights.splice(defIdx, 1);
+    }
+
+    this.selectionState.treeVersion++;
+    void this.api.deleteLight(levelLight.id);
+  }
+
+  async onAddLightClick(lightType: LightDef['type']) {
+    const round = (n: number) => Math.round(n * 10000) / 10000;
+    const orbitTarget = this.orbitControls?.target ?? new THREE.Vector3();
+    const position: [number, number, number] = [
+      round(orbitTarget.x),
+      round(orbitTarget.y),
+      round(orbitTarget.z),
+    ];
+
+    const candidate: Partial<LightDef> & { type: LightDef['type'] } = { type: lightType };
+    if (lightType !== 'ambient') {
+      (candidate as any).position = position;
+    }
+
+    const newDef = await this.api.addLight(candidate as Omit<LightDef, 'id'>);
+    if (!newDef) return;
+
+    // Create the Three.js light (inline since the helper is not exported)
+    let newLight: THREE.Light;
+    switch (newDef.type) {
+      case 'ambient':
+        newLight = new THREE.AmbientLight(newDef.color ?? 0xffffff, newDef.intensity ?? 1);
+        break;
+      case 'directional': {
+        const l = new THREE.DirectionalLight(newDef.color ?? 0xffffff, newDef.intensity ?? 1);
+        if (newDef.position) l.position.fromArray(newDef.position);
+        newLight = l;
+        break;
+      }
+      case 'point': {
+        const l = new THREE.PointLight(
+          newDef.color ?? 0xffffff,
+          newDef.intensity ?? 1,
+          newDef.distance ?? 0,
+          newDef.decay ?? 2
+        );
+        if (newDef.position) l.position.fromArray(newDef.position);
+        newLight = l;
+        break;
+      }
+      case 'spot': {
+        const l = new THREE.SpotLight(
+          newDef.color ?? 0xffffff,
+          newDef.intensity ?? 1,
+          newDef.distance ?? 0,
+          newDef.angle ?? Math.PI / 4,
+          newDef.penumbra ?? 0,
+          newDef.decay ?? 2
+        );
+        if (newDef.position) l.position.fromArray(newDef.position);
+        newLight = l;
+        break;
+      }
+    }
+    newLight!.name = newDef.id;
+    this.viz.scene.add(newLight!);
+
+    const levelLight: LevelLight = { id: newDef.id, light: newLight!, def: newDef };
+    this.allLevelLights.push(levelLight);
+    if (!this.levelDef.lights) this.levelDef.lights = [];
+    this.levelDef.lights.push(newDef);
+
+    // Create proxy if positional
+    if (newDef.type !== 'ambient') {
+      const mat = new THREE.MeshBasicMaterial({
+        color: newDef.color ?? 0xffffff,
+        transparent: true,
+        opacity: 0.75,
+        depthTest: false,
+      });
+      const proxy = new THREE.Mesh(this.lightProxyGeometry, mat);
+      if (newDef.position) proxy.position.fromArray(newDef.position);
+      proxy.renderOrder = 999;
+      this.viz.scene.add(proxy);
+      this.lightProxyMeshes.push(proxy);
+      this.meshToLevelLight.set(proxy, levelLight);
+      this.lightToProxy.set(newDef.id, proxy);
+    }
+
+    this.selectionState.treeVersion++;
+    this.selectLight(levelLight);
+  }
+
+  // ---- End light methods ----
 
   /**
    * Replay the last transform action on the currently selected object (Shift+R).
@@ -1114,7 +1440,8 @@ export const initLevelEditor = (
   loadedTextures: Map<string, THREE.Texture>,
   levelDef: LevelDef,
   rootNodes: LevelSceneNode[],
-  nodeById: Map<string, LevelSceneNode>
+  nodeById: Map<string, LevelSceneNode>,
+  levelLights: LevelLight[]
 ): LevelEditor =>
   new LevelEditor(
     viz,
@@ -1125,5 +1452,6 @@ export const initLevelEditor = (
     loadedTextures,
     levelDef,
     rootNodes,
-    nodeById
+    nodeById,
+    levelLights
   );

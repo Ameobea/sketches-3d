@@ -1,35 +1,13 @@
 import * as THREE from 'three';
 import type { Viz } from 'src/viz';
-import {
-  buildCustomShader,
-  type CustomShaderMaterial,
-  type CustomShaderProps,
-} from 'src/viz/shaders/customShader';
-import BridgeMistColorShader from 'src/viz/shaders/bridge2/bridge_top_mist/color.frag?raw';
+
+import CheckpointVertexShader from './checkpoint.vert?raw';
+import CheckpointFragmentShader from './checkpoint.frag?raw';
+import depthExactVertexBody from 'src/viz/shaders/depthExactVertex.glsl?raw';
+import commonShaderCode from 'src/viz/shaders/common.frag?raw';
+import noiseShaderCode from 'src/viz/shaders/noise.frag?raw';
 
 export const DEFAULT_CHECKPOINT_COLOR: [number, number, number] = [0.8, 0.1, 0.645 * 2];
-
-/**
- * The bridge-top-mist color shader with all sentinels filled in with their default values,
- * including the default checkpoint color. Import this instead of the raw .frag file when using
- * the shader outside of buildCheckpointMaterial (e.g. passed directly to buildCustomShader).
- */
-export const BridgeMistColorShaderDefault = BridgeMistColorShader.replace(
-  'vec4 outColor = vec4(0.8, 0.5, 0.6, 0.0);',
-  `vec4 outColor = vec4(${DEFAULT_CHECKPOINT_COLOR[0].toFixed(8)}, ${DEFAULT_CHECKPOINT_COLOR[1].toFixed(8)}, ${DEFAULT_CHECKPOINT_COLOR[2].toFixed(8)}, 0.0);`
-)
-  .replace('__NOISE_ROT__', 'mat3(1.0)')
-  .replace('__NOISE_DIR__', 'vec3(0.0000, 1.0000, -3.0000)')
-  .replace('__NOISE_FREQ__', 'vec3(3.6000, 0.3000, 0.6000)')
-  .replace('__NOISE_POS_QUANT__', '0.02')
-  .replaceAll('__NOISE_BIAS__', '-0.2')
-  .replaceAll('__NOISE_POW__', '0.62')
-  .replaceAll('__NOISE_QUANT__', '0.042')
-  .replaceAll('__NOISE_MULTIPLIER__', '1.0')
-  .replace('__FADE_DEFS__', '')
-  .replace('__EDGE_WARP_DEFS__', '');
-// Note: __BREEZE_*__ sentinels are inside #ifdef EDGE_WARP_ACTIVE which is inactive here,
-// so they remain unresolved but are safely skipped by the GLSL preprocessor.
 
 export interface CheckpointMaterialOptions {
   /** Direction (and speed) of noise animation. Default vec3(0, 1, -3). */
@@ -75,6 +53,34 @@ export interface CheckpointMaterialOptions {
    * gives noise + (-0.2) + (-0.8) = noise - 1.0 at the very top).
    */
   noiseVertBiasAmtHi?: number;
+
+  // ── Cap (normal-aware) noise ───────────────────────────────────────────────
+  /**
+   * When true, fragments whose world-space normal points mostly up or down
+   * blend toward an alternate noise sampling that looks good on horizontal
+   * surfaces (e.g. the tops of flame-column portals). Pass-through on vertical
+   * faces — existing side tuning is not disturbed. Default: true.
+   */
+  capEnabled?: boolean;
+  /**
+   * Extra Euler rotation (XYZ, radians) applied *after* noiseRotation when
+   * sampling the cap noise field. Default [PI/2, 0, 0] — a 90° rotation about
+   * X, which swaps the noise Y and Z axes so the "flame flow up" direction of
+   * the noise field projects onto the world XZ plane. The result looks like
+   * cross-sections through the same flame column instead of a single static
+   * slice.
+   */
+  capNoiseRotation?: [number, number, number];
+  /**
+   * |worldNormal.y| below which the cap branch is a full pass-through (pure
+   * side noise). Default 0.5 — keeps side walls and up to ~60°-tilted faces
+   * untouched.
+   */
+  capBlendLo?: number;
+  /**
+   * |worldNormal.y| at which the cap branch is fully active. Default 0.85.
+   */
+  capBlendHi?: number;
 
   // ── X-axis fade ────────────────────────────────────────────────────────────
   /**
@@ -160,11 +166,32 @@ export interface CheckpointMaterialOptions {
   breezeNoiseAmpMult?: number;
 }
 
+export interface CheckpointMaterialExtras {
+  /** Optional material name (forwarded to THREE.Material.name). */
+  name?: string;
+  /**
+   * Final multiplier on output RGB. Use this to push the material brighter
+   * so it crosses the emissive bloom threshold. Replaces the old
+   * `ambientLightScale` knob, which is meaningless now that the material is
+   * unlit. Default 1.
+   */
+  intensity?: number;
+  /** Discard threshold on computed alpha. Default 0.05. */
+  alphaTest?: number;
+  /**
+   * When true, only front faces are rendered (`THREE.FrontSide`). Use this for
+   * portal meshes whose geometry exactly touches a surrounding frame — rendering
+   * back faces at the same depth as the frame surface causes z-fighting.
+   * Default false (DoubleSide, so the interior is visible when looking in from any angle).
+   */
+  frontFaceOnly?: boolean;
+}
+
 /**
- * A CustomShaderMaterial produced by buildCheckpointMaterial, extended with a `setMesh`
- * helper that computes the world-space bounding box and updates the fade uniforms.
+ * A plain THREE.ShaderMaterial with a `setMesh` helper that computes the
+ * world-space bounding box of a mesh and updates the fade uniforms.
  */
-export type CheckpointMaterial = CustomShaderMaterial & {
+export type CheckpointMaterial = THREE.ShaderMaterial & {
   setMesh(mesh: THREE.Mesh): void;
 };
 
@@ -179,88 +206,117 @@ const buildNoiseRotGLSL = (rotation: [number, number, number]): string => {
 
 const v3 = ([r, g, b]: [number, number, number]) => `vec3(${r.toFixed(6)}, ${g.toFixed(6)}, ${b.toFixed(6)})`;
 
-export const buildCheckpointMaterial = (
-  viz: Viz,
-  color: [number, number, number] = DEFAULT_CHECKPOINT_COLOR,
-  extraProps: Partial<CustomShaderProps> = {},
-  options: CheckpointMaterialOptions = {}
-): CheckpointMaterial => {
+const buildCheckpointVertexShader = () =>
+  CheckpointVertexShader.replace('__DEPTH_EXACT_VERTEX_BODY__', depthExactVertexBody);
+
+const buildCheckpointFragmentShader = (
+  color: [number, number, number],
+  options: CheckpointMaterialOptions,
+  alphaTest: number
+): string => {
   const [nx, ny, nz] = options.noiseDir ?? [0, 1, -3];
   const [fx, fy, fz] = options.noiseFreq ?? [3.6, 0.3, 0.6];
   const noiseRotGLSL = options.noiseRotation ? buildNoiseRotGLSL(options.noiseRotation) : 'mat3(1.0)';
   const f = (n: number) => n.toFixed(6);
 
-  const mat = buildCustomShader(
-    {
-      metalness: 0,
-      alphaTest: 0.05,
-      transparent: true,
-      ambientLightScale: 2,
-      side: THREE.DoubleSide,
-      ...extraProps,
-    },
-    {
-      colorShader: BridgeMistColorShader.replace(
-        'vec4 outColor = vec4(0.8, 0.5, 0.6, 0.0);',
-        `vec4 outColor = vec4(${color[0].toFixed(8)}, ${color[1].toFixed(8)}, ${color[2].toFixed(8)}, 0.0);`
-      )
-        .replace('__NOISE_ROT__', noiseRotGLSL)
-        .replace('__NOISE_DIR__', `vec3(${nx.toFixed(4)}, ${ny.toFixed(4)}, ${nz.toFixed(4)})`)
-        .replace('__NOISE_FREQ__', `vec3(${fx.toFixed(4)}, ${fy.toFixed(4)}, ${fz.toFixed(4)})`)
-        .replace('__NOISE_POS_QUANT__', f(options.noisePosQuantize ?? 0.02))
-        .replaceAll('__NOISE_BIAS__', f(options.noiseBias ?? -0.2))
-        .replaceAll('__NOISE_POW__', f(options.noisePow ?? 0.62))
-        .replaceAll('__NOISE_QUANT__', f(options.noiseQuantize ?? 0.042))
-        .replaceAll('__NOISE_MULTIPLIER__', f(options.noiseMultiplier ?? 1.0))
-        .replace(
-          '__FADE_DEFS__',
-          [
-            options.fadeTopDist || options.fadeBottomDist ? '#define FADE_ACTIVE' : '',
-            options.noiseVertBiasAmtLo !== undefined || options.noiseVertBiasAmtHi !== undefined
-              ? '#define VERT_BIAS_ACTIVE'
-              : '',
-            options.xFadeLo !== undefined && options.xFadeHi !== undefined ? '#define X_FADE_ACTIVE' : '',
-          ]
-            .filter(Boolean)
-            .join('\n')
-        )
-        .replace('__EDGE_WARP_DEFS__', options.fadeEdgeAmp ? '#define EDGE_WARP_ACTIVE' : '')
-        // Breeze sentinels — only live inside #ifdef EDGE_WARP_ACTIVE so safe to always replace
-        .replace('__BREEZE_TIME_FREQ__', f(options.breezeTimeFreq ?? 0.75))
-        .replace('__VERT_BIAS_LO__', f(options.noiseVertBiasLo ?? 0.3))
-        .replace('__VERT_BIAS_HI__', f(options.noiseVertBiasHi ?? 1.0))
-        .replace('__VERT_BIAS_AMT_LO__', f(options.noiseVertBiasAmtLo ?? 0.0))
-        .replace('__VERT_BIAS_AMT_HI__', f(options.noiseVertBiasAmtHi ?? 0.0))
-        .replace('__X_FADE_LO__', f(options.xFadeLo ?? 0.0))
-        .replace('__X_FADE_HI__', f(options.xFadeHi ?? 0.0))
-        .replace('__BREEZE_THRESHOLD__', f(options.breezeThreshold ?? 0.5))
-        .replace('__BREEZE_THRESHOLD_HI__', f(options.breezeThresholdHi ?? 1.0))
-        .replace('__BREEZE_BIAS_DELTA__', f(options.breezeBiasDelta ?? 0.0))
-        .replace('__BREEZE_NOISE_AMP_MULT__', f(options.breezeNoiseAmpMult ?? 0.0))
-        .replace('__BREEZE_HOT_COLOR__', options.breezeHotColor ? v3(options.breezeHotColor) : 'outColor.rgb')
-        .replace('__BREEZE_COLOR_MIX__', f(options.breezeColorMix ?? 0.0))
-        .replaceAll('__BREEZE_MOD_SCALE__', f(options.breezeModScale ?? 0.5))
-        .replace('__BREEZE_PM_DEPTH__', f(options.breezePmDepth ?? 1.8))
-        .replace('__BREEZE_AMP_MULT__', f(options.breezeAmpMult ?? 2.5)),
-    },
-    { disableToneMapping: true }
-  );
+  const capEnabled = options.capEnabled ?? true;
+  const capNoiseRotGLSL = buildNoiseRotGLSL(options.capNoiseRotation ?? [Math.PI / 2, 0, 0]);
 
-  // Vertical fade + edge-warp uniforms — always present so the shader compiles.
-  // fadeTopDist, fadeBottomDist, fadeEdgeAmp are stored as fractions of bbox height and
-  // converted to world-space units in setMesh(). Initial values use DEFAULT_BBOX_HEIGHT
-  // as a stand-in so the material looks reasonable before setMesh is called.
+  const helpers = `${commonShaderCode}\n${noiseShaderCode}\n`;
+
+  return (
+    helpers +
+    CheckpointFragmentShader.replaceAll('__BASE_COLOR__', v3(color))
+      .replaceAll('__NOISE_ROT__', noiseRotGLSL)
+      .replaceAll('__NOISE_DIR__', `vec3(${nx.toFixed(4)}, ${ny.toFixed(4)}, ${nz.toFixed(4)})`)
+      .replaceAll('__NOISE_FREQ__', `vec3(${fx.toFixed(4)}, ${fy.toFixed(4)}, ${fz.toFixed(4)})`)
+      .replaceAll('__NOISE_POS_QUANT__', f(options.noisePosQuantize ?? 0.02))
+      .replaceAll('__NOISE_BIAS__', f(options.noiseBias ?? -0.2))
+      .replaceAll('__NOISE_POW__', f(options.noisePow ?? 0.62))
+      .replaceAll('__NOISE_QUANT__', f(options.noiseQuantize ?? 0.042))
+      .replaceAll('__NOISE_MULTIPLIER__', f(options.noiseMultiplier ?? 1.0))
+      .replaceAll(
+        '__FADE_DEFS__',
+        [
+          options.fadeTopDist || options.fadeBottomDist ? '#define FADE_ACTIVE' : '',
+          options.noiseVertBiasAmtLo !== undefined || options.noiseVertBiasAmtHi !== undefined
+            ? '#define VERT_BIAS_ACTIVE'
+            : '',
+          options.xFadeLo !== undefined && options.xFadeHi !== undefined ? '#define X_FADE_ACTIVE' : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      )
+      .replaceAll('__EDGE_WARP_DEFS__', options.fadeEdgeAmp ? '#define EDGE_WARP_ACTIVE' : '')
+      .replaceAll('__CAP_DEFS__', capEnabled ? '#define CAP_ACTIVE' : '')
+      .replaceAll('__CAP_NOISE_ROT__', capNoiseRotGLSL)
+      .replaceAll('__CAP_BLEND_LO__', f(options.capBlendLo ?? 0.5))
+      .replaceAll('__CAP_BLEND_HI__', f(options.capBlendHi ?? 0.85))
+      .replaceAll('__ALPHA_TEST__', f(alphaTest))
+      // Breeze sentinels — only live inside #ifdef EDGE_WARP_ACTIVE so safe to always replace
+      .replaceAll('__BREEZE_TIME_FREQ__', f(options.breezeTimeFreq ?? 0.75))
+      .replaceAll('__VERT_BIAS_LO__', f(options.noiseVertBiasLo ?? 0.3))
+      .replaceAll('__VERT_BIAS_HI__', f(options.noiseVertBiasHi ?? 1.0))
+      .replaceAll('__VERT_BIAS_AMT_LO__', f(options.noiseVertBiasAmtLo ?? 0.0))
+      .replaceAll('__VERT_BIAS_AMT_HI__', f(options.noiseVertBiasAmtHi ?? 0.0))
+      .replaceAll('__X_FADE_LO__', f(options.xFadeLo ?? 0.0))
+      .replaceAll('__X_FADE_HI__', f(options.xFadeHi ?? 0.0))
+      .replaceAll('__BREEZE_THRESHOLD_HI__', f(options.breezeThresholdHi ?? 1.0))
+      .replaceAll('__BREEZE_THRESHOLD__', f(options.breezeThreshold ?? 0.5))
+      .replaceAll('__BREEZE_BIAS_DELTA__', f(options.breezeBiasDelta ?? 0.0))
+      .replaceAll('__BREEZE_NOISE_AMP_MULT__', f(options.breezeNoiseAmpMult ?? 0.0))
+      .replaceAll('__BREEZE_HOT_COLOR__', options.breezeHotColor ? v3(options.breezeHotColor) : v3(color))
+      .replaceAll('__BREEZE_COLOR_MIX__', f(options.breezeColorMix ?? 0.0))
+      .replaceAll('__BREEZE_MOD_SCALE__', f(options.breezeModScale ?? 0.5))
+      .replaceAll('__BREEZE_PM_DEPTH__', f(options.breezePmDepth ?? 1.8))
+      .replaceAll('__BREEZE_AMP_MULT__', f(options.breezeAmpMult ?? 2.5))
+  );
+};
+
+export const buildCheckpointMaterial = (
+  viz: Viz,
+  color: [number, number, number] = DEFAULT_CHECKPOINT_COLOR,
+  extras: CheckpointMaterialExtras = {},
+  options: CheckpointMaterialOptions = {}
+): CheckpointMaterial => {
+  const alphaTest = extras.alphaTest ?? 0.05;
+
+  // Fade/edge-warp uniforms use `fraction of bbox height` as their authored
+  // unit, but the shader consumes world-space distance. setMesh() rewrites
+  // these when the mesh is known; until then we use a stand-in bbox height so
+  // the material at least looks reasonable.
   const DEFAULT_BBOX_HEIGHT = 4;
   const [ex, ez] = options.fadeEdgeSpeed ?? [0.15, 0.1];
-  mat.uniforms.bboxYMin = { value: 0 };
-  mat.uniforms.bboxYMax = { value: DEFAULT_BBOX_HEIGHT };
-  mat.uniforms.fadeTopDist = { value: (options.fadeTopDist ?? 0) * DEFAULT_BBOX_HEIGHT };
-  mat.uniforms.fadeTopSteepness = { value: options.fadeTopSteepness ?? 1 };
-  mat.uniforms.fadeBottomDist = { value: (options.fadeBottomDist ?? 0) * DEFAULT_BBOX_HEIGHT };
-  mat.uniforms.fadeBottomSteepness = { value: options.fadeBottomSteepness ?? 1 };
-  mat.uniforms.fadeEdgeAmp = { value: (options.fadeEdgeAmp ?? 0) * DEFAULT_BBOX_HEIGHT };
-  mat.uniforms.fadeEdgeFreq = { value: options.fadeEdgeFreq ?? 0.08 };
-  mat.uniforms.fadeEdgeSpeed = { value: new THREE.Vector2(ex, ez) };
+
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: buildCheckpointVertexShader(),
+    fragmentShader: buildCheckpointFragmentShader(color, options, alphaTest),
+    glslVersion: THREE.GLSL3,
+    transparent: true,
+    side: extras.frontFaceOnly ? THREE.FrontSide : THREE.DoubleSide,
+    depthWrite: false,
+    uniforms: {
+      curTimeSeconds: { value: 0 },
+      intensity: { value: extras.intensity ?? 1 },
+      bboxYMin: { value: 0 },
+      bboxYMax: { value: DEFAULT_BBOX_HEIGHT },
+      fadeTopDist: { value: (options.fadeTopDist ?? 0) * DEFAULT_BBOX_HEIGHT },
+      fadeTopSteepness: { value: options.fadeTopSteepness ?? 1 },
+      fadeBottomDist: { value: (options.fadeBottomDist ?? 0) * DEFAULT_BBOX_HEIGHT },
+      fadeBottomSteepness: { value: options.fadeBottomSteepness ?? 1 },
+      fadeEdgeAmp: { value: (options.fadeEdgeAmp ?? 0) * DEFAULT_BBOX_HEIGHT },
+      fadeEdgeFreq: { value: options.fadeEdgeFreq ?? 0.08 },
+      fadeEdgeSpeed: { value: new THREE.Vector2(ex, ez) },
+    },
+  });
+
+  mat.toneMapped = false;
+  if (extras.name) {
+    mat.name = extras.name;
+  }
+
+  mat.userData.emissiveBypass = true;
+  mat.userData.occlusionExclude = true;
 
   const checkpointMat = mat as CheckpointMaterial;
   checkpointMat.setMesh = (mesh: THREE.Mesh) => {
@@ -273,6 +329,8 @@ export const buildCheckpointMaterial = (
     mat.uniforms.fadeEdgeAmp.value = (options.fadeEdgeAmp ?? 0) * height;
   };
 
-  viz.registerBeforeRenderCb(curTimeSeconds => mat.setCurTimeSeconds(curTimeSeconds));
+  viz.registerBeforeRenderCb(curTimeSeconds => {
+    mat.uniforms.curTimeSeconds.value = curTimeSeconds;
+  });
   return checkpointMat;
 };

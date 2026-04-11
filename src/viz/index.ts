@@ -6,7 +6,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { initSentry } from 'src/sentry';
 import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
 import { getAmmoJS, BulletPhysics } from './collision';
-import { FlightPlayer, RecorderEventType, fetchReplayForPlay } from './flightRecorder';
+import {
+  FlightPlayer,
+  RecorderEventType,
+  fetchReplayForPlay,
+  preFetchFlightRecorderWasm,
+} from './flightRecorder';
 import * as Conf from './conf';
 import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebuggerInit.svelte.ts';
@@ -163,7 +168,15 @@ export class Viz {
    */
   private viewModeInterpolationState: ViewModeInterpolationState | null = null;
   private onRespawnCBs: (() => void)[] = [];
-  private physicsStartupBarriers: Promise<void>[] = [];
+  private physicsStartupBarrierCount = 0;
+  private physicsStartupBarriersResolved = false;
+  private resolvePhysicsStartupBarriers!: () => void;
+  private physicsStartupBarriersPromise: Promise<void> = new Promise<void>(resolve => {
+    this.resolvePhysicsStartupBarriers = () => {
+      this.physicsStartupBarriersResolved = true;
+      resolve();
+    };
+  });
   private inlineConsole =
     window.location.href.includes('localhost') &&
     !window.location.href.includes('geoscript') &&
@@ -197,14 +210,8 @@ export class Viz {
       for (const { mesh, baseMat, replacementMat, distance } of this.distanceSwapEntries) {
         const distanceToCamera = this.camera.position.distanceTo(mesh.position);
         if (distanceToCamera < distance) {
-          if (mesh.material !== baseMat) {
-            // console.log('swapping back to close mat', mesh.name);
-          }
           mesh.material = baseMat;
         } else {
-          if (mesh.material !== replacementMat) {
-            // console.log('swapping to far mat', mesh.name);
-          }
           mesh.material = replacementMat;
         }
       }
@@ -777,12 +784,46 @@ export class Viz {
     }
   };
 
-  public registerPhysicsStartupBarrier = (barrier: Promise<unknown>) =>
-    this.physicsStartupBarriers.push(Promise.resolve(barrier).then(() => void 0));
+  public registerPhysicsStartupBarrier = (barrier: Promise<unknown>) => {
+    if (this.physicsStartupBarriersResolved) {
+      console.error(
+        'registerPhysicsStartupBarrier called after physics startup barriers have already been resolved; this barrier will be ignored.'
+      );
+      return;
+    }
+    this.physicsStartupBarrierCount += 1;
+    Promise.resolve(barrier).then(
+      () => {
+        this.physicsStartupBarrierCount -= 1;
+        if (this.physicsStartupBarrierCount === 0) {
+          this.resolvePhysicsStartupBarriers();
+        }
+      },
+      err => {
+        this.physicsStartupBarrierCount -= 1;
+        if (this.physicsStartupBarrierCount === 0) {
+          this.resolvePhysicsStartupBarriers();
+        }
+        throw err;
+      }
+    );
+  };
 
-  public awaitPhysicsStartupBarriers = async () => {
-    const barriers = this.physicsStartupBarriers.splice(0);
-    await Promise.all(barriers);
+  public awaitPhysicsStartupBarriers = (): Promise<void> => {
+    if (this.physicsStartupBarrierCount === 0) {
+      if (this.fpCtx) {
+        // physics is already initialized and no barriers, so we can resolve immediately
+        this.resolvePhysicsStartupBarriers();
+        return this.physicsStartupBarriersPromise;
+      } else {
+        // we have to wait for the physics engine to be loaded anyway, so wait for that and then
+        // await any barriers that might be registered in the meantime
+        return new Promise<void>(resolve =>
+          this.collisionWorldLoadedCbs.push(() => this.awaitPhysicsStartupBarriers().then(() => resolve()))
+        );
+      }
+    }
+    return this.physicsStartupBarriersPromise;
   };
 
   public registerDestroyedCb = (cb: () => void) => this.onDestroyedCbs.push(cb);
@@ -871,6 +912,10 @@ export const initViz = (
     sceneDefOverride,
   }: InitVizArgs
 ) => {
+  // start loading some critical async deps as early as possible
+  preFetchFlightRecorderWasm();
+  getAmmoJS();
+
   initSentry();
 
   const sceneDef = sceneDefOverride ?? ScenesByName[providedSceneName];
@@ -890,7 +935,8 @@ export const initViz = (
   const useLevelDef = useLevelDefFlag || useSceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 
-  const scenePromises = Promise.all([getSceneLoader(), Conf.getVizConfig()]);
+  const vizConfP = Conf.getVizConfig();
+  const sceneLoaderP = getSceneLoader();
 
   const viz = new Viz(paused, popUpCalled, sceneDef, providedSceneName);
   (window as any).viz = viz;
@@ -913,17 +959,23 @@ export const initViz = (
       ? gltf.scenes.find(scene => scene.name.toLowerCase() === sceneName.toLowerCase()) || new THREE.Group()
       : new THREE.Group();
 
+    const vizConfig = await vizConfP;
+    viz.vizConfig = vizConfig;
+    applyGraphicsSettings(viz, vizConfig.current.graphics);
+
     if (useSceneDef) {
       // TODO: would be ideal to start this before we even load the glTF.  Could update the level def loading
       // code to accept the asset library glTF as a promise and just await it where needed.
-      viz.levelLoadHandle = loadLevelDef(viz, scene, userData as LevelDef);
+      viz.levelLoadHandle = loadLevelDef(
+        viz,
+        scene,
+        userData as LevelDef,
+        vizConfig.current.graphics.quality
+      );
     }
-
-    const [sceneLoader, vizConfig] = await scenePromises;
-    viz.vizConfig = vizConfig;
-    applyGraphicsSettings(viz, vizConfig.current.graphics);
     applyAudioSettings(vizConfig.current.audio);
     resetCustomShaderGlobals();
+    const sceneLoader = await sceneLoaderP;
     const sceneConf = {
       ...buildDefaultSceneConfig(),
       ...((await sceneLoader(viz, scene, vizConfig.current, userData)) ?? {}),

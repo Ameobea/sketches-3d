@@ -3,6 +3,7 @@ import type { SceneConfig } from '../scenes';
 import { DefaultMoveSpeed } from '../sceneDefaults';
 import { DefaultExternalVelocityAirDampingFactor } from '../clientDefaults';
 import { DefaultGravity, DefaultJumpSpeed } from '../conf';
+import { dev } from '$app/environment';
 
 export interface JumpSimParams {
   /** Gravity magnitude, units/s². ParkourManager default: 30 */
@@ -361,38 +362,43 @@ export function generateParkourPlatforms(
     currentExtVel *= Math.pow(1 - airDamping, airTimeToNext);
   }
 
-  // Post-pass: warn about height-constrained jumps.
-  //
-  // A jump is height-constrained when deltaH is close to maxArcHeight, which shortens air time and
-  // therefore reduces horizontal range. At the limit (deltaH = maxArcHeight), the player barely
-  // reaches the platform at the apex of the arc, with minimal time to travel horizontally. If a
-  // jump is height-constrained and the player holds W+Space, they arrive moving fast horizontally
-  // with little room to land cleanly before needing to redirect for the next jump.
-  const HEIGHT_WARN_FRACTION = 0.8;
-  for (let i = 0; i < platforms.length - 1; i++) {
-    const from = platforms[i];
-    const to = platforms[i + 1];
-    const deltaH = to.y - from.y;
-    if (maxArcHeight <= 0 || deltaH / maxArcHeight <= HEIGHT_WARN_FRACTION) continue;
+  if (dev) {
+    // Post-pass: warn about height-constrained jumps.
+    //
+    // A jump is height-constrained when deltaH is close to maxArcHeight, which shortens air time and
+    // therefore reduces horizontal range. At the limit (deltaH = maxArcHeight), the player barely
+    // reaches the platform at the apex of the arc, with minimal time to travel horizontally. If a
+    // jump is height-constrained and the player holds W+Space, they arrive moving fast horizontally
+    // with little room to land cleanly before needing to redirect for the next jump.
+    const HEIGHT_WARN_FRACTION = 0.8;
+    for (let i = 0; i < platforms.length - 1; i++) {
+      const from = platforms[i];
+      const to = platforms[i + 1];
+      const deltaH = to.y - from.y;
+      if (maxArcHeight <= 0 || deltaH / maxArcHeight <= HEIGHT_WARN_FRACTION) {
+        continue;
+      }
 
-    const airTime = getAirTime(arc, maxArcHeight, deltaH) ?? flatAirTime;
-    const extVel = extVelAtJump[i] ?? 0;
+      const airTime = getAirTime(arc, maxArcHeight, deltaH) ?? flatAirTime;
+      const extVel = extVelAtJump[i] ?? 0;
 
-    const horizDist = Math.sqrt((to.x - from.x) ** 2 + (to.z - from.z) ** 2);
-    const actualRange =
-      (effectiveAirSpeed * airTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, airTime)) * fudgeFactor;
-    const flatRange =
-      (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, flatAirTime)) *
-      fudgeFactor;
+      const horizDist = Math.sqrt((to.x - from.x) ** 2 + (to.z - from.z) ** 2);
+      const actualRange =
+        (effectiveAirSpeed * airTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, airTime)) *
+        fudgeFactor;
+      const flatRange =
+        (effectiveAirSpeed * flatAirTime + jumpTiltHorizBonus + extVelHorizContrib(extVel, flatAirTime)) *
+        fudgeFactor;
 
-    console.warn(
-      `[platformGen] height-constrained jump at step ${i}→${i + 1}:` +
-        `\n  from (${from.x.toFixed(2)}, ${from.y.toFixed(2)}, ${from.z.toFixed(2)})` +
-        `\n  to   (${to.x.toFixed(2)}, ${to.y.toFixed(2)}, ${to.z.toFixed(2)})` +
-        `\n  deltaH=${deltaH.toFixed(2)} = ${((deltaH / maxArcHeight) * 100).toFixed(1)}% of maxArcHeight=${maxArcHeight.toFixed(2)}` +
-        `\n  airTime=${airTime.toFixed(3)}s (flat: ${flatAirTime.toFixed(3)}s)` +
-        `\n  horizDist=${horizDist.toFixed(2)}, horizRange=${actualRange.toFixed(2)} (flat jump would allow ${flatRange.toFixed(2)}, deficit=${(flatRange - actualRange).toFixed(2)})`
-    );
+      console.warn(
+        `[platformGen] height-constrained jump at step ${i}→${i + 1}:` +
+          `\n  from (${from.x.toFixed(2)}, ${from.y.toFixed(2)}, ${from.z.toFixed(2)})` +
+          `\n  to   (${to.x.toFixed(2)}, ${to.y.toFixed(2)}, ${to.z.toFixed(2)})` +
+          `\n  deltaH=${deltaH.toFixed(2)} = ${((deltaH / maxArcHeight) * 100).toFixed(1)}% of maxArcHeight=${maxArcHeight.toFixed(2)}` +
+          `\n  airTime=${airTime.toFixed(3)}s (flat: ${flatAirTime.toFixed(3)}s)` +
+          `\n  horizDist=${horizDist.toFixed(2)}, horizRange=${actualRange.toFixed(2)} (flat jump would allow ${flatRange.toFixed(2)}, deficit=${(flatRange - actualRange).toFixed(2)})`
+      );
+    }
   }
 
   return platforms;

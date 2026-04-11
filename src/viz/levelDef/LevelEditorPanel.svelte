@@ -2,17 +2,23 @@
   import AssetTreePicker from './AssetTreePicker.svelte';
   import HierarchyPanel from './HierarchyPanel.svelte';
   import InfoPanel from './InfoPanel.svelte';
+  import LightInfoPanel from './LightInfoPanel.svelte';
   import type { AssetLibFolder } from './assetLibTypes';
   import type { TransformSnapshot } from './LevelEditor.svelte';
-  import type { LevelSceneNode } from './loadLevelDef';
+  import type { LevelLight, LevelSceneNode } from './loadLevelDef';
+  import type { LightDef } from './types';
 
   interface Props {
     assetIds: string[];
     materialIds: string[];
     libFolders: AssetLibFolder[];
     rootNodes: LevelSceneNode[];
+    lights: LevelLight[];
     selectedNodeId: string | null;
     selectedMaterialId: string | null;
+    selectedLightId: string | null;
+    selectedLightDef: LightDef | null;
+    lightPosition: [number, number, number];
     isGroupSelected: boolean;
     isGeneratedSelected: boolean;
     materialEditorOpen: boolean;
@@ -23,6 +29,7 @@
     onadd: (assetId: string, materialId: string | undefined) => void;
     onaddlibrary: (libPath: string, materialId: string | undefined) => void;
     onaddgroup: () => void;
+    onaddlight: (lightType: LightDef['type']) => void;
     onrename: (newId: string) => void;
     onmaterialchange: (matId: string | null) => void;
     onapplytransform: (snap: Partial<TransformSnapshot>) => void;
@@ -30,6 +37,10 @@
     ontoggleMaterialEditor: () => void;
     onconvertToCsg: () => void;
     onselectnode: (node: LevelSceneNode) => void;
+    onselectlight: (light: LevelLight) => void;
+    onlightpositionchange: (pos: [number, number, number]) => void;
+    onlightpropertychange: (update: Partial<LightDef>) => void;
+    ondeletelight: () => void;
   }
 
   let {
@@ -37,8 +48,12 @@
     materialIds,
     libFolders,
     rootNodes,
+    lights,
     selectedNodeId,
     selectedMaterialId,
+    selectedLightId,
+    selectedLightDef,
+    lightPosition,
     isGroupSelected,
     isGeneratedSelected,
     materialEditorOpen,
@@ -49,6 +64,7 @@
     onadd,
     onaddlibrary,
     onaddgroup,
+    onaddlight,
     onrename,
     onmaterialchange,
     onapplytransform,
@@ -56,7 +72,13 @@
     ontoggleMaterialEditor,
     onconvertToCsg,
     onselectnode,
+    onselectlight,
+    onlightpositionchange,
+    onlightpropertychange,
+    ondeletelight,
   }: Props = $props();
+
+  let selectedLightType = $state<LightDef['type']>('point');
 
   // Selected asset: either a local asset ID or an __ASSETS__/… library path.
   let selectedAsset = $state<string | null>(null);
@@ -126,6 +148,16 @@
       <button class="add-btn" onclick={handleAdd}>add object</button>
       <button class="add-btn" onclick={onaddgroup}>add group</button>
     </div>
+
+    <div class="row add-light-row">
+      <select class="field-select light-type-select" bind:value={selectedLightType}>
+        <option value="ambient">ambient</option>
+        <option value="directional">directional</option>
+        <option value="point">point</option>
+        <option value="spot">spot</option>
+      </select>
+      <button class="add-btn" onclick={() => onaddlight(selectedLightType)}>add light</button>
+    </div>
   </div>
 
   <div class="divider"></div>
@@ -134,24 +166,41 @@
     {materialEditorOpen ? 'close materials' : 'edit materials'}
   </button>
 
-  <HierarchyPanel {rootNodes} selectedNodeId={selectedNodeId} {onselectnode} />
-
-  <InfoPanel
-    nodeId={selectedNodeId}
-    isGroup={isGroupSelected}
-    isGenerated={isGeneratedSelected}
-    materialId={selectedMaterialId}
-    {materialIds}
-    {isCsgAsset}
-    {position}
-    {rotation}
-    {scale}
-    {onapplytransform}
-    {onrename}
-    {onmaterialchange}
-    {onconvertToCsg}
-    {ondelete}
+  <HierarchyPanel
+    {rootNodes}
+    selectedNodeId={selectedNodeId}
+    {lights}
+    {selectedLightId}
+    {onselectnode}
+    {onselectlight}
   />
+
+  {#if selectedLightDef}
+    <LightInfoPanel
+      lightDef={selectedLightDef}
+      lightPosition={lightPosition}
+      onapplyposition={onlightpositionchange}
+      onpropertychange={onlightpropertychange}
+      ondelete={ondeletelight}
+    />
+  {:else}
+    <InfoPanel
+      nodeId={selectedNodeId}
+      isGroup={isGroupSelected}
+      isGenerated={isGeneratedSelected}
+      materialId={selectedMaterialId}
+      {materialIds}
+      {isCsgAsset}
+      {position}
+      {rotation}
+      {scale}
+      {onapplytransform}
+      {onrename}
+      {onmaterialchange}
+      {onconvertToCsg}
+      {ondelete}
+    />
+  {/if}
 </div>
 
 <style>
@@ -216,6 +265,15 @@
 
   .add-btns {
     gap: 6px;
+  }
+
+  .add-light-row {
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .light-type-select {
+    flex: 1;
   }
 
   .field-label {

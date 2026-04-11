@@ -1,0 +1,11 @@
+{
+  "$schema": "../objects-schema.json",
+  "objects": [
+    {
+      "id": "spawn_platform",
+      "asset": "platform",
+      "position": [0, -1.5, 0],
+      "scale": [1, 1, 1]
+    }
+  ]
+}

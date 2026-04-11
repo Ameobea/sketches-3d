@@ -1,3 +1,6 @@
+uniform float curTimeSeconds;
+uniform float intensity;
+
 uniform float bboxYMin;
 uniform float bboxYMax;
 uniform float fadeTopDist;
@@ -8,8 +11,14 @@ uniform float fadeEdgeAmp;
 uniform float fadeEdgeFreq;
 uniform vec2 fadeEdgeSpeed;
 
+in vec3 vWorldPos;
+in vec3 vWorldNormal;
+
+out vec4 fragColor;
+
 __FADE_DEFS__
 __EDGE_WARP_DEFS__
+__CAP_DEFS__
 
 // Oklab conversion for perceptually-uniform color mixing.
 // Input/output: linear RGB (no gamma). Ref: https://bottosson.github.io/posts/oklab/
@@ -37,21 +46,58 @@ vec3 oklabToRgb(vec3 c) {
   );
 }
 
-vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-  vec4 outColor = vec4(0.8, 0.5, 0.6, 0.0);
+// Samples the fire/aurora noise field at a given world position using the
+// "side" configuration tuned for vertical faces. `vertBias` shifts the bias
+// term (threshold cutoff) and is computed outside so the breeze branch can
+// modify it too.
+float sampleSideNoise(vec3 pos) {
+  vec3 noisePos = __NOISE_ROT__ * pos;
+  noisePos = quantize(noisePos, __NOISE_POS_QUANT__);
+  noisePos += curTimeSeconds * __NOISE_DIR__;
+  return fbm_2_octaves(noisePos * __NOISE_FREQ__);
+}
+
+#ifdef CAP_ACTIVE
+// Alternate noise sampling for near-horizontal faces. The cap rotation matrix
+// (baked in from the capNoiseRotation option) is an additional rotation
+// applied after the side noise rotation — by default it swaps Y<->Z so the
+// "flame flow up" axis of the noise field projects onto the XZ plane, making
+// the cap look like a slice through the same flame column instead of a flat,
+// mostly-constant sample. See the capNoiseRotation docs in CheckpointMaterial.ts.
+float sampleCapNoise(vec3 pos) {
+  vec3 noisePos = __CAP_NOISE_ROT__ * (__NOISE_ROT__ * pos);
+  noisePos = quantize(noisePos, __NOISE_POS_QUANT__);
+  noisePos += curTimeSeconds * __NOISE_DIR__;
+  return fbm_2_octaves(noisePos * __NOISE_FREQ__);
+}
+#endif
+
+void main() {
+  vec4 outColor = vec4(__BASE_COLOR__, 0.0);
 
   // Vertical bias: interpolates between two bias values across the mesh height so flame
   // tips are sparser than the base, matching real flame appearance.
   float vertBias = 0.0;
   #ifdef VERT_BIAS_ACTIVE
-    float vertT = clamp((pos.y - bboxYMin) / (bboxYMax - bboxYMin), 0.0, 1.0);
+    float vertT = clamp((vWorldPos.y - bboxYMin) / (bboxYMax - bboxYMin), 0.0, 1.0);
     vertBias = mix(__VERT_BIAS_AMT_LO__, __VERT_BIAS_AMT_HI__, smoothstep(__VERT_BIAS_LO__, __VERT_BIAS_HI__, vertT));
   #endif
 
-  vec3 noisePos = __NOISE_ROT__ * pos;
-  noisePos = quantize(noisePos, __NOISE_POS_QUANT__);
-  noisePos += curTimeSeconds * __NOISE_DIR__;
-  float noise_ = fbm_2_octaves(noisePos * __NOISE_FREQ__);
+  // Sample the side-tuned noise field — exactly as before, so all existing
+  // tuning is preserved on vertical faces.
+  float noise_ = sampleSideNoise(vWorldPos);
+
+  #ifdef CAP_ACTIVE
+    // Blend toward the cap sample when the fragment's world normal points up
+    // (or down). On a true side wall (|normal.y| ≈ 0) `upness` is 0 and the
+    // cap branch is a pass-through — intentionally, to avoid disturbing the
+    // carefully-tuned side look.
+    float upness = smoothstep(__CAP_BLEND_LO__, __CAP_BLEND_HI__, abs(vWorldNormal.y));
+    if (upness > 0.0) {
+      float capNoise = sampleCapNoise(vWorldPos);
+      noise_ = mix(noise_, capNoise, upness);
+    }
+  #endif
 
 #ifdef EDGE_WARP_ACTIVE
   // 1D time-domain noise drives a "breeze" envelope.  Hoist before alpha so it can
@@ -74,7 +120,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   #ifdef EDGE_WARP_ACTIVE
     // PM-style domain warping: breeze displaces sample position rather than scaling
     // frequency, keeping phase continuous (no discontinuous jumps).
-    vec2 samplePos = vec2(pos.x, pos.z) * fadeEdgeFreq + curTimeSeconds * fadeEdgeSpeed;
+    vec2 samplePos = vec2(vWorldPos.x, vWorldPos.z) * fadeEdgeFreq + curTimeSeconds * fadeEdgeSpeed;
     vec2 pmDisplace = vec2(
       noise(samplePos * __BREEZE_MOD_SCALE__ + 13.7),
       noise(samplePos * __BREEZE_MOD_SCALE__ + 27.4)
@@ -85,14 +131,18 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
     float edgeWarp = 0.0;
   #endif
 
-  float topFade    = fadeTopDist    > 0.0 ? pow(clamp((bboxYMax - edgeWarp - pos.y)   / fadeTopDist,    0.0, 1.0), fadeTopSteepness)    : 1.0;
-  float bottomFade = fadeBottomDist > 0.0 ? pow(clamp((pos.y - (bboxYMin + edgeWarp)) / fadeBottomDist, 0.0, 1.0), fadeBottomSteepness) : 1.0;
+  float topFade    = fadeTopDist    > 0.0 ? pow(clamp((bboxYMax - edgeWarp - vWorldPos.y)   / fadeTopDist,    0.0, 1.0), fadeTopSteepness)    : 1.0;
+  float bottomFade = fadeBottomDist > 0.0 ? pow(clamp((vWorldPos.y - (bboxYMin + edgeWarp)) / fadeBottomDist, 0.0, 1.0), fadeBottomSteepness) : 1.0;
   outColor.a *= topFade * bottomFade;
 #endif
 
 #ifdef X_FADE_ACTIVE
-  outColor.a *= 1.0 - smoothstep(__X_FADE_LO__, __X_FADE_HI__, pos.x);
+  outColor.a *= 1.0 - smoothstep(__X_FADE_LO__, __X_FADE_HI__, vWorldPos.x);
 #endif
 
-  return outColor;
+  // alphaTest as a discard — mirrors `alphaTest: 0.05` on the old material so
+  // transparent sorting is still behaved.
+  if (outColor.a < __ALPHA_TEST__) discard;
+
+  fragColor = vec4(outColor.rgb * intensity, outColor.a);
 }

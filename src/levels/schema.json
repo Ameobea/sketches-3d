@@ -560,16 +560,74 @@
               "parkour": {
                 "type": "object",
                 "properties": {
-                  "checkpoint": { "type": "number" },
-                  "win": { "type": "boolean" }
+                  "checkpoint": {
+                    "type": "number"
+                  },
+                  "win": {
+                    "type": "boolean"
+                  }
                 },
                 "additionalProperties": false
               },
               "behaviors": {
                 "type": "array",
-                "items": { "$ref": "#/definitions/behaviorSpec" }
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "fn": {
+                      "type": "string"
+                    },
+                    "params": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "fn"
+                  ],
+                  "additionalProperties": false
+                }
               },
-              "spawner": { "$ref": "#/definitions/spawnerDef" }
+              "spawner": {
+                "type": "object",
+                "properties": {
+                  "interval": {
+                    "type": "number"
+                  },
+                  "initialDelay": {
+                    "type": "number"
+                  },
+                  "behaviors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "fn": {
+                          "type": "string"
+                        },
+                        "params": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "fn"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "interval"
+                ],
+                "additionalProperties": false
+              }
             },
             "required": [
               "id",
@@ -579,6 +637,429 @@
           },
           {
             "$ref": "#/definitions/__schema1"
+          }
+        ]
+      }
+    },
+    "lights": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "ambient"
+              },
+              "color": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "intensity": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "directional"
+              },
+              "color": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "intensity": {
+                "type": "number"
+              },
+              "position": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "target": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "castShadow": {
+                "type": "boolean"
+              },
+              "shadow": {
+                "type": "object",
+                "properties": {
+                  "mapSize": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "low": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "medium": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "high": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "low",
+                          "medium",
+                          "high"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "bias": {
+                    "type": "number"
+                  },
+                  "normalBias": {
+                    "type": "number"
+                  },
+                  "radius": {
+                    "type": "number"
+                  },
+                  "blurSamples": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "near": {
+                    "type": "number"
+                  },
+                  "far": {
+                    "type": "number"
+                  },
+                  "left": {
+                    "type": "number"
+                  },
+                  "right": {
+                    "type": "number"
+                  },
+                  "top": {
+                    "type": "number"
+                  },
+                  "bottom": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "point"
+              },
+              "color": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "intensity": {
+                "type": "number"
+              },
+              "position": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "distance": {
+                "type": "number"
+              },
+              "decay": {
+                "type": "number"
+              },
+              "castShadow": {
+                "type": "boolean"
+              },
+              "shadow": {
+                "type": "object",
+                "properties": {
+                  "mapSize": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "low": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "medium": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "high": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "low",
+                          "medium",
+                          "high"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "bias": {
+                    "type": "number"
+                  },
+                  "normalBias": {
+                    "type": "number"
+                  },
+                  "radius": {
+                    "type": "number"
+                  },
+                  "blurSamples": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "near": {
+                    "type": "number"
+                  },
+                  "far": {
+                    "type": "number"
+                  },
+                  "left": {
+                    "type": "number"
+                  },
+                  "right": {
+                    "type": "number"
+                  },
+                  "top": {
+                    "type": "number"
+                  },
+                  "bottom": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "spot"
+              },
+              "color": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "intensity": {
+                "type": "number"
+              },
+              "position": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "target": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "angle": {
+                "type": "number"
+              },
+              "penumbra": {
+                "type": "number"
+              },
+              "distance": {
+                "type": "number"
+              },
+              "decay": {
+                "type": "number"
+              },
+              "castShadow": {
+                "type": "boolean"
+              },
+              "shadow": {
+                "type": "object",
+                "properties": {
+                  "mapSize": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "low": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "medium": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "high": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "low",
+                          "medium",
+                          "high"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "bias": {
+                    "type": "number"
+                  },
+                  "normalBias": {
+                    "type": "number"
+                  },
+                  "radius": {
+                    "type": "number"
+                  },
+                  "blurSamples": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "near": {
+                    "type": "number"
+                  },
+                  "far": {
+                    "type": "number"
+                  },
+                  "left": {
+                    "type": "number"
+                  },
+                  "right": {
+                    "type": "number"
+                  },
+                  "top": {
+                    "type": "number"
+                  },
+                  "bottom": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type"
+            ],
+            "additionalProperties": false
           }
         ]
       }
@@ -694,32 +1175,6 @@
   ],
   "additionalProperties": false,
   "definitions": {
-    "behaviorSpec": {
-      "type": "object",
-      "properties": {
-        "fn": { "type": "string" },
-        "params": {
-          "type": "object",
-          "propertyNames": { "type": "string" },
-          "additionalProperties": {}
-        }
-      },
-      "required": ["fn"],
-      "additionalProperties": false
-    },
-    "spawnerDef": {
-      "type": "object",
-      "properties": {
-        "interval": { "type": "number" },
-        "initialDelay": { "type": "number" },
-        "behaviors": {
-          "type": "array",
-          "items": { "$ref": "#/definitions/behaviorSpec" }
-        }
-      },
-      "required": ["interval"],
-      "additionalProperties": false
-    },
     "__schema0": {
       "anyOf": [
         {
@@ -931,16 +1386,74 @@
                   "parkour": {
                     "type": "object",
                     "properties": {
-                      "checkpoint": { "type": "number" },
-                      "win": { "type": "boolean" }
+                      "checkpoint": {
+                        "type": "number"
+                      },
+                      "win": {
+                        "type": "boolean"
+                      }
                     },
                     "additionalProperties": false
                   },
                   "behaviors": {
                     "type": "array",
-                    "items": { "$ref": "#/definitions/behaviorSpec" }
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "fn": {
+                          "type": "string"
+                        },
+                        "params": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "fn"
+                      ],
+                      "additionalProperties": false
+                    }
                   },
-                  "spawner": { "$ref": "#/definitions/spawnerDef" }
+                  "spawner": {
+                    "type": "object",
+                    "properties": {
+                      "interval": {
+                        "type": "number"
+                      },
+                      "initialDelay": {
+                        "type": "number"
+                      },
+                      "behaviors": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "fn": {
+                              "type": "string"
+                            },
+                            "params": {
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "fn"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "interval"
+                    ],
+                    "additionalProperties": false
+                  }
                 },
                 "required": [
                   "id",

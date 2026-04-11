@@ -355,6 +355,126 @@ export const ScenePhysicsDefSchema = z.object({
 });
 export type ScenePhysicsDef = z.infer<typeof ScenePhysicsDefSchema>;
 
+export const AmbientLightDefSchema = z.object({
+  id: z.string(),
+  type: z.literal('ambient'),
+  /** Hex color integer. Default: 0xffffff */
+  color: z.number().int().optional(),
+  /** Default: 1 */
+  intensity: z.number().optional(),
+});
+
+/**
+ * Shadow map resolution. May be a single number (applied uniformly) or a per-quality object
+ * so a single scene def can target Low/Medium/High tiers without scene code having to mutate
+ * the light after instantiation.
+ */
+export const ShadowMapSizeSchema = z.union([
+  z.number().int().positive(),
+  z.object({
+    low: z.number().int().positive(),
+    medium: z.number().int().positive(),
+    high: z.number().int().positive(),
+  }),
+]);
+export type ShadowMapSize = z.infer<typeof ShadowMapSizeSchema>;
+
+/**
+ * Static shadow config for shadow-casting lights. Applied at light instantiation time,
+ * BEFORE the light is added to the scene — this matters because three.js lazily creates
+ * `light.shadow.map` at the current `mapSize` on first render and will NOT recreate it on
+ * a subsequent mapSize change, so any post-hoc mutation after the first render is a no-op.
+ */
+export const ShadowConfigDefSchema = z.object({
+  /** Shadow map resolution. Default: 1024 */
+  mapSize: ShadowMapSizeSchema.optional(),
+  /** Shadow acne bias. Default: 0 (often needs to be a small negative number like -0.0001) */
+  bias: z.number().optional(),
+  /** Normal-offset bias. Default: 0 */
+  normalBias: z.number().optional(),
+  /** PCF/VSM blur radius. Default: 1 */
+  radius: z.number().optional(),
+  /** VSM blur sample count. Default: 8 */
+  blurSamples: z.number().int().positive().optional(),
+  /** Directional/spot-only: near plane of the shadow camera frustum. Default: 0.5 */
+  near: z.number().optional(),
+  /** Directional/spot-only: far plane of the shadow camera frustum. Default: 500 */
+  far: z.number().optional(),
+  /** Directional-only: left edge of the orthographic shadow camera frustum. Default: -5 */
+  left: z.number().optional(),
+  /** Directional-only: right edge of the orthographic shadow camera frustum. Default: 5 */
+  right: z.number().optional(),
+  /** Directional-only: top edge of the orthographic shadow camera frustum. Default: 5 */
+  top: z.number().optional(),
+  /** Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5 */
+  bottom: z.number().optional(),
+});
+export type ShadowConfigDef = z.infer<typeof ShadowConfigDefSchema>;
+
+export const DirectionalLightDefSchema = z.object({
+  id: z.string(),
+  type: z.literal('directional'),
+  color: z.number().int().optional(),
+  intensity: z.number().optional(),
+  /** World-space position (light shines from here toward origin). Default: [0, 1, 0] */
+  position: Vec3.optional(),
+  /** World-space target position the light shines toward. Default: [0, 0, 0] */
+  target: Vec3.optional(),
+  castShadow: z.boolean().optional(),
+  /** Shadow camera + shadow map config. Only applied when `castShadow` is true. */
+  shadow: ShadowConfigDefSchema.optional(),
+});
+
+export const PointLightDefSchema = z.object({
+  id: z.string(),
+  type: z.literal('point'),
+  color: z.number().int().optional(),
+  intensity: z.number().optional(),
+  position: Vec3.optional(),
+  /** Maximum range; 0 = unlimited. Default: 0 */
+  distance: z.number().optional(),
+  /** Attenuation exponent. Default: 2 */
+  decay: z.number().optional(),
+  castShadow: z.boolean().optional(),
+  /** Shadow map config. Only applied when `castShadow` is true. Frustum fields are ignored
+   * (point lights use a cube camera derived from `distance`). */
+  shadow: ShadowConfigDefSchema.optional(),
+});
+
+export const SpotLightDefSchema = z.object({
+  id: z.string(),
+  type: z.literal('spot'),
+  color: z.number().int().optional(),
+  intensity: z.number().optional(),
+  position: Vec3.optional(),
+  /** World-space target position the spot light points toward. Default: [0, 0, 0] */
+  target: Vec3.optional(),
+  /** Half-angle of the cone in radians. Default: π/4 */
+  angle: z.number().optional(),
+  /** Edge softness 0–1. Default: 0 */
+  penumbra: z.number().optional(),
+  distance: z.number().optional(),
+  decay: z.number().optional(),
+  castShadow: z.boolean().optional(),
+  /** Shadow camera + shadow map config. Only applied when `castShadow` is true.
+   * Orthographic-frustum fields (left/right/top/bottom) are ignored (spot lights use a
+   * perspective shadow camera derived from `angle`). */
+  shadow: ShadowConfigDefSchema.optional(),
+});
+
+export const LightDefSchema = z.discriminatedUnion('type', [
+  AmbientLightDefSchema,
+  DirectionalLightDefSchema,
+  PointLightDefSchema,
+  SpotLightDefSchema,
+]);
+
+export type AmbientLightDef = z.infer<typeof AmbientLightDefSchema>;
+export type DirectionalLightDef = z.infer<typeof DirectionalLightDefSchema>;
+export type PointLightDef = z.infer<typeof PointLightDefSchema>;
+export type SpotLightDef = z.infer<typeof SpotLightDefSchema>;
+export type LightDef = z.infer<typeof LightDefSchema>;
+
 const GeneratorDefSchema = z.object({
   file: z.string(),
   params: z.record(z.string(), z.unknown()).optional(),
@@ -389,6 +509,7 @@ export const LevelDefSchema = z
     materials: z.record(z.string(), MaterialDefSchema).optional(),
     assets: z.record(z.string(), AssetDefSchema),
     objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
+    lights: z.array(LightDefSchema).optional(),
     physics: ScenePhysicsDefSchema.optional(),
     generators: GeneratorsRecordSchema.optional(),
   })
@@ -487,6 +608,7 @@ export const LevelDefRawSchema = z.object({
   materials: z.record(z.string(), MaterialDefSchema).optional(),
   assets: z.record(z.string(), AssetDefRawSchema),
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
+  lights: z.array(LightDefSchema).optional(),
   physics: ScenePhysicsDefSchema.optional(),
   generators: GeneratorsRecordSchema.optional(),
 });

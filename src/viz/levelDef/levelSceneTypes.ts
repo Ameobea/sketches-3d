@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 
-import type { ObjectDef, ObjectGroupDef } from './types';
+import type { LightDef, ObjectDef, ObjectGroupDef } from './types';
 
 export interface LevelObject {
   id: string;
@@ -28,3 +28,9 @@ export interface LevelGroup {
 export type LevelSceneNode = LevelObject | LevelGroup;
 
 export const isLevelGroup = (n: LevelSceneNode): n is LevelGroup => 'children' in n;
+
+export interface LevelLight {
+  id: string;
+  light: THREE.Light;
+  def: LightDef;
+}

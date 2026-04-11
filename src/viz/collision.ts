@@ -63,11 +63,11 @@ import {
 } from './flightRecorder.js';
 import { ReplayController } from './replayController.js';
 import { withWorldSpaceTransform } from './util/three.js';
-
-// ─── Subtick Input Provider ───────────────────────────────────────────────
-//
-// Abstracts the source of per-subtick player input so that live gameplay and
-// deterministic replay can share the same subtick execution path.
+import {
+  type CollisionShapeBuildResult,
+  applyShapeBuildResult,
+  buildCollisionShapeFromMesh,
+} from './collisionShapes.js';
 
 /** Per-subtick input state consumed by the shared subtick execution path. */
 export interface SubtickInputState {
@@ -534,10 +534,6 @@ export class BulletPhysics {
     }
   };
 
-  /**
-   * Derive the exact key flags the controller should consume this subtick.
-   * This is what must be recorded for deterministic replay.
-   */
   private getEffectiveKeyFlags = (input: SubtickInputState): number => {
     if (this.replayController.isActive) {
       return input.keyFlags;
@@ -566,7 +562,6 @@ export class BulletPhysics {
           shadowUniforms.playerShadowPos.set(newPlayerPos.x, feetY, newPlayerPos.z);
 
           const shadowRayMaxDist = 50;
-          // Start rays from player center so they clear the surface on slopes
           const rayOriginY = newPlayerPos.y;
           const rayEndY = rayOriginY - shadowRayMaxDist;
           const px = newPlayerPos.x;
@@ -586,7 +581,6 @@ export class BulletPhysics {
             return frac < 1.0 ? rayOriginY - frac * shadowRayMaxDist : feetY - shadowRayMaxDist;
           };
 
-          // Center ray
           const centerReceiverY = castShadowRay(px, pz);
           const centerDrop = feetY - centerReceiverY;
           shadowUniforms.playerShadowParams.z = centerReceiverY;
@@ -831,7 +825,7 @@ export class BulletPhysics {
     const numEvents = this.playerController.getNumPendingEvents();
     for (let i = 0; i < numEvents; i++) {
       const zoneId = this.playerController.getPendingEventId(i);
-      const eventType = this.playerController.getPendingEventType(i);
+      const eventType = this.playerController.getPendingEventType(i) as ZoneEventType;
 
       if (eventType === ZoneEventType.JumpFired) {
         for (const cb of this.jumpCbs) {
@@ -884,6 +878,8 @@ export class BulletPhysics {
         case ZoneEventType.BoostZoneExit:
           cbs.onLeave?.();
           break;
+        default:
+          eventType satisfies never;
       }
     }
     this.playerController.clearPendingEvents();
@@ -1017,9 +1013,7 @@ export class BulletPhysics {
     this.initFlightRecorderHeader();
   };
 
-  public getPhysicsTime = (): number => {
-    return this.physicsElapsedTime;
-  };
+  public getPhysicsTime = (): number => this.physicsElapsedTime;
 
   public registerPhysicsTicker = (
     ticker: PhysicsTicker,
@@ -1050,11 +1044,6 @@ export class BulletPhysics {
         continue;
       }
       const transform = entry.body.getWorldTransform();
-      // Sync the motion state before `substepSimulation` runs: `btRigidBody::saveKinematicState`
-      // (called inside Bullet's standard `stepSimulation`) reads from the motion state and would
-      // otherwise overwrite the transform the tick callback just set.  We no longer call
-      // `saveKinematicState` in `substepSimulation`, but keeping the motion state in sync is
-      // correct hygiene for any Bullet path that reads it.
       const motionState = entry.body.getMotionState();
       if (motionState) {
         motionState.setWorldTransform(transform);
@@ -1084,12 +1073,7 @@ export class BulletPhysics {
     objRef?: CollisionObjectRef,
     colliderType: 'static' | 'kinematic' = 'static'
   ) => {
-    const transform = new this.Ammo.btTransform();
-    transform.setIdentity();
-    transform.setOrigin(this.btvec3(pos.x, pos.y, pos.z));
-    const rot = new this.Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w);
-    transform.setRotation(rot);
-    this.Ammo.destroy(rot);
+    const transform = this.makeBtTransform(pos, quat);
 
     // Add the object as static, so it doesn't move but still collides
     const motionState = new this.Ammo.btDefaultMotionState(transform);
@@ -1153,87 +1137,22 @@ export class BulletPhysics {
     this.Ammo.destroy(collisionObj);
   };
 
-  private buildTrimeshShape = (
-    indices: Uint16Array | undefined,
-    vertices: Float32Array,
-    scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
-  ) => {
-    const numVertices = vertices.length / 3;
-    const numTriangles = indices ? indices.length / 3 : numVertices / 3;
+  private buildCollisionShapeFromMesh = (
+    mesh: THREE.Mesh,
+    extraScale?: THREE.Vector3
+  ): CollisionShapeBuildResult => buildCollisionShapeFromMesh(this.Ammo, this.btvec3, mesh, extraScale);
 
-    // Write scaled vertex positions into an Ammo heap buffer (float32, 12-byte stride).
-    // `BtTriangleIndexVertexArrayWrappe`r holds a raw pointer and must not be freed while the shape lives.
-    const vertexPtr = this.Ammo._malloc(numVertices * 3 * 4);
-    const vertexHeap = new Float32Array(this.Ammo.HEAPF32.buffer, vertexPtr, numVertices * 3);
-    if (scale.x === 1 && scale.y === 1 && scale.z === 1) {
-      vertexHeap.set(vertices);
-    } else {
-      for (let i = 0; i < vertices.length; i += 3) {
-        vertexHeap[i] = vertices[i] * scale.x;
-        vertexHeap[i + 1] = vertices[i + 1] * scale.y;
-        vertexHeap[i + 2] = vertices[i + 2] * scale.z;
-      }
+  /** Creates a btTransform from a position and optional quaternion.  Caller must destroy it. */
+  private makeBtTransform = (pos: THREE.Vector3, quat?: THREE.Quaternion) => {
+    const transform = new this.Ammo.btTransform();
+    transform.setIdentity();
+    transform.setOrigin(this.btvec3(pos.x, pos.y, pos.z));
+    if (quat) {
+      const rot = new this.Ammo.btQuaternion(quat.x, quat.y, quat.z, quat.w);
+      transform.setRotation(rot);
+      this.Ammo.destroy(rot);
     }
-
-    // Write int32 indices (`btTriangleIndexVertexArrayWrapper` defaults to `PHY_INTEGER`).
-    const numIndexInts = numTriangles * 3;
-    const indexPtr = this.Ammo._malloc(numIndexInts * 4);
-    const indexHeap = new Int32Array(this.Ammo.HEAPF32.buffer, indexPtr, numIndexInts);
-    if (indices) {
-      for (let i = 0; i < indices.length; i++) {
-        indexHeap[i] = indices[i];
-      }
-    } else {
-      for (let i = 0; i < numIndexInts; i++) {
-        indexHeap[i] = i;
-      }
-    }
-
-    const indexedArray = new this.Ammo.btTriangleIndexVertexArrayWrapper(
-      numTriangles,
-      indexPtr,
-      3 * 4, // triangle index stride: 3 × int32
-      numVertices,
-      vertexPtr,
-      3 * 4 // vertex stride: 3 × float32
-    );
-    return new this.Ammo.btBvhTriangleMeshShape(indexedArray, true, true);
-  };
-
-  private buildCollisionShapeFromMesh = (mesh: THREE.Mesh, extraScale?: THREE.Vector3) => {
-    if (mesh.geometry instanceof THREE.BoxGeometry) {
-      const halfExtents = this.btvec3(
-        mesh.geometry.parameters.width * mesh.scale.x * (extraScale?.x ?? 1) * 0.5,
-        mesh.geometry.parameters.height * mesh.scale.y * (extraScale?.y ?? 1) * 0.5,
-        mesh.geometry.parameters.depth * mesh.scale.z * (extraScale?.z ?? 1) * 0.5
-      );
-      return new this.Ammo.btBoxShape(halfExtents);
-    } else if (
-      (mesh.geometry instanceof THREE.SphereGeometry ||
-        (mesh.geometry instanceof THREE.IcosahedronGeometry && mesh.geometry.parameters.detail >= 2)) &&
-      mesh.scale.x === mesh.scale.y &&
-      mesh.scale.y === mesh.scale.z &&
-      (!extraScale || (extraScale.x === extraScale.y && extraScale.y === extraScale.z))
-    ) {
-      const radius = mesh.geometry.parameters.radius * mesh.scale.x * (extraScale?.x ?? 1);
-      return new this.Ammo.btSphereShape(radius);
-    }
-
-    const geometry = mesh.geometry as THREE.BufferGeometry;
-    const vertices = geometry.attributes.position.array as Float32Array | Uint16Array;
-    const indices = geometry.index?.array as Uint16Array | undefined;
-    if (vertices instanceof Uint16Array) {
-      throw new Error('GLTF Quantization not yet supported');
-    }
-    let scale = mesh.scale.clone();
-    if (extraScale) {
-      scale = scale.multiply(extraScale);
-    }
-
-    if (mesh.userData.convexhull || mesh.userData.convexHull) {
-      return this.buildConvexHullShape(indices, vertices, scale);
-    }
-    return this.buildTrimeshShape(indices, vertices, scale);
+    return transform;
   };
 
   public teleportPlayer = (
@@ -1271,11 +1190,12 @@ export class BulletPhysics {
       return;
     }
 
-    const shape = this.buildCollisionShapeFromMesh(mesh);
+    const buildResult = this.buildCollisionShapeFromMesh(mesh);
     const objRef: CollisionObjectRef = {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
     };
-    const rigidBody = this.addCollisionObject(shape, mesh.position, mesh.quaternion, objRef, colliderType);
+    const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
+    const rigidBody = this.addCollisionObject(buildResult.shape, pos, quat, objRef, colliderType);
     mesh.userData.rigidBody = rigidBody;
   };
 
@@ -1448,13 +1368,9 @@ export class BulletPhysics {
 
   public getDashCharges = (): number => this.playerController.getDashCharges();
 
-  public captureInitialDashState = () => {
-    this.playerController.captureInitialDashState();
-  };
+  public captureInitialDashState = () => this.playerController.captureInitialDashState();
 
-  public saveDashCheckpointState = () => {
-    this.playerController.saveDashCheckpointState();
-  };
+  public saveDashCheckpointState = () => this.playerController.saveDashCheckpointState();
 
   public restoreDashCheckpointState = () => {
     this.playerController.restoreDashCheckpointState();
@@ -1473,26 +1389,11 @@ export class BulletPhysics {
           const shape = new this.Ammo.btBoxShape(
             this.btvec3(region.halfExtents.x, region.halfExtents.y, region.halfExtents.z)
           );
-          const transform = new this.Ammo.btTransform();
-          transform.setIdentity();
-          transform.setOrigin(this.btvec3(region.pos.x, region.pos.y, region.pos.z));
-          if (region.quat) {
-            const rot = new this.Ammo.btQuaternion(
-              region.quat.x,
-              region.quat.y,
-              region.quat.z,
-              region.quat.w
-            );
-            transform.setRotation(rot);
-            this.Ammo.destroy(rot);
-          }
-          return { shape, transform };
+          return { shape, transform: this.makeBtTransform(region.pos, region.quat) };
         }
         case 'mesh': {
           const { mesh } = region;
           return withWorldSpaceTransform(mesh, mesh => {
-            // buildCollisionShapeFromMesh reads mesh.scale (now world-space) internally,
-            // so only pass margin/region.scale as an additional multiplier.
             let extraScale: THREE.Vector3 | undefined;
             if (region.margin || region.scale) {
               extraScale = new THREE.Vector3(1, 1, 1).multiplyScalar(1 + (region.margin ?? 0));
@@ -1500,48 +1401,21 @@ export class BulletPhysics {
                 extraScale = extraScale.multiply(region.scale);
               }
             }
-            const shape = this.buildCollisionShapeFromMesh(region.mesh, extraScale);
-            const transform = new this.Ammo.btTransform();
-            transform.setIdentity();
-            transform.setOrigin(this.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-            if (mesh.quaternion) {
-              const rot = new this.Ammo.btQuaternion(
-                mesh.quaternion.x,
-                mesh.quaternion.y,
-                mesh.quaternion.z,
-                mesh.quaternion.w
-              );
-              transform.setRotation(rot);
-              this.Ammo.destroy(rot);
-            }
-            return { shape, transform };
+            const buildResult = this.buildCollisionShapeFromMesh(region.mesh, extraScale);
+            const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
+            return { shape: buildResult.shape, transform: this.makeBtTransform(pos, quat) };
           });
         }
         case 'sphere': {
           const shape = new this.Ammo.btSphereShape(region.radius);
-          const transform = new this.Ammo.btTransform();
-          transform.setIdentity();
-          transform.setOrigin(this.btvec3(region.pos.x, region.pos.y, region.pos.z));
-          return { shape, transform };
+          return { shape, transform: this.makeBtTransform(region.pos) };
         }
         default: {
           // For convexHull and aabb, fall through to mesh-based approach
           const mesh = (region as any).mesh as THREE.Mesh;
-          const shape = this.buildCollisionShapeFromMesh(mesh);
-          const transform = new this.Ammo.btTransform();
-          transform.setIdentity();
-          transform.setOrigin(this.btvec3(mesh.position.x, mesh.position.y, mesh.position.z));
-          if (mesh.quaternion) {
-            const rot = new this.Ammo.btQuaternion(
-              mesh.quaternion.x,
-              mesh.quaternion.y,
-              mesh.quaternion.z,
-              mesh.quaternion.w
-            );
-            transform.setRotation(rot);
-            this.Ammo.destroy(rot);
-          }
-          return { shape, transform };
+          const buildResult = this.buildCollisionShapeFromMesh(mesh);
+          const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
+          return { shape: buildResult.shape, transform: this.makeBtTransform(pos, quat) };
         }
       }
     })();
@@ -1663,31 +1537,6 @@ export class BulletPhysics {
     this.Ammo.destroy(this.collisionWorld);
   };
 
-  private buildConvexHullShape = (
-    indices: Uint16Array | undefined,
-    vertices: Float32Array,
-    scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
-  ) => {
-    const hull = new this.Ammo.btConvexHullShape();
-
-    if (indices) {
-      for (let i = 0; i < indices.length; i++) {
-        const ix = indices[i] * 3;
-        hull.addPoint(
-          this.btvec3(vertices[ix] * scale.x, vertices[ix + 1] * scale.y, vertices[ix + 2] * scale.z)
-        );
-      }
-    } else {
-      for (let i = 0; i < vertices.length; i += 3) {
-        hull.addPoint(
-          this.btvec3(vertices[i] * scale.x, vertices[i + 1] * scale.y, vertices[i + 2] * scale.z)
-        );
-      }
-    }
-
-    return hull;
-  };
-
   public addHeightmapTerrain = (
     heightmapData: Float32Array,
     minHeight: number,
@@ -1745,9 +1594,8 @@ export class BulletPhysics {
     this.addCollisionObject(heightfieldShape, new THREE.Vector3(0, 0, 0));
   };
 
-  public registerDashCb = (cb: (curTimeSeconds: number) => void) => {
-    this.dashCbs.push(cb);
-  };
+  public registerDashCb = (cb: (curTimeSeconds: number) => void) => this.dashCbs.push(cb);
+
   public deregisterDashCb = (cb: (curTimeSeconds: number) => void) => {
     const ix = this.dashCbs.indexOf(cb);
     if (ix === -1) {

@@ -1,24 +1,39 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
-import type { VizConfig } from 'src/viz/conf';
+import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
-import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
+import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
+import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+
+const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
+  const out: THREE.Mesh[] = [];
+  obj.traverse(child => {
+    if (child instanceof THREE.Mesh) {
+      out.push(child);
+    }
+  });
+  return out;
+};
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
   const playerHeight = 3.5;
   const playerRadius = 1;
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
-    buildCustomShader({
-      color: new THREE.Color(0x8d3d9f),
-      metalness: 0.18,
-      roughness: 0.82,
-    })
+    buildCustomShader(
+      {
+        color: new THREE.Color(0x8d3d9f),
+        metalness: 0.18,
+        roughness: 0.82,
+      },
+      {},
+      { noOcclusion: true }
+    )
   );
   playerMesh.castShadow = false;
   playerMesh.receiveShadow = true;
@@ -51,19 +66,13 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     vizConf,
     {
       spawn: {
-        pos: new THREE.Vector3(0, 3, 8),
-        rot: new THREE.Vector3(0, Math.PI, 0),
+        pos: new THREE.Vector3(0, 3, 0),
+        rot: new THREE.Vector3(-0.35, -Math.PI / 2, 0),
       },
     },
     scoreThresholds,
-    {
-      dashToken: {
-        core: new THREE.MeshStandardMaterial({ color: 0x9effe1, emissive: 0x1a322e, roughness: 0.4 }),
-        ring: new THREE.MeshStandardMaterial({ color: 0xffd464, emissive: 0x36290a, roughness: 0.3 }),
-      },
-      checkpoint: new THREE.MeshStandardMaterial({ color: 0x80f0ff, emissive: 0x173845, roughness: 0.32 }),
-    },
-    'jump_pad_speedup_test',
+    undefined,
+    'factory',
     true,
     {
       gravity: 220,
@@ -79,11 +88,11 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         mesh: playerMesh,
         colliderSize: { height: playerHeight, radius: playerRadius },
         playerShadow: { radius: playerRadius, intensity: 0.85 },
-        moveSpeed: { onGround: 12.5, inAir: 18 },
+        moveSpeed: { onGround: 15.75, inAir: 18 },
         jumpVelocity: 76,
         terminalVelocity: 180,
         dashConfig: {
-          chargeConfig: { curCharges: rwritable(Infinity) },
+          chargeConfig: { curCharges: rwritable(0) },
           dashMagnitude: 16,
           useExternalVelocity: true,
           minDashDelaySeconds: 0.3,
@@ -91,6 +100,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         coyoteTimeSeconds: 0.135,
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
         maxSlopeRadians: 1.3,
+        oobYThreshold: -50,
       },
       viewMode: {
         type: 'thirdPerson',
@@ -102,12 +112,39 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     }
   );
 
-  initPylonsPostprocessing(viz, vizConf, false, { toneMapping: { mode: 'agx', exposure: 0.9 } });
+  configureDefaultPostprocessingPipeline({
+    viz,
+    quality: vizConf.graphics.quality,
+    toneMapping: { mode: 'agx', exposure: 1 },
+    autoUpdateShadowMap: true,
+    emissiveBypass: true,
+    emissiveBloom:
+      vizConf.graphics.quality > GraphicsQuality.Low
+        ? { intensity: 2.5, levels: 2, luminanceThreshold: 0.08, radius: 0.1 }
+        : null,
+  });
 
-  const handle = viz.levelLoadHandle;
-  if (handle) {
-    handle.setSceneRuntime(pkManager.runtime, 'scene_def_test');
-  }
+  const handle = viz.levelLoadHandle!;
+
+  handle.setMaterialFactories({
+    checkpoint: viz => {
+      const mat = buildPylonsCheckpointMaterial(viz);
+      return { material: mat, onAssigned: mesh => mat.setMesh(mesh) };
+    },
+  });
+
+  handle.parkourObjects.then(parkourObjs => {
+    const checkpointMeshes = parkourObjs.flatMap(obj => collectMeshes(obj.object));
+    pkManager.setMaterials(
+      {
+        dashToken: {
+          core: new THREE.MeshStandardMaterial({ color: 0x9effe1, emissive: 0x1a322e, roughness: 0.4 }),
+          ring: new THREE.MeshStandardMaterial({ color: 0xffd464, emissive: 0x36290a, roughness: 0.3 }),
+        },
+      },
+      { checkpointMeshes }
+    );
+  });
 
   return pkManager.buildSceneConfig();
 };

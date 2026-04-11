@@ -5,9 +5,17 @@ import { defineConfig } from 'vite';
 import devtoolsJson from 'vite-plugin-devtools-json';
 import crossOriginIsolation from 'vite-plugin-cross-origin-isolation';
 import { behaviorsPlugin } from './src/viz/sceneRuntime/viteBehaviorsPlugin';
+import { generatorsPlugin } from './src/viz/levelDef/viteGeneratorsPlugin';
 
 const config = defineConfig({
-  plugins: [wasm(), sveltekit(), devtoolsJson(), crossOriginIsolation(), behaviorsPlugin()],
+  plugins: [
+    wasm(),
+    sveltekit(),
+    devtoolsJson(),
+    crossOriginIsolation(),
+    behaviorsPlugin(),
+    generatorsPlugin(),
+  ],
   server: {
     port: 4800,
     proxy: {
@@ -33,9 +41,7 @@ const config = defineConfig({
   optimizeDeps: {
     exclude: ['codemirror'],
   },
-  ssr: {
-    external: ['esbuild'],
-  },
+  ssr: {},
   build: {
     sourcemap: true,
     target: 'esnext',

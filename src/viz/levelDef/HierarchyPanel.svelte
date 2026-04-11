@@ -1,17 +1,20 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
 
-  import type { LevelSceneNode } from './levelSceneTypes';
+  import type { LevelLight, LevelSceneNode } from './levelSceneTypes';
   import { isLevelGroup } from './levelSceneTypes';
   import { isGeneratedDef } from './levelDefTreeUtils';
 
   interface Props {
     rootNodes: LevelSceneNode[];
     selectedNodeId: string | null;
+    lights: LevelLight[];
+    selectedLightId: string | null;
     onselectnode: (node: LevelSceneNode) => void;
+    onselectlight: (light: LevelLight) => void;
   }
 
-  let { rootNodes, selectedNodeId, onselectnode }: Props = $props();
+  let { rootNodes, selectedNodeId, lights, selectedLightId, onselectnode, onselectlight }: Props = $props();
 
   // Track expanded state per group id
   const expanded = new SvelteMap<string, boolean>();
@@ -26,6 +29,23 @@
   {#each rootNodes as node (node.id)}
     {@render renderNode(node, 0)}
   {/each}
+
+  {#if lights.length > 0}
+    <div class="section-label lights-label">lights</div>
+    {#each lights as light (light.id)}
+      <div
+        class="row leaf-row"
+        class:selected={light.id === selectedLightId}
+        role="button"
+        tabindex="0"
+        onclick={() => onselectlight(light)}
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectlight(light); }}
+      >
+        <span class="node-id">{light.id}</span>
+        <span class="badge light-type-badge">{light.def.type}</span>
+      </div>
+    {/each}
+  {/if}
 </div>
 
 {#snippet renderNode(node: LevelSceneNode, depth: number)}
@@ -144,5 +164,14 @@
   .generated-badge {
     color: #f2c66d;
     border: 1px solid #6a5526;
+  }
+
+  .lights-label {
+    margin-top: 8px;
+  }
+
+  .light-type-badge {
+    color: #adf;
+    border: 1px solid #36a;
   }
 </style>

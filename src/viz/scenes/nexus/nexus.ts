@@ -160,7 +160,7 @@ export const processLoadedScene = async (
     bridge2: BASEMENT_DEFAULT,
   };
 
-  // ambientLightScale compensates for perceived-luminance differences between portal colors.
+  // Emissive intensity compensates for perceived-luminance differences between portal colors.
   // Rec. 709 luma weights green ~72% and blue only ~7%, so blue-heavy colors need a much
   // larger scale to cross the luminance threshold in the bloom pass. Values are hand-tuned.
   const PortalAmbientScale = new Map<[number, number, number], number>([
@@ -212,7 +212,7 @@ export const processLoadedScene = async (
     portal.material = buildCheckpointMaterial(
       viz,
       color,
-      { ambientLightScale: PortalAmbientScale.get(unmappedColor) ?? 2 },
+      { intensity: PortalAmbientScale.get(unmappedColor) ?? 2, frontFaceOnly: true },
       {
         noiseDir: PortalNoiseDirByName[portalKey],
         noiseFreq: PortalNoiseFreqByName[portalKey],
@@ -517,7 +517,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     },
     toneMapping: { exposure: 0.5, mode: 'agx' },
     // toneMapping: { exposure: 1, mode: 'aces' },
-    autoUpdateShadowMap: true,
+    autoUpdateShadowMap: false,
     emissiveBypass: true,
     emissiveBypassAmbientIntensity: vizConf.graphics.quality > GraphicsQuality.Low ? 2.8 : 3,
     emissiveBloom:

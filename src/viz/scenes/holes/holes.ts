@@ -14,7 +14,9 @@ import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/ma
 const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
   const out: THREE.Mesh[] = [];
   obj.traverse(child => {
-    if (child instanceof THREE.Mesh) out.push(child);
+    if (child instanceof THREE.Mesh) {
+      out.push(child);
+    }
   });
   return out;
 };

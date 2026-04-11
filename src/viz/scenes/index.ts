@@ -600,4 +600,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     legacyLights: false,
     useSceneDef: true,
   },
+  factory: {
+    sceneName: null,
+    gltfName: null,
+    sceneLoader: () => import('./factory/factory').then(mod => mod.processLoadedScene),
+    metadata: { title: 'factory' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
 };

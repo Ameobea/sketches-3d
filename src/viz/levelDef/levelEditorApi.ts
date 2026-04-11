@@ -1,5 +1,5 @@
 import type { AssetLibFolder } from './assetLibTypes';
-import type { CsgTreeNode, ObjectDef, ObjectGroupDef } from './types';
+import type { CsgTreeNode, LightDef, ObjectDef, ObjectGroupDef } from './types';
 import type { LevelObject, LevelSceneNode } from './loadLevelDef';
 
 const round = (n: number) => Math.round(n * 10000) / 10000;
@@ -228,6 +228,54 @@ export class LevelEditorApi {
           res.text().then(t => console.error('[LevelEditor] CSG tree save failed:', res.status, t));
       })
       .catch(err => console.error('[LevelEditor] CSG tree save error:', err));
+  };
+
+  addLight = async (def: Omit<LightDef, 'id'> & { id?: string }): Promise<LightDef | null> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}/lights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(def),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] add light failed:', res.status, await res.text());
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error('[LevelEditor] add light error:', err);
+      return null;
+    }
+  };
+
+  saveLight = async (def: LightDef): Promise<void> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}/lights`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(def),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] save light failed:', res.status, await res.text());
+      }
+    } catch (err) {
+      console.error('[LevelEditor] save light error:', err);
+    }
+  };
+
+  deleteLight = async (id: string): Promise<void> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}/lights`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] delete light failed:', res.status, await res.text());
+      }
+    } catch (err) {
+      console.error('[LevelEditor] delete light error:', err);
+    }
   };
 
   convertToCsg = async (objectId: string): Promise<{ csgAssetName: string; tree: CsgTreeNode } | null> => {

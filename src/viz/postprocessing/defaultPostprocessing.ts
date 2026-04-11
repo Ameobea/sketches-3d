@@ -18,31 +18,6 @@ import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emis
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 
-const populateShadowMap = (viz: Viz, autoUpdateShadowMap: boolean) => {
-  const shadows: THREE.DirectionalLightShadow[] = [];
-  viz.scene.traverse(obj => {
-    if (obj instanceof THREE.DirectionalLight) {
-      shadows.push(obj.shadow);
-    }
-  });
-
-  // Render the scene once to populate the shadow map
-  shadows.forEach(shadow => {
-    shadow.needsUpdate = true;
-  });
-  viz.renderer.shadowMap.needsUpdate = true;
-  viz.renderer.render(viz.scene, viz.camera);
-  if (!autoUpdateShadowMap) {
-    shadows.forEach(shadow => {
-      shadow.needsUpdate = false;
-      shadow.autoUpdate = false;
-    });
-    viz.renderer.shadowMap.needsUpdate = false;
-    viz.renderer.shadowMap.autoUpdate = false;
-  }
-  viz.renderer.shadowMap.enabled = true;
-};
-
 /**
  * Default emissive bloom configuration (quality-independent params).
  * `levels` is intentionally excluded — it's set per-quality in the pipeline.
@@ -191,6 +166,7 @@ export const configureDefaultPostprocessingPipeline = ({
     frameBufferType: THREE.HalfFloatType,
   });
 
+  let renderPass: MainRenderPass | RenderPass;
   let depthPass: DepthPass | null = null;
   let depthPrePassMaterial: THREE.Material | null = null;
 
@@ -204,12 +180,12 @@ export const configureDefaultPostprocessingPipeline = ({
     depthPass.skipShadowMapUpdate = true;
     effectComposer.addPass(depthPass);
 
-    const renderPass = new MainRenderPass(viz.scene, viz.camera);
-    renderPass.skipShadowMapUpdate = true;
+    renderPass = new MainRenderPass(viz.scene, viz.camera);
+    renderPass.skipShadowMapUpdate = !autoUpdateShadowMap;
     renderPass.needsDepthTexture = true;
     effectComposer.addPass(renderPass);
   } else {
-    const renderPass = new RenderPass(viz.scene, viz.camera);
+    renderPass = new RenderPass(viz.scene, viz.camera);
     effectComposer.addPass(renderPass);
   }
 
@@ -315,20 +291,38 @@ export const configureDefaultPostprocessingPipeline = ({
     finalPass.renderToScreen = true;
   }
 
-  let didRender = false;
-  viz.setRenderOverride(timeDiffSeconds => {
-    effectComposer.render(timeDiffSeconds);
-    viz.renderer.shadowMap.autoUpdate = autoUpdateShadowMap;
-    viz.renderer.shadowMap.needsUpdate = autoUpdateShadowMap;
+  let didRenderShadowMap = false;
+  let sceneGeomReady = false;
+  viz.awaitPhysicsStartupBarriers().then(() => {
+    sceneGeomReady = true;
+  });
 
-    // For some reason, the shadow map that we render at the start of everything is getting cleared at some
-    // point during the setup of this postprocessing pipeline.
-    //
-    // So, we have to re-populate the shadowmap so that it can be used to power the godrays and, well, shadows.
-    if (!didRender && viz.renderer.shadowMap.enabled && !autoUpdateShadowMap) {
-      didRender = true;
-      populateShadowMap(viz, autoUpdateShadowMap);
+  viz.renderer.shadowMap.autoUpdate = autoUpdateShadowMap;
+  viz.renderer.shadowMap.needsUpdate = autoUpdateShadowMap;
+  viz.setRenderOverride(timeDiffSeconds => {
+    if (!didRenderShadowMap && viz.renderer.shadowMap.enabled && !autoUpdateShadowMap && sceneGeomReady) {
+      didRenderShadowMap = true;
+      viz.renderer.shadowMap.needsUpdate = true;
+      viz.scene.traverse(obj => {
+        if (!(obj instanceof THREE.DirectionalLight) || !obj.castShadow) {
+          return;
+        }
+        obj.shadow.camera.updateProjectionMatrix();
+        obj.shadow.needsUpdate = true;
+      });
+      effectComposer.render(timeDiffSeconds);
+      viz.scene.traverse(obj => {
+        if (!(obj instanceof THREE.DirectionalLight)) {
+          return;
+        }
+        obj.shadow.needsUpdate = false;
+        obj.shadow.autoUpdate = false;
+      });
+      viz.renderer.shadowMap.autoUpdate = false;
+      return;
     }
+
+    effectComposer.render(timeDiffSeconds);
   });
 
   const controller = new PostprocessingPipelineController(

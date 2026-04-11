@@ -167,4 +167,23 @@ export interface CustomShaderOptions {
    * can identify and skip these objects.
    */
   noOcclusion?: boolean;
+  /**
+   * Enables retro-style vertex lighting (Gouraud shading). Lighting is evaluated per-vertex in
+   * the vertex shader and interpolated across fragments, giving a classic faceted/low-poly look.
+   *
+   * Shadow maps are still sampled per-fragment for crisp shadow edges (hybrid approach).
+   *
+   * Incompatible with clearcoat, iridescence, sheen, and transmission — those are PBR fragment
+   * effects that have no vertex-lighting equivalent.
+   *
+   * Normal maps have no effect on lighting when this is enabled (lighting uses geometric normals).
+   */
+  vertexLighting?: boolean;
+  /**
+   * Shininess exponent for Blinn-Phong specular highlights in vertex lighting mode.
+   * Higher values produce tighter highlights; lower values produce a broad sheen.
+   * Only has an effect when `vertexLighting` is enabled. Set to 0 or omit to disable specular.
+   * Typical range: 8 (very broad) to 128 (tight pinpoint). Default: 0 (no specular).
+   */
+  vertexLightingShininess?: number;
 }

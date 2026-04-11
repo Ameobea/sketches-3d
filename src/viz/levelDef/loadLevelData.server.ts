@@ -1,6 +1,3 @@
-import { createRequire } from 'node:module';
-import vm from 'node:vm';
-
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { dev } from '$app/environment';
@@ -12,51 +9,40 @@ import { getAssetsDir, getLevelDir } from './levelPaths.server';
 import { LevelDefSchema, LevelDefRawSchema } from './types';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 
-const nodeRequire = createRequire(import.meta.url);
-const getEsbuild = (): typeof import('esbuild') =>
-  nodeRequire(process.env.ESBUILD_MODULE_ID ?? ['es', 'build'].join(''));
-const generatorFnCache = new Map<string, GeneratorFn>();
-
 /**
- * Compiles and loads a generator TypeScript file using esbuild + vm, bypassing
- * the Node ESM module cache so that dev edits are always reflected.
+ * Pre-compiled generator modules for production.  Vite processes this glob at
+ * build time, turning each matched `.gen.ts` into a lazy chunk in the SSR
+ * bundle.  The keys are repo-root-relative paths like `/src/levels/t/platforms.gen.ts`.
  */
-const loadGeneratorFn = (filePath: string): GeneratorFn => {
-  if (!dev) {
-    const cached = generatorFnCache.get(filePath);
-    if (cached) {
-      return cached;
+const prodGeneratorLoaders = import.meta.glob<{ default: GeneratorFn }>('/src/levels/**/*.gen.ts');
+
+const loadGeneratorModule = async (filePath: string): Promise<GeneratorFn> => {
+  if (dev) {
+    // In dev, use the Vite dev server's ssrLoadModule (set on globalThis by generatorsPlugin).
+    // Invalidate first so edits are always reflected without restart.
+    const server = (globalThis as Record<string, any>).__viteDevServer;
+    if (!server) {
+      throw new Error('[loadGeneratorModule] Vite dev server not available on globalThis');
     }
+    const mods = server.moduleGraph.getModulesByFile(filePath);
+    if (mods) {
+      for (const mod of mods) server.moduleGraph.invalidateModule(mod);
+    }
+    const mod = await server.ssrLoadModule(filePath);
+    return (mod.default ?? mod) as GeneratorFn;
   }
 
-  const { buildSync } = getEsbuild();
-  const { outputFiles } = buildSync({
-    entryPoints: [filePath],
-    bundle: true,
-    format: 'cjs',
-    platform: 'node',
-    write: false,
-    external: ['three'],
-    define: { 'import.meta.url': `"file://${filePath}"` },
-    alias: { src: join(process.cwd(), 'src') },
-  });
-  const req = createRequire(filePath);
-  const mod = { exports: {} as Record<string, unknown> };
-  vm.runInNewContext(outputFiles[0].text, {
-    module: mod,
-    exports: mod.exports,
-    require: req,
-    console,
-    process,
-    Buffer,
-  });
-  const fn = (mod.exports.default ?? mod.exports) as GeneratorFn;
-
-  if (!dev) {
-    generatorFnCache.set(filePath, fn);
+  // Production: use pre-compiled chunks from import.meta.glob.
+  const key = filePath.replace(process.cwd(), '');
+  const loader = prodGeneratorLoaders[key];
+  if (!loader) {
+    throw new Error(
+      `[loadGeneratorModule] No pre-built generator for "${key}". ` +
+        `Known generators: ${Object.keys(prodGeneratorLoaders).join(', ')}`
+    );
   }
-
-  return fn;
+  const mod = await loader();
+  return mod.default;
 };
 
 const markGeneratedNode = (node: ObjectDef | ObjectGroupDef): ObjectDef | ObjectGroupDef => {
@@ -173,7 +159,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
               `[loadLevelData] Generator "${genDef.file}" for group "${groupNode.id}" not found in level "${name}"`
             );
           }
-          const fn = loadGeneratorFn(genPath);
+          const fn = await loadGeneratorModule(genPath);
           console.log(
             `[loadLevelData] Running generator "${groupNode.generator}" for group "${groupNode.id}"...`
           );

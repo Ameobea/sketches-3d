@@ -61,13 +61,28 @@ export function packKeyFlags(keyStates: Record<string, boolean>): number {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-const loadFlightRecorderInstance = async (): Promise<FlightRecorderExports> => {
-  const response = await fetch(flightRecorderWasmURL);
-  const bytes = await response.arrayBuffer();
-  const module = await WebAssembly.compile(bytes);
-  const instance = await WebAssembly.instantiate(module, { env: {} });
-  return instance.exports as unknown as FlightRecorderExports;
+let flightRecorderInstancePromise: Promise<FlightRecorderExports> | null = null;
+
+const loadFlightRecorderInstance = (): Promise<FlightRecorderExports> => {
+  if (flightRecorderInstancePromise) {
+    return flightRecorderInstancePromise;
+  }
+  flightRecorderInstancePromise = (async () => {
+    const response = await fetch(flightRecorderWasmURL);
+    const bytes = await response.arrayBuffer();
+    const module = await WebAssembly.compile(bytes);
+    const instance = await WebAssembly.instantiate(module, { env: {} });
+    return instance.exports as unknown as FlightRecorderExports;
+  })();
+  return flightRecorderInstancePromise;
 };
+
+/**
+ * Kicks off fetching and compiling the flight recorder Wasm module in the
+ * background.  Safe to call multiple times; the work is only done once.
+ * Calling this early lets {@link FlightRecorder.init} resolve faster later.
+ */
+export const preFetchFlightRecorderWasm = (): void => void loadFlightRecorderInstance();
 
 export class FlightRecorder {
   private exports!: FlightRecorderExports;
@@ -77,8 +92,17 @@ export class FlightRecorder {
   private headerPtr = 0;
   private eventDataPtr = 0;
   private ready = false;
+  private initPromise: Promise<void> | null = null;
 
   async init(): Promise<void> {
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+    this.initPromise = this._init();
+    return this.initPromise;
+  }
+
+  private async _init(): Promise<void> {
     this.exports = await loadFlightRecorderInstance();
 
     this.ctx = this.exports.create_recorder();

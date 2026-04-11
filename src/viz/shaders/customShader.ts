@@ -7,6 +7,7 @@ import softOcclusionDiscard from './softOcclusionDiscard.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
 import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import GeneratedUVsFragment from './generatedUVs.vert?raw';
+import depthExactVertexBody from './depthExactVertex.glsl?raw';
 import noiseShaders from './noise.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 import { buildTriplanarDefsFragment, type TriplanarMappingParams } from './triplanarMapping';
@@ -364,19 +365,12 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
       void main() {
-        // Apply instance transform first (mat4*vec4), then model/view (mat4*vec4 each).
-        // Keeps all multiplications as mat4*vec4 to match Three.js's project_vertex evaluation
-        // order and avoid the extra precision loss of a mat4*mat4 intermediate product.
-        vec4 localPos = vec4(position, 1.0);
-        vec3 localNormal = normal;
-        #ifdef USE_INSTANCING
-          localPos = instanceMatrix * localPos;
-          localNormal = (instanceMatrix * vec4(localNormal, 0.0)).xyz;
-        #endif
+        // Shared snippet declares localPos / localNormal / mvPos and writes gl_Position
+        // in a form bit-exact with Three.js's project_vertex chunk, so fragments drawn
+        // here line up with the color pass depth buffer.
+        ${depthExactVertexBody}
         vWorldPos = (modelMatrix * localPos).xyz;
         vWorldNormal = normalize((modelMatrix * vec4(localNormal, 0.0)).xyz);
-        vec4 mvPos = modelViewMatrix * localPos;
-        gl_Position = projectionMatrix * mvPos;
       }
     `,
     fragmentShader: `
@@ -395,9 +389,7 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
     },
   });
 
-const DefaultReflectionParams: ReflectionParams = Object.freeze({
-  alpha: 1,
-});
+const DefaultReflectionParams: ReflectionParams = Object.freeze({ alpha: 1 });
 
 const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
   contrastPreservationFactor: 0.5,
@@ -469,6 +461,8 @@ export const buildCustomShaderArgs = (
     useWorldSpaceGeneratedUVs,
     useTriplanarMapping,
     noOcclusion,
+    vertexLighting = false,
+    vertexLightingShininess = 0,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -602,6 +596,24 @@ export const buildCustomShaderArgs = (
   }
   if (iridescenceShader && iridescenceReverseColorRamp) {
     throw new Error('Cannot use both iridescence shader and iridescence reverse color ramp');
+  }
+
+  if (vertexLighting) {
+    if (clearcoat || clearcoatRoughness) {
+      console.warn('Vertex lighting is incompatible with clearcoat');
+    }
+    if (iridescence || iridescenceShader) {
+      console.warn('Vertex lighting is incompatible with iridescence');
+    }
+    if (sheen) {
+      console.warn('Vertex lighting is incompatible with sheen');
+    }
+    if (transmission || transmissionMap) {
+      console.warn('Vertex lighting is incompatible with transmission');
+    }
+    if (normalMap) {
+      console.warn('Normal maps have no effect on lighting when vertex lighting is enabled');
+    }
   }
 
   const mapDisableDistance =
@@ -882,6 +894,11 @@ ${enableFog ? '#include <fog_pars_vertex>' : ''}
 #include <shadowmap_pars_vertex>
 #include <logdepthbuf_pars_vertex>
 #include <clipping_planes_pars_vertex>
+${vertexLighting ? '#include <lights_pars_begin>' : ''}
+
+${vertexLighting ? 'varying vec3 vVertexDirect;' : ''}
+${vertexLighting ? 'varying vec3 vVertexIndirect;' : ''}
+${vertexLighting && vertexLightingShininess > 0 ? 'varying vec3 vVertexSpecular;' : ''}
 
 ${includeNoiseShadersVertex ? noiseShaders : ''}
 
@@ -986,6 +1003,104 @@ void main() {
   #include <shadowmap_vertex>
   ${enableFog ? '#include <fog_vertex>' : ''}
 
+  ${
+    vertexLighting
+      ? `
+  // --- Vertex lighting (Gouraud) ---
+  // Compute a simple Lambertian diffuse per-vertex, split into direct + indirect.
+  // Shadow maps are still sampled per-fragment for crisp edges and only applied to direct.
+  vec3 vtxDirectAccum = vec3(0.0);
+  vec3 vtxIndirectAccum = vec3(0.0);
+  ${vertexLightingShininess > 0 ? 'vec3 vtxSpecAccum = vec3(0.0);' : ''}
+  vec3 vtxViewPos = -mvPosition.xyz; // geometry position in view space
+  // Three.js light uniforms and helper functions work in view space,
+  // so we need the view-space normal for N·L (not vWorldNormal).
+  vec3 vtxNormal = normalize(transformedNormal);
+  ${vertexLightingShininess > 0 ? 'vec3 vtxViewDir = normalize(vtxViewPos);' : ''}
+
+  IncidentLight vtxDirectLight;
+
+  #if (NUM_DIR_LIGHTS > 0)
+    DirectionalLight vtxDirLight;
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
+      vtxDirLight = directionalLights[i];
+      getDirectionalLightInfo(vtxDirLight, vtxDirectLight);
+      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
+      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
+      ${
+        vertexLightingShininess > 0
+          ? `{
+        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
+        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
+        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
+      }`
+          : ''
+      }
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  #if (NUM_POINT_LIGHTS > 0)
+    PointLight vtxPointLight;
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_POINT_LIGHTS; i++) {
+      vtxPointLight = pointLights[i];
+      getPointLightInfo(vtxPointLight, vtxViewPos, vtxDirectLight);
+      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
+      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
+      ${
+        vertexLightingShininess > 0
+          ? `{
+        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
+        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
+        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
+      }`
+          : ''
+      }
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  #if (NUM_SPOT_LIGHTS > 0)
+    SpotLight vtxSpotLight;
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_SPOT_LIGHTS; i++) {
+      vtxSpotLight = spotLights[i];
+      getSpotLightInfo(vtxSpotLight, vtxViewPos, vtxDirectLight);
+      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
+      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
+      ${
+        vertexLightingShininess > 0
+          ? `{
+        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
+        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
+        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
+      }`
+          : ''
+      }
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  // Indirect: ambient + hemisphere
+  vtxIndirectAccum += ambientLightColor;
+
+  #if (NUM_HEMI_LIGHTS > 0)
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_HEMI_LIGHTS; i++) {
+      vtxIndirectAccum += getHemisphereLightIrradiance(hemisphereLights[i], vtxNormal);
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  vVertexDirect = vtxDirectAccum;
+  vVertexIndirect = vtxIndirectAccum;
+  ${vertexLightingShininess > 0 ? 'vVertexSpecular = vtxSpecAccum;' : ''}
+  `
+      : ''
+  }
+
   ${customVertexFragment ?? ''}
 }`,
     fragmentShader: `
@@ -1049,6 +1164,9 @@ uniform float opacity;
 
 varying vec3 vViewPosition;
 uniform mat4 modelMatrix;
+${vertexLighting ? 'varying vec3 vVertexDirect;' : ''}
+${vertexLighting ? 'varying vec3 vVertexIndirect;' : ''}
+${vertexLighting && vertexLightingShininess > 0 ? 'varying vec3 vVertexSpecular;' : ''}
 
 #include <common>
 #include <packing>
@@ -1250,6 +1368,63 @@ void main() {
   }
 
 	// accumulation
+  ${
+    vertexLighting
+      ? `
+  // --- Vertex lighting path ---
+  // Lighting was computed per-vertex; we only need per-fragment shadow map sampling here.
+  // Shadows only affect direct light; ambient/indirect passes through unshadowed.
+  float totalShadow = 1.0;
+
+  #if defined(USE_SHADOWMAP)
+    float computedShadow;
+
+    #if (NUM_DIR_LIGHTS > 0) && (NUM_DIR_LIGHT_SHADOWS > 0)
+      DirectionalLightShadow vtxDirShadow;
+      #pragma unroll_loop_start
+      for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
+        #if (UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS)
+          vtxDirShadow = directionalLightShadows[i];
+          computedShadow = getShadow(directionalShadowMap[i], vtxDirShadow.shadowMapSize, vtxDirShadow.shadowBias, vtxDirShadow.shadowRadius, vDirectionalShadowCoord[i]);
+          totalShadow *= computedShadow;
+        #endif
+      }
+      #pragma unroll_loop_end
+    #endif
+
+    #if (NUM_SPOT_LIGHTS > 0) && (NUM_SPOT_LIGHT_SHADOWS > 0)
+      SpotLightShadow vtxSpotShadow;
+      #pragma unroll_loop_start
+      for (int i = 0; i < NUM_SPOT_LIGHTS; i++) {
+        #if (UNROLLED_LOOP_INDEX < NUM_SPOT_LIGHT_SHADOWS)
+          vtxSpotShadow = spotLightShadows[i];
+          computedShadow = getShadow(spotShadowMap[i], vtxSpotShadow.shadowMapSize, vtxSpotShadow.shadowBias, vtxSpotShadow.shadowRadius, vSpotLightCoord[i]);
+          totalShadow *= computedShadow;
+        #endif
+      }
+      #pragma unroll_loop_end
+    #endif
+
+    #if (NUM_POINT_LIGHTS > 0) && (NUM_POINT_LIGHT_SHADOWS > 0)
+      PointLightShadow vtxPointShadow;
+      #pragma unroll_loop_start
+      for (int i = 0; i < NUM_POINT_LIGHTS; i++) {
+        #if (UNROLLED_LOOP_INDEX < NUM_POINT_LIGHT_SHADOWS)
+          vtxPointShadow = pointLightShadows[i];
+          computedShadow = getPointShadow(pointShadowMap[i], vtxPointShadow.shadowMapSize, vtxPointShadow.shadowBias, vtxPointShadow.shadowRadius, vPointShadowCoord[i], vtxPointShadow.shadowCameraNear, vtxPointShadow.shadowCameraFar);
+          totalShadow *= computedShadow;
+        #endif
+      }
+      #pragma unroll_loop_end
+    #endif
+  #endif
+
+  // Apply RECIPROCAL_PI to match PBR energy conservation (BRDF_Lambert divides by PI).
+  // Shadows only darken direct light; indirect (ambient + hemisphere) is unshadowed.
+  vec3 totalDiffuse = diffuseColor.rgb * RECIPROCAL_PI * (vVertexDirect * totalShadow + vVertexIndirect);
+  vec3 totalSpecular = ${vertexLightingShininess > 0 ? 'vVertexSpecular * totalShadow' : 'vec3(0.0)'};
+  `
+      : `
 	#include <lights_physical_fragment>
   ${buildRunIridescenceShaderFragment(iridescenceShader)}
   ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(sampledDiffuseColor_.rgb);' : ''}
@@ -1264,6 +1439,8 @@ void main() {
 
 	vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
 	vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;
+  `
+  }
 
 	if (playerShadowParams.y > 0.0) {
 		float psRadius = playerShadowParams.x;
