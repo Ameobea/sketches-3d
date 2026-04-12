@@ -92,6 +92,19 @@ export interface CustomShaderProps {
    * Controls screen-space reflections.
    */
   reflection?: Partial<ReflectionParams>;
+  /**
+   * Fades the fragment's alpha to zero based on world-space Y position. Auto-sets
+   * `transparent: true` on the material so alpha blending is actually applied.
+   *
+   * `bottomFade: [fadeStart, fadeEnd]` — alpha ramps from 0 (at fadeStart) to 1 (at fadeEnd).
+   * `topFade: [fadeStart, fadeEnd]`    — alpha ramps from 1 (at fadeStart) to 0 (at fadeEnd).
+   *
+   * Both are optional; omit either to skip that direction.
+   */
+  heightAlpha?: {
+    bottomFade?: [fadeStart: number, fadeEnd: number];
+    topFade?: [fadeStart: number, fadeEnd: number];
+  };
 }
 
 export interface CustomShaderShaders {

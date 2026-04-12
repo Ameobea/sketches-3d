@@ -217,6 +217,7 @@ export class BulletPhysics {
   private readonly playerEyePosScratch = new THREE.Vector3();
   /** Tracks whether backface rendering was enabled last frame to avoid redundant scene traversals. */
   private backfaceRenderingEnabled = true;
+  private readonly collisionShapeCleanupFns = new WeakMap<BtCollisionObject, () => void>();
   public flightRecorder: FlightRecorder = new FlightRecorder();
   public packStateBufPtr = 0;
   public readonly replayController: ReplayController;
@@ -328,11 +329,12 @@ export class BulletPhysics {
         default:
           playerColliderShape satisfies never;
           throw new Error(
-            `Unknown player collider shape: ${playerColliderShape}. Expected 'capsule' or 'cylinder'.`
+            `Unknown player collider shape: ${playerColliderShape}. Expected 'capsule', 'cylinder', or 'sphere'.`
           );
       }
     })();
     this.playerGhostObject.setCollisionShape(playerShape);
+    this.registerCollisionShapeCleanup(this.playerGhostObject, { shape: playerShape });
     this.playerGhostObject.setCollisionFlags(16); // btCollisionObject::CF_CHARACTER_OBJECT
 
     const playerStepHeight = this.viz.sceneConf.player?.stepHeight ?? DEFAULT_STEP_HEIGHT;
@@ -1066,13 +1068,41 @@ export class BulletPhysics {
     }
   };
 
+  private registerCollisionShapeCleanup = (
+    collisionObj: BtCollisionObject,
+    buildResult: Pick<CollisionShapeBuildResult, 'shape' | 'destroyShape'>
+  ) => {
+    const destroyShape = buildResult.destroyShape ?? (Ammo => Ammo.destroy(buildResult.shape));
+    this.collisionShapeCleanupFns.set(collisionObj, () => destroyShape(this.Ammo));
+  };
+
+  private destroyCollisionShape = (collisionObj: BtCollisionObject, meshName?: string) => {
+    const destroyShape = this.collisionShapeCleanupFns.get(collisionObj);
+    try {
+      if (destroyShape) {
+        destroyShape();
+      } else {
+        const collisionShape = collisionObj.getCollisionShape();
+        if (collisionShape) {
+          this.Ammo.destroy(collisionShape);
+        }
+      }
+    } catch (err) {
+      console.error(`Error destroying collision shape for mesh ${meshName ?? '<Unknown>'}`, { collisionObj });
+      console.error(err);
+    } finally {
+      this.collisionShapeCleanupFns.delete(collisionObj);
+    }
+  };
+
   public addCollisionObject = (
-    shape: BtCollisionShape,
+    buildResult: CollisionShapeBuildResult,
     pos: THREE.Vector3,
     quat: THREE.Quaternion = new THREE.Quaternion(),
     objRef?: CollisionObjectRef,
     colliderType: 'static' | 'kinematic' = 'static'
   ) => {
+    const { shape } = buildResult;
     const transform = this.makeBtTransform(pos, quat);
 
     // Add the object as static, so it doesn't move but still collides
@@ -1099,6 +1129,7 @@ export class BulletPhysics {
       this.collisionObjectRefs.set(refIx, objRef);
     }
     this.collisionWorld.addRigidBody(body);
+    this.registerCollisionShapeCleanup(body, buildResult);
 
     this.Ammo.destroy(rbInfo);
     this.Ammo.destroy(transform);
@@ -1121,19 +1152,7 @@ export class BulletPhysics {
       }
     }
 
-    // currently, every collision object owns its own shape, so we need to destroy it here
-    //
-    // we could re-use idential shape objects between collision objs in the future as an optimization, at which
-    // point we would need to refcount them or something and not destroy them here.
-    try {
-      const collisionShape = collisionObj.getCollisionShape();
-      if (collisionShape) {
-        this.Ammo.destroy(collisionShape);
-      }
-    } catch (err) {
-      console.error(`Error destroying collision shape for mesh ${meshName ?? '<Unknown>'}`, { collisionObj });
-      console.error(err);
-    }
+    this.destroyCollisionShape(collisionObj, meshName);
     this.Ammo.destroy(collisionObj);
   };
 
@@ -1195,7 +1214,7 @@ export class BulletPhysics {
       materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
     };
     const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
-    const rigidBody = this.addCollisionObject(buildResult.shape, pos, quat, objRef, colliderType);
+    const rigidBody = this.addCollisionObject(buildResult, pos, quat, objRef, colliderType);
     mesh.userData.rigidBody = rigidBody;
   };
 
@@ -1236,11 +1255,8 @@ export class BulletPhysics {
     this.collisionWorld.removeCollisionObject(ghostObj);
     this.Ammo.destroy(entry.sensor);
     if (destroyCollisionObj) {
-      try {
-        this.Ammo.destroy(ghostObj);
-      } catch (err) {
-        console.error('Error destroying ghostObj', ghostObj, err);
-      }
+      this.destroyCollisionShape(ghostObj);
+      this.Ammo.destroy(ghostObj);
     }
   };
 
@@ -1285,6 +1301,7 @@ export class BulletPhysics {
     this.zoneCallbacks.delete(entry.zoneId);
     this.collisionWorld.removeCollisionObject(entry.ghostObj);
     this.Ammo.destroy(entry.pad);
+    this.destroyCollisionShape(entry.ghostObj);
     this.Ammo.destroy(entry.ghostObj);
   };
 
@@ -1323,6 +1340,7 @@ export class BulletPhysics {
     this.zoneCallbacks.delete(entry.zoneId);
     this.collisionWorld.removeCollisionObject(entry.ghostObj);
     this.Ammo.destroy(entry.zone);
+    this.destroyCollisionShape(entry.ghostObj);
     this.Ammo.destroy(entry.ghostObj);
   };
 
@@ -1363,6 +1381,7 @@ export class BulletPhysics {
     this.zoneCallbacks.delete(entry.zoneId);
     this.collisionWorld.removeCollisionObject(entry.ghostObj);
     this.Ammo.destroy(entry.token);
+    this.destroyCollisionShape(entry.ghostObj);
     this.Ammo.destroy(entry.ghostObj);
   };
 
@@ -1383,13 +1402,13 @@ export class BulletPhysics {
   };
 
   private createZoneGhostObject = (region: ContactRegion): BtPairCachingGhostObject => {
-    const { shape, transform } = (() => {
+    const { buildResult, transform } = (() => {
       switch (region.type) {
         case 'box': {
           const shape = new this.Ammo.btBoxShape(
             this.btvec3(region.halfExtents.x, region.halfExtents.y, region.halfExtents.z)
           );
-          return { shape, transform: this.makeBtTransform(region.pos, region.quat) };
+          return { buildResult: { shape }, transform: this.makeBtTransform(region.pos, region.quat) };
         }
         case 'mesh': {
           const { mesh } = region;
@@ -1403,27 +1422,28 @@ export class BulletPhysics {
             }
             const buildResult = this.buildCollisionShapeFromMesh(region.mesh, extraScale);
             const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
-            return { shape: buildResult.shape, transform: this.makeBtTransform(pos, quat) };
+            return { buildResult, transform: this.makeBtTransform(pos, quat) };
           });
         }
         case 'sphere': {
           const shape = new this.Ammo.btSphereShape(region.radius);
-          return { shape, transform: this.makeBtTransform(region.pos) };
+          return { buildResult: { shape }, transform: this.makeBtTransform(region.pos) };
         }
         default: {
           // For convexHull and aabb, fall through to mesh-based approach
           const mesh = (region as any).mesh as THREE.Mesh;
           const buildResult = this.buildCollisionShapeFromMesh(mesh);
           const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
-          return { shape: buildResult.shape, transform: this.makeBtTransform(pos, quat) };
+          return { buildResult, transform: this.makeBtTransform(pos, quat) };
         }
       }
     })();
 
     const obj = new this.Ammo.btPairCachingGhostObject();
     obj.setWorldTransform(transform);
-    obj.setCollisionShape(shape);
+    obj.setCollisionShape(buildResult.shape);
     obj.setCollisionFlags(4); // btCollisionObject::CF_NO_CONTACT_RESPONSE
+    this.registerCollisionShapeCleanup(obj, buildResult);
     this.Ammo.destroy(transform);
 
     this.collisionWorld.addCollisionObject(
@@ -1442,7 +1462,7 @@ export class BulletPhysics {
     colliderType: 'static' | 'kinematic' = 'static'
   ) => {
     const shape = new this.Ammo.btBoxShape(this.btvec3(...halfExtents));
-    this.addCollisionObject(shape, new THREE.Vector3(...pos), quat, undefined, colliderType);
+    this.addCollisionObject({ shape }, new THREE.Vector3(...pos), quat, undefined, colliderType);
   };
 
   public addCone = (
@@ -1453,7 +1473,7 @@ export class BulletPhysics {
     colliderType: 'static' | 'kinematic' = 'static'
   ) => {
     const shape = new this.Ammo.btConeShape(radius, height);
-    this.addCollisionObject(shape, pos, quat, undefined, colliderType);
+    this.addCollisionObject({ shape }, pos, quat, undefined, colliderType);
   };
 
   public addCompound = (
@@ -1467,6 +1487,7 @@ export class BulletPhysics {
     quat?: THREE.Quaternion
   ) => {
     const parentShape = new this.Ammo.btCompoundShape(true);
+    const childShapes: BtCollisionShape[] = [];
 
     const childTransform = new this.Ammo.btTransform();
     for (const child of children) {
@@ -1477,6 +1498,7 @@ export class BulletPhysics {
 
         throw new Error('Unimplemented');
       })();
+      childShapes.push(childShape);
 
       childTransform.setIdentity();
       childTransform.setOrigin(this.btvec3(...child.pos));
@@ -1488,7 +1510,19 @@ export class BulletPhysics {
       parentShape.addChildShape(childTransform, childShape);
     }
 
-    this.addCollisionObject(parentShape, new THREE.Vector3(...pos), quat);
+    this.addCollisionObject(
+      {
+        shape: parentShape,
+        destroyShape: Ammo => {
+          Ammo.destroy(parentShape);
+          for (const childShape of childShapes) {
+            Ammo.destroy(childShape);
+          }
+        },
+      },
+      new THREE.Vector3(...pos),
+      quat
+    );
 
     this.Ammo.destroy(childTransform);
   };
@@ -1533,6 +1567,7 @@ export class BulletPhysics {
     this.Ammo.destroy(this.dispatcher);
     this.Ammo.destroy(this.solver);
     this.Ammo.destroy(this.playerController);
+    this.destroyCollisionShape(this.playerGhostObject, 'player');
     this.Ammo.destroy(this.playerGhostObject);
     this.Ammo.destroy(this.collisionWorld);
   };
@@ -1591,7 +1626,16 @@ export class BulletPhysics {
       this.btvec3(worldSpaceWidth / (gridResolutionX - 1), 1, worldSpaceLength / (gridResolutionY - 1))
     );
 
-    this.addCollisionObject(heightfieldShape, new THREE.Vector3(0, 0, 0));
+    this.addCollisionObject(
+      {
+        shape: heightfieldShape,
+        destroyShape: Ammo => {
+          Ammo.destroy(heightfieldShape);
+          Ammo._free(terrainDataPtr);
+        },
+      },
+      new THREE.Vector3(0, 0, 0)
+    );
   };
 
   public registerDashCb = (cb: (curTimeSeconds: number) => void) => this.dashCbs.push(cb);

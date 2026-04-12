@@ -1,10 +1,13 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 
 import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
-import type { ObjectDef } from 'src/viz/levelDef/types';
+import type { ObjectDef, ObjectGroupDef } from 'src/viz/levelDef/types';
 import {
   findNodeById,
+  findNodeWithParent,
   flattenAllNodes,
+  flattenLeaves,
+  GENERATED_NODE_USERDATA_KEY,
   isGeneratedDef,
   isObjectGroup,
   removeNodeById,
@@ -112,6 +115,11 @@ export const POST: RequestHandler = async ({ params, request }) => {
         rotation?: [number, number, number];
         scale?: [number, number, number];
         id?: string;
+      }
+    | {
+        /** Paste a full group subtree (copy-paste). Server assigns fresh IDs. */
+        type: 'group_paste';
+        def: ObjectGroupDef;
       };
 
   const level = openLevel(name);
@@ -153,6 +161,50 @@ export const POST: RequestHandler = async ({ params, request }) => {
     return json(newGroup, { status: 201 });
   }
 
+  if (body.type === 'group_paste') {
+    // Validate all referenced assets exist
+    for (const leaf of flattenLeaves([body.def])) {
+      if (!level.def.assets[leaf.asset]) error(400, `Unknown asset "${leaf.asset}" in pasted group`);
+    }
+
+    // Assign fresh IDs to every node in the subtree. We build the set of used IDs
+    // incrementally so siblings within the pasted tree don't collide with each other.
+    const allIds = new Set(flattenAllNodes(level.def.objects).map(n => n.id));
+
+    const withFreshIds = (node: ObjectDef | ObjectGroupDef): ObjectDef | ObjectGroupDef => {
+      const stem = isObjectGroup(node) ? 'group' : (node as ObjectDef).asset;
+      const prefix = `${stem}_`;
+      let maxN = -1;
+      for (const id of allIds) {
+        if (id === stem || id.startsWith(prefix)) {
+          const suffix = id === stem ? 0 : parseInt(id.slice(prefix.length), 10);
+          if (!isNaN(suffix) && suffix > maxN) maxN = suffix;
+        }
+      }
+      const freshId = maxN < 0 ? stem : `${prefix}${maxN + 1}`;
+      allIds.add(freshId);
+
+      // Strip the generated marker so the copy is a regular, editable node.
+      const { [GENERATED_NODE_USERDATA_KEY]: _drop, ...restUserData } = node.userData ?? {};
+      const userData = Object.keys(restUserData).length > 0 ? restUserData : undefined;
+
+      if (isObjectGroup(node)) {
+        return {
+          ...node,
+          id: freshId,
+          userData,
+          children: node.children.map(withFreshIds),
+        } as ObjectGroupDef;
+      }
+      return { ...node, id: freshId, userData } as ObjectDef;
+    };
+
+    const newDef = withFreshIds(body.def) as ObjectGroupDef;
+    level.def.objects.push(newDef);
+    level.save();
+    return json(newDef, { status: 201 });
+  }
+
   // Default: create ObjectDef
   if (!level.def.assets[body.asset]) {
     error(400, `Unknown asset "${body.asset}"`);
@@ -175,4 +227,91 @@ export const POST: RequestHandler = async ({ params, request }) => {
   level.def.objects.push(newObj);
   level.save();
   return json(newObj, { status: 201 });
+};
+
+/**
+ * Group multiple sibling nodes into a new parent group.
+ *
+ * Body: { nodeIds: string[], position: [number, number, number] }
+ *
+ * All nodes must be siblings (same parent array). The new group is inserted
+ * where the first listed node was, and each node's local position is adjusted
+ * to preserve world-space placement.
+ */
+export const PUT: RequestHandler = async ({ params, request }) => {
+  guardDev();
+  const name = validateName(params.name);
+
+  const body = (await request.json()) as {
+    nodeIds: string[];
+    position: [number, number, number];
+  };
+
+  if (!body.nodeIds || body.nodeIds.length < 2) {
+    error(400, 'Need at least 2 node IDs to group');
+  }
+
+  const level = openLevel(name);
+
+  // Locate all nodes and verify they share the same parent array
+  const lookups = body.nodeIds.map(id => findNodeWithParent(level.def.objects, id));
+  for (let i = 0; i < lookups.length; i++) {
+    if (!lookups[i]) error(404, `Node "${body.nodeIds[i]}" not found`);
+  }
+
+  const parentArray = lookups[0]!.parentArray;
+  for (const lookup of lookups) {
+    if (lookup!.parentArray !== parentArray) {
+      error(400, 'All nodes must be siblings (same parent) to be grouped');
+    }
+  }
+
+  // Generate a unique group ID
+  const allNodes = flattenAllNodes(level.def.objects);
+  const allIds = new Set(allNodes.map(n => n.id));
+  let groupId = 'group';
+  if (allIds.has(groupId)) {
+    let n = 1;
+    while (allIds.has(`group_${n}`)) n++;
+    groupId = `group_${n}`;
+  }
+
+  // Compute the insertion index (where the first selected node was)
+  const firstIdx = parentArray.indexOf(lookups[0]!.node);
+
+  // Remove nodes from parent array (iterate in reverse to preserve indices)
+  const nodesToGroup = lookups.map(l => l!.node);
+  const idsToRemove = new Set(body.nodeIds);
+  for (let i = parentArray.length - 1; i >= 0; i--) {
+    if (idsToRemove.has(parentArray[i].id)) {
+      parentArray.splice(i, 1);
+    }
+  }
+
+  // Adjust each node's position to be relative to the new group position
+  const round = (n: number) => Math.round(n * 10000) / 10000;
+  for (const node of nodesToGroup) {
+    const oldPos = node.position ?? [0, 0, 0];
+    node.position = [
+      round(oldPos[0] - body.position[0]),
+      round(oldPos[1] - body.position[1]),
+      round(oldPos[2] - body.position[2]),
+    ];
+  }
+
+  // Create the new group
+  const newGroup = {
+    id: groupId,
+    children: nodesToGroup,
+    position: body.position,
+    rotation: [0, 0, 0] as [number, number, number],
+    scale: [1, 1, 1] as [number, number, number],
+  };
+
+  // Insert where the first node was
+  const insertIdx = Math.min(firstIdx, parentArray.length);
+  parentArray.splice(insertIdx, 0, newGroup);
+
+  level.save();
+  return json(newGroup, { status: 201 });
 };

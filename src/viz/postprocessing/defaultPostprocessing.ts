@@ -146,6 +146,8 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    * Only relevant when emissiveBypass is true. Default: 2.8 (nexus baseline).
    */
   emissiveBypassAmbientIntensity?: number;
+  /** See doc comment of `FinalPass` for usage of this. */
+  fogShader?: string;
 }
 
 export const configureDefaultPostprocessingPipeline = ({
@@ -160,6 +162,7 @@ export const configureDefaultPostprocessingPipeline = ({
   emissiveBypass = false,
   emissiveBloom = {} as EmissiveBloomConfig | null,
   emissiveBypassAmbientIntensity = 2.8,
+  fogShader,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
   const effectComposer = new StableDepthEffectComposer(viz.renderer, {
     multisampling: 0,
@@ -265,12 +268,13 @@ export const configureDefaultPostprocessingPipeline = ({
   // to the full composited scene in one place.
   viz.renderer.toneMapping = THREE.NoToneMapping;
 
-  const finalPass = new FinalPass({
+  const finalPass = new FinalPass(viz, {
     toneMapping: toneMapping.mode ?? 'aces',
     exposure: toneMapping.exposure ?? 1.0,
     emissiveBuffer: emissiveBypassPass?.emissiveRT.texture ?? null,
     emissiveBloomBuffer: emissiveBlurPass?.bloomTexture ?? null,
     bloomIntensity: emissiveBlurPass?.intensity ?? 1.0,
+    fogShader,
   });
   effectComposer.addPass(finalPass);
 

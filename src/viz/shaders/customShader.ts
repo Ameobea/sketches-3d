@@ -396,6 +396,123 @@ const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
   sharpenFactor: 12.8,
 });
 
+/** Gouraud shading for vertex lighting */
+const buildRunVertexLightingFragment = (vertexLightingShininess: number) => `
+  // Compute a simple Lambertian diffuse per-vertex, split into direct + indirect.
+  // Shadow maps are still sampled per-fragment for crisp edges and only applied to direct.
+  vec3 vtxDirectAccum = vec3(0.0);
+  vec3 vtxIndirectAccum = vec3(0.0);
+  ${vertexLightingShininess > 0 ? 'vec3 vtxSpecAccum = vec3(0.0);' : ''}
+  vec3 vtxViewPos = -mvPosition.xyz; // geometry position in view space
+  vec3 vtxNormal = normalize(transformedNormal);
+  ${vertexLightingShininess > 0 ? 'vec3 vtxViewDir = normalize(vtxViewPos);' : ''}
+
+  IncidentLight vtxDirectLight;
+
+  #if (NUM_DIR_LIGHTS > 0)
+    DirectionalLight vtxDirLight;
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
+      vtxDirLight = directionalLights[i];
+      getDirectionalLightInfo(vtxDirLight, vtxDirectLight);
+      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
+      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
+      ${
+        vertexLightingShininess > 0
+          ? `{
+        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
+        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
+        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
+      }`
+          : ''
+      }
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  #if (NUM_POINT_LIGHTS > 0)
+    PointLight vtxPointLight;
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_POINT_LIGHTS; i++) {
+      vtxPointLight = pointLights[i];
+      getPointLightInfo(vtxPointLight, vtxViewPos, vtxDirectLight);
+      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
+      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
+      ${
+        vertexLightingShininess > 0
+          ? `{
+        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
+        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
+        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
+      }`
+          : ''
+      }
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  #if (NUM_SPOT_LIGHTS > 0)
+    SpotLight vtxSpotLight;
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_SPOT_LIGHTS; i++) {
+      vtxSpotLight = spotLights[i];
+      getSpotLightInfo(vtxSpotLight, vtxViewPos, vtxDirectLight);
+      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
+      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
+      ${
+        vertexLightingShininess > 0
+          ? `{
+        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
+        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
+        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
+      }`
+          : ''
+      }
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  vtxIndirectAccum += ambientLightColor;
+
+  #if (NUM_HEMI_LIGHTS > 0)
+    #pragma unroll_loop_start
+    for (int i = 0; i < NUM_HEMI_LIGHTS; i++) {
+      vtxIndirectAccum += getHemisphereLightIrradiance(hemisphereLights[i], vtxNormal);
+    }
+    #pragma unroll_loop_end
+  #endif
+
+  vVertexDirect = vtxDirectAccum;
+  vVertexIndirect = vtxIndirectAccum;
+  ${vertexLightingShininess > 0 ? 'vVertexSpecular = vtxSpecAccum;' : ''}
+  `;
+
+const buildHeightAlphaFragment = (
+  heightAlpha: { bottomFade?: [number, number]; topFade?: [number, number] } | undefined
+): string => {
+  if (!heightAlpha) return '';
+  const { bottomFade, topFade } = heightAlpha;
+  if (!bottomFade && !topFade) return '';
+
+  const lines: string[] = [];
+  if (bottomFade) {
+    lines.push(
+      `heightAlphaFactor *= smoothstep(${bottomFade[0].toFixed(3)}, ${bottomFade[1].toFixed(3)}, vWorldPos.y);`
+    );
+  }
+  if (topFade) {
+    lines.push(
+      `heightAlphaFactor *= 1.0 - smoothstep(${topFade[0].toFixed(3)}, ${topFade[1].toFixed(3)}, vWorldPos.y);`
+    );
+  }
+
+  return `{
+    float heightAlphaFactor = 1.0;
+    ${lines.join('\n    ')}
+    diffuseColor.a *= heightAlphaFactor;
+  }`;
+};
+
 export const buildCustomShaderArgs = (
   {
     roughness = 0.9,
@@ -429,6 +546,8 @@ export const buildCustomShaderArgs = (
     ambientLightScale = 1,
     ambientDistanceAmp = globalConfig.ambientDistanceAmp,
     reflection: providedReflectionParams,
+    heightAlpha,
+    transparent,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -875,6 +994,7 @@ export const buildCustomShaderArgs = (
     fog: true,
     lights: true,
     dithering: false,
+    transparent: heightAlpha ? true : (transparent ?? false),
     uniforms,
     vertexShader: /* glsl */ `
 #define STANDARD
@@ -1003,103 +1123,7 @@ void main() {
   #include <shadowmap_vertex>
   ${enableFog ? '#include <fog_vertex>' : ''}
 
-  ${
-    vertexLighting
-      ? `
-  // --- Vertex lighting (Gouraud) ---
-  // Compute a simple Lambertian diffuse per-vertex, split into direct + indirect.
-  // Shadow maps are still sampled per-fragment for crisp edges and only applied to direct.
-  vec3 vtxDirectAccum = vec3(0.0);
-  vec3 vtxIndirectAccum = vec3(0.0);
-  ${vertexLightingShininess > 0 ? 'vec3 vtxSpecAccum = vec3(0.0);' : ''}
-  vec3 vtxViewPos = -mvPosition.xyz; // geometry position in view space
-  // Three.js light uniforms and helper functions work in view space,
-  // so we need the view-space normal for N·L (not vWorldNormal).
-  vec3 vtxNormal = normalize(transformedNormal);
-  ${vertexLightingShininess > 0 ? 'vec3 vtxViewDir = normalize(vtxViewPos);' : ''}
-
-  IncidentLight vtxDirectLight;
-
-  #if (NUM_DIR_LIGHTS > 0)
-    DirectionalLight vtxDirLight;
-    #pragma unroll_loop_start
-    for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
-      vtxDirLight = directionalLights[i];
-      getDirectionalLightInfo(vtxDirLight, vtxDirectLight);
-      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
-      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
-      ${
-        vertexLightingShininess > 0
-          ? `{
-        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
-        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
-        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
-      }`
-          : ''
-      }
-    }
-    #pragma unroll_loop_end
-  #endif
-
-  #if (NUM_POINT_LIGHTS > 0)
-    PointLight vtxPointLight;
-    #pragma unroll_loop_start
-    for (int i = 0; i < NUM_POINT_LIGHTS; i++) {
-      vtxPointLight = pointLights[i];
-      getPointLightInfo(vtxPointLight, vtxViewPos, vtxDirectLight);
-      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
-      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
-      ${
-        vertexLightingShininess > 0
-          ? `{
-        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
-        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
-        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
-      }`
-          : ''
-      }
-    }
-    #pragma unroll_loop_end
-  #endif
-
-  #if (NUM_SPOT_LIGHTS > 0)
-    SpotLight vtxSpotLight;
-    #pragma unroll_loop_start
-    for (int i = 0; i < NUM_SPOT_LIGHTS; i++) {
-      vtxSpotLight = spotLights[i];
-      getSpotLightInfo(vtxSpotLight, vtxViewPos, vtxDirectLight);
-      float vtxNdotL = saturate(dot(vtxNormal, vtxDirectLight.direction));
-      vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
-      ${
-        vertexLightingShininess > 0
-          ? `{
-        vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
-        float vtxNdotH = saturate(dot(vtxNormal, vtxH));
-        vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
-      }`
-          : ''
-      }
-    }
-    #pragma unroll_loop_end
-  #endif
-
-  // Indirect: ambient + hemisphere
-  vtxIndirectAccum += ambientLightColor;
-
-  #if (NUM_HEMI_LIGHTS > 0)
-    #pragma unroll_loop_start
-    for (int i = 0; i < NUM_HEMI_LIGHTS; i++) {
-      vtxIndirectAccum += getHemisphereLightIrradiance(hemisphereLights[i], vtxNormal);
-    }
-    #pragma unroll_loop_end
-  #endif
-
-  vVertexDirect = vtxDirectAccum;
-  vVertexIndirect = vtxIndirectAccum;
-  ${vertexLightingShininess > 0 ? 'vVertexSpecular = vtxSpecAccum;' : ''}
-  `
-      : ''
-  }
+  ${vertexLighting ? buildRunVertexLightingFragment(vertexLightingShininess) : ''}
 
   ${customVertexFragment ?? ''}
 }`,
@@ -1522,6 +1546,8 @@ void main() {
   #ifdef USE_TRANSMISSION
   diffuseColor.a *= material.transmissionAlpha;
   #endif
+
+  ${buildHeightAlphaFragment(heightAlpha)}
 
   outFragColor = vec4( outgoingLight, diffuseColor.a );
 

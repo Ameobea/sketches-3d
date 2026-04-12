@@ -1,5 +1,118 @@
 {
   "$schema": "../materials-schema.json",
-  "textures": {},
-  "materials": {}
+  "textures": {
+    "chipped_yellow_painted_cracked_stone_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/e21f03a6-3673-45b6-83cb-4cffd53adbcf.avif",
+      "colorSpace": "srgb"
+    },
+    "chipped_yellow_painted_cracked_stone_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/5a528b01-415d-48fb-8bd6-de81e335fafa.avif"
+    },
+    "chipped_rusty_gray_painted_wall_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/e4b1c4dc-e2a4-400a-90a7-14f2f25197ab.avif",
+      "colorSpace": "srgb"
+    },
+    "chipped_rusty_gray_painted_wall_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/ca6d2f18-91ee-46ce-b1e8-54cb411ba647.avif"
+    },
+    "concrete_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/3a5937da-07f7-4fbf-a086-4cc664ada8f3.avif",
+      "colorSpace": "srgb"
+    },
+    "concrete_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/5b2197b4-02e0-4d0a-b714-6ee9a867e3ac.avif"
+    },
+    "horizontal_metal_1_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/f5d7e1a9-3c54-4233-8e7d-292a514cc1c7.avif",
+      "colorSpace": "srgb"
+    },
+    "horizontal_metal_1_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/8a4f8add-ac59-4d23-b74e-472d488c7469.avif"
+    }
+  },
+  "materials": {
+    "chipped_yellow_painted_cracked_stone": {
+      "type": "customShader",
+      "props": {
+        "color": "#8e8681",
+        "map": "chipped_yellow_painted_cracked_stone_diffuse",
+        "normalMap": "chipped_yellow_painted_cracked_stone_normal",
+        "roughness": 0.65,
+        "metalness": 0.77,
+        "normalScale": 0.82,
+        "uvScale": [0.02, 0.02]
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "chipped_rusty_gray_painted_wall": {
+      "type": "customShader",
+      "props": {
+        "color": "#6b6b6b",
+        "roughness": 0.9,
+        "metalness": 0.18,
+        "normalScale": 0.26,
+        "uvScale": [0.15, 0.15],
+        "map": "chipped_rusty_gray_painted_wall_diffuse",
+        "normalMap": "chipped_rusty_gray_painted_wall_normal",
+        "heightAlpha": {
+          "bottomFade": [-160, -10],
+          "topFade": [60, 200]
+        }
+      },
+      "options": {
+        "useGeneratedUVs": true,
+        "useWorldSpaceGeneratedUVs": true,
+        "tileBreaking": {
+          "type": "neyret",
+          "patchScale": 3
+        },
+        "randomizeUVOffset": true
+      },
+      "shaders": {}
+    },
+    "concrete": {
+      "type": "customShader",
+      "props": {
+        "color": "#575757",
+        "roughness": 0.95,
+        "metalness": 0.17,
+        "normalScale": 0.68,
+        "iridescence": 0,
+        "uvScale": [0.02, 0.02],
+        "map": "concrete_diffuse",
+        "normalMap": "concrete_normal"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "gray": {
+      "type": "customShader",
+      "props": {
+        "color": "#333333",
+        "roughness": 0.97,
+        "metalness": 0.34
+      }
+    },
+    "horizontal_metal_1": {
+      "type": "customShader",
+      "props": {
+        "color": "#b0b0b0",
+        "roughness": 0.63,
+        "metalness": 0.75,
+        "normalScale": 0.74,
+        "uvScale": [0.2, 0.2],
+        "map": "horizontal_metal_1_diffuse",
+        "normalMap": "horizontal_metal_1_normal"
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": true,
+        "useWorldSpaceGeneratedUVs": true,
+        "randomizeUVOffset": true
+      }
+    }
+  }
 }

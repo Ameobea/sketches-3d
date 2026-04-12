@@ -93,7 +93,7 @@
           }}
         >
           {#if item.thumbnailUrl}
-            <img src={item.thumbnailUrl} alt={item.name} crossorigin="anonymous" />
+            <img src={item.thumbnailUrl} alt={item.name} crossorigin="anonymous" loading="lazy" />
           {:else}
             <div class="no-item"></div>
           {/if}

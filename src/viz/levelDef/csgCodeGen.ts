@@ -134,7 +134,7 @@ const assembleProgram = (state: TreeGenState, resultVar: string): string => {
   for (const [assetKey, varName] of state.imports) {
     importLines.push(`import { mesh: ${varName} } from "${assetKey}"`);
   }
-  return [...importLines, '', ...state.lets, `export mesh = ${resultVar}`].join('\n');
+  return [...importLines, '', ...state.lets, `export mesh = ${resultVar} | remesh_planar_patches`].join('\n');
 };
 
 /**

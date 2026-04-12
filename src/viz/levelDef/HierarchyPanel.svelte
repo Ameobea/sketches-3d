@@ -7,14 +7,16 @@
 
   interface Props {
     rootNodes: LevelSceneNode[];
-    selectedNodeId: string | null;
+    selectedNodeIds: string[];
     lights: LevelLight[];
     selectedLightId: string | null;
-    onselectnode: (node: LevelSceneNode) => void;
+    onselectnode: (node: LevelSceneNode, ctrlKey: boolean) => void;
     onselectlight: (light: LevelLight) => void;
   }
 
-  let { rootNodes, selectedNodeId, lights, selectedLightId, onselectnode, onselectlight }: Props = $props();
+  let { rootNodes, selectedNodeIds, lights, selectedLightId, onselectnode, onselectlight }: Props = $props();
+
+  const isNodeSelected = (id: string) => selectedNodeIds.includes(id);
 
   // Track expanded state per group id
   const expanded = new SvelteMap<string, boolean>();
@@ -52,12 +54,12 @@
   {#if isLevelGroup(node)}
     <div
       class="row group-row"
-      class:selected={node.id === selectedNodeId}
+      class:selected={isNodeSelected(node.id)}
       style:padding-left="{4 + depth * 12}px"
       role="button"
       tabindex="0"
-      onclick={() => onselectnode(node)}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectnode(node); }}
+      onclick={(e) => onselectnode(node, e.ctrlKey || e.metaKey)}
+      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey); }}
     >
       <button
         class="chevron"
@@ -78,12 +80,12 @@
   {:else}
     <div
       class="row leaf-row"
-      class:selected={node.id === selectedNodeId}
+      class:selected={isNodeSelected(node.id)}
       style:padding-left="{4 + depth * 12}px"
       role="button"
       tabindex="0"
-      onclick={() => onselectnode(node)}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectnode(node); }}
+      onclick={(e) => onselectnode(node, e.ctrlKey || e.metaKey)}
+      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey); }}
     >
       <span class="node-id">{node.id}</span>
       {#if isGeneratedDef(node.def)}

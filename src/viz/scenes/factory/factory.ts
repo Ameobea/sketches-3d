@@ -21,6 +21,18 @@ const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
 };
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
+  // // non-shadow-casting faint red point light that follows the player, sitting 5 units above them
+  // const playerLight = new THREE.PointLight(0x753c3c, 3.5, 150, 0.2);
+  // playerLight.castShadow = false;
+  // viz.scene.add(playerLight);
+  // viz.registerBeforeRenderCb(() => {
+  //   const playerPos = viz.fpCtx?.playerController.getPosition();
+  //   if (!playerPos) {
+  //     return;
+  //   }
+  //   playerLight.position.set(playerPos.x(), playerPos.y() + 5, playerPos.z());
+  // });
+
   const playerHeight = 3.5;
   const playerRadius = 1;
   const playerMesh = new THREE.Mesh(
@@ -122,6 +134,11 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       vizConf.graphics.quality > GraphicsQuality.Low
         ? { intensity: 2.5, levels: 2, luminanceThreshold: 0.08, radius: 0.1 }
         : null,
+    fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
+          float distToPlayer = distance(worldPos.xz, playerPos.xz);
+          float fogFactor = smoothstep(40., 190., distToPlayer);
+          return vec4(vec3(0.0002, 0.0002, 0.0002), fogFactor);
+        }`,
   });
 
   const handle = viz.levelLoadHandle!;

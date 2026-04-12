@@ -65,6 +65,24 @@ export class LevelEditorApi {
     }
   };
 
+  sendPasteGroup = async (def: ObjectGroupDef): Promise<ObjectGroupDef | null> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'group_paste', def }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] paste group failed:', res.status, await res.text());
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error('[LevelEditor] paste group error:', err);
+      return null;
+    }
+  };
+
   sendAddGroup = async (body: {
     position: [number, number, number];
     rotation?: [number, number, number];
@@ -292,6 +310,27 @@ export class LevelEditorApi {
       return await res.json();
     } catch (err) {
       console.error('[LevelEditor] convert to CSG error:', err);
+      return null;
+    }
+  };
+
+  groupNodes = async (
+    nodeIds: string[],
+    position: [number, number, number]
+  ): Promise<ObjectGroupDef | null> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodeIds, position }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] group nodes failed:', res.status, await res.text());
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.error('[LevelEditor] group nodes error:', err);
       return null;
     }
   };

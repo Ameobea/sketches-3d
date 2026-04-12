@@ -87,7 +87,17 @@
                 "type": "object",
                 "properties": {
                   "color": {
-                    "type": "number"
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^#[0-9a-fA-F]{6}$"
+                      }
+                    ]
                   },
                   "roughness": {
                     "type": "number"
@@ -135,7 +145,17 @@
                     "type": "number"
                   },
                   "sheenColor": {
-                    "type": "number"
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^#[0-9a-fA-F]{6}$"
+                      }
+                    ]
                   },
                   "sheenRoughness": {
                     "type": "number"
@@ -233,6 +253,34 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "heightAlpha": {
+                    "type": "object",
+                    "properties": {
+                      "bottomFade": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "topFade": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -260,6 +308,9 @@
                     ]
                   },
                   "useGeneratedUVs": {
+                    "type": "boolean"
+                  },
+                  "useWorldSpaceGeneratedUVs": {
                     "type": "boolean"
                   },
                   "tileBreaking": {
@@ -328,6 +379,374 @@
                 },
                 "additionalProperties": false
               },
+              "shaders": {
+                "type": "object",
+                "properties": {
+                  "customVertexFragment": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "colorShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "normalShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "roughnessShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "roughnessReverseColorRamp": {
+                    "type": "object",
+                    "properties": {
+                      "colorA_srgb": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "colorB_srgb": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "vMin": {
+                        "type": "number"
+                      },
+                      "vMax": {
+                        "type": "number"
+                      },
+                      "curveSteepness": {
+                        "type": "number"
+                      },
+                      "curveOffset": {
+                        "type": "number"
+                      },
+                      "perpSigma": {
+                        "type": "number"
+                      },
+                      "baseFallback": {
+                        "type": "number"
+                      },
+                      "colorSpace": {
+                        "type": "string",
+                        "enum": [
+                          "srgb",
+                          "linear"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "colorA_srgb",
+                      "colorB_srgb",
+                      "vMin",
+                      "vMax",
+                      "curveSteepness",
+                      "curveOffset",
+                      "perpSigma",
+                      "baseFallback"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "metalnessShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "metalnessReverseColorRamp": {
+                    "type": "object",
+                    "properties": {
+                      "colorA_srgb": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "colorB_srgb": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "vMin": {
+                        "type": "number"
+                      },
+                      "vMax": {
+                        "type": "number"
+                      },
+                      "curveSteepness": {
+                        "type": "number"
+                      },
+                      "curveOffset": {
+                        "type": "number"
+                      },
+                      "perpSigma": {
+                        "type": "number"
+                      },
+                      "baseFallback": {
+                        "type": "number"
+                      },
+                      "colorSpace": {
+                        "type": "string",
+                        "enum": [
+                          "srgb",
+                          "linear"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "colorA_srgb",
+                      "colorB_srgb",
+                      "vMin",
+                      "vMax",
+                      "curveSteepness",
+                      "curveOffset",
+                      "perpSigma",
+                      "baseFallback"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "emissiveShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "iridescenceShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "iridescenceReverseColorRamp": {
+                    "type": "object",
+                    "properties": {
+                      "colorA_srgb": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "colorB_srgb": {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "vMin": {
+                        "type": "number"
+                      },
+                      "vMax": {
+                        "type": "number"
+                      },
+                      "curveSteepness": {
+                        "type": "number"
+                      },
+                      "curveOffset": {
+                        "type": "number"
+                      },
+                      "perpSigma": {
+                        "type": "number"
+                      },
+                      "baseFallback": {
+                        "type": "number"
+                      },
+                      "colorSpace": {
+                        "type": "string",
+                        "enum": [
+                          "srgb",
+                          "linear"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "colorA_srgb",
+                      "colorB_srgb",
+                      "vMin",
+                      "vMax",
+                      "curveSteepness",
+                      "curveOffset",
+                      "perpSigma",
+                      "baseFallback"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "displacementShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "includeNoiseShadersVertex": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
               "emissiveBypass": {
                 "type": "boolean"
               }
@@ -348,7 +767,17 @@
                 "type": "object",
                 "properties": {
                   "color": {
-                    "type": "number"
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^#[0-9a-fA-F]{6}$"
+                      }
+                    ]
                   },
                   "transparent": {
                     "type": "boolean"
@@ -656,9 +1085,17 @@
                 "const": "ambient"
               },
               "color": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  }
+                ]
               },
               "intensity": {
                 "type": "number"
@@ -681,9 +1118,17 @@
                 "const": "directional"
               },
               "color": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  }
+                ]
               },
               "intensity": {
                 "type": "number"
@@ -810,9 +1255,17 @@
                 "const": "point"
               },
               "color": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  }
+                ]
               },
               "intensity": {
                 "type": "number"
@@ -931,9 +1384,17 @@
                 "const": "spot"
               },
               "color": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  }
+                ]
               },
               "intensity": {
                 "type": "number"

@@ -94,3 +94,26 @@ export const removeNodeById = (
   }
   return { removed: false, nodes };
 };
+
+/**
+ * Find the parent array containing a node with the given id, along with its
+ * index within that array. Returns null if not found.
+ */
+export const findNodeWithParent = (
+  nodes: (ObjectDef | ObjectGroupDef)[],
+  id: string
+): {
+  node: ObjectDef | ObjectGroupDef;
+  parentArray: (ObjectDef | ObjectGroupDef)[];
+  index: number;
+} | null => {
+  const idx = nodes.findIndex(n => n.id === id);
+  if (idx !== -1) return { node: nodes[idx], parentArray: nodes, index: idx };
+  for (const node of nodes) {
+    if (isObjectGroup(node)) {
+      const result = findNodeWithParent(node.children, id);
+      if (result) return result;
+    }
+  }
+  return null;
+};

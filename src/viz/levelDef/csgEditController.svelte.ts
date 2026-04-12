@@ -966,6 +966,13 @@ export class CsgEditController {
       levelObj.assetId = csgAssetName;
       levelObj.def.asset = csgAssetName;
 
+      // Strip rotation + scale from the level object — they've been moved into
+      // the root leaf node of the CSG tree by the server.
+      levelObj.object.rotation.set(0, 0, 0);
+      levelObj.object.scale.set(1, 1, 1);
+      delete levelObj.def.rotation;
+      delete levelObj.def.scale;
+
       const originalAssetId = (tree as any).asset;
       const originalPrototype = this.editor.prototypes.get(originalAssetId);
       if (originalPrototype) {

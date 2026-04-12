@@ -9,6 +9,15 @@ uniform float bloomIntensity;
 uniform float gammaExponent;
 varying vec2 vUv;
 
+#ifdef HAS_FOG
+uniform sampler2D depthBuffer;
+uniform mat4 projectionMatrixInverse;
+uniform mat4 cameraWorldMatrix;
+uniform vec3 fogCameraPos;
+uniform vec3 fogPlayerPos;
+uniform float curTimeSeconds;
+#endif
+
 #include <common>
 #include <tonemapping_pars_fragment>
 
@@ -35,8 +44,35 @@ float tpdfDither(vec2 seed) {
   return a + b - 1.0;
 }
 
+#ifdef HAS_FOG
+// Reconstructs the world-space position of the fragment from the depth buffer.
+// depth is the raw depth buffer value in [0, 1]; a value at or near 1.0 indicates
+// the far plane (sky / no geometry) and should be handled in getFogEffect accordingly.
+vec3 reconstructWorldPos(float depth, vec2 uv) {
+  vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  vec4 viewPos = projectionMatrixInverse * ndc;
+  viewPos /= viewPos.w;
+  return (cameraWorldMatrix * viewPos).xyz;
+}
+#endif
+
 void main() {
   vec4 color = texture2D(inputBuffer, vUv);
+
+  // Fog blend runs in linear space, before tone mapping, so the fog color is
+  // authored in linear and participates correctly in the tone-mapping curve.
+  #ifdef HAS_FOG
+  {
+    float depth = texture2D(depthBuffer, vUv).r;
+    vec3 worldPos = reconstructWorldPos(depth, vUv);
+    // getFogEffect is defined by the injected fogShader string.
+    // Signature: vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos,
+    //                              float depth, float curTimeSeconds)
+    // Returns vec4(fogColor.rgb, fogFactor) where fogFactor=0 is clear, 1 is full fog.
+    vec4 fogResult = getFogEffect(worldPos, fogCameraPos, fogPlayerPos, depth, curTimeSeconds);
+    color.rgb = mix(color.rgb, fogResult.rgb, fogResult.a);
+  }
+  #endif
 
   #if defined(TONE_MAPPING_ACES)
     color.rgb = ACESFilmicToneMapping(color.rgb);

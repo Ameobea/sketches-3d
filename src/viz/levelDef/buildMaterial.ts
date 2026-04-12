@@ -3,8 +3,12 @@ import * as THREE from 'three';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { buildCustomBasicShader } from 'src/viz/shaders/customBasicShader';
 import { MaterialClass } from 'src/viz/shaders/customShader.types';
-import type { CustomShaderOptions, CustomShaderProps } from 'src/viz/shaders/customShader.types';
-import type { MaterialDef, ShaderPropsJson, ShaderOptionsJson } from './types';
+import type {
+  CustomShaderOptions,
+  CustomShaderProps,
+  CustomShaderShaders,
+} from 'src/viz/shaders/customShader.types';
+import type { MaterialDef, ShaderPropsJson, ShaderOptionsJson, ShaderShadersJson } from './types';
 
 const SIDE_MAP: Record<NonNullable<ShaderPropsJson['side']>, THREE.Side> = {
   front: THREE.FrontSide,
@@ -25,7 +29,6 @@ const resolveShaderProps = (
 ): CustomShaderProps => {
   const props: CustomShaderProps = {};
 
-  // Scalar props (direct copy)
   if (propsJson.color !== undefined) props.color = propsJson.color;
   if (propsJson.roughness !== undefined) props.roughness = propsJson.roughness;
   if (propsJson.metalness !== undefined) props.metalness = propsJson.metalness;
@@ -53,11 +56,10 @@ const resolveShaderProps = (
     props.mapDisableTransitionThreshold = propsJson.mapDisableTransitionThreshold;
   if (propsJson.ambientDistanceAmp !== undefined) props.ambientDistanceAmp = propsJson.ambientDistanceAmp;
   if (propsJson.reflection !== undefined) props.reflection = propsJson.reflection;
+  if (propsJson.heightAlpha !== undefined) props.heightAlpha = propsJson.heightAlpha;
 
-  // Enum conversions
   if (propsJson.side !== undefined) props.side = SIDE_MAP[propsJson.side];
 
-  // Texture refs → actual textures
   const resolveTexture = (key: string | undefined): THREE.Texture | undefined =>
     key !== undefined ? textures.get(key) : undefined;
 
@@ -82,6 +84,8 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
   if (optionsJson.useTriplanarMapping !== undefined)
     options.useTriplanarMapping = optionsJson.useTriplanarMapping as any;
   if (optionsJson.useGeneratedUVs !== undefined) options.useGeneratedUVs = optionsJson.useGeneratedUVs;
+  if (optionsJson.useWorldSpaceGeneratedUVs !== undefined)
+    options.useWorldSpaceGeneratedUVs = optionsJson.useWorldSpaceGeneratedUVs;
   if (optionsJson.tileBreaking !== undefined) options.tileBreaking = optionsJson.tileBreaking;
   if (optionsJson.enableFog !== undefined) options.enableFog = optionsJson.enableFog;
   if (optionsJson.antialiasColorShader !== undefined)
@@ -100,6 +104,29 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
   return options;
 };
 
+const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShaders => {
+  const shaders: CustomShaderShaders = {};
+  if (shadersJson.customVertexFragment !== undefined)
+    shaders.customVertexFragment = shadersJson.customVertexFragment;
+  if (shadersJson.colorShader !== undefined) shaders.colorShader = shadersJson.colorShader;
+  if (shadersJson.normalShader !== undefined) shaders.normalShader = shadersJson.normalShader;
+  if (shadersJson.roughnessShader !== undefined) shaders.roughnessShader = shadersJson.roughnessShader;
+  if (shadersJson.roughnessReverseColorRamp !== undefined)
+    shaders.roughnessReverseColorRamp = shadersJson.roughnessReverseColorRamp;
+  if (shadersJson.metalnessShader !== undefined) shaders.metalnessShader = shadersJson.metalnessShader;
+  if (shadersJson.metalnessReverseColorRamp !== undefined)
+    shaders.metalnessReverseColorRamp = shadersJson.metalnessReverseColorRamp;
+  if (shadersJson.emissiveShader !== undefined) shaders.emissiveShader = shadersJson.emissiveShader;
+  if (shadersJson.iridescenceShader !== undefined) shaders.iridescenceShader = shadersJson.iridescenceShader;
+  if (shadersJson.iridescenceReverseColorRamp !== undefined)
+    shaders.iridescenceReverseColorRamp = shadersJson.iridescenceReverseColorRamp;
+  if (shadersJson.displacementShader !== undefined)
+    shaders.displacementShader = shadersJson.displacementShader;
+  if (shadersJson.includeNoiseShadersVertex !== undefined)
+    shaders.includeNoiseShadersVertex = shadersJson.includeNoiseShadersVertex;
+  return shaders;
+};
+
 /**
  * Build a Three.js material from a serializable `MaterialDef` and the resolved texture registry.
  */
@@ -109,8 +136,9 @@ export const buildMaterial = (
 ): THREE.Material => {
   if (matDef.type === 'customShader') {
     const props = matDef.props ? resolveShaderProps(matDef.props, textures) : {};
+    const shaders = matDef.shaders ? resolveShaderShaders(matDef.shaders) : {};
     const options = matDef.options ? resolveShaderOptions(matDef.options) : {};
-    return buildCustomShader(props, {}, options) as unknown as THREE.Material;
+    return buildCustomShader(props, shaders, options);
   }
 
   if (matDef.type !== 'customBasicShader') {

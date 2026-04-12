@@ -1,14 +1,39 @@
 import * as THREE from 'three';
 
-import type { AmmoInterface, BtCollisionShape, BtVec3 } from '../ammojs/ammoTypes';
+import type {
+  AmmoInterface,
+  BtBvhTriangleMeshShape,
+  BtCollisionShape,
+  BtTriangleInfoMap,
+  BtVec3,
+  btTriangleIndexVertexArrayWrapper,
+} from '../ammojs/ammoTypes';
 
 export interface CollisionShapeBuildResult {
   shape: BtCollisionShape;
+  /** Releases the shape and any additional Wasm resources it owns. */
+  destroyShape?: (Ammo: AmmoInterface) => void;
   /** Center offset in scaled local space — rotate by mesh quaternion and add to position */
   centerOffset?: THREE.Vector3;
   /** Local rotation of the detected shape, to be composed with mesh quaternion */
   localRotation?: THREE.Quaternion;
 }
+
+const shouldDebugInternalEdges = () =>
+  typeof window !== 'undefined' &&
+  (((window as any).__dreamInternalEdgeDebug as boolean | undefined) === true ||
+    new URLSearchParams(window.location.search).get('debugInternalEdges') === '1');
+
+const generateInternalEdgeInfo = (
+  Ammo: AmmoInterface,
+  meshShape: BtBvhTriangleMeshShape,
+  triangleInfoMap: BtTriangleInfoMap
+) => {
+  const generate =
+    Ammo.btInternalEdgeUtility.btGenerateInternalEdgeInfo ??
+    Ammo.btInternalEdgeUtility.prototype.btGenerateInternalEdgeInfo;
+  generate(meshShape, triangleInfoMap);
+};
 
 /**
  * If the build result has center/rotation offsets, composes them with the given
@@ -189,47 +214,87 @@ export const buildTrimeshShape = (
   indices: Uint16Array | undefined,
   vertices: Float32Array,
   scale: THREE.Vector3 = new THREE.Vector3(1, 1, 1)
-) => {
+): CollisionShapeBuildResult => {
   const numVertices = vertices.length / 3;
   const numTriangles = indices ? indices.length / 3 : numVertices / 3;
 
-  // Write scaled vertex positions into an Ammo heap buffer (float32, 12-byte stride).
-  // `btTriangleIndexVertexArrayWrapper` holds a raw pointer and must not be freed while the shape lives.
-  const vertexPtr = Ammo._malloc(numVertices * 3 * 4);
-  const vertexHeap = new Float32Array(Ammo.HEAPF32.buffer, vertexPtr, numVertices * 3);
-  if (scale.x === 1 && scale.y === 1 && scale.z === 1) {
-    vertexHeap.set(vertices);
-  } else {
-    for (let i = 0; i < vertices.length; i += 3) {
-      vertexHeap[i] = vertices[i] * scale.x;
-      vertexHeap[i + 1] = vertices[i + 1] * scale.y;
-      vertexHeap[i + 2] = vertices[i + 2] * scale.z;
-    }
-  }
+  let vertexPtr = 0;
+  let indexPtr = 0;
+  let indexedArray: btTriangleIndexVertexArrayWrapper | null = null;
+  let meshShape: BtBvhTriangleMeshShape | null = null;
+  let triangleInfoMap: BtTriangleInfoMap | null = null;
 
-  // Write int32 indices (`btTriangleIndexVertexArrayWrapper` defaults to `PHY_INTEGER`).
-  const numIndexInts = numTriangles * 3;
-  const indexPtr = Ammo._malloc(numIndexInts * 4);
-  const indexHeap = new Int32Array(Ammo.HEAPF32.buffer, indexPtr, numIndexInts);
-  if (indices) {
-    for (let i = 0; i < indices.length; i++) {
-      indexHeap[i] = indices[i];
+  try {
+    // Write scaled vertex positions into an Ammo heap buffer (float32, 12-byte stride).
+    // `btTriangleIndexVertexArrayWrapper` holds a raw pointer and must not be freed while the shape lives.
+    vertexPtr = Ammo._malloc(numVertices * 3 * 4);
+    const vertexHeap = new Float32Array(Ammo.HEAPF32.buffer, vertexPtr, numVertices * 3);
+    if (scale.x === 1 && scale.y === 1 && scale.z === 1) {
+      vertexHeap.set(vertices);
+    } else {
+      for (let i = 0; i < vertices.length; i += 3) {
+        vertexHeap[i] = vertices[i] * scale.x;
+        vertexHeap[i + 1] = vertices[i + 1] * scale.y;
+        vertexHeap[i + 2] = vertices[i + 2] * scale.z;
+      }
     }
-  } else {
-    for (let i = 0; i < numIndexInts; i++) {
-      indexHeap[i] = i;
-    }
-  }
 
-  const indexedArray = new Ammo.btTriangleIndexVertexArrayWrapper(
-    numTriangles,
-    indexPtr,
-    3 * 4, // triangle index stride: 3 × int32
-    numVertices,
-    vertexPtr,
-    3 * 4 // vertex stride: 3 × float32
-  );
-  return new Ammo.btBvhTriangleMeshShape(indexedArray, true, true);
+    // Write int32 indices (`btTriangleIndexVertexArrayWrapper` defaults to `PHY_INTEGER`).
+    const numIndexInts = numTriangles * 3;
+    indexPtr = Ammo._malloc(numIndexInts * 4);
+    const indexHeap = new Int32Array(Ammo.HEAPF32.buffer, indexPtr, numIndexInts);
+    if (indices) {
+      for (let i = 0; i < indices.length; i++) {
+        indexHeap[i] = indices[i];
+      }
+    } else {
+      for (let i = 0; i < numIndexInts; i++) {
+        indexHeap[i] = i;
+      }
+    }
+
+    indexedArray = new Ammo.btTriangleIndexVertexArrayWrapper(
+      numTriangles,
+      indexPtr,
+      3 * 4, // triangle index stride: 3 × int32
+      numVertices,
+      vertexPtr,
+      3 * 4 // vertex stride: 3 × float32
+    );
+    meshShape = new Ammo.btBvhTriangleMeshShape(indexedArray, true, true);
+
+    triangleInfoMap = new Ammo.btTriangleInfoMap();
+    generateInternalEdgeInfo(Ammo, meshShape, triangleInfoMap);
+    meshShape.setTriangleInfoMap(triangleInfoMap);
+
+    return {
+      shape: meshShape,
+      destroyShape: Ammo => {
+        Ammo.destroy(meshShape!);
+        Ammo.destroy(triangleInfoMap!);
+        Ammo.destroy(indexedArray!);
+        Ammo._free(indexPtr);
+        Ammo._free(vertexPtr);
+      },
+    };
+  } catch (err) {
+    if (meshShape) {
+      Ammo.destroy(meshShape);
+    }
+    if (triangleInfoMap) {
+      Ammo.destroy(triangleInfoMap);
+    }
+    if (indexedArray) {
+      Ammo.destroy(indexedArray);
+    }
+    if (indexPtr !== 0) {
+      Ammo._free(indexPtr);
+    }
+    if (vertexPtr !== 0) {
+      Ammo._free(vertexPtr);
+    }
+    throw err;
+  }
 };
 
 export const buildConvexHullShape = (
@@ -315,5 +380,16 @@ export const buildCollisionShapeFromMesh = (
   if (mesh.userData.convexhull || mesh.userData.convexHull) {
     return { shape: buildConvexHullShape(Ammo, btvec3, indices, vertices, scale) };
   }
-  return { shape: buildTrimeshShape(Ammo, indices, vertices, scale) };
+  const buildResult = buildTrimeshShape(Ammo, indices, vertices, scale);
+  if (shouldDebugInternalEdges()) {
+    const meshShape = buildResult.shape as BtBvhTriangleMeshShape;
+    const infoMap = meshShape.getTriangleInfoMap();
+    console.info('[internal-edge] attached triangle info map', {
+      meshName: mesh.name || '<unnamed>',
+      shapePtr: Ammo.getPointer(meshShape),
+      infoMapPtr: Ammo.getPointer(infoMap),
+      triangleCount: indices ? indices.length / 3 : vertices.length / 9,
+    });
+  }
+  return buildResult;
 };

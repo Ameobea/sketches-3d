@@ -232,12 +232,38 @@ export interface BtTriangleMesh extends BtStridingMeshInterface {
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface btTriangleIndexVertexArrayWrapper extends BtStridingMeshInterface {}
 
+export interface BtTriangleInfoMap {
+  m_convexEpsilon: number;
+  m_planarEpsilon: number;
+  m_equalVertexThreshold: number;
+  m_edgeDistanceThreshold: number;
+  m_maxEdgeAngleThreshold: number;
+  m_zeroAreaThreshold: number;
+}
+
 export interface BtConvexHullShape extends BtCollisionShape {
   addPoint(point: BtVec3, recalculateLocalAabb?: boolean): void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface BtConcaveShape extends BtCollisionShape {}
+
+export interface BtBvhTriangleMeshShape extends BtCollisionShape {
+  setTriangleInfoMap(map: BtTriangleInfoMap): void;
+  getTriangleInfoMap(): BtTriangleInfoMap;
+}
+
+export interface BtInternalEdgeUtility {
+  btGenerateInternalEdgeInfo(trimeshShape: BtBvhTriangleMeshShape, triangleInfoMap: BtTriangleInfoMap): void;
+}
+
+export interface BtInternalEdgeUtilityStatic {
+  prototype: BtInternalEdgeUtility;
+  btGenerateInternalEdgeInfo?: (
+    trimeshShape: BtBvhTriangleMeshShape,
+    triangleInfoMap: BtTriangleInfoMap
+  ) => void;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface BtHeightfieldTerrainShape extends BtConcaveShape {}
@@ -263,6 +289,7 @@ export interface BtCompoundShape extends BtCollisionShape {
 
 export interface AmmoInterface {
   destroy(obj: any): void;
+  getPointer(obj: any): number;
   btDefaultCollisionConfiguration: new () => BtCollisionConfiguration;
   btCollisionDispatcher: new (config: BtCollisionConfiguration) => BtCollisionDispatcher;
   btDbvtBroadphase: new () => BtBroadphaseInterface;
@@ -326,12 +353,14 @@ export interface AmmoInterface {
     vertexBase: number,
     vertexStride: number
   ) => btTriangleIndexVertexArrayWrapper;
+  btTriangleInfoMap: new () => BtTriangleInfoMap;
   btVector3: new () => BtVec3;
   btBvhTriangleMeshShape: new (
     meshInterface: BtStridingMeshInterface,
     useQuantizedAabbCompression: boolean,
     buildBVH: boolean
-  ) => BtCollisionShape;
+  ) => BtBvhTriangleMeshShape;
+  btInternalEdgeUtility: BtInternalEdgeUtilityStatic;
   btConvexHullShape: new () => BtConvexHullShape;
   _malloc: (size: number) => number;
   _free: (ptr: number) => void;

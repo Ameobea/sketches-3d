@@ -38,16 +38,24 @@ export const POST: RequestHandler = async ({ params, request }) => {
     csgAssetName = `${baseName}_${n++}`;
   }
 
-  // Create CSG asset with single leaf at identity transform
-  level.def.assets[csgAssetName] = {
-    type: 'csg',
-    tree: {
-      asset: objDef.asset,
-    },
-  } as any;
+  // Create CSG asset with single leaf carrying the object's rotation + scale.
+  // Translation stays on the level object; rotation/scale move into the tree so
+  // that subsequent CSG children aren't unexpectedly skewed/rotated.
+  const leafNode: Record<string, unknown> = { asset: objDef.asset };
+  if (objDef.rotation && objDef.rotation.some(v => v !== 0)) {
+    leafNode.rotation = objDef.rotation;
+  }
+  if (objDef.scale && objDef.scale.some((v, i) => v !== [1, 1, 1][i])) {
+    leafNode.scale = objDef.scale;
+  }
 
-  // Update the object to reference the CSG asset
+  level.def.assets[csgAssetName] = { type: 'csg', tree: leafNode } as any;
+
+  // Update the object to reference the CSG asset, stripping rotation + scale
+  // (they've been moved into the leaf node above).
   objDef.asset = csgAssetName;
+  delete objDef.rotation;
+  delete objDef.scale;
 
   level.save();
   return json({ csgAssetName, tree: level.def.assets[csgAssetName] }, { status: 201 });

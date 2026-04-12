@@ -3,6 +3,17 @@ import { z } from 'zod';
 const Vec2 = z.tuple([z.number(), z.number()]);
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
+/**
+ * Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a
+ * CSS-style 6-digit hex string (e.g. "#303030").  No transform here so the
+ * schema remains representable in JSON Schema; callers that need an integer
+ * must run `normalizeRawDefColors` after parsing.
+ */
+const ColorInputSchema = z.union([
+  z.number().int(),
+  z.string().regex(/^#[0-9a-fA-F]{6}$/i, 'Color string must be a 6-digit hex value like "#rrggbb"'),
+]);
+
 export const GltfAssetDefSchema = z.object({
   type: z.literal('gltf'),
   /** Name of the mesh/object as it appears in the loaded gltf scene */
@@ -127,6 +138,34 @@ export const TriplanarMappingParamsJsonSchema = z.object({
   sharpenFactor: z.number().optional(),
 });
 
+export const ReverseColorRampParamsSchema = z.object({
+  colorA_srgb: Vec3,
+  colorB_srgb: Vec3,
+  vMin: z.number(),
+  vMax: z.number(),
+  curveSteepness: z.number(),
+  curveOffset: z.number(),
+  perpSigma: z.number(),
+  baseFallback: z.number(),
+  colorSpace: z.enum(['srgb', 'linear']).optional(),
+});
+
+/** Serializable CustomShaderShaders — GLSL snippet fields as inline strings. */
+export const ShaderShadersJsonSchema = z.object({
+  customVertexFragment: z.string().optional(),
+  colorShader: z.string().optional(),
+  normalShader: z.string().optional(),
+  roughnessShader: z.string().optional(),
+  roughnessReverseColorRamp: ReverseColorRampParamsSchema.optional(),
+  metalnessShader: z.string().optional(),
+  metalnessReverseColorRamp: ReverseColorRampParamsSchema.optional(),
+  emissiveShader: z.string().optional(),
+  iridescenceShader: z.string().optional(),
+  iridescenceReverseColorRamp: ReverseColorRampParamsSchema.optional(),
+  displacementShader: z.string().optional(),
+  includeNoiseShadersVertex: z.boolean().optional(),
+});
+
 /** Serializable CustomShaderProps — texture slots as string keys into textures registry */
 export const ShaderPropsJsonSchema = z.object({
   color: z.number().optional(),
@@ -169,12 +208,19 @@ export const ShaderPropsJsonSchema = z.object({
   // complex but JSON-safe
   ambientDistanceAmp: AmbientDistanceAmpParamsSchema.optional(),
   reflection: ReflectionParamsSchema.optional(),
+  heightAlpha: z
+    .object({
+      bottomFade: Vec2.optional(),
+      topFade: Vec2.optional(),
+    })
+    .optional(),
 });
 
 /** Serializable subset of CustomShaderOptions */
 export const ShaderOptionsJsonSchema = z.object({
   useTriplanarMapping: z.union([z.boolean(), TriplanarMappingParamsJsonSchema]).optional(),
   useGeneratedUVs: z.boolean().optional(),
+  useWorldSpaceGeneratedUVs: z.boolean().optional(),
   tileBreaking: z
     .union([
       z.object({ type: z.literal('neyret'), patchScale: z.number().optional() }),
@@ -195,6 +241,7 @@ export const CustomShaderMatDefSchema = z.object({
   type: z.literal('customShader'),
   props: ShaderPropsJsonSchema.optional(),
   options: ShaderOptionsJsonSchema.optional(),
+  shaders: ShaderShadersJsonSchema.optional(),
   emissiveBypass: z.boolean().optional(),
 });
 
@@ -234,12 +281,76 @@ export const MaterialDefSchema = z.discriminatedUnion('type', [
 export type AmbientDistanceAmpParams = z.infer<typeof AmbientDistanceAmpParamsSchema>;
 export type ReflectionParams = z.infer<typeof ReflectionParamsSchema>;
 export type TriplanarMappingParamsJson = z.infer<typeof TriplanarMappingParamsJsonSchema>;
+export type ReverseColorRampParamsJson = z.infer<typeof ReverseColorRampParamsSchema>;
+export type ShaderShadersJson = z.infer<typeof ShaderShadersJsonSchema>;
 export type ShaderPropsJson = z.infer<typeof ShaderPropsJsonSchema>;
 export type ShaderOptionsJson = z.infer<typeof ShaderOptionsJsonSchema>;
 export type CustomShaderMatDef = z.infer<typeof CustomShaderMatDefSchema>;
 export type CustomBasicShaderMatDef = z.infer<typeof CustomBasicShaderMatDefSchema>;
 export type GeneratedMatDef = z.infer<typeof GeneratedMatDefSchema>;
 export type MaterialDef = z.infer<typeof MaterialDefSchema>;
+
+// ---- Raw (disk-facing) variants that accept hex color strings and shader file refs ----
+
+/** Like ShaderPropsJsonSchema but `color` and `sheenColor` accept "#rrggbb" strings. */
+const ShaderPropsJsonRawSchema = ShaderPropsJsonSchema.extend({
+  color: ColorInputSchema.optional(),
+  sheenColor: ColorInputSchema.optional(),
+});
+
+/** A GLSL shader snippet as an inline string or a file reference resolved server-side. */
+const ShaderGlslFieldRawSchema = z.union([z.string(), z.object({ file: z.string() })]);
+
+/** Like ShaderShadersJsonSchema but GLSL string fields also accept `{ file: string }`. */
+const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
+  customVertexFragment: ShaderGlslFieldRawSchema.optional(),
+  colorShader: ShaderGlslFieldRawSchema.optional(),
+  normalShader: ShaderGlslFieldRawSchema.optional(),
+  roughnessShader: ShaderGlslFieldRawSchema.optional(),
+  metalnessShader: ShaderGlslFieldRawSchema.optional(),
+  emissiveShader: ShaderGlslFieldRawSchema.optional(),
+  iridescenceShader: ShaderGlslFieldRawSchema.optional(),
+  displacementShader: ShaderGlslFieldRawSchema.optional(),
+});
+
+const CustomShaderMatDefRawSchema = CustomShaderMatDefSchema.extend({
+  props: ShaderPropsJsonRawSchema.optional(),
+  shaders: ShaderShadersJsonRawSchema.optional(),
+});
+
+const CustomBasicShaderMatDefRawSchema = CustomBasicShaderMatDefSchema.extend({
+  props: z
+    .object({
+      color: ColorInputSchema.optional(),
+      transparent: z.boolean().optional(),
+      alphaTest: z.number().optional(),
+      fogMultiplier: z.number().optional(),
+    })
+    .optional(),
+});
+
+export const MaterialDefRawSchema = z.discriminatedUnion('type', [
+  CustomShaderMatDefRawSchema,
+  CustomBasicShaderMatDefRawSchema,
+  GeneratedMatDefSchema,
+]);
+export type MaterialDefRaw = z.infer<typeof MaterialDefRawSchema>;
+
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/i;
+
+/** Recursively walk a plain JSON object and convert hex color strings to integers in-place for known color keys. */
+export const normalizeRawDefColors = (obj: unknown, key = ''): unknown => {
+  if ((key === 'color' || key === 'sheenColor') && typeof obj === 'string' && HEX_COLOR_RE.test(obj)) {
+    return parseInt(obj.slice(1), 16);
+  }
+  if (Array.isArray(obj)) return obj.map(v => normalizeRawDefColors(v));
+  if (obj !== null && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj as Record<string, unknown>).map(([k, v]) => [k, normalizeRawDefColors(v, k)])
+    );
+  }
+  return obj;
+};
 
 /** A reference to a behavior function resolved from the virtual:behaviors module. */
 export const BehaviorSpecSchema = z.object({
@@ -475,6 +586,20 @@ export type PointLightDef = z.infer<typeof PointLightDefSchema>;
 export type SpotLightDef = z.infer<typeof SpotLightDefSchema>;
 export type LightDef = z.infer<typeof LightDefSchema>;
 
+// ---- Raw (disk-facing) light variants that accept hex color strings ----
+
+const AmbientLightDefRawSchema = AmbientLightDefSchema.extend({ color: ColorInputSchema.optional() });
+const DirectionalLightDefRawSchema = DirectionalLightDefSchema.extend({ color: ColorInputSchema.optional() });
+const PointLightDefRawSchema = PointLightDefSchema.extend({ color: ColorInputSchema.optional() });
+const SpotLightDefRawSchema = SpotLightDefSchema.extend({ color: ColorInputSchema.optional() });
+
+const LightDefRawSchema = z.discriminatedUnion('type', [
+  AmbientLightDefRawSchema,
+  DirectionalLightDefRawSchema,
+  PointLightDefRawSchema,
+  SpotLightDefRawSchema,
+]);
+
 const GeneratorDefSchema = z.object({
   file: z.string(),
   params: z.record(z.string(), z.unknown()).optional(),
@@ -605,10 +730,10 @@ export const LevelDefRawSchema = z.object({
   $schema: z.string().optional(),
   version: z.literal(1),
   textures: z.record(z.string(), TextureDefSchema).optional(),
-  materials: z.record(z.string(), MaterialDefSchema).optional(),
+  materials: z.record(z.string(), MaterialDefRawSchema).optional(),
   assets: z.record(z.string(), AssetDefRawSchema),
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
-  lights: z.array(LightDefSchema).optional(),
+  lights: z.array(LightDefRawSchema).optional(),
   physics: ScenePhysicsDefSchema.optional(),
   generators: GeneratorsRecordSchema.optional(),
 });
@@ -624,7 +749,7 @@ export type LevelDefRaw = z.infer<typeof LevelDefRawSchema>;
 export const MaterialsFileSchema = z.object({
   $schema: z.string().optional(),
   textures: z.record(z.string(), TextureDefSchema).optional(),
-  materials: z.record(z.string(), MaterialDefSchema).optional(),
+  materials: z.record(z.string(), MaterialDefRawSchema).optional(),
 });
 export type MaterialsFile = z.infer<typeof MaterialsFileSchema>;
 

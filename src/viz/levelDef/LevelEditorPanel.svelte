@@ -14,6 +14,7 @@
     libFolders: AssetLibFolder[];
     rootNodes: LevelSceneNode[];
     lights: LevelLight[];
+    selectedNodeIds: string[];
     selectedNodeId: string | null;
     selectedMaterialId: string | null;
     selectedLightId: string | null;
@@ -36,11 +37,12 @@
     ondelete: () => void;
     ontoggleMaterialEditor: () => void;
     onconvertToCsg: () => void;
-    onselectnode: (node: LevelSceneNode) => void;
+    onselectnode: (node: LevelSceneNode, ctrlKey: boolean) => void;
     onselectlight: (light: LevelLight) => void;
     onlightpositionchange: (pos: [number, number, number]) => void;
     onlightpropertychange: (update: Partial<LightDef>) => void;
     ondeletelight: () => void;
+    ongroupselected?: () => void;
   }
 
   let {
@@ -49,6 +51,7 @@
     libFolders,
     rootNodes,
     lights,
+    selectedNodeIds,
     selectedNodeId,
     selectedMaterialId,
     selectedLightId,
@@ -76,7 +79,10 @@
     onlightpositionchange,
     onlightpropertychange,
     ondeletelight,
+    ongroupselected,
   }: Props = $props();
+
+  const selectionCount = $derived(selectedNodeIds.length);
 
   let selectedLightType = $state<LightDef['type']>('point');
 
@@ -168,7 +174,7 @@
 
   <HierarchyPanel
     {rootNodes}
-    selectedNodeId={selectedNodeId}
+    {selectedNodeIds}
     {lights}
     {selectedLightId}
     {onselectnode}
@@ -183,6 +189,14 @@
       onpropertychange={onlightpropertychange}
       ondelete={ondeletelight}
     />
+  {:else if selectionCount > 1}
+    <div class="multi-select-panel">
+      <div class="multi-select-header">{selectionCount} objects selected</div>
+      {#if ongroupselected}
+        <button class="action-btn" onclick={ongroupselected}>group selected</button>
+      {/if}
+      <button class="action-btn delete-btn" onclick={ondelete}>delete selected</button>
+    </div>
   {:else}
     <InfoPanel
       nodeId={selectedNodeId}
@@ -324,5 +338,43 @@
 
   .edit-mats-btn:hover {
     background: #252525;
+  }
+
+  .multi-select-panel {
+    border-top: 1px solid #333;
+    margin-top: 6px;
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .multi-select-header {
+    font-size: 12px;
+    color: #ccc;
+    margin-bottom: 4px;
+  }
+
+  .action-btn {
+    background: #1a1a1a;
+    color: #e8e8e8;
+    border: 1px solid #555;
+    padding: 3px 6px;
+    cursor: pointer;
+    font: 11px monospace;
+    text-align: center;
+  }
+
+  .action-btn:hover {
+    background: #252525;
+  }
+
+  .delete-btn {
+    border-color: #633;
+    color: #f88;
+  }
+
+  .delete-btn:hover {
+    background: #2a1a1a;
   }
 </style>

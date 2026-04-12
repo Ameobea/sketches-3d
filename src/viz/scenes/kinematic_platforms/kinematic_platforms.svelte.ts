@@ -59,6 +59,10 @@ const initLevel = async (viz: Viz) => {
     },
     { mesh: kinematicCube, body: rigidBody }
   );
+  viz.registerDestroyedCb(() => {
+    fpCtx.Ammo.destroy(btTransform);
+    fpCtx.Ammo.destroy(btQuat);
+  });
 
   // const bulletGeo = new THREE.SphereGeometry(2, 16, 16);
   // const bulletMat = buildCustomShader({ color: 0xff0000 }, {}, { materialClass: MaterialClass.Instakill });

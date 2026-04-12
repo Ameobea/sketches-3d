@@ -6,7 +6,7 @@ import { formatLevelJson } from './formatLevelJson';
 import type { GeneratorFn } from './generatorTypes';
 import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils';
 import { getAssetsDir, getLevelDir } from './levelPaths.server';
-import { LevelDefSchema, LevelDefRawSchema } from './types';
+import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 
 /**
@@ -178,8 +178,13 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     await runGeneratorsInTree(json.objects ?? []);
   }
 
+  // Normalize hex color strings (e.g. "#rrggbb") to integers before Zod validation.
+  // LevelDefRawSchema documents that colors may be strings, but LevelDefSchema (and all
+  // downstream runtime code) expects plain integers, so we coerce here.
+  const normalized = normalizeRawDefColors(json);
+
   // Parse with the raw schema, which accepts both `code` and `file` geoscript assets.
-  const rawResult = LevelDefRawSchema.safeParse(json);
+  const rawResult = LevelDefRawSchema.safeParse(normalized);
   if (!rawResult.success) {
     const msg = rawResult.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`[loadLevelData] Invalid level def "${name}":\n${msg}`);
@@ -200,7 +205,41 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
       return [assetId, assetDef];
     })
   );
-  const inlinedDef = { ...rawResult.data, assets: resolvedAssets };
+
+  // Inline any `{ file }` GLSL shader references in material shaders.
+  const SHADER_GLSL_FIELDS = [
+    'customVertexFragment',
+    'colorShader',
+    'normalShader',
+    'roughnessShader',
+    'metalnessShader',
+    'emissiveShader',
+    'iridescenceShader',
+    'displacementShader',
+  ] as const;
+
+  const resolveGlslPath = (file: string): string =>
+    file.startsWith('__ASSETS__/')
+      ? join(getAssetsDir(), file.slice('__ASSETS__/'.length))
+      : join(levelDir, file);
+
+  const resolvedMaterials = rawResult.data.materials
+    ? Object.fromEntries(
+        Object.entries(rawResult.data.materials).map(([matId, matDef]) => {
+          if (matDef.type !== 'customShader' || !matDef.shaders) return [matId, matDef];
+          const shaders = { ...matDef.shaders };
+          for (const field of SHADER_GLSL_FIELDS) {
+            const val = shaders[field];
+            if (val !== null && typeof val === 'object' && 'file' in val) {
+              shaders[field] = readFileSync(resolveGlslPath(val.file), 'utf-8');
+            }
+          }
+          return [matId, { ...matDef, shaders }];
+        })
+      )
+    : rawResult.data.materials;
+
+  const inlinedDef = { ...rawResult.data, assets: resolvedAssets, materials: resolvedMaterials };
 
   // Validate the fully-inlined def (includes cross-reference checks).
   const result = LevelDefSchema.safeParse(inlinedDef);
