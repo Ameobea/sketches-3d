@@ -1,11 +1,11 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { dev } from '$app/environment';
 
-import { formatLevelJson } from './formatLevelJson';
 import type { GeneratorFn } from './generatorTypes';
 import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils';
-import { getAssetsDir, getLevelDir } from './levelPaths.server';
+import { getAssetsDir } from './levelPaths.server';
+import { readLevelSourceFiles } from './levelSourceFiles.server';
 import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 
@@ -79,59 +79,7 @@ const markGeneratedNode = (node: ObjectDef | ObjectGroupDef): ObjectDef | Object
  * level editor workflow of edit → reload → see changes.
  */
 export const loadLevelData = async (name: string): Promise<LevelDef> => {
-  const levelDir = getLevelDir(name);
-  const filePath = join(levelDir, 'def.json');
-  const raw = readFileSync(filePath, 'utf-8');
-  const json = JSON.parse(raw);
-
-  // Keep schemas in sync while editing locally without mutating container assets in prod.
-  if (dev && json.$schema !== '../schema.json') {
-    json.$schema = '../schema.json';
-    writeFileSync(filePath, formatLevelJson(json), 'utf-8');
-  }
-
-  // Merge materials.json if present (external values win on conflict).
-  const materialsPath = join(levelDir, 'materials.json');
-  if (existsSync(materialsPath)) {
-    const matsJson = JSON.parse(readFileSync(materialsPath, 'utf-8'));
-    if (dev && matsJson.$schema !== '../materials-schema.json') {
-      matsJson.$schema = '../materials-schema.json';
-      writeFileSync(materialsPath, formatLevelJson(matsJson), 'utf-8');
-    }
-    if (matsJson.textures) json.textures = { ...json.textures, ...matsJson.textures };
-    if (matsJson.materials) json.materials = { ...json.materials, ...matsJson.materials };
-  }
-
-  // Merge objects.json over def.json objects when present.
-  // objects.json entries win on ID conflict; def.json entries not present in objects.json
-  // are retained (e.g. generator anchor groups that are structural, not editor-placed).
-  const objectsPath = join(levelDir, 'objects.json');
-  if (existsSync(objectsPath)) {
-    const objsJson = JSON.parse(readFileSync(objectsPath, 'utf-8'));
-    if (dev && objsJson.$schema !== '../objects-schema.json') {
-      objsJson.$schema = '../objects-schema.json';
-      writeFileSync(objectsPath, formatLevelJson(objsJson), 'utf-8');
-    }
-    const merged = new Map((json.objects ?? []).map((n: { id: string }) => [n.id, n]));
-    for (const obj of objsJson.objects ?? []) merged.set(obj.id, obj);
-    json.objects = [...merged.values()];
-  }
-
-  // Auto-discover *.geo files from the geo/ subdirectory.
-  const geoDir = join(levelDir, 'geo');
-  if (existsSync(geoDir)) {
-    if (!json.assets) json.assets = {};
-    for (const file of readdirSync(geoDir).filter((f: string) => f.endsWith('.geo'))) {
-      const id = file.slice(0, -4);
-      if (!(id in json.assets)) {
-        json.assets[id] = { type: 'geoscript', file: `geo/${file}` };
-      } else {
-        console.warn(
-          `[loadLevelData] "${name}": geo/${file} ignored — asset "${id}" already defined in def.json`
-        );
-      }
-    }
-  }
+  const { levelDir, def: json } = readLevelSourceFiles(name, { syncSchemas: dev });
 
   // Run generator modules for any anchor groups that declare a `generator` field.
   // The generator's output becomes the group's children; the group's own transform

@@ -18,18 +18,16 @@ import type {
   CsgAssetDef,
   CsgTreeNode,
   LevelDef,
-  LightDef,
   ObjectDef,
   ObjectGroupDef,
-  ShadowConfigDef,
-  ShadowMapSize,
 } from './types';
-import { GraphicsQuality } from 'src/viz/conf';
+import type { GraphicsQuality } from 'src/viz/conf';
 import type { SceneRuntime } from '../sceneRuntime';
 import type { BehaviorFn } from '../sceneRuntime/types';
 import { isObjectGroup, flattenLeaves, isGeneratedDef } from './levelDefTreeUtils';
 import { type LevelObject, type LevelGroup, type LevelSceneNode, type LevelLight } from './levelSceneTypes';
 import { replaceLeafInstance } from './editorStructuralOps';
+import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
 export { isLevelGroup } from './levelSceneTypes';
 import { buildMaterial } from './buildMaterial';
@@ -366,105 +364,6 @@ const resolveScriptAssets = async (
   workerManager.terminate();
 };
 
-const resolveShadowMapSize = (size: ShadowMapSize, quality: GraphicsQuality): number => {
-  if (typeof size === 'number') return size;
-  switch (quality) {
-    case GraphicsQuality.Low:
-      return size.low;
-    case GraphicsQuality.Medium:
-      return size.medium;
-    case GraphicsQuality.High:
-      return size.high;
-  }
-};
-
-/**
- * Applies a `ShadowConfigDef` to a freshly created light's `shadow` object. Must run BEFORE
- * the light is added to the scene: three.js lazily creates `shadow.map` at the current
- * `shadow.mapSize` on the first render and will NOT recreate it on a subsequent mapSize
- * change. See `shadow.map === null` check in `WebGLShadowMap.render()` (three.module.js).
- *
- * Frustum fields (left/right/top/bottom) only apply to directional lights; near/far also
- * apply to spot lights. Point lights only use mapSize/bias/radius/etc.
- */
-const applyShadowConfig = (
-  light: THREE.DirectionalLight | THREE.PointLight | THREE.SpotLight,
-  cfg: ShadowConfigDef,
-  quality: GraphicsQuality
-): void => {
-  if (cfg.mapSize !== undefined) {
-    const size = resolveShadowMapSize(cfg.mapSize, quality);
-    light.shadow.mapSize.set(size, size);
-  }
-  if (cfg.bias !== undefined) light.shadow.bias = cfg.bias;
-  if (cfg.normalBias !== undefined) light.shadow.normalBias = cfg.normalBias;
-  if (cfg.radius !== undefined) light.shadow.radius = cfg.radius;
-  if (cfg.blurSamples !== undefined) light.shadow.blurSamples = cfg.blurSamples;
-
-  const cam = light.shadow.camera;
-  if (cfg.near !== undefined) cam.near = cfg.near;
-  if (cfg.far !== undefined) cam.far = cfg.far;
-  if (light instanceof THREE.DirectionalLight && cam instanceof THREE.OrthographicCamera) {
-    if (cfg.left !== undefined) cam.left = cfg.left;
-    if (cfg.right !== undefined) cam.right = cfg.right;
-    if (cfg.top !== undefined) cam.top = cfg.top;
-    if (cfg.bottom !== undefined) cam.bottom = cfg.bottom;
-  }
-  cam.updateProjectionMatrix();
-};
-
-/** Build a THREE.Light from a serialized LightDef. */
-const instantiateLightFromDef = (
-  def: LightDef,
-  quality: GraphicsQuality
-): { light: THREE.Light; target?: THREE.Object3D } => {
-  switch (def.type) {
-    case 'ambient':
-      return { light: new THREE.AmbientLight(def.color ?? 0xffffff, def.intensity ?? 1) };
-    case 'directional': {
-      const l = new THREE.DirectionalLight(def.color ?? 0xffffff, def.intensity ?? 1);
-      if (def.position) l.position.fromArray(def.position);
-      if (def.target) l.target.position.fromArray(def.target);
-      if (def.castShadow) {
-        l.castShadow = true;
-        if (def.shadow) applyShadowConfig(l, def.shadow, quality);
-      }
-      return { light: l, target: l.target };
-    }
-    case 'point': {
-      const l = new THREE.PointLight(
-        def.color ?? 0xffffff,
-        def.intensity ?? 1,
-        def.distance ?? 0,
-        def.decay ?? 2
-      );
-      if (def.position) l.position.fromArray(def.position);
-      if (def.castShadow) {
-        l.castShadow = true;
-        if (def.shadow) applyShadowConfig(l, def.shadow, quality);
-      }
-      return { light: l };
-    }
-    case 'spot': {
-      const l = new THREE.SpotLight(
-        def.color ?? 0xffffff,
-        def.intensity ?? 1,
-        def.distance ?? 0,
-        def.angle ?? Math.PI / 4,
-        def.penumbra ?? 0,
-        def.decay ?? 2
-      );
-      if (def.position) l.position.fromArray(def.position);
-      if (def.target) l.target.position.fromArray(def.target);
-      if (def.castShadow) {
-        l.castShadow = true;
-        if (def.shadow) applyShadowConfig(l, def.shadow, quality);
-      }
-      return { light: l, target: l.target };
-    }
-  }
-};
-
 /**
  * Start loading a level definition. Returns a handle with:
  * - `objects`: resolves when all geometry is placed in the scene
@@ -599,17 +498,11 @@ export const loadLevelDef = (
   preCreateGroups(levelDef.objects, viz.scene);
 
   // --- Instantiate lights ---
-  // Shadow config MUST be applied before the light is added to the scene — see the comment
-  // on `applyShadowConfig`. `instantiateLightFromDef` takes care of that.
   const levelLights: LevelLight[] = [];
   for (const lightDef of levelDef.lights ?? []) {
-    const { light, target } = instantiateLightFromDef(lightDef, quality);
-    light.name = lightDef.id;
-    viz.scene.add(light);
-    // Directional/spot lights have a target Object3D; add it to the scene so its matrixWorld
-    // is kept in sync, matching how nexus (and other hand-built scenes) do it.
-    if (target) viz.scene.add(target);
-    levelLights.push({ id: lightDef.id, light, def: lightDef });
+    const levelLight = createLevelLight(lightDef, quality);
+    addLevelLightToScene(viz.scene, levelLight);
+    levelLights.push(levelLight);
   }
 
   // Track physics: push one callback to collisionWorldLoadedCbs; for objects placed

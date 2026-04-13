@@ -1,11 +1,10 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync } from 'fs';
 
 import { dev } from '$app/environment';
 import { error } from '@sveltejs/kit';
 
 import { formatLevelJson } from 'src/viz/levelDef/formatLevelJson';
-import { getLevelDir } from 'src/viz/levelDef/levelPaths.server';
+import { readLevelSourceFiles } from 'src/viz/levelDef/levelSourceFiles.server';
 import type { LevelDefRaw } from 'src/viz/levelDef/types';
 
 export const guardDev = () => {
@@ -38,48 +37,19 @@ export interface LevelStore {
  * `save()` writes mutations back to whichever file(s) own each section.
  */
 export const openLevel = (name: string): LevelStore => {
-  const levelDir = getLevelDir(name);
-  const defPath = join(levelDir, 'def.json');
-
-  let def: LevelDefRaw;
+  let source: ReturnType<typeof readLevelSourceFiles> | null = null;
   try {
-    def = JSON.parse(readFileSync(defPath, 'utf-8'));
-  } catch {
-    error(404, `Level "${name}" not found`);
-  }
-
-  const materialsPath = join(levelDir, 'materials.json');
-  const objectsPath = join(levelDir, 'objects.json');
-  const materialsFilePath = existsSync(materialsPath) ? materialsPath : undefined;
-  const objectsFilePath = existsSync(objectsPath) ? objectsPath : undefined;
-
-  // Merge materials.json over def.json (external wins on conflict)
-  if (materialsFilePath) {
-    const mats = JSON.parse(readFileSync(materialsFilePath, 'utf-8'));
-    if (mats.textures) def.textures = { ...def.textures, ...mats.textures };
-    if (mats.materials) def.materials = { ...def.materials, ...mats.materials };
-  }
-
-  // Merge objects.json over def.json objects when present.
-  // objects.json entries win on ID conflict; def.json entries not present in objects.json
-  // are retained (e.g. generator anchor groups that are structural, not editor-placed).
-  if (objectsFilePath) {
-    const objs = JSON.parse(readFileSync(objectsFilePath, 'utf-8'));
-    const merged = new Map((def.objects ?? []).map(n => [n.id, n]));
-    for (const obj of objs.objects ?? []) merged.set(obj.id, obj);
-    def.objects = [...merged.values()];
-  }
-
-  // Auto-discover *.geo files from the geo/ subdirectory
-  const geoDir = join(levelDir, 'geo');
-  if (existsSync(geoDir)) {
-    for (const file of readdirSync(geoDir).filter(f => f.endsWith('.geo'))) {
-      const id = file.slice(0, -4);
-      if (!(id in def.assets)) {
-        def.assets[id] = { type: 'geoscript', file: `geo/${file}` };
-      }
+    source = readLevelSourceFiles(name);
+  } catch (err) {
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err ? (err as { code?: string }).code : undefined;
+    if (code === 'ENOENT') {
+      error(404, `Level "${name}" not found`);
     }
+    throw err;
   }
+  if (!source) error(404, `Level "${name}" not found`);
+  const { def, defPath, materialsFilePath, objectsFilePath } = source;
 
   const save = () => {
     const defToWrite = { ...def };

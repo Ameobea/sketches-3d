@@ -32,5 +32,6 @@ export const isLevelGroup = (n: LevelSceneNode): n is LevelGroup => 'children' i
 export interface LevelLight {
   id: string;
   light: THREE.Light;
+  target?: THREE.Object3D;
   def: LightDef;
 }

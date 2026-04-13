@@ -3,92 +3,17 @@
   import HierarchyPanel from './HierarchyPanel.svelte';
   import InfoPanel from './InfoPanel.svelte';
   import LightInfoPanel from './LightInfoPanel.svelte';
-  import type { AssetLibFolder } from './assetLibTypes';
-  import type { TransformSnapshot } from './LevelEditor.svelte';
-  import type { LevelLight, LevelSceneNode } from './loadLevelDef';
+  import type { LevelEditorPanelActions, LevelEditorPanelViewState } from './levelEditorPanelTypes';
   import type { LightDef } from './types';
 
   interface Props {
-    assetIds: string[];
-    materialIds: string[];
-    libFolders: AssetLibFolder[];
-    rootNodes: LevelSceneNode[];
-    lights: LevelLight[];
-    selectedNodeIds: string[];
-    selectedNodeId: string | null;
-    treeVersion: number;
-    selectedMaterialId: string | null;
-    selectedLightId: string | null;
-    selectedLightDef: LightDef | null;
-    lightPosition: [number, number, number];
-    isGroupSelected: boolean;
-    isGeneratedSelected: boolean;
-    materialEditorOpen: boolean;
-    isCsgAsset: boolean;
-    position: [number, number, number];
-    rotation: [number, number, number];
-    scale: [number, number, number];
-    onadd: (assetId: string, materialId: string | undefined) => void;
-    onaddlibrary: (libPath: string, materialId: string | undefined) => void;
-    onaddgroup: () => void;
-    onaddlight: (lightType: LightDef['type']) => void;
-    onrename: (newId: string) => void;
-    onmaterialchange: (matId: string | null) => void;
-    onapplytransform: (snap: Partial<TransformSnapshot>) => void;
-    ondelete: () => void;
-    ontoggleMaterialEditor: () => void;
-    onconvertToCsg: () => void;
-    onselectnode: (node: LevelSceneNode, ctrlKey: boolean) => void;
-    onselectlight: (light: LevelLight) => void;
-    onlightpositionchange: (pos: [number, number, number]) => void;
-    onlightpropertychange: (update: Partial<LightDef>) => void;
-    ondeletelight: () => void;
-    canGroupSelected?: boolean;
-    ongroupselected?: () => void;
-    onreparent?: (parentId: string | null) => void;
+    view: LevelEditorPanelViewState;
+    actions: LevelEditorPanelActions;
   }
 
-  let {
-    assetIds,
-    materialIds,
-    libFolders,
-    rootNodes,
-    lights,
-    selectedNodeIds,
-    selectedNodeId,
-    treeVersion,
-    selectedMaterialId,
-    selectedLightId,
-    selectedLightDef,
-    lightPosition,
-    isGroupSelected,
-    isGeneratedSelected,
-    materialEditorOpen,
-    isCsgAsset,
-    position,
-    rotation,
-    scale,
-    onadd,
-    onaddlibrary,
-    onaddgroup,
-    onaddlight,
-    onrename,
-    onmaterialchange,
-    onapplytransform,
-    ondelete,
-    ontoggleMaterialEditor,
-    onconvertToCsg,
-    onselectnode,
-    onselectlight,
-    onlightpositionchange,
-    onlightpropertychange,
-    ondeletelight,
-    canGroupSelected,
-    ongroupselected,
-    onreparent,
-  }: Props = $props();
+  let { view, actions }: Props = $props();
 
-  const selectionCount = $derived(selectedNodeIds.length);
+  const selectionCount = $derived(view.selectedNodeIds.length);
 
   let selectedLightType = $state<LightDef['type']>('point');
 
@@ -97,11 +22,11 @@
   // Keep selectedAsset valid when local assets change (e.g. after a page load or lib registration).
   $effect(() => {
     if (selectedAsset === null || selectedAsset.startsWith('__ASSETS__/')) return;
-    if (!assetIds.includes(selectedAsset)) selectedAsset = assetIds[0] ?? null;
+    if (!view.assetIds.includes(selectedAsset)) selectedAsset = view.assetIds[0] ?? null;
   });
   // Default to first local asset on first render.
   $effect(() => {
-    if (selectedAsset === null && assetIds.length > 0) selectedAsset = assetIds[0];
+    if (selectedAsset === null && view.assetIds.length > 0) selectedAsset = view.assetIds[0];
   });
 
   let selectedMaterial = $state('');
@@ -118,9 +43,9 @@
   const handleAdd = () => {
     if (!selectedAsset) return;
     if (selectedAsset.startsWith('__ASSETS__/')) {
-      onaddlibrary(selectedAsset, selectedMaterial || undefined);
+      actions.addLibraryObject(selectedAsset, selectedMaterial || undefined);
     } else {
-      onadd(selectedAsset, selectedMaterial || undefined);
+      actions.addObject(selectedAsset, selectedMaterial || undefined);
     }
   };
 </script>
@@ -139,8 +64,8 @@
     </div>
     {#if assetPickerExpanded}
       <AssetTreePicker
-        localItems={assetIds}
-        {libFolders}
+        localItems={view.assetIds}
+        libFolders={view.libFolders}
         selected={selectedAsset}
         onselect={(v) => { selectedAsset = v; }}
       />
@@ -150,7 +75,7 @@
       <span class="field-label">material:</span>
       <select class="field-select" bind:value={selectedMaterial}>
         <option value="">(none)</option>
-        {#each materialIds as id (id)}
+        {#each view.materialIds as id (id)}
           <option value={id}>{id}</option>
         {/each}
       </select>
@@ -158,7 +83,7 @@
 
     <div class="row add-btns">
       <button class="add-btn" onclick={handleAdd}>add object</button>
-      <button class="add-btn" onclick={onaddgroup}>add group</button>
+      <button class="add-btn" onclick={actions.addGroup}>add group</button>
     </div>
 
     <div class="row add-light-row">
@@ -168,59 +93,59 @@
         <option value="point">point</option>
         <option value="spot">spot</option>
       </select>
-      <button class="add-btn" onclick={() => onaddlight(selectedLightType)}>add light</button>
+      <button class="add-btn" onclick={() => actions.addLight(selectedLightType)}>add light</button>
     </div>
   </div>
 
   <div class="divider"></div>
 
-  <button class="edit-mats-btn" onclick={ontoggleMaterialEditor}>
-    {materialEditorOpen ? 'close materials' : 'edit materials'}
+  <button class="edit-mats-btn" onclick={actions.toggleMaterialEditor}>
+    {view.materialEditorOpen ? 'close materials' : 'edit materials'}
   </button>
 
   <HierarchyPanel
-    {rootNodes}
-    {selectedNodeIds}
-    {lights}
-    {selectedLightId}
-    {treeVersion}
-    {onselectnode}
-    {onselectlight}
-    {onreparent}
+    rootNodes={view.rootNodes}
+    selectedNodeIds={view.selectedNodeIds}
+    lights={view.lights}
+    selectedLightId={view.selectedLightId}
+    treeVersion={view.treeVersion}
+    onselectnode={actions.selectNode}
+    onselectlight={actions.selectLight}
+    onreparent={actions.reparent}
   />
 
-  {#if selectedLightDef}
+  {#if view.selectedLightDef}
     <LightInfoPanel
-      lightDef={selectedLightDef}
-      lightPosition={lightPosition}
-      onapplyposition={onlightpositionchange}
-      onpropertychange={onlightpropertychange}
-      ondelete={ondeletelight}
+      lightDef={view.selectedLightDef}
+      lightPosition={view.lightPosition}
+      onapplyposition={actions.applyLightPosition}
+      onpropertychange={actions.applyLightProperty}
+      ondelete={actions.deleteLight}
     />
   {:else if selectionCount > 1}
     <div class="multi-select-panel">
       <div class="multi-select-header">{selectionCount} objects selected</div>
-      {#if ongroupselected}
-        <button class="action-btn" onclick={ongroupselected} disabled={!canGroupSelected}>group selected</button>
+      {#if actions.groupSelected}
+        <button class="action-btn" onclick={actions.groupSelected} disabled={!view.canGroupSelected}>group selected</button>
       {/if}
-      <button class="action-btn delete-btn" onclick={ondelete}>delete selected</button>
+      <button class="action-btn delete-btn" onclick={actions.deleteSelection}>delete selected</button>
     </div>
   {:else}
     <InfoPanel
-      nodeId={selectedNodeId}
-      isGroup={isGroupSelected}
-      isGenerated={isGeneratedSelected}
-      materialId={selectedMaterialId}
-      {materialIds}
-      {isCsgAsset}
-      {position}
-      {rotation}
-      {scale}
-      {onapplytransform}
-      {onrename}
-      {onmaterialchange}
-      {onconvertToCsg}
-      {ondelete}
+      nodeId={view.selectedNodeId}
+      isGroup={view.isGroupSelected}
+      isGenerated={view.isGeneratedSelected}
+      materialId={view.selectedMaterialId}
+      materialIds={view.materialIds}
+      isCsgAsset={view.isCsgAsset}
+      position={view.position}
+      rotation={view.rotation}
+      scale={view.scale}
+      onapplytransform={actions.applyTransform}
+      onrename={actions.rename}
+      onmaterialchange={actions.changeMaterial}
+      onconvertToCsg={actions.convertToCsg}
+      ondelete={actions.deleteSelection}
     />
   {/if}
 </div>

@@ -25,6 +25,13 @@ import { round } from './mathUtils';
 import { collectSubtreeLeaves } from './editorStructuralOps';
 import { EditorMutationController } from './editorMutationController';
 import type { StructuralUndoEntry } from './editorMutationController';
+import type { LevelEditorPanelActions, LevelEditorPanelViewState } from './levelEditorPanelTypes';
+import {
+  addLevelLightToScene,
+  applyLightDefToLevelLight,
+  createLevelLight,
+  removeLevelLightFromScene,
+} from './levelLightUtils';
 
 export type { TransformSnapshot } from './TransformHandler';
 
@@ -100,6 +107,9 @@ export class LevelEditor {
   /** Shorthand for the selection manager's reactive state. */
   private get selectionState() {
     return this.selection.state;
+  }
+  private get lightQuality() {
+    return this.viz.vizConfig.current.graphics.quality;
   }
   private panelComponent: Record<string, any> | null = null;
   private panelTarget: HTMLDivElement | null = null;
@@ -420,110 +430,116 @@ export class LevelEditor {
     const materialEditorOpen = () => this.materialEditor.isOpen;
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this;
+    const view: LevelEditorPanelViewState = {
+      get assetIds() {
+        void state.assetsVersion;
+        return Object.keys(self.levelDef.assets);
+      },
+      get materialIds() {
+        return Object.keys(self.levelDef.materials ?? {});
+      },
+      get libFolders() {
+        return state.libFolders;
+      },
+      get rootNodes() {
+        void state.treeVersion;
+        return [...self.rootNodes];
+      },
+      get lights() {
+        void state.treeVersion;
+        return self.allLevelLights;
+      },
+      get selectedNodeIds() {
+        return state.selectedNodeIds;
+      },
+      get selectedNodeId() {
+        return state.nodeId;
+      },
+      get treeVersion() {
+        return state.treeVersion;
+      },
+      get selectedMaterialId() {
+        return state.materialId;
+      },
+      get selectedLightId() {
+        return state.selectedLightDef?.id ?? null;
+      },
+      get selectedLightDef() {
+        return state.selectedLightDef;
+      },
+      get lightPosition() {
+        return state.lightPosition;
+      },
+      get isGroupSelected() {
+        return state.isGroup;
+      },
+      get isGeneratedSelected() {
+        return state.isGenerated;
+      },
+      get materialEditorOpen() {
+        return materialEditorOpen();
+      },
+      get isCsgAsset() {
+        return state.isCsgAsset;
+      },
+      get position() {
+        return state.position;
+      },
+      get rotation() {
+        return state.rotation;
+      },
+      get scale() {
+        return state.scale;
+      },
+      get canGroupSelected() {
+        void state.treeVersion;
+        return self.selection.canGroupWith(self.nodeById, self.rootNodes);
+      },
+    };
+    const actions: LevelEditorPanelActions = {
+      selectNode: (node, ctrlKey) => {
+        if (ctrlKey) this.toggleSelect(node);
+        else this.select(node);
+      },
+      selectLight: light => this.selectLight(light),
+      addLight: lightType => void this.onAddLightClick(lightType),
+      applyLightPosition: pos => this.applyLightPositionInput(pos),
+      applyLightProperty: update => this.applyLightPropertyChange(update),
+      deleteLight: () => {
+        if (this.selectedLight) this.deleteLight(this.selectedLight);
+      },
+      addObject: (assetId, materialId) => this.onAddClick(assetId, materialId),
+      addLibraryObject: (libPath, materialId) => void this.onAddLibraryClick(libPath, materialId),
+      addGroup: () => void this.onAddGroupClick(),
+      rename: newId => {
+        if (this.selectedNode && !this.selectedNode.generated) {
+          void this.renameNode(this.selectedNode, newId);
+        }
+      },
+      changeMaterial: matId => this.onObjectMaterialChange(matId),
+      applyTransform: snap => this.applyTransformInput(snap),
+      deleteSelection: () => this.deleteSelected(),
+      toggleMaterialEditor: () => {
+        if (this.materialEditor.isOpen) {
+          this.materialEditor.close();
+        } else {
+          this.materialEditor.open(this.selectedObject?.def?.material ?? null);
+        }
+      },
+      convertToCsg: () => {
+        if (this.selectedObject && !this.selectedObject.generated) {
+          void this.csgController.convertToCsg(this.selectedObject.id);
+        }
+      },
+      groupSelected: () => void this.groupSelected(),
+      reparent: parentId => void this.reparentSelected(parentId),
+    };
 
     this.panelComponent = mount(LevelEditorPanel, {
       target,
       props: {
-        get assetIds() {
-          void state.assetsVersion;
-          return Object.keys(self.levelDef.assets);
-        },
-        materialIds: Object.keys(this.levelDef.materials ?? {}),
-        get libFolders() {
-          return state.libFolders;
-        },
-        get rootNodes() {
-          void state.treeVersion;
-          return [...self.rootNodes];
-        },
-        get treeVersion() {
-          return state.treeVersion;
-        },
-        get lights() {
-          void state.treeVersion;
-          return self.allLevelLights;
-        },
-        get selectedLightId(): string | null {
-          return state.selectedLightDef?.id ?? null;
-        },
-        get selectedLightDef() {
-          return state.selectedLightDef;
-        },
-        get lightPosition(): [number, number, number] {
-          return state.lightPosition;
-        },
-        get selectedNodeIds(): string[] {
-          return state.selectedNodeIds;
-        },
-        get selectedNodeId(): string | null {
-          return state.nodeId;
-        },
-        get selectedMaterialId(): string | null {
-          return state.materialId;
-        },
-        get isGroupSelected(): boolean {
-          return state.isGroup;
-        },
-        get isGeneratedSelected(): boolean {
-          return state.isGenerated;
-        },
-        get isCsgAsset(): boolean {
-          return state.isCsgAsset;
-        },
-        get materialEditorOpen(): boolean {
-          return materialEditorOpen();
-        },
-        get position(): [number, number, number] {
-          return state.position;
-        },
-        get rotation(): [number, number, number] {
-          return state.rotation;
-        },
-        get scale(): [number, number, number] {
-          return state.scale;
-        },
-        onselectnode: (node: import('./loadLevelDef').LevelSceneNode, ctrlKey: boolean) => {
-          if (ctrlKey) this.toggleSelect(node);
-          else this.select(node);
-        },
-        onselectlight: (light: import('./levelSceneTypes').LevelLight) => this.selectLight(light),
-        onaddlight: (lightType: import('./types').LightDef['type']) => void this.onAddLightClick(lightType),
-        onlightpositionchange: (pos: [number, number, number]) => this.applyLightPositionInput(pos),
-        onlightpropertychange: (update: Partial<import('./types').LightDef>) =>
-          this.applyLightPropertyChange(update),
-        ondeletelight: () => {
-          if (this.selectedLight) this.deleteLight(this.selectedLight);
-        },
-        onadd: (assetId: string, materialId: string | undefined) => this.onAddClick(assetId, materialId),
-        onaddlibrary: (libPath: string, materialId: string | undefined) =>
-          void this.onAddLibraryClick(libPath, materialId),
-        onaddgroup: () => void this.onAddGroupClick(),
-        onrename: (newId: string) => {
-          if (this.selectedNode && !this.selectedNode.generated) {
-            void this.renameNode(this.selectedNode, newId);
-          }
-        },
-        onmaterialchange: (matId: string | null) => this.onObjectMaterialChange(matId),
-        onapplytransform: (snap: Partial<TransformSnapshot>) => this.applyTransformInput(snap),
-        ondelete: () => this.deleteSelected(),
-        ontoggleMaterialEditor: () => {
-          if (this.materialEditor.isOpen) {
-            this.materialEditor.close();
-          } else {
-            this.materialEditor.open(this.selectedObject?.def?.material ?? null);
-          }
-        },
-        onconvertToCsg: () => {
-          if (this.selectedObject && !this.selectedObject.generated) {
-            void this.csgController.convertToCsg(this.selectedObject.id);
-          }
-        },
-        get canGroupSelected() {
-          void state.treeVersion;
-          return self.selection.canGroupWith(self.nodeById, self.rootNodes);
-        },
-        ongroupselected: () => void this.groupSelected(),
-        onreparent: (parentId: string | null) => void this.reparentSelected(parentId),
+        view,
+        actions,
       },
     });
   }
@@ -915,33 +931,12 @@ export class LevelEditor {
     if (!light) return;
     light.def = { ...light.def, ...update } as LightDef;
     this.updateLevelDefLight(light);
+    applyLightDefToLevelLight(light, this.lightQuality);
     void this.api.saveLight(light.def);
     this.selectionState.selectedLightDef = light.def;
-
-    // Apply live to the Three.js light
-    const l = light.light;
     if ('color' in update && update.color !== undefined) {
-      l.color.setHex(update.color);
       const proxy = this.lightToProxy.get(light.id);
       if (proxy) (proxy.material as THREE.MeshBasicMaterial).color.setHex(update.color);
-    }
-    if ('intensity' in update && update.intensity !== undefined) {
-      l.intensity = update.intensity;
-    }
-    if ('castShadow' in update && update.castShadow !== undefined) {
-      l.castShadow = update.castShadow;
-    }
-    if ('distance' in update && update.distance !== undefined && 'distance' in l) {
-      (l as THREE.PointLight | THREE.SpotLight).distance = update.distance;
-    }
-    if ('decay' in update && update.decay !== undefined && 'decay' in l) {
-      (l as THREE.PointLight | THREE.SpotLight).decay = update.decay as number;
-    }
-    if ('angle' in update && update.angle !== undefined && l instanceof THREE.SpotLight) {
-      l.angle = update.angle;
-    }
-    if ('penumbra' in update && update.penumbra !== undefined && l instanceof THREE.SpotLight) {
-      l.penumbra = update.penumbra;
     }
   }
 
@@ -954,8 +949,7 @@ export class LevelEditor {
   private deleteLight(levelLight: LevelLight) {
     if (this.selection.selectedLight === levelLight) this.deselectLight();
 
-    // Remove from scene
-    this.viz.scene.remove(levelLight.light);
+    removeLevelLightFromScene(this.viz.scene, levelLight);
 
     // Remove proxy
     const proxy = this.lightToProxy.get(levelLight.id);
@@ -995,48 +989,8 @@ export class LevelEditor {
 
     const newDef = await this.api.addLight(candidate as Omit<LightDef, 'id'>);
     if (!newDef) return;
-
-    // Create the Three.js light (inline since the helper is not exported)
-    let newLight: THREE.Light;
-    switch (newDef.type) {
-      case 'ambient':
-        newLight = new THREE.AmbientLight(newDef.color ?? 0xffffff, newDef.intensity ?? 1);
-        break;
-      case 'directional': {
-        const l = new THREE.DirectionalLight(newDef.color ?? 0xffffff, newDef.intensity ?? 1);
-        if (newDef.position) l.position.fromArray(newDef.position);
-        newLight = l;
-        break;
-      }
-      case 'point': {
-        const l = new THREE.PointLight(
-          newDef.color ?? 0xffffff,
-          newDef.intensity ?? 1,
-          newDef.distance ?? 0,
-          newDef.decay ?? 2
-        );
-        if (newDef.position) l.position.fromArray(newDef.position);
-        newLight = l;
-        break;
-      }
-      case 'spot': {
-        const l = new THREE.SpotLight(
-          newDef.color ?? 0xffffff,
-          newDef.intensity ?? 1,
-          newDef.distance ?? 0,
-          newDef.angle ?? Math.PI / 4,
-          newDef.penumbra ?? 0,
-          newDef.decay ?? 2
-        );
-        if (newDef.position) l.position.fromArray(newDef.position);
-        newLight = l;
-        break;
-      }
-    }
-    newLight!.name = newDef.id;
-    this.viz.scene.add(newLight!);
-
-    const levelLight: LevelLight = { id: newDef.id, light: newLight!, def: newDef };
+    const levelLight = createLevelLight(newDef, this.lightQuality);
+    addLevelLightToScene(this.viz.scene, levelLight);
     this.allLevelLights.push(levelLight);
     if (!this.levelDef.lights) this.levelDef.lights = [];
     this.levelDef.lights.push(newDef);
