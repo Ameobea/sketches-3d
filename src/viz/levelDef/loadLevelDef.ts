@@ -29,6 +29,7 @@ import type { SceneRuntime } from '../sceneRuntime';
 import type { BehaviorFn } from '../sceneRuntime/types';
 import { isObjectGroup, flattenLeaves, isGeneratedDef } from './levelDefTreeUtils';
 import { type LevelObject, type LevelGroup, type LevelSceneNode, type LevelLight } from './levelSceneTypes';
+import { replaceLeafInstance } from './editorStructuralOps';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
 export { isLevelGroup } from './levelSceneTypes';
 import { buildMaterial } from './buildMaterial';
@@ -855,18 +856,11 @@ export const loadLevelDef = (
             for (const levelObj of allLevelObjects) {
               if (levelObj.assetId !== id) continue;
 
-              editor.unregisterMeshes(levelObj);
-              const oldParent = levelObj.object.parent ?? viz.scene;
-              oldParent.remove(levelObj.object);
-
               const clone = instantiateLevelObject(newPrototype, levelObj.def, {
                 builtMaterials,
                 fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
               });
-
-              oldParent.add(clone);
-              levelObj.object = clone;
-              editor.registerMeshes(levelObj);
+              replaceLeafInstance(editor, levelObj, clone);
             }
           });
         });

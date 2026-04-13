@@ -78,7 +78,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     vizConf,
     {
       spawn: {
-        pos: new THREE.Vector3(0, 3, 0),
+        pos: new THREE.Vector3(-40, 3, 0),
         rot: new THREE.Vector3(-0.35, -Math.PI / 2, 0),
       },
     },

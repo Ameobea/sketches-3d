@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { CsgTreeNode, CsgLeafNode, CsgOpNode } from './types';
-  import { isOpNode, cloneTree, getNodeAtPath, setNodeAtPath, deleteAtPath } from './csgTreeUtils';
+  import { isOpNode, cloneTree, getNodeAtPath, setNodeAtPath, deleteAtPath, insertAfterPath, splitPath } from './csgTreeUtils';
 
   interface Props {
     tree: CsgTreeNode | null;
@@ -61,10 +61,16 @@
     }
   };
 
-  const handleAddLeaf = () => {
+  const handleAddLeaf = (mode: 'into' | 'after') => {
     if (!tree || addAssetId === '') return;
     const newLeaf: CsgLeafNode = { asset: addAssetId };
 
+    if (mode === 'after' && selectedNodePath !== null && selectedNodePath !== '') {
+      emitChange(insertAfterPath(tree, selectedNodePath, newLeaf));
+      return;
+    }
+
+    // mode === 'into' (or fallback for 'after' on root)
     if (selectedNodePath !== null && selectedNodePath !== '') {
       const selectedNode = getNodeAtPath(tree, selectedNodePath);
       if (isOpNode(selectedNode)) {
@@ -82,11 +88,19 @@
         emitChange(setNodeAtPath(tree, selectedNodePath, wrapper));
       }
     } else {
-      const newRoot: CsgOpNode = {
-        op: addOp,
-        children: [cloneTree(tree), newLeaf],
-      };
-      emitChange(newRoot);
+      // Nothing selected (or root selected but we want into)
+      // If root is an op, add to it. Otherwise wrap it.
+      if (isOpNode(tree)) {
+        const newRoot = cloneTree(tree) as CsgOpNode;
+        newRoot.children.push(newLeaf);
+        emitChange(newRoot);
+      } else {
+        const newRoot: CsgOpNode = {
+          op: addOp,
+          children: [cloneTree(tree), newLeaf],
+        };
+        emitChange(newRoot);
+      }
     }
   };
 
@@ -98,16 +112,6 @@
   const polarityColor = (path: string): string => {
     const p = nodePolarities.get(path);
     return p === 'negative' ? '#ff6633' : '#88cc88';
-  };
-
-  /** Get the parent path and child index from a full path. */
-  const splitPath = (path: string): { parentPath: string; childIndex: number } | null => {
-    if (!path) return null;
-    const parts = path.split('.');
-    return {
-      parentPath: parts.slice(0, -1).join('.'),
-      childIndex: Number(parts[parts.length - 1]),
-    };
   };
 
   /** Get the sibling count for a node at a given path. */
@@ -200,14 +204,21 @@
         {/each}
       </select>
     </div>
-    <button class="add-node-btn" onclick={handleAddLeaf}>
+    <div class="add-buttons">
+      <button class="add-node-btn" onclick={() => handleAddLeaf('into')}>
+        {#if selectedNodePath !== null && selectedNodePath !== ''}
+          {@const selNode = tree ? getNodeAtPath(tree, selectedNodePath) : null}
+          {selNode && isOpNode(selNode) ? 'add into selected' : 'wrap selected'}
+        {:else}
+          add to root
+        {/if}
+      </button>
       {#if selectedNodePath !== null && selectedNodePath !== ''}
-        {@const selNode = tree ? getNodeAtPath(tree, selectedNodePath) : null}
-        {selNode && isOpNode(selNode) ? 'add to selected op' : 'add at selected'}
-      {:else}
-        add at root
+        <button class="add-node-btn" onclick={() => handleAddLeaf('after')}>
+          add after selected
+        </button>
       {/if}
-    </button>
+    </div>
   </div>
 </div>
 
@@ -334,6 +345,15 @@
   .add-row {
     display: flex;
     gap: 6px;
+  }
+
+  .add-buttons {
+    display: flex;
+    gap: 4px;
+  }
+
+  .add-buttons > .add-node-btn {
+    flex: 1;
   }
 
   .add-node-btn {

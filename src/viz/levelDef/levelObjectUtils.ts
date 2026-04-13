@@ -4,6 +4,9 @@ import type { ObjectDef, ObjectGroupDef } from './types';
 
 export const LEVEL_PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
 
+/** Material applied to selected objects in the level editor. */
+export const SELECTION_HIGHLIGHT_MAT = new THREE.MeshBasicMaterial({ color: 0x4488ff });
+
 type TransformDef = Pick<ObjectDef, 'position' | 'rotation' | 'scale'> | ObjectGroupDef;
 
 export const applyTransform = (object: THREE.Object3D, def: TransformDef) => {

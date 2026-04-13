@@ -16,6 +16,7 @@
     lights: LevelLight[];
     selectedNodeIds: string[];
     selectedNodeId: string | null;
+    treeVersion: number;
     selectedMaterialId: string | null;
     selectedLightId: string | null;
     selectedLightDef: LightDef | null;
@@ -42,7 +43,9 @@
     onlightpositionchange: (pos: [number, number, number]) => void;
     onlightpropertychange: (update: Partial<LightDef>) => void;
     ondeletelight: () => void;
+    canGroupSelected?: boolean;
     ongroupselected?: () => void;
+    onreparent?: (parentId: string | null) => void;
   }
 
   let {
@@ -53,6 +56,7 @@
     lights,
     selectedNodeIds,
     selectedNodeId,
+    treeVersion,
     selectedMaterialId,
     selectedLightId,
     selectedLightDef,
@@ -79,7 +83,9 @@
     onlightpositionchange,
     onlightpropertychange,
     ondeletelight,
+    canGroupSelected,
     ongroupselected,
+    onreparent,
   }: Props = $props();
 
   const selectionCount = $derived(selectedNodeIds.length);
@@ -177,8 +183,10 @@
     {selectedNodeIds}
     {lights}
     {selectedLightId}
+    {treeVersion}
     {onselectnode}
     {onselectlight}
+    {onreparent}
   />
 
   {#if selectedLightDef}
@@ -193,7 +201,7 @@
     <div class="multi-select-panel">
       <div class="multi-select-header">{selectionCount} objects selected</div>
       {#if ongroupselected}
-        <button class="action-btn" onclick={ongroupselected}>group selected</button>
+        <button class="action-btn" onclick={ongroupselected} disabled={!canGroupSelected}>group selected</button>
       {/if}
       <button class="action-btn delete-btn" onclick={ondelete}>delete selected</button>
     </div>

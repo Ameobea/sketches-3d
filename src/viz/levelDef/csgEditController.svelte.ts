@@ -6,11 +6,13 @@ import { WorkerManager } from 'src/geoscript/workerManager';
 import type { CsgAssetDef, CsgTreeNode, AssetDef } from './types';
 import type { LevelObject } from './loadLevelDef';
 import { LEVEL_PLACEHOLDER_MAT, instantiateLevelObject } from './levelObjectUtils';
+import { replaceLeafInstance } from './editorStructuralOps';
 import { generateCsgCode, generateComplementCode, generateSubtreeCode } from './csgCodeGen';
 import { isOpNode, getNodeAtPath, cloneTree, computeNodePolarities } from './csgTreeUtils';
 import CsgTreeEditor from './CsgTreeEditor.svelte';
 import type { LevelEditor } from './LevelEditor.svelte';
 import { UndoSystem } from './undoSystem';
+import { round } from './mathUtils';
 
 type TransformTuple = [number, number, number];
 
@@ -181,7 +183,6 @@ export class CsgEditController {
       // Root selected — transform applies to the level object
       if (this.editLevelObj) {
         const obj = this.editLevelObj.object;
-        const round = (n: number) => Math.round(n * 10000) / 10000;
         this.editLevelObj.def.position = obj.position.toArray().map(round) as [number, number, number];
         this.editLevelObj.def.rotation = [obj.rotation.x, obj.rotation.y, obj.rotation.z].map(round) as [
           number,
@@ -912,7 +913,6 @@ export class CsgEditController {
     if (!preview) return;
 
     // Read local transform from the preview mesh and write back to the tree node
-    const round = (n: number) => Math.round(n * 10000) / 10000;
     const tree = cloneTree(this.csgPanelState.tree);
     const node = getNodeAtPath(tree, this.selectedNodePath);
     node.position = preview.position.toArray().map(round) as [number, number, number];
@@ -1067,39 +1067,29 @@ export class CsgEditController {
       // In CSG edit mode, don't re-register for normal raycast (previews handle selection)
       if (this._isActive && levelObj === this.editLevelObj) {
         const wasVisible = levelObj.object.visible;
-        this.editor.removePhysics(levelObj);
-        this.editor.viz.scene.remove(levelObj.object);
         const clone = instantiateLevelObject(newPrototype, levelObj.def, {
           builtMaterials: this.editor.builtMaterials,
           fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
-          // Preserve visibility state from current config (hidden in Config 2)
-          visible: wasVisible,
         });
-        levelObj.object = clone;
-        this.editor.viz.scene.add(clone);
-        this.editor.syncPhysics(levelObj);
+        // Preserve visibility state from current config (hidden in Config 2)
+        replaceLeafInstance(this.editor, levelObj, clone, {
+          visible: wasVisible,
+          skipMeshRegistration: true,
+        });
         if (this.selectedNodePath === '') {
-          this.editor.transformControls?.attach(clone);
+          this.editor.transformControls?.attach(levelObj.object);
         }
         continue;
       }
-
-      this.editor.unregisterMeshes(levelObj);
-      this.editor.removePhysics(levelObj);
-      this.editor.viz.scene.remove(levelObj.object);
 
       const clone = instantiateLevelObject(newPrototype, levelObj.def, {
         builtMaterials: this.editor.builtMaterials,
         fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
       });
-
-      levelObj.object = clone;
-      this.editor.viz.scene.add(clone);
-      this.editor.registerMeshes(levelObj);
-      this.editor.syncPhysics(levelObj);
+      replaceLeafInstance(this.editor, levelObj, clone);
 
       if (this.editor.selectedObject === levelObj) {
-        this.editor.transformControls?.attach(clone);
+        this.editor.transformControls?.attach(levelObj.object);
       }
     }
   }

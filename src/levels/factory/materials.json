@@ -34,13 +34,13 @@
     "chipped_yellow_painted_cracked_stone": {
       "type": "customShader",
       "props": {
-        "color": "#8e8681",
-        "map": "chipped_yellow_painted_cracked_stone_diffuse",
-        "normalMap": "chipped_yellow_painted_cracked_stone_normal",
+        "color": "#c1bcb8",
         "roughness": 0.65,
         "metalness": 0.77,
         "normalScale": 0.82,
-        "uvScale": [0.02, 0.02]
+        "uvScale": [0.02, 0.02],
+        "map": "chipped_yellow_painted_cracked_stone_diffuse",
+        "normalMap": "chipped_yellow_painted_cracked_stone_normal"
       },
       "options": {
         "useTriplanarMapping": true
@@ -49,7 +49,7 @@
     "chipped_rusty_gray_painted_wall": {
       "type": "customShader",
       "props": {
-        "color": "#6b6b6b",
+        "color": "#545454",
         "roughness": 0.9,
         "metalness": 0.18,
         "normalScale": 0.26,

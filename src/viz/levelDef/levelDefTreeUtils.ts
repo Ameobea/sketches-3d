@@ -117,3 +117,25 @@ export const findNodeWithParent = (
   }
   return null;
 };
+
+/**
+ * Check whether a node is a descendant of a potential ancestor group.
+ */
+export const isDescendantOf = (
+  nodes: (ObjectDef | ObjectGroupDef)[],
+  potentialAncestorId: string,
+  targetId: string
+): boolean => {
+  const ancestor = findNodeById(nodes, potentialAncestorId);
+  if (!ancestor || !isObjectGroup(ancestor)) return false;
+
+  const walk = (node: ObjectGroupDef): boolean => {
+    for (const child of node.children) {
+      if (child.id === targetId) return true;
+      if (isObjectGroup(child) && walk(child)) return true;
+    }
+    return false;
+  };
+
+  return walk(ancestor);
+};

@@ -75,6 +75,32 @@ export class SelectionManager {
     return this._selectedNodes.length > 1;
   }
 
+  /**
+   * True when all selected nodes share the same parent (enabling grouping).
+   * Requires at least 2 editable (non-generated) nodes.
+   * Uses the nodeById map to identify each node's parent group.
+   */
+  canGroupWith(
+    nodeById: Map<string, import('./levelSceneTypes').LevelSceneNode>,
+    rootNodes: import('./levelSceneTypes').LevelSceneNode[]
+  ): boolean {
+    const editable = this._selectedNodes.filter(n => !n.generated);
+    if (editable.length < 2) return false;
+
+    const getParentId = (node: import('./levelSceneTypes').LevelSceneNode): string | null => {
+      // Check if it's at root level
+      if (rootNodes.includes(node)) return null;
+      // Otherwise find parent group
+      for (const [id, candidate] of nodeById) {
+        if (isLevelGroup(candidate) && candidate.children.includes(node)) return id;
+      }
+      return null;
+    };
+
+    const firstParentId = getParentId(editable[0]);
+    return editable.every(n => getParentId(n) === firstParentId);
+  }
+
   isSelected(node: LevelSceneNode): boolean {
     return this._selectedNodes.includes(node);
   }

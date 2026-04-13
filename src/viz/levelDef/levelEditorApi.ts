@@ -1,8 +1,9 @@
 import type { AssetLibFolder } from './assetLibTypes';
 import type { CsgTreeNode, LightDef, ObjectDef, ObjectGroupDef } from './types';
-import type { LevelObject, LevelSceneNode } from './loadLevelDef';
-
-const round = (n: number) => Math.round(n * 10000) / 10000;
+import type { LevelSceneNode } from './loadLevelDef';
+import type { RuntimeSubtree } from './editorStructuralTypes';
+import type { TransformSnapshot } from './TransformHandler';
+import { round } from './mathUtils';
 
 export class LevelEditorApi {
   constructor(private levelName: string) {}
@@ -47,6 +48,8 @@ export class LevelEditorApi {
     rotation?: [number, number, number];
     scale?: [number, number, number];
     id?: string;
+    parentId?: string;
+    index?: number;
   }): Promise<ObjectDef | null> => {
     try {
       const res = await fetch(`/level_editor/${this.levelName}`, {
@@ -121,22 +124,29 @@ export class LevelEditorApi {
     }
   };
 
-  sendRestore = (
-    levelObj: LevelObject,
-    snapshot: {
-      position: [number, number, number];
-      rotation: [number, number, number];
-      scale: [number, number, number];
+  restoreSubtree = async (subtree: RuntimeSubtree): Promise<void> => {
+    const def = JSON.parse(JSON.stringify(subtree.root.def)) as ObjectDef | ObjectGroupDef;
+    def.position = subtree.transform.position.map(round) as [number, number, number];
+    def.rotation = subtree.transform.rotation.map(round) as [number, number, number];
+    def.scale = subtree.transform.scale.map(round) as [number, number, number];
+
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'restore_subtree',
+          def,
+          parentId: subtree.placement.parent.type === 'group' ? subtree.placement.parent.groupId : undefined,
+          index: subtree.placement.index,
+        }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] restore subtree failed:', res.status, await res.text());
+      }
+    } catch (err) {
+      console.error('[LevelEditor] restore subtree error:', err);
     }
-  ) => {
-    void this.sendAdd({
-      id: levelObj.id,
-      asset: levelObj.assetId,
-      material: levelObj.def.material,
-      position: snapshot.position.map(round) as [number, number, number],
-      rotation: snapshot.rotation.map(round) as [number, number, number],
-      scale: snapshot.scale.map(round) as [number, number, number],
-    });
   };
 
   renameNode = async (id: string, newId: string): Promise<{ resolvedId: string } | null> => {
@@ -332,6 +342,38 @@ export class LevelEditorApi {
     } catch (err) {
       console.error('[LevelEditor] group nodes error:', err);
       return null;
+    }
+  };
+
+  reparentNodes = async (
+    nodes: Array<{ id: string; transform: TransformSnapshot }>,
+    parentId?: string,
+    index?: number
+  ): Promise<boolean> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'reparent',
+          nodes: nodes.map(node => ({
+            id: node.id,
+            position: node.transform.position.map(round) as [number, number, number],
+            rotation: node.transform.rotation.map(round) as [number, number, number],
+            scale: node.transform.scale.map(round) as [number, number, number],
+          })),
+          parentId,
+          index,
+        }),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] reparent failed:', res.status, await res.text());
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('[LevelEditor] reparent error:', err);
+      return false;
     }
   };
 }

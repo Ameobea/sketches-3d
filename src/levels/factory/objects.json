@@ -4,7 +4,7 @@
     {
       "id": "spawn_platform",
       "asset": "platform",
-      "position": [0, -1.5, 0],
+      "position": [-40, -1.5, 0],
       "scale": [1.2289, 1.2289, 1.2289],
       "material": "concrete",
       "rotation": [0, 0, 0]
@@ -42,37 +42,160 @@
       "material": "chipped_rusty_gray_painted_wall"
     },
     {
-      "id": "plat",
+      "id": "plats",
       "children": [
         {
-          "id": "rod",
-          "asset": "rod",
-          "position": [0, -4.4373, -2.578],
-          "rotation": [0.6088, 0, 0],
-          "scale": [2.5463, 2.2464, 2.5463],
-          "material": "gray",
-          "nocollide": true
+          "id": "plat_1_1_1_1",
+          "children": [
+            {
+              "id": "rod_4",
+              "asset": "rod",
+              "position": [0, -4.4373, -2.578],
+              "rotation": [0.6088, 0, 0],
+              "scale": [2.5463, 2.2464, 2.5463],
+              "material": "gray",
+              "nocollide": true
+            },
+            {
+              "id": "plat1_4",
+              "asset": "plat1",
+              "position": [0, 4.4373, 2.578],
+              "rotation": [0, -3.1416, 0],
+              "scale": [0.891, 0.891, 1.3137],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [-44.5625, -6.1284, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
         },
         {
-          "id": "plat1",
-          "asset": "plat1",
-          "position": [0, 4.4373, 2.578],
-          "rotation": [0, -3.1416, 0],
-          "scale": [0.891, 0.891, 1.3137],
-          "material": "chipped_yellow_painted_cracked_stone"
+          "id": "plat_1_1_1",
+          "children": [
+            {
+              "id": "rod_3",
+              "asset": "rod",
+              "position": [0, -4.4373, -2.578],
+              "rotation": [0.6088, 0, 0],
+              "scale": [2.5463, 2.2464, 2.5463],
+              "material": "gray",
+              "nocollide": true
+            },
+            {
+              "id": "plat1_3",
+              "asset": "plat1",
+              "position": [0, 4.4373, 2.578],
+              "rotation": [0, -3.1416, 0],
+              "scale": [0.891, 0.891, 1.3137],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [-18.8392, -0.629, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "plat_1_1",
+          "children": [
+            {
+              "id": "rod_2",
+              "asset": "rod",
+              "position": [0, -4.4373, -2.578],
+              "rotation": [0.6088, 0, 0],
+              "scale": [2.5463, 2.2464, 2.5463],
+              "material": "gray",
+              "nocollide": true
+            },
+            {
+              "id": "plat1_2",
+              "asset": "plat1",
+              "position": [0, 4.4373, 2.578],
+              "rotation": [0, -3.1416, 0],
+              "scale": [0.891, 0.891, 1.3137],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [7.2175, 5.0316, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "plat_1",
+          "children": [
+            {
+              "id": "rod_1",
+              "asset": "rod",
+              "position": [0, -4.4373, -2.578],
+              "rotation": [0.6088, 0, 0],
+              "scale": [2.5463, 2.2464, 2.5463],
+              "material": "gray",
+              "nocollide": true
+            },
+            {
+              "id": "plat1_1",
+              "asset": "plat1",
+              "position": [0, 4.4373, 2.578],
+              "rotation": [0, -3.1416, 0],
+              "scale": [0.891, 0.891, 1.3137],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [28.7372, 8.4835, 0.0706],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
         }
       ],
-      "position": [8.9739, 2.1277, -37.557],
+      "position": [44.9897, 5.8869, -37.557],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
     },
     {
-      "id": "box",
-      "asset": "csg_box",
-      "position": [86.959, 19.0147, 22.2324],
+      "id": "wrap_wall",
+      "children": [
+        {
+          "id": "box_1",
+          "asset": "box",
+          "position": [0.248, 0, 9.0247],
+          "rotation": [0, 0, 0],
+          "scale": [2.0761, 5.6618, 0.5513],
+          "material": "chipped_rusty_gray_painted_wall"
+        },
+        {
+          "id": "box",
+          "asset": "csg_box",
+          "position": [-0.2481, 0, -9.0248],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1.1303, 1],
+          "material": "horizontal_metal_1"
+        }
+      ],
+      "position": [87.2071, 19.0147, 31.2572],
       "rotation": [0, 0, 0],
-      "scale": [1, 1.1303, 1],
-      "material": "horizontal_metal_1"
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "wrap_wall_1",
+      "children": [
+        {
+          "id": "box_2",
+          "asset": "box",
+          "position": [0.248, 0, 9.0247],
+          "rotation": [0, 0, 0],
+          "scale": [2.0761, 5.6618, 0.5513],
+          "material": "chipped_rusty_gray_painted_wall"
+        },
+        {
+          "id": "csg_box",
+          "asset": "csg_box",
+          "position": [-0.2481, 0, -9.0248],
+          "rotation": [0, 3.1416, 0],
+          "scale": [1, 1.1303, 1],
+          "material": "horizontal_metal_1"
+        }
+      ],
+      "position": [110.5667, 19.5147, 31.2572],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     }
   ]
 }

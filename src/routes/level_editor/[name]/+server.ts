@@ -12,7 +12,9 @@ import {
   isObjectGroup,
   removeNodeById,
 } from 'src/viz/levelDef/levelDefTreeUtils';
+import { round } from 'src/viz/levelDef/mathUtils';
 import { guardDev, openLevel, validateName } from '../levelEditorUtils.server';
+import { insertNodeAtPlacement } from '../levelTreeOps.server';
 
 const failIfGeneratedNode = async (name: string, id: string) => {
   const mergedLevel = await loadLevelData(name);
@@ -108,6 +110,10 @@ export const POST: RequestHandler = async ({ params, request }) => {
         scale?: [number, number, number];
         /** If provided (undo/redo restore), use this id exactly instead of generating one. */
         id?: string;
+        /** If provided, insert under this parent group instead of at root. */
+        parentId?: string;
+        /** Index within the parent's children (or root) at which to insert. Defaults to append. */
+        index?: number;
       }
     | {
         type: 'group';
@@ -120,6 +126,25 @@ export const POST: RequestHandler = async ({ params, request }) => {
         /** Paste a full group subtree (copy-paste). Server assigns fresh IDs. */
         type: 'group_paste';
         def: ObjectGroupDef;
+      }
+    | {
+        /** Restore an exact subtree (undo/redo) at a specific placement. */
+        type: 'restore_subtree';
+        def: ObjectDef | ObjectGroupDef;
+        parentId?: string;
+        index?: number;
+      }
+    | {
+        type: 'reparent';
+        nodeIds?: string[];
+        nodes?: Array<{
+          id: string;
+          position?: [number, number, number];
+          rotation?: [number, number, number];
+          scale?: [number, number, number];
+        }>;
+        parentId?: string;
+        index?: number;
       };
 
   const level = openLevel(name);
@@ -172,7 +197,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     const allIds = new Set(flattenAllNodes(level.def.objects).map(n => n.id));
 
     const withFreshIds = (node: ObjectDef | ObjectGroupDef): ObjectDef | ObjectGroupDef => {
-      const stem = isObjectGroup(node) ? 'group' : (node as ObjectDef).asset;
+      const stem = isObjectGroup(node) ? node.id : (node as ObjectDef).asset;
       const prefix = `${stem}_`;
       let maxN = -1;
       for (const id of allIds) {
@@ -205,6 +230,124 @@ export const POST: RequestHandler = async ({ params, request }) => {
     return json(newDef, { status: 201 });
   }
 
+  if (body.type === 'restore_subtree') {
+    const subtreeNodes = flattenAllNodes([body.def]);
+    const subtreeIds = new Set<string>();
+    for (const node of subtreeNodes) {
+      if (subtreeIds.has(node.id)) error(400, `Duplicate node id "${node.id}" in restored subtree`);
+      subtreeIds.add(node.id);
+    }
+
+    const mergedLevel = await loadLevelData(name);
+    for (const node of subtreeNodes) {
+      if (findNodeById(mergedLevel.objects, node.id)) {
+        error(409, `Node "${node.id}" already exists in level "${name}"`);
+      }
+    }
+
+    for (const leaf of flattenLeaves([body.def])) {
+      if (!level.def.assets[leaf.asset]) error(400, `Unknown asset "${leaf.asset}" in restored subtree`);
+      if (leaf.material && !level.def.materials?.[leaf.material]) {
+        error(400, `Unknown material "${leaf.material}" in restored subtree`);
+      }
+    }
+
+    if (body.parentId) {
+      const targetParent = findNodeById(level.def.objects, body.parentId);
+      if (!targetParent || !isObjectGroup(targetParent)) {
+        error(404, `Target group "${body.parentId}" not found`);
+      }
+    }
+
+    const insertIndex =
+      body.index ??
+      (body.parentId
+        ? ((findNodeById(level.def.objects, body.parentId) as ObjectGroupDef | undefined)?.children.length ??
+          0)
+        : level.def.objects.length);
+    insertNodeAtPlacement(level.def.objects, body.def, body.parentId, insertIndex);
+    level.save();
+    return json(body.def, { status: 201 });
+  }
+
+  if (body.type === 'reparent') {
+    const nodeInputs:
+      | Array<{
+          id: string;
+          position?: [number, number, number];
+          rotation?: [number, number, number];
+          scale?: [number, number, number];
+        }>
+      | [] = body.nodes ?? body.nodeIds?.map(id => ({ id })) ?? [];
+    if (nodeInputs.length === 0) error(400, 'Need at least 1 node ID to reparent');
+
+    const nodesToMove: (ObjectDef | ObjectGroupDef)[] = [];
+    const transformsById = new Map(
+      nodeInputs.map(node => [
+        node.id,
+        { position: node.position, rotation: node.rotation, scale: node.scale },
+      ])
+    );
+    for (const nodeInput of nodeInputs) {
+      const node = findNodeById(level.def.objects, nodeInput.id);
+      if (!node) error(404, `Node "${nodeInput.id}" not found`);
+      if (isGeneratedDef(node)) error(400, `Node "${nodeInput.id}" is read-only`);
+      nodesToMove.push(node);
+    }
+
+    if (body.parentId) {
+      const targetParent = findNodeById(level.def.objects, body.parentId);
+      if (!targetParent || !isObjectGroup(targetParent))
+        error(404, `Target group "${body.parentId}" not found`);
+      // Prevent circular reparenting
+      for (const node of nodesToMove) {
+        if (node.id === body.parentId) error(400, 'Cannot reparent a group into itself');
+        if (isObjectGroup(node)) {
+          const walk = (n: ObjectGroupDef): boolean => {
+            for (const child of n.children) {
+              if (child.id === body.parentId) return true;
+              if (isObjectGroup(child) && walk(child)) return true;
+            }
+            return false;
+          };
+          if (walk(node))
+            error(400, `Cannot reparent group "${node.id}" into its descendant "${body.parentId}"`);
+        }
+      }
+    }
+
+    // Detach all nodes from current parents
+    for (const node of nodesToMove) {
+      const { removed, nodes: updated } = removeNodeById(level.def.objects, node.id);
+      if (removed) level.def.objects = updated;
+    }
+
+    // Re-attach all nodes at the new location
+    let insertIndex = body.index;
+    if (insertIndex === undefined) {
+      if (body.parentId) {
+        const targetParent = findNodeById(level.def.objects, body.parentId);
+        if (!targetParent || !isObjectGroup(targetParent)) {
+          error(404, `Target group "${body.parentId}" not found`);
+        }
+        insertIndex = targetParent.children.length;
+      } else {
+        insertIndex = level.def.objects.length;
+      }
+    }
+    for (const node of nodesToMove) {
+      const transform = transformsById.get(node.id);
+      if (transform?.position !== undefined) node.position = transform.position;
+      if (transform?.rotation !== undefined) node.rotation = transform.rotation;
+      if (transform?.scale !== undefined) node.scale = transform.scale;
+      insertNodeAtPlacement(level.def.objects, node, body.parentId, insertIndex);
+      insertIndex++; // Sequential append within target parent
+    }
+
+    level.save();
+    return new Response(null, { status: 204 });
+  }
+
   // Default: create ObjectDef
   if (!level.def.assets[body.asset]) {
     error(400, `Unknown asset "${body.asset}"`);
@@ -224,7 +367,17 @@ export const POST: RequestHandler = async ({ params, request }) => {
     ...(body.material ? { material: body.material } : {}),
   };
 
-  level.def.objects.push(newObj);
+  if (body.parentId) {
+    const targetParent = findNodeById(level.def.objects, body.parentId);
+    if (!targetParent || !isObjectGroup(targetParent)) {
+      error(404, `Target group "${body.parentId}" not found`);
+    }
+  }
+
+  const insertIndex = body.index ?? level.def.objects.length;
+  if (!insertNodeAtPlacement(level.def.objects, newObj, body.parentId, insertIndex)) {
+    error(404, `Target group "${body.parentId}" not found`);
+  }
   level.save();
   return json(newObj, { status: 201 });
 };
@@ -289,7 +442,6 @@ export const PUT: RequestHandler = async ({ params, request }) => {
   }
 
   // Adjust each node's position to be relative to the new group position
-  const round = (n: number) => Math.round(n * 10000) / 10000;
   for (const node of nodesToGroup) {
     const oldPos = node.position ?? [0, 0, 0];
     node.position = [

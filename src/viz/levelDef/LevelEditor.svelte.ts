@@ -10,13 +10,8 @@ import { isLevelGroup } from './levelSceneTypes';
 import { SelectionManager } from './SelectionManager.svelte';
 import { TransformHandler, snapshotTransform, applySnapshot, snapshotsEqual } from './TransformHandler';
 import type { TransformSnapshot, TransformMode } from './TransformHandler';
-import {
-  LEVEL_PLACEHOLDER_MAT,
-  applyTransform,
-  assignMaterial,
-  instantiateLevelObject,
-} from './levelObjectUtils';
-import { flattenLeaves, isObjectGroup } from './levelDefTreeUtils';
+import { LEVEL_PLACEHOLDER_MAT, SELECTION_HIGHLIGHT_MAT, assignMaterial } from './levelObjectUtils';
+import { flattenLeaves, isDescendantOf } from './levelDefTreeUtils';
 import { resolveGeoscriptAsset } from './loadLevelDef';
 import LevelEditorPanel from './LevelEditorPanel.svelte';
 import { LevelEditorApi } from './levelEditorApi';
@@ -26,6 +21,16 @@ import { CsgEditController } from './csgEditController.svelte';
 import { focusCamera } from '../util/focusCamera';
 import { clearPhysicsBinding } from '../util/physics';
 import { withWorldSpaceTransform } from '../util/three';
+import { round } from './mathUtils';
+import {
+  detachSubtree,
+  attachSubtree,
+  applyStructuralOp,
+  collectSubtreeLeaves,
+  capturePlacement,
+} from './editorStructuralOps';
+import { buildLeafNode, buildGroupSubtree } from './editorNodeFactory';
+import type { RuntimeSubtree, StructuralOp } from './editorStructuralTypes';
 
 export type { TransformSnapshot } from './TransformHandler';
 
@@ -34,12 +39,11 @@ type UndoEntry =
       type: 'transform';
       entries: Array<{ node: LevelSceneNode; before: TransformSnapshot; after: TransformSnapshot }>;
     }
-  | { type: 'add'; levelObj: LevelObject; snapshot: TransformSnapshot }
-  | { type: 'delete'; entries: Array<{ levelObj: LevelObject; snapshot: TransformSnapshot }> };
+  | { type: 'structural'; undoOps: StructuralOp[]; redoOps: StructuralOp[] };
 
 type ClipboardEntry =
   | { type: 'object'; assetId: string; def: ObjectDef }
-  | { type: 'group'; def: ObjectGroupDef };
+  | { type: 'group'; def: ObjectGroupDef; worldPosition: [number, number, number] };
 
 export class LevelEditor {
   viz: Viz;
@@ -165,6 +169,33 @@ export class LevelEditor {
     });
   }
 
+  /** Stores per-mesh original materials while selection highlight is active. */
+  private originalMeshMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+  private structuralSyncQueue: Promise<void> = Promise.resolve();
+
+  private clearSelectionHighlights() {
+    for (const [mesh, mat] of this.originalMeshMaterials) {
+      (mesh as THREE.Mesh).material = mat as THREE.Material;
+    }
+    this.originalMeshMaterials.clear();
+  }
+
+  private applySelectionHighlights() {
+    for (const node of this.selection.selectedNodes) {
+      const leaves = isLevelGroup(node)
+        ? collectSubtreeLeaves(node)
+        : [node as import('./levelSceneTypes').LevelObject];
+      for (const leaf of leaves) {
+        leaf.object.traverse(child => {
+          if (child instanceof THREE.Mesh && !this.originalMeshMaterials.has(child)) {
+            this.originalMeshMaterials.set(child, child.material);
+            child.material = SELECTION_HIGHLIGHT_MAT;
+          }
+        });
+      }
+    }
+  }
+
   private snapshotTransform = snapshotTransform;
   private applySnapshot = applySnapshot;
 
@@ -205,7 +236,12 @@ export class LevelEditor {
       const node = this.selection.primaryNode;
       if (node) {
         if (isLevelGroup(node)) {
-          this.clipboard = { type: 'group', def: JSON.parse(JSON.stringify(node.def)) };
+          const wp = node.object.getWorldPosition(new THREE.Vector3());
+          this.clipboard = {
+            type: 'group',
+            def: JSON.parse(JSON.stringify(node.def)),
+            worldPosition: [wp.x, wp.y, wp.z],
+          };
         } else {
           this.clipboard = { type: 'object', assetId: node.assetId, def: node.def };
         }
@@ -393,7 +429,10 @@ export class LevelEditor {
         },
         get rootNodes() {
           void state.treeVersion;
-          return self.rootNodes;
+          return [...self.rootNodes];
+        },
+        get treeVersion() {
+          return state.treeVersion;
         },
         get lights() {
           void state.treeVersion;
@@ -474,7 +513,12 @@ export class LevelEditor {
             void this.csgController.convertToCsg(this.selectedObject.id);
           }
         },
+        get canGroupSelected() {
+          void state.treeVersion;
+          return self.selection.canGroupWith(self.nodeById, self.rootNodes);
+        },
         ongroupselected: () => void this.groupSelected(),
+        onreparent: (parentId: string | null) => void this.reparentSelected(parentId),
       },
     });
   }
@@ -494,9 +538,14 @@ export class LevelEditor {
     if (this.selectedLight) {
       this.selection.syncState({ isCsgAsset: false });
       this.syncLightPositionFromObject();
+      this.clearSelectionHighlights();
       return;
     }
     this.selection.syncState({ isCsgAsset: this.csgController.isEditorOpen });
+    this.clearSelectionHighlights();
+    if (!this.csgController.isActive) {
+      this.applySelectionHighlights();
+    }
   }
 
   /** Reads the current Three.js object transform into selectionState. Called at all points
@@ -571,7 +620,6 @@ export class LevelEditor {
     }
 
     const isToggle = e.ctrlKey || e.metaKey;
-    console.log({ isToggle });
 
     // Check light proxies first (they're small so prioritize proximity)
     const lightHits = this.raycaster.intersectObjects(this.lightProxyMeshes, false);
@@ -837,7 +885,6 @@ export class LevelEditor {
 
   private saveLightPosition(levelLight: LevelLight) {
     if (levelLight.def.type === 'ambient') return;
-    const round = (n: number) => Math.round(n * 10000) / 10000;
     const pos = levelLight.light.position;
     const position: [number, number, number] = [round(pos.x), round(pos.y), round(pos.z)];
     levelLight.def = { ...levelLight.def, position } as LightDef;
@@ -929,7 +976,6 @@ export class LevelEditor {
   }
 
   async onAddLightClick(lightType: LightDef['type']) {
-    const round = (n: number) => Math.round(n * 10000) / 10000;
     const orbitTarget = this.orbitControls?.target ?? new THREE.Vector3();
     const position: [number, number, number] = [
       round(orbitTarget.x),
@@ -1032,6 +1078,53 @@ export class LevelEditor {
     this.syncTransformFromNode();
   }
 
+  private enqueueStructuralSync(task: () => Promise<void>) {
+    this.structuralSyncQueue = this.structuralSyncQueue
+      .catch(err => console.error('[LevelEditor] structural sync queue error:', err))
+      .then(async () => {
+        try {
+          await task();
+        } catch (err) {
+          console.error('[LevelEditor] structural sync failed:', err);
+        }
+      });
+    return this.structuralSyncQueue;
+  }
+
+  private syncStructuralOps = async (ops: StructuralOp[]) => {
+    const movedNodeIds = new Set<string>();
+    const detachedNodeIds = new Set(
+      ops.filter(op => op.type === 'detach_subtree').map(op => op.subtree.root.id)
+    );
+    for (const op of ops) {
+      if (op.type === 'attach_subtree' && detachedNodeIds.has(op.subtree.root.id)) {
+        movedNodeIds.add(op.subtree.root.id);
+      }
+    }
+
+    for (const op of ops) {
+      if (op.type !== 'attach_subtree') continue;
+      if (!movedNodeIds.has(op.subtree.root.id)) continue;
+      await this.api.reparentNodes(
+        [{ id: op.subtree.root.id, transform: op.subtree.transform }],
+        op.subtree.placement.parent.type === 'group' ? op.subtree.placement.parent.groupId : undefined,
+        op.subtree.placement.index
+      );
+    }
+
+    for (const op of ops) {
+      if (op.type === 'detach_subtree' && !movedNodeIds.has(op.subtree.root.id)) {
+        await this.api.sendDelete(op.subtree.root.id);
+      }
+    }
+
+    for (const op of ops) {
+      if (op.type === 'attach_subtree' && !movedNodeIds.has(op.subtree.root.id)) {
+        await this.api.restoreSubtree(op.subtree);
+      }
+    }
+  };
+
   private applyUndoEntry = (entry: UndoEntry, direction: 'undo' | 'redo') => {
     if (entry.type === 'transform') {
       for (const te of entry.entries) {
@@ -1043,89 +1136,25 @@ export class LevelEditor {
       // Re-select the first node for focus
       if (entry.entries.length > 0) this.select(entry.entries[0].node);
       this.syncTransformFromNode();
-    } else if (entry.type === 'add') {
-      if (direction === 'undo') {
-        this.removeFromScene(entry.levelObj);
-        this.api.sendDelete(entry.levelObj.id);
-      } else {
-        this.addToScene(entry.levelObj, entry.snapshot);
-        this.api.sendRestore(entry.levelObj, entry.snapshot);
+    } else if (entry.type === 'structural') {
+      // Structural undo/redo entries record the required detach/attach order explicitly.
+      const ops = direction === 'undo' ? entry.undoOps : entry.redoOps;
+      let nodeToSelect: LevelSceneNode | null = null;
+      for (const op of ops) {
+        applyStructuralOp(this, op);
+        if (op.type === 'attach_subtree') nodeToSelect = op.subtree.root;
       }
-    } else if (entry.type === 'delete') {
-      for (const de of entry.entries) {
-        if (direction === 'undo') {
-          this.addToScene(de.levelObj, de.snapshot);
-          this.api.sendRestore(de.levelObj, de.snapshot);
-        } else {
-          this.removeFromScene(de.levelObj);
-          this.api.sendDelete(de.levelObj.id);
-        }
-      }
+      this.selectionState.treeVersion++;
+      if (nodeToSelect) this.select(nodeToSelect);
+      else this.deselect();
+
+      void this.enqueueStructuralSync(() => this.syncStructuralOps(ops));
     } else {
       entry satisfies never;
     }
   };
 
-  private removeFromScene(levelObj: LevelObject) {
-    if (this.selection.isSelected(levelObj)) this.deselect();
-    this.unregisterMeshes(levelObj);
-    this.removePhysics(levelObj);
-    const parent = levelObj.object.parent ?? this.viz.scene;
-    parent.remove(levelObj.object);
-    const idx = this.allLevelObjects.indexOf(levelObj);
-    if (idx !== -1) this.allLevelObjects.splice(idx, 1);
-    // Remove from rootNodes if it was a top-level object
-    const rootIdx = this.rootNodes.indexOf(levelObj);
-    if (rootIdx !== -1) {
-      this.rootNodes.splice(rootIdx, 1);
-      this.selectionState.treeVersion++;
-    }
-  }
-
-  private addToScene(levelObj: LevelObject, snapshot: TransformSnapshot) {
-    this.applySnapshot(levelObj.object, snapshot);
-    this.viz.scene.add(levelObj.object);
-    this.allLevelObjects.push(levelObj);
-    this.rootNodes.push(levelObj);
-    this.selectionState.treeVersion++;
-    this.registerMeshes(levelObj);
-    if (this.viz.fpCtx) this.syncPhysics(levelObj);
-    this.select(levelObj);
-  }
-
-  /** Recursively collect all LevelObjects within a group subtree. */
-  private collectGroupLeaves(group: LevelGroup): LevelObject[] {
-    const leaves: LevelObject[] = [];
-    for (const child of group.children) {
-      if (isLevelGroup(child)) {
-        leaves.push(...this.collectGroupLeaves(child));
-      } else {
-        leaves.push(child);
-      }
-    }
-    return leaves;
-  }
-
-  private deleteGroup(group: LevelGroup) {
-    if (this.selection.isSelected(group)) this.deselect();
-    // Remove physics and mesh registration for all leaf descendants.
-    for (const leaf of this.collectGroupLeaves(group)) {
-      this.unregisterMeshes(leaf);
-      this.removePhysics(leaf);
-      const idx = this.allLevelObjects.indexOf(leaf);
-      if (idx !== -1) this.allLevelObjects.splice(idx, 1);
-    }
-    // Remove the group's Three.js object (children are part of the group hierarchy).
-    (group.object.parent ?? this.viz.scene).remove(group.object);
-    // Remove from rootNodes.
-    const rootIdx = this.rootNodes.indexOf(group);
-    if (rootIdx !== -1) this.rootNodes.splice(rootIdx, 1);
-    this.selectionState.treeVersion++;
-    void this.api.sendDelete(group.id);
-  }
-
   private async onAddGroupClick() {
-    const round = (n: number) => Math.round(n * 10000) / 10000;
     const orbitTarget = this.orbitControls?.target ?? new THREE.Vector3();
     const position: [number, number, number] = [
       round(orbitTarget.x),
@@ -1138,7 +1167,6 @@ export class LevelEditor {
 
     const groupObj = new THREE.Group();
     groupObj.position.fromArray(newDef.position ?? [0, 0, 0]);
-    this.viz.scene.add(groupObj);
 
     const levelGroup: LevelGroup = {
       id: newDef.id,
@@ -1147,8 +1175,13 @@ export class LevelEditor {
       children: [],
       generated: false,
     };
-    this.rootNodes.push(levelGroup);
-    this.nodeById.set(levelGroup.id, levelGroup);
+    const subtree: RuntimeSubtree = {
+      root: levelGroup,
+      placement: { parent: { type: 'root' }, index: this.rootNodes.length },
+      transform: this.snapshotTransform(groupObj),
+      leaves: [],
+    };
+    attachSubtree(this, subtree);
     this.selectionState.treeVersion++;
     this.select(levelGroup);
   }
@@ -1158,67 +1191,109 @@ export class LevelEditor {
    * All selected nodes must be siblings (same level in the hierarchy).
    */
   private async groupSelected() {
-    const nodes = [...this.selection.selectedNodes];
-    if (nodes.length < 2) return;
+    if (!this.selection.canGroupWith(this.nodeById, this.rootNodes)) return;
 
-    // Filter out generated nodes
-    const editableNodes = nodes.filter(n => !n.generated);
-    if (editableNodes.length < 2) return;
+    const editableNodes = [...this.selection.selectedNodes].filter(n => !n.generated);
 
-    const round = (n: number) => Math.round(n * 10000) / 10000;
+    // Capture placements before any mutation so indices are still valid.
+    // All nodes share the same parent (enforced by canGroupWith), so the group
+    // will be inserted at the placement of the earliest-indexed node.
+    const placements = editableNodes.map(n => ({ node: n, placement: capturePlacement(this, n) }));
+    const insertIndex = Math.min(...placements.map(p => p.placement.index));
+    const sharedParent = placements[0].placement.parent;
 
-    // Compute centroid of selected nodes' positions
+    // Compute the group origin in the shared parent's local space so nested
+    // grouping stores the new node transform in the correct coordinate system.
     const centroid = new THREE.Vector3();
     for (const node of editableNodes) {
       centroid.add(node.object.getWorldPosition(new THREE.Vector3()));
     }
     centroid.divideScalar(editableNodes.length);
-    const position: [number, number, number] = [round(centroid.x), round(centroid.y), round(centroid.z)];
+
+    const groupParent =
+      sharedParent.type === 'root'
+        ? this.viz.scene
+        : ((this.nodeById.get(sharedParent.groupId) as LevelGroup | undefined)?.object ?? null);
+    if (!groupParent) return;
+
+    groupParent.updateMatrixWorld(true);
+    const localCentroid = groupParent.worldToLocal(centroid.clone());
+    const requestedPosition: [number, number, number] = [
+      round(localCentroid.x),
+      round(localCentroid.y),
+      round(localCentroid.z),
+    ];
 
     const nodeIds = editableNodes.map(n => n.id);
-    const newDef = await this.api.groupNodes(nodeIds, position);
+    const newDef = await this.api.groupNodes(nodeIds, requestedPosition);
     if (!newDef) return;
+    const groupOrigin = new THREE.Vector3().fromArray(newDef.position ?? requestedPosition);
 
-    // Create the Three.js group
+    // Deselect before mutations so highlight state is clean.
+    this.deselect();
+
+    // Detach each selected node. Collect the subtrees in order so undo can re-apply them in reverse.
+    const detachedSubtrees: RuntimeSubtree[] = [];
+    for (const node of editableNodes) {
+      detachedSubtrees.push(detachSubtree(this, node));
+    }
+
+    // Adjust each node's local position in the shared parent's local space so
+    // moving them under the new group preserves their world placement.
+    for (const sub of detachedSubtrees) {
+      sub.root.object.position.sub(groupOrigin);
+      sub.root.object.position.set(
+        round(sub.root.object.position.x),
+        round(sub.root.object.position.y),
+        round(sub.root.object.position.z)
+      );
+      // Sync the def so the saved JSON is correct too.
+      sub.root.def.position = sub.root.object.position.toArray() as [number, number, number];
+    }
+
+    // Build the new group object
     const groupObj = new THREE.Group();
     groupObj.position.fromArray(newDef.position ?? [0, 0, 0]);
 
-    // Reparent each selected node's Three.js object under the new group.
-    // Adjust local position to preserve world placement.
-    for (const node of editableNodes) {
-      const worldPos = node.object.getWorldPosition(new THREE.Vector3());
-      const localPos = worldPos.sub(centroid);
-      node.object.position.set(round(localPos.x), round(localPos.y), round(localPos.z));
-
-      // Remove from current Three.js parent
-      node.object.parent?.remove(node.object);
-      groupObj.add(node.object);
-    }
-
-    this.viz.scene.add(groupObj);
-
-    // Build the LevelGroup for our scene graph
-    const childNodes: LevelSceneNode[] = [];
-    for (const node of editableNodes) {
-      childNodes.push(node);
-
-      // Remove from rootNodes if it was top-level
-      const rootIdx = this.rootNodes.indexOf(node);
-      if (rootIdx !== -1) this.rootNodes.splice(rootIdx, 1);
+    // Add detached nodes under the group Three.js object
+    for (const sub of detachedSubtrees) {
+      groupObj.add(sub.root.object);
     }
 
     const levelGroup: LevelGroup = {
       id: newDef.id,
       object: groupObj,
       def: newDef as ObjectGroupDef,
-      children: childNodes,
+      children: detachedSubtrees.map(s => s.root),
       generated: false,
     };
-    this.rootNodes.push(levelGroup);
-    this.nodeById.set(levelGroup.id, levelGroup);
+    // Rebind def.children to the live child def references so that subsequent
+    // mutations (transform, material) are reflected when the group is serialized.
+    levelGroup.def.children = detachedSubtrees.map(s => s.root.def);
+
+    const allLeaves = detachedSubtrees.flatMap(s => s.leaves);
+    const groupSubtree: RuntimeSubtree = {
+      root: levelGroup,
+      placement: { parent: sharedParent, index: insertIndex },
+      transform: this.snapshotTransform(groupObj),
+      leaves: allLeaves,
+    };
+    attachSubtree(this, groupSubtree);
+
     this.selectionState.treeVersion++;
 
-    // Clear selection and select the new group
+    // Undo: detach group, re-attach each child at its original placement (reversed).
+    // Redo: detach children, attach group.
+    const undoOps: StructuralOp[] = [
+      { type: 'detach_subtree', subtree: groupSubtree },
+      ...detachedSubtrees.map(s => ({ type: 'attach_subtree' as const, subtree: s })).reverse(),
+    ];
+    const redoOps: StructuralOp[] = [
+      ...detachedSubtrees.map(s => ({ type: 'detach_subtree' as const, subtree: s })),
+      { type: 'attach_subtree', subtree: groupSubtree },
+    ];
+    this.undoSystem.push({ type: 'structural', undoOps, redoOps });
+
     this.select(levelGroup);
   }
 
@@ -1255,32 +1330,169 @@ export class LevelEditor {
     const nodes = [...this.selection.selectedNodes];
     if (nodes.length === 0) return;
 
-    // Check if any are generated (read-only)
     if (nodes.every(n => n.generated)) {
       console.info('[LevelEditor] Generated nodes are read-only in the editor.');
       return;
     }
 
-    const deleteEntries: Array<{ levelObj: LevelObject; snapshot: TransformSnapshot }> = [];
+    this.deselect();
+
+    const undoOps: StructuralOp[] = [];
+    const redoOps: StructuralOp[] = [];
+    const deletedNodes = new Set<LevelSceneNode>();
+    const deletedIds: string[] = [];
 
     for (const node of nodes) {
       if (node.generated) continue;
-      if (isLevelGroup(node)) {
-        this.deleteGroup(node);
-      } else {
-        const snapshot = this.snapshotTransform(node.object);
-        this.removeFromScene(node);
-        deleteEntries.push({ levelObj: node, snapshot });
-        this.api.sendDelete(node.id);
-      }
+      const subtree = detachSubtree(this, node);
+      undoOps.push({ type: 'attach_subtree', subtree });
+      redoOps.push({ type: 'detach_subtree', subtree });
+      deletedNodes.add(node);
+      deletedIds.push(node.id);
     }
 
-    if (deleteEntries.length > 0) {
-      // Purge stale transform entries for deleted objects
-      const deletedSet = new Set<LevelSceneNode>(deleteEntries.map(e => e.levelObj));
-      this.undoSystem.purge(e => e.type === 'transform' && e.entries.some(te => deletedSet.has(te.node)));
-      this.undoSystem.push({ type: 'delete', entries: deleteEntries });
+    if (undoOps.length > 0) {
+      // Purge stale transform entries for deleted nodes
+      this.undoSystem.purge(e => e.type === 'transform' && e.entries.some(te => deletedNodes.has(te.node)));
+      this.undoSystem.push({ type: 'structural', undoOps: [...undoOps].reverse(), redoOps });
+      this.selectionState.treeVersion++;
+      void this.enqueueStructuralSync(async () => {
+        for (const id of deletedIds) {
+          await this.api.sendDelete(id);
+        }
+      });
     }
+  }
+
+  /**
+   * Reparent the currently selected nodes to a new parent group (or root).
+   * Maintains world-space transforms.
+   */
+  private async reparentSelected(targetParentId: string | null) {
+    const nodes = [...this.selection.selectedNodes].filter(n => !n.generated);
+    if (nodes.length === 0) return;
+
+    // Filter out invalid reparents (e.g. into self or descendant)
+    const validNodes = nodes.filter(node => {
+      if (targetParentId === null) return true;
+      if (node.id === targetParentId) return false;
+      // Circular check
+      if (
+        isLevelGroup(node) &&
+        isDescendantOf(
+          this.rootNodes.map(n => n.def),
+          node.id,
+          targetParentId
+        )
+      )
+        return false;
+      return true;
+    });
+
+    if (validNodes.length === 0) return;
+
+    const targetParent = targetParentId ? this.nodeById.get(targetParentId) : null;
+    if (targetParentId && (!targetParent || !isLevelGroup(targetParent) || targetParent.generated)) return;
+
+    // 1. Capture world transforms BEFORE detachment
+    const worldTransforms = validNodes.map(node => {
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      const worldScale = new THREE.Vector3();
+      node.object.getWorldPosition(worldPos);
+      node.object.getWorldQuaternion(worldQuat);
+      node.object.getWorldScale(worldScale);
+      return { worldPos, worldQuat, worldScale };
+    });
+
+    // 2. Detach all nodes
+    const detachedSubtrees: RuntimeSubtree[] = [];
+    for (const node of validNodes) {
+      const subtree = detachSubtree(this, node);
+      detachedSubtrees.push(subtree);
+    }
+
+    // 3. Attach to new parent and restore world transforms
+    const targetChildren = targetParentId ? (targetParent as LevelGroup).children : this.rootNodes;
+    const insertionIndex = targetChildren.length;
+
+    for (let i = 0; i < detachedSubtrees.length; i++) {
+      const sub = detachedSubtrees[i];
+      const { worldPos, worldQuat, worldScale } = worldTransforms[i];
+      const node = sub.root;
+
+      // Create new placement at the end of the new parent's children
+      const newParentRef: import('./editorStructuralTypes').ParentRef = targetParentId
+        ? { type: 'group', groupId: targetParentId }
+        : { type: 'root' };
+      sub.placement = { parent: newParentRef, index: insertionIndex + i };
+
+      attachSubtree(this, sub);
+
+      // 4. Update local transform to match the captured world transform
+      const parent = node.object.parent ?? this.viz.scene;
+      parent.updateMatrixWorld(); // Ensure parent matrix is fresh
+      const parentInv = parent.matrixWorld.clone().invert();
+
+      // Position
+      node.object.position.copy(worldPos).applyMatrix4(parentInv);
+
+      // Rotation
+      const parentWorldQuat = new THREE.Quaternion();
+      parent.getWorldQuaternion(parentWorldQuat);
+      node.object.quaternion.copy(parentWorldQuat.invert()).multiply(worldQuat);
+
+      // Scale
+      const parentWorldScale = new THREE.Vector3();
+      parent.getWorldScale(parentWorldScale);
+      node.object.scale.set(
+        worldScale.x / parentWorldScale.x,
+        worldScale.y / parentWorldScale.y,
+        worldScale.z / parentWorldScale.z
+      );
+
+      // Sync the def
+      node.def.position = node.object.position.toArray().map(round) as [number, number, number];
+      node.def.rotation = [
+        round(node.object.rotation.x),
+        round(node.object.rotation.y),
+        round(node.object.rotation.z),
+      ];
+      node.def.scale = node.object.scale.toArray().map(round) as [number, number, number];
+
+      node.object.updateMatrixWorld(true);
+      this.syncSceneNodePhysics(node);
+    }
+
+    // Capture the new state for undo/redo
+    const newSubtrees = validNodes.map(node => {
+      const subtree = detachSubtree(this, node);
+      attachSubtree(this, subtree);
+      return subtree;
+    });
+
+    const compoundUndoOps: StructuralOp[] = [
+      ...newSubtrees.map(s => ({ type: 'detach_subtree' as const, subtree: s })).reverse(),
+      ...detachedSubtrees.map(s => ({ type: 'attach_subtree' as const, subtree: s })).reverse(),
+    ];
+    const compoundRedoOps: StructuralOp[] = [
+      ...detachedSubtrees.map(s => ({ type: 'detach_subtree' as const, subtree: s })),
+      ...newSubtrees.map(s => ({ type: 'attach_subtree' as const, subtree: s })),
+    ];
+
+    this.undoSystem.push({ type: 'structural', undoOps: compoundUndoOps, redoOps: compoundRedoOps });
+
+    this.selectionState.treeVersion++;
+    this.syncAfterSelectionChange();
+    void this.enqueueStructuralSync(() =>
+      this.api
+        .reparentNodes(
+          validNodes.map(node => ({ id: node.id, transform: this.snapshotTransform(node.object) })),
+          targetParentId ?? undefined,
+          insertionIndex
+        )
+        .then(() => undefined)
+    );
   }
 
   private async onAddLibraryClick(libPath: string, materialId: string | undefined) {
@@ -1312,7 +1524,6 @@ export class LevelEditor {
       return;
     }
 
-    const round = (n: number) => Math.round(n * 10000) / 10000;
     const orbitTarget = this.orbitControls?.target ?? new THREE.Vector3();
     const position: [number, number, number] = [
       round(orbitTarget.x),
@@ -1329,7 +1540,7 @@ export class LevelEditor {
     if (!clip) return;
 
     if (clip.type === 'group') {
-      const srcPos = clip.def.position ?? [0, 0, 0];
+      const srcPos = clip.worldPosition;
       const patchedDef: ObjectGroupDef = {
         ...JSON.parse(JSON.stringify(clip.def)),
         position: [srcPos[0], srcPos[1] + 0.5, srcPos[2]] as [number, number, number],
@@ -1346,10 +1557,22 @@ export class LevelEditor {
       const newDef = await this.api.sendPasteGroup(patchedDef);
       if (!newDef) return;
 
-      const levelGroup = this.instantiateGroupSubtree(newDef, this.viz.scene);
-      this.rootNodes.push(levelGroup);
+      const root = buildGroupSubtree(this, newDef);
+      const leaves = collectSubtreeLeaves(root);
+      const subtree: RuntimeSubtree = {
+        root,
+        placement: { parent: { type: 'root' }, index: this.rootNodes.length },
+        transform: this.snapshotTransform(root.object),
+        leaves,
+      };
+      attachSubtree(this, subtree);
       this.selectionState.treeVersion++;
-      this.select(levelGroup);
+      this.undoSystem.push({
+        type: 'structural',
+        undoOps: [{ type: 'detach_subtree', subtree }],
+        redoOps: [{ type: 'attach_subtree', subtree }],
+      });
+      this.select(root);
       return;
     }
 
@@ -1371,51 +1594,22 @@ export class LevelEditor {
     if (newDef) this.finalizeSpawn(assetId, newDef);
   }
 
-  /**
-   * Create a LevelObject from a prototype and register it with the editor's tracking state.
-   * Adds the clone to `parent` (scene root or a group THREE.Object3D).
-   * Does NOT add to rootNodes, push undo, or update treeVersion — caller handles those.
-   */
-  private instantiateLeaf(assetId: string, def: ObjectDef, parent: THREE.Object3D): LevelObject {
-    const clone = instantiateLevelObject(this.prototypes.get(assetId)!, def, {
-      builtMaterials: this.builtMaterials,
-      fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
-    });
-    const levelObj: LevelObject = { id: def.id, assetId, object: clone, def, generated: false };
-    parent.add(clone);
-    this.allLevelObjects.push(levelObj);
-    this.nodeById.set(levelObj.id, levelObj);
-    this.registerMeshes(levelObj);
-    if (this.viz.fpCtx) this.syncPhysics(levelObj);
-    return levelObj;
-  }
-
-  /** Recursively build a LevelGroup subtree from a def, parented under `parentObj`. */
-  private instantiateGroupSubtree(def: ObjectGroupDef, parentObj: THREE.Object3D): LevelGroup {
-    const groupObj = new THREE.Group();
-    applyTransform(groupObj, def);
-    parentObj.add(groupObj);
-
-    const levelGroup: LevelGroup = { id: def.id, object: groupObj, def, children: [], generated: false };
-    this.nodeById.set(def.id, levelGroup);
-
-    for (const childDef of def.children) {
-      if (isObjectGroup(childDef)) {
-        levelGroup.children.push(this.instantiateGroupSubtree(childDef, groupObj));
-      } else {
-        levelGroup.children.push(this.instantiateLeaf(childDef.asset, childDef, groupObj));
-      }
-    }
-    return levelGroup;
-  }
-
   private finalizeSpawn(assetId: string, newDef: ObjectDef) {
-    const levelObj = this.instantiateLeaf(assetId, newDef, this.viz.scene);
-    const snapshot = this.snapshotTransform(levelObj.object);
-    this.rootNodes.push(levelObj);
+    const leaf = buildLeafNode(this, assetId, newDef);
+    const subtree: RuntimeSubtree = {
+      root: leaf,
+      placement: { parent: { type: 'root' }, index: this.rootNodes.length },
+      transform: this.snapshotTransform(leaf.object),
+      leaves: [leaf],
+    };
+    attachSubtree(this, subtree);
     this.selectionState.treeVersion++;
-    this.undoSystem.push({ type: 'add', levelObj, snapshot });
-    this.select(levelObj);
+    this.undoSystem.push({
+      type: 'structural',
+      undoOps: [{ type: 'detach_subtree', subtree }],
+      redoOps: [{ type: 'attach_subtree', subtree }],
+    });
+    this.select(leaf);
   }
 
   private onObjectMaterialChange(matId: string | null) {
@@ -1425,6 +1619,9 @@ export class LevelEditor {
       console.info('[LevelEditor] Generated objects are read-only in the editor.');
       return;
     }
+
+    // Clear highlight before modifying materials, then re-apply with new base.
+    this.clearSelectionHighlights();
 
     if (matId) {
       levelObj.def.material = matId;
@@ -1436,6 +1633,8 @@ export class LevelEditor {
 
     this.selectionState.materialId = matId;
     void this.api.saveMaterialAssignment(levelObj.id, matId);
+
+    this.applySelectionHighlights();
   }
 
   syncPhysics(levelObj: LevelObject) {
