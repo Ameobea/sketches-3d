@@ -110,6 +110,7 @@ export class MaterialEditorController {
 
     for (const levelObj of this.allLevelObjects) {
       if (levelObj.def.material === id) {
+        delete levelObj.def.material;
         assignMaterial(levelObj.object, LEVEL_PLACEHOLDER_MAT);
       }
     }
