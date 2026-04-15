@@ -1,4 +1,5 @@
 use std::f32::consts::PI;
+use std::ops::{Add, Mul, Sub};
 
 use mesh::linked_mesh::Vec3;
 
@@ -74,6 +75,67 @@ pub fn cubic_bezier_3d_path(
     let t = i as f32 / count as f32;
     cubic_bezier_3d(p0, p1, p2, p3, t)
   })
+}
+
+/// Evaluates a single cubic Hermite segment.
+/// `p0`/`p1` are the start/end points; `t0`/`t1` are the tangents; `s ∈ [0, 1]`.
+#[inline]
+fn eval_hermite_segment<P>(p0: P, p1: P, t0: P, t1: P, s: f32) -> P
+where
+  P: Copy + Add<Output = P> + Mul<f32, Output = P>,
+{
+  let s2 = s * s;
+  let s3 = s2 * s;
+  p0 * (2. * s3 - 3. * s2 + 1.)
+    + p1 * (-2. * s3 + 3. * s2)
+    + t0 * (s3 - 2. * s2 + s)
+    + t1 * (s3 - s2)
+}
+
+/// Evaluates a cardinal spline at `t ∈ [0, 1]`.
+///
+/// A cardinal spline is a cubic Hermite spline whose tangents are derived automatically from
+/// neighbouring control points:  `T_i = tension * (P_{i+1} - P_{i-1})`.  Setting
+/// `tension = 0.5` gives a standard Catmull-Rom spline.
+///
+/// For **open** splines the tangents at the two endpoints are computed using a clamped
+/// phantom neighbour (`P_{-1} = P_0`, `P_n = P_{n-1}`), which makes the endpoint tangents
+/// point toward the adjacent interior point scaled by `tension`.
+///
+/// For **closed** splines the index arithmetic wraps around so the curve joins smoothly
+/// at `t = 0`/`t = 1`.
+///
+/// Requires at least 2 control points.
+pub fn eval_cardinal_spline<P>(points: &[P], t: f32, tension: f32, closed: bool) -> P
+where
+  P: Copy + Add<Output = P> + Sub<Output = P> + Mul<f32, Output = P>,
+{
+  let n = points.len();
+  debug_assert!(n >= 2, "cardinal spline requires at least 2 control points");
+
+  let n_segs = if closed { n } else { n - 1 };
+  let raw = (t * n_segs as f32).clamp(0., n_segs as f32);
+  let seg = (raw.floor() as usize).min(n_segs - 1);
+  let s = raw - seg as f32;
+
+  let get = |i: isize| -> P {
+    if closed {
+      points[i.rem_euclid(n as isize) as usize]
+    } else {
+      points[i.clamp(0, (n as isize) - 1) as usize]
+    }
+  };
+
+  let i = seg as isize;
+  let p_prev = get(i - 1);
+  let p0 = get(i);
+  let p1 = get(i + 1);
+  let p_next = get(i + 2);
+
+  let tan0 = (p1 - p_prev) * tension;
+  let tan1 = (p_next - p0) * tension;
+
+  eval_hermite_segment(p0, p1, tan0, tan1, s)
 }
 
 pub fn get_superellipse_point(t: f32, width: f32, height: f32, n: f32) -> (f32, f32) {

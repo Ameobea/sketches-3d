@@ -265,6 +265,10 @@ export const populateScene = (scene: THREE.Scene, geoscriptOutput: GeoscriptRunR
       scene.add(line);
       newRenderedObjects.push(line);
     } else if (obj.type === 'light') {
+      if (obj.light instanceof THREE.DirectionalLight || obj.light instanceof THREE.SpotLight) {
+        obj.light.userData.geotoyTarget = obj.light.target;
+        scene.add(obj.light.target);
+      }
       scene.add(obj.light);
       newRenderedObjects.push(obj.light);
     } else {

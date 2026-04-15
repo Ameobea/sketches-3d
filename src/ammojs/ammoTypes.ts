@@ -94,6 +94,7 @@ export interface BtKinematicCharacterController {
   setExternalVelocity(velocity: BtVec3): void;
   setExternalVelocityAirDampingFactor(factor: BtVec3): void;
   setExternalVelocityGroundDampingFactor(factor: BtVec3): void;
+  setSlopeSlide(minAngle: number, maxSpeed: number): void;
   setOnGround(onGround: boolean): void;
   setVerticalVelocity(velocity: number): void;
   setGravityShapeRiseMultiplier(v: number): void;
@@ -136,6 +137,7 @@ export interface BtKinematicCharacterController {
   getCameraRayHitNormalX(): number;
   getCameraRayHitNormalY(): number;
   getCameraRayHitNormalZ(): number;
+  getCameraRayHitNonPermeable(): boolean;
 
   packState(outBuffer: number): number;
   resetForNewRun(): void;
@@ -166,6 +168,7 @@ export interface BtCollisionObject {
 export interface BtRigidBody extends BtCollisionObject {
   setCollisionFlags(flags: number): void;
   setUserIndex(index: number): void;
+  setUserIndex2(index: number): void;
   getMotionState(): BtMotionState | undefined | null;
 }
 

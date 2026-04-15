@@ -62,49 +62,47 @@ export const processLoadedScene = async (
 
   let ctx = $state<ReplCtx | null>(null);
 
-  let pipelineController: PostprocessingPipelineController | null = null;
+  let pipelineController: PostprocessingPipelineController | null = configureDefaultPostprocessingPipeline({
+    viz,
+    quality,
+    addMiddlePasses: (composer, viz, _quality) => {
+      if (quality > GraphicsQuality.Low && (window.innerWidth > 800 || userData?.renderMode)) {
+        const n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        composer.addPass(n8aoPass);
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.configuration.intensity = 2;
+        n8aoPass.configuration.aoRadius = 5;
+        // \/ this breaks rendering and makes the background black if enabled
+        n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Performance',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'Medium',
+          }[quality]
+        );
+      }
+    },
+    autoUpdateShadowMap: !userData?.renderMode,
+    toneMapping: { mode: 'neutral', exposure: 1 },
+  });
 
   if (userData?.renderMode) {
     let didRender = false;
-    viz.setRenderOverride(() => {
+    viz.setRenderOverride(timeDiffSeconds => {
       if (!ctx?.getLastRunOutcome() || didRender || !ctx?.getAreAllMaterialsLoaded()) {
         return;
       }
 
-      viz.renderer.render(viz.scene, viz.camera);
+      pipelineController?.renderFrame(timeDiffSeconds);
       didRender = true;
       (window as any).onRenderReady?.();
-    });
-  } else {
-    pipelineController = configureDefaultPostprocessingPipeline({
-      viz,
-      quality,
-      addMiddlePasses: (composer, viz, _quality) => {
-        if (quality > GraphicsQuality.Low && window.innerWidth > 800) {
-          const n8aoPass = new N8AOPostPass(
-            viz.scene,
-            viz.camera,
-            viz.renderer.domElement.width,
-            viz.renderer.domElement.height
-          );
-          composer.addPass(n8aoPass);
-          n8aoPass.gammaCorrection = false;
-          n8aoPass.configuration.intensity = 2;
-          n8aoPass.configuration.aoRadius = 5;
-          // \/ this breaks rendering and makes the background black if enabled
-          n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
-          n8aoPass.setQualityMode(
-            {
-              [GraphicsQuality.Low]: 'Performance',
-              [GraphicsQuality.Medium]: 'Low',
-              [GraphicsQuality.High]: 'Medium',
-            }[quality]
-          );
-        }
-      },
-      autoUpdateShadowMap: !userData?.renderMode,
-      toneMapping: { mode: 'neutral', exposure: 1 },
-    });
+    }, false);
   }
 
   if (!userData?.renderMode && localStorage.getItem('geoscript-axis-helpers') !== 'false') {

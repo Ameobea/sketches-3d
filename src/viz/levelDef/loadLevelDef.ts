@@ -620,6 +620,23 @@ export const loadLevelDef = (
       const levelObj = placedObjects.get(objId);
       if (levelObj) {
         assignMaterial(levelObj.object, mat);
+
+        if (mat.userData.nonPermeable && physicsReady) {
+          const fpCtx = viz.fpCtx;
+          if (fpCtx) {
+            levelObj.object.traverse(child => {
+              if (!(child instanceof THREE.Mesh)) return;
+              // Object-level override already made a decision — respect it.
+              if (child.userData.nonPermeable !== undefined) return;
+              const rigidBody = child.userData.rigidBody;
+              if (rigidBody) {
+                fpCtx.markBodyNonPermeable(rigidBody);
+              }
+            });
+          } else {
+            console.error(`\`fpCtx\` not ready when trying to mark "${levelObj.id}" as non-permeable`);
+          }
+        }
       }
     }
   };

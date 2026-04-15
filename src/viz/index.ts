@@ -315,9 +315,14 @@ export class Viz {
     this.popupCalled.set(screen);
   };
 
-  public setRenderOverride = (cb: ((timeDiffSeconds: number) => void) | null) => {
+  public setRenderOverride = (
+    cb: ((timeDiffSeconds: number) => void) | null,
+    clearPostprocessingController = true
+  ) => {
     this.renderOverride = cb;
-    this.postprocessingController = null;
+    if (clearPostprocessingController) {
+      this.postprocessingController = null;
+    }
   };
 
   public registerResizeCb = (cb: () => void) => this.resizeCbs.push(cb);

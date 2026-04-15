@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+import { MATERIAL_CLASS_NAMES, type MaterialClassName } from 'src/viz/shaders/customShader.types';
+
+// Extract values from the enum→name map as a non-empty tuple for z.enum
+const materialClassNameValues = Object.values(MATERIAL_CLASS_NAMES) as [
+  MaterialClassName,
+  ...MaterialClassName[],
+];
+
 const Vec2 = z.tuple([z.number(), z.number()]);
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -190,6 +198,7 @@ export const ShaderPropsJsonSchema = z.object({
   fogShadowFactor: z.number().optional(),
   ambientLightScale: z.number().optional(),
   mapDisableDistance: z.number().nullable().optional(),
+  mapDisableDistanceAxes: z.union([z.literal('xyz'), z.literal('xz')]).optional(),
   mapDisableTransitionThreshold: z.number().optional(),
   side: z.enum(['front', 'back', 'double']).optional(),
   /**
@@ -234,7 +243,7 @@ export const ShaderOptionsJsonSchema = z.object({
   disableToneMapping: z.boolean().optional(),
   randomizeUVOffset: z.boolean().optional(),
   useNoise2: z.boolean().optional(),
-  materialClass: z.enum(['default', 'rock', 'crystal', 'instakill']).optional(),
+  materialClass: z.enum(materialClassNameValues).optional(),
 });
 
 export const CustomShaderMatDefSchema = z.object({
@@ -243,6 +252,9 @@ export const CustomShaderMatDefSchema = z.object({
   options: ShaderOptionsJsonSchema.optional(),
   shaders: ShaderShadersJsonSchema.optional(),
   emissiveBypass: z.boolean().optional(),
+  /** If true, the camera will hard-snap rather than dither through this material, and the
+   *  soft-occlusion shader effect is disabled for it. */
+  nonPermeable: z.boolean().optional(),
 });
 
 export const CustomBasicShaderMatDefSchema = z.object({
@@ -261,6 +273,8 @@ export const CustomBasicShaderMatDefSchema = z.object({
     })
     .optional(),
   emissiveBypass: z.boolean().optional(),
+  /** If true, the camera will hard-snap rather than dither through this material. */
+  nonPermeable: z.boolean().optional(),
 });
 
 /**
@@ -270,6 +284,9 @@ export const CustomBasicShaderMatDefSchema = z.object({
 export const GeneratedMatDefSchema = z.object({
   type: z.literal('generated'),
   emissiveBypass: z.boolean().optional(),
+  /** If true, the camera will hard-snap rather than dither through this material.
+   *  The runtime-provided material must have `userData.nonPermeable = true` set manually. */
+  nonPermeable: z.boolean().optional(),
 });
 
 export const MaterialDefSchema = z.discriminatedUnion('type', [
@@ -401,6 +418,19 @@ export const ObjectDefSchema = z
     material: z.string().optional(),
     /** If true, this object will not be registered in the collision world */
     nocollide: z.boolean().optional(),
+    /**
+     * Collision shape type. Default: 'trimesh' (exact triangle mesh, with automatic box/sphere
+     * detection for simple primitives). Use 'convexHull' for dynamic or smoother collision on
+     * objects where concave accuracy isn't needed.
+     */
+    colliderShape: z.enum(['trimesh', 'convexHull']).optional(),
+    /**
+     * Overrides the material-level `nonPermeable` flag for this object.
+     * When true, the camera hard-snaps rather than dithering through it.
+     * When false, disables non-permeable behavior even if the material sets it.
+     * When absent, the material's own flag is used.
+     */
+    nonPermeable: z.boolean().optional(),
     /** Parkour-specific metadata: marks this object as a checkpoint or win zone. */
     parkour: ParkourObjectMetaSchema.optional(),
     /** Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`. */
@@ -411,6 +441,10 @@ export const ObjectDefSchema = z
   .refine(def => !(def.behaviors && def.spawner), {
     message: '"behaviors" and "spawner" are mutually exclusive on an object',
     path: ['spawner'],
+  })
+  .refine(def => !(def.nocollide && def.colliderShape !== undefined), {
+    message: '"colliderShape" has no effect when "nocollide" is true',
+    path: ['colliderShape'],
   });
 
 export type ObjectDef = z.infer<typeof ObjectDefSchema>;

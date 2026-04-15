@@ -46,6 +46,8 @@ export interface CameraControllerParams {
    * (0,0,0) when the last cast had no hit.
    */
   getLastRayHitNormal: () => { x: number; y: number; z: number };
+  /** True when the most recent cameraRayTest hit a body tagged as non-permeable. */
+  getLastRayHitNonPermeable: () => boolean;
 }
 
 /**
@@ -93,6 +95,7 @@ export class CameraController {
   private readonly getThirdPersonXrayEnabled: () => boolean;
   private readonly cameraRayTest: CameraRayTestFn;
   private readonly getLastRayHitNormal: () => { x: number; y: number; z: number };
+  private readonly getLastRayHitNonPermeable: () => boolean;
 
   private readonly spherical = new THREE.Spherical();
   private readonly offset = new THREE.Vector3();
@@ -111,6 +114,7 @@ export class CameraController {
     this.getThirdPersonXrayEnabled = params.getThirdPersonXrayEnabled;
     this.cameraRayTest = params.cameraRayTest;
     this.getLastRayHitNormal = params.getLastRayHitNormal;
+    this.getLastRayHitNonPermeable = params.getLastRayHitNonPermeable;
 
     this.installEventListeners();
   }
@@ -367,6 +371,21 @@ export class CameraController {
       // Entry of this layer in absolute distance from eye.
       const remaining = maxDist - probeDist;
       const entryDist = probeDist + fwdFrac * remaining;
+
+      // Non-permeable barrier — always hard-snap regardless of thickness.
+      if (this.getLastRayHitNonPermeable()) {
+        this.isSoftOccluded = hasSoftLayer;
+        const margin =
+          SoftOcclusionInsideMarginBase + SoftOcclusionInsideMarginThicknessScale * lastThickness;
+        const snapDist = Math.max(this.minCameraDistance, entryDist - this.cameraCollisionBias - margin);
+        if (snapDist < this.currentDistance) {
+          this.currentDistance = snapDist;
+        } else {
+          this.currentDistance = Math.min(snapDist, this.currentDistance + this.cameraExtendSpeed * dtSecs);
+        }
+        return this.currentDistance;
+      }
+
       const insideDist = entryDist + STEP;
 
       if (insideDist >= maxDist) {

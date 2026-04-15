@@ -486,6 +486,21 @@
     })()
   );
 
+  const removeRenderedObject = (obj: RenderedObject) => {
+    viz.scene.remove(obj);
+    if (
+      (obj instanceof THREE.DirectionalLight || obj instanceof THREE.SpotLight) &&
+      obj.userData.geotoyTarget instanceof THREE.Object3D
+    ) {
+      if (obj.userData.geotoyTarget) {
+        viz.scene.remove(obj.userData.geotoyTarget);
+      }
+    }
+    if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+      obj.geometry.dispose();
+    }
+  };
+
   const run = async (code?: string) => {
     if (isRunning || ctxPtr === null) {
       return;
@@ -507,10 +522,7 @@
     err = null;
 
     for (const obj of renderedObjects) {
-      viz.scene.remove(obj);
-      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
-        obj.geometry.dispose();
-      }
+      removeRenderedObject(obj);
     }
     renderedObjects = [];
     runStats = null;
@@ -561,10 +573,7 @@
     workerManager.terminate();
 
     for (const obj of renderedObjects) {
-      viz.scene.remove(obj);
-      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
-        obj.geometry.dispose();
-      }
+      removeRenderedObject(obj);
     }
     renderedObjects = [];
     runStats = null;
@@ -728,10 +737,7 @@
       workerManager.terminate();
 
       for (const mesh of renderedObjects) {
-        viz.scene.remove(mesh);
-        if (mesh instanceof THREE.Mesh || mesh instanceof THREE.Line) {
-          mesh.geometry.dispose();
-        }
+        removeRenderedObject(mesh);
       }
 
       window.removeEventListener('beforeunload', beforeUnloadHandler);

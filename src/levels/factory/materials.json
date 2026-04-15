@@ -28,6 +28,13 @@
     },
     "horizontal_metal_1_normal": {
       "url": "https://geotoy.b-cdn.net/textures/1/8a4f8add-ac59-4d23-b74e-472d488c7469.avif"
+    },
+    "rusty_metal_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/5ce2808a-543c-4409-b827-d858c79432a3.avif",
+      "colorSpace": "srgb"
+    },
+    "rusty_metal_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/5be1798e-97a6-42cd-95bd-3d2f324255ba.avif"
     }
   },
   "materials": {
@@ -43,7 +50,8 @@
         "normalMap": "chipped_yellow_painted_cracked_stone_normal"
       },
       "options": {
-        "useTriplanarMapping": true
+        "useTriplanarMapping": true,
+        "materialClass": "metalplate"
       }
     },
     "chipped_rusty_gray_painted_wall": {
@@ -52,14 +60,18 @@
         "color": "#545454",
         "roughness": 0.9,
         "metalness": 0.18,
-        "normalScale": 0.26,
+        "normalScale": 0.83,
+        "transparent": false,
         "uvScale": [0.15, 0.15],
         "map": "chipped_rusty_gray_painted_wall_diffuse",
         "normalMap": "chipped_rusty_gray_painted_wall_normal",
         "heightAlpha": {
-          "bottomFade": [-160, -10],
+          "bottomFade": [-230, -10],
           "topFade": [60, 200]
-        }
+        },
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 20,
+        "mapDisableDistanceAxes": "xz"
       },
       "options": {
         "useGeneratedUVs": true,
@@ -70,7 +82,7 @@
         },
         "randomizeUVOffset": true
       },
-      "shaders": {}
+      "nonPermeable": true
     },
     "concrete": {
       "type": "customShader",
@@ -111,6 +123,49 @@
         "useTriplanarMapping": false,
         "useGeneratedUVs": true,
         "useWorldSpaceGeneratedUVs": true,
+        "randomizeUVOffset": true
+      }
+    },
+    "rusty_metal": {
+      "type": "customShader",
+      "props": {
+        "color": "#868483",
+        "roughness": 0.78,
+        "metalness": 0.79,
+        "normalScale": 0.56,
+        "uvScale": [0.1, 0.1],
+        "map": "rusty_metal_diffuse",
+        "normalMap": "rusty_metal_normal",
+        "heightAlpha": {
+          "bottomFade": [-230, -10],
+          "topFade": [60, 200]
+        }
+      },
+      "options": {
+        "useTriplanarMapping": true,
+        "randomizeUVOffset": true
+      }
+    },
+    "rusty_metal_decoration": {
+      "type": "customShader",
+      "props": {
+        "color": "#868483",
+        "roughness": 0.98,
+        "metalness": 0.79,
+        "normalScale": 0.07,
+        "uvScale": [0.02, 0.02],
+        "map": "rusty_metal_diffuse",
+        "normalMap": "rusty_metal_normal",
+        "heightAlpha": {
+          "bottomFade": [-230, -10],
+          "topFade": [100, 200]
+        },
+        "transparent": false,
+        "mapDisableDistance": 200,
+        "mapDisableTransitionThreshold": 50
+      },
+      "options": {
+        "useTriplanarMapping": true,
         "randomizeUVOffset": true
       }
     }

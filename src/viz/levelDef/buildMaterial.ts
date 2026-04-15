@@ -2,11 +2,12 @@ import * as THREE from 'three';
 
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { buildCustomBasicShader } from 'src/viz/shaders/customBasicShader';
-import { MaterialClass } from 'src/viz/shaders/customShader.types';
+import { type MaterialClass, MATERIAL_CLASS_NAMES } from 'src/viz/shaders/customShader.types';
 import type {
   CustomShaderOptions,
   CustomShaderProps,
   CustomShaderShaders,
+  MaterialClassName,
 } from 'src/viz/shaders/customShader.types';
 import type { MaterialDef, ShaderPropsJson, ShaderOptionsJson, ShaderShadersJson } from './types';
 
@@ -16,12 +17,13 @@ const SIDE_MAP: Record<NonNullable<ShaderPropsJson['side']>, THREE.Side> = {
   double: THREE.DoubleSide,
 };
 
-const MATERIAL_CLASS_MAP: Record<NonNullable<ShaderOptionsJson['materialClass']>, MaterialClass> = {
-  default: MaterialClass.Default,
-  rock: MaterialClass.Rock,
-  crystal: MaterialClass.Crystal,
-  instakill: MaterialClass.Instakill,
-};
+// Reverse of MATERIAL_CLASS_NAMES: string name → MaterialClass integer
+const MATERIAL_CLASS_MAP = Object.fromEntries(
+  (Object.entries(MATERIAL_CLASS_NAMES) as [string, MaterialClassName][]).map(([k, v]) => [
+    v,
+    Number(k) as MaterialClass,
+  ])
+) as Record<MaterialClassName, MaterialClass>;
 
 const resolveShaderProps = (
   propsJson: ShaderPropsJson,
@@ -52,6 +54,8 @@ const resolveShaderProps = (
   if (propsJson.fogShadowFactor !== undefined) props.fogShadowFactor = propsJson.fogShadowFactor;
   if (propsJson.ambientLightScale !== undefined) props.ambientLightScale = propsJson.ambientLightScale;
   if (propsJson.mapDisableDistance !== undefined) props.mapDisableDistance = propsJson.mapDisableDistance;
+  if (propsJson.mapDisableDistanceAxes !== undefined)
+    props.mapDisableDistanceAxes = propsJson.mapDisableDistanceAxes;
   if (propsJson.mapDisableTransitionThreshold !== undefined)
     props.mapDisableTransitionThreshold = propsJson.mapDisableTransitionThreshold;
   if (propsJson.ambientDistanceAmp !== undefined) props.ambientDistanceAmp = propsJson.ambientDistanceAmp;
@@ -138,14 +142,21 @@ export const buildMaterial = (
     const props = matDef.props ? resolveShaderProps(matDef.props, textures) : {};
     const shaders = matDef.shaders ? resolveShaderShaders(matDef.shaders) : {};
     const options = matDef.options ? resolveShaderOptions(matDef.options) : {};
-    return buildCustomShader(props, shaders, options);
+    if (matDef.nonPermeable) {
+      options.noOcclusion = true;
+    }
+    const mat = buildCustomShader(props, shaders, options);
+    if (matDef.nonPermeable) {
+      mat.userData.nonPermeable = true;
+    }
+    return mat;
   }
 
   if (matDef.type !== 'customBasicShader') {
     throw new Error(`buildMaterial: unhandled material type "${(matDef as { type: string }).type}"`);
   }
   const p = matDef.props ?? {};
-  return buildCustomBasicShader(
+  const mat = buildCustomBasicShader(
     {
       color: p.color !== undefined ? new THREE.Color(p.color) : undefined,
       transparent: p.transparent,
@@ -155,4 +166,8 @@ export const buildMaterial = (
     {},
     matDef.options ?? {}
   ) as unknown as THREE.Material;
+  if (matDef.nonPermeable) {
+    mat.userData.nonPermeable = true;
+  }
+  return mat;
 };

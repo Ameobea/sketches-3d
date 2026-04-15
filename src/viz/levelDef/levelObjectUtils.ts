@@ -73,5 +73,20 @@ export const instantiateLevelObject = (
     }
   }
 
+  // Stamp the object-level nonPermeable override onto each mesh so addTriMesh can
+  // read it without needing to walk back up to the ObjectDef.  Only set when the
+  // def explicitly specifies a value; absence means "defer to material".
+  if (def.nonPermeable !== undefined) {
+    forEachMesh(clone, mesh => {
+      mesh.userData.nonPermeable = def.nonPermeable;
+    });
+  }
+
+  if (def.colliderShape !== undefined) {
+    forEachMesh(clone, mesh => {
+      mesh.userData.convexHull = def.colliderShape === 'convexHull';
+    });
+  }
+
   return clone;
 };

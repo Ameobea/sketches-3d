@@ -407,6 +407,11 @@ pub(crate) fn as_path_sampler(callable: &Callable) -> Option<&dyn PathSampler> {
             .downcast_ref::<TransformedCallableSampler>()
             .map(|t| t as &dyn PathSampler)
         })
+        .or_else(|| {
+          any
+            .downcast_ref::<super::catmull_rom::CatmullRomCallable2D>()
+            .map(|t| t as &dyn PathSampler)
+        })
     }
     _ => None,
   }

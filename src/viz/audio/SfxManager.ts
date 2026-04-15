@@ -1,7 +1,7 @@
 import type { Readable } from 'svelte/store';
 
 import type { VizConfig } from '../conf';
-import type { MaterialClass } from '../shaders/customShader';
+import { MaterialClass } from '../shaders/customShader';
 
 export interface SfxWalkConfig {
   playWalkSound?: (mat: MaterialClass) => void;
@@ -10,7 +10,17 @@ export interface SfxWalkConfig {
 }
 
 export interface SfxLandConfig {
-  materialLandSounds: Partial<Record<MaterialClass, () => void>>;
+  /**
+   * Per-material landing sound overrides.
+   *
+   * - `() => void` — fully custom callback (e.g. Web Synth MIDI).
+   * - `string[]`   — list of sfx names (keys in SFX_DEFS) to pick from at random.
+   *                  The scene is responsible for including them in `neededSfx`.
+   *
+   * When an override is present for a material class, the built-in default for that
+   * class is skipped (and its sfx will not be fetched).
+   */
+  materialLandSounds: Partial<Record<MaterialClass, (() => void) | string[]>>;
 }
 
 export interface SfxConfig {
@@ -31,7 +41,12 @@ const SFX_DEFS: Record<string, { url: string; playbackRate?: number }> = {
   dash_pickup: { url: 'https://i.ameo.link/ctb.ogg', playbackRate: 1.4 },
   land_default: { url: 'https://i.ameo.link/cvk.ogg' }, // original unfiltered: https://i.ameo.link/bga.mp3
   player_die: { url: 'https://i.ameo.link/cx8.ogg' },
+  metal_plate_land_0: { url: 'https://i.ameo.link/dmi.ogg' },
+  metal_plate_land_1: { url: 'https://i.ameo.link/dmj.ogg' },
+  jump_pad_trigger: { url: 'https://i.ameo.link/dml.ogg' },
 };
+
+const METAL_PLATE_LAND_SFX = ['metal_plate_land_0', 'metal_plate_land_1'] as const;
 
 export class SfxManager {
   private vizConfig: Readable<VizConfig> | null = null;
@@ -113,13 +128,46 @@ export class SfxManager {
   }
 
   public onPlayerLand(materialClass: MaterialClass) {
-    const customCb = this.config.land?.materialLandSounds?.[materialClass];
-    if (customCb) {
-      customCb();
+    const override = this.config.land?.materialLandSounds?.[materialClass];
+    if (override !== undefined) {
+      if (typeof override === 'function') {
+        override();
+      } else {
+        this.playSfxRandom(override);
+      }
+      return;
+    }
+
+    if (materialClass === MaterialClass.MetalPlate) {
+      this.playSfxRandom(METAL_PLATE_LAND_SFX);
       return;
     }
 
     this.playSfx('land_default');
+  }
+
+  /**
+   * Called when a collision object with the given material class is registered in the scene.
+   * Triggers lazy loading of any default sfx associated with that class, unless the scene has
+   * already provided an override for it.
+   */
+  public onMaterialClassPresent(materialClass: MaterialClass) {
+    if (materialClass === MaterialClass.MetalPlate) {
+      const hasOverride = this.config.land?.materialLandSounds?.[materialClass] !== undefined;
+      if (!hasOverride) {
+        for (const name of METAL_PLATE_LAND_SFX) {
+          this.loadSfx(name);
+        }
+      }
+    }
+  }
+
+  /**
+   * Called when a jump pad is registered in the scene. Triggers lazy loading of the
+   * default jump pad trigger sfx.
+   */
+  public onJumpPadPresent() {
+    this.loadSfx('jump_pad_trigger');
   }
 
   public onWalkStart(materialClass: MaterialClass) {
@@ -128,6 +176,10 @@ export class SfxManager {
 
   public onWalkStop() {
     this.curWalkMatClass = null;
+  }
+
+  public playSfxRandom(names: readonly string[]) {
+    this.playSfx(names[Math.floor(Math.random() * names.length)]);
   }
 
   public playSfx(name: string) {

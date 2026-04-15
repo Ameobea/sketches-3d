@@ -24,7 +24,23 @@ export enum MaterialClass {
   Rock,
   Crystal,
   Instakill,
+  MetalPlate,
 }
+
+/**
+ * Maps each MaterialClass variant to its canonical string name.
+ * `satisfies Record<MaterialClass, string>` ensures the map stays exhaustive —
+ * adding a new enum variant without updating this object is a compile error.
+ */
+export const MATERIAL_CLASS_NAMES = {
+  [MaterialClass.Default]: 'default',
+  [MaterialClass.Rock]: 'rock',
+  [MaterialClass.Crystal]: 'crystal',
+  [MaterialClass.Instakill]: 'instakill',
+  [MaterialClass.MetalPlate]: 'metalplate',
+} as const satisfies Record<MaterialClass, string>;
+
+export type MaterialClassName = (typeof MATERIAL_CLASS_NAMES)[MaterialClass];
 
 export interface CustomShaderProps {
   name?: string;
@@ -71,6 +87,14 @@ export interface CustomShaderProps {
    * `null` to disable.
    */
   mapDisableDistance?: number | null;
+  /**
+   * Which axes to use when computing the distance for `mapDisableDistance`.
+   *
+   * - `'xyz'` (default) — full 3D Euclidean distance.
+   * - `'xz'`           — horizontal-only distance (ignores vertical offset), useful when
+   *                       combined with XZ-only fog so that the texture fade matches the fog fade.
+   */
+  mapDisableDistanceAxes?: 'xyz' | 'xz';
   /**
    * If provided, the shader will interpolate between read map value and diffuse color within this distance.
    */

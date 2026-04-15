@@ -207,7 +207,7 @@ const buildTextureDisableFragment = (
   const endEdge = mapDisableDistance.toFixed(3);
 
   return `
-    float textureActivation = 1. - smoothstep(${startEdge}, ${endEdge}, distanceToCamera);
+    float textureActivation = 1. - smoothstep(${startEdge}, ${endEdge}, texDisableDistance);
   `;
 };
 
@@ -487,7 +487,12 @@ const buildRunVertexLightingFragment = (vertexLightingShininess: number) => `
   ${vertexLightingShininess > 0 ? 'vVertexSpecular = vtxSpecAccum;' : ''}
   `;
 
-const buildHeightAlphaFragment = (
+/**
+ * Builds the GLSL that computes `heightAlphaFactor` from `vWorldPos.y` and, when the
+ * factor is exactly 0, writes black and returns immediately — skipping all texture
+ * lookups, lighting, and shadow work.  Emitted near the top of `main()`.
+ */
+const buildHeightAlphaEarlyOut = (
   heightAlpha: { bottomFade?: [number, number]; topFade?: [number, number] } | undefined
 ): string => {
   if (!heightAlpha) return '';
@@ -506,10 +511,31 @@ const buildHeightAlphaFragment = (
     );
   }
 
-  return `{
+  return `
     float heightAlphaFactor = 1.0;
     ${lines.join('\n    ')}
-    diffuseColor.a *= heightAlphaFactor;
+    if (heightAlphaFactor < 0.001) {
+      outFragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      return;
+    }
+  `;
+};
+
+/**
+ * Applies the height-alpha darkening to `outgoingLight` using the already-computed
+ * `heightAlphaFactor`.  Emitted near the end of `main()`.
+ */
+const buildHeightAlphaFragment = (
+  heightAlpha: { bottomFade?: [number, number]; topFade?: [number, number] } | undefined
+): string => {
+  if (!heightAlpha) return '';
+  const { bottomFade, topFade } = heightAlpha;
+  if (!bottomFade && !topFade) return '';
+
+  // heightAlphaFactor was already computed by the early-out block; just apply it.
+  return `{
+    // heightAlphaFactor computed earlier near top of main()
+    outgoingLight.rgb = mix(outgoingLight.rgb, vec3(0.), 1. - heightAlphaFactor);
   }`;
 };
 
@@ -541,6 +567,7 @@ export const buildCustomShaderArgs = (
     lightMapIntensity,
     fogMultiplier,
     mapDisableDistance: rawMapDisableDistance,
+    mapDisableDistanceAxes = 'xyz',
     mapDisableTransitionThreshold = 20,
     fogShadowFactor = 0.1,
     ambientLightScale = 1,
@@ -994,7 +1021,8 @@ export const buildCustomShaderArgs = (
     fog: true,
     lights: true,
     dithering: false,
-    transparent: heightAlpha ? true : (transparent ?? false),
+    // transparent: heightAlpha ? true : (transparent ?? false),
+    transparent: transparent ?? false,
     uniforms,
     vertexShader: /* glsl */ `
 #define STANDARD
@@ -1289,8 +1317,15 @@ void main() {
 
   float distanceToCamera = distance(cameraPosition, vWorldPos);
   float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
+  ${
+    mapDisableDistanceAxes === 'xz'
+      ? 'float texDisableDistance = distance(cameraPosition.xz, vWorldPos.xz);'
+      : 'float texDisableDistance = distanceToCamera;'
+  }
 
   ${buildTextureDisableFragment(mapDisableDistance, mapDisableTransitionThreshold)}
+
+  ${buildHeightAlphaEarlyOut(heightAlpha)}
 
   vec4 diffuseColor = vec4(diffuse, opacity);
   ${

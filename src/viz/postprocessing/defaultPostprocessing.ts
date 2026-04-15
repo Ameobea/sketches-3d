@@ -38,12 +38,14 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   public readonly emissiveBypassPass: EmissiveBypassPass | null;
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
   private readonly finalPass: FinalPass | null;
+  private readonly renderFrameCb: (timeDiffSeconds: number) => void;
 
   constructor(
     effectComposer: StableDepthEffectComposer,
     depthPass: DepthPass | null,
     depthPrePassMaterial: THREE.Material | null,
     renderer: THREE.WebGLRenderer,
+    renderFrameCb: (timeDiffSeconds: number) => void,
     emissiveBypassPass: EmissiveBypassPass | null = null,
     emissiveBloomPass: EmissiveBloomPass | null = null,
     finalPass: FinalPass | null = null
@@ -55,6 +57,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     this.emissiveBypassPass = emissiveBypassPass;
     this.emissiveBloomPass = emissiveBloomPass;
     this.finalPass = finalPass;
+    this.renderFrameCb = renderFrameCb;
   }
 
   get hasFinalPass(): boolean {
@@ -63,6 +66,10 @@ export class PostprocessingPipelineController implements PostprocessingControlle
 
   setGamma(gamma: number): void {
     this.finalPass?.setGamma(gamma);
+  }
+
+  renderFrame(timeDiffSeconds: number): void {
+    this.renderFrameCb(timeDiffSeconds);
   }
 
   setDepthPrePassEnabled(enabled: boolean) {
@@ -303,7 +310,7 @@ export const configureDefaultPostprocessingPipeline = ({
 
   viz.renderer.shadowMap.autoUpdate = autoUpdateShadowMap;
   viz.renderer.shadowMap.needsUpdate = autoUpdateShadowMap;
-  viz.setRenderOverride(timeDiffSeconds => {
+  const renderFrame = (timeDiffSeconds: number) => {
     if (!didRenderShadowMap && viz.renderer.shadowMap.enabled && !autoUpdateShadowMap && sceneGeomReady) {
       didRenderShadowMap = true;
       viz.renderer.shadowMap.needsUpdate = true;
@@ -327,13 +334,15 @@ export const configureDefaultPostprocessingPipeline = ({
     }
 
     effectComposer.render(timeDiffSeconds);
-  });
+  };
+  viz.setRenderOverride(renderFrame);
 
   const controller = new PostprocessingPipelineController(
     effectComposer,
     depthPass,
     depthPrePassMaterial,
     viz.renderer,
+    renderFrame,
     emissiveBypassPass,
     emissiveBlurPass,
     finalPass

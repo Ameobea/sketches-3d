@@ -293,7 +293,7 @@ export class LevelEditor {
       if (!this.csgController.handleEscape()) {
         this.deselect();
       }
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    } else if (e.key === 'Delete') {
       if (this.selectedLight) {
         e.preventDefault();
         this.deleteLight(this.selectedLight);

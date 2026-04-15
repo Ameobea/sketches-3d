@@ -175,6 +175,18 @@
                       }
                     ]
                   },
+                  "mapDisableDistanceAxes": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "xyz"
+                      },
+                      {
+                        "type": "string",
+                        "const": "xz"
+                      }
+                    ]
+                  },
                   "mapDisableTransitionThreshold": {
                     "type": "number"
                   },
@@ -369,7 +381,8 @@
                       "default",
                       "rock",
                       "crystal",
-                      "instakill"
+                      "instakill",
+                      "metalplate"
                     ]
                   }
                 },
@@ -745,6 +758,9 @@
               },
               "emissiveBypass": {
                 "type": "boolean"
+              },
+              "nonPermeable": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -798,6 +814,9 @@
               },
               "emissiveBypass": {
                 "type": "boolean"
+              },
+              "nonPermeable": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -813,6 +832,9 @@
                 "const": "generated"
               },
               "emissiveBypass": {
+                "type": "boolean"
+              },
+              "nonPermeable": {
                 "type": "boolean"
               }
             },

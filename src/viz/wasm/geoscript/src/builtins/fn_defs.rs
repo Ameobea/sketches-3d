@@ -883,6 +883,32 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "is_manifold" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "The mesh to check"
+          },
+          ArgDef {
+            name: "two_manifold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "If true (default), checks that every edge is shared by exactly two faces (watertight/2-manifold).  If false, checks only that no edge is shared by more than two faces (1-manifold)."
+          },
+        ],
+        description: "Returns true if the mesh satisfies the manifold condition.  Assumes the mesh is a single connected component; disconnected islands or parts may produce incorrect results.  By default checks for 2-manifold (watertight): every edge shared by exactly two faces.  Set `two_manifold=false` to check only for 1-manifold (no edge shared by more than two faces).  This check is purely topological; vertex positions, normals, and winding order are not considered.",
+        return_type: &[ArgType::Bool],
+      },
+    ],
+  },
   "vec2" => FnDef {
     module: "core",
     examples: &[],
@@ -8228,6 +8254,72 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         return_type: &[ArgType::Callable],
       }
     ]
+  },
+  "catmull_rom" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec2` control points the spline passes through."
+          },
+          ArgDef {
+            name: "tension",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: "Tangent scale factor. `0.5` (default) gives standard Catmull-Rom. Higher values produce more pronounced curves; `0.0` produces a linear interpolation between points."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the spline wraps from the last control point back to the first, forming a closed loop."
+          },
+        ],
+        description: "Returns a path sampler callable `|t: float|: vec2` that evaluates a Catmull-Rom spline through the given 2D control points. The spline passes through every control point. All interior joints are C1 smooth; only the endpoints of an open spline are non-smooth. `tension` generalises to the full cardinal spline family (`0.5` = standard Catmull-Rom).",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "catmull_rom_3d" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec3` control points the spline passes through."
+          },
+          ArgDef {
+            name: "tension",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: "Tangent scale factor. `0.5` (default) gives standard Catmull-Rom. Higher values produce more pronounced curves; `0.0` produces a linear interpolation between points."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the spline wraps from the last control point back to the first, forming a closed loop."
+          },
+        ],
+        description: "Returns a callable `|t: float|: vec3` that evaluates a Catmull-Rom spline through the given 3D control points. The spline passes through every control point. All interior joints are C1 smooth; only the endpoints of an open spline are non-smooth. `tension` generalises to the full cardinal spline family (`0.5` = standard Catmull-Rom).",
+        return_type: &[ArgType::Callable],
+      },
+    ],
   },
   "critical_points" => FnDef {
     module: "path",

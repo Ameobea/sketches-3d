@@ -33,8 +33,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   //   playerLight.position.set(playerPos.x(), playerPos.y() + 5, playerPos.z());
   // });
 
-  const playerHeight = 3.5;
-  const playerRadius = 1;
+  const playerHeight = 5;
+  const playerRadius = 1.5;
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
     buildCustomShader(
@@ -78,7 +78,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     vizConf,
     {
       spawn: {
-        pos: new THREE.Vector3(-40, 3, 0),
+        pos: new THREE.Vector3(-48, 3, -14),
         rot: new THREE.Vector3(-0.35, -Math.PI / 2, 0),
       },
     },
@@ -100,9 +100,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         mesh: playerMesh,
         colliderSize: { height: playerHeight, radius: playerRadius },
         playerShadow: { radius: playerRadius, intensity: 0.85 },
-        moveSpeed: { onGround: 15.75, inAir: 18 },
+        moveSpeed: { onGround: 18.9, inAir: 21.6 },
         jumpVelocity: 76,
         terminalVelocity: 180,
+        maxPenetrationDepth: 0.008,
         dashConfig: {
           chargeConfig: { curCharges: rwritable(0) },
           dashMagnitude: 16,
@@ -112,7 +113,11 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         coyoteTimeSeconds: 0.135,
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
         maxSlopeRadians: 1.3,
-        oobYThreshold: -50,
+        oobYThreshold: -200,
+        slopeSlide: {
+          minAngle: 1.2,
+          maxSpeed: 12,
+        },
       },
       viewMode: {
         type: 'thirdPerson',
@@ -136,7 +141,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
           float distToPlayer = distance(worldPos.xz, playerPos.xz);
-          float fogFactor = smoothstep(40., 190., distToPlayer);
+          float fogFactor = smoothstep(80., 290., distToPlayer);
           return vec4(vec3(0.0002, 0.0002, 0.0002), fogFactor);
         }`,
   });

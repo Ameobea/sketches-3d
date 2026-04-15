@@ -216,6 +216,17 @@ export interface SceneConfig {
     maxSlopeRadians?: number;
     /** Maximum penetration depth for the character controller. Default: 0.075 */
     maxPenetrationDepth?: number;
+    /**
+     * When set, surfaces steeper than `minAngle` radians cause the player to slide downhill.
+     *
+     * Slide speed scales linearly from 0 at `minAngle` to `maxSpeed` (units/s) at `maxSlopeRadians`.
+     *
+     * Disabled by default.
+     */
+    slopeSlide?: {
+      minAngle: number;
+      maxSpeed: number;
+    };
     /** Minimum delay in seconds between consecutive jumps. Default: 0.25 */
     minJumpDelaySeconds?: number;
     oobYThreshold?: number;

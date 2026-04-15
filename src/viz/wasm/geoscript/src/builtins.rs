@@ -64,6 +64,7 @@ use crate::{
 };
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
+pub(crate) mod catmull_rom;
 pub(crate) mod fn_defs;
 pub(crate) mod lerp_path;
 pub(crate) mod offset_path;
@@ -5359,6 +5360,21 @@ fn flip_normals_impl(
   }
 }
 
+fn is_manifold_impl(
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+  let two_manifold = arg_refs[1]
+    .resolve(args, kwargs)
+    .as_bool()
+    .unwrap_or(true);
+  let result = mesh.mesh.check_is_manifold_dynamic(two_manifold).is_ok();
+  Ok(Value::Bool(result))
+}
+
 fn vec2_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -6330,6 +6346,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "flip_normals" => builtin_fn!(flip_normals, |def_ix, arg_refs, args, kwargs, _ctx| {
     flip_normals_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "is_manifold" => builtin_fn!(is_manifold, |def_ix, arg_refs, args, kwargs, _ctx| {
+    is_manifold_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "catmull_rom" => builtin_fn!(catmull_rom, |def_ix, arg_refs, args, kwargs, ctx| {
+    catmull_rom::catmull_rom_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "catmull_rom_3d" => builtin_fn!(catmull_rom_3d, |def_ix, arg_refs, args, kwargs, ctx| {
+    catmull_rom::catmull_rom_3d_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "vec2" => builtin_fn!(vec2, |def_ix, arg_refs, args, kwargs, _ctx| {
     vec2_impl(def_ix, arg_refs, args, kwargs)

@@ -348,6 +348,10 @@ export class BulletPhysics {
       this.viz.sceneConf.player?.maxPenetrationDepth ?? DefaultMaxPenetrationDepth
     );
     this.playerController.setMaxSlope(this.viz.sceneConf.player?.maxSlopeRadians ?? DefaultMaxSlopeRadians);
+    const slopeSlide = this.viz.sceneConf.player?.slopeSlide;
+    if (slopeSlide) {
+      this.playerController.setSlopeSlide(slopeSlide.minAngle, slopeSlide.maxSpeed);
+    }
     this.playerController.setJumpSpeed(this.viz.sceneConf.player?.jumpVelocity ?? DefaultJumpSpeed);
     if (this.viz.sceneConf.player?.terminalVelocity !== undefined) {
       this.playerController.setFallSpeed(this.viz.sceneConf.player.terminalVelocity);
@@ -443,6 +447,7 @@ export class BulletPhysics {
         y: this.playerController.getCameraRayHitNormalY(),
         z: this.playerController.getCameraRayHitNormalZ(),
       }),
+      getLastRayHitNonPermeable: () => this.playerController.getCameraRayHitNonPermeable(),
     });
 
     if (viewMode.type === 'firstPerson' || viewMode.type === 'thirdPerson') {
@@ -1136,6 +1141,12 @@ export class BulletPhysics {
     return body;
   };
 
+  /**
+   * Tags a rigid body as a non-permeable camera barrier.  The camera will hard-snap to just
+   * before this body rather than dithering through it, regardless of its thickness.
+   */
+  public markBodyNonPermeable = (body: BtRigidBody): void => body.setUserIndex2(1);
+
   public removeCollisionObject = (collisionObj: BtCollisionObject, meshName?: string) => {
     this.collisionWorld.removeCollisionObject(collisionObj);
 
@@ -1210,12 +1221,22 @@ export class BulletPhysics {
     }
 
     const buildResult = this.buildCollisionShapeFromMesh(mesh);
-    const objRef: CollisionObjectRef = {
-      materialClass: mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined,
-    };
+    const meshMaterialClass =
+      mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined;
+    const objRef: CollisionObjectRef = { materialClass: meshMaterialClass };
+    if (meshMaterialClass !== undefined) {
+      this.viz.sfxManager.onMaterialClassPresent(meshMaterialClass);
+    }
     const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
     const rigidBody = this.addCollisionObject(buildResult, pos, quat, objRef, colliderType);
     mesh.userData.rigidBody = rigidBody;
+    const isNonPermeable =
+      mesh.userData.nonPermeable !== undefined
+        ? (mesh.userData.nonPermeable as boolean)
+        : !Array.isArray(mesh.material) && !!mesh.material.userData?.nonPermeable;
+    if (isNonPermeable) {
+      this.markBodyNonPermeable(rigidBody);
+    }
   };
 
   public addPlayerRegionContactCb: AddPlayerRegionContactCB = (
@@ -1282,7 +1303,12 @@ export class BulletPhysics {
     pad.setDirection(this.btvec3(config.direction.x, config.direction.y, config.direction.z));
     this.playerController.addJumpPad(pad);
 
-    this.zoneCallbacks.set(zoneId, { onEnter: onTrigger });
+    this.viz.sfxManager.onJumpPadPresent();
+    const onEnter = () => {
+      this.viz.sfxManager.playSfx('jump_pad_trigger');
+      onTrigger?.();
+    };
+    this.zoneCallbacks.set(zoneId, { onEnter });
     const entry: JumpPadEntry = { pad, ghostObj, zoneId };
     this.jumpPads.push(entry);
     return entry;

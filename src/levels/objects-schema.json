@@ -79,6 +79,16 @@
               "nocollide": {
                 "type": "boolean"
               },
+              "colliderShape": {
+                "type": "string",
+                "enum": [
+                  "trimesh",
+                  "convexHull"
+                ]
+              },
+              "nonPermeable": {
+                "type": "boolean"
+              },
               "parkour": {
                 "type": "object",
                 "properties": {
@@ -250,6 +260,16 @@
                     "type": "string"
                   },
                   "nocollide": {
+                    "type": "boolean"
+                  },
+                  "colliderShape": {
+                    "type": "string",
+                    "enum": [
+                      "trimesh",
+                      "convexHull"
+                    ]
+                  },
+                  "nonPermeable": {
                     "type": "boolean"
                   },
                   "parkour": {

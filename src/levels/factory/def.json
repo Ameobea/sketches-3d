@@ -55,6 +55,26 @@
           }
         ]
       }
+    },
+    "angled_plat": {
+      "type": "geoscript",
+      "file": "geo/angled_plat.geo"
+    },
+    "pipes1": {
+      "type": "geoscript",
+      "file": "geo/pipes1.geo"
+    },
+    "pipe_decoration1": {
+      "type": "geoscript",
+      "file": "geo/pipe_decoration1.geo"
+    },
+    "pipes2": {
+      "type": "geoscript",
+      "file": "geo/pipes2.geo"
+    },
+    "pipe_decoration2": {
+      "type": "geoscript",
+      "file": "geo/pipe_decoration2.geo"
     }
   },
   "objects": [],
@@ -71,8 +91,8 @@
     "player": {
       "jumpVelocity": 76,
       "moveSpeed": {
-        "onGround": 15.75,
-        "inAir": 18
+        "onGround": 18.9,
+        "inAir": 21.6
       }
     }
   }
