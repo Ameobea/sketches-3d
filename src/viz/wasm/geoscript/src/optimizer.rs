@@ -497,6 +497,7 @@ fn hash_statement(
       name,
       expr,
       type_hint,
+      ..
     } => {
       name.hash(hasher);
       std::mem::discriminant(type_hint).hash(hasher);
@@ -1772,6 +1773,7 @@ fn optimize_statement<'a>(
       name,
       expr,
       type_hint,
+      ..
     } => {
       // insert a placeholder for the variable in the local scope to support recursive calls
       // unless we're assigning to an existing variable
@@ -1886,6 +1888,7 @@ fn optimize_top_level_statement<'a>(
       name,
       expr,
       type_hint,
+      ..
     } => {
       // Handle identically to Assignment
       if !local_scope.has(*name) {
@@ -2406,6 +2409,7 @@ fn = || {
       name: _,
       expr,
       type_hint: _,
+      ..
     } => match expr {
       Expr::Call {
         call: FunctionCall {

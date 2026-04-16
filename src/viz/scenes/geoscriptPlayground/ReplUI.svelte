@@ -289,6 +289,11 @@
       },
     });
     editorView = editor.editorView;
+
+    // Lazy-load analysis extensions — does not block editor creation or page load
+    import('../../../geoscript/analysisExtensions').then(({ buildAnalysisExtensions }) => {
+      editor.setAnalysisExtensions(buildAnalysisExtensions(() => !preludeEjected));
+    });
   };
 
   onDestroy(() => {

@@ -15,6 +15,7 @@ bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/basalt.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/csg_sandbox.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
 
   cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
@@ -36,6 +37,7 @@ opt:
   wasm-opt ./build/basalt_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/basalt_bg.wasm --enable-bulk-memory
   wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/csg_sandbox_bg.wasm --enable-bulk-memory
   wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
+  wasm-opt ./build/geoscript_analysis_wasm_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_analysis_wasm_bg.wasm --enable-bulk-memory
   wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
 
 build:
@@ -110,8 +112,21 @@ build-geoscript-repl-release:
   wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
   cp ./build/geoscript_repl* ../wasmComp
 
+build-geoscript-analysis:
+  RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_analysis_wasm
+  wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-opt ./build/geoscript_analysis_wasm_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_analysis_wasm_bg.wasm --enable-bulk-memory
+  cp ./build/geoscript_analysis_wasm* ../wasmComp
+
+build-geoscript-analysis-release:
+  RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package geoscript_analysis_wasm
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-opt ./build/geoscript_analysis_wasm_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_analysis_wasm_bg.wasm --enable-bulk-memory
+  cp ./build/geoscript_analysis_wasm* ../wasmComp
+
 build-geoscript:
   just build-geoscript-repl
+  just build-geoscript-analysis
 
 build-flight-recorder:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package flight_recorder

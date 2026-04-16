@@ -12,7 +12,7 @@ import {
   delimitedIndent,
 } from '@codemirror/language';
 import { linter, type Diagnostic } from '@codemirror/lint';
-import { EditorState, Prec, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
 import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
 import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
 
@@ -155,9 +155,11 @@ export const buildEditor = ({
     EditorState.allowMultipleSelections.of(true),
   ]);
 
+  const analysisCompartment = new Compartment();
+
   const editorState = EditorState.create({
     doc: initialCode,
-    extensions,
+    extensions: [extensions, analysisCompartment.of([])],
   });
 
   const editorView = new EditorView({
@@ -173,6 +175,10 @@ export const buildEditor = ({
         changes: { from: 0, to: editorView.state.doc.length, insert: code },
       });
       localStorage.lastGeoscriptPlaygroundCode = code;
+    },
+    /** Hot-swap analysis extensions without recreating the editor. */
+    setAnalysisExtensions: (exts: Extension[]) => {
+      editorView.dispatch({ effects: analysisCompartment.reconfigure(exts) });
     },
   };
 };

@@ -366,6 +366,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "geoscript_analysis"
+version = "0.1.0"
+dependencies = [
+ "fxhash",
+ "geoscript",
+ "nanoserde 0.2.1",
+]
+
+[[package]]
+name = "geoscript_analysis_wasm"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "geoscript_analysis",
+ "log",
+ "nanoserde 0.2.1",
+ "wasm-bindgen",
+ "wasm-logger",
+]
+
+[[package]]
 name = "geoscript_repl"
 version = "0.1.0"
 dependencies = [

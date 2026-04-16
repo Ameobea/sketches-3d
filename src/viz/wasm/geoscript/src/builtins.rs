@@ -65,14 +65,14 @@ use crate::{
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod catmull_rom;
-pub(crate) mod fn_defs;
+pub mod fn_defs;
 pub(crate) mod lerp_path;
 pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 pub(crate) mod path_critical_points;
 pub(crate) mod trace_path;
 
-pub(crate) static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
+pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
   "trans_global" => "translate_global",
   "v2" => "vec2",

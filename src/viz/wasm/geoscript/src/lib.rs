@@ -56,8 +56,8 @@ use crate::{
   seq::{ChainSeq, IntRange, MapSeq},
 };
 
-mod ast;
-mod builtins;
+pub mod ast;
+pub mod builtins;
 pub mod lights;
 pub mod materials;
 pub mod mesh_ops;
@@ -1056,7 +1056,7 @@ impl ArgType {
     }
   }
 
-  fn list_from_bitflags(valid_types: u16) -> Vec<ArgType> {
+  pub fn list_from_bitflags(valid_types: u16) -> Vec<ArgType> {
     if valid_types == ANY_FLAG {
       return vec![ArgType::Any];
     }
@@ -2178,6 +2178,7 @@ impl EvalCtx {
         name,
         expr,
         type_hint,
+        ..
       } => {
         let (line, col) = self.resolve_loc(expr.loc());
         let val = match self.eval_expr(expr, scope, Some(*name))? {
@@ -2243,6 +2244,7 @@ impl EvalCtx {
         name,
         expr,
         type_hint,
+        ..
       } => {
         let (line, col) = self.resolve_loc(expr.loc());
         let val = match self.eval_expr(expr, scope, Some(*name))? {
@@ -2565,6 +2567,7 @@ impl EvalCtx {
           name,
           expr,
           type_hint,
+          ..
         } => {
           let (line, col) = self.resolve_loc(expr.loc());
           let val = match self.eval_expr(expr, &closure_scope, Some(*name))? {

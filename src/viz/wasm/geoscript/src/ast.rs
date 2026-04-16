@@ -244,6 +244,7 @@ impl DestructurePattern {
 pub enum Statement {
   Assignment {
     name: Sym,
+    name_loc: SourceLoc,
     expr: Expr,
     type_hint: Option<TypeName>,
   },
@@ -268,6 +269,7 @@ pub enum TopLevelStatement {
   Statement(Statement),
   Export {
     name: Sym,
+    name_loc: SourceLoc,
     expr: Expr,
     type_hint: Option<TypeName>,
   },
@@ -1259,6 +1261,7 @@ impl ClosureBody {
         name,
         expr,
         type_hint: _,
+        ..
       } = stmt
       {
         if constify_assignments {
@@ -1345,6 +1348,7 @@ impl ClosureBody {
         name,
         expr,
         type_hint: _,
+        ..
       } = stmt
       {
         let is_deconstified = match closure_scope.get(*name) {
@@ -2256,8 +2260,10 @@ fn parse_assignment(ctx: &EvalCtx, assignment: Pair<Rule>) -> Result<Statement, 
 
   let expr = parse_expr(ctx, next)?;
 
+  let name_loc = ctx.add_source_loc(line, col);
   Ok(Statement::Assignment {
     name,
+    name_loc,
     expr,
     type_hint,
   })
@@ -2421,8 +2427,10 @@ fn parse_export_statement(
 
   let expr = parse_expr(ctx, next)?;
 
+  let name_loc = ctx.add_source_loc(line, col);
   Ok(TopLevelStatement::Export {
     name,
+    name_loc,
     expr,
     type_hint,
   })
