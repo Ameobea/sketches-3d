@@ -43,7 +43,6 @@ use crate::{
   ast::{
     bracketify_closures, maybe_init_op_def_shorthands, parse_top_level_statement, BinOp,
     ClosureArg, ClosureBody, DestructurePattern, FunctionCall, MapLiteralEntry, TopLevelStatement,
-    TypeName,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
@@ -65,6 +64,8 @@ pub mod noise;
 pub mod optimizer;
 pub mod path_building;
 mod seq;
+pub mod ty;
+pub mod type_infer;
 
 pub use self::ast::{traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
@@ -259,7 +260,7 @@ pub struct Closure {
   ///
   /// This will be `None` in the case of a recursive call since it's taken by the root call.
   arg_placeholder_scope: RefCell<Option<FxHashMap<Sym, Value>>>,
-  return_type_hint: Option<TypeName>,
+  return_type_hint: Option<ArgType>,
 }
 
 impl Debug for Closure {
@@ -920,7 +921,7 @@ impl Value {
     }
   }
 
-  fn get_type(&self) -> ArgType {
+  pub fn get_type(&self) -> ArgType {
     match self {
       Value::Int(_) => ArgType::Int,
       Value::Float(_) => ArgType::Float,
@@ -1018,41 +1019,6 @@ impl ArgType {
       ArgType::Material => "material",
       ArgType::Nil => "nil",
       ArgType::Any => "any",
-    }
-  }
-
-  // TODO: this is a hack and limits the kind of type inference we can do.  Should use a fully
-  // symbolic function signature resolution method instead of re-using `get_args`
-  fn build_example_val(&self) -> Option<Value> {
-    match self {
-      ArgType::Int => Some(Value::Int(0)),
-      ArgType::Float => Some(Value::Float(0.)),
-      ArgType::Numeric => None,
-      ArgType::Vec2 => Some(Value::Vec2(Vec2::new(0., 0.))),
-      ArgType::Vec3 => Some(Value::Vec3(Vec3::new(0., 0., 0.))),
-      ArgType::Mesh => Some(Value::Mesh(Rc::new(MeshHandle {
-        mesh: Rc::new(LinkedMesh::new(0, 0, None)),
-        transform: Matrix4::identity(),
-        manifold_handle: Rc::new(ManifoldHandle::new(0)),
-        aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
-        material: None,
-      }))),
-      ArgType::Light => Some(Value::Light(Box::new(Light::Ambient(
-        AmbientLight::default(),
-      )))),
-      ArgType::Callable => Some(Value::Callable(Rc::new(Callable::Builtin {
-        fn_entry_ix: usize::MAX,
-        fn_impl: |_, _, _, _, _| panic!("example callable should never be called"),
-        pre_resolved_signature: None,
-      }))),
-      ArgType::Sequence => Some(Value::Sequence(Rc::new(EagerSeq { inner: Vec::new() }))),
-      ArgType::Map => Some(Value::Map(Rc::new(FxHashMap::default()))),
-      ArgType::Bool => Some(Value::Bool(false)),
-      ArgType::String => Some(Value::String(String::new())),
-      ArgType::Material => Some(Value::Material(Rc::new(Material::default()))),
-      ArgType::Nil => Some(Value::Nil),
-      ArgType::Any => None,
     }
   }
 
@@ -1326,28 +1292,133 @@ fn get_unop_def_ix(ctx: &EvalCtx, fn_entry_ix: usize, arg: &Value) -> Result<usi
   ));
 }
 
-/// Specialized version of `get_args` for more efficient unary operator lookup.  Assumes that each
-/// def in `defs` has exactly one arg.
-fn get_unop_return_ty(
-  ctx: &EvalCtx,
-  name: &str,
-  defs: &[FnSignature],
-  arg: &Value,
-) -> Result<&'static [ArgType], ErrorStack> {
-  for def in defs {
-    let arg_def = &def.arg_defs[0];
-    if ArgType::any_valid(arg_def.valid_types, arg) {
-      return Ok(&def.return_type);
+/// Result of type-level signature matching.
+pub struct SignatureTypeMatch {
+  pub def_ix: usize,
+  pub arg_refs: SmallVec<[ArgRef; 6]>,
+  pub return_type: &'static [ArgType],
+}
+
+/// Type-level signature matching: finds the first signature where all provided positional and
+/// keyword argument types are compatible with the parameter definitions.
+///
+/// Returns a `SignatureTypeMatch` on match, or `None` if no signature matches (including partial
+/// application cases where fewer args than required are provided).
+pub fn match_signature_by_arg_types(
+  sigs: &'static [FnSignature],
+  positional_types: &[ArgType],
+  kwarg_types: &[(Sym, ArgType)],
+) -> Option<SignatureTypeMatch> {
+  // Dynamic sigs (first arg name empty) can't be type-matched
+  if let Some(sig) = sigs.first() {
+    if let Some(arg_def) = sig.arg_defs.first() {
+      if arg_def.name.is_empty() {
+        return None;
+      }
     }
   }
 
-  return Err(build_no_fn_def_found_err(
-    ctx,
-    name,
-    &[arg.clone()],
-    EMPTY_KWARGS,
-    fn_sigs()[name].signatures,
-  ));
+  let mut arg_refs: SmallVec<[ArgRef; 6]> = SmallVec::new();
+
+  'sig: for (sig_ix, sig) in sigs.iter().enumerate() {
+    // Skip sigs that don't recognize a provided kwarg
+    for &(kwarg_sym, _) in kwarg_types {
+      if sig
+        .arg_defs
+        .iter()
+        .all(|def| def.interned_name != kwarg_sym)
+      {
+        continue 'sig;
+      }
+    }
+
+    let mut pos_ix = 0;
+    let mut all_matched = true;
+    arg_refs.clear();
+
+    for arg_def in sig.arg_defs {
+      // Check kwargs first, then positional, then default
+      if let Some(&(kwarg_sym, ty)) =
+        kwarg_types.iter().find(|(sym, _)| *sym == arg_def.interned_name)
+      {
+        if arg_def.valid_types & ty.as_bitflags() == 0 {
+          continue 'sig;
+        }
+        arg_refs.push(ArgRef::Keyword(kwarg_sym));
+      } else if pos_ix < positional_types.len() {
+        let ty = positional_types[pos_ix];
+        if arg_def.valid_types & ty.as_bitflags() == 0 {
+          continue 'sig;
+        }
+        arg_refs.push(ArgRef::Positional(pos_ix));
+        pos_ix += 1;
+      } else {
+        match &arg_def.default_value {
+          DefaultValue::Required => {
+            // Missing required arg — could be partial application
+            all_matched = false;
+            break;
+          }
+          DefaultValue::Optional(get_default) => {
+            arg_refs.push(ArgRef::Default(get_default()));
+          }
+        }
+      }
+    }
+
+    if all_matched {
+      return Some(SignatureTypeMatch {
+        def_ix: sig_ix,
+        arg_refs: arg_refs.clone(),
+        return_type: sig.return_type,
+      });
+    }
+  }
+
+  None
+}
+
+/// Type-level binary operator signature matching.  Each signature is assumed to have exactly two
+/// arg defs.
+pub fn match_binop_by_arg_types(
+  fn_entry_ix: usize,
+  lhs_ty: ArgType,
+  rhs_ty: ArgType,
+) -> Option<(usize, &'static [ArgType])> {
+  let fn_entry = &fn_sigs().entries[fn_entry_ix];
+  let sigs = fn_entry.1.signatures;
+  let lhs_flags = lhs_ty.as_bitflags();
+  let rhs_flags = rhs_ty.as_bitflags();
+
+  for (sig_ix, sig) in sigs.iter().enumerate() {
+    let lhs_def = &sig.arg_defs[0];
+    let rhs_def = &sig.arg_defs[1];
+    if lhs_def.valid_types & lhs_flags != 0 && rhs_def.valid_types & rhs_flags != 0 {
+      return Some((sig_ix, sig.return_type));
+    }
+  }
+
+  None
+}
+
+/// Type-level unary operator signature matching.  Each signature is assumed to have exactly one
+/// arg def.
+pub fn match_unop_by_arg_types(
+  fn_entry_ix: usize,
+  arg_ty: ArgType,
+) -> Option<&'static [ArgType]> {
+  let fn_entry = &fn_sigs().entries[fn_entry_ix];
+  let sigs = fn_entry.1.signatures;
+  let arg_flags = arg_ty.as_bitflags();
+
+  for sig in sigs {
+    let arg_def = &sig.arg_defs[0];
+    if arg_def.valid_types & arg_flags != 0 {
+      return Some(sig.return_type);
+    }
+  }
+
+  None
 }
 
 pub struct AppendOnlyBuffer<T> {
@@ -1403,19 +1474,19 @@ impl Clone for Scope {
   }
 }
 
-fn get_default_globals() -> [(&'static str, Sym, Value); 2] {
+pub fn get_default_globals() -> [(&'static str, Value); 2] {
   [
-    ("pi", Sym(0), Value::Float(std::f32::consts::PI)),
-    ("tau", Sym(1), Value::Float(std::f32::consts::TAU)),
+    ("pi", Value::Float(std::f32::consts::PI)),
+    ("tau", Value::Float(std::f32::consts::TAU)),
   ]
 }
 
 impl Scope {
-  pub fn default_globals() -> Self {
+  pub fn default_globals(interner: &SymbolInterner) -> Self {
     let scope = Scope::default();
 
-    for (_name, sym, val) in get_default_globals() {
-      scope.insert(sym, val);
+    for (name, val) in get_default_globals() {
+      scope.insert(interner.intern(name), val);
     }
 
     scope
@@ -1503,7 +1574,7 @@ fn build_default_symbol_interner() -> SymbolInterner {
     next_sym: Cell::new(0),
   };
 
-  for (name, _, _) in get_default_globals() {
+  for (name, _val) in get_default_globals() {
     interner.intern(name);
   }
 
@@ -1636,9 +1707,11 @@ unsafe impl Sync for EvalCtx {}
 
 impl Default for EvalCtx {
   fn default() -> Self {
+    let interned_symbols = SymbolInterner::default();
+    let globals = Scope::default_globals(&interned_symbols);
     EvalCtx {
-      globals: Scope::default_globals(),
-      interned_symbols: SymbolInterner::default(),
+      globals,
+      interned_symbols,
       rendered_meshes: RenderedMeshes::default(),
       rendered_lights: RenderedLights::default(),
       rendered_paths: RenderedPaths::default(),
@@ -2157,7 +2230,7 @@ impl EvalCtx {
     ident: Sym,
     value: Value,
     scope: &Scope,
-    type_hint: Option<TypeName>,
+    type_hint: Option<ArgType>,
   ) -> Result<Value, ErrorStack> {
     if let Some(type_hint) = type_hint {
       type_hint.validate_val(&value)?;
@@ -2877,7 +2950,7 @@ impl EvalCtx {
 
     // Parse and evaluate the module in a fresh scope (only default globals like pi/tau).
     // Builtins are resolved by name at eval time, so they're available without being in scope.
-    let module_scope = Scope::default_globals();
+    let module_scope = Scope::default_globals(&self.interned_symbols);
     let mut ast = parse_program_src(self, &source)
       .map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
     optimizer::optimize_ast(self, &mut ast)

@@ -280,9 +280,6 @@ pub(crate) trait PathSampler: Any {
   fn fill_rule(&self) -> Option<FillRule> {
     None
   }
-  fn is_reversed(&self) -> bool {
-    false
-  }
 
   /// Returns the 2D affine transform matrix for this path sampler.
   fn transform(&self) -> &Matrix3<f32>;
@@ -1594,10 +1591,6 @@ impl PathSampler for PathTracerCallable {
 
   fn fill_rule(&self) -> Option<FillRule> {
     self.fill_rule
-  }
-
-  fn is_reversed(&self) -> bool {
-    self.reverse
   }
 
   fn to_lyon_path_for_tessellation(&self) -> Option<lyon_tessellation::path::Path> {

@@ -4,14 +4,22 @@ use geoscript::{
     fn_defs::{fn_sigs, FnDef},
     FUNCTION_ALIASES,
   },
-  EvalCtx, Program,
+  EvalCtx,
 };
 use nanoserde::SerJson;
 
+mod analysis;
+mod completions;
+mod diagnostics;
+mod format;
+mod goto;
+mod hover;
 mod scope;
 mod source_scan;
 
-pub use scope::{ScopeAnalysis, SymbolDef, SymbolKind, SymbolRef};
+
+pub use analysis::Analysis;
+pub use scope::{SymbolDef, SymbolKind, SymbolRef};
 
 /// Severity of a diagnostic message.
 #[derive(Clone, Debug, PartialEq, Eq, SerJson)]
@@ -149,409 +157,30 @@ impl AnalysisCtx {
           }],
         }
       }
-      Ok(program) => self.analyze_program(&program),
-    }
-  }
-
-  /// Run analysis on an already-parsed program.
-  fn analyze_program(&self, program: &Program) -> AnalysisResult {
-    let scope_analysis = ScopeAnalysis::build(&self.eval_ctx, program);
-    let mut diagnostics = Vec::new();
-
-    // Report undefined references
-    for unresolved in &scope_analysis.unresolved_refs {
-      let name = self
-        .eval_ctx
-        .interned_symbols
-        .with_resolved(unresolved.name, |s| s.to_string());
-      // Skip if name couldn't be resolved (shouldn't happen, but be safe)
-      let Some(name) = name else { continue };
-
-      let (line, col) = self.eval_ctx.resolve_loc(unresolved.loc);
-      if line == 0 && col == 0 {
-        continue;
-      }
-
-      diagnostics.push(AnalysisDiagnostic {
-        start_line: line,
-        start_col: col,
-        end_line: line,
-        end_col: col + name.len() as u32,
-        severity: DiagnosticSeverity::Error,
-        message: format!("Undefined variable `{name}`"),
-      });
-    }
-
-    // Report wrong argument count for builtin function calls
-    for call_info in &scope_analysis.function_calls {
-      let Some(name_str) = self
-        .eval_ctx
-        .interned_symbols
-        .with_resolved(call_info.name, |s| s.to_string())
-      else {
-        continue;
-      };
-
-      // Only check builtins that aren't shadowed by a local
-      if call_info.is_shadowed {
-        continue;
-      }
-
-      let Some((_real_name, fn_def)) = self.lookup_builtin(&name_str) else {
-        continue;
-      };
-
-      self.check_call_args(call_info, fn_def, &name_str, &mut diagnostics);
-    }
-
-    AnalysisResult { diagnostics }
-  }
-
-  fn check_call_args(
-    &self,
-    call_info: &scope::FunctionCallInfo,
-    fn_def: &FnDef,
-    name: &str,
-    diagnostics: &mut Vec<AnalysisDiagnostic>,
-  ) {
-    if fn_def.signatures.is_empty() {
-      return;
-    }
-
-    let n_positional = call_info.arg_count;
-
-    // Only check that there aren't too many positional args.
-    // Fewer args than required is allowed because geoscript supports partial application
-    // (e.g. `box(1) | translate(vec3(0,1,0))` via the pipeline operator).
-    let too_many_positional = !fn_def.signatures.iter().any(|sig| {
-      n_positional <= sig.arg_defs.len()
-    });
-
-    if too_many_positional {
-      let (line, col) = self.eval_ctx.resolve_loc(call_info.loc);
-      if line == 0 && col == 0 {
-        return;
-      }
-
-      let max_params = fn_def
-        .signatures
-        .iter()
-        .map(|sig| sig.arg_defs.len())
-        .max()
-        .unwrap();
-
-      diagnostics.push(AnalysisDiagnostic {
-        start_line: line,
-        start_col: col,
-        end_line: line,
-        end_col: col + name.len() as u32,
-        severity: DiagnosticSeverity::Error,
-        message: format!(
-          "`{name}` accepts at most {max_params} argument(s), but {n_positional} positional argument(s) were provided",
-        ),
-      });
-    }
-
-    // Validate kwargs: check that each kwarg name is valid for at least one signature
-    self.check_call_kwargs(call_info, fn_def, name, diagnostics);
-  }
-
-  fn check_call_kwargs(
-    &self,
-    call_info: &scope::FunctionCallInfo,
-    fn_def: &FnDef,
-    name: &str,
-    diagnostics: &mut Vec<AnalysisDiagnostic>,
-  ) {
-    for &kwarg_sym in &call_info.kwarg_names {
-      let kwarg_valid = fn_def.signatures.iter().any(|sig| {
-        sig.arg_defs.iter().any(|arg| arg.interned_name == kwarg_sym)
-      });
-
-      if !kwarg_valid {
-        let (line, col) = self.eval_ctx.resolve_loc(call_info.loc);
-        if line == 0 && col == 0 {
-          continue;
-        }
-
-        let kwarg_name = self
-          .eval_ctx
-          .interned_symbols
-          .with_resolved(kwarg_sym, |s| s.to_string());
-        let Some(kwarg_name) = kwarg_name else { continue };
-
-        diagnostics.push(AnalysisDiagnostic {
-          start_line: line,
-          start_col: col,
-          end_line: line,
-          end_col: col + name.len() as u32,
-          severity: DiagnosticSeverity::Error,
-          message: format!(
-            "unknown keyword argument `{kwarg_name}` for `{name}`",
-          ),
-        });
-      }
+      Ok(program) => diagnostics::analyze_program(self, &program),
     }
   }
 
   /// Get hover information at a given source location.
-  pub fn hover(&self, src: &str, target_line: u32, target_col: u32, include_prelude: bool) -> Option<HoverInfo> {
-    let parse_result = geoscript::parse_program_maybe_with_prelude(
-      &self.eval_ctx,
-      src.to_owned(),
-      include_prelude,
-    );
-
-    let program = parse_result.ok()?;
-    let scope_analysis = ScopeAnalysis::build(&self.eval_ctx, &program);
-
-    // Find the symbol at this position
-    // Check definitions first
-    for def in scope_analysis.all_defs() {
-      let (line, col) = self.eval_ctx.resolve_loc(def.loc);
-      let name = self
-        .eval_ctx
-        .interned_symbols
-        .with_resolved(def.name, |s| s.to_string())?;
-      let end_col = col + name.len() as u32;
-
-      if line == target_line && target_col >= col && target_col < end_col {
-        let content = match def.kind {
-          SymbolKind::Variable => format!("(variable) {name}"),
-          SymbolKind::ClosureParam => format!("(parameter) {name}"),
-          SymbolKind::Import => format!("(import) {name}"),
-        };
-        return Some(HoverInfo {
-          content,
-          start_line: line,
-          start_col: col,
-          end_line: line,
-          end_col,
-        });
-      }
-    }
-
-    // Check references
-    for sym_ref in scope_analysis.all_refs() {
-      let (line, col) = self.eval_ctx.resolve_loc(sym_ref.loc);
-      let name = self
-        .eval_ctx
-        .interned_symbols
-        .with_resolved(sym_ref.name, |s| s.to_string())?;
-      let end_col = col + name.len() as u32;
-
-      if line == target_line && target_col >= col && target_col < end_col {
-        // Check if it's a builtin
-        if let Some((real_name, fn_def)) = self.lookup_builtin(&name) {
-          let content = format_builtin_hover(real_name, fn_def);
-          return Some(HoverInfo {
-            content,
-            start_line: line,
-            start_col: col,
-            end_line: line,
-            end_col,
-          });
-        }
-
-        // User-defined — show what we know
-        let content = format!("(variable) {name}");
-        return Some(HoverInfo {
-          content,
-          start_line: line,
-          start_col: col,
-          end_line: line,
-          end_col,
-        });
-      }
-    }
-
-    // Check function calls (the function name part)
-    for call_info in &scope_analysis.function_calls {
-      let (line, col) = self.eval_ctx.resolve_loc(call_info.loc);
-      let name = self
-        .eval_ctx
-        .interned_symbols
-        .with_resolved(call_info.name, |s| s.to_string())?;
-      let end_col = col + name.len() as u32;
-
-      if line == target_line && target_col >= col && target_col < end_col {
-        if !call_info.is_shadowed {
-          if let Some((real_name, fn_def)) = self.lookup_builtin(&name) {
-            let content = format_builtin_hover(real_name, fn_def);
-            return Some(HoverInfo {
-              content,
-              start_line: line,
-              start_col: col,
-              end_line: line,
-              end_col,
-            });
-          }
-        }
-
-        let content = format!("(function) {name}");
-        return Some(HoverInfo {
-          content,
-          start_line: line,
-          start_col: col,
-          end_line: line,
-          end_col,
-        });
-      }
-    }
-
-    // Fallback: check if the cursor is on a kwarg name via source-text scanning
-    if let Some(hover) = self.hover_kwarg(src, target_line, target_col) {
-      return Some(hover);
-    }
-
-    None
-  }
-
-  /// Try to produce hover info for a kwarg name by scanning the source text.
-  fn hover_kwarg(&self, src: &str, target_line: u32, target_col: u32) -> Option<HoverInfo> {
-    let offset = source_scan::line_col_to_offset(src, target_line, target_col)?;
-    let call_info = source_scan::find_enclosing_call(src, offset)?;
-    let kwarg_name = call_info.kwarg_name.as_deref()?;
-
-    let (_canonical, fn_def) = self.lookup_builtin(&call_info.fn_name)?;
-
-    // Find the matching ArgDef across all signatures
-    for sig in fn_def.signatures {
-      for arg in sig.arg_defs {
-        if arg.name == kwarg_name {
-          let types = geoscript::ArgType::list_from_bitflags(arg.valid_types);
-          let type_str = types
-            .iter()
-            .map(|t| format!("{t:?}"))
-            .collect::<Vec<_>>()
-            .join(" | ");
-          let mut content = format!("(parameter) **{kwarg_name}**: `{type_str}`");
-          if !arg.description.is_empty() {
-            content.push_str(&format!("\n{}", arg.description));
-          }
-          let kwarg_len = kwarg_name.len() as u32;
-          return Some(HoverInfo {
-            content,
-            start_line: target_line,
-            start_col: target_col,
-            end_line: target_line,
-            end_col: target_col + kwarg_len,
-          });
-        }
-      }
-    }
-
-    None
-  }
-
-  /// Get completions at a given source location.
-  pub fn completions(&self, src: &str, target_line: u32, target_col: u32, include_prelude: bool) -> Vec<CompletionItem> {
-    let parse_result = geoscript::parse_program_maybe_with_prelude(
-      &self.eval_ctx,
-      src.to_owned(),
-      include_prelude,
-    );
-
-    let mut items = Vec::new();
-
-    // Even if parsing fails, we can still offer builtin completions
-    if let Ok(program) = parse_result {
-      let scope_analysis = ScopeAnalysis::build(&self.eval_ctx, &program);
-
-      // Add in-scope user-defined variables
-      for def in scope_analysis.definitions_visible_at(target_line, target_col) {
-        let Some(name) = self
-          .eval_ctx
-          .interned_symbols
-          .with_resolved(def.name, |s| s.to_string())
-        else {
-          continue;
-        };
-
-        items.push(CompletionItem {
-          label: name,
-          kind: match def.kind {
-            SymbolKind::Variable => "variable".into(),
-            SymbolKind::ClosureParam => "variable".into(),
-            SymbolKind::Import => "variable".into(),
-          },
-          detail: String::new(),
-          info: String::new(),
-        });
-      }
-    }
-
-    // Add builtins (sorted by name for consistency)
-    let mut builtin_names: Vec<&str> = fn_sigs().entries().map(|(name, _)| *name).collect();
-    builtin_names.sort();
-    for name in builtin_names {
-      let def = fn_sigs().get(name).unwrap();
-      let detail = if let Some(sig) = def.signatures.first() {
-        format_signature_oneliner(name, sig)
-      } else {
-        String::new()
-      };
-      let info = def
-        .signatures
-        .first()
-        .map(|s| s.description.to_string())
-        .unwrap_or_default();
-
-      items.push(CompletionItem {
-        label: name.to_string(),
-        kind: "function".into(),
-        detail,
-        info,
-      });
-    }
-
-    // If we're inside a function call, also suggest kwarg names for that function
-    self.add_kwarg_completions(src, target_line, target_col, &mut items);
-
-    items
-  }
-
-  /// If the cursor is inside a builtin function call, add completions for valid kwarg
-  /// names (with `=` suffix) that haven't already been provided.
-  fn add_kwarg_completions(
+  pub fn hover(
     &self,
     src: &str,
     target_line: u32,
     target_col: u32,
-    items: &mut Vec<CompletionItem>,
-  ) {
-    let Some(offset) = source_scan::line_col_to_offset(src, target_line, target_col) else {
-      return;
-    };
-    let Some(call_info) = source_scan::find_enclosing_call(src, offset) else {
-      return;
-    };
-    let Some((_canonical, fn_def)) = self.lookup_builtin(&call_info.fn_name) else {
-      return;
-    };
+    include_prelude: bool,
+  ) -> Option<HoverInfo> {
+    hover::hover(self, src, target_line, target_col, include_prelude)
+  }
 
-    // Collect all unique kwarg names across all signatures
-    let mut seen = FxHashSet::default();
-    for sig in fn_def.signatures {
-      for arg in sig.arg_defs {
-        if arg.name.is_empty() || !seen.insert(arg.name) {
-          continue;
-        }
-        let types = geoscript::ArgType::list_from_bitflags(arg.valid_types);
-        let type_str = types
-          .iter()
-          .map(|t| format!("{t:?}"))
-          .collect::<Vec<_>>()
-          .join("|");
-
-        items.push(CompletionItem {
-          label: format!("{}=", arg.name),
-          kind: "property".into(),
-          detail: type_str,
-          info: arg.description.to_string(),
-        });
-      }
-    }
+  /// Get completions at a given source location.
+  pub fn completions(
+    &self,
+    src: &str,
+    target_line: u32,
+    target_col: u32,
+    include_prelude: bool,
+  ) -> Vec<CompletionItem> {
+    completions::completions(self, src, target_line, target_col, include_prelude)
   }
 
   /// Get the definition location for the symbol at the given position.
@@ -562,86 +191,8 @@ impl AnalysisCtx {
     target_col: u32,
     include_prelude: bool,
   ) -> Option<DefinitionLocation> {
-    let program = geoscript::parse_program_maybe_with_prelude(
-      &self.eval_ctx,
-      src.to_owned(),
-      include_prelude,
-    )
-    .ok()?;
-
-    let scope_analysis = ScopeAnalysis::build(&self.eval_ctx, &program);
-
-    // Find the reference at this position
-    for sym_ref in scope_analysis.all_refs() {
-      let (line, col) = self.eval_ctx.resolve_loc(sym_ref.loc);
-      let name = self
-        .eval_ctx
-        .interned_symbols
-        .with_resolved(sym_ref.name, |s| s.to_string())?;
-      let end_col = col + name.len() as u32;
-
-      if line == target_line && target_col >= col && target_col < end_col {
-        // Look up the definition
-        if let Some(def_loc) = sym_ref.resolved_def {
-          let (def_line, def_col) = self.eval_ctx.resolve_loc(def_loc);
-          return Some(DefinitionLocation {
-            start_line: def_line,
-            start_col: def_col,
-            end_line: def_line,
-            end_col: def_col + name.len() as u32,
-          });
-        }
-        // It's a builtin or unresolved — no definition to go to
-        return None;
-      }
-    }
-
-    None
+    goto::goto_definition(self, src, target_line, target_col, include_prelude)
   }
-}
-
-fn format_signature_oneliner(name: &str, sig: &geoscript::builtins::fn_defs::FnSignature) -> String {
-  let args: Vec<String> = sig
-    .arg_defs
-    .iter()
-    .map(|arg| {
-      let types = geoscript::ArgType::list_from_bitflags(arg.valid_types);
-      let type_str = types
-        .iter()
-        .map(|t| format!("{t:?}"))
-        .collect::<Vec<_>>()
-        .join("|");
-      match &arg.default_value {
-        geoscript::builtins::fn_defs::DefaultValue::Required => {
-          format!("{}: {type_str}", arg.name)
-        }
-        geoscript::builtins::fn_defs::DefaultValue::Optional(get_default) => {
-          format!("{}: {type_str} = {:?}", arg.name, get_default())
-        }
-      }
-    })
-    .collect();
-  format!("{}({})", name, args.join(", "))
-}
-
-fn format_builtin_hover(name: &str, fn_def: &FnDef) -> String {
-  let mut parts = Vec::new();
-  parts.push(format!("(builtin) **{}**", name));
-  if !fn_def.module.is_empty() {
-    parts.push(format!("Module: {}", fn_def.module));
-  }
-
-  for (i, sig) in fn_def.signatures.iter().enumerate() {
-    if fn_def.signatures.len() > 1 {
-      parts.push(format!("\nOverload {}:", i + 1));
-    }
-    parts.push(format!("`{}`", format_signature_oneliner(name, sig)));
-    if !sig.description.is_empty() {
-      parts.push(sig.description.to_string());
-    }
-  }
-
-  parts.join("\n")
 }
 
 #[cfg(test)]
@@ -651,11 +202,6 @@ mod tests {
   fn analyze(src: &str) -> AnalysisResult {
     let ctx = AnalysisCtx::new();
     ctx.analyze(src, false)
-  }
-
-  fn analyze_with_prelude(src: &str) -> AnalysisResult {
-    let ctx = AnalysisCtx::new();
-    ctx.analyze(src, true)
   }
 
   #[test]
@@ -806,7 +352,10 @@ y = x
   fn test_invalid_kwarg_error() {
     let result = analyze("m = box(nonexistent_kwarg=5)");
     assert!(
-      result.diagnostics.iter().any(|d| d.message.contains("unknown keyword argument")),
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("unknown keyword argument")),
       "Expected invalid kwarg diagnostic, got: {:?}",
       result.diagnostics
     );
@@ -838,6 +387,43 @@ y = x
   }
 
   #[test]
+  fn test_hover_variable_with_inferred_type() {
+    let ctx = AnalysisCtx::new();
+
+    // Hover on `m` definition — should show inferred type from box() → Mesh
+    let hover = ctx.hover("m = box()", 1, 1, false).unwrap();
+    assert!(
+      hover.content.contains("mesh"),
+      "Expected type 'mesh' in hover for box() result, got: {}",
+      hover.content
+    );
+
+    // Hover on literal assignment — should show Int
+    let hover = ctx.hover("x = 42", 1, 1, false).unwrap();
+    assert!(
+      hover.content.contains("int"),
+      "Expected type 'int' in hover, got: {}",
+      hover.content
+    );
+
+    // Hover on reference to a typed variable
+    let hover = ctx.hover("m = box()\nn = m", 2, 5, false).unwrap();
+    assert!(
+      hover.content.contains("mesh"),
+      "Expected type 'mesh' in hover for reference to m, got: {}",
+      hover.content
+    );
+
+    // Variable assigned from chain — type propagates
+    let hover = ctx.hover("v = vec3(1, 0, 0)", 1, 1, false).unwrap();
+    assert!(
+      hover.content.contains("vec3"),
+      "Expected type 'vec3' in hover, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
   fn test_completions_inside_call_include_kwargs() {
     let ctx = AnalysisCtx::new();
     // cursor inside box() call — should get kwarg suggestions
@@ -852,6 +438,419 @@ y = x
       kwarg_labels.contains(&"size="),
       "Expected kwarg completion `size=`, got: {:?}",
       kwarg_labels
+    );
+  }
+
+  #[test]
+  fn test_hover_pipeline_propagates_type() {
+    let ctx = AnalysisCtx::new();
+    // `m = box() | scale(2)` — pipeline should produce Mesh
+    let hover = ctx
+      .hover("m = box() | scale(2)", 1, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("mesh"),
+      "expected `mesh` type for piped chain, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_pipeline_chain_propagates_type() {
+    let ctx = AnalysisCtx::new();
+    // Multi-stage chain — type should still propagate end-to-end
+    let hover = ctx
+      .hover("m = box() | scale(2) | translate(vec3(1, 0, 0))", 1, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("mesh"),
+      "expected `mesh` type for multi-stage piped chain, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_binop_int_addition() {
+    let ctx = AnalysisCtx::new();
+    let hover = ctx.hover("x = 1 + 2", 1, 1, false).expect("hover for `x`");
+    assert!(
+      hover.content.contains("int"),
+      "expected `int` type for int+int, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_binop_vec3_addition() {
+    let ctx = AnalysisCtx::new();
+    let hover = ctx
+      .hover("v = vec3(1, 0, 0) + vec3(0, 1, 0)", 1, 1, false)
+      .expect("hover for `v`");
+    assert!(
+      hover.content.contains("vec3"),
+      "expected `vec3` type for vec3+vec3, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_static_field_access_swizzle() {
+    let ctx = AnalysisCtx::new();
+    // `v.x` on a vec3 → float
+    let hover = ctx
+      .hover("v = vec3(1, 0, 0)\nx = v.x", 2, 1, false)
+      .expect("hover for `x`");
+    assert!(
+      hover.content.contains("float"),
+      "expected `float` type for v.x, got: {}",
+      hover.content
+    );
+
+    // `v.xy` → vec2
+    let hover = ctx
+      .hover("v = vec3(1, 0, 0)\nxy = v.xy", 2, 1, false)
+      .expect("hover for `xy`");
+    assert!(
+      hover.content.contains("vec2"),
+      "expected `vec2` type for v.xy, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_type_hint_mismatch_diagnostic() {
+    // `x: mesh = "string"` — string can't be assigned to a mesh-typed binding
+    let result = analyze(r#"x: mesh = "string""#);
+    assert!(
+      result.diagnostics.iter().any(|d| d.message.contains("type mismatch")
+        && d.message.contains("mesh")
+        && d.message.contains("str")),
+      "expected type-mismatch diagnostic, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_type_hint_compatible_no_diagnostic() {
+    // `x: num = 1` — `num` accepts both int and float, so no error
+    let result = analyze("x: num = 1");
+    assert!(
+      result.diagnostics.is_empty(),
+      "expected no diagnostics for `num = 1`, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_no_matching_signature_diagnostic() {
+    // box() has no signature accepting a string positional arg
+    let result = analyze(r#"m = box("not a valid arg")"#);
+    assert!(
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("no overload") && d.message.contains("box")),
+      "expected no-overload diagnostic, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_partial_application_does_not_diagnose() {
+    // translate(vec3(...)) is a valid partial app — must not emit no-overload
+    let result = analyze("m = translate(vec3(1, 0, 0))");
+    assert!(
+      result
+        .diagnostics
+        .iter()
+        .all(|d| !d.message.contains("no overload")),
+      "expected no no-overload diagnostic for partial app, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_hover_paf_var_shows_partial_application() {
+    let ctx = AnalysisCtx::new();
+    // `f = translate(vec3(1, 0, 0))` — translate needs more args, so f is a partial app.
+    // Hover on `f` should describe the partial application and remaining params.
+    let hover = ctx
+      .hover("f = translate(vec3(1, 0, 0))", 1, 1, false)
+      .expect("hover for `f`");
+    assert!(
+      hover.content.contains("partial application"),
+      "expected partial-application label in hover, got: {}",
+      hover.content
+    );
+    assert!(
+      hover.content.contains("translate"),
+      "expected base function name `translate` in hover, got: {}",
+      hover.content
+    );
+    // The first overload of translate has `mesh` as the remaining param after binding the vec3.
+    assert!(
+      hover.content.contains("mesh"),
+      "expected remaining param info to mention `mesh`, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_paf_call_resolves_to_return_type() {
+    let ctx = AnalysisCtx::new();
+    // f = translate(vec3); m = f(box())  — calling the PAF should yield Mesh
+    let hover = ctx
+      .hover("f = translate(vec3(1, 0, 0))\nm = f(box())", 2, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("mesh"),
+      "expected `mesh` type for f(box()) result, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_paf_pipeline_resolves_to_return_type() {
+    let ctx = AnalysisCtx::new();
+    // f = translate(vec3); m = box() | f  — piping into the PAF should yield Mesh
+    let hover = ctx
+      .hover("f = translate(vec3(1, 0, 0))\nm = box() | f", 2, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("mesh"),
+      "expected `mesh` type for `box() | f` result, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_paf_pipeline_wrong_type_diagnoses() {
+    // `1 | translate(vec3)` — combined args become [vec3, int], no overload matches and
+    // the prefix isn't valid either (sig 0 wants Mesh|Light second; sig 1 wants Numeric first).
+    let result = analyze("x = 1 | translate(vec3(1, 0, 0))");
+    assert!(
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("no overload") && d.message.contains("translate")),
+      "expected no-overload diagnostic when wrong type is piped into PAF, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_paf_chained_pipeline_through_var() {
+    let ctx = AnalysisCtx::new();
+    // Chain: bind a partial, then pipeline through it from a `box()` result.
+    let hover = ctx
+      .hover(
+        "shift = translate(vec3(1, 0, 0))\nm = box() | shift | scale(2)",
+        2,
+        1,
+        false,
+      )
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("mesh"),
+      "expected `mesh` type after chained PAF pipeline, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_call_focused_overload_shows_arg_docs() {
+    let ctx = AnalysisCtx::new();
+    // Hover on `box` in `box(1, 1, 1)` — args fully specified, exactly one signature matches.
+    // Output should include the per-argument descriptions ("Width along the X axis" etc.) and
+    // should NOT include an "Overload N:" header since only the matched sig is rendered.
+    let hover = ctx
+      .hover("m = box(1, 1, 1)", 1, 5, false)
+      .expect("hover for `box` call");
+    assert!(
+      hover.content.contains("Width along the X axis"),
+      "expected per-arg description for `width`, got: {}",
+      hover.content
+    );
+    assert!(
+      hover.content.contains("Arguments:"),
+      "expected `Arguments:` header in focused hover, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_call_unknown_args_shows_all_overloads() {
+    let ctx = AnalysisCtx::new();
+    // No matched sig (undefined ident → Unknown arg type) — fall back to the all-overloads view.
+    let hover = ctx
+      .hover("m = box(unknown_var)", 1, 5, false)
+      .expect("hover for `box` call");
+    // The fallback all-overloads view does NOT include the "Arguments:" header that the
+    // focused renderer produces.
+    assert!(
+      !hover.content.contains("Arguments:"),
+      "expected fallback (all-overloads) hover when sig unknown, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_closure_return_type_mismatch_diagnoses() {
+    // The user's canonical Layer 3 example: an explicit `return` with the wrong type inside
+    // a conditional inside a typed closure should surface a return-type-mismatch diagnostic.
+    let src = r#"
+my_fn = |x: int|: int {
+  if x > 1 { return "a string" }
+  x + 3
+}
+"#;
+    let result = analyze(src);
+    assert!(
+      result.diagnostics.iter().any(|d| d.message.contains("return type mismatch")
+        && d.message.contains("int")
+        && d.message.contains("str")),
+      "expected return-type-mismatch diagnostic, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_closure_implicit_return_matches_annotation() {
+    // Typed closure whose implicit (tail) expression matches the declared return type —
+    // should not produce any diagnostics.
+    let result = analyze("f = |x: int|: int { x + 1 }");
+    assert!(
+      result.diagnostics.is_empty(),
+      "expected no diagnostics for well-typed closure, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_closure_implicit_return_wrong_type_diagnoses() {
+    // Annotated as int but tail expression is a string — should flag the implicit return.
+    let result = analyze(r#"f = |x: int|: int { "hello" }"#);
+    assert!(
+      result.diagnostics.iter().any(|d| d.message.contains("return type mismatch")),
+      "expected implicit-return mismatch diagnostic, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_call_typed_closure_resolves_to_return_type() {
+    let ctx = AnalysisCtx::new();
+    // Calling a user closure should produce hover info showing its return type.
+    let hover = ctx
+      .hover("f = |x: int|: int { x + 1 }\nm = f(3)", 2, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("int"),
+      "expected `int` type for f(3) result, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_pipeline_typed_closure_resolves_to_return_type() {
+    let ctx = AnalysisCtx::new();
+    let hover = ctx
+      .hover("f = |x: int|: int { x + 1 }\nm = 3 | f", 2, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("int"),
+      "expected `int` type for `3 | f` result, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_closure_var_shows_callable_signature() {
+    let ctx = AnalysisCtx::new();
+    let hover = ctx
+      .hover("f = |x: int|: int { x + 1 }", 1, 1, false)
+      .expect("hover for `f`");
+    assert!(
+      hover.content.contains("fn(") && hover.content.contains("→"),
+      "expected callable signature in hover, got: {}",
+      hover.content
+    );
+    assert!(
+      hover.content.contains("int"),
+      "expected `int` in callable signature, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_closure_inferred_return_type_from_body() {
+    let ctx = AnalysisCtx::new();
+    // No explicit return type annotation — inferred from the body's tail expression.
+    let hover = ctx
+      .hover("f = |x: int| x + 1\nm = f(3)", 2, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      hover.content.contains("int"),
+      "expected inferred `int` return type, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_block_type_is_last_expression() {
+    let ctx = AnalysisCtx::new();
+    // A block's type is the type of its final expression statement.
+    let hover = ctx
+      .hover("x = { a = 10\n a + 1 }", 1, 1, false)
+      .expect("hover for `x`");
+    assert!(
+      hover.content.contains("int"),
+      "expected `int` type for block result, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_conditional_type_unions_branches() {
+    let ctx = AnalysisCtx::new();
+    // if-else branches with different types → Union
+    let hover = ctx
+      .hover(r#"x = if true { 1 } else { "s" }"#, 1, 1, false)
+      .expect("hover for `x`");
+    // display_str for union joins variant names with ` | `
+    assert!(
+      hover.content.contains("int") && hover.content.contains("str"),
+      "expected union of `int` and `str` from conditional, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_return_outside_closure_is_noop() {
+    // A stray `return` at the top level is a runtime concept; the analyzer should not crash
+    // or produce a spurious type error on it.
+    let result = analyze("return 1");
+    assert!(
+      result
+        .diagnostics
+        .iter()
+        .all(|d| !d.message.contains("return type mismatch")),
+      "unexpected return-type diagnostic for top-level return, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_hover_prefix_neg() {
+    let ctx = AnalysisCtx::new();
+    // `-x` where x is int → int
+    let hover = ctx
+      .hover("x = 5\ny = -x", 2, 1, false)
+      .expect("hover for `y`");
+    assert!(
+      hover.content.contains("int"),
+      "expected `int` type for -x, got: {}",
+      hover.content
     );
   }
 }

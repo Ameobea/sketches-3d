@@ -5,10 +5,10 @@ use siphasher::sip128::{Hasher128, SipHasher};
 
 use crate::{
   ast::{
-    eval_range, get_dyn_type, maybe_pre_resolve_bulitin_call_signature, pre_resolve_binop_def_ix,
-    pre_resolve_expr_type, BinOp, ClosureArg, ClosureBody, DestructurePattern, DynType, Expr,
+    bind_closure_params_into_scope, eval_range, maybe_pre_resolve_builtin_call_signature,
+    record_non_const_binding, BinOp, ClosureArg, ClosureBody, DestructurePattern, Expr,
     FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, SourceLoc, Statement,
-    TopLevelStatement, TrackedValue, TrackedValueRef, TypeName,
+    TopLevelStatement, TrackedValue, TrackedValueRef,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -16,7 +16,9 @@ use crate::{
     trace_path::TRACE_PATH_DRAW_COMMAND_NAMES,
     FUNCTION_ALIASES,
   },
+  match_binop_by_arg_types,
   seq::EagerSeq,
+  type_infer::infer_expr,
   ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value,
 };
 
@@ -435,7 +437,7 @@ fn hash_expr(
   }
 }
 
-fn hash_type_name(type_name: TypeName, hasher: &mut SipHasher) {
+fn hash_type_name(type_name: ArgType, hasher: &mut SipHasher) {
   std::mem::discriminant(&type_name).hash(hasher);
 }
 
@@ -531,7 +533,7 @@ fn hash_statement(
 fn hash_closure_parts(
   params: &Rc<Vec<ClosureArg>>,
   body: &Rc<crate::ast::ClosureBody>,
-  return_type_hint: &Option<TypeName>,
+  return_type_hint: &Option<ArgType>,
   hasher: &mut SipHasher,
   uses_rng: &mut bool,
   config: ExprHashConfig,
@@ -717,7 +719,8 @@ fn is_float_assoc_literal(val: &Value) -> bool {
 }
 
 fn expr_requires_float_assoc(ctx: &EvalCtx, local_scope: &ScopeTracker, expr: &Expr) -> bool {
-  match pre_resolve_expr_type(ctx, local_scope, expr) {
+  let mut env = local_scope.build_type_env(ctx);
+  match infer_expr(ctx, &mut env, expr).as_single_arg_type() {
     Some(ArgType::Int) => false,
     Some(ArgType::Float | ArgType::Vec2 | ArgType::Vec3 | ArgType::Numeric) => true,
     Some(_) => false,
@@ -927,9 +930,18 @@ fn fold_constants<'a>(
         }
       }
 
-      let resolve_opt = pre_resolve_binop_def_ix(ctx, local_scope, op, lhs, rhs);
-      if let Some(def_ix) = resolve_opt {
-        *pre_resolved_def_ix = Some(def_ix.1);
+      if let Some(name) = op.get_builtin_fn_name() {
+        if let Some(entry_ix) = get_builtin_fn_sig_entry_ix(name) {
+          let mut env = local_scope.build_type_env(ctx);
+          if let (Some(lhs_ty), Some(rhs_ty)) = (
+            infer_expr(ctx, &mut env, lhs).as_single_arg_type(),
+            infer_expr(ctx, &mut env, rhs).as_single_arg_type(),
+          ) {
+            if let Some((def_ix, _)) = match_binop_by_arg_types(entry_ix, lhs_ty, rhs_ty) {
+              *pre_resolved_def_ix = Some(def_ix);
+            }
+          }
+        }
       }
 
       let (Some(lhs_val), Some(rhs_val)) = (lhs.as_literal(), rhs.as_literal()) else {
@@ -1198,8 +1210,8 @@ fn fold_constants<'a>(
               }
             },
             // calling a closure argument or dynamic captured variable
-            TrackedValueRef::Arg(_) => (),
-            TrackedValueRef::Dyn { .. } => (),
+            TrackedValueRef::Arg => (),
+            TrackedValueRef::Dyn => (),
           }
         } else {
           // try to resolve it as a builtin
@@ -1259,7 +1271,7 @@ fn fold_constants<'a>(
         } = &**callable
         {
           if pre_resolved_signature.is_none() {
-            let pre_resolved_signature = maybe_pre_resolve_bulitin_call_signature(
+            let pre_resolved_signature = maybe_pre_resolve_builtin_call_signature(
               ctx,
               local_scope,
               *fn_entry_ix,
@@ -1320,8 +1332,8 @@ fn fold_constants<'a>(
                     .unwrap();
                 }
               },
-              TrackedValueRef::Arg(_) => None,
-              TrackedValueRef::Dyn { .. } => None,
+              TrackedValueRef::Arg => None,
+              TrackedValueRef::Dyn => None,
             }
           } else {
             unreachable!(
@@ -1362,22 +1374,7 @@ fn fold_constants<'a>(
       *params = Rc::new(params_inner);
 
       let mut closure_scope = ScopeTracker::wrap(local_scope);
-      for param in params.iter() {
-        for ident in param.ident.iter_idents() {
-          closure_scope.set(
-            ident,
-            TrackedValue::Arg(ClosureArg {
-              default_val: None,
-              type_hint: match param.ident {
-                DestructurePattern::Ident(_) => param.type_hint,
-                DestructurePattern::Map(_) => None,
-                DestructurePattern::Array(_) => None,
-              },
-              ident: DestructurePattern::Ident(ident),
-            }),
-          );
-        }
-      }
+      bind_closure_params_into_scope(&mut closure_scope, &params);
 
       // We use this scope for const capture checking/inlining to avoid situations where the closure
       // assigns a local variable with the same name as a non-const captured variable, shadowing it.
@@ -1385,6 +1382,7 @@ fn fold_constants<'a>(
       // This would hide the capture and cause incorrect behavior.
       let mut local_scope_with_args = ScopeTracker {
         vars: closure_scope.vars.clone(),
+        types: closure_scope.types.clone(),
         parent: Some(local_scope),
       };
 
@@ -1396,16 +1394,13 @@ fn fold_constants<'a>(
 
       for (name, val) in closure_scope.vars.iter() {
         match val {
-          TrackedValue::Dyn { type_hint } => {
-            local_scope_with_args.set(
-              *name,
-              TrackedValue::Dyn {
-                type_hint: *type_hint,
-              },
-            );
-          }
-          TrackedValue::Arg(arg) => {
-            local_scope_with_args.set(*name, TrackedValue::Arg(arg.clone()));
+          TrackedValue::Dyn | TrackedValue::Arg => {
+            let ty = closure_scope
+              .types
+              .get(name)
+              .cloned()
+              .unwrap_or(crate::ty::AbstractType::Unknown);
+            local_scope_with_args.set_with_type(*name, val.clone(), ty);
           }
           TrackedValue::Const(_) => (),
         }
@@ -1654,14 +1649,7 @@ fn fold_constants<'a>(
       ) {
         for name in conditional_scope_var_names {
           if let Some(TrackedValueRef::Const(_)) = parent_scope.get(name) {
-            parent_scope.set(
-              name,
-              TrackedValue::Arg(ClosureArg {
-                ident: DestructurePattern::Ident(name),
-                type_hint: None,
-                default_val: None,
-              }),
-            );
+            parent_scope.set(name, TrackedValue::Arg);
           }
         }
       }
@@ -1761,6 +1749,38 @@ fn fold_constants<'a>(
   }
 }
 
+/// Shared logic for `Statement::Assignment` and `TopLevelStatement::Export`: optimize the RHS,
+/// then either store a folded literal as const or delegate to [`record_non_const_binding`].
+fn optimize_simple_assignment(
+  ctx: &EvalCtx,
+  local_scope: &mut ScopeTracker,
+  name: Sym,
+  expr: &mut Expr,
+  type_hint: Option<ArgType>,
+  allow_rng_const_eval: bool,
+) -> Result<(), ErrorStack> {
+  // insert a placeholder for the variable in the local scope to support recursive calls
+  // unless we're assigning to an existing variable
+  if !local_scope.has(name) {
+    match type_hint {
+      Some(ty) => local_scope.set_with_type(
+        name,
+        TrackedValue::Dyn,
+        crate::ty::AbstractType::Concrete(ty),
+      ),
+      None => local_scope.set(name, TrackedValue::Dyn),
+    }
+  }
+
+  optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
+
+  match expr.as_literal() {
+    Some(val) => local_scope.set(name, TrackedValue::Const(val.clone())),
+    None => record_non_const_binding(ctx, local_scope, name, expr, type_hint),
+  }
+  Ok(())
+}
+
 fn optimize_statement<'a>(
   ctx: &EvalCtx,
   local_scope: &'a mut ScopeTracker,
@@ -1774,58 +1794,14 @@ fn optimize_statement<'a>(
       expr,
       type_hint,
       ..
-    } => {
-      // insert a placeholder for the variable in the local scope to support recursive calls
-      // unless we're assigning to an existing variable
-      if !local_scope.has(*name) {
-        local_scope.set(
-          *name,
-          TrackedValue::Dyn {
-            type_hint: *type_hint,
-          },
-        );
-      }
-
-      optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
-
-      local_scope.set(
-        *name,
-        match expr.as_literal() {
-          Some(val) => TrackedValue::Const(val.clone()),
-          None => {
-            let dyn_type = get_dyn_type(expr, local_scope);
-            let pre_resolved_ty = match *type_hint {
-              Some(hint) => Some(hint),
-              None => match pre_resolve_expr_type(ctx, local_scope, expr) {
-                Some(ty) => ty.into(),
-                None => None,
-              },
-            };
-            match dyn_type {
-              DynType::Arg => TrackedValue::Arg(ClosureArg {
-                ident: DestructurePattern::Ident(*name),
-                type_hint: pre_resolved_ty,
-                default_val: None,
-              }),
-              DynType::Const | DynType::Dyn => TrackedValue::Dyn {
-                type_hint: pre_resolved_ty,
-              },
-            }
-          }
-        },
-      );
-      Ok(())
-    }
+    } => optimize_simple_assignment(ctx, local_scope, *name, expr, *type_hint, allow_rng_const_eval),
     Statement::DestructureAssignment { lhs, rhs } => {
       // insert a placeholder for assigned variables in the local scope to support recursive calls
       // unless we're assigning to an existing variables
       for name in lhs.iter_idents() {
         if !local_scope.has(name) {
-          local_scope.set(
-            name,
-            // no way currently to get type data for stuff inside of maps/arrays
-            TrackedValue::Dyn { type_hint: None },
-          );
+          // no way currently to get type data for stuff inside of maps/arrays
+          local_scope.set(name, TrackedValue::Dyn);
         }
       }
 
@@ -1834,14 +1810,7 @@ fn optimize_statement<'a>(
 
       let Some(rhs) = rhs.as_literal() else {
         for name in lhs.iter_idents() {
-          local_scope.set(
-            name,
-            TrackedValue::Arg(ClosureArg {
-              ident: DestructurePattern::Ident(name),
-              type_hint: None,
-              default_val: None,
-            }),
-          );
+          local_scope.set(name, TrackedValue::Arg);
         }
         return Ok(());
       };
@@ -1889,54 +1858,11 @@ fn optimize_top_level_statement<'a>(
       expr,
       type_hint,
       ..
-    } => {
-      // Handle identically to Assignment
-      if !local_scope.has(*name) {
-        local_scope.set(
-          *name,
-          TrackedValue::Dyn {
-            type_hint: *type_hint,
-          },
-        );
-      }
-
-      optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
-
-      local_scope.set(
-        *name,
-        match expr.as_literal() {
-          Some(val) => TrackedValue::Const(val.clone()),
-          None => {
-            let dyn_type = get_dyn_type(expr, local_scope);
-            let pre_resolved_ty = match *type_hint {
-              Some(hint) => Some(hint),
-              None => match pre_resolve_expr_type(ctx, local_scope, expr) {
-                Some(ty) => ty.into(),
-                None => None,
-              },
-            };
-            match dyn_type {
-              DynType::Arg => TrackedValue::Arg(ClosureArg {
-                ident: DestructurePattern::Ident(*name),
-                type_hint: pre_resolved_ty,
-                default_val: None,
-              }),
-              DynType::Const | DynType::Dyn => TrackedValue::Dyn {
-                type_hint: pre_resolved_ty,
-              },
-            }
-          }
-        },
-      );
-      Ok(())
-    }
+    } => optimize_simple_assignment(ctx, local_scope, *name, expr, *type_hint, allow_rng_const_eval),
     TopLevelStatement::Import { bindings, .. } => {
       // Cannot const-fold imports; mark all bound names as dynamic
       for name in bindings.iter_idents() {
-        local_scope.set(
-          name,
-          TrackedValue::Dyn { type_hint: None },
-        );
+        local_scope.set(name, TrackedValue::Dyn);
       }
       Ok(())
     }

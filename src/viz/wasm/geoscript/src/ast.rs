@@ -6,13 +6,13 @@ use pest::iterators::Pair;
 use crate::{
   builtins::{
     add_impl, and_impl, bit_and_impl, bit_or_impl, div_impl, eq_impl,
-    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, FnSignature},
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
     map_impl, mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl,
     pos_impl, sub_impl, BoolOp,
   },
-  get_args, get_binop_def_ix, get_unop_def_ix, get_unop_return_ty, ArgType, Callable, Closure,
-  ErrorStack, EvalCtx, GetArgsOutput, IntRange, PreResolvedSignature, Rule, Sym, Value,
-  EMPTY_KWARGS, FUNCTION_ALIASES, PRATT_PARSER,
+  get_binop_def_ix, get_unop_def_ix, match_signature_by_arg_types, ArgType, Callable, Closure,
+  ErrorStack, EvalCtx, IntRange, PreResolvedSignature, Rule, Sym, Value, EMPTY_KWARGS,
+  FUNCTION_ALIASES, PRATT_PARSER,
 };
 
 /// Source location index. Points into a SourceMap to retrieve (line, col).
@@ -25,109 +25,48 @@ pub struct Program {
   pub statements: Vec<TopLevelStatement>,
 }
 
-// TODO: probably should de-dupe this with `ArgType`
-#[derive(Debug, Clone, Copy)]
-pub enum TypeName {
-  Mesh,
-  Int,
-  Float,
-  Num,
-  Vec2,
-  Vec3,
-  Bool,
-  String,
-  Map,
-  Seq,
-  Callable,
-  Nil,
-  Material,
-  Light,
-}
-
-impl Into<ArgType> for TypeName {
-  fn into(self) -> ArgType {
-    match self {
-      TypeName::Mesh => ArgType::Mesh,
-      TypeName::Int => ArgType::Int,
-      TypeName::Float => ArgType::Float,
-      TypeName::Num => ArgType::Numeric,
-      TypeName::Vec2 => ArgType::Vec2,
-      TypeName::Vec3 => ArgType::Vec3,
-      TypeName::Bool => ArgType::Bool,
-      TypeName::String => ArgType::String,
-      TypeName::Map => ArgType::Map,
-      TypeName::Seq => ArgType::Sequence,
-      TypeName::Callable => ArgType::Callable,
-      TypeName::Nil => ArgType::Nil,
-      TypeName::Material => ArgType::Material,
-      TypeName::Light => ArgType::Light,
-    }
-  }
-}
-
-impl Into<Option<TypeName>> for ArgType {
-  fn into(self) -> Option<TypeName> {
-    match self {
-      ArgType::Mesh => Some(TypeName::Mesh),
-      ArgType::Int => Some(TypeName::Int),
-      ArgType::Float => Some(TypeName::Float),
-      ArgType::Numeric => Some(TypeName::Num),
-      ArgType::Vec2 => Some(TypeName::Vec2),
-      ArgType::Vec3 => Some(TypeName::Vec3),
-      ArgType::Bool => Some(TypeName::Bool),
-      ArgType::String => Some(TypeName::String),
-      ArgType::Map => Some(TypeName::Map),
-      ArgType::Sequence => Some(TypeName::Seq),
-      ArgType::Callable => Some(TypeName::Callable),
-      ArgType::Nil => Some(TypeName::Nil),
-      ArgType::Material => Some(TypeName::Material),
-      ArgType::Light => Some(TypeName::Light),
-      ArgType::Any => None,
-    }
-  }
-}
-
-impl FromStr for TypeName {
+impl FromStr for ArgType {
   type Err = String;
 
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
-      "mesh" => Ok(TypeName::Mesh),
-      "int" => Ok(TypeName::Int),
-      "float" => Ok(TypeName::Float),
-      "num" => Ok(TypeName::Num),
-      "vec2" => Ok(TypeName::Vec2),
-      "vec3" => Ok(TypeName::Vec3),
-      "bool" => Ok(TypeName::Bool),
-      "str" | "string" => Ok(TypeName::String),
-      "map" => Ok(TypeName::Map),
-      "seq" | "sequence" => Ok(TypeName::Seq),
-      "fn" | "callable" => Ok(TypeName::Callable),
-      "nil" => Ok(TypeName::Nil),
-      "mat" => Ok(TypeName::Material),
-      "light" => Ok(TypeName::Light),
+      "mesh" => Ok(ArgType::Mesh),
+      "int" => Ok(ArgType::Int),
+      "float" => Ok(ArgType::Float),
+      "num" => Ok(ArgType::Numeric),
+      "vec2" => Ok(ArgType::Vec2),
+      "vec3" => Ok(ArgType::Vec3),
+      "bool" => Ok(ArgType::Bool),
+      "str" | "string" => Ok(ArgType::String),
+      "map" => Ok(ArgType::Map),
+      "seq" | "sequence" => Ok(ArgType::Sequence),
+      "fn" | "callable" => Ok(ArgType::Callable),
+      "nil" => Ok(ArgType::Nil),
+      "mat" => Ok(ArgType::Material),
+      "light" => Ok(ArgType::Light),
       _ => Err(format!("Unknown type name: {s}")),
     }
   }
 }
 
-impl TypeName {
+impl ArgType {
   pub fn validate_val(&self, val: &Value) -> Result<(), ErrorStack> {
     match (self, val) {
-      (TypeName::Mesh, Value::Mesh(_)) => Ok(()),
-      (TypeName::Int, Value::Int(_)) => Ok(()),
-      (TypeName::Float, Value::Float(_)) => Ok(()),
-      (TypeName::Num, Value::Int(_) | Value::Float(_)) => Ok(()),
-      (TypeName::Vec2, Value::Vec2(_)) => Ok(()),
-      (TypeName::Vec3, Value::Vec3(_)) => Ok(()),
-      (TypeName::Bool, Value::Bool(_)) => Ok(()),
-      (TypeName::Seq, Value::Sequence(_)) => Ok(()),
-      (TypeName::Callable, Value::Callable(_)) => Ok(()),
-      (TypeName::Map, Value::Map(_)) => Ok(()),
-      (TypeName::String, Value::String(_)) => Ok(()),
-      (TypeName::Nil, Value::Nil) => Ok(()),
-      (TypeName::Material, Value::Material(_)) => Ok(()),
-      (TypeName::Light, Value::Light(_)) => Ok(()),
+      (ArgType::Any, _) => Ok(()),
+      (ArgType::Mesh, Value::Mesh(_)) => Ok(()),
+      (ArgType::Int, Value::Int(_)) => Ok(()),
+      (ArgType::Float, Value::Float(_)) => Ok(()),
+      (ArgType::Numeric, Value::Int(_) | Value::Float(_)) => Ok(()),
+      (ArgType::Vec2, Value::Vec2(_)) => Ok(()),
+      (ArgType::Vec3, Value::Vec3(_)) => Ok(()),
+      (ArgType::Bool, Value::Bool(_)) => Ok(()),
+      (ArgType::Sequence, Value::Sequence(_)) => Ok(()),
+      (ArgType::Callable, Value::Callable(_)) => Ok(()),
+      (ArgType::Map, Value::Map(_)) => Ok(()),
+      (ArgType::String, Value::String(_)) => Ok(()),
+      (ArgType::Nil, Value::Nil) => Ok(()),
+      (ArgType::Material, Value::Material(_)) => Ok(()),
+      (ArgType::Light, Value::Light(_)) => Ok(()),
       _ => Err(ErrorStack::new(format!(
         "Value {val:?} does not match type {self:?}"
       ))),
@@ -246,7 +185,7 @@ pub enum Statement {
     name: Sym,
     name_loc: SourceLoc,
     expr: Expr,
-    type_hint: Option<TypeName>,
+    type_hint: Option<ArgType>,
   },
   DestructureAssignment {
     lhs: DestructurePattern,
@@ -271,7 +210,7 @@ pub enum TopLevelStatement {
     name: Sym,
     name_loc: SourceLoc,
     expr: Expr,
-    type_hint: Option<TypeName>,
+    type_hint: Option<ArgType>,
   },
   Import {
     bindings: DestructurePattern,
@@ -430,7 +369,7 @@ impl Statement {
 #[derive(Clone, Debug)]
 pub struct ClosureArg {
   pub ident: DestructurePattern,
-  pub type_hint: Option<TypeName>,
+  pub type_hint: Option<ArgType>,
   pub default_val: Option<Expr>,
 }
 
@@ -528,7 +467,7 @@ pub enum Expr {
     params: Rc<Vec<ClosureArg>>,
     body: Rc<ClosureBody>,
     arg_placeholder_scope: FxHashMap<Sym, Value>,
-    return_type_hint: Option<TypeName>,
+    return_type_hint: Option<ArgType>,
     loc: SourceLoc,
   },
   Ident {
@@ -760,22 +699,7 @@ impl Expr {
         }
 
         let mut closure_scope = ScopeTracker::wrap(local_scope);
-        for param in params.iter() {
-          for ident in param.ident.iter_idents() {
-            closure_scope.set(
-              ident,
-              TrackedValue::Arg(ClosureArg {
-                default_val: None,
-                type_hint: match param.ident {
-                  DestructurePattern::Ident(_) => param.type_hint,
-                  DestructurePattern::Map(_) => None,
-                  DestructurePattern::Array(_) => None,
-                },
-                ident: DestructurePattern::Ident(ident),
-              }),
-            );
-          }
-        }
+        bind_closure_params_into_scope(&mut closure_scope, params);
 
         let body_captures_dyn = body.analyze_const_captures(
           ctx,
@@ -793,13 +717,13 @@ impl Expr {
       }
       Expr::Ident { name: id, .. } => match local_scope.vars.get(id) {
         Some(TrackedValue::Const(_)) => false,
-        Some(TrackedValue::Arg(_)) => false,
-        Some(TrackedValue::Dyn { .. }) => true,
+        Some(TrackedValue::Arg) => false,
+        Some(TrackedValue::Dyn) => true,
         None => match local_scope.parent {
           Some(parent) => match parent.get(*id) {
             Some(TrackedValueRef::Const(_)) => false,
-            Some(TrackedValueRef::Arg(_)) => true,
-            Some(TrackedValueRef::Dyn { .. }) => true,
+            Some(TrackedValueRef::Arg) => true,
+            Some(TrackedValueRef::Dyn) => true,
             None => true,
           },
           None => true,
@@ -943,22 +867,7 @@ impl Expr {
         *params = Rc::new(params_inner);
 
         let mut closure_scope = ScopeTracker::wrap(local_scope);
-        for param in params.iter() {
-          for ident in param.ident.iter_idents() {
-            closure_scope.set(
-              ident,
-              TrackedValue::Arg(ClosureArg {
-                default_val: None,
-                type_hint: match param.ident {
-                  DestructurePattern::Ident(_) => param.type_hint,
-                  DestructurePattern::Map(_) => None,
-                  DestructurePattern::Array(_) => None,
-                },
-                ident: DestructurePattern::Ident(ident),
-              }),
-            );
-          }
-        }
+        bind_closure_params_into_scope(&mut closure_scope, params);
 
         let mut body_inner = (**body).clone();
         body_inner.inline_const_captures(ctx, &mut closure_scope);
@@ -971,8 +880,8 @@ impl Expr {
             loc: *loc,
           };
         }
-        Some(TrackedValue::Arg(_)) => {}
-        Some(TrackedValue::Dyn { .. }) => {}
+        Some(TrackedValue::Arg) => {}
+        Some(TrackedValue::Dyn) => {}
         None => match local_scope.parent {
           Some(parent) => match parent.get(*id) {
             Some(TrackedValueRef::Const(resolved)) => {
@@ -981,8 +890,8 @@ impl Expr {
                 loc: *loc,
               };
             }
-            Some(TrackedValueRef::Arg(_)) => {}
-            Some(TrackedValueRef::Dyn { .. }) => {}
+            Some(TrackedValueRef::Arg) => {}
+            Some(TrackedValueRef::Dyn) => {}
             None => {}
           },
           None => {}
@@ -1260,7 +1169,7 @@ impl ClosureBody {
       if let Statement::Assignment {
         name,
         expr,
-        type_hint: _,
+        type_hint,
         ..
       } = stmt
       {
@@ -1270,32 +1179,17 @@ impl ClosureBody {
         }
         // if this variable has already been de-constified in the scope, we avoid overwriting it
         let is_deconstified = match closure_scope.get(*name) {
-          Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn { .. }) => true,
+          Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
           Some(TrackedValueRef::Const(_)) => false,
           None => false,
         };
 
         if !is_deconstified {
-          let tracked_val = match expr.as_literal() {
-            Some(literal) => TrackedValue::Const(literal.clone()),
-            None => {
-              let dyn_type = get_dyn_type(expr, closure_scope);
-              match dyn_type {
-                DynType::Arg => TrackedValue::Arg(ClosureArg {
-                  ident: DestructurePattern::Ident(*name),
-                  type_hint: None,
-                  default_val: None,
-                }),
-                DynType::Const | DynType::Dyn => TrackedValue::Dyn {
-                  type_hint: match pre_resolve_expr_type(ctx, closure_scope, expr) {
-                    Some(ty) => ty.into(),
-                    None => None,
-                  },
-                },
-              }
-            }
-          };
-          closure_scope.set(*name, tracked_val);
+          if let Some(literal) = expr.as_literal() {
+            closure_scope.set(*name, TrackedValue::Const(literal.clone()));
+          } else {
+            record_non_const_binding(ctx, closure_scope, *name, expr, *type_hint);
+          }
         }
       }
       // TODO: should de-dupe
@@ -1306,32 +1200,17 @@ impl ClosureBody {
             continue;
           }
           let is_deconstified = match closure_scope.get(name) {
-            Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn { .. }) => true,
+            Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
             Some(TrackedValueRef::Const(_)) => false,
             None => false,
           };
 
           if !is_deconstified {
-            let tracked_val = match rhs.as_literal() {
-              Some(literal) => TrackedValue::Const(literal.clone()),
-              None => {
-                let dyn_type = get_dyn_type(rhs, closure_scope);
-                match dyn_type {
-                  DynType::Arg => TrackedValue::Arg(ClosureArg {
-                    ident: DestructurePattern::Ident(name),
-                    type_hint: None,
-                    default_val: None,
-                  }),
-                  DynType::Const | DynType::Dyn => TrackedValue::Dyn {
-                    type_hint: match pre_resolve_expr_type(ctx, closure_scope, rhs) {
-                      Some(ty) => ty.into(),
-                      None => None,
-                    },
-                  },
-                }
-              }
-            };
-            closure_scope.set(name, tracked_val);
+            if let Some(literal) = rhs.as_literal() {
+              closure_scope.set(name, TrackedValue::Const(literal.clone()));
+            } else {
+              record_non_const_binding(ctx, closure_scope, name, rhs, None);
+            }
           }
         }
       }
@@ -1347,67 +1226,37 @@ impl ClosureBody {
       if let Statement::Assignment {
         name,
         expr,
-        type_hint: _,
+        type_hint,
         ..
       } = stmt
       {
         let is_deconstified = match closure_scope.get(*name) {
-          Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn { .. }) => true,
+          Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
           Some(TrackedValueRef::Const(_)) => false,
           None => false,
         };
 
         if !is_deconstified {
-          let tracked_val = match expr.as_literal() {
-            Some(literal) => TrackedValue::Const(literal.clone()),
-            None => {
-              let dyn_type = get_dyn_type(expr, closure_scope);
-              match dyn_type {
-                DynType::Arg => TrackedValue::Arg(ClosureArg {
-                  ident: DestructurePattern::Ident(*name),
-                  type_hint: None,
-                  default_val: None,
-                }),
-                DynType::Const | DynType::Dyn => TrackedValue::Dyn {
-                  type_hint: match pre_resolve_expr_type(ctx, closure_scope, expr) {
-                    Some(ty) => ty.into(),
-                    None => None,
-                  },
-                },
-              }
-            }
-          };
-          closure_scope.set(*name, tracked_val);
+          if let Some(literal) = expr.as_literal() {
+            closure_scope.set(*name, TrackedValue::Const(literal.clone()));
+          } else {
+            record_non_const_binding(ctx, closure_scope, *name, expr, *type_hint);
+          }
         }
       } else if let Statement::DestructureAssignment { lhs, rhs } = stmt {
         for name in lhs.iter_idents() {
           let is_deconstified = match closure_scope.get(name) {
-            Some(TrackedValueRef::Arg(_) | TrackedValueRef::Dyn { .. }) => true,
+            Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
             Some(TrackedValueRef::Const(_)) => false,
             None => false,
           };
 
           if !is_deconstified {
-            let tracked_val = match rhs.as_literal() {
-              Some(literal) => TrackedValue::Const(literal.clone()),
-              None => {
-                let dyn_type = get_dyn_type(rhs, closure_scope);
-                match dyn_type {
-                  DynType::Arg => TrackedValue::Arg(ClosureArg {
-                    ident: DestructurePattern::Ident(name),
-                    type_hint: None,
-                    default_val: None,
-                  }),
-                  DynType::Const | DynType::Dyn => TrackedValue::Dyn {
-                    type_hint: match pre_resolve_expr_type(ctx, closure_scope, rhs) {
-                      Some(ty) => ty.into(),
-                      None => None,
-                    },
-                  },
-                }
-              }
-            };
-            closure_scope.set(name, tracked_val);
+            if let Some(literal) = rhs.as_literal() {
+              closure_scope.set(name, TrackedValue::Const(literal.clone()));
+            } else {
+              record_non_const_binding(ctx, closure_scope, name, rhs, None);
+            }
           }
         }
       }
@@ -1588,7 +1437,7 @@ impl BinOp {
     }
   }
 
-  fn get_builtin_fn_name(&self) -> Option<&'static str> {
+  pub fn get_builtin_fn_name(&self) -> Option<&'static str> {
     let name = match self {
       BinOp::Add => "add",
       BinOp::Sub => "sub",
@@ -1621,6 +1470,14 @@ pub enum PrefixOp {
 }
 
 impl PrefixOp {
+  pub fn get_builtin_fn_name(&self) -> &'static str {
+    match self {
+      PrefixOp::Neg => "neg",
+      PrefixOp::Pos => "pos",
+      PrefixOp::Not => "not",
+    }
+  }
+
   pub fn apply(&self, ctx: &EvalCtx, val: &Value) -> Result<Value, ErrorStack> {
     let fn_sig_entry_ix = unsafe {
       (addr_of!(UNOP_DEF_IX_TABLE) as *const usize)
@@ -1788,7 +1645,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
             let mut default_val = None;
             if next.as_rule() == Rule::type_hint {
               type_hint = Some(
-                TypeName::from_str(next.into_inner().next().unwrap().as_str()).map_err(|err| {
+                ArgType::from_str(next.into_inner().next().unwrap().as_str()).map_err(|err| {
                   ErrorStack::new(err)
                     .wrap(format!(
                       "Invalid type hint for closure arg {:?}",
@@ -1825,7 +1682,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       let mut next = inner.next().unwrap();
       let return_type_hint = if next.as_rule() == Rule::type_hint {
         let type_hint_str = next.into_inner().next().unwrap().as_str();
-        let return_type_hint = TypeName::from_str(type_hint_str).map_err(|err| {
+        let return_type_hint = ArgType::from_str(type_hint_str).map_err(|err| {
           ErrorStack::new(err)
             .wrap("Invalid type hint for closure return type")
             .with_loc(line as u32, col as u32)
@@ -2250,7 +2107,7 @@ fn parse_assignment(ctx: &EvalCtx, assignment: Pair<Rule>) -> Result<Statement, 
 
   let mut next = inner.next().unwrap();
   let type_hint = if next.as_rule() == Rule::type_hint {
-    let type_hint = TypeName::from_str(next.into_inner().next().unwrap().as_str())
+    let type_hint = ArgType::from_str(next.into_inner().next().unwrap().as_str())
       .map_err(|err| ErrorStack::new(err).with_loc(line as u32, col as u32))?;
     next = inner.next().unwrap();
     Some(type_hint)
@@ -2417,7 +2274,7 @@ fn parse_export_statement(
 
   let mut next = inner.next().unwrap();
   let type_hint = if next.as_rule() == Rule::type_hint {
-    let type_hint = TypeName::from_str(next.into_inner().next().unwrap().as_str())
+    let type_hint = ArgType::from_str(next.into_inner().next().unwrap().as_str())
       .map_err(|err| ErrorStack::new(err).with_loc(line as u32, col as u32))?;
     next = inner.next().unwrap();
     Some(type_hint)
@@ -2496,20 +2353,20 @@ pub(crate) fn parse_top_level_statement(
 pub(crate) enum TrackedValue {
   /// Value is const-available and has already been evaluated
   Const(Value),
-  /// Value is a closure argument and isn't available during const eval
-  Arg(ClosureArg),
-  /// Value is a non-const variable, either directly from or derived from an enclosing scope
-  Dyn { type_hint: Option<TypeName> },
+  /// Value is a closure argument and isn't available during const eval.  Type information
+  /// (if known) lives in the enclosing [`ScopeTracker::types`] side-table.
+  Arg,
+  /// Value is a non-const variable, either directly from or derived from an enclosing scope.
+  /// Type information (if known) lives in the enclosing [`ScopeTracker::types`] side-table.
+  Dyn,
 }
 
 impl TrackedValue {
   pub fn as_ref<'a>(&'a self) -> TrackedValueRef<'a> {
     match self {
       TrackedValue::Const(val) => TrackedValueRef::Const(val),
-      TrackedValue::Arg(arg) => TrackedValueRef::Arg(arg),
-      TrackedValue::Dyn { type_hint } => TrackedValueRef::Dyn {
-        type_hint: *type_hint,
-      },
+      TrackedValue::Arg => TrackedValueRef::Arg,
+      TrackedValue::Dyn => TrackedValueRef::Dyn,
     }
   }
 }
@@ -2517,13 +2374,17 @@ impl TrackedValue {
 #[derive(Debug)]
 pub(crate) enum TrackedValueRef<'a> {
   Const(&'a Value),
-  Arg(&'a ClosureArg),
-  Dyn { type_hint: Option<TypeName> },
+  Arg,
+  Dyn,
 }
 
 #[derive(Default, Debug)]
 pub(crate) struct ScopeTracker<'a> {
   pub vars: FxHashMap<Sym, TrackedValue>,
+  /// Side-table of known types for bindings in this scope frame.  Entries are populated when
+  /// a binding is added with `set_with_type`; scopes walked via the parent chain contribute
+  /// their own entries in [`build_type_env`].
+  pub types: FxHashMap<Sym, crate::ty::AbstractType>,
   pub parent: Option<&'a ScopeTracker<'a>>,
 }
 
@@ -2531,6 +2392,7 @@ impl<'a> ScopeTracker<'a> {
   pub fn wrap(parent: &'a ScopeTracker<'a>) -> Self {
     ScopeTracker {
       vars: FxHashMap::default(),
+      types: FxHashMap::default(),
       parent: Some(parent),
     }
   }
@@ -2538,6 +2400,7 @@ impl<'a> ScopeTracker<'a> {
   pub fn fork(&self) -> ScopeTracker<'a> {
     ScopeTracker {
       vars: self.vars.clone(),
+      types: self.types.clone(),
       parent: self.parent,
     }
   }
@@ -2564,266 +2427,137 @@ impl<'a> ScopeTracker<'a> {
 
   pub fn set(&mut self, name: Sym, value: TrackedValue) {
     self.vars.insert(name, value);
+    self.types.remove(&name);
+  }
+
+  /// Insert a binding whose type is already known.  Writes the tracked value and records
+  /// `ty` in the scope's side-table so that [`build_type_env`] can surface it without having
+  /// to inspect the stored value.
+  pub fn set_with_type(
+    &mut self,
+    name: Sym,
+    value: TrackedValue,
+    ty: crate::ty::AbstractType,
+  ) {
+    self.vars.insert(name, value);
+    self.types.insert(name, ty);
+  }
+
+  /// Snapshot this scope (walking the parent chain) into a [`TypeEnv`] suitable for use with
+  /// [`crate::type_infer::infer_expr`].  Each scope frame becomes a frame in the TypeEnv,
+  /// outermost-first.  The base TypeEnv is pre-seeded with the language's default globals
+  /// (`pi`, `tau`, etc.) via [`crate::type_infer::TypeEnv::with_default_globals`].
+  pub fn build_type_env(&self, ctx: &EvalCtx) -> crate::type_infer::TypeEnv {
+    use crate::ty::AbstractType;
+
+    let mut chain: Vec<&ScopeTracker> = Vec::new();
+    let mut cur = Some(self);
+    while let Some(s) = cur {
+      chain.push(s);
+      cur = s.parent;
+    }
+
+    let mut env = crate::type_infer::TypeEnv::with_default_globals(ctx);
+    // First entry in `chain` is this scope; last is the outermost.  Push outermost first so
+    // lookup resolves innermost shadowing correctly.
+    for frame in chain.iter().rev() {
+      env.push_scope();
+      for (&name, val) in &frame.vars {
+        let ty = match val {
+          TrackedValue::Const(v) => AbstractType::Concrete(v.get_type()),
+          TrackedValue::Arg | TrackedValue::Dyn => frame
+            .types
+            .get(&name)
+            .cloned()
+            .unwrap_or(AbstractType::Unknown),
+        };
+        env.define(name, ty);
+      }
+    }
+    env
   }
 }
 
-pub(crate) fn pre_resolve_binop_def_ix(
-  ctx: &EvalCtx,
-  scope_tracker: &ScopeTracker,
-  op: &BinOp,
-  lhs: &Expr,
-  rhs: &Expr,
-) -> Option<(&'static [FnSignature], usize)> {
-  let builtin_name = op.get_builtin_fn_name()?;
-
-  let builtin_arg_defs = fn_sigs()[builtin_name].signatures;
-
-  let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
-  let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
-  let fn_entry_ix = get_builtin_fn_sig_entry_ix(builtin_name).unwrap();
-  get_binop_def_ix(
-    ctx,
-    fn_entry_ix,
-    &lhs_ty.build_example_val()?,
-    &rhs_ty.build_example_val()?,
-  )
-  .ok()
-  .map(|def_ix| (builtin_arg_defs, def_ix))
+fn swizzle_result_ty(field: &str, valid: impl Fn(char) -> bool) -> Option<ArgType> {
+  if !field.chars().all(valid) {
+    return None;
+  }
+  match field.chars().count() {
+    1 => Some(ArgType::Float),
+    2 => Some(ArgType::Vec2),
+    3 => Some(ArgType::Vec3),
+    _ => None,
+  }
 }
 
-pub(crate) fn pre_resolve_expr_type(
-  ctx: &EvalCtx,
-  scope_tracker: &ScopeTracker,
-  arg: &Expr,
+/// Type-level static field access (e.g. `v.x`, `v.xyz`).  Mirrors
+/// `EvalCtx::eval_static_field_access` but operates purely on types.
+pub fn infer_static_field_access_ty(lhs_ty: ArgType, field: &str) -> Option<ArgType> {
+  match lhs_ty {
+    ArgType::Vec2 => swizzle_result_ty(field, |c| matches!(c, 'x' | 'y' | 'r' | 'g')),
+    ArgType::Vec3 => {
+      swizzle_result_ty(field, |c| matches!(c, 'x' | 'y' | 'z' | 'r' | 'g' | 'b'))
+    }
+    _ => None,
+  }
+}
+
+/// Type-level dynamic field access (`v[i]` or `v[s]`).  Handles:
+/// - integer index into Vec2/Vec3 → Float
+/// - string-literal field is equivalent to static field access
+pub fn infer_dynamic_field_access_ty(
+  lhs_ty: ArgType,
+  field_expr: &Expr,
+  field_ty: ArgType,
 ) -> Option<ArgType> {
-  match arg {
-    Expr::Literal { value: v, .. } => Some(v.get_type()),
-    Expr::Ident { name: id, .. } => match scope_tracker.get(*id) {
-      Some(TrackedValueRef::Const(val)) => Some(val.get_type()),
-      Some(TrackedValueRef::Arg(arg)) => arg.type_hint.map(Into::into),
-      Some(TrackedValueRef::Dyn { type_hint }) => type_hint.map(Into::into),
-      None => None, // error will happen later
-    },
-    Expr::BinOp {
-      op,
-      lhs,
-      rhs,
-      pre_resolved_def_ix,
-      ..
-    } => {
-      match op {
-        BinOp::Range | BinOp::RangeInclusive => return Some(ArgType::Sequence),
-        BinOp::Pipeline => {
-          let rhs_ty = pre_resolve_expr_type(ctx, scope_tracker, rhs)?;
-          if matches!(rhs_ty, ArgType::Mesh) {
-            return Some(ArgType::Mesh);
-          }
-
-          return match &**rhs {
-            Expr::Literal {
-              value: Value::Callable(callable),
-              ..
-            } => callable.get_return_type_hint(),
-            _ => None,
-          };
-        }
-        BinOp::Map => return Some(ArgType::Sequence),
-        _ => (),
-      }
-
-      let (builtin_arg_defs, def_ix) = match pre_resolved_def_ix {
-        Some(def_ix) => {
-          let builtin_name = op.get_builtin_fn_name()?;
-          let builtin_arg_defs = fn_sigs()[builtin_name].signatures;
-          (builtin_arg_defs, *def_ix)
-        }
-        None => pre_resolve_binop_def_ix(ctx, scope_tracker, op, lhs, rhs)?,
-      };
-      let return_tys = builtin_arg_defs[def_ix].return_type;
-      match return_tys.len() {
-        0 => return None,
-        1 => (),
-        _ => return None,
-      }
-      match &return_tys[0] {
-        ArgType::Any => None,
-        ty => Some(*ty),
-      }
-    }
-    Expr::PrefixOp { op, expr, .. } => {
-      let arg_ty = pre_resolve_expr_type(ctx, scope_tracker, expr)?;
-      let example_val = arg_ty.build_example_val()?;
-      let return_ty_res = match op {
-        PrefixOp::Neg => get_unop_return_ty(ctx, "neg", fn_sigs()["neg"].signatures, &example_val),
-        PrefixOp::Pos => get_unop_return_ty(ctx, "pos", fn_sigs()["pos"].signatures, &example_val),
-        PrefixOp::Not => get_unop_return_ty(ctx, "not", fn_sigs()["not"].signatures, &example_val),
-      };
-      match return_ty_res {
-        Ok(return_tys) => {
-          if return_tys.len() == 1 {
-            if matches!(return_tys[0], ArgType::Any) {
-              None
-            } else {
-              Some(return_tys[0])
-            }
-          } else {
-            None
-          }
-        }
-        Err(_) => None,
-      }
-    }
-    Expr::Range { .. } => Some(ArgType::Sequence),
-    Expr::StaticFieldAccess { lhs, field, .. } => {
-      let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
-      let lhs_val = lhs_ty.build_example_val()?;
-      let out_val = match ctx.eval_static_field_access(&lhs_val, field) {
-        Ok(out) => out,
-        Err(err) => {
-          log::error!(
-            "Got error when evaluating field access with example values; lhs={lhs:?}, \
-             field={field:?}, err={err}"
-          );
-          return None;
-        }
-      };
-      let out_ty = out_val.get_type();
-      if matches!(out_ty, ArgType::Any) {
-        return None;
-      }
-      Some(out_ty)
-    }
-    Expr::FieldAccess { lhs, field, .. } => {
-      let lhs_ty = pre_resolve_expr_type(ctx, scope_tracker, lhs)?;
-      let lhs_val = lhs_ty.build_example_val()?;
-      let field_ty = pre_resolve_expr_type(ctx, scope_tracker, field)?;
-      let field_val = field_ty.build_example_val()?;
-      let out_val = match ctx.eval_field_access(&lhs_val, &field_val) {
-        Ok(out) => out,
-        Err(err) => {
-          log::error!(
-            "Got error when evaluating array access with example values; lhs={lhs:?}, \
-             field={field:?}, err={err}"
-          );
-          return None;
-        }
-      };
-      let out_ty = out_val.get_type();
-      if matches!(out_ty, ArgType::Any) {
-        return None;
-      }
-      Some(out_ty)
-    }
-    Expr::Call {
-      call: FunctionCall {
-        target,
-        args,
-        kwargs,
-      },
-      ..
-    } => match target {
-      FunctionCallTarget::Name(_) => None,
-      FunctionCallTarget::Literal(callable) => match &**callable {
-        Callable::Builtin {
-          fn_entry_ix,
-          pre_resolved_signature,
-          ..
-        } => {
-          let return_ty = if let Some(sig) = pre_resolved_signature {
-            let fn_signature_defs = fn_sigs().entries[*fn_entry_ix].1.signatures;
-            fn_signature_defs[sig.def_ix].return_type
-          } else {
-            match maybe_pre_resolve_bulitin_call_signature(
-              ctx,
-              scope_tracker,
-              *fn_entry_ix,
-              args,
-              kwargs,
-            ) {
-              Ok(Some(sig)) => {
-                let fn_signature_defs = fn_sigs().entries[*fn_entry_ix].1.signatures;
-                fn_signature_defs[sig.def_ix].return_type
-              }
-              Ok(None) => return None,
-              Err(_) => return None,
-            }
-          };
-          match return_ty.len() {
-            0 => None,
-            1 => {
-              if !matches!(return_ty[0], ArgType::Any) {
-                Some(return_ty[0])
-              } else {
-                None
-              }
-            }
-            _ => None,
-          }
-        }
-        Callable::PartiallyAppliedFn(paf) => paf.get_return_type_hint(),
-        Callable::Closure(closure) => closure.return_type_hint.map(Into::into),
-        Callable::ComposedFn(_) => None,
-        Callable::Dynamic { inner, .. } => return inner.get_return_type_hint(),
-      },
-    },
-    Expr::Closure { .. } => Some(ArgType::Callable),
-    Expr::ArrayLiteral { .. } => Some(ArgType::Sequence),
-    Expr::MapLiteral { .. } => Some(ArgType::Map),
-    Expr::Conditional { .. } => None,
-    Expr::Block { .. } => None,
+  if let Expr::Literal {
+    value: Value::String(s),
+    ..
+  } = field_expr
+  {
+    return infer_static_field_access_ty(lhs_ty, s);
+  }
+  match (lhs_ty, field_ty) {
+    (ArgType::Vec2 | ArgType::Vec3, ArgType::Int) => Some(ArgType::Float),
+    _ => None,
   }
 }
 
-pub(crate) fn maybe_pre_resolve_bulitin_call_signature(
+pub(crate) fn maybe_pre_resolve_builtin_call_signature(
   ctx: &EvalCtx,
   scope_tracker: &ScopeTracker,
   fn_entry_ix: usize,
   args: &[Expr],
   kwargs: &FxHashMap<Sym, Expr>,
 ) -> Result<Option<PreResolvedSignature>, ErrorStack> {
+  use crate::type_infer::infer_expr;
+
+  let mut env = scope_tracker.build_type_env(ctx);
   let mut arg_tys: Vec<ArgType> = Vec::with_capacity(args.len());
   for arg in args {
-    let Some(ty) = pre_resolve_expr_type(ctx, scope_tracker, arg) else {
+    let Some(ty) = infer_expr(ctx, &mut env, arg).as_single_arg_type() else {
       return Ok(None);
     };
     arg_tys.push(ty);
   }
 
-  let mut kwarg_tys: FxHashMap<Sym, ArgType> =
-    FxHashMap::with_capacity_and_hasher(kwargs.len(), Default::default());
+  let mut kwarg_tys: Vec<(Sym, ArgType)> = Vec::with_capacity(kwargs.len());
   for (name, expr) in kwargs {
-    let Some(ty) = pre_resolve_expr_type(ctx, scope_tracker, expr) else {
+    let Some(ty) = infer_expr(ctx, &mut env, expr).as_single_arg_type() else {
       return Ok(None);
     };
-    kwarg_tys.insert(*name, ty);
+    kwarg_tys.push((*name, ty));
   }
 
-  // in order to re-use `get_args` code, we create fake args and kwargs of the types we're expecting
-  let Ok(args) = arg_tys
-    .into_iter()
-    .map(|ty| ty.build_example_val().ok_or(()))
-    .collect::<Result<Vec<Value>, ()>>()
-  else {
-    return Ok(None);
-  };
-  let Ok(kwargs) = kwarg_tys
-    .into_iter()
-    .map(|(name, ty)| Ok((name, ty.build_example_val().ok_or(())?)))
-    .collect::<Result<FxHashMap<_, Value>, ()>>()
-  else {
-    return Ok(None);
-  };
+  let def = &fn_sigs().entries[fn_entry_ix].1;
+  let sigs = def.signatures;
 
-  let (fn_name, def) = &fn_sigs().entries[fn_entry_ix];
-  let sigs = &def.signatures;
-
-  let resolved_sig = get_args(ctx, fn_name, sigs, &args, &kwargs)?;
-  match resolved_sig {
-    GetArgsOutput::Valid { def_ix, arg_refs } => Ok(Some(PreResolvedSignature {
-      def_ix,
-      arg_refs: arg_refs.into_iter().collect(),
+  match match_signature_by_arg_types(sigs, &arg_tys, &kwarg_tys) {
+    Some(sig_match) => Ok(Some(PreResolvedSignature {
+      def_ix: sig_match.def_ix,
+      arg_refs: sig_match.arg_refs.into_iter().collect(),
     })),
-    GetArgsOutput::PartiallyApplied => Ok(None),
+    None => Ok(None),
   }
 }
 
@@ -2906,15 +2640,15 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
     }
     Expr::Ident { name, .. } => match local_scope.vars.get(name) {
       Some(TrackedValue::Const(_)) => DynType::Const,
-      Some(TrackedValue::Arg(_)) => DynType::Arg,
-      Some(TrackedValue::Dyn { .. }) => DynType::Dyn,
+      Some(TrackedValue::Arg) => DynType::Arg,
+      Some(TrackedValue::Dyn) => DynType::Dyn,
       None => match local_scope.parent {
         Some(parent) => match parent.get(*name) {
           Some(TrackedValueRef::Const(_)) => DynType::Const,
           // closure args from the parent scope aren't part of the pure scope of the current
           // closure, so we have to treat them as true dyn
-          Some(TrackedValueRef::Arg(_)) => DynType::Dyn,
-          Some(TrackedValueRef::Dyn { .. }) => DynType::Dyn,
+          Some(TrackedValueRef::Arg) => DynType::Dyn,
+          Some(TrackedValueRef::Dyn) => DynType::Dyn,
           None => DynType::Dyn,
         },
         None => DynType::Dyn,
@@ -2952,6 +2686,63 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
         .exprs()
         .fold(acc, |acc, expr| acc | get_dyn_type(expr, local_scope))
     }),
+  }
+}
+
+/// Bind a closure's declared parameters into `scope` as [`TrackedValue::Arg`] entries,
+/// attaching any declared parameter type as an `AbstractType` side-table entry so that
+/// later type inference inside the closure body sees the parameter's type.
+pub(crate) fn bind_closure_params_into_scope(scope: &mut ScopeTracker, params: &[ClosureArg]) {
+  for param in params {
+    for ident in param.ident.iter_idents() {
+      let ty_hint = match param.ident {
+        DestructurePattern::Ident(_) => param.type_hint,
+        DestructurePattern::Map(_) | DestructurePattern::Array(_) => None,
+      };
+      match ty_hint {
+        Some(ty) => scope.set_with_type(
+          ident,
+          TrackedValue::Arg,
+          crate::ty::AbstractType::Concrete(ty),
+        ),
+        None => scope.set(ident, TrackedValue::Arg),
+      }
+    }
+  }
+}
+
+/// Record the result of a non-const binding (an `Assignment` / `Export` / closure-local whose
+/// RHS did not fold to a literal) into `scope`.
+///
+/// Classifies the RHS via [`get_dyn_type`] to pick between [`TrackedValue::Arg`] and
+/// [`TrackedValue::Dyn`], and either honors an explicit `type_hint` or runs shared forward
+/// inference to recover the RHS type.  The full [`AbstractType`] produced by inference is
+/// preserved — it is *not* flattened through `.as_single_arg_type()` — so richer variants
+/// (`PartiallyApplied`, `Union`, etc.) stay available to downstream type queries.
+pub(crate) fn record_non_const_binding(
+  ctx: &EvalCtx,
+  scope: &mut ScopeTracker,
+  name: Sym,
+  expr: &Expr,
+  type_hint: Option<ArgType>,
+) {
+  use crate::ty::AbstractType;
+
+  let tracked = match get_dyn_type(expr, scope) {
+    DynType::Arg => TrackedValue::Arg,
+    DynType::Const | DynType::Dyn => TrackedValue::Dyn,
+  };
+  let ty = match type_hint {
+    Some(hint) => AbstractType::Concrete(hint),
+    None => {
+      let mut env = scope.build_type_env(ctx);
+      crate::type_infer::infer_expr(ctx, &mut env, expr)
+    }
+  };
+  if matches!(ty, AbstractType::Unknown) {
+    scope.set(name, tracked);
+  } else {
+    scope.set_with_type(name, tracked, ty);
   }
 }
 
@@ -3086,7 +2877,7 @@ fn test_inline_const_captures_visits_all_conditional_branches() {
   let else_sym = ctx.interned_symbols.intern("else_val");
 
   let mut scope = ScopeTracker::default();
-  scope.set(cond_sym, TrackedValue::Dyn { type_hint: None });
+  scope.set(cond_sym, TrackedValue::Dyn);
   scope.set(then_sym, TrackedValue::Const(Value::Int(1)));
   scope.set(else_sym, TrackedValue::Const(Value::Int(2)));
 
