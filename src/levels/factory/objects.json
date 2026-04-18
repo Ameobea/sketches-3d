@@ -221,7 +221,7 @@
         {
           "id": "wall_1",
           "asset": "wall",
-          "position": [0, -71.8664, 120],
+          "position": [0.1, -71.8664, 120],
           "rotation": [0, 1.5708, 0],
           "scale": [8, 2.6589, 7],
           "material": "chipped_rusty_gray_painted_wall"
@@ -229,7 +229,7 @@
         {
           "id": "wall",
           "asset": "wall",
-          "position": [0, -71.8664, -138.7516],
+          "position": [0.1, -71.8664, -138.7516],
           "rotation": [0, 1.5708, 0],
           "scale": [8, 2.6589, 7],
           "material": "chipped_rusty_gray_painted_wall"
@@ -304,22 +304,6 @@
       "material": "rusty_metal"
     },
     {
-      "id": "pipes2_1",
-      "asset": "pipes2",
-      "position": [204.1435, -123.6538, 37.4836],
-      "rotation": [0, -1.5708, 0],
-      "scale": [1.4673, 1.4673, 1.4673],
-      "material": "rusty_metal"
-    },
-    {
-      "id": "pipes2_2",
-      "asset": "pipes2",
-      "position": [250.3599, -115.1345, 37.4836],
-      "rotation": [0, -1.5708, 0],
-      "scale": [2.1838, 2.1838, 2.1838],
-      "material": "rusty_metal"
-    },
-    {
       "id": "plat1_5",
       "asset": "plat1",
       "position": [246.7486, 27.3986, 36.092],
@@ -328,28 +312,172 @@
       "material": "chipped_yellow_painted_cracked_stone"
     },
     {
-      "id": "pipe_decoration2_1",
-      "asset": "pipe_decoration2",
-      "position": [-254.9415, -181.0535, -31.4549],
-      "rotation": [-0.8697, -1.5708, -3.1416],
-      "scale": [-1.4027, -1.7989, -1.7989],
-      "material": "rusty_metal_decoration"
+      "id": "pipe_decorations_2",
+      "children": [
+        {
+          "id": "pipe_decoration2_1",
+          "asset": "pipe_decoration2",
+          "position": [-12.7024, -3.9665, 0],
+          "rotation": [-0.8697, -1.5708, -3.1416],
+          "scale": [-1.4027, -1.7989, -1.7989],
+          "material": "rusty_metal_decoration"
+        },
+        {
+          "id": "pipe_decoration2_2",
+          "asset": "pipe_decoration2",
+          "position": [12.7024, 3.9664, 0],
+          "rotation": [-0.8697, -1.5708, 3.1416],
+          "scale": [-1.4027, -1.7989, -1.7989],
+          "material": "rusty_metal_decoration"
+        }
+      ],
+      "position": [-242.2391, -177.087, -31.4549],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     },
     {
-      "id": "pipe_decoration2_2",
-      "asset": "pipe_decoration2",
-      "position": [-229.5367, -173.1206, -31.4549],
-      "rotation": [-0.8697, -1.5708, 3.1416],
-      "scale": [-1.4027, -1.7989, -1.7989],
-      "material": "rusty_metal_decoration"
+      "id": "pipe_decorations_1",
+      "children": [
+        {
+          "id": "pipes2_3",
+          "asset": "pipes2",
+          "position": [0.8109, 1.1967, -60.7643],
+          "rotation": [0, 1.5708, 0],
+          "scale": [1.8551, 1.8551, 1.8551],
+          "material": "rusty_metal"
+        },
+        {
+          "id": "pipes2_2",
+          "asset": "pipes2",
+          "position": [22.7027, 3.6613, 30.3821],
+          "rotation": [0, -1.5708, 0],
+          "scale": [2.1838, 2.1838, 2.1838],
+          "material": "rusty_metal"
+        },
+        {
+          "id": "pipes2_1",
+          "asset": "pipes2",
+          "position": [-23.5137, -4.858, 30.3821],
+          "rotation": [0, -1.5708, 0],
+          "scale": [1.4673, 1.4673, 1.4673],
+          "material": "rusty_metal"
+        }
+      ],
+      "position": [227.6572, -118.7958, 7.1015],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     },
     {
-      "id": "pipes2_3",
-      "asset": "pipes2",
-      "position": [228.4681, -117.5991, -53.6628],
-      "rotation": [0, 1.5708, 0],
-      "scale": [1.8551, 1.8551, 1.8551],
-      "material": "rusty_metal"
+      "id": "catwalks",
+      "children": [
+        {
+          "id": "small_grate_4",
+          "asset": "small_grate",
+          "position": [-45.7927, -8.2126, 4.5604],
+          "rotation": [0.1368, -1.3346, -0.154],
+          "scale": [1.0129, 0.9174, 0.9549],
+          "material": "chipped_yellow_painted_cracked_stone"
+        },
+        {
+          "id": "catwalk",
+          "children": [
+            {
+              "id": "small_grate_2",
+              "asset": "small_grate",
+              "position": [17.1125, 0, -7.5768],
+              "rotation": [0, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            },
+            {
+              "id": "small_grate_3",
+              "asset": "small_grate",
+              "position": [17.1125, 0, 7.5767],
+              "rotation": [0, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            },
+            {
+              "id": "small_grate",
+              "asset": "small_grate",
+              "position": [-17.1125, 0, 7.5767],
+              "rotation": [0, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            },
+            {
+              "id": "small_grate_1",
+              "asset": "small_grate",
+              "position": [-17.1125, 0, -7.5768],
+              "rotation": [0, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [-19.0463, 4.1063, -2.5],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "catwalk_1",
+          "children": [
+            {
+              "id": "small_grate_5",
+              "asset": "small_grate",
+              "position": [17.1125, 0, -7.5768],
+              "rotation": [0, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            },
+            {
+              "id": "small_grate_6",
+              "asset": "small_grate",
+              "position": [15.3494, -14.3216, 7.5767],
+              "rotation": [-0.3958, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            },
+            {
+              "id": "small_grate_7",
+              "asset": "small_grate",
+              "position": [-17.1125, -3.7551, 7.5767],
+              "rotation": [-0.2343, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            },
+            {
+              "id": "small_grate_8",
+              "asset": "small_grate",
+              "position": [-17.1125, 0, -7.5768],
+              "rotation": [0, -1.5708, 0],
+              "scale": [0.7456, 0.9174, 0.9549],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [64.8389, 4.1063, -2.5],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        }
+      ],
+      "position": [282.7653, 57.245, 0.1713],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "tank",
+      "asset": "tank",
+      "position": [429.2275, 15.2377, 7.2535],
+      "rotation": [0, 0, 0],
+      "scale": [0.8464, 0.8464, 0.8464],
+      "material": "bumpy_copper"
+    },
+    {
+      "id": "tank_1",
+      "asset": "tank",
+      "position": [494.0525, 15.7377, -24.1242],
+      "rotation": [0, 0, 0],
+      "scale": [0.8464, 0.8464, 0.8464],
+      "material": "bumpy_copper"
     }
   ]
 }

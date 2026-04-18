@@ -35,6 +35,13 @@
     },
     "rusty_metal_normal": {
       "url": "https://geotoy.b-cdn.net/textures/1/5be1798e-97a6-42cd-95bd-3d2f324255ba.avif"
+    },
+    "bumpy_copper_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/896fb465-f24e-44df-95a9-028325ed653d.avif",
+      "colorSpace": "srgb"
+    },
+    "bumpy_copper_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/39daeb77-eea6-4993-9d96-45c6b089e143.avif"
     }
   },
   "materials": {
@@ -161,12 +168,36 @@
           "topFade": [100, 200]
         },
         "transparent": false,
-        "mapDisableDistance": 200,
+        "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50
       },
       "options": {
         "useTriplanarMapping": true,
         "randomizeUVOffset": true
+      }
+    },
+    "bumpy_copper": {
+      "type": "customShader",
+      "props": {
+        "color": "#a49084",
+        "roughness": 0.52,
+        "metalness": 0.73,
+        "normalScale": 0.22,
+        "uvScale": [0.02, 0.02],
+        "map": "bumpy_copper_diffuse",
+        "normalMap": "bumpy_copper_normal",
+        "heightAlpha": {
+          "bottomFade": [-230, -10],
+          "topFade": [100, 200]
+        },
+        "transparent": false,
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50
+      },
+      "options": {
+        "useTriplanarMapping": true,
+        "randomizeUVOffset": true,
+        "materialClass": "metalplate"
       }
     }
   }

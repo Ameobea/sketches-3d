@@ -75,6 +75,22 @@
     "pipe_decoration2": {
       "type": "geoscript",
       "file": "geo/pipe_decoration2.geo"
+    },
+    "cheese_wheel": {
+      "type": "geoscript",
+      "file": "geo/cheese_wheel.geo"
+    },
+    "grate": {
+      "type": "geoscript",
+      "file": "geo/grate.geo"
+    },
+    "small_grate": {
+      "type": "geoscript",
+      "file": "geo/small_grate.geo"
+    },
+    "tank": {
+      "type": "geoscript",
+      "file": "geo/tank.geo"
     }
   },
   "objects": [],

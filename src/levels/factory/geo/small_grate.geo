@@ -16,8 +16,8 @@ p = build_path(80)
 
 p = path_union(p, build_path(-80) | path_trans(-100, 0))
 
-width = 15.25*2
-height = 24.7*2
+width = 19.5
+height = 35
 border_thickness = 0.8
 p = path_intersect(
   p,
