@@ -1164,7 +1164,8 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   viz.setRenderOverride(tDiffSeconds => composer.render(tDiffSeconds));
 
   viz.registerResizeCb(() => {
-    composer.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
+    const logicalSize = viz.renderer.getSize(new THREE.Vector2());
+    composer.setSize(logicalSize.x, logicalSize.y);
   });
 
   viz.renderer.toneMapping = THREE.ACESFilmicToneMapping;

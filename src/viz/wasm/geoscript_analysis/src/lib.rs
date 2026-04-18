@@ -4,7 +4,7 @@ use geoscript::{
     fn_defs::{fn_sigs, FnDef},
     FUNCTION_ALIASES,
   },
-  EvalCtx,
+  parse_program_maybe_with_prelude, EvalCtx,
 };
 use nanoserde::SerJson;
 
@@ -16,7 +16,6 @@ mod goto;
 mod hover;
 mod scope;
 mod source_scan;
-
 
 pub use analysis::Analysis;
 pub use scope::{SymbolDef, SymbolKind, SymbolRef};
@@ -134,11 +133,8 @@ impl AnalysisCtx {
 
   /// Parse source code and run full analysis, returning diagnostics.
   pub fn analyze(&self, src: &str, include_prelude: bool) -> AnalysisResult {
-    let parse_result = geoscript::parse_program_maybe_with_prelude(
-      &self.eval_ctx,
-      src.to_owned(),
-      include_prelude,
-    );
+    let parse_result =
+      parse_program_maybe_with_prelude(&self.eval_ctx, src.to_owned(), include_prelude);
 
     match parse_result {
       Err(err) => {
@@ -342,7 +338,10 @@ y = x
     // Too many positional args should still be reported
     let result = analyze("m = vec3(1, 2, 3, 4, 5, 6, 7)");
     assert!(
-      result.diagnostics.iter().any(|d| d.message.contains("at most")),
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("at most")),
       "Expected too-many-args diagnostic, got: {:?}",
       result.diagnostics
     );
@@ -460,7 +459,12 @@ y = x
     let ctx = AnalysisCtx::new();
     // Multi-stage chain — type should still propagate end-to-end
     let hover = ctx
-      .hover("m = box() | scale(2) | translate(vec3(1, 0, 0))", 1, 1, false)
+      .hover(
+        "m = box() | scale(2) | translate(vec3(1, 0, 0))",
+        1,
+        1,
+        false,
+      )
       .expect("hover for `m`");
     assert!(
       hover.content.contains("mesh"),
@@ -522,9 +526,12 @@ y = x
     // `x: mesh = "string"` — string can't be assigned to a mesh-typed binding
     let result = analyze(r#"x: mesh = "string""#);
     assert!(
-      result.diagnostics.iter().any(|d| d.message.contains("type mismatch")
-        && d.message.contains("mesh")
-        && d.message.contains("str")),
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("type mismatch")
+          && d.message.contains("mesh")
+          && d.message.contains("str")),
       "expected type-mismatch diagnostic, got: {:?}",
       result.diagnostics
     );
@@ -706,9 +713,12 @@ my_fn = |x: int|: int {
 "#;
     let result = analyze(src);
     assert!(
-      result.diagnostics.iter().any(|d| d.message.contains("return type mismatch")
-        && d.message.contains("int")
-        && d.message.contains("str")),
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("return type mismatch")
+          && d.message.contains("int")
+          && d.message.contains("str")),
       "expected return-type-mismatch diagnostic, got: {:?}",
       result.diagnostics
     );
@@ -731,7 +741,10 @@ my_fn = |x: int|: int {
     // Annotated as int but tail expression is a string — should flag the implicit return.
     let result = analyze(r#"f = |x: int|: int { "hello" }"#);
     assert!(
-      result.diagnostics.iter().any(|d| d.message.contains("return type mismatch")),
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("return type mismatch")),
       "expected implicit-return mismatch diagnostic, got: {:?}",
       result.diagnostics
     );

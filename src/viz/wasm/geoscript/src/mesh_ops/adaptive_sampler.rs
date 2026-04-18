@@ -53,7 +53,7 @@ use mesh::linked_mesh::Vec3;
 use crate::Vec2;
 
 /// Minimum segment length to prevent infinite subdivision on degenerate geometry.
-const DEFAULT_MIN_SEGMENT_LENGTH: f32 = 1e-5;
+pub(crate) const DEFAULT_MIN_SEGMENT_LENGTH: f32 = 1e-5;
 
 /// Set to `true` to enable verbose per-span logging for the adaptive sampler.
 /// Logs curvature/arc-length mass breakdown, baseline suppression factors, and
@@ -67,6 +67,12 @@ const OVERSAMPLE_FACTOR: usize = 55;
 
 /// Hard minimum for the number of dense samples regardless of target_count.
 const MIN_DENSE_SAMPLES: usize = 64;
+
+/// Returns a recommended `n_dense_per_span` for curvature analysis, matching the formula used
+/// internally by `adaptive_sample_fallible`.
+pub(crate) fn recommended_n_dense(target_count: usize, n_spans: usize) -> usize {
+  MIN_DENSE_SAMPLES.max(OVERSAMPLE_FACTOR * target_count / n_spans.max(1))
+}
 
 /// Multiplier for the curvature contribution to the density field.
 /// Higher values concentrate more samples at high-curvature regions at the cost of uniformity
@@ -193,7 +199,7 @@ where
 ///
 /// Stores a dense curvature analysis of the span, used to proportionally allocate budget
 /// and place samples via center-of-mass integration.
-struct SpanData {
+pub(crate) struct SpanData {
   t_start: f32,
   t_end: f32,
   /// sum of all densities (arc_length_mass + curvature_mass)
@@ -253,7 +259,7 @@ impl SpanData {
 /// Samples `n_dense + 1` uniformly-spaced points (both endpoints included), computes chord
 /// deviations zeroed at both endpoints (preventing cross-boundary curvature leakage), and
 /// builds the density/cumulative arrays used for proportional sample placement.
-fn analyze_span<P, E>(
+pub(crate) fn analyze_span<P, E>(
   t_start: f32,
   t_end: f32,
   n_dense: usize,
@@ -323,7 +329,7 @@ where
 ///
 /// Uses the largest-remainder (Hamilton) method to ensure the integer allocations sum exactly
 /// to `free_budget`, minimizing rounding bias across spans.
-fn distribute_budget(free_budget: usize, effective_masses: &[f32]) -> Vec<usize> {
+pub(crate) fn distribute_budget(free_budget: usize, effective_masses: &[f32]) -> Vec<usize> {
   let n = effective_masses.len();
   if n == 0 {
     return Vec::new();
@@ -363,6 +369,61 @@ fn distribute_budget(free_budget: usize, effective_masses: &[f32]) -> Vec<usize>
   }
 
   allocations
+}
+
+/// Computes per-span sample budget allocations using curvature-aware effective-mass weighting.
+///
+/// This is the cross-span budget distribution logic from `adaptive_sample_fallible`, extracted
+/// for reuse when distributing a sample budget across independent path segments (e.g., subpaths)
+/// where each sampler covers its own `[0.0, 1.0]` domain.
+///
+/// Returns allocations of length `span_samplers.len()` that sum exactly to `free_budget`.
+/// When `free_budget` is 0 or `span_samplers` is empty, returns an all-zero vec.
+pub(crate) fn distribute_samples_by_mass<P, F>(
+  free_budget: usize,
+  span_samplers: &[F],
+  n_dense_per_span: usize,
+) -> Vec<usize>
+where
+  P: AdaptiveSamplePoint,
+  F: Fn(f32) -> P,
+{
+  if span_samplers.is_empty() || free_budget == 0 {
+    return vec![0; span_samplers.len()];
+  }
+
+  let n_dense = n_dense_per_span.max(2);
+  let spans: Vec<SpanData> = span_samplers
+    .iter()
+    .map(|sample_fn| {
+      analyze_span::<P, std::convert::Infallible>(0.0, 1.0, n_dense, &|t| Ok(sample_fn(t)))
+        .expect("infallible sample_fn cannot fail")
+    })
+    .collect();
+
+  let total_arc_length_mass: f32 = spans.iter().map(|s| s.arc_length_mass).sum();
+  let total_curvature_mass: f32 = spans.iter().map(|s| s.curvature_mass).sum();
+  let total_mass = total_arc_length_mass + total_curvature_mass;
+
+  let curvature_ratio = if total_mass > 0.0 {
+    total_curvature_mass / total_mass
+  } else {
+    0.0
+  };
+
+  let baseline_factor = 1.0
+    - smoothstep(
+      BASELINE_SUPPRESSION_LOW,
+      BASELINE_SUPPRESSION_HIGH,
+      curvature_ratio,
+    );
+
+  let effective_masses: Vec<f32> = spans
+    .iter()
+    .map(|s| s.curvature_mass + baseline_factor * s.arc_length_mass)
+    .collect();
+
+  distribute_budget(free_budget, &effective_masses)
 }
 
 /// Adaptively samples a curve using curvature-aware density integration (fallible version).
@@ -957,5 +1018,42 @@ mod tests {
       extras_in_arcs, 8,
       "All 8 free samples should go to arc spans, but got {extras_in_arcs}"
     );
+  }
+
+  /// Verify that `distribute_samples_by_mass` allocates proportionally and sums correctly.
+  #[test]
+  fn test_distribute_samples_by_mass_proportional() {
+    // Two spans: one is a semicircle (lots of curvature), one is a straight line (none).
+    // With a tight budget, the arc span should receive more samples than the straight one.
+    let arc_sampler: fn(f32) -> Vec2 = |t: f32| -> Vec2 {
+      let angle = t * PI;
+      Vec2::new(angle.cos(), angle.sin())
+    };
+    let line_sampler: fn(f32) -> Vec2 = |t: f32| -> Vec2 { Vec2::new(t, 0.0) };
+
+    let free_budget = 10usize;
+    let allocs =
+      distribute_samples_by_mass::<Vec2, _>(free_budget, &[arc_sampler, line_sampler], 64);
+
+    assert_eq!(allocs.len(), 2);
+    assert_eq!(
+      allocs.iter().sum::<usize>(),
+      free_budget,
+      "allocations must sum to free_budget"
+    );
+
+    // Arc span has curvature; straight span does not.  Arc should receive >= straight.
+    assert!(
+      allocs[0] >= allocs[1],
+      "arc span should receive at least as many samples as straight span: {allocs:?}"
+    );
+  }
+
+  /// Verify that `distribute_samples_by_mass` handles zero free_budget gracefully.
+  #[test]
+  fn test_distribute_samples_by_mass_zero_budget() {
+    let sampler = |t: f32| Vec2::new(t, 0.0);
+    let allocs = distribute_samples_by_mass::<Vec2, _>(0, &[sampler, sampler], 64);
+    assert_eq!(allocs, vec![0, 0]);
   }
 }

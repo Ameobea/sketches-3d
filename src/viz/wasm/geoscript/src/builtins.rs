@@ -1907,7 +1907,16 @@ fn tessellate_path_impl(
       let path_val = arg_refs[0].resolve(args, kwargs);
       let flipped = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
       let curve_angle_degrees = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let sample_count = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
+      let sample_count_val = arg_refs[3].resolve(args, kwargs);
+      let sample_count: Option<usize> = match sample_count_val {
+        Value::Nil => None,
+        Value::Int(n) => Some(*n as usize),
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid sample_count for `tessellate_path`; expected int or nil, found: {other:?}"
+          )))
+        }
+      };
       let closed_override = match arg_refs[4].resolve(args, kwargs) {
         Value::Bool(val) => Some(val),
         Value::Nil => None,
@@ -1962,10 +1971,12 @@ fn tessellate_path_impl(
         }
       }
 
-      if sample_count < 3 {
-        return Err(ErrorStack::new(format!(
-          "Invalid sample_count for `tessellate_path`; expected >= 3, found: {sample_count}"
-        )));
+      if let Some(n) = sample_count {
+        if n < 3 {
+          return Err(ErrorStack::new(format!(
+            "Invalid sample_count for `tessellate_path`; expected >= 3, found: {n}"
+          )));
+        }
       }
 
       if matches!(closed_override, Some(false)) {
@@ -2119,7 +2130,8 @@ fn tessellate_path_impl(
           }
         }
 
-        let subpath_data = sampler.and_then(|s| s.sample_subpaths(curve_angle_radians));
+        let subpath_data =
+          sampler.and_then(|s| s.sample_subpaths_with_limit(curve_angle_radians, sample_count));
 
         if let Some(subpath_data) = subpath_data {
           for (ix, (points, _closed)) in subpath_data.into_iter().enumerate() {
@@ -2142,7 +2154,9 @@ fn tessellate_path_impl(
           let p1 = sample_point(1.0)?;
           let actual_closed = (p0 - p1).norm() <= 1e-4;
           let include_end = !actual_closed;
-          let t_samples = build_topology_samples(sample_count as usize, None, None, include_end);
+          let effective_sample_count = sample_count.unwrap_or(64);
+          let t_samples =
+            build_topology_samples(effective_sample_count, None, None, include_end);
           let mut points = Vec::with_capacity(t_samples.len());
           for t in t_samples {
             points.push(sample_point(t)?);

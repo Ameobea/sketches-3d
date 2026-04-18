@@ -1,7 +1,6 @@
 #![feature(
   impl_trait_in_bindings,
   adt_const_params,
-  thread_local,
   impl_trait_in_fn_trait_return,
   unsafe_cell_access,
   likely_unlikely,
@@ -48,7 +47,7 @@ use crate::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
-  lights::{AmbientLight, Light},
+  lights::Light,
   materials::Material,
   mesh_ops::mesh_boolean::{drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp},
   optimizer::optimize_ast,
@@ -1338,8 +1337,9 @@ pub fn match_signature_by_arg_types(
 
     for arg_def in sig.arg_defs {
       // Check kwargs first, then positional, then default
-      if let Some(&(kwarg_sym, ty)) =
-        kwarg_types.iter().find(|(sym, _)| *sym == arg_def.interned_name)
+      if let Some(&(kwarg_sym, ty)) = kwarg_types
+        .iter()
+        .find(|(sym, _)| *sym == arg_def.interned_name)
       {
         if arg_def.valid_types & ty.as_bitflags() == 0 {
           continue 'sig;
@@ -1403,10 +1403,7 @@ pub fn match_binop_by_arg_types(
 
 /// Type-level unary operator signature matching.  Each signature is assumed to have exactly one
 /// arg def.
-pub fn match_unop_by_arg_types(
-  fn_entry_ix: usize,
-  arg_ty: ArgType,
-) -> Option<&'static [ArgType]> {
+pub fn match_unop_by_arg_types(fn_entry_ix: usize, arg_ty: ArgType) -> Option<&'static [ArgType]> {
   let fn_entry = &fn_sigs().entries[fn_entry_ix];
   let sigs = fn_entry.1.signatures;
   let arg_flags = arg_ty.as_bitflags();

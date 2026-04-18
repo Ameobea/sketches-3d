@@ -71,7 +71,11 @@ export const configurePostprocessing = (
 
   const godraysParams: GodraysPassParams = {
     color: new THREE.Color().copy(dirLight.color),
-    resolutionScale: 1,
+    resolutionScale: {
+      [GraphicsQuality.Low]: 0.333,
+      [GraphicsQuality.Medium]: 0.7,
+      [GraphicsQuality.High]: 1,
+    }[quality],
     upsampleQuality: GodraysUpsampleQuality.LOW,
     distanceAttenuation: 2,
     density: 1 / 16,
@@ -80,7 +84,7 @@ export const configurePostprocessing = (
       [GraphicsQuality.Low]: 50,
       [GraphicsQuality.Medium]: 65,
       [GraphicsQuality.High]: 80,
-    }[quality] as any,
+    }[quality],
     blur: {
       kernelSize: {
         [GraphicsQuality.Low]: KernelSize.MEDIUM,
@@ -104,11 +108,11 @@ export const configurePostprocessing = (
     n8aoPass.configuration.intensity = 7;
     n8aoPass.configuration.aoRadius = 9;
     // \/ this breaks rendering and makes the background black if enabled
-    // n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Low;
+    n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
     n8aoPass.setQualityMode(
       {
         [GraphicsQuality.Low]: 'Performance',
-        [GraphicsQuality.Medium]: 'Low',
+        [GraphicsQuality.Medium]: 'Performance',
         [GraphicsQuality.High]: 'Medium',
       }[quality]
     );
@@ -216,7 +220,7 @@ export const configurePostprocessing = (
       if (newN8AOIntensity > 0 && !n8aoPassEnabled) {
         // effectComposer.addPass(n8aoPass, USE_DEPTH_PREPASS ? 2 : 1);
         n8aoPass.enabled = true;
-        n8aoPass.n8aoPassEnabled = true;
+        n8aoPassEnabled = true;
       } else if (newN8AOIntensity === 0 && n8aoPassEnabled) {
         n8aoPass.enabled = false;
         n8aoPassEnabled = false;
@@ -237,6 +241,7 @@ export const configurePostprocessing = (
   });
 
   viz.registerResizeCb(() => {
-    effectComposer.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
+    const logicalSize = viz.renderer.getSize(new THREE.Vector2());
+    effectComposer.setSize(logicalSize.x, logicalSize.y);
   });
 };

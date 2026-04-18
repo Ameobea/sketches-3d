@@ -1,4 +1,4 @@
-use geoscript::ty::AbstractType;
+use geoscript::{parse_program_maybe_with_prelude, ty::AbstractType, ArgType};
 
 use crate::{
   analysis::Analysis,
@@ -13,11 +13,8 @@ pub(crate) fn hover(
   target_col: u32,
   include_prelude: bool,
 ) -> Option<HoverInfo> {
-  let parse_result = geoscript::parse_program_maybe_with_prelude(
-    &ctx.eval_ctx,
-    src.to_owned(),
-    include_prelude,
-  );
+  let parse_result =
+    parse_program_maybe_with_prelude(&ctx.eval_ctx, src.to_owned(), include_prelude);
 
   let program = parse_result.ok()?;
   let analysis = Analysis::build(&ctx.eval_ctx, &program);
@@ -174,7 +171,7 @@ fn hover_kwarg(
   for sig in fn_def.signatures {
     for arg in sig.arg_defs {
       if arg.name == kwarg_name {
-        let types = geoscript::ArgType::list_from_bitflags(arg.valid_types);
+        let types = ArgType::list_from_bitflags(arg.valid_types);
         let type_str = types
           .iter()
           .map(|t| format!("{t:?}"))

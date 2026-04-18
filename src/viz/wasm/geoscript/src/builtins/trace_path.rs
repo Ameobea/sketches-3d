@@ -304,6 +304,22 @@ pub(crate) trait PathSampler: Any {
     None
   }
 
+  /// Like `sample_subpaths`, but caps the total number of output points across all subpaths.
+  ///
+  /// When `total_limit` is `Some(n)` and the natural tessellation would exceed `n` points,
+  /// adaptively resamples each subpath using curvature+arc-length weighting, preserving any
+  /// detected topological critical points (sharp corners) as mandatory boundaries.
+  ///
+  /// When `total_limit` is `None` or the natural count is already within the limit, delegates
+  /// to `sample_subpaths` unchanged.
+  fn sample_subpaths_with_limit(
+    &self,
+    angle_tolerance: f32,
+    _total_limit: Option<usize>,
+  ) -> Option<Vec<(Vec<Vec2>, bool)>> {
+    self.sample_subpaths(angle_tolerance)
+  }
+
   /// Build a lyon `Path` directly from the sampler's curve topology (lines, beziers, arcs),
   /// with the sampler's transform applied to all control points.
   ///
@@ -1381,6 +1397,51 @@ impl PathTracerCallable {
     out
   }
 
+  /// Returns critical t-values in per-subpath `[0, 1]` space for use as `adaptive_sample`
+  /// initial boundaries.
+  ///
+  /// When `override_critical_points` is set on the parent, filters those global t-values to
+  /// those within this subpath's global span and normalizes them to `[0, 1]`.  This ensures
+  /// sharp corners detected by boolean operations (e.g. rectangle clip edges) are preserved
+  /// as mandatory sample points during adaptive resampling.
+  ///
+  /// Falls back to `[0.0, 1.0]` when no override is present or the span is degenerate.
+  pub(crate) fn subpath_local_critical_points(&self, subpath_ix: usize) -> Vec<f32> {
+    let global_start = if subpath_ix == 0 {
+      0.0f32
+    } else {
+      self.subpath_cumulative_lengths[subpath_ix - 1] / self.total_length
+    };
+    let global_end = self.subpath_cumulative_lengths[subpath_ix] / self.total_length;
+    let span = global_end - global_start;
+
+    if span <= 0.0 {
+      return vec![0.0, 1.0];
+    }
+
+    let Some(override_cps) = &self.override_critical_points else {
+      return vec![0.0, 1.0];
+    };
+
+    // Use raw stored values (forward space) — reversal is handled by the caller when
+    // it reverses the output point list, not by flipping t-values here.
+    let mut local: Vec<f32> = override_cps
+      .iter()
+      .copied()
+      .filter(|&t| t >= global_start && t <= global_end)
+      .map(|t| ((t - global_start) / span).clamp(0.0, 1.0))
+      .collect();
+
+    if local.iter().all(|&t| t > 1e-6) {
+      local.push(0.0);
+    }
+    if local.iter().all(|&t| t < 1.0 - 1e-6) {
+      local.push(1.0);
+    }
+    local.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    local
+  }
+
   fn sample(&self, t: f32) -> Result<Vec2, ErrorStack> {
     if self.subpaths.is_empty() || self.total_length <= LENGTH_EPSILON {
       return Err(ErrorStack::new(
@@ -1702,6 +1763,86 @@ impl PathSampler for PathTracerCallable {
       }
       result.push((points, is_closed));
     }
+    Some(result)
+  }
+
+  fn sample_subpaths_with_limit(
+    &self,
+    angle_tolerance: f32,
+    total_limit: Option<usize>,
+  ) -> Option<Vec<(Vec<Vec2>, bool)>> {
+    use crate::mesh_ops::adaptive_sampler::{
+      adaptive_sample, distribute_samples_by_mass, recommended_n_dense,
+      DEFAULT_MIN_SEGMENT_LENGTH,
+    };
+
+    let limit = match total_limit {
+      None => return self.sample_subpaths(angle_tolerance),
+      Some(l) => l,
+    };
+
+    // Compute natural samples to check whether reduction is actually needed.
+    let natural = self.sample_subpaths(angle_tolerance)?;
+    let natural_total: usize = natural.iter().map(|(pts, _)| pts.len()).sum();
+
+    if limit >= natural_total {
+      return Some(natural);
+    }
+
+    // Adaptive reduction: distribute `limit` points across subpaths proportionally by
+    // curvature+arc-length mass, preserving detected sharp corners as mandatory boundaries.
+    let n_subpaths = self.subpaths.len();
+
+    // One mandatory sample per subpath (the t=0 start, always included by adaptive_sample).
+    let free_budget = limit.saturating_sub(n_subpaths);
+    let n_dense = recommended_n_dense(limit, n_subpaths);
+
+    let allocations = {
+      let samplers: Vec<_> = self
+        .subpaths
+        .iter()
+        .map(|sp| {
+          let len = sp.total_length;
+          move |t: f32| sp.sample_by_length(t * len)
+        })
+        .collect();
+      distribute_samples_by_mass::<Vec2, _>(free_budget, &samplers, n_dense)
+    };
+
+    let transform = &self.transform;
+    let mut result = Vec::with_capacity(n_subpaths);
+
+    for (subpath_ix, (subpath, &extra)) in
+      self.subpaths.iter().zip(allocations.iter()).enumerate()
+    {
+      let budget = 1 + extra;
+      let local_cps = self.subpath_local_critical_points(subpath_ix);
+      let len = subpath.total_length;
+
+      let t_samples = adaptive_sample::<Vec2, _>(
+        budget,
+        &local_cps,
+        |t| subpath.sample_by_length(t * len),
+        DEFAULT_MIN_SEGMENT_LENGTH,
+      );
+
+      let mut points: Vec<Vec2> = t_samples
+        .iter()
+        .map(|&t| subpath.sample_by_length(t * len))
+        .collect();
+
+      if self.reverse {
+        points.reverse();
+      }
+      if *transform != Matrix3::identity() {
+        for p in &mut points {
+          *p = apply_transform_to_point(transform, *p);
+        }
+      }
+
+      result.push((points, subpath.is_closed()));
+    }
+
     Some(result)
   }
 }
@@ -3368,5 +3509,99 @@ p0 = centered(0)
     // Original first point was (10, 10), centroid of endpoints is (15, 15),
     // so centered first point should be (10-15, 10-15) = (-5, -5)
     assert_vec2_close(*p0.as_vec2().unwrap(), Vec2::new(-5.0, -5.0));
+  }
+
+  /// Verify that `subpath_local_critical_points` maps parent override_critical_points into
+  /// per-subpath [0, 1] space correctly.  This is the fix for the oversight where
+  /// sample_subpath_points used all segment endpoints as guides instead of the detected sharp
+  /// corners stored in override_critical_points.
+  #[test]
+  fn test_subpath_local_critical_points_with_override() {
+    // Two-segment path: subpath 0 is a unit square (length 4), subpath 1 is a unit line
+    // (length 1), total length 5.  Place an override critical point at global t=0.2,
+    // which is arc-length 1.0 into subpath 0 (the first corner of the square).
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 1.0)),
+      DrawCommand::LineTo(Vec2::new(0.0, 1.0)),
+      DrawCommand::LineTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::MoveTo(Vec2::new(10.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(11.0, 0.0)),
+    ];
+    let total_len_expected = 4.0 + 1.0; // square perimeter + unit line
+
+    // Override critical points: 0.0 (start), midpoint of subpath 0 (global t = 2/5 = 0.4),
+    // and start of subpath 1 (global t = 4/5 = 0.8).
+    let override_cps = vec![0.0, 0.4, 0.8];
+    let mut tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+    tracer.override_critical_points = Some(override_cps);
+
+    // Sanity: total length is approximately correct.
+    assert!((tracer.total_length - total_len_expected).abs() < 0.01);
+
+    // Subpath 0 spans global t [0.0, 0.8] (length 4 / total 5).
+    // Override cp at 0.4 is inside subpath 0: local_t = (0.4 - 0.0) / 0.8 = 0.5.
+    let local_0 = tracer.subpath_local_critical_points(0);
+    assert!(
+      local_0.contains(&0.0_f32) && local_0.contains(&1.0_f32),
+      "should always include 0.0 and 1.0: {local_0:?}"
+    );
+    let has_mid = local_0.iter().any(|&t| (t - 0.5).abs() < 1e-4);
+    assert!(has_mid, "expected 0.5 in subpath 0 local cps: {local_0:?}");
+
+    // Override cp at 0.8 is exactly the boundary — global_start for subpath 1.
+    // Subpath 1 spans global t [0.8, 1.0].  local_t = (0.8 - 0.8) / 0.2 = 0.0.
+    let local_1 = tracer.subpath_local_critical_points(1);
+    assert!(
+      local_1.contains(&0.0_f32) && local_1.contains(&1.0_f32),
+      "should include 0.0 and 1.0: {local_1:?}"
+    );
+  }
+
+  /// Verify that `sample_subpaths_with_limit` on an all-line path:
+  ///   1. Returns exactly `limit` points.
+  ///   2. Includes the detected critical-point corners (mapped to output points).
+  ///   3. When limit >= natural count, returns the natural samples unchanged.
+  #[test]
+  fn test_sample_subpaths_with_limit_respects_count_and_corners() {
+    // Build a closed all-line polygon approximating a circle: 60 line segments.
+    use std::f32::consts::TAU;
+    let n = 60usize;
+    let mut cmds = vec![DrawCommand::MoveTo(Vec2::new(1.0, 0.0))];
+    for i in 1..n {
+      let angle = TAU * i as f32 / n as f32;
+      cmds.push(DrawCommand::LineTo(Vec2::new(angle.cos(), angle.sin())));
+    }
+    cmds.push(DrawCommand::Close);
+
+    // Mark quarter-circle corners as override critical points (global t = 0, 0.25, 0.5, 0.75).
+    let override_cps = vec![0.0, 0.25, 0.5, 0.75];
+    let mut tracer = PathTracerCallable::new(true, false, false, cmds, Sym(0));
+    tracer.override_critical_points = Some(override_cps.clone());
+
+    // Natural sample count should be 60 (one per segment for closed path).
+    let natural = tracer.sample_subpaths(0.1).unwrap();
+    let natural_total: usize = natural.iter().map(|(pts, _)| pts.len()).sum();
+    assert_eq!(natural_total, 60);
+
+    // With limit=20 we should get exactly 20 points.
+    let limited = tracer
+      .sample_subpaths_with_limit(0.1, Some(20))
+      .unwrap();
+    let limited_total: usize = limited.iter().map(|(pts, _)| pts.len()).sum();
+    assert_eq!(limited_total, 20, "expected exactly 20 points, got {limited_total}");
+
+    // With limit >= natural, result should match natural.
+    let no_reduction = tracer
+      .sample_subpaths_with_limit(0.1, Some(100))
+      .unwrap();
+    let no_reduction_total: usize = no_reduction.iter().map(|(pts, _)| pts.len()).sum();
+    assert_eq!(no_reduction_total, natural_total);
+
+    // None limit should also match natural.
+    let unlimited = tracer.sample_subpaths_with_limit(0.1, None).unwrap();
+    let unlimited_total: usize = unlimited.iter().map(|(pts, _)| pts.len()).sum();
+    assert_eq!(unlimited_total, natural_total);
   }
 }

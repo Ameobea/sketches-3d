@@ -268,22 +268,22 @@ pub(crate) fn detect_critical_points(
       }
     }
 
-    // // Pass 3 (disabled): explicitly include new vertices created by the boolean op
-    // if let Some(pre_op) = pre_op_vertices {
-    //   if !pre_op.is_empty() {
-    //     for i in 0..n {
-    //       if is_critical[i] {
-    //         continue;
-    //       }
-    //       let key = (path[i].x.to_bits(), path[i].y.to_bits());
-    //       if !pre_op.contains(&key) {
-    //         let t_i = cumulative[i] / total_length;
-    //         is_critical[i] = true;
-    //         t_values.push(t_i);
-    //       }
-    //     }
-    //   }
-    // }
+    // Pass 3: explicitly include new vertices created by the boolean op
+    if let Some(pre_op) = pre_op_vertices {
+      if !pre_op.is_empty() {
+        for i in 0..n {
+          if is_critical[i] {
+            continue;
+          }
+          let key = (path[i].x.to_bits(), path[i].y.to_bits());
+          if !pre_op.contains(&key) {
+            let t_i = cumulative[i] / total_length;
+            is_critical[i] = true;
+            t_values.push(t_i);
+          }
+        }
+      }
+    }
   }
 
   t_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));

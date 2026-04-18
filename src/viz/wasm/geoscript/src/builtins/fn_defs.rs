@@ -6735,9 +6735,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "sample_count",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Int),
-            default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_path callables."
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Maximum total number of output points across all subpaths. When provided, adaptively resamples the path to this count using curvature+arc-length weighting while preserving critical corners. When nil (default), uses the path's natural tessellation resolution."
           },
           ArgDef {
             name: "closed",

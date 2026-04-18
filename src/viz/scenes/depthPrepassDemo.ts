@@ -91,7 +91,8 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   viz.setRenderOverride((timeDiffSeconds: number) => composer.render(timeDiffSeconds));
 
   viz.registerResizeCb(() => {
-    composer.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
+    const logicalSize = viz.renderer.getSize(new THREE.Vector2());
+    composer.setSize(logicalSize.x, logicalSize.y);
   });
 
   return {

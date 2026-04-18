@@ -1,9 +1,9 @@
 use fxhash::FxHashSet;
-use geoscript::builtins::fn_defs::fn_sigs;
+use geoscript::{builtins::fn_defs::fn_sigs, parse_program_maybe_with_prelude};
 
 use crate::{
-  analysis::Analysis, format::format_signature_oneliner, source_scan, AnalysisCtx,
-  CompletionItem, SymbolKind,
+  analysis::Analysis, format::format_signature_oneliner, source_scan, AnalysisCtx, CompletionItem,
+  SymbolKind,
 };
 
 pub(crate) fn completions(
@@ -13,11 +13,8 @@ pub(crate) fn completions(
   target_col: u32,
   include_prelude: bool,
 ) -> Vec<CompletionItem> {
-  let parse_result = geoscript::parse_program_maybe_with_prelude(
-    &ctx.eval_ctx,
-    src.to_owned(),
-    include_prelude,
-  );
+  let parse_result =
+    parse_program_maybe_with_prelude(&ctx.eval_ctx, src.to_owned(), include_prelude);
 
   let mut items = Vec::new();
 
@@ -113,9 +110,9 @@ fn add_kwarg_completions(
 
       items.push(CompletionItem {
         label: format!("{}=", arg.name),
-        kind: "property".into(),
+        kind: "property".to_owned(),
         detail: type_str,
-        info: arg.description.to_string(),
+        info: arg.description.to_owned(),
       });
     }
   }

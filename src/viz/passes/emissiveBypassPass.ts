@@ -145,15 +145,19 @@ export class EmissiveBypassPass extends Pass {
       const gl = renderer.getContext() as WebGL2RenderingContext;
       const props = (renderer as any).properties;
 
-      const srcFBO = props.get(this.stableDepthTarget).__webglFramebuffer as WebGLFramebuffer;
-      const dstFBO = props.get(this.emissiveRT).__webglFramebuffer as WebGLFramebuffer;
-      const { width, height } = this.emissiveRT;
+      const srcProps = props.get(this.stableDepthTarget);
+      const dstProps = props.get(this.emissiveRT);
+      if (srcProps?.__webglFramebuffer && dstProps?.__webglFramebuffer) {
+        const srcFBO = srcProps.__webglFramebuffer as WebGLFramebuffer;
+        const dstFBO = dstProps.__webglFramebuffer as WebGLFramebuffer;
+        const { width, height } = this.emissiveRT;
 
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
-      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
-      gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
+        gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      }
       // Restore Three.js render target tracking after raw GL calls
       renderer.setRenderTarget(null);
     }

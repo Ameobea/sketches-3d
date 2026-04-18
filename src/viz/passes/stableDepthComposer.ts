@@ -161,7 +161,13 @@ export class StableDepthEffectComposer extends EffectComposer {
 
   override setSize(width: number, height: number): void {
     super.setSize(width, height);
-    this.stableDepth?.setSize(width, height);
+    if (this.stableDepth) {
+      const renderer = this.getRenderer();
+      if (renderer) {
+        const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
+        this.stableDepth.setSize(drawingBufferSize.x, drawingBufferSize.y);
+      }
+    }
   }
 
   override dispose(): void {

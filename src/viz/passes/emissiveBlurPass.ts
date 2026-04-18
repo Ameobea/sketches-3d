@@ -119,6 +119,10 @@ export class EmissiveBloomPass extends Pass {
   override initialize(renderer: THREE.WebGLRenderer, alpha: boolean, frameBufferType: number): void {
     // Forward to the inner pass so it sets HalfFloat on its internal mipmaps.
     this.mipmapBlur.initialize(renderer, alpha, THREE.HalfFloatType);
+    // Pre-compile the threshold material so the first frame doesn't stall on shader compilation.
+    if (this.thresholdMat) {
+      renderer.compile(this.scene, this.camera);
+    }
   }
 
   override setSize(width: number, height: number): void {

@@ -219,9 +219,12 @@ export const configureDefaultPostprocessingPipeline = ({
     );
 
     const stableDepthTgt = effectComposer.stableDepthTarget;
-    if (stableDepthTgt) {
-      emissiveBypassPass.setStableDepthTarget(stableDepthTgt);
+    if (!stableDepthTgt) {
+      throw new Error(
+        'emissiveBypass requires a depth source. Enable useDepthPrePass=true or add a fogShader to ensure a depth texture is allocated before the emissive bypass pass.'
+      );
     }
+    emissiveBypassPass.setStableDepthTarget(stableDepthTgt);
 
     effectComposer.addPass(emissiveBypassPass);
 
@@ -330,7 +333,6 @@ export const configureDefaultPostprocessingPipeline = ({
         obj.shadow.autoUpdate = false;
       });
       viz.renderer.shadowMap.autoUpdate = false;
-      return;
     }
 
     effectComposer.render(timeDiffSeconds);
@@ -349,7 +351,8 @@ export const configureDefaultPostprocessingPipeline = ({
   );
   viz.postprocessingController = controller;
   viz.registerResizeCb(() => {
-    effectComposer.setSize(viz.renderer.domElement.width, viz.renderer.domElement.height);
+    const logicalSize = viz.renderer.getSize(new THREE.Vector2());
+    effectComposer.setSize(logicalSize.x, logicalSize.y);
   });
   controller.setGamma(viz.vizConfig.current.graphics.gamma);
   return controller;
