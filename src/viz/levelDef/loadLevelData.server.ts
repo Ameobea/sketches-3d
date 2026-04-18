@@ -148,7 +148,10 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
           : join(levelDir, assetDef.file);
         const code = readFileSync(codePath, 'utf-8');
-        return [assetId, { type: 'geoscript' as const, code, includePrelude: assetDef.includePrelude }];
+        return [
+          assetId,
+          { type: 'geoscript' as const, code, includePrelude: assetDef.includePrelude, _meta: assetDef._meta },
+        ];
       }
       return [assetId, assetDef];
     })

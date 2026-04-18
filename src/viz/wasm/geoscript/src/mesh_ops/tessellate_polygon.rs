@@ -36,6 +36,7 @@ fn project_ring_to_2d(ring: &[Vec3], frame: &PlaneFrame) -> Vec<(f32, f32)> {
 
 #[cfg(target_arch = "wasm32")]
 fn run_triangulation(vertices: &[f32], input_vertex_count: usize) -> Result<Vec<u32>, ErrorStack> {
+  crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
   if !cgal_get_is_loaded() {
     return Err(ErrorStack::new_uninitialized_module("cgal"));
   }

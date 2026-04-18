@@ -71,6 +71,31 @@ pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_
 
 pub const PRELUDE: &str = include_str!("prelude.geo");
 
+pub const DEP_BIT_GEODESICS: u32 = 1 << 0;
+pub const DEP_BIT_CGAL: u32 = 1 << 1;
+pub const DEP_BIT_CLIPPER2: u32 = 1 << 2;
+pub const DEP_BIT_TEXT2PATH: u32 = 1 << 3;
+
+// Single-threaded WASM makes a global mutable u32 safe for dep tracking.
+#[cfg(target_arch = "wasm32")]
+static mut USED_ASYNC_DEPS: u32 = 0;
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+pub fn or_async_dep_bit(bit: u32) {
+  unsafe { USED_ASYNC_DEPS |= bit; }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn reset_async_dep_bits() {
+  unsafe { USED_ASYNC_DEPS = 0; }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn get_async_dep_bits() -> u32 {
+  unsafe { USED_ASYNC_DEPS }
+}
+
 #[derive(Parser)]
 #[grammar = "src/geoscript.pest"]
 pub struct GSParser;

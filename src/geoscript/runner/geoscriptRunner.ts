@@ -5,14 +5,16 @@ import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
 import type { GeoscriptAsyncDeps } from '../geoscriptWorker.worker';
+import { bitmaskToAsyncDepNames } from '../asyncDepBits';
 
-const buildEmptyRunStats = (startTime: number): RunStats => ({
-  runtimeMs: performance.now() - startTime,
+const buildEmptyRunStats = (): RunStats => ({
+  runtimeMs: 0,
   renderedMeshCount: 0,
   renderedPathCount: 0,
   renderedLightCount: 0,
   totalVtxCount: 0,
   totalFaceCount: 0,
+  asyncDeps: [],
 });
 
 const getOverrideMat = (materialOverride: 'wireframe' | 'wireframe-xray' | 'normal' | null | undefined) => {
@@ -41,29 +43,30 @@ export const runGeoscript = async ({
     await repl.setModuleSources(ctxPtr, modules);
   }
 
-  const startTime = performance.now();
+  let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
   try {
-    await repl.eval(ctxPtr, code, includePrelude);
+    evalResult = await repl.eval(ctxPtr, code, includePrelude);
   } catch (evalErr) {
     const errorMessage = `Error evaluating code: ${evalErr}`;
     console.error(errorMessage, evalErr);
     return {
       objects: [],
-      stats: buildEmptyRunStats(startTime),
+      stats: buildEmptyRunStats(),
       error: errorMessage,
     };
   }
 
   const err = (await repl.getErr(ctxPtr)) || null;
   if (err) {
-    // Check if it's a special error indicating that an async dep needs to be loaded
+    // Safety net: if a dep wasn't pre-loaded, load it now and re-run.
+    // text_to_path always goes through this path since its args are runtime values.
     if (err.includes('__GEOTOY_UNINITIALIZED_MODULE__:')) {
       const depName = /__GEOTOY_UNINITIALIZED_MODULE__:(\w+)/.exec(err)?.[1];
       if (!depName) {
         console.error('Unrecognized error format:', err);
         return {
           objects: [],
-          stats: buildEmptyRunStats(startTime),
+          stats: buildEmptyRunStats(),
           error: err,
         };
       }
@@ -79,6 +82,7 @@ export const runGeoscript = async ({
       }
 
       await repl.initAsyncDeps(deps, argsByKey);
+      // The recursive call's stats win (last successful eval's numbers).
       return runGeoscript({
         code,
         ctxPtr,
@@ -93,12 +97,16 @@ export const runGeoscript = async ({
 
     return {
       objects: [],
-      stats: buildEmptyRunStats(startTime),
+      stats: buildEmptyRunStats(),
       error: err,
     };
   }
 
-  const stats: RunStats = buildEmptyRunStats(startTime);
+  const stats: RunStats = {
+    ...buildEmptyRunStats(),
+    runtimeMs: evalResult.durationMs,
+    asyncDeps: bitmaskToAsyncDepNames(evalResult.usedDepsBitmask),
+  };
   const renderedObjects: GeneratedObject[] = [];
 
   const overrideMat = getOverrideMat(materialOverride);

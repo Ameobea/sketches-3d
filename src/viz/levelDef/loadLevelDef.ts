@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 import { dev } from '$app/environment';
-import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
-import { WorkerManager } from 'src/geoscript/workerManager';
+import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
+import type { GeoscriptJob } from 'src/geoscript/geoscriptExecutor';
 import type { Viz } from 'src/viz';
 import { withWorldSpaceTransform } from 'src/viz/util/three';
 import {
@@ -17,6 +17,7 @@ import type {
   BehaviorSpec,
   CsgAssetDef,
   CsgTreeNode,
+  GeoscriptAssetMeta,
   LevelDef,
   ObjectDef,
   ObjectGroupDef,
@@ -274,26 +275,27 @@ const RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_transforms | r
  * requiring a full page reload.
  */
 export const resolveGeoscriptAsset = async (code: string): Promise<THREE.Object3D | null> => {
-  const workerManager = new WorkerManager();
-  const repl = workerManager.getWorker();
-  const ctxPtr = await repl.init();
+  const executor = new GeoscriptExecutor();
+  const promises = executor.submit([
+    {
+      id: '__resolveGeoscriptAsset__',
+      modules: { code },
+      code: RENDER_WRAPPER,
+      includePrelude: false,
+      asyncDeps: [],
+      deps: [],
+      collectMetadata: false,
+    },
+  ]);
+  const result = await promises.get('__resolveGeoscriptAsset__')!;
+  executor.terminate();
 
-  const runResult = await runGeoscript({
-    code: RENDER_WRAPPER,
-    ctxPtr,
-    repl,
-    includePrelude: false,
-    modules: { code },
-  });
-
-  workerManager.terminate();
-
-  if (runResult.error) {
-    console.error('[levelDef] resolveGeoscriptAsset error:', runResult.error);
+  if (result.error) {
+    console.error('[levelDef] resolveGeoscriptAsset error:', result.error);
     return null;
   }
 
-  return extractPrototype(runResult.objects as any);
+  return extractPrototype(result.objects as any);
 };
 
 /**
@@ -315,53 +317,123 @@ const buildAssetModules = (
   return { ...modules, code };
 };
 
+/** djb2 hash over a string, returned as a hex string. */
+const djb2Hash = (s: string): string => {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(16);
+};
+
+const computeCodeHash = (includePrelude: boolean, modules: Record<string, string>): string => {
+  const content =
+    (includePrelude ? '1' : '0') +
+    Object.entries(modules)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => `${k}:${v}`)
+      .join('\0');
+  return djb2Hash(content);
+};
+
+const shouldCollectMeta = (def: AssetDef, modules: Record<string, string>, includePrelude: boolean): boolean => {
+  const meta = (def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined;
+  if (!meta) {
+    return true;
+  }
+  if (meta.codeHash !== computeCodeHash(includePrelude, modules)) {
+    return true;
+  }
+  return meta.count < 5;
+};
+
+const computeUpdatedMeta = (
+  existing: GeoscriptAssetMeta | undefined,
+  sampled: { runtimeMs: number; asyncDeps: string[] },
+  modules: Record<string, string>,
+  includePrelude: boolean
+): GeoscriptAssetMeta => {
+  const codeHash = computeCodeHash(includePrelude, modules);
+  const hashChanged = !existing || existing.codeHash !== codeHash;
+  const baseCount = hashChanged ? 0 : existing!.count;
+  const baseRuntimeMs = hashChanged ? 0 : existing!.runtimeMs;
+
+  const newCount = Math.min(baseCount + 1, 5);
+  const newRuntimeMs = (baseRuntimeMs * baseCount + sampled.runtimeMs) / (baseCount + 1);
+
+  const result: GeoscriptAssetMeta = { runtimeMs: newRuntimeMs, count: newCount, codeHash };
+  if (sampled.asyncDeps.length > 0) {
+    result.asyncDeps = sampled.asyncDeps;
+  }
+  return result;
+};
+
 /**
- * Run all geoscript and CSG assets in dependency order within a single worker context.
- * Each asset's code is loaded as a module that `export mesh = ...`, then a tiny render
- * wrapper imports and renders it. This uniform protocol allows assets to be used both
- * standalone and as CSG inputs interchangeably.
+ * Run all geoscript and CSG assets via the executor, firing onResolved incrementally.
+ * In dev mode, collects per-asset runtime metadata and POSTs updates to disk.
  */
 const resolveScriptAssets = async (
   sortedIds: string[],
   assets: Record<string, AssetDef>,
-  onResolved: (id: string, obj: THREE.Object3D) => void
+  onResolved: (id: string, obj: THREE.Object3D) => void,
+  sceneName: string
 ): Promise<void> => {
   const scriptIds = sortedIds.filter(id => assets[id].type === 'geoscript' || assets[id].type === 'csg');
-  if (scriptIds.length === 0) return;
+  if (scriptIds.length === 0) {
+    return;
+  }
 
-  const workerManager = new WorkerManager();
-  const repl = workerManager.getWorker();
-  const ctxPtr = await repl.init();
+  const executor = new GeoscriptExecutor();
 
-  for (const id of scriptIds) {
+  const jobs: GeoscriptJob[] = scriptIds.map(id => {
     const def = assets[id];
     const modules = buildAssetModules(id, def, assets);
     const includePrelude = def.type === 'geoscript' ? (def.includePrelude ?? true) : false;
+    const asyncDeps: string[] = ((def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined)?.asyncDeps?.filter(d => d !== 'text_to_path') ?? [];
+    const collectMetadata = dev && shouldCollectMeta(def, modules, includePrelude);
+    return { id, modules, code: RENDER_WRAPPER, includePrelude, asyncDeps, deps: [], collectMetadata };
+  });
 
-    const runResult = await runGeoscript({
-      code: RENDER_WRAPPER,
-      ctxPtr,
-      repl,
-      includePrelude,
-      modules,
+  const promises = executor.submit(jobs);
+  const metaUpdates: Record<string, GeoscriptAssetMeta> = {};
+
+  for (const id of scriptIds) {
+    promises.get(id)!.then(res => {
+      if (res.error) {
+        console.error(`[levelDef] ${assets[id].type} error for asset "${id}":`, res.error);
+        return;
+      }
+      const prototype = extractPrototype(res.objects as any);
+      if (!prototype) {
+        console.warn(`[levelDef] Asset "${id}" produced no meshes`);
+        return;
+      }
+      prototype.name = id;
+      onResolved(id, prototype);
+
+      if (dev && res.meta) {
+        const def = assets[id];
+        const modules = buildAssetModules(id, def, assets);
+        const includePrelude = def.type === 'geoscript' ? (def.includePrelude ?? true) : false;
+        const existing = (def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined;
+        const updated = computeUpdatedMeta(existing, res.meta, modules, includePrelude);
+        if (JSON.stringify(updated) !== JSON.stringify(existing)) {
+          metaUpdates[id] = updated;
+        }
+      }
     });
-
-    if (runResult.error) {
-      console.error(`[levelDef] ${def.type} error for asset "${id}":`, runResult.error);
-      continue;
-    }
-
-    const prototype = extractPrototype(runResult.objects as any);
-    if (!prototype) {
-      console.warn(`[levelDef] Asset "${id}" produced no meshes`);
-      continue;
-    }
-    prototype.name = id;
-
-    onResolved(id, prototype);
   }
 
-  workerManager.terminate();
+  await Promise.all(promises.values());
+  executor.terminate();
+
+  if (dev && Object.keys(metaUpdates).length > 0) {
+    fetch(`/level_editor/${sceneName}/asset-metadata`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metaUpdates),
+    }).catch(err => console.error('[levelDef] Failed to save asset metadata:', err));
+  }
 };
 
 /**
@@ -702,7 +774,7 @@ export const loadLevelDef = (
     onAssetResolved(assetId, src);
   }
 
-  const geoscriptDone = resolveScriptAssets(sortedAssetIds, levelDef.assets, onAssetResolved);
+  const geoscriptDone = resolveScriptAssets(sortedAssetIds, levelDef.assets, onAssetResolved, viz.sceneName);
 
   const objectsPromise: Promise<LevelObject[]> = geoscriptDone.then(() => allLevelObjects);
   const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(
@@ -772,7 +844,7 @@ export const loadLevelDef = (
               });
               replaceLeafInstance(editor, levelObj, clone);
             }
-          });
+          }, viz.sceneName);
         });
 
         viz.registerDestroyedCb(() => sse.close());

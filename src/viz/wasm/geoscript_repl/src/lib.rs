@@ -161,6 +161,8 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
 #[wasm_bindgen]
 pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
   let ctx = unsafe { &mut *ctx };
+  #[cfg(target_arch = "wasm32")]
+  geoscript::reset_async_dep_bits();
   let Ok(program) = &mut ctx.last_program else {
     ctx.last_result = Err(ErrorStack::new(
       "This should not be called if parsing the program resulted in an error",
@@ -173,6 +175,20 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
   }
   ctx.last_result = eval_program_with_ctx(&ctx.geo_ctx, program);
   ctx.convert_rendered_meshes();
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_used_async_deps(_ctx: *const GeoscriptReplCtx) -> u32 {
+  #[cfg(target_arch = "wasm32")]
+  { geoscript::get_async_dep_bits() }
+  #[cfg(not(target_arch = "wasm32"))]
+  { 0 }
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_clear_const_eval_cache(ctx: *mut GeoscriptReplCtx) {
+  let ctx = unsafe { &mut *ctx };
+  ctx.geo_ctx.const_eval_cache.borrow_mut().entries.clear();
 }
 
 #[wasm_bindgen]

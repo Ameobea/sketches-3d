@@ -2735,6 +2735,8 @@ pub fn text_to_path_impl(
         val => Some(FillRule::parse(val, "text_to_path")?),
       };
 
+      #[cfg(target_arch = "wasm32")]
+      crate::or_async_dep_bit(crate::DEP_BIT_TEXT2PATH);
       let svg_path = crate::mesh_ops::mesh_ops::get_cached_svg_path_str(
         &text,
         &font_family,

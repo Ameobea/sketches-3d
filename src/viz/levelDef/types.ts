@@ -28,11 +28,21 @@ export const GltfAssetDefSchema = z.object({
   meshName: z.string(),
 });
 
+export const GeoscriptAssetMetaSchema = z.object({
+  runtimeMs: z.number(),
+  count: z.number().int().min(0).max(5),
+  codeHash: z.string(),
+  /** Async dep names actually used during eval. Omitted when none were used. */
+  asyncDeps: z.array(z.string()).optional(),
+});
+export type GeoscriptAssetMeta = z.infer<typeof GeoscriptAssetMetaSchema>;
+
 export const GeoscriptAssetDefSchema = z.object({
   type: z.literal('geoscript'),
   code: z.string(),
   /** Whether to include the standard geoscript prelude. Default: true */
   includePrelude: z.boolean().optional(),
+  _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
 /** Geoscript asset that references an external file (resolved server-side before the client sees it). */
@@ -42,6 +52,7 @@ export const GeoscriptAssetDefFileSchema = z.object({
   file: z.string(),
   /** Whether to include the standard geoscript prelude. Default: true */
   includePrelude: z.boolean().optional(),
+  _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
 /** Union of both geoscript asset forms — used when parsing JSON from disk. */
@@ -86,6 +97,7 @@ const CsgTreeNodeSchema: z.ZodType<CsgTreeNode> = z.union([CsgOpNodeSchema, CsgL
 export const CsgAssetDefSchema = z.object({
   type: z.literal('csg'),
   tree: CsgTreeNodeSchema,
+  _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
 export type CsgAssetDef = z.infer<typeof CsgAssetDefSchema>;

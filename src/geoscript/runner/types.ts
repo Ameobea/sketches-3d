@@ -10,6 +10,8 @@ export interface RunStats {
   renderedLightCount: number;
   totalVtxCount: number;
   totalFaceCount: number;
+  /** Async dep names actually used during the eval (from the Rust bitmask). */
+  asyncDeps: string[];
 }
 
 export interface GeneratedMesh {

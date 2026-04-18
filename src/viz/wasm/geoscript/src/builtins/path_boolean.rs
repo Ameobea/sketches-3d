@@ -271,6 +271,8 @@ pub fn path_boolean_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
+      #[cfg(target_arch = "wasm32")]
+      crate::or_async_dep_bit(crate::DEP_BIT_CLIPPER2);
       if !clipper2_get_is_loaded() {
         return Err(ErrorStack::new_uninitialized_module("clipper2"));
       }

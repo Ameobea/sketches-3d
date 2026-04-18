@@ -886,6 +886,34 @@
               },
               "includePrelude": {
                 "type": "boolean"
+              },
+              "_meta": {
+                "type": "object",
+                "properties": {
+                  "runtimeMs": {
+                    "type": "number"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "codeHash": {
+                    "type": "string"
+                  },
+                  "asyncDeps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "runtimeMs",
+                  "count",
+                  "codeHash"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -906,6 +934,34 @@
               },
               "includePrelude": {
                 "type": "boolean"
+              },
+              "_meta": {
+                "type": "object",
+                "properties": {
+                  "runtimeMs": {
+                    "type": "number"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "codeHash": {
+                    "type": "string"
+                  },
+                  "asyncDeps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "runtimeMs",
+                  "count",
+                  "codeHash"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -923,6 +979,34 @@
               },
               "tree": {
                 "$ref": "#/definitions/__schema0"
+              },
+              "_meta": {
+                "type": "object",
+                "properties": {
+                  "runtimeMs": {
+                    "type": "number"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5
+                  },
+                  "codeHash": {
+                    "type": "string"
+                  },
+                  "asyncDeps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "runtimeMs",
+                  "count",
+                  "codeHash"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [

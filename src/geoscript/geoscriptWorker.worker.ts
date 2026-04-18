@@ -22,6 +22,7 @@ export interface GeoscriptAsyncDeps {
   clipper2?: boolean;
 }
 
+
 const initAsyncDeps = (
   deps: GeoscriptAsyncDeps,
   argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>>
@@ -88,6 +89,17 @@ const methods = {
   ) => {
     await initAsyncDeps(deps, argsByKey);
   },
+  initAsyncDep: async (name: keyof GeoscriptAsyncDeps, args?: string[]) => {
+    const deps: GeoscriptAsyncDeps = { [name]: true };
+    const argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>> = {};
+    if (args?.length) {
+      argsByKey[name] = args;
+    }
+    await initAsyncDeps(deps, argsByKey);
+  },
+  clearConstEvalCache: (ctxPtr: number) => {
+    Geoscript.geoscript_repl_clear_const_eval_cache(ctxPtr);
+  },
   setModuleSources: (ctxPtr: number, modules: Record<string, string>) => {
     const names = Object.keys(modules);
     const sources = Object.values(modules);
@@ -96,16 +108,14 @@ const methods = {
   eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
     Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
     if (Geoscript.geoscript_repl_has_err(ctxPtr)) {
-      return;
+      return { durationMs: 0, usedDepsBitmask: 0 };
     }
 
-    const deps: GeoscriptAsyncDeps = JSON.parse(Geoscript.geoscript_repl_get_async_dependencies(ctxPtr));
-    const depsPromise = initAsyncDeps(deps, {});
-    if (depsPromise) {
-      await depsPromise;
-    }
-
+    const start = performance.now();
     Geoscript.geoscript_repl_eval(ctxPtr);
+    const durationMs = performance.now() - start;
+    const usedDepsBitmask = Geoscript.geoscript_repl_get_used_async_deps(ctxPtr);
+    return { durationMs, usedDepsBitmask };
   },
   getErr: (ctxPtr: number) => {
     return Geoscript.geoscript_repl_get_err(ctxPtr);

@@ -150,6 +150,7 @@ pub fn get_geodesic_error() -> String {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn verify_cgal_loaded() -> Result<(), ErrorStack> {
+  crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
   if !cgal_get_is_loaded() {
     Err(ErrorStack::new_uninitialized_module("cgal"))
   } else {

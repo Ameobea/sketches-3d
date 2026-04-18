@@ -2275,6 +2275,8 @@ fn trace_geodesic_path_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  #[cfg(target_arch = "wasm32")]
+  crate::or_async_dep_bit(crate::DEP_BIT_GEODESICS);
   if !get_geodesics_loaded() {
     return Err(ErrorStack::new_uninitialized_module("geodesics"));
   }
@@ -2455,6 +2457,8 @@ fn text_to_mesh_impl(
         }
       };
 
+      #[cfg(target_arch = "wasm32")]
+      crate::or_async_dep_bit(crate::DEP_BIT_TEXT2PATH);
       let svg_path = get_cached_svg_path_str(
         &text,
         &font_family,
@@ -2552,6 +2556,8 @@ fn text_to_svg_impl(
         }
       };
 
+      #[cfg(target_arch = "wasm32")]
+      crate::or_async_dep_bit(crate::DEP_BIT_TEXT2PATH);
       let svg_path = get_cached_svg_path_str(
         &text,
         &font_family,
