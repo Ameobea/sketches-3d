@@ -68,12 +68,16 @@ export class LevelEditorApi {
     }
   };
 
-  sendPasteGroup = async (def: ObjectGroupDef): Promise<ObjectGroupDef | null> => {
+  sendPasteGroup = async (
+    def: ObjectGroupDef,
+    parentId?: string,
+    index?: number
+  ): Promise<ObjectGroupDef | null> => {
     try {
       const res = await fetch(`/level_editor/${this.levelName}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'group_paste', def }),
+        body: JSON.stringify({ type: 'group_paste', def, parentId, index }),
       });
       if (!res.ok) {
         console.error('[LevelEditor] paste group failed:', res.status, await res.text());

@@ -147,6 +147,15 @@ export class SelectionManager {
     this._selectedNodes = [];
   }
 
+  /**
+   * Replace the entire selection with the given list of nodes. Used for
+   * batch operations (e.g. selecting all clones produced by a multi-paste).
+   */
+  selectMany(nodes: LevelSceneNode[]) {
+    this.selectedLight = null;
+    this._selectedNodes = [...nodes];
+  }
+
   /** Clear light selection. */
   deselectLight() {
     this.selectedLight = null;

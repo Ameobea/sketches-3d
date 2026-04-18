@@ -31,6 +31,50 @@ export const applySnapshot = (obj: THREE.Object3D, snap: TransformSnapshot) => {
   obj.scale.fromArray(snap.scale);
 };
 
+/**
+ * Captures an object's current world-space transform (decomposed from its world matrix).
+ * `updateMatrixWorld` is called to ensure the matrix is fresh.
+ */
+export const snapshotWorldTransform = (obj: THREE.Object3D): TransformSnapshot => {
+  obj.updateMatrixWorld(true);
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  obj.matrixWorld.decompose(pos, quat, scale);
+  const euler = new THREE.Euler().setFromQuaternion(quat);
+  return {
+    position: [pos.x, pos.y, pos.z],
+    rotation: [euler.x, euler.y, euler.z],
+    scale: [scale.x, scale.y, scale.z],
+  };
+};
+
+/**
+ * Convert a world-space TransformSnapshot into a local-space TransformSnapshot
+ * relative to `parent`'s world matrix.
+ */
+export const worldToLocalSnapshot = (world: TransformSnapshot, parent: THREE.Object3D): TransformSnapshot => {
+  parent.updateMatrixWorld(true);
+  const worldMatrix = new THREE.Matrix4().compose(
+    new THREE.Vector3().fromArray(world.position),
+    new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(world.rotation[0], world.rotation[1], world.rotation[2])
+    ),
+    new THREE.Vector3().fromArray(world.scale)
+  );
+  const localMatrix = new THREE.Matrix4().copy(parent.matrixWorld).invert().multiply(worldMatrix);
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  localMatrix.decompose(pos, quat, scale);
+  const euler = new THREE.Euler().setFromQuaternion(quat);
+  return {
+    position: [pos.x, pos.y, pos.z],
+    rotation: [euler.x, euler.y, euler.z],
+    scale: [scale.x, scale.y, scale.z],
+  };
+};
+
 export const snapshotsEqual = (a: TransformSnapshot, b: TransformSnapshot): boolean => {
   for (let i = 0; i < 3; i++) {
     if (Math.abs(a.position[i] - b.position[i]) > SNAP_EPS) return false;

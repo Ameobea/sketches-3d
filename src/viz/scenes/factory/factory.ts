@@ -112,11 +112,11 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         },
         coyoteTimeSeconds: 0.135,
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
-        maxSlopeRadians: 1.3,
+        maxSlopeRadians: 1.4,
         oobYThreshold: -200,
         slopeSlide: {
-          minAngle: 1.2,
-          maxSpeed: 12,
+          minAngle: 1.1,
+          maxSpeed: 80,
         },
       },
       viewMode: {
@@ -140,7 +140,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         ? { intensity: 2.5, levels: 2, luminanceThreshold: 0.08, radius: 0.1 }
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
-          float distToPlayer = distance(worldPos.xz, playerPos.xz);
+          float distToPlayer = distance(worldPos.xz, playerPos.xz) + 0.01 * abs(worldPos.y - playerPos.y);
           float fogFactor = smoothstep(80., 290., distToPlayer);
           return vec4(vec3(0.0002, 0.0002, 0.0002), fogFactor);
         }`,

@@ -4,11 +4,17 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
-import type { LevelDef, LightDef, ObjectDef, ObjectGroupDef } from './types';
+import type { LevelDef, LightDef } from './types';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
 import { SelectionManager } from './SelectionManager.svelte';
-import { TransformHandler, snapshotTransform, applySnapshot, snapshotsEqual } from './TransformHandler';
+import {
+  TransformHandler,
+  snapshotTransform,
+  applySnapshot,
+  snapshotsEqual,
+  snapshotWorldTransform,
+} from './TransformHandler';
 import type { TransformSnapshot, TransformMode } from './TransformHandler';
 import { LEVEL_PLACEHOLDER_MAT, SELECTION_HIGHLIGHT_MAT, assignMaterial } from './levelObjectUtils';
 import { isDescendantOf } from './levelDefTreeUtils';
@@ -24,7 +30,7 @@ import { withWorldSpaceTransform } from '../util/three';
 import { round } from './mathUtils';
 import { collectSubtreeLeaves } from './editorStructuralOps';
 import { EditorMutationController } from './editorMutationController';
-import type { StructuralUndoEntry } from './editorMutationController';
+import type { StructuralUndoEntry, ClipboardEntry } from './editorMutationController';
 import type { LevelEditorPanelActions, LevelEditorPanelViewState } from './levelEditorPanelTypes';
 import {
   addLevelLightToScene,
@@ -41,10 +47,6 @@ type UndoEntry =
       entries: Array<{ node: LevelSceneNode; before: TransformSnapshot; after: TransformSnapshot }>;
     }
   | StructuralUndoEntry;
-
-type ClipboardEntry =
-  | { type: 'object'; assetId: string; def: ObjectDef }
-  | { type: 'group'; def: ObjectGroupDef; worldPosition: [number, number, number] };
 
 export class LevelEditor {
   viz: Viz;
@@ -90,7 +92,7 @@ export class LevelEditor {
   private originalSetPointerCapture: ((pointerId: number) => void) | null = null;
   private originalReleasePointerCapture: ((pointerId: number) => void) | null = null;
 
-  private clipboard: ClipboardEntry | null = null;
+  private clipboard: ClipboardEntry[] = [];
 
   allLevelLights: LevelLight[];
   /** Delegating accessor for the selected light (used by CsgEditController / external code). */
@@ -244,27 +246,16 @@ export class LevelEditor {
 
     // Copy / Paste
     if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !isTypingInput) {
-      const node = this.selection.primaryNode;
-      if (node) {
-        if (isLevelGroup(node)) {
-          const wp = node.object.getWorldPosition(new THREE.Vector3());
-          this.clipboard = {
-            type: 'group',
-            def: JSON.parse(JSON.stringify(node.def)),
-            worldPosition: [wp.x, wp.y, wp.z],
-          };
-        } else {
-          this.clipboard = {
-            type: 'object',
-            assetId: node.assetId,
-            def: JSON.parse(JSON.stringify(node.def)),
-          };
-        }
+      const nodes = this.selection.selectedNodes.filter(n => !n.generated);
+      if (nodes.length > 0) {
+        this.clipboard = nodes.map(node =>
+          this.mutationController.captureClipboardEntry(node, snapshotWorldTransform(node.object))
+        );
       }
       return;
     }
     if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !isTypingInput) {
-      if (this.clipboard) {
+      if (this.clipboard.length > 0) {
         e.preventDefault();
         void this.pasteObject();
       }
@@ -1195,22 +1186,20 @@ export class LevelEditor {
   }
 
   private async pasteObject() {
-    const clip = this.clipboard;
-    if (!clip) return;
+    if (this.clipboard.length === 0) return;
+    const newNodes = await this.mutationController.pasteEntries(this.clipboard);
+    if (newNodes.length === 0) return;
 
-    if (clip.type === 'group') {
-      const root = await this.mutationController.pasteGroup(clip.def, clip.worldPosition);
-      if (root) {
-        this.selectionState.treeVersion++;
-        this.select(root);
-      }
-      return;
-    }
+    this.selectionState.treeVersion++;
 
-    const leaf = await this.mutationController.pasteLeaf(clip.assetId, clip.def);
-    if (leaf) {
-      this.selectionState.treeVersion++;
-      this.select(leaf);
+    // CSG editing is incompatible with multi-select; exit before re-selecting.
+    if (this.csgController.isActive) this.csgController.exit();
+
+    if (newNodes.length === 1) {
+      this.select(newNodes[0]);
+    } else {
+      this.selection.selectMany(newNodes);
+      this.syncAfterSelectionChange();
     }
   }
 

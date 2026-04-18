@@ -126,6 +126,10 @@ export const POST: RequestHandler = async ({ params, request }) => {
         /** Paste a full group subtree (copy-paste). Server assigns fresh IDs. */
         type: 'group_paste';
         def: ObjectGroupDef;
+        /** If provided, insert under this parent group instead of at root. */
+        parentId?: string;
+        /** Index within the parent's children (or root). Defaults to append. */
+        index?: number;
       }
     | {
         /** Restore an exact subtree (undo/redo) at a specific placement. */
@@ -225,7 +229,21 @@ export const POST: RequestHandler = async ({ params, request }) => {
     };
 
     const newDef = withFreshIds(body.def) as ObjectGroupDef;
-    level.def.objects.push(newDef);
+
+    if (body.parentId) {
+      const targetParent = findNodeById(level.def.objects, body.parentId);
+      if (!targetParent || !isObjectGroup(targetParent)) {
+        error(404, `Target group "${body.parentId}" not found`);
+      }
+    }
+
+    const insertIndex =
+      body.index ??
+      (body.parentId
+        ? ((findNodeById(level.def.objects, body.parentId) as ObjectGroupDef | undefined)?.children.length ??
+          0)
+        : level.def.objects.length);
+    insertNodeAtPlacement(level.def.objects, newDef, body.parentId, insertIndex);
     level.save();
     return json(newDef, { status: 201 });
   }

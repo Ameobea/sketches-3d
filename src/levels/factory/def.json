@@ -91,6 +91,10 @@
     "tank": {
       "type": "geoscript",
       "file": "geo/tank.geo"
+    },
+    "wire": {
+      "type": "geoscript",
+      "code": "export mesh = extrude_pipe(0.2, 6, 0..30 -> |i| v3(0, i*10, 0))"
     }
   },
   "objects": [],

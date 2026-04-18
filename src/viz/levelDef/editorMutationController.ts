@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import type { LevelObject, LevelGroup, LevelSceneNode } from './levelSceneTypes';
+import { isLevelGroup } from './levelSceneTypes';
 import type { ObjectDef, ObjectGroupDef } from './types';
 import type { StructuralCtx, RuntimeSubtree, StructuralOp, ParentRef } from './editorStructuralTypes';
 import type { BuildCtx } from './editorNodeFactory';
@@ -13,7 +14,8 @@ import {
   collectSubtreeLeaves,
   applyStructuralOp,
 } from './editorStructuralOps';
-import { snapshotTransform } from './TransformHandler';
+import type { TransformSnapshot } from './TransformHandler';
+import { snapshotTransform, worldToLocalSnapshot } from './TransformHandler';
 import { flattenLeaves } from './levelDefTreeUtils';
 import { round } from './mathUtils';
 
@@ -22,6 +24,31 @@ export type StructuralUndoEntry = {
   undoOps: StructuralOp[];
   redoOps: StructuralOp[];
 };
+
+/**
+ * A single clipboard entry produced by Ctrl+C on a selected node.
+ * Stores the def (deep-cloned), the source node's parent, and the source's
+ * world-space transform at copy-time. At paste-time, the target parent is
+ * resolved (falling back to root if the original parent is gone) and the
+ * world transform is projected into the resolved parent's local space.
+ */
+export type ClipboardEntry =
+  | {
+      kind: 'object';
+      assetId: string;
+      def: ObjectDef;
+      parent: ParentRef;
+      worldTransform: TransformSnapshot;
+    }
+  | {
+      kind: 'group';
+      def: ObjectGroupDef;
+      parent: ParentRef;
+      worldTransform: TransformSnapshot;
+    };
+
+/** Vertical offset applied (in the resolved parent's local Y) to each clone. */
+const PASTE_Y_OFFSET = 0.5;
 
 type MutationCtx = StructuralCtx & BuildCtx;
 
@@ -180,66 +207,136 @@ export class EditorMutationController {
   }
 
   /**
-   * Paste a leaf object from clipboard data.
-   * Offsets the Y position slightly to avoid Z-fighting on the source.
-   * Returns the new node or null on failure.
+   * Capture a node as a clipboard entry: its def, its current parent, and its
+   * world-space transform at copy-time. The world transform lets paste produce
+   * sensible placement even if the original parent has been deleted by then.
    */
-  async pasteLeaf(assetId: string, def: ObjectDef): Promise<LevelObject | null> {
-    if (!this.ctx.prototypes.has(assetId)) {
-      console.warn(
-        `[EditorMutationController] No prototype for asset "${assetId}" — asset may not be loaded yet`
-      );
-      return null;
+  captureClipboardEntry(node: LevelSceneNode, worldTransform: TransformSnapshot): ClipboardEntry {
+    const parent = capturePlacement(this.ctx, node).parent;
+    if (isLevelGroup(node)) {
+      return {
+        kind: 'group',
+        def: JSON.parse(JSON.stringify(node.def)),
+        parent,
+        worldTransform,
+      };
     }
-    const srcPos = def.position ?? [0, 0, 0];
-    const position: [number, number, number] = [srcPos[0], srcPos[1] + 0.5, srcPos[2]];
-    const newDef = await this.api.sendAdd({
-      asset: assetId,
-      material: def.material,
-      position,
-      rotation: def.rotation,
-      scale: def.scale,
-    });
-    if (!newDef) return null;
-    return this._finalizeSpawnLeaf(assetId, newDef);
+    return {
+      kind: 'object',
+      assetId: node.assetId,
+      def: JSON.parse(JSON.stringify(node.def)),
+      parent,
+      worldTransform,
+    };
   }
 
   /**
-   * Paste a group subtree from clipboard data.
-   * Offsets the Y position slightly and validates that all leaf prototypes are loaded.
-   * Returns the new root group or null on failure.
+   * Paste a batch of clipboard entries. Each entry is placed as a sibling of
+   * its original source (or at root, if the source's parent is gone). World
+   * placement is preserved via world→local projection, with a small local-Y
+   * offset per clone to avoid overlapping the source.
+   *
+   * All successfully pasted clones are bundled into a single compound
+   * structural undo entry. Returns the new root nodes in paste order.
    */
-  async pasteGroup(def: ObjectGroupDef, worldPosition: [number, number, number]): Promise<LevelGroup | null> {
-    const patchedDef: ObjectGroupDef = {
-      ...JSON.parse(JSON.stringify(def)),
-      position: [worldPosition[0], worldPosition[1] + 0.5, worldPosition[2]] as [number, number, number],
-    };
+  async pasteEntries(entries: ClipboardEntry[]): Promise<LevelSceneNode[]> {
+    const newSubtrees: RuntimeSubtree[] = [];
+    const newNodes: LevelSceneNode[] = [];
 
-    for (const leaf of flattenLeaves([patchedDef])) {
-      if (!this.ctx.prototypes.has(leaf.asset)) {
-        console.warn(`[EditorMutationController] No prototype for asset "${leaf.asset}" in pasted group`);
+    for (const entry of entries) {
+      const result = await this._pasteOne(entry);
+      if (!result) continue;
+      newSubtrees.push(result.subtree);
+      newNodes.push(result.subtree.root);
+    }
+
+    if (newSubtrees.length > 0) {
+      this.undoPush({
+        type: 'structural',
+        undoOps: newSubtrees.map(s => ({ type: 'detach_subtree' as const, subtree: s })).reverse(),
+        redoOps: newSubtrees.map(s => ({ type: 'attach_subtree' as const, subtree: s })),
+      });
+    }
+
+    return newNodes;
+  }
+
+  private async _pasteOne(entry: ClipboardEntry): Promise<{ subtree: RuntimeSubtree } | null> {
+    // Validate asset prototypes are available.
+    if (entry.kind === 'object') {
+      if (!this.ctx.prototypes.has(entry.assetId)) {
+        console.warn(
+          `[EditorMutationController] No prototype for asset "${entry.assetId}" — asset may not be loaded yet`
+        );
         return null;
+      }
+    } else {
+      for (const leaf of flattenLeaves([entry.def])) {
+        if (!this.ctx.prototypes.has(leaf.asset)) {
+          console.warn(`[EditorMutationController] No prototype for asset "${leaf.asset}" in pasted group`);
+          return null;
+        }
       }
     }
 
-    const newDef = await this.api.sendPasteGroup(patchedDef);
-    if (!newDef) return null;
+    // Resolve target parent, falling back to root if the original is gone or generated.
+    let parentRef: ParentRef = entry.parent;
+    let targetParentObj: THREE.Object3D = this.ctx.viz.scene;
+    let targetChildren: LevelSceneNode[] = this.ctx.rootNodes;
+    if (parentRef.type === 'group') {
+      const parentNode = this.ctx.nodeById.get(parentRef.groupId);
+      if (parentNode && isLevelGroup(parentNode) && !parentNode.generated) {
+        targetParentObj = parentNode.object;
+        targetChildren = parentNode.children;
+      } else {
+        parentRef = { type: 'root' };
+      }
+    }
 
-    const root = buildGroupSubtree(this.ctx, newDef);
+    // Project world transform into the resolved parent's local space and apply offset.
+    const local = worldToLocalSnapshot(entry.worldTransform, targetParentObj);
+    local.position = [local.position[0], local.position[1] + PASTE_Y_OFFSET, local.position[2]];
+    const position = local.position.map(round) as [number, number, number];
+    const rotation = local.rotation.map(round) as [number, number, number];
+    const scale = local.scale.map(round) as [number, number, number];
+
+    const parentId = parentRef.type === 'group' ? parentRef.groupId : undefined;
+    const index = targetChildren.length;
+
+    let root: LevelSceneNode;
+    if (entry.kind === 'object') {
+      const newDef = await this.api.sendAdd({
+        asset: entry.assetId,
+        material: entry.def.material,
+        position,
+        rotation,
+        scale,
+        parentId,
+        index,
+      });
+      if (!newDef) return null;
+      root = buildLeafNode(this.ctx, entry.assetId, newDef);
+    } else {
+      const patchedDef: ObjectGroupDef = {
+        ...JSON.parse(JSON.stringify(entry.def)),
+        position,
+        rotation,
+        scale,
+      };
+      const newDef = await this.api.sendPasteGroup(patchedDef, parentId, index);
+      if (!newDef) return null;
+      root = buildGroupSubtree(this.ctx, newDef);
+    }
+
     const leaves = collectSubtreeLeaves(root);
     const subtree: RuntimeSubtree = {
       root,
-      placement: { parent: { type: 'root' }, index: this.ctx.rootNodes.length },
+      placement: { parent: parentRef, index },
       transform: snapshotTransform(root.object),
       leaves,
     };
     attachSubtree(this.ctx, subtree);
-    this.undoPush({
-      type: 'structural',
-      undoOps: [{ type: 'detach_subtree', subtree }],
-      redoOps: [{ type: 'attach_subtree', subtree }],
-    });
-    return root;
+    return { subtree };
   }
 
   // ---------------------------------------------------------------------------
