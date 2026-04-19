@@ -150,7 +150,12 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
         const code = readFileSync(codePath, 'utf-8');
         return [
           assetId,
-          { type: 'geoscript' as const, code, includePrelude: assetDef.includePrelude, _meta: assetDef._meta },
+          {
+            type: 'geoscript' as const,
+            code,
+            includePrelude: assetDef.includePrelude,
+            _meta: assetDef._meta,
+          },
         ];
       }
       return [assetId, assetDef];

@@ -1,14 +1,12 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
 import WasmURL from './clipper2z.wasm?url';
 
-const Clipper2Wasm = new AsyncOnce(() =>
-  import('./clipper2z.js')
-    .then(mod => {
-      (mod.default as any).locateFile = (_path: string) => WasmURL;
-      return mod.default;
-    })
-    .then(mod => mod({ locateFile: (_path: string) => WasmURL }))
-);
+const Clipper2Wasm = new AsyncOnce(async () => {
+  const wasmBinaryP = fetch(WasmURL).then(r => r.arrayBuffer());
+  const mod = await import('./clipper2z.js');
+  const wasmBinary = await wasmBinaryP;
+  return mod.default({ wasmBinary, locateFile: (_path: string) => WasmURL } as any);
+});
 
 export const initClipper2 = (): Promise<void> | true => {
   if (Clipper2Wasm.isSome()) {

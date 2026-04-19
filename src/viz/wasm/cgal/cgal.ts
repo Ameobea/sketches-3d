@@ -1,14 +1,15 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
 import WasmURL from './index.wasm?url';
 
-const CGALWasm = new AsyncOnce(() =>
-  import('./index.js')
-    .then(mod => {
-      (mod.CGAL as any).locateFile = (_path: string) => WasmURL;
-      return mod.CGAL;
-    })
-    .then(mod => mod({ locateFile: (_path: string) => WasmURL }))
-);
+const CGALWasm = new AsyncOnce(async () => {
+  // Kick off wasm fetch in parallel with the JS glue fetch so the two don't
+  // waterfall. The wasm URL is hashed, so any `<link rel="preload">` for it
+  // makes this a cache hit.
+  const wasmBinaryP = fetch(WasmURL).then(r => r.arrayBuffer());
+  const mod = await import('./index.js');
+  const wasmBinary = await wasmBinaryP;
+  return mod.CGAL({ wasmBinary, locateFile: (_path: string) => WasmURL } as any);
+});
 
 export const initCGAL = (): Promise<void> | true => {
   if (CGALWasm.isSome()) {

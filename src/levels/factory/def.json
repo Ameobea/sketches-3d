@@ -21,27 +21,27 @@
     "platform": {
       "type": "geoscript",
       "code": "export mesh = box(20, 3, 20)",
-      "_meta": { "runtimeMs": 5.493333379427592, "count": 3, "codeHash": "8b6313c0" }
+      "_meta": { "runtimeMs": 5.168000030517578, "count": 5, "codeHash": "8b6313c0" }
     },
     "rod": {
       "type": "geoscript",
       "code": "set_sharp_angle_threshold(190);export mesh = extrude_pipe(radius=0.08, resolution=8, path=[v3(0), v3(0, 5, 0)]);",
-      "_meta": { "runtimeMs": 4.108333309491475, "count": 3, "codeHash": "c786ed9d", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 4.257999992370605, "count": 5, "codeHash": "c786ed9d", "asyncDeps": [ "cgal" ] }
     },
     "wall": {
       "type": "geoscript",
       "code": "export mesh = box(20, 200, 100)",
-      "_meta": { "runtimeMs": 0.23166672388712564, "count": 3, "codeHash": "fc6ae40e" }
+      "_meta": { "runtimeMs": 0.21600003242492677, "count": 5, "codeHash": "fc6ae40e" }
     },
     "plat1": {
       "type": "geoscript",
       "file": "geo/plat1.geo",
-      "_meta": { "runtimeMs": 16.015000025431316, "count": 3, "codeHash": "970753a6", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 16.035000014305115, "count": 5, "codeHash": "970753a6", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "box": {
       "type": "geoscript",
       "code": "export mesh = box(5, 5, 5)",
-      "_meta": { "runtimeMs": 0.15333330631256104, "count": 3, "codeHash": "4ef92748" }
+      "_meta": { "runtimeMs": 0.1629999876022339, "count": 5, "codeHash": "4ef92748" }
     },
     "csg_box": {
       "type": "csg",
@@ -60,57 +60,57 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 7.4983333349227905, "count": 3, "codeHash": "9e2dfb4", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 7.629000020027161, "count": 5, "codeHash": "9e2dfb4", "asyncDeps": [ "cgal" ] }
     },
     "angled_plat": {
       "type": "geoscript",
       "file": "geo/angled_plat.geo",
-      "_meta": { "runtimeMs": 4.183333317438762, "count": 3, "codeHash": "af95c50b", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 4.134000015258789, "count": 5, "codeHash": "af95c50b", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "pipes1": {
       "type": "geoscript",
       "file": "geo/pipes1.geo",
-      "_meta": { "runtimeMs": 22.950000007947285, "count": 3, "codeHash": "30ece142", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 22.653000020980834, "count": 5, "codeHash": "30ece142", "asyncDeps": [ "cgal" ] }
     },
     "pipe_decoration1": {
       "type": "geoscript",
       "file": "geo/pipe_decoration1.geo",
-      "_meta": { "runtimeMs": 6.353333314259847, "count": 3, "codeHash": "1ee452b6", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 6.019999980926514, "count": 5, "codeHash": "1ee452b6", "asyncDeps": [ "cgal" ] }
     },
     "pipes2": {
       "type": "geoscript",
       "file": "geo/pipes2.geo",
-      "_meta": { "runtimeMs": 10.91000004609426, "count": 3, "codeHash": "adf33454", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 10.18600001335144, "count": 5, "codeHash": "adf33454", "asyncDeps": [ "cgal" ] }
     },
     "pipe_decoration2": {
       "type": "geoscript",
       "file": "geo/pipe_decoration2.geo",
-      "_meta": { "runtimeMs": 1.9049999713897705, "count": 3, "codeHash": "605d1911", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 1.8769999504089356, "count": 5, "codeHash": "605d1911", "asyncDeps": [ "cgal" ] }
     },
     "cheese_wheel": {
       "type": "geoscript",
       "file": "geo/cheese_wheel.geo",
-      "_meta": { "runtimeMs": 48.50000003973643, "count": 3, "codeHash": "d8f6d6d6", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 47.06800000667572, "count": 5, "codeHash": "d8f6d6d6", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "grate": {
       "type": "geoscript",
       "file": "geo/grate.geo",
-      "_meta": { "runtimeMs": 154.0300000111262, "count": 3, "codeHash": "12360de3", "asyncDeps": [ "clipper2" ] }
+      "_meta": { "runtimeMs": 148.13900003433227, "count": 5, "codeHash": "12360de3", "asyncDeps": [ "clipper2" ] }
     },
     "small_grate": {
       "type": "geoscript",
       "file": "geo/small_grate.geo",
-      "_meta": { "runtimeMs": 123.7933333714803, "count": 3, "codeHash": "9b85b83a", "asyncDeps": [ "clipper2" ] }
+      "_meta": { "runtimeMs": 118.46100001335144, "count": 5, "codeHash": "9b85b83a", "asyncDeps": [ "clipper2" ] }
     },
     "tank": {
       "type": "geoscript",
       "file": "geo/tank.geo",
-      "_meta": { "runtimeMs": 27.5600000222524, "count": 3, "codeHash": "8d54cc51", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 25.90200002193451, "count": 5, "codeHash": "8d54cc51", "asyncDeps": [ "cgal" ] }
     },
     "wire": {
       "type": "geoscript",
       "code": "export mesh = extrude_pipe(0.2, 6, 0..30 -> |i| v3(0, i*10, 0))",
-      "_meta": { "runtimeMs": 0.5599999825159708, "count": 3, "codeHash": "f1709bb5", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 0.5210000038146972, "count": 5, "codeHash": "f1709bb5", "asyncDeps": [ "cgal" ] }
     }
   },
   "objects": [],

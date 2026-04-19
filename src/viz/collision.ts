@@ -96,9 +96,13 @@ export const getAmmoJS = async () => {
     return ammojs;
   }
 
-  ammojs = import('../ammojs/ammo.wasm.js').then(mod =>
-    (mod as any).Ammo.apply({}, [{ locateFile: () => AmmoWasmURL }])
-  );
+  ammojs = (async () => {
+    // Kick off wasm fetch in parallel with the JS glue fetch so they don't waterfall.
+    const wasmBinaryP = fetch(AmmoWasmURL).then(r => r.arrayBuffer());
+    const mod = await import('../ammojs/ammo.wasm.js');
+    const wasmBinary = await wasmBinaryP;
+    return (mod as any).Ammo.apply({}, [{ wasmBinary, locateFile: () => AmmoWasmURL }]);
+  })();
   return ammojs;
 };
 

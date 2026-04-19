@@ -3,13 +3,16 @@ import * as Comlink from 'comlink';
 import { initManifoldWasm } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
+import geoscriptReplWasmURL from 'src/viz/wasmComp/geoscript_repl_bg.wasm?url';
 import { initGeodesics } from './geodesics';
 import { initCGAL } from 'src/viz/wasm/cgal/cgal';
 import { initClipper2 } from 'src/viz/wasm/clipper2/clipper2';
 import { textToSvg } from './text_to_path';
 
 const initGeoscript = async () => {
-  await Geoscript.default();
+  // Pass `fetch(url)` directly so wasm-bindgen uses `WebAssembly.instantiateStreaming`.
+  // With the `<link rel="preload">` from the scene route, the fetch is a cache hit.
+  await Geoscript.default(fetch(geoscriptReplWasmURL));
   return Geoscript;
 };
 
@@ -21,7 +24,6 @@ export interface GeoscriptAsyncDeps {
   text_to_path?: boolean;
   clipper2?: boolean;
 }
-
 
 const initAsyncDeps = (
   deps: GeoscriptAsyncDeps,

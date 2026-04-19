@@ -62,42 +62,44 @@ export class GeoscriptExecutor {
       const jobDeps = job.asyncDeps.filter(d => d !== 'text_to_path');
 
       const jobPromise = new Promise<GeoscriptJobResult>(res => {
-        chain = chain.then(async () => {
-          // Wait for this job's specific deps.
-          if (jobDeps.length > 0) {
-            await Promise.all(jobDeps.map(d => depPromises.get(d)!));
-          }
+        chain = chain
+          .then(async () => {
+            // Wait for this job's specific deps.
+            if (jobDeps.length > 0) {
+              await Promise.all(jobDeps.map(d => depPromises.get(d)!));
+            }
 
-          const ctxPtr = await this.ctxPtrPromise;
+            const ctxPtr = await this.ctxPtrPromise;
 
-          if (job.collectMetadata) {
-            await repl.clearConstEvalCache(ctxPtr);
-          }
+            if (job.collectMetadata) {
+              await repl.clearConstEvalCache(ctxPtr);
+            }
 
-          // runGeoscript handles reset + setModuleSources internally.
-          const runResult = await runGeoscript({
-            code: job.code,
-            ctxPtr,
-            repl,
-            includePrelude: job.includePrelude,
-            modules: job.modules,
-          });
+            // runGeoscript handles reset + setModuleSources internally.
+            const runResult = await runGeoscript({
+              code: job.code,
+              ctxPtr,
+              repl,
+              includePrelude: job.includePrelude,
+              modules: job.modules,
+            });
 
-          const result: GeoscriptJobResult = {
-            objects: runResult.objects,
-            error: runResult.error,
-          };
-          if (job.collectMetadata && !runResult.error) {
-            result.meta = {
-              runtimeMs: runResult.stats.runtimeMs,
-              asyncDeps: runResult.stats.asyncDeps,
+            const result: GeoscriptJobResult = {
+              objects: runResult.objects,
+              error: runResult.error,
             };
-          }
+            if (job.collectMetadata && !runResult.error) {
+              result.meta = {
+                runtimeMs: runResult.stats.runtimeMs,
+                asyncDeps: runResult.stats.asyncDeps,
+              };
+            }
 
-          res(result);
-        }).catch(err => {
-          res({ objects: [], error: String(err) });
-        });
+            res(result);
+          })
+          .catch(err => {
+            res({ objects: [], error: String(err) });
+          });
       });
 
       results.set(job.id, jobPromise);

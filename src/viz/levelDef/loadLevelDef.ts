@@ -336,7 +336,11 @@ const computeCodeHash = (includePrelude: boolean, modules: Record<string, string
   return djb2Hash(content);
 };
 
-const shouldCollectMeta = (def: AssetDef, modules: Record<string, string>, includePrelude: boolean): boolean => {
+const shouldCollectMeta = (
+  def: AssetDef,
+  modules: Record<string, string>,
+  includePrelude: boolean
+): boolean => {
   const meta = (def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined;
   if (!meta) {
     return true;
@@ -389,7 +393,10 @@ const resolveScriptAssets = async (
     const def = assets[id];
     const modules = buildAssetModules(id, def, assets);
     const includePrelude = def.type === 'geoscript' ? (def.includePrelude ?? true) : false;
-    const asyncDeps: string[] = ((def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined)?.asyncDeps?.filter(d => d !== 'text_to_path') ?? [];
+    const asyncDeps: string[] =
+      ((def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined)?.asyncDeps?.filter(
+        d => d !== 'text_to_path'
+      ) ?? [];
     const collectMetadata = dev && shouldCollectMeta(def, modules, includePrelude);
     return { id, modules, code: RENDER_WRAPPER, includePrelude, asyncDeps, deps: [], collectMetadata };
   });
@@ -831,20 +838,25 @@ export const loadLevelDef = (
           );
           if (sortedAffected.length === 0) return;
 
-          await resolveScriptAssets(sortedAffected, mutableAssets, (id, newPrototype) => {
-            assetPrototypes.set(id, newPrototype);
+          await resolveScriptAssets(
+            sortedAffected,
+            mutableAssets,
+            (id, newPrototype) => {
+              assetPrototypes.set(id, newPrototype);
 
-            // Swap every placed object that uses this asset in-place.
-            for (const levelObj of allLevelObjects) {
-              if (levelObj.assetId !== id) continue;
+              // Swap every placed object that uses this asset in-place.
+              for (const levelObj of allLevelObjects) {
+                if (levelObj.assetId !== id) continue;
 
-              const clone = instantiateLevelObject(newPrototype, levelObj.def, {
-                builtMaterials,
-                fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
-              });
-              replaceLeafInstance(editor, levelObj, clone);
-            }
-          }, viz.sceneName);
+                const clone = instantiateLevelObject(newPrototype, levelObj.def, {
+                  builtMaterials,
+                  fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
+                });
+                replaceLeafInstance(editor, levelObj, clone);
+              }
+            },
+            viz.sceneName
+          );
         });
 
         viz.registerDestroyedCb(() => sse.close());

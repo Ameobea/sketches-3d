@@ -3,14 +3,12 @@ import geodesicsWasmURL from 'src/geodesics/geodesics.wasm?url';
 
 let LastError = '';
 
-const GeodesicsModule = new AsyncOnce(() =>
-  import('src/geodesics/geodesics.js')
-    .then(mod => {
-      (mod.Geodesics as any).locateFile = (_path: string) => geodesicsWasmURL;
-      return mod.Geodesics;
-    })
-    .then(mod => mod({ locateFile: (_path: string) => geodesicsWasmURL }))
-);
+const GeodesicsModule = new AsyncOnce(async () => {
+  const wasmBinaryP = fetch(geodesicsWasmURL).then(r => r.arrayBuffer());
+  const mod = await import('src/geodesics/geodesics.js');
+  const wasmBinary = await wasmBinaryP;
+  return mod.Geodesics({ wasmBinary, locateFile: (_path: string) => geodesicsWasmURL } as any);
+});
 
 export const initGeodesics = (): Promise<void> => GeodesicsModule.get().then(() => {});
 
