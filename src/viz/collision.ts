@@ -500,16 +500,19 @@ export class BulletPhysics {
         new THREE.Vector3(rot[0], rot[1], rot[2])
       );
     };
-    (window as any).getPos = () =>
-      this.viz.camera.position
-        .clone()
-        .sub(new THREE.Vector3(0, this.playerColliderHeight / 2, 0))
-        .toArray();
-    (window as any).getRot = () => this.viz.camera.rotation.toArray();
+    (window as any).getPos = () => {
+      const p = this.playerController.getPosition();
+      const feetOffset = this.playerColliderHeight / 2 + this.playerColliderRadius;
+      return [p.x(), p.y() - feetOffset, p.z()];
+    };
+    (window as any).getRot = () => {
+      const { phi, theta } = this.viz.cameraController?.angles ?? { phi: Math.PI / 2, theta: 0 };
+      return [phi - Math.PI / 2, theta, 0];
+    };
     (window as any).recordPos = () =>
       JSON.stringify({
         pos: (window as any).getPos(),
-        rot: this.viz.camera.rotation.toArray().slice(0, 3),
+        rot: (window as any).getRot(),
       });
     window.onbeforeunload = function () {
       if ((window as any).recordPos) {

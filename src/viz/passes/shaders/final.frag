@@ -9,8 +9,10 @@ uniform float bloomIntensity;
 uniform float gammaExponent;
 varying vec2 vUv;
 
-#ifdef HAS_FOG
+#if defined(HAS_FOG) || defined(SKY_BYPASS_TONEMAP)
 uniform sampler2D depthBuffer;
+#endif
+#ifdef HAS_FOG
 uniform mat4 projectionMatrixInverse;
 uniform mat4 cameraWorldMatrix;
 uniform vec3 fogCameraPos;
@@ -59,6 +61,15 @@ vec3 reconstructWorldPos(float depth, vec2 uv) {
 void main() {
   vec4 color = texture2D(inputBuffer, vUv);
 
+  // Sky-bypass detection: fragments at the far plane (depth ≈ 1) are treated as
+  // sky / no geometry and skip the tone-mapping stage entirely, preserving the
+  // color authored by the sky material. All downstream passes (sRGB encode,
+  // emissive composite, bloom, gamma, dither) still run.
+  bool bypassToneMap = false;
+  #ifdef SKY_BYPASS_TONEMAP
+    bypassToneMap = texture2D(depthBuffer, vUv).r >= 0.9999;
+  #endif
+
   // Fog blend runs in linear space, before tone mapping, so the fog color is
   // authored in linear and participates correctly in the tone-mapping curve.
   #ifdef HAS_FOG
@@ -74,20 +85,22 @@ void main() {
   }
   #endif
 
-  #if defined(TONE_MAPPING_ACES)
-    color.rgb = ACESFilmicToneMapping(color.rgb);
-  #elif defined(TONE_MAPPING_CINEON)
-    color.rgb = CineonToneMapping(color.rgb);
-  #elif defined(TONE_MAPPING_REINHARD)
-    color.rgb = ReinhardToneMapping(color.rgb);
-  #elif defined(TONE_MAPPING_AGX)
-    color.rgb = AgXToneMapping(color.rgb);
-  #elif defined(TONE_MAPPING_NEUTRAL)
-    color.rgb = NeutralToneMapping(color.rgb);
-  #else
-    // 'none': apply exposure and hard-clamp
-    color.rgb = min(color.rgb * toneMappingExposure, vec3(1.0));
-  #endif
+  if (!bypassToneMap) {
+    #if defined(TONE_MAPPING_ACES)
+      color.rgb = ACESFilmicToneMapping(color.rgb);
+    #elif defined(TONE_MAPPING_CINEON)
+      color.rgb = CineonToneMapping(color.rgb);
+    #elif defined(TONE_MAPPING_REINHARD)
+      color.rgb = ReinhardToneMapping(color.rgb);
+    #elif defined(TONE_MAPPING_AGX)
+      color.rgb = AgXToneMapping(color.rgb);
+    #elif defined(TONE_MAPPING_NEUTRAL)
+      color.rgb = NeutralToneMapping(color.rgb);
+    #else
+      // 'none': apply exposure and hard-clamp
+      color.rgb = min(color.rgb * toneMappingExposure, vec3(1.0));
+    #endif
+  }
 
   color.rgb = linearToSRGB(color.rgb);
 

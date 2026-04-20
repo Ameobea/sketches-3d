@@ -542,6 +542,15 @@
       "rotation": [0, -1.8221, 0],
       "scale": [0.8464, 0.8464, 0.8464],
       "material": "bumpy_copper"
+    },
+    {
+      "id": "wrap_arrow",
+      "asset": "wrap_arrow",
+      "position": [413.1374, 28.7615, -5.6587],
+      "rotation": [1.5708, -0.6778, 0],
+      "scale": [0.5439, 0.5439, 0.5439],
+      "material": "highlight",
+      "nocollide": true
     }
   ]
 }

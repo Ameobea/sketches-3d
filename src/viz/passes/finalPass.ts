@@ -13,7 +13,8 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
     emissiveBuffer: THREE.Texture | null,
     emissiveBloomBuffer: THREE.Texture | null,
     bloomIntensity: number,
-    fogShader: string | undefined
+    fogShader: string | undefined,
+    skyBypassTonemap: boolean
   ) {
     const defines: Record<string, string> = {};
     if (toneMapping === 'aces') defines.TONE_MAPPING_ACES = '1';
@@ -25,6 +26,9 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
     if (emissiveBuffer !== null) defines.HAS_EMISSIVE_BUFFER = '1';
     if (emissiveBloomBuffer !== null) defines.HAS_EMISSIVE_BLOOM = '1';
     if (fogShader) defines.HAS_FOG = '1';
+    if (skyBypassTonemap) defines.SKY_BYPASS_TONEMAP = '1';
+
+    const needsDepth = !!fogShader || skyBypassTonemap;
 
     const uniforms: Record<string, THREE.IUniform> = {
       inputBuffer: { value: null },
@@ -38,8 +42,10 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
       uniforms.emissiveBloomBuffer = { value: emissiveBloomBuffer };
       uniforms.bloomIntensity = { value: bloomIntensity };
     }
-    if (fogShader) {
+    if (needsDepth) {
       uniforms.depthBuffer = { value: null };
+    }
+    if (fogShader) {
       // These two are set to the camera's own matrix objects so they stay in sync
       // without any per-frame copy — Three.js reads uniform.value by reference.
       uniforms.projectionMatrixInverse = { value: new THREE.Matrix4() };
@@ -66,6 +72,7 @@ export class FinalPass extends Pass {
   private readonly viz: Viz;
   private readonly mat: FinalPassMaterial;
   private readonly hasFogShader: boolean;
+  private readonly needsDepth: boolean;
   private storedDepthTexture: THREE.Texture | null = null;
 
   override setDepthTexture(depthTexture: THREE.Texture | null): void {
@@ -92,6 +99,7 @@ export class FinalPass extends Pass {
       emissiveBloomBuffer = null,
       bloomIntensity = 1.0,
       fogShader,
+      skyBypassTonemap = false,
     }: {
       toneMapping?: ToneMappingMode;
       exposure?: number;
@@ -110,6 +118,13 @@ export class FinalPass extends Pass {
        * Uses GLSL ES 1.00 style (texture2D, etc.) since the final pass does not use GLSL3.
        */
       fogShader?: string;
+      /**
+       * When true, fragments at the depth-buffer far plane (sky / no geometry) skip tone
+       * mapping and the exposure scale, going straight to sRGB encoding. Lets sky shaders
+       * author display-referred colors that are preserved 1:1 through the pipeline. sRGB
+       * encoding, gamma, dither, emissive composite, and bloom still run normally.
+       */
+      skyBypassTonemap?: boolean;
     } = {}
   ) {
     super('FinalPass', undefined, new THREE.Camera());
@@ -120,14 +135,18 @@ export class FinalPass extends Pass {
       emissiveBuffer,
       emissiveBloomBuffer,
       bloomIntensity,
-      fogShader
+      fogShader,
+      skyBypassTonemap
     );
     this.hasFogShader = !!fogShader;
+    this.needsDepth = !!fogShader || skyBypassTonemap;
     this.fullscreenMaterial = this.mat;
 
-    if (fogShader) {
+    if (this.needsDepth) {
       this.needsDepthTexture = true;
+    }
 
+    if (fogShader) {
       this.mat.uniforms.projectionMatrixInverse.value = this.viz.camera.projectionMatrixInverse;
       this.mat.uniforms.cameraWorldMatrix.value = this.viz.camera.matrixWorld;
 
@@ -146,6 +165,8 @@ export class FinalPass extends Pass {
 
     if (this.mat.uniforms.depthBuffer) {
       this.mat.uniforms.depthBuffer.value = this.storedDepthTexture;
+    }
+    if (this.hasFogShader) {
       this.mat.uniforms.fogCameraPos.value.setFromMatrixPosition(this.viz.camera.matrixWorld);
     }
 

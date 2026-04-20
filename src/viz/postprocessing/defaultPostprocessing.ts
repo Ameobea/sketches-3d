@@ -15,6 +15,7 @@ import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { buildOcclusionDepthMaterial } from 'src/viz/shaders/customShader';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
+import { EmissiveFogPass } from 'src/viz/passes/emissiveFogPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 
@@ -155,6 +156,11 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
   emissiveBypassAmbientIntensity?: number;
   /** See doc comment of `FinalPass` for usage of this. */
   fogShader?: string;
+  /**
+   * When true, fragments at the depth-buffer far plane skip tone mapping in FinalPass,
+   * so sky shaders' authored colors are preserved 1:1. See `FinalPass` for details.
+   */
+  skyBypassTonemap?: boolean;
 }
 
 export const configureDefaultPostprocessingPipeline = ({
@@ -170,6 +176,7 @@ export const configureDefaultPostprocessingPipeline = ({
   emissiveBloom = {} as EmissiveBloomConfig | null,
   emissiveBypassAmbientIntensity = 2.8,
   fogShader,
+  skyBypassTonemap = false,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
   const effectComposer = new StableDepthEffectComposer(viz.renderer, {
     multisampling: 0,
@@ -209,6 +216,7 @@ export const configureDefaultPostprocessingPipeline = ({
 
   let emissiveBypassPass: EmissiveBypassPass | null = null;
   let emissiveBlurPass: EmissiveBloomPass | null = null;
+  let emissiveFogPass: EmissiveFogPass | null = null;
   if (emissiveBypass) {
     const { width, height } = viz.renderer.domElement;
     emissiveBypassPass = new EmissiveBypassPass(
@@ -228,6 +236,14 @@ export const configureDefaultPostprocessingPipeline = ({
 
     effectComposer.addPass(emissiveBypassPass);
 
+    // Fog the emissive RT *before* bloom so the bloom source already has fogged alpha/color
+    if (fogShader) {
+      emissiveFogPass = new EmissiveFogPass(viz, emissiveBypassPass, fogShader, width, height);
+      effectComposer.addPass(emissiveFogPass);
+    }
+
+    const emissiveCompositeRT = emissiveFogPass?.fogEmissiveRT ?? emissiveBypassPass.emissiveRT;
+
     if (emissiveBloom !== null) {
       const qualityLevels = {
         [GraphicsQuality.Low]: 3,
@@ -239,7 +255,7 @@ export const configureDefaultPostprocessingPipeline = ({
         ...DEFAULT_EMISSIVE_BLOOM_CONFIG,
         ...emissiveBloom,
       };
-      emissiveBlurPass = new EmissiveBloomPass(emissiveBypassPass.emissiveRT, bloomConfig);
+      emissiveBlurPass = new EmissiveBloomPass(emissiveCompositeRT, bloomConfig);
       effectComposer.addPass(emissiveBlurPass);
     }
 
@@ -278,13 +294,20 @@ export const configureDefaultPostprocessingPipeline = ({
   // to the full composited scene in one place.
   viz.renderer.toneMapping = THREE.NoToneMapping;
 
+  // When the fog pass is active, FinalPass must composite the *fogged* emissive so body
+  // pixels participate in fog. Without it, FinalPass would overlay un-fogged emissive on
+  // top of the fogged scene below.
+  const finalEmissiveTexture =
+    emissiveFogPass?.fogEmissiveRT.texture ?? emissiveBypassPass?.emissiveRT.texture ?? null;
+
   const finalPass = new FinalPass(viz, {
     toneMapping: toneMapping.mode ?? 'aces',
     exposure: toneMapping.exposure ?? 1.0,
-    emissiveBuffer: emissiveBypassPass?.emissiveRT.texture ?? null,
+    emissiveBuffer: finalEmissiveTexture,
     emissiveBloomBuffer: emissiveBlurPass?.bloomTexture ?? null,
     bloomIntensity: emissiveBlurPass?.intensity ?? 1.0,
     fogShader,
+    skyBypassTonemap,
   });
   effectComposer.addPass(finalPass);
 

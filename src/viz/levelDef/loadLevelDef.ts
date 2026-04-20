@@ -380,14 +380,18 @@ const resolveScriptAssets = async (
   sortedIds: string[],
   assets: Record<string, AssetDef>,
   onResolved: (id: string, obj: THREE.Object3D) => void,
-  sceneName: string
+  sceneName: string,
+  providedExecutor?: GeoscriptExecutor
 ): Promise<void> => {
   const scriptIds = sortedIds.filter(id => assets[id].type === 'geoscript' || assets[id].type === 'csg');
   if (scriptIds.length === 0) {
     return;
   }
 
-  const executor = new GeoscriptExecutor();
+  // Reuse a caller-owned executor when provided so the worker boot + wasm fetches
+  // can overlap with the rest of page load.  Caller is responsible for terminating it.
+  const executor = providedExecutor ?? new GeoscriptExecutor();
+  const ownsExecutor = !providedExecutor;
 
   const jobs: GeoscriptJob[] = scriptIds.map(id => {
     const def = assets[id];
@@ -432,7 +436,9 @@ const resolveScriptAssets = async (
   }
 
   await Promise.all(promises.values());
-  executor.terminate();
+  if (ownsExecutor) {
+    executor.terminate();
+  }
 
   if (dev && Object.keys(metaUpdates).length > 0) {
     fetch(`/level_editor/${sceneName}/asset-metadata`, {
@@ -456,7 +462,8 @@ export const loadLevelDef = (
   viz: Viz,
   loadedWorld: THREE.Group,
   levelDef: LevelDef,
-  quality: GraphicsQuality
+  quality: GraphicsQuality,
+  geoscriptExecutor?: GeoscriptExecutor
 ): LevelLoadHandle => {
   // For each material, the set of texture keys it still needs before it can be built.
   const matTexPending = new Map<string, Set<string>>();
@@ -781,7 +788,13 @@ export const loadLevelDef = (
     onAssetResolved(assetId, src);
   }
 
-  const geoscriptDone = resolveScriptAssets(sortedAssetIds, levelDef.assets, onAssetResolved, viz.sceneName);
+  const geoscriptDone = resolveScriptAssets(
+    sortedAssetIds,
+    levelDef.assets,
+    onAssetResolved,
+    viz.sceneName,
+    geoscriptExecutor
+  );
 
   const objectsPromise: Promise<LevelObject[]> = geoscriptDone.then(() => allLevelObjects);
   const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(

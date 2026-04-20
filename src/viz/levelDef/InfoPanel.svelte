@@ -92,10 +92,23 @@
     if (e.key === 'Escape') { focused = null; (e.target as HTMLInputElement).blur(); }
   };
 
+  const evalExpr = (s: string): number | null => {
+    const trimmed = s.trim();
+    if (!trimmed) return null;
+    const sanitized = trimmed.replace(/\bpi\b/gi, 'PI');
+    if (!/^[\d\s+\-*/().PI]+$/.test(sanitized)) return null;
+    try {
+      const result = new Function('PI', `"use strict"; return (${sanitized});`)(Math.PI);
+      return typeof result === 'number' && isFinite(result) ? result : null;
+    } catch {
+      return null;
+    }
+  };
+
   const commit = () => {
     if (!focused) return;
-    const n = parseFloat(draft);
-    if (isNaN(n)) return;
+    const n = evalExpr(draft);
+    if (n === null) return;
     const { field, axis } = focused;
     const src = field === 'position' ? position : field === 'rotation' ? rotation : scale;
     const next: [number, number, number] = [src[0], src[1], src[2]];

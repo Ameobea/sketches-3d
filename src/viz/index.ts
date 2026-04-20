@@ -33,6 +33,7 @@ import { unmount } from 'svelte';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { LoadOrbitControls } from './preloadCache';
 import { loadLevelDef, type LevelLoadHandle } from './levelDef/loadLevelDef';
+import type { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { LevelDef } from './levelDef/types';
 
 export interface PostprocessingController {
@@ -897,6 +898,12 @@ interface InitVizArgs {
   vizCb: (viz: Viz, vizConfig: TransparentWritable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
   userData?: any;
   sceneDefOverride?: SceneDef;
+  /**
+   * Optional pre-spawned geoscript executor.  Owned by the caller (typically
+   * `[scene]/+page.svelte`), constructed at component mount so the worker boot
+   * + wasm fetches overlap with GLTF loading and renderer setup.
+   */
+  geoscriptExecutor?: GeoscriptExecutor;
 }
 
 /**
@@ -915,6 +922,7 @@ export const initViz = (
     vizCb,
     userData,
     sceneDefOverride,
+    geoscriptExecutor,
   }: InitVizArgs
 ) => {
   // start loading some critical async deps as early as possible
@@ -975,7 +983,8 @@ export const initViz = (
         viz,
         scene,
         userData as LevelDef,
-        vizConfig.current.graphics.quality
+        vizConfig.current.graphics.quality,
+        geoscriptExecutor
       );
     }
     applyAudioSettings(vizConfig.current.audio);

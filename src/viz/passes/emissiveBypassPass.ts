@@ -93,6 +93,16 @@ export class EmissiveBypassPass extends Pass {
     this.stableDepthTarget = target;
   }
 
+  /**
+   * True iff the emissive RT contains meaningful pixels from the most recent frame
+   * (i.e. at least one registered bypass mesh was in the camera frustum and got rendered).
+   * Downstream passes that consume emissiveRT can short-circuit when false to avoid
+   * redundant work on frames where no bypass geometry is visible.
+   */
+  get hasContent(): boolean {
+    return this._emissiveRTHasContent;
+  }
+
   override setSize(width: number, height: number): void {
     this.emissiveRT.setSize(width, height);
   }

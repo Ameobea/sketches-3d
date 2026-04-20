@@ -10,10 +10,12 @@
   import { loadVizConfig, type VizConfig } from './conf';
   import InfiniteInitial from './InitialScreens/InfiniteInitial.svelte';
   import { rwritable } from './util/TransparentWritable';
+  import type { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 
   export let sceneName: string;
   export let userData: any = undefined;
   export let sceneDefOverride: SceneDef | undefined = undefined;
+  export let geoscriptExecutor: GeoscriptExecutor | undefined = undefined;
 
   $: sceneDef = sceneDefOverride ?? ScenesByName[sceneName];
   $: metadata = sceneDef?.metadata;
@@ -68,7 +70,7 @@
 {#key sceneName}
   <!-- svelte-ignore element_invalid_self_closing_tag -->
   <div
-    use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData, sceneDefOverride }}
+    use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData, sceneDefOverride, geoscriptExecutor }}
     id="viz-container"
   />
 {/key}

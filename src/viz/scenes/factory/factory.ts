@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { N8AOPostPass } from 'n8ao';
 
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
@@ -9,6 +10,8 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
+import { GradientSky, HorizonMode } from 'src/viz/GradientSky';
+import { GroundPlane } from 'src/viz/GroundPlane';
 
 const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
   const out: THREE.Mesh[] = [];
@@ -21,18 +24,6 @@ const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
 };
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
-  // // non-shadow-casting faint red point light that follows the player, sitting 5 units above them
-  // const playerLight = new THREE.PointLight(0x753c3c, 3.5, 150, 0.2);
-  // playerLight.castShadow = false;
-  // viz.scene.add(playerLight);
-  // viz.registerBeforeRenderCb(() => {
-  //   const playerPos = viz.fpCtx?.playerController.getPosition();
-  //   if (!playerPos) {
-  //     return;
-  //   }
-  //   playerLight.position.set(playerPos.x(), playerPos.y() + 5, playerPos.z());
-  // });
-
   const playerHeight = 5;
   const playerRadius = 1.5;
   const playerMesh = new THREE.Mesh(
@@ -132,19 +123,188 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
-    toneMapping: { mode: 'agx', exposure: 1 },
+    toneMapping: { mode: 'agx', exposure: 1.2 },
     autoUpdateShadowMap: true,
     emissiveBypass: true,
+    skyBypassTonemap: false,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
-        ? { intensity: 2.5, levels: 2, luminanceThreshold: 0.08, radius: 0.1 }
+        ? { intensity: 4.0, levels: 4, luminanceThreshold: 0.08, radius: 0.3 }
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
+          // Sky pixels sit at the far plane; skip fogging so the gradient sky is untouched.
+          if (depth >= 0.9999) {
+            return vec4(0.0);
+          }
           float distToPlayer = distance(worldPos.xz, playerPos.xz) + 0.01 * abs(worldPos.y - playerPos.y);
-          float fogFactor = smoothstep(80., 290., distToPlayer);
+          float fogFactor = smoothstep(140., 310., distToPlayer);
           return vec4(vec3(0.0002, 0.0002, 0.0002), fogFactor);
         }`,
+    addMiddlePasses: (composer, viz, quality) => {
+      let n8aoPass: typeof N8AOPostPass | null = null;
+      if (quality > GraphicsQuality.Low) {
+        n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.configuration.intensity = 4;
+        n8aoPass.configuration.aoRadius = 2.5;
+        n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Performance',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'Medium',
+          }[quality]
+        );
+        composer.addPass(n8aoPass, 2);
+      }
+    },
   });
+
+  // linear-gradient(180deg, #0d1522 0%, #0f1f2f 20.2%, #454b59 64.6%, #714f4d 100%)
+  // 180deg puts 0% at the top (zenith) and 100% at the bottom (horizon), so we
+  // invert the percentages for our (0 = horizon, 1 = zenith) convention.
+  const sky = new GradientSky({
+    stops: [
+      { position: 0.0, color: 0x714f4d },
+      { position: 0.354, color: 0x454b59 },
+      { position: 0.698, color: 0x0f1f2f },
+      { position: 1.0, color: 0x0d1522 },
+    ],
+    horizonMode: HorizonMode.SolidBelow,
+    belowColor: new THREE.Color(0x060301),
+    horizonBlend: 0.03,
+    horizonOffset: -0.2,
+    haze: [
+      {
+        color: 0x2e2833,
+        highColor: 0x8a6a68,
+        intensity: 0.45,
+        center: 0.98,
+        width: 0.82,
+        sharpness: 0.18,
+        scale: [4.2, 6.0, 4.2],
+        speed: [0.015, 0.0, 0.02],
+        warp: 0.08,
+        warpScale: 0.2,
+        warpSpeed: 0.005,
+        octaves: 6,
+        lacunarity: 2.13,
+        gain: 0.52,
+        bias: 0.0,
+        pow: 1.25,
+      },
+      {
+        color: 0x140317,
+        intensity: 0.95,
+        center: 0.12,
+        width: 0.38,
+        sharpness: 0.22,
+        scale: [1.0, 7.0, 1.0],
+        speed: [-0.01, 0.0, 0.008],
+      },
+    ],
+    stars: {
+      color: 0xe6ecff,
+      intensity: 1.4,
+      density: 180,
+      threshold: 0.045,
+      size: 0.07,
+      twinkleSpeed: 2.2,
+      minElev: 0.04,
+    },
+  });
+  sky.scale.setScalar(450000);
+  sky.frustumCulled = false;
+  viz.scene.add(sky);
+  viz.registerBeforeRenderCb(curTimeSeconds => sky.setTime(curTimeSeconds));
+
+  // SDF-morph demo ground, tiled to infinity. One hashed orbit point per cell, smin'd
+  // across a 3x3 neighborhood so blobs merge seamlessly across cell boundaries. Paint
+  // output is pumped into HDR and rendered through the emissive bypass layer so colors
+  // skip AgX tone mapping and drive the bloom pass for an aggressive glow.
+  const groundPaintShader = `
+    uniform vec3 uGroundBgColor;
+    uniform vec3 uBlobColorOuter;
+    uniform vec3 uBlobColorInner;
+    uniform float uTileSize;
+    uniform float uEmissiveBoost;
+
+    float sdCircle(vec2 p, vec2 c, float r) {
+      return length(p - c) - r;
+    }
+
+    // Polynomial smooth-min from Inigo Quilez — bounded width \`k\`, C1 continuous.
+    float smin(float a, float b, float k) {
+      float h = max(k - abs(a - b), 0.0) / k;
+      return min(a, b) - h * h * k * 0.25;
+    }
+
+    // Deterministic point inside cell \`id\`, orbiting a hashed base offset. Stays within
+    // the cell bounds so 3x3 neighbor sampling is sufficient for smin continuity.
+    vec2 cellPoint(vec2 id, float T) {
+      vec2 h = vec2(hash(id + 3.7), hash(id + 19.1));
+      float phase = h.x * 6.2831853;
+      vec2 jitter = (h - 0.5) * (T * 0.25);
+      vec2 orbit = vec2(sin(uTime * 0.27 + phase),
+                        cos(uTime * 0.21 + phase)) * (T * 0.22);
+      return id * T + jitter + orbit;
+    }
+
+    float cellRadius(vec2 id, float T) {
+      return T * (0.12 + 0.08 * hash(id + 7.3));
+    }
+
+    vec4 paintGround(vec2 uv, vec2 uvDeriv, vec3 dir, float invDist) {
+      float T = uTileSize;
+      vec2 cellId = floor(uv / T + 0.5);
+
+      float d = 1e9;
+      for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+          vec2 nId = cellId + vec2(float(i), float(j));
+          d = smin(d, sdCircle(uv, cellPoint(nId, T), cellRadius(nId, T)), T * 0.2);
+        }
+      }
+
+      // Derivative-aware edge AA. Citation: "The Best Darn Grid Shader (Yet)",
+      // Ben Golus, https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8
+      // The general trick — using max(fwidth(uv)) as a per-pixel AA radius and
+      // smoothstep'ing the SDF against it — keeps edges crisp as the ground recedes.
+      float aaW = max(uvDeriv.x, uvDeriv.y);
+      float edge = 1.0 - smoothstep(-aaW, aaW, d);
+
+      float innerT = smoothstep(0.0, -T * 0.1, d);
+      vec3 blobCol = mix(uBlobColorOuter, uBlobColorInner, innerT) * uEmissiveBoost;
+
+      return vec4(mix(uGroundBgColor, blobCol, edge), 1.0);
+    }
+  `;
+
+  const ground = new GroundPlane({
+    height: 120,
+    horizonFadeStart: 0.0,
+    horizonFadeEnd: 0.09,
+    paintShader: groundPaintShader,
+    uniforms: {
+      uGroundBgColor: { value: new THREE.Color(0x0a0508) },
+      uBlobColorOuter: { value: new THREE.Color(0x3d1a1f) },
+      uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
+      uTileSize: { value: 80.0 },
+      // HDR multiplier on the blob color — drives the bloom pass and skips AgX since
+      // the mesh is registered with the emissive bypass below.
+      uEmissiveBoost: { value: 4.0 },
+    },
+  });
+  ground.scale.setScalar(450000);
+  ground.frustumCulled = false;
+  viz.scene.add(ground);
+  viz.postprocessingController?.emissiveBypassPass?.addBypassMesh(ground);
+  viz.registerBeforeRenderCb(curTimeSeconds => ground.setTime(curTimeSeconds));
 
   const handle = viz.levelLoadHandle!;
 

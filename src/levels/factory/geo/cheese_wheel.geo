@@ -28,8 +28,6 @@ inner = trace_path(|| circle(v2(0), 5))
   }))
   | path_scale(1.4)
 
-critical_points(inner) | print
-
 inner = inner
   | tessellate_path(curve_angle_degrees=2, sample_count=120)
   | extrude(up=v3(0, 1.4, 0))

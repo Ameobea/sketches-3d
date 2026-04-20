@@ -22,7 +22,7 @@
  *        No other changes required in the rest of the pipeline.
  */
 
-import { ClearMaskPass, EffectComposer, MaskPass, type Pass } from 'postprocessing';
+import { ClearMaskPass, EffectComposer, MaskPass, RenderPass, type Pass } from 'postprocessing';
 import * as THREE from 'three';
 
 class DepthCopyToStable {
@@ -126,9 +126,8 @@ export class StableDepthEffectComposer extends EffectComposer {
     for (const pass of passes) {
       if (!pass.enabled) continue;
 
-      // Blit depth right before the first swap. inputBuffer.depthTexture being non-null
-      // confirms the scene has rendered and depth is available on this buffer.
-      if (!depthBlitted && pass.needsSwap && inputBuffer.depthTexture) {
+      // Blit depth as soon as the `RenderPass` stage is over
+      if (!depthBlitted && inputBuffer.depthTexture && (!(pass instanceof RenderPass) || pass.needsSwap)) {
         stableDepth.blit(renderer, inputBuffer);
         depthBlitted = true;
       }

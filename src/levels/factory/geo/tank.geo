@@ -1,14 +1,18 @@
 m = capsule(radius=14, height=8, radial_segments=28)
   | scale(1.15, 3.5, 1.15)
   | trans(0, -8, 0)
-  | sub(b=box(100, 40, 100) + v3(0, 28, 0))
-  -> |v| v * v3(2, 1, 2)
-  -> |v| {
+  | sub(b=box(100, 40, 100) + v3(0, 24, 0))
+  | scale(2, 1, 2)
+  -> |v: vec3| {
     if v.y < -3 {
       v3(v.x, -3 + (v.y -20) * 0.15, v.z)
     } else {
       v
     }
+  }
+  -> |v: vec3| {
+    hs = 0.935 + (v.y + 3) * 0.008
+    v3(v.x * hs, v.y, v.z * hs)
   }
   | union(
     cyl(radius=16, radial_segments=28, height=320) + v3(0, 160, 0)

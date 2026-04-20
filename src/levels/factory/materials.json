@@ -73,7 +73,7 @@
         "map": "chipped_rusty_gray_painted_wall_diffuse",
         "normalMap": "chipped_rusty_gray_painted_wall_normal",
         "heightAlpha": {
-          "bottomFade": [-230, -10],
+          "bottomFade": [-230, -50],
           "topFade": [60, 200]
         },
         "mapDisableDistance": 300,
@@ -144,7 +144,7 @@
         "map": "rusty_metal_diffuse",
         "normalMap": "rusty_metal_normal",
         "heightAlpha": {
-          "bottomFade": [-230, -10],
+          "bottomFade": [-230, -50],
           "topFade": [60, 200]
         }
       },
@@ -164,7 +164,7 @@
         "map": "rusty_metal_diffuse",
         "normalMap": "rusty_metal_normal",
         "heightAlpha": {
-          "bottomFade": [-230, -10],
+          "bottomFade": [-230, -50],
           "topFade": [100, 200]
         },
         "transparent": false,
@@ -187,7 +187,7 @@
         "map": "bumpy_copper_diffuse",
         "normalMap": "bumpy_copper_normal",
         "heightAlpha": {
-          "bottomFade": [-230, -10],
+          "bottomFade": [-230, -50],
           "topFade": [100, 200]
         },
         "transparent": false,
@@ -199,6 +199,16 @@
         "randomizeUVOffset": true,
         "materialClass": "metalplate"
       }
+    },
+    "highlight": {
+      "type": "customShader",
+      "props": {
+        "color": "#c2a93a",
+        "roughness": 1,
+        "metalness": 0,
+        "transparent": true
+      },
+      "emissiveBypass": true
     }
   }
 }
