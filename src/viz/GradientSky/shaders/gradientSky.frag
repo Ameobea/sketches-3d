@@ -45,11 +45,6 @@ uniform float uHazeWidths[MAX_HAZES];
 uniform float uHazeSharpness[MAX_HAZES];
 uniform vec3 uHazeScales[MAX_HAZES];
 uniform vec3 uHazeSpeeds[MAX_HAZES];
-// Low-frequency elevation warp to break up circular contours at high elevations.
-// Noise is sampled on a unit circle for seamless azimuth continuity.
-uniform float uHazeWarp[MAX_HAZES];
-uniform float uHazeWarpScale[MAX_HAZES];
-uniform float uHazeWarpSpeed[MAX_HAZES];
 // Per-layer fBm shaping knobs. `skyFbm` loops up to MAX_HAZE_OCTAVES with an
 // early break on uHazeOctaves[i]. bias/pow are applied to the raw fBm output
 // before the smoothstep threshold — `pow` in particular is what turns the same
@@ -164,30 +159,19 @@ float skyFbm(vec3 x, int octaves, float lacunarity, float gain) {
 // azimuth). `uHazeSpeeds[i]` drifts the noise over time.
 //
 // Returns (rgb, alpha) for straight alpha-over compositing onto the gradient.
-vec4 evalHaze(float elev, float azimuth, vec3 dir) {
+vec4 evalHaze(float elev, vec3 dir) {
   vec3 outColor = vec3(0.0);
   float outAlpha = 0.0;
-  float cosAz = cos(azimuth);
-  float sinAz = sin(azimuth);
   for (int i = 0; i < MAX_HAZES; i++) {
     if (i >= uHazeCount) {
       break;
     }
-    // Domain-warp the noise sample point's elevation axis by a low-frequency
-    // function of azimuth (and optionally time)
-    float warpOffset = 0.0;
-    if (uHazeWarp[i] != 0.0) {
-      vec3 warpP = vec3(cosAz * uHazeWarpScale[i], uTime * uHazeWarpSpeed[i], sinAz * uHazeWarpScale[i]);
-      warpOffset = (fbm(warpP) - 0.5) * 2.0 * uHazeWarp[i];
-    }
-
     float w = max(uHazeWidths[i], 1e-4);
     float shape = 1.0 - smoothstep(0.0, w, abs(elev - uHazeCenters[i]));
     if (shape <= 0.0) {
       continue;
     }
-    vec3 dirWarped = vec3(dir.x, dir.y + warpOffset, dir.z);
-    vec3 p = dirWarped * uHazeScales[i] + uHazeSpeeds[i] * uTime;
+    vec3 p = dir * uHazeScales[i] + uHazeSpeeds[i] * uTime;
     float f = skyFbm(p, uHazeOctaves[i], uHazeLacunarity[i], uHazeGain[i]);
     f = clamp(f + uHazeBias[i], 0.0, 1.0);
     f = pow(f, max(uHazePow[i], 1e-3));
@@ -294,7 +278,7 @@ void main() {
   color += stars.rgb * horizonBlend;
 
   // Noise haze: alpha-over onto the gradient + stars.
-  vec4 haze = evalHaze(relElev, azimuth, dir);
+  vec4 haze = evalHaze(relElev, dir);
   haze.a *= horizonBlend;
   color = color * (1.0 - haze.a) + haze.rgb * haze.a;
 

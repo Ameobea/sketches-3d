@@ -32,8 +32,18 @@ export interface EmissiveBloomConfig {
   /**
    * Width of the smoothstep transition around luminanceThreshold.
    * Default 0.1. Larger values give a softer roll-off into the bloom.
+   * Ignored when `luminanceSoftKnee` is set.
    */
   luminanceSmoothing?: number;
+  /**
+   * When > 0, switches the gate from a smoothstep to a UE4-style soft-knee: a
+   * quadratic ramp of width `2 * luminanceSoftKnee` centered on `luminanceThreshold`,
+   * then a subtractive linear region above it. No hard cutoff — pixels just below
+   * threshold still contribute a small amount, fading smoothly to zero. Use this
+   * when the smoothstep still reads as binary on low-luma flickering content.
+   * Omit or set to 0 to use the smoothstep path.
+   */
+  luminanceSoftKnee?: number;
 }
 
 /**
@@ -81,6 +91,12 @@ export class EmissiveBloomPass extends Pass {
     }
   }
 
+  public setLuminanceSoftKnee(value: number): void {
+    if (this.thresholdMat) {
+      this.thresholdMat.uniforms.softKnee.value = value;
+    }
+  }
+
   constructor(sourceRT: THREE.WebGLRenderTarget, config: EmissiveBloomConfig = {}) {
     super('EmissiveBloomPass');
     this.needsSwap = false;
@@ -104,6 +120,7 @@ export class EmissiveBloomPass extends Pass {
           tInput: { value: null },
           threshold: { value: thresh },
           smoothing: { value: config.luminanceSmoothing ?? 0.1 },
+          softKnee: { value: config.luminanceSoftKnee ?? 0 },
         },
         vertexShader: THRESHOLD_VERT,
         fragmentShader: THRESHOLD_FRAG,

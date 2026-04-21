@@ -32,6 +32,19 @@ export interface GroundPlaneParams {
    * from `noise.frag` (hash, noise, fbm) are in scope.
    */
   paintShader: string;
+  /**
+   * Fake atmospheric tint — mixes the paint color toward `color` as -dir.y approaches 0,
+   * approximating distance reddening/darkening without a real optical-depth calc. At
+   * strength 0 (the default) it's a no-op. Match `color` to the sky's horizon hue for
+   * a seamless blend.
+   */
+  atmosphericTint?: {
+    color: THREE.ColorRepresentation;
+    /** |dir.y| range over which the tint fades in. At -dir.y=range, tint ≈ 0; at horizon, full strength. Default 0.2. */
+    range?: number;
+    /** Max mix factor at the horizon. 0 = off, 1 = full replacement. Default 0. */
+    strength?: number;
+  };
   /** Additional uniforms exposed to the paint shader. */
   uniforms?: Record<string, THREE.IUniform>;
 }
@@ -45,6 +58,9 @@ export class GroundPlane extends THREE.Mesh {
       uHeight: { value: params.height ?? 100 },
       uHorizonFadeStart: { value: params.horizonFadeStart ?? 0.0 },
       uHorizonFadeEnd: { value: params.horizonFadeEnd ?? 0.08 },
+      uAtmoTintColor: { value: new THREE.Color(params.atmosphericTint?.color ?? 0x000000) },
+      uAtmoTintRange: { value: params.atmosphericTint?.range ?? 0.2 },
+      uAtmoTintStrength: { value: params.atmosphericTint?.strength ?? 0 },
       ...(params.uniforms ?? {}),
     };
 

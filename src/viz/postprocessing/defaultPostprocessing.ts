@@ -112,16 +112,19 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     intensity,
     luminanceThreshold,
     luminanceSmoothing,
+    luminanceSoftKnee,
   }: {
     radius?: number;
     intensity?: number;
     luminanceThreshold?: number;
     luminanceSmoothing?: number;
+    luminanceSoftKnee?: number;
   }): void {
     if (radius !== undefined) this.emissiveBloomPass?.setRadius(radius);
     if (intensity !== undefined) this.finalPass?.setBloomIntensity(intensity);
     if (luminanceThreshold !== undefined) this.emissiveBloomPass?.setLuminanceThreshold(luminanceThreshold);
     if (luminanceSmoothing !== undefined) this.emissiveBloomPass?.setLuminanceSmoothing(luminanceSmoothing);
+    if (luminanceSoftKnee !== undefined) this.emissiveBloomPass?.setLuminanceSoftKnee(luminanceSoftKnee);
   }
 }
 

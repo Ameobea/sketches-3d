@@ -68,16 +68,6 @@ export interface HazeLayer {
   /** Per-axis drift speed applied to the noise input (units/second). */
   speed?: [number, number, number];
   /**
-   * Amplitude (in elevation units) of a low-frequency warp applied to the
-   * band's center elevation. Breaks up the circular contours that would
-   * otherwise appear when a band is sampled far from the horizon. 0 disables.
-   */
-  warp?: number;
-  /** Spatial frequency of the warp around the azimuth loop. */
-  warpScale?: number;
-  /** Time-drift of the warp pattern, rad/s. 0 keeps it static. */
-  warpSpeed?: number;
-  /**
    * fBm octave count. More octaves add finer detail at increasing cost. Capped
    * at 6 by the shader. Default 4.
    */
@@ -180,9 +170,6 @@ export class GradientSky extends THREE.Mesh {
       uHazeSharpness: { value: new Float32Array(MAX_HAZES) },
       uHazeScales: { value: makeVec3Array(MAX_HAZES) },
       uHazeSpeeds: { value: makeVec3Array(MAX_HAZES) },
-      uHazeWarp: { value: new Float32Array(MAX_HAZES) },
-      uHazeWarpScale: { value: new Float32Array(MAX_HAZES) },
-      uHazeWarpSpeed: { value: new Float32Array(MAX_HAZES) },
       uHazeOctaves: { value: new Int32Array(MAX_HAZES) },
       uHazeLacunarity: { value: new Float32Array(MAX_HAZES) },
       uHazeGain: { value: new Float32Array(MAX_HAZES) },
@@ -265,9 +252,6 @@ export class GradientSky extends THREE.Mesh {
     const sharpness = this.uniforms.uHazeSharpness.value as Float32Array;
     const scales = this.uniforms.uHazeScales.value as THREE.Vector3[];
     const speeds = this.uniforms.uHazeSpeeds.value as THREE.Vector3[];
-    const warp = this.uniforms.uHazeWarp.value as Float32Array;
-    const warpScale = this.uniforms.uHazeWarpScale.value as Float32Array;
-    const warpSpeed = this.uniforms.uHazeWarpSpeed.value as Float32Array;
     const octaves = this.uniforms.uHazeOctaves.value as Int32Array;
     const lacunarity = this.uniforms.uHazeLacunarity.value as Float32Array;
     const gain = this.uniforms.uHazeGain.value as Float32Array;
@@ -285,9 +269,6 @@ export class GradientSky extends THREE.Mesh {
       scales[i].set(s[0], s[1], s[2]);
       const sp = h.speed ?? [0.02, 0, 0.02];
       speeds[i].set(sp[0], sp[1], sp[2]);
-      warp[i] = h.warp ?? 0;
-      warpScale[i] = h.warpScale ?? 1.5;
-      warpSpeed[i] = h.warpSpeed ?? 0;
       octaves[i] = Math.max(1, Math.min(6, h.octaves ?? 4));
       lacunarity[i] = h.lacunarity ?? 2.0;
       gain[i] = h.gain ?? 0.5;

@@ -26,9 +26,14 @@ void main() {
 
   vec4 paint = paintGround(uv, uvDeriv, dir, invDist);
 
+  // Atmospheric tint — strengthens as -dir.y approaches 0. At strength 0 the mix
+  // factor is zero everywhere and this is a no-op.
+  float atmoT = (1.0 - smoothstep(0.0, uAtmoTintRange, -dir.y)) * uAtmoTintStrength;
+  vec3 tinted = mix(paint.rgb, uAtmoTintColor, clamp(atmoT, 0.0, 1.0));
+
   // Horizon fade: 0 at/above horizon, ramping to 1 in the band below. Smoothstep over
   // negative inputs returns 0, so above-horizon fragments naturally get alpha=0.
   float horizonAlpha = smoothstep(uHorizonFadeStart, uHorizonFadeEnd, -dir.y);
 
-  fragColor = vec4(paint.rgb, paint.a * horizonAlpha);
+  fragColor = vec4(tinted, paint.a * horizonAlpha);
 }

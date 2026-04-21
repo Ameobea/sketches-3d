@@ -129,7 +129,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     skyBypassTonemap: false,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
-        ? { intensity: 4.0, levels: 4, luminanceThreshold: 0.08, radius: 0.3 }
+        ? { intensity: 4.0, levels: 4, luminanceThreshold: 0.02, radius: 0.3, luminanceSoftKnee: 0.02 }
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
           // Sky pixels sit at the far plane; skip fogging so the gradient sky is untouched.
@@ -178,34 +178,37 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     horizonMode: HorizonMode.SolidBelow,
     belowColor: new THREE.Color(0x060301),
     horizonBlend: 0.03,
-    horizonOffset: -0.2,
+    horizonOffset: -0.025,
     haze: [
       {
         color: 0x2e2833,
-        highColor: 0x8a6a68,
-        intensity: 0.45,
-        center: 0.98,
+        highColor: 0x878584,
+        intensity: 0.65,
+        center: 0.78,
         width: 0.82,
-        sharpness: 0.18,
+        sharpness: 0.28,
         scale: [4.2, 6.0, 4.2],
         speed: [0.015, 0.0, 0.02],
-        warp: 0.08,
-        warpScale: 0.2,
-        warpSpeed: 0.005,
-        octaves: 6,
+        octaves: {
+          [GraphicsQuality.Low]: 3,
+          [GraphicsQuality.Medium]: 4,
+          [GraphicsQuality.High]: 6,
+        }[vizConf.graphics.quality],
         lacunarity: 2.13,
-        gain: 0.52,
-        bias: 0.0,
-        pow: 1.25,
+        gain: 0.32,
+        bias: 0.2,
+        pow: 1.15,
       },
       {
         color: 0x140317,
         intensity: 0.95,
-        center: 0.12,
-        width: 0.38,
-        sharpness: 0.22,
-        scale: [1.0, 7.0, 1.0],
+        center: 0.01,
+        width: 0.1,
+        sharpness: 0.32,
+        scale: [0.8, 9.0, 0.8],
         speed: [-0.01, 0.0, 0.008],
+        bias: 0.15,
+        pow: 1.5,
       },
     ],
     stars: {
@@ -250,38 +253,64 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       vec2 h = vec2(hash(id + 3.7), hash(id + 19.1));
       float phase = h.x * 6.2831853;
       vec2 jitter = (h - 0.5) * (T * 0.25);
-      vec2 orbit = vec2(sin(uTime * 0.27 + phase),
-                        cos(uTime * 0.21 + phase)) * (T * 0.22);
+      vec2 orbit = vec2(sin(uTime * 0.027 + phase),
+                        cos(uTime * 0.021 + phase)) * (T * 0.22);
       return id * T + jitter + orbit;
     }
 
-    float cellRadius(vec2 id, float T) {
-      return T * (0.12 + 0.08 * hash(id + 7.3));
+    // Radius grows with the screen-space derivative to reduce sub-pixel
+    float cellRadius(vec2 id, float T, float aaW) {
+      float base = T * (0.12 + 0.08 * hash(id + 7.3));
+      return min(max(base, aaW * 0.85), T * 0.35);
+    }
+
+    float cellTwinkle(vec2 id) {
+      float phase = hash(id + 31.7) * 6.2831853;
+      float rate = 0.5 + 0.3 * hash(id + 43.1);
+      return 0.85 + 0.15 * sin(uTime * rate + phase);
     }
 
     vec4 paintGround(vec2 uv, vec2 uvDeriv, vec3 dir, float invDist) {
       float T = uTileSize;
       vec2 cellId = floor(uv / T + 0.5);
+      float aaW = max(uvDeriv.x, uvDeriv.y);
 
       float d = 1e9;
       for (int j = -1; j <= 1; j++) {
         for (int i = -1; i <= 1; i++) {
           vec2 nId = cellId + vec2(float(i), float(j));
-          d = smin(d, sdCircle(uv, cellPoint(nId, T), cellRadius(nId, T)), T * 0.2);
+          d = smin(d, sdCircle(uv, cellPoint(nId, T), cellRadius(nId, T, aaW)), T * 0.2);
         }
       }
 
-      // Derivative-aware edge AA. Citation: "The Best Darn Grid Shader (Yet)",
+      // Derivative-aware edge AA, from: "The Best Darn Grid Shader (Yet)",
       // Ben Golus, https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8
-      // The general trick — using max(fwidth(uv)) as a per-pixel AA radius and
-      // smoothstep'ing the SDF against it — keeps edges crisp as the ground recedes.
-      float aaW = max(uvDeriv.x, uvDeriv.y);
       float edge = 1.0 - smoothstep(-aaW, aaW, d);
 
-      float innerT = smoothstep(0.0, -T * 0.1, d);
-      vec3 blobCol = mix(uBlobColorOuter, uBlobColorInner, innerT) * uEmissiveBoost;
+      // Amplitude fade past Nyquist, also from Ben Golus's article
+      //
+      // As derivatives approach the tile size, tiles pack sub-pixel and the edge term
+      // shimmers between 0 and 1 depending on exactly where the fragment lands. Lerp
+      // toward the per-tile average coverage (roughly π·r²/T² ≈ 0.1 for our radius
+      // distribution) so sub-pixel regions read as a uniform dim glow instead of aliasing.
+      float avgCoverage = 0.1;
+      float lodT = clamp(aaW / T * 2. - 1., 0., 1.);
+      edge = mix(edge, avgCoverage, lodT);
 
-      return vec4(mix(uGroundBgColor, blobCol, edge), 1.0);
+      float innerT = smoothstep(0., -T * 0.1, d);
+      // more emissive boost close to the horizon where the circles are smaller and less
+      // likely to trigger bloom on their own, and less boost up close where they can bloom
+      // aggressively without washing out the scene.
+      float boost = mix(0.5, uEmissiveBoost, smoothstep(0.14, 0., -dir.y));
+      vec3 blobCol = mix(uBlobColorOuter, uBlobColorInner, innerT) * boost;
+
+      // Twinkle strength ramps 0 → 1 as we look from steeply-down toward the horizon,
+      // so close blobs sit still (no distracting pulse) while distant ones shimmer like
+      // city lights from altitude.
+      float twinkleMix = 1. - smoothstep(0., 0.5, -dir.y);
+      blobCol *= mix(1., cellTwinkle(cellId), twinkleMix);
+
+      return vec4(mix(uGroundBgColor, blobCol, edge), 1.);
     }
   `;
 
@@ -289,15 +318,28 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     height: 120,
     horizonFadeStart: 0.0,
     horizonFadeEnd: 0.09,
+    atmosphericTint: {
+      // Dark warm red, sitting in the same hue family as the sky's lowest stop
+      // (0x714f4d). Blobs reddening and dimming as they recede mimics the
+      // sky-bleed-through effect even when the ground doesn't overlap the sky.
+      // color: 0x2a0806,
+      range: 0.57,
+      strength: 0.75,
+      color: 0x160303,
+      // range: 0.45,
+      // strength: 0.9,
+    },
     paintShader: groundPaintShader,
     uniforms: {
       uGroundBgColor: { value: new THREE.Color(0x0a0508) },
-      uBlobColorOuter: { value: new THREE.Color(0x3d1a1f) },
+      // uBlobColorOuter: { value: new THREE.Color(0x3d1a1f) },
+      // uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
+      uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
       uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
       uTileSize: { value: 80.0 },
       // HDR multiplier on the blob color — drives the bloom pass and skips AgX since
       // the mesh is registered with the emissive bypass below.
-      uEmissiveBoost: { value: 4.0 },
+      uEmissiveBoost: { value: 3.5 },
     },
   });
   ground.scale.setScalar(450000);
