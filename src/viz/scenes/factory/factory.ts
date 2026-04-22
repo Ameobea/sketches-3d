@@ -10,8 +10,7 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
-import { GradientSky, HorizonMode } from 'src/viz/GradientSky';
-import { GroundPlane } from 'src/viz/GroundPlane';
+import { SkyStack, HorizonMode } from 'src/viz/SkyStack';
 
 const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
   const out: THREE.Mesh[] = [];
@@ -120,116 +119,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     }
   );
 
-  configureDefaultPostprocessingPipeline({
-    viz,
-    quality: vizConf.graphics.quality,
-    toneMapping: { mode: 'agx', exposure: 1.2 },
-    autoUpdateShadowMap: true,
-    emissiveBypass: true,
-    skyBypassTonemap: false,
-    emissiveBloom:
-      vizConf.graphics.quality > GraphicsQuality.Low
-        ? { intensity: 4.0, levels: 4, luminanceThreshold: 0.02, radius: 0.3, luminanceSoftKnee: 0.02 }
-        : null,
-    fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
-          // Sky pixels sit at the far plane; skip fogging so the gradient sky is untouched.
-          if (depth >= 0.9999) {
-            return vec4(0.0);
-          }
-          float distToPlayer = distance(worldPos.xz, playerPos.xz) + 0.01 * abs(worldPos.y - playerPos.y);
-          float fogFactor = smoothstep(140., 310., distToPlayer);
-          return vec4(vec3(0.0002, 0.0002, 0.0002), fogFactor);
-        }`,
-    addMiddlePasses: (composer, viz, quality) => {
-      let n8aoPass: typeof N8AOPostPass | null = null;
-      if (quality > GraphicsQuality.Low) {
-        n8aoPass = new N8AOPostPass(
-          viz.scene,
-          viz.camera,
-          viz.renderer.domElement.width,
-          viz.renderer.domElement.height
-        );
-        n8aoPass.gammaCorrection = false;
-        n8aoPass.configuration.intensity = 4;
-        n8aoPass.configuration.aoRadius = 2.5;
-        n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
-        n8aoPass.setQualityMode(
-          {
-            [GraphicsQuality.Low]: 'Performance',
-            [GraphicsQuality.Medium]: 'Low',
-            [GraphicsQuality.High]: 'Medium',
-          }[quality]
-        );
-        composer.addPass(n8aoPass, 2);
-      }
-    },
-  });
-
-  // linear-gradient(180deg, #0d1522 0%, #0f1f2f 20.2%, #454b59 64.6%, #714f4d 100%)
-  // 180deg puts 0% at the top (zenith) and 100% at the bottom (horizon), so we
-  // invert the percentages for our (0 = horizon, 1 = zenith) convention.
-  const sky = new GradientSky({
-    stops: [
-      { position: 0.0, color: 0x714f4d },
-      { position: 0.354, color: 0x454b59 },
-      { position: 0.698, color: 0x0f1f2f },
-      { position: 1.0, color: 0x0d1522 },
-    ],
-    horizonMode: HorizonMode.SolidBelow,
-    belowColor: new THREE.Color(0x060301),
-    horizonBlend: 0.03,
-    horizonOffset: -0.025,
-    haze: [
-      {
-        color: 0x2e2833,
-        highColor: 0x878584,
-        intensity: 0.65,
-        center: 0.78,
-        width: 0.82,
-        sharpness: 0.28,
-        scale: [4.2, 6.0, 4.2],
-        speed: [0.015, 0.0, 0.02],
-        octaves: {
-          [GraphicsQuality.Low]: 3,
-          [GraphicsQuality.Medium]: 4,
-          [GraphicsQuality.High]: 6,
-        }[vizConf.graphics.quality],
-        lacunarity: 2.13,
-        gain: 0.32,
-        bias: 0.2,
-        pow: 1.15,
-      },
-      {
-        color: 0x140317,
-        intensity: 0.95,
-        center: 0.01,
-        width: 0.1,
-        sharpness: 0.32,
-        scale: [0.8, 9.0, 0.8],
-        speed: [-0.01, 0.0, 0.008],
-        bias: 0.15,
-        pow: 1.5,
-      },
-    ],
-    stars: {
-      color: 0xe6ecff,
-      intensity: 1.4,
-      density: 180,
-      threshold: 0.045,
-      size: 0.07,
-      twinkleSpeed: 2.2,
-      minElev: 0.04,
-    },
-  });
-  sky.scale.setScalar(450000);
-  sky.frustumCulled = false;
-  viz.scene.add(sky);
-  viz.registerBeforeRenderCb(curTimeSeconds => sky.setTime(curTimeSeconds));
-
   // SDF-morph demo ground, tiled to infinity. One hashed orbit point per cell, smin'd
   // across a 3x3 neighborhood so blobs merge seamlessly across cell boundaries. Paint
-  // output is pumped into HDR and rendered through the emissive bypass layer so colors
-  // skip AgX tone mapping and drive the bloom pass for an aggressive glow.
+  // output is pumped into HDR and rendered via the SkyStack emissive attachment so
+  // colors skip AgX tone mapping and drive the bloom pass for an aggressive glow.
   const groundPaintShader = `
     uniform vec3 uGroundBgColor;
     uniform vec3 uBlobColorOuter;
@@ -314,39 +207,175 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     }
   `;
 
-  const ground = new GroundPlane({
-    height: 120,
-    horizonFadeStart: 0.0,
-    horizonFadeEnd: 0.09,
-    atmosphericTint: {
-      // Dark warm red, sitting in the same hue family as the sky's lowest stop
-      // (0x714f4d). Blobs reddening and dimming as they recede mimics the
-      // sky-bleed-through effect even when the ground doesn't overlap the sky.
-      // color: 0x2a0806,
-      range: 0.57,
-      strength: 0.75,
-      color: 0x160303,
-      // range: 0.45,
-      // strength: 0.9,
+  // Sky sub-pipeline — owns the emissive RT; other bypass meshes composite on
+  // top of its output. 180deg linear-gradient(#0d1522 → #0f1f2f → #454b59 →
+  // #714f4d); inverted from CSS because our convention is 0=horizon, 1=zenith.
+  const skyStack = new SkyStack(
+    viz,
+    {
+      horizonOffset: -0.025,
+      gradient: {
+        stops: [
+          { position: 0.0, color: 0x714f4d },
+          { position: 0.354, color: 0x454b59 },
+          { position: 0.698, color: 0x0f1f2f },
+          { position: 1.0, color: 0x0d1522 },
+        ],
+        // linear-gradient(180deg, #52545a 0%, #bd5a58 34%, #174463 68%, #071520 100%)
+        // stops: [
+        //   { position: 0.0, color: 0x52545a },
+        //   { position: 0.34, color: 0xbd5a58 },
+        //   { position: 0.68, color: 0x174463 },
+        //   { position: 1.0, color: 0x071520 },
+        // ],
+        horizonMode: HorizonMode.SolidBelow,
+        belowColor: 0x060301,
+        horizonBlend: 0.03,
+      },
+      stars: {
+        color: 0xe6ecff,
+        intensity: 0.35,
+        density: 180,
+        threshold: 0.045,
+        size: 0.04,
+        twinkleSpeed: 9.0,
+        twinkleDepth: 0.3,
+        minElev: 0.04,
+      },
+      buildings: {
+        color: 0xff7a3a,
+        colorAlt: 0xffd07a,
+        intensity: 0.8,
+        buildingCount: 300,
+        buildingPresence: 0.75,
+        buildingGap: 0.2,
+        buildingMinHeight: 0.015,
+        buildingMaxHeight: 0.08,
+        floorsMin: 4,
+        floorsMax: 18,
+        windowsMin: 2,
+        windowsMax: 5,
+        maxFloorStride: 2,
+        maxWindowStride: 1,
+        litFractionMin: 0.25,
+        litFractionMax: 0.75,
+        windowWidth: 0.45,
+        windowHeight: 0.5,
+        twinkleSpeed: 5.0,
+        twinkleDepth: 0.38,
+        // groundElev sits 0.01 below the shared horizon offset so the
+        // cityscape tucks just under the horizon line.
+        groundElev: -0.01,
+        silhouetteDarkness: 0.15,
+      },
+      // Low wispy haze band behind the cityscape — sits above the gradient
+      // but gets occluded by silhouettes + windows. Demonstrates the
+      // "between layers" slot.
+      cloudsBack: {
+        color: 0x1a1c28,
+        highColor: 0x3a3550,
+        intensity: 0.55,
+        center: 0.055,
+        width: 0.08,
+        sharpness: 0.18,
+        scale: [1.2, 16, 1.2],
+        speed: [0.01, 0, 0.008],
+        octaves: 4,
+        bias: 0.05,
+        pow: 1.2,
+      },
+      // Higher cloud bank in front of everything — covers silhouettes and
+      // dims windows/stars behind it.
+      cloudsFront: {
+        color: 0x2a2030,
+        highColor: 0x554050,
+        intensity: 1,
+        center: 0.048,
+        width: 0.08,
+        sharpness: 0.12,
+        scale: [0.9, 5, 0.9],
+        speed: [0.015, 0, -0.01],
+        octaves: 1,
+        bias: 9.95,
+        pow: 1,
+      },
+      ground: {
+        height: 120,
+        // Retreat the paint from the horizon band — SkyStack's buildings layer
+        // takes over the distant-light duty here, and pushing the fade down kills
+        // the worst of the sub-pixel aliasing from SDF blobs shrinking past Nyquist.
+        horizonFadeStart: 0.03,
+        horizonFadeEnd: 0.06,
+        atmosphericTint: {
+          // Dark warm red, sitting in the same hue family as the sky's lowest stop
+          // (0x714f4d). Blobs reddening and dimming as they recede mimics the
+          // sky-bleed-through effect even when the ground doesn't overlap the sky.
+          range: 0.57,
+          strength: 0.75,
+          color: 0x160303,
+        },
+        paintShader: groundPaintShader,
+        uniforms: {
+          uGroundBgColor: { value: new THREE.Color(0x0a0508) },
+          uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
+          uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
+          uTileSize: { value: 80.0 },
+          // HDR multiplier on the blob color — drives the bloom pass and skips
+          // AgX since the paint is routed through the emissive attachment.
+          uEmissiveBoost: { value: 3.5 },
+        },
+      },
     },
-    paintShader: groundPaintShader,
-    uniforms: {
-      uGroundBgColor: { value: new THREE.Color(0x0a0508) },
-      // uBlobColorOuter: { value: new THREE.Color(0x3d1a1f) },
-      // uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
-      uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
-      uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
-      uTileSize: { value: 80.0 },
-      // HDR multiplier on the blob color — drives the bloom pass and skips AgX since
-      // the mesh is registered with the emissive bypass below.
-      uEmissiveBoost: { value: 3.5 },
+    viz.renderer.domElement.width,
+    viz.renderer.domElement.height
+  );
+  viz.registerBeforeRenderCb(curTimeSeconds => skyStack.setTime(curTimeSeconds));
+
+  configureDefaultPostprocessingPipeline({
+    viz,
+    quality: vizConf.graphics.quality,
+    toneMapping: { mode: 'agx', exposure: 1.2 },
+    autoUpdateShadowMap: true,
+    emissiveBypass: true,
+    skyBypassTonemap: false,
+    skyStack,
+    emissiveBloom:
+      vizConf.graphics.quality > GraphicsQuality.Low
+        ? { intensity: 4.0, levels: 4, luminanceThreshold: 0.02, radius: 0.3, luminanceSoftKnee: 0.02 }
+        : null,
+    fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
+          // Sky pixels sit at the far plane; skip fogging so the gradient sky is untouched.
+          if (depth >= 0.9999) {
+            return vec4(0.0);
+          }
+          float distToPlayer = distance(worldPos.xz, playerPos.xz) + 0.01 * abs(worldPos.y - playerPos.y);
+          float fogFactor = smoothstep(140., 310., distToPlayer);
+          return vec4(vec3(0.0002, 0.0002, 0.0002), fogFactor);
+        }`,
+    addMiddlePasses: (composer, viz, quality) => {
+      let n8aoPass: typeof N8AOPostPass | null = null;
+      if (quality > GraphicsQuality.Low) {
+        n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.configuration.intensity = 4;
+        n8aoPass.configuration.aoRadius = 2.5;
+        n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Performance',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'Medium',
+          }[quality]
+        );
+        // composer.addPass(n8aoPass, 3);
+      }
     },
   });
-  ground.scale.setScalar(450000);
-  ground.frustumCulled = false;
-  viz.scene.add(ground);
-  viz.postprocessingController?.emissiveBypassPass?.addBypassMesh(ground);
-  viz.registerBeforeRenderCb(curTimeSeconds => ground.setTime(curTimeSeconds));
 
   const handle = viz.levelLoadHandle!;
 

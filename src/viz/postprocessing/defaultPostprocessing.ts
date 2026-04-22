@@ -18,6 +18,7 @@ import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emis
 import { EmissiveFogPass } from 'src/viz/passes/emissiveFogPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
+import type { SkyStack } from 'src/viz/SkyStack';
 
 /**
  * Default emissive bloom configuration (quality-independent params).
@@ -164,6 +165,13 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    * so sky shaders' authored colors are preserved 1:1. See `FinalPass` for details.
    */
   skyBypassTonemap?: boolean;
+  /**
+   * Unified sky sub-pipeline. When provided, its pass is inserted between the depth
+   * pre-pass and the main render pass; it owns the emissive RT that is then shared
+   * with the emissive bypass pass (bypass meshes render on top of sky content).
+   * Requires `useDepthPrePass: true` and `emissiveBypass: true`.
+   */
+  skyStack?: SkyStack;
 }
 
 export const configureDefaultPostprocessingPipeline = ({
@@ -180,7 +188,16 @@ export const configureDefaultPostprocessingPipeline = ({
   emissiveBypassAmbientIntensity = 2.8,
   fogShader,
   skyBypassTonemap = false,
+  skyStack,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
+  if (skyStack) {
+    if (!useDepthPrePass) {
+      throw new Error('skyStack requires useDepthPrePass: true (needs stable depth target).');
+    }
+    if (!emissiveBypass) {
+      throw new Error('skyStack requires emissiveBypass: true (sky RT feeds the emissive composite).');
+    }
+  }
   const effectComposer = new StableDepthEffectComposer(viz.renderer, {
     multisampling: 0,
     frameBufferType: THREE.HalfFloatType,
@@ -200,10 +217,32 @@ export const configureDefaultPostprocessingPipeline = ({
     depthPass.skipShadowMapUpdate = true;
     effectComposer.addPass(depthPass);
 
-    renderPass = new MainRenderPass(viz.scene, viz.camera);
-    renderPass.skipShadowMapUpdate = !autoUpdateShadowMap;
-    renderPass.needsDepthTexture = true;
-    effectComposer.addPass(renderPass);
+    const mainRenderPass = new MainRenderPass(viz.scene, viz.camera);
+    mainRenderPass.skipShadowMapUpdate = !autoUpdateShadowMap;
+    mainRenderPass.needsDepthTexture = true;
+    effectComposer.addPass(mainRenderPass);
+    renderPass = mainRenderPass;
+
+    if (skyStack) {
+      const stableDepthTgt = effectComposer.stableDepthTarget;
+      if (!stableDepthTgt) {
+        throw new Error('skyStack: stableDepthTarget was not created after adding MainRenderPass.');
+      }
+      skyStack.pass.setStableDepthTarget(stableDepthTgt);
+      skyStack.setSceneDepth(stableDepthTgt.depthTexture);
+      // MainRenderPass runs with clear=false so sky pixels painted below are
+      // preserved — but three.js still forces a color clear when scene.background
+      // is a THREE.Color (Viz's default). Suppress that during MainRenderPass so
+      // our gradient survives into FinalPass.
+      mainRenderPass.suppressSceneBackground = true;
+      // Unified sky pass runs between depthPass (index 0) and renderPass
+      // (currently index 1). It renders into an MRT (count=2), then blits
+      // attachment[0] into inputBuffer (tone-mapped color) and attachment[1]
+      // into its standalone emissiveRT (bypass-tone-map + bloom). Being the
+      // first non-RenderPass in the loop also triggers the StableDepth blit
+      // before this pass runs.
+      effectComposer.addPass(skyStack.pass, 1);
+    }
   } else {
     renderPass = new RenderPass(viz.scene, viz.camera);
     effectComposer.addPass(renderPass);
@@ -222,11 +261,17 @@ export const configureDefaultPostprocessingPipeline = ({
   let emissiveFogPass: EmissiveFogPass | null = null;
   if (emissiveBypass) {
     const { width, height } = viz.renderer.domElement;
+
+    // SkyStackPass already populated `skyStack.emissiveRT` (attachment[1] of
+    // its MRT, blitted back at the end of the pass). EmissiveBypassPass
+    // consumes that RT as `externalEmissiveRT` and composites bypass meshes
+    // (portals, etc.) on top without clearing.
     emissiveBypassPass = new EmissiveBypassPass(
       viz.scene,
       viz.camera as THREE.PerspectiveCamera,
       width,
-      height
+      height,
+      skyStack?.emissiveRT
     );
 
     const stableDepthTgt = effectComposer.stableDepthTarget;

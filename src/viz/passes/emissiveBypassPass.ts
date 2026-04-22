@@ -31,6 +31,12 @@ interface BypassEntry {
 export class EmissiveBypassPass extends Pass {
   private readonly bypassCamera: THREE.PerspectiveCamera;
   readonly emissiveRT: THREE.WebGLRenderTarget;
+  /**
+   * When true, another subsystem (e.g. SkyStackPass) owns emissiveRT and is
+   * responsible for allocation, resize, depth blit, and per-frame clear. This
+   * pass then only renders bypass meshes on top of the existing contents.
+   */
+  private readonly rtIsExternal: boolean;
   private stableDepthTarget: THREE.WebGLRenderTarget | null = null;
   private readonly _mainCamera: THREE.PerspectiveCamera;
   public readonly scene: THREE.Scene;
@@ -43,7 +49,13 @@ export class EmissiveBypassPass extends Pass {
   private readonly _sphere = new THREE.Sphere();
   private _emissiveRTHasContent = false;
 
-  constructor(scene: THREE.Scene, mainCamera: THREE.PerspectiveCamera, width: number, height: number) {
+  constructor(
+    scene: THREE.Scene,
+    mainCamera: THREE.PerspectiveCamera,
+    width: number,
+    height: number,
+    externalEmissiveRT?: THREE.WebGLRenderTarget
+  ) {
     super('EmissiveBypassPass');
     this.scene = scene;
     this._mainCamera = mainCamera;
@@ -56,12 +68,18 @@ export class EmissiveBypassPass extends Pass {
     // We manually sync matrixWorld from the main camera in render().
     this.bypassCamera.matrixAutoUpdate = false;
 
-    this.emissiveRT = new THREE.WebGLRenderTarget(width, height, {
-      type: THREE.HalfFloatType,
-      format: THREE.RGBAFormat,
-      depthBuffer: true,
-      depthTexture: new THREE.DepthTexture(width, height, THREE.UnsignedIntType),
-    });
+    if (externalEmissiveRT) {
+      this.emissiveRT = externalEmissiveRT;
+      this.rtIsExternal = true;
+    } else {
+      this.emissiveRT = new THREE.WebGLRenderTarget(width, height, {
+        type: THREE.HalfFloatType,
+        format: THREE.RGBAFormat,
+        depthBuffer: true,
+        depthTexture: new THREE.DepthTexture(width, height, THREE.UnsignedIntType),
+      });
+      this.rtIsExternal = false;
+    }
   }
 
   /**
@@ -104,7 +122,9 @@ export class EmissiveBypassPass extends Pass {
   }
 
   override setSize(width: number, height: number): void {
-    this.emissiveRT.setSize(width, height);
+    if (!this.rtIsExternal) {
+      this.emissiveRT.setSize(width, height);
+    }
   }
 
   override render(
@@ -129,7 +149,10 @@ export class EmissiveBypassPass extends Pass {
       return this._frustum.intersectsSphere(this._sphere);
     });
     if (!anyVisible) {
-      if (this._emissiveRTHasContent) {
+      // When an external owner (SkyStack) manages the RT, it cleared this frame
+      // already — do not touch anything here. Only the internal-ownership path
+      // needs the "stale pixels from last frame" cleanup.
+      if (this._emissiveRTHasContent && !this.rtIsExternal) {
         renderer.setRenderTarget(this.emissiveRT);
         renderer.setClearColor(new THREE.Color(0, 0, 0), 0);
         renderer.clear(true, false, false);
@@ -148,34 +171,39 @@ export class EmissiveBypassPass extends Pass {
     this.bypassCamera.projectionMatrixInverse.copy(this._mainCamera.projectionMatrixInverse);
     this.bypassCamera.matrixWorldNeedsUpdate = false;
 
-    // Ensure emissiveRT's WebGL FBO exists before blit
-    renderer.setRenderTarget(this.emissiveRT);
+    if (!this.rtIsExternal) {
+      // Ensure emissiveRT's WebGL FBO exists before blit
+      renderer.setRenderTarget(this.emissiveRT);
 
-    if (this.stableDepthTarget) {
-      const gl = renderer.getContext() as WebGL2RenderingContext;
-      const props = (renderer as any).properties;
+      if (this.stableDepthTarget) {
+        const gl = renderer.getContext() as WebGL2RenderingContext;
+        const props = (renderer as any).properties;
 
-      const srcProps = props.get(this.stableDepthTarget);
-      const dstProps = props.get(this.emissiveRT);
-      if (srcProps?.__webglFramebuffer && dstProps?.__webglFramebuffer) {
-        const srcFBO = srcProps.__webglFramebuffer as WebGLFramebuffer;
-        const dstFBO = dstProps.__webglFramebuffer as WebGLFramebuffer;
-        const { width, height } = this.emissiveRT;
+        const srcProps = props.get(this.stableDepthTarget);
+        const dstProps = props.get(this.emissiveRT);
+        if (srcProps?.__webglFramebuffer && dstProps?.__webglFramebuffer) {
+          const srcFBO = srcProps.__webglFramebuffer as WebGLFramebuffer;
+          const dstFBO = dstProps.__webglFramebuffer as WebGLFramebuffer;
+          const { width, height } = this.emissiveRT;
 
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
-        gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
+          gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+        }
+        // Restore Three.js render target tracking after raw GL calls
+        renderer.setRenderTarget(null);
       }
-      // Restore Three.js render target tracking after raw GL calls
-      renderer.setRenderTarget(null);
-    }
 
-    // Clear color to transparent, keeping depth from blit
-    renderer.setRenderTarget(this.emissiveRT);
-    renderer.setClearColor(new THREE.Color(0, 0, 0), 0);
-    renderer.clearColor();
+      // Clear color to transparent, keeping depth from blit
+      renderer.setRenderTarget(this.emissiveRT);
+      renderer.setClearColor(new THREE.Color(0, 0, 0), 0);
+      renderer.clearColor();
+    } else {
+      // SkyStack already blitted depth and cleared color; just bind the target.
+      renderer.setRenderTarget(this.emissiveRT);
+    }
 
     // Swap to real materials for the bypass render
     for (const entry of this.bypassEntries) {
@@ -199,7 +227,9 @@ export class EmissiveBypassPass extends Pass {
     for (const { proxyMat } of this.bypassEntries) {
       proxyMat.dispose();
     }
-    this.emissiveRT.dispose();
+    if (!this.rtIsExternal) {
+      this.emissiveRT.dispose();
+    }
     super.dispose();
   }
 }
