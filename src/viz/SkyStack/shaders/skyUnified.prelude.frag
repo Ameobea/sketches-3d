@@ -97,8 +97,8 @@ float accumEmissiveAlpha = 0.0;
 // only needs to think about the layer's own blend math.
 void accumulate(vec3 color, vec3 emissive, float alpha, float emissiveAlpha) {
   float w = 1.0 - accumAlpha;
-  accumSkyColor      += w * color;
-  accumEmissive      += w * emissive;
-  accumAlpha         += w * alpha;
+  accumSkyColor += w * color;
+  accumEmissive += w * emissive;
+  accumAlpha += w * alpha;
   accumEmissiveAlpha += w * emissiveAlpha;
 }

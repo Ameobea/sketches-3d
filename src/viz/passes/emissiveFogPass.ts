@@ -55,8 +55,6 @@ export class EmissiveFogPass extends Pass {
       uniforms: {
         emissiveBuffer: { value: bypassPass.emissiveRT.texture },
         emissiveDepthBuffer: { value: bypassPass.emissiveRT.depthTexture },
-        // Camera matrices are held by reference so they stay in sync with the live camera
-        // without any per-frame copy. Three reads `uniform.value` by reference each draw.
         projectionMatrixInverse: { value: viz.camera.projectionMatrixInverse },
         cameraWorldMatrix: { value: viz.camera.matrixWorld },
         fogCameraPos: { value: new THREE.Vector3() },

@@ -10,7 +10,15 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
-import { SkyStack, HorizonMode } from 'src/viz/SkyStack';
+import {
+  SkyStack,
+  HorizonMode,
+  starsLayer,
+  cloudsLayer,
+  buildingsLayer,
+  groundLayer,
+  gradientBackground,
+} from 'src/viz/SkyStack';
 
 const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
   const out: THREE.Mesh[] = [];
@@ -163,7 +171,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       return 0.85 + 0.15 * sin(uTime * rate + phase);
     }
 
-    vec4 paintGround(vec2 uv, vec2 uvDeriv, vec3 dir, float invDist) {
+    vec4 paintGround_$ID(vec2 uv, vec2 uvDeriv, vec3 dir, float invDist) {
       float T = uTileSize;
       vec2 cellId = floor(uv / T + 0.5);
       float aaW = max(uvDeriv.x, uvDeriv.y);
@@ -214,117 +222,128 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     viz,
     {
       horizonOffset: -0.025,
-      gradient: {
+      horizonBlend: 0.03,
+      layers: [
+        // Higher cloud bank in front of everything — covers silhouettes and
+        // dims windows/stars behind it.
+        cloudsLayer({
+          id: 'cloudsFront',
+          zIndex: 40,
+          color: 0x2a2030,
+          highColor: 0x554050,
+          intensity: 1,
+          center: 0.048,
+          width: 0.08,
+          sharpness: 0.12,
+          scale: [0.9, 5, 0.9],
+          speed: [0.015, 0, -0.01],
+          octaves: 1,
+          bias: 9.95,
+          pow: 1,
+        }),
+        buildingsLayer({
+          id: 'buildings',
+          zIndex: 30,
+          color: 0xff7a3a,
+          colorAlt: 0xffd07a,
+          intensity: 0.8,
+          buildingCount: 300,
+          buildingPresence: 0.75,
+          buildingGap: 0.2,
+          buildingMinHeight: 0.015,
+          buildingMaxHeight: 0.08,
+          floorsMin: 4,
+          floorsMax: 18,
+          windowsMin: 2,
+          windowsMax: 5,
+          maxFloorStride: 2,
+          maxWindowStride: 1,
+          litFractionMin: 0.25,
+          litFractionMax: 0.75,
+          windowWidth: 0.45,
+          windowHeight: 0.5,
+          twinkleSpeed: 5.0,
+          twinkleDepth: 0.38,
+          // groundElev sits 0.01 below the shared horizon offset so the
+          // cityscape tucks just under the horizon line.
+          groundElev: -0.01,
+          // Approximates the former gradient-following silhouette: horizon
+          // gradient color (0x714f4d) darkened ~15%.
+          silhouetteColor: 0x110c0b,
+        }),
+        // Low wispy haze band behind the cityscape — sits above the gradient
+        // but gets occluded by silhouettes + windows.
+        cloudsLayer({
+          id: 'cloudsBack',
+          zIndex: 20,
+          color: 0x1a1c28,
+          highColor: 0x3a3550,
+          intensity: 0.55,
+          center: 0.055,
+          width: 0.08,
+          sharpness: 0.18,
+          scale: [1.2, 16, 1.2],
+          speed: [0.01, 0, 0.008],
+          octaves: 4,
+          bias: 0.05,
+          pow: 1.2,
+        }),
+        starsLayer({
+          id: 'stars',
+          zIndex: 10,
+          color: 0xe6ecff,
+          intensity: 0.35,
+          density: 180,
+          threshold: 0.045,
+          size: 0.04,
+          twinkleSpeed: 9.0,
+          twinkleDepth: 0.3,
+          minElev: 0.04,
+        }),
+        groundLayer({
+          id: 'ground',
+          zIndex: 5,
+          height: 120,
+          // Retreat the paint from the horizon band — SkyStack's buildings layer
+          // takes over the distant-light duty here, and pushing the fade down kills
+          // the worst of the sub-pixel aliasing from SDF blobs shrinking past Nyquist.
+          horizonFadeStart: 0.03,
+          horizonFadeEnd: 0.06,
+          atmosphericTint: {
+            // Dark warm red, sitting in the same hue family as the sky's lowest stop
+            // (0x714f4d). Blobs reddening and dimming as they recede mimics the
+            // sky-bleed-through effect even when the ground doesn't overlap the sky.
+            range: 0.57,
+            strength: 0.75,
+            color: 0x160303,
+          },
+          paintShader: groundPaintShader,
+          uniforms: {
+            uGroundBgColor: { value: new THREE.Color(0x0a0508) },
+            uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
+            uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
+            uTileSize: { value: 80.0 },
+            // HDR multiplier on the blob color — drives the bloom pass and skips
+            // AgX since the paint is routed through the emissive attachment.
+            uEmissiveBoost: { value: 3.5 },
+          },
+        }),
+      ],
+      background: gradientBackground({
         stops: [
           { position: 0.0, color: 0x714f4d },
           { position: 0.354, color: 0x454b59 },
           { position: 0.698, color: 0x0f1f2f },
           { position: 1.0, color: 0x0d1522 },
         ],
-        // linear-gradient(180deg, #52545a 0%, #bd5a58 34%, #174463 68%, #071520 100%)
-        // stops: [
-        //   { position: 0.0, color: 0x52545a },
-        //   { position: 0.34, color: 0xbd5a58 },
-        //   { position: 0.68, color: 0x174463 },
-        //   { position: 1.0, color: 0x071520 },
-        // ],
         horizonMode: HorizonMode.SolidBelow,
         belowColor: 0x060301,
-        horizonBlend: 0.03,
-      },
-      stars: {
-        color: 0xe6ecff,
-        intensity: 0.35,
-        density: 180,
-        threshold: 0.045,
-        size: 0.04,
-        twinkleSpeed: 9.0,
-        twinkleDepth: 0.3,
-        minElev: 0.04,
-      },
-      buildings: {
-        color: 0xff7a3a,
-        colorAlt: 0xffd07a,
-        intensity: 0.8,
-        buildingCount: 300,
-        buildingPresence: 0.75,
-        buildingGap: 0.2,
-        buildingMinHeight: 0.015,
-        buildingMaxHeight: 0.08,
-        floorsMin: 4,
-        floorsMax: 18,
-        windowsMin: 2,
-        windowsMax: 5,
-        maxFloorStride: 2,
-        maxWindowStride: 1,
-        litFractionMin: 0.25,
-        litFractionMax: 0.75,
-        windowWidth: 0.45,
-        windowHeight: 0.5,
-        twinkleSpeed: 5.0,
-        twinkleDepth: 0.38,
-        // groundElev sits 0.01 below the shared horizon offset so the
-        // cityscape tucks just under the horizon line.
-        groundElev: -0.01,
-        silhouetteDarkness: 0.15,
-      },
-      // Low wispy haze band behind the cityscape — sits above the gradient
-      // but gets occluded by silhouettes + windows. Demonstrates the
-      // "between layers" slot.
-      cloudsBack: {
-        color: 0x1a1c28,
-        highColor: 0x3a3550,
-        intensity: 0.55,
-        center: 0.055,
-        width: 0.08,
-        sharpness: 0.18,
-        scale: [1.2, 16, 1.2],
-        speed: [0.01, 0, 0.008],
-        octaves: 4,
-        bias: 0.05,
-        pow: 1.2,
-      },
-      // Higher cloud bank in front of everything — covers silhouettes and
-      // dims windows/stars behind it.
-      cloudsFront: {
-        color: 0x2a2030,
-        highColor: 0x554050,
-        intensity: 1,
-        center: 0.048,
-        width: 0.08,
-        sharpness: 0.12,
-        scale: [0.9, 5, 0.9],
-        speed: [0.015, 0, -0.01],
-        octaves: 1,
-        bias: 9.95,
-        pow: 1,
-      },
-      ground: {
-        height: 120,
-        // Retreat the paint from the horizon band — SkyStack's buildings layer
-        // takes over the distant-light duty here, and pushing the fade down kills
-        // the worst of the sub-pixel aliasing from SDF blobs shrinking past Nyquist.
-        horizonFadeStart: 0.03,
-        horizonFadeEnd: 0.06,
-        atmosphericTint: {
-          // Dark warm red, sitting in the same hue family as the sky's lowest stop
-          // (0x714f4d). Blobs reddening and dimming as they recede mimics the
-          // sky-bleed-through effect even when the ground doesn't overlap the sky.
-          range: 0.57,
-          strength: 0.75,
-          color: 0x160303,
-        },
-        paintShader: groundPaintShader,
-        uniforms: {
-          uGroundBgColor: { value: new THREE.Color(0x0a0508) },
-          uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
-          uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
-          uTileSize: { value: 80.0 },
-          // HDR multiplier on the blob color — drives the bloom pass and skips
-          // AgX since the paint is routed through the emissive attachment.
-          uEmissiveBoost: { value: 3.5 },
-        },
-      },
+        lutResolution: {
+          [GraphicsQuality.Low]: 32,
+          [GraphicsQuality.Medium]: 64,
+          [GraphicsQuality.High]: 128,
+        }[vizConf.graphics.quality],
+      }),
     },
     viz.renderer.domElement.width,
     viz.renderer.domElement.height
@@ -372,7 +391,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
             [GraphicsQuality.High]: 'Medium',
           }[quality]
         );
-        // composer.addPass(n8aoPass, 3);
+        composer.addPass(n8aoPass, 3);
       }
     },
   });

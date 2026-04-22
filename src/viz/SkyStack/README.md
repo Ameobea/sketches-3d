@@ -14,15 +14,24 @@ DepthPass → SkyStackPass → MainRenderPass → ... → EmissiveBypassPass →
 
 `SkyStackPass` (see `SkyStackPass.ts`) owns:
 
-- `skyMRT` — internal RT with two color attachments, no depth.
+- `skyMRT` — three.js-managed MRT whose two color attachments are rebound
+  each frame to the consumer RTs' underlying GL textures (see below).
 - `emissiveRT` — single-attachment RT with depth, **shared with**
   `EmissiveBypassPass` (which composites portal/bypass meshes on top without
-  clearing).
+  clearing, and owns the blit that populates `emissiveRT.depth`).
 
-Per frame: blit stable depth into `emissiveRT.depth`; clear color on both
-RTs; render the unified shader into `skyMRT`; blit attachment 0 →
-`inputBuffer` color (gets tone-mapped in `FinalPass`), blit attachment 1 →
-`emissiveRT` color (bypasses tone mapping, drives bloom).
+Per frame: rebind `skyMRT`'s color attachments to `inputBuffer.texture` and
+`emissiveRT.texture`'s GL textures (cache-skipped when unchanged); clear
+`skyMRT` (clears through the hijacked attachments → clears `inputBuffer.color`
+and `emissiveRT.color`); render the unified shader — its two fragment outputs
+(`oColor`, `oEmissive`) land **directly** in `inputBuffer` and `emissiveRT`
+with zero intermediate blits.
+
+The hijack-attachment trick is load-bearing for smooth frames on TBDR GPUs
+(Apple Silicon) alongside screen-space effects like n8ao: per-frame
+full-resolution color blits between render targets force tile-memory
+resolves, and the resulting sync barriers can hitch downstream passes that
+share `inputBuffer` even though GPU/CPU usage both appear low.
 
 The shader's `discardIfOccluded()` reads stableDepth via `uSceneDepth` and
 discards any fragment behind scene geometry — so SkyStack only writes where
@@ -109,76 +118,90 @@ only compositor-provided variables — never the state of any other layer. If
 the gate were referencing other layers it would be a coupling point we're
 deliberately avoiding.
 
-## Current layers
+## Public API
 
-Defined in `skyUnifiedShader.ts`, configured via `SkyStackParams`. Front to
-back as the compositor sees them:
+`SkyStackParams` takes a flat list of layers plus an optional background:
 
-1. **cloudsFront** — alpha-blend haze in front of buildings (gate: `aboveHorizon`).
-2. **buildings** — silhouette + windows. Probe runs inline; on hit, emits
-   opaque silhouette (alpha=1) plus window emissive (gate: `aboveHorizon`).
-3. **cloudsBack** — alpha-blend haze behind buildings (gate: `aboveHorizon`).
-4. **stars** — pure emissive, no skyColor contribution (gate: `aboveHorizon`).
-5. **ground** — below-horizon SDF/paint shader, pure emissive
-   (gate: `dir.y < 0.01`).
-6. **gradient** (always last) — back-most fallback. Outputs alpha=1 to fill
-   any remaining coverage. Bands are part of this layer.
+```ts
+new SkyStack(viz, {
+  horizonOffset: -0.025,
+  horizonBlend: 0.03,
+  layers: [
+    cloudsLayer({ id: 'cloudsFront', zIndex: 40, ... }),
+    buildingsLayer({ id: 'buildings', zIndex: 30, silhouetteColor: 0x..., ... }),
+    cloudsLayer({ id: 'cloudsBack', zIndex: 20, ... }),
+    starsLayer({ id: 'stars', zIndex: 10, ... }),
+    groundLayer({ id: 'ground', zIndex: 5, paintShader: '...', ... }),
+  ],
+  background: gradientBackground({ stops: [...], bands: [...] }),
+}, width, height);
+```
 
-Each layer's GLSL helpers + uniforms are only emitted into the assembled
-shader source when its config is provided — there's no runtime branching on
-layer presence.
+Every layer is produced by a factory function that returns a plain `Layer`
+(or `BackgroundLayer`) record. Each factory handles its own:
 
-## Baked counts
+- Uniform creation (suffixed with `_<id>` for per-instance isolation).
+- Per-instance GLSL (uniform decls + helper functions, with `$ID` tokens
+  substituted at factory time).
+- Shared modules keyed for dedup (e.g. `skyFbm` shared across all cloud
+  instances).
+- Compile-time `#define` contributions, merged across layers (e.g. clouds
+  contribute `MAX_HAZE_OCTAVES` with `merge: 'max'`).
+- A body string that calls `accumulate(...)` and an optional gate.
 
-Loop bounds and uniform-array sizes that used to be capped by `MAX_*`
-constants are now **baked into the shader at build time** as `#define`s
-(`STOP_COUNT`, `BAND_COUNT`, `MAX_HAZE_OCTAVES`). The driver gets literal
-loop bounds and can unroll. Counts are immutable per `SkyStack` instance —
-`setStops`/`setBands` accept any colors/positions you like but reject
-length-mismatched arrays. Reconfiguring the count means recreating the
-SkyStack.
+Built-in factories: `starsLayer`, `cloudsLayer`, `buildingsLayer`,
+`groundLayer`, plus `customLayer` as the user escape hatch. Backgrounds:
+`gradientBackground`, `solidBackground`, `customBackground`. The background
+slot is optional — omit it for a black sky.
 
-## Future direction: generic user-supplied layers
+Runtime mutation is by direct uniform poking: hold a reference to the
+factory's output and set `.uniforms['uFoo_<id>'].value = ...`.
 
-The `SkyLayer { name, body, gate? }` shape and front-to-back accumulator are
-deliberately the seed of a generic compose pipeline. The current 5 hardcoded
-layers will eventually be replaced (or augmented) by user-supplied layers,
-each declaring:
+## Z-ordering
 
-- A z-index for ordering (front-to-back iteration order).
-- A GLSL body that calls `accumulate(...)`.
-- An optional cheap gate predicate.
-- Its own uniforms (passed through to the assembled shader).
-- Possibly a blend-mode declaration that auto-derives the `accumulate()` args
-  from a higher-level shape (e.g. `kind: 'alphaBlend'` would wrap a `vec4
-  source` value as `accumulate(source.rgb * source.a, vec3(0), source.a, 0)`
-  without the layer body needing to think about pre-multiplication).
+`zIndex` is CSS-like: higher = closer to camera = emitted first. The
+compositor sorts layers by zIndex descending, wraps each in the saturation
+guard + optional gate, then runs the background last. Any layer that emits
+`alpha=1` short-circuits every layer behind it via the `(1 - accumAlpha)`
+weighting; the background is typically the thing that finally saturates, but
+an opaque layer in front (buildings silhouette, dense clouds, …) will skip
+it entirely.
 
-Because cross-layer coupling has already been eliminated, dropping in a new
-layer (aurora, lightning flash, distant mountain silhouette, custom
-scene-specific overlay) is purely additive — any opaque layer auto-blocks
-content behind it via the saturation early-out, and any alpha-blend layer
-auto-attenuates emissive behind it via the `(1 - accumAlpha)` weighting.
+## Cross-layer independence
 
-The current `SkyStackParams`-with-named-slots API will likely become a thin
-convenience wrapper that translates the well-known layer kinds into generic
-`SkyLayer` entries, with an escape hatch for user-defined layers.
+Layer bodies reference only compositor-scope variables (`dir`, `elev`,
+`azimuth`, `cosElev`, `horizonBlend`, `aboveHorizon`) and their own
+id-prefixed uniforms / helpers — never another layer's state. This makes any
+layer drop-in additive: an aurora or lightning-flash layer just needs to
+decide its zIndex and produce a `Layer` from `customLayer(...)`. If the new
+layer emits alpha=1, layers behind it auto-skip; if it's alpha-blended,
+layers behind auto-attenuate via `(1 - accumAlpha)`.
 
 ## Performance notes
 
-The big perf wins from the recent optimization pass:
+The big perf wins from the recent optimization passes:
 
 - Above-horizon `paintGround` early-out (the SDF/paint cost was the largest
   per-fragment expense; ~40-50% of pixels are above horizon).
 - `skyMRT` no depth attachment (saves a per-frame depth blit).
 - Baked loop counts (driver unrolling).
 - Front-to-back saturation early-out (predictive cloud / silhouette skip).
+- Direct MRT writes into `inputBuffer` + `emissiveRT` via attachment hijack
+  (eliminates two per-frame color blits; critical on TBDR hardware — see
+  pipeline placement section above).
+- `emissiveRT.depth` shares `stableDepthTarget.depthTexture` directly (wired
+  at setup via `SkyStackPass.setEmissiveDepthTexture()`), eliminating the
+  per-frame depth blit entirely. Bypass meshes render with `depthWrite=true`
+  into the shared texture — that's intentional for EmissiveFogPass's
+  per-pixel fog reconstruction. Tradeoff: FinalPass's fog reads the same
+  shared texture and so sees mesh depth at bypass-mesh pixels, which gives
+  a slight fog error on scene-behind color there — invisible when bypass
+  meshes are opaque (the common case) since their emissive composites on
+  top in FinalPass.
 
 Future levers (see `gradient-sky-followups.md` for the longer list):
 
 - Gradient → 1D LUT texture (kills the per-fragment Oklab cube-roots).
-- Direct render into `inputBuffer` + `emissiveRT` (skip the two
-  intermediate-MRT blits — a real bandwidth saving).
 - Quality tier gating (octave reduction, layer skipping at low quality).
 - Per-cloud unrolled `skyFbm` (currently shared, with runtime octave count).
 
@@ -186,14 +209,19 @@ Future levers (see `gradient-sky-followups.md` for the longer list):
 
 | File | Role |
 |------|------|
-| `SkyStack.ts` | Public class. Owns uniforms + the `SkyStackPass`. |
+| `SkyStack.ts` | Public class. Owns shared uniforms + the `SkyStackPass`. |
 | `SkyStackPass.ts` | postprocessing `Pass`. Allocates RTs, runs the draw + blits. |
-| `skyUnifiedShader.ts` | Assembles the fragment shader from the configs. Defines the `SkyLayer` shape and the layer bodies. |
-| `uniforms.ts` | Shared-uniform definitions, count-aware constructor. |
+| `compose.ts` | Assembles the fragment shader from a layer list: sort by zIndex, dedup modules, merge defines, emit bodies under the saturation guard. |
+| `types.ts` | Core types: `Layer`, `BackgroundLayer`, `SharedModule`, `DefineContribution`. |
+| `uniforms.ts` | Compositor-shared uniform record + constructor. |
 | `shaders/skyUnified.prelude.frag` | Prelude: MRT outputs, helpers, accumulator + `accumulate()`. |
-| `shaders/gradient.glsl` | Gradient-stop interpolation (Oklab) + bands. |
-| `shaders/hazeField.glsl` | Cloud band sampler (`sampleHaze` + shared `skyFbm`). |
-| `shaders/buildingGeom.glsl` | `probeBuilding()` discrete-tower math. |
-| `shaders/ground.glsl` | `sampleGround()` ray-plane intersection + paint dispatch. |
 | `shaders/skyStack.vert` | Trivial fullscreen quad vertex shader. |
-| `layers/*.ts` | Per-layer config types (interfaces only — no runtime). |
+| `layers/_util.ts` | `resolveId` — id substitution helper for per-instance GLSL. |
+| `layers/stars.{ts,glsl}` | Star field layer. |
+| `layers/clouds.{ts, module.glsl, instance.glsl}` | Cloud band layer. Shared `skyFbm` module + per-instance sampler. |
+| `layers/buildings.{ts,glsl}` | Discrete-tower silhouettes + windows. |
+| `layers/ground.{ts,glsl}` | Below-horizon virtual ground plane with a user paint shader. |
+| `layers/custom.ts` | Escape hatch — plain `Layer` with user-supplied GLSL. |
+| `backgrounds/gradient.{ts,glsl}` | Oklab gradient + additive bands backmost layer. |
+| `backgrounds/solid.ts` | Flat solid-color backmost layer. |
+| `backgrounds/custom.ts` | Escape hatch for custom backgrounds. |

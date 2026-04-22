@@ -4,33 +4,48 @@ import * as THREE from 'three';
 const BLACK = new THREE.Color(0, 0, 0);
 
 /**
- * Single MRT-owning pass that runs the unified SkyStack fragment shader and
- * splits its output into:
+ * MRT-owning pass that runs the unified SkyStack fragment shader and writes
+ * directly into the consumer render targets:
  *
- *   - attachment 0 (color)    → blitted into the composer's inputBuffer.
- *                               Tone-mapped by AgX in FinalPass.
- *   - attachment 1 (emissive) → blitted into `emissiveRT` (a standalone single-
- *                               attachment RT owned by this pass). Bypasses
- *                               tone mapping, feeds bloom, and is shared with
- *                               EmissiveBypassPass (which composites bypass
- *                               meshes on top without clearing).
+ *   - attachment 0 (color)    → `inputBuffer.texture` (tone-mapped by AgX in FinalPass).
+ *   - attachment 1 (emissive) → `emissiveRT.texture`  (bypass-tone-map + bloom,
+ *                               shared with EmissiveBypassPass which composites on top
+ *                               without clearing).
+ *
+ * Implementation: a single three.js-managed MRT (`skyMRT`) whose two color
+ * attachments are rebound each frame to the consumer RTs' underlying GL
+ * textures. This eliminates the two per-frame full-resolution color blits
+ * that the previous "render into skyMRT then blit out" design required.
+ * On TBDR hardware (Apple Silicon) those blits forced tile-memory resolves
+ * that hitched any pass sharing `inputBuffer` downstream (e.g. n8ao).
  *
  * Per-frame flow:
- *   1. Blit stableDepthTarget depth → `emissiveRT` depth (skyMRT has no depth
- *      attachment — its shader writes are ungated and the occlusion test
- *      reads stableDepth directly via `uSceneDepth`).
- *   2. Clear `skyMRT` and `emissiveRT` color attachments.
- *   3. Render the fullscreen triangle with the unified material.
- *   4. Blit `skyMRT.textures[0]` → `inputBuffer` color.
- *   5. Blit `skyMRT.textures[1]` → `emissiveRT` color.
+ *   1. Rebind skyMRT's COLOR_ATTACHMENT0/1 to inputBuffer.texture and
+ *      emissiveRT.texture's GL textures (only when those textures change —
+ *      first run, resize, or RT reallocation).
+ *   2. Clear skyMRT (clears through the hijacked attachments → clears
+ *      inputBuffer.color and emissiveRT.color).
+ *   3. Render the fullscreen triangle with the unified material — fragment
+ *      outputs go directly into inputBuffer and emissiveRT.
  *
- * Placement: immediately between DepthPass and MainRenderPass. As the first
- * non-RenderPass in the composer loop, inserting this pass triggers the
- * StableDepth blit right before it runs — so `stableDepthTarget` holds the
- * freshly-rendered scene depth from DepthPass.
+ * Placement: between DepthPass and MainRenderPass. As the first non-RenderPass
+ * in the composer loop, inserting this pass triggers the StableDepth blit
+ * right before it runs — so `stableDepthTarget` holds the freshly-rendered
+ * scene depth from DepthPass (consumed by the sky shader via `uSceneDepth`).
  *
- * `needsSwap = false` — writes to its own MRT + blits into inputBuffer and
- * emissiveRT; the composer's ping-pong is untouched.
+ * `emissiveRT` depth: this pass constructs `emissiveRT` without a depth
+ * attachment, and a wiring step in `defaultPostprocessing` attaches
+ * `stableDepthTarget.depthTexture` directly as `emissiveRT`'s depth via
+ * `setEmissiveDepthTexture()`. Result: no per-frame depth blit. The
+ * EmissiveFogPass still gets "mesh depth at mesh pixels, scene depth
+ * elsewhere" semantics (because bypass meshes render with depthWrite=true
+ * into the shared texture); the only cost is that FinalPass's fog reads
+ * the same shared texture and therefore sees mesh depth at bypass-mesh
+ * pixels — invisible for opaque bypass meshes (the common case), since
+ * the bypass emissive covers the main-scene color at those pixels in the
+ * final composite.
+ *
+ * `needsSwap = false` — does not rotate the composer's ping-pong.
  */
 export class SkyStackPass extends Pass {
   public readonly skyMRT: THREE.WebGLRenderTarget;
@@ -39,17 +54,22 @@ export class SkyStackPass extends Pass {
   private readonly fsScene: THREE.Scene;
   private readonly fsCamera: THREE.OrthographicCamera;
   private readonly fsMesh: THREE.Mesh;
-  private stableDepthTarget: THREE.WebGLRenderTarget | null = null;
+  // Tracks which GL textures are currently attached to skyMRT's color slots so
+  // we only re-run framebufferTexture2D when the consumer textures actually
+  // change (resize / first frame / RT reallocation).
+  private boundAttachment0: WebGLTexture | null = null;
+  private boundAttachment1: WebGLTexture | null = null;
 
   constructor(material: THREE.ShaderMaterial, width: number, height: number) {
     super('SkyStackPass');
     this.needsSwap = false;
     this.material = material;
 
-    // No depth attachment on skyMRT: the shader runs with depthTest/depthWrite
-    // off, and `discardIfOccluded` samples the *external* stableDepth texture
-    // (uSceneDepth) — never this RT's depth. Saves one full-res depth blit and
-    // a DepthTexture allocation per frame.
+    // Backing MRT whose color attachments get hijacked each frame. We still
+    // let three.js construct it — that gives us a valid FBO + drawBuffers
+    // state + viewport handling via renderer.setRenderTarget/render. The
+    // internal textures it allocates are overwritten by our external
+    // attachments and never read, but they're small enough to live with.
     this.skyMRT = new THREE.WebGLRenderTarget(width, height, {
       count: 2,
       type: THREE.HalfFloatType,
@@ -57,11 +77,13 @@ export class SkyStackPass extends Pass {
       depthBuffer: false,
     });
 
+    // No depth attachment on construction. `setEmissiveDepthTexture()` wires
+    // stableDepth's depth texture in before first render; emissiveRT then
+    // shares that depth, eliminating the per-frame blit.
     this.emissiveRT = new THREE.WebGLRenderTarget(width, height, {
       type: THREE.HalfFloatType,
       format: THREE.RGBAFormat,
-      depthBuffer: true,
-      depthTexture: new THREE.DepthTexture(width, height, THREE.UnsignedIntType),
+      depthBuffer: false,
     });
 
     this.fsScene = new THREE.Scene();
@@ -71,13 +93,25 @@ export class SkyStackPass extends Pass {
     this.fsScene.add(this.fsMesh);
   }
 
-  public setStableDepthTarget(target: THREE.WebGLRenderTarget): void {
-    this.stableDepthTarget = target;
+  /**
+   * Attach an externally-owned depth texture as `emissiveRT`'s depth.
+   * MUST be called before the first render: three.js sets up the FBO (and
+   * attaches whatever depth is present on the RT at that moment) lazily on
+   * the first `setRenderTarget(emissiveRT)`.
+   */
+  public setEmissiveDepthTexture(depthTexture: THREE.DepthTexture): void {
+    this.emissiveRT.depthTexture = depthTexture;
+    this.emissiveRT.depthBuffer = true;
   }
 
   override setSize(width: number, height: number): void {
     this.skyMRT.setSize(width, height);
     this.emissiveRT.setSize(width, height);
+    // setSize disposes and forces re-allocation of the underlying GL textures
+    // on next setRenderTarget, so the attachment identities we cached are
+    // stale. Force re-bind on next render().
+    this.boundAttachment0 = null;
+    this.boundAttachment1 = null;
   }
 
   override render(
@@ -88,76 +122,47 @@ export class SkyStackPass extends Pass {
     const gl = renderer.getContext() as WebGL2RenderingContext;
     const props = (renderer as any).properties;
 
-    // Force FBO allocation for emissiveRT before the raw blit. skyMRT has no
-    // depth attachment so it doesn't need a depth blit — its color writes are
-    // ungated and the shader's occlusion test reads stableDepth directly via
-    // uSceneDepth.
+    // Ensure both consumer RTs have allocated GL textures — we borrow them
+    // as attachments below.
+    renderer.setRenderTarget(inputBuffer);
     renderer.setRenderTarget(this.emissiveRT);
 
-    // Blit stable depth into emissiveRT.depth — that's what EmissiveBypassPass
-    // depth-tests its bypass meshes against later in the composer.
-    if (this.stableDepthTarget) {
-      const srcProps = props.get(this.stableDepthTarget);
-      const emProps = props.get(this.emissiveRT);
-      if (srcProps?.__webglFramebuffer && emProps?.__webglFramebuffer) {
-        const srcFBO = srcProps.__webglFramebuffer as WebGLFramebuffer;
-        const emFBO = emProps.__webglFramebuffer as WebGLFramebuffer;
-        const { width, height } = this.emissiveRT;
+    // Bind skyMRT once so three.js allocates its FBO if it hasn't already.
+    renderer.setRenderTarget(this.skyMRT);
 
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, emFBO);
-        gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+    // Hijack skyMRT's color attachments to point directly at the consumer
+    // RTs' GL textures. This is what lets renderer.render() below write
+    // straight into inputBuffer + emissiveRT without a blit.
+    const skyProps = props.get(this.skyMRT);
+    const inputTexProps = props.get(inputBuffer.texture);
+    const emTexProps = props.get(this.emissiveRT.texture);
+    const skyFBO = skyProps?.__webglFramebuffer as WebGLFramebuffer | undefined;
+    const inputGLTex = inputTexProps?.__webglTexture as WebGLTexture | undefined;
+    const emGLTex = emTexProps?.__webglTexture as WebGLTexture | undefined;
 
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-      }
-      renderer.setRenderTarget(null);
+    if (
+      skyFBO &&
+      inputGLTex &&
+      emGLTex &&
+      (this.boundAttachment0 !== inputGLTex || this.boundAttachment1 !== emGLTex)
+    ) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, skyFBO);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, inputGLTex, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, emGLTex, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.boundAttachment0 = inputGLTex;
+      this.boundAttachment1 = emGLTex;
     }
 
-    // Clear MRT color (both attachments). No depth on this RT, so a color-only
-    // clear is all that's needed.
+    // Clear both attachments (→ clears inputBuffer.color and emissiveRT.color
+    // since those are what's attached). Sky-occluded fragments will discard
+    // and leave the cleared value; MainRenderPass writes scene color on top.
     renderer.setRenderTarget(this.skyMRT);
     renderer.setClearColor(BLACK, 0);
     renderer.clearColor();
 
-    // Also clear the emissiveRT color. The attachment[1] blit below overwrites
-    // it, but clearing explicitly also handles the case where the shader
-    // early-discards every fragment (nothing to blit over stale pixels).
-    renderer.setRenderTarget(this.emissiveRT);
-    renderer.clearColor();
-
-    // Draw the unified shader into the MRT.
-    renderer.setRenderTarget(this.skyMRT);
+    // Render fragment outputs go straight into the consumer RT textures.
     renderer.render(this.fsScene, this.fsCamera);
-
-    // Blit MRT attachments into their consumer RTs.
-    const inputProps = props.get(inputBuffer);
-    const skyProps = props.get(this.skyMRT);
-    const emProps = props.get(this.emissiveRT);
-    if (skyProps?.__webglFramebuffer) {
-      const { width, height } = this.skyMRT;
-      const srcFBO = skyProps.__webglFramebuffer as WebGLFramebuffer;
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
-
-      if (inputProps?.__webglFramebuffer) {
-        const dstFBO = inputProps.__webglFramebuffer as WebGLFramebuffer;
-        gl.readBuffer(gl.COLOR_ATTACHMENT0);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
-        // inputBuffer is single-attachment — its draw buffer is already
-        // COLOR_ATTACHMENT0, no need to reset.
-        gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
-      }
-
-      if (emProps?.__webglFramebuffer) {
-        const dstFBO = emProps.__webglFramebuffer as WebGLFramebuffer;
-        gl.readBuffer(gl.COLOR_ATTACHMENT1);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
-        gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
-      }
-
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-    }
 
     renderer.setRenderTarget(null);
   }

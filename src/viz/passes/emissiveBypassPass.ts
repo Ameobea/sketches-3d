@@ -171,38 +171,39 @@ export class EmissiveBypassPass extends Pass {
     this.bypassCamera.projectionMatrixInverse.copy(this._mainCamera.projectionMatrixInverse);
     this.bypassCamera.matrixWorldNeedsUpdate = false;
 
-    if (!this.rtIsExternal) {
-      // Ensure emissiveRT's WebGL FBO exists before blit
-      renderer.setRenderTarget(this.emissiveRT);
+    // Ensure emissiveRT's WebGL FBO exists.
+    renderer.setRenderTarget(this.emissiveRT);
 
-      if (this.stableDepthTarget) {
-        const gl = renderer.getContext() as WebGL2RenderingContext;
-        const props = (renderer as any).properties;
+    if (this.rtIsExternal) {
+      // External-ownership path (SkyStack): emissiveRT's depth attachment
+      // is wired directly to stableDepth's depth texture at setup time,
+      // so no per-frame depth work is needed. Color was painted + cleared
+      // by SkyStackPass.
+    } else if (this.stableDepthTarget) {
+      // Internal-ownership path: emissiveRT owns its own depth texture, so
+      // we must blit scene depth in each frame.
+      const gl = renderer.getContext() as WebGL2RenderingContext;
+      const props = (renderer as any).properties;
 
-        const srcProps = props.get(this.stableDepthTarget);
-        const dstProps = props.get(this.emissiveRT);
-        if (srcProps?.__webglFramebuffer && dstProps?.__webglFramebuffer) {
-          const srcFBO = srcProps.__webglFramebuffer as WebGLFramebuffer;
-          const dstFBO = dstProps.__webglFramebuffer as WebGLFramebuffer;
-          const { width, height } = this.emissiveRT;
+      const srcProps = props.get(this.stableDepthTarget);
+      const dstProps = props.get(this.emissiveRT);
+      if (srcProps?.__webglFramebuffer && dstProps?.__webglFramebuffer) {
+        const srcFBO = srcProps.__webglFramebuffer as WebGLFramebuffer;
+        const dstFBO = dstProps.__webglFramebuffer as WebGLFramebuffer;
+        const { width, height } = this.emissiveRT;
 
-          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
-          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
-          gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
-          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-        }
-        // Restore Three.js render target tracking after raw GL calls
-        renderer.setRenderTarget(null);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
+        gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
       }
-
-      // Clear color to transparent, keeping depth from blit
+      // Restore Three.js render target tracking after raw GL calls.
       renderer.setRenderTarget(this.emissiveRT);
+
+      // Clear color to transparent, keeping depth from the blit.
       renderer.setClearColor(new THREE.Color(0, 0, 0), 0);
       renderer.clearColor();
-    } else {
-      // SkyStack already blitted depth and cleared color; just bind the target.
-      renderer.setRenderTarget(this.emissiveRT);
     }
 
     // Swap to real materials for the bypass render

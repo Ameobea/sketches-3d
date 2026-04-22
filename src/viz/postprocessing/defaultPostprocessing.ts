@@ -228,8 +228,14 @@ export const configureDefaultPostprocessingPipeline = ({
       if (!stableDepthTgt) {
         throw new Error('skyStack: stableDepthTarget was not created after adding MainRenderPass.');
       }
-      skyStack.pass.setStableDepthTarget(stableDepthTgt);
+      if (!stableDepthTgt.depthTexture) {
+        throw new Error('skyStack: stableDepthTarget has no depthTexture.');
+      }
       skyStack.setSceneDepth(stableDepthTgt.depthTexture);
+      // Share stableDepth's depthTexture as emissiveRT's depth attachment so
+      // EmissiveBypassPass depth-tests bypass meshes without a per-frame
+      // depth blit. Must happen before first render (see method doc).
+      skyStack.pass.setEmissiveDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
       // MainRenderPass runs with clear=false so sky pixels painted below are
       // preserved — but three.js still forces a color clear when scene.background
       // is a THREE.Color (Viz's default). Suppress that during MainRenderPass so

@@ -22,6 +22,8 @@ export class DepthPass extends RenderPass implements Resizable {
     useExternalRenderTarget?: boolean
   ) {
     super(scene, camera, overrideMaterial);
+    this.clearPass.setClearFlags(false, true, false);
+    overrideMaterial.colorWrite = false;
     if (useExternalRenderTarget) {
       this.renderTarget = new THREE.WebGLRenderTarget(1, 1, {
         format: THREE.RGBAFormat,
