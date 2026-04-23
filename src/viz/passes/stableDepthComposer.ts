@@ -12,14 +12,10 @@
  * Solution:
  *   Override render() to inject a single blitFramebuffer call immediately before the first
  *   swap fires each frame. At that point inputBuffer still holds the scene's fresh depth (the
- *   render passes run before any swap). The blit copies depth into a dedicated stableDepthTarget
- *   that is never used as a render output. All passes receive stableDepthTarget.depthTexture via
- *   setDepthTexture, so they always read from a texture that cannot be simultaneously bound as a
+ *   render passes run before any swap). The blit copies depth into a dedicated `stableDepthTarget`
+ *   that is never used as a render output. All passes receive `stableDepthTarget.depthTexture` via
+ *   `setDepthTexture`, so they always read from a texture that cannot be simultaneously bound as a
  *   framebuffer attachment — no feedback loop possible.
- *
- * Usage: replace `new EffectComposer(renderer, opts)` with
- *        `new StableDepthEffectComposer(renderer, opts)`.
- *        No other changes required in the rest of the pipeline.
  */
 
 import { ClearMaskPass, EffectComposer, MaskPass, RenderPass, type Pass } from 'postprocessing';

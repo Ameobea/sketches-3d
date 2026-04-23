@@ -46,8 +46,6 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
       uniforms.depthBuffer = { value: null };
     }
     if (fogShader) {
-      // These two are set to the camera's own matrix objects so they stay in sync
-      // without any per-frame copy — Three.js reads uniform.value by reference.
       uniforms.projectionMatrixInverse = { value: new THREE.Matrix4() };
       uniforms.cameraWorldMatrix = { value: new THREE.Matrix4() };
       uniforms.fogCameraPos = { value: new THREE.Vector3() };
@@ -60,7 +58,6 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
       uniforms,
       defines,
       vertexShader: VERTEX_SHADER,
-      // Prepend the user's fog function so it's available to the #ifdef HAS_FOG call in main().
       fragmentShader: fogShader ? fogShader + '\n' + FRAGMENT_SHADER : FRAGMENT_SHADER,
       depthWrite: false,
       depthTest: false,
@@ -149,8 +146,6 @@ export class FinalPass extends Pass {
     if (fogShader) {
       this.mat.uniforms.projectionMatrixInverse.value = this.viz.camera.projectionMatrixInverse;
       this.mat.uniforms.cameraWorldMatrix.value = this.viz.camera.matrixWorld;
-
-      this.mat.uniforms.fogPlayerPos.value = new THREE.Vector3();
     }
   }
 

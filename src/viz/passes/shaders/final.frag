@@ -72,7 +72,11 @@ void main() {
 
   // Fog blend runs in linear space, before tone mapping, so the fog color is
   // authored in linear and participates correctly in the tone-mapping curve.
+  // `fogResult` is hoisted to function scope so the emissive composite below
+  // can reuse the same factor — that's what lets us avoid a separate
+  // emissive-fog pass for the no-bloom case.
   #ifdef HAS_FOG
+  vec4 fogResult = vec4(0.0);
   {
     float depth = texture2D(depthBuffer, vUv).r;
     vec3 worldPos = reconstructWorldPos(depth, vUv);
@@ -80,7 +84,7 @@ void main() {
     // Signature: vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos,
     //                              float depth, float curTimeSeconds)
     // Returns vec4(fogColor.rgb, fogFactor) where fogFactor=0 is clear, 1 is full fog.
-    vec4 fogResult = getFogEffect(worldPos, fogCameraPos, fogPlayerPos, depth, curTimeSeconds);
+    fogResult = getFogEffect(worldPos, fogCameraPos, fogPlayerPos, depth, curTimeSeconds);
     color.rgb = mix(color.rgb, fogResult.rgb, fogResult.a);
   }
   #endif
@@ -107,6 +111,14 @@ void main() {
 #ifdef HAS_EMISSIVE_BUFFER
 {
   vec4 emissive = texture2D(emissiveBuffer, vUv);
+  // Apply the same fog factor computed above to the emissive sample so the
+  // composite matches the fogged scene below. The bloom path is pre-fogged
+  // in EmissiveBloomPass's filter step (so blurred halos attenuate correctly);
+  // here we handle the composite path with no extra pass.
+  #ifdef HAS_FOG
+    emissive.rgb = mix(emissive.rgb, fogResult.rgb, fogResult.a);
+    emissive.a *= (1.0 - fogResult.a);
+  #endif
   // Composite emissive without AgX — preserves vivid saturated colors.
   vec3 emissiveSRGB = linearToSRGB(emissive.rgb);
   color.rgb = mix(color.rgb, emissiveSRGB, emissive.a);

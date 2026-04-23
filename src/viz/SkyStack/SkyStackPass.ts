@@ -37,13 +37,13 @@ const BLACK = new THREE.Color(0, 0, 0);
  * attachment, and a wiring step in `defaultPostprocessing` attaches
  * `stableDepthTarget.depthTexture` directly as `emissiveRT`'s depth via
  * `setEmissiveDepthTexture()`. Result: no per-frame depth blit. The
- * EmissiveFogPass still gets "mesh depth at mesh pixels, scene depth
- * elsewhere" semantics (because bypass meshes render with depthWrite=true
- * into the shared texture); the only cost is that FinalPass's fog reads
- * the same shared texture and therefore sees mesh depth at bypass-mesh
- * pixels — invisible for opaque bypass meshes (the common case), since
- * the bypass emissive covers the main-scene color at those pixels in the
- * final composite.
+ * EmissiveBloomPass filter step (when fog is active) gets "mesh depth at
+ * mesh pixels, scene depth elsewhere" semantics because bypass meshes
+ * render with depthWrite=true into the shared texture; the only cost is
+ * that FinalPass's fog reads the same shared texture and therefore sees
+ * mesh depth at bypass-mesh pixels — invisible for opaque bypass meshes
+ * (the common case), since the bypass emissive covers the main-scene
+ * color at those pixels in the final composite.
  *
  * `needsSwap = false` — does not rotate the composer's ping-pong.
  */
@@ -119,6 +119,12 @@ export class SkyStackPass extends Pass {
     inputBuffer: THREE.WebGLRenderTarget,
     _outputBuffer: THREE.WebGLRenderTarget
   ): void {
+    if (!this.emissiveRT.depthTexture) {
+      throw new Error(
+        "SkyStackPass: setEmissiveDepthTexture() must be called before the first render so emissiveRT shares the composer's stable depth — otherwise the FBO is created without depth and bypass meshes drawn on top of the sky have nothing to depth-test against."
+      );
+    }
+
     const gl = renderer.getContext() as WebGL2RenderingContext;
     const props = (renderer as any).properties;
 
@@ -164,7 +170,10 @@ export class SkyStackPass extends Pass {
     // Render fragment outputs go straight into the consumer RT textures.
     renderer.render(this.fsScene, this.fsCamera);
 
-    renderer.setRenderTarget(null);
+    // Intentionally NOT calling setRenderTarget(null) here — the next pass
+    // (MainRenderPass) immediately rebinds inputBuffer, so a default-FBO
+    // bind in between is wasted work. On TBDR (Apple Silicon) it also
+    // forces an unnecessary tile-memory resolve to the default framebuffer.
   }
 
   override dispose(): void {

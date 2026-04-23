@@ -2,6 +2,7 @@ import { MipmapBlurPass, Pass } from 'postprocessing';
 import * as THREE from 'three';
 import THRESHOLD_FRAG from './shaders/emissiveThreshold.frag?raw';
 import THRESHOLD_VERT from './shaders/emissiveThreshold.vert?raw';
+import type { Viz } from '..';
 
 export interface EmissiveBloomConfig {
   /**
@@ -23,10 +24,12 @@ export interface EmissiveBloomConfig {
   intensity?: number;
   /**
    * Luminance threshold for bloom gating (0–1).
+   *
    * Pixels with luminance below this value are suppressed before blurring, so only
    * bright areas (e.g. the lit strands of an animated portal) bloom. Pixels above
    * threshold + smoothing contribute fully; the transition is a smoothstep.
-   * Omit or set to 0 to disable (every emissive pixel blooms equally).
+   *
+   * Omit or set to 0 to disable.
    */
   luminanceThreshold?: number;
   /**
@@ -38,112 +41,148 @@ export interface EmissiveBloomConfig {
   /**
    * When > 0, switches the gate from a smoothstep to a UE4-style soft-knee: a
    * quadratic ramp of width `2 * luminanceSoftKnee` centered on `luminanceThreshold`,
-   * then a subtractive linear region above it. No hard cutoff — pixels just below
-   * threshold still contribute a small amount, fading smoothly to zero. Use this
-   * when the smoothstep still reads as binary on low-luma flickering content.
-   * Omit or set to 0 to use the smoothstep path.
+   * then a subtractive linear region above it.
    */
   luminanceSoftKnee?: number;
 }
 
 /**
- * Bloom pass for the emissive bypass layer.
- * Wraps postprocessing's MipmapBlurPass (the same high-quality downsample/upsample
- * chain used by BloomEffect) to blur the emissive render target and produce a
- * dedicated bloom texture that FinalPass composites additively.
+ * Bloom pass for the emissive bypass layer, with an optional pre-filter step.
  *
- * Optionally applies a luminance threshold pass before blurring so that only the
- * bright areas of animated emissive content (e.g. portal strand highlights) bloom.
+ * Pipeline:
+ *   sourceRT → [filter pass] → MipmapBlur → bloomTexture
+ *
+ * The filter pass runs whenever fog and/or a luminance threshold is configured.
+ * It applies fog first (so blurred halos correctly attenuate with distance) and
+ * then the threshold ramp (so only bright pixels contribute to bloom). When
+ * neither is configured, MipmapBlur reads sourceRT directly and the filter RT
+ * is never allocated.
  *
  * needsSwap = false — writes to its own internal targets.
  */
 export class EmissiveBloomPass extends Pass {
+  private readonly viz: Viz | null;
   private readonly mipmapBlur: MipmapBlurPass;
   private readonly sourceRT: THREE.WebGLRenderTarget;
   readonly intensity: number;
 
-  // Threshold pass — only allocated when luminanceThreshold is configured.
-  private readonly thresholdRT: THREE.WebGLRenderTarget | null = null;
-  private readonly thresholdMat: THREE.ShaderMaterial | null = null;
+  private readonly filterRT: THREE.WebGLRenderTarget | null = null;
+  private readonly filterMat: THREE.ShaderMaterial | null = null;
+  private readonly hasFog: boolean;
 
   /** Output texture: blurred bloom glow. Pass directly to FinalPass as emissiveBloomBuffer. */
   get bloomTexture(): THREE.Texture {
     return this.mipmapBlur.texture;
   }
 
-  /**
-   * Update the blur radius without rebuilding the mipmap chain.
-   * Safe to call every frame — only touches a shader uniform.
-   */
   public setRadius(value: number): void {
     this.mipmapBlur.radius = value;
   }
 
   public setLuminanceThreshold(value: number): void {
-    if (this.thresholdMat) {
-      this.thresholdMat.uniforms.threshold.value = value;
+    if (this.filterMat?.uniforms.threshold) {
+      this.filterMat.uniforms.threshold.value = value;
     }
   }
 
   public setLuminanceSmoothing(value: number): void {
-    if (this.thresholdMat) {
-      this.thresholdMat.uniforms.smoothing.value = value;
+    if (this.filterMat?.uniforms.smoothing) {
+      this.filterMat.uniforms.smoothing.value = value;
     }
   }
 
   public setLuminanceSoftKnee(value: number): void {
-    if (this.thresholdMat) {
-      this.thresholdMat.uniforms.softKnee.value = value;
+    if (this.filterMat?.uniforms.softKnee) {
+      this.filterMat.uniforms.softKnee.value = value;
     }
   }
 
-  constructor(sourceRT: THREE.WebGLRenderTarget, config: EmissiveBloomConfig = {}) {
+  override setDepthTexture(depthTexture: THREE.Texture | null): void {
+    if (this.filterMat?.uniforms.depthBuffer) {
+      this.filterMat.uniforms.depthBuffer.value = depthTexture;
+    }
+  }
+
+  constructor(
+    sourceRT: THREE.WebGLRenderTarget,
+    config: EmissiveBloomConfig = {},
+    fogShader?: string,
+    viz?: Viz
+  ) {
     super('EmissiveBloomPass');
     this.needsSwap = false;
     this.sourceRT = sourceRT;
+    this.viz = viz ?? null;
     this.intensity = config.intensity ?? 1.0;
+    this.hasFog = !!fogShader && !!viz;
 
     this.mipmapBlur = new MipmapBlurPass();
-    // levels must be set before setSize() is called (it rebuilds the mipmap chain)
+    // `levels` must be set before setSize() is called (it rebuilds the mipmap chain)
     this.mipmapBlur.levels = config.levels ?? 8;
     this.mipmapBlur.radius = config.radius ?? 0.85;
 
     const thresh = config.luminanceThreshold ?? 0;
-    if (thresh > 0) {
-      this.thresholdRT = new THREE.WebGLRenderTarget(sourceRT.width, sourceRT.height, {
+    const hasThreshold = thresh > 0;
+
+    if (hasThreshold || this.hasFog) {
+      this.filterRT = new THREE.WebGLRenderTarget(sourceRT.width, sourceRT.height, {
         type: THREE.HalfFloatType,
         format: THREE.RGBAFormat,
         depthBuffer: false,
       });
-      this.thresholdMat = new THREE.ShaderMaterial({
-        uniforms: {
-          tInput: { value: null },
-          threshold: { value: thresh },
-          smoothing: { value: config.luminanceSmoothing ?? 0.1 },
-          softKnee: { value: config.luminanceSoftKnee ?? 0 },
-        },
+
+      const defines: Record<string, string> = {};
+      if (hasThreshold) defines.HAS_THRESHOLD = '1';
+      if (this.hasFog) defines.HAS_FOG = '1';
+
+      const uniforms: Record<string, THREE.IUniform> = {
+        tInput: { value: null },
+      };
+      if (hasThreshold) {
+        uniforms.threshold = { value: thresh };
+        uniforms.smoothing = { value: config.luminanceSmoothing ?? 0.1 };
+        uniforms.softKnee = { value: config.luminanceSoftKnee ?? 0 };
+      }
+      if (this.hasFog && viz) {
+        uniforms.depthBuffer = { value: null };
+        uniforms.projectionMatrixInverse = { value: viz.camera.projectionMatrixInverse };
+        uniforms.cameraWorldMatrix = { value: viz.camera.matrixWorld };
+        uniforms.fogCameraPos = { value: new THREE.Vector3() };
+        uniforms.fogPlayerPos = { value: new THREE.Vector3() };
+        uniforms.curTimeSeconds = { value: 0.0 };
+      }
+
+      this.filterMat = new THREE.ShaderMaterial({
+        name: 'EmissiveBloomFilterMaterial',
+        uniforms,
+        defines,
         vertexShader: THRESHOLD_VERT,
-        fragmentShader: THRESHOLD_FRAG,
+        fragmentShader: this.hasFog ? `${fogShader}\n${THRESHOLD_FRAG}` : THRESHOLD_FRAG,
         depthWrite: false,
         depthTest: false,
       });
       // Prime the Pass's internal fullscreen quad with this material so this.scene
-      // has the quad ready for the threshold render in render().
-      this.fullscreenMaterial = this.thresholdMat;
+      // has the quad ready for the filter render in render(). Also lets the base
+      // Pass.setDepthTexture wire `depthBuffer` automatically.
+      this.fullscreenMaterial = this.filterMat;
+
+      if (this.hasFog) {
+        this.needsDepthTexture = true;
+      }
     }
   }
 
   override initialize(renderer: THREE.WebGLRenderer, alpha: boolean, frameBufferType: number): void {
     // Forward to the inner pass so it sets HalfFloat on its internal mipmaps.
     this.mipmapBlur.initialize(renderer, alpha, THREE.HalfFloatType);
-    // Pre-compile the threshold material so the first frame doesn't stall on shader compilation.
-    if (this.thresholdMat) {
+    // Pre-compile the filter material so the first frame doesn't stall on shader compilation.
+    if (this.filterMat) {
       renderer.compile(this.scene, this.camera);
     }
   }
 
   override setSize(width: number, height: number): void {
-    this.thresholdRT?.setSize(width, height);
+    this.filterRT?.setSize(width, height);
     this.mipmapBlur.setSize(width, height);
   }
 
@@ -155,22 +194,30 @@ export class EmissiveBloomPass extends Pass {
   ): void {
     let blurInput = this.sourceRT;
 
-    if (this.thresholdMat && this.thresholdRT) {
-      // Threshold pass: emissiveRT → thresholdRT (full resolution).
-      this.thresholdMat.uniforms.tInput.value = this.sourceRT.texture;
-      renderer.setRenderTarget(this.thresholdRT);
+    if (this.filterMat && this.filterRT) {
+      this.filterMat.uniforms.tInput.value = this.sourceRT.texture;
+      if (this.hasFog && this.viz) {
+        this.filterMat.uniforms.fogCameraPos.value.setFromMatrixPosition(this.viz.camera.matrixWorld);
+        if (this.viz.fpCtx) {
+          this.filterMat.uniforms.curTimeSeconds.value = this.viz.fpCtx.getPhysicsTime();
+          const playerPos = this.viz.fpCtx.playerController.getPosition();
+          if (playerPos) {
+            this.filterMat.uniforms.fogPlayerPos.value.set(playerPos.x(), playerPos.y(), playerPos.z());
+          }
+        }
+      }
+      renderer.setRenderTarget(this.filterRT);
       renderer.clear();
       renderer.render(this.scene, this.camera);
-      blurInput = this.thresholdRT;
+      blurInput = this.filterRT;
     }
 
-    // MipmapBlurPass reads blurInput.texture and writes to its own internal targets.
     this.mipmapBlur.render(renderer, blurInput, null, deltaTime);
   }
 
   override dispose(): void {
-    this.thresholdRT?.dispose();
-    this.thresholdMat?.dispose();
+    this.filterRT?.dispose();
+    this.filterMat?.dispose();
     this.mipmapBlur.dispose();
     super.dispose();
   }

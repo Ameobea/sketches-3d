@@ -84,7 +84,6 @@ export class DepthPass extends RenderPass implements Resizable {
 
     renderer.shadowMap.enabled = shadowMapWasEnabled;
 
-    // Restore visibility of excluded objects.
     for (const obj of occlusionExcluded) {
       obj.visible = true;
     }
@@ -97,35 +96,8 @@ export class DepthPass extends RenderPass implements Resizable {
 }
 
 export class MainRenderPass extends RenderPass {
-  /**
-   * When true, scene.background is temporarily nulled during render() so that
-   * three.js's background-driven forceClear (which fires when scene.background
-   * is a THREE.Color, regardless of renderer.autoClear) does not wipe color
-   * contents written by a preceding pass. Enable this when something else
-   * (e.g. SkyStackPass) already paints the sky into inputBuffer before
-   * MainRenderPass runs.
-   */
-  public suppressSceneBackground = false;
-
   constructor(scene: THREE.Scene, camera: THREE.Camera) {
     super(scene, camera);
     this.clear = false;
-  }
-
-  override render(
-    renderer: THREE.WebGLRenderer,
-    inputBuffer: THREE.WebGLRenderTarget,
-    outputBuffer: THREE.WebGLRenderTarget,
-    deltaTime?: number,
-    stencilTest?: boolean
-  ): void {
-    if (!this.suppressSceneBackground) {
-      super.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
-      return;
-    }
-    const saved = this.scene.background;
-    this.scene.background = null;
-    super.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
-    this.scene.background = saved;
   }
 }

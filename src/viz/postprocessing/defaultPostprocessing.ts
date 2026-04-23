@@ -15,16 +15,10 @@ import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { buildOcclusionDepthMaterial } from 'src/viz/shaders/customShader';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
-import { EmissiveFogPass } from 'src/viz/passes/emissiveFogPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 import type { SkyStack } from 'src/viz/SkyStack';
 
-/**
- * Default emissive bloom configuration (quality-independent params).
- * `levels` is intentionally excluded — it's set per-quality in the pipeline.
- * Scenes can override individual fields via the `emissiveBloom` param.
- */
 export const DEFAULT_EMISSIVE_BLOOM_CONFIG: Omit<EmissiveBloomConfig, 'levels'> = {
   radius: 0.35,
   intensity: 0.8,
@@ -86,12 +80,6 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   }
 
   /**
-   * Dynamically update emissive bloom parameters. Safe to call every frame.
-   * `radius` controls blur spread (MipmapBlurPass upsampling blend — only touches a uniform).
-   * `intensity` scales the additive bloom contribution in FinalPass.
-   * `luminanceThreshold` and `luminanceSmoothing` control the threshold pass that runs before the blur (if enabled). Higher threshold means fewer pixels contribute to bloom; smoothing controls how gradually pixels near the threshold contribute.
-   */
-  /**
    * Scan `scene` for any meshes whose material has `userData.emissiveBypass` set
    * and register them with the emissive bypass pass. Safe to call multiple times —
    * already-registered meshes are skipped. Use this when bypass meshes are added
@@ -145,7 +133,7 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
   useDepthPrePass?: boolean;
   emissiveBypass?: boolean;
   /**
-   * Config for the emissive bloom pass. Only used when emissiveBypass is true.
+   * Config for the emissive bloom pass. Only used when `emissiveBypass` is true.
    * `levels` defaults to a quality-dependent value if not set:
    *   Low → 4, Medium → 6, High → 8.
    * Pass `null` to disable the bloom pass entirely (emissive bypass compositing still runs).
@@ -155,7 +143,7 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    * Intensity of the dedicated ambient light used exclusively by the emissive bypass render
    * (layer 31). Decouples portal/bypass-mesh brightness from the main scene's ambient light
    * so that dimming scene lights does not affect emissive bypass objects.
-   * Only relevant when emissiveBypass is true. Default: 2.8 (nexus baseline).
+   * Only relevant when `emissiveBypass` is true. Default: 2.8 (nexus baseline).
    */
   emissiveBypassAmbientIntensity?: number;
   /** See doc comment of `FinalPass` for usage of this. */
@@ -233,20 +221,9 @@ export const configureDefaultPostprocessingPipeline = ({
       }
       skyStack.setSceneDepth(stableDepthTgt.depthTexture);
       // Share stableDepth's depthTexture as emissiveRT's depth attachment so
-      // EmissiveBypassPass depth-tests bypass meshes without a per-frame
-      // depth blit. Must happen before first render (see method doc).
+      // EmissiveBypassPass depth-tests bypass meshes without a per-frame depth blit.
       skyStack.pass.setEmissiveDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
-      // MainRenderPass runs with clear=false so sky pixels painted below are
-      // preserved — but three.js still forces a color clear when scene.background
-      // is a THREE.Color (Viz's default). Suppress that during MainRenderPass so
-      // our gradient survives into FinalPass.
-      mainRenderPass.suppressSceneBackground = true;
-      // Unified sky pass runs between depthPass (index 0) and renderPass
-      // (currently index 1). It renders into an MRT (count=2), then blits
-      // attachment[0] into inputBuffer (tone-mapped color) and attachment[1]
-      // into its standalone emissiveRT (bypass-tone-map + bloom). Being the
-      // first non-RenderPass in the loop also triggers the StableDepth blit
-      // before this pass runs.
+      viz.scene.background = null;
       effectComposer.addPass(skyStack.pass, 1);
     }
   } else {
@@ -256,7 +233,6 @@ export const configureDefaultPostprocessingPipeline = ({
 
   addMiddlePasses?.(effectComposer, viz, quality);
 
-  // HDR post effects run before tone mapping
   if (postEffects?.length) {
     const hdrFxPass = new EffectPass(viz.camera, ...postEffects);
     effectComposer.addPass(hdrFxPass);
@@ -264,14 +240,9 @@ export const configureDefaultPostprocessingPipeline = ({
 
   let emissiveBypassPass: EmissiveBypassPass | null = null;
   let emissiveBlurPass: EmissiveBloomPass | null = null;
-  let emissiveFogPass: EmissiveFogPass | null = null;
   if (emissiveBypass) {
     const { width, height } = viz.renderer.domElement;
 
-    // SkyStackPass already populated `skyStack.emissiveRT` (attachment[1] of
-    // its MRT, blitted back at the end of the pass). EmissiveBypassPass
-    // consumes that RT as `externalEmissiveRT` and composites bypass meshes
-    // (portals, etc.) on top without clearing.
     emissiveBypassPass = new EmissiveBypassPass(
       viz.scene,
       viz.camera as THREE.PerspectiveCamera,
@@ -286,17 +257,11 @@ export const configureDefaultPostprocessingPipeline = ({
         'emissiveBypass requires a depth source. Enable useDepthPrePass=true or add a fogShader to ensure a depth texture is allocated before the emissive bypass pass.'
       );
     }
-    emissiveBypassPass.setStableDepthTarget(stableDepthTgt);
+    // Share the composer's stable depth as emissiveRT's depth attachment.
+    // No-op when SkyStack provided the external RT (it wired its own depth above).
+    emissiveBypassPass.setStableDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
 
     effectComposer.addPass(emissiveBypassPass);
-
-    // Fog the emissive RT *before* bloom so the bloom source already has fogged alpha/color
-    if (fogShader) {
-      emissiveFogPass = new EmissiveFogPass(viz, emissiveBypassPass, fogShader, width, height);
-      effectComposer.addPass(emissiveFogPass);
-    }
-
-    const emissiveCompositeRT = emissiveFogPass?.fogEmissiveRT ?? emissiveBypassPass.emissiveRT;
 
     if (emissiveBloom !== null) {
       const qualityLevels = {
@@ -309,14 +274,12 @@ export const configureDefaultPostprocessingPipeline = ({
         ...DEFAULT_EMISSIVE_BLOOM_CONFIG,
         ...emissiveBloom,
       };
-      emissiveBlurPass = new EmissiveBloomPass(emissiveCompositeRT, bloomConfig);
+      emissiveBlurPass = new EmissiveBloomPass(emissiveBypassPass.emissiveRT, bloomConfig, fogShader, viz);
       effectComposer.addPass(emissiveBlurPass);
     }
 
-    // Dedicated ambient light for the bypass render only (layer 31).
-    // Using a layer-isolated light keeps portal/emissive-bypass brightness constant
-    // regardless of what the main scene's ambient/directional lights are doing — so
-    // e.g. dimming scene lights for a proximity effect doesn't dim the portals.
+    // emissive pass objects shouldn't be impacted by the main scene's lighting, so we create a
+    // dedicated static light just for that pass.
     const bypassAmbientLight = new THREE.AmbientLight(0xffffff, emissiveBypassAmbientIntensity);
     bypassAmbientLight.layers.disableAll();
     bypassAmbientLight.layers.enable(EMISSIVE_BYPASS_LAYER);
@@ -344,15 +307,10 @@ export const configureDefaultPostprocessingPipeline = ({
     });
   }
 
-  // Disable in-shader tone mapping. The FinalPass applies tone mapping + sRGB encoding
-  // to the full composited scene in one place.
+  // we do our own tone mapping in `FinalPass`
   viz.renderer.toneMapping = THREE.NoToneMapping;
 
-  // When the fog pass is active, FinalPass must composite the *fogged* emissive so body
-  // pixels participate in fog. Without it, FinalPass would overlay un-fogged emissive on
-  // top of the fogged scene below.
-  const finalEmissiveTexture =
-    emissiveFogPass?.fogEmissiveRT.texture ?? emissiveBypassPass?.emissiveRT.texture ?? null;
+  const finalEmissiveTexture = emissiveBypassPass?.emissiveRT.texture ?? null;
 
   const finalPass = new FinalPass(viz, {
     toneMapping: toneMapping.mode ?? 'aces',
@@ -365,8 +323,6 @@ export const configureDefaultPostprocessingPipeline = ({
   });
   effectComposer.addPass(finalPass);
 
-  // SMAA runs after tone mapping + sRGB encode so edge detection operates in display
-  // space, where luminance contrast matches perception.
   if (enableAntiAliasing) {
     const smaaEffect = new SMAAEffect({
       preset: {
