@@ -274,19 +274,7 @@ export interface SceneDef {
   needsDraco?: boolean;
   legacyLights?: boolean;
   /**
-   * If true, the scene uses the level definition system.  The gltf file (if any) is treated as a
-   * mesh asset library rather than being automatically added to the scene and physics world.
-   * The `loadLevelDef` loader handles scene population and physics registration instead.
-   */
-  useLevelDef?: boolean;
-  /**
-   * Implies `useLevelDef`. When true, `loadLevelDef` is called automatically by the framework
-   * as early as possible (before the scene module chunk and viz config finish loading), so
-   * texture fetches and geoscript workers start in parallel with those downloads.
-   *
-   * The `userData` passed to the scene (i.e. the `LevelDef` from `+page.server.ts`) is used
-   * as the level definition. The scene's `processLoadedScene` does NOT need to call
-   * `loadLevelDef` itself.
+   * When true, `loadLevelDef` is called automatically by the framework.
    */
   useSceneDef?: boolean;
 }

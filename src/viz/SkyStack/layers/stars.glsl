@@ -41,7 +41,28 @@ vec4 sampleStars_$ID(vec3 dir, float elev, float azimuth, float cosElev) {
 
   vec2 starPos = vec2(hash(cell + vec2(1.3, 2.7)), hash(cell + vec2(4.7, 6.1)));
   float d = distance(local, starPos);
-  float point = smoothstep(uStarSize_$ID, 0.0, d);
+
+  // Analytic pixel footprint in cell-local [0,1]² space.  Each cell spans
+  // approximately TWO_PI/cellsPerRing radians of azimuth (horizontal) and
+  // PI/vCells radians of elevation (vertical).  One pixel subtends angPx
+  // radians, so its fraction of a cell is angPx / cellAngularSize.
+  float angPx = 2.0 * abs(uProjectionMatrixInverse[1][1])
+               / float(textureSize(uSceneDepth, 0).y);
+  float pxU = cellsPerRing * angPx / (TWO_PI * max(cosElev, 0.01));
+  float pxV = vCells * angPx / PI;
+  float pxSize = max(pxU, pxV);
+
+  // Ensure sub-pixel stars render as soft dots instead of aliased squares.
+  // Ref: https://iquilezles.org/articles/filtering/
+  // When the star radius is smaller than a pixel, expand the rendering
+  // radius so the smoothstep gradient spans at least ~1.5px, then dim
+  // proportionally to the true area to conserve energy — a star half the
+  // size of a pixel should be 1/4 the brightness of a full-pixel star.
+  float renderSize = max(uStarSize_$ID, pxSize * 0.75);
+  float point = smoothstep(renderSize, 0.0, d);
+  float areaRatio = uStarSize_$ID / renderSize;
+  point *= areaRatio * areaRatio;
+
   if (point <= 0.0) {
     return vec4(0.0);
   }

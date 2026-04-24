@@ -22,10 +22,14 @@ void sampleGround_$ID(vec3 dir, out vec4 groundEmissive) {
   float t = uGroundHeight_$ID / negDy;
   vec2 uv = dir.xz * t;
 
-  vec2 uvDeriv = vec2(
-    length(vec2(dFdx(uv.x), dFdy(uv.x))),
-    length(vec2(dFdx(uv.y), dFdy(uv.y)))
-  );
+  // Analytic UV derivative — avoids dFdx/dFdy which are undefined at geometry
+  // edges after discardIfOccluded().  The per-pixel footprint on the ground
+  // plane is t * angularPixelSize / sin(elevation) ≈ h / negDy² * angularPixelSize.
+  // Conservative isotropic estimate (uses the dominant elevation-direction rate).
+  float angularPx = 2.0 * abs(uProjectionMatrixInverse[1][1])
+                   / float(textureSize(uSceneDepth, 0).y);
+  vec2 uvDeriv = vec2(uGroundHeight_$ID * angularPx / (negDy * negDy));
+
   float invDist = -dir.y / uGroundHeight_$ID;
 
   vec4 paint = paintGround_$ID(uv, uvDeriv, dir, invDist);

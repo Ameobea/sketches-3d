@@ -69,6 +69,13 @@ export interface Layer {
    * variables, never another layer's state.
    */
   gate?: string;
+  /**
+   * Enable 2×2 RGSS (rotated-grid) supersampling for this layer. The layer
+   * body runs 4× with jittered view directions and the compositor contribution
+   * is averaged. Only the oversampled layer pays the extra cost; other layers
+   * are unaffected. Gate expressions still apply per-sample.
+   */
+  oversample?: boolean;
 }
 
 /**
@@ -85,4 +92,6 @@ export interface BackgroundLayer {
   defines?: DefineContribution[];
   instanceGlsl?: string;
   body: string;
+  /** @see Layer.oversample */
+  oversample?: boolean;
 }

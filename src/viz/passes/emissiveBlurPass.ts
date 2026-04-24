@@ -1,5 +1,6 @@
-import { MipmapBlurPass, Pass } from 'postprocessing';
+import { Pass } from 'postprocessing';
 import * as THREE from 'three';
+import { DualKawaseBlurPass } from './dualKawaseBlurPass';
 import THRESHOLD_FRAG from './shaders/emissiveThreshold.frag?raw';
 import THRESHOLD_VERT from './shaders/emissiveThreshold.vert?raw';
 import type { Viz } from '..';
@@ -14,7 +15,7 @@ export interface EmissiveBloomConfig {
   /**
    * Blend radius during upsampling (0–1).
    * Lower values = tighter per-feature glow; higher = broader halo.
-   * Default 0.85 (MipmapBlurPass default).
+   * Default 0.85.
    */
   radius?: number;
   /**
@@ -50,19 +51,19 @@ export interface EmissiveBloomConfig {
  * Bloom pass for the emissive bypass layer, with an optional pre-filter step.
  *
  * Pipeline:
- *   sourceRT → [filter pass] → MipmapBlur → bloomTexture
+ *   sourceRT → [filter pass] → DualKawaseBlur → bloomTexture
  *
  * The filter pass runs whenever fog and/or a luminance threshold is configured.
  * It applies fog first (so blurred halos correctly attenuate with distance) and
  * then the threshold ramp (so only bright pixels contribute to bloom). When
- * neither is configured, MipmapBlur reads sourceRT directly and the filter RT
- * is never allocated.
+ * neither is configured, DualKawaseBlur reads sourceRT directly and the filter
+ * RT is never allocated.
  *
  * needsSwap = false — writes to its own internal targets.
  */
 export class EmissiveBloomPass extends Pass {
   private readonly viz: Viz | null;
-  private readonly mipmapBlur: MipmapBlurPass;
+  private readonly blur: DualKawaseBlurPass;
   private readonly sourceRT: THREE.WebGLRenderTarget;
   readonly intensity: number;
 
@@ -72,11 +73,11 @@ export class EmissiveBloomPass extends Pass {
 
   /** Output texture: blurred bloom glow. Pass directly to FinalPass as emissiveBloomBuffer. */
   get bloomTexture(): THREE.Texture {
-    return this.mipmapBlur.texture;
+    return this.blur.texture;
   }
 
   public setRadius(value: number): void {
-    this.mipmapBlur.radius = value;
+    this.blur.setRadius(value);
   }
 
   public setLuminanceThreshold(value: number): void {
@@ -116,10 +117,7 @@ export class EmissiveBloomPass extends Pass {
     this.intensity = config.intensity ?? 1.0;
     this.hasFog = !!fogShader && !!viz;
 
-    this.mipmapBlur = new MipmapBlurPass();
-    // `levels` must be set before setSize() is called (it rebuilds the mipmap chain)
-    this.mipmapBlur.levels = config.levels ?? 8;
-    this.mipmapBlur.radius = config.radius ?? 0.85;
+    this.blur = new DualKawaseBlurPass(config.levels ?? 8, config.radius ?? 0.85);
 
     const thresh = config.luminanceThreshold ?? 0;
     const hasThreshold = thresh > 0;
@@ -172,9 +170,7 @@ export class EmissiveBloomPass extends Pass {
     }
   }
 
-  override initialize(renderer: THREE.WebGLRenderer, alpha: boolean, frameBufferType: number): void {
-    // Forward to the inner pass so it sets HalfFloat on its internal mipmaps.
-    this.mipmapBlur.initialize(renderer, alpha, THREE.HalfFloatType);
+  override initialize(renderer: THREE.WebGLRenderer, _alpha: boolean, _frameBufferType: number): void {
     // Pre-compile the filter material so the first frame doesn't stall on shader compilation.
     if (this.filterMat) {
       renderer.compile(this.scene, this.camera);
@@ -183,7 +179,7 @@ export class EmissiveBloomPass extends Pass {
 
   override setSize(width: number, height: number): void {
     this.filterRT?.setSize(width, height);
-    this.mipmapBlur.setSize(width, height);
+    this.blur.setSize(width, height);
   }
 
   override render(
@@ -212,13 +208,13 @@ export class EmissiveBloomPass extends Pass {
       blurInput = this.filterRT;
     }
 
-    this.mipmapBlur.render(renderer, blurInput, null, deltaTime);
+    this.blur.render(renderer, blurInput);
   }
 
   override dispose(): void {
     this.filterRT?.dispose();
     this.filterMat?.dispose();
-    this.mipmapBlur.dispose();
+    this.blur.dispose();
     super.dispose();
   }
 }

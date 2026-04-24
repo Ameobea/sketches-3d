@@ -44,6 +44,8 @@ export interface BuildingsLayerConfig {
    * to blend buildings into the sky.
    */
   silhouetteColor: THREE.ColorRepresentation;
+  /** @see Layer.oversample */
+  oversample?: boolean;
 }
 
 export const buildingsLayer = (c: BuildingsLayerConfig): Layer => {
@@ -79,7 +81,7 @@ export const buildingsLayer = (c: BuildingsLayerConfig): Layer => {
     uniforms,
     instanceGlsl: resolveId(buildingsGlsl, id),
     body: resolveId(
-      `BuildingHit_$ID hit = probeBuilding_$ID(elev, azimuth);
+      `BuildingHit_$ID hit = probeBuilding_$ID(elev, azimuth, cosElev);
       if (hit.hasBody) {
         // Opaque silhouette (alpha=1) — saturates the stack and short-circuits
         // any layer behind. Windows ride the emissive channel.
@@ -89,5 +91,6 @@ export const buildingsLayer = (c: BuildingsLayerConfig): Layer => {
       id
     ),
     gate: 'aboveHorizon',
+    oversample: c.oversample,
   };
 };

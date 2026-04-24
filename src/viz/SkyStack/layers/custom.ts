@@ -20,6 +20,8 @@ export interface CustomLayerConfig {
    */
   body: string;
   gate?: string;
+  /** @see Layer.oversample */
+  oversample?: boolean;
 }
 
 /**
@@ -36,4 +38,5 @@ export const customLayer = (c: CustomLayerConfig): Layer => ({
   instanceGlsl: c.instanceGlsl ? resolveId(c.instanceGlsl, c.id) : undefined,
   body: resolveId(c.body, c.id),
   gate: c.gate,
+  oversample: c.oversample,
 });

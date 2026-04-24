@@ -127,10 +127,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     }
   );
 
-  // SDF-morph demo ground, tiled to infinity. One hashed orbit point per cell, smin'd
-  // across a 3x3 neighborhood so blobs merge seamlessly across cell boundaries. Paint
-  // output is pumped into HDR and rendered via the SkyStack emissive attachment so
-  // colors skip AgX tone mapping and drive the bloom pass for an aggressive glow.
+  // Temp demo that uses some shadertoy-style procedural 2D SDF stuff
   const groundPaintShader = `
     uniform vec3 uGroundBgColor;
     uniform vec3 uBlobColorOuter;
@@ -224,22 +221,21 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       horizonOffset: -0.025,
       horizonBlend: 0.03,
       layers: [
-        // Higher cloud bank in front of everything — covers silhouettes and
-        // dims windows/stars behind it.
         cloudsLayer({
           id: 'cloudsFront',
           zIndex: 40,
           color: 0x2a2030,
           highColor: 0x554050,
-          intensity: 1,
-          center: 0.048,
-          width: 0.08,
-          sharpness: 0.12,
-          scale: [0.9, 5, 0.9],
+          // highColor: 0x0,
+          intensity: 0.98,
+          center: 0.025,
+          width: 0.084,
+          sharpness: 0.82,
+          scale: [0.9, 25, 0.9],
           speed: [0.015, 0, -0.01],
           octaves: 1,
-          bias: 9.95,
-          pow: 1,
+          bias: 0.75,
+          pow: 1.2,
         }),
         buildingsLayer({
           id: 'buildings',
@@ -270,24 +266,26 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           // Approximates the former gradient-following silhouette: horizon
           // gradient color (0x714f4d) darkened ~15%.
           silhouetteColor: 0x110c0b,
+          oversample: true,
         }),
         // Low wispy haze band behind the cityscape — sits above the gradient
         // but gets occluded by silhouettes + windows.
-        cloudsLayer({
-          id: 'cloudsBack',
-          zIndex: 20,
-          color: 0x1a1c28,
-          highColor: 0x3a3550,
-          intensity: 0.55,
-          center: 0.055,
-          width: 0.08,
-          sharpness: 0.18,
-          scale: [1.2, 16, 1.2],
-          speed: [0.01, 0, 0.008],
-          octaves: 4,
-          bias: 0.05,
-          pow: 1.2,
-        }),
+        // cloudsLayer({
+        //   id: 'cloudsBack',
+        //   zIndex: 20,
+        //   color: 0x1a1c28,
+        //   // highColor: 0x3a3550,
+        //   highColor: 0xff00ff,
+        //   intensity: 0.55,
+        //   center: 0.055,
+        //   width: 0.08,
+        //   sharpness: 0.18,
+        //   scale: [1.2, 16, 1.2],
+        //   speed: [0.01, 0, 0.008],
+        //   octaves: 4,
+        //   bias: 0.05,
+        //   pow: 1.2,
+        // }),
         starsLayer({
           id: 'stars',
           zIndex: 10,
@@ -295,10 +293,11 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           intensity: 0.35,
           density: 180,
           threshold: 0.045,
-          size: 0.04,
+          size: 0.07,
           twinkleSpeed: 9.0,
           twinkleDepth: 0.3,
           minElev: 0.04,
+          oversample: vizConf.graphics.quality >= GraphicsQuality.Medium,
         }),
         groundLayer({
           id: 'ground',
@@ -318,6 +317,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
             color: 0x160303,
           },
           paintShader: groundPaintShader,
+          oversample: vizConf.graphics.quality >= GraphicsQuality.Medium,
           uniforms: {
             uGroundBgColor: { value: new THREE.Color(0x0a0508) },
             uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
@@ -360,7 +360,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     skyStack,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
-        ? { intensity: 4.0, levels: 4, luminanceThreshold: 0.02, radius: 0.3, luminanceSoftKnee: 0.02 }
+        ? { intensity: 6.0, levels: 3, luminanceThreshold: 0.02, radius: 0.45, luminanceSoftKnee: 0.02 }
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
           // Sky pixels sit at the far plane; skip fogging so the gradient sky is untouched.

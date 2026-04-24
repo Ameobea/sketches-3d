@@ -206,7 +206,8 @@
         "color": "#c2a93a",
         "roughness": 1,
         "metalness": 0,
-        "transparent": true
+        "transparent": true,
+        "ambientLightScale": 0.8
       },
       "emissiveBypass": true
     }

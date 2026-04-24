@@ -54,13 +54,80 @@ const dedupModules = (modules: SharedModule[]): string[] => {
  * Background layers use this same wrapper (no gate) — the outer saturation
  * check is cheap insurance and costs nothing in the typical case where the
  * background is the thing that finally saturates the stack.
+ *
+ * When `layer.oversample` is true, the body runs 4× with RGSS-jittered view
+ * directions and the accumulator delta is averaged. The gate still applies
+ * per-sample (a jittered direction may cross the gate boundary).
  */
 const emitLayerBody = (layer: Layer | BackgroundLayer, tag: string, gate?: string): string => {
   const inner = gate ? `if (${gate}) {\n${layer.body}\n    }` : layer.body;
-  return `
+
+  if (!layer.oversample) {
+    return `
   // === ${layer.id}${tag} ===
   if (accumAlpha < SKY_SATURATION_ALPHA) {
     ${inner}
+  }`;
+  }
+
+  // 2×2 RGSS (rotated grid supersampling). Save accumulator state, run body
+  // 4× with jittered dir/elev/azimuth/cosElev, average the delta, restore.
+  return `
+  // === ${layer.id}${tag} (oversampled 2×2 RGSS) ===
+  if (accumAlpha < SKY_SATURATION_ALPHA) {
+    vec3 _ssSky = accumSkyColor;
+    vec3 _ssEm  = accumEmissive;
+    float _ssA  = accumAlpha;
+    float _ssEA = accumEmissiveAlpha;
+
+    vec3 _dSky = vec3(0.0);
+    vec3 _dEm  = vec3(0.0);
+    float _dA  = 0.0;
+    float _dEA = 0.0;
+
+    vec2 _px = 1.0 / vec2(textureSize(uSceneDepth, 0));
+
+    // RGSS offsets — rotated grid gives better diagonal coverage than a regular 2×2 box.
+    const vec2 _ssOff[4] = vec2[4](
+      vec2( 0.125,  0.375),
+      vec2( 0.375, -0.125),
+      vec2(-0.125, -0.375),
+      vec2(-0.375,  0.125)
+    );
+
+    for (int _ss = 0; _ss < 4; _ss++) {
+      accumSkyColor      = _ssSky;
+      accumEmissive      = _ssEm;
+      accumAlpha         = _ssA;
+      accumEmissiveAlpha = _ssEA;
+
+      vec2 _jUv  = vUv + _ssOff[_ss] * _px;
+      vec4 _jNdc = vec4(_jUv * 2.0 - 1.0, 1.0, 1.0);
+      vec4 _jV   = uProjectionMatrixInverse * _jNdc;
+      _jV /= _jV.w;
+      dir = normalize((uCameraWorldMatrix * vec4(_jV.xyz, 0.0)).xyz);
+      skyCoords(dir, elev, azimuth, cosElev);
+      horizonBlend = smoothstep(-uHorizonBlend, uHorizonBlend, elev);
+      aboveHorizon = elev >= -uHorizonBlend;
+
+      ${inner}
+
+      _dSky += accumSkyColor      - _ssSky;
+      _dEm  += accumEmissive      - _ssEm;
+      _dA   += accumAlpha         - _ssA;
+      _dEA  += accumEmissiveAlpha - _ssEA;
+    }
+
+    accumSkyColor      = _ssSky + _dSky * 0.25;
+    accumEmissive      = _ssEm  + _dEm  * 0.25;
+    accumAlpha         = _ssA   + _dA   * 0.25;
+    accumEmissiveAlpha = _ssEA  + _dEA  * 0.25;
+
+    // Restore pixel-center dir for subsequent layers.
+    dir = skyViewDir();
+    skyCoords(dir, elev, azimuth, cosElev);
+    horizonBlend = smoothstep(-uHorizonBlend, uHorizonBlend, elev);
+    aboveHorizon = elev >= -uHorizonBlend;
   }`;
 };
 

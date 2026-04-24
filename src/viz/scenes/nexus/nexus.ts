@@ -534,8 +534,8 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   const BLOOM_NEAR_BASEMENT = 5;
   const BLOOM_FAR_BASEMENT = 18;
 
-  const BLOOM_RADIUS_REST = 0.35;
-  const BLOOM_RADIUS_PEAK = 0.15;
+  const BLOOM_RADIUS_REST = 0.55;
+  const BLOOM_RADIUS_PEAK = 0.35;
   const BLOOM_INTENSITY_REST = 0.8;
   const BLOOM_INTENSITY_PEAK = 1.3;
   const BLOOM_LUMINANCE_THRESHOLD_REST = 1.1;

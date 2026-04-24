@@ -941,11 +941,9 @@ export const initViz = (
     sceneLoader: getSceneLoader,
     gltfName: providedGLTFName,
     extension = 'gltf',
-    useLevelDef: useLevelDefFlag = false,
     useSceneDef = false,
   } = sceneDef;
-  // useSceneDef implies useLevelDef (the GLTF scene is a mesh library, not auto-added to physics)
-  const useLevelDef = useLevelDefFlag || useSceneDef;
+  const useLevelDef = useSceneDef;
   const gltfName = providedGLTFName === undefined ? 'dream' : providedGLTFName;
 
   const vizConfP = Conf.getVizConfig();

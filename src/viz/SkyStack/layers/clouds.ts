@@ -34,6 +34,8 @@ export interface CloudsLayerConfig {
   bias?: number;
   /** Shaping exponent on the density curve. Default 1. */
   pow?: number;
+  /** @see Layer.oversample */
+  oversample?: boolean;
 }
 
 const vec3Uniform = (v: [number, number, number] | undefined, fallback: [number, number, number]) =>
@@ -75,5 +77,6 @@ export const cloudsLayer = (c: CloudsLayerConfig): Layer => {
       id
     ),
     gate: 'aboveHorizon',
+    oversample: c.oversample,
   };
 };

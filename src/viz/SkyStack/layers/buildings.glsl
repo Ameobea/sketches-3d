@@ -35,9 +35,12 @@ struct BuildingHit_$ID {
   float windowStride;
   float litFrac;
   float colorH;
+  // Analytic per-pixel change rate of the window/floor grid coordinates,
+  // replacing fwidth() which is undefined after discardIfOccluded().
+  float cellRate;
 };
 
-BuildingHit_$ID probeBuilding_$ID(float elev, float azimuth) {
+BuildingHit_$ID probeBuilding_$ID(float elev, float azimuth, float cosElev) {
   BuildingHit_$ID hit;
   hit.hasBody = false;
   hit.bCell = vec2(0.0);
@@ -52,6 +55,7 @@ BuildingHit_$ID probeBuilding_$ID(float elev, float azimuth) {
   hit.windowStride = 1.0;
   hit.litFrac = 0.0;
   hit.colorH = 0.0;
+  hit.cellRate = 0.0;
 
   if (elev < uGroundElev_$ID || elev > uGroundElev_$ID + uBuildingMaxHeight_$ID) {
     return hit;
@@ -105,6 +109,17 @@ BuildingHit_$ID probeBuilding_$ID(float elev, float azimuth) {
   float windowIdx = floor(windowF);
   vec2 cellLocal = vec2(fract(windowF), fract(floorF));
 
+  // Analytic pixel footprint in floor/window grid space.
+  // Ref: https://iquilezles.org/articles/filtering/
+  // floorF = localY * floorCount, where localY = (elev - ground) / buildingHeight.
+  // One pixel spans angPx radians; in elevation units that's angPx / (HALF_PI * cosElev)
+  // (accounting for the asin nonlinearity). Similarly for the azimuth → window mapping.
+  float angPx = 2.0 * abs(uProjectionMatrixInverse[1][1])
+               / float(textureSize(uSceneDepth, 0).y);
+  float ce = max(cosElev, 0.01);
+  float dFloor = floorCount / max(buildingHeight, 1e-4) * angPx / (HALF_PI * ce);
+  float dWindow = windowCount / bodyWidth * uBuildingCount_$ID / TWO_PI * angPx / ce;
+
   hit.hasBody = true;
   hit.bCell = bCell;
   hit.localX = localX;
@@ -118,6 +133,7 @@ BuildingHit_$ID probeBuilding_$ID(float elev, float azimuth) {
   hit.windowStride = windowStride;
   hit.litFrac = litFrac;
   hit.colorH = colorH;
+  hit.cellRate = max(dFloor, dWindow);
   return hit;
 }
 
@@ -126,9 +142,7 @@ BuildingHit_$ID probeBuilding_$ID(float elev, float azimuth) {
 vec4 sampleWindows_$ID(BuildingHit_$ID hit) {
   vec3 buildingCol = mix(uCityColor_$ID, uCityColorAlt_$ID, hit.colorH);
 
-  float floorF = hit.localY * hit.floorCount;
-  float windowF = hit.localX * hit.windowCount;
-  float cellRate = max(fwidth(floorF), fwidth(windowF));
+  float cellRate = hit.cellRate;
   float lod = smoothstep(0.35, 1.0, cellRate);
 
   float avgCoverage = uWindowWidth_$ID * uWindowHeight_$ID * hit.litFrac /
@@ -148,7 +162,7 @@ vec4 sampleWindows_$ID(BuildingHit_$ID hit) {
       vec2 offset = abs(hit.cellLocal - 0.5);
       vec2 outside = offset - halfSize;
       float sdf = max(outside.x, outside.y);
-      float aaW = max(fwidth(sdf), 1e-5) * 0.5;
+      float aaW = max(cellRate, 1e-5) * 0.5;
       sharp = 1.0 - smoothstep(-aaW, aaW, sdf);
 
       float winColorH = hash(wCell + vec2(13.3, 17.1));
