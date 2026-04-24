@@ -67,7 +67,7 @@
         "color": "#545454",
         "roughness": 0.9,
         "metalness": 0.18,
-        "normalScale": 0.83,
+        "normalScale": 0.23,
         "transparent": false,
         "uvScale": [0.15, 0.15],
         "map": "chipped_rusty_gray_painted_wall_diffuse",

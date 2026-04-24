@@ -14,9 +14,10 @@ import {
   SkyStack,
   HorizonMode,
   starsLayer,
-  cloudsLayer,
+  // cloudsLayer,
   buildingsLayer,
-  groundLayer,
+  // groundLayer,
+  voxelGroundLayer,
   gradientBackground,
 } from 'src/viz/SkyStack';
 
@@ -127,90 +128,90 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     }
   );
 
-  // Temp demo that uses some shadertoy-style procedural 2D SDF stuff
-  const groundPaintShader = `
-    uniform vec3 uGroundBgColor;
-    uniform vec3 uBlobColorOuter;
-    uniform vec3 uBlobColorInner;
-    uniform float uTileSize;
-    uniform float uEmissiveBoost;
-
-    float sdCircle(vec2 p, vec2 c, float r) {
-      return length(p - c) - r;
-    }
-
-    // Polynomial smooth-min from Inigo Quilez — bounded width \`k\`, C1 continuous.
-    float smin(float a, float b, float k) {
-      float h = max(k - abs(a - b), 0.0) / k;
-      return min(a, b) - h * h * k * 0.25;
-    }
-
-    // Deterministic point inside cell \`id\`, orbiting a hashed base offset. Stays within
-    // the cell bounds so 3x3 neighbor sampling is sufficient for smin continuity.
-    vec2 cellPoint(vec2 id, float T) {
-      vec2 h = vec2(hash(id + 3.7), hash(id + 19.1));
-      float phase = h.x * 6.2831853;
-      vec2 jitter = (h - 0.5) * (T * 0.25);
-      vec2 orbit = vec2(sin(uTime * 0.027 + phase),
-                        cos(uTime * 0.021 + phase)) * (T * 0.22);
-      return id * T + jitter + orbit;
-    }
-
-    // Radius grows with the screen-space derivative to reduce sub-pixel
-    float cellRadius(vec2 id, float T, float aaW) {
-      float base = T * (0.12 + 0.08 * hash(id + 7.3));
-      return min(max(base, aaW * 0.85), T * 0.35);
-    }
-
-    float cellTwinkle(vec2 id) {
-      float phase = hash(id + 31.7) * 6.2831853;
-      float rate = 0.5 + 0.3 * hash(id + 43.1);
-      return 0.85 + 0.15 * sin(uTime * rate + phase);
-    }
-
-    vec4 paintGround_$ID(vec2 uv, vec2 uvDeriv, vec3 dir, float invDist) {
-      float T = uTileSize;
-      vec2 cellId = floor(uv / T + 0.5);
-      float aaW = max(uvDeriv.x, uvDeriv.y);
-
-      float d = 1e9;
-      for (int j = -1; j <= 1; j++) {
-        for (int i = -1; i <= 1; i++) {
-          vec2 nId = cellId + vec2(float(i), float(j));
-          d = smin(d, sdCircle(uv, cellPoint(nId, T), cellRadius(nId, T, aaW)), T * 0.2);
-        }
-      }
-
-      // Derivative-aware edge AA, from: "The Best Darn Grid Shader (Yet)",
-      // Ben Golus, https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8
-      float edge = 1.0 - smoothstep(-aaW, aaW, d);
-
-      // Amplitude fade past Nyquist, also from Ben Golus's article
-      //
-      // As derivatives approach the tile size, tiles pack sub-pixel and the edge term
-      // shimmers between 0 and 1 depending on exactly where the fragment lands. Lerp
-      // toward the per-tile average coverage (roughly π·r²/T² ≈ 0.1 for our radius
-      // distribution) so sub-pixel regions read as a uniform dim glow instead of aliasing.
-      float avgCoverage = 0.1;
-      float lodT = clamp(aaW / T * 2. - 1., 0., 1.);
-      edge = mix(edge, avgCoverage, lodT);
-
-      float innerT = smoothstep(0., -T * 0.1, d);
-      // more emissive boost close to the horizon where the circles are smaller and less
-      // likely to trigger bloom on their own, and less boost up close where they can bloom
-      // aggressively without washing out the scene.
-      float boost = mix(0.5, uEmissiveBoost, smoothstep(0.14, 0., -dir.y));
-      vec3 blobCol = mix(uBlobColorOuter, uBlobColorInner, innerT) * boost;
-
-      // Twinkle strength ramps 0 → 1 as we look from steeply-down toward the horizon,
-      // so close blobs sit still (no distracting pulse) while distant ones shimmer like
-      // city lights from altitude.
-      float twinkleMix = 1. - smoothstep(0., 0.5, -dir.y);
-      blobCol *= mix(1., cellTwinkle(cellId), twinkleMix);
-
-      return vec4(mix(uGroundBgColor, blobCol, edge), 1.);
-    }
-  `;
+  // --- Old SDF ground paint shader (preserved for future test scene) ---
+  // const groundPaintShader = `
+  //   uniform vec3 uGroundBgColor;
+  //   uniform vec3 uBlobColorOuter;
+  //   uniform vec3 uBlobColorInner;
+  //   uniform float uTileSize;
+  //   uniform float uEmissiveBoost;
+  //
+  //   float sdCircle(vec2 p, vec2 c, float r) {
+  //     return length(p - c) - r;
+  //   }
+  //
+  //   // Polynomial smooth-min from Inigo Quilez — bounded width \`k\`, C1 continuous.
+  //   float smin(float a, float b, float k) {
+  //     float h = max(k - abs(a - b), 0.0) / k;
+  //     return min(a, b) - h * h * k * 0.25;
+  //   }
+  //
+  //   // Deterministic point inside cell \`id\`, orbiting a hashed base offset. Stays within
+  //   // the cell bounds so 3x3 neighbor sampling is sufficient for smin continuity.
+  //   vec2 cellPoint(vec2 id, float T) {
+  //     vec2 h = vec2(hash(id + 3.7), hash(id + 19.1));
+  //     float phase = h.x * 6.2831853;
+  //     vec2 jitter = (h - 0.5) * (T * 0.25);
+  //     vec2 orbit = vec2(sin(uTime * 0.027 + phase),
+  //                       cos(uTime * 0.021 + phase)) * (T * 0.22);
+  //     return id * T + jitter + orbit;
+  //   }
+  //
+  //   // Radius grows with the screen-space derivative to reduce sub-pixel
+  //   float cellRadius(vec2 id, float T, float aaW) {
+  //     float base = T * (0.12 + 0.08 * hash(id + 7.3));
+  //     return min(max(base, aaW * 0.85), T * 0.35);
+  //   }
+  //
+  //   float cellTwinkle(vec2 id) {
+  //     float phase = hash(id + 31.7) * 6.2831853;
+  //     float rate = 0.5 + 0.3 * hash(id + 43.1);
+  //     return 0.85 + 0.15 * sin(uTime * rate + phase);
+  //   }
+  //
+  //   vec4 paintGround_$ID(vec2 uv, vec2 uvDeriv, vec3 dir, float invDist) {
+  //     float T = uTileSize;
+  //     vec2 cellId = floor(uv / T + 0.5);
+  //     float aaW = max(uvDeriv.x, uvDeriv.y);
+  //
+  //     float d = 1e9;
+  //     for (int j = -1; j <= 1; j++) {
+  //       for (int i = -1; i <= 1; i++) {
+  //         vec2 nId = cellId + vec2(float(i), float(j));
+  //         d = smin(d, sdCircle(uv, cellPoint(nId, T), cellRadius(nId, T, aaW)), T * 0.2);
+  //       }
+  //     }
+  //
+  //     // Derivative-aware edge AA, from: "The Best Darn Grid Shader (Yet)",
+  //     // Ben Golus, https://bgolus.medium.com/the-best-darn-grid-shader-yet-727f9278b9d8
+  //     float edge = 1.0 - smoothstep(-aaW, aaW, d);
+  //
+  //     // Amplitude fade past Nyquist, also from Ben Golus's article
+  //     //
+  //     // As derivatives approach the tile size, tiles pack sub-pixel and the edge term
+  //     // shimmers between 0 and 1 depending on exactly where the fragment lands. Lerp
+  //     // toward the per-tile average coverage (roughly π·r²/T² ≈ 0.1 for our radius
+  //     // distribution) so sub-pixel regions read as a uniform dim glow instead of aliasing.
+  //     float avgCoverage = 0.1;
+  //     float lodT = clamp(aaW / T * 2. - 1., 0., 1.);
+  //     edge = mix(edge, avgCoverage, lodT);
+  //
+  //     float innerT = smoothstep(0., -T * 0.1, d);
+  //     // more emissive boost close to the horizon where the circles are smaller and less
+  //     // likely to trigger bloom on their own, and less boost up close where they can bloom
+  //     // aggressively without washing out the scene.
+  //     float boost = mix(0.5, uEmissiveBoost, smoothstep(0.14, 0., -dir.y));
+  //     vec3 blobCol = mix(uBlobColorOuter, uBlobColorInner, innerT) * boost;
+  //
+  //     // Twinkle strength ramps 0 → 1 as we look from steeply-down toward the horizon,
+  //     // so close blobs sit still (no distracting pulse) while distant ones shimmer like
+  //     // city lights from altitude.
+  //     float twinkleMix = 1. - smoothstep(0., 0.5, -dir.y);
+  //     blobCol *= mix(1., cellTwinkle(cellId), twinkleMix);
+  //
+  //     return vec4(mix(uGroundBgColor, blobCol, edge), 1.);
+  //   }
+  // `;
 
   // Sky sub-pipeline — owns the emissive RT; other bypass meshes composite on
   // top of its output. 180deg linear-gradient(#0d1522 → #0f1f2f → #454b59 →
@@ -218,56 +219,56 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   const skyStack = new SkyStack(
     viz,
     {
-      horizonOffset: -0.025,
+      horizonOffset: -0.038,
       horizonBlend: 0.03,
       layers: [
-        cloudsLayer({
-          id: 'cloudsFront',
-          zIndex: 40,
-          color: 0x2a2030,
-          highColor: 0x554050,
-          // highColor: 0x0,
-          intensity: 0.98,
-          center: 0.025,
-          width: 0.084,
-          sharpness: 0.82,
-          scale: [0.9, 25, 0.9],
-          speed: [0.015, 0, -0.01],
-          octaves: 1,
-          bias: 0.75,
-          pow: 1.2,
-        }),
-        buildingsLayer({
-          id: 'buildings',
-          zIndex: 30,
-          color: 0xff7a3a,
-          colorAlt: 0xffd07a,
-          intensity: 0.8,
-          buildingCount: 300,
-          buildingPresence: 0.75,
-          buildingGap: 0.2,
-          buildingMinHeight: 0.015,
-          buildingMaxHeight: 0.08,
-          floorsMin: 4,
-          floorsMax: 18,
-          windowsMin: 2,
-          windowsMax: 5,
-          maxFloorStride: 2,
-          maxWindowStride: 1,
-          litFractionMin: 0.25,
-          litFractionMax: 0.75,
-          windowWidth: 0.45,
-          windowHeight: 0.5,
-          twinkleSpeed: 5.0,
-          twinkleDepth: 0.38,
-          // groundElev sits 0.01 below the shared horizon offset so the
-          // cityscape tucks just under the horizon line.
-          groundElev: -0.01,
-          // Approximates the former gradient-following silhouette: horizon
-          // gradient color (0x714f4d) darkened ~15%.
-          silhouetteColor: 0x110c0b,
-          oversample: true,
-        }),
+        // cloudsLayer({
+        //   id: 'cloudsFront',
+        //   zIndex: 40,
+        //   color: 0x2a2030,
+        //   highColor: 0x554050,
+        //   // highColor: 0x0,
+        //   intensity: 0.98,
+        //   center: 0.025,
+        //   width: 0.084,
+        //   sharpness: 0.82,
+        //   scale: [0.9, 25, 0.9],
+        //   speed: [0.015, 0, -0.01],
+        //   octaves: 1,
+        //   bias: 0.75,
+        //   pow: 1.2,
+        // }),
+        // buildingsLayer({
+        //   id: 'buildings',
+        //   zIndex: 30,
+        //   color: 0xff7a3a,
+        //   colorAlt: 0xffd07a,
+        //   intensity: 0.8,
+        //   buildingCount: 300,
+        //   buildingPresence: 0.75,
+        //   buildingGap: 0.2,
+        //   buildingMinHeight: 0.015,
+        //   buildingMaxHeight: 0.08,
+        //   floorsMin: 4,
+        //   floorsMax: 18,
+        //   windowsMin: 2,
+        //   windowsMax: 5,
+        //   maxFloorStride: 2,
+        //   maxWindowStride: 1,
+        //   litFractionMin: 0.25,
+        //   litFractionMax: 0.75,
+        //   windowWidth: 0.45,
+        //   windowHeight: 0.5,
+        //   twinkleSpeed: 5.0,
+        //   twinkleDepth: 0.38,
+        //   // groundElev sits 0.01 below the shared horizon offset so the
+        //   // cityscape tucks just under the horizon line.
+        //   groundElev: -0.01,
+        //   // Approximates the former gradient-following silhouette: horizon
+        //   // gradient color (0x714f4d) darkened ~15%.
+        //   silhouetteColor: 0x110c0b,
+        //   oversample: true,
+        // }),
         // Low wispy haze band behind the cityscape — sits above the gradient
         // but gets occluded by silhouettes + windows.
         // cloudsLayer({
@@ -286,55 +287,74 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         //   bias: 0.05,
         //   pow: 1.2,
         // }),
-        starsLayer({
-          id: 'stars',
-          zIndex: 10,
-          color: 0xe6ecff,
-          intensity: 0.35,
-          density: 180,
-          threshold: 0.045,
-          size: 0.07,
-          twinkleSpeed: 9.0,
-          twinkleDepth: 0.3,
-          minElev: 0.04,
-          oversample: vizConf.graphics.quality >= GraphicsQuality.Medium,
-        }),
-        groundLayer({
-          id: 'ground',
+        // starsLayer({
+        //   id: 'stars',
+        //   zIndex: 10,
+        //   color: 0xe6ecff,
+        //   intensity: 0.35,
+        //   density: 180,
+        //   threshold: 0.045,
+        //   size: 0.07,
+        //   twinkleSpeed: 9.0,
+        //   twinkleDepth: 0.3,
+        //   minElev: 0.04,
+        //   oversample: vizConf.graphics.quality >= GraphicsQuality.Medium,
+        // }),
+        // --- Old SDF ground layer (preserved for future test scene) ---
+        // groundLayer({
+        //   id: 'ground',
+        //   zIndex: 5,
+        //   height: 120,
+        //   horizonFadeStart: 0.03,
+        //   horizonFadeEnd: 0.06,
+        //   atmosphericTint: {
+        //     range: 0.57,
+        //     strength: 0.75,
+        //     color: 0x160303,
+        //   },
+        //   paintShader: groundPaintShader,
+        //   oversample: vizConf.graphics.quality >= GraphicsQuality.Medium,
+        //   uniforms: {
+        //     uGroundBgColor: { value: new THREE.Color(0x0a0508) },
+        //     uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
+        //     uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
+        //     uTileSize: { value: 80.0 },
+        //     uEmissiveBoost: { value: 3.5 },
+        //   },
+        // }),
+        // background: gradientBackground({
+        //   stops: [
+        //     { position: 0.0, color: 0x714f4d },
+        //     { position: 0.354, color: 0x454b59 },
+        //     { position: 0.698, color: 0x0f1f2f },
+        //     { position: 1.0, color: 0x0d1522 },
+        //   ],
+        //   horizonMode: HorizonMode.SolidBelow,
+        //   belowColor: 0x060301,
+        //   lutResolution: {
+        //     [GraphicsQuality.Low]: 32,
+        //     [GraphicsQuality.Medium]: 64,
+        //     [GraphicsQuality.High]: 128,
+        //   }[vizConf.graphics.quality],
+        // }),
+        voxelGroundLayer({
+          id: 'voxGround',
           zIndex: 5,
-          height: 120,
-          // Retreat the paint from the horizon band — SkyStack's buildings layer
-          // takes over the distant-light duty here, and pushing the fade down kills
-          // the worst of the sub-pixel aliasing from SDF blobs shrinking past Nyquist.
-          horizonFadeStart: 0.03,
-          horizonFadeEnd: 0.06,
-          atmosphericTint: {
-            // Dark warm red, sitting in the same hue family as the sky's lowest stop
-            // (0x714f4d). Blobs reddening and dimming as they recede mimics the
-            // sky-bleed-through effect even when the ground doesn't overlap the sky.
-            range: 0.57,
-            strength: 0.75,
-            color: 0x160303,
-          },
-          paintShader: groundPaintShader,
-          oversample: vizConf.graphics.quality >= GraphicsQuality.Medium,
-          uniforms: {
-            uGroundBgColor: { value: new THREE.Color(0x0a0508) },
-            uBlobColorOuter: { value: new THREE.Color(0x1c0508) },
-            uBlobColorInner: { value: new THREE.Color(0xff7a4a) },
-            uTileSize: { value: 80.0 },
-            // HDR multiplier on the blob color — drives the bloom pass and skips
-            // AgX since the paint is routed through the emissive attachment.
-            uEmissiveBoost: { value: 3.5 },
-          },
+          maxSteps: {
+            [GraphicsQuality.Low]: 64,
+            [GraphicsQuality.Medium]: 128,
+            [GraphicsQuality.High]: 256,
+          }[vizConf.graphics.quality],
+          lavaQuality: vizConf.graphics.quality >= GraphicsQuality.High ? 1 : 0,
+          oversample: vizConf.graphics.quality > GraphicsQuality.Medium,
         }),
       ],
       background: gradientBackground({
         stops: [
-          { position: 0.0, color: 0x714f4d },
-          { position: 0.354, color: 0x454b59 },
-          { position: 0.698, color: 0x0f1f2f },
-          { position: 1.0, color: 0x0d1522 },
+          { position: 0.0, color: 0x411010 },
+          // { position: 0.354, color: 0x452222 },
+          { position: 0.3, color: 0x0 },
+          { position: 1.0, color: 0x0 },
         ],
         horizonMode: HorizonMode.SolidBelow,
         belowColor: 0x060301,

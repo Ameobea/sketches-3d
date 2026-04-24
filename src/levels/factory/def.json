@@ -5,15 +5,15 @@
     {
       "id": "ambient",
       "type": "ambient",
-      "color": "#d6cfcf",
-      "intensity": 2.4
+      "color": "#d7ab85",
+      "intensity": 1.9
     },
     {
       "id": "sun",
       "type": "directional",
-      "color": "#d6c4c4",
-      "intensity": 1.6,
-      "position": [-300, 1000, 0],
+      "color": "#d65454",
+      "intensity": 0.3,
+      "position": [-300, -1000, 0],
       "castShadow": false
     }
   ],
