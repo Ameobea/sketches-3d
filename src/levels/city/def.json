@@ -1,0 +1,46 @@
+{
+  "$schema": "../schema.json",
+  "version": 1,
+  "lights": [
+    {
+      "id": "ambient",
+      "type": "ambient",
+      "color": "#d7ab85",
+      "intensity": 3.8
+    },
+    {
+      "id": "sun",
+      "type": "directional",
+      "color": "#d65454",
+      "intensity": 0.3,
+      "position": [-300, -1000, 0],
+      "castShadow": false
+    }
+  ],
+  "assets": {
+    "platform": {
+      "type": "geoscript",
+      "code": "export mesh = box(20, 3, 20)",
+      "_meta": { "runtimeMs": 0.14750000834465027, "count": 2, "codeHash": "8b6313c0" }
+    }
+  },
+  "objects": [],
+  "physics": {
+    "gravity": 220,
+    "simulationTickRate": 160,
+    "gravityShaping": {
+      "riseMultiplier": 1,
+      "apexMultiplier": 0.6,
+      "fallMultiplier": 1.2,
+      "apexThreshold": 4,
+      "kneeWidth": 0.1
+    },
+    "player": {
+      "jumpVelocity": 76,
+      "moveSpeed": {
+        "onGround": 18.9,
+        "inAir": 21.6
+      }
+    }
+  }
+}

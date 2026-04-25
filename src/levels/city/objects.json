@@ -1,0 +1,31 @@
+{
+  "$schema": "../objects-schema.json",
+  "objects": [
+    {
+      "id": "spawn_platform",
+      "children": [
+        {
+          "id": "spawn_platform_top",
+          "asset": "platform",
+          "position": [0, 75.8268, 0],
+          "scale": [1, 1.5, 1],
+          "material": "concrete",
+          "rotation": [0, 0, 0]
+        },
+        {
+          "id": "spawn_platform_pole",
+          "asset": "platform",
+          "position": [0, -75.8269, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.3, 100, 0.3],
+          "material": "chipped_rusty_gray_painted_wall",
+          "nocollide": true,
+          "nonPermeable": false
+        }
+      ],
+      "position": [-48, -77.3268, -14],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    }
+  ]
+}

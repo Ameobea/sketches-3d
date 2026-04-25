@@ -1,0 +1,67 @@
+{
+  "$schema": "../materials-schema.json",
+  "textures": {
+    "concrete_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/3a5937da-07f7-4fbf-a086-4cc664ada8f3.avif",
+      "colorSpace": "srgb"
+    },
+    "concrete_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/5b2197b4-02e0-4d0a-b714-6ee9a867e3ac.avif"
+    },
+    "chipped_rusty_gray_painted_wall_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/e4b1c4dc-e2a4-400a-90a7-14f2f25197ab.avif",
+      "colorSpace": "srgb"
+    },
+    "chipped_rusty_gray_painted_wall_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/ca6d2f18-91ee-46ce-b1e8-54cb411ba647.avif"
+    }
+  },
+  "materials": {
+    "concrete": {
+      "type": "customShader",
+      "props": {
+        "color": "#575757",
+        "roughness": 0.95,
+        "metalness": 0.17,
+        "normalScale": 0.68,
+        "iridescence": 0,
+        "uvScale": [0.02, 0.02],
+        "map": "concrete_diffuse",
+        "normalMap": "concrete_normal"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "chipped_rusty_gray_painted_wall": {
+      "type": "customShader",
+      "props": {
+        "color": "#545454",
+        "roughness": 0.9,
+        "metalness": 0.18,
+        "normalScale": 0.23,
+        "transparent": false,
+        "uvScale": [0.15, 0.15],
+        "map": "chipped_rusty_gray_painted_wall_diffuse",
+        "normalMap": "chipped_rusty_gray_painted_wall_normal",
+        "heightAlpha": {
+          "bottomFade": [-230, -50],
+          "topFade": [60, 200]
+        },
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 20,
+        "mapDisableDistanceAxes": "xz"
+      },
+      "options": {
+        "useGeneratedUVs": true,
+        "useWorldSpaceGeneratedUVs": true,
+        "tileBreaking": {
+          "type": "neyret",
+          "patchScale": 3
+        },
+        "randomizeUVOffset": true
+      },
+      "nonPermeable": true
+    }
+  }
+}

@@ -106,7 +106,31 @@ export class DualKawaseBlurPass {
     if (width === this.width && height === this.height) return;
     this.width = width;
     this.height = height;
-    this.rebuildTargets();
+
+    // If the pyramid hasn't been allocated yet (or was torn down), build from scratch.
+    // Otherwise resize existing RTs in place so `outputTarget.texture` (consumed by
+    // FinalPass as `emissiveBloomBuffer`) keeps the same JS reference across resizes.
+    if (this.downTargets.length === 0 || !this.outputTarget) {
+      this.rebuildTargets();
+      return;
+    }
+    if (width === 0 || height === 0) {
+      this.disposeTargets();
+      return;
+    }
+
+    let w = width;
+    let h = height;
+    for (let i = 0; i < this.levels; i++) {
+      w = Math.max(Math.floor(w / 2), 1);
+      h = Math.max(Math.floor(h / 2), 1);
+      this.downTargets[i].setSize(w, h);
+    }
+    for (let i = 0; i < this.upTargets.length; i++) {
+      const mirror = this.downTargets[this.levels - 2 - i];
+      this.upTargets[i].setSize(mirror.width, mirror.height);
+    }
+    this.outputTarget.setSize(width, height);
   }
 
   private rebuildTargets(): void {

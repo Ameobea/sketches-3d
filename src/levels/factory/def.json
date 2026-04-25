@@ -112,10 +112,10 @@
       "code": "export mesh = extrude_pipe(0.2, 6, 0..30 -> |i| v3(0, i*10, 0))",
       "_meta": { "runtimeMs": 0.5210000038146972, "count": 5, "codeHash": "f1709bb5", "asyncDeps": [ "cgal" ] }
     },
-    "wrap_arrow": {
+    "wrap_arrow2": {
       "type": "geoscript",
-      "file": "__ASSETS__/meshes/signs/wrap_arrow.geo",
-      "_meta": { "runtimeMs": 4.7940000057220455, "count": 5, "codeHash": "38d30100", "asyncDeps": [ "cgal" ] }
+      "file": "__ASSETS__/meshes/signs/wrap_arrow2.geo",
+      "_meta": { "runtimeMs": 0.6389999985694885, "count": 5, "codeHash": "65763fe4", "asyncDeps": [ "cgal" ] }
     }
   },
   "objects": [],

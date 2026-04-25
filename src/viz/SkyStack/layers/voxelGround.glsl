@@ -11,7 +11,7 @@ const float VOXEL_SIZE_$ID     = 4.0;   // world-space size of one voxel
 // ---- Appearance ----
 const vec3  SURFACE_COLOR_$ID    = vec3(0.008, 0.008, 0.008);
 const vec3  LAVA_COLOR_$ID       = vec3(1.0, 0.177, 0.0);
-const float LAVA_INTENSITY_$ID   = 0.25;
+const float LAVA_INTENSITY_$ID   = 0.35;
 const float LIGHT_INTENSITY_$ID  = 0.4;
 const vec3  LIGHT_DIR_$ID        = vec3(0.4243, 0.8485, 0.3182); // normalize(0.4, 0.8, 0.3)
 const float AMBIENT_$ID          = 0.0;
@@ -290,6 +290,9 @@ void colorSolidVoxel_$ID(
     }
   }
 
+  // GI attenuation from scratch noise (walls only; defaults to no attenuation).
+  float giScratchAtten = 1.0;
+
 #if VOX_LAVA_QUALITY >= 1
   // ---- High-quality extras: per-plate variation, scratches, grime ----
   float hBright  = hash(plateCell + vec2(91.3, 47.7));
@@ -298,8 +301,12 @@ void colorSolidVoxel_$ID(
   float plateBright = 0.95 + 0.35 * hBright;
 
   float scratchAxis = mix(surfUV.x, surfUV.y, step(hScratch, 0.5));
-  float scratches = noise(scratchAxis * 12.0 + hScratch * 200.0);
-  scratches = 0.85 + 0.25 * scratches;
+  float sRaw = noise(scratchAxis * 12.0 + hScratch * 200.0);
+
+  // Scratch valleys darken the lava GI glow so sheet-metal reads on walls.
+  giScratchAtten = mix(0.6, 1.0, sRaw);
+
+  float scratches = 0.85 + 0.25 * sRaw;
 
   float grime = noise(surfUV * 2.5 + vec2(3.7, 11.3));
   grime = 0.8 + 0.2 * grime;
@@ -334,8 +341,10 @@ void colorSolidVoxel_$ID(
   if (giStrength > 0.001) {
     // Bevel modulates GI on walls so plate grooves show as dark lines in the glow.
     float giBevel = (abs(hit.normal.y) < 0.5) ? mix(0.4, 1.0, bevel) : 1.0;
-    outEmissive = LAVA_COLOR_$ID * LAVA_INTENSITY_$ID * giStrength * giBevel;
-    outEmissiveAlpha = giStrength * giBevel;
+    float giTex = (abs(hit.normal.y) < 0.5) ? giScratchAtten : 1.0;
+    float giMask = giBevel * giTex;
+    outEmissive = LAVA_COLOR_$ID * LAVA_INTENSITY_$ID * giStrength * giMask;
+    outEmissiveAlpha = giStrength * giMask;
   }
 
   // Crack lava in wall grooves — adds emissive on top of GI.

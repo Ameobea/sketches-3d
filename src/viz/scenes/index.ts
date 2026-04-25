@@ -607,4 +607,19 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     legacyLights: false,
     useSceneDef: true,
   },
+  factory_shader_demo: {
+    sceneName: null,
+    gltfName: null,
+    sceneLoader: () => import('./factory/factory_shader_demo').then(mod => mod.processLoadedScene),
+    metadata: { title: 'factory shader demo' },
+    legacyLights: false,
+  },
+  city: {
+    sceneName: null,
+    gltfName: null,
+    sceneLoader: () => import('./city/city').then(mod => mod.processLoadedScene),
+    metadata: { title: 'city' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
 };
