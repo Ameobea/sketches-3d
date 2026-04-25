@@ -51,7 +51,7 @@ type UndoEntry =
 export class LevelEditor {
   viz: Viz;
   levelDef: LevelDef;
-  prototypes: Map<string, THREE.Object3D>;
+  prototypes: Map<string, THREE.Mesh>;
   builtMaterials: Map<string, THREE.Material>;
 
   api: LevelEditorApi;
@@ -122,7 +122,7 @@ export class LevelEditor {
     viz: Viz,
     objects: LevelObject[],
     levelName: string,
-    prototypes: Map<string, THREE.Object3D>,
+    prototypes: Map<string, THREE.Mesh>,
     builtMaterials: Map<string, THREE.Material>,
     loadedTextures: Map<string, THREE.Texture>,
     levelDef: LevelDef,
@@ -1232,14 +1232,16 @@ export class LevelEditor {
     const fpCtx: BulletPhysics | undefined = this.viz.fpCtx;
     if (!fpCtx) return;
 
-    levelObj.object.traverse(child => {
-      if (!(child instanceof THREE.Mesh)) {
-        return;
-      }
+    // The entity's `object` may have been swapped by `replaceLeafInstance`; point
+    // it at the current object so future behavior ticks and transforms use the
+    // live scene-graph node.  Existing bodies were detached in `removePhysics`.
+    levelObj.entity.object = levelObj.object;
+    // Resync def-derived physics flags in case the def was edited since placement.
+    levelObj.entity.nonPermeable = levelObj.def.nonPermeable;
+    levelObj.entity.isConvexHull = levelObj.def.colliderShape === 'convexHull';
 
-      clearPhysicsBinding(child, fpCtx);
-      withWorldSpaceTransform(child, mesh => fpCtx.addTriMesh(mesh));
-    });
+    clearPhysicsBinding(levelObj.object, fpCtx);
+    withWorldSpaceTransform(levelObj.object, mesh => fpCtx.addTriMesh(mesh, 'static', levelObj.entity));
   }
 
   private syncSceneNodePhysics(node: LevelSceneNode) {
@@ -1259,13 +1261,7 @@ export class LevelEditor {
       return;
     }
 
-    levelObj.object.traverse(child => {
-      if (!(child instanceof THREE.Mesh)) {
-        return;
-      }
-
-      clearPhysicsBinding(child, fpCtx);
-    });
+    clearPhysicsBinding(levelObj.object, fpCtx);
   }
 
   private destroy() {
@@ -1280,7 +1276,7 @@ export const initLevelEditor = (
   viz: Viz,
   objects: LevelObject[],
   levelName: string,
-  prototypes: Map<string, THREE.Object3D>,
+  prototypes: Map<string, THREE.Mesh>,
   builtMaterials: Map<string, THREE.Material>,
   loadedTextures: Map<string, THREE.Texture>,
   levelDef: LevelDef,

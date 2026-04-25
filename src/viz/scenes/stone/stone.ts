@@ -13,6 +13,7 @@ import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { LODTerrain } from 'src/viz/terrain/LODTerrain';
 import type { TerrainGenParams } from 'src/viz/terrain/TerrainGenWorker/TerrainGenWorker.worker';
 import { loadNamedTextures } from 'src/viz/textureLoading';
+import { clearPhysicsBinding } from 'src/viz/util/physics';
 import { smoothstepScale } from 'src/viz/util/util';
 import { getTerrainGenWorker } from 'src/viz/workerPool';
 import type { SceneConfig, SceneLocations } from '..';
@@ -524,8 +525,7 @@ export const processLoadedScene = async (
   const handleAllTotemsCollected = () => {
     const door = loadedWorld.getObjectByName('monolith_door') as THREE.Mesh;
     door.visible = false;
-    viz.fpCtx!.removeCollisionObject(door.userData.rigidBody);
-    delete door.userData.rigidBody;
+    clearPhysicsBinding(door, viz.fpCtx!);
 
     doorLight.intensity = 9;
 

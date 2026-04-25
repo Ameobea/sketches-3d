@@ -32,9 +32,10 @@ import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
 export { isLevelGroup } from './levelSceneTypes';
 import { buildMaterial } from './buildMaterial';
+import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
+import { Entity } from '../sceneRuntime/Entity';
 import { TextureFetchPool } from './texturePool';
 import { generateCsgCode } from './csgCodeGen';
-import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 
 type PhysicsContext = NonNullable<Viz['fpCtx']>;
 
@@ -59,7 +60,7 @@ export interface LevelLoadHandle {
    * Safe to read (with full coverage) once `objects` has resolved.
    * Intended for the level editor's "add object" flow.
    */
-  prototypes: Map<string, THREE.Object3D>;
+  prototypes: Map<string, THREE.Mesh>;
   /**
    * Map from material name → built THREE.Material. Populated incrementally as textures load.
    * Safe to read (with full coverage) once `complete` has resolved.
@@ -239,7 +240,7 @@ const topoSortAssets = (assets: Record<string, AssetDef>): string[] => {
  */
 const extractPrototype = (
   objects: { type: string; geometry?: THREE.BufferGeometry; transform?: THREE.Matrix4 }[]
-): THREE.Object3D | null => {
+): THREE.Mesh | null => {
   const meshes: THREE.Mesh[] = [];
   for (const obj of objects) {
     if (obj.type !== 'mesh') {
@@ -253,15 +254,13 @@ const extractPrototype = (
 
   if (meshes.length === 0) {
     return null;
-  } else if (meshes.length === 1) {
-    return meshes[0];
   }
-
-  const group = new THREE.Group();
-  for (const mesh of meshes) {
-    group.add(mesh);
+  if (meshes.length > 1) {
+    throw new Error(
+      `Geoscript asset produced ${meshes.length} meshes; leaf objects must resolve to a single mesh`
+    );
   }
-  return group;
+  return meshes[0];
 };
 
 /** The render wrapper imports the asset's exported mesh and pipes it through `render`. */
@@ -274,7 +273,7 @@ const RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_transforms | r
  * Used by the level editor to resolve newly-registered asset library entries without
  * requiring a full page reload.
  */
-export const resolveGeoscriptAsset = async (code: string): Promise<THREE.Object3D | null> => {
+export const resolveGeoscriptAsset = async (code: string): Promise<THREE.Mesh | null> => {
   const executor = new GeoscriptExecutor();
   const promises = executor.submit([
     {
@@ -379,7 +378,7 @@ const computeUpdatedMeta = (
 const resolveScriptAssets = async (
   sortedIds: string[],
   assets: Record<string, AssetDef>,
-  onResolved: (id: string, obj: THREE.Object3D) => void,
+  onResolved: (id: string, obj: THREE.Mesh) => void,
   sceneName: string,
   providedExecutor?: GeoscriptExecutor
 ): Promise<void> => {
@@ -534,7 +533,7 @@ export const loadLevelDef = (
   const placedObjects = new Map<string, LevelObject>();
   const builtMaterials = new Map<string, THREE.Material>();
   const loadedTextures = new Map<string, THREE.Texture>();
-  const assetPrototypes = new Map<string, THREE.Object3D>();
+  const assetPrototypes = new Map<string, THREE.Mesh>();
   const allLevelObjects: LevelObject[] = [];
   const registeredPhysicsObjects = new Set<string>();
 
@@ -608,15 +607,7 @@ export const loadLevelDef = (
       return;
     }
 
-    levelObj.object.traverse(child => {
-      if (!(child instanceof THREE.Mesh)) {
-        return;
-      }
-
-      // addTriMesh -> addCollisionObject reads mesh.position/quaternion/scale directly,
-      // so temporarily expose the mesh's world-space transform during registration.
-      withWorldSpaceTransform(child, mesh => fpCtx.addTriMesh(mesh));
-    });
+    withWorldSpaceTransform(levelObj.object, mesh => fpCtx.addTriMesh(mesh, 'static', levelObj.entity));
     registeredPhysicsObjects.add(levelObj.id);
   };
 
@@ -628,7 +619,7 @@ export const loadLevelDef = (
     }
   });
 
-  const placeObject = (assetId: string, prototype: THREE.Object3D, objDef: ObjectDef) => {
+  const placeObject = (assetId: string, prototype: THREE.Mesh, objDef: ObjectDef) => {
     const clone = instantiateLevelObject(prototype, objDef, {
       builtMaterials,
       fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
@@ -637,12 +628,20 @@ export const loadLevelDef = (
     const parent = parentMap.get(objDef.id) ?? viz.scene;
     parent.add(clone);
 
+    const entity = new Entity(viz, objDef.id, clone);
+    if (objDef.nonPermeable !== undefined) {
+      entity.nonPermeable = objDef.nonPermeable;
+    }
+    if (objDef.colliderShape !== undefined) {
+      entity.isConvexHull = objDef.colliderShape === 'convexHull';
+    }
     const levelObj: LevelObject = {
       id: objDef.id,
       assetId,
       object: clone,
       def: objDef,
       generated: isGeneratedDef(objDef),
+      entity,
     };
     allLevelObjects.push(levelObj);
     placedObjects.set(objDef.id, levelObj);
@@ -685,7 +684,7 @@ export const loadLevelDef = (
     }
   };
 
-  const onAssetResolved = (assetId: string, prototype: THREE.Object3D) => {
+  const onAssetResolved = (assetId: string, prototype: THREE.Mesh) => {
     assetPrototypes.set(assetId, prototype);
     for (const objDef of assetToObjDefs.get(assetId) ?? []) {
       placeObject(assetId, prototype, objDef);
@@ -707,18 +706,17 @@ export const loadLevelDef = (
       if (levelObj) {
         assignMaterial(levelObj.object, mat);
 
+        // Upgrade the entity's material class now that the real material has arrived.
+        if (mat instanceof CustomShaderMaterial && mat.materialClass !== undefined) {
+          levelObj.entity.setMaterialClass(mat.materialClass);
+        }
+
         if (mat.userData.nonPermeable && physicsReady) {
           const fpCtx = viz.fpCtx;
           if (fpCtx) {
-            levelObj.object.traverse(child => {
-              if (!(child instanceof THREE.Mesh)) return;
-              // Object-level override already made a decision — respect it.
-              if (child.userData.nonPermeable !== undefined) return;
-              const rigidBody = child.userData.rigidBody;
-              if (rigidBody) {
-                fpCtx.markBodyNonPermeable(rigidBody);
-              }
-            });
+            if (levelObj.entity.nonPermeable === undefined && levelObj.entity.body) {
+              fpCtx.markBodyNonPermeable(levelObj.entity.body);
+            }
           } else {
             console.error(`\`fpCtx\` not ready when trying to mark "${levelObj.id}" as non-permeable`);
           }
@@ -784,6 +782,11 @@ export const loadLevelDef = (
         `[levelDef] gltf asset "${assetId}": mesh "${assetDef.meshName}" not found in loadedWorld`
       );
       continue;
+    }
+    if (!(src instanceof THREE.Mesh)) {
+      throw new Error(
+        `[levelDef] gltf asset "${assetId}": "${assetDef.meshName}" resolved to ${src.type}, expected Mesh`
+      );
     }
     onAssetResolved(assetId, src);
   }
@@ -985,22 +988,14 @@ export const loadLevelDef = (
             const resolved = resolveBehaviorSpecs(objDef.behaviors);
             if (resolved.length === 0) continue;
 
-            const rigidBody = (() => {
-              let rb: BtRigidBody | undefined;
-              levelObj.object.traverse(child => {
-                if (child instanceof THREE.Mesh && child.userData.rigidBody && !rb) {
-                  rb = child.userData.rigidBody;
-                }
-              });
-              return rb;
-            })();
-
-            if (rigidBody) {
-              rigidBody.setCollisionFlags(2); // CF_KINEMATIC_OBJECT
-              rigidBody.setActivationState(4); // DISABLE_DEACTIVATION
+            // Promote the entity's body to kinematic so behaviors can drive it
+            // via setTransform without the physics engine fighting back.
+            if (levelObj.entity.body) {
+              levelObj.entity.body.setCollisionFlags(2); // CF_KINEMATIC_OBJECT
+              levelObj.entity.body.setActivationState(4); // DISABLE_DEACTIVATION
             }
 
-            const entity = runtime.createEntity(objDef.id, levelObj.object, rigidBody);
+            const entity = runtime.adoptEntity(levelObj.entity);
 
             for (const { fn, params } of resolved) {
               const behavior = fn(params, entity, runtime);

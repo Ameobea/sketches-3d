@@ -7,9 +7,8 @@ import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
 import { buildPylonsMaterials } from 'src/viz/parkour/regions/pylons/materials';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
-import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { makeSpinner, makeSlider } from 'src/viz/sceneRuntime/legacyHelpers';
+import type { Behavior } from 'src/viz/sceneRuntime/types';
 
 const locations = {
   spawn: {
@@ -107,7 +106,21 @@ export const processLoadedScene = async (
 
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     const spinner1 = loadedWorld.getObjectByName('spinner1')! as THREE.Mesh;
-    rt.registerOnStartCb(() => makeSpinner(rt, spinner1, 6.6));
+    const spinnerEntity = fpCtx.getEntity(spinner1)!;
+    spinnerEntity.body!.setCollisionFlags(2); // CF_KINEMATIC_OBJECT
+    spinnerEntity.body!.setActivationState(4); // DISABLE_DEACTIVATION
+    const spinnerInitialPos = spinner1.position.clone();
+    const spinnerInitialRot = spinner1.rotation.y;
+    const spinnerRps = 6.6 / 60;
+    const spinnerMatrix = new THREE.Matrix4();
+    rt.adoptEntity(spinnerEntity);
+    spinnerEntity.addBehavior({
+      tick: elapsed => {
+        spinnerMatrix.makeRotationY(spinnerInitialRot - spinnerRps * elapsed * Math.PI * 2);
+        spinnerMatrix.setPosition(spinnerInitialPos);
+        spinnerEntity.setTransform(spinnerMatrix);
+      },
+    });
 
     const sliders: THREE.Mesh[] = [];
     const sideSliders: THREE.Mesh[] = [];
@@ -125,81 +138,65 @@ export const processLoadedScene = async (
       }
     });
 
+    const makeLinearSlideBehavior =
+      (startPos: THREE.Vector3, moveDir: THREE.Vector3, despawnCheck: (pos: THREE.Vector3) => boolean) =>
+      (_params: Record<string, unknown>): Behavior => ({
+        tick: (elapsed, entity) => {
+          const x = startPos.x + moveDir.x * elapsed;
+          const y = startPos.y + moveDir.y * elapsed;
+          const z = startPos.z + moveDir.z * elapsed;
+          if (despawnCheck(entity.object.position)) {
+            return 'remove';
+          }
+          entity.setPosition(x, y, z);
+        },
+      });
+
     for (const slider of sliders) {
       slider.removeFromParent();
-      fpCtx.removeCollisionObject(slider.userData.rigidBody as BtRigidBody);
 
-      rt.registerOnStartCb(() => {
-        rt.schedulePeriodic(
-          (invokeTimeSeconds: number) => {
-            const sliderClone = slider.clone();
-            viz.scene.add(sliderClone);
-            fpCtx.addTriMesh(sliderClone);
-
-            const startPos = slider.position.clone();
-            const moveDir = new THREE.Vector3(0, 0, 15.8);
-            makeSlider(rt, sliderClone, {
-              getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
-                startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
-              despawnCond: (mesh, _curTimeSeconds) => mesh.position.z > 279,
-              spawnTimeSeconds: invokeTimeSeconds,
-            });
+      const startPos = slider.position.clone();
+      rt.registerSpawner(slider.name, slider, {
+        interval: 0.7,
+        initialDelay: 0.1,
+        behaviors: [
+          {
+            fn: makeLinearSlideBehavior(startPos, new THREE.Vector3(0, 0, 15.8), pos => pos.z > 279),
+            params: {},
           },
-          0.1,
-          0.7
-        );
+        ],
       });
     }
 
     for (const slider of sideSliders) {
       slider.removeFromParent();
-      fpCtx.removeCollisionObject(slider.userData.rigidBody as BtRigidBody);
 
-      rt.registerOnStartCb(() => {
-        rt.schedulePeriodic(
-          (invokeTimeSeconds: number) => {
-            const sliderClone = slider.clone();
-            viz.scene.add(sliderClone);
-            fpCtx.addTriMesh(sliderClone);
-
-            const startPos = slider.position.clone();
-            const moveDir = new THREE.Vector3(14, 0, 0);
-            makeSlider(rt, sliderClone, {
-              getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
-                startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
-              despawnCond: (mesh, _curTimeSeconds) => mesh.position.x > -165,
-              spawnTimeSeconds: invokeTimeSeconds,
-            });
+      const startPos = slider.position.clone();
+      rt.registerSpawner(slider.name, slider, {
+        interval: 0.7,
+        initialDelay: 0,
+        behaviors: [
+          {
+            fn: makeLinearSlideBehavior(startPos, new THREE.Vector3(14, 0, 0), pos => pos.x > -165),
+            params: {},
           },
-          0,
-          0.7
-        );
+        ],
       });
     }
 
     for (const slider of threeSliders) {
       slider.removeFromParent();
-      fpCtx.removeCollisionObject(slider.userData.rigidBody as BtRigidBody);
 
-      rt.registerOnStartCb(() => {
-        rt.schedulePeriodic(
-          (invokeTimeSeconds: number) => {
-            const sliderClone = slider.clone();
-            viz.scene.add(sliderClone);
-            fpCtx.addTriMesh(sliderClone);
-
-            const startPos = slider.position.clone();
-            const moveDir = new THREE.Vector3(-14, 0, 0);
-            makeSlider(rt, sliderClone, {
-              getPos: (_curTimeSeconds: number, secondsSinceSpawn: number) =>
-                startPos.clone().add(moveDir.clone().multiplyScalar(secondsSinceSpawn)),
-              despawnCond: (mesh, _curTimeSeconds) => mesh.position.x < -209,
-              spawnTimeSeconds: invokeTimeSeconds,
-            });
+      const startPos = slider.position.clone();
+      rt.registerSpawner(slider.name, slider, {
+        interval: 0.7,
+        initialDelay: 0,
+        behaviors: [
+          {
+            fn: makeLinearSlideBehavior(startPos, new THREE.Vector3(-14, 0, 0), pos => pos.x < -209),
+            params: {},
           },
-          0,
-          0.7
-        );
+        ],
       });
     }
   });

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
 
-type CollisionRemover = Pick<BulletPhysics, 'removeCollisionObject'>;
+type PhysicsBindingCtx = Pick<BulletPhysics, 'removeCollisionObject' | 'getEntity'>;
 
 export const withPhysicsContext = (
   viz: Pick<Viz, 'fpCtx' | 'collisionWorldLoadedCbs'>,
@@ -18,12 +18,12 @@ export const withPhysicsContext = (
 
 export const clearPhysicsBinding = (
   object: THREE.Object3D,
-  fpCtx: CollisionRemover,
+  fpCtx: PhysicsBindingCtx,
   meshName: string = object.name
 ) => {
-  if (object.userData.rigidBody) {
-    fpCtx.removeCollisionObject(object.userData.rigidBody, meshName);
-    object.userData.rigidBody = undefined;
+  const entity = fpCtx.getEntity(object);
+  if (entity?.body) {
+    fpCtx.removeCollisionObject(entity.body, meshName);
     return true;
   }
 
@@ -38,7 +38,7 @@ export const clearPhysicsBinding = (
 
 export const clearPhysicsBindings = (
   object: THREE.Object3D,
-  fpCtx: CollisionRemover,
+  fpCtx: PhysicsBindingCtx,
   opts: { meshesOnly?: boolean } = {}
 ) => {
   object.traverse(child => {

@@ -120,14 +120,12 @@ export class CsgAssetResolver {
       return;
     }
 
-    const newPrototype =
-      meshes.length === 1
-        ? (meshes[0] as THREE.Object3D)
-        : (() => {
-            const g = new THREE.Group();
-            meshes.forEach(m => g.add(m));
-            return g;
-          })();
+    if (meshes.length > 1) {
+      throw new Error(
+        `[CsgAssetResolver] CSG asset "${assetId}" produced ${meshes.length} meshes; leaf objects must resolve to a single mesh`
+      );
+    }
+    const newPrototype: THREE.Mesh = meshes[0];
 
     this.editor.prototypes.set(assetId, newPrototype);
 

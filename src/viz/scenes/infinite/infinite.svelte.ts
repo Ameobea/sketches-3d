@@ -9,6 +9,7 @@ import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
 import type { InfiniteConfig } from 'src/viz/util/util';
 import InfiniteEndSvelte from 'src/viz/EndScreens/InfiniteEnd.svelte';
 import type { BulletPhysics } from 'src/viz/collision';
+import { clearPhysicsBinding } from 'src/viz/util/physics';
 
 const locations = {
   spawn: {
@@ -77,7 +78,7 @@ const initLevel = async (viz: Viz) => {
         currentConfig.varyingGaps
       );
       squares[oldestSquareIdx].position.set(destPoint.x, destPoint.y, destPoint.z);
-      fpCtx.removeCollisionObject(squares[oldestSquareIdx].userData.rigidBody);
+      clearPhysicsBinding(squares[oldestSquareIdx], fpCtx);
       fpCtx.addTriMesh(squares[oldestSquareIdx]);
       squares[oldestSquareIdx].material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
       squares[newestSquareIdx].material = new THREE.MeshBasicMaterial({ color: 0xadd8e6 });

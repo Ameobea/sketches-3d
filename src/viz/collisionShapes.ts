@@ -324,7 +324,9 @@ export const buildCollisionShapeFromMesh = (
   Ammo: AmmoInterface,
   btvec3: (x: number, y: number, z: number) => BtVec3,
   mesh: THREE.Mesh,
-  extraScale?: THREE.Vector3
+  extraScale?: THREE.Vector3,
+  /** Forces a convex-hull shape regardless of `mesh.userData.convexhull`. */
+  forceConvexHull: boolean = false
 ): CollisionShapeBuildResult => {
   if (mesh.geometry instanceof THREE.BoxGeometry) {
     const halfExtents = btvec3(
@@ -355,9 +357,11 @@ export const buildCollisionShapeFromMesh = (
     scale = scale.multiply(extraScale);
   }
 
+  const useConvexHull = forceConvexHull || !!mesh.userData.convexhull;
+
   // Detect boxes from raw vertex data (catches GLTF-imported cubes, scaled boxes, and
   // boxes with baked-in rotations that don't use THREE.BoxGeometry)
-  if (!mesh.userData.convexhull && !mesh.userData.convexHull) {
+  if (!useConvexHull) {
     const boxResult = tryDetectBoxFromVertices(vertices, indices, scale);
     if (boxResult) {
       const shape = new Ammo.btBoxShape(
@@ -377,7 +381,7 @@ export const buildCollisionShapeFromMesh = (
     }
   }
 
-  if (mesh.userData.convexhull || mesh.userData.convexHull) {
+  if (useConvexHull) {
     return { shape: buildConvexHullShape(Ammo, btvec3, indices, vertices, scale) };
   }
   const buildResult = buildTrimeshShape(Ammo, indices, vertices, scale);

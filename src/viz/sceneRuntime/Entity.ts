@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 
 import type { BtQuaternion, BtRigidBody, BtTransform, BtVec3 } from 'src/ammojs/ammoTypes';
+import type { Viz } from 'src/viz';
+import type { MaterialClass } from '../shaders/customShader.types';
 import type { Behavior, BehaviorHandle } from './types';
 
 interface BehaviorEntry {
@@ -9,19 +11,45 @@ interface BehaviorEntry {
   removed: boolean;
 }
 
+let nextNumericId = 1;
+
 /**
- * An entity is a scene object with attached behaviors.  It bundles the Three.js
- * object, an optional Bullet rigid body, and a base transform so that behavior
- * logic can work in local (offset) space while the entity lives at an arbitrary
- * position in the scene.
+ * An entity is a scene object with attached state (a single physics body,
+ * material class, optional behaviors).  It is the unified owner of
+ * per-collidable metadata in the runtime: landing SFX, camera-barrier flags,
+ * custom surface triggers, and behavior lifecycle all live here.
+ *
+ * **Invariant:** one entity = one leaf mesh = at most one rigid body.
+ *
+ * Entity creation is decoupled from physics readiness: an Entity can exist
+ * before the collision world is up.  The body is attached later via
+ * {@link _setBody} (called from `addTriMesh` / `addCollisionObject`), at
+ * which point `numericId` gets reflected into the Ammo user index so the
+ * player-land path can map back.
  */
 export class Entity {
   public readonly id: string;
-  public readonly object: THREE.Object3D;
-  public body: BtRigidBody | null;
+  /**
+   * Per-process unique integer.  Stored in the Ammo `btRigidBody` user index
+   * so that collision events (player landing on a surface) can map the contact
+   * back to the owning Entity.
+   */
+  public readonly numericId: number;
+  public object: THREE.Mesh;
+  public body: BtRigidBody | null = null;
   /** The original placement transform from the level def. */
   public readonly baseTransform: THREE.Matrix4;
+  public materialClass: MaterialClass | undefined = undefined;
+  /**
+   * Object-level override for the camera "non-permeable" barrier flag.  `undefined`
+   * means "defer to the assigned material's `userData.nonPermeable`".  An explicit
+   * `true`/`false` on the entity wins over the material default.
+   */
+  public nonPermeable: boolean | undefined = undefined;
+  /** If true, physics registration builds a convex-hull shape instead of a trimesh. */
+  public isConvexHull: boolean = false;
 
+  private viz: Viz;
   private behaviors: BehaviorEntry[] = [];
   private nextBehaviorId = 0;
 
@@ -35,15 +63,46 @@ export class Entity {
   /** @internal */ _btvec3: ((x: number, y: number, z: number) => BtVec3) | null = null;
   /** @internal */ _btQuat: BtQuaternion | null = null;
 
-  constructor(id: string, object: THREE.Object3D, body: BtRigidBody | null = null) {
+  constructor(viz: Viz, id: string, object: THREE.Mesh) {
+    this.viz = viz;
     this.id = id;
+    this.numericId = nextNumericId++;
     this.object = object;
-    this.body = body;
 
     // Capture the initial world-space transform as the base
     this.baseTransform = new THREE.Matrix4();
     object.updateWorldMatrix(true, false);
     this.baseTransform.copy(object.matrixWorld);
+  }
+
+  /** @internal Called by BulletPhysics when a body is registered for this entity. */
+  _setBody(body: BtRigidBody): void {
+    if (this.body !== null) {
+      throw new Error(`Entity "${this.id}": _setBody called but entity already has a body`);
+    }
+    this.body = body;
+  }
+
+  /** @internal Called by BulletPhysics when the body is removed from this entity. */
+  _clearBody(): void {
+    if (this.body === null) {
+      throw new Error(`Entity "${this.id}": _clearBody called but entity has no body`);
+    }
+    this.body = null;
+  }
+
+  /**
+   * Set the entity's material class.  Safe to call multiple times; the SFX
+   * lazy-load is announced exactly once per entity.  A caller may upgrade
+   * `undefined` → a real class (for levelDef materials that finish loading
+   * after physics registration), but cannot change an already-set class.
+   */
+  setMaterialClass(mc: MaterialClass): void {
+    if (this.materialClass !== undefined) {
+      return;
+    }
+    this.materialClass = mc;
+    this.viz.sfxManager.onMaterialClassPresent(mc);
   }
 
   addBehavior(behavior: Behavior): BehaviorHandle {
@@ -66,7 +125,7 @@ export class Entity {
 
   /**
    * Set the entity's world-space transform, updating both the Three.js object
-   * and the Bullet rigid body (if present).
+   * and the attached Bullet rigid body (if any).
    */
   setTransform(matrix: THREE.Matrix4): void {
     matrix.decompose(this._pos, this._quat, this._scale);
@@ -75,14 +134,15 @@ export class Entity {
     this.object.quaternion.copy(this._quat);
     this.object.scale.copy(this._scale);
 
-    if (this.body && this._btTransform && this._btvec3) {
-      this._btTransform.setOrigin(this._btvec3(this._pos.x, this._pos.y, this._pos.z));
-      if (this._btQuat) {
-        this._btQuat.setValue(this._quat.x, this._quat.y, this._quat.z, this._quat.w);
-        this._btTransform.setRotation(this._btQuat);
-      }
-      this.body.setWorldTransform(this._btTransform);
+    if (!this.body || !this._btTransform || !this._btvec3) {
+      return;
     }
+    this._btTransform.setOrigin(this._btvec3(this._pos.x, this._pos.y, this._pos.z));
+    if (this._btQuat) {
+      this._btQuat.setValue(this._quat.x, this._quat.y, this._quat.z, this._quat.w);
+      this._btTransform.setRotation(this._btQuat);
+    }
+    this.body.setWorldTransform(this._btTransform);
   }
 
   /**
@@ -91,10 +151,11 @@ export class Entity {
   setPosition(x: number, y: number, z: number): void {
     this.object.position.set(x, y, z);
 
-    if (this.body && this._btTransform && this._btvec3) {
-      this._btTransform.setOrigin(this._btvec3(x, y, z));
-      this.body.setWorldTransform(this._btTransform);
+    if (!this.body || !this._btTransform || !this._btvec3) {
+      return;
     }
+    this._btTransform.setOrigin(this._btvec3(x, y, z));
+    this.body.setWorldTransform(this._btTransform);
   }
 
   /** @internal Called by SceneRuntime each physics tick with relative elapsed time. */

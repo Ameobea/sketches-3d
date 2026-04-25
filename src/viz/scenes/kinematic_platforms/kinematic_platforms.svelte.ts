@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import type { BtRigidBody } from 'src/ammojs/ammoTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { BulletHellManager, type BulletHellEvent } from 'src/viz/bulletHell/BulletHellManager';
@@ -37,7 +36,7 @@ const initLevel = async (viz: Viz) => {
   const btTransform = new fpCtx.Ammo.btTransform();
   const btQuat = new fpCtx.Ammo.btQuaternion(0, 0, 0, 1);
   btTransform.setIdentity();
-  const rigidBody = kinematicCube.userData.rigidBody as BtRigidBody;
+  const rigidBody = fpCtx.getEntity(kinematicCube)!.body!;
   const scratchEuler = new THREE.Euler();
   const scratchQuat = new THREE.Quaternion();
   const initialPhysicsTime = fpCtx.getPhysicsTime();

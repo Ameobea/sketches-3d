@@ -1,16 +1,19 @@
 import * as THREE from 'three';
 
+import type { Viz } from 'src/viz';
 import type { ObjectDef, ObjectGroupDef } from './types';
 import type { LevelObject, LevelGroup } from './levelSceneTypes';
 import { isObjectGroup } from './levelDefTreeUtils';
 import { LEVEL_PLACEHOLDER_MAT, applyTransform, instantiateLevelObject } from './levelObjectUtils';
+import { Entity } from '../sceneRuntime/Entity';
 
 /**
  * Minimal context required to build runtime nodes from defs.
  * LevelEditor satisfies this interface structurally.
  */
 export interface BuildCtx {
-  prototypes: Map<string, THREE.Object3D>;
+  viz: Viz;
+  prototypes: Map<string, THREE.Mesh>;
   builtMaterials: Map<string, THREE.Material>;
 }
 
@@ -24,7 +27,14 @@ export function buildLeafNode(ctx: BuildCtx, assetId: string, def: ObjectDef): L
     builtMaterials: ctx.builtMaterials,
     fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
   });
-  return { id: def.id, assetId, object: clone, def, generated: false };
+  const entity = new Entity(ctx.viz, def.id, clone);
+  if (def.nonPermeable !== undefined) {
+    entity.nonPermeable = def.nonPermeable;
+  }
+  if (def.colliderShape !== undefined) {
+    entity.isConvexHull = def.colliderShape === 'convexHull';
+  }
+  return { id: def.id, assetId, object: clone, def, generated: false, entity };
 }
 
 /**

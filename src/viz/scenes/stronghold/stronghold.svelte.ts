@@ -4,7 +4,7 @@ import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { ParkourManager, type ParkourMaterials } from 'src/viz/parkour/ParkourManager.svelte';
-import { makeSlider } from 'src/viz/sceneRuntime/legacyHelpers';
+import { clearPhysicsBinding } from 'src/viz/util/physics';
 import { buildPylonsMaterials, ShinyPatchworkStoneTextures } from 'src/viz/parkour/regions/pylons/materials';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { initPylonsPostprocessing } from '../pkPylons/postprocessing';
@@ -38,6 +38,7 @@ const makeRotatingPlatforms = (
   adjustPos?: (basePos: THREE.Vector3, secondsSinceSpawn: number, entityIx: number) => THREE.Vector3
 ) => {
   const rt = pkMgr.runtime;
+  const fpCtx = viz.fpCtx!;
 
   // platforms rotate around the center point in a square, repeating their motion infinitely
   const circumference = radius * 2 * 4;
@@ -67,16 +68,20 @@ const makeRotatingPlatforms = (
     const mesh = baseMesh.clone();
     mesh.position.copy(getPos(startPhase, 0));
     viz.scene.add(mesh);
-    makeSlider(rt, mesh, {
-      getPos: (curTimeSeconds: number, secondsSinceSpawn: number) => {
-        const basePos = getPos(startPhase, secondsSinceSpawn);
-        if (adjustPos) {
-          return adjustPos(basePos, secondsSinceSpawn, i);
-        } else {
-          return basePos;
-        }
+
+    const body = fpCtx.addTriMesh(mesh, 'kinematic');
+    if (!body) {
+      throw new Error(`makeRotatingPlatforms: addTriMesh failed for platform ${i}`);
+    }
+
+    const entity = fpCtx.getEntity(mesh)!;
+    rt.adoptEntity(entity);
+    entity.addBehavior({
+      tick: elapsed => {
+        const basePos = getPos(startPhase, elapsed);
+        const pos = adjustPos ? adjustPos(basePos, elapsed, i) : basePos;
+        entity.setPosition(pos.x, pos.y, pos.z);
       },
-      removeOnReset: false,
     });
   }
 };
@@ -100,23 +105,22 @@ const setupScene = async (
   pkManager.setMaterials(pkMaterials);
 
   const cb = () => {
+    const fpCtx = viz.fpCtx!;
+
     const plat1 = loadedWorld.getObjectByName('plat1') as THREE.Mesh;
-    viz.fpCtx!.removeCollisionObject(plat1.userData.rigidBody, 'plat1');
-    delete plat1.userData.rigidBody;
+    clearPhysicsBinding(plat1, fpCtx);
 
     const plat2 = plat1.clone();
     plat2.scale.set(0.84, 0.84, 0.84);
 
     const blocker = loadedWorld.getObjectByName('blocker') as THREE.Mesh;
-    viz.fpCtx!.removeCollisionObject(blocker.userData.rigidBody, 'blocker');
-    delete blocker.userData.rigidBody;
+    clearPhysicsBinding(blocker, fpCtx);
     blocker.removeFromParent();
 
     const blockerInterior = loadedWorld.getObjectByName('blocker_interior') as THREE.Mesh;
     viz.registerBeforeRenderCb(curTimeSeconds => blockerInteriorMaterial.setCurTimeSeconds(curTimeSeconds));
     blockerInterior.material = blockerInteriorMaterial;
-    viz.fpCtx!.removeCollisionObject(blockerInterior.userData.rigidBody, 'blocker_interior');
-    delete blockerInterior.userData.rigidBody;
+    clearPhysicsBinding(blockerInterior, fpCtx);
     blockerInterior.removeFromParent();
 
     const platSpeed = 2.8;

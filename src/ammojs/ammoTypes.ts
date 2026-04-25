@@ -167,6 +167,7 @@ export interface BtCollisionObject {
 
 export interface BtRigidBody extends BtCollisionObject {
   setCollisionFlags(flags: number): void;
+  getUserIndex(): number;
   setUserIndex(index: number): void;
   setUserIndex2(index: number): void;
   getMotionState(): BtMotionState | undefined | null;

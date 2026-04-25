@@ -1,19 +1,28 @@
 import type * as THREE from 'three';
 
+import type { Entity } from '../sceneRuntime/Entity';
 import type { LightDef, ObjectDef, ObjectGroupDef } from './types';
 
 export interface LevelObject {
   id: string;
   assetId: string;
   /**
-   * The placed Three.js object. Will be a THREE.Mesh for single-mesh assets
-   * (gltf or single-output geoscript) or a THREE.Group for multi-mesh geoscript output.
-   * Use `.traverse()` to reach individual meshes for material assignment.
+   * The placed Three.js mesh.
+   *
+   * **Invariant:** a leaf object always resolves to a single `THREE.Mesh`.
+   * Multi-mesh content must be represented as explicit groups of leaf objects.
    */
-  object: THREE.Object3D;
+  object: THREE.Mesh;
   def: ObjectDef;
   /** True when this object was produced by a generator (read-only in the editor). */
   generated: boolean;
+  /**
+   * The entity wrapping this LevelObject.  Owns at most one collision body,
+   * material class, and behavior attachments.  Created at placement time
+   * (possibly before physics is ready); the body is attached later when
+   * physics registers.
+   */
+  entity: Entity;
 }
 
 export interface LevelGroup {

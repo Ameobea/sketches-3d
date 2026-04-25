@@ -13,9 +13,9 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import {
   SkyStack,
   HorizonMode,
-  starsLayer,
+  // starsLayer,
   // cloudsLayer,
-  buildingsLayer,
+  // buildingsLayer,
   // groundLayer,
   voxelGroundLayer,
   gradientBackground,

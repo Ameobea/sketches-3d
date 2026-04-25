@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
-import type { BtRigidBody } from 'src/ammojs/ammoTypes';
-import { Scheduler, type SchedulerHandle } from '../bulletHell/Scheduler';
-import { getAmmoJS, type PhysicsTicker, type PhysicsTickerHandle } from '../collision';
+import { getAmmoJS, type PhysicsTickerHandle } from '../collision';
+import { clearPhysicsBinding } from '../util/physics';
 import { withWorldSpaceTransform } from '../util/three';
 import { Entity } from './Entity';
 import type { Behavior, BehaviorFn } from './types';
@@ -39,14 +38,9 @@ export class SceneRuntime {
   private entities: Entity[] = [];
   private entityById = new Map<string, Entity>();
   private entityEpochs = new Map<Entity, number>();
-  private scheduler: Scheduler = new Scheduler();
-  private pendingPhysicsActions: (() => void)[] = [];
   private pendingRemovals: Entity[] = [];
   private isTicking = false;
-  private physicsTickerHandles: PhysicsTickerHandle[] = [];
   private managerTickerHandle: PhysicsTickerHandle | null = null;
-  private onStartCbs: (() => void)[] = [];
-  private didStart = false;
   private fpCtxRef: PhysicsContext | null = null;
   private spawners: SpawnerState[] = [];
 
@@ -67,12 +61,6 @@ export class SceneRuntime {
 
       this.managerTickerHandle = fpCtx.registerPhysicsTicker({
         tick: (physicsTime: number) => {
-          this.flushPendingPhysicsActions();
-          if (!this.didStart) {
-            this.didStart = true;
-            this.runOnStartCbs();
-          }
-          this.scheduler.tick(physicsTime);
           this.tickSpawners(physicsTime);
           this.tickEntities(physicsTime);
           this.flushPendingRemovals();
@@ -90,18 +78,37 @@ export class SceneRuntime {
 
   // --- Entity management ---
 
-  createEntity(id: string, object: THREE.Object3D, body?: BtRigidBody): Entity {
-    const entity = new Entity(id, object, body ?? null);
+  /**
+   * Create a new Entity and attach it to this runtime for behavior ticking and
+   * lifecycle management.
+   */
+  createEntity(id: string, object: THREE.Mesh): Entity {
+    const entity = new Entity(this.viz, id, object);
+    this.attachEntity(entity);
+    return entity;
+  }
+
+  /**
+   * Take ownership of an entity that was created outside this runtime (e.g. by
+   * {@link BulletPhysics} during level-def physics registration) so its behaviors
+   * tick and its lifecycle callbacks fire.
+   */
+  adoptEntity(entity: Entity): Entity {
+    if (this.entityById.has(entity.id)) {
+      return entity;
+    }
+    this.attachEntity(entity);
+    return entity;
+  }
+
+  private attachEntity(entity: Entity): void {
     this.entityEpochs.set(entity, this.fpCtxRef?.getPhysicsTime() ?? 0);
     this.entities.push(entity);
-    this.entityById.set(id, entity);
+    this.entityById.set(entity.id, entity);
 
-    // Set up Ammo helpers if physics is already ready
     if (this.fpCtxRef) {
       this.initEntityPhysicsHelpers(entity, this.fpCtxRef);
     }
-
-    return entity;
   }
 
   removeEntity(entity: Entity): void {
@@ -129,10 +136,9 @@ export class SceneRuntime {
     // Remove from scene
     entity.object.parent?.remove(entity.object);
 
-    // Remove physics body
-    if (entity.body && this.fpCtxRef) {
+    // Remove the entity's physics body if it has one.
+    if (this.fpCtxRef && entity.body) {
       this.fpCtxRef.removeCollisionObject(entity.body);
-      entity.body = null;
     }
 
     const ix = this.entities.indexOf(entity);
@@ -172,16 +178,13 @@ export class SceneRuntime {
       throw new Error('SceneRuntime: physics not ready when registering spawner');
     }
 
-    // Hide the template and remove its physics.
-    // Clear stale userData references so clones don't inherit dead rigid bodies.
+    if (!(templateObj instanceof THREE.Mesh)) {
+      throw new Error(`registerSpawner "${templateId}": template must be a Mesh, got ${templateObj.type}`);
+    }
+
+    // Hide the template and remove its physics so clones start fresh.
     templateObj.visible = false;
-    templateObj.traverse(child => {
-      if (child instanceof THREE.Mesh && child.userData.rigidBody) {
-        fpCtx.removeCollisionObject(child.userData.rigidBody);
-        delete child.userData.rigidBody;
-        delete child.userData.collisionObj;
-      }
-    });
+    clearPhysicsBinding(templateObj, fpCtx);
 
     const currentTime = fpCtx.getPhysicsTime();
     const state: SpawnerState = {
@@ -207,27 +210,14 @@ export class SceneRuntime {
   private spawnClone(state: SpawnerState): void {
     const fpCtx = this.fpCtxRef!;
 
-    const clone = state.templateObj.clone();
+    const clone = state.templateObj.clone() as THREE.Mesh;
     clone.visible = true;
     const parent = state.templateObj.parent ?? this.viz.scene;
     parent.add(clone);
 
-    // Register kinematic physics for the clone
-    let cloneBody: BtRigidBody | undefined;
-    clone.traverse(child => {
-      if (child instanceof THREE.Mesh) {
-        withWorldSpaceTransform(child, mesh => fpCtx.addTriMesh(mesh, 'kinematic'));
-        if (!cloneBody && child.userData.rigidBody) {
-          cloneBody = child.userData.rigidBody;
-        }
-      }
-    });
+    const cloneEntity = this.createEntity(`${state.templateId}__clone_${state.cloneCounter++}`, clone);
+    withWorldSpaceTransform(clone, mesh => fpCtx.addTriMesh(mesh, 'kinematic', cloneEntity));
 
-    const cloneEntity = this.createEntity(
-      `${state.templateId}__clone_${state.cloneCounter++}`,
-      clone,
-      cloneBody
-    );
     state.clones.push(cloneEntity);
 
     // Attach behaviors; wrap them to handle despawn (tick returning 'remove')
@@ -268,42 +258,7 @@ export class SceneRuntime {
 
   // --- Physics ticker management (for non-entity tickers) ---
 
-  registerTicker(
-    ticker: PhysicsTicker,
-    opts?: { mesh?: THREE.Object3D; body?: BtRigidBody }
-  ): PhysicsTickerHandle {
-    if (!this.fpCtxRef) {
-      throw new Error('SceneRuntime: physics not ready');
-    }
-    const handle = this.fpCtxRef.registerPhysicsTicker(ticker, opts);
-    this.physicsTickerHandles.push(handle);
-    return handle;
-  }
-
-  unregisterTicker(handle: PhysicsTickerHandle): void {
-    handle.unregister();
-    const ix = this.physicsTickerHandles.indexOf(handle);
-    if (ix !== -1) {
-      this.physicsTickerHandles[ix] = this.physicsTickerHandles[this.physicsTickerHandles.length - 1];
-      this.physicsTickerHandles.pop();
-    }
-  }
-
-  // --- Scheduling ---
-
-  schedulePeriodic(
-    callback: (invokeTimeSeconds: number) => void,
-    initialTimeSeconds: number,
-    intervalSeconds: number
-  ): SchedulerHandle {
-    return this.scheduler.schedule(callback, initialTimeSeconds, intervalSeconds);
-  }
-
   // --- Lifecycle ---
-
-  registerOnStartCb(cb: () => void): void {
-    this.onStartCbs.push(cb);
-  }
 
   registerResetCb(cb: () => void): void {
     this.resetCbs.push(cb);
@@ -313,14 +268,7 @@ export class SceneRuntime {
     this.destroyCbs.push(cb);
   }
 
-  queuePhysicsAction(cb: () => void): void {
-    this.pendingPhysicsActions.push(cb);
-  }
-
   reset(): void {
-    this.flushPendingPhysicsActions();
-    this.unregisterAllTickers();
-
     // Remove all spawner clones and reset spawn timing
     const currentTime = this.fpCtxRef?.getPhysicsTime() ?? 0;
     for (const state of this.spawners) {
@@ -339,15 +287,9 @@ export class SceneRuntime {
     for (const cb of this.resetCbs) {
       cb();
     }
-
-    this.scheduler.clear();
-    this.didStart = false;
-    this.runOnStartCbs();
   }
 
   destroy(): void {
-    this.flushPendingPhysicsActions();
-    this.unregisterAllTickers();
     this.managerTickerHandle?.unregister();
     this.managerTickerHandle = null;
 
@@ -390,26 +332,6 @@ export class SceneRuntime {
     this.isTicking = false;
   }
 
-  private flushPendingPhysicsActions(): void {
-    while (this.pendingPhysicsActions.length > 0) {
-      const cb = this.pendingPhysicsActions.shift();
-      cb?.();
-    }
-  }
-
-  private unregisterAllTickers(): void {
-    for (const handle of this.physicsTickerHandles) {
-      handle.unregister();
-    }
-    this.physicsTickerHandles = [];
-  }
-
-  private runOnStartCbs(): void {
-    for (const cb of this.onStartCbs) {
-      cb();
-    }
-  }
-
   /** Initialize Ammo helpers for all entities that don't have them yet. */
   private initializeEntityPhysics(fpCtx: PhysicsContext): void {
     for (const entity of this.entities) {
@@ -421,14 +343,13 @@ export class SceneRuntime {
 
   /** Set up the Ammo btTransform and helpers on a single entity. */
   private initEntityPhysicsHelpers(entity: Entity, fpCtx: PhysicsContext): void {
-    if (entity.body) {
-      const tfn = new fpCtx.Ammo.btTransform();
-      tfn.setIdentity();
-      entity._btTransform = tfn;
-      entity._btvec3 = fpCtx.btvec3;
-
-      const quat = new fpCtx.Ammo.btQuaternion(0, 0, 0, 1);
-      entity._btQuat = quat;
+    if (entity._btTransform) {
+      return;
     }
+    const tfn = new fpCtx.Ammo.btTransform();
+    tfn.setIdentity();
+    entity._btTransform = tfn;
+    entity._btvec3 = fpCtx.btvec3;
+    entity._btQuat = new fpCtx.Ammo.btQuaternion(0, 0, 0, 1);
   }
 }

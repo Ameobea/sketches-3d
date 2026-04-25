@@ -29,7 +29,7 @@ export interface ReplaceLeafOptions {
 export function replaceLeafInstance(
   ctx: StructuralCtx,
   levelObj: LevelObject,
-  nextObject: THREE.Object3D,
+  nextObject: THREE.Mesh,
   opts?: ReplaceLeafOptions
 ): void {
   if (!opts?.skipMeshRegistration) {

@@ -23,6 +23,7 @@ import type { SceneConfig } from './scenes/index.js';
 import { CameraController } from './cameraController.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
+import { Entity } from './sceneRuntime/Entity';
 import {
   DefaultGravity,
   DefaultJumpSpeed,
@@ -125,10 +126,6 @@ export type AddPlayerRegionContactCB = (
   minPenetrationDepth?: number
 ) => BtPairCachingGhostObject;
 
-interface CollisionObjectRef {
-  materialClass?: MaterialClass;
-}
-
 interface ZoneCallbacks {
   onEnter?: () => void;
   onLeave?: () => void;
@@ -202,8 +199,16 @@ export class BulletPhysics {
   private dashCbs: ((curTimeSeconds: number) => void)[] = [];
   private isWalking = false;
   public simulationTickRate: number;
-  private nextCollisionObjectRefId = 0;
-  private collisionObjectRefs: Map<number, CollisionObjectRef> = new Map();
+  /**
+   * Maps Ammo `btRigidBody` user indices (assigned from {@link Entity.numericId}) back to
+   * the owning Entity.  Populated on `addTriMesh` / `addCollisionObject` when an Entity
+   * is supplied; entries are evicted from {@link removeCollisionObject} when the last
+   * body owned by an Entity goes away.
+   */
+  private entitiesByUserIndex: Map<number, Entity> = new Map();
+  /** Mesh → owning Entity, so legacy mesh-only callers can resolve via {@link getEntity}. */
+  private entityByObject: WeakMap<THREE.Object3D, Entity> = new WeakMap();
+  private nextAnonEntityCounter = 0;
   private nextZoneId = 1;
   private zoneCallbacks: Map<number, ZoneCallbacks> = new Map();
   private sensorEntries: SensorEntry[] = [];
@@ -808,8 +813,8 @@ export class BulletPhysics {
     const nowOnGround = this.playerController.onGround();
     if (!prevOnGround && nowOnGround) {
       const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
-      const landedOnObject = this.collisionObjectRefs.get(landedOnObjectIx);
-      const materialClass = landedOnObject?.materialClass ?? MaterialClass.Default;
+      const landedEntity = this.entitiesByUserIndex.get(landedOnObjectIx);
+      const materialClass = landedEntity?.materialClass ?? MaterialClass.Default;
       this.viz.sfxManager.onPlayerLand(materialClass);
     }
 
@@ -1111,7 +1116,7 @@ export class BulletPhysics {
     buildResult: CollisionShapeBuildResult,
     pos: THREE.Vector3,
     quat: THREE.Quaternion = new THREE.Quaternion(),
-    objRef?: CollisionObjectRef,
+    entity?: Entity,
     colliderType: 'static' | 'kinematic' = 'static'
   ) => {
     const { shape } = buildResult;
@@ -1135,10 +1140,10 @@ export class BulletPhysics {
         throw new Error(`Unknown collider type: ${colliderType}. Expected 'static' or 'kinematic'.`);
     }
 
-    if (objRef) {
-      const refIx = this.nextCollisionObjectRefId++;
-      body.setUserIndex(refIx);
-      this.collisionObjectRefs.set(refIx, objRef);
+    if (entity) {
+      body.setUserIndex(entity.numericId);
+      this.entitiesByUserIndex.set(entity.numericId, entity);
+      entity._setBody(body);
     }
     this.collisionWorld.addRigidBody(body);
     this.registerCollisionShapeCleanup(body, buildResult);
@@ -1146,6 +1151,30 @@ export class BulletPhysics {
     this.Ammo.destroy(rbInfo);
     this.Ammo.destroy(transform);
     return body;
+  };
+
+  /**
+   * Create a fresh Entity owned by this physics world.  The Entity's numeric id is
+   * unique per process; it will be stored in the Ammo user index of any rigid body
+   * attached to this entity, so that collision events map back to it.
+   */
+  public createEntity = (id: string, object: THREE.Mesh): Entity => {
+    return new Entity(this.viz, id, object);
+  };
+
+  /**
+   * Resolve the Entity that owns the given Three.js object, if any.  Returns the
+   * entity that was passed into (or implicitly created by) the `addTriMesh` call
+   * that registered this object.  Used by legacy callers that only hold the mesh.
+   */
+  public getEntity = (object: THREE.Object3D): Entity | undefined => this.entityByObject.get(object);
+
+  /**
+   * Create an anonymous Entity for legacy `addTriMesh` call sites that don't
+   * carry their own Entity (e.g. pre-levelDef scenes that just hand us a mesh).
+   */
+  private createAnonymousEntity = (object: THREE.Mesh): Entity => {
+    return this.createEntity(`__anon_${this.nextAnonEntityCounter++}`, object);
   };
 
   /**
@@ -1158,7 +1187,18 @@ export class BulletPhysics {
     this.collisionWorld.removeCollisionObject(collisionObj);
 
     const rigidBody = this.Ammo.btRigidBody.prototype.upcast(collisionObj);
-    if (rigidBody) {
+    if (rigidBody && typeof rigidBody.getUserIndex === 'function') {
+      // Detach from owning entity and drop the user-index mapping.
+      const userIx = rigidBody.getUserIndex();
+      if (userIx !== 0) {
+        const entity = this.entitiesByUserIndex.get(userIx);
+        if (entity) {
+          entity._clearBody();
+          this.entitiesByUserIndex.delete(userIx);
+          this.entityByObject.delete(entity.object);
+        }
+      }
+
       const motionState = rigidBody.getMotionState();
       if (motionState) {
         try {
@@ -1176,8 +1216,10 @@ export class BulletPhysics {
 
   private buildCollisionShapeFromMesh = (
     mesh: THREE.Mesh,
-    extraScale?: THREE.Vector3
-  ): CollisionShapeBuildResult => buildCollisionShapeFromMesh(this.Ammo, this.btvec3, mesh, extraScale);
+    extraScale?: THREE.Vector3,
+    forceConvexHull: boolean = false
+  ): CollisionShapeBuildResult =>
+    buildCollisionShapeFromMesh(this.Ammo, this.btvec3, mesh, extraScale, forceConvexHull);
 
   /** Creates a btTransform from a position and optional quaternion.  Caller must destroy it. */
   private makeBtTransform = (pos: THREE.Vector3, quat?: THREE.Quaternion) => {
@@ -1210,9 +1252,27 @@ export class BulletPhysics {
     this.playerController.setOnGround(false);
   };
 
-  public addTriMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
+  /**
+   * Register a mesh for collision.
+   *
+   * If `entity` is supplied, the produced rigid body is attached to it and its
+   * Ammo user index is set to `entity.numericId` (enabling player-land lookup
+   * → {@link Entity.materialClass}).  If no entity is given (legacy call sites),
+   * an anonymous Entity is created internally.  Either way, callers that only
+   * hold the mesh can resolve the owning Entity (and its rigid body) via
+   * {@link getEntity}.
+   *
+   * For the instakill path (an Instakill-classed material or `userData.instakill`),
+   * a ghost-object sensor is registered instead of a rigid body, the mesh carries
+   * the sensor in `userData.collisionObj`, and no Entity is involved.
+   */
+  public addTriMesh = (
+    mesh: THREE.Mesh,
+    colliderType: 'static' | 'kinematic' = 'static',
+    entity?: Entity
+  ): BtRigidBody | undefined => {
     if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
-      return;
+      return undefined;
     }
 
     if (
@@ -1224,26 +1284,29 @@ export class BulletPhysics {
         this.viz.onInstakillTerrainCollision(collisionObj, mesh)
       );
       mesh.userData.collisionObj = collisionObj;
-      return;
+      return undefined;
     }
 
-    const buildResult = this.buildCollisionShapeFromMesh(mesh);
+    const ownerEntity = entity ?? this.createAnonymousEntity(mesh);
     const meshMaterialClass =
       mesh.material instanceof CustomShaderMaterial ? mesh.material.materialClass : undefined;
-    const objRef: CollisionObjectRef = { materialClass: meshMaterialClass };
     if (meshMaterialClass !== undefined) {
-      this.viz.sfxManager.onMaterialClassPresent(meshMaterialClass);
+      ownerEntity.setMaterialClass(meshMaterialClass);
     }
+
+    const buildResult = this.buildCollisionShapeFromMesh(mesh, undefined, ownerEntity.isConvexHull);
     const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
-    const rigidBody = this.addCollisionObject(buildResult, pos, quat, objRef, colliderType);
-    mesh.userData.rigidBody = rigidBody;
+    const rigidBody = this.addCollisionObject(buildResult, pos, quat, ownerEntity, colliderType);
+    this.entityByObject.set(mesh, ownerEntity);
+
     const isNonPermeable =
-      mesh.userData.nonPermeable !== undefined
-        ? (mesh.userData.nonPermeable as boolean)
+      ownerEntity.nonPermeable !== undefined
+        ? ownerEntity.nonPermeable
         : !Array.isArray(mesh.material) && !!mesh.material.userData?.nonPermeable;
     if (isNonPermeable) {
       this.markBodyNonPermeable(rigidBody);
     }
+    return rigidBody;
   };
 
   public addPlayerRegionContactCb: AddPlayerRegionContactCB = (

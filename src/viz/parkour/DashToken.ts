@@ -9,6 +9,8 @@ import type { BulletPhysics } from '../collision';
 export class DashToken extends THREE.Object3D {
   private viz: Viz;
   private base: THREE.Object3D;
+  /** Tracks whether physics bindings have been cleared from the shared base object. */
+  private static clearedBases = new WeakSet<THREE.Object3D>();
 
   constructor(viz: Viz, base: THREE.Object3D) {
     super();
@@ -17,7 +19,11 @@ export class DashToken extends THREE.Object3D {
 
     this.scale.setScalar(0.9);
 
-    withPhysicsContext(viz, fpCtx => clearPhysicsBindings(base, fpCtx));
+    // Only clear physics on the base once — clones share the same base object.
+    if (!DashToken.clearedBases.has(base)) {
+      DashToken.clearedBases.add(base);
+      withPhysicsContext(viz, fpCtx => clearPhysicsBindings(base, fpCtx));
+    }
 
     const core = base.children.find(c => c.name.includes('core'))!.clone();
     const rings = base.children.filter(c => c.name.includes('ring')).map(obj => obj.clone()) as THREE.Mesh[];
