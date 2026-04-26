@@ -622,4 +622,12 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     legacyLights: false,
     useSceneDef: true,
   },
+  sunrise: {
+    sceneName: null,
+    gltfName: null,
+    sceneLoader: () => import('./sunrise/sunrise').then(mod => mod.processLoadedScene),
+    metadata: { title: 'sunrise' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
 };

@@ -70,12 +70,25 @@ export interface Layer {
    */
   gate?: string;
   /**
-   * Enable 2×2 RGSS (rotated-grid) supersampling for this layer. The layer
-   * body runs 4× with jittered view directions and the compositor contribution
-   * is averaged. Only the oversampled layer pays the extra cost; other layers
-   * are unaffected. Gate expressions still apply per-sample.
+   * Supersampling for this layer. The body runs N times with jittered view
+   * directions and the compositor contribution is averaged.
+   *
+   *   - `false` / `undefined`: no supersampling (single center sample).
+   *   - `true` or `4`: 4-tap RGSS (rotated grid). Best quality.
+   *   - `3`: 3-tap rotated equilateral triangle. ~25% cheaper than 4×; better
+   *     orientation coverage than the 2-tap pair but a step down from 4-tap
+   *     on the densest sub-pixel features.
+   *   - `2`: 2-tap diagonal (one diagonal pair from the RGSS pattern). Roughly
+   *     half the cost of 4×; covers diagonal edges well, less ideal on
+   *     near-axis-aligned features.
+   *
+   * Only the oversampled layer pays the extra cost; other layers are
+   * unaffected. Gate expressions still apply per-sample. When a gate is set
+   * and oversampling is enabled, the gate is also evaluated at center as a
+   * cheap pre-check that skips the entire oversample block when the layer
+   * couldn't possibly contribute at this pixel.
    */
-  oversample?: boolean;
+  oversample?: boolean | 2 | 3 | 4;
 }
 
 /**
@@ -93,5 +106,5 @@ export interface BackgroundLayer {
   instanceGlsl?: string;
   body: string;
   /** @see Layer.oversample */
-  oversample?: boolean;
+  oversample?: boolean | 2 | 3 | 4;
 }

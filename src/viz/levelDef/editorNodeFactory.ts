@@ -31,9 +31,6 @@ export function buildLeafNode(ctx: BuildCtx, assetId: string, def: ObjectDef): L
   if (def.nonPermeable !== undefined) {
     entity.nonPermeable = def.nonPermeable;
   }
-  if (def.colliderShape !== undefined) {
-    entity.isConvexHull = def.colliderShape === 'convexHull';
-  }
   return { id: def.id, assetId, object: clone, def, generated: false, entity };
 }
 

@@ -33,6 +33,7 @@ export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './leve
 export { isLevelGroup } from './levelSceneTypes';
 import { buildMaterial } from './buildMaterial';
 import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
+import { extractHullInputVertices, type CollisionMeshOverride } from '../collisionShapes';
 import { Entity } from '../sceneRuntime/Entity';
 import { TextureFetchPool } from './texturePool';
 import { generateCsgCode } from './csgCodeGen';
@@ -461,8 +462,7 @@ export const loadLevelDef = (
   viz: Viz,
   loadedWorld: THREE.Group,
   levelDef: LevelDef,
-  quality: GraphicsQuality,
-  geoscriptExecutor?: GeoscriptExecutor
+  quality: GraphicsQuality
 ): LevelLoadHandle => {
   // For each material, the set of texture keys it still needs before it can be built.
   const matTexPending = new Map<string, Set<string>>();
@@ -537,6 +537,84 @@ export const loadLevelDef = (
   const allLevelObjects: LevelObject[] = [];
   const registeredPhysicsObjects = new Set<string>();
 
+  // Per-asset collision-hull mesh.  Populated by `resolveAssetPrototype` for assets with
+  // `colliderShape: 'convexHull'` once Manifold has computed the hull; absent for trimesh
+  // assets, which derive their collision data from the visual mesh at registration time.
+  const assetCollisionMeshes = new Map<string, CollisionMeshOverride>();
+
+  // Per-asset latest resolution promise.  Doubles as a supersession token: when a
+  // hot-reload kicks off a new resolution, an older in-flight resolution that finishes
+  // afterward sees a different promise here and drops its result.
+  const assetResolutions = new Map<string, Promise<void>>();
+
+  // The geoscript worker hosts Manifold (used for convex-hull derivation) alongside the
+  // geoscript runtime.  Acquire it lazily — only if some asset actually needs the worker
+  // (geoscript/csg assets or assets with `colliderShape: 'convexHull'`).
+  const needsExecutor = Object.values(levelDef.assets).some(
+    def => def.type === 'geoscript' || def.type === 'csg' || def.colliderShape === 'convexHull'
+  );
+  const sharedExecutor: GeoscriptExecutor | undefined = needsExecutor
+    ? viz.getGeoscriptExecutor()
+    : undefined;
+
+  /**
+   * Adopt `mesh` as the asset's prototype and (if its `colliderShape` requires it) kick
+   * off async computation of its collision hull.  Returns a single promise that resolves
+   * when the asset is fully ready — i.e., the collision hull (if any) has landed and
+   * physics registration may proceed.
+   *
+   * Idempotent and supersession-aware: a newer call wins; results from an older in-flight
+   * call are dropped if they land after a newer call.  Used by initial load, by hot-reload
+   * of geo source files, and by the editor's CSG asset re-resolve path.
+   */
+  const resolveAssetPrototype = (
+    assetId: string,
+    mesh: THREE.Mesh,
+    assetsRef: Record<string, AssetDef> = levelDef.assets
+  ): Promise<void> => {
+    assetPrototypes.set(assetId, mesh);
+    // Drop any stale hull entry now; will be repopulated below if applicable.
+    assetCollisionMeshes.delete(assetId);
+
+    const assetDef = assetsRef[assetId];
+    const needsHull = assetDef?.colliderShape === 'convexHull';
+    if (!needsHull) {
+      const ready = Promise.resolve();
+      assetResolutions.set(assetId, ready);
+      return ready;
+    }
+    if (!sharedExecutor) {
+      // `needsExecutor` should have flagged this asset, so this is a programming error.
+      console.error(`[levelDef] convexHull asset "${assetId}" but no executor available`);
+      const ready = Promise.resolve();
+      assetResolutions.set(assetId, ready);
+      return ready;
+    }
+
+    let inputVerts: Float32Array;
+    try {
+      inputVerts = extractHullInputVertices(mesh.geometry);
+    } catch (err) {
+      console.warn(`[levelDef] convexHull asset "${assetId}": skipping hull —`, err);
+      const ready = Promise.resolve();
+      assetResolutions.set(assetId, ready);
+      return ready;
+    }
+    const promise: Promise<void> = sharedExecutor
+      .computeConvexHull(inputVerts)
+      .then(hull => {
+        // Only adopt this result if no newer resolution has superseded it.
+        if (assetResolutions.get(assetId) === promise) {
+          assetCollisionMeshes.set(assetId, { verts: hull.verts, indices: hull.indices });
+        }
+      })
+      .catch(err => {
+        console.error(`[levelDef] Failed to compute convex hull for asset "${assetId}":`, err);
+      });
+    assetResolutions.set(assetId, promise);
+    return promise;
+  };
+
   // Pre-create the group hierarchy synchronously before async asset resolution.
   // Each leaf def gets mapped to its parent Object3D so placeObject can add to the right parent.
   const parentMap = new Map<string, THREE.Object3D>(); // objectId → parent container
@@ -607,7 +685,12 @@ export const loadLevelDef = (
       return;
     }
 
-    withWorldSpaceTransform(levelObj.object, mesh => fpCtx.addTriMesh(mesh, 'static', levelObj.entity));
+    // Placement is gated on `resolveAssetPrototype` resolution, so by the time a
+    // `levelObj` exists its asset's collision data (if any) is already in the cache.
+    const collisionMeshOverride = assetCollisionMeshes.get(levelObj.assetId);
+    withWorldSpaceTransform(levelObj.object, mesh =>
+      fpCtx.addTriMesh(mesh, 'static', levelObj.entity, collisionMeshOverride)
+    );
     registeredPhysicsObjects.add(levelObj.id);
   };
 
@@ -631,9 +714,6 @@ export const loadLevelDef = (
     const entity = new Entity(viz, objDef.id, clone);
     if (objDef.nonPermeable !== undefined) {
       entity.nonPermeable = objDef.nonPermeable;
-    }
-    if (objDef.colliderShape !== undefined) {
-      entity.isConvexHull = objDef.colliderShape === 'convexHull';
     }
     const levelObj: LevelObject = {
       id: objDef.id,
@@ -684,11 +764,17 @@ export const loadLevelDef = (
     }
   };
 
+  // Tracks every initial-load placement chain so the completion barrier can await both
+  // the geoscript run *and* the post-resolution hull/placement steps.
+  const initialPlacementPromises: Promise<void>[] = [];
+
   const onAssetResolved = (assetId: string, prototype: THREE.Mesh) => {
-    assetPrototypes.set(assetId, prototype);
-    for (const objDef of assetToObjDefs.get(assetId) ?? []) {
-      placeObject(assetId, prototype, objDef);
-    }
+    const promise = resolveAssetPrototype(assetId, prototype).then(() => {
+      for (const objDef of assetToObjDefs.get(assetId) ?? []) {
+        placeObject(assetId, prototype, objDef);
+      }
+    });
+    initialPlacementPromises.push(promise);
   };
 
   const tryBuildMaterial = (matName: string) => {
@@ -796,10 +882,15 @@ export const loadLevelDef = (
     levelDef.assets,
     onAssetResolved,
     viz.sceneName,
-    geoscriptExecutor
+    sharedExecutor
   );
 
-  const objectsPromise: Promise<LevelObject[]> = geoscriptDone.then(() => allLevelObjects);
+  // `geoscriptDone` resolves after every `onAssetResolved` has been called (so every
+  // `initialPlacementPromises` entry exists); awaiting those then gives us "all assets
+  // resolved + all hulls computed + all objects placed".
+  const objectsPromise: Promise<LevelObject[]> = geoscriptDone
+    .then(() => Promise.all(initialPlacementPromises))
+    .then(() => allLevelObjects);
   const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(
     ([levelObjects, fpCtx]) => {
       for (const levelObj of levelObjects) {
@@ -829,7 +920,9 @@ export const loadLevelDef = (
           levelDef,
           rootNodes,
           nodeById,
-          levelLights
+          levelLights,
+          assetCollisionMeshes,
+          resolveAssetPrototype
         );
 
         // Subscribe to geo file changes for in-place hot reload.
@@ -841,10 +934,12 @@ export const loadLevelDef = (
           };
           console.log(`[levelDef] Hot reloading geo asset "${assetId}"`);
 
-          // Update the code in our mutable shadow.
+          // Update the code in our mutable shadow.  Preserve every field that affects
+          // physics/collision derivation (notably `colliderShape`) so a hot-reload of a
+          // `convexHull` asset doesn't get demoted back to trimesh after the swap.
           const existing = mutableAssets[assetId];
           if (!existing || existing.type !== 'geoscript') return;
-          mutableAssets[assetId] = { type: 'geoscript', code, includePrelude: existing.includePrelude };
+          mutableAssets[assetId] = { ...existing, code };
 
           // Re-run the changed asset and everything that transitively depends on it.
           const affected = getDownstreamAssets(assetId, buildReverseDeps(mutableAssets));
@@ -858,20 +953,22 @@ export const loadLevelDef = (
             sortedAffected,
             mutableAssets,
             (id, newPrototype) => {
-              assetPrototypes.set(id, newPrototype);
+              // Adopt the new prototype + recompute its hull (if any) before swapping
+              // instances so syncPhysics picks up the new hull rather than a stale one.
+              resolveAssetPrototype(id, newPrototype, mutableAssets).then(() => {
+                for (const levelObj of allLevelObjects) {
+                  if (levelObj.assetId !== id) continue;
 
-              // Swap every placed object that uses this asset in-place.
-              for (const levelObj of allLevelObjects) {
-                if (levelObj.assetId !== id) continue;
-
-                const clone = instantiateLevelObject(newPrototype, levelObj.def, {
-                  builtMaterials,
-                  fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
-                });
-                replaceLeafInstance(editor, levelObj, clone);
-              }
+                  const clone = instantiateLevelObject(newPrototype, levelObj.def, {
+                    builtMaterials,
+                    fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
+                  });
+                  replaceLeafInstance(editor, levelObj, clone);
+                }
+              });
             },
-            viz.sceneName
+            viz.sceneName,
+            sharedExecutor
           );
         });
 

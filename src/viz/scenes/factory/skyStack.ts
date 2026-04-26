@@ -6,8 +6,6 @@ import { SkyStack, HorizonMode, voxelGroundLayer, gradientBackground } from 'src
  * Builds the SkyStack used by the live factory level. Shared with
  * `factory_shader_demo` so parameter changes stay in sync between the
  * gameplay scene and the standalone shader showcase.
- *
- * Registers a before-render callback to drive the time uniform.
  */
 export const buildFactorySkyStack = (viz: Viz, vizConf: VizConfig): SkyStack => {
   const skyStack = new SkyStack(
@@ -25,7 +23,7 @@ export const buildFactorySkyStack = (viz: Viz, vizConf: VizConfig): SkyStack => 
             [GraphicsQuality.High]: 256,
           }[vizConf.graphics.quality],
           lavaQuality: vizConf.graphics.quality >= GraphicsQuality.High ? 1 : 0,
-          oversample: vizConf.graphics.quality > GraphicsQuality.Medium,
+          oversample: vizConf.graphics.quality > GraphicsQuality.Medium ? 3 : false,
         }),
       ],
       background: gradientBackground({

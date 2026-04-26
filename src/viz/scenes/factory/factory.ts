@@ -152,9 +152,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           viz.renderer.domElement.height
         );
         n8aoPass.gammaCorrection = false;
-        n8aoPass.configuration.intensity = 4;
-        n8aoPass.configuration.aoRadius = 2.5;
+        n8aoPass.configuration.intensity = 4.6;
+        n8aoPass.configuration.aoRadius = 3.5;
         n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
+        n8aoPass.configuration.denoiseIterations = 1;
         n8aoPass.setQualityMode(
           {
             [GraphicsQuality.Low]: 'Performance',
@@ -163,6 +164,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           }[quality]
         );
         composer.addPass(n8aoPass, 3);
+        n8aoPass.autoDetectTransparency = false;
+        n8aoPass.configuration.transparencyAware = false;
       }
     },
   });

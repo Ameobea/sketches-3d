@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
+import type { CollisionMeshOverride } from 'src/viz/collisionShapes';
 import type { LevelDef, LightDef } from './types';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
@@ -53,6 +54,17 @@ export class LevelEditor {
   levelDef: LevelDef;
   prototypes: Map<string, THREE.Mesh>;
   builtMaterials: Map<string, THREE.Material>;
+  /** Shared with `loadLevelDef`: precomputed collision-hull data for `convexHull` assets. */
+  assetCollisionMeshes: Map<string, CollisionMeshOverride>;
+  /**
+   * Adopt a new visual prototype for an asset and (if its `colliderShape` requires it)
+   * recompute and cache its collision hull.  Returns a promise that resolves once the
+   * asset is fully ready — callers should `await` before triggering syncPhysics so that
+   * registration uses the new hull rather than the stale one.
+   *
+   * Provided by `loadLevelDef`; null when running outside that scope.
+   */
+  resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null;
 
   api: LevelEditorApi;
   private undoSystem = new UndoSystem<UndoEntry>();
@@ -128,12 +140,16 @@ export class LevelEditor {
     levelDef: LevelDef,
     rootNodes: LevelSceneNode[],
     nodeById: Map<string, LevelSceneNode>,
-    levelLights: LevelLight[]
+    levelLights: LevelLight[],
+    assetCollisionMeshes: Map<string, CollisionMeshOverride>,
+    resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null
   ) {
     this.viz = viz;
     this.levelDef = levelDef;
     this.prototypes = prototypes;
     this.builtMaterials = builtMaterials;
+    this.assetCollisionMeshes = assetCollisionMeshes;
+    this.resolveAssetPrototype = resolveAssetPrototype;
     this.allLevelObjects = objects;
     this.rootNodes = rootNodes;
     this.nodeById = nodeById;
@@ -1238,10 +1254,12 @@ export class LevelEditor {
     levelObj.entity.object = levelObj.object;
     // Resync def-derived physics flags in case the def was edited since placement.
     levelObj.entity.nonPermeable = levelObj.def.nonPermeable;
-    levelObj.entity.isConvexHull = levelObj.def.colliderShape === 'convexHull';
 
     clearPhysicsBinding(levelObj.object, fpCtx);
-    withWorldSpaceTransform(levelObj.object, mesh => fpCtx.addTriMesh(mesh, 'static', levelObj.entity));
+    const collisionMeshOverride = this.assetCollisionMeshes.get(levelObj.assetId);
+    withWorldSpaceTransform(levelObj.object, mesh =>
+      fpCtx.addTriMesh(mesh, 'static', levelObj.entity, collisionMeshOverride)
+    );
   }
 
   private syncSceneNodePhysics(node: LevelSceneNode) {
@@ -1282,7 +1300,9 @@ export const initLevelEditor = (
   levelDef: LevelDef,
   rootNodes: LevelSceneNode[],
   nodeById: Map<string, LevelSceneNode>,
-  levelLights: LevelLight[]
+  levelLights: LevelLight[],
+  assetCollisionMeshes: Map<string, CollisionMeshOverride>,
+  resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null
 ): LevelEditor =>
   new LevelEditor(
     viz,
@@ -1294,5 +1314,7 @@ export const initLevelEditor = (
     levelDef,
     rootNodes,
     nodeById,
-    levelLights
+    levelLights,
+    assetCollisionMeshes,
+    resolveAssetPrototype
   );

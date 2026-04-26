@@ -25,7 +25,7 @@ export interface StarsLayerConfig {
   /** Half-width of the fade ramp around `minElev`. Default 0.03. */
   fadeRange?: number;
   /** @see Layer.oversample */
-  oversample?: boolean;
+  oversample?: boolean | 2 | 3 | 4;
 }
 
 export const starsLayer = (c: StarsLayerConfig): Layer => {

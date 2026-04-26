@@ -1,6 +1,6 @@
 import * as Comlink from 'comlink';
 
-import { initManifoldWasm } from './manifold';
+import { compute_convex_hull_mesh, initManifoldWasm } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 import geoscriptReplWasmURL from 'src/viz/wasmComp/geoscript_repl_bg.wasm?url';
@@ -159,6 +159,16 @@ const methods = {
     Geoscript.geoscript_set_materials(ctxPtr, availableMaterials);
   },
   getPrelude: () => Geoscript.geoscript_repl_get_prelude(),
+  /**
+   * Compute the convex hull of `verts` (flat xyz Float32Array, asset-local space) using
+   * Manifold and return the resulting triangle mesh data.  Manifold and the geoscript wasm
+   * are loaded together at worker init, so this is safe to call any time after `init()`
+   * resolves — independent of any geoscript context.
+   */
+  computeConvexHull: (verts: Float32Array): { verts: Float32Array; indices: Uint32Array } => {
+    const out = compute_convex_hull_mesh(verts);
+    return Comlink.transfer(out, [out.verts.buffer, out.indices.buffer]);
+  },
 };
 
 export type GeoscriptWorkerMethods = typeof methods;

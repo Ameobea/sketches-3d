@@ -46,8 +46,6 @@ export class Entity {
    * `true`/`false` on the entity wins over the material default.
    */
   public nonPermeable: boolean | undefined = undefined;
-  /** If true, physics registration builds a convex-hull shape instead of a trimesh. */
-  public isConvexHull: boolean = false;
 
   private viz: Viz;
   private behaviors: BehaviorEntry[] = [];

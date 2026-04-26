@@ -22,10 +22,23 @@ const ColorInputSchema = z.union([
   z.string().regex(/^#[0-9a-fA-F]{6}$/i, 'Color string must be a 6-digit hex value like "#rrggbb"'),
 ]);
 
+/**
+ * Collision shape type for an asset's collider.  Default: `trimesh` (exact triangle mesh,
+ * with automatic box/sphere detection for simple primitives).  `convexHull` precomputes
+ * a real convex hull (via Manifold) once per asset and uses that as the trimesh; useful
+ * for shapes where concave accuracy isn't needed and a smooth bounding hull is preferred.
+ *
+ * Lives on the asset, not the object, so the (potentially expensive) hull is computed
+ * exactly once per asset and shared across all instances.
+ */
+const AssetColliderShapeSchema = z.enum(['trimesh', 'convexHull']);
+export type AssetColliderShape = z.infer<typeof AssetColliderShapeSchema>;
+
 export const GltfAssetDefSchema = z.object({
   type: z.literal('gltf'),
   /** Name of the mesh/object as it appears in the loaded gltf scene */
   meshName: z.string(),
+  colliderShape: AssetColliderShapeSchema.optional(),
 });
 
 export const GeoscriptAssetMetaSchema = z.object({
@@ -42,6 +55,7 @@ export const GeoscriptAssetDefSchema = z.object({
   code: z.string(),
   /** Whether to include the standard geoscript prelude. Default: true */
   includePrelude: z.boolean().optional(),
+  colliderShape: AssetColliderShapeSchema.optional(),
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
@@ -52,6 +66,7 @@ export const GeoscriptAssetDefFileSchema = z.object({
   file: z.string(),
   /** Whether to include the standard geoscript prelude. Default: true */
   includePrelude: z.boolean().optional(),
+  colliderShape: AssetColliderShapeSchema.optional(),
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
@@ -97,6 +112,7 @@ const CsgTreeNodeSchema: z.ZodType<CsgTreeNode> = z.union([CsgOpNodeSchema, CsgL
 export const CsgAssetDefSchema = z.object({
   type: z.literal('csg'),
   tree: CsgTreeNodeSchema,
+  colliderShape: AssetColliderShapeSchema.optional(),
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
@@ -431,12 +447,6 @@ export const ObjectDefSchema = z
     /** If true, this object will not be registered in the collision world */
     nocollide: z.boolean().optional(),
     /**
-     * Collision shape type. Default: 'trimesh' (exact triangle mesh, with automatic box/sphere
-     * detection for simple primitives). Use 'convexHull' for dynamic or smoother collision on
-     * objects where concave accuracy isn't needed.
-     */
-    colliderShape: z.enum(['trimesh', 'convexHull']).optional(),
-    /**
      * Overrides the material-level `nonPermeable` flag for this object.
      * When true, the camera hard-snaps rather than dithering through it.
      * When false, disables non-permeable behavior even if the material sets it.
@@ -453,10 +463,6 @@ export const ObjectDefSchema = z
   .refine(def => !(def.behaviors && def.spawner), {
     message: '"behaviors" and "spawner" are mutually exclusive on an object',
     path: ['spawner'],
-  })
-  .refine(def => !(def.nocollide && def.colliderShape !== undefined), {
-    message: '"colliderShape" has no effect when "nocollide" is true',
-    path: ['colliderShape'],
   });
 
 export type ObjectDef = z.infer<typeof ObjectDefSchema>;

@@ -38,7 +38,7 @@ export interface GroundLayerConfig {
   /** Additional uniforms exposed to the paint shader. */
   uniforms?: Record<string, THREE.IUniform>;
   /** @see Layer.oversample */
-  oversample?: boolean;
+  oversample?: boolean | 2 | 3 | 4;
 }
 
 export const groundLayer = (c: GroundLayerConfig): Layer => {

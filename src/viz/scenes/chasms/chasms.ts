@@ -480,7 +480,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   );
   const towerStairs = getMesh(loadedWorld, 'tower_stairs');
   towerStairs.material = stairsMat;
-  towerStairs.userData.convexhull = true;
+  towerStairs.userData.colliderShape = 'convexHull';
 
   const towerFloorMat = buildCustomShader(
     {
@@ -526,7 +526,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
     if (obj.name.startsWith('tower_stairs_upper')) {
       const mesh = obj as THREE.Mesh;
       mesh.material = stairsMat;
-      mesh.userData.convexhull = true;
+      mesh.userData.colliderShape = 'convexHull';
     }
 
     if (obj.name.startsWith('tower_wall')) {
@@ -1021,7 +1021,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   loadedWorld.traverse(obj => {
     if (obj.name.startsWith('furnace_bars') && obj instanceof THREE.Mesh) {
       obj.material = furnaceBarsMat;
-      obj.userData.convexhull = true;
+      obj.userData.colliderShape = 'convexHull';
     } else if (obj.name.startsWith('furnace') && obj instanceof THREE.Mesh) {
       obj.material = furnaceMat;
       furnacePositions.push(obj.position.clone());

@@ -245,10 +245,6 @@ export interface BtTriangleInfoMap {
   m_zeroAreaThreshold: number;
 }
 
-export interface BtConvexHullShape extends BtCollisionShape {
-  addPoint(point: BtVec3, recalculateLocalAabb?: boolean): void;
-}
-
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface BtConcaveShape extends BtCollisionShape {}
 
@@ -365,7 +361,6 @@ export interface AmmoInterface {
     buildBVH: boolean
   ) => BtBvhTriangleMeshShape;
   btInternalEdgeUtility: BtInternalEdgeUtilityStatic;
-  btConvexHullShape: new () => BtConvexHullShape;
   _malloc: (size: number) => number;
   _free: (ptr: number) => void;
   HEAPF32: Float32Array;

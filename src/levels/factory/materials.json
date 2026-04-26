@@ -203,11 +203,11 @@
     "highlight": {
       "type": "customShader",
       "props": {
-        "color": "#c2a93a",
+        "color": "#b8a033",
         "roughness": 1,
-        "metalness": 0,
+        "metalness": 0.4,
         "transparent": true,
-        "ambientLightScale": 0.8
+        "ambientLightScale": 0.5
       },
       "emissiveBypass": true
     }

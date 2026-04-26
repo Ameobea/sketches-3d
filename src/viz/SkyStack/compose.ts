@@ -45,6 +45,43 @@ const dedupModules = (modules: SharedModule[]): string[] => {
 };
 
 /**
+ * Normalize the `oversample` field to a sample count.
+ *   undefined / false / 0 → 0 (off)
+ *   true / 4              → 4 (RGSS)
+ *   3                     → 3 (rotated equilateral triangle)
+ *   2                     → 2 (diagonal pair)
+ */
+const oversampleSampleCount = (v: boolean | 2 | 3 | 4 | undefined): 0 | 2 | 3 | 4 => {
+  if (v === true || v === 4) return 4;
+  if (v === 3) return 3;
+  if (v === 2) return 2;
+  return 0;
+};
+
+// 4-tap rotated-grid supersampling pattern.
+const SS_OFFSETS_4: [number, number][] = [
+  [0.125, 0.375],
+  [0.375, -0.125],
+  [-0.125, -0.375],
+  [-0.375, 0.125],
+];
+
+// 3-tap pattern: equilateral triangle inscribed at the same radius (~0.395)
+// as the 4-tap RGSS samples, rotated 15° so no vertex sits on an axis. Picks
+// up edge orientations the 2-tap pair misses (which is biased toward one
+// diagonal) without paying the full 4× cost. ~25% cheaper than 4-tap.
+const SS_OFFSETS_3: [number, number][] = [
+  [0.102, 0.382],
+  [0.279, -0.279],
+  [-0.381, -0.102],
+];
+
+// 2-tap diagonal pair drawn from the 4-tap RGSS pattern. Offsets are 180°
+// apart so the pair covers both edge orientations reasonably; not as good as
+// 4-tap on near-axis-aligned features but ~half the cost.
+const SS_OFFSETS_2: [number, number][] = [SS_OFFSETS_4[1], SS_OFFSETS_4[3]];
+
+/**
  * Emit a layer body wrapped in the saturation early-out and optional gate.
  * Renders as:
  *   // === <id> ===
@@ -55,14 +92,24 @@ const dedupModules = (modules: SharedModule[]): string[] => {
  * check is cheap insurance and costs nothing in the typical case where the
  * background is the thing that finally saturates the stack.
  *
- * When `layer.oversample` is true, the body runs 4× with RGSS-jittered view
- * directions and the accumulator delta is averaged. The gate still applies
- * per-sample (a jittered direction may cross the gate boundary).
+ * When oversampling is enabled, the body runs N times (2 or 4) with jittered
+ * view directions and the accumulator delta is averaged. The gate still
+ * applies per-sample (a jittered direction may cross the gate boundary).
+ *
+ * Pre-gate optimization: when both `gate` and oversample are active, the
+ * gate is also evaluated at center *outside* the wrapper, so above-horizon
+ * pixels (or other pixels safely outside the gate region) skip the entire
+ * state-save / dir-recompute / loop overhead. Pixels right at the gate
+ * boundary trade a tiny amount of AA fidelity for the cost reduction; for
+ * the gates we use in this codebase (`dir.y < 0.01`, `aboveHorizon`) the
+ * boundary sits in fully-fogged or alpha-zero territory so the visual
+ * impact is nil in practice.
  */
 const emitLayerBody = (layer: Layer | BackgroundLayer, tag: string, gate?: string): string => {
   const inner = gate ? `if (${gate}) {\n${layer.body}\n    }` : layer.body;
+  const samples = oversampleSampleCount(layer.oversample);
 
-  if (!layer.oversample) {
+  if (samples === 0) {
     return `
   // === ${layer.id}${tag} ===
   if (accumAlpha < SKY_SATURATION_ALPHA) {
@@ -70,11 +117,14 @@ const emitLayerBody = (layer: Layer | BackgroundLayer, tag: string, gate?: strin
   }`;
   }
 
-  // 2×2 RGSS (rotated grid supersampling). Save accumulator state, run body
-  // 4× with jittered dir/elev/azimuth/cosElev, average the delta, restore.
+  const offsets = samples === 2 ? SS_OFFSETS_2 : samples === 3 ? SS_OFFSETS_3 : SS_OFFSETS_4;
+  const offsetGlsl = offsets.map(([x, y]) => `vec2(${x.toFixed(3)}, ${y.toFixed(3)})`).join(',\n      ');
+  const inverseSampleCount = (1 / samples).toFixed(3);
+  const outerGate = gate ? ` && (${gate})` : '';
+
   return `
-  // === ${layer.id}${tag} (oversampled 2×2 RGSS) ===
-  if (accumAlpha < SKY_SATURATION_ALPHA) {
+  // === ${layer.id}${tag} (oversampled ${samples}×) ===
+  if (accumAlpha < SKY_SATURATION_ALPHA${outerGate}) {
     vec3 _ssSky = accumSkyColor;
     vec3 _ssEm  = accumEmissive;
     float _ssA  = accumAlpha;
@@ -87,15 +137,11 @@ const emitLayerBody = (layer: Layer | BackgroundLayer, tag: string, gate?: strin
 
     vec2 _px = 1.0 / vec2(textureSize(uSceneDepth, 0));
 
-    // RGSS offsets — rotated grid gives better diagonal coverage than a regular 2×2 box.
-    const vec2 _ssOff[4] = vec2[4](
-      vec2( 0.125,  0.375),
-      vec2( 0.375, -0.125),
-      vec2(-0.125, -0.375),
-      vec2(-0.375,  0.125)
+    const vec2 _ssOff[${samples}] = vec2[${samples}](
+      ${offsetGlsl}
     );
 
-    for (int _ss = 0; _ss < 4; _ss++) {
+    for (int _ss = 0; _ss < ${samples}; _ss++) {
       accumSkyColor      = _ssSky;
       accumEmissive      = _ssEm;
       accumAlpha         = _ssA;
@@ -118,10 +164,10 @@ const emitLayerBody = (layer: Layer | BackgroundLayer, tag: string, gate?: strin
       _dEA  += accumEmissiveAlpha - _ssEA;
     }
 
-    accumSkyColor      = _ssSky + _dSky * 0.25;
-    accumEmissive      = _ssEm  + _dEm  * 0.25;
-    accumAlpha         = _ssA   + _dA   * 0.25;
-    accumEmissiveAlpha = _ssEA  + _dEA  * 0.25;
+    accumSkyColor      = _ssSky + _dSky * ${inverseSampleCount};
+    accumEmissive      = _ssEm  + _dEm  * ${inverseSampleCount};
+    accumAlpha         = _ssA   + _dA   * ${inverseSampleCount};
+    accumEmissiveAlpha = _ssEA  + _dEA  * ${inverseSampleCount};
 
     // Restore pixel-center dir for subsequent layers.
     dir = skyViewDir();

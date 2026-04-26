@@ -343,7 +343,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       (lowerName.startsWith('railing') && !lowerName.includes('corner')) ||
       lowerName.startsWith('staircase_stairs')
     ) {
-      obj.userData.convexhull = true;
+      obj.userData.colliderShape = 'convexHull';
     }
 
     if (lowerName === 'greenhouse_windows') {

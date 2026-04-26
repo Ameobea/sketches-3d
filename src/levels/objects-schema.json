@@ -79,13 +79,6 @@
               "nocollide": {
                 "type": "boolean"
               },
-              "colliderShape": {
-                "type": "string",
-                "enum": [
-                  "trimesh",
-                  "convexHull"
-                ]
-              },
               "nonPermeable": {
                 "type": "boolean"
               },
@@ -261,13 +254,6 @@
                   },
                   "nocollide": {
                     "type": "boolean"
-                  },
-                  "colliderShape": {
-                    "type": "string",
-                    "enum": [
-                      "trimesh",
-                      "convexHull"
-                    ]
                   },
                   "nonPermeable": {
                     "type": "boolean"

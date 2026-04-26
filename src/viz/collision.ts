@@ -65,9 +65,11 @@ import {
 import { ReplayController } from './replayController.js';
 import { withWorldSpaceTransform } from './util/three.js';
 import {
+  type CollisionMeshOverride,
   type CollisionShapeBuildResult,
   applyShapeBuildResult,
   buildCollisionShapeFromMesh,
+  extractHullInputVertices,
 } from './collisionShapes.js';
 
 /** Per-subtick input state consumed by the shared subtick execution path. */
@@ -1217,9 +1219,9 @@ export class BulletPhysics {
   private buildCollisionShapeFromMesh = (
     mesh: THREE.Mesh,
     extraScale?: THREE.Vector3,
-    forceConvexHull: boolean = false
+    collisionMeshOverride?: CollisionMeshOverride
   ): CollisionShapeBuildResult =>
-    buildCollisionShapeFromMesh(this.Ammo, this.btvec3, mesh, extraScale, forceConvexHull);
+    buildCollisionShapeFromMesh(this.Ammo, this.btvec3, mesh, extraScale, collisionMeshOverride);
 
   /** Creates a btTransform from a position and optional quaternion.  Caller must destroy it. */
   private makeBtTransform = (pos: THREE.Vector3, quat?: THREE.Quaternion) => {
@@ -1269,7 +1271,8 @@ export class BulletPhysics {
   public addTriMesh = (
     mesh: THREE.Mesh,
     colliderType: 'static' | 'kinematic' = 'static',
-    entity?: Entity
+    entity?: Entity,
+    collisionMeshOverride?: CollisionMeshOverride
   ): BtRigidBody | undefined => {
     if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
       return undefined;
@@ -1294,7 +1297,7 @@ export class BulletPhysics {
       ownerEntity.setMaterialClass(meshMaterialClass);
     }
 
-    const buildResult = this.buildCollisionShapeFromMesh(mesh, undefined, ownerEntity.isConvexHull);
+    const buildResult = this.buildCollisionShapeFromMesh(mesh, undefined, collisionMeshOverride);
     const { pos, quat } = applyShapeBuildResult(buildResult, mesh.position, mesh.quaternion);
     const rigidBody = this.addCollisionObject(buildResult, pos, quat, ownerEntity, colliderType);
     this.entityByObject.set(mesh, ownerEntity);
@@ -1307,6 +1310,31 @@ export class BulletPhysics {
       this.markBodyNonPermeable(rigidBody);
     }
     return rigidBody;
+  };
+
+  /**
+   * Compute the convex hull of `mesh` (asynchronously, via Manifold in the geoscript
+   * worker) and register the result as a static collider.  The mesh's geometry buffer
+   * is read at call time; the mesh's world-space transform is captured at registration
+   * time inside the resolution handler (matching the level-def physics path).
+   *
+   * Registers a physics-startup barrier on the viz so the game waits for the hull
+   * before unpausing.
+   */
+  public addConvexHullMesh = (mesh: THREE.Mesh, colliderType: 'static' | 'kinematic' = 'static') => {
+    const inputVerts = extractHullInputVertices(mesh.geometry);
+
+    const promise = this.viz
+      .getGeoscriptExecutor()
+      .computeConvexHull(inputVerts)
+      .then(hull => {
+        const override: CollisionMeshOverride = { verts: hull.verts, indices: hull.indices };
+        withWorldSpaceTransform(mesh, m => this.addTriMesh(m, colliderType, undefined, override));
+      })
+      .catch(err => {
+        console.error(`addConvexHullMesh: hull computation failed for "${mesh.name}":`, err);
+      });
+    this.viz.registerPhysicsStartupBarrier(promise);
   };
 
   public addPlayerRegionContactCb: AddPlayerRegionContactCB = (

@@ -1,3 +1,5 @@
+import * as Comlink from 'comlink';
+
 import { runGeoscript } from './runner/geoscriptRunner';
 import type { GeneratedObject } from './runner/types';
 import type { GeoscriptAsyncDeps } from './geoscriptWorker.worker';
@@ -106,6 +108,17 @@ export class GeoscriptExecutor {
     }
 
     return results;
+  }
+
+  /**
+   * Compute the convex hull of `verts` (flat xyz Float32Array, asset-local space) using
+   * Manifold inside the worker.  Independent of the geoscript ctx — does not share any
+   * state with submitted jobs and does not need to wait for jobs in the queue.
+   */
+  async computeConvexHull(verts: Float32Array): Promise<{ verts: Float32Array; indices: Uint32Array }> {
+    await this.ctxPtrPromise;
+    const repl = this.workerManager.getWorker();
+    return repl.computeConvexHull(Comlink.transfer(verts, [verts.buffer]));
   }
 
   terminate(): void {

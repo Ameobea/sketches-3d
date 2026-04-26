@@ -127,7 +127,16 @@ export class CsgAssetResolver {
     }
     const newPrototype: THREE.Mesh = meshes[0];
 
-    this.editor.prototypes.set(assetId, newPrototype);
+    // Adopt the new prototype + (re)compute its collision hull if the asset's
+    // `colliderShape` requires one.  Awaiting before triggering the physics rebuild
+    // ensures syncPhysics uses the new hull rather than a stale one.
+    if (this.editor.resolveAssetPrototype) {
+      await this.editor.resolveAssetPrototype(assetId, newPrototype);
+      // Re-check supersession after the await — a newer resolve may have queued.
+      if (requestId !== this.assetResolveLatestQueuedRequestId) return;
+    } else {
+      this.editor.prototypes.set(assetId, newPrototype);
+    }
 
     // Snapshot the CSG edit context at the time this resolve was latest.
     const editingLevelObj = this.editingLevelObj;

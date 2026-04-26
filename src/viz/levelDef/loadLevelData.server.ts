@@ -148,15 +148,10 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
           : join(levelDir, assetDef.file);
         const code = readFileSync(codePath, 'utf-8');
-        return [
-          assetId,
-          {
-            type: 'geoscript' as const,
-            code,
-            includePrelude: assetDef.includePrelude,
-            _meta: assetDef._meta,
-          },
-        ];
+        // Spread every other field through (e.g. `colliderShape`, `_meta`,
+        // `includePrelude`) so asset-level metadata survives the file→code inlining.
+        const { file: _file, ...rest } = assetDef;
+        return [assetId, { ...rest, type: 'geoscript' as const, code }];
       }
       return [assetId, assetDef];
     })

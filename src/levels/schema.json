@@ -866,6 +866,13 @@
               },
               "meshName": {
                 "type": "string"
+              },
+              "colliderShape": {
+                "type": "string",
+                "enum": [
+                  "trimesh",
+                  "convexHull"
+                ]
               }
             },
             "required": [
@@ -886,6 +893,13 @@
               },
               "includePrelude": {
                 "type": "boolean"
+              },
+              "colliderShape": {
+                "type": "string",
+                "enum": [
+                  "trimesh",
+                  "convexHull"
+                ]
               },
               "_meta": {
                 "type": "object",
@@ -935,6 +949,13 @@
               "includePrelude": {
                 "type": "boolean"
               },
+              "colliderShape": {
+                "type": "string",
+                "enum": [
+                  "trimesh",
+                  "convexHull"
+                ]
+              },
               "_meta": {
                 "type": "object",
                 "properties": {
@@ -979,6 +1000,13 @@
               },
               "tree": {
                 "$ref": "#/definitions/__schema0"
+              },
+              "colliderShape": {
+                "type": "string",
+                "enum": [
+                  "trimesh",
+                  "convexHull"
+                ]
               },
               "_meta": {
                 "type": "object",
@@ -1091,13 +1119,6 @@
               },
               "nocollide": {
                 "type": "boolean"
-              },
-              "colliderShape": {
-                "type": "string",
-                "enum": [
-                  "trimesh",
-                  "convexHull"
-                ]
               },
               "nonPermeable": {
                 "type": "boolean"
@@ -1959,13 +1980,6 @@
                   },
                   "nocollide": {
                     "type": "boolean"
-                  },
-                  "colliderShape": {
-                    "type": "string",
-                    "enum": [
-                      "trimesh",
-                      "convexHull"
-                    ]
                   },
                   "nonPermeable": {
                     "type": "boolean"

@@ -33,7 +33,7 @@ import { unmount } from 'svelte';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { LoadOrbitControls } from './preloadCache';
 import { loadLevelDef, type LevelLoadHandle } from './levelDef/loadLevelDef';
-import type { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
+import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { LevelDef } from './levelDef/types';
 
 export interface PostprocessingController {
@@ -834,6 +834,30 @@ export class Viz {
 
   public registerDestroyedCb = (cb: () => void) => this.onDestroyedCbs.push(cb);
 
+  /**
+   * Shared `GeoscriptExecutor` (worker hosting the geoscript runtime + Manifold).
+   * Used both by level-def loading (for geoscript/csg asset resolution) and by legacy
+   * `addConvexHullMesh` (for one-shot hull computation via Manifold).
+   *
+   * May be seeded via {@link seedGeoscriptExecutor} with a caller-owned instance — in
+   * that case the seed is reused and the seed's owner is responsible for termination.
+   * Otherwise a worker is lazy-spawned on first request and torn down on viz destroy.
+   */
+  private geoscriptExecutor: GeoscriptExecutor | null = null;
+  public seedGeoscriptExecutor = (executor: GeoscriptExecutor) => {
+    this.geoscriptExecutor = executor;
+  };
+  public getGeoscriptExecutor = (): GeoscriptExecutor => {
+    if (!this.geoscriptExecutor) {
+      const executor = new GeoscriptExecutor();
+      this.geoscriptExecutor = executor;
+      // Only auto-spawned executors are owned by Viz; seeded ones are terminated by
+      // their original owner.
+      this.registerDestroyedCb(() => executor.terminate());
+    }
+    return this.geoscriptExecutor;
+  };
+
   public get destroyed() {
     return this.isDestroyed;
   }
@@ -974,6 +998,9 @@ export const initViz = (
     viz.vizConfig = vizConfig;
     applyGraphicsSettings(viz, vizConfig.current.graphics);
 
+    if (geoscriptExecutor) {
+      viz.seedGeoscriptExecutor(geoscriptExecutor);
+    }
     if (useSceneDef) {
       // TODO: would be ideal to start this before we even load the glTF.  Could update the level def loading
       // code to accept the asset library glTF as a promise and just await it where needed.
@@ -981,8 +1008,7 @@ export const initViz = (
         viz,
         scene,
         userData as LevelDef,
-        vizConfig.current.graphics.quality,
-        geoscriptExecutor
+        vizConfig.current.graphics.quality
       );
     }
     applyAudioSettings(vizConfig.current.audio);
@@ -1132,7 +1158,11 @@ export const initViz = (
           const children = obj.children;
           obj.children = [];
           if (obj instanceof THREE.Mesh) {
-            viz.fpCtx!.addTriMesh(obj);
+            if (obj.userData.colliderShape === 'convexHull') {
+              viz.fpCtx!.addConvexHullMesh(obj);
+            } else {
+              viz.fpCtx!.addTriMesh(obj);
+            }
           }
           obj.children = children;
         };

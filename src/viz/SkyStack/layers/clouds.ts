@@ -35,7 +35,7 @@ export interface CloudsLayerConfig {
   /** Shaping exponent on the density curve. Default 1. */
   pow?: number;
   /** @see Layer.oversample */
-  oversample?: boolean;
+  oversample?: boolean | 2 | 3 | 4;
 }
 
 const vec3Uniform = (v: [number, number, number] | undefined, fallback: [number, number, number]) =>

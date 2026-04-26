@@ -9,8 +9,20 @@ export interface VoxelGroundLayerConfig {
   maxSteps?: number;
   /** Lava surface quality: 0 = simple, 1 = 3D fbm noise. Default 0. */
   lavaQuality?: number;
+  /**
+   * Debug render mode (default 0 = off).
+   *   1 = DDA step-count heatmap. Dim blue = few steps, red = full step budget,
+   *       very dim flat = LOD-skipped (zero DDA cost). Override of the normal
+   *       coloring; emissive output is suppressed.
+   *   2 = Cell-cache miss heatmap. Same ramp as mode 1 (red = many recomputes),
+   *       but counts only DDA steps that had to redo the per-cell hash work
+   *       instead of reusing the cached `CellData`. Compare with mode 1 — the
+   *       gap between the two is the work the cache is saving. Should read
+   *       substantially cooler than mode 1 wherever caching is helping.
+   */
+  debugMode?: number;
   /** @see Layer.oversample */
-  oversample?: boolean;
+  oversample?: boolean | 2 | 3 | 4;
 }
 
 export const voxelGroundLayer = (c: VoxelGroundLayerConfig): Layer => {
@@ -18,6 +30,7 @@ export const voxelGroundLayer = (c: VoxelGroundLayerConfig): Layer => {
   const defines: DefineContribution[] = [
     { key: 'MAX_VOX_DDA_STEPS', value: c.maxSteps ?? 48, merge: 'max' },
     { key: 'VOX_LAVA_QUALITY', value: c.lavaQuality ?? 0, merge: 'max' },
+    { key: 'DEBUG_VOX_GROUND_MODE', value: c.debugMode ?? 0, merge: 'max' },
   ];
 
   return {

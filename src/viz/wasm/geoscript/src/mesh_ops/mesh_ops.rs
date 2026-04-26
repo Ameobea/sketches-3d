@@ -198,8 +198,6 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, ErrorStack> 
 
   use crate::ManifoldHandle;
 
-  verify_cgal_loaded()?;
-
   let verts = unsafe { std::slice::from_raw_parts(verts.as_ptr() as *const f32, verts.len() * 3) };
 
   let encoded_output = convex_hull(verts);

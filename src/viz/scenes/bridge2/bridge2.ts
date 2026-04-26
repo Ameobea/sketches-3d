@@ -647,7 +647,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
     { readRoughnessMapFromRChannel: true }
   );
   rock1.material = rock1Mat;
-  rock1.userData.convexhull = true;
+  rock1.userData.colliderShape = 'convexHull';
   const rock1GoldTrim = getMesh(loadedWorld, 'rock1_gold_trim');
   rock1GoldTrim.userData.nocollide = true;
   rock1GoldTrim.material = buildCustomShader(

@@ -21,7 +21,7 @@ export interface CustomLayerConfig {
   body: string;
   gate?: string;
   /** @see Layer.oversample */
-  oversample?: boolean;
+  oversample?: boolean | 2 | 3 | 4;
 }
 
 /**

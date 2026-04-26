@@ -246,6 +246,39 @@ export const convex_hull = (verts: Float32Array) => {
   return encodeManifoldMesh(manifold, false);
 };
 
+/**
+ * Compute the convex hull of a set of input vertices and return the resulting manifold mesh
+ * directly as `{ verts, indices }`, without registering it in `MeshHandles` (the Manifold
+ * is freed before returning).  Used for one-shot hull computations driven from JS rather
+ * than from a chained geoscript operation.
+ */
+export const compute_convex_hull_mesh = (
+  verts: Float32Array
+): { verts: Float32Array; indices: Uint32Array } => {
+  if (!ManifoldWasm) {
+    throw new Error('Manifold Wasm not initialized');
+  }
+
+  const { Manifold } = ManifoldWasm;
+
+  const vec3s: Vec3[] = [];
+  for (let i = 0; i < verts.length; i += 3) {
+    vec3s.push([verts[i], verts[i + 1], verts[i + 2]]);
+  }
+  const manifold = Manifold.hull(vec3s);
+  try {
+    const mesh = manifold.getMesh();
+    // `vertProperties` and `triVerts` are views into Wasm memory — copy out of WASM-owned
+    // buffers before deleting the Manifold so the caller can keep the result.
+    return {
+      verts: new Float32Array(mesh.vertProperties),
+      indices: new Uint32Array(mesh.triVerts),
+    };
+  } finally {
+    manifold.delete();
+  }
+};
+
 let splitOutput: [Uint8Array, Uint8Array] = [new Uint8Array(), new Uint8Array()];
 
 export const split_by_plane = (
