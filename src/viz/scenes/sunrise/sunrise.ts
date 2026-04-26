@@ -67,7 +67,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     vizConf,
     {
       spawn: {
-        pos: new THREE.Vector3(-48, 3, -14),
+        pos: new THREE.Vector3(0, 3, 0),
         rot: new THREE.Vector3(-0.35, -Math.PI / 2, 0),
       },
     },
@@ -134,7 +134,9 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           { position: 0.905, color: 0xc5a597 },
           { position: 0.944, color: 0xb29790 },
           { position: 1.0, color: 0x828283 },
-        ],
+        ]
+          .map(({ position, color }) => ({ position: 1 - position, color }))
+          .reverse(),
         horizonMode: HorizonMode.SolidBelow,
         belowColor: 0x060301,
         lutResolution: {

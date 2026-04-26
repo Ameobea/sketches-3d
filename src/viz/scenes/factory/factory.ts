@@ -23,6 +23,10 @@ const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
 };
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
+  viz.camera.near = 0.5;
+  viz.camera.far = 20_000;
+  viz.camera.updateProjectionMatrix();
+
   const playerHeight = 5;
   const playerRadius = 1.5;
   const playerMesh = new THREE.Mesh(
@@ -171,6 +175,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   });
 
   const handle = viz.levelLoadHandle!;
+
+  handle.setSceneRuntime(pkManager.runtime, 'scene_def_test');
 
   handle.setMaterialFactories({
     checkpoint: viz => {

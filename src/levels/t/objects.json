@@ -137,7 +137,9 @@
       "scale": [4.8716, 3.6425, 4.8716],
       "nocollide": true,
       "material": "checkpoint",
-      "parkour": { "win": true }
+      "parkour": {
+        "win": true
+      }
     }
   ]
 }

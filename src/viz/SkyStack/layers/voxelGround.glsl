@@ -553,7 +553,7 @@ void sampleVoxelGround_$ID(
 
   // ---- DDA trace ----
 
-  vec3 entryWorld = dir * tEnter;
+  vec3 entryWorld = dir * tEnter + vec3(3755., 0., 3855.);
   vec3 voxelOrigin = vec3(
     (entryWorld.x + camPos.x) / VOXEL_SIZE_$ID,
     float(VOLUME_DEPTH_$ID) - 0.001,

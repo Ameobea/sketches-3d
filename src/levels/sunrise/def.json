@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema.json",
+  "version": 1,
+  "lights": [
+    {
+      "id": "ambient",
+      "type": "ambient",
+      "color": "#d7ab85",
+      "intensity": 3.8
+    },
+    {
+      "id": "sun",
+      "type": "directional",
+      "color": "#d65454",
+      "intensity": 0.3,
+      "position": [-300, -1000, 0],
+      "castShadow": false
+    }
+  ],
+  "assets": {
+    "box": {
+      "type": "geoscript",
+      "code": "export mesh = box(1)",
+      "_meta": { "runtimeMs": 2.716666667101284, "count": 3, "codeHash": "961b4562" }
+    }
+  },
+  "objects": [
+    {
+      "id": "spawn_platform",
+      "asset": "box",
+      "scale": [30, 5, 30],
+      "position": [0, -0.5, 0]
+    }
+  ]
+}

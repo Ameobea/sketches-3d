@@ -19,8 +19,8 @@ export const buildFactorySkyStack = (viz: Viz, vizConf: VizConfig): SkyStack => 
           zIndex: 5,
           maxSteps: {
             [GraphicsQuality.Low]: 64,
-            [GraphicsQuality.Medium]: 128,
-            [GraphicsQuality.High]: 256,
+            [GraphicsQuality.Medium]: 108,
+            [GraphicsQuality.High]: 128,
           }[vizConf.graphics.quality],
           lavaQuality: vizConf.graphics.quality >= GraphicsQuality.High ? 1 : 0,
           oversample: vizConf.graphics.quality > GraphicsQuality.Medium ? 3 : false,

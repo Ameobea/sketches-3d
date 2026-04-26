@@ -42,6 +42,13 @@
     },
     "bumpy_copper_normal": {
       "url": "https://geotoy.b-cdn.net/textures/1/39daeb77-eea6-4993-9d96-45c6b089e143.avif"
+    },
+    "sooty_silver_metal_1_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/7ec70215-9a28-40df-9415-319f1568badf.avif",
+      "colorSpace": "srgb"
+    },
+    "sooty_silver_metal_1_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/b9a228a1-a58e-4c83-95de-eadb42cfe48c.avif"
     }
   },
   "materials": {
@@ -68,17 +75,16 @@
         "roughness": 0.9,
         "metalness": 0.18,
         "normalScale": 0.23,
-        "transparent": false,
+        "mapDisableDistance": 300,
+        "mapDisableDistanceAxes": "xz",
+        "mapDisableTransitionThreshold": 20,
         "uvScale": [0.15, 0.15],
         "map": "chipped_rusty_gray_painted_wall_diffuse",
         "normalMap": "chipped_rusty_gray_painted_wall_normal",
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [60, 200]
-        },
-        "mapDisableDistance": 300,
-        "mapDisableTransitionThreshold": 20,
-        "mapDisableDistanceAxes": "xz"
+        }
       },
       "options": {
         "useGeneratedUVs": true,
@@ -173,6 +179,27 @@
       },
       "options": {
         "useTriplanarMapping": true,
+        "randomizeUVOffset": true
+      }
+    },
+    "sooty_silver_metal_1": {
+      "type": "customShader",
+      "props": {
+        "color": "#ededed",
+        "roughness": 0.76,
+        "metalness": 0.78,
+        "normalScale": 0.31,
+        "uvScale": [0.15, 0.15],
+        "map": "sooty_silver_metal_1_diffuse",
+        "normalMap": "sooty_silver_metal_1_normal",
+        "heightAlpha": {
+          "bottomFade": [-230, -50],
+          "topFade": [60, 200]
+        }
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": true,
         "randomizeUVOffset": true
       }
     },

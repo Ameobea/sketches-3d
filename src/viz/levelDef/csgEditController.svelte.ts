@@ -31,6 +31,7 @@ export class CsgEditController {
   private _isActive = false;
   private editLevelObj: LevelObject | null = null;
   private editGroup: THREE.Group | null = null;
+  private editGroupParent: THREE.Object3D | null = null;
   private selectedNodePath: string | null = null;
 
   private readonly undoSystem = new UndoSystem<CsgUndoEntry>();
@@ -197,7 +198,12 @@ export class CsgEditController {
     this.editGroup.position.copy(obj.position);
     this.editGroup.rotation.copy(obj.rotation);
     this.editGroup.scale.copy(obj.scale);
-    this.editor.viz.scene.add(this.editGroup);
+    // Parent to the same parent as the level object so editGroup inherits any
+    // ancestor group transforms — copying only the local TRS would otherwise
+    // place the previews at the wrong world position when the level object is
+    // nested inside an object group.
+    this.editGroupParent = obj.parent ?? this.editor.viz.scene;
+    this.editGroupParent.add(this.editGroup);
 
     this.previewScene.activate(this.editGroup, levelObj);
 
@@ -223,8 +229,9 @@ export class CsgEditController {
     }
 
     if (this.editGroup) {
-      this.editor.viz.scene.remove(this.editGroup);
+      (this.editGroupParent ?? this.editor.viz.scene).remove(this.editGroup);
       this.editGroup = null;
+      this.editGroupParent = null;
     }
 
     this.runtime.terminatePreviewWorker();
