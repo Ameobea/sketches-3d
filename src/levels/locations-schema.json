@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "editor_bookmarks": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9
+              },
+              "mode": {
+                "type": "string",
+                "const": "play"
+              },
+              "playerPos": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "cameraAngles": {
+                "type": "object",
+                "properties": {
+                  "phi": {
+                    "type": "number"
+                  },
+                  "theta": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "phi",
+                  "theta"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "slot",
+              "mode",
+              "playerPos",
+              "cameraAngles"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9
+              },
+              "mode": {
+                "type": "string",
+                "const": "edit"
+              },
+              "cameraPos": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "orbitTarget": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "slot",
+              "mode",
+              "cameraPos",
+              "orbitTarget"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "title": "LocationsFile",
+  "$id": "https://ameo.design/schemas/level-locations.json"
+}

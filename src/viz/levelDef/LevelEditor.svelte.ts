@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
 import type { CollisionMeshOverride } from 'src/viz/collisionShapes';
-import type { LevelDef, LightDef } from './types';
+import type { EditorBookmark, LevelDef, LightDef } from './types';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
 import { SelectionManager } from './SelectionManager.svelte';
@@ -130,6 +130,8 @@ export class LevelEditor {
 
   private csgController = new CsgEditController(this);
 
+  private bookmarks = new Map<number, EditorBookmark>();
+
   constructor(
     viz: Viz,
     objects: LevelObject[],
@@ -177,6 +179,13 @@ export class LevelEditor {
 
     window.addEventListener('keydown', this.onKeyDown);
     viz.registerDestroyedCb(() => this.destroy());
+
+    void this.api.fetchLocations().then(file => {
+      if (!file) return;
+      for (const b of file.editor_bookmarks ?? []) {
+        this.bookmarks.set(b.slot, b);
+      }
+    });
   }
 
   registerMeshes(levelObj: LevelObject) {
@@ -235,11 +244,21 @@ export class LevelEditor {
       return;
     }
 
-    if (!this.isEditMode) return;
-
     // Don't fire editor binds when the user is typing in an input or textarea.
     const activeTag = (document.activeElement as HTMLElement | null)?.tagName?.toLowerCase();
     const isTypingInput = activeTag === 'input' || activeTag === 'textarea';
+
+    // Bookmark binds — work in BOTH edit and play mode.
+    // Ctrl+0..9: teleport to slot. Ctrl+Shift+0..9: save current state to slot.
+    if ((e.ctrlKey || e.metaKey) && !isTypingInput && /^Digit[0-9]$/.test(e.code)) {
+      e.preventDefault();
+      const slot = parseInt(e.code.slice(5), 10);
+      if (e.shiftKey) this.captureBookmark(slot);
+      else this.teleportToBookmark(slot);
+      return;
+    }
+
+    if (!this.isEditMode) return;
 
     // Undo / Redo
     if (!isTypingInput) {
@@ -1280,6 +1299,51 @@ export class LevelEditor {
     }
 
     clearPhysicsBinding(levelObj.object, fpCtx);
+  }
+
+  private captureBookmark(slot: number) {
+    let bookmark: EditorBookmark;
+    if (this.isEditMode) {
+      const cam = this.viz.camera.position;
+      const target = this.orbitControls?.target ?? new THREE.Vector3();
+      bookmark = {
+        slot,
+        mode: 'edit',
+        cameraPos: [round(cam.x), round(cam.y), round(cam.z)],
+        orbitTarget: [round(target.x), round(target.y), round(target.z)],
+      };
+    } else {
+      const playerPos = this.viz.fpCtx?.playerStateGetters.getPlayerPos();
+      if (!playerPos) {
+        console.warn('[LevelEditor] cannot bookmark — no player context yet');
+        return;
+      }
+      const angles = this.viz.cameraController?.getAngles() ?? { phi: Math.PI / 2, theta: 0 };
+      bookmark = {
+        slot,
+        mode: 'play',
+        playerPos: [round(playerPos[0]), round(playerPos[1]), round(playerPos[2])],
+        cameraAngles: { phi: angles.phi, theta: angles.theta },
+      };
+    }
+    this.bookmarks.set(slot, bookmark);
+    void this.api.saveBookmark(bookmark);
+  }
+
+  private teleportToBookmark(slot: number) {
+    const bookmark = this.bookmarks.get(slot);
+    if (!bookmark) return;
+
+    if (bookmark.mode === 'play') {
+      if (this.isEditMode) this.exitEditMode();
+      this.viz.fpCtx?.teleportPlayer(bookmark.playerPos);
+      this.viz.cameraController?.setAngles(bookmark.cameraAngles.phi, bookmark.cameraAngles.theta);
+    } else {
+      if (!this.isEditMode) this.enterEditMode();
+      this.viz.camera.position.fromArray(bookmark.cameraPos);
+      this.orbitControls?.target.fromArray(bookmark.orbitTarget);
+      this.orbitControls?.update();
+    }
   }
 
   private destroy() {

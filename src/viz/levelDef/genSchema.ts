@@ -6,7 +6,7 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
 
-import { LevelDefRawSchema, MaterialsFileSchema, ObjectsFileSchema } from './types';
+import { LevelDefRawSchema, LocationsFileSchema, MaterialsFileSchema, ObjectsFileSchema } from './types';
 
 const schemasDir = join(import.meta.dirname, '../../../src/levels');
 
@@ -37,4 +37,11 @@ write(
   z.toJSONSchema(ObjectsFileSchema, { target: 'draft-7' }) as Record<string, unknown>,
   'ObjectsFile',
   'https://ameo.design/schemas/level-objects.json'
+);
+
+write(
+  'locations-schema.json',
+  z.toJSONSchema(LocationsFileSchema, { target: 'draft-7' }) as Record<string, unknown>,
+  'LocationsFile',
+  'https://ameo.design/schemas/level-locations.json'
 );

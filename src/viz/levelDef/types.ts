@@ -816,3 +816,33 @@ export const ObjectsFileSchema = z.object({
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
 });
 export type ObjectsFile = z.infer<typeof ObjectsFileSchema>;
+
+const BookmarkSlotSchema = z.number().int().min(0).max(9);
+
+export const PlayBookmarkSchema = z.object({
+  slot: BookmarkSlotSchema,
+  mode: z.literal('play'),
+  playerPos: Vec3,
+  cameraAngles: z.object({ phi: z.number(), theta: z.number() }),
+});
+
+export const EditBookmarkSchema = z.object({
+  slot: BookmarkSlotSchema,
+  mode: z.literal('edit'),
+  cameraPos: Vec3,
+  orbitTarget: Vec3,
+});
+
+export const EditorBookmarkSchema = z.discriminatedUnion('mode', [PlayBookmarkSchema, EditBookmarkSchema]);
+export type EditorBookmark = z.infer<typeof EditorBookmarkSchema>;
+
+/**
+ * Schema for an optional `locations.json` file alongside `def.json`.
+ * Holds editor-only data (currently just camera bookmarks) that should never
+ * ship to production — the prod load path doesn't read this file.
+ */
+export const LocationsFileSchema = z.object({
+  $schema: z.string().optional(),
+  editor_bookmarks: z.array(EditorBookmarkSchema).optional(),
+});
+export type LocationsFile = z.infer<typeof LocationsFileSchema>;

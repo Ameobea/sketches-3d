@@ -269,6 +269,10 @@ export class CameraController {
     this.theta = theta;
   }
 
+  public getAngles(): { phi: number; theta: number } {
+    return { phi: this.phi, theta: this.theta };
+  }
+
   /** Set the target zoom distance (no-op in first-person mode). */
   public setTargetZoomDistance(distance: number): void {
     if (this.targetDistance <= 0) return;

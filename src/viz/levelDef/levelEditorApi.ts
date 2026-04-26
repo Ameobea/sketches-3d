@@ -1,5 +1,12 @@
 import type { AssetLibFolder } from './assetLibTypes';
-import type { CsgTreeNode, LightDef, ObjectDef, ObjectGroupDef } from './types';
+import type {
+  CsgTreeNode,
+  EditorBookmark,
+  LightDef,
+  LocationsFile,
+  ObjectDef,
+  ObjectGroupDef,
+} from './types';
 import type { LevelSceneNode } from './loadLevelDef';
 import type { RuntimeSubtree } from './editorStructuralTypes';
 import type { TransformSnapshot } from './TransformHandler';
@@ -346,6 +353,35 @@ export class LevelEditorApi {
     } catch (err) {
       console.error('[LevelEditor] group nodes error:', err);
       return null;
+    }
+  };
+
+  fetchLocations = async (): Promise<LocationsFile | null> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}/locations`);
+      if (!res.ok) {
+        console.error('[LevelEditor] locations fetch failed:', res.status, await res.text());
+        return null;
+      }
+      return (await res.json()) as LocationsFile;
+    } catch (err) {
+      console.error('[LevelEditor] locations fetch error:', err);
+      return null;
+    }
+  };
+
+  saveBookmark = async (bookmark: EditorBookmark): Promise<void> => {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}/locations`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bookmark),
+      });
+      if (!res.ok) {
+        console.error('[LevelEditor] bookmark save failed:', res.status, await res.text());
+      }
+    } catch (err) {
+      console.error('[LevelEditor] bookmark save error:', err);
     }
   };
 
