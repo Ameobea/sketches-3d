@@ -5,12 +5,12 @@
     "box": {
       "type": "geoscript",
       "code": "export mesh = box(5)",
-      "_meta": { "runtimeMs": 3.7949999943375587, "count": 1, "codeHash": "961b45e6" }
+      "_meta": { "runtimeMs": 3.55999999884516, "count": 5, "codeHash": "961b45e6" }
     },
     "capsule": {
       "type": "geoscript",
       "code": "export mesh = capsule(height=4, radial_segments=16)",
-      "_meta": { "runtimeMs": 0.5600000023841858, "count": 1, "codeHash": "841aeda1" }
+      "_meta": { "runtimeMs": 0.5500000004656613, "count": 5, "codeHash": "841aeda1" }
     },
     "csg_plat2": {
       "type": "csg",
@@ -30,7 +30,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 16.265000000596046, "count": 1, "codeHash": "594b05f3", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 17.137000000127593, "count": 5, "codeHash": "594b05f3", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_coil": {
       "type": "csg",
@@ -90,7 +90,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 27.92000000178814, "count": 1, "codeHash": "3bd42240", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 29.227000000351108, "count": 5, "codeHash": "3bd42240", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_capsule": {
       "type": "csg",
@@ -142,52 +142,52 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 27.969999998807907, "count": 1, "codeHash": "9f335096", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 30.27799999974668, "count": 5, "codeHash": "9f335096", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "block": {
       "type": "geoscript",
       "file": "geo/block.geo",
-      "_meta": { "runtimeMs": 1.8799999952316284, "count": 1, "codeHash": "737134a6", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 2.0939999989932403, "count": 5, "codeHash": "737134a6", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "coil": {
       "type": "geoscript",
       "file": "geo/coil.geo",
-      "_meta": { "runtimeMs": 13.395000003278255, "count": 1, "codeHash": "39339b47", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 13.910000000684523, "count": 5, "codeHash": "39339b47", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "plat1": {
       "type": "geoscript",
       "file": "geo/plat1.geo",
-      "_meta": { "runtimeMs": 4.809999994933605, "count": 1, "codeHash": "6a9bde3b", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 5.333999998983927, "count": 5, "codeHash": "6a9bde3b", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "plat2": {
       "type": "geoscript",
       "file": "geo/plat2.geo",
-      "_meta": { "runtimeMs": 32.099999994039536, "count": 1, "codeHash": "38acd06", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 32.46399999880232, "count": 5, "codeHash": "38acd06", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "puck": {
       "type": "geoscript",
       "file": "geo/puck.geo",
-      "_meta": { "runtimeMs": 14.66499999910593, "count": 1, "codeHash": "a9db00af", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 11.317999999783932, "count": 5, "codeHash": "a9db00af", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "ring": {
       "type": "geoscript",
       "file": "geo/ring.geo",
-      "_meta": { "runtimeMs": 44.5350000038743, "count": 1, "codeHash": "3a6a8748", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 53.67100000083447, "count": 5, "codeHash": "3a6a8748", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "t3": {
       "type": "geoscript",
       "file": "geo/t3.geo",
-      "_meta": { "runtimeMs": 15.714999996125698, "count": 1, "codeHash": "4c47b26c", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 19.326999999256806, "count": 5, "codeHash": "4c47b26c", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "t4": {
       "type": "geoscript",
       "file": "geo/t4.geo",
-      "_meta": { "runtimeMs": 22.019999995827675, "count": 1, "codeHash": "e5335981", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 27.45399999914225, "count": 5, "codeHash": "e5335981", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "telephone_pole": {
       "type": "geoscript",
       "file": "geo/telephone_pole.geo",
-      "_meta": { "runtimeMs": 15.20499999821186, "count": 1, "codeHash": "bdc3f5c", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 18.788999999617225, "count": 5, "codeHash": "bdc3f5c", "asyncDeps": [ "cgal", "clipper2" ] }
     }
   },
   "physics": {

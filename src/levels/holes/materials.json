@@ -41,7 +41,7 @@
     "plastered_concrete": {
       "type": "customShader",
       "props": {
-        "color": 14671839,
+        "color": "#dfdfdf",
         "roughness": 0.9,
         "metalness": 0.4,
         "uvScale": [0.04, 0.04],

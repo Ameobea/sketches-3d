@@ -4,11 +4,13 @@
   "assets": {
     "box": {
       "type": "geoscript",
-      "code": "export mesh = box(5)"
+      "code": "export mesh = box(5)",
+      "_meta": { "runtimeMs": 4.200000002980232, "count": 1, "codeHash": "961b45e6" }
     },
     "cyl": {
       "type": "geoscript",
-      "code": "export mesh = cylinder(radius=1, height=4, radial_segments=16, height_segments=1)"
+      "code": "export mesh = cylinder(radius=1, height=4, radial_segments=16, height_segments=1)",
+      "_meta": { "runtimeMs": 0.7650000005960464, "count": 1, "codeHash": "543df248" }
     },
     "csg_box_1": {
       "type": "csg",
@@ -56,7 +58,8 @@
             "scale": [0.1779, 44.8524, 0.1243]
           }
         ]
-      }
+      },
+      "_meta": { "runtimeMs": 10.030000001192093, "count": 1, "codeHash": "f19f8c11", "asyncDeps": [ "cgal" ] }
     },
     "csg_box_3": {
       "type": "csg",
@@ -76,7 +79,8 @@
             "scale": [0.6964, 1, 0.6073]
           }
         ]
-      }
+      },
+      "_meta": { "runtimeMs": 1.5200000032782555, "count": 1, "codeHash": "d5cdacf8", "asyncDeps": [ "cgal" ] }
     },
     "csg_box_6": {
       "type": "csg",
@@ -96,17 +100,20 @@
             "scale": [1.1785, 0.7521, 0.7664]
           }
         ]
-      }
+      },
+      "_meta": { "runtimeMs": 1.219999998807907, "count": 1, "codeHash": "7b405a5e", "asyncDeps": [ "cgal" ] }
     },
     "csg_box_7": {
       "type": "csg",
       "tree": {
         "asset": "box"
-      }
+      },
+      "_meta": { "runtimeMs": 0.4050000011920929, "count": 1, "codeHash": "b6d73304", "asyncDeps": [ "cgal" ] }
     },
     "cursed_steps": {
       "type": "geoscript",
-      "file": "geo/cursed_steps.geo"
+      "file": "geo/cursed_steps.geo",
+      "_meta": { "runtimeMs": 6.839999996125698, "count": 1, "codeHash": "75dc64bc", "asyncDeps": [ "cgal", "clipper2" ] }
     }
   },
   "physics": {
