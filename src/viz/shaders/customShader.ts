@@ -304,6 +304,25 @@ export const setOcclusionBackfaceRendering = (scene: THREE.Scene, enable: boolea
   });
 };
 
+/**
+ * Eagerly compile both the FrontSide and DoubleSide+BackSide shadow-side variants of
+ * every `CustomShaderMaterial` in the scene. Toggling `shadowSide` at runtime changes
+ * the program cache key in three.js, so the first occlusion-induced switch causes a
+ * fresh shader compile/link — visible as a hitch. Call this once during scene load
+ * for scenes that have (or can switch into) third-person mode to pay that cost up
+ * front while a loading screen is showing.
+ */
+export const precompileOcclusionShaderVariants = (
+  scene: THREE.Scene,
+  renderer: THREE.WebGLRenderer,
+  camera: THREE.Camera
+) => {
+  setOcclusionBackfaceRendering(scene, true);
+  renderer.compile(scene, camera);
+  setOcclusionBackfaceRendering(scene, false);
+  renderer.compile(scene, camera);
+};
+
 export const resetCustomShaderGlobals = () => {
   globalConfig = {};
   occlusionBackfaceRenderingEnabled = false;
@@ -387,6 +406,31 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
       occlusionEnd: { value: occlusionEnd },
       occlusionParams: { value: occlusionParams },
     },
+  });
+
+/**
+ * A bit-exact depth-only override material with no dithering. Used by the depth pre-pass
+ * for `noOcclusion` meshes (player, `nonPermeable` walls) — they need their depth written
+ * so downstream consumers (SkyStack's `discardIfOccluded`, FinalPass's sky-bypass detection,
+ * and the FinalPass emissive composite gate) see them as scene geometry, but they should
+ * never get the camera-occlusion dither pattern punched into them.
+ */
+export const buildPlainDepthMaterial = (): THREE.ShaderMaterial =>
+  new THREE.ShaderMaterial({
+    vertexShader: `
+      #ifdef USE_INSTANCING
+        attribute mat4 instanceMatrix;
+      #endif
+      void main() {
+        ${depthExactVertexBody}
+      }
+    `,
+    fragmentShader: `
+      void main() {
+        gl_FragColor = vec4(1.0);
+      }
+    `,
+    uniforms: {},
   });
 
 const DefaultReflectionParams: ReflectionParams = Object.freeze({ alpha: 1 });

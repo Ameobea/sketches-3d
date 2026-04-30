@@ -12,7 +12,7 @@ import type { Viz } from 'src/viz';
 import type { PostprocessingController } from 'src/viz';
 import { GraphicsQuality } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
-import { buildOcclusionDepthMaterial } from 'src/viz/shaders/customShader';
+import { buildOcclusionDepthMaterial, buildPlainDepthMaterial } from 'src/viz/shaders/customShader';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
@@ -201,7 +201,9 @@ export const configureDefaultPostprocessingPipeline = ({
     viz.renderer.autoClearDepth = false;
     depthPrePassMaterial = buildOcclusionDepthMaterial();
     depthPrePassMaterial.side = THREE.FrontSide;
-    depthPass = new DepthPass(viz.scene, viz.camera, depthPrePassMaterial);
+    const plainDepthMaterial = buildPlainDepthMaterial();
+    plainDepthMaterial.side = THREE.FrontSide;
+    depthPass = new DepthPass(viz.scene, viz.camera, depthPrePassMaterial, false, plainDepthMaterial);
     depthPass.skipShadowMapUpdate = true;
     effectComposer.addPass(depthPass);
 

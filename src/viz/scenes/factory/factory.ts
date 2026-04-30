@@ -167,7 +167,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
             [GraphicsQuality.High]: 'Medium',
           }[quality]
         );
-        composer.addPass(n8aoPass, 3);
+        // composer.addPass(n8aoPass, 3);
         n8aoPass.autoDetectTransparency = false;
         n8aoPass.configuration.transparencyAware = false;
       }

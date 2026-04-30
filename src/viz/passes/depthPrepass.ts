@@ -14,16 +14,27 @@ export class ClearDepthPass extends Pass {
 
 export class DepthPass extends RenderPass implements Resizable {
   public renderTarget: THREE.WebGLRenderTarget | null = null;
+  /**
+   * Optional non-dithering depth-only material used in a second prepass step for meshes flagged
+   * `occlusionExclude` (the player, `nonPermeable` walls, etc). Without this second step those
+   * meshes leave depth at the far plane, which makes downstream consumers (SkyStack's
+   * `discardIfOccluded`, FinalPass's sky-bypass tone-map gate, FinalPass's emissive composite)
+   * mistake their pixels for sky and bleed sky color through them.
+   */
+  private plainDepthMaterial: THREE.Material | null;
 
   constructor(
     scene: THREE.Scene,
     camera: THREE.Camera,
     overrideMaterial: THREE.Material,
-    useExternalRenderTarget?: boolean
+    useExternalRenderTarget?: boolean,
+    plainDepthMaterial?: THREE.Material
   ) {
     super(scene, camera, overrideMaterial);
     this.clearPass.setClearFlags(false, true, false);
     overrideMaterial.colorWrite = false;
+    if (plainDepthMaterial) plainDepthMaterial.colorWrite = false;
+    this.plainDepthMaterial = plainDepthMaterial ?? null;
     if (useExternalRenderTarget) {
       this.renderTarget = new THREE.WebGLRenderTarget(1, 1, {
         format: THREE.RGBAFormat,
@@ -40,8 +51,9 @@ export class DepthPass extends RenderPass implements Resizable {
     deltaTime?: number | undefined,
     stencilTest?: boolean | undefined
   ): void {
-    // Avoid rendering transparent objects; also skip occlusion-excluded meshes so their depth
-    // is not pre-written (the main pass renders them without dithering and writes depth then).
+    // Categorize scene meshes: `selection` gets the dithering override material; `occlusionExcluded`
+    // gets the plain depth material in a second step so its depth still lands in the buffer without
+    // picking up the camera-occlusion dither pattern.
     const selection: THREE.Object3D[] = [];
     const occlusionExcluded: THREE.Object3D[] = [];
     this.scene.traverse(c => {
@@ -52,7 +64,10 @@ export class DepthPass extends RenderPass implements Resizable {
       if (mat?.depthTest === false) {
         return;
       }
-      if ((c as THREE.Mesh).userData?.occlusionExclude) {
+      // The flag may be set on the mesh's userData or on the material's userData
+      // (`buildCustomShader` with `noOcclusion: true` sets it on `material.userData`).
+      const matUserData = !Array.isArray(mat) ? mat?.userData : undefined;
+      if ((c as THREE.Mesh).userData?.occlusionExclude || matUserData?.occlusionExclude) {
         occlusionExcluded.push(c);
         return;
       }
@@ -66,7 +81,8 @@ export class DepthPass extends RenderPass implements Resizable {
       this.selection.add(child);
     }
 
-    // Temporarily hide excluded objects so scene.overrideMaterial doesn't affect them.
+    // Step 1: dithering prepass for occlusion-eligible meshes. Hide excluded ones so the
+    // dithering override material doesn't punch holes into their depth.
     for (const obj of occlusionExcluded) {
       obj.visible = false;
     }
@@ -82,11 +98,35 @@ export class DepthPass extends RenderPass implements Resizable {
       super.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
     }
 
-    renderer.shadowMap.enabled = shadowMapWasEnabled;
-
     for (const obj of occlusionExcluded) {
       obj.visible = true;
     }
+
+    // Step 2: plain (non-dithering) depth prepass for occlusion-excluded meshes. Toggles
+    // visibility on every other Mesh so `scene.overrideMaterial` doesn't accidentally apply to
+    // them. Map captures prior visibility so user-hidden meshes don't get force-shown after.
+    if (occlusionExcluded.length > 0 && this.plainDepthMaterial) {
+      const occlusionExcludedSet = new Set(occlusionExcluded);
+      const restoreVisibility = new Map<THREE.Object3D, boolean>();
+      this.scene.traverse(c => {
+        if (!(c instanceof THREE.Mesh)) return;
+        if (occlusionExcludedSet.has(c)) return;
+        if (!c.visible) return;
+        restoreVisibility.set(c, true);
+        c.visible = false;
+      });
+
+      const savedOverride = this.scene.overrideMaterial;
+      this.scene.overrideMaterial = this.plainDepthMaterial;
+      const target = this.renderTarget ?? inputBuffer;
+      renderer.setRenderTarget(target);
+      renderer.render(this.scene, this.camera);
+      this.scene.overrideMaterial = savedOverride;
+
+      for (const obj of restoreVisibility.keys()) obj.visible = true;
+    }
+
+    renderer.shadowMap.enabled = shadowMapWasEnabled;
   }
 
   setSize(width: number, height: number): void {

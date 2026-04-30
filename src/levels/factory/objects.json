@@ -399,7 +399,7 @@
           "asset": "pipe_decoration2",
           "position": [-211.499, -186.488, -31.4549],
           "rotation": [0, 1.5708, 0],
-          "scale": [-2.2891, -2.9356, -2.9356],
+          "scale": [2.2891, 2.9356, 2.9356],
           "material": "rusty_metal_decoration"
         }
       ],
@@ -446,8 +446,8 @@
           "id": "pipe_decoration2_2",
           "asset": "pipe_decoration2",
           "position": [12.7024, 3.9664, 0],
-          "rotation": [-0.8697, -1.5708, 3.1416],
-          "scale": [-1.4027, -1.7989, -1.7989],
+          "rotation": [-0.8697, -1.5708, -3.1416],
+          "scale": [1.4027, 1.7989, 1.7989],
           "material": "rusty_metal_decoration"
         }
       ],

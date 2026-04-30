@@ -22,7 +22,11 @@ import { type SceneConfig, type SceneDef, ScenesByName, type ViewMode } from './
 import { buildDefaultSceneConfig, DefaultTopDownCameraFOV } from './sceneDefaults';
 import { DefaultTopDownCameraRotation } from './clientDefaults';
 import type { CameraController } from './cameraController';
-import { resetCustomShaderGlobals, getPlayerShadowUniforms } from './shaders/customShader';
+import {
+  resetCustomShaderGlobals,
+  getPlayerShadowUniforms,
+  precompileOcclusionShaderVariants,
+} from './shaders/customShader';
 import { clearPhysicsBinding } from './util/physics';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
 import type { BtPairCachingGhostObject } from 'src/ammojs/ammoTypes.ts';
@@ -448,6 +452,12 @@ export class Viz {
       endCameraPos = this.cameraController!.computeIdealCameraPos(playerEyePos);
       endCameraRot = this.cameraController!.computeLookRotation();
       endFOV = this.cameraController!.currentFOV;
+
+      // Warm the DoubleSide+BackSide program variants before the transition completes so
+      // the first occlusion event in third person doesn't trigger a shader-compile hitch.
+      if (newViewMode.type === 'thirdPerson' && this.sceneConf.viewMode!.type !== 'thirdPerson') {
+        precompileOcclusionShaderVariants(this.scene, this.renderer, this.camera);
+      }
     } else if (newViewMode.type === 'top-down') {
       this.cameraController?.deactivate();
       endCameraPos = this.fpCtx!.computeTopDownCameraPos(playerFeetPos.clone(), newViewMode);
@@ -1229,6 +1239,13 @@ export const initViz = (
 
     if (sceneConf.player?.mesh) {
       viz.scene.add(sceneConf.player.mesh);
+    }
+
+    // Warm both shadow-side program variants up front for scenes that can enter third-person —
+    // otherwise the first occlusion-triggered DoubleSide flip recompiles every CustomShaderMaterial
+    // in the scene and causes a visible hitch.
+    if (sceneConf.viewMode.type === 'thirdPerson') {
+      precompileOcclusionShaderVariants(viz.scene, viz.renderer, viz.camera);
     }
 
     if (!useLevelDef) {
