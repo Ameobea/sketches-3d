@@ -37,7 +37,14 @@ export class Entity {
   public readonly numericId: number;
   public object: THREE.Mesh;
   public body: BtRigidBody | null = null;
-  /** The original placement transform from the level def. */
+  /**
+   * The authored placement transform in the entity's parent-local space.
+   * Behaviors compose deltas onto this base; consumers feed the result back
+   * into {@link setTransform}, which writes directly to the object's local
+   * `position`/`quaternion`/`scale` — so this must stay parent-local for the
+   * round-trip to compose correctly under non-identity ancestor transforms
+   * (e.g. when the entity is a child of an editor group).
+   */
   public readonly baseTransform: THREE.Matrix4;
   public materialClass: MaterialClass | undefined = undefined;
   /**
@@ -55,6 +62,7 @@ export class Entity {
   private readonly _pos = new THREE.Vector3();
   private readonly _quat = new THREE.Quaternion();
   private readonly _scale = new THREE.Vector3();
+  private readonly _worldMat = new THREE.Matrix4();
 
   // Ammo helpers — set by SceneRuntime after physics is ready
   /** @internal */ _btTransform: BtTransform | null = null;
@@ -67,10 +75,19 @@ export class Entity {
     this.numericId = nextNumericId++;
     this.object = object;
 
-    // Capture the initial world-space transform as the base
     this.baseTransform = new THREE.Matrix4();
-    object.updateWorldMatrix(true, false);
-    this.baseTransform.copy(object.matrixWorld);
+    object.updateMatrix();
+    this.baseTransform.copy(object.matrix);
+  }
+
+  /**
+   * Recapture {@link baseTransform} from the object's current local matrix.
+   * Call this whenever the entity's authored placement changes outside of a
+   * behavior tick (editor transform commits, group/ungroup, reparent).
+   */
+  refreshBaseTransform(): void {
+    this.object.updateMatrix();
+    this.baseTransform.copy(this.object.matrix);
   }
 
   /** @internal Called by BulletPhysics when a body is registered for this entity. */
@@ -122,8 +139,11 @@ export class Entity {
   }
 
   /**
-   * Set the entity's world-space transform, updating both the Three.js object
-   * and the attached Bullet rigid body (if any).
+   * Set the entity's parent-local transform.  Writes directly to the Three.js
+   * object's local `position`/`quaternion`/`scale`, and pushes the composed
+   * world-space transform to the attached Bullet rigid body (if any).
+   *
+   * Behaviors should pass parent-local matrices: e.g. `baseTransform.clone().multiply(delta)`.
    */
   setTransform(matrix: THREE.Matrix4): void {
     matrix.decompose(this._pos, this._quat, this._scale);
@@ -135,6 +155,13 @@ export class Entity {
     if (!this.body || !this._btTransform || !this._btvec3) {
       return;
     }
+
+    const parent = this.object.parent;
+    if (parent) {
+      parent.updateWorldMatrix(true, false);
+      this._worldMat.multiplyMatrices(parent.matrixWorld, matrix);
+      this._worldMat.decompose(this._pos, this._quat, this._scale);
+    }
     this._btTransform.setOrigin(this._btvec3(this._pos.x, this._pos.y, this._pos.z));
     if (this._btQuat) {
       this._btQuat.setValue(this._quat.x, this._quat.y, this._quat.z, this._quat.w);
@@ -144,7 +171,7 @@ export class Entity {
   }
 
   /**
-   * Convenience: set position only, preserving current rotation and scale.
+   * Convenience: set parent-local position only, preserving current rotation and scale.
    */
   setPosition(x: number, y: number, z: number): void {
     this.object.position.set(x, y, z);
@@ -152,7 +179,15 @@ export class Entity {
     if (!this.body || !this._btTransform || !this._btvec3) {
       return;
     }
-    this._btTransform.setOrigin(this._btvec3(x, y, z));
+
+    const parent = this.object.parent;
+    if (parent) {
+      parent.updateWorldMatrix(true, false);
+      this._pos.set(x, y, z).applyMatrix4(parent.matrixWorld);
+      this._btTransform.setOrigin(this._btvec3(this._pos.x, this._pos.y, this._pos.z));
+    } else {
+      this._btTransform.setOrigin(this._btvec3(x, y, z));
+    }
     this.body.setWorldTransform(this._btTransform);
   }
 

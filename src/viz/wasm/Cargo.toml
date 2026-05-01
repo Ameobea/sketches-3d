@@ -18,6 +18,7 @@ members = [
   "geoscript_analysis",
   "geoscript_analysis_wasm",
   "flight_recorder",
+  "sound_engine",
 ]
 resolver = "2"
 

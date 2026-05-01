@@ -43,6 +43,7 @@ export class SceneRuntime {
   private managerTickerHandle: PhysicsTickerHandle | null = null;
   private fpCtxRef: PhysicsContext | null = null;
   private spawners: SpawnerState[] = [];
+  private wasBehaviorsPaused = false;
 
   /** Additional callbacks invoked on reset, beyond entity behavior resets. */
   private resetCbs: (() => void)[] = [];
@@ -61,6 +62,30 @@ export class SceneRuntime {
 
       this.managerTickerHandle = fpCtx.registerPhysicsTicker({
         tick: (physicsTime: number) => {
+          if (this.viz.behaviorsPaused) {
+            // First tick of a paused span: snap every behavior-driven entity
+            // back to its authored rest pose so the editor sees authored state,
+            // not whatever frame the animation happened to be on.
+            if (!this.wasBehaviorsPaused) {
+              for (const entity of this.entities) {
+                if (entity.hasBehaviors()) {
+                  entity.setTransform(entity.baseTransform);
+                }
+              }
+              this.wasBehaviorsPaused = true;
+            }
+            // Advance the per-entity epoch so that when behaviors resume,
+            // `elapsed` doesn't jump by the pause duration.
+            for (const entity of this.entities) {
+              this.entityEpochs.set(entity, physicsTime);
+            }
+            for (const state of this.spawners) {
+              state.nextSpawnTime = physicsTime + (state.config.initialDelay ?? 0);
+            }
+            this.flushPendingRemovals();
+            return;
+          }
+          this.wasBehaviorsPaused = false;
           this.tickSpawners(physicsTime);
           this.tickEntities(physicsTime);
           this.flushPendingRemovals();

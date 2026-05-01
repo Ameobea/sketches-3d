@@ -13,7 +13,7 @@
       "type": "directional",
       "color": "#d65454",
       "intensity": 0.3,
-      "position": [-300, -1000, 0],
+      "position": [-300, -1000, 15],
       "castShadow": false
     }
   ],

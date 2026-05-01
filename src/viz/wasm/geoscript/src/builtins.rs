@@ -65,6 +65,7 @@ use crate::{
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod catmull_rom;
+pub(crate) mod fillet_path;
 pub mod fn_defs;
 pub(crate) mod lerp_path;
 pub(crate) mod offset_path;
@@ -6376,6 +6377,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "catmull_rom_3d" => builtin_fn!(catmull_rom_3d, |def_ix, arg_refs, args, kwargs, ctx| {
     catmull_rom::catmull_rom_3d_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "fillet_path" => builtin_fn!(fillet_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    fillet_path::fillet_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "fillet_path_3d" => builtin_fn!(fillet_path_3d, |def_ix, arg_refs, args, kwargs, ctx| {
+    fillet_path::fillet_path_3d_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "vec2" => builtin_fn!(vec2, |def_ix, arg_refs, args, kwargs, _ctx| {
     vec2_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -6758,6 +6765,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "circle" => builtin_fn!(circle, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::draw_command_stub_impl("circle", def_ix, arg_refs, args, kwargs, ctx)
+  }),
+  "rect" => builtin_fn!(rect, |def_ix, arg_refs, args, kwargs, ctx| {
+    trace_path::draw_command_stub_impl("rect", def_ix, arg_refs, args, kwargs, ctx)
   }),
   "close" => builtin_fn!(close, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::draw_command_stub_impl("close", def_ix, arg_refs, args, kwargs, ctx)

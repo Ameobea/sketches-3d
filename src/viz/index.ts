@@ -4,7 +4,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { initSentry } from 'src/sentry';
-import { buildDefaultSfxConfig, SfxManager } from './audio/SfxManager';
+import { buildDefaultSfxConfig, SoundEngine } from './audio/SoundEngine';
 import { getAmmoJS, BulletPhysics } from './collision';
 import {
   FlightPlayer,
@@ -117,7 +117,7 @@ export class Viz {
   public sceneName: string;
   public clock: THREE.Clock = new THREE.Clock();
   public inventory: Inventory = new Inventory();
-  public sfxManager: SfxManager = new SfxManager();
+  public sfxManager: SoundEngine;
   public scene: THREE.Scene = new THREE.Scene();
   /**
    * Overlay scene rendered after all postprocessing with a fresh depth buffer.
@@ -129,6 +129,12 @@ export class Viz {
   public popupCalled: TransparentWritable<PopupScreenFocus>;
   public collisionWorldLoadedCbs: ((fpCtx: BulletPhysics) => void)[] = [];
   public fpCtx: BulletPhysics | undefined;
+  /**
+   * When true, SceneRuntime suspends behavior and spawner ticks.  Set by the
+   * level editor while in edit mode so that behavior-driven transforms don't
+   * fight with authoring.  The physics world keeps ticking either way.
+   */
+  public behaviorsPaused: boolean = false;
   /**
    * Persistent user-configurable settings, mostly set via the pause menu.
    */
@@ -208,8 +214,10 @@ export class Viz {
     this.paused = paused;
     this.popupCalled = popupCalled;
     this.sceneName = sceneName;
+    this.sfxManager = new SoundEngine({ enabled: sceneDef.audio !== false });
 
     this.setupCameraAndRenderer(sceneDef);
+    this.sfxManager.setCamera(this.camera);
 
     this.registerBeforeRenderCb(() => {
       for (const { mesh, baseMat, replacementMat, distance } of this.distanceSwapEntries) {
@@ -711,7 +719,10 @@ export class Viz {
     document.addEventListener('pointerlockchange', this.handlePointerLockChange);
     document.addEventListener('mousedown', this.handleMouseDown);
     window.addEventListener('resize', this.onWindowResize);
-    this.unsubscribePauseStateChange = this.paused.subscribe(this.handlePauseStateChange);
+    this.unsubscribePauseStateChange = this.paused.subscribe(paused => {
+      this.handlePauseStateChange(paused);
+      this.sfxManager.setPaused(paused);
+    });
 
     if (this.sceneConf.customControlsEntries) {
       for (const { key, action } of this.sceneConf.customControlsEntries) {
@@ -913,7 +924,9 @@ export class Viz {
         } else {
           o.material?.dispose();
         }
-        clearPhysicsBinding(o, this.fpCtx!);
+        if (this.fpCtx) {
+          clearPhysicsBinding(o, this.fpCtx);
+        }
       }
     });
 

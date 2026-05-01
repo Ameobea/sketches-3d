@@ -559,7 +559,7 @@ const buildHeightAlphaEarlyOut = (
     float heightAlphaFactor = 1.0;
     ${lines.join('\n    ')}
     if (heightAlphaFactor < 0.001) {
-      outFragColor = vec4(0.001, 0.001, 0.001, 1.0);
+      outFragColor = vec4(0.0, 0.0, 0.0, 1.0);
       return;
     }
   `;
@@ -579,7 +579,7 @@ const buildHeightAlphaFragment = (
   // heightAlphaFactor was already computed by the early-out block; just apply it.
   return `{
     // heightAlphaFactor computed earlier near top of main()
-    outgoingLight.rgb = mix(outgoingLight.rgb, vec3(0.001), 1. - heightAlphaFactor);
+    outgoingLight.rgb = mix(outgoingLight.rgb, vec3(0.0), 1. - heightAlphaFactor);
   }`;
 };
 

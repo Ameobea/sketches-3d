@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import type { Viz } from '..';
-import type { SfxConfig } from '../audio/SfxManager';
+import type { SfxConfig } from '../audio/SoundEngine';
 import type { VizConfig } from '../conf';
 import type { DeepPartial } from '../util/util.ts';
 import type { TransparentWritable } from '../util/TransparentWritable.ts';
@@ -277,6 +277,12 @@ export interface SceneDef {
    * When true, `loadLevelDef` is called automatically by the framework.
    */
   useSceneDef?: boolean;
+  /**
+   * When false, the audio engine (AudioWorklet, wasm, sample fetches) is not
+   * initialized for this scene.  Use for non-game scenes (e.g. the geoscript
+   * playground) that have no sfx or spatial audio.  Default: true.
+   */
+  audio?: boolean;
 }
 
 const ParticleConduit: SceneDef = {
@@ -574,6 +580,7 @@ export const ScenesByName: { [key: string]: SceneDef } = {
     gltfName: null,
     legacyLights: false,
     metadata: { title: 'geoscript ' },
+    audio: false,
   },
   scene_def_test: {
     sceneName: null,

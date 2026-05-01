@@ -4,7 +4,8 @@
   impl_trait_in_fn_trait_return,
   unsafe_cell_access,
   likely_unlikely,
-  iter_array_chunks
+  iter_array_chunks,
+  thread_local
 )]
 
 #[cfg(target_arch = "wasm32")]
@@ -422,26 +423,21 @@ impl Callable {
     match self {
       Callable::Builtin { fn_entry_ix, .. } => {
         let name = fn_sigs().entries[*fn_entry_ix].0;
+        // Trace-path draw commands are intrinsically side-effectful (they mutate the
+        // surrounding `DrawCtx`), and so are their pipe/aliased forms.  Aliases
+        // resolve to their canonical name through `FUNCTION_ALIASES`, but the bare
+        // alias still has its own builtin entry, so check both spellings.
+        if crate::builtins::trace_path::is_trace_path_draw_command_name(name) {
+          return true;
+        }
+        if let Some(canonical) = crate::builtins::FUNCTION_ALIASES.get(name) {
+          if crate::builtins::trace_path::is_trace_path_draw_command_name(canonical) {
+            return true;
+          }
+        }
         matches!(
           name,
-          "print"
-            | "render"
-            | "call"
-            | "randv"
-            | "randf"
-            | "randi"
-            | "assert"
-            | "set_rng_seed"
-            | "move"
-            | "line"
-            | "quadratic_bezier"
-            | "quad_bezier"
-            | "cubic_bezier"
-            | "smooth_cubic_bezier"
-            | "smooth_quadratic_bezier"
-            | "arc"
-            | "circle"
-            | "close"
+          "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert" | "set_rng_seed"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),

@@ -23,7 +23,7 @@ const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
 };
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
-  viz.camera.near = 0.5;
+  viz.camera.near = 0.2;
   viz.camera.far = 20_000;
   viz.camera.updateProjectionMatrix();
 
@@ -167,7 +167,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
             [GraphicsQuality.High]: 'Medium',
           }[quality]
         );
-        // composer.addPass(n8aoPass, 3);
+        composer.addPass(n8aoPass, 3);
         n8aoPass.autoDetectTransparency = false;
         n8aoPass.configuration.transparencyAware = false;
       }
@@ -196,6 +196,17 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       },
       { checkpointMeshes }
     );
+  });
+
+  viz.sfxManager.registerSfxDefs({
+    factory_ambient: { url: 'https://i.ameo.link/dnx.ogg' },
+  });
+  viz.sfxManager.playSpatialLoop('factory_ambient', {
+    pos: [542, 22, -142.5],
+    gain: 0.2,
+    refDistance: 100,
+    rolloff: 2.5,
+    xfade: 0.03,
   });
 
   return pkManager.buildSceneConfig();

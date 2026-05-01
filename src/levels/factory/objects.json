@@ -213,7 +213,7 @@
         {
           "id": "wall_2",
           "asset": "wall",
-          "position": [0, 71.8664, -143.7516],
+          "position": [-5.1115, 71.8664, -143.7516],
           "rotation": [0, 1.5708, 0],
           "scale": [8, 2.6589, 7],
           "material": "chipped_rusty_gray_painted_wall"
@@ -678,71 +678,80 @@
       "position": [476.6173, 29.2615, -34.2574],
       "rotation": [1.5708, -0.5332, 0],
       "scale": [0.5439, 0.5439, 0.5439],
-      "material": "highlight"
+      "material": "highlight",
+      "nocollide": true
     },
     {
-      "id": "gear1",
-      "asset": "gear1",
-      "position": [541.1948, 19.8046, -63.6734],
-      "rotation": [0, -1.5708, 2.7253],
-      "scale": [2.5, 2.5, 1],
-      "material": "sooty_silver_metal_1",
-      "behaviors": [
+      "id": "gears",
+      "children": [
         {
-          "fn": "spinner",
-          "params": {
-            "rps": [0, 0, -0.2]
-          }
-        }
-      ]
-    },
-    {
-      "id": "gear1_1",
-      "asset": "gear1",
-      "position": [541.1295, 42.9154, -102.7661],
-      "rotation": [0, 1.5708, -0.5721],
-      "scale": [2.5, 2.5, 1],
-      "material": "sooty_silver_metal_1",
-      "behaviors": [
+          "id": "gear1",
+          "asset": "gear1",
+          "position": [0.0326, -17.7799, 63.4423],
+          "rotation": [0, -1.5708, 2.7253],
+          "scale": [2.5, 2.5, 1],
+          "material": "sooty_silver_metal_1",
+          "behaviors": [
+            {
+              "fn": "spinner",
+              "params": {
+                "rps": [0, 0, -0.2]
+              }
+            }
+          ]
+        },
         {
-          "fn": "spinner",
-          "params": {
-            "rps": [0, 0, -0.2]
-          }
-        }
-      ]
-    },
-    {
-      "id": "gear1_2",
-      "asset": "gear1",
-      "position": [541.1948, 45.5682, -148.3879],
-      "rotation": [0, 1.5708, -0.5721],
-      "scale": [2.5, 2.5, 1],
-      "material": "sooty_silver_metal_1",
-      "behaviors": [
+          "id": "gear1_1",
+          "asset": "gear1",
+          "position": [-0.0327, 5.3309, 24.3496],
+          "rotation": [0, 1.5708, -0.5721],
+          "scale": [2.5, 2.5, 1],
+          "material": "sooty_silver_metal_1",
+          "behaviors": [
+            {
+              "fn": "spinner",
+              "params": {
+                "rps": [0, 0, -0.2]
+              }
+            }
+          ]
+        },
         {
-          "fn": "spinner",
-          "params": {
-            "rps": [0, 0, 0.2]
-          }
-        }
-      ]
-    },
-    {
-      "id": "gear1_3",
-      "asset": "gear1",
-      "position": [541.1295, 42.0497, -193.6354],
-      "rotation": [0, -1.5708, 2.7253],
-      "scale": [2.5, 2.5, 1],
-      "material": "sooty_silver_metal_1",
-      "behaviors": [
+          "id": "gear1_2",
+          "asset": "gear1",
+          "position": [0.0326, 7.9837, -21.2722],
+          "rotation": [0, 1.5708, -0.5721],
+          "scale": [2.5, 2.5, 1],
+          "material": "sooty_silver_metal_1",
+          "behaviors": [
+            {
+              "fn": "spinner",
+              "params": {
+                "rps": [0, 0, 0.2]
+              }
+            }
+          ]
+        },
         {
-          "fn": "spinner",
-          "params": {
-            "rps": [0, 0, 0.2]
-          }
+          "id": "gear1_3",
+          "asset": "gear1",
+          "position": [-0.0327, 4.4652, -66.5197],
+          "rotation": [0, -1.5708, 2.7253],
+          "scale": [2.5, 2.5, 1],
+          "material": "sooty_silver_metal_1",
+          "behaviors": [
+            {
+              "fn": "spinner",
+              "params": {
+                "rps": [0, 0, 0.2]
+              }
+            }
+          ]
         }
-      ]
+      ],
+      "position": [541.1622, 37.5845, -127.1157],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     }
   ]
 }

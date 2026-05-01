@@ -1276,6 +1276,39 @@ impl PathTracerCallable {
           b.last_cubic_ctrl = None;
           b.last_quad_ctrl = None;
         }
+        DrawCommand::Rect {
+          center,
+          width,
+          height,
+        } => {
+          finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
+
+          let hw = width * 0.5;
+          let hh = height * 0.5;
+          let tr = Vec2::new(center.x + hw, center.y + hh);
+          let tl = Vec2::new(center.x - hw, center.y + hh);
+          let bl = Vec2::new(center.x - hw, center.y - hh);
+          let br = Vec2::new(center.x + hw, center.y - hh);
+
+          extend_bounds(&mut min, &mut max, tl);
+          extend_bounds(&mut min, &mut max, br);
+
+          // Trace the rectangle CCW (in math Y-up) starting at top-right, mirroring `circle`'s
+          // start-on-the-right convention.
+          builder = Some(SubpathBuilder::new(tr));
+          let b = builder.as_mut().unwrap();
+
+          for (start, end) in [(tr, tl), (tl, bl), (bl, br), (br, tr)] {
+            let length = (end - start).norm();
+            if length > LENGTH_EPSILON {
+              b.segments.push(PathSegment::Line { start, end, length });
+            }
+          }
+          b.current = tr;
+          b.closed = true;
+          b.last_cubic_ctrl = None;
+          b.last_quad_ctrl = None;
+        }
         DrawCommand::Close => {
           if let Some(builder) = builder.as_mut() {
             let cur = builder.current;
@@ -1879,6 +1912,11 @@ pub enum DrawCommand {
     center: Vec2,
     radius: f32,
   },
+  Rect {
+    center: Vec2,
+    width: f32,
+    height: f32,
+  },
   Close,
 }
 
@@ -1912,6 +1950,7 @@ fn inject_draw_commands(ctx: &EvalCtx, scope: &Scope, draw_ctx: &Rc<DrawCtx>) {
       "smooth_cubic_bezier" => Some(DrawCommandKind::SmoothCubic),
       "arc" => Some(DrawCommandKind::Arc),
       "circle" => Some(DrawCommandKind::Circle),
+      "rect" => Some(DrawCommandKind::Rect),
       "close" => Some(DrawCommandKind::Close),
       _ => None,
     }
@@ -1937,18 +1976,7 @@ fn inject_draw_commands(ctx: &EvalCtx, scope: &Scope, draw_ctx: &Rc<DrawCtx>) {
     );
   }
 
-  let canonical = [
-    "move",
-    "line",
-    "quadratic_bezier",
-    "smooth_quadratic_bezier",
-    "cubic_bezier",
-    "smooth_cubic_bezier",
-    "arc",
-    "circle",
-    "close",
-  ];
-  for name in canonical {
+  for &name in TRACE_PATH_DRAW_COMMAND_NAMES {
     if let Some(kind) = draw_command_kind_for_name(name) {
       insert_cmd(ctx, scope, draw_ctx, name, kind);
     }
@@ -1974,6 +2002,7 @@ enum DrawCommandKind {
   SmoothCubic,
   Arc,
   Circle,
+  Rect,
   Close,
 }
 
@@ -2188,6 +2217,36 @@ impl DynamicCallable for DrawCommandCallable {
           .cmds
           .push(DrawCommand::Circle { center, radius });
       }
+      DrawCommandKind::Rect => {
+        let (center, width, height) = match def_ix {
+          0 => {
+            let center = *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+            let size_val = arg_refs[1].resolve(args, kwargs);
+            let (w, h) = if let Some(v) = size_val.as_vec2() {
+              (v.x, v.y)
+            } else if let Some(s) = size_val.as_float() {
+              (s, s)
+            } else {
+              return Err(ErrorStack::new(format!(
+                "rect: `size` must be a vec2 or numeric, found: {size_val:?}"
+              )));
+            };
+            (center, w, h)
+          }
+          1 => {
+            let cx = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+            let cy = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+            let w = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+            let h = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+            (Vec2::new(cx, cy), w, h)
+          }
+          _ => unreachable!(),
+        };
+        self
+          .draw_ctx
+          .cmds
+          .push(DrawCommand::Rect { center, width, height });
+      }
       DrawCommandKind::Close => {
         self.draw_ctx.cmds.push(DrawCommand::Close);
       }
@@ -2347,6 +2406,14 @@ fn build_arc_segment(
   ))
 }
 
+/// Single source of truth for the names of all trace-path draw commands.
+///
+/// Adding a new draw command means appending its name here and wiring it through
+/// [`DrawCommandKind`], [`DrawCommand`], the `draw_command_kind_for_name` match in
+/// [`inject_draw_commands`], `BUILTIN_FN_IMPLS` (as a stub via
+/// [`draw_command_stub_impl`]), and `fn_defs::FN_SIGNATURE_DEFS`.  Side-effect
+/// tracking and the optimizer's trace-path const-folder both consult this list
+/// directly, so no extra allowlist needs to be updated.
 pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: &[&str] = &[
   "move",
   "line",
@@ -2356,8 +2423,14 @@ pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: &[&str] = &[
   "smooth_cubic_bezier",
   "arc",
   "circle",
+  "rect",
   "close",
 ];
+
+#[inline]
+pub(crate) fn is_trace_path_draw_command_name(name: &str) -> bool {
+  TRACE_PATH_DRAW_COMMAND_NAMES.contains(&name)
+}
 
 fn eval_trace_path_cb(ctx: &EvalCtx, cb: &Callable) -> Result<Vec<DrawCommand>, ErrorStack> {
   let Callable::Closure(closure) = cb else {
@@ -3605,5 +3678,65 @@ p0 = centered(0)
     let unlimited = tracer.sample_subpaths_with_limit(0.1, None).unwrap();
     let unlimited_total: usize = unlimited.iter().map(|(pts, _)| pts.len()).sum();
     assert_eq!(unlimited_total, natural_total);
+  }
+
+  #[test]
+  fn test_rect_subpath_corners() {
+    // 4-wide, 2-tall rect centered at origin. Perimeter = 12.
+    // Corners traced CCW from top-right: (2,1) -> (-2,1) -> (-2,-1) -> (2,-1) -> (2,1).
+    // Cumulative arc lengths: 0, 4, 6, 10, 12. As t-fractions: 0, 1/3, 1/2, 5/6, 1.
+    let cmds = vec![DrawCommand::Rect {
+      center: Vec2::new(0.0, 0.0),
+      width: 4.0,
+      height: 2.0,
+    }];
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+
+    assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(2.0, 1.0));
+    assert_vec2_close(tracer.sample(1.0 / 3.0).unwrap(), Vec2::new(-2.0, 1.0));
+    assert_vec2_close(tracer.sample(0.5).unwrap(), Vec2::new(-2.0, -1.0));
+    assert_vec2_close(tracer.sample(5.0 / 6.0).unwrap(), Vec2::new(2.0, -1.0));
+    assert_vec2_close(tracer.sample(1.0).unwrap(), Vec2::new(2.0, 1.0));
+  }
+
+  #[test]
+  fn test_rect_via_trace_path_scalar_size() {
+    let src = r#"
+path = trace_path(|| {
+  rect(center=v2(0, 0), size=2)
+})
+mesh = tessellate_path(path)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let mesh = ctx.get_global("mesh").unwrap();
+    let mesh = mesh.as_mesh().unwrap();
+    assert_eq!(mesh.mesh.vertices.len(), 4);
+    assert_eq!(mesh.mesh.faces.len(), 2);
+  }
+
+  #[test]
+  fn test_rect_via_trace_path_vec2_size() {
+    let src = r#"
+path = trace_path(|| {
+  rect(center=v2(1, 2), size=v2(4, 6))
+})
+tr = path(0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let tr = ctx.get_global("tr").unwrap();
+    assert_vec2_close(*tr.as_vec2().unwrap(), Vec2::new(3.0, 5.0));
+  }
+
+  #[test]
+  fn test_rect_via_trace_path_numeric_form() {
+    let src = r#"
+path = trace_path(|| {
+  rect(0, 0, 4, 2)
+})
+tr = path(0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let tr = ctx.get_global("tr").unwrap();
+    assert_vec2_close(*tr.as_vec2().unwrap(), Vec2::new(2.0, 1.0));
   }
 }

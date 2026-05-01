@@ -351,6 +351,7 @@ export class LevelEditor {
 
     this.viz.controlState.movementEnabled = false;
     this.viz.controlState.cameraControlEnabled = false;
+    this.viz.behaviorsPaused = true;
 
     if (document.pointerLockElement) {
       document.exitPointerLock();
@@ -427,6 +428,7 @@ export class LevelEditor {
 
     this.viz.controlState.movementEnabled = true;
     this.viz.controlState.cameraControlEnabled = true;
+    this.viz.behaviorsPaused = false;
 
     this.viz.unregisterBeforeRenderCb(this.tickOrbitControls);
     this.orbitControls?.dispose();
@@ -1273,6 +1275,9 @@ export class LevelEditor {
     levelObj.entity.object = levelObj.object;
     // Resync def-derived physics flags in case the def was edited since placement.
     levelObj.entity.nonPermeable = levelObj.def.nonPermeable;
+    // Authored placement may have changed (transform commit, group, reparent);
+    // re-base behaviors off the new local transform so they don't fight it.
+    levelObj.entity.refreshBaseTransform();
 
     clearPhysicsBinding(levelObj.object, fpCtx);
     const collisionMeshOverride = this.assetCollisionMeshes.get(levelObj.assetId);

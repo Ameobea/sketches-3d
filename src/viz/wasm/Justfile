@@ -21,6 +21,7 @@ bindgen:
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/terrain.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/flight_recorder.wasm ./build2
+  cp ./target/wasm32-unknown-unknown/release/sound_engine.wasm ./build2
   cp ./build2/*.wasm ../wasmComp
 
 opt:
@@ -39,6 +40,7 @@ opt:
   wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
   wasm-opt ./build/geoscript_analysis_wasm_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_analysis_wasm_bg.wasm --enable-bulk-memory
   wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
+  wasm-opt ./build2/sound_engine.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/sound_engine.wasm --enable-bulk-memory
 
 build:
   #!/bin/bash
@@ -133,3 +135,9 @@ build-flight-recorder:
   cp ./target/wasm32-unknown-unknown/release/flight_recorder.wasm ./build2
   wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
   cp ./build2/flight_recorder.wasm ../wasmComp
+
+build-sound-engine:
+  RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package sound_engine
+  cp ./target/wasm32-unknown-unknown/release/sound_engine.wasm ./build2
+  wasm-opt ./build2/sound_engine.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/sound_engine.wasm --enable-bulk-memory
+  cp ./build2/sound_engine.wasm ../wasmComp

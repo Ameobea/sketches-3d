@@ -8321,6 +8321,100 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "fillet_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec2` points defining a polyline whose interior corners will be smoothed."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Target radius of the inscribed circle at each corner. Either a number (constant for every corner) or a callable `|corner_ix: int, vertex: vec2|: float` that returns a per-corner radius."
+          },
+          ArgDef {
+            name: "resolution",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(8)),
+            description: "Number of arc segments generated per filleted corner.  Higher values produce smoother bends.  Each corner replaces 1 input vertex with `resolution + 1` output vertices."
+          },
+          ArgDef {
+            name: "clamp_radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true, automatically reduces the per-corner radius so that the fillet's tangent points never cross the midpoint of an adjacent segment.  When false, an error is raised if the requested radius is too large for a given corner."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the path is treated as a closed loop and the wrap-around corner between the last and first points is also filleted."
+          },
+        ],
+        description: "Smooths the interior corners of a 2D polyline by replacing each corner with a circular-arc fillet of the requested radius.  Collinear vertices, U-turns, and zero-length segments pass through unmodified.  Returns a new sequence of `vec2` points (the original endpoints are preserved when `closed=false`).",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "fillet_path_3d" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec3` points defining a polyline whose interior corners will be smoothed.  Often piped directly into `extrude_pipe`."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Target radius of the inscribed circle at each corner. Either a number (constant for every corner) or a callable `|corner_ix: int, vertex: vec3|: float` that returns a per-corner radius."
+          },
+          ArgDef {
+            name: "resolution",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(8)),
+            description: "Number of arc segments generated per filleted corner.  Higher values produce smoother bends.  Each corner replaces 1 input vertex with `resolution + 1` output vertices."
+          },
+          ArgDef {
+            name: "clamp_radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true, automatically reduces the per-corner radius so that the fillet's tangent points never cross the midpoint of an adjacent segment.  When false, an error is raised if the requested radius is too large for a given corner."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the path is treated as a closed loop and the wrap-around corner between the last and first points is also filleted."
+          },
+        ],
+        description: "Smooths the interior corners of a 3D polyline by replacing each corner with a true circular-arc fillet of the requested radius (lying in the plane of the bend).  Collinear vertices, U-turns, and zero-length segments pass through unmodified.  Returns a new sequence of `vec3` points (the original endpoints are preserved when `closed=false`).  Designed to be piped directly into `extrude_pipe` or other path-consuming builtins.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
   "critical_points" => FnDef {
     module: "path",
     examples: &[],
@@ -9239,6 +9333,66 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Adds a circle centered at `cx,cy` with the given `radius`.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "rect" => FnDef {
+    module: "trace_path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Center of the rectangle."
+          },
+          ArgDef {
+            name: "size",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Size of the rectangle as a `vec2` of `(width, height)`, or a single number for a square."
+          },
+        ],
+        description: "Adds an axis-aligned rectangle centered at `center` with the given `size`.  Emitted as a closed subpath of four line segments.  This can only be called within the callback passed to `trace_path`.",
+        return_type: &[ArgType::Nil],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X coordinate of the center of the rectangle."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y coordinate of the center of the rectangle."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Width along the X axis."
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Height along the Y axis."
+          },
+        ],
+        description: "Adds an axis-aligned rectangle centered at `cx,cy` with the given `width` and `height`.  Emitted as a closed subpath of four line segments.  This can only be called within the callback passed to `trace_path`.",
         return_type: &[ArgType::Nil],
       },
     ],
