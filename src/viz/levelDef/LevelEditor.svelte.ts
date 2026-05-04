@@ -74,10 +74,28 @@ export class LevelEditor {
   private isEditMode = false;
   private orbitControls: OrbitControls | null = null;
   private transformHandler: TransformHandler | null = null;
+  /** Three.js scene fog stashed on enter, restored on exit. */
+  private savedSceneFog: THREE.FogBase | null = null;
   /** Public accessor for transform controls (used by CsgEditController). */
   get transformControls() {
     return this.transformHandler?.controls ?? null;
   }
+  /**
+   * Purge undo/redo entries that reference any of the given node ids.
+   * Used by structural ops (e.g. multi-CSG conversion) that delete nodes
+   * outside the normal structural-undo path.
+   */
+  purgeUndoForNodeIds(ids: ReadonlySet<string>) {
+    this.undoSystem.purge(entry => {
+      if (entry.type === 'transform') {
+        return entry.entries.some(e => ids.has(e.node.id));
+      }
+      const refsDeleted = (op: { subtree: { root: { id: string }; leaves: { id: string }[] } }) =>
+        ids.has(op.subtree.root.id) || op.subtree.leaves.some(l => ids.has(l.id));
+      return entry.undoOps.some(refsDeleted) || entry.redoOps.some(refsDeleted);
+    });
+  }
+
   /** Delegating accessor for the primary selected node (used by CsgEditController). */
   get selectedNode(): LevelSceneNode | null {
     return this.selection.primaryNode;
@@ -353,6 +371,13 @@ export class LevelEditor {
     this.viz.controlState.cameraControlEnabled = false;
     this.viz.behaviorsPaused = true;
 
+    // Disable any active fog while editing — it obscures distant geometry the
+    // user needs to see and interact with. Custom postprocessing fog disables
+    // via a shader define; the scene's THREE.js fog is just stashed.
+    this.savedSceneFog = this.viz.scene.fog;
+    this.viz.scene.fog = null;
+    this.viz.postprocessingController?.setFogEnabled(false);
+
     if (document.pointerLockElement) {
       document.exitPointerLock();
     }
@@ -429,6 +454,10 @@ export class LevelEditor {
     this.viz.controlState.movementEnabled = true;
     this.viz.controlState.cameraControlEnabled = true;
     this.viz.behaviorsPaused = false;
+
+    this.viz.scene.fog = this.savedSceneFog;
+    this.savedSceneFog = null;
+    this.viz.postprocessingController?.setFogEnabled(true);
 
     this.viz.unregisterBeforeRenderCb(this.tickOrbitControls);
     this.orbitControls?.dispose();
@@ -523,6 +552,11 @@ export class LevelEditor {
         void state.treeVersion;
         return self.selection.canGroupWith(self.nodeById, self.rootNodes);
       },
+      get canConvertSelectedToCsg() {
+        void state.treeVersion;
+        void state.selectedNodeIds;
+        return self.canConvertSelectedToCsg;
+      },
     };
     const actions: LevelEditorPanelActions = {
       selectNode: (node, ctrlKey) => {
@@ -554,11 +588,7 @@ export class LevelEditor {
           this.materialEditor.open(this.selectedObject?.def?.material ?? null);
         }
       },
-      convertToCsg: () => {
-        if (this.selectedObject && !this.selectedObject.generated) {
-          void this.csgController.convertToCsg(this.selectedObject.id);
-        }
-      },
+      convertToCsg: () => void this.convertSelectedToCsg(),
       groupSelected: () => void this.groupSelected(),
       reparent: parentId => void this.reparentSelected(parentId),
     };
@@ -1113,6 +1143,35 @@ export class LevelEditor {
       this.selectionState.treeVersion++;
       this.select(group);
     }
+  }
+
+  /**
+   * True when the current selection is eligible for "convert to CSG":
+   * - At least one node selected
+   * - All selected nodes are leaf objects (no groups), non-generated
+   * - All referenced assets are geoscript or csg
+   * - For multi-select: all selected nodes share the same parent
+   */
+  get canConvertSelectedToCsg(): boolean {
+    const nodes = this.selection.selectedNodes;
+    if (nodes.length === 0) return false;
+    for (const n of nodes) {
+      if (n.generated) return false;
+      if (isLevelGroup(n)) return false;
+      const assetDef = this.levelDef.assets[n.assetId];
+      if (!assetDef) return false;
+      if (assetDef.type !== 'geoscript' && assetDef.type !== 'csg') return false;
+    }
+    if (nodes.length > 1 && !this.selection.haveSharedParent(this.nodeById, this.rootNodes)) {
+      return false;
+    }
+    return true;
+  }
+
+  private async convertSelectedToCsg() {
+    if (!this.canConvertSelectedToCsg) return;
+    const ids = this.selection.selectedNodes.map(n => n.id);
+    await this.csgController.convertToCsg(ids);
   }
 
   private async renameNode(node: LevelSceneNode, newId: string) {

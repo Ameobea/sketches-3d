@@ -130,7 +130,9 @@
         "normalScale": 0.74,
         "uvScale": [0.2, 0.2],
         "map": "horizontal_metal_1_diffuse",
-        "normalMap": "horizontal_metal_1_normal"
+        "normalMap": "horizontal_metal_1_normal",
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50
       },
       "options": {
         "useTriplanarMapping": false,
@@ -149,6 +151,8 @@
         "uvScale": [0.1, 0.1],
         "map": "rusty_metal_diffuse",
         "normalMap": "rusty_metal_normal",
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50,
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [60, 200]
@@ -192,6 +196,8 @@
         "uvScale": [0.15, 0.15],
         "map": "sooty_silver_metal_1_diffuse",
         "normalMap": "sooty_silver_metal_1_normal",
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50,
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [60, 200]

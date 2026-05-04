@@ -8,7 +8,7 @@ uniform float smoothing;
 uniform float softKnee;
 #endif
 
-#ifdef HAS_FOG
+#if defined(HAS_FOG) && !defined(FOG_DISABLED)
 uniform sampler2D depthBuffer;
 uniform mat4 projectionMatrixInverse;
 uniform mat4 cameraWorldMatrix;
@@ -27,7 +27,7 @@ vec3 reconstructWorldPos(float depth, vec2 uv) {
 void main() {
   vec4 color = texture2D(tInput, vUv);
 
-#ifdef HAS_FOG
+#if defined(HAS_FOG) && !defined(FOG_DISABLED)
   if (color.a > 0.0) {
     float depth = texture2D(depthBuffer, vUv).r;
     vec3 worldPos = reconstructWorldPos(depth, vUv);

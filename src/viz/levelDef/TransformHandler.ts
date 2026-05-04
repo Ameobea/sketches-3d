@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
 import type { LevelSceneNode } from './levelSceneTypes';
-import { isLevelGroup } from './levelSceneTypes';
 
 export type TransformMode = 'translate' | 'rotate' | 'scale';
 
@@ -325,9 +324,12 @@ export class TransformHandler {
 
     if (entries.length === 0) return;
 
-    // Compute replayable delta for single non-group selection
+    // Capture a replayable delta for any single-node drag (mesh or group).
+    // Replay re-applies position/rotation as additive deltas and scale as a
+    // multiplicative factor; the math doesn't care whether the source or
+    // target node is a group or a leaf, so cross-type replay works too.
     let replayable: ReplayableTransformDelta | null = null;
-    if (entries.length === 1 && !isLevelGroup(entries[0].node)) {
+    if (entries.length === 1) {
       const { before, after } = entries[0];
       replayable = {
         positionDelta: [

@@ -86,19 +86,30 @@ export class SelectionManager {
   ): boolean {
     const editable = this._selectedNodes.filter(n => !n.generated);
     if (editable.length < 2) return false;
+    return this.haveSharedParent(nodeById, rootNodes);
+  }
+
+  /**
+   * True when every selected node shares the same parent. Vacuously true
+   * for selections of 0 or 1. Unlike `canGroupWith`, this does not require
+   * a minimum count or filter by `generated`.
+   */
+  haveSharedParent(
+    nodeById: Map<string, import('./levelSceneTypes').LevelSceneNode>,
+    rootNodes: import('./levelSceneTypes').LevelSceneNode[]
+  ): boolean {
+    if (this._selectedNodes.length < 2) return true;
 
     const getParentId = (node: import('./levelSceneTypes').LevelSceneNode): string | null => {
-      // Check if it's at root level
       if (rootNodes.includes(node)) return null;
-      // Otherwise find parent group
       for (const [id, candidate] of nodeById) {
         if (isLevelGroup(candidate) && candidate.children.includes(node)) return id;
       }
       return null;
     };
 
-    const firstParentId = getParentId(editable[0]);
-    return editable.every(n => getParentId(n) === firstParentId);
+    const firstParentId = getParentId(this._selectedNodes[0]);
+    return this._selectedNodes.every(n => getParentId(n) === firstParentId);
   }
 
   isSelected(node: LevelSceneNode): boolean {

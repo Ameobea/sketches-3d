@@ -82,6 +82,20 @@ export class FinalPass extends Pass {
     }
   }
 
+  /**
+   * Toggle the FOG_DISABLED shader define. No-op for pipelines without a fog
+   * shader. Triggers a one-time recompile per state change.
+   */
+  public setFogEnabled(enabled: boolean): void {
+    if (!this.hasFogShader) return;
+    const wantDisabled = !enabled;
+    const isDisabled = this.mat.defines.FOG_DISABLED === '1';
+    if (wantDisabled === isDisabled) return;
+    if (wantDisabled) this.mat.defines.FOG_DISABLED = '1';
+    else delete this.mat.defines.FOG_DISABLED;
+    this.mat.needsUpdate = true;
+  }
+
   /** gamma=1.0 is identity; >1.0 brightens midtones, <1.0 darkens. */
   public setGamma(gamma: number): void {
     this.mat.uniforms.gammaExponent.value = 1.0 / gamma;

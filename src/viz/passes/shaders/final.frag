@@ -12,7 +12,7 @@ varying vec2 vUv;
 #if defined(HAS_FOG) || defined(SKY_BYPASS_TONEMAP)
 uniform sampler2D depthBuffer;
 #endif
-#ifdef HAS_FOG
+#if defined(HAS_FOG) && !defined(FOG_DISABLED)
 uniform mat4 projectionMatrixInverse;
 uniform mat4 cameraWorldMatrix;
 uniform vec3 fogCameraPos;
@@ -46,7 +46,7 @@ float tpdfDither(vec2 seed) {
   return a + b - 1.0;
 }
 
-#ifdef HAS_FOG
+#if defined(HAS_FOG) && !defined(FOG_DISABLED)
 // Reconstructs the world-space position of the fragment from the depth buffer.
 // depth is the raw depth buffer value in [0, 1]; a value at or near 1.0 indicates
 // the far plane (sky / no geometry) and should be handled in getFogEffect accordingly.
@@ -75,7 +75,7 @@ void main() {
   // `fogResult` is hoisted to function scope so the emissive composite below
   // can reuse the same factor — that's what lets us avoid a separate
   // emissive-fog pass for the no-bloom case.
-  #ifdef HAS_FOG
+  #if defined(HAS_FOG) && !defined(FOG_DISABLED)
   vec4 fogResult = vec4(0.0);
   {
     float depth = texture2D(depthBuffer, vUv).r;
@@ -115,7 +115,7 @@ void main() {
   // composite matches the fogged scene below. The bloom path is pre-fogged
   // in EmissiveBloomPass's filter step (so blurred halos attenuate correctly);
   // here we handle the composite path with no extra pass.
-  #ifdef HAS_FOG
+  #if defined(HAS_FOG) && !defined(FOG_DISABLED)
     emissive.rgb = mix(emissive.rgb, fogResult.rgb, fogResult.a);
     emissive.a *= (1.0 - fogResult.a);
   #endif

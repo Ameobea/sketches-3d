@@ -128,6 +128,7 @@
       {#if actions.groupSelected}
         <button class="action-btn" onclick={actions.groupSelected} disabled={!view.canGroupSelected}>group selected</button>
       {/if}
+      <button class="action-btn" onclick={actions.convertToCsg} disabled={!view.canConvertSelectedToCsg}>convert to CSG</button>
       <button class="action-btn delete-btn" onclick={actions.deleteSelection}>delete selected</button>
     </div>
   {:else}

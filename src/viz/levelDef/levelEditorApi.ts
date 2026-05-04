@@ -317,12 +317,14 @@ export class LevelEditorApi {
     }
   };
 
-  convertToCsg = async (objectId: string): Promise<{ csgAssetName: string; tree: CsgTreeNode } | null> => {
+  convertToCsg = async (
+    objectIds: string[]
+  ): Promise<{ csgAssetName: string; tree: CsgTreeNode; primaryId: string; deletedIds: string[] } | null> => {
     try {
       const res = await fetch(`/level_editor/${this.levelName}/csg`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ objectId }),
+        body: JSON.stringify({ objectIds }),
       });
       if (!res.ok) {
         console.error('[LevelEditor] convert to CSG failed:', res.status, await res.text());

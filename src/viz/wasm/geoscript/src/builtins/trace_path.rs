@@ -2406,14 +2406,6 @@ fn build_arc_segment(
   ))
 }
 
-/// Single source of truth for the names of all trace-path draw commands.
-///
-/// Adding a new draw command means appending its name here and wiring it through
-/// [`DrawCommandKind`], [`DrawCommand`], the `draw_command_kind_for_name` match in
-/// [`inject_draw_commands`], `BUILTIN_FN_IMPLS` (as a stub via
-/// [`draw_command_stub_impl`]), and `fn_defs::FN_SIGNATURE_DEFS`.  Side-effect
-/// tracking and the optimizer's trace-path const-folder both consult this list
-/// directly, so no extra allowlist needs to be updated.
 pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: &[&str] = &[
   "move",
   "line",
@@ -2426,11 +2418,6 @@ pub(crate) const TRACE_PATH_DRAW_COMMAND_NAMES: &[&str] = &[
   "rect",
   "close",
 ];
-
-#[inline]
-pub(crate) fn is_trace_path_draw_command_name(name: &str) -> bool {
-  TRACE_PATH_DRAW_COMMAND_NAMES.contains(&name)
-}
 
 fn eval_trace_path_cb(ctx: &EvalCtx, cb: &Callable) -> Result<Vec<DrawCommand>, ErrorStack> {
   let Callable::Closure(closure) = cb else {

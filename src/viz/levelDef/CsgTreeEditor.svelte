@@ -61,6 +61,21 @@
     }
   };
 
+  /**
+   * Wrap the selected node in a new op of the chosen kind, with `newLeaf` as
+   * the second child. Works for any path (root or descendant), op or leaf.
+   */
+  const handleWrap = () => {
+    if (!tree || addAssetId === '' || selectedNodePath === null) return;
+    const selected = getNodeAtPath(tree, selectedNodePath);
+    const newLeaf: CsgLeafNode = { asset: addAssetId };
+    const wrapper: CsgOpNode = {
+      op: addOp,
+      children: [cloneTree(selected), newLeaf],
+    };
+    emitChange(setNodeAtPath(tree, selectedNodePath, wrapper));
+  };
+
   const handleAddLeaf = (mode: 'into' | 'after') => {
     if (!tree || addAssetId === '') return;
     const newLeaf: CsgLeafNode = { asset: addAssetId };
@@ -213,6 +228,14 @@
           add to root
         {/if}
       </button>
+      {#if tree && selectedNodePath !== null}
+        {@const selNode = getNodeAtPath(tree, selectedNodePath)}
+        {#if isOpNode(selNode)}
+          <button class="add-node-btn" onclick={handleWrap}>
+            {selectedNodePath === '' ? 'wrap root' : 'wrap selected'}
+          </button>
+        {/if}
+      {/if}
       {#if selectedNodePath !== null && selectedNodePath !== ''}
         <button class="add-node-btn" onclick={() => handleAddLeaf('after')}>
           add after selected

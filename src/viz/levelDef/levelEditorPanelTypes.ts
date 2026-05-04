@@ -44,4 +44,5 @@ export interface LevelEditorPanelViewState {
   rotation: [number, number, number];
   scale: [number, number, number];
   canGroupSelected?: boolean;
+  canConvertSelectedToCsg?: boolean;
 }

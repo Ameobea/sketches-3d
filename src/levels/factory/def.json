@@ -172,6 +172,42 @@
       "type": "geoscript",
       "file": "__ASSETS__/meshes/spinners/gear1.geo",
       "_meta": { "runtimeMs": 12.358999998867512, "count": 5, "codeHash": "2c3c09e1", "asyncDeps": [ "cgal" ] }
+    },
+    "csg_wall_1": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "op": "union",
+            "children": [
+              {
+                "asset": "wall",
+                "rotation": [0, 1.5708, 0],
+                "scale": [8, 2.6589, 7]
+              },
+              {
+                "asset": "wall",
+                "position": [-5.2115, 143.7328, -5],
+                "rotation": [0, 1.5708, 0],
+                "scale": [8, 2.6589, 7]
+              }
+            ]
+          },
+          {
+            "asset": "box",
+            "position": [139.191, 25.9385, 80.8246],
+            "rotation": [0, 0, 0],
+            "scale": [-13.1988, -347.8076, -4.4983]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 1.4280000001192092, "count": 5, "codeHash": "663367e3", "asyncDeps": [ "cgal" ] }
+    },
+    "pipes3": {
+      "type": "geoscript",
+      "file": "geo/pipes3.geo",
+      "_meta": { "runtimeMs": 1.3587500043213367, "count": 4, "codeHash": "215bf625", "asyncDeps": [ "cgal" ] }
     }
   },
   "objects": [],

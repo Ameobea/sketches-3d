@@ -10,6 +10,8 @@ import { CsgResolveRuntime } from './csgResolveRuntime';
 import { CsgEditorPanelController } from './csgEditorPanelController.svelte';
 import { CsgPreviewScene } from './csgPreviewScene';
 import { CsgAssetResolver } from './csgAssetResolver';
+import { detachSubtree } from './editorStructuralOps';
+import { isLevelGroup } from './levelSceneTypes';
 
 type TransformTuple = [number, number, number];
 
@@ -252,32 +254,83 @@ export class CsgEditController {
     this.panelController.close();
   }
 
-  async convertToCsg(objectId: string) {
-    const result = await this.editor.api.convertToCsg(objectId);
+  /**
+   * Convert one or more selected leaf objects to a single CSG-asset object.
+   *
+   * Single-object: equivalent to the original conversion — the new tree is one
+   * leaf carrying the source's rotation + scale.
+   *
+   * Multi-object: the server unifies the inputs into a `union` op tree
+   * (rooted at the first object's position) and deletes the other objects.
+   * The remaining (primary) level object is updated to reference the new
+   * CSG asset, and a re-resolve is triggered so the visible mesh reflects
+   * the union geometry.
+   *
+   * Not undoable (matches the single-object behavior). Undo entries that
+   * reference the deleted nodes are purged.
+   */
+  async convertToCsg(objectIds: string[]) {
+    if (objectIds.length === 0) return;
+
+    const result = await this.editor.api.convertToCsg(objectIds);
     if (!result) return;
 
-    const { csgAssetName, tree } = result;
+    const { csgAssetName, tree, primaryId, deletedIds } = result;
     this.editor.levelDef.assets[csgAssetName] = { type: 'csg', tree } as any;
 
-    const levelObj = this.editor.allLevelObjects.find((o: LevelObject) => o.id === objectId);
-    if (levelObj) {
-      levelObj.assetId = csgAssetName;
-      levelObj.def.asset = csgAssetName;
+    const primary = this.editor.allLevelObjects.find((o: LevelObject) => o.id === primaryId);
+    if (!primary) return;
 
-      // Strip rotation + scale from the level object — they've been moved into
-      // the root leaf node of the CSG tree by the server.
-      levelObj.object.rotation.set(0, 0, 0);
-      levelObj.object.scale.set(1, 1, 1);
-      delete levelObj.def.rotation;
-      delete levelObj.def.scale;
-
-      const originalAssetId = (tree as any).asset;
-      const originalPrototype = this.editor.prototypes.get(originalAssetId);
-      if (originalPrototype) {
-        this.editor.prototypes.set(csgAssetName, originalPrototype);
+    // Detach the deleted (non-primary) objects from the editor's scene/physics/tracking.
+    if (deletedIds.length > 0) {
+      const deletedNodeSet = new Set<string>(deletedIds);
+      for (const id of deletedIds) {
+        const node = this.editor.nodeById.get(id);
+        if (node && !isLevelGroup(node)) {
+          detachSubtree(this.editor, node);
+        }
       }
+      // Stale undo entries referencing deleted nodes would mis-target after this op.
+      this.editor.purgeUndoForNodeIds(deletedNodeSet);
+      this.editor.selection.state.treeVersion++;
+    }
 
-      this.editor.select(levelObj);
+    primary.assetId = csgAssetName;
+    primary.def.asset = csgAssetName;
+
+    // Strip rotation + scale from the level object — they've been baked into
+    // the root tree node(s) by the server.
+    primary.object.rotation.set(0, 0, 0);
+    primary.object.scale.set(1, 1, 1);
+    delete primary.def.rotation;
+    delete primary.def.scale;
+
+    // Register a placeholder prototype under the new asset name so the level
+    // object continues to render until the asynchronous re-resolve completes.
+    // For single-object: the source asset's prototype is correct as-is.
+    // For multi-object: any of the input prototypes works as a stand-in.
+    const findFirstLeafAsset = (node: CsgTreeNode): string | undefined => {
+      if ('asset' in node) return node.asset;
+      for (const child of node.children) {
+        const a = findFirstLeafAsset(child);
+        if (a) return a;
+      }
+      return undefined;
+    };
+    const placeholderSourceAsset = findFirstLeafAsset(tree);
+    if (placeholderSourceAsset) {
+      const proto = this.editor.prototypes.get(placeholderSourceAsset);
+      if (proto && !this.editor.prototypes.has(csgAssetName)) {
+        this.editor.prototypes.set(csgAssetName, proto);
+      }
+    }
+
+    this.editor.select(primary);
+
+    // For multi-object, the unioned geometry differs from any single input
+    // prototype, so kick off a re-resolve to replace the placeholder.
+    if (deletedIds.length > 0) {
+      void this.assetResolver.reResolveCsgAsset(csgAssetName);
     }
   }
 

@@ -1,64 +1,131 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 
 import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
-import type { CsgTreeNode } from 'src/viz/levelDef/types';
-import { findNodeById, isGeneratedDef, isObjectGroup } from 'src/viz/levelDef/levelDefTreeUtils';
+import type { CsgTreeNode, ObjectDef, ObjectGroupDef } from 'src/viz/levelDef/types';
+import {
+  findNodeById,
+  findNodeWithParent,
+  isGeneratedDef,
+  isObjectGroup,
+} from 'src/viz/levelDef/levelDefTreeUtils';
 import { guardDev, openLevel, validateName } from '../../levelEditorUtils.server';
 
-/** Convert an existing object to a CSG tree (single leaf at identity transform) */
+const buildLeafForObj = (objDef: ObjectDef, position?: [number, number, number]): Record<string, unknown> => {
+  const leaf: Record<string, unknown> = { asset: objDef.asset };
+  if (position && position.some(v => v !== 0)) leaf.position = position;
+  if (objDef.rotation && objDef.rotation.some(v => v !== 0)) leaf.rotation = objDef.rotation;
+  if (objDef.scale && objDef.scale.some((v, i) => v !== [1, 1, 1][i])) leaf.scale = objDef.scale;
+  return leaf;
+};
+
+/**
+ * Convert one or more existing objects to a CSG asset.
+ *
+ * Single-object: the new CSG tree is a single leaf carrying the object's
+ * rotation + scale (translation stays on the level object).
+ *
+ * Multi-object: requires all selected objects to be sibling leaves whose
+ * assets are geoscript or csg. The first object becomes the CSG-converted
+ * level object (its position is the anchor); the others are deleted. The
+ * tree is a union op whose children are leaf nodes carrying each input's
+ * rotation, scale, and position relative to the anchor.
+ */
 export const POST: RequestHandler = async ({ params, request }) => {
   guardDev();
   const name = validateName(params.name);
-  const { objectId } = (await request.json()) as { objectId: string };
+  const body = (await request.json()) as { objectId?: string; objectIds?: string[] };
+  const objectIds: string[] = body.objectIds ?? (body.objectId ? [body.objectId] : []);
+  if (objectIds.length === 0) error(400, 'objectId or objectIds is required');
 
   const level = openLevel(name);
 
-  const found = findNodeById(level.def.objects, objectId);
-  if (!found) {
-    const mergedLevel = await loadLevelData(name);
-    const mergedNode = findNodeById(mergedLevel.objects, objectId);
-    if (mergedNode && isGeneratedDef(mergedNode)) {
-      error(400, `Generated node "${objectId}" is read-only in the level editor`);
+  // Resolve all objects, validating each is a non-generated leaf with a
+  // geoscript/csg asset.
+  type Resolved = {
+    id: string;
+    def: ObjectDef;
+    parentArray: (ObjectDef | ObjectGroupDef)[];
+    index: number;
+  };
+  const resolved: Resolved[] = [];
+  for (const id of objectIds) {
+    const found = findNodeWithParent(level.def.objects, id);
+    if (!found) {
+      const mergedLevel = await loadLevelData(name);
+      const mergedNode = findNodeById(mergedLevel.objects, id);
+      if (mergedNode && isGeneratedDef(mergedNode)) {
+        error(400, `Generated node "${id}" is read-only in the level editor`);
+      }
+      error(404, `Object "${id}" not found`);
     }
-    error(404, `Object "${objectId}" not found`);
+    if (isObjectGroup(found.node)) error(400, `Object "${id}" is a group, not a leaf object`);
+    const objDef = found.node;
+    const assetDef = level.def.assets[objDef.asset];
+    if (!assetDef || (assetDef.type !== 'geoscript' && (assetDef as any).type !== 'csg')) {
+      error(400, `Asset "${objDef.asset}" must be a geoscript or csg asset`);
+    }
+    resolved.push({ id, def: objDef, parentArray: found.parentArray, index: found.index });
   }
-  if (isObjectGroup(found)) error(400, `Object "${objectId}" is a group, not a leaf object`);
-  const objDef = found;
 
-  const assetDef = level.def.assets[objDef.asset];
-  if (!assetDef || (assetDef.type !== 'geoscript' && (assetDef as any).type !== 'csg')) {
-    error(400, `Asset "${objDef.asset}" must be a geoscript or csg asset`);
+  // For multi: enforce all share the same parent.
+  if (resolved.length > 1) {
+    const parentArray = resolved[0].parentArray;
+    if (!resolved.every(r => r.parentArray === parentArray)) {
+      error(400, 'All selected objects must be siblings (share the same parent)');
+    }
   }
 
-  // Generate unique CSG asset name
-  const baseName = `csg_${objDef.asset}`;
+  const primary = resolved[0];
+  const primaryDef = primary.def;
+
+  // Generate unique CSG asset name based on primary object's asset.
+  const baseName = `csg_${primaryDef.asset}`;
   let csgAssetName = baseName;
   let n = 1;
   while (level.def.assets[csgAssetName]) {
     csgAssetName = `${baseName}_${n++}`;
   }
 
-  // Create CSG asset with single leaf carrying the object's rotation + scale.
-  // Translation stays on the level object; rotation/scale move into the tree so
-  // that subsequent CSG children aren't unexpectedly skewed/rotated.
-  const leafNode: Record<string, unknown> = { asset: objDef.asset };
-  if (objDef.rotation && objDef.rotation.some(v => v !== 0)) {
-    leafNode.rotation = objDef.rotation;
-  }
-  if (objDef.scale && objDef.scale.some((v, i) => v !== [1, 1, 1][i])) {
-    leafNode.scale = objDef.scale;
+  let tree: Record<string, unknown>;
+  if (resolved.length === 1) {
+    tree = buildLeafForObj(primaryDef);
+  } else {
+    // Anchor at the primary object's position; each child leaf gets a position
+    // relative to the anchor (so world placement is preserved when the CSG-
+    // converted primary stays at its original position).
+    const anchor = primaryDef.position ?? [0, 0, 0];
+    const children = resolved.map(r => {
+      const pos = r.def.position ?? [0, 0, 0];
+      const rel: [number, number, number] = [pos[0] - anchor[0], pos[1] - anchor[1], pos[2] - anchor[2]];
+      return buildLeafForObj(r.def, rel);
+    });
+    tree = { op: 'union', children };
   }
 
-  level.def.assets[csgAssetName] = { type: 'csg', tree: leafNode } as any;
+  level.def.assets[csgAssetName] = { type: 'csg', tree } as any;
 
-  // Update the object to reference the CSG asset, stripping rotation + scale
-  // (they've been moved into the leaf node above).
-  objDef.asset = csgAssetName;
-  delete objDef.rotation;
-  delete objDef.scale;
+  // Replace the primary object's asset reference, stripping rotation + scale
+  // (they've been baked into the tree). Position stays on the level object.
+  primaryDef.asset = csgAssetName;
+  delete primaryDef.rotation;
+  delete primaryDef.scale;
+
+  // Remove the non-primary objects from their (shared) parent array. Splice in
+  // descending index order so earlier indices remain valid.
+  const deletedIds: string[] = [];
+  if (resolved.length > 1) {
+    const toRemove = resolved
+      .slice(1)
+      .map(r => ({ index: r.index, id: r.id }))
+      .sort((a, b) => b.index - a.index);
+    for (const { index, id } of toRemove) {
+      primary.parentArray.splice(index, 1);
+      deletedIds.push(id);
+    }
+  }
 
   level.save();
-  return json({ csgAssetName, tree: level.def.assets[csgAssetName] }, { status: 201 });
+  return json({ csgAssetName, tree, primaryId: primary.id, deletedIds }, { status: 201 });
 };
 
 /** Update a CSG asset's tree */

@@ -47,6 +47,7 @@ use crate::{
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
     resolve_builtin_impl, FUNCTION_ALIASES,
+    trace_path::TRACE_PATH_DRAW_COMMAND_NAMES
   },
   lights::Light,
   materials::Material,
@@ -427,11 +428,11 @@ impl Callable {
         // surrounding `DrawCtx`), and so are their pipe/aliased forms.  Aliases
         // resolve to their canonical name through `FUNCTION_ALIASES`, but the bare
         // alias still has its own builtin entry, so check both spellings.
-        if crate::builtins::trace_path::is_trace_path_draw_command_name(name) {
+        if TRACE_PATH_DRAW_COMMAND_NAMES.contains(&name) {
           return true;
         }
         if let Some(canonical) = crate::builtins::FUNCTION_ALIASES.get(name) {
-          if crate::builtins::trace_path::is_trace_path_draw_command_name(canonical) {
+          if TRACE_PATH_DRAW_COMMAND_NAMES.contains(canonical) {
             return true;
           }
         }

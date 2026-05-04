@@ -64,6 +64,11 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     this.finalPass?.setGamma(gamma);
   }
 
+  setFogEnabled(enabled: boolean): void {
+    this.finalPass?.setFogEnabled(enabled);
+    this.emissiveBloomPass?.setFogEnabled(enabled);
+  }
+
   renderFrame(timeDiffSeconds: number): void {
     this.renderFrameCb(timeDiffSeconds);
   }

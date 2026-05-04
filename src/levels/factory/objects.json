@@ -211,14 +211,6 @@
           "material": "chipped_rusty_gray_painted_wall"
         },
         {
-          "id": "wall_2",
-          "asset": "wall",
-          "position": [-5.1115, 71.8664, -143.7516],
-          "rotation": [0, 1.5708, 0],
-          "scale": [8, 2.6589, 7],
-          "material": "chipped_rusty_gray_painted_wall"
-        },
-        {
           "id": "wall_1",
           "asset": "wall",
           "position": [0.1, 89.3474, 120],
@@ -228,10 +220,8 @@
         },
         {
           "id": "wall",
-          "asset": "wall",
+          "asset": "csg_wall_1",
           "position": [0.1, -71.8664, -138.7516],
-          "rotation": [0, 1.5708, 0],
-          "scale": [8, 2.6589, 7],
           "material": "chipped_rusty_gray_painted_wall"
         },
         {
@@ -424,14 +414,6 @@
       "material": "rusty_metal"
     },
     {
-      "id": "plat1_5",
-      "asset": "plat1",
-      "position": [246.7486, 27.3986, 36.092],
-      "rotation": [0, 0, 0],
-      "scale": [0.811, 1, 1],
-      "material": "chipped_yellow_painted_cracked_stone"
-    },
-    {
       "id": "pipe_decorations_2",
       "children": [
         {
@@ -461,7 +443,7 @@
         {
           "id": "pipes2_3",
           "asset": "pipes2",
-          "position": [0.8109, 1.1967, -60.7643],
+          "position": [12.3534, 1.1967, -60.7643],
           "rotation": [0, 1.5708, 0],
           "scale": [1.8551, 1.8551, 1.8551],
           "material": "rusty_metal"
@@ -752,6 +734,121 @@
       "position": [541.1622, 37.5845, -127.1157],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
+    },
+    {
+      "id": "plats_1",
+      "children": [
+        {
+          "id": "plat_1_1_1_2",
+          "children": [
+            {
+              "id": "rod_9",
+              "asset": "rod",
+              "position": [0, -4.4373, -2.578],
+              "rotation": [0.6088, 0, 0],
+              "scale": [2.5463, 2.2464, 2.5463],
+              "material": "gray",
+              "nocollide": true
+            },
+            {
+              "id": "plat1_10",
+              "asset": "plat1",
+              "position": [0, 4.4373, 2.578],
+              "rotation": [0, -3.1416, 0],
+              "scale": [0.891, 0.891, 1.3137],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [-20.8334, 20.4723, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "plat_1_1_2",
+          "children": [
+            {
+              "id": "rod_10",
+              "asset": "rod",
+              "position": [0, -4.4373, -2.578],
+              "rotation": [0.6088, 0, 0],
+              "scale": [2.5463, 2.2464, 2.5463],
+              "material": "gray",
+              "nocollide": true
+            },
+            {
+              "id": "plat1_11",
+              "asset": "plat1",
+              "position": [0, 4.4373, 2.578],
+              "rotation": [0, -3.1416, 0],
+              "scale": [0.891, 0.891, 1.3137],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [1.2639, 15.5823, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "plat_1_3",
+          "children": [
+            {
+              "id": "rod_11",
+              "asset": "rod",
+              "position": [0, -4.4373, -2.578],
+              "rotation": [0.6088, 0, 0],
+              "scale": [2.5463, 2.2464, 2.5463],
+              "material": "gray",
+              "nocollide": true
+            },
+            {
+              "id": "plat1_12",
+              "asset": "plat1",
+              "position": [0, 4.4373, 2.578],
+              "rotation": [0, -3.1416, 0],
+              "scale": [0.891, 0.891, 1.3137],
+              "material": "chipped_yellow_painted_cracked_stone"
+            }
+          ],
+          "position": [25.0066, 9.9349, 0.0706],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        }
+      ],
+      "position": [412.4394, 35.9647, -146.9489],
+      "rotation": [0, 1.5708, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "bounce_plat",
+      "children": [
+        {
+          "id": "rod_12",
+          "asset": "rod",
+          "position": [0, -4.5295, 2.3429],
+          "rotation": [0.6088, 3.1416, 0],
+          "scale": [2.5463, 2.2464, 2.5463],
+          "material": "gray"
+        },
+        {
+          "id": "plat1_5",
+          "asset": "plat1",
+          "position": [0, 4.5295, -2.3428],
+          "rotation": [0, 0, 0],
+          "scale": [0.811, 1, 1],
+          "material": "chipped_yellow_painted_cracked_stone"
+        }
+      ],
+      "position": [247.072, 22.8691, 38.4348],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "pipes3",
+      "asset": "pipes3",
+      "position": [399.1091, 112.777, -87.8257],
+      "rotation": [0, -1.5708, 0],
+      "scale": [4.9366, 3.6887, 4.4281],
+      "material": "rusty_metal"
     }
   ]
 }

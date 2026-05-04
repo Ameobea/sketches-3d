@@ -42,6 +42,12 @@ import type { LevelDef } from './levelDef/types';
 
 export interface PostprocessingController {
   setGamma(value: number): void;
+  /**
+   * Toggle the post-processing fog (FinalPass + EmissiveBloomPass filter).
+   * No-op for pipelines that didn't supply a `fogShader`. Recompiles the
+   * affected shader programs the first time the state changes.
+   */
+  setFogEnabled(enabled: boolean): void;
   readonly hasFinalPass: boolean;
   readonly emissiveBypassPass: { addBypassMesh(mesh: THREE.Mesh): void } | null;
 }

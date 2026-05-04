@@ -98,6 +98,21 @@ export class EmissiveBloomPass extends Pass {
     }
   }
 
+  /**
+   * Toggle the FOG_DISABLED shader define on the filter material. No-op when
+   * the pass was constructed without a fog shader. Triggers a recompile per
+   * state change.
+   */
+  public setFogEnabled(enabled: boolean): void {
+    if (!this.hasFog || !this.filterMat) return;
+    const wantDisabled = !enabled;
+    const isDisabled = this.filterMat.defines.FOG_DISABLED === '1';
+    if (wantDisabled === isDisabled) return;
+    if (wantDisabled) this.filterMat.defines.FOG_DISABLED = '1';
+    else delete this.filterMat.defines.FOG_DISABLED;
+    this.filterMat.needsUpdate = true;
+  }
+
   override setDepthTexture(depthTexture: THREE.Texture | null): void {
     if (this.filterMat?.uniforms.depthBuffer) {
       this.filterMat.uniforms.depthBuffer.value = depthTexture;
