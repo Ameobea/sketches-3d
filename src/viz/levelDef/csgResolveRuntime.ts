@@ -1,4 +1,5 @@
 import { WorkerManager } from 'src/geoscript/workerManager';
+import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 
 /**
  * Manages the worker pool and execution queues used by the CSG editor for
@@ -22,7 +23,7 @@ export class CsgResolveRuntime {
     if (!this.previewWorkerManager || !this.previewRepl || !this.previewCtxPtrPromise) {
       this.previewWorkerManager = new WorkerManager();
       this.previewRepl = this.previewWorkerManager.getWorker();
-      this.previewCtxPtrPromise = this.previewRepl.init();
+      this.previewCtxPtrPromise = this.previewRepl.init(getGeoscriptWorkerWasmURLs());
     }
     return { repl: this.previewRepl, ctxPtrPromise: this.previewCtxPtrPromise };
   }
@@ -32,7 +33,7 @@ export class CsgResolveRuntime {
     if (!this.assetWorkerManager || !this.assetRepl || !this.assetCtxPtrPromise) {
       this.assetWorkerManager = new WorkerManager();
       this.assetRepl = this.assetWorkerManager.getWorker();
-      this.assetCtxPtrPromise = this.assetRepl.init();
+      this.assetCtxPtrPromise = this.assetRepl.init(getGeoscriptWorkerWasmURLs());
     }
     return { repl: this.assetRepl, ctxPtrPromise: this.assetCtxPtrPromise };
   }

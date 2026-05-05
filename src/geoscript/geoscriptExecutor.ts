@@ -4,6 +4,7 @@ import { runGeoscript } from './runner/geoscriptRunner';
 import type { GeneratedObject } from './runner/types';
 import type { GeoscriptAsyncDeps } from './geoscriptWorker.worker';
 import { WorkerManager } from './workerManager';
+import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 
 export interface GeoscriptJob {
   id: string;
@@ -31,7 +32,7 @@ export class GeoscriptExecutor {
   constructor() {
     this.workerManager = new WorkerManager();
     const repl = this.workerManager.getWorker();
-    this.ctxPtrPromise = repl.init();
+    this.ctxPtrPromise = repl.init(getGeoscriptWorkerWasmURLs());
   }
 
   submit(jobs: GeoscriptJob[]): Map<string, Promise<GeoscriptJobResult>> {

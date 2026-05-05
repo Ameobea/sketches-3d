@@ -1,11 +1,22 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
-import WasmURL from './clipper2z.wasm?url';
+
+// The wasm URL is configured by the caller via `setClipper2WasmURL` rather
+// than imported with `?url` here, so this module can be safely included in a
+// `?worker` graph without Vite emitting a duplicate wasm copy that would miss
+// the main-thread `<link rel=preload>`.
+let WasmURL: string | null = null;
+export const setClipper2WasmURL = (url: string) => {
+  WasmURL = url;
+};
 
 const Clipper2Wasm = new AsyncOnce(async () => {
+  if (!WasmURL) {
+    throw new Error('clipper2 wasm URL not configured; call setClipper2WasmURL() first');
+  }
   const wasmBinaryP = fetch(WasmURL).then(r => r.arrayBuffer());
   const mod = await import('./clipper2z.js');
   const wasmBinary = await wasmBinaryP;
-  return mod.default({ wasmBinary, locateFile: (_path: string) => WasmURL } as any);
+  return mod.default({ wasmBinary, locateFile: (_path: string) => WasmURL! } as any);
 });
 
 export const initClipper2 = (): Promise<void> | true => {

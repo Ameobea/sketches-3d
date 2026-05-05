@@ -1,9 +1,14 @@
 import ManifoldModule, { type Manifold, type ManifoldToplevel, type Mat4, type Vec3 } from 'manifold-3d';
-import manifoldWasmURL from 'manifold-3d/manifold.wasm?url';
 
-// import ManifoldModule from './manifoldComp/manifold';
-// import type { Manifold, ManifoldToplevel, Vec3 } from 'manifold-3d';
-// import manifoldWasURL from './manifoldComp/manifold.wasm?url';
+// The wasm URL is configured by the caller via `setManifoldWasmURL` rather than
+// imported with `?url` here.  Keeping the import out of this module's graph
+// prevents Vite from emitting a duplicate copy of the wasm under
+// `workers/assets/` when this module is pulled in from a `?worker` entry point,
+// which would defeat the main-thread `<link rel=preload>` for it.
+let manifoldWasmURL: string | null = null;
+export const setManifoldWasmURL = (url: string) => {
+  manifoldWasmURL = url;
+};
 
 let ManifoldWasm: ManifoldToplevel | null = null;
 
@@ -11,8 +16,11 @@ export const initManifoldWasm = async () => {
   if (ManifoldWasm) {
     return ManifoldWasm;
   }
+  if (!manifoldWasmURL) {
+    throw new Error('manifold wasm URL not configured; call setManifoldWasmURL() first');
+  }
 
-  ManifoldWasm = await ManifoldModule({ locateFile: () => manifoldWasmURL });
+  ManifoldWasm = await ManifoldModule({ locateFile: () => manifoldWasmURL! });
   ManifoldWasm.setup();
   return ManifoldWasm;
 };

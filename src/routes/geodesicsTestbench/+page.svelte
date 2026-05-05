@@ -1,6 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { getGeodesicsModule } from 'src/geoscript/geodesics';
+  import { getGeodesicsModule, setGeodesicsWasmURL } from 'src/geoscript/geodesics';
+  import { WASM_ASSET_URLS } from 'src/viz/wasmComp/wasmAssetURLs';
 
   const initTestbench = (mod: any) => {
     (window as any).Geodesics = mod;
@@ -50,6 +51,7 @@
   };
 
   if (browser) {
+    setGeodesicsWasmURL(WASM_ASSET_URLS.geodesics);
     getGeodesicsModule().then(initTestbench);
   }
 </script>

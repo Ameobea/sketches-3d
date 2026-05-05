@@ -274,22 +274,22 @@
     "pipes4": {
       "type": "geoscript",
       "file": "geo/pipes4.geo",
-      "_meta": { "runtimeMs": 0.7075000000186265, "count": 4, "codeHash": "99b3321a", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 0.7660000000149012, "count": 5, "codeHash": "99b3321a", "asyncDeps": [ "cgal" ] }
     },
     "center_fenced_ring/bottom": {
       "type": "geoscript",
       "file": "geo/center_fenced_ring/bottom.geo",
-      "_meta": { "runtimeMs": 4.506250000093132, "count": 4, "codeHash": "9111052f" }
+      "_meta": { "runtimeMs": 5.086000000312924, "count": 5, "codeHash": "9111052f" }
     },
     "center_fenced_ring/plat": {
       "type": "geoscript",
       "file": "geo/center_fenced_ring/plat.geo",
-      "_meta": { "runtimeMs": 4.18625000026077, "count": 4, "codeHash": "75837ca5" }
+      "_meta": { "runtimeMs": 4.788000001758337, "count": 5, "codeHash": "75837ca5" }
     },
     "center_fenced_ring/railing": {
       "type": "geoscript",
       "file": "geo/center_fenced_ring/railing.geo",
-      "_meta": { "runtimeMs": 5.890000000130385, "count": 4, "codeHash": "31fc6bc8" }
+      "_meta": { "runtimeMs": 6.857000001892447, "count": 5, "codeHash": "31fc6bc8" }
     }
   },
   "objects": [],

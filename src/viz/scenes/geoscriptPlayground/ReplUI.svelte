@@ -6,6 +6,7 @@
 
   import type { Viz } from 'src/viz';
   import type { WorkerManager } from 'src/geoscript/workerManager';
+  import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
   import { buildEditor } from '../../../geoscript/editor';
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
   import SaveControls from './SaveControls.svelte';
@@ -158,7 +159,7 @@
   onMount(() => {
     onSizeChange(size, isEditorCollapsed, layoutOrientation);
 
-    repl.init().then(ptr => {
+    repl.init(getGeoscriptWorkerWasmURLs()).then(ptr => {
       ctxPtr = ptr;
     });
   });
@@ -585,7 +586,7 @@
 
     repl = await workerManager.recreate();
 
-    ctxPtr = await repl.init();
+    ctxPtr = await repl.init(getGeoscriptWorkerWasmURLs());
 
     err = 'Execution interrupted';
     isRunning = false;

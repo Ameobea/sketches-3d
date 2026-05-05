@@ -2,6 +2,7 @@ import * as Comlink from 'comlink';
 import * as THREE from 'three';
 
 import type { RuneGenCtx } from './RuneGenCtx';
+import { WASM_ASSET_URLS } from 'src/viz/wasmComp/wasmAssetURLs';
 
 let RuneGenWorker: Promise<Comlink.Remote<RuneGenCtx>> | null = null;
 
@@ -51,11 +52,13 @@ class RuneGenerator {
 
 export const getRuneGenerator = async () => {
   if (!RuneGenWorker) {
-    RuneGenWorker = new Promise(async resolve => {
+    RuneGenWorker = (async () => {
       const workerMod = await import('./runeGenWorker.worker.js?worker');
       const worker = new workerMod.default();
-      resolve(Comlink.wrap<RuneGenCtx>(worker));
-    });
+      const ctx = Comlink.wrap<RuneGenCtx>(worker);
+      await ctx.init(WASM_ASSET_URLS.geodesics);
+      return ctx;
+    })();
   }
 
   return new RuneGenerator(await RuneGenWorker);

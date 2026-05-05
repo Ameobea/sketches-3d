@@ -32,3 +32,4 @@ src/viz/wasm/clipper2/*
 rustc-ice-*.txt
 .codex
 design
+!src/viz/wasmComp/wasmAssetURLs.ts

@@ -65,6 +65,9 @@ void main() {
   // sky / no geometry and skip the tone-mapping stage entirely, preserving the
   // color authored by the sky material. All downstream passes (sRGB encode,
   // emissive composite, bloom, gamma, dither) still run.
+  //
+  // TODO: do we even need this anymore now that skystack can render the sky into
+  // the emissive buffer directly?
   bool bypassToneMap = false;
   #ifdef SKY_BYPASS_TONEMAP
     bypassToneMap = texture2D(depthBuffer, vUv).r >= 0.9999;

@@ -1,13 +1,24 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
-import geodesicsWasmURL from 'src/geodesics/geodesics.wasm?url';
 
 let LastError = '';
 
+// The wasm URL is configured by the caller via `setGeodesicsWasmURL` rather
+// than imported with `?url` here, so this module can be safely included in a
+// `?worker` graph without Vite emitting a duplicate wasm copy that would miss
+// the main-thread `<link rel=preload>`.
+let geodesicsWasmURL: string | null = null;
+export const setGeodesicsWasmURL = (url: string) => {
+  geodesicsWasmURL = url;
+};
+
 const GeodesicsModule = new AsyncOnce(async () => {
+  if (!geodesicsWasmURL) {
+    throw new Error('geodesics wasm URL not configured; call setGeodesicsWasmURL() first');
+  }
   const wasmBinaryP = fetch(geodesicsWasmURL).then(r => r.arrayBuffer());
   const mod = await import('src/geodesics/geodesics.js');
   const wasmBinary = await wasmBinaryP;
-  return mod.Geodesics({ wasmBinary, locateFile: (_path: string) => geodesicsWasmURL } as any);
+  return mod.Geodesics({ wasmBinary, locateFile: (_path: string) => geodesicsWasmURL! } as any);
 });
 
 export const initGeodesics = (): Promise<void> => GeodesicsModule.get().then(() => {});

@@ -39,18 +39,6 @@ export interface GradientBackgroundConfig {
   /** Used when horizonMode = SolidBelow. Default 0x000000. */
   belowColor?: THREE.ColorRepresentation;
   bands?: CloudBand[];
-  /**
-   * 1D LUT resolution. The gradient is Oklab-interpolated at factory time
-   * into `lutResolution` evenly-spaced RGB entries, baked as a constant
-   * array into the shader. The fragment shader does a cheap linear RGB
-   * lerp between adjacent entries — perceptually indistinguishable from
-   * live Oklab math for typical close-hue sky gradients, but without any
-   * per-fragment cube roots.
-   *
-   * Higher = smoother gradient (more shader constants emitted), lower =
-   * smaller shader + may show faint banding on long smooth ramps. 32 is
-   * usually fine; 128 is overkill for sky. Default 64.
-   */
   lutResolution?: number;
 }
 
@@ -61,16 +49,6 @@ const emitLutConst = (id: string, lut: readonly (readonly [number, number, numbe
   return `const vec3 GRADIENT_LUT_${id}[${lut.length}] = vec3[](\n  ${entries}\n);`;
 };
 
-/**
- * Gradient-sky background. Oklab gradient is baked at factory time into a
- * constant 1D LUT of length `lutResolution`; the per-fragment lookup is an
- * index + linear RGB lerp between adjacent entries. Stops are effectively
- * frozen at construction — mutating them live isn't supported because the
- * LUT is a shader constant. Rebuild the SkyStack to change them.
- *
- * Optional additive bands stay as animatable uniforms (intensity, fade rate,
- * color per band) — they're overlayed on top of the LUT sample.
- */
 export const gradientBackground = (c: GradientBackgroundConfig): BackgroundLayer => {
   if (c.stops.length < 1) {
     throw new Error('gradientBackground: must have at least one stop');

@@ -1,15 +1,24 @@
 import * as Comlink from 'comlink';
 
-import { compute_convex_hull_mesh, initManifoldWasm } from './manifold';
+import { compute_convex_hull_mesh, initManifoldWasm, setManifoldWasmURL } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
-import geoscriptReplWasmURL from 'src/viz/wasmComp/geoscript_repl_bg.wasm?url';
-import { initGeodesics } from './geodesics';
-import { initCGAL } from 'src/viz/wasm/cgal/cgal';
-import { initClipper2 } from 'src/viz/wasm/clipper2/clipper2';
+import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
+import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';
+import { initClipper2, setClipper2WasmURL } from 'src/viz/wasm/clipper2/clipper2';
 import { textToSvg } from './text_to_path';
+import type { GeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
+
+// Wasm asset URLs are passed in by the main thread via `init()` (not imported
+// with `?url` here) so Vite emits each wasm only into the main bundle's asset
+// graph.  This keeps the URL the worker fetches identical to the one preloaded
+// by `<link rel=preload>` in the scene route's HTML.
+let geoscriptReplWasmURL: string | null = null;
 
 const initGeoscript = async () => {
+  if (!geoscriptReplWasmURL) {
+    throw new Error('geoscript_repl wasm URL not set; pass urls to worker init()');
+  }
   // Pass `fetch(url)` directly so wasm-bindgen uses `WebAssembly.instantiateStreaming`.
   // With the `<link rel="preload">` from the scene route, the fetch is a cache hit.
   await Geoscript.default(fetch(geoscriptReplWasmURL));
@@ -78,7 +87,13 @@ const initAsyncDeps = (
 };
 
 const methods = {
-  init: async () => {
+  init: async (urls: GeoscriptWorkerWasmURLs) => {
+    geoscriptReplWasmURL = urls.geoscriptRepl;
+    setManifoldWasmURL(urls.manifold);
+    setCGALWasmURL(urls.cgal);
+    setClipper2WasmURL(urls.clipper2);
+    setGeodesicsWasmURL(urls.geodesics);
+
     const [_manifold, repl] = await Promise.all([initManifoldWasm(), initGeoscript()]);
     return repl.geoscript_repl_init();
   },

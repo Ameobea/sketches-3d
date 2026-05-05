@@ -4,13 +4,15 @@ import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { buildGrayFossilRockMaterial } from 'src/viz/materials/GrayFossilRock/GrayFossilRockMaterial';
-import { initManifoldWasm } from 'src/geoscript/manifold';
+import { initManifoldWasm, setManifoldWasmURL } from 'src/geoscript/manifold';
+import { WASM_ASSET_URLS } from 'src/viz/wasmComp/wasmAssetURLs';
 
 export const processLoadedScene = async (
   viz: Viz,
   _loadedWorld: THREE.Group,
   _vizConf: VizConfig
 ): Promise<SceneConfig> => {
+  setManifoldWasmURL(WASM_ASSET_URLS.manifold);
   const manifoldInitPromise = initManifoldWasm();
   const loader = new THREE.ImageBitmapLoader();
   const debugMatPromise = buildGrayFossilRockMaterial(

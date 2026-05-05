@@ -1,31 +1,40 @@
 import * as Comlink from 'comlink';
 
-import { getGeodesicsModule } from 'src/geoscript/geodesics';
+import { getGeodesicsModule, setGeodesicsWasmURL } from 'src/geoscript/geodesics';
 import * as stone from '../../../wasmComp/stone';
 
 export class RuneGenCtx {
   private engine!: typeof import('../../../wasmComp/stone');
   private geodesics: any;
-  private initialized: Promise<void>;
+  private initialized: Promise<void> | null = null;
 
-  constructor() {
-    this.initialized = this.init();
-  }
-
-  public async init() {
-    const [engine, geodesics] = await Promise.all([
-      Promise.resolve(stone).then(async engine => {
-        await engine.default();
-        return engine;
-      }),
-      getGeodesicsModule(),
-    ]);
-
-    this.engine = engine;
-    this.geodesics = geodesics;
+  // The geodesics wasm URL is supplied by the main thread rather than imported
+  // here with `?url`.  This keeps `wasmAssetURLs` (and every wasm it lists) out
+  // of the runeGen worker bundle, so Vite doesn't emit duplicate `?url` assets
+  // under `workers/assets/` that would shadow the main-thread `<link rel=preload>`.
+  public init(geodesicsWasmURL: string) {
+    if (this.initialized) {
+      return this.initialized;
+    }
+    setGeodesicsWasmURL(geodesicsWasmURL);
+    this.initialized = (async () => {
+      const [engine, geodesics] = await Promise.all([
+        Promise.resolve(stone).then(async engine => {
+          await engine.default();
+          return engine;
+        }),
+        getGeodesicsModule(),
+      ]);
+      this.engine = engine;
+      this.geodesics = geodesics;
+    })();
+    return this.initialized;
   }
 
   public awaitInit() {
+    if (!this.initialized) {
+      throw new Error('RuneGenCtx.init(url) must be called before awaitInit()');
+    }
     return this.initialized;
   }
 

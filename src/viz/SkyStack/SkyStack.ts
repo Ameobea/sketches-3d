@@ -23,18 +23,13 @@ export interface SkyStackParams {
  * Unified sub-pipeline for background sky content. Owns a single `SkyStackPass`
  * that runs one MRT draw producing (color, emissive) simultaneously.
  *
- *   attachment 0 (color)    — blitted into inputBuffer BEFORE MainRenderPass.
- *                             Tone-mapped in `FinalPass`.
- *   attachment 1 (emissive) — blitted into `emissiveRT`. Bypasses tone mapping,
- *                             drives bloom, shared with EmissiveBypassPass.
- *
  * Layers are supplied by factory functions — see `layers/*`, `backgrounds/*`,
  * and the custom-layer escape hatches (`customLayer`, `customBackground`).
  * Per-layer uniforms live on the layer objects' `.uniforms` records; hold a
  * reference to the layer if you need to mutate them at runtime.
  *
  * Shared uniforms (time, scene depth, horizon offset/blend) stay here:
- *   viz.registerBeforeRenderCb(t => skyStack.setTime(t));
+ *   `viz.registerBeforeRenderCb(t => skyStack.setTime(t));`
  */
 export class SkyStack {
   public readonly pass: SkyStackPass;
@@ -77,13 +72,5 @@ export class SkyStack {
 
   public setSceneDepth(depthTexture: THREE.Texture | null): void {
     this.uniforms.uSceneDepth.value = depthTexture;
-  }
-
-  public setHorizonOffset(offset: number): void {
-    this.uniforms.uHorizonOffset.value = offset;
-  }
-
-  public setHorizonBlend(blend: number): void {
-    this.uniforms.uHorizonBlend.value = blend;
   }
 }

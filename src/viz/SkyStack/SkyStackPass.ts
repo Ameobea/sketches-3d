@@ -7,17 +7,12 @@ const BLACK = new THREE.Color(0, 0, 0);
  * MRT-owning pass that runs the unified SkyStack fragment shader and writes
  * directly into the consumer render targets:
  *
- *   - attachment 0 (color)    → `inputBuffer.texture` (tone-mapped by AgX in FinalPass).
- *   - attachment 1 (emissive) → `emissiveRT.texture`  (bypass-tone-map + bloom,
- *                               shared with EmissiveBypassPass which composites on top
- *                               without clearing).
+ *   - attachment 0 (color)
+ *   - attachment 1 (emissiveBypass)
  *
  * Implementation: a single three.js-managed MRT (`skyMRT`) whose two color
  * attachments are rebound each frame to the consumer RTs' underlying GL
- * textures. This eliminates the two per-frame full-resolution color blits
- * that the previous "render into skyMRT then blit out" design required.
- * On TBDR hardware (Apple Silicon) those blits forced tile-memory resolves
- * that hitched any pass sharing `inputBuffer` downstream (e.g. n8ao).
+ * textures.
  *
  * Per-frame flow:
  *   1. Rebind skyMRT's COLOR_ATTACHMENT0/1 to inputBuffer.texture and
@@ -36,16 +31,7 @@ const BLACK = new THREE.Color(0, 0, 0);
  * `emissiveRT` depth: this pass constructs `emissiveRT` without a depth
  * attachment, and a wiring step in `defaultPostprocessing` attaches
  * `stableDepthTarget.depthTexture` directly as `emissiveRT`'s depth via
- * `setEmissiveDepthTexture()`. Result: no per-frame depth blit. The
- * EmissiveBloomPass filter step (when fog is active) gets "mesh depth at
- * mesh pixels, scene depth elsewhere" semantics because bypass meshes
- * render with depthWrite=true into the shared texture; the only cost is
- * that FinalPass's fog reads the same shared texture and therefore sees
- * mesh depth at bypass-mesh pixels — invisible for opaque bypass meshes
- * (the common case), since the bypass emissive covers the main-scene
- * color at those pixels in the final composite.
- *
- * `needsSwap = false` — does not rotate the composer's ping-pong.
+ * `setEmissiveDepthTexture()`.
  */
 export class SkyStackPass extends Pass {
   public readonly skyMRT: THREE.WebGLRenderTarget;
@@ -54,9 +40,6 @@ export class SkyStackPass extends Pass {
   private readonly fsScene: THREE.Scene;
   private readonly fsCamera: THREE.OrthographicCamera;
   private readonly fsMesh: THREE.Mesh;
-  // Tracks which GL textures are currently attached to skyMRT's color slots so
-  // we only re-run framebufferTexture2D when the consumer textures actually
-  // change (resize / first frame / RT reallocation).
   private boundAttachment0: WebGLTexture | null = null;
   private boundAttachment1: WebGLTexture | null = null;
 
@@ -78,8 +61,7 @@ export class SkyStackPass extends Pass {
     });
 
     // No depth attachment on construction. `setEmissiveDepthTexture()` wires
-    // stableDepth's depth texture in before first render; emissiveRT then
-    // shares that depth, eliminating the per-frame blit.
+    // stableDepth's depth texture in before first render
     this.emissiveRT = new THREE.WebGLRenderTarget(width, height, {
       type: THREE.HalfFloatType,
       format: THREE.RGBAFormat,
@@ -172,8 +154,7 @@ export class SkyStackPass extends Pass {
 
     // Intentionally NOT calling setRenderTarget(null) here — the next pass
     // (MainRenderPass) immediately rebinds inputBuffer, so a default-FBO
-    // bind in between is wasted work. On TBDR (Apple Silicon) it also
-    // forces an unnecessary tile-memory resolve to the default framebuffer.
+    // bind in between is wasted work.
   }
 
   override dispose(): void {

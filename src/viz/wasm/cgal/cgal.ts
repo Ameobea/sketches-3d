@@ -1,14 +1,25 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
-import WasmURL from './index.wasm?url';
+
+// The wasm URL is configured by the caller via `setCGALWasmURL` rather than
+// imported with `?url` here, so this module can be safely included in a
+// `?worker` graph without Vite emitting a duplicate wasm copy that would miss
+// the main-thread `<link rel=preload>`.
+let WasmURL: string | null = null;
+export const setCGALWasmURL = (url: string) => {
+  WasmURL = url;
+};
 
 const CGALWasm = new AsyncOnce(async () => {
+  if (!WasmURL) {
+    throw new Error('cgal wasm URL not configured; call setCGALWasmURL() first');
+  }
   // Kick off wasm fetch in parallel with the JS glue fetch so the two don't
   // waterfall. The wasm URL is hashed, so any `<link rel="preload">` for it
   // makes this a cache hit.
   const wasmBinaryP = fetch(WasmURL).then(r => r.arrayBuffer());
   const mod = await import('./index.js');
   const wasmBinary = await wasmBinaryP;
-  return mod.CGAL({ wasmBinary, locateFile: (_path: string) => WasmURL } as any);
+  return mod.CGAL({ wasmBinary, locateFile: (_path: string) => WasmURL! } as any);
 });
 
 export const initCGAL = (): Promise<void> | true => {

@@ -1,11 +1,4 @@
-import ammoWasmURL from 'src/ammojs/ammo.wasm.wasm?url';
-import geodesicsWasmURL from 'src/geodesics/geodesics.wasm?url';
-import cgalWasmURL from 'src/viz/wasm/cgal/index.wasm?url';
-import clipper2WasmURL from 'src/viz/wasm/clipper2/clipper2z.wasm?url';
-import flightRecorderWasmURL from 'src/viz/wasmComp/flight_recorder.wasm?url';
-import geoscriptReplWasmURL from 'src/viz/wasmComp/geoscript_repl_bg.wasm?url';
-import manifoldWasmURL from 'manifold-3d/manifold.wasm?url';
-
+import { WASM_ASSET_URLS } from 'src/viz/wasmComp/wasmAssetURLs';
 import type { GeoscriptAssetMeta, LevelDef } from './types';
 
 /**
@@ -20,12 +13,12 @@ import type { GeoscriptAssetMeta, LevelDef } from './types';
 export const getScenePreloadUrls = (levelDef: LevelDef | null): string[] => {
   // ammo + flight_recorder are pre-fetched unconditionally by `initViz`, so they
   // benefit every Viz-backed route, not just useSceneDef ones.
-  const urls: string[] = [ammoWasmURL, flightRecorderWasmURL];
+  const urls: string[] = [WASM_ASSET_URLS.ammo, WASM_ASSET_URLS.flightRecorder];
   if (!levelDef) {
     return urls;
   }
 
-  urls.push(geoscriptReplWasmURL, manifoldWasmURL);
+  urls.push(WASM_ASSET_URLS.geoscriptRepl, WASM_ASSET_URLS.manifold);
 
   const asyncDeps = new Set<string>();
   for (const asset of Object.values(levelDef.assets ?? {})) {
@@ -38,13 +31,13 @@ export const getScenePreloadUrls = (levelDef: LevelDef | null): string[] => {
   }
 
   if (asyncDeps.has('cgal')) {
-    urls.push(cgalWasmURL);
+    urls.push(WASM_ASSET_URLS.cgal);
   }
   if (asyncDeps.has('clipper2')) {
-    urls.push(clipper2WasmURL);
+    urls.push(WASM_ASSET_URLS.clipper2);
   }
   if (asyncDeps.has('geodesics')) {
-    urls.push(geodesicsWasmURL);
+    urls.push(WASM_ASSET_URLS.geodesics);
   }
 
   return urls;
