@@ -49,6 +49,7 @@ const generatePageSvelte = (sceneName: string, entry: SceneRegistryEntry): strin
   import Viz from 'src/viz/Viz.svelte';
   import type { SceneDef } from 'src/viz/scenes';
   import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
+  import { collectLevelDefEagerDeps } from 'src/viz/levelDef/preloadUrls';
   import type { PageData } from './$types';
 
   const sceneName = '${sceneName}';
@@ -66,7 +67,7 @@ const generatePageSvelte = (sceneName: string, entry: SceneRegistryEntry): strin
     const wantExecutor = !!data.levelDef;
     if (wantExecutor && executorSceneName !== data.sceneName) {
       geoscriptExecutor?.terminate();
-      geoscriptExecutor = new GeoscriptExecutor();
+      geoscriptExecutor = new GeoscriptExecutor(collectLevelDefEagerDeps(data.levelDef));
       executorSceneName = data.sceneName;
     } else if (!wantExecutor && geoscriptExecutor) {
       geoscriptExecutor.terminate();

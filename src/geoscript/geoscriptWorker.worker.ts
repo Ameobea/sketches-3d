@@ -87,14 +87,34 @@ const initAsyncDeps = (
 };
 
 const methods = {
-  init: async (urls: GeoscriptWorkerWasmURLs) => {
+  init: async (
+    urls: GeoscriptWorkerWasmURLs,
+    eagerDeps?: { cgal?: boolean; clipper2?: boolean; geodesics?: boolean }
+  ) => {
     geoscriptReplWasmURL = urls.geoscriptRepl;
     setManifoldWasmURL(urls.manifold);
     setCGALWasmURL(urls.cgal);
     setClipper2WasmURL(urls.clipper2);
     setGeodesicsWasmURL(urls.geodesics);
 
-    const [_manifold, repl] = await Promise.all([initManifoldWasm(), initGeoscript()]);
+    const eagerInits: Promise<unknown>[] = [];
+    if (eagerDeps?.cgal) {
+      const p = initCGAL();
+      if (p instanceof Promise) {
+        eagerInits.push(p);
+      }
+    }
+    if (eagerDeps?.clipper2) {
+      const p = initClipper2();
+      if (p instanceof Promise) {
+        eagerInits.push(p);
+      }
+    }
+    if (eagerDeps?.geodesics) {
+      eagerInits.push(initGeodesics());
+    }
+
+    const [_manifold, repl] = await Promise.all([initManifoldWasm(), initGeoscript(), ...eagerInits]);
     return repl.geoscript_repl_init();
   },
   reset: (ctxPtr: number) => {

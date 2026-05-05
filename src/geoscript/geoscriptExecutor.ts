@@ -29,10 +29,10 @@ export class GeoscriptExecutor {
   private workerManager: WorkerManager;
   private ctxPtrPromise: Promise<number>;
 
-  constructor() {
+  constructor(eagerDeps?: { cgal?: boolean; clipper2?: boolean; geodesics?: boolean }) {
     this.workerManager = new WorkerManager();
     const repl = this.workerManager.getWorker();
-    this.ctxPtrPromise = repl.init(getGeoscriptWorkerWasmURLs());
+    this.ctxPtrPromise = repl.init(getGeoscriptWorkerWasmURLs(), eagerDeps);
   }
 
   submit(jobs: GeoscriptJob[]): Map<string, Promise<GeoscriptJobResult>> {
