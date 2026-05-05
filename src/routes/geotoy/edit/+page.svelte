@@ -8,7 +8,7 @@
     processLoadedScene,
     type GeoscriptPlaygroundUserData,
   } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
-  import { ScenesByName } from 'src/viz/scenes';
+  import { SCENE_REGISTRY } from 'src/viz/scenes/sceneRegistry';
   import { LoadOrbitControls } from 'src/viz/preloadCache';
   import { WorkerManager } from 'src/geoscript/workerManager';
 
@@ -25,7 +25,8 @@
     workerManager: browser ? new WorkerManager() : null,
   });
 
-  const sceneDefOverride = { ...ScenesByName['geoscript'], sceneLoader: () => processLoadedScene };
+  const { modulePath: _modulePath, ...geoscriptData } = SCENE_REGISTRY['geoscript'];
+  const sceneDef = { ...geoscriptData, sceneLoader: () => processLoadedScene };
 </script>
 
-<Viz sceneName="geoscript" {userData} {sceneDefOverride} />
+<Viz sceneName="geoscript" {userData} {sceneDef} />

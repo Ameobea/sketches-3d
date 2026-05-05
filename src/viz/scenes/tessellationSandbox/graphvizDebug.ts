@@ -36,4 +36,6 @@ export const build_linked_mesh_graphviz = (rawConnections: string): string => {
   return dot;
 };
 
-(window as any).build_linked_mesh_graphviz = build_linked_mesh_graphviz;
+if (typeof window !== 'undefined') {
+  (window as any).build_linked_mesh_graphviz = build_linked_mesh_graphviz;
+}

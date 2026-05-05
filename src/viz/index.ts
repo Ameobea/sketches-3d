@@ -18,7 +18,7 @@ import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger
 import { initEulerDebugger, initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
 import { Inventory } from './inventory/Inventory';
-import { type SceneConfig, type SceneDef, ScenesByName, type ViewMode } from './scenes';
+import type { SceneConfig, SceneDef, ViewMode } from './scenes';
 import { buildDefaultSceneConfig, DefaultTopDownCameraFOV } from './sceneDefaults';
 import { DefaultTopDownCameraRotation } from './clientDefaults';
 import type { CameraController } from './cameraController';
@@ -959,11 +959,11 @@ interface InitVizArgs {
   sceneName?: string;
   vizCb: (viz: Viz, vizConfig: TransparentWritable<Conf.VizConfig>, sceneConf: SceneConfig) => void;
   userData?: any;
-  sceneDefOverride?: SceneDef;
+  sceneDef: SceneDef;
   /**
-   * Optional pre-spawned geoscript executor.  Owned by the caller (typically
-   * `[scene]/+page.svelte`), constructed at component mount so the worker boot
-   * + wasm fetches overlap with GLTF loading and renderer setup.
+   * Optional pre-spawned geoscript executor.  Owned by the caller, constructed
+   * at component mount so the worker boot + wasm fetches overlap with GLTF
+   * loading and renderer setup.
    */
   geoscriptExecutor?: GeoscriptExecutor;
 }
@@ -983,7 +983,7 @@ export const initViz = (
     sceneName: providedSceneName = Conf.DefaultSceneName,
     vizCb,
     userData,
-    sceneDefOverride,
+    sceneDef,
     geoscriptExecutor,
   }: InitVizArgs
 ) => {
@@ -992,11 +992,6 @@ export const initViz = (
   getAmmoJS();
 
   initSentry();
-
-  const sceneDef = sceneDefOverride ?? ScenesByName[providedSceneName];
-  if (!sceneDef) {
-    throw new Error(`No scene found for name ${providedSceneName}`);
-  }
 
   const {
     sceneName,

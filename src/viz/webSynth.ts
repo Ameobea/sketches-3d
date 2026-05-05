@@ -1,7 +1,8 @@
 import { applyAudioSettings } from '.';
 import { loadVizConfig } from './conf';
 
-const ctx = new AudioContext();
+let ctx: AudioContext | null = null;
+
 export const setGlobalVolume = (volume: number) => {
   if (volume < 0 || volume > 100) {
     throw new Error('Volume must be between 0 and 100');
@@ -10,9 +11,12 @@ export const setGlobalVolume = (volume: number) => {
   (ctx as any).globalVolume.gain.value = +volume / 100;
   localStorage.globalVolume = volume;
 };
-(window as any).setGlobalVolume = setGlobalVolume;
 
 export const initWebSynth = (args: { compositionIDToLoad?: number }) => {
+  if (!ctx) {
+    ctx = new AudioContext();
+    (window as any).setGlobalVolume = setGlobalVolume;
+  }
   const content = document.createElement('div');
   content.id = 'content';
   content.style.display = 'none';

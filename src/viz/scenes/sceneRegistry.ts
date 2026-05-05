@@ -1,0 +1,380 @@
+import type { SceneMetadata } from './index';
+
+/**
+ * Source-of-truth list of every playable scene.  The `generated-scene-routes`
+ * Vite plugin reads this at build/dev time and writes a per-scene SvelteKit
+ * route under `src/routes/(generated)/<route>/+page.{svelte,server.ts}` for
+ * each entry.  See `viteGeneratedScenesPlugin.ts` for the rationale behind
+ * the static-import-based approach (modulepreload coverage).
+ *
+ * IMPORTANT: This file is intentionally *pure data* — it does not import any
+ * scene module.  Anything that statically imports this file will pull every
+ * scene into its chunk graph, defeating the whole point of the plugin.
+ * Consumers other than the plugin should not exist.
+ */
+
+export interface SceneRegistryEntry {
+  /** Path (relative to project root, via `src/...` alias) of the scene module
+   * exporting `processLoadedScene`. */
+  modulePath: string;
+  sceneName: string | null;
+  gltfName?: string | null;
+  extension?: 'gltf' | 'glb';
+  needsDraco?: boolean;
+  legacyLights?: boolean;
+  /** When true, `loadLevelDef` is called automatically by the framework. */
+  useSceneDef?: boolean;
+  /** When false, the audio engine is not initialized for this scene. */
+  audio?: boolean;
+  metadata: SceneMetadata;
+}
+
+const ParticleConduit: SceneRegistryEntry = {
+  modulePath: 'src/viz/scenes/blink',
+  sceneName: 'blink',
+  legacyLights: false,
+  metadata: {
+    title: 'Particle Conduit',
+    description:
+      '3D physics-based particle system where particles move along a conduit.  Various forces interact along with noise-based fields to send the particles on chaotic paths.  Built with Three.JS + Rust + WebAssembly',
+    openGraph: {
+      title: 'Particle Conduit',
+      description:
+        'Physics-based particle system where particles move along a conduit.  Various forces interact along with noise-based fields to send the particles on chaotic paths.',
+      images: [
+        {
+          url: 'https://i.ameo.link/a9c.png',
+          alt: 'A screenshot of the particle conduit visualization.  Shows red and orange particles moving in stream-like patterns across the screen.  Includes a control panel on the right with many controls for configuring the simulation.',
+          width: 1508,
+          height: 1194,
+        },
+      ],
+    },
+  },
+};
+
+export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
+  bridge: {
+    modulePath: 'src/viz/scenes/bridge',
+    sceneName: 'bridge',
+    metadata: { title: 'bridge' },
+    legacyLights: true,
+  },
+  blink: ParticleConduit,
+  particle_conduit: ParticleConduit,
+  walkways: {
+    modulePath: 'src/viz/scenes/walkways',
+    sceneName: 'walkways',
+    metadata: { title: 'walkways' },
+    legacyLights: true,
+  },
+  subdivided: {
+    modulePath: 'src/viz/scenes/subdivided',
+    sceneName: 'subdivided',
+    metadata: { title: 'subdivided' },
+    legacyLights: true,
+  },
+  fractal_cube: {
+    modulePath: 'src/viz/scenes/fractal_cube',
+    sceneName: 'fractal_cube',
+    metadata: { title: 'fractal cube' },
+    legacyLights: true,
+  },
+  bridge2: {
+    modulePath: 'src/viz/scenes/bridge2',
+    sceneName: 'bridge2',
+    metadata: { title: 'bridge2' },
+    gltfName: 'checkpoint5',
+    legacyLights: true,
+  },
+  collisiondemo: {
+    modulePath: 'src/viz/scenes/collisionDemo',
+    sceneName: 'collisionDemo',
+    metadata: { title: 'collisionDemo' },
+    legacyLights: true,
+  },
+  chasms: {
+    modulePath: 'src/viz/scenes/chasms/chasms',
+    sceneName: 'chasms',
+    metadata: { title: 'chasms' },
+    gltfName: 'chasms',
+    legacyLights: true,
+  },
+  godrays_test: {
+    modulePath: 'src/viz/scenes/experiments/godrays-test/godraysTest',
+    sceneName: 'godrays_test',
+    metadata: { title: 'godrays_test' },
+    gltfName: null,
+    legacyLights: true,
+  },
+  rainy: {
+    modulePath: 'src/viz/scenes/rainy/rainy',
+    sceneName: 'Scene',
+    metadata: { title: 'rainy' },
+    gltfName: 'rainy',
+    extension: 'glb',
+    needsDraco: true,
+    legacyLights: true,
+  },
+  depthPrepassDemo: {
+    modulePath: 'src/viz/scenes/depthPrepassDemo',
+    sceneName: null,
+    metadata: { title: 'depthPrepassDemo' },
+    gltfName: null,
+    legacyLights: true,
+  },
+  smoke: {
+    modulePath: 'src/viz/scenes/smoke/smoke',
+    sceneName: 'Scene',
+    metadata: {
+      title: 'smoke',
+      openGraph: {
+        images: [
+          {
+            url: 'https://i.ameo.link/bf1.png',
+            width: 1829,
+            height: 1304,
+            alt: 'A screenshot of the "smoke" level.  Shows intense orange fog, floating fractal structures composed out of large dark cubes with stone-like texturing and patterns, and four orange/yellow lights glowing in the distance supported by long poles.',
+          },
+        ],
+      },
+    },
+    gltfName: 'smoke',
+    extension: 'glb',
+    legacyLights: true,
+  },
+  cave: {
+    modulePath: 'src/viz/scenes/cave/cave',
+    sceneName: 'proc',
+    metadata: { title: 'cave' },
+    gltfName: 'cave',
+    extension: 'glb',
+    legacyLights: true,
+  },
+  gn_inst_test: {
+    modulePath: 'src/viz/scenes/experiments/gn_inst_test/gnInstTest',
+    sceneName: 'Scene',
+    metadata: { title: 'gn_inst_test' },
+    gltfName: 'gn_inst_test',
+    extension: 'glb',
+    legacyLights: true,
+  },
+  fogTest: {
+    modulePath: 'src/viz/scenes/experiments/fog/fog',
+    sceneName: 'Scene',
+    metadata: { title: 'volumetric fog test' },
+    gltfName: 'fogTest',
+    extension: 'glb',
+    legacyLights: true,
+  },
+  terrainTest: {
+    modulePath: 'src/viz/scenes/experiments/terrain/terrain',
+    sceneName: 'Scene',
+    metadata: { title: 'LOD terrain test' },
+    gltfName: 'fogTest',
+    extension: 'glb',
+    legacyLights: true,
+  },
+  stone: {
+    modulePath: 'src/viz/scenes/stone/stone',
+    sceneName: 'Scene',
+    metadata: { title: 'stone' },
+    gltfName: 'stone',
+    extension: 'glb',
+    legacyLights: false,
+  },
+  terrainSandbox: {
+    modulePath: 'src/viz/scenes/terrainSandbox/terrainSandbox',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'terrain sandbox' },
+    legacyLights: true,
+  },
+  runeGenTest: {
+    modulePath: 'src/viz/scenes/experiments/runeGen/runeGen',
+    sceneName: 'Scene',
+    gltfName: 'torus',
+    extension: 'glb',
+    metadata: { title: 'Geodesic Mesh Mapping Demo' },
+    legacyLights: true,
+  },
+  construction: {
+    modulePath: 'src/viz/scenes/construction/construction',
+    sceneName: 'Scene',
+    gltfName: 'construction',
+    extension: 'glb',
+    metadata: { title: 'Under Construction' },
+    legacyLights: true,
+  },
+  pk_pylons: {
+    modulePath: 'src/viz/scenes/pkPylons/pkPylons.svelte.ts',
+    sceneName: 'Scene',
+    gltfName: 'pk_pylons',
+    extension: 'glb',
+    metadata: { title: 'pk_pylons' },
+    legacyLights: false,
+  },
+  tessellationSandbox: {
+    modulePath: 'src/viz/scenes/tessellationSandbox/tessellationSandbox',
+    sceneName: 'Scene',
+    gltfName: 'tessellationSandbox',
+    extension: 'glb',
+    metadata: { title: 'tessellation sandbox' },
+  },
+  basalt: {
+    modulePath: 'src/viz/scenes/basalt/basalt',
+    sceneName: 'Scene',
+    gltfName: 'basalt',
+    extension: 'glb',
+    metadata: { title: 'basalt' },
+    legacyLights: false,
+  },
+  nexus: {
+    modulePath: 'src/viz/scenes/nexus/nexus',
+    sceneName: 'Scene',
+    gltfName: 'nexus',
+    extension: 'glb',
+    metadata: { title: 'nexus' },
+    legacyLights: false,
+  },
+  csgSandbox: {
+    modulePath: 'src/viz/scenes/csgSandbox/csgSandbox',
+    sceneName: 'Scene',
+    gltfName: 'basalt',
+    extension: 'glb',
+    metadata: { title: 'CSG sandbox' },
+    legacyLights: false,
+  },
+  ssrSandbox: {
+    modulePath: 'src/viz/scenes/ssrSandbox/ssrSandbox',
+    sceneName: 'Scene',
+    gltfName: 'basalt',
+    extension: 'glb',
+    metadata: { title: 'SSR sandbox' },
+    legacyLights: false,
+  },
+  movement_v2: {
+    modulePath: 'src/viz/scenes/movement_v2/movement_v2.svelte.ts',
+    sceneName: 'Scene',
+    gltfName: 'movement_v2',
+    extension: 'glb',
+    metadata: { title: 'Movement V2' },
+    legacyLights: false,
+  },
+  infinite: {
+    modulePath: 'src/viz/scenes/infinite/infinite.svelte.ts',
+    sceneName: null,
+    gltfName: null,
+    extension: 'glb',
+    metadata: { title: 'Infinite' },
+  },
+  kinematic_platforms: {
+    modulePath: 'src/viz/scenes/kinematic_platforms/kinematic_platforms.svelte.ts',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'kinematic_platforms (legacy test)' },
+    legacyLights: false,
+  },
+  jump_pad_speedup_test: {
+    modulePath: 'src/viz/scenes/jump_pad_speedup_test/jump_pad_speedup_test',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'jump pad + speedup test' },
+    legacyLights: false,
+  },
+  plats: {
+    modulePath: 'src/viz/scenes/plats/plats.svelte.ts',
+    sceneName: 'Scene',
+    gltfName: 'plats',
+    extension: 'glb',
+    metadata: { title: 'plats' },
+    legacyLights: false,
+  },
+  tutorial: {
+    modulePath: 'src/viz/scenes/tutorial/tutorial.svelte.ts',
+    sceneName: 'Scene',
+    gltfName: 'tutorial',
+    extension: 'glb',
+    metadata: { title: 'tutorial' },
+    legacyLights: false,
+  },
+  cornered: {
+    modulePath: 'src/viz/scenes/cornered/cornered.svelte.ts',
+    sceneName: 'Scene',
+    gltfName: 'cornered',
+    extension: 'glb',
+    metadata: { title: 'cornered' },
+    legacyLights: false,
+  },
+  stronghold: {
+    modulePath: 'src/viz/scenes/stronghold/stronghold.svelte.ts',
+    sceneName: 'Scene',
+    gltfName: 'stronghold',
+    extension: 'glb',
+    metadata: { title: 'stronghold' },
+    legacyLights: false,
+  },
+  geoscript: {
+    modulePath: 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte.ts',
+    sceneName: null,
+    gltfName: null,
+    legacyLights: false,
+    metadata: { title: 'geoscript ' },
+    audio: false,
+  },
+  scene_def_test: {
+    modulePath: 'src/viz/scenes/scene_def_test/scene_def_test',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'scene_def_test' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
+  t: {
+    modulePath: 'src/viz/scenes/t/t',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'T' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
+  holes: {
+    modulePath: 'src/viz/scenes/holes/holes',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'Holes' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
+  factory: {
+    modulePath: 'src/viz/scenes/factory/factory',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'factory' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
+  factory_shader_demo: {
+    modulePath: 'src/viz/scenes/factory/factory_shader_demo',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'factory shader demo' },
+    legacyLights: false,
+  },
+  city: {
+    modulePath: 'src/viz/scenes/city/city',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'city' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
+  sunrise: {
+    modulePath: 'src/viz/scenes/sunrise/sunrise',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'sunrise' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
+};

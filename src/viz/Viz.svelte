@@ -5,7 +5,7 @@
   import '../index.css';
   import type { PopupScreenFocus } from './util/util.ts';
   import PauseMenu from './PauseMenu/PauseMenu.svelte';
-  import { type SceneConfig, type SceneDef, ScenesByName } from './scenes';
+  import type { SceneConfig, SceneDef } from './scenes';
   import DashChargeUI from './UI/DashChargeUI.svelte';
   import { loadVizConfig, type VizConfig } from './conf';
   import InfiniteInitial from './InitialScreens/InfiniteInitial.svelte';
@@ -14,10 +14,9 @@
 
   export let sceneName: string;
   export let userData: any = undefined;
-  export let sceneDefOverride: SceneDef | undefined = undefined;
+  export let sceneDef: SceneDef;
   export let geoscriptExecutor: GeoscriptExecutor | undefined = undefined;
 
-  $: sceneDef = sceneDefOverride ?? ScenesByName[sceneName];
   $: metadata = sceneDef?.metadata;
 
   const paused = rwritable(false);
@@ -70,7 +69,7 @@
 {#key sceneName}
   <!-- svelte-ignore element_invalid_self_closing_tag -->
   <div
-    use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData, sceneDefOverride, geoscriptExecutor }}
+    use:initViz={{ paused, popUpCalled, sceneName, vizCb, userData, sceneDef, geoscriptExecutor }}
     id="viz-container"
   />
 {/key}

@@ -6,9 +6,13 @@ import devtoolsJson from 'vite-plugin-devtools-json';
 import crossOriginIsolation from 'vite-plugin-cross-origin-isolation';
 import { behaviorsPlugin } from './src/viz/sceneRuntime/viteBehaviorsPlugin';
 import { generatorsPlugin } from './src/viz/levelDef/viteGeneratorsPlugin';
+import { generatedScenesPlugin } from './src/viz/scenes/viteGeneratedScenesPlugin';
 
 const config = defineConfig({
   plugins: [
+    // Must run before `sveltekit()` so its `config()` hook writes the
+    // `src/routes/(generated)/` tree before SvelteKit walks the routes dir.
+    generatedScenesPlugin(),
     wasm(),
     sveltekit(),
     devtoolsJson(),
