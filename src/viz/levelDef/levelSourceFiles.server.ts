@@ -66,12 +66,23 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
   const geoDir = join(levelDir, 'geo');
   if (existsSync(geoDir)) {
     def.assets ??= {};
-    for (const file of readdirSync(geoDir).filter(fileName => fileName.endsWith('.geo'))) {
-      const id = file.slice(0, -4);
-      if (!(id in def.assets)) {
-        def.assets[id] = { type: 'geoscript', file: `geo/${file}` };
+    // Recursively scan `geo/` for `.geo` files. Files in subdirectories get
+    // slash-separated IDs (e.g. `center_fenced_ring/bottom`) and the `file`
+    // path mirrors the on-disk relative path under the level dir.
+    const walk = (dir: string, relFromGeo: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          walk(join(dir, entry.name), relFromGeo ? `${relFromGeo}/${entry.name}` : entry.name);
+        } else if (entry.isFile() && entry.name.endsWith('.geo')) {
+          const stem = entry.name.slice(0, -4);
+          const id = relFromGeo ? `${relFromGeo}/${stem}` : stem;
+          if (!(id in def.assets!)) {
+            def.assets![id] = { type: 'geoscript', file: `geo/${id}.geo` };
+          }
+        }
       }
-    }
+    };
+    walk(geoDir, '');
   }
 
   return {

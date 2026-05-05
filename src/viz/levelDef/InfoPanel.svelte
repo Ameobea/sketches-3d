@@ -1,5 +1,6 @@
 <script lang="ts">
   import AssetTreePicker from './AssetTreePicker.svelte';
+  import TransformInputs from './TransformInputs.svelte';
   import type { TransformSnapshot } from './LevelEditor.svelte';
 
   interface Props {
@@ -57,66 +58,6 @@
     if (e.key === 'Escape') { idDraft = nodeId ?? ''; (e.target as HTMLInputElement).blur(); }
   };
 
-  const fmt = (n: number) => {
-    const s = n.toFixed(4);
-    // Trim trailing zeros after decimal, but keep at least one decimal place
-    return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '.0');
-  };
-
-  // Each transform axis input tracks its own draft while focused.
-  type Axis = 0 | 1 | 2;
-  type Field = 'position' | 'rotation' | 'scale';
-
-  let focused: { field: Field; axis: Axis } | null = $state(null);
-  let draft = $state('');
-
-  const displayVal = (field: Field, axis: Axis): string => {
-    if (focused?.field === field && focused.axis === axis) return draft;
-    const arr = field === 'position' ? position : field === 'rotation' ? rotation : scale;
-    return fmt(arr[axis]);
-  };
-
-  const onFocus = (field: Field, axis: Axis) => {
-    const arr = field === 'position' ? position : field === 'rotation' ? rotation : scale;
-    draft = fmt(arr[axis]);
-    focused = { field, axis };
-  };
-
-  const onBlur = () => {
-    commit();
-    focused = null;
-  };
-
-  const onKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') { commit(); (e.target as HTMLInputElement).blur(); }
-    if (e.key === 'Escape') { focused = null; (e.target as HTMLInputElement).blur(); }
-  };
-
-  const evalExpr = (s: string): number | null => {
-    const trimmed = s.trim();
-    if (!trimmed) return null;
-    const sanitized = trimmed.replace(/\bpi\b/gi, 'PI');
-    if (!/^[\d\s+\-*/().PI]+$/.test(sanitized)) return null;
-    try {
-      const result = new Function('PI', `"use strict"; return (${sanitized});`)(Math.PI);
-      return typeof result === 'number' && isFinite(result) ? result : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const commit = () => {
-    if (!focused) return;
-    const n = evalExpr(draft);
-    if (n === null) return;
-    const { field, axis } = focused;
-    const src = field === 'position' ? position : field === 'rotation' ? rotation : scale;
-    const next: [number, number, number] = [src[0], src[1], src[2]];
-    next[axis] = n;
-    onapplytransform({ [field]: next });
-  };
-
-  const axisLabels: [string, string, string] = ['x', 'y', 'z'];
 </script>
 
 {#if nodeId !== null}
@@ -141,23 +82,12 @@
 
     {#if !isGenerated}
       <!-- Transform section -->
-      {#each ([['position', position], ['rotation', rotation], ['scale', scale]] as const) as [field]}
-        <div class="tf-row">
-          <span class="tf-label">{field.slice(0, 3)}</span>
-          {#each ([0, 1, 2] as const) as axis}
-            <span class="axis-label">{axisLabels[axis]}</span>
-            <input
-              class="tf-input"
-              type="text"
-              value={displayVal(field as Field, axis)}
-              oninput={(e) => { draft = (e.target as HTMLInputElement).value; }}
-              onfocus={() => onFocus(field as Field, axis)}
-              onblur={onBlur}
-              onkeydown={onKeydown}
-            />
-          {/each}
-        </div>
-      {/each}
+      <TransformInputs
+        {position}
+        {rotation}
+        {scale}
+        onapply={(patch) => onapplytransform(patch)}
+      />
 
       <!-- Material assignment (leaf objects) -->
       {#if !isGroup}
@@ -255,12 +185,6 @@
     border: 1px solid #6a5526;
   }
 
-  .tf-row {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-  }
-
   .mat-row {
     display: flex;
     align-items: flex-start;
@@ -278,28 +202,6 @@
     font-size: 11px;
     color: #888;
     flex-shrink: 0;
-  }
-
-  .axis-label {
-    font-size: 10px;
-    color: #666;
-    width: 8px;
-    flex-shrink: 0;
-  }
-
-  .tf-input {
-    flex: 1;
-    min-width: 0;
-    background: #111;
-    color: #ddd;
-    border: 1px solid #444;
-    padding: 1px 3px;
-    font: 11px monospace;
-  }
-
-  .tf-input:focus {
-    outline: none;
-    border-color: #7a7;
   }
 
   .action-btn {

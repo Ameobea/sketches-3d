@@ -164,6 +164,7 @@ export class Viz {
   public orbitControls: OrbitControls | null = null;
 
   private resizeCbs: (() => void)[] = [];
+  private viewportResizeObserver: ResizeObserver | null = null;
   private onDestroyedCbs: (() => void)[] = [];
   private isDestroyed = false;
   private beforeRenderCbs: {
@@ -224,6 +225,12 @@ export class Viz {
 
     this.setupCameraAndRenderer(sceneDef);
     this.sfxManager.setCamera(this.camera);
+
+    window.addEventListener('resize', this.onWindowResize);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.viewportResizeObserver = new ResizeObserver(this.onWindowResize);
+      this.viewportResizeObserver.observe(document.documentElement);
+    }
 
     this.registerBeforeRenderCb(() => {
       for (const { mesh, baseMat, replacementMat, distance } of this.distanceSwapEntries) {
@@ -724,7 +731,6 @@ export class Viz {
     window.addEventListener('keyup', this.handleKeyUp);
     document.addEventListener('pointerlockchange', this.handlePointerLockChange);
     document.addEventListener('mousedown', this.handleMouseDown);
-    window.addEventListener('resize', this.onWindowResize);
     this.unsubscribePauseStateChange = this.paused.subscribe(paused => {
       this.handlePauseStateChange(paused);
       this.sfxManager.setPaused(paused);
@@ -744,7 +750,6 @@ export class Viz {
     window.removeEventListener('keyup', this.handleKeyUp);
     document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
     document.removeEventListener('mousedown', this.handleMouseDown);
-    window.removeEventListener('resize', this.onWindowResize);
     this.unsubscribePauseStateChange?.();
   };
 
@@ -906,6 +911,10 @@ export class Viz {
     if (this.animateHandle) {
       cancelAnimationFrame(this.animateHandle);
     }
+
+    window.removeEventListener('resize', this.onWindowResize);
+    this.viewportResizeObserver?.disconnect();
+    this.viewportResizeObserver = null;
 
     this.renderer.dispose();
     this.beforeRenderCbs.length = 0;

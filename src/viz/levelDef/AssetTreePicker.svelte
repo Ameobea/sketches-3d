@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { AssetLibFolder } from './assetLibTypes';
+  import type { AssetLibFile, AssetLibFolder } from './assetLibTypes';
 
   interface Props {
-    /** Flat list of locally-defined items (asset IDs or material IDs). */
+    /** Flat list of locally-defined items (asset IDs or material IDs). Items
+     *  containing `/` are auto-grouped into nested folders by path segment. */
     localItems: string[];
     /** Asset library folder tree. If empty, no "asset lib" section is shown. */
     libFolders?: AssetLibFolder[];
@@ -31,6 +32,28 @@
     else next.add(key);
     expandedFolders = next;
   };
+
+  // Group local items containing `/` into a nested folder tree. Items without
+  // any `/` stay as flat root entries rendered after the folders.
+  const localTree = $derived.by(() => {
+    const root: AssetLibFolder = { name: '', files: [], subfolders: [] };
+    for (const id of localItems) {
+      const parts = id.split('/');
+      const fileName = parts[parts.length - 1];
+      let cur = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const dir = parts[i];
+        let child = cur.subfolders.find(f => f.name === dir);
+        if (!child) {
+          child = { name: dir, files: [], subfolders: [] };
+          cur.subfolders.push(child);
+        }
+        cur = child;
+      }
+      cur.files.push({ name: fileName, path: id } satisfies AssetLibFile);
+    }
+    return { folders: root.subfolders, flatIds: root.files.map(f => f.path) };
+  });
 </script>
 
 <div class="tree-picker">
@@ -63,7 +86,11 @@
     >(none)</div>
   {/if}
 
-  {#each localItems as id (id)}
+  {#each localTree.folders as folder (folder.name)}
+    {@render folderNode(folder, `local/${folder.name}`, 0)}
+  {/each}
+
+  {#each localTree.flatIds as id (id)}
     <div
       class="item"
       class:selected={selected === id}

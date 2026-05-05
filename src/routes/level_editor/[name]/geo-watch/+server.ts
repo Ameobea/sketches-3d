@@ -34,25 +34,28 @@ export const GET: RequestHandler = ({ params }) => {
         return;
       }
 
-      watcher = watch(geoDir, (_eventType, filename) => {
+      watcher = watch(geoDir, { recursive: true }, (_eventType, filename) => {
         if (!filename?.endsWith('.geo')) return;
+        // Normalize Windows path separators so subdir asset IDs match the
+        // slash-separated form produced by readLevelSourceFiles.
+        const relPath = filename.replaceAll('\\', '/');
 
         // Debounce per file: collapse rapid bursts into a single event.
-        const existing = debounceTimers.get(filename);
+        const existing = debounceTimers.get(relPath);
         if (existing) clearTimeout(existing);
         debounceTimers.set(
-          filename,
+          relPath,
           setTimeout(() => {
-            debounceTimers.delete(filename);
+            debounceTimers.delete(relPath);
 
             let code: string;
             try {
-              code = readFileSync(join(geoDir, filename), 'utf-8');
+              code = readFileSync(join(geoDir, relPath), 'utf-8');
             } catch {
               return; // File deleted or temporarily unreadable — ignore.
             }
 
-            const assetId = filename.slice(0, -4);
+            const assetId = relPath.slice(0, -4);
             const payload = JSON.stringify({ assetId, code });
             controller.enqueue(encoder.encode(`event: geo-change\ndata: ${payload}\n\n`));
           }, 50)

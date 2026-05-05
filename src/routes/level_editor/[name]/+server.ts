@@ -154,6 +154,14 @@ export const POST: RequestHandler = async ({ params, request }) => {
   const level = openLevel(name);
   const allNodes = flattenAllNodes(level.def.objects);
 
+  // Asset IDs may be slash-separated (e.g. `center_fenced_ring/bottom`) when
+  // discovered from a subdir of `geo/`. Strip the directory parts so derived
+  // node IDs stay simple identifiers.
+  const assetIdToNodeStem = (assetId: string): string => {
+    const slash = assetId.lastIndexOf('/');
+    return slash === -1 ? assetId : assetId.slice(slash + 1);
+  };
+
   const resolveId = async (stem: string, requestedId?: string): Promise<string> => {
     if (requestedId) {
       const mergedLevel = await loadLevelData(name);
@@ -201,7 +209,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     const allIds = new Set(flattenAllNodes(level.def.objects).map(n => n.id));
 
     const withFreshIds = (node: ObjectDef | ObjectGroupDef): ObjectDef | ObjectGroupDef => {
-      const stem = isObjectGroup(node) ? node.id : (node as ObjectDef).asset;
+      const stem = isObjectGroup(node) ? node.id : assetIdToNodeStem((node as ObjectDef).asset);
       const prefix = `${stem}_`;
       let maxN = -1;
       for (const id of allIds) {
@@ -374,7 +382,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     error(400, `Unknown material "${body.material}"`);
   }
 
-  const id = await resolveId(body.asset, body.id);
+  const id = await resolveId(assetIdToNodeStem(body.asset), body.id);
 
   const newObj: ObjectDef = {
     id,

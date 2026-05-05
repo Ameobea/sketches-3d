@@ -78,8 +78,12 @@ export const POST: RequestHandler = async ({ params, request }) => {
   const primary = resolved[0];
   const primaryDef = primary.def;
 
-  // Generate unique CSG asset name based on primary object's asset.
-  const baseName = `csg_${primaryDef.asset}`;
+  // Generate unique CSG asset name based on primary object's asset. The asset
+  // ID may include slash-separated subdirs (e.g. `dir/leaf`); use only the
+  // basename so the generated CSG asset id is a clean identifier.
+  const lastSlash = primaryDef.asset.lastIndexOf('/');
+  const assetStem = lastSlash === -1 ? primaryDef.asset : primaryDef.asset.slice(lastSlash + 1);
+  const baseName = `csg_${assetStem}`;
   let csgAssetName = baseName;
   let n = 1;
   while (level.def.assets[csgAssetName]) {

@@ -204,8 +204,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   viz.sfxManager.playSpatialLoop('factory_ambient', {
     pos: [542, 22, -142.5],
     gain: 0.2,
-    refDistance: 100,
-    rolloff: 2.5,
+    refDistance: 80,
+    rolloff: 3.5,
     xfade: 0.03,
   });
 

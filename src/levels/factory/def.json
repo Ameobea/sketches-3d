@@ -171,7 +171,12 @@
     "gear1": {
       "type": "geoscript",
       "file": "__ASSETS__/meshes/spinners/gear1.geo",
-      "_meta": { "runtimeMs": 12.358999998867512, "count": 5, "codeHash": "2c3c09e1", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 13.41000000052154, "count": 5, "codeHash": "71a737eb", "asyncDeps": [ "cgal" ] }
+    },
+    "gear1_shortrod": {
+      "type": "geoscript",
+      "file": "__ASSETS__/meshes/spinners/gear1_shortrod.geo",
+      "_meta": { "runtimeMs": 13.778999999910592, "count": 5, "codeHash": "36b7daf4", "asyncDeps": [ "cgal" ] }
     },
     "csg_wall_1": {
       "type": "csg",
@@ -182,9 +187,42 @@
             "op": "union",
             "children": [
               {
-                "asset": "wall",
-                "rotation": [0, 1.5708, 0],
-                "scale": [8, 2.6589, 7]
+                "op": "difference",
+                "children": [
+                  {
+                    "op": "difference",
+                    "children": [
+                      {
+                        "asset": "wall",
+                        "rotation": [0, 1.5708, 0],
+                        "scale": [8, 2.6589, 7]
+                      },
+                      {
+                        "asset": "box",
+                        "position": [279.7891, 251.4215, 78.2381],
+                        "rotation": [0, 0, 0],
+                        "scale": [8.3603, -6.7758, 2.2618]
+                      }
+                    ]
+                  },
+                  {
+                    "op": "difference",
+                    "children": [
+                      {
+                        "asset": "box",
+                        "position": [352.6347, 0, 80.1555],
+                        "rotation": [0, 0, 0],
+                        "scale": [6.2742, 138.9509, 4.7894]
+                      },
+                      {
+                        "asset": "box",
+                        "position": [342.6687, 212.2186, 69.0042],
+                        "rotation": [0, 0, 0],
+                        "scale": [5.9864, 6.862, 5.9864]
+                      }
+                    ]
+                  }
+                ]
               },
               {
                 "asset": "wall",
@@ -196,18 +234,62 @@
           },
           {
             "asset": "box",
-            "position": [139.191, 25.9385, 80.8246],
+            "position": [143.2466, 209.9952, 80.8246],
             "rotation": [0, 0, 0],
-            "scale": [-13.1988, -347.8076, -4.4983]
+            "scale": [-14.9106, -347.8076, -7.4516]
+          },
+          {
+            "asset": "box",
+            "position": [146.0304, 305.182, -23.6526],
+            "rotation": [0, 0, 0],
+            "scale": [10.9188, 12.5789, 47.4739]
+          },
+          {
+            "asset": "box",
+            "position": [145.5554, 284.1675, -6.1641],
+            "rotation": [0, 0, 0],
+            "scale": [13.995, 7.1253, 33.3797]
+          },
+          {
+            "asset": "box",
+            "position": [145.5554, -54.5394, -34.1895],
+            "rotation": [0, 0, 0],
+            "scale": [13.995, 147.6488, -13.489]
+          },
+          {
+            "asset": "box",
+            "position": [145.5554, 327.1079, -26.585],
+            "rotation": [0, 0, 0],
+            "scale": [76.8199, 5.0753, -10.3819]
           }
         ]
       },
-      "_meta": { "runtimeMs": 1.4280000001192092, "count": 5, "codeHash": "663367e3", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 6.220999999716878, "count": 5, "codeHash": "28ba5116", "asyncDeps": [ "cgal" ] }
     },
     "pipes3": {
       "type": "geoscript",
       "file": "geo/pipes3.geo",
-      "_meta": { "runtimeMs": 1.3587500043213367, "count": 4, "codeHash": "215bf625", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 1.3990000009536743, "count": 5, "codeHash": "215bf625", "asyncDeps": [ "cgal" ] }
+    },
+    "pipes4": {
+      "type": "geoscript",
+      "file": "geo/pipes4.geo",
+      "_meta": { "runtimeMs": 0.7075000000186265, "count": 4, "codeHash": "99b3321a", "asyncDeps": [ "cgal" ] }
+    },
+    "center_fenced_ring/bottom": {
+      "type": "geoscript",
+      "file": "geo/center_fenced_ring/bottom.geo",
+      "_meta": { "runtimeMs": 4.506250000093132, "count": 4, "codeHash": "9111052f" }
+    },
+    "center_fenced_ring/plat": {
+      "type": "geoscript",
+      "file": "geo/center_fenced_ring/plat.geo",
+      "_meta": { "runtimeMs": 4.18625000026077, "count": 4, "codeHash": "75837ca5" }
+    },
+    "center_fenced_ring/railing": {
+      "type": "geoscript",
+      "file": "geo/center_fenced_ring/railing.geo",
+      "_meta": { "runtimeMs": 5.890000000130385, "count": 4, "codeHash": "31fc6bc8" }
     }
   },
   "objects": [],

@@ -299,16 +299,25 @@ export class LevelEditor {
 
     // Copy / Paste
     if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !isTypingInput) {
-      const nodes = this.selection.selectedNodes.filter(n => !n.generated);
-      if (nodes.length > 0) {
-        this.clipboard = nodes.map(node =>
-          this.mutationController.captureClipboardEntry(node, snapshotWorldTransform(node.object))
-        );
+      if (this.csgController.isActive) {
+        this.csgController.copySelectedNode();
+      } else {
+        const nodes = this.selection.selectedNodes.filter(n => !n.generated);
+        if (nodes.length > 0) {
+          this.clipboard = nodes.map(node =>
+            this.mutationController.captureClipboardEntry(node, snapshotWorldTransform(node.object))
+          );
+        }
       }
       return;
     }
     if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !isTypingInput) {
-      if (this.clipboard.length > 0) {
+      if (this.csgController.isActive) {
+        if (this.csgController.hasClipboard) {
+          e.preventDefault();
+          void this.csgController.pasteNode();
+        }
+      } else if (this.clipboard.length > 0) {
         e.preventDefault();
         void this.pasteObject();
       }
@@ -875,11 +884,17 @@ export class LevelEditor {
 
   /**
    * Centers the orbit camera on the selected object (like Blender's numpad '.').
+   * When CSG editing is active, focuses on the selected CSG sub-node's preview
+   * instead of the level object itself.
    */
   private focusSelected() {
-    if (!this.selectedNode || !this.orbitControls) return;
+    if (!this.orbitControls) return;
 
-    const obj = this.selectedNode.object;
+    const obj = this.csgController.isActive
+      ? this.csgController.getFocusTarget()
+      : (this.selectedNode?.object ?? null);
+    if (!obj) return;
+
     const box = new THREE.Box3().setFromObject(obj);
     const center = box.getCenter(new THREE.Vector3());
     const sphere = new THREE.Sphere();

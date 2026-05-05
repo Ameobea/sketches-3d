@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
-import type { CsgAssetDef, CsgTreeNode } from './types';
+import type { CsgAssetDef, CsgTreeNode, CsgOpNode } from './types';
 import type { LevelObject } from './loadLevelDef';
-import { cloneTree, getNodeAtPath } from './csgTreeUtils';
+import { cloneTree, getNodeAtPath, insertAfterPath, isOpNode, splitPath } from './csgTreeUtils';
 import type { LevelEditor } from './LevelEditor.svelte';
 import { UndoSystem } from './undoSystem';
 import { round } from './mathUtils';
@@ -48,6 +48,9 @@ export class CsgEditController {
   private readonly panelController: CsgEditorPanelController;
   private readonly previewScene: CsgPreviewScene;
   private readonly assetResolver: CsgAssetResolver;
+
+  /** Single-node clipboard for CSG copy/paste. Persists across edit sessions. */
+  private csgClipboard: CsgTreeNode | null = null;
 
   constructor(private readonly editor: LevelEditor) {
     this.runtime = new CsgResolveRuntime();
@@ -170,6 +173,86 @@ export class CsgEditController {
       this.exit();
     }
     return true;
+  }
+
+  /**
+   * Resolve the Three.js object the camera should focus on for the current
+   * selection (used by the "." keybind). Falls back to the level object when
+   * nothing is selected or the selected sub-node has no preview yet.
+   */
+  getFocusTarget(): THREE.Object3D | null {
+    if (!this.editLevelObj) return null;
+    if (this.selectedNodePath === '' || this.selectedNodePath === null) {
+      return this.editLevelObj.object;
+    }
+    return this.previewScene.getNodePreview(this.selectedNodePath) ?? this.editLevelObj.object;
+  }
+
+  /**
+   * Copy the currently selected sub-tree into the CSG clipboard. No-op when
+   * nothing is selected. Selecting the root copies the entire tree.
+   */
+  copySelectedNode(): void {
+    if (!this._isActive || this.selectedNodePath === null) return;
+    const tree = this.panelController.tree;
+    if (!tree) return;
+    const node = getNodeAtPath(tree, this.selectedNodePath);
+    this.csgClipboard = cloneTree(node);
+  }
+
+  get hasClipboard(): boolean {
+    return this.csgClipboard !== null;
+  }
+
+  /**
+   * Insert the clipboard sub-tree near the current selection:
+   * - leaf selected: insert as a sibling immediately after it
+   * - op selected: append as a child
+   * - root or nothing selected: append to root op, or wrap a leaf root in a union
+   *
+   * The newly inserted node becomes the selection.
+   */
+  async pasteNode(): Promise<void> {
+    if (!this._isActive || !this.csgClipboard) return;
+    const tree = this.panelController.tree;
+    if (!tree) return;
+
+    const newNode = cloneTree(this.csgClipboard);
+    let newTree: CsgTreeNode;
+    let newSelectedPath: string;
+
+    if (this.selectedNodePath === null || this.selectedNodePath === '') {
+      if (isOpNode(tree)) {
+        const cloned = cloneTree(tree) as CsgOpNode;
+        cloned.children.push(newNode);
+        newTree = cloned;
+        newSelectedPath = `${cloned.children.length - 1}`;
+      } else {
+        newTree = { op: 'union', children: [cloneTree(tree), newNode] };
+        newSelectedPath = '1';
+      }
+    } else {
+      const selected = getNodeAtPath(tree, this.selectedNodePath);
+      if (isOpNode(selected)) {
+        const cloned = cloneTree(tree);
+        const target = getNodeAtPath(cloned, this.selectedNodePath) as CsgOpNode;
+        target.children.push(newNode);
+        newTree = cloned;
+        newSelectedPath = `${this.selectedNodePath}.${target.children.length - 1}`;
+      } else {
+        const info = splitPath(this.selectedNodePath)!;
+        newTree = insertAfterPath(tree, this.selectedNodePath, newNode);
+        newSelectedPath = info.parentPath
+          ? `${info.parentPath}.${info.childIndex + 1}`
+          : `${info.childIndex + 1}`;
+      }
+    }
+
+    // Update selection ahead of onTreeChange so its applyRenderConfig pass
+    // already targets the freshly-pasted node.
+    this.selectedNodePath = newSelectedPath;
+    this.panelController.setSelectedNodePath(newSelectedPath);
+    await this.onTreeChange(newTree);
   }
 
   /** Raycast against CSG node previews. Returns true if handled. */

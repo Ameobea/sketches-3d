@@ -2,6 +2,13 @@
   import { untrack } from 'svelte';
   import type { CsgTreeNode, CsgLeafNode, CsgOpNode } from './types';
   import { isOpNode, cloneTree, getNodeAtPath, setNodeAtPath, deleteAtPath, insertAfterPath, splitPath } from './csgTreeUtils';
+  import TransformInputs, { type TransformPatch } from './TransformInputs.svelte';
+  import { round } from './mathUtils';
+
+  // Marker key set on the drop-target node before mutation so we can re-find
+  // it post-detach (paths may shift when the source's parent collapses).
+  // Survives JSON-based cloneTree since it's a plain enumerable string key.
+  const DROP_TARGET_MARK = '__csgDropTargetMark';
 
   interface Props {
     tree: CsgTreeNode | null;
@@ -129,6 +136,126 @@
     return p === 'negative' ? '#ff6633' : '#88cc88';
   };
 
+  // --- Drag and Drop ---
+
+  let draggedPath = $state<string | null>(null);
+  let dropTargetPath = $state<string | null>(null);
+
+  const isValidDropTarget = (sourcePath: string, targetPath: string): boolean => {
+    if (sourcePath === '') return false; // root can't be dragged
+    if (sourcePath === targetPath) return false;
+    if (targetPath.startsWith(sourcePath + '.')) return false; // descendant of source
+    if (!tree) return false;
+    return isOpNode(getNodeAtPath(tree, targetPath));
+  };
+
+  const handleDragStart = (e: DragEvent, path: string) => {
+    if (path === '') {
+      e.preventDefault();
+      return;
+    }
+    draggedPath = path;
+    e.dataTransfer?.setData('text/plain', path);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    draggedPath = null;
+    dropTargetPath = null;
+  };
+
+  const handleDragOver = (e: DragEvent, path: string) => {
+    if (!draggedPath || !isValidDropTarget(draggedPath, path)) {
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+      return;
+    }
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dropTargetPath = path;
+  };
+
+  const handleDragLeave = () => {
+    dropTargetPath = null;
+  };
+
+  const handleDrop = (e: DragEvent, targetPath: string) => {
+    e.preventDefault();
+    const sourcePath = draggedPath;
+    draggedPath = null;
+    dropTargetPath = null;
+    if (!tree || sourcePath === null) return;
+    if (!isValidDropTarget(sourcePath, targetPath)) return;
+
+    const sourceSubtree = cloneTree(getNodeAtPath(tree, sourcePath));
+
+    // Mark the target on a clone, then run detach. The marker survives clones
+    // and the collapse-to-sibling path inside deleteAtPath, but is gone if the
+    // marked node was itself the source's parent and got collapsed away — in
+    // which case the move is a no-op (would leave the tree unchanged).
+    const marked = cloneTree(tree);
+    (getNodeAtPath(marked, targetPath) as any)[DROP_TARGET_MARK] = true;
+
+    const afterDetach = deleteAtPath(marked, sourcePath);
+    if (!afterDetach) return;
+
+    const findMarked = (n: CsgTreeNode): CsgTreeNode | null => {
+      if (DROP_TARGET_MARK in (n as any)) return n;
+      if (isOpNode(n)) {
+        for (const c of n.children) {
+          const r = findMarked(c);
+          if (r) return r;
+        }
+      }
+      return null;
+    };
+
+    const found = findMarked(afterDetach);
+    if (!found) return;
+    delete (found as any)[DROP_TARGET_MARK];
+    if (!isOpNode(found)) return;
+
+    found.children.push(sourceSubtree);
+    onnodeselect(null); // selection paths shift after restructure
+    emitChange(afterDetach);
+  };
+
+  type Vec3 = [number, number, number];
+
+  const arrEq = (a: Vec3, b: Vec3) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+
+  const roundVec = (v: Vec3): Vec3 => [round(v[0]), round(v[1]), round(v[2])];
+
+  const getSelectedNodeTransform = (): { position: Vec3; rotation: Vec3; scale: Vec3 } | null => {
+    if (!tree || selectedNodePath === null || selectedNodePath === '') return null;
+    const node = getNodeAtPath(tree, selectedNodePath);
+    return {
+      position: (node.position ?? [0, 0, 0]) as Vec3,
+      rotation: (node.rotation ?? [0, 0, 0]) as Vec3,
+      scale: (node.scale ?? [1, 1, 1]) as Vec3,
+    };
+  };
+
+  const handleTransformApply = (patch: TransformPatch) => {
+    if (!tree || selectedNodePath === null || selectedNodePath === '') return;
+    const current = getSelectedNodeTransform();
+    if (!current) return;
+
+    const nextPos = patch.position ? roundVec(patch.position as Vec3) : current.position;
+    const nextRot = patch.rotation ? roundVec(patch.rotation as Vec3) : current.rotation;
+    const nextScale = patch.scale ? roundVec(patch.scale as Vec3) : current.scale;
+
+    if (arrEq(nextPos, current.position) && arrEq(nextRot, current.rotation) && arrEq(nextScale, current.scale)) {
+      return;
+    }
+
+    const newRoot = cloneTree(tree);
+    const node = getNodeAtPath(newRoot, selectedNodePath);
+    node.position = nextPos;
+    node.rotation = nextRot;
+    node.scale = nextScale;
+    emitChange(newRoot);
+  };
+
   /** Get the sibling count for a node at a given path. */
   const getSiblingCount = (path: string): number => {
     if (!tree || !path) return 0;
@@ -153,7 +280,15 @@
         <div
           class="op-node"
           class:selected={selectedNodePath === path}
+          class:drop-over={dropTargetPath === path}
+          class:dragging={draggedPath === path}
           style="margin-left: {depth * 16}px"
+          draggable={path !== ''}
+          ondragstart={(e) => handleDragStart(e, path)}
+          ondragend={handleDragEnd}
+          ondragover={(e) => handleDragOver(e, path)}
+          ondragleave={handleDragLeave}
+          ondrop={(e) => handleDrop(e, path)}
           onclick={(e) => handleNodeClick(path, e)}
         >
           <span class="polarity-dot" style="color: {polarityColor(path)}">●</span>
@@ -186,7 +321,11 @@
         <div
           class="leaf-node"
           class:selected={selectedNodePath === path}
+          class:dragging={draggedPath === path}
           style="margin-left: {depth * 16}px"
+          draggable={true}
+          ondragstart={(e) => handleDragStart(e, path)}
+          ondragend={handleDragEnd}
           onclick={(e) => handleNodeClick(path, e)}
         >
           <span class="polarity-dot" style="color: {polarityColor(path)}">●</span>
@@ -243,6 +382,21 @@
       {/if}
     </div>
   </div>
+
+  {#if tree && selectedNodePath !== null && selectedNodePath !== ''}
+    {@const tf = getSelectedNodeTransform()}
+    {#if tf}
+      <div class="csg-divider"></div>
+      <div class="transform-section">
+        <TransformInputs
+          position={tf.position}
+          rotation={tf.rotation}
+          scale={tf.scale}
+          onapply={handleTransformApply}
+        />
+      </div>
+    {/if}
+  {/if}
 </div>
 
 <style>
@@ -301,6 +455,15 @@
   .op-node.selected, .leaf-node.selected {
     background: #1a3040;
     outline: 1px solid #00ffff;
+  }
+
+  .op-node.drop-over {
+    background: #2a3a2a;
+    outline: 1px dashed #4a4;
+  }
+
+  .op-node.dragging, .leaf-node.dragging {
+    opacity: 0.5;
   }
 
   .polarity-dot {
@@ -390,6 +553,12 @@
 
   .add-node-btn:hover {
     background: #252525;
+  }
+
+  .transform-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .empty-label {

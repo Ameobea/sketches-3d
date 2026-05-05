@@ -36,7 +36,7 @@
     selectedAsset
       ? selectedAsset.startsWith('__ASSETS__/')
         ? selectedAsset.split('/').pop()?.replace(/\.geo$/, '') ?? selectedAsset
-        : selectedAsset
+        : (selectedAsset.split('/').pop() ?? selectedAsset)
       : '(none)'
   );
 
