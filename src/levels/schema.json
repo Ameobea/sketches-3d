@@ -322,7 +322,7 @@
                   "useGeneratedUVs": {
                     "type": "boolean"
                   },
-                  "useWorldSpaceGeneratedUVs": {
+                  "useWorldSpaceUVs": {
                     "type": "boolean"
                   },
                   "tileBreaking": {
@@ -1764,6 +1764,110 @@
         ],
         "additionalProperties": false
       }
+    },
+    "audio": {
+      "type": "object",
+      "properties": {
+        "sfxDefs": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "playbackRate": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "spatialLoops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sfx": {
+                "type": "string"
+              },
+              "pos": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "gain": {
+                "type": "number"
+              },
+              "playbackRate": {
+                "type": "number"
+              },
+              "xfade": {
+                "type": "number"
+              },
+              "filter": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "lp",
+                      "hp",
+                      "bp",
+                      "notch"
+                    ]
+                  },
+                  "freq": {
+                    "type": "number"
+                  },
+                  "q": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "type",
+                  "freq"
+                ],
+                "additionalProperties": false
+              },
+              "refDistance": {
+                "type": "number"
+              },
+              "rolloff": {
+                "type": "number"
+              },
+              "cullThreshold": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "sfx",
+              "pos"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [

@@ -153,11 +153,12 @@ export class SoundEngine {
   private sfxDefs: Record<string, SfxDef> = { ...BUILTIN_SFX_DEFS };
   private samplesByName = new Map<string, number>();
   private requestedSamples = new Set<string>();
+  /** Samples whose `uploadSample` message has been posted to the AWP. */
+  private uploadedSamples = new Set<string>();
   private nextSampleId = 1;
   private nextHandle = 1;
 
-  /** SFX queued before the wasm finished loading. */
-  private pendingPlaySfx: { name: string; opts?: PlaySfxOpts }[] = [];
+  /** Spatial loops queued before either the wasm or their sample finished loading. */
   private pendingSpatial: PendingSpatialLoop[] = [];
 
   private listenerSab: SharedArrayBuffer | null = null;
@@ -250,13 +251,20 @@ export class SoundEngine {
     // Master gain (in case it was set before ready).
     this.postEvent({ kind: EV_SET_MASTER_GAIN, params: [this.masterGain] });
 
-    const sfx = this.pendingPlaySfx;
-    this.pendingPlaySfx = [];
-    for (const p of sfx) this.playSfx(p.name, p.opts);
-
-    const spatial = this.pendingSpatial;
-    this.pendingSpatial = [];
-    for (const p of spatial) this.startSpatialLoopByHandle(p.handle, p.name, p.opts);
+    // Only drain spatial loops whose samples have actually been uploaded. The
+    // rest stay queued and will be drained by the per-sample callback in
+    // `loadSfxForLoop` when their upload completes — otherwise we'd race the
+    // wasm engine, which silently drops `EV_START_SPATIAL_LOOP` for samples it
+    // doesn't yet have data for.
+    const stillPending: PendingSpatialLoop[] = [];
+    for (const p of this.pendingSpatial) {
+      if (this.uploadedSamples.has(p.name)) {
+        this.startSpatialLoopByHandle(p.handle, p.name, p.opts);
+      } else {
+        stillPending.push(p);
+      }
+    }
+    this.pendingSpatial = stillPending;
   }
 
   private postEvent(ev: {
@@ -295,15 +303,15 @@ export class SoundEngine {
     fetch(def.url)
       .then(r => r.arrayBuffer())
       .then(buf => this.ctx!.decodeAudioData(buf))
-      .then(audioBuf => this.uploadDecoded(id, audioBuf))
+      .then(audioBuf => this.uploadDecoded(name, id, audioBuf))
       .catch(err => console.error(`Failed to load sfx "${name}":`, err));
   }
 
-  private uploadDecoded(id: number, audioBuf: AudioBuffer) {
+  private uploadDecoded(name: string, id: number, audioBuf: AudioBuffer) {
     if (!this.node) {
       // Shouldn't happen — node is ready well before any decode finishes — but
       // be defensive: queue and retry once node exists.
-      setTimeout(() => this.uploadDecoded(id, audioBuf), 50);
+      setTimeout(() => this.uploadDecoded(name, id, audioBuf), 50);
       return;
     }
     const channels = Math.min(2, audioBuf.numberOfChannels);
@@ -316,11 +324,15 @@ export class SoundEngine {
     this.node.port.postMessage({ type: 'uploadSample', id, channels, data: planar, xfadeThreshold: 0 }, [
       planar.buffer,
     ]);
+    this.uploadedSamples.add(name);
   }
 
   /** Re-upload a sample with crossfade-loop pre-baking enabled. */
-  private uploadDecodedForLoop(id: number, audioBuf: AudioBuffer, xfade: number) {
-    if (!this.node) return;
+  private uploadDecodedForLoop(name: string, id: number, audioBuf: AudioBuffer, xfade: number) {
+    if (!this.node) {
+      setTimeout(() => this.uploadDecodedForLoop(name, id, audioBuf, xfade), 50);
+      return;
+    }
     const channels = Math.min(2, audioBuf.numberOfChannels);
     const len = audioBuf.length;
     const planar = new Float32Array(channels * len);
@@ -330,6 +342,7 @@ export class SoundEngine {
     this.node.port.postMessage({ type: 'uploadSample', id, channels, data: planar, xfadeThreshold: xfade }, [
       planar.buffer,
     ]);
+    this.uploadedSamples.add(name);
   }
 
   private loadNeededSfx() {
@@ -374,13 +387,6 @@ export class SoundEngine {
     }
   }
 
-  /**
-   * Pause / resume audio rendering without disturbing internal state. While
-   * paused, all sample playheads, biquad filters, and the limiter envelope
-   * stay frozen; output is silence. Queued events (master-gain changes,
-   * new voice starts) still apply, so on resume the next render reflects
-   * any state changes that happened during pause.
-   */
   public setPaused(paused: boolean) {
     this.node?.port.postMessage({ type: 'setPaused', paused });
   }
@@ -426,17 +432,14 @@ export class SoundEngine {
 
   public playSfx(name: string, opts?: PlaySfxOpts) {
     if (!this.enabled) return;
-    if (!this.nodeReady) {
-      this.pendingPlaySfx.push({ name, opts });
-      return;
-    }
-    const id = this.samplesByName.get(name);
-    if (id === undefined) {
-      // Sample wasn't preloaded; kick off a load and queue the play.
-      this.loadSfx(name);
-      this.pendingPlaySfx.push({ name, opts });
-      return;
-    }
+    // Kick off the fetch on first reference so subsequent calls can play.
+    // Until the upload lands we drop — preferring silence over delayed
+    // playback for oneshots. Sounds that need to play reliably the first
+    // time should be preloaded (via `neededSfx` or an explicit `loadSfx`).
+    if (!this.requestedSamples.has(name)) this.loadSfx(name);
+    if (!this.nodeReady || !this.uploadedSamples.has(name)) return;
+
+    const id = this.samplesByName.get(name)!;
     const def = this.sfxDefs[name];
     const rate = opts?.playbackRate ?? def?.playbackRate ?? 1;
     const gain = opts?.gain ?? 1;
@@ -448,25 +451,25 @@ export class SoundEngine {
     });
   }
 
-  // -- new: spatial loops ----------------------------------------------------
-
   public playSpatialLoop(name: string, opts: SpatialLoopOpts): SpatialVoiceHandle {
     const handle = this.nextHandle++;
 
-    if (!this.enabled || !this.nodeReady) {
-      if (this.enabled) this.pendingSpatial.push({ name, opts, handle });
+    if (!this.enabled) {
       return this.makeHandle(handle);
     }
 
-    const id = this.samplesByName.get(name);
-    if (id === undefined) {
-      // Need to (re)load with crossfade pre-baking.
+    // Always kick off the loop-aware fetch if we haven't already; we need the
+    // crossfade-pre-baked upload regardless of whether the node is ready yet.
+    if (!this.requestedSamples.has(name)) {
       this.loadSfxForLoop(name, opts.xfade ?? 0.1);
-      this.pendingSpatial.push({ name, opts, handle });
-      return this.makeHandle(handle);
     }
 
-    this.startSpatialLoopByHandle(handle, name, opts);
+    if (this.nodeReady && this.uploadedSamples.has(name)) {
+      this.startSpatialLoopByHandle(handle, name, opts);
+    } else {
+      this.pendingSpatial.push({ name, opts, handle });
+    }
+
     return this.makeHandle(handle);
   }
 
@@ -483,11 +486,12 @@ export class SoundEngine {
       .then(r => r.arrayBuffer())
       .then(buf => this.ctx!.decodeAudioData(buf))
       .then(audioBuf => {
-        this.uploadDecodedForLoop(id, audioBuf, xfade);
-        // Flush any pending spatial loops for this sample.
-        const pending = this.pendingSpatial.filter(p => p.name === name);
-        this.pendingSpatial = this.pendingSpatial.filter(p => p.name !== name);
-        for (const p of pending) this.startSpatialLoopByHandle(p.handle, p.name, p.opts);
+        this.uploadDecodedForLoop(name, id, audioBuf, xfade);
+        if (this.nodeReady) {
+          const pending = this.pendingSpatial.filter(p => p.name === name);
+          this.pendingSpatial = this.pendingSpatial.filter(p => p.name !== name);
+          for (const p of pending) this.startSpatialLoopByHandle(p.handle, p.name, p.opts);
+        }
       })
       .catch(err => console.error(`Failed to load looping sfx "${name}":`, err));
   }

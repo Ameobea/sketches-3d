@@ -19,11 +19,6 @@ export interface CollisionShapeBuildResult {
   localRotation?: THREE.Quaternion;
 }
 
-const shouldDebugInternalEdges = () =>
-  typeof window !== 'undefined' &&
-  (((window as any).__dreamInternalEdgeDebug as boolean | undefined) === true ||
-    new URLSearchParams(window.location.search).get('debugInternalEdges') === '1');
-
 const generateInternalEdgeInfo = (
   Ammo: AmmoInterface,
   meshShape: BtBvhTriangleMeshShape,
@@ -218,6 +213,10 @@ export const buildTrimeshShape = (
   const numVertices = vertices.length / 3;
   const numTriangles = indices ? indices.length / 3 : numVertices / 3;
 
+  // The physics engine depends on triangle orientation for collision detection, and for meshes with negative scaling
+  // we need to manually flip the winding order to compensate
+  const flipWinding = scale.x * scale.y * scale.z < 0;
+
   let vertexPtr = 0;
   let indexPtr = 0;
   let indexedArray: btTriangleIndexVertexArrayWrapper | null = null;
@@ -244,12 +243,28 @@ export const buildTrimeshShape = (
     indexPtr = Ammo._malloc(numIndexInts * 4);
     const indexHeap = new Int32Array(Ammo.HEAPF32.buffer, indexPtr, numIndexInts);
     if (indices) {
-      for (let i = 0; i < indices.length; i++) {
-        indexHeap[i] = indices[i];
+      if (flipWinding) {
+        for (let t = 0; t < numTriangles; t++) {
+          indexHeap[t * 3] = indices[t * 3];
+          indexHeap[t * 3 + 1] = indices[t * 3 + 2];
+          indexHeap[t * 3 + 2] = indices[t * 3 + 1];
+        }
+      } else {
+        for (let i = 0; i < indices.length; i++) {
+          indexHeap[i] = indices[i];
+        }
       }
     } else {
-      for (let i = 0; i < numIndexInts; i++) {
-        indexHeap[i] = i;
+      if (flipWinding) {
+        for (let t = 0; t < numTriangles; t++) {
+          indexHeap[t * 3] = t * 3;
+          indexHeap[t * 3 + 1] = t * 3 + 2;
+          indexHeap[t * 3 + 2] = t * 3 + 1;
+        }
+      } else {
+        for (let i = 0; i < numIndexInts; i++) {
+          indexHeap[i] = i;
+        }
       }
     }
 
@@ -346,33 +361,6 @@ export const extractHullInputVertices = (geometry: THREE.BufferGeometry): Float3
   return verts.slice(0, positionAttr.count * 3);
 };
 
-/** Build the trimesh shape and (when enabled) emit the internal-edge debug log. */
-const buildTrimeshShapeWithDebug = (
-  Ammo: AmmoInterface,
-  indices: Uint16Array | Uint32Array | undefined,
-  verts: Float32Array,
-  scale: THREE.Vector3,
-  meshName: string,
-  source: 'override' | 'mesh'
-): CollisionShapeBuildResult => {
-  const buildResult = buildTrimeshShape(Ammo, indices, verts, scale);
-  if (shouldDebugInternalEdges()) {
-    const meshShape = buildResult.shape as BtBvhTriangleMeshShape;
-    const infoMap = meshShape.getTriangleInfoMap();
-    const tag =
-      source === 'override'
-        ? '[internal-edge] attached triangle info map (override)'
-        : '[internal-edge] attached triangle info map';
-    console.info(tag, {
-      meshName: meshName || '<unnamed>',
-      shapePtr: Ammo.getPointer(meshShape),
-      infoMapPtr: Ammo.getPointer(infoMap),
-      triangleCount: indices ? indices.length / 3 : verts.length / 9,
-    });
-  }
-  return buildResult;
-};
-
 export const buildCollisionShapeFromMesh = (
   Ammo: AmmoInterface,
   btvec3: (x: number, y: number, z: number) => BtVec3,
@@ -386,14 +374,7 @@ export const buildCollisionShapeFromMesh = (
   }
 
   if (collisionMeshOverride) {
-    return buildTrimeshShapeWithDebug(
-      Ammo,
-      collisionMeshOverride.indices,
-      collisionMeshOverride.verts,
-      scale,
-      mesh.name,
-      'override'
-    );
+    return buildTrimeshShape(Ammo, collisionMeshOverride.indices, collisionMeshOverride.verts, scale);
   }
 
   if (mesh.geometry instanceof THREE.BoxGeometry) {
@@ -441,5 +422,5 @@ export const buildCollisionShapeFromMesh = (
     };
   }
 
-  return buildTrimeshShapeWithDebug(Ammo, indices, vertices, scale, mesh.name, 'mesh');
+  return buildTrimeshShape(Ammo, indices, vertices, scale);
 };

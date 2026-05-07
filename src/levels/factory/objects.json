@@ -1043,6 +1043,37 @@
       "rotation": [0, 0, 0],
       "scale": [0.6971, 1, 1],
       "material": "chipped_yellow_painted_cracked_stone"
+    },
+    {
+      "id": "box_6",
+      "asset": "box",
+      "position": [206.1485, 77.2059, -214.9817],
+      "rotation": [0, 0, 0],
+      "scale": [11.6917, 2.0691, 0.1954],
+      "material": "checkpoint",
+      "parkour": {
+        "checkpoint": 0
+      }
+    },
+    {
+      "id": "outside_platform_spawner",
+      "asset": "plat1",
+      "position": [158.3276, 75.0411, -226.33],
+      "scale": [1, 1, 1],
+      "material": "chipped_yellow_painted_cracked_stone_localspace",
+      "spawner": {
+        "interval": 2.5,
+        "initialDelay": 0.5,
+        "behaviors": [
+          {
+            "fn": "linearSlide",
+            "params": {
+              "velocity": [-16, 0, 0],
+              "maxDistance": 360
+            }
+          }
+        ]
+      }
     }
   ]
 }

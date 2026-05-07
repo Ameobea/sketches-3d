@@ -172,6 +172,17 @@ export interface CustomShaderOptions {
   // TODO: This is a shocking hack and should be removed
   disabledDirectionalLightIndices?: number[];
   disabledSpotLightIndices?: number[];
+  /**
+   * If true, applies a stable per-mesh random offset to texture sampling. Works with both
+   * `useGeneratedUVs` (offsets `vUv`) and `useTriplanarMapping` (offsets the 3D sample position).
+   *
+   * The random key is sourced from a per-mesh uniform pushed via `onBeforeRender`, defaulting
+   * to a hash of the mesh's id (or `mesh.userData.uvOffsetSeed` if explicitly set). Unlike the
+   * old transform-based hash, this is stable across animation/movement.
+   *
+   * For meshes built outside the level-JSON pipeline, call `attachRandomizedUVOffset(mesh)`
+   * once after assigning the material so the seed gets pushed each render.
+   */
   randomizeUVOffset?: boolean;
   /**
    * Enabling this option will cause UV coordinates to be generated for this object using object space position and normal.
@@ -181,16 +192,23 @@ export interface CustomShaderOptions {
    */
   useGeneratedUVs?: boolean;
   /**
-   * When set alongside `useGeneratedUVs`, UV coordinates are generated from world-space position instead of
-   * object-space position.
+   * Selects the coordinate space used for UV generation.
    *
-   * This is necessary for LOD terrain where each tile mesh has a unique local origin — without it, the same
-   * world-space point yields different UVs in different tiles, causing visible texture popping on LOD transitions.
+   * Applies to both `useGeneratedUVs` (drives the projected UV) and `useTriplanarMapping`
+   * (drives the 3D sample position and the weighting normal).
    *
-   * **Constraint**: do not use this on animated/moving geometry. World-space UV generation causes textures to
-   * slide across the surface as the object moves, which is usually undesirable.
+   * Defaults are mode-dependent to preserve legacy behavior when unset:
+   *   - `useGeneratedUVs`: defaults to **local-space** (`false`).
+   *   - `useTriplanarMapping`: defaults to **world-space** (`true`).
+   *
+   * World-space is necessary for LOD terrain where each tile mesh has a unique local origin
+   * — without it, the same world-space point yields different UVs in different tiles, causing
+   * visible texture popping on LOD transitions.
+   *
+   * **Constraint**: do not use world-space on animated/moving geometry. Textures will slide
+   * across the surface as the object moves, which is usually undesirable.
    */
-  useWorldSpaceGeneratedUVs?: boolean;
+  useWorldSpaceUVs?: boolean;
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
   /**
    * Material class controls things like the sfx that are played when players land on the surface and

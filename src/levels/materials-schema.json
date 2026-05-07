@@ -318,7 +318,7 @@
                   "useGeneratedUVs": {
                     "type": "boolean"
                   },
-                  "useWorldSpaceGeneratedUVs": {
+                  "useWorldSpaceUVs": {
                     "type": "boolean"
                   },
                   "tileBreaking": {

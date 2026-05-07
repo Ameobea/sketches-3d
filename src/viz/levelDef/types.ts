@@ -257,7 +257,7 @@ export const ShaderPropsJsonSchema = z.object({
 export const ShaderOptionsJsonSchema = z.object({
   useTriplanarMapping: z.union([z.boolean(), TriplanarMappingParamsJsonSchema]).optional(),
   useGeneratedUVs: z.boolean().optional(),
-  useWorldSpaceGeneratedUVs: z.boolean().optional(),
+  useWorldSpaceUVs: z.boolean().optional(),
   tileBreaking: z
     .union([
       z.object({ type: z.literal('neyret'), patchScale: z.number().optional() }),
@@ -659,6 +659,66 @@ const GeneratorDefSchema = z.object({
 
 const GeneratorsRecordSchema = z.record(z.string(), GeneratorDefSchema);
 
+/**
+ * A named sample definition: an entry the runtime registers with the SFX
+ * manager so subsequent scene-def references can play it by name.  Mirrors the
+ * `SfxDef` type used by the runtime sound engine.
+ */
+export const SfxDefSchema = z.object({
+  /** URL of the audio sample (.ogg/.wav/etc). */
+  url: z.string(),
+  /** Default playback rate when this sample is played. Default: 1 */
+  playbackRate: z.number().optional(),
+});
+export type SfxDef = z.infer<typeof SfxDefSchema>;
+
+const SpatialLoopFilterSchema = z.object({
+  type: z.enum(['lp', 'hp', 'bp', 'notch']),
+  freq: z.number(),
+  q: z.number().optional(),
+});
+
+/**
+ * A spatial looped sound source placed in the world.  Plays automatically when
+ * the level loads.  The `sfx` field references either a builtin sfx name or
+ * one of the keys in the level def's `audio.sfxDefs` map.
+ */
+export const SpatialLoopDefSchema = z.object({
+  id: z.string(),
+  /** Name of the sfx sample to loop (key into `sfxDefs` or a builtin). */
+  sfx: z.string(),
+  /** World-space position of the emitter. */
+  pos: Vec3,
+  /** Linear gain. Default: 1 */
+  gain: z.number().optional(),
+  /** Playback rate. Default: 1 */
+  playbackRate: z.number().optional(),
+  /** 0..1 fraction of the sample for crossfade ramp on each end. Default: 0.1 */
+  xfade: z.number().optional(),
+  /** Optional biquad filter applied to this voice. */
+  filter: SpatialLoopFilterSchema.optional(),
+  /** Distance at which attenuation begins. Default: 1 */
+  refDistance: z.number().optional(),
+  /** Attenuation curve exponent: gain = 1 / max(1, dist/ref)^rolloff. Default: 1 */
+  rolloff: z.number().optional(),
+  /** Linear gain threshold below which mixing is skipped. Default: 0.001 */
+  cullThreshold: z.number().optional(),
+});
+export type SpatialLoopDef = z.infer<typeof SpatialLoopDefSchema>;
+
+/**
+ * Audio configuration for a level: scene-specific sfx sample registrations and
+ * positioned spatial loops that start automatically at load time.  Lives at
+ * `levelDef.audio` and may be sourced from the optional sidecar `audio.json`.
+ */
+export const AudioDefSchema = z.object({
+  /** Map of sfx sample names → defs. Names override any builtin with the same key. */
+  sfxDefs: z.record(z.string(), SfxDefSchema).optional(),
+  /** Spatial loops started automatically when the level loads. */
+  spatialLoops: z.array(SpatialLoopDefSchema).optional(),
+});
+export type AudioDef = z.infer<typeof AudioDefSchema>;
+
 /** Collect all leaf ObjectDefs from a (possibly nested) objects array, with their schema paths. */
 const collectObjectDefs = (
   nodes: (ObjectDef | ObjectGroupDef)[],
@@ -689,6 +749,7 @@ export const LevelDefSchema = z
     lights: z.array(LightDefSchema).optional(),
     physics: ScenePhysicsDefSchema.optional(),
     generators: GeneratorsRecordSchema.optional(),
+    audio: AudioDefSchema.optional(),
   })
   .superRefine((def, ctx) => {
     const assetKeys = new Set(Object.keys(def.assets));
@@ -700,14 +761,14 @@ export const LevelDefSchema = z
     for (const { obj, path } of allObjectDefs) {
       if (!assetKeys.has(obj.asset)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: [...path, 'asset'],
           message: `Unknown asset "${obj.asset}". Available: ${[...assetKeys].join(', ') || '(none)'}`,
         });
       }
       if (obj.material !== undefined && !matKeys.has(obj.material)) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: [...path, 'material'],
           message: `Unknown material "${obj.material}". Available: ${[...matKeys].join(', ') || '(none)'}`,
         });
@@ -722,7 +783,7 @@ export const LevelDefSchema = z
         if ('asset' in node) {
           if (!assetKeys.has(node.asset)) {
             ctx.addIssue({
-              code: z.ZodIssueCode.custom,
+              code: 'custom',
               path: ['assets', assetName, ...path, 'asset'],
               message: `CSG leaf references unknown asset "${node.asset}"`,
             });
@@ -730,7 +791,7 @@ export const LevelDefSchema = z
           const refDef = def.assets[node.asset];
           if (refDef && refDef.type !== 'geoscript' && refDef.type !== 'csg') {
             ctx.addIssue({
-              code: z.ZodIssueCode.custom,
+              code: 'custom',
               path: ['assets', assetName, ...path, 'asset'],
               message: `CSG leaf must reference a geoscript or csg asset, got "${refDef.type}"`,
             });
@@ -762,7 +823,7 @@ export const LevelDefSchema = z
         const ref = p[slot];
         if (ref !== undefined && !texKeys.has(ref)) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: 'custom',
             path: ['materials', matName, 'props', slot],
             message: `Unknown texture "${ref}". Available: ${[...texKeys].join(', ') || '(none)'}`,
           });
@@ -788,6 +849,7 @@ export const LevelDefRawSchema = z.object({
   lights: z.array(LightDefRawSchema).optional(),
   physics: ScenePhysicsDefSchema.optional(),
   generators: GeneratorsRecordSchema.optional(),
+  audio: AudioDefSchema.optional(),
 });
 
 export type LevelDefRaw = z.infer<typeof LevelDefRawSchema>;
@@ -816,6 +878,18 @@ export const ObjectsFileSchema = z.object({
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
 });
 export type ObjectsFile = z.infer<typeof ObjectsFileSchema>;
+
+/**
+ * Schema for an optional `audio.json` file alongside `def.json`.
+ * When present, its contents are merged over (and replace) any same-named
+ * entries in `def.json`'s `audio` field.
+ */
+export const AudioFileSchema = z.object({
+  $schema: z.string().optional(),
+  sfxDefs: z.record(z.string(), SfxDefSchema).optional(),
+  spatialLoops: z.array(SpatialLoopDefSchema).optional(),
+});
+export type AudioFile = z.infer<typeof AudioFileSchema>;
 
 const BookmarkSlotSchema = z.number().int().min(0).max(9);
 

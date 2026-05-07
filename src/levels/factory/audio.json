@@ -1,0 +1,17 @@
+{
+  "$schema": "../audio-schema.json",
+  "sfxDefs": {
+    "factory_ambient": { "url": "https://i.ameo.link/dnx.ogg" }
+  },
+  "spatialLoops": [
+    {
+      "id": "factory_ambient_loop",
+      "sfx": "factory_ambient",
+      "pos": [542, 22, -142.5],
+      "gain": 0.2,
+      "refDistance": 80,
+      "rolloff": 3.5,
+      "xfade": 0.03
+    }
+  ]
+}

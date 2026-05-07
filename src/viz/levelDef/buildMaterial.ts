@@ -88,8 +88,7 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
   if (optionsJson.useTriplanarMapping !== undefined)
     options.useTriplanarMapping = optionsJson.useTriplanarMapping as any;
   if (optionsJson.useGeneratedUVs !== undefined) options.useGeneratedUVs = optionsJson.useGeneratedUVs;
-  if (optionsJson.useWorldSpaceGeneratedUVs !== undefined)
-    options.useWorldSpaceGeneratedUVs = optionsJson.useWorldSpaceGeneratedUVs;
+  if (optionsJson.useWorldSpaceUVs !== undefined) options.useWorldSpaceUVs = optionsJson.useWorldSpaceUVs;
   if (optionsJson.tileBreaking !== undefined) options.tileBreaking = optionsJson.tileBreaking;
   if (optionsJson.enableFog !== undefined) options.enableFog = optionsJson.enableFog;
   if (optionsJson.antialiasColorShader !== undefined)

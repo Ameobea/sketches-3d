@@ -119,24 +119,30 @@ const buildUnpackDiffuseNormalGBAFragment = (params: true | { lut: Uint8Array })
   }
 };
 
+const hashSeedToVec2GLSL = `
+vec2 hashSeedToVec2(float seed) {
+  return vec2(
+    fract(sin(seed * 127.1 + 311.7) * 43758.5453),
+    fract(sin(seed * 269.5 + 183.3) * 43758.5453)
+  );
+}`;
+
+const hashSeedToVec3GLSL = `
+vec3 hashSeedToVec3(float seed) {
+  return vec3(
+    fract(sin(seed * 127.1 + 311.7) * 43758.5453),
+    fract(sin(seed * 269.5 + 183.3) * 43758.5453),
+    fract(sin(seed * 419.2 + 271.9) * 43758.5453)
+  );
+}`;
+
 const buildUVVertexFragment = (randomizeUVOffset: boolean | undefined): string => {
   if (randomizeUVOffset) {
     return `
       #ifdef USE_UV
-        float modelWorldX = modelMatrix[3][0];
-        float modelWorldY = modelMatrix[3][1];
-        float modelWorldZ = modelMatrix[3][2];
-        vec3 modelWorld = vec3(modelWorldX, modelWorldY, modelWorldZ);
+        vec2 uvOffset = hashSeedToVec2(uvOffsetSeed);
 
-        // hash x, y, z
-        float hash = fract(sin(dot(modelWorld, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-
-        vec2 uvOffset = vec2(
-          fract(hash * 3502.2),
-          fract(hash * 3200.)
-        );
-
-        // Add \`uvUffset\` to \`vUv\` to randomize the UVs.
+        // Add \`uvOffset\` to \`vUv\` to randomize the UVs.
         float uvScaleX = uvTransform[0][0];
         float uvScaleY = uvTransform[1][1];
         mat3 newUVTransform = mat3(
@@ -648,7 +654,7 @@ export const buildCustomShaderArgs = (
     disabledSpotLightIndices,
     randomizeUVOffset,
     useGeneratedUVs,
-    useWorldSpaceGeneratedUVs,
+    useWorldSpaceUVs,
     useTriplanarMapping,
     noOcclusion,
     vertexLighting = false,
@@ -676,6 +682,16 @@ export const buildCustomShaderArgs = (
     },
   ]);
   uniforms.normalScale = { value: new THREE.Vector2(normalScale, normalScale) };
+
+  // Mode-dependent default for `useWorldSpaceUVs` to preserve legacy behavior:
+  //  - triplanar historically only had world-space, so default true.
+  //  - generated UVs historically defaulted to local-space, so default false.
+  const triplanarUsesWorldSpace = useTriplanarMapping ? (useWorldSpaceUVs ?? true) : false;
+  const generatedUVsUseWorldSpace = useGeneratedUVs ? (useWorldSpaceUVs ?? false) : false;
+
+  if (randomizeUVOffset) {
+    uniforms.uvOffsetSeed = { value: 0 };
+  }
 
   if (tileBreaking?.type === 'fastFixMipmap') {
     uniforms.noiseSampler = { value: buildNoiseTexture() };
@@ -814,7 +830,7 @@ export const buildCustomShaderArgs = (
       if (useTriplanarMapping) {
         return `
         #ifdef USE_MAP
-          sampledDiffuseColor_ = triplanarTextureFixContrast(map, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal);
+          sampledDiffuseColor_ = triplanarTextureFixContrast(map, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal);
         #endif`;
       }
 
@@ -859,7 +875,7 @@ export const buildCustomShaderArgs = (
     const inner = (() => {
       if (useTriplanarMapping && roughnessMap) {
         return `
-          vec3 texelRoughness = triplanarTexture(roughnessMap, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal).xyz;
+          vec3 texelRoughness = triplanarTexture(roughnessMap, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal).xyz;
         `;
       }
 
@@ -974,10 +990,14 @@ export const buildCustomShaderArgs = (
 
     const inner = (() => {
       if (useTriplanarMapping) {
+        // The perturbed normal is in the same space as the input normal we passed (vTriplanarNormal).
+        // For world-space, transform world->view directly. For local-space, go object->world->view.
+        const transform = triplanarUsesWorldSpace
+          ? '(viewMatrix * vec4(perturbedNormal, 0.)).xyz'
+          : '(viewMatrix * modelMatrix * vec4(perturbedNormal, 0.)).xyz';
         return `
-          vec3 newWorldNormal = triplanarTextureNormalMap(normalMap, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, normalScale).xyz;
-          // Transform \`newWorldNormal\` from world space to view space
-          normal = normalize((viewMatrix * vec4(newWorldNormal, 0.)).xyz);
+          vec3 perturbedNormal = triplanarTextureNormalMap(normalMap, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, normalScale).xyz;
+          normal = normalize(${transform});
           `;
       }
 
@@ -1011,11 +1031,12 @@ export const buildCustomShaderArgs = (
 
     const inner = (() => {
       if (useTriplanarMapping) {
+        const transform = triplanarUsesWorldSpace
+          ? '(viewMatrix * vec4(perturbedClearcoatNormal, 0.)).xyz'
+          : '(viewMatrix * modelMatrix * vec4(perturbedClearcoatNormal, 0.)).xyz';
         return `
-          // TODO: I'm pretty sure double-applying uv transform is wrong, here and in all others
-          vec3 newClearcoatWorldNormal = triplanarTextureNormalMap(clearcoatNormalMap, vWorldPos, vec2(uvTransform[0][0], uvTransform[1][1]), vWorldNormal, clearcoatNormalScale).xyz;
-          // Transform \`newWorldNormal\` from world space to view space
-          clearcoatNormal = normalize((viewMatrix * vec4(newClearcoatWorldNormal, 0.)).xyz);
+          vec3 perturbedClearcoatNormal = triplanarTextureNormalMap(clearcoatNormalMap, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, clearcoatNormalScale).xyz;
+          clearcoatNormal = normalize(${transform});
           `;
       }
 
@@ -1105,6 +1126,11 @@ varying vec3 vWorldPos;
 varying vec3 vObjectNormal;
 varying vec3 vWorldNormal;
 uniform mat3 uvTransform;
+${randomizeUVOffset ? 'uniform float uvOffsetSeed;' : ''}
+${randomizeUVOffset ? hashSeedToVec2GLSL : ''}
+${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
+${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
+${useTriplanarMapping && randomizeUVOffset ? hashSeedToVec3GLSL : ''}
 
 void main() {
   #include <color_vertex>
@@ -1152,11 +1178,30 @@ void main() {
   vObjectNormal = normal;
   vWorldNormal = normalize((modelMatrix * vec4(normal, 0.)).xyz);
 
+  ${(() => {
+    if (!useTriplanarMapping) return '';
+    const pos = triplanarUsesWorldSpace ? 'vWorldPos' : 'position';
+    const norm = triplanarUsesWorldSpace ? 'vWorldNormal' : 'vObjectNormal';
+    const offsetExpr = randomizeUVOffset
+      ? `
+      vec2 _uvScaleVec = vec2(uvTransform[0][0], uvTransform[1][1]);
+      vec3 _uvOffset3 = hashSeedToVec3(uvOffsetSeed);
+      vec3 _safeScale = vec3(
+        _uvScaleVec.x != 0.0 ? 1.0 / _uvScaleVec.x : 0.0,
+        _uvScaleVec.y != 0.0 ? 1.0 / _uvScaleVec.y : 0.0,
+        _uvScaleVec.x != 0.0 ? 1.0 / _uvScaleVec.x : 0.0
+      );
+      vTriplanarPos = ${pos} + _uvOffset3 * _safeScale;`
+      : `vTriplanarPos = ${pos};`;
+    return `${offsetExpr}
+      vTriplanarNormal = ${norm};`;
+  })()}
+
   #ifdef USE_UV
   ${(() => {
     if (useGeneratedUVs) {
-      const uvPos = useWorldSpaceGeneratedUVs ? 'vWorldPos' : 'position';
-      const uvNormal = useWorldSpaceGeneratedUVs ? 'worldNormal' : 'normal';
+      const uvPos = generatedUVsUseWorldSpace ? 'vWorldPos' : 'position';
+      const uvNormal = generatedUVsUseWorldSpace ? 'worldNormal' : 'normal';
       return `
       vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
       vUv = generateUV(${uvPos}, ${uvNormal});
@@ -1309,6 +1354,8 @@ ${softOcclusionPreamble}
 varying vec3 vObjectNormal;
 varying vec3 vWorldNormal;
 uniform mat3 uvTransform;
+${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
+${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
 
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
@@ -1854,6 +1901,19 @@ export const buildCustomShader = (
   } else {
     // Materials opt into runtime occlusion backface toggling unless explicitly excluded.
     setMaterialOcclusionBackfaceRendering(mat, occlusionBackfaceRenderingEnabled);
+  }
+
+  if (opts?.randomizeUVOffset) {
+    mat.onBeforeRender = (_renderer, _scene, _camera, _geometry, object) => {
+      const explicit = (object as { userData?: { uvOffsetSeed?: number } }).userData?.uvOffsetSeed;
+      const seed =
+        typeof explicit === 'number' && Number.isFinite(explicit)
+          ? explicit
+          : ((object.id * 2654435761) >>> 0) / 4294967296;
+      mat.uniforms.uvOffsetSeed.value = seed;
+      // this is needed, otherwise this won't be set properly when the order of objects changes and stuff like that
+      mat.uniformsNeedUpdate = true;
+    };
   }
 
   return mat;

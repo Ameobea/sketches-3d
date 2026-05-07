@@ -37,11 +37,11 @@
       "url": "https://geotoy.b-cdn.net/textures/1/5be1798e-97a6-42cd-95bd-3d2f324255ba.avif"
     },
     "bumpy_copper_diffuse": {
-      "url": "https://geotoy.b-cdn.net/textures/1/896fb465-f24e-44df-95a9-028325ed653d.avif",
+      "url": "https://geotoy.b-cdn.net/textures/1/4f58c10d-8d3f-42c9-9add-6c08e0b641b6.avif",
       "colorSpace": "srgb"
     },
     "bumpy_copper_normal": {
-      "url": "https://geotoy.b-cdn.net/textures/1/39daeb77-eea6-4993-9d96-45c6b089e143.avif"
+      "url": "https://geotoy.b-cdn.net/textures/1/ac7cf4ba-4d5e-4c88-9c70-707af3c2ed4a.avif"
     },
     "sooty_silver_metal_1_diffuse": {
       "url": "https://geotoy.b-cdn.net/textures/1/7ec70215-9a28-40df-9415-319f1568badf.avif",
@@ -68,6 +68,25 @@
         "materialClass": "metalplate"
       }
     },
+    "chipped_yellow_painted_cracked_stone_localspace": {
+      "type": "customShader",
+      "props": {
+        "color": "#c1bcb8",
+        "roughness": 0.65,
+        "metalness": 0.77,
+        "normalScale": 0.82,
+        "uvScale": [0.16, 0.16],
+        "map": "chipped_yellow_painted_cracked_stone_diffuse",
+        "normalMap": "chipped_yellow_painted_cracked_stone_normal"
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": true,
+        "useWorldSpaceUVs": false,
+        "randomizeUVOffset": true,
+        "materialClass": "metalplate"
+      }
+    },
     "chipped_rusty_gray_painted_wall": {
       "type": "customShader",
       "props": {
@@ -88,7 +107,7 @@
       },
       "options": {
         "useGeneratedUVs": true,
-        "useWorldSpaceGeneratedUVs": true,
+        "useWorldSpaceUVs": true,
         "tileBreaking": {
           "type": "neyret",
           "patchScale": 3
@@ -137,7 +156,7 @@
       "options": {
         "useTriplanarMapping": false,
         "useGeneratedUVs": true,
-        "useWorldSpaceGeneratedUVs": true,
+        "useWorldSpaceUVs": true,
         "randomizeUVOffset": true
       }
     },
@@ -212,20 +231,20 @@
     "bumpy_copper": {
       "type": "customShader",
       "props": {
-        "color": "#a49084",
-        "roughness": 0.52,
-        "metalness": 0.73,
-        "normalScale": 0.22,
-        "uvScale": [0.02, 0.02],
+        "color": "#8c8c8c",
+        "roughness": 0.53,
+        "metalness": 0.57,
+        "normalScale": 0.54,
+        "transparent": false,
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50,
+        "uvScale": [0.012, 0.012],
         "map": "bumpy_copper_diffuse",
         "normalMap": "bumpy_copper_normal",
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [100, 200]
-        },
-        "transparent": false,
-        "mapDisableDistance": 300,
-        "mapDisableTransitionThreshold": 50
+        }
       },
       "options": {
         "useTriplanarMapping": true,
@@ -242,6 +261,10 @@
         "transparent": true,
         "ambientLightScale": 0.5
       },
+      "emissiveBypass": true
+    },
+    "checkpoint": {
+      "type": "generated",
       "emissiveBypass": true
     }
   }

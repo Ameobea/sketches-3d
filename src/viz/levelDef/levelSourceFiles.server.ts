@@ -10,6 +10,7 @@ export interface LevelSourceFiles {
   defPath: string;
   materialsFilePath?: string;
   objectsFilePath?: string;
+  audioFilePath?: string;
   def: LevelDefRaw;
 }
 
@@ -38,8 +39,10 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
 
   const materialsPath = join(levelDir, 'materials.json');
   const objectsPath = join(levelDir, 'objects.json');
+  const audioPath = join(levelDir, 'audio.json');
   const materialsFilePath = existsSync(materialsPath) ? materialsPath : undefined;
   const objectsFilePath = existsSync(objectsPath) ? objectsPath : undefined;
+  const audioFilePath = existsSync(audioPath) ? audioPath : undefined;
 
   if (materialsFilePath) {
     const mats = JSON.parse(readFileSync(materialsFilePath, 'utf-8')) as Record<string, unknown>;
@@ -61,6 +64,22 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
     const merged = new Map((def.objects ?? []).map(node => [node.id, node]));
     for (const obj of objs.objects ?? []) merged.set(obj.id, obj);
     def.objects = [...merged.values()];
+  }
+
+  if (audioFilePath) {
+    const audio = JSON.parse(readFileSync(audioFilePath, 'utf-8')) as Record<string, unknown> & {
+      sfxDefs?: NonNullable<LevelDefRaw['audio']>['sfxDefs'];
+      spatialLoops?: NonNullable<LevelDefRaw['audio']>['spatialLoops'];
+    };
+    if (opts.syncSchemas) {
+      syncSchema(audioFilePath, audio, '../audio-schema.json');
+    }
+    const existing = def.audio ?? {};
+    def.audio = {
+      ...existing,
+      ...(audio.sfxDefs ? { sfxDefs: { ...(existing.sfxDefs ?? {}), ...audio.sfxDefs } } : {}),
+      ...(audio.spatialLoops ? { spatialLoops: audio.spatialLoops } : {}),
+    };
   }
 
   const geoDir = join(levelDir, 'geo');
@@ -90,6 +109,7 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
     defPath,
     materialsFilePath,
     objectsFilePath,
+    audioFilePath,
     def,
   };
 };

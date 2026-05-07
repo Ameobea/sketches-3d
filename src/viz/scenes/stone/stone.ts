@@ -92,7 +92,7 @@ const initTerrain = async (
       {},
       {
         useGeneratedUVs: true,
-        useWorldSpaceGeneratedUVs: true,
+        useWorldSpaceUVs: true,
         randomizeUVOffset: false,
         tileBreaking: { type: 'neyret', patchScale: 1.3 },
       }

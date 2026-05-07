@@ -54,7 +54,7 @@
       },
       "options": {
         "useGeneratedUVs": true,
-        "useWorldSpaceGeneratedUVs": true,
+        "useWorldSpaceUVs": true,
         "tileBreaking": {
           "type": "neyret",
           "patchScale": 3

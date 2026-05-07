@@ -198,16 +198,5 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     );
   });
 
-  viz.sfxManager.registerSfxDefs({
-    factory_ambient: { url: 'https://i.ameo.link/dnx.ogg' },
-  });
-  viz.sfxManager.playSpatialLoop('factory_ambient', {
-    pos: [542, 22, -142.5],
-    gain: 0.2,
-    refDistance: 80,
-    rolloff: 3.5,
-    xfade: 0.03,
-  });
-
   return pkManager.buildSceneConfig();
 };
