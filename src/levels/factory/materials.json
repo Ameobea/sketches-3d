@@ -231,20 +231,21 @@
     "bumpy_copper": {
       "type": "customShader",
       "props": {
-        "color": "#8c8c8c",
-        "roughness": 0.53,
-        "metalness": 0.57,
+        "color": "#a7c3a7",
+        "roughness": 0.47,
+        "metalness": 0.76,
         "normalScale": 0.54,
         "transparent": false,
         "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50,
-        "uvScale": [0.012, 0.012],
+        "uvScale": [0.01, 0.01],
         "map": "bumpy_copper_diffuse",
         "normalMap": "bumpy_copper_normal",
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [100, 200]
-        }
+        },
+        "iridescence": 0
       },
       "options": {
         "useTriplanarMapping": true,

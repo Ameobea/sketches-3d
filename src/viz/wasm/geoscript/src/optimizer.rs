@@ -6,15 +6,13 @@ use siphasher::sip128::{Hasher128, SipHasher};
 use crate::{
   ast::{
     bind_closure_params_into_scope, eval_range, maybe_pre_resolve_builtin_call_signature,
-    record_non_const_binding, BinOp, ClosureArg, ClosureBody, DestructurePattern, Expr,
-    FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, SourceLoc, Statement,
-    TopLevelStatement, TrackedValue, TrackedValueRef,
+    record_non_const_binding, BinOp, ClosureArg, DestructurePattern, Expr, FunctionCall,
+    FunctionCallTarget, MapLiteralEntry, ScopeTracker, SourceLoc, Statement, TopLevelStatement,
+    TrackedValue, TrackedValueRef,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
-    resolve_builtin_impl,
-    trace_path::TRACE_PATH_DRAW_COMMAND_NAMES,
-    FUNCTION_ALIASES,
+    resolve_builtin_impl, FUNCTION_ALIASES,
   },
   match_binop_by_arg_types,
   seq::EagerSeq,
@@ -27,31 +25,6 @@ use crate::{
 /// slightly different results in some cases.  For almost everything done in Geoscript/Geotoy, it's
 /// unlikely to matter though.
 const FLOAT_ASSOC_FOLDING_ENABLED: bool = true;
-
-fn add_trace_path_draw_commands(ctx: &EvalCtx, scope: &mut ScopeTracker) {
-  for name in TRACE_PATH_DRAW_COMMAND_NAMES {
-    let sym = ctx.interned_symbols.intern(name);
-    if !scope.has(sym) {
-      scope.set(
-        sym,
-        TrackedValue::Const(Value::Callable(Rc::new(Callable::Closure(Closure {
-          params: Rc::new(Vec::new()),
-          body: Rc::new(ClosureBody(Vec::new())),
-          captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-          arg_placeholder_scope: RefCell::new(None),
-          return_type_hint: None,
-        })))),
-      );
-    }
-  }
-}
-
-fn is_trace_path_callable(callable: &Callable) -> bool {
-  match callable {
-    Callable::Builtin { fn_entry_ix, .. } => fn_sigs().entries[*fn_entry_ix].0 == "trace_path",
-    _ => false,
-  }
-}
 
 #[derive(Clone, Copy)]
 struct ConstEvalCacheLookup {
@@ -122,109 +95,6 @@ fn is_known_rng_free_callable(callable: &Callable) -> bool {
     Callable::Closure(_) => false,
     Callable::Dynamic { inner, .. } => !inner.is_side_effectful() && !inner.is_rng_dependent(),
   }
-}
-
-fn is_trace_path_closure_effectively_const(
-  ctx: &EvalCtx,
-  local_scope: &mut ScopeTracker,
-  expr: &mut Expr,
-  allow_rng_const_eval: bool,
-) -> Result<bool, ErrorStack> {
-  // we construct a new scope for optimizing the body which contains fake trace path functions that
-  // resolve to const callables
-  let mut fake_scope = ScopeTracker::wrap(local_scope);
-  add_trace_path_draw_commands(ctx, &mut fake_scope);
-
-  let mut test_expr = expr.clone();
-  optimize_expr(ctx, &mut fake_scope, &mut test_expr, allow_rng_const_eval)?;
-
-  // if the closure was literalized successfully, we need to swap back the closure body to the
-  // original one so the draw commands actually do something and then attempt to re-optimize it so
-  // as many optimizations as possibly can apply
-  if let Expr::Literal {
-    value: Value::Callable(callable),
-    ..
-  } = test_expr
-  {
-    if matches!(callable.as_ref(), Callable::Closure(_)) {
-      if let Expr::Closure { params, loc, .. } = expr {
-        if !params.is_empty() {
-          let (line, col) = ctx.resolve_loc(*loc);
-          return Err(
-            ErrorStack::new("Trace path closures should have no parameters").with_loc(line, col),
-          );
-        }
-
-        return Ok(true);
-      }
-    }
-  }
-
-  Ok(false)
-}
-
-/// Special-case for the `trace_path` builtin to allow constifying its closure argument which
-/// contains effectful calls.
-///
-/// The effects of those calls are limited to the function call, so it's safe to constify them.
-fn maybe_constify_trace_path_closure_arg(
-  ctx: &EvalCtx,
-  local_scope: &mut ScopeTracker,
-  args: &mut [Expr],
-  kwargs: &mut FxHashMap<Sym, Expr>,
-  allow_rng_const_eval: bool,
-) -> Result<(), ErrorStack> {
-  let cb_sym = ctx.interned_symbols.intern("cb");
-  let (is_effectively_const, expr_opt) = if let Some(expr) = kwargs.get_mut(&cb_sym) {
-    (
-      is_trace_path_closure_effectively_const(ctx, local_scope, expr, allow_rng_const_eval)?,
-      Some(expr),
-    )
-  } else if let Some(expr) = args.get_mut(0) {
-    (
-      is_trace_path_closure_effectively_const(ctx, local_scope, expr, allow_rng_const_eval)?,
-      Some(expr),
-    )
-  } else {
-    (false, None)
-  };
-
-  // since the closure with the effectful commands removed optimized to a constant, we can
-  // also the original closure and assume that it doesn't capture any dynamic environment.
-  if is_effectively_const {
-    if let Some(expr) = expr_opt {
-      if matches!(&expr, Expr::Closure { .. }) {
-        optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
-
-        // if the expr wasn't literalized (which it won't be if contained any draw
-        // commands...), we force it to be now.
-        match expr {
-          Expr::Closure {
-            params,
-            body,
-            arg_placeholder_scope,
-            return_type_hint,
-            loc,
-          } => {
-            *expr = Expr::Literal {
-              value: Value::Callable(Rc::new(Callable::Closure(Closure {
-                params: Rc::clone(&params),
-                body: Rc::clone(&body),
-                // There is no captured scope since everything was const in the test case
-                captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-                arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
-                return_type_hint: *return_type_hint,
-              }))),
-              loc: *loc,
-            };
-          }
-          _ => (),
-        }
-      }
-    }
-  }
-
-  Ok(())
 }
 
 fn callable_requires_rng_state(callable: &Callable) -> bool {
@@ -1244,18 +1114,6 @@ fn fold_constants<'a>(
         }
       }
 
-      if let FunctionCallTarget::Literal(callable) = target {
-        if is_trace_path_callable(callable) {
-          maybe_constify_trace_path_closure_arg(
-            ctx,
-            local_scope,
-            args,
-            kwargs,
-            allow_rng_const_eval,
-          )?;
-        }
-      }
-
       for arg in args.iter_mut() {
         optimize_expr(ctx, local_scope, arg, allow_rng_const_eval)?;
       }
@@ -1317,7 +1175,11 @@ fn fold_constants<'a>(
                   &arg_vals,
                   &kwarg_vals,
                   allow_rng_const_eval,
-                )?,
+                )
+                .map_err(|err| {
+                  let (line, col) = ctx.resolve_loc(*loc);
+                  err.with_loc(line, col)
+                })?,
                 other => {
                   let (line, col) = ctx.resolve_loc(*loc);
                   return ctx
@@ -1350,7 +1212,11 @@ fn fold_constants<'a>(
           &arg_vals,
           &kwarg_vals,
           allow_rng_const_eval,
-        )?,
+        )
+        .map_err(|err| {
+          let (line, col) = ctx.resolve_loc(*loc);
+          err.with_loc(line, col)
+        })?,
       };
 
       if let Some(evaled) = evaled {
@@ -2763,10 +2629,10 @@ a = 0..4 -> |x| x + offset
 }
 
 #[test]
-fn test_const_eval_cache_persists_across_runs_with_trace_path() {
+fn test_const_eval_cache_persists_across_runs_with_path_block() {
   let code = r#"
 distance = 1
-path_sampler = trace_path(|| {
+path_sampler = build_path(path {
   move(0, 0)
   line(distance, 0)
   line(distance, distance)
@@ -2826,20 +2692,15 @@ path_sampler = trace_path(|| {
   assert_eq!(*p3.as_vec2().unwrap(), crate::Vec2::new(1., 1.));
 }
 
-// just because we can
+/// Helper closures defined inside a `path { ... }` block can still call rewritten draw
+/// commands (`move`, `line`, etc.) — the rewriting pass recurses into nested closure bodies.
 #[test]
-fn test_trace_path_sneaky_ref_const_eval() {
+fn test_path_block_nested_closure_rewrite() {
   let code = r#"
-m = move
-l2 = line
-path_sampler = trace_path(|| {
-  // helper functions that call draw commands can be defined, but they must
-  // be defined within the `trace_path` closure
-  l = |x, y| {
-    l2(x, y)
-  }
+path_sampler = build_path(path {
+  l = |x, y| line(x, y)
 
-  m(0, 0)
+  move(0, 0)
   l(10, 0)
 })
 out = path_sampler(0.5)

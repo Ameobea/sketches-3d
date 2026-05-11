@@ -6,7 +6,7 @@ p = offset_path(p, delta=1.5, end_type='square', join_type='miter')
 p = offset_path(p, delta=-0.7, end_type='superellipse', join_type='superellipse', superellipse_exponent=2)
 p = offset_path(p, delta=0.7, end_type='superellipse', join_type='superellipse', superellipse_exponent=2)
 
-p2 = trace_path(|| {
+p2 = build_path(path {
   line(0, 1)
   line(1, 1)
   line(1, 0)

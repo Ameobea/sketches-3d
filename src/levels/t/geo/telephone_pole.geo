@@ -4,7 +4,7 @@ p = trace_svg_path(
 ) | path_scale(1.3, 1)
 p = p | path_union(p | path_trans(offset=v2(0, 9)))
 // p = p | path_union(p | path_rot(angle=-pi) | path_trans(0, -15))
-p = path_difference(p, trace_path(|| {
+p = path_difference(p, build_path(path {
   move(1, 1)
   line(-1, 1)
   line(-1, -1)

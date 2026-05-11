@@ -20,8 +20,17 @@
 @skip { whitespace | LineComment }
 
 @top Program {
-  statement*
+  topLevelStatement*
 }
+
+topLevelStatement {
+  ImportStatement |
+  ExportStatement |
+  statement
+}
+
+ImportStatement { Import MapDestructure From StringLiteral ";"? }
+ExportStatement { Export Identifier TypeHint? "=" Expr ";"? }
 
 DestructureElem { Identifier | ArrayDestructure | MapDestructure }
 MapDestructureKV { Identifier ":" DestructureElem }
@@ -44,6 +53,9 @@ UnaryOp { "+" | "-" | "!" }
 ParenthesizedExpr { "(" Expr ")" }
 CallExpr { Identifier !call "(" commaSep<FunctionArg> ")" }
 IfExpr { If !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
+PathBlock { Path "{" statement* "}" }
+
+Path { @extend<Identifier, "path"> }
 
 FnArgDefaultValue { Identifier | literal | ArrayExpr | MapExpr | ParenthesizedExpr | CallExpr | BlockExpr | IfExpr }
 
@@ -68,7 +80,8 @@ Expr {
   ClosureExpr { (LogicalOrOp TypeHint? Expr) | (ClosureParamList TypeHint? Expr) } |
   ParenthesizedExpr |
   BlockExpr |
-  IfExpr
+  IfExpr |
+  PathBlock
 }
 
 BlockExpr { "{" statement* ~maybedestructure "}" ~maybeblock }
@@ -130,8 +143,8 @@ MapEntry { MapKV | MapSplat }
 
   BoolLiteral { "true" | "false" }
   NilLiteral { "nil" }
-  Integer { $[0-9]+ }
-  HexInteger { "0x" $[0-9a-fA-F_]+ }
+  Integer { $[0-9] ($[0-9] | "_" $[0-9])* }
+  HexInteger { "0x" $[0-9a-fA-F] ($[0-9a-fA-F] | "_" $[0-9a-fA-F])* }
 
   @precedence { HexInteger, Integer }
 
@@ -146,7 +159,10 @@ MapEntry { MapKV | MapSplat }
   Else { "else" }
   Return { "return" }
   Break { "break" }
-  @precedence { Return, Break, If, ElseIf, Else, BoolLiteral, NilLiteral, Identifier }
+  Import { "import" }
+  Export { "export" }
+  From { "from" }
+  @precedence { Return, Break, If, ElseIf, Else, Import, Export, From, BoolLiteral, NilLiteral, Identifier }
 
   doubleQuoteStringContent { !["\\\n]+ }
   singleQuoteStringContent { !['\\\n]+ }

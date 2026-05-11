@@ -1,5 +1,5 @@
-p = trace_path(
-  || {
+p = build_path(
+  path {
     line(0,1)
     line(1,1)
     line(1,0)
@@ -27,7 +27,7 @@ m = rail_sweep(
   | origin_to_geometry
   | remesh_planar_patches(max_angle_deg=2)
 
-p = trace_path(|| {
+p = build_path(path {
   move(-3.6, 0)
   line(3.6, 0)
 })

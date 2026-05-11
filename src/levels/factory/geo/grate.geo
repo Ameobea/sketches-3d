@@ -1,5 +1,5 @@
-build_path = |offset: num| {
-  p = trace_path(|| {
+make_grate_path = |offset: num| {
+  p = build_path(path {
     move(-0.2, -100)
     line(0.2, -100)
     line(0.2 - offset, 100)
@@ -12,16 +12,16 @@ build_path = |offset: num| {
     | fold(p, |acc, p| path_union(acc, p))
 }
 
-p = build_path(80)
+p = make_grate_path(80)
 
-p = path_union(p, build_path(-80) | path_trans(-100, 0))
+p = path_union(p, make_grate_path(-80) | path_trans(-100, 0))
 
 width = 15.25*2
 height = 24.7*2
 border_thickness = 0.8
 p = path_intersect(
   p,
-  trace_path(|| {
+  build_path(path {
     move(-width/2, -height/2)
     line(width/2, -height/2)
     line(width/2, height/2)
@@ -32,14 +32,14 @@ p = path_intersect(
 )
   | path_trans(-0.4, -0.3)
 
-border = trace_path(|| {
+border = build_path(path {
   move(-(width/2 + border_thickness/2), -(height/2 + border_thickness/2))
   line(width/2 + border_thickness/2, -(height/2 + border_thickness/2))
   line(width/2 + border_thickness/2, height/2 + border_thickness/2)
   line(-(width/2 + border_thickness/2), height/2 + border_thickness/2)
   close()
 })
-  | path_difference(clip=trace_path(|| {
+  | path_difference(clip=build_path(path {
     move(-width/2, -height/2)
     line(width/2, -height/2)
     line(width/2, height/2)

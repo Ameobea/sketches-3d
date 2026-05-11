@@ -1,5 +1,5 @@
-p = trace_path(
-  || {
+p = build_path(
+  path {
     circle(center=v2(0), radius=0.5)
   },
   center=true,

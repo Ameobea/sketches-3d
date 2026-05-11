@@ -1263,13 +1263,6 @@ impl ClosureBody {
     }
   }
 
-  pub(crate) fn traverse_exprs_mut(&mut self, mut traverse: impl FnMut(&mut Expr)) {
-    for stmt in &mut self.0 {
-      for expr in stmt.exprs_mut() {
-        traverse(expr);
-      }
-    }
-  }
 }
 
 #[derive(Clone, Debug)]
@@ -1869,11 +1862,158 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       })
     }
     Rule::block_expr => parse_block_expr(ctx, expr),
+    Rule::path_block => parse_path_block(ctx, expr),
     _ => unimplemented!(
       "unimplemented node type for parse_node: {:?}",
       expr.as_rule()
     ),
   }
+}
+
+const PATH_BLOCK_REWRITE_MAP: &[(&str, &str)] = &[
+  ("move", "path_move"),
+  ("line", "path_line"),
+  ("quad_bezier", "path_quadratic_bezier"),
+  ("quadratic_bezier", "path_quadratic_bezier"),
+  ("smooth_quad_bezier", "path_smooth_quadratic_bezier"),
+  ("smooth_quadratic_bezier", "path_smooth_quadratic_bezier"),
+  ("bezier", "path_cubic_bezier"),
+  ("cubic_bezier", "path_cubic_bezier"),
+  ("smooth_bezier", "path_smooth_cubic_bezier"),
+  ("smooth_cubic_bezier", "path_smooth_cubic_bezier"),
+  ("arc", "path_arc"),
+  ("circle", "path_circle"),
+  ("rect", "path_rect"),
+  ("close", "path_close"),
+];
+
+fn build_path_block_rewrite_map(ctx: &EvalCtx) -> FxHashMap<Sym, Sym> {
+  let mut map = FxHashMap::default();
+  for (from, to) in PATH_BLOCK_REWRITE_MAP {
+    let from_sym = ctx.interned_symbols.intern(from);
+    let to_sym = ctx.interned_symbols.intern(to);
+    map.insert(from_sym, to_sym);
+  }
+  map
+}
+
+fn rewrite_path_block_calls_in_expr(replacements: &FxHashMap<Sym, Sym>, expr: &mut Expr) {
+  if let Expr::Call {
+    call:
+      FunctionCall {
+        target: FunctionCallTarget::Name(sym),
+        ..
+      },
+    ..
+  } = expr
+  {
+    if let Some(&new_sym) = replacements.get(sym) {
+      *sym = new_sym;
+    }
+  }
+}
+
+fn rewrite_path_block_calls(replacements: &FxHashMap<Sym, Sym>, statements: &mut [Statement]) {
+  for stmt in statements {
+    stmt.traverse_exprs_mut(&mut |expr: &mut Expr| {
+      rewrite_path_block_calls_in_expr(replacements, expr);
+    });
+  }
+}
+
+fn parse_path_block(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
+  let (line, col) = expr.line_col();
+  let loc = ctx.add_source_loc(line, col);
+
+  if expr.as_rule() != Rule::path_block {
+    return Err(
+      ErrorStack::new(format!(
+        "`parse_path_block` can only handle `path_block` rules, found: {:?}",
+        expr.as_rule()
+      ))
+      .with_loc(line as u32, col as u32),
+    );
+  }
+
+  let mut statements: Vec<Statement> = expr
+    .into_inner()
+    .map(|stmt| parse_statement(ctx, stmt))
+    .filter_map(|res| match res {
+      Ok(Some(stmt)) => Some(Ok(stmt)),
+      Ok(None) => None,
+      Err(err) => Some(Err(err)),
+    })
+    .collect::<Result<Vec<_>, ErrorStack>>()?;
+
+  for stmt in &statements {
+    match stmt {
+      Statement::Return { .. } => {
+        return Err(
+          ErrorStack::new(
+            "`return` is not allowed inside a `path { ... }` block; the block's value is the \
+             flattened sequence of draw commands",
+          )
+          .with_loc(line as u32, col as u32),
+        );
+      }
+      Statement::Break { .. } => {
+        return Err(
+          ErrorStack::new(
+            "`break` is not allowed inside a `path { ... }` block; the block's value is the \
+             flattened sequence of draw commands",
+          )
+          .with_loc(line as u32, col as u32),
+        );
+      }
+      _ => {}
+    }
+  }
+
+  let replacements = build_path_block_rewrite_map(ctx);
+  rewrite_path_block_calls(&replacements, &mut statements);
+
+  let mut new_stmts: Vec<Statement> = Vec::with_capacity(statements.len() + 1);
+  let mut temp_idents: Vec<Expr> = Vec::new();
+
+  for (i, stmt) in statements.into_iter().enumerate() {
+    match stmt {
+      Statement::Expr(expr) => {
+        let temp_name = ctx
+          .interned_symbols
+          .intern(&format!("__geoscript_internal__pb_{line}_{col}_{i}"));
+        new_stmts.push(Statement::Assignment {
+          name: temp_name,
+          name_loc: loc,
+          expr,
+          type_hint: None,
+        });
+        temp_idents.push(Expr::Ident {
+          name: temp_name,
+          loc,
+        });
+      }
+      other => new_stmts.push(other),
+    }
+  }
+
+  let array_lit = Expr::ArrayLiteral {
+    elements: temp_idents,
+    loc,
+  };
+  let flatten_call = Expr::Call {
+    call: FunctionCall {
+      target: FunctionCallTarget::Name(ctx.interned_symbols.intern("flatten")),
+      args: vec![array_lit],
+      kwargs: FxHashMap::default(),
+    },
+    loc,
+  };
+  new_stmts.push(Statement::Expr(flatten_call));
+
+  Ok(Expr::Block {
+    statements: new_stmts,
+    loc,
+  })
 }
 
 fn parse_double_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStack> {

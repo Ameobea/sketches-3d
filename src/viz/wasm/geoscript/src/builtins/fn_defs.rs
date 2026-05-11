@@ -7960,53 +7960,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       }
     ]
   },
-  "trace_path" => FnDef {
-    module: "path",
-    examples: &[], // TODO
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "cb",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "A function that will be called with a special scope including draw commands to define the path.  It receives no arguments and its return value is ignored; the path is defined based on the draw commands issued within the function."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path will be closed by connecting the last point to the first point."
-          },
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path will be centered around the origin after being traced."
-          },
-          ArgDef {
-            name: "reverse",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path will be sampled in reverse direction (from end to start). Sampling at t=0 will return the end point and t=1 will return the start point."
-          },
-          ArgDef {
-            name: "fill_rule",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional fill rule that describes how the interior of this path should be interpreted for operations like tessellation.  One of \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil."
-          }
-        ],
-        description: "Traces a path based on draw commands issued within the provided callback function.  The function returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
-        return_type: &[ArgType::Callable]
-      }
-    ]
-  },
   "trace_svg_path" => FnDef {
     module: "path",
     examples: &[], // TODO
@@ -8650,6 +8603,798 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       }
     ]
   },
+  "build_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cmds",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "A sequence of draw command maps as produced by the `path { ... }` macro or hand-built via `path_move`, `path_line`, `path_close`, `path_arc`, etc."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, each subpath is closed by connecting the last point back to the first.",
+          },
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the path is centered around the origin after construction.",
+          },
+          ArgDef {
+            name: "reverse",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the path is sampled in reverse direction.",
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional fill rule: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.",
+          },
+        ],
+        description: "Builds a 2D path sampler from a sequence of draw command maps.\n\nThe canonical input source is the `path { ... }` macro, which evaluates to a sequence of draw command maps.  This function turns that sequence into a `|t: num|: vec2` callable, where `t` ranges over the path's arc length from 0 to 1.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "discretize_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler callable. Topology-aware paths use adaptive curvature sampling; black-box `|t: num|: vec2` callables fall back to uniform sampling."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(128)),
+            description: "Uniform sample count for black-box callables that don't expose topology."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the input as closed/open. When nil, the input's existing topology is preserved (or inferred from `p(0) ≈ p(1)` for black-box callables)."
+          },
+        ],
+
+        description: "Replaces every continuous curve in the input path with a polyline of straight line segments, returning a new path sampler.\n\nThis is the same discretization step that `path_union` / `offset_path` apply internally before handing geometry to Clipper2; running it explicitly is useful for inspecting the polyline that those operations would see, or for paths where polyline-only consumers need a guaranteed-segment-only input.\n\nUses adaptive curvature-based sampling driven by `curve_angle_degrees` for paths backed by a path tracer. For black-box callables, falls back to uniform sampling at `sample_count` points.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "path_join" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path1",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "First path sampler (from `build_path`, `trace_svg_path`, etc.)."
+          },
+          ArgDef {
+            name: "path2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Second path sampler (from `build_path`, `trace_svg_path`, etc.)."
+          },
+        ],
+        description: "Joins two paths by structurally concatenating their subpath arrays.  Avoids the Clipper2 round-trip used by `path_union`/`path_difference` etc.; appropriate when the inputs are known not to overlap.\n\nBoth inputs must be path samplers with identity transforms.  Apply `apply_transforms` first to bake non-identity transforms into geometry before joining.\n\nThe returned path inherits the `fill_rule` of the first input that has one; conflicting fill rules raise an error.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "path_move" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a `move` draw command tagged dict for use inside a `path { ... }` block (which rewrites bare `move` calls to `path_move`).  Equivalent to writing `move(x, y)` inside the block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a `move` draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_line" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a `line` draw command tagged dict for use inside a `path { ... }` block (which rewrites bare `line` calls to `path_line`).",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "pos",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a `line` draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_quadratic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_smooth_quadratic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a smooth quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a smooth quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_cubic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl1",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c1x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c1y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_smooth_cubic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a smooth cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds a smooth cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_arc" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "large_arc_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "sweep_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds an SVG-style elliptical arc draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "large_arc_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "sweep_flag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds an SVG-style elliptical arc draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds an SVG-style elliptical arc draw command tagged dict.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X-axis radius"
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y-axis radius"
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the arc's x-axis in degrees"
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Builds an SVG-style elliptical arc draw command tagged dict.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_circle" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Center of the circle."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Radius of the circle."
+          },
+        ],
+        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X coordinate of the center of the circle."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y coordinate of the center of the circle."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Radius of the circle."
+          },
+        ],
+        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_rect" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Center of the rectangle."
+          },
+          ArgDef {
+            name: "size",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Size of the rectangle as a `vec2` of `(width, height)`, or a single number for a square."
+          },
+        ],
+        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.",
+        return_type: &[ArgType::Map],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X coordinate of the center of the rectangle."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y coordinate of the center of the rectangle."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Width along the X axis."
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Height along the Y axis."
+          },
+        ],
+        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_close" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[],
+        description: "Builds a `close` draw command tagged dict.  Closes the current subpath by drawing a straight line from the current point back to the initial point of the subpath (the position of the last `move` command).  Mirrors the SVG `z` command.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_segments" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler from `build_path` / `trace_svg_path` / `text_to_path` / `offset_path` / boolean ops."
+          },
+        ],
+        description: "Returns a sequence of tagged dicts, one per segment of the path, in subpath traversal order with the path's transform applied.\n\nEvery segment dict has these common fields:\n- `type`: `\"line\"` | `\"quad\"` | `\"cubic\"` | `\"arc\"`\n- `start`, `end`: vec2 endpoints\n- `length`: arc length of the segment\n- `subpath`: int — index of the parent subpath\n- `closed`: bool — whether the parent subpath is closed\n- `t_start`, `t_end`: floats in [0, 1] — arc-length parameters within the parent subpath\n- `t_start_global`, `t_end_global`: floats in [0, 1] — arc-length parameters across the full path\n\nPer-type extras:\n- `quad`: `ctrl: vec2`\n- `cubic`: `ctrl1: vec2`, `ctrl2: vec2`\n- `arc`: `center: vec2`, `rx: num`, `ry: num`, `x_axis_rotation: num` (radians), `large_arc: bool`, `sweep: bool`, `theta_start: num`, `theta_delta: num`\n\nThe path's `reverse` flag is a sampling-order concern and is intentionally not honoured here; segments are always emitted in their as-built order.\n\nOnly works with paths that expose segment topology (i.e. those backed by a path tracer); paths from `catmull_rom` / `lerp_paths` are not supported.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "path_frame" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "t",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Arc-length parameter in [0, 1]; clamped if out of range."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "inward_normal",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true and `t` lies inside a closed subpath whose orientation can be determined, the normal is flipped to point inward (toward the interior of the closed shape) regardless of CW/CCW winding. For open subpaths or paths without topology, has no effect — the normal is the left-perpendicular of the tangent."
+          },
+        ],
+        description: "Samples a path at parameter `t` and returns a frame dict `{pos: vec2, tangent: vec2, normal: vec2}`.\n\n- `pos`: the path point `p(t)`.\n- `tangent`: a unit vector along the path direction, computed via central finite difference (with one-sided fallback at t=0 and t=1).\n- `normal`: a unit vector perpendicular to the tangent. By default it's the left-perpendicular (counter-clockwise rotation by 90°). For closed subpaths whose orientation can be determined, it is flipped to consistently point inward when `inward_normal` is true.\n\nUseful for sweeps, ribbons, offset constructions, or any procedural geometry that needs to follow a path with a consistent local frame.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
   "path_trans" => FnDef {
     module: "path",
     examples: &[],
@@ -8779,632 +9524,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Scales a 2D path by (x, y), returning a new path sampler with the transform composed.",
         return_type: &[ArgType::Callable],
-      },
-    ],
-  },
-  "move" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Moves the current point to the given position without drawing.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "pos",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Moves the current point to the given position without drawing.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "line" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Draws a straight line from the current point to the given position.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "pos",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Draws a straight line from the current point to the given position.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "quadratic_bezier" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "ctrl",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a quadratic Bezier segment from the current point to `to` using `ctrl` as the control point.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "cx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "cy",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a quadratic Bezier segment from the current point to `x,y` using `cx,cy` as the control point.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "smooth_quadratic_bezier" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a smooth quadratic Bezier segment from the current point to `to` using the reflection of the previous quadratic control point as the new control point.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a smooth quadratic Bezier segment from the current point to `x,y` using the reflection of the previous quadratic control point as the new control point.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "cubic_bezier" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "ctrl1",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "ctrl2",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a cubic Bezier segment from the current point to `to` using `ctrl1` and `ctrl2` as control points.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "c1x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c1y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c2x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c2y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a cubic Bezier segment from the current point to `x,y` using the provided control points.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "smooth_cubic_bezier" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "ctrl2",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a smooth cubic Bezier segment from the current point to `to` using the reflection of the previous cubic's second control point as the first control point, and `ctrl2` as the second control point.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "c2x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c2y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds a smooth cubic Bezier segment from the current point to `x,y` using the reflection of the previous cubic's second control point as the first control point, and the provided second control point.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "arc" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "large_arc_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "sweep_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "large_arc_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "sweep_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Adds an SVG-style elliptical arc from the current point to the given position.  `x_axis_rotation` is in degrees.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "circle" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: "Center of the circle."
-          },
-          ArgDef {
-            name: "radius",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Radius of the circle."
-          },
-        ],
-        description: "Adds a circle centered at `center` with the given `radius`.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "cx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X coordinate of the center of the circle."
-          },
-          ArgDef {
-            name: "cy",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y coordinate of the center of the circle."
-          },
-          ArgDef {
-            name: "radius",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Radius of the circle."
-          },
-        ],
-        description: "Adds a circle centered at `cx,cy` with the given `radius`.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "rect" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: "Center of the rectangle."
-          },
-          ArgDef {
-            name: "size",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Size of the rectangle as a `vec2` of `(width, height)`, or a single number for a square."
-          },
-        ],
-        description: "Adds an axis-aligned rectangle centered at `center` with the given `size`.  Emitted as a closed subpath of four line segments.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "cx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X coordinate of the center of the rectangle."
-          },
-          ArgDef {
-            name: "cy",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y coordinate of the center of the rectangle."
-          },
-          ArgDef {
-            name: "width",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Width along the X axis."
-          },
-          ArgDef {
-            name: "height",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Height along the Y axis."
-          },
-        ],
-        description: "Adds an axis-aligned rectangle centered at `cx,cy` with the given `width` and `height`.  Emitted as a closed subpath of four line segments.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
-      },
-    ],
-  },
-  "close" => FnDef {
-    module: "trace_path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[],
-        description: "Closes the current subpath by drawing a straight line from the current point back to the initial point of the subpath (the position of the last `move` command).  Mirrors the SVG `z` command.  This can only be called within the callback passed to `trace_path`.",
-        return_type: &[ArgType::Nil],
       },
     ],
   },

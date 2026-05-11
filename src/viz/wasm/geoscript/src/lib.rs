@@ -47,7 +47,6 @@ use crate::{
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
     resolve_builtin_impl, FUNCTION_ALIASES,
-    trace_path::TRACE_PATH_DRAW_COMMAND_NAMES
   },
   lights::Light,
   materials::Material,
@@ -424,18 +423,6 @@ impl Callable {
     match self {
       Callable::Builtin { fn_entry_ix, .. } => {
         let name = fn_sigs().entries[*fn_entry_ix].0;
-        // Trace-path draw commands are intrinsically side-effectful (they mutate the
-        // surrounding `DrawCtx`), and so are their pipe/aliased forms.  Aliases
-        // resolve to their canonical name through `FUNCTION_ALIASES`, but the bare
-        // alias still has its own builtin entry, so check both spellings.
-        if TRACE_PATH_DRAW_COMMAND_NAMES.contains(&name) {
-          return true;
-        }
-        if let Some(canonical) = crate::builtins::FUNCTION_ALIASES.get(name) {
-          if TRACE_PATH_DRAW_COMMAND_NAMES.contains(canonical) {
-            return true;
-          }
-        }
         matches!(
           name,
           "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert" | "set_rng_seed"
@@ -4926,10 +4913,10 @@ x = len(m)"#;
 
 #[test]
 fn test_render_path_sampler() {
-  // A trace_path callable (which implements PathSampler) should be renderable directly.
+  // A path sampler (which implements PathSampler) should be renderable directly.
   // It should produce a single closed path with 10001 points (10000 samples + closing repeat).
   let src = r#"
-p = trace_path(|| {
+p = build_path(path {
   move(0, 0)
   line(1, 0)
   line(1, 1)
@@ -5072,3 +5059,4 @@ fn test_import_unknown_module_error() {
     "Error should mention unknown module, got: {err}"
   );
 }
+

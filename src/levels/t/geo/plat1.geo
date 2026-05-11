@@ -1,5 +1,5 @@
-p = trace_path(
-  || {
+p = build_path(
+  path {
     line(0,1)
     line(1,1)
     line(1,0)

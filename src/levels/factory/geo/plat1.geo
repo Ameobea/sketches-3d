@@ -1,9 +1,9 @@
-p = trace_path(|| {
+p = build_path(path {
   circle(radius=35, center=v2(0))
 })
 p = path_intersect(
   p,
-  trace_path(|| {
+  build_path(path {
     move(-2, -6)
     line(2, -6)
     line(2, 6)

@@ -9,11 +9,11 @@ use crate::builtins::path_critical_points::{
 };
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
-  build_topology_samples, DrawCommand, FillRule, PathTracerCallable,
+  polylines_to_draw_commands, sample_path_subpaths, FillRule, PathTracerCallable,
 };
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
-use crate::{Callable, Vec2, EMPTY_KWARGS};
+use crate::{Callable, Vec2};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -63,32 +63,6 @@ pub enum BooleanOp {
   Intersect,
   Difference,
   Xor,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn build_draw_commands(paths: Vec<Vec<Vec2>>) -> Vec<DrawCommand> {
-  let mut cmds = Vec::new();
-  for mut points in paths {
-    if points.len() < 2 {
-      continue;
-    }
-
-    if let (Some(first), Some(last)) = (points.first(), points.last()) {
-      if (*first - *last).norm() <= 1e-6 {
-        points.pop();
-      }
-    }
-
-    let Some(first) = points.first().copied() else {
-      continue;
-    };
-    cmds.push(DrawCommand::MoveTo(first));
-    for pt in points.iter().skip(1) {
-      cmds.push(DrawCommand::LineTo(*pt));
-    }
-    cmds.push(DrawCommand::Close);
-  }
-  cmds
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -202,60 +176,24 @@ fn sample_path_to_coords(
   closed_override: Option<bool>,
   fn_name: &str,
 ) -> Result<(Vec<f64>, Vec<u32>), ErrorStack> {
-  use crate::builtins::trace_path::as_path_sampler;
+  let subpaths = sample_path_subpaths(
+    ctx,
+    path_callable,
+    curve_angle_radians,
+    sample_count,
+    closed_override,
+    fn_name,
+  )?;
 
   let mut coords = Vec::new();
   let mut lengths = Vec::new();
-
-  let sampler = as_path_sampler(path_callable);
-  let subpath_data = sampler.and_then(|s| s.sample_subpaths(curve_angle_radians));
-
-  if let Some(subpath_data) = subpath_data {
-    for (points, _is_closed) in subpath_data {
-      if points.len() >= 2 {
-        lengths.push(points.len() as u32);
-        for pt in &points {
-          coords.push(pt.x as f64);
-          coords.push(pt.y as f64);
-        }
-      }
-    }
-  } else {
-    let sample_point = |t: f32| -> Result<Vec2, ErrorStack> {
-      let out = ctx
-        .invoke_callable(path_callable, &[Value::Float(t)], EMPTY_KWARGS)
-        .map_err(|err| err.wrap(&format!("Error sampling callable passed to `{fn_name}`")))?;
-      let point = out.as_vec2().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "Expected Vec2 from callable passed to `{fn_name}`, found: {out:?}"
-        ))
-      })?;
-      Ok(*point)
-    };
-
-    let is_closed = if let Some(closed) = closed_override {
-      closed
-    } else {
-      let p0 = sample_point(0.0)?;
-      let p1 = sample_point(1.0)?;
-      (p0 - p1).norm() <= 1e-4
-    };
-
-    let t_samples = build_topology_samples(sample_count, None, None, !is_closed);
-    let mut points = Vec::with_capacity(t_samples.len());
-    for t in t_samples {
-      points.push(sample_point(t)?);
-    }
-
-    if points.len() >= 2 {
-      lengths.push(points.len() as u32);
-      for pt in &points {
-        coords.push(pt.x as f64);
-        coords.push(pt.y as f64);
-      }
+  for (points, _is_closed) in subpaths {
+    lengths.push(points.len() as u32);
+    for pt in &points {
+      coords.push(pt.x as f64);
+      coords.push(pt.y as f64);
     }
   }
-
   Ok((coords, lengths))
 }
 
@@ -358,7 +296,8 @@ pub fn path_boolean_impl(
         None
       };
 
-      let draw_cmds = build_draw_commands(boolean_result.paths);
+      let draw_cmds =
+        polylines_to_draw_commands(boolean_result.paths.into_iter().map(|p| (p, true)));
 
       let interned_t_kwarg = ctx.interned_symbols.intern("t");
       let mut tracer = PathTracerCallable::new_with_critical_points(

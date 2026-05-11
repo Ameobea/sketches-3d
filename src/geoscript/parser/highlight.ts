@@ -42,4 +42,8 @@ export const geoscriptHighlighting = styleTags({
   Else: t.keyword,
   Return: t.keyword,
   Break: t.keyword,
+  Path: t.keyword,
+  Import: t.keyword,
+  Export: t.keyword,
+  From: t.keyword,
 });

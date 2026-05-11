@@ -840,18 +840,19 @@ mod tests {
 
     let sampler = PathTracerCallable {
       interned_t_kwarg: Sym(0),
-      subpaths: vec![PathSubpath {
+      subpaths: std::rc::Rc::new(vec![PathSubpath {
         segments,
         cumulative_lengths: cumulative_lens,
         total_length: total_len,
         closed: true,
-      }],
-      subpath_cumulative_lengths: vec![total_len],
+      }]),
+      subpath_cumulative_lengths: std::rc::Rc::new(vec![total_len]),
       total_length: total_len,
       reverse: false,
       override_critical_points: Some(Vec::new()),
       fill_rule: None,
       transform: nalgebra::Matrix3::identity(),
+      inward_flip_cache: std::cell::RefCell::new(None),
     };
     let ring_resolution = 80;
     let min_segment_length = 0.00001;

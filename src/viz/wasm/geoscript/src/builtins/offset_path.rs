@@ -6,12 +6,10 @@ use std::rc::Rc;
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::path_critical_points::{detect_critical_points, CriticalPointConfig};
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::trace_path::{
-  build_topology_samples, DrawCommand, PathTracerCallable,
-};
+use crate::builtins::trace_path::{polylines_to_draw_commands, PathTracerCallable};
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
-use crate::{Callable, Vec2, EMPTY_KWARGS};
+use crate::{Callable, Vec2};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -143,32 +141,6 @@ fn parse_end_type(value: &Value) -> Result<u32, ErrorStack> {
     )));
   }
   Ok(num as u32)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn build_draw_commands(paths: Vec<Vec<Vec2>>) -> Vec<DrawCommand> {
-  let mut cmds = Vec::new();
-  for mut points in paths {
-    if points.len() < 2 {
-      continue;
-    }
-
-    if let (Some(first), Some(last)) = (points.first(), points.last()) {
-      if (*first - *last).norm() <= 1e-6 {
-        points.pop();
-      }
-    }
-
-    let Some(first) = points.first().copied() else {
-      continue;
-    };
-    cmds.push(DrawCommand::MoveTo(first));
-    for pt in points.iter().skip(1) {
-      cmds.push(DrawCommand::LineTo(*pt));
-    }
-    cmds.push(DrawCommand::Close);
-  }
-  cmds
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -332,53 +304,20 @@ pub fn offset_path_impl(
       let mut closed_inputs = Vec::new();
       let mut open_inputs = Vec::new();
 
-      let mut push_path = |points: Vec<Vec2>, is_closed: bool| {
-        if points.len() < 2 {
-          return;
-        }
+      let subpaths = crate::builtins::trace_path::sample_path_subpaths(
+        ctx,
+        path_callable,
+        curve_angle_radians,
+        sample_count,
+        closed_override,
+        "offset_path",
+      )?;
+      for (points, is_closed) in subpaths {
         if is_closed {
           closed_inputs.push(points);
         } else {
           open_inputs.push(points);
         }
-      };
-
-      let sampler = crate::builtins::trace_path::as_path_sampler(path_callable);
-      let subpath_data = sampler.and_then(|s| s.sample_subpaths(curve_angle_radians));
-
-      if let Some(subpath_data) = subpath_data {
-        for (points, is_closed) in subpath_data {
-          let is_closed = closed_override.unwrap_or(is_closed);
-          push_path(points, is_closed);
-        }
-      } else {
-        let sample_point = |t: f32| -> Result<Vec2, ErrorStack> {
-          let out = ctx
-            .invoke_callable(path_callable, &[Value::Float(t)], EMPTY_KWARGS)
-            .map_err(|err| err.wrap("Error sampling callable passed to `offset_path`"))?;
-          let point = out.as_vec2().ok_or_else(|| {
-            ErrorStack::new(format!(
-              "Expected Vec2 from callable passed to `offset_path`, found: {out:?}"
-            ))
-          })?;
-          Ok(*point)
-        };
-
-        let is_closed = if let Some(closed) = closed_override {
-          closed
-        } else {
-          let p0 = sample_point(0.0)?;
-          let p1 = sample_point(1.0)?;
-          (p0 - p1).norm() <= 1e-4
-        };
-
-        let t_samples = build_topology_samples(sample_count, None, None, !is_closed);
-        let mut points = Vec::with_capacity(t_samples.len());
-        for t in t_samples {
-          points.push(sample_point(t)?);
-        }
-
-        push_path(points, is_closed);
       }
 
       let mut output_paths = Vec::new();
@@ -421,7 +360,7 @@ pub fn offset_path_impl(
       run_group(&open_inputs, false)?;
 
       let output_path_count = output_paths.len();
-      let draw_cmds = build_draw_commands(output_paths);
+      let draw_cmds = polylines_to_draw_commands(output_paths.into_iter().map(|p| (p, true)));
       if output_path_count != 1 {
         critical_points = None;
       }

@@ -12,7 +12,7 @@ railing = rail_sweep(
   spine_resolution=64,
   ring_resolution=4,
   closed=true,
-  profile=trace_path(|| rect(v2(0), v2(1, 0.6)))
+  profile=build_path(path { rect(v2(0), v2(1, 0.6)) })
 )
   | trans(0, 7.4, 0)
 

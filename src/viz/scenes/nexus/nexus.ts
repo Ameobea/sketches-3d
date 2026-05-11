@@ -24,6 +24,7 @@ import { MetricsAPI } from 'src/api/client';
 import PlatformColorShader from './shaders/platform/color.frag?raw';
 import PlatformRoughnessShader from './shaders/platform/roughness.frag?raw';
 import { resolve } from '$app/paths';
+import { dev } from '$app/environment';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -629,6 +630,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     spawnLocation: 'spawn',
     gravity: 30,
     player: {
+      playerColliderShape: 'capsule',
       moveSpeed: { onGround: 10, inAir: 13 },
       colliderSize: { height: 2.2, radius: 1.14 },
       jumpVelocity: 12,
@@ -643,6 +645,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
       externalVelocityGroundDampingFactor: new THREE.Vector3(0.9992, 0.9992, 0.9992),
     },
     debugPos: true,
+    debugPlayerKinematics: dev,
     locations,
     customControlsEntries: [
       {
