@@ -5354,6 +5354,44 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "aabb" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "The mesh to compute the axis-aligned bounding box of."
+          },
+        ],
+        description: "Returns the axis-aligned bounding box of `mesh` as a 2-element sequence `[mins, maxs]` of Vec3 corners, in world space (after the mesh's transform is applied). Errors if the mesh is empty.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "path_aabb" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler with analytic segment topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`)."
+          },
+        ],
+        description: "Returns the exact axis-aligned bounding box of a 2D path as a 2-element sequence `[mins, maxs]` of Vec2 corners.\n\nThe bound is computed analytically from the path's line segments, beziers, and arcs (exact modulo floating-point rounding) — not from a polyline discretization. Any transforms applied to the path are baked in. Errors if the path is empty, or if it contains arc segments under a non-uniform transform (skew or non-uniform scale), since transformed arcs are conics with no closed-form axis-aligned bound; bake the transform with `apply_transforms` first in that case.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
   "is_self_intersecting" => FnDef {
     module: "mesh",
     examples: &[],
@@ -8492,6 +8530,60 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Computes the intersection of two 2D paths using Clipper2. The intersection contains only areas inside both paths.",
         return_type: &[ArgType::Callable],
+      }
+    ]
+  },
+  "path_intersects" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The first path sampler. Must be a callable with known topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); black-box `|t|: vec2` callables are rejected."
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The second path sampler. Same restriction as `a`."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
+            description: "Fill rule used to determine the interior of each path when checking for overlap: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count fallback for path samplers without curvature-adaptive sampling."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the inputs as closed/open."
+          },
+        ],
+        description: "Returns `true` if the two 2D path regions overlap under the given fill rule, `false` otherwise.\n\nDetects both cases where path segments cross and cases where one path is fully contained inside the other. Uses Clipper2's region intersection internally, so winding order and the chosen fill rule determine what counts as interior.\n\nOnly supported for path samplers with known topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); generic black-box `|t|: vec2` callables raise an error.",
+        return_type: &[ArgType::Bool],
       }
     ]
   },

@@ -3386,6 +3386,65 @@ fn intersects_impl(
   }
 }
 
+fn aabb_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      if mesh.mesh.is_empty() {
+        return Err(ErrorStack::new(
+          "`aabb`: cannot compute the AABB of an empty mesh",
+        ));
+      }
+      let bbox = mesh.get_or_compute_aabb();
+      Ok(Value::Sequence(Rc::new(EagerSeq {
+        inner: vec![Value::Vec3(bbox.mins.coords), Value::Vec3(bbox.maxs.coords)],
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn path_aabb_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let path_val = arg_refs[0].resolve(args, kwargs);
+      let callable = path_val.as_callable().ok_or_else(|| {
+        ErrorStack::new(format!(
+          "Invalid `path` argument for `path_aabb`; expected Callable, found: {path_val:?}"
+        ))
+      })?;
+
+      let tracer = trace_path::as_path_tracer(callable).ok_or_else(|| {
+        ErrorStack::new(
+          "`path_aabb` requires a path sampler with analytic segment topology (e.g. from \
+           `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`). Black-box \
+           callables and samplers like `lerp_path` or `catmull_rom` that don't expose \
+           explicit segments are not supported.",
+        )
+      })?;
+
+      let (mins, maxs) = tracer.analytic_aabb()?.ok_or_else(|| {
+        ErrorStack::new("`path_aabb`: path contains no contributing segments")
+      })?;
+
+      Ok(Value::Sequence(Rc::new(EagerSeq {
+        inner: vec![Value::Vec2(mins), Value::Vec2(maxs)],
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn is_self_intersecting_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -7231,6 +7290,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "intersects" => builtin_fn!(intersects, |def_ix, arg_refs, args, kwargs, _ctx| {
     intersects_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "aabb" => builtin_fn!(aabb, |def_ix, arg_refs, args, kwargs, _ctx| {
+    aabb_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "path_aabb" => builtin_fn!(path_aabb, |def_ix, arg_refs, args, kwargs, _ctx| {
+    path_aabb_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "is_self_intersecting" => builtin_fn!(is_self_intersecting, |def_ix, arg_refs, args, kwargs, _ctx| {
     is_self_intersecting_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -7296,6 +7361,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "path_intersect" => builtin_fn!(path_intersect, |def_ix, arg_refs, args, kwargs, ctx| {
     path_boolean::path_intersect_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "path_intersects" => builtin_fn!(path_intersects, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_boolean::path_intersects_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "path_difference" => builtin_fn!(path_difference, |def_ix, arg_refs, args, kwargs, ctx| {
     path_boolean::path_difference_impl(ctx, def_ix, arg_refs, args, kwargs)

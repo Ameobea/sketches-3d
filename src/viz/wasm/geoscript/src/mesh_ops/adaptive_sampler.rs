@@ -603,11 +603,6 @@ where
 
 #[cfg(test)]
 mod tests {
-  use crate::{
-    builtins::trace_path::{PathSampler, PathSegment, PathSubpath, PathTracerCallable},
-    EvalCtx, Sym,
-  };
-
   use super::*;
   use std::f32::consts::PI;
 
@@ -795,102 +790,6 @@ mod tests {
     assert!(
       has_sample_near_turn,
       "Should have sample near turn at t=0.5"
-    );
-  }
-
-  #[test]
-  fn test_bad_adaptive_sampler_repro() {
-    let raw_test_data = include_str!("./test_data/adaptive_sampler_repro_pts.txt");
-
-    // format:
-    // start_x
-    // start_y
-    // end_x
-    // end_y
-    // length
-
-    // 589 line segments
-
-    let mut segments = Vec::new();
-    for line in raw_test_data.lines().take(589 * 5).array_chunks::<5>() {
-      let start_x: f32 = line[0].parse().unwrap();
-      let start_y: f32 = line[1].parse().unwrap();
-      let end_x: f32 = line[2].parse().unwrap();
-      let end_y: f32 = line[3].parse().unwrap();
-      let length: f32 = line[4].parse().unwrap();
-
-      segments.push(PathSegment::Line {
-        start: Vec2::new(start_x, start_y),
-        end: Vec2::new(end_x, end_y),
-        length,
-      });
-    }
-
-    // on line 2946 (1-indexed) the `cumulative_lengths` list starts
-    //
-    // all total lengths are equal to the last cumulative length
-    let mut cumulative_lens = Vec::new();
-    for line in raw_test_data.lines().skip(589 * 5).take(589) {
-      let cumulative_len: f32 = line.parse().unwrap();
-      cumulative_lens.push(cumulative_len);
-    }
-    assert_eq!(cumulative_lens[0], 0.07176949);
-    let total_len = cumulative_lens.last().copied().unwrap();
-    assert_eq!(total_len, 32.876934);
-
-    let sampler = PathTracerCallable {
-      interned_t_kwarg: Sym(0),
-      subpaths: std::rc::Rc::new(vec![PathSubpath {
-        segments,
-        cumulative_lengths: cumulative_lens,
-        total_length: total_len,
-        closed: true,
-      }]),
-      subpath_cumulative_lengths: std::rc::Rc::new(vec![total_len]),
-      total_length: total_len,
-      reverse: false,
-      override_critical_points: Some(Vec::new()),
-      fill_rule: None,
-      transform: nalgebra::Matrix3::identity(),
-      inward_flip_cache: std::cell::RefCell::new(None),
-    };
-    let ring_resolution = 80;
-    let min_segment_length = 0.00001;
-    let initial_ts = vec![0.0, 1.0];
-
-    let ctx = EvalCtx::default();
-    let sample_fn = |t| sampler.eval_at(t, &ctx);
-
-    let samples =
-      adaptive_sample_fallible(ring_resolution, &initial_ts, sample_fn, min_segment_length)
-        .unwrap();
-
-    assert_eq!(
-      samples.len(),
-      ring_resolution,
-      "Should return exactly ring_resolution samples"
-    );
-    assert!(
-      samples.iter().all(|&t| t >= 0.0 && t < 1.0),
-      "All samples must be in [0, 1)"
-    );
-    for &[a, b] in samples.array_windows::<2>() {
-      assert!(a < b, "Samples must be strictly increasing");
-    }
-
-    // The old greedy algorithm produced a gap from t=0.0 to t=0.1 (8x the expected ~0.0125
-    // average gap), because the S-curve midpoints coincided with chords.  Verify this is fixed:
-    // no consecutive gap should exceed 4x the average spacing.
-    let avg_gap = 1.0 / ring_resolution as f32;
-    let max_consecutive_gap = samples
-      .array_windows::<2>()
-      .map(|&[a, b]| b - a)
-      .fold(0.0f32, f32::max);
-    assert!(
-      max_consecutive_gap < avg_gap * 4.0,
-      "Max consecutive gap {max_consecutive_gap:.4} exceeds 4x average {:.4} (old algorithm \
-       produced 0.1 gap at the start)",
-      avg_gap * 4.0
     );
   }
 

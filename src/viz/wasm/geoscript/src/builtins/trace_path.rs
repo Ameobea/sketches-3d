@@ -17,13 +17,6 @@ use crate::{
 const CURVE_TABLE_SAMPLES: usize = 32;
 const LENGTH_EPSILON: f32 = 1e-5;
 
-fn extend_bounds(min: &mut Vec2, max: &mut Vec2, p: Vec2) {
-  min.x = min.x.min(p.x);
-  min.y = min.y.min(p.y);
-  max.x = max.x.max(p.x);
-  max.y = max.y.max(p.y);
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ArcLengthTable {
   cumulative: Vec<f32>,
@@ -31,28 +24,23 @@ pub(crate) struct ArcLengthTable {
 }
 
 impl ArcLengthTable {
-  fn new(samples: usize, mut sample_fn: impl FnMut(f32) -> Vec2) -> (Self, Vec2, Vec2) {
+  fn new(samples: usize, mut sample_fn: impl FnMut(f32) -> Vec2) -> Self {
     let samples = samples.max(1);
     let mut cumulative = Vec::with_capacity(samples + 1);
     let mut total = 0.0;
 
-    let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
-    let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
-
     let mut prev = sample_fn(0.0);
-    extend_bounds(&mut min, &mut max, prev);
     cumulative.push(0.0);
 
     for i in 1..=samples {
       let t = i as f32 / samples as f32;
       let point = sample_fn(t);
-      extend_bounds(&mut min, &mut max, point);
       total += (point - prev).norm();
       cumulative.push(total);
       prev = point;
     }
 
-    (Self { cumulative, total }, min, max)
+    Self { cumulative, total }
   }
 
   fn total(&self) -> f32 {
@@ -395,6 +383,13 @@ impl<T: PathSampler + 'static> DynamicCallable for T {
 
   fn is_rng_dependent(&self) -> bool {
     false
+  }
+}
+
+pub(crate) fn as_path_tracer(callable: &Callable) -> Option<&PathTracerCallable> {
+  match callable {
+    Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
+    _ => None,
   }
 }
 
@@ -796,6 +791,121 @@ impl PathSegment {
     }
   }
 
+  /// Returns the exact AABB of this segment in its local coordinate space.
+  pub(crate) fn aabb(&self) -> (Vec2, Vec2) {
+    match self {
+      PathSegment::Line { start, end, .. } => (
+        Vec2::new(start.x.min(end.x), start.y.min(end.y)),
+        Vec2::new(start.x.max(end.x), start.y.max(end.y)),
+      ),
+      PathSegment::Quadratic {
+        start, ctrl, end, ..
+      } => quadratic_bezier_aabb(*start, *ctrl, *end),
+      PathSegment::Cubic {
+        start,
+        ctrl1,
+        ctrl2,
+        end,
+        ..
+      } => cubic_bezier_aabb(*start, *ctrl1, *ctrl2, *end),
+      PathSegment::Arc {
+        center,
+        rx,
+        ry,
+        cos_phi,
+        sin_phi,
+        theta_start,
+        theta_delta,
+        ..
+      } => arc_aabb(
+        *center,
+        *rx,
+        *ry,
+        *cos_phi,
+        *sin_phi,
+        *theta_start,
+        *theta_delta,
+      ),
+    }
+  }
+
+  /// Returns the exact AABB of this segment after applying the given 2D affine transform.
+  /// Errors only for arc segments under a non-uniform transform, where the result is not an
+  /// arc and an exact bound would require evaluating a transformed conic.
+  pub(crate) fn aabb_under_transform(
+    &self,
+    m: &Matrix3<f32>,
+  ) -> Result<(Vec2, Vec2), ErrorStack> {
+    if *m == Matrix3::identity() {
+      return Ok(self.aabb());
+    }
+    match self {
+      PathSegment::Line { start, end, .. } => {
+        let s = apply_transform_to_point(m, *start);
+        let e = apply_transform_to_point(m, *end);
+        Ok((
+          Vec2::new(s.x.min(e.x), s.y.min(e.y)),
+          Vec2::new(s.x.max(e.x), s.y.max(e.y)),
+        ))
+      }
+      PathSegment::Quadratic {
+        start, ctrl, end, ..
+      } => Ok(quadratic_bezier_aabb(
+        apply_transform_to_point(m, *start),
+        apply_transform_to_point(m, *ctrl),
+        apply_transform_to_point(m, *end),
+      )),
+      PathSegment::Cubic {
+        start,
+        ctrl1,
+        ctrl2,
+        end,
+        ..
+      } => Ok(cubic_bezier_aabb(
+        apply_transform_to_point(m, *start),
+        apply_transform_to_point(m, *ctrl1),
+        apply_transform_to_point(m, *ctrl2),
+        apply_transform_to_point(m, *end),
+      )),
+      PathSegment::Arc {
+        center,
+        rx,
+        ry,
+        cos_phi,
+        sin_phi,
+        theta_start,
+        theta_delta,
+        ..
+      } => {
+        if !is_uniform_transform(m) {
+          return Err(ErrorStack::new(
+            "exact AABB of an arc segment under a non-uniform transform (e.g. non-uniform \
+             scale or skew) is not supported; bake the transform into the path first or \
+             convert arcs to cubic beziers",
+          ));
+        }
+        let cos_a = m[(0, 0)];
+        let sin_a = m[(1, 0)];
+        let scale = (cos_a * cos_a + sin_a * sin_a).sqrt();
+        let rot_angle = sin_a.atan2(cos_a);
+        let new_center = apply_transform_to_point(m, *center);
+        let new_rx = rx * scale;
+        let new_ry = ry * scale;
+        let old_phi = sin_phi.atan2(*cos_phi);
+        let new_phi = old_phi + rot_angle;
+        Ok(arc_aabb(
+          new_center,
+          new_rx,
+          new_ry,
+          new_phi.cos(),
+          new_phi.sin(),
+          *theta_start,
+          *theta_delta,
+        ))
+      }
+    }
+  }
+
   fn sample_by_length(&self, length: f32) -> Vec2 {
     match self {
       PathSegment::Line {
@@ -855,6 +965,132 @@ impl PathSegment {
   }
 }
 
+/// Returns the analytic 2D AABB of a quadratic bezier with the given control points.
+///
+/// Solves dB/dt = 0 per component for the interior extrema, evaluates the curve at those
+/// in-range t values, and combines with the endpoints. Exact modulo floating-point rounding.
+pub(crate) fn quadratic_bezier_aabb(p0: Vec2, p1: Vec2, p2: Vec2) -> (Vec2, Vec2) {
+  let mut min = Vec2::new(p0.x.min(p2.x), p0.y.min(p2.y));
+  let mut max = Vec2::new(p0.x.max(p2.x), p0.y.max(p2.y));
+  for axis in 0..2 {
+    let a0 = p0[axis];
+    let a1 = p1[axis];
+    let a2 = p2[axis];
+    let denom = a0 - 2.0 * a1 + a2;
+    if denom.abs() <= 1e-12 {
+      continue;
+    }
+    let t = (a0 - a1) / denom;
+    if (0.0..=1.0).contains(&t) {
+      let v = quadratic_bezier(p0, p1, p2, t)[axis];
+      min[axis] = min[axis].min(v);
+      max[axis] = max[axis].max(v);
+    }
+  }
+  (min, max)
+}
+
+/// Returns the analytic 2D AABB of a cubic bezier with the given control points.
+///
+/// Solves the quadratic dB/dt = 0 per component for interior extrema (up to two per axis),
+/// evaluates the curve at those in-range t values, and combines with the endpoints. Exact
+/// modulo floating-point rounding.
+pub(crate) fn cubic_bezier_aabb(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> (Vec2, Vec2) {
+  let mut min = Vec2::new(p0.x.min(p3.x), p0.y.min(p3.y));
+  let mut max = Vec2::new(p0.x.max(p3.x), p0.y.max(p3.y));
+  for axis in 0..2 {
+    let a0 = p0[axis];
+    let a1 = p1[axis];
+    let a2 = p2[axis];
+    let a3 = p3[axis];
+    // B'(t) / 3 = (1-t)^2 (a1-a0) + 2(1-t)t (a2-a1) + t^2 (a3-a2)
+    //           = a t^2 + b t + c
+    let a = -a0 + 3.0 * a1 - 3.0 * a2 + a3;
+    let b = 2.0 * (a0 - 2.0 * a1 + a2);
+    let c = a1 - a0;
+
+    let mut consider = |t: f32| {
+      if (0.0..=1.0).contains(&t) {
+        let v = cubic_bezier(p0, p1, p2, p3, t)[axis];
+        min[axis] = min[axis].min(v);
+        max[axis] = max[axis].max(v);
+      }
+    };
+
+    if a.abs() <= 1e-12 {
+      if b.abs() > 1e-12 {
+        consider(-c / b);
+      }
+      continue;
+    }
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+      continue;
+    }
+    let sq = disc.sqrt();
+    consider((-b + sq) / (2.0 * a));
+    consider((-b - sq) / (2.0 * a));
+  }
+  (min, max)
+}
+
+/// Returns the analytic 2D AABB of the elliptical arc covered by the given parametrization.
+///
+/// `theta_delta` may be positive or negative (signed sweep). Critical angles where
+/// dx/dθ = 0 or dy/dθ = 0 are computed analytically; each is shifted by multiples of 2π
+/// to test inclusion in the swept range, and contributing points are folded into the
+/// endpoint bounds. Exact modulo floating-point rounding.
+pub(crate) fn arc_aabb(
+  center: Vec2,
+  rx: f32,
+  ry: f32,
+  cos_phi: f32,
+  sin_phi: f32,
+  theta_start: f32,
+  theta_delta: f32,
+) -> (Vec2, Vec2) {
+  let start = arc_point(center, rx, ry, cos_phi, sin_phi, theta_start, theta_delta, 0.0);
+  let end = arc_point(center, rx, ry, cos_phi, sin_phi, theta_start, theta_delta, 1.0);
+  let mut min = Vec2::new(start.x.min(end.x), start.y.min(end.y));
+  let mut max = Vec2::new(start.x.max(end.x), start.y.max(end.y));
+
+  if theta_delta.abs() <= 1e-12 || rx <= 0.0 || ry <= 0.0 {
+    return (min, max);
+  }
+
+  let theta_x = (-ry * sin_phi).atan2(rx * cos_phi);
+  let theta_y = (ry * cos_phi).atan2(rx * sin_phi);
+
+  let two_pi = std::f32::consts::TAU;
+  let theta_end = theta_start + theta_delta;
+  let (theta_lo, theta_hi) = if theta_delta >= 0.0 {
+    (theta_start, theta_end)
+  } else {
+    (theta_end, theta_start)
+  };
+
+  for theta_c in [theta_x, theta_x + std::f32::consts::PI, theta_y, theta_y + std::f32::consts::PI]
+  {
+    // Shift theta_c by 2π·k so it falls into [theta_lo, theta_hi], if possible.
+    let k = ((theta_lo - theta_c) / two_pi).ceil();
+    let theta_in = theta_c + k * two_pi;
+    if theta_in < theta_lo - 1e-6 || theta_in > theta_hi + 1e-6 {
+      continue;
+    }
+    let t = (theta_in - theta_start) / theta_delta;
+    if !(-1e-6..=1.0 + 1e-6).contains(&t) {
+      continue;
+    }
+    let p = arc_point(center, rx, ry, cos_phi, sin_phi, theta_start, theta_delta, t.clamp(0.0, 1.0));
+    min.x = min.x.min(p.x);
+    min.y = min.y.min(p.y);
+    max.x = max.x.max(p.x);
+    max.y = max.y.max(p.y);
+  }
+
+  (min, max)
+}
+
 fn is_uniform_transform(m: &Matrix3<f32>) -> bool {
   let a = m[(0, 0)];
   let b = m[(0, 1)];
@@ -886,7 +1122,7 @@ pub(crate) fn transform_segment(
       let new_start = apply_transform_to_point(m, *start);
       let new_ctrl = apply_transform_to_point(m, *ctrl);
       let new_end = apply_transform_to_point(m, *end);
-      let (table, _, _) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+      let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
         quadratic_bezier(new_start, new_ctrl, new_end, t)
       });
       Ok(PathSegment::Quadratic {
@@ -907,7 +1143,7 @@ pub(crate) fn transform_segment(
       let new_ctrl1 = apply_transform_to_point(m, *ctrl1);
       let new_ctrl2 = apply_transform_to_point(m, *ctrl2);
       let new_end = apply_transform_to_point(m, *end);
-      let (table, _, _) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+      let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
         cubic_bezier(new_start, new_ctrl1, new_ctrl2, new_end, t)
       });
       Ok(PathSegment::Cubic {
@@ -939,11 +1175,13 @@ pub(crate) fn transform_segment(
       }
 
       // Uniform similarity transform: preserves arcs exactly.
-      // Extract the uniform scale and rotation angle from the 2x2 block.
-      let a = m[(0, 0)];
-      let b = m[(0, 1)];
-      let scale = (a * a + b * b).sqrt();
-      let rot_angle = b.atan2(a);
+      // Extract the uniform scale and rotation angle from the 2x2 block. For the project's
+      // row-major rotation matrix `[cos, -sin; sin, cos]`, the signed rotation angle comes
+      // from `atan2(m[1,0], m[0,0]) = atan2(sin, cos)`; using `m[0,1]` would yield -angle.
+      let cos_a = m[(0, 0)];
+      let sin_a = m[(1, 0)];
+      let scale = (cos_a * cos_a + sin_a * sin_a).sqrt();
+      let rot_angle = sin_a.atan2(cos_a);
 
       let new_center = apply_transform_to_point(m, *center);
       let new_end = apply_transform_to_point(m, *end);
@@ -956,7 +1194,7 @@ pub(crate) fn transform_segment(
       let new_cos_phi = new_phi.cos();
       let new_sin_phi = new_phi.sin();
 
-      let (table, _, _) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+      let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
         arc_point(
           new_center,
           new_rx,
@@ -1100,6 +1338,32 @@ impl PathSubpath {
   }
 }
 
+/// Returns the exact AABB of all segments across the given subpaths, with the given affine
+/// transform applied to each segment first. `None` if there are no contributing segments.
+///
+/// Errors only when the transform is non-uniform (skew or non-uniform scale) and at least
+/// one segment is an `Arc`, since the transformed shape is then a conic with no closed-form
+/// axis-aligned bound.
+pub(crate) fn subpaths_aabb(
+  subpaths: &[PathSubpath],
+  transform: &Matrix3<f32>,
+) -> Result<Option<(Vec2, Vec2)>, ErrorStack> {
+  let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
+  let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+  let mut any = false;
+  for sp in subpaths {
+    for seg in &sp.segments {
+      let (smin, smax) = seg.aabb_under_transform(transform)?;
+      min.x = min.x.min(smin.x);
+      min.y = min.y.min(smin.y);
+      max.x = max.x.max(smax.x);
+      max.y = max.y.max(smax.y);
+      any = true;
+    }
+  }
+  Ok(if any { Some((min, max)) } else { None })
+}
+
 #[derive(Debug)]
 pub struct PathTracerCallable {
   pub interned_t_kwarg: Sym,
@@ -1123,14 +1387,10 @@ impl PathTracerCallable {
   ) -> Self {
     let mut subpaths: Vec<PathSubpath> = Vec::new();
     let mut builder: Option<SubpathBuilder> = None;
-    let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
-    let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
 
     fn finalize_subpath(
       builder: &mut Option<SubpathBuilder>,
       force_close: bool,
-      min: &mut Vec2,
-      max: &mut Vec2,
       out: &mut Vec<PathSubpath>,
     ) {
       let Some(mut builder) = builder.take() else {
@@ -1140,8 +1400,6 @@ impl PathTracerCallable {
       if force_close && !builder.closed {
         let cur = builder.current;
         let start = builder.start;
-        extend_bounds(min, max, cur);
-        extend_bounds(min, max, start);
         let length = (start - cur).norm();
         if length > LENGTH_EPSILON {
           builder.segments.push(PathSegment::Line {
@@ -1172,8 +1430,7 @@ impl PathTracerCallable {
     for cmd in draw_cmds {
       match cmd {
         DrawCommand::MoveTo(pos) => {
-          finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
-          extend_bounds(&mut min, &mut max, pos);
+          finalize_subpath(&mut builder, closed, &mut subpaths);
           builder = Some(SubpathBuilder::new(pos));
         }
         DrawCommand::LineTo(pos) => {
@@ -1183,8 +1440,6 @@ impl PathTracerCallable {
             .unwrap_or_else(|| Vec2::new(0.0, 0.0));
           let builder = get_or_create_builder(&mut builder, start);
           builder.closed = false;
-          extend_bounds(&mut min, &mut max, start);
-          extend_bounds(&mut min, &mut max, pos);
           let length = (pos - start).norm();
           if length > LENGTH_EPSILON {
             builder.segments.push(PathSegment::Line {
@@ -1204,11 +1459,9 @@ impl PathTracerCallable {
             .unwrap_or_else(|| Vec2::new(0.0, 0.0));
           let builder = get_or_create_builder(&mut builder, start);
           builder.closed = false;
-          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             quadratic_bezier(start, ctrl, to, t)
           });
-          extend_bounds(&mut min, &mut max, tmin);
-          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             builder.segments.push(PathSegment::Quadratic {
               start,
@@ -1232,11 +1485,9 @@ impl PathTracerCallable {
             Some(last_ctrl) => start + (start - last_ctrl),
             None => start,
           };
-          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             quadratic_bezier(start, ctrl, to, t)
           });
-          extend_bounds(&mut min, &mut max, tmin);
-          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             builder.segments.push(PathSegment::Quadratic {
               start,
@@ -1256,11 +1507,9 @@ impl PathTracerCallable {
             .unwrap_or_else(|| Vec2::new(0., 0.));
           let builder = get_or_create_builder(&mut builder, start);
           builder.closed = false;
-          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             cubic_bezier(start, ctrl1, ctrl2, to, t)
           });
-          extend_bounds(&mut min, &mut max, tmin);
-          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             builder.segments.push(PathSegment::Cubic {
               start,
@@ -1285,11 +1534,9 @@ impl PathTracerCallable {
             Some(last_ctrl) => start + (start - last_ctrl),
             None => start,
           };
-          let (table, tmin, tmax) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
             cubic_bezier(start, ctrl1, ctrl2, to, t)
           });
-          extend_bounds(&mut min, &mut max, tmin);
-          extend_bounds(&mut min, &mut max, tmax);
           if table.total() > LENGTH_EPSILON {
             builder.segments.push(PathSegment::Cubic {
               start,
@@ -1317,11 +1564,9 @@ impl PathTracerCallable {
             .unwrap_or_else(|| Vec2::new(0.0, 0.0));
           let builder = get_or_create_builder(&mut builder, start);
           builder.closed = false;
-          if let Some((segment, tmin, tmax)) =
+          if let Some(segment) =
             build_arc_segment(start, to, rx, ry, x_axis_rotation, large_arc, sweep)
           {
-            extend_bounds(&mut min, &mut max, tmin);
-            extend_bounds(&mut min, &mut max, tmax);
             if segment.length() > LENGTH_EPSILON {
               builder.segments.push(segment);
             }
@@ -1332,23 +1577,16 @@ impl PathTracerCallable {
         }
         DrawCommand::Circle { center, radius } => {
           // Emit as: move to right of circle, two semicircular arcs, close.
-          finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
+          finalize_subpath(&mut builder, closed, &mut subpaths);
 
           let right = center + Vec2::new(radius, 0.0);
           let left = center - Vec2::new(radius, 0.0);
-
-          extend_bounds(&mut min, &mut max, center - Vec2::new(radius, radius));
-          extend_bounds(&mut min, &mut max, center + Vec2::new(radius, radius));
 
           builder = Some(SubpathBuilder::new(right));
           let b = builder.as_mut().unwrap();
 
           // First semicircle: right -> left (sweep = true => goes through top)
-          if let Some((seg, smin, smax)) =
-            build_arc_segment(right, left, radius, radius, 0.0, false, true)
-          {
-            extend_bounds(&mut min, &mut max, smin);
-            extend_bounds(&mut min, &mut max, smax);
+          if let Some(seg) = build_arc_segment(right, left, radius, radius, 0.0, false, true) {
             if seg.length() > LENGTH_EPSILON {
               b.segments.push(seg);
             }
@@ -1356,11 +1594,7 @@ impl PathTracerCallable {
           b.current = left;
 
           // Second semicircle: left -> right (sweep = true => completes the circle)
-          if let Some((seg, smin, smax)) =
-            build_arc_segment(left, right, radius, radius, 0.0, false, true)
-          {
-            extend_bounds(&mut min, &mut max, smin);
-            extend_bounds(&mut min, &mut max, smax);
+          if let Some(seg) = build_arc_segment(left, right, radius, radius, 0.0, false, true) {
             if seg.length() > LENGTH_EPSILON {
               b.segments.push(seg);
             }
@@ -1375,7 +1609,7 @@ impl PathTracerCallable {
           width,
           height,
         } => {
-          finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
+          finalize_subpath(&mut builder, closed, &mut subpaths);
 
           let hw = width * 0.5;
           let hh = height * 0.5;
@@ -1383,9 +1617,6 @@ impl PathTracerCallable {
           let tl = Vec2::new(center.x - hw, center.y + hh);
           let bl = Vec2::new(center.x - hw, center.y - hh);
           let br = Vec2::new(center.x + hw, center.y - hh);
-
-          extend_bounds(&mut min, &mut max, tl);
-          extend_bounds(&mut min, &mut max, br);
 
           // Trace the rectangle CCW (in math Y-up) starting at top-right, mirroring `circle`'s
           // start-on-the-right convention.
@@ -1407,8 +1638,6 @@ impl PathTracerCallable {
           if let Some(builder) = builder.as_mut() {
             let cur = builder.current;
             let first = builder.start;
-            extend_bounds(&mut min, &mut max, cur);
-            extend_bounds(&mut min, &mut max, first);
             let length = (first - cur).norm();
             if length > LENGTH_EPSILON {
               builder.segments.push(PathSegment::Line {
@@ -1426,14 +1655,17 @@ impl PathTracerCallable {
       }
     }
 
-    finalize_subpath(&mut builder, closed, &mut min, &mut max, &mut subpaths);
+    finalize_subpath(&mut builder, closed, &mut subpaths);
 
-    if center && min.x <= max.x {
-      let center_pt = (min + max) * 0.5;
-      let offset = -center_pt;
-      for subpath in &mut subpaths {
-        for segment in &mut subpath.segments {
-          segment.translate(offset);
+    if center {
+      // Local-space (identity transform) — arcs can't fail this branch.
+      if let Ok(Some((cmin, cmax))) = subpaths_aabb(&subpaths, &Matrix3::identity()) {
+        let center_pt = (cmin + cmax) * 0.5;
+        let offset = -center_pt;
+        for subpath in &mut subpaths {
+          for segment in &mut subpath.segments {
+            segment.translate(offset);
+          }
         }
       }
     }
@@ -1456,6 +1688,16 @@ impl PathTracerCallable {
       transform: Matrix3::identity(),
       inward_flip_cache: RefCell::new(None),
     }
+  }
+
+  /// Returns the exact AABB of this tracer's geometry, with its 2D affine transform applied.
+  ///
+  /// Errors only if the path contains arc segments and the transform is non-uniform (i.e. a
+  /// skew or non-uniform scale), in which case the transformed arcs are conics with no
+  /// closed-form axis-aligned bound. In that case, bake the transform first with
+  /// `apply_transforms` (which converts arcs to cubic beziers) and call again.
+  pub fn analytic_aabb(&self) -> Result<Option<(Vec2, Vec2)>, ErrorStack> {
+    subpaths_aabb(&self.subpaths, &self.transform)
   }
 
   #[allow(dead_code)]
@@ -2455,15 +2697,12 @@ fn build_arc_segment(
   x_axis_rotation: f32,
   large_arc: bool,
   sweep: bool,
-) -> Option<(PathSegment, Vec2, Vec2)> {
+) -> Option<PathSegment> {
   let mut rx = rx.abs();
   let mut ry = ry.abs();
   if rx <= LENGTH_EPSILON || ry <= LENGTH_EPSILON {
     let length = (end - start).norm();
-    let mut min = start;
-    let mut max = start;
-    extend_bounds(&mut min, &mut max, end);
-    return Some((PathSegment::Line { start, end, length }, min, max));
+    return Some(PathSegment::Line { start, end, length });
   }
 
   if (end - start).norm() <= LENGTH_EPSILON {
@@ -2492,10 +2731,7 @@ fn build_arc_segment(
   let denom = rx_sq * y1p_sq + ry_sq * x1p_sq;
   if denom.abs() <= LENGTH_EPSILON {
     let length = (end - start).norm();
-    let mut min = start;
-    let mut max = start;
-    extend_bounds(&mut min, &mut max, end);
-    return Some((PathSegment::Line { start, end, length }, min, max));
+    return Some(PathSegment::Line { start, end, length });
   }
 
   let numerator = rx_sq * ry_sq - rx_sq * y1p_sq - ry_sq * x1p_sq;
@@ -2520,7 +2756,7 @@ fn build_arc_segment(
     theta_delta += 2. * PI;
   }
 
-  let (table, min, max) = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+  let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
     arc_point(
       center,
       rx,
@@ -2533,21 +2769,17 @@ fn build_arc_segment(
     )
   });
 
-  Some((
-    PathSegment::Arc {
-      end,
-      center,
-      rx,
-      ry,
-      cos_phi,
-      sin_phi,
-      theta_start,
-      theta_delta,
-      table,
-    },
-    min,
-    max,
-  ))
+  Some(PathSegment::Arc {
+    end,
+    center,
+    rx,
+    ry,
+    cos_phi,
+    sin_phi,
+    theta_start,
+    theta_delta,
+    table,
+  })
 }
 
 fn parse_svg_path_to_draw_commands(svg_path_str: &str) -> Result<Vec<DrawCommand>, ErrorStack> {
@@ -2859,6 +3091,109 @@ mod tests {
     assert_vec2_close(tracer.sample(0.0).unwrap(), Vec2::new(0.0, 0.0));
     assert_vec2_close(tracer.sample(0.25).unwrap(), Vec2::new(1.0, 0.0));
     assert_vec2_close(tracer.sample(0.75).unwrap(), Vec2::new(1.0, 2.0));
+  }
+
+  fn assert_aabb_close(actual: (Vec2, Vec2), expected_min: Vec2, expected_max: Vec2) {
+    assert_vec2_close(actual.0, expected_min);
+    assert_vec2_close(actual.1, expected_max);
+  }
+
+  #[test]
+  fn test_quadratic_bezier_aabb_interior_extremum() {
+    // Symmetric quadratic peaking at y=1 above the chord (0,0)-(2,0).
+    let (min, max) =
+      quadratic_bezier_aabb(Vec2::new(0.0, 0.0), Vec2::new(1.0, 2.0), Vec2::new(2.0, 0.0));
+    // Peak is at t = 0.5 → B(0.5) = 0.25*(0,0) + 0.5*(1,2) + 0.25*(2,0) = (1, 1).
+    assert_vec2_close(min, Vec2::new(0.0, 0.0));
+    assert_vec2_close(max, Vec2::new(2.0, 1.0));
+  }
+
+  #[test]
+  fn test_cubic_bezier_aabb_monotonic() {
+    // Monotone-in-x, monotone-in-y cubic — extrema are at the endpoints.
+    let (min, max) = cubic_bezier_aabb(
+      Vec2::new(0.0, 0.0),
+      Vec2::new(0.25, 0.25),
+      Vec2::new(0.5, 0.5),
+      Vec2::new(1.0, 1.0),
+    );
+    assert_vec2_close(min, Vec2::new(0.0, 0.0));
+    assert_vec2_close(max, Vec2::new(1.0, 1.0));
+  }
+
+  #[test]
+  fn test_arc_aabb_full_circle() {
+    // Full circle of radius 5 centered at origin.
+    use std::f32::consts::TAU;
+    let (min, max) = arc_aabb(Vec2::new(0.0, 0.0), 5.0, 5.0, 1.0, 0.0, 0.0, TAU);
+    assert_vec2_close(min, Vec2::new(-5.0, -5.0));
+    assert_vec2_close(max, Vec2::new(5.0, 5.0));
+  }
+
+  #[test]
+  fn test_arc_aabb_quarter_circle() {
+    // Quarter circle from (5,0) to (0,5), sweeping counter-clockwise.
+    use std::f32::consts::FRAC_PI_2;
+    let (min, max) = arc_aabb(Vec2::new(0.0, 0.0), 5.0, 5.0, 1.0, 0.0, 0.0, FRAC_PI_2);
+    assert_vec2_close(min, Vec2::new(0.0, 0.0));
+    assert_vec2_close(max, Vec2::new(5.0, 5.0));
+  }
+
+  #[test]
+  fn test_path_tracer_analytic_aabb_circle() {
+    // `Circle` draw command emits two semicircle arcs; the AABB should match the bounding
+    // square exactly, not the polyline approximation.
+    let cmds = vec![DrawCommand::Circle {
+      center: Vec2::new(3.0, -2.0),
+      radius: 4.0,
+    }];
+    let tracer = PathTracerCallable::new(true, false, false, cmds, Sym(0));
+    let (min, max) = tracer.analytic_aabb().unwrap().unwrap();
+    assert_aabb_close((min, max), Vec2::new(-1.0, -6.0), Vec2::new(7.0, 2.0));
+  }
+
+  #[test]
+  fn test_analytic_aabb_under_rotation_of_elliptical_arc() {
+    // A half-ellipse with rx=2, ry=1, sweeping from angle 0 to π. Local-space AABB is
+    // [(-2, 0), (2, 1)]. Rotating by +π/2 about the origin should give [(-1, -2), (0, 2)] —
+    // a sign error in the rotation extraction (atan2(b, a) instead of atan2(c, a)) would
+    // instead bake -π/2, producing [(-1, 0)...(0, 2)] vs the expected.
+    use std::f32::consts::FRAC_PI_2;
+    let cmds = vec![DrawCommand::MoveTo(Vec2::new(2.0, 0.0)), DrawCommand::Arc {
+      rx: 2.0,
+      ry: 1.0,
+      x_axis_rotation: 0.0,
+      large_arc: false,
+      sweep: true,
+      to: Vec2::new(-2.0, 0.0),
+    }];
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+    let (lmin, lmax) = tracer.analytic_aabb().unwrap().unwrap();
+    assert_vec2_close(lmin, Vec2::new(-2.0, 0.0));
+    assert_vec2_close(lmax, Vec2::new(2.0, 1.0));
+
+    let (sin_a, cos_a) = FRAC_PI_2.sin_cos();
+    let rot = Matrix3::new(cos_a, -sin_a, 0.0, sin_a, cos_a, 0.0, 0.0, 0.0, 1.0);
+    let mut rotated = tracer;
+    rotated.transform = rot;
+    let (rmin, rmax) = rotated.analytic_aabb().unwrap().unwrap();
+    assert_vec2_close(rmin, Vec2::new(-1.0, -2.0));
+    assert_vec2_close(rmax, Vec2::new(0.0, 2.0));
+  }
+
+  #[test]
+  fn test_path_tracer_analytic_aabb_under_translation() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(2.0, 1.0)),
+    ];
+    let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
+    let translated = Matrix3::new(1.0, 0.0, 10.0, 0.0, 1.0, -5.0, 0.0, 0.0, 1.0);
+    let mut tracer_t = tracer;
+    tracer_t.transform = translated;
+    let (min, max) = tracer_t.analytic_aabb().unwrap().unwrap();
+    assert_vec2_close(min, Vec2::new(10.0, -5.0));
+    assert_vec2_close(max, Vec2::new(12.0, -4.0));
   }
 
   #[test]

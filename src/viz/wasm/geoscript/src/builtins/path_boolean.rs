@@ -9,7 +9,8 @@ use crate::builtins::path_critical_points::{
 };
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
-  polylines_to_draw_commands, sample_path_subpaths, FillRule, PathTracerCallable,
+  as_path_sampler, as_path_tracer, polylines_to_draw_commands, sample_path_subpaths, FillRule,
+  PathTracerCallable,
 };
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
@@ -456,4 +457,187 @@ pub fn path_xor_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   path_boolean_impl(ctx, def_ix, arg_refs, args, kwargs, (), "path_xor")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn ensure_path_sampler(
+  callable: &Rc<Callable>,
+  arg_name: &str,
+  fn_name: &str,
+) -> Result<(), ErrorStack> {
+  if as_path_sampler(callable).is_some() {
+    return Ok(());
+  }
+  Err(ErrorStack::new(format!(
+    "`{fn_name}` requires `{arg_name}` to be a path sampler with known topology (e.g. from \
+     `path {{ ... }}`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, \
+     `catmull_rom`). Black-box `|t|: vec2` callables are not supported."
+  )))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn coords_aabb(coords: &[f64]) -> Option<(Vec2, Vec2)> {
+  if coords.len() < 2 {
+    return None;
+  }
+  let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
+  let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+  let mut i = 0;
+  while i + 1 < coords.len() {
+    let x = coords[i] as f32;
+    let y = coords[i + 1] as f32;
+    if x < min.x {
+      min.x = x;
+    }
+    if y < min.y {
+      min.y = y;
+    }
+    if x > max.x {
+      max.x = x;
+    }
+    if y > max.y {
+      max.y = y;
+    }
+    i += 2;
+  }
+  Some((min, max))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn path_intersects_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      crate::or_async_dep_bit(crate::DEP_BIT_CLIPPER2);
+      if !clipper2_get_is_loaded() {
+        return Err(ErrorStack::new_uninitialized_module("clipper2"));
+      }
+
+      let a_val = arg_refs[0].resolve(args, kwargs);
+      let a_callable = a_val.as_callable().ok_or_else(|| {
+        ErrorStack::new(format!(
+          "Invalid `a` argument for `path_intersects`; expected Callable, found: {a_val:?}"
+        ))
+      })?;
+
+      let b_val = arg_refs[1].resolve(args, kwargs);
+      let b_callable = b_val.as_callable().ok_or_else(|| {
+        ErrorStack::new(format!(
+          "Invalid `b` argument for `path_intersects`; expected Callable, found: {b_val:?}"
+        ))
+      })?;
+
+      ensure_path_sampler(a_callable, "a", "path_intersects")?;
+      ensure_path_sampler(b_callable, "b", "path_intersects")?;
+
+      let fill_rule_enum = FillRule::parse(arg_refs[2].resolve(args, kwargs), "path_intersects")?;
+      let fill_rule = fill_rule_enum.to_clipper2_u32();
+
+      let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap() as f64;
+      if curve_angle_degrees <= 0.0 {
+        return Err(ErrorStack::new(format!(
+          "Invalid curve_angle_degrees for `path_intersects`; expected > 0, found: \
+           {curve_angle_degrees}"
+        )));
+      }
+      let curve_angle_radians = (curve_angle_degrees as f32).to_radians();
+
+      let sample_count_val = arg_refs[4].resolve(args, kwargs);
+      let sample_count = match sample_count_val.as_int() {
+        Some(v) => v.max(2) as usize,
+        None => {
+          return Err(ErrorStack::new(format!(
+            "Invalid sample_count for `path_intersects`; expected int, found: \
+             {sample_count_val:?}"
+          )))
+        }
+      };
+
+      let closed_override_val = arg_refs[5].resolve(args, kwargs);
+      let closed_override = match closed_override_val {
+        Value::Bool(b) => Some(*b),
+        Value::Nil => None,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid closed argument for `path_intersects`; expected bool or nil, found: \
+             {closed_override_val:?}"
+          )))
+        }
+      };
+
+      let a_tracer = as_path_tracer(a_callable);
+      let b_tracer = as_path_tracer(b_callable);
+      if let (Some(a), Some(b)) = (a_tracer, b_tracer) {
+        let a_box = a.analytic_aabb().ok().flatten();
+        let b_box = b.analytic_aabb().ok().flatten();
+        if let (Some((a_min, a_max)), Some((b_min, b_max))) = (a_box, b_box) {
+          if a_max.x < b_min.x || b_max.x < a_min.x || a_max.y < b_min.y || b_max.y < a_min.y {
+            return Ok(Value::Bool(false));
+          }
+        }
+      }
+
+      let (a_coords, a_lengths) = sample_path_to_coords(
+        ctx,
+        a_callable,
+        curve_angle_radians,
+        sample_count,
+        closed_override,
+        "path_intersects",
+      )?;
+      let (b_coords, b_lengths) = sample_path_to_coords(
+        ctx,
+        b_callable,
+        curve_angle_radians,
+        sample_count,
+        closed_override,
+        "path_intersects",
+      )?;
+
+      if a_coords.is_empty() || b_coords.is_empty() {
+        return Ok(Value::Bool(false));
+      }
+
+      // Skip the polyline AABB pre-check if both inputs already passed the analytic one —
+      // the discretized bound is strictly looser and can't reject anything the exact one didn't.
+      if a_tracer.is_none() || b_tracer.is_none() {
+        if let (Some((a_min, a_max)), Some((b_min, b_max))) =
+          (coords_aabb(&a_coords), coords_aabb(&b_coords))
+        {
+          if a_max.x < b_min.x || b_max.x < a_min.x || a_max.y < b_min.y || b_max.y < a_min.y {
+            return Ok(Value::Bool(false));
+          }
+        }
+      }
+
+      clipper2_intersect_paths(&a_coords, &a_lengths, &b_coords, &b_lengths, fill_rule);
+      let out_lengths = clipper2_get_output_path_lengths();
+      let has_intersection = out_lengths.iter().any(|len| *len > 0);
+      clipper2_clear_output();
+
+      Ok(Value::Bool(has_intersection))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn path_intersects_impl(
+  _ctx: &EvalCtx,
+  def_ix: usize,
+  _arg_refs: &[ArgRef],
+  _args: &[Value],
+  _kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => Err(ErrorStack::new(
+      "`path_intersects` is only supported in wasm builds",
+    )),
+    _ => unimplemented!(),
+  }
 }
