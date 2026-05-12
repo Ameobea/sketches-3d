@@ -77,6 +77,7 @@ pub(crate) mod trace_path;
 pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
   "trans_global" => "translate_global",
+  "rot_local" => "rotate_around_center",
   "v2" => "vec2",
   "v3" => "vec3",
   "subdivide" => "tessellate",
@@ -93,12 +94,12 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "mix" => "lerp",
   "teapot" => "utah_teapot",
   "bunny" => "stanford_bunny",
-  // "monkey" => "suzanne",
   "push" => "append",
   "randv3" => "randv",
   "string" => "str",
   "sign" => "signum",
   "worley" => "worley_noise",
+  "path_render" => "render_path",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -4845,15 +4846,6 @@ fn stanford_bunny_impl(def_ix: usize) -> Result<Value, ErrorStack> {
   }
 }
 
-// fn suzanne_impl(def_ix: usize) -> Result<Value, ErrorStack> {
-//   match def_ix {
-//     0 => Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
-//       LinkedMesh::new_suzanne(),
-//     ))))),
-//     _ => unimplemented!(),
-//   }
-// }
-
 fn rot_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -6923,9 +6915,6 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "stanford_bunny" => builtin_fn!(stanford_bunny, |def_ix, _arg_refs, _args, _kwargs, _ctx| {
     stanford_bunny_impl(def_ix)
   }),
-  // "suzanne" => builtin_fn!(suzanne, |def_ix, _arg_refs, _args, _kwargs, _ctx| {
-  //   suzanne_impl(def_ix)
-  // }),
   "translate" => builtin_fn!(translate, |def_ix, arg_refs, args, kwargs, _ctx| {
     translate_impl(def_ix, arg_refs, args, kwargs)
   }),

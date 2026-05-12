@@ -7710,17 +7710,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
-  // "suzanne" => FnDef {
-  //   module: "mesh",
-  //   examples: &[],
-  //   signatures: &[
-  //     FnSignature {
-  //       arg_defs: &[],
-  //       description: "Generates a Suzanne mesh, a 3D model from Blender often used as a test or placeholder object.\n\nThis mesh is NOT manifold, so it cannot be used with functions that require a manifold mesh such as mesh boolean ops, `trace_geodesic_path`, and others.",
-  //       return_type: &[ArgType::Mesh],
-  //     },
-  //   ],
-  // },
   "call" => FnDef {
     module: "fn",
     examples: &[],

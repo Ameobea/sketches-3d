@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{auth::User, render_thumbnail::render_thumbnail};
 use axum::{
   Json,
@@ -9,6 +11,33 @@ use sqlx::{Arguments, FromRow, Row, SqlitePool, sqlite::SqliteArguments};
 
 use crate::server::APIError;
 use axum::http::StatusCode;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Transform3 {
+  pub pos: [f64; 3],
+  pub rot: [f64; 3],
+  pub scale: [f64; 3],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeDef {
+  pub id: String,
+  pub name: String,
+  pub source: String,
+  pub transform: Transform3,
+  pub children: Vec<String>,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TreeDef {
+  #[serde(rename = "rootIds")]
+  pub root_ids: Vec<String>,
+  #[serde(rename = "globalsSource")]
+  pub globals_source: String,
+  pub nodes: HashMap<String, NodeDef>,
+}
 
 #[derive(Debug, FromRow, Serialize)]
 pub struct Composition {
@@ -34,7 +63,7 @@ pub struct CompositionAndVersion {
 pub struct CompositionVersion {
   pub id: i64,
   pub composition_id: i64,
-  pub source_code: String,
+  pub tree: sqlx::types::Json<TreeDef>,
   pub created_at: DateTime<Utc>,
   pub thumbnail_url: Option<String>,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
@@ -44,21 +73,21 @@ pub struct CompositionVersion {
 pub struct CreateComposition {
   pub title: String,
   pub description: String,
-  pub source_code: String,
+  pub tree: sqlx::types::Json<TreeDef>,
   pub is_shared: bool,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct CreateCompositionVersion {
-  pub source_code: String,
+  pub tree: sqlx::types::Json<TreeDef>,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl<'a> From<&'a CompositionVersion> for CreateCompositionVersion {
   fn from(other: &'a CompositionVersion) -> Self {
     Self {
-      source_code: other.source_code.clone(),
+      tree: other.tree.clone(),
       metadata: other.metadata.clone(),
     }
   }
@@ -114,11 +143,11 @@ pub async fn create_composition(
   })?;
 
   let version_id = sqlx::query(
-    "INSERT INTO composition_versions (composition_id, source_code, metadata) VALUES (?, ?, ?) \
+    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) \
      RETURNING id",
   )
   .bind(id)
-  .bind(&payload.source_code)
+  .bind(&payload.tree)
   .bind(&payload.metadata)
   .fetch_one(&mut *tx)
   .await
@@ -198,11 +227,11 @@ pub async fn create_composition_version(
   }
 
   let version = sqlx::query_as::<_, CompositionVersion>(
-    "INSERT INTO composition_versions (composition_id, source_code, metadata) VALUES (?, ?, ?) \
+    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) \
      RETURNING *",
   )
   .bind(composition_id)
-  .bind(&payload.source_code)
+  .bind(&payload.tree)
   .bind(&payload.metadata)
   .fetch_one(&pool)
   .await
@@ -305,11 +334,11 @@ pub async fn fork_composition(
   })?;
 
   let version_id = sqlx::query(
-    "INSERT INTO composition_versions (composition_id, source_code, metadata) VALUES (?, ?, ?) \
+    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) \
      RETURNING id",
   )
   .bind(forked_composition_id)
-  .bind(&latest_version.source_code)
+  .bind(&latest_version.tree)
   .bind(&latest_version.metadata)
   .fetch_one(&mut *tx)
   .await
@@ -355,7 +384,7 @@ pub async fn fork_composition(
     version: CompositionVersion {
       id: version_id,
       composition_id: forked_composition_id,
-      source_code: latest_version.source_code,
+      tree: latest_version.tree,
       created_at: Utc::now(),
       thumbnail_url: None,
       metadata: latest_version.metadata,
@@ -553,7 +582,7 @@ async fn list_compositions(
     comp: Composition,
     latest_id: i64,
     latest_composition_id: i64,
-    latest_source_code: String,
+    latest_tree: sqlx::types::Json<TreeDef>,
     latest_created_at: DateTime<Utc>,
     latest_thumbnail_url: Option<String>,
     latest_metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
@@ -599,9 +628,9 @@ JOIN (
 ORDER BY c.updated_at DESC
 {}",
     if include_code {
-      "cv.source_code as latest_source_code"
+      "cv.tree as latest_tree"
     } else {
-      "'' as latest_source_code"
+      "'{\"rootIds\":[],\"globalsSource\":\"\",\"nodes\":{}}' as latest_tree"
     },
     match (limit, offset) {
       (Some(limit), Some(offset)) => format!("LIMIT {limit} OFFSET {offset}"),
@@ -629,7 +658,7 @@ ORDER BY c.updated_at DESC
       let latest = CompositionVersion {
         id: row.latest_id,
         composition_id: row.latest_composition_id,
-        source_code: row.latest_source_code,
+        tree: row.latest_tree,
         created_at: row.latest_created_at,
         thumbnail_url: row.latest_thumbnail_url,
         metadata: row.latest_metadata,

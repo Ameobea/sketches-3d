@@ -43,10 +43,31 @@ export interface CompositionVersionMetadata {
   preludeEjected?: boolean;
 }
 
+export interface Transform3 {
+  pos: [number, number, number];
+  rot: [number, number, number];
+  scale: [number, number, number];
+}
+
+export interface NodeDef {
+  id: string;
+  name: string;
+  source: string;
+  transform: Transform3;
+  children: string[];
+  disabled?: boolean;
+}
+
+export interface TreeDef {
+  rootIds: string[];
+  globalsSource: string;
+  nodes: Record<string, NodeDef>;
+}
+
 export interface CompositionVersion {
   id: number;
   composition_id: number;
-  source_code: string;
+  tree: TreeDef;
   created_at: string;
   metadata: CompositionVersionMetadata;
   thumbnail_url?: string | null;
@@ -55,15 +76,46 @@ export interface CompositionVersion {
 export interface CreateComposition {
   title: string;
   description: string;
-  source_code: string;
+  tree: TreeDef;
   is_shared: boolean;
   metadata: CompositionVersionMetadata;
 }
 
 export interface CreateCompositionVersion {
-  source_code: string;
+  tree: TreeDef;
   metadata: CompositionVersionMetadata;
 }
+
+export const buildIdentityTransform = (): Transform3 => ({
+  pos: [0, 0, 0],
+  rot: [0, 0, 0],
+  scale: [1, 1, 1],
+});
+
+export const buildSingleNodeTree = (source: string, name = 'main'): TreeDef => {
+  const id = crypto.randomUUID();
+  return {
+    rootIds: [id],
+    globalsSource: '',
+    nodes: {
+      [id]: {
+        id,
+        name,
+        source,
+        transform: buildIdentityTransform(),
+        children: [],
+      },
+    },
+  };
+};
+
+export const getRootNodeSource = (tree: TreeDef): string => {
+  const rootId = tree.rootIds[0];
+  if (!rootId) {
+    return '';
+  }
+  return tree.nodes[rootId]?.source ?? '';
+};
 
 export class APIError extends Error {
   public status: number;

@@ -2,6 +2,7 @@
   import { resolve } from '$app/paths';
   import type { EditorView } from 'codemirror';
   import { buildEditor } from 'src/geoscript/editor';
+  import { getRootNodeSource } from 'src/geoscript/geotoyAPIClient';
 
   let { data } = $props();
 
@@ -17,7 +18,7 @@
 
     const editor = buildEditor({
       container: codemirrorContainer,
-      initialCode: data.version.source_code,
+      initialCode: getRootNodeSource(data.version.tree),
       readonly: true,
     });
     editorView = editor.editorView;

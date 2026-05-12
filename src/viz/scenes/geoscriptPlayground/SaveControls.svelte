@@ -1,6 +1,12 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { APIError, createComposition, type Composition, type CompositionVersion } from 'src/geoscript/geotoyAPIClient';
+  import {
+    APIError,
+    buildSingleNodeTree,
+    createComposition,
+    type Composition,
+    type CompositionVersion,
+  } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
   import { buildCompositionVersionMetadata, saveNewVersion } from './persistence';
@@ -49,7 +55,7 @@
         title,
         description,
         metadata: metadataRes.metadata,
-        source_code: getCurrentCode(),
+        tree: buildSingleNodeTree(getCurrentCode()),
         is_shared: isShared,
       });
       return { type: 'ok', comp };

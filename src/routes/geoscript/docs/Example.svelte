@@ -2,6 +2,7 @@
   import type { EditorView } from 'codemirror';
   import type { PopulatedFnExample } from './types';
   import { buildEditor } from 'src/geoscript/editor';
+  import { getRootNodeSource } from 'src/geoscript/geotoyAPIClient';
 
   let { example }: { example: PopulatedFnExample } = $props();
 
@@ -9,6 +10,8 @@
 
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
+
+  const exampleCode = $derived(getRootNodeSource(example.version.tree));
 
   $effect(() => {
     if (open) {
@@ -18,7 +21,7 @@
 
       const editor = buildEditor({
         container: codemirrorContainer,
-        initialCode: example.version.source_code,
+        initialCode: exampleCode,
         readonly: true,
       });
       editorView = editor.editorView;
@@ -51,7 +54,7 @@
         {#if open}
           <div class="codemirror-container" bind:this={codemirrorContainer}></div>
         {:else}
-          <code>{example.version.source_code}</code>
+          <code>{exampleCode}</code>
         {/if}
       </div>
     </div>
