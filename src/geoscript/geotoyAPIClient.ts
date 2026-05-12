@@ -1,6 +1,13 @@
 import type { MaterialDescriptor, MaterialDefinitions, MaterialDef } from './materials';
 
-export const GEOTOY_API_BASE_URL = import.meta.env.VITE_GEOSCRIPT_API_URL || 'http://localhost:5810';
+// Lazily accessed so node-test imports don't blow up on `import.meta.env`.
+let _geotoyAPIBaseURL: string | undefined;
+export const getGeotoyAPIBaseURL = (): string => {
+  if (_geotoyAPIBaseURL === undefined) {
+    _geotoyAPIBaseURL = import.meta.env.VITE_GEOSCRIPT_API_URL || 'http://localhost:5810';
+  }
+  return _geotoyAPIBaseURL!;
+};
 
 const INTERNAL_PROXY_GEOTOY_API_BASE_URL = '/geotoy_api';
 
@@ -59,10 +66,14 @@ export interface NodeDef {
 }
 
 export interface TreeDef {
-  rootIds: string[];
+  /** Id of the always-present `_root` compositor node. */
+  rootId: string;
   globalsSource: string;
   nodes: Record<string, NodeDef>;
 }
+
+/** The reserved name of the always-present root compositor node. */
+export const ROOT_NODE_NAME = '_root';
 
 export interface CompositionVersion {
   id: number;
@@ -92,15 +103,19 @@ export const buildIdentityTransform = (): Transform3 => ({
   scale: [1, 1, 1],
 });
 
-export const buildSingleNodeTree = (source: string, name = 'main'): TreeDef => {
+/**
+ * Build a fresh tree containing only `_root` with the given source. Used for legacy
+ * single-source compositions and as the empty-state default.
+ */
+export const buildLegacyRootTree = (source: string): TreeDef => {
   const id = crypto.randomUUID();
   return {
-    rootIds: [id],
+    rootId: id,
     globalsSource: '',
     nodes: {
       [id]: {
         id,
-        name,
+        name: ROOT_NODE_NAME,
         source,
         transform: buildIdentityTransform(),
         children: [],
@@ -109,13 +124,9 @@ export const buildSingleNodeTree = (source: string, name = 'main'): TreeDef => {
   };
 };
 
-export const getRootNodeSource = (tree: TreeDef): string => {
-  const rootId = tree.rootIds[0];
-  if (!rootId) {
-    return '';
-  }
-  return tree.nodes[rootId]?.source ?? '';
-};
+export const buildEmptyTree = (): TreeDef => buildLegacyRootTree('');
+
+export const getRootNodeSource = (tree: TreeDef): string => tree.nodes[tree.rootId]?.source ?? '';
 
 export class APIError extends Error {
   public status: number;

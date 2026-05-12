@@ -1,11 +1,15 @@
 import * as THREE from 'three';
+import type * as Comlink from 'comlink';
 import type { RunGeoscriptOptions, GeoscriptRunResult, RunStats, GeneratedObject, MatEntry } from './types';
 import { buildLight } from 'src/viz/scenes/geoscriptPlayground/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
-import type { GeoscriptAsyncDeps } from '../geoscriptWorker.worker';
+import type { GeoscriptAsyncDeps, GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
 import { bitmaskToAsyncDepNames } from '../asyncDepBits';
+import type { TreeDef, NodeDef } from '../geotoyAPIClient';
+import { ROOT_NODE_NAME } from '../geotoyAPIClient';
+import { buildParentMap } from 'src/viz/scenes/geoscriptPlayground/treeOps';
 
 const buildEmptyRunStats = (): RunStats => ({
   runtimeMs: 0,
@@ -27,6 +31,30 @@ const getOverrideMat = (materialOverride: 'wireframe' | 'wireframe-xray' | 'norm
   return null;
 };
 
+/**
+ * If `err` is a `__GEOTOY_UNINITIALIZED_MODULE__:<dep>` sentinel, init the dep and
+ * return true so the caller can retry. Returns false otherwise.
+ */
+const tryInitAsyncDepFromErr = async (
+  err: string,
+  repl: Comlink.Remote<GeoscriptWorkerMethods>
+): Promise<boolean> => {
+  if (!err.includes('__GEOTOY_UNINITIALIZED_MODULE__:')) return false;
+  const depName = /__GEOTOY_UNINITIALIZED_MODULE__:(\w+)/.exec(err)?.[1];
+  if (!depName) {
+    console.error('Unrecognized __GEOTOY_UNINITIALIZED_MODULE__ format:', err);
+    return false;
+  }
+  const deps: GeoscriptAsyncDeps = {};
+  deps[depName as keyof GeoscriptAsyncDeps] = true;
+  const argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>> = {};
+  if (err.includes('||__||')) {
+    argsByKey[depName as keyof GeoscriptAsyncDeps] = err.split('||__||').slice(1);
+  }
+  await repl.initAsyncDeps(deps, argsByKey);
+  return true;
+};
+
 export const runGeoscript = async ({
   code,
   ctxPtr,
@@ -36,11 +64,38 @@ export const runGeoscript = async ({
   materialOverride,
   renderMode = false,
   modules,
+  ambientSources,
 }: RunGeoscriptOptions): Promise<GeoscriptRunResult> => {
   await repl.reset(ctxPtr);
 
   if (modules && Object.keys(modules).length > 0) {
     await repl.setModuleSources(ctxPtr, modules);
+  }
+
+  if (ambientSources !== undefined) {
+    try {
+      await repl.setAmbientScope(ctxPtr, ambientSources);
+    } catch (err) {
+      const errStr = err instanceof Error ? err.message : String(err);
+      if (await tryInitAsyncDepFromErr(errStr, repl)) {
+        return runGeoscript({
+          code,
+          ctxPtr,
+          repl,
+          materials,
+          includePrelude,
+          materialOverride,
+          renderMode,
+          modules,
+          ambientSources,
+        });
+      }
+      return {
+        objects: [],
+        stats: buildEmptyRunStats(),
+        error: `Error building ambient scope: ${err}`,
+      };
+    }
   }
 
   let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
@@ -60,29 +115,7 @@ export const runGeoscript = async ({
   if (err) {
     // Safety net: if a dep wasn't pre-loaded, load it now and re-run.
     // text_to_path always goes through this path since its args are runtime values.
-    if (err.includes('__GEOTOY_UNINITIALIZED_MODULE__:')) {
-      const depName = /__GEOTOY_UNINITIALIZED_MODULE__:(\w+)/.exec(err)?.[1];
-      if (!depName) {
-        console.error('Unrecognized error format:', err);
-        return {
-          objects: [],
-          stats: buildEmptyRunStats(),
-          error: err,
-        };
-      }
-
-      const argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>> = {};
-
-      const deps: GeoscriptAsyncDeps = {};
-      deps[depName as keyof GeoscriptAsyncDeps] = true;
-      const hasArgs = err.includes('||__||');
-      if (hasArgs) {
-        const args = err.split('||__||').slice(1);
-        argsByKey[depName as keyof GeoscriptAsyncDeps] = args;
-      }
-
-      await repl.initAsyncDeps(deps, argsByKey);
-      // The recursive call's stats win (last successful eval's numbers).
+    if (await tryInitAsyncDepFromErr(err, repl)) {
       return runGeoscript({
         code,
         ctxPtr,
@@ -92,9 +125,9 @@ export const runGeoscript = async ({
         materialOverride,
         renderMode,
         modules,
+        ambientSources,
       });
     }
-
     return {
       objects: [],
       stats: buildEmptyRunStats(),
@@ -119,6 +152,7 @@ export const runGeoscript = async ({
       indices: initialIndices,
       normals,
       material: materialName,
+      sourceModule,
     } = await repl.getRenderedMesh(ctxPtr, i);
 
     let verts = initialVerts;
@@ -207,6 +241,7 @@ export const runGeoscript = async ({
       transform: new THREE.Matrix4().fromArray(transform),
       castShadow: true,
       receiveShadow: true,
+      sourceModule: sourceModule ?? '',
     });
   }
 
@@ -247,13 +282,81 @@ export const runGeoscript = async ({
   return result;
 };
 
-export const populateScene = (scene: THREE.Scene, geoscriptOutput: GeoscriptRunResult) => {
+export interface PopulateSceneOpts {
+  /** The tree used to look up ancestor transforms for each rendered mesh. */
+  tree?: TreeDef;
+  /** Pre-computed `moduleName → nodeId` map. Built by the caller from the tree. */
+  moduleNameToNodeId?: Record<string, string>;
+}
+
+const _scratchEuler = new THREE.Euler();
+const _scratchQuat = new THREE.Quaternion();
+const _scratchPos = new THREE.Vector3();
+const _scratchScale = new THREE.Vector3();
+
+/**
+ * Memoized world-matrix lookup: each node's matrix = `parent.world × node.local`,
+ * computed once per `populateScene` call. Pulls every ancestor through `parentMap`
+ * with a guard against malformed cycles.
+ */
+const buildWorldMatrixCache = (tree: TreeDef, parentMap: Map<string, string>): Map<string, THREE.Matrix4> => {
+  const cache = new Map<string, THREE.Matrix4>();
+  const local = (node: NodeDef): THREE.Matrix4 => {
+    _scratchEuler.set(node.transform.rot[0], node.transform.rot[1], node.transform.rot[2], 'YXZ');
+    _scratchQuat.setFromEuler(_scratchEuler);
+    _scratchPos.set(node.transform.pos[0], node.transform.pos[1], node.transform.pos[2]);
+    _scratchScale.set(node.transform.scale[0], node.transform.scale[1], node.transform.scale[2]);
+    return new THREE.Matrix4().compose(_scratchPos, _scratchQuat, _scratchScale);
+  };
+  const get = (id: string, visiting: Set<string>): THREE.Matrix4 => {
+    const cached = cache.get(id);
+    if (cached) return cached;
+    const node = tree.nodes[id];
+    if (!node) {
+      const ident = new THREE.Matrix4();
+      cache.set(id, ident);
+      return ident;
+    }
+    if (visiting.has(id)) {
+      const ident = new THREE.Matrix4();
+      cache.set(id, ident);
+      return ident;
+    }
+    visiting.add(id);
+    const m = local(node);
+    const parentId = parentMap.get(id);
+    if (parentId) {
+      m.premultiply(get(parentId, visiting));
+    }
+    visiting.delete(id);
+    cache.set(id, m);
+    return m;
+  };
+  for (const id of Object.keys(tree.nodes)) get(id, new Set());
+  return cache;
+};
+
+export const populateScene = (
+  scene: THREE.Scene,
+  geoscriptOutput: GeoscriptRunResult,
+  opts: PopulateSceneOpts = {}
+) => {
   const newRenderedObjects: RenderedObject[] = [];
+  const { tree, moduleNameToNodeId } = opts;
+  const worldMatrices = tree ? buildWorldMatrixCache(tree, buildParentMap(tree)) : null;
 
   for (const obj of geoscriptOutput.objects) {
     if (obj.type === 'mesh') {
+      const sourceNodeId = tree && moduleNameToNodeId ? moduleNameToNodeId[obj.sourceModule] : undefined;
+      if (tree && obj.sourceModule && obj.sourceModule !== ROOT_NODE_NAME && !sourceNodeId) {
+        continue;
+      }
+
       const mesh = new THREE.Mesh(obj.geometry, obj.material);
       mesh.userData.materialName = obj.materialName;
+      if (sourceNodeId) {
+        mesh.userData.sourceNodeId = sourceNodeId;
+      }
 
       if (obj.materialPromise) {
         obj.materialPromise.then(mat => {
@@ -261,7 +364,12 @@ export const populateScene = (scene: THREE.Scene, geoscriptOutput: GeoscriptRunR
         });
       }
 
-      mesh.applyMatrix4(obj.transform);
+      const ancestor =
+        worldMatrices && sourceNodeId
+          ? (worldMatrices.get(sourceNodeId)?.clone() ?? new THREE.Matrix4())
+          : new THREE.Matrix4();
+      const finalTransform = ancestor.multiply(obj.transform);
+      mesh.applyMatrix4(finalTransform);
       mesh.castShadow = obj.castShadow;
       mesh.receiveShadow = obj.receiveShadow;
       scene.add(mesh);

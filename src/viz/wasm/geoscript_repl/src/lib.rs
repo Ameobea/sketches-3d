@@ -4,7 +4,7 @@ use fxhash::FxHashMap;
 use geoscript::{
   eval_program_with_ctx, materials::Material, optimizer::optimize_ast,
   parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls, ErrorStack, EvalCtx,
-  Program, Sym, PRELUDE,
+  Program, Scope, Sym, PRELUDE,
 };
 use mesh::OwnedIndexedMesh;
 use nanoserde::SerJson;
@@ -38,6 +38,11 @@ fn maybe_init() {
 pub struct OutputMesh {
   pub mesh: OwnedIndexedMesh,
   pub material: Option<String>,
+  /// Name of the module that called `render()` to register this mesh. Used JS-side
+  /// to look up the source node's ancestor chain and compose tree-transforms.
+  /// `None` means the render fired outside any module context (e.g. while building
+  /// the ambient scope from `_globals`); JS-side drops these.
+  pub source_module: Option<String>,
 }
 
 pub struct GeoscriptReplCtx {
@@ -62,7 +67,8 @@ impl GeoscriptReplCtx {
   pub fn convert_rendered_meshes(&mut self) {
     self.output_meshes.clear();
 
-    for mesh_handle in self.geo_ctx.rendered_meshes.inner.borrow_mut().drain(..) {
+    for rendered in self.geo_ctx.rendered_meshes.inner.borrow_mut().drain(..) {
+      let mesh_handle = rendered.mesh;
       let mut mesh = (*mesh_handle.mesh).clone();
 
       let merged_count = mesh.merge_vertices_by_distance(0.0001);
@@ -88,6 +94,7 @@ impl GeoscriptReplCtx {
           },
           None => None,
         },
+        source_module: rendered.source_module,
       });
     }
   }
@@ -173,7 +180,15 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
     ctx.last_result = Err(err);
     return;
   }
+  // The entry-point program is `_root`'s emitted source; tag its renders accordingly
+  // so JS-side ancestor-transform composition can find the source node.
+  let prev_module = ctx
+    .geo_ctx
+    .current_module
+    .borrow_mut()
+    .replace("_root".to_owned());
   ctx.last_result = eval_program_with_ctx(&ctx.geo_ctx, program);
+  *ctx.geo_ctx.current_module.borrow_mut() = prev_module;
   ctx.convert_rendered_meshes();
 }
 
@@ -234,6 +249,54 @@ pub fn geoscript_repl_set_module_sources(
   for (name, source) in module_names.into_iter().zip(module_sources.into_iter()) {
     sources.insert(name, source);
   }
+  drop(sources);
+  // Module source changes invalidate any cached evaluations.
+  ctx.geo_ctx.invalidate_module_cache();
+}
+
+/// Build the ambient scope by evaluating each source in order; each source sees the
+/// scope accumulated from the previous as its base. Used to construct prelude + globals
+/// into a single ambient scope cloned for each subsequent module evaluation.
+///
+/// Module sources must be registered via `set_module_sources` before calling this if any
+/// of the provided sources `import` from them.
+#[wasm_bindgen]
+pub fn geoscript_repl_set_ambient_scope_from_sources(
+  ctx: *mut GeoscriptReplCtx,
+  sources: Vec<String>,
+) -> Result<(), String> {
+  let ctx = unsafe { &mut *ctx };
+
+  // Ambient changes invalidate any cached module evaluations: their scopes were resolved
+  // against the previous ambient.
+  ctx.geo_ctx.clear_ambient_scope();
+  ctx.geo_ctx.invalidate_module_cache();
+
+  let mut scope = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
+  for source in sources {
+    ctx.geo_ctx.set_ambient_scope(scope.clone());
+    scope = ctx
+      .geo_ctx
+      .evaluate_module_to_scope(&source)
+      .map_err(|err| format!("{err}"))?;
+  }
+  ctx.geo_ctx.set_ambient_scope(scope);
+
+  // Renders fired inside prelude / `_globals` are spurious — they are not part of
+  // the user-visible composition. Drop anything that got pushed during ambient
+  // construction so it doesn't leak into the next eval.
+  ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
+
+  Ok(())
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_clear_ambient_scope(ctx: *mut GeoscriptReplCtx) {
+  let ctx = unsafe { &mut *ctx };
+  ctx.geo_ctx.clear_ambient_scope();
+  ctx.geo_ctx.invalidate_module_cache();
 }
 
 #[wasm_bindgen]
@@ -346,6 +409,18 @@ pub fn geoscript_repl_get_rendered_mesh_normals(
     .shading_normals
     .as_ref()
     .map(|normals| normals.clone())
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_source_module(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  ctx.output_meshes[mesh_ix]
+    .source_module
+    .clone()
+    .unwrap_or_default()
 }
 
 #[wasm_bindgen]

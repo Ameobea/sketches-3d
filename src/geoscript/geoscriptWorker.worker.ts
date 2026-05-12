@@ -142,6 +142,19 @@ const methods = {
     const sources = Object.values(modules);
     Geoscript.geoscript_repl_set_module_sources(ctxPtr, names, sources);
   },
+  /**
+   * Install an ambient scope built by sequentially evaluating each provided source
+   * (typically `[prelude_src, globals_src]`). The resulting scope is cloned as the
+   * base for every subsequent module evaluation. Pass an empty array to reset.
+   * Throws if any source fails to evaluate.
+   */
+  setAmbientScope: (ctxPtr: number, sources: string[]) => {
+    if (sources.length === 0) {
+      Geoscript.geoscript_repl_clear_ambient_scope(ctxPtr);
+      return;
+    }
+    Geoscript.geoscript_repl_set_ambient_scope_from_sources(ctxPtr, sources);
+  },
   eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
     Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
     if (Geoscript.geoscript_repl_has_err(ctxPtr)) {
@@ -169,9 +182,10 @@ const methods = {
     const indices = Geoscript.geoscript_repl_get_rendered_mesh_indices(ctxPtr, meshIx);
     const normals = Geoscript.geoscript_repl_get_rendered_mesh_normals(ctxPtr, meshIx);
     const material = Geoscript.geoscript_repl_get_rendered_mesh_material(ctxPtr, meshIx);
+    const sourceModule = Geoscript.geoscript_repl_get_rendered_mesh_source_module(ctxPtr, meshIx);
 
     return Comlink.transfer(
-      { verts, indices, normals, transform, material },
+      { verts, indices, normals, transform, material, sourceModule },
       filterNils([verts.buffer, indices.buffer, normals?.buffer])
     );
   },

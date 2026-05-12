@@ -32,8 +32,9 @@ pub struct NodeDef {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TreeDef {
-  #[serde(rename = "rootIds")]
-  pub root_ids: Vec<String>,
+  /// Id of the always-present `_root` compositor node.
+  #[serde(rename = "rootId")]
+  pub root_id: String,
   #[serde(rename = "globalsSource")]
   pub globals_source: String,
   pub nodes: HashMap<String, NodeDef>,
@@ -630,7 +631,9 @@ ORDER BY c.updated_at DESC
     if include_code {
       "cv.tree as latest_tree"
     } else {
-      "'{\"rootIds\":[],\"globalsSource\":\"\",\"nodes\":{}}' as latest_tree"
+      // Stub TreeDef containing only an empty `_root`. Used as a placeholder when the
+      // caller didn't ask for the actual code.
+      "'{\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"name\":\"_root\",\"source\":\"\",\"transform\":{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":[1,1,1]},\"children\":[]}}}' as latest_tree"
     },
     match (limit, offset) {
       (Some(limit), Some(offset)) => format!("LIMIT {limit} OFFSET {offset}"),

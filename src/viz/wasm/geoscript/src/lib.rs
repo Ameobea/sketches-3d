@@ -1461,7 +1461,17 @@ impl<T> AppendOnlyBuffer<T> {
   }
 }
 
-type RenderedMeshes = AppendOnlyBuffer<Rc<MeshHandle>>;
+/// A mesh that has been registered for rendering plus the name of the module that
+/// fired the `render` call. JS-side composes ancestor tree-transforms based on
+/// `source_module` at scene-populate time; `None` is used for renders that fire
+/// outside of any module context (e.g. while building the ambient scope from
+/// prelude / `_globals` sources — these are dropped by the scene populator).
+pub struct RenderedMesh {
+  pub mesh: Rc<MeshHandle>,
+  pub source_module: Option<String>,
+}
+
+type RenderedMeshes = AppendOnlyBuffer<RenderedMesh>;
 type RenderedLights = AppendOnlyBuffer<Light>;
 type RenderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
 
@@ -1524,6 +1534,24 @@ impl Scope {
   fn has(&self, key: Sym) -> bool {
     self.vars.borrow().contains_key(&key)
       || self.parent.as_ref().map(|p| p.has(key)).unwrap_or(false)
+  }
+
+  /// Collects bindings reachable through this scope and its parent chain,
+  /// innermost-first (i.e. shadowing wins). Used by the optimizer to seed
+  /// its scope tracker from the ambient scope.
+  pub fn collect_bindings_innermost_first(&self) -> Vec<(Sym, Value)> {
+    let mut seen: FxHashSet<Sym> = FxHashSet::default();
+    let mut out: Vec<(Sym, Value)> = Vec::new();
+    let mut cur: Option<&Scope> = Some(self);
+    while let Some(s) = cur {
+      for (sym, val) in s.vars.borrow().iter() {
+        if seen.insert(*sym) {
+          out.push((*sym, val.clone()));
+        }
+      }
+      cur = s.parent.as_deref();
+    }
+    out
   }
 }
 
@@ -1645,10 +1673,16 @@ use crate::ast::SourceLoc;
 /// Maps SourceLoc indices to (line, col) pairs.
 #[derive(Default)]
 pub struct SourceMap {
-  /// (line, col) pairs. Index 0 is reserved as a sentinel for unknown locations.
-  locations: Vec<(u32, u32)>,
-  /// Number of lines in the prelude included before user code.  This is subtracted from line
-  /// numbers in error messages.
+  /// (line, col, prelude_offset) triples. Index 0 is reserved as a sentinel for unknown locations.
+  /// `prelude_offset` is the number of lines prepended to this entry's source at parse time;
+  /// it is subtracted from `line` when resolving. Stored per-entry (rather than as a single
+  /// global subtract) so that imported-module source locations are not falsely offset by the
+  /// root program's prelude.
+  locations: Vec<(u32, u32, u32)>,
+  /// Number of lines in the prelude included before user code at the time `add` is called.
+  /// New entries record this value; it is subtracted from their line numbers when resolved.
+  /// Callers that parse module sources (which do not include the prelude) should save, set to 0,
+  /// and restore this around the parse.
   pub prelude_line_count: u32,
 }
 
@@ -1659,14 +1693,16 @@ impl SourceMap {
       prelude_line_count,
     };
     // Reserve index 0 as "unknown location" sentinel
-    map.locations.push((0, 0));
+    map.locations.push((0, 0, 0));
     map
   }
 
   /// Add a location and return its SourceLoc index.
   pub fn add(&mut self, line: usize, col: usize) -> SourceLoc {
     let idx = self.locations.len() as u32;
-    self.locations.push((line as u32, col as u32));
+    self
+      .locations
+      .push((line as u32, col as u32, self.prelude_line_count));
     SourceLoc(idx)
   }
 
@@ -1676,7 +1712,7 @@ impl SourceMap {
       .locations
       .get(loc.0 as usize)
       .copied()
-      .map(|(line, col)| (line.saturating_sub(self.prelude_line_count), col))
+      .map(|(line, col, prelude)| (line.saturating_sub(prelude), col))
       .unwrap_or((0, 0))
   }
 }
@@ -1706,6 +1742,18 @@ pub struct EvalCtx {
   /// When evaluating a module body, this holds the export map being built.
   /// `None` when evaluating the main program.
   pub current_module_exports: RefCell<Option<FxHashMap<Sym, Value>>>,
+  /// Optional scope cloned as the base of each module evaluation (including the
+  /// main `_root` program) in place of the default `pi`/`tau`-only globals scope.
+  /// Built externally (typically from prelude + globals sources) and installed
+  /// via `set_ambient_scope`.
+  pub ambient_scope: RefCell<Option<Rc<Scope>>>,
+  /// Set of module names currently being resolved. Used to detect circular imports.
+  pub modules_in_flight: RefCell<FxHashSet<String>>,
+  /// Name of the module whose body is currently being evaluated, used to tag each
+  /// `render` call with its source module. Set by `resolve_module_inner` while
+  /// evaluating a module body, and by the wasm-side top-level eval wrapper to
+  /// `_root` for the entry-point program. `None` while building the ambient scope.
+  pub current_module: RefCell<Option<String>>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1735,6 +1783,9 @@ impl Default for EvalCtx {
       module_sources: RefCell::new(FxHashMap::default()),
       module_exports: RefCell::new(FxHashMap::default()),
       current_module_exports: RefCell::new(None),
+      ambient_scope: RefCell::new(None),
+      modules_in_flight: RefCell::new(FxHashSet::default()),
+      current_module: RefCell::new(None),
     }
   }
 }
@@ -2934,10 +2985,72 @@ impl EvalCtx {
     self.interned_symbols.with_resolved(sym, f).unwrap()
   }
 
+  /// Returns the base scope for a fresh module evaluation: a clone of the ambient
+  /// scope if one is installed, otherwise the default `pi`/`tau`-only globals.
+  pub fn fresh_module_scope(&self) -> Scope {
+    match self.ambient_scope.borrow().as_ref() {
+      Some(scope) => (**scope).clone(),
+      None => Scope::default_globals(&self.interned_symbols),
+    }
+  }
+
+  pub fn set_ambient_scope(&self, scope: Scope) {
+    *self.ambient_scope.borrow_mut() = Some(Rc::new(scope));
+  }
+
+  pub fn clear_ambient_scope(&self) {
+    *self.ambient_scope.borrow_mut() = None;
+  }
+
+  pub fn invalidate_module_cache(&self) {
+    self.module_exports.borrow_mut().clear();
+  }
+
+  /// Evaluate `source` as a module body and return the resulting scope. The base scope
+  /// is taken from `fresh_module_scope()` (so this composes: callers can stack evaluations
+  /// by installing the previous result as the ambient scope before the next call). Exports
+  /// declared in the source are assigned into the scope as bindings; the export tracking
+  /// map is not used here.
+  pub fn evaluate_module_to_scope(&self, source: &str) -> Result<Scope, ErrorStack> {
+    let scope = self.fresh_module_scope();
+
+    // Module sources do not include the prelude, so locations parsed here should not
+    // be offset by the root program's prelude line count.
+    let prev_offset = self.source_map.borrow().prelude_line_count;
+    self.source_map.borrow_mut().prelude_line_count = 0;
+    let parse_res = parse_program_src(self, source);
+    self.source_map.borrow_mut().prelude_line_count = prev_offset;
+
+    let mut ast = parse_res?;
+    optimizer::optimize_ast(self, &mut ast)?;
+
+    for statement in &ast.statements {
+      match self.eval_top_level_statement(statement, &scope)? {
+        ControlFlow::Continue(_) => {}
+        ControlFlow::Break(_) => {
+          return Err(ErrorStack::new("`break` at module top level not allowed"));
+        }
+        ControlFlow::Return(_) => {
+          return Err(ErrorStack::new("`return` at module top level not allowed"));
+        }
+      }
+    }
+
+    Ok(scope)
+  }
+
   fn resolve_module(&self, module_name: &str) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
     // Check cache first
     if let Some(exports) = self.module_exports.borrow().get(module_name) {
       return Ok(Rc::clone(exports));
+    }
+
+    // Circular-import guard. Without this, importing a module that (transitively)
+    // imports itself would recurse until the stack overflowed.
+    if self.modules_in_flight.borrow().contains(module_name) {
+      return Err(ErrorStack::new(format!(
+        "Circular module import detected: module \"{module_name}\" is already being evaluated"
+      )));
     }
 
     // Get source code
@@ -2948,33 +3061,72 @@ impl EvalCtx {
       .cloned()
       .ok_or_else(|| ErrorStack::new(format!("Unknown module \"{module_name}\"")))?;
 
-    // Set up module export context
-    let prev_exports = self
-      .current_module_exports
+    self
+      .modules_in_flight
       .borrow_mut()
-      .replace(FxHashMap::default());
+      .insert(module_name.to_owned());
 
-    // Parse and evaluate the module in a fresh scope (only default globals like pi/tau).
-    // Builtins are resolved by name at eval time, so they're available without being in scope.
-    let module_scope = Scope::default_globals(&self.interned_symbols);
-    let mut ast = parse_program_src(self, &source)
-      .map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
+    let result = self.resolve_module_inner(module_name, &source);
+
+    self.modules_in_flight.borrow_mut().remove(module_name);
+
+    result
+  }
+
+  fn resolve_module_inner(
+    &self,
+    module_name: &str,
+    source: &str,
+  ) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
+    // RAII guard: snapshots `current_module_exports` and `current_module`, installs
+    // the new values, and restores the previous ones on drop so every early return
+    // from below is correct by construction.
+    struct ModuleCtxGuard<'a> {
+      ctx: &'a EvalCtx,
+      prev_exports: Option<FxHashMap<Sym, Value>>,
+      prev_module: Option<String>,
+    }
+    impl<'a> Drop for ModuleCtxGuard<'a> {
+      fn drop(&mut self) {
+        *self.ctx.current_module_exports.borrow_mut() = self.prev_exports.take();
+        *self.ctx.current_module.borrow_mut() = self.prev_module.take();
+      }
+    }
+    let _guard = ModuleCtxGuard {
+      ctx: self,
+      prev_exports: self
+        .current_module_exports
+        .borrow_mut()
+        .replace(FxHashMap::default()),
+      prev_module: self
+        .current_module
+        .borrow_mut()
+        .replace(module_name.to_owned()),
+    };
+
+    // Module sources do not include the prelude; suppress any inherited offset around the parse.
+    let prev_offset = self.source_map.borrow().prelude_line_count;
+    self.source_map.borrow_mut().prelude_line_count = 0;
+    let parse_res = parse_program_src(self, source);
+    self.source_map.borrow_mut().prelude_line_count = prev_offset;
+
+    let module_scope = self.fresh_module_scope();
+    let mut ast = parse_res.map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
     optimizer::optimize_ast(self, &mut ast)
       .map_err(|err| err.wrap(&format!("Error optimizing module \"{module_name}\"")))?;
 
-    // Evaluate statements in module scope
     for statement in &ast.statements {
-      match self.eval_top_level_statement(statement, &module_scope)? {
+      match self
+        .eval_top_level_statement(statement, &module_scope)
+        .map_err(|err| err.wrap(&format!("Error evaluating module \"{module_name}\"")))?
+      {
         ControlFlow::Continue(_) => {}
         ControlFlow::Break(_) => {
-          // Restore previous export context before returning error
-          *self.current_module_exports.borrow_mut() = prev_exports;
           return Err(ErrorStack::new(format!(
             "`break` in module \"{module_name}\" top level"
           )));
         }
         ControlFlow::Return(_) => {
-          *self.current_module_exports.borrow_mut() = prev_exports;
           return Err(ErrorStack::new(format!(
             "`return` in module \"{module_name}\" top level"
           )));
@@ -2982,15 +3134,11 @@ impl EvalCtx {
       }
     }
 
-    // Collect exports
     let export_map = self
       .current_module_exports
       .borrow_mut()
       .take()
       .unwrap_or_default();
-
-    // Restore previous export context (for nested module evaluation)
-    *self.current_module_exports.borrow_mut() = prev_exports;
 
     // Convert Sym keys to String keys for the Value::Map representation
     let string_map: FxHashMap<String, Value> = export_map
@@ -3087,8 +3235,19 @@ pub fn parse_program_maybe_with_prelude(
 }
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
+  // When an ambient scope is installed, the root program (treated as a module for
+  // hierarchy purposes) gets a fresh clone of it as its base scope, rather than the
+  // long-lived `ctx.globals` that accumulates user vars across calls.
+  let ambient_scope_owned;
+  let scope: &Scope = if ctx.ambient_scope.borrow().is_some() {
+    ambient_scope_owned = ctx.fresh_module_scope();
+    &ambient_scope_owned
+  } else {
+    &ctx.globals
+  };
+
   for statement in &ast.statements {
-    let _val = match ctx.eval_top_level_statement(statement, &ctx.globals)? {
+    let _val = match ctx.eval_top_level_statement(statement, scope)? {
       ControlFlow::Continue(val) => val,
       ControlFlow::Break(_) => {
         return Err(ErrorStack::new(
@@ -3231,7 +3390,7 @@ c | render
   assert!(result.is_ok(), "Failed to evaluate: {:?}", result.err());
   let rendered_meshes = result.unwrap().rendered_meshes.into_inner();
   assert_eq!(rendered_meshes.len(), 1);
-  let mesh = &rendered_meshes[0];
+  let mesh = &rendered_meshes[0].mesh;
   assert_eq!(mesh.mesh.vertices.len(), 8);
   for vtx in mesh.mesh.vertices.values() {
     let pos = (mesh.transform * vtx.position.push(1.)).xyz();
@@ -3256,7 +3415,7 @@ render(a)
     .rendered_meshes
     .into_inner();
   assert_eq!(rendered_meshes.len(), 1);
-  let mesh = &rendered_meshes[0];
+  let mesh = &rendered_meshes[0].mesh;
   assert_eq!(mesh.mesh.vertices.len(), 8);
   for vtx in mesh.mesh.vertices.values() {
     let pos = (mesh.transform * vtx.position.push(1.)).xyz();
@@ -3566,7 +3725,7 @@ render(meshes)
   assert_eq!(rendered_meshes.len(), 10);
 
   for i in 0..10 {
-    let mesh = &rendered_meshes[i];
+    let mesh = &rendered_meshes[i].mesh;
     let center = mesh
       .mesh
       .vertices
@@ -5057,6 +5216,118 @@ fn test_import_unknown_module_error() {
   assert!(
     err.contains("Unknown module"),
     "Error should mention unknown module, got: {err}"
+  );
+}
+
+#[test]
+fn test_side_effect_only_import() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("side".to_string(), "x = 42".to_string());
+  // `import { } from "..."` should parse and run the module body for its side
+  // effects without binding any names. Used by treeCodegen to evaluate root nodes
+  // that have no `export mesh` (e.g. legacy `box(1) | render` sources).
+  let src = r#"import { } from "side""#;
+  parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).unwrap();
+}
+
+#[test]
+fn test_evaluate_module_to_scope() {
+  let ctx = EvalCtx::default();
+
+  // Plain assignment makes the binding available in the returned scope.
+  let scope = ctx.evaluate_module_to_scope("a = 7\nb = a * 2").unwrap();
+  let a_sym = ctx.interned_symbols.intern("a");
+  let b_sym = ctx.interned_symbols.intern("b");
+  assert_eq!(scope.get(a_sym).unwrap().as_int().unwrap(), 7);
+  assert_eq!(scope.get(b_sym).unwrap().as_int().unwrap(), 14);
+
+  // Exports are assigned into the scope like any other binding.
+  let scope = ctx
+    .evaluate_module_to_scope("export foo = 42")
+    .unwrap();
+  let foo_sym = ctx.interned_symbols.intern("foo");
+  assert_eq!(scope.get(foo_sym).unwrap().as_int().unwrap(), 42);
+}
+
+#[test]
+fn test_ambient_scope_visible_in_imported_module() {
+  let ctx = EvalCtx::default();
+
+  // Build an ambient scope containing `my_const = 42` and install it.
+  let ambient = ctx.evaluate_module_to_scope("my_const = 42").unwrap();
+  ctx.set_ambient_scope(ambient);
+
+  // A module's body should see `my_const` via the ambient scope.
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("user_mod".to_string(), "export val = my_const + 1".to_string());
+
+  let src = r#"
+import { val } from "user_mod"
+result = val
+"#;
+  parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).unwrap();
+  // result lives in the per-eval scope, not in ctx.globals when ambient is set.
+  // We instead verify by checking the cached module export.
+  let exports = ctx
+    .module_exports
+    .borrow()
+    .get("user_mod")
+    .cloned()
+    .unwrap();
+  assert_eq!(exports.get("val").unwrap().as_int().unwrap(), 43);
+}
+
+#[test]
+fn test_circular_import_detected() {
+  let ctx = EvalCtx::default();
+
+  ctx.module_sources.borrow_mut().insert(
+    "a".to_string(),
+    r#"import { x } from "b"
+export y = x"#
+      .to_string(),
+  );
+  ctx.module_sources.borrow_mut().insert(
+    "b".to_string(),
+    r#"import { y } from "a"
+export x = y"#
+      .to_string(),
+  );
+
+  let src = r#"import { y } from "a""#;
+  let result = parse_and_eval_program_with_ctx(src.to_string(), &ctx, false);
+  assert!(result.is_err(), "circular import should fail, not infinite-loop");
+  let err = format!("{}", result.unwrap_err());
+  assert!(
+    err.contains("Circular module import"),
+    "error should mention circular import, got: {err}"
+  );
+}
+
+#[test]
+fn test_module_error_reports_module_name_and_local_line() {
+  let ctx = EvalCtx::default();
+
+  // Module on line 2 has a binop type error. Root program is parsed without prelude,
+  // but we still want the reported line to be the *module's* line, not flattened.
+  ctx.module_sources.borrow_mut().insert(
+    "broken".to_string(),
+    // Line 1: comment-ish; Line 2: the error.
+    "y = 1\nexport z = y + \"hello\"".to_string(),
+  );
+
+  let src = r#"import { z } from "broken""#;
+  let result = parse_and_eval_program_with_ctx(src.to_string(), &ctx, false);
+  assert!(result.is_err());
+  let err = format!("{}", result.unwrap_err());
+  assert!(
+    err.contains("broken"),
+    "error should mention the failing module name, got: {err}"
   );
 }
 

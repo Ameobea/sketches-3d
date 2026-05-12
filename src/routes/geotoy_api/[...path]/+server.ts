@@ -1,11 +1,12 @@
 import { type RequestHandler } from '@sveltejs/kit';
 
-import { GEOTOY_API_BASE_URL } from 'src/geoscript/geotoyAPIClient';
+import { getGeotoyAPIBaseURL } from 'src/geoscript/geotoyAPIClient';
 
 export const fallback: RequestHandler = async ({ request, fetch, params }) => {
   const path = params.path;
-  const hostname = GEOTOY_API_BASE_URL.replace(/^https?:\/\//, '');
-  const protocol = GEOTOY_API_BASE_URL.startsWith('https') ? 'https:' : 'http:';
+  const baseUrl = getGeotoyAPIBaseURL();
+  const hostname = baseUrl.replace(/^https?:\/\//, '');
+  const protocol = baseUrl.startsWith('https') ? 'https:' : 'http:';
   const url = new URL(path ?? '', `${protocol}//${hostname}`);
 
   const originalUrl = new URL(request.url);

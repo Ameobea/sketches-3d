@@ -2,10 +2,10 @@
   import { goto } from '$app/navigation';
   import {
     APIError,
-    buildSingleNodeTree,
     createComposition,
     type Composition,
     type CompositionVersion,
+    type TreeDef,
   } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
@@ -19,7 +19,7 @@
     viz,
     comp,
     materials,
-    getCurrentCode,
+    getCurrentTree,
     onSave,
     preludeEjected,
     userData,
@@ -28,7 +28,7 @@
     viz: Viz;
     comp: Composition | undefined | null;
     materials: MaterialDefinitions;
-    getCurrentCode: () => string;
+    getCurrentTree: () => TreeDef;
     onSave: () => void;
     preludeEjected: boolean;
     userData: GeoscriptPlaygroundUserData | undefined;
@@ -55,7 +55,7 @@
         title,
         description,
         metadata: metadataRes.metadata,
-        tree: buildSingleNodeTree(getCurrentCode()),
+        tree: getCurrentTree(),
         is_shared: isShared,
       });
       return { type: 'ok', comp };
@@ -77,7 +77,7 @@
       if (comp) {
         const res = await saveNewVersion(
           comp,
-          getCurrentCode(),
+          getCurrentTree(),
           viz,
           materials,
           preludeEjected,

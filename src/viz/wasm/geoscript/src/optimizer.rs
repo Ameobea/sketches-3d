@@ -1772,6 +1772,15 @@ fn default_optimizer_pipeline() -> OptimizerPipeline {
 
 fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
   let mut local_scope = ScopeTracker::default();
+  // Seed the tracker with the ambient scope's bindings
+  if let Some(ambient) = ctx.ambient_scope.borrow().as_ref() {
+    for (sym, val) in ambient.collect_bindings_innermost_first() {
+      local_scope
+        .vars
+        .entry(sym)
+        .or_insert(TrackedValue::Const(val));
+    }
+  }
   for stmt in &mut ast.statements {
     optimize_top_level_statement(ctx, &mut local_scope, stmt, true)?;
   }

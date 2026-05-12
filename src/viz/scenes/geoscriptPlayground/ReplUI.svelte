@@ -28,6 +28,7 @@
     type Composition,
     type CompositionVersion,
     type CompositionVersionMetadata,
+    type TreeDef,
   } from 'src/geoscript/geotoyAPIClient';
   import {
     clearSavedState,
@@ -39,6 +40,10 @@
     saveState,
     setLastRunWasSuccessful,
   } from './persistence';
+  import { compileTree } from 'src/geoscript/treeCodegen';
+  import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
+  import { buildParentMap, findParentId } from './treeOps';
+  import HierarchyPanel from './HierarchyPanel.svelte';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
   import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
   import { populateScene } from 'src/geoscript/runner/geoscriptRunner';
@@ -95,12 +100,57 @@
   let repl = $derived(workerManager.getWorker());
 
   const {
-    code: initialCode,
+    tree: initialTree,
     materials: initialMatDefs,
     lastRunWasSuccessful,
     view: initialView,
     preludeEjected: initialPreludeEjected,
   } = $derived(loadState(userData));
+
+  const treeState = new TreeState({
+    initial: untrack(() => initialTree),
+    savedBaseline:
+      untrack(() => userData?.initialComposition?.version.tree) ?? untrack(() => initialTree),
+  });
+  treeState.setSelected(untrack(() => initialTree).rootId);
+
+  let failedNodeIds = $state<Set<string>>(new Set());
+
+  const getActiveSource = (): string => {
+    const sel = treeState.state.selectedId;
+    if (sel === GLOBALS_SELECTION_ID) return treeState.state.tree.globalsSource;
+    if (sel && treeState.state.tree.nodes[sel]) return treeState.state.tree.nodes[sel].source;
+    return '';
+  };
+  const writeActiveSource = (source: string): void => {
+    const sel = treeState.state.selectedId;
+    if (sel === GLOBALS_SELECTION_ID) {
+      treeState.setGlobalsSource(source);
+    } else if (sel && treeState.state.tree.nodes[sel]) {
+      treeState.setSource(sel, source);
+    }
+  };
+
+  const treePanelVisible = $derived(
+    Object.keys(treeState.state.tree.nodes).length > 1 ||
+      treeState.state.tree.globalsSource.length > 0 ||
+      treeState.state.selectedId === GLOBALS_SELECTION_ID
+  );
+
+  const breadcrumb = $derived.by(() => {
+    const sel = treeState.state.selectedId;
+    if (sel === GLOBALS_SELECTION_ID) return '_globals';
+    if (!sel) return '';
+    const names: string[] = [];
+    let cur: string | null = sel;
+    while (cur) {
+      const node = treeState.state.tree.nodes[cur];
+      if (!node) break;
+      names.unshift(node.name);
+      cur = findParentId(treeState.state.tree, cur);
+    }
+    return names.join(' / ');
+  });
 
   let ctxPtr = $state<number | null>(null);
 
@@ -135,7 +185,7 @@
     };
     await saveNewVersion(
       newComp,
-      editorView?.state.doc.toString() || '',
+      treeState.serialize(),
       viz,
       materialDefinitions,
       preludeEjected,
@@ -145,6 +195,8 @@
       newUserData
     );
     userData = newUserData;
+    treeState.markSaved();
+    isDirty = false;
   };
 
   const initialLayoutOrientation =
@@ -154,8 +206,6 @@
       ? Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth)
       : Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
   );
-  let lastCode = untrack(() => initialCode);
-
   onMount(() => {
     onSizeChange(size, isEditorCollapsed, layoutOrientation);
 
@@ -194,6 +244,61 @@
   let runStats: RunStats | null = $state(null);
   let renderedObjects: RenderedObject[] = $state([]);
   let lightHelpers: THREE.Object3D[] = $state([]);
+  let lastRunTree: TreeDef | null = $state(null);
+
+  const collectDescendants = (tree: TreeDef, rootId: string): Set<string> => {
+    const out = new Set<string>([rootId]);
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const id = queue.pop()!;
+      const node = tree.nodes[id];
+      if (!node) continue;
+      for (const cid of node.children) {
+        if (!out.has(cid)) {
+          out.add(cid);
+          queue.push(cid);
+        }
+      }
+    }
+    return out;
+  };
+
+  // Solo + disabled visibility. Membership uses the last-run tree; disabled flags
+  // come from the live tree so toggles are instant. Precomputed sets keep the
+  // per-mesh check O(1).
+  $effect(() => {
+    const soloId = treeState.state.soloId;
+    const renderTree = lastRunTree;
+    const liveTree = treeState.state.tree;
+    if (!renderTree) {
+      for (const obj of renderedObjects) {
+        if (obj instanceof THREE.Mesh) obj.visible = true;
+      }
+      return;
+    }
+
+    const parentMap = buildParentMap(renderTree);
+    const soloAllowed = soloId ? collectDescendants(renderTree, soloId) : null;
+    const ancestorHidden = (id: string): boolean => {
+      let cur: string | undefined = id;
+      while (cur) {
+        if (liveTree.nodes[cur]?.disabled) return true;
+        cur = parentMap.get(cur);
+      }
+      return false;
+    };
+
+    for (const obj of renderedObjects) {
+      if (!(obj instanceof THREE.Mesh)) continue;
+      const sourceNodeId = obj.userData.sourceNodeId as string | undefined;
+      if (!sourceNodeId) {
+        obj.visible = !soloId;
+        continue;
+      }
+      const inSolo = !soloAllowed || soloAllowed.has(sourceNodeId);
+      obj.visible = inSolo && !ancestorHidden(sourceNodeId);
+    }
+  });
 
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
@@ -212,23 +317,22 @@
     // if the user closed the tab while the last run was in progress, avoid eagerly running it again in
     // case there was an infinite loop or something
     if (lastRunWasSuccessful) {
-      run(initialCode);
+      run();
     }
   });
 
-  const beforeUnloadHandler = () => {
-    if (editorView) {
-      saveState(
-        {
-          code: editorView.state.doc.toString(),
-          materials: materialDefinitions,
-          view: getView(viz),
-          preludeEjected,
-        },
-        userData
-      );
-    }
-  };
+  const beforeUnloadHandler = () =>
+    saveState(
+      {
+        tree: treeState.serialize(),
+        materials: materialDefinitions,
+        view: getView(viz),
+        preludeEjected,
+      },
+      userData
+    );
+
+  let lastSwappedSelection: string | null = null;
 
   const setupEditor = () => {
     if (!codemirrorContainer) {
@@ -265,17 +369,15 @@
       {
         key: 'Ctrl-s',
         run: () => {
-          if (editorView) {
-            saveState(
-              {
-                code: editorView.state.doc.toString(),
-                materials: materialDefinitions,
-                view: getView(viz),
-                preludeEjected,
-              },
-              userData
-            );
-          }
+          saveState(
+            {
+              tree: treeState.serialize(),
+              materials: materialDefinitions,
+              view: getView(viz),
+              preludeEjected,
+            },
+            userData
+          );
           return true;
         },
       },
@@ -284,18 +386,38 @@
     const editor = buildEditor({
       container: codemirrorContainer,
       customKeymap,
-      initialCode: lastCode,
+      initialCode: untrack(() => getActiveSource()),
       onDocChange: () => {
         isDirty = true;
+        if (editorView) {
+          writeActiveSource(editorView.state.doc.toString());
+        }
       },
     });
     editorView = editor.editorView;
+    lastSwappedSelection = untrack(() => treeState.state.selectedId);
 
-    // Lazy-load analysis extensions — does not block editor creation or page load
     import('../../../geoscript/analysisExtensions').then(({ buildAnalysisExtensions }) => {
       editor.setAnalysisExtensions(buildAnalysisExtensions(() => !preludeEjected));
     });
   };
+
+  // Swap the editor doc when selection changes. Caveat: CodeMirror's undo stack
+  // isn't reset, so Ctrl-Z after a swap can write into the now-selected node.
+  $effect(() => {
+    const sel = treeState.state.selectedId;
+    if (sel === lastSwappedSelection) return;
+    if (!editorView) {
+      lastSwappedSelection = sel;
+      return;
+    }
+    const newSource = untrack(() => getActiveSource());
+    editorView.dispatch({
+      changes: { from: 0, to: editorView.state.doc.length, insert: newSource },
+      selection: { anchor: 0 },
+    });
+    lastSwappedSelection = sel;
+  });
 
   onDestroy(() => {
     if (editorView) {
@@ -507,25 +629,29 @@
     }
   };
 
-  const run = async (code?: string) => {
+  const buildModuleNameToNodeId = (tree: TreeDef): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const node of Object.values(tree.nodes)) {
+      if (!node.disabled) out[node.name] = node.id;
+    }
+    return out;
+  };
+
+  const extractFailedModuleName = (msg: string): string | null => {
+    const m = msg.match(/module\s+["']([^"']+)["']/i);
+    return m ? m[1] : null;
+  };
+
+  const run = async () => {
     if (isRunning || ctxPtr === null) {
       return;
     }
-
-    const finalCode = (() => {
-      if (typeof code === 'string') {
-        return code;
-      }
-      if (editorView) {
-        return editorView.state.doc.toString();
-      }
-      return lastCode;
-    })();
 
     beforeUnloadHandler();
 
     isRunning = true;
     err = null;
+    failedNodeIds = new Set();
 
     for (const obj of renderedObjects) {
       removeRenderedObject(obj);
@@ -538,9 +664,23 @@
       matsByName[def.name] = { def, mat: customMaterials[id] };
     }
 
+    const tree = treeState.serialize();
+    const compiled = compileTree(tree);
+    const moduleNameToNodeId = buildModuleNameToNodeId(tree);
+
+    const ambientSources: string[] = [];
+    if (!preludeEjected) {
+      ambientSources.push(await repl.getPrelude());
+    }
+    if (tree.globalsSource.trim().length > 0) {
+      ambientSources.push(tree.globalsSource);
+    }
+
     setLastRunWasSuccessful(false, userData);
     const result = await runGeoscript({
-      code: finalCode,
+      code: compiled.rootSource,
+      modules: compiled.modules,
+      ambientSources,
       ctxPtr,
       repl,
       materials: matsByName,
@@ -551,13 +691,21 @@
 
     if (result.error) {
       err = result.error;
+      const failedModule = extractFailedModuleName(result.error);
+      if (failedModule && moduleNameToNodeId[failedModule]) {
+        failedNodeIds = new Set([moduleNameToNodeId[failedModule]]);
+      }
       isRunning = false;
       return;
     }
 
     setLastRunWasSuccessful(true, userData);
     runStats = result.stats;
-    renderedObjects = populateScene(viz.scene, result);
+    renderedObjects = populateScene(viz.scene, result, {
+      tree,
+      moduleNameToNodeId,
+    });
+    lastRunTree = tree;
 
     for (const helper of lightHelpers) {
       viz.scene.remove(helper);
@@ -596,22 +744,19 @@
     if (onlyIfUVUnwrapperNotLoaded && getIsUVUnwrapLoaded()) {
       return;
     }
-    return run(editorView?.state.doc.toString() ?? lastCode);
+    return run();
   };
 
   const toggleEditorCollapsed = () => {
-    if (editorView) {
-      lastCode = editorView.state.doc.toString();
-      saveState(
-        {
-          code: lastCode,
-          materials: materialDefinitions,
-          view: getView(viz),
-          preludeEjected,
-        },
-        userData
-      );
-    }
+    saveState(
+      {
+        tree: treeState.serialize(),
+        materials: materialDefinitions,
+        view: getView(viz),
+        preludeEjected,
+      },
+      userData
+    );
     isEditorCollapsed = !isEditorCollapsed;
     onSizeChange(size, isEditorCollapsed, layoutOrientation);
   };
@@ -633,7 +778,7 @@
     }
     preludeEjected = !preludeEjected;
 
-    run(editorView.state.doc.toString());
+    run();
   };
 
   let exportDialog = $state<HTMLDialogElement | null>(null);
@@ -673,11 +818,13 @@
 
     const serverState = getServerState(userData);
 
-    if (editorView) {
-      editorView.dispatch({
-        changes: { from: 0, to: editorView.state.doc.length, insert: serverState.code },
-      });
-    }
+    // Reset the tree to the server-side version. `replaceTree` clears selection/solo
+    // and updates the dirty baseline; the editor-swap effect picks up the new
+    // selection and refreshes the doc, but we set selection explicitly here so we
+    // land on a real node rather than null.
+    treeState.replaceTree(serverState.tree);
+    treeState.setSelected(serverState.tree.rootId);
+
     didInitMats = false;
 
     materialDefinitions = serverState.materials;
@@ -692,11 +839,11 @@
     }
     preludeEjected = serverState.preludeEjected;
 
-    run(serverState.code);
+    run();
 
     saveState(
       {
-        code: serverState.code,
+        tree: serverState.tree,
         materials: serverState.materials,
         view: serverState.view,
         preludeEjected: serverState.preludeEjected,
@@ -816,11 +963,76 @@
       onmousedown={handleMousedown}
     ></div>
     <div class={['editor-container', layoutOrientation === 'horizontal' ? 'horizontal' : '']}>
-      <div
-        bind:this={codemirrorContainer}
-        class="codemirror-wrapper"
-        style="flex: 1; background: #222;"
-      ></div>
+      {#if treePanelVisible}
+        <div class={['tree-pane', layoutOrientation === 'horizontal' ? 'horizontal' : '']}>
+          <HierarchyPanel
+            tree={treeState.state.tree}
+            selectedId={treeState.state.selectedId}
+            soloId={treeState.state.soloId}
+            {failedNodeIds}
+            onselect={(id) => treeState.setSelected(id)}
+            onsoloToggle={(id) => treeState.setSolo(treeState.state.soloId === id ? null : id)}
+            onDisableToggle={(id) => {
+              const node = treeState.state.tree.nodes[id];
+              if (node) treeState.setDisabled(id, !node.disabled);
+              isDirty = true;
+            }}
+            oncreate={(parentId) => {
+              const newId = treeState.createNode({ parentId: parentId ?? undefined });
+              treeState.setSelected(newId);
+              isDirty = true;
+            }}
+            ondelete={(id) => {
+              treeState.deleteNode(id);
+              isDirty = true;
+            }}
+            onrename={(id, newName) => {
+              try {
+                treeState.rename(id, newName);
+                isDirty = true;
+                return true;
+              } catch (err) {
+                console.warn('rename failed:', err);
+                return false;
+              }
+            }}
+            onreparent={(id, newParentId) => {
+              try {
+                treeState.reparent(id, newParentId);
+                isDirty = true;
+              } catch (err) {
+                console.warn('reparent failed:', err);
+              }
+            }}
+            canDelete={(id) => treeState.canDelete(id)}
+          />
+        </div>
+      {/if}
+      <div class="editor-pane">
+        {#if treePanelVisible || breadcrumb}
+          <div class="editor-header">
+            <span class="breadcrumb">{breadcrumb || '(no selection)'}</span>
+            {#if !treePanelVisible}
+              <button
+                class="add-node-btn"
+                title="add a sibling node"
+                onclick={() => {
+                  const newId = treeState.createNode({ name: 'node_2' });
+                  treeState.setSelected(newId);
+                  isDirty = true;
+                }}
+              >
+                + node
+              </button>
+            {/if}
+          </div>
+        {/if}
+        <div
+          bind:this={codemirrorContainer}
+          class="codemirror-wrapper"
+          style="flex: 1; background: #222;"
+        ></div>
+      </div>
       <div class="controls">
         <div class="output">
           <ReplControls
@@ -851,12 +1063,13 @@
           {#if !userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id}
             <SaveControls
               comp={userData.initialComposition?.comp}
-              getCurrentCode={() => editorView?.state.doc.toString() || ''}
+              getCurrentTree={() => treeState.serialize()}
               materials={materialDefinitions}
               {viz}
               {preludeEjected}
               onSave={() => {
                 isDirty = false;
+                treeState.markSaved();
               }}
               onForked={handleForkedComposition}
               {userData}
@@ -960,6 +1173,72 @@
     padding: 8px;
     overflow-y: auto;
     min-height: 80px;
+  }
+
+  .tree-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 200px;
+    width: 200px;
+    min-width: 0;
+    border-right: 1px solid #444;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #1a1a1a;
+  }
+
+  .tree-pane.horizontal {
+    flex: 0 0 180px;
+    width: auto;
+    height: 180px;
+    border-right: none;
+    border-bottom: 1px solid #444;
+  }
+
+  .editor-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .editor-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 8px;
+    border-bottom: 1px solid #333;
+    background: #1a1a1a;
+    font-size: 11px;
+    color: #aaa;
+    flex-shrink: 0;
+    min-height: 22px;
+  }
+
+  .breadcrumb {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: inherit;
+  }
+
+  .add-node-btn {
+    background: #1c1c1c;
+    color: #ddd;
+    border: 1px solid #444;
+    border-radius: 2px;
+    padding: 0 6px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    line-height: 16px;
+  }
+
+  .add-node-btn:hover {
+    background: #2a2a2a;
+    border-color: #666;
   }
 
   .codemirror-wrapper {

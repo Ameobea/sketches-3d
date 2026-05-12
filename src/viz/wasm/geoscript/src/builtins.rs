@@ -3823,12 +3823,21 @@ fn render_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  // Tag each rendered mesh with the module that fired the call so JS-side can
+  // compose ancestor tree-transforms at scene-populate time.
+  let push_mesh = |mesh: Rc<crate::MeshHandle>| {
+    ctx.rendered_meshes.push(crate::RenderedMesh {
+      mesh,
+      source_module: ctx.current_module.borrow().clone(),
+    });
+  };
+
   match def_ix {
     0 => {
       let Value::Mesh(mesh) = arg_refs[0].resolve(args, kwargs) else {
         unreachable!()
       };
-      ctx.rendered_meshes.push(Rc::clone(mesh));
+      push_mesh(Rc::clone(mesh));
       Ok(Value::Nil)
     }
     1 => {
@@ -3868,7 +3877,7 @@ fn render_impl(
       let render_single = |res: Result<Value, ErrorStack>| -> Result<(), ErrorStack> {
         match res {
           Ok(Value::Mesh(mesh)) => {
-            ctx.rendered_meshes.push(mesh);
+            push_mesh(mesh);
           }
           Ok(Value::Sequence(inner_seq)) => {
             let iter = inner_seq.consume(ctx);

@@ -23,6 +23,13 @@ export interface GeneratedMesh {
   transform: THREE.Matrix4;
   castShadow: boolean;
   receiveShadow: boolean;
+  /**
+   * Name of the geoscript module that called `render()` to register this mesh.
+   * The JS-side scene populator looks up the corresponding tree node and composes
+   * its ancestor chain of transforms before adding the mesh to the Three.js scene.
+   * Empty string for the legacy/flat-source path.
+   */
+  sourceModule: string;
 }
 
 export interface GeneratedPath {
@@ -68,6 +75,13 @@ export interface RunGeoscriptOptions {
   onError?: (error: string) => void;
   renderMode?: boolean;
   modules?: Record<string, string>;
+  /**
+   * Sources to use to build the ambient scope (cloned for each module evaluation).
+   * Typically `[prelude_src, globals_src]`. Empty array clears any existing ambient.
+   * When omitted, ambient scope is left untouched (caller is responsible for
+   * clearing it via a prior `reset()`).
+   */
+  ambientSources?: string[];
 }
 
 export interface GeoscriptRunResult {
