@@ -1,19 +1,44 @@
-import { defaultKeymap, indentWithTab } from '@codemirror/commands';
-import { basicSetup } from 'codemirror';
 import {
+  acceptCompletion,
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completionKeymap,
+} from '@codemirror/autocomplete';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldGutter,
+  foldKeymap,
   foldNodeProp,
   foldInside,
   indentNodeProp,
+  indentOnInput,
   LRLanguage,
   LanguageSupport,
+  syntaxHighlighting,
   syntaxTree,
   type Language,
   continuedIndent,
   delimitedIndent,
 } from '@codemirror/language';
-import { linter, type Diagnostic } from '@codemirror/lint';
+import { lintKeymap, linter, type Diagnostic } from '@codemirror/lint';
+import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
-import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
+import {
+  crosshairCursor,
+  drawSelection,
+  dropCursor,
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+  type KeyBinding,
+} from '@codemirror/view';
 import { gruvboxDark } from 'cm6-theme-gruvbox-dark';
 
 import { parser as geoscriptParser } from './parser/geoscript';
@@ -116,6 +141,44 @@ export const buildEditor = ({
     return diagnostics;
   });
 
+  // History in its own compartment so `resetHistory` can clear it on doc swap
+  // (CM history is per-EditorState; without reset, undo rewinds across swaps).
+  const historyCompartment = new Compartment();
+
+  // Inlined basicSetup so `history()` can live in its own compartment.
+  const baseExtensions: Extension[] = [
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightSpecialChars(),
+    historyCompartment.of(history()),
+    foldGutter(),
+    drawSelection(),
+    dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(),
+    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    bracketMatching(),
+    closeBrackets(),
+    autocompletion(),
+    rectangularSelection(),
+    crosshairCursor(),
+    highlightActiveLine(),
+    highlightSelectionMatches(),
+    keymap.of([
+      ...closeBracketsKeymap,
+      ...defaultKeymap,
+      ...searchKeymap,
+      ...historyKeymap,
+      ...foldKeymap,
+      ...completionKeymap,
+      // Tab tries to accept an open completion first; falls through to
+      // indentWithTab when no completion is showing.
+      { key: 'Tab', run: acceptCompletion },
+      indentWithTab,
+      ...lintKeymap,
+    ]),
+  ];
+
   const extensions: Extension = filterNils([
     onDocChange
       ? EditorView.updateListener.of(update => {
@@ -125,9 +188,7 @@ export const buildEditor = ({
         })
       : null,
     customKeymap ? Prec.highest(keymap.of(customKeymap)) : null,
-    basicSetup,
-    keymap.of(defaultKeymap),
-    keymap.of([indentWithTab]),
+    baseExtensions,
     gruvboxDark,
     EditorView.theme({
       '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
@@ -179,6 +240,10 @@ export const buildEditor = ({
     /** Hot-swap analysis extensions without recreating the editor. */
     setAnalysisExtensions: (exts: Extension[]) => {
       editorView.dispatch({ effects: analysisCompartment.reconfigure(exts) });
+    },
+    /** Clears CM undo history; call after swapping the doc to a new logical source. */
+    resetHistory: () => {
+      editorView.dispatch({ effects: historyCompartment.reconfigure(history()) });
     },
   };
 };

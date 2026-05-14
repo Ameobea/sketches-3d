@@ -28,6 +28,7 @@
     type Composition,
     type CompositionVersion,
     type CompositionVersionMetadata,
+    type Transform3,
     type TreeDef,
   } from 'src/geoscript/geotoyAPIClient';
   import {
@@ -42,18 +43,21 @@
   } from './persistence';
   import { compileTree } from 'src/geoscript/treeCodegen';
   import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
-  import { buildParentMap, findParentId } from './treeOps';
+  import { buildParentMap, computeMeshCounts, findParentId } from './treeOps';
   import HierarchyPanel from './HierarchyPanel.svelte';
+  import NodeInspector from './NodeInspector.svelte';
+  import { TransformGizmo, type GizmoMode, type GizmoSpace } from './transformGizmo';
+  import { installRaycastSelect } from './raycastSelect';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
   import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
-  import { populateScene } from 'src/geoscript/runner/geoscriptRunner';
+  import { populateScene, buildWorldMatrixCache } from 'src/geoscript/runner/geoscriptRunner';
   import type { MatEntry, RenderedObject } from 'src/geoscript/runner/types';
   import {
     buildCustomMaterials,
     fetchAndSetTextures,
     getReferencedTextureIDs,
   } from './materialLoading.svelte';
-  import { centerView, snapView, orbit } from './cameraControls';
+  import { centerView, focusOnSubtree, snapView, orbit } from './cameraControls';
   import { buildLightHelpers, toggleAxisHelpers, toggleLightHelpers } from './gizmos';
   import { useRecording } from './recording';
   import type { PostprocessingPipelineController } from 'src/viz/postprocessing/defaultPostprocessing';
@@ -122,6 +126,8 @@
     if (sel && treeState.state.tree.nodes[sel]) return treeState.state.tree.nodes[sel].source;
     return '';
   };
+  // Source edits skip `applyEdit`: CM owns per-node text undo; tree undo handles
+  // only structural ops, transforms, disable, etc.
   const writeActiveSource = (source: string): void => {
     const sel = treeState.state.selectedId;
     if (sel === GLOBALS_SELECTION_ID) {
@@ -141,13 +147,14 @@
     const sel = treeState.state.selectedId;
     if (sel === GLOBALS_SELECTION_ID) return '_globals';
     if (!sel) return '';
+    const tree = treeState.state.tree;
     const names: string[] = [];
     let cur: string | null = sel;
     while (cur) {
-      const node = treeState.state.tree.nodes[cur];
+      const node = tree.nodes[cur];
       if (!node) break;
-      names.unshift(node.name);
-      cur = findParentId(treeState.state.tree, cur);
+      names.unshift(cur === tree.rootId ? 'Root' : node.name);
+      cur = findParentId(tree, cur);
     }
     return names.join(' / ');
   });
@@ -214,6 +221,215 @@
     });
   });
 
+  let gizmo = $state<TransformGizmo | null>(null);
+  let raycastDisposer: (() => void) | null = null;
+  let gizmoMode = $state<GizmoMode>('translate');
+  let gizmoSpace = $state<GizmoSpace>('local');
+
+  onMount(() => {
+    let cancelled = false;
+    (async () => {
+      while (!viz.orbitControls && !cancelled) {
+        await new Promise(r => setTimeout(r, 16));
+      }
+      if (cancelled) return;
+      const orbit = viz.orbitControls!;
+      const g = new TransformGizmo(viz.camera, viz.renderer.domElement, viz.overlayScene, {
+        onDraggingChanged: dragging => {
+          orbit.enabled = !dragging;
+        },
+        onTransformChange: (id, transform) => {
+          treeState.applyEdit(`transform:${id}`, () => treeState.setTransform(id, transform));
+          isDirty = true;
+          runOrFast();
+        },
+        onDragEnd: () => {
+          // Catches the final state if the last `onTransformChange` was dropped by `isRunning`.
+          runOrFast();
+        },
+      });
+      const disposer = installRaycastSelect({
+        canvas: viz.renderer.domElement,
+        camera: viz.camera,
+        getCandidates: () =>
+          renderedObjects.filter(o => o instanceof THREE.Mesh && !!o.userData.sourceNodeId),
+        onSelect: id => {
+          // Empty-space click deselects to root — same neutral state Escape produces.
+          treeState.setSelected(id ?? treeState.state.tree.rootId);
+        },
+        isDraggingGizmo: () => g.dragging(),
+      });
+      if (cancelled) {
+        disposer();
+        g.dispose();
+        return;
+      }
+      gizmo = g;
+      raycastDisposer = disposer;
+    })();
+    return () => {
+      cancelled = true;
+      raycastDisposer?.();
+      raycastDisposer = null;
+      gizmo?.dispose();
+      gizmo = null;
+    };
+  });
+
+  // Re-sync gizmo on selection change and after each run (ancestor world transforms
+  // refresh). Reading `lastRunTree` subscribes the effect to reruns.
+  $effect(() => {
+    const sel = treeState.state.selectedId;
+    void lastRunTree;
+    if (!gizmo) return;
+    const id = sel === null || sel === GLOBALS_SELECTION_ID ? null : sel;
+    gizmo.syncTo(id, treeState.state.tree);
+  });
+
+  let hierarchyPanel = $state<{ startRename: (id: string) => void } | null>(null);
+
+  const setGizmoMode = (mode: GizmoMode) => {
+    gizmoMode = mode;
+    gizmo?.setMode(mode);
+  };
+
+  const toggleGizmoSpace = () => {
+    gizmoSpace = gizmoSpace === 'world' ? 'local' : 'world';
+    gizmo?.setSpace(gizmoSpace);
+  };
+
+  let resetEditorHistory: (() => void) | null = null;
+
+  const runUndo = (): boolean => {
+    if (!treeState.undo()) return true;
+    isDirty = treeState.isDirty();
+    runOrFast();
+    return true;
+  };
+
+  const runRedo = (): boolean => {
+    if (!treeState.redo()) return true;
+    isDirty = treeState.isDirty();
+    runOrFast();
+    return true;
+  };
+
+  const isEditorFocused = (): boolean => {
+    const active = document.activeElement;
+    if (!active || !codemirrorContainer) return false;
+    return codemirrorContainer.contains(active);
+  };
+
+  // Blender-style hotkeys: G/R/S/L/./Esc/Delete plus `/` solo and F2 rename.
+  onMount(() => {
+    const isTypingTarget = (el: Element | null): boolean => {
+      if (!el) return false;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return true;
+      return (el as HTMLElement).isContentEditable;
+    };
+
+    const handler = (e: KeyboardEvent) => {
+      // When the editor is focused, let CM's historyKeymap handle undo/redo
+      // (per-node text history); otherwise route to the tree undo system.
+      const isMod = e.ctrlKey || e.metaKey;
+      const isUndoKey = isMod && !e.altKey && (e.key === 'z' || e.key === 'Z');
+      const isRedoKey =
+        isMod &&
+        !e.altKey &&
+        ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || (!e.shiftKey && e.key === 'y'));
+      if (isUndoKey || isRedoKey) {
+        if (e.defaultPrevented) return;
+        if (isEditorFocused()) return;
+        if (isRedoKey) runRedo();
+        else runUndo();
+        e.preventDefault();
+        return;
+      }
+
+      if (isTypingTarget(document.activeElement)) return;
+      if (isMod || e.altKey) return;
+
+      const sel = treeState.state.selectedId;
+      const tree = treeState.state.tree;
+      const isNodeSelected = sel !== null && sel !== GLOBALS_SELECTION_ID && !!tree.nodes[sel];
+
+      // Delete is destructive enough that we want it only when the user is
+      // demonstrably in a tree-editing context — focused inside the panel or
+      // with no UI focused at all. Other shortcuts are non-destructive and
+      // applied broadly, but still no-op when nothing's selected.
+      const active = document.activeElement;
+      const inHierarchyPanel = !!(active && (active as HTMLElement).closest?.('[data-hierarchy-panel]'));
+      const treeContextFocused = inHierarchyPanel || !active || active === document.body;
+
+      switch (e.key) {
+        case 'g':
+        case 'G':
+          if (!isNodeSelected) return;
+          setGizmoMode('translate');
+          e.preventDefault();
+          return;
+        case 'r':
+        case 'R':
+          if (!isNodeSelected) return;
+          setGizmoMode('rotate');
+          e.preventDefault();
+          return;
+        case 's':
+        case 'S':
+          if (!isNodeSelected) return;
+          setGizmoMode('scale');
+          e.preventDefault();
+          return;
+        case 'l':
+        case 'L':
+          if (!isNodeSelected) return;
+          toggleGizmoSpace();
+          e.preventDefault();
+          return;
+        case '.':
+          if (isNodeSelected) {
+            focusOnSubtree(viz, renderedObjects, tree, sel);
+            e.preventDefault();
+          }
+          return;
+        case '/':
+          if (isNodeSelected && sel !== tree.rootId) {
+            treeState.setSolo(treeState.state.soloId === sel ? null : sel);
+            e.preventDefault();
+          }
+          return;
+        case 'Escape':
+          if (treeState.state.soloId !== null) {
+            treeState.setSolo(null);
+            e.preventDefault();
+          } else if (isNodeSelected && sel !== tree.rootId) {
+            treeState.setSelected(tree.rootId);
+            e.preventDefault();
+          }
+          return;
+        case 'Delete':
+          if (!treeContextFocused) return;
+          if (isNodeSelected && treeState.canDelete(sel)) {
+            e.preventDefault();
+            treeState.applyEdit(null, () => treeState.deleteNode(sel));
+            isDirty = true;
+          }
+          return;
+        case 'F2':
+          if (isNodeSelected && sel !== tree.rootId) {
+            e.preventDefault();
+            hierarchyPanel?.startRename(sel);
+          }
+          return;
+      }
+    };
+
+    // Capture phase so our Escape claims the event before Viz's pause toggle.
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  });
+
   const handleMousedown = (e: MouseEvent) => {
     e.preventDefault();
 
@@ -243,8 +459,13 @@
   let isRunning: boolean = $state(false);
   let runStats: RunStats | null = $state(null);
   let renderedObjects: RenderedObject[] = $state([]);
+  // Bumped on cancel(). A run captures its gen up front and bails on any post-
+  // await continuation whose gen no longer matches — distinguishes "worker
+  // terminated mid-call" from a real eval failure.
+  let runGen = 0;
   let lightHelpers: THREE.Object3D[] = $state([]);
   let lastRunTree: TreeDef | null = $state(null);
+  let meshCounts: ReadonlyMap<string, number> = $state(new Map());
 
   const collectDescendants = (tree: TreeDef, rootId: string): Set<string> => {
     const out = new Set<string>([rootId]);
@@ -340,6 +561,7 @@
         beforeUnloadHandler();
         editorView.destroy();
         editorView = null;
+        resetEditorHistory = null;
       }
       return;
     }
@@ -388,13 +610,15 @@
       customKeymap,
       initialCode: untrack(() => getActiveSource()),
       onDocChange: () => {
-        isDirty = true;
         if (editorView) {
           writeActiveSource(editorView.state.doc.toString());
         }
+        // Recompute (not just `= true`) so CM undo back to the saved baseline clears dirty.
+        isDirty = treeState.isDirty();
       },
     });
     editorView = editor.editorView;
+    resetEditorHistory = editor.resetHistory;
     lastSwappedSelection = untrack(() => treeState.state.selectedId);
 
     import('../../../geoscript/analysisExtensions').then(({ buildAnalysisExtensions }) => {
@@ -402,8 +626,8 @@
     });
   };
 
-  // Swap the editor doc when selection changes. Caveat: CodeMirror's undo stack
-  // isn't reset, so Ctrl-Z after a swap can write into the now-selected node.
+  // Swap the editor doc on selection change; clear CM undo so Ctrl-Z can't
+  // rewind past the swap.
   $effect(() => {
     const sel = treeState.state.selectedId;
     if (sel === lastSwappedSelection) return;
@@ -416,6 +640,7 @@
       changes: { from: 0, to: editorView.state.doc.length, insert: newSource },
       selection: { anchor: 0 },
     });
+    resetEditorHistory?.();
     lastSwappedSelection = sel;
   });
 
@@ -642,6 +867,57 @@
     return m ? m[1] : null;
   };
 
+  /**
+   * Hash of every wasm input except per-node transforms; the fast path uses it
+   * to decide whether a re-eval is needed. Material defs are serialized whole
+   * because UV-mapping fields drive JS-side UV unwrap during the per-mesh build.
+   */
+  const computeEvalInputsHash = (): string => {
+    const tree = treeState.state.tree;
+    const nodeKeys = Object.keys(tree.nodes).sort();
+    const parts: string[] = [`g:${tree.globalsSource}`];
+    for (const k of nodeKeys) {
+      const n = tree.nodes[k];
+      // `children` matters: reparenting changes `compileTree`'s emitted imports.
+      parts.push(`n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.source}:${n.children.join(',')}`);
+    }
+    parts.push(`pe:${preludeEjected ? 1 : 0}`);
+    const matIds = Object.keys(materialDefinitions.materials).sort();
+    for (const id of matIds) {
+      parts.push(`m:${id}:${JSON.stringify(materialDefinitions.materials[id])}`);
+    }
+    parts.push(`dm:${materialDefinitions.defaultMaterialID ?? ''}`);
+    return parts.join('\x00');
+  };
+
+  let lastEvalInputsHash: string | null = null;
+
+  /** Recompose each mesh's `ancestor × localInScript` if only transforms changed. */
+  const tryTransformOnlyFastPath = (): boolean => {
+    if (isRunning) return false;
+    if (lastEvalInputsHash === null) return false;
+    if (computeEvalInputsHash() !== lastEvalInputsHash) return false;
+
+    const tree = treeState.serialize();
+    const worldMatrices = buildWorldMatrixCache(tree, buildParentMap(tree));
+    for (const obj of renderedObjects) {
+      if (!(obj instanceof THREE.Mesh)) continue;
+      const sourceNodeId = obj.userData.sourceNodeId as string | undefined;
+      const localInScript = obj.userData.localInScript as THREE.Matrix4 | undefined;
+      if (!sourceNodeId || !localInScript) continue;
+      const ancestor = worldMatrices.get(sourceNodeId)?.clone() ?? new THREE.Matrix4();
+      const final = ancestor.multiply(localInScript);
+      final.decompose(obj.position, obj.quaternion, obj.scale);
+    }
+    lastRunTree = tree;
+    return true;
+  };
+
+  const runOrFast = () => {
+    if (tryTransformOnlyFastPath()) return;
+    run();
+  };
+
   const run = async () => {
     if (isRunning || ctxPtr === null) {
       return;
@@ -649,14 +925,18 @@
 
     beforeUnloadHandler();
 
+    const myGen = runGen;
     isRunning = true;
     err = null;
     failedNodeIds = new Set();
 
-    for (const obj of renderedObjects) {
-      removeRenderedObject(obj);
+    // Defer disposal until after populate so unchanged objects can be reused.
+    const prevObjects = renderedObjects;
+    const prevByReuseKey = new Map<number, RenderedObject>();
+    for (const obj of prevObjects) {
+      const key = obj.userData.reuseKey as number | undefined;
+      if (typeof key === 'number') prevByReuseKey.set(key, obj);
     }
-    renderedObjects = [];
     runStats = null;
 
     const matsByName: Record<string, { def: MaterialDef; mat: MatEntry }> = {};
@@ -668,55 +948,95 @@
     const compiled = compileTree(tree);
     const moduleNameToNodeId = buildModuleNameToNodeId(tree);
 
-    const ambientSources: string[] = [];
-    if (!preludeEjected) {
-      ambientSources.push(await repl.getPrelude());
-    }
-    if (tree.globalsSource.trim().length > 0) {
-      ambientSources.push(tree.globalsSource);
-    }
-
-    setLastRunWasSuccessful(false, userData);
-    const result = await runGeoscript({
-      code: compiled.rootSource,
-      modules: compiled.modules,
-      ambientSources,
-      ctxPtr,
-      repl,
-      materials: matsByName,
-      includePrelude: !preludeEjected,
-      materialOverride,
-      renderMode: userData?.renderMode ?? false,
-    });
-
-    if (result.error) {
-      err = result.error;
-      const failedModule = extractFailedModuleName(result.error);
-      if (failedModule && moduleNameToNodeId[failedModule]) {
-        failedNodeIds = new Set([moduleNameToNodeId[failedModule]]);
+    try {
+      const ambientSources: string[] = [];
+      if (!preludeEjected) {
+        ambientSources.push(await repl.getPrelude());
       }
+      if (tree.globalsSource.trim().length > 0) {
+        ambientSources.push(tree.globalsSource);
+      }
+
+      setLastRunWasSuccessful(false, userData);
+      const result = await runGeoscript({
+        code: compiled.rootSource,
+        modules: compiled.modules,
+        ambientSources,
+        ctxPtr,
+        repl,
+        materials: matsByName,
+        includePrelude: !preludeEjected,
+        materialOverride,
+        renderMode: userData?.renderMode ?? false,
+      });
+
+      if (myGen !== runGen) return;
+
+      if (result.error) {
+        // Keep the previous scene visible on failure.
+        err = result.error;
+        const failedModule = extractFailedModuleName(result.error);
+        if (failedModule && moduleNameToNodeId[failedModule]) {
+          failedNodeIds = new Set([moduleNameToNodeId[failedModule]]);
+        }
+        isRunning = false;
+        return;
+      }
+
+      setLastRunWasSuccessful(true, userData);
+      runStats = result.stats;
+      const populated = populateScene(viz.scene, result, {
+        tree,
+        moduleNameToNodeId,
+        prev: prevByReuseKey,
+      });
+      renderedObjects = populated.objects;
+      for (const obj of prevObjects) {
+        const key = obj.userData.reuseKey as number | undefined;
+        if (typeof key === 'number' && populated.reusedKeys.has(key)) continue;
+        removeRenderedObject(obj);
+      }
+      lastRunTree = tree;
+
+      const directCounts = new Map<string, number>();
+      for (const obj of renderedObjects) {
+        if (!(obj instanceof THREE.Mesh)) continue;
+        const id = obj.userData.sourceNodeId as string | undefined;
+        if (!id) continue;
+        directCounts.set(id, (directCounts.get(id) ?? 0) + 1);
+      }
+      meshCounts = computeMeshCounts(tree, directCounts);
+
+      for (const helper of lightHelpers) {
+        viz.scene.remove(helper);
+      }
+      if (localStorage['geoscript-light-helpers'] === 'true') {
+        lightHelpers = buildLightHelpers(viz, renderedObjects);
+      } else {
+        lightHelpers = [];
+      }
+
+      lastEvalInputsHash = computeEvalInputsHash();
       isRunning = false;
-      return;
+    } catch (e) {
+      // cancel() bumped runGen and is taking over teardown — drop this run's
+      // rejection silently. Anything else is a real bug worth surfacing.
+      if (myGen !== runGen) return;
+      console.error('geoscript run failed', e);
+      err = `Run failed: ${e instanceof Error ? e.message : String(e)}`;
+      isRunning = false;
     }
+  };
 
-    setLastRunWasSuccessful(true, userData);
-    runStats = result.stats;
-    renderedObjects = populateScene(viz.scene, result, {
-      tree,
-      moduleNameToNodeId,
-    });
-    lastRunTree = tree;
+  const handleInspectorTransformChange = (id: string, transform: Transform3) => {
+    treeState.applyEdit(`transform:${id}`, () => treeState.setTransform(id, transform));
+    isDirty = true;
+    runOrFast();
+  };
 
-    for (const helper of lightHelpers) {
-      viz.scene.remove(helper);
-    }
-    if (localStorage['geoscript-light-helpers'] === 'true') {
-      lightHelpers = buildLightHelpers(viz, renderedObjects);
-    } else {
-      lightHelpers = [];
-    }
-
-    isRunning = false;
+  const handleInspectorDisableToggle = (id: string, disabled: boolean) => {
+    treeState.applyEdit(null, () => treeState.setDisabled(id, disabled));
+    isDirty = true;
   };
 
   const cancel = async () => {
@@ -724,6 +1044,7 @@
       return;
     }
 
+    runGen++;
     workerManager.terminate();
 
     for (const obj of renderedObjects) {
@@ -966,6 +1287,7 @@
       {#if treePanelVisible}
         <div class={['tree-pane', layoutOrientation === 'horizontal' ? 'horizontal' : '']}>
           <HierarchyPanel
+            bind:this={hierarchyPanel}
             tree={treeState.state.tree}
             selectedId={treeState.state.selectedId}
             soloId={treeState.state.soloId}
@@ -974,21 +1296,23 @@
             onsoloToggle={(id) => treeState.setSolo(treeState.state.soloId === id ? null : id)}
             onDisableToggle={(id) => {
               const node = treeState.state.tree.nodes[id];
-              if (node) treeState.setDisabled(id, !node.disabled);
+              if (node) treeState.applyEdit(null, () => treeState.setDisabled(id, !node.disabled));
               isDirty = true;
             }}
             oncreate={(parentId) => {
-              const newId = treeState.createNode({ parentId: parentId ?? undefined });
-              treeState.setSelected(newId);
+              treeState.applyEdit(null, () => {
+                const newId = treeState.createNode({ parentId: parentId ?? undefined });
+                treeState.setSelected(newId);
+              });
               isDirty = true;
             }}
             ondelete={(id) => {
-              treeState.deleteNode(id);
+              treeState.applyEdit(null, () => treeState.deleteNode(id));
               isDirty = true;
             }}
             onrename={(id, newName) => {
               try {
-                treeState.rename(id, newName);
+                treeState.applyEdit(null, () => treeState.rename(id, newName));
                 isDirty = true;
                 return true;
               } catch (err) {
@@ -998,7 +1322,7 @@
             }}
             onreparent={(id, newParentId) => {
               try {
-                treeState.reparent(id, newParentId);
+                treeState.applyEdit(null, () => treeState.reparent(id, newParentId));
                 isDirty = true;
               } catch (err) {
                 console.warn('reparent failed:', err);
@@ -1012,13 +1336,23 @@
         {#if treePanelVisible || breadcrumb}
           <div class="editor-header">
             <span class="breadcrumb">{breadcrumb || '(no selection)'}</span>
+            {#if treeState.state.selectedId
+              && treeState.state.selectedId !== GLOBALS_SELECTION_ID
+              && treeState.state.selectedId !== treeState.state.tree.rootId}
+              <span
+                class="gizmo-indicator"
+                title="gizmo mode (G/R/S) · space (L)"
+              >{gizmoMode[0]}·{gizmoSpace === 'world' ? 'W' : 'L'}</span>
+            {/if}
             {#if !treePanelVisible}
               <button
                 class="add-node-btn"
                 title="add a sibling node"
                 onclick={() => {
-                  const newId = treeState.createNode({ name: 'node_2' });
-                  treeState.setSelected(newId);
+                  treeState.applyEdit(null, () => {
+                    const newId = treeState.createNode({ name: 'node_2' });
+                    treeState.setSelected(newId);
+                  });
                   isDirty = true;
                 }}
               >
@@ -1026,6 +1360,18 @@
               </button>
             {/if}
           </div>
+        {/if}
+        {#if treeState.state.selectedId
+          && treeState.state.selectedId !== GLOBALS_SELECTION_ID
+          && (treeState.state.tree.nodes[treeState.state.selectedId]?.children.length ?? 0) > 0}
+          <NodeInspector
+            tree={treeState.state.tree}
+            parentId={treeState.state.selectedId}
+            {meshCounts}
+            onselect={(id) => treeState.setSelected(id)}
+            onTransformChange={handleInspectorTransformChange}
+            onDisableToggle={handleInspectorDisableToggle}
+          />
         {/if}
         <div
           bind:this={codemirrorContainer}
@@ -1222,6 +1568,18 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: inherit;
+  }
+
+  .gizmo-indicator {
+    color: #888;
+    font-size: 10px;
+    font-family: monospace;
+    border: 1px solid #333;
+    border-radius: 2px;
+    padding: 0 4px;
+    line-height: 14px;
+    flex-shrink: 0;
+    user-select: none;
   }
 
   .add-node-btn {

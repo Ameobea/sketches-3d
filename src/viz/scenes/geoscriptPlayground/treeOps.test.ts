@@ -27,6 +27,7 @@ interface TreeDef {
 }
 
 import {
+  computeMeshCounts,
   createNode,
   deleteNode,
   emptyTree,
@@ -132,6 +133,36 @@ test('uniqueName auto-disambiguates createNode collisions', () => {
 
   setSource(t, b, 'render(box(1))');
   assert.equal(t.nodes[b].source, 'render(box(1))');
+});
+
+test('computeMeshCounts sums direct + descendant renders per node', () => {
+  // _root -> a -> b (leaf); _root -> c (leaf)
+  // Direct counts: a=2, b=3, c=5, _root=1
+  // Expected recursive: b=3, a=2+3=5, c=5, _root=1+5+5=11
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+  const b = createNode(t, { id: 'b', name: 'b', parentId: a });
+  const c = createNode(t, { id: 'c', name: 'c' });
+
+  const direct = new Map<string, number>([
+    [t.rootId, 1],
+    [a, 2],
+    [b, 3],
+    [c, 5],
+  ]);
+  const counts = computeMeshCounts(t, direct);
+  assert.equal(counts.get(b), 3);
+  assert.equal(counts.get(a), 5);
+  assert.equal(counts.get(c), 5);
+  assert.equal(counts.get(t.rootId), 11);
+});
+
+test('computeMeshCounts returns zero for nodes with no renders', () => {
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+  const counts = computeMeshCounts(t, new Map());
+  assert.equal(counts.get(t.rootId), 0);
+  assert.equal(counts.get(a), 0);
 });
 
 test('getNodeAncestorChain returns [node, ..., _root]', () => {

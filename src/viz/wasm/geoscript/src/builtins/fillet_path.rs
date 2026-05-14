@@ -131,8 +131,8 @@ fn fillet_polyline<V: FilletVec>(
       user_radius.min(max_radius)
     } else if user_radius > max_radius {
       return Err(ErrorStack::new(format!(
-        "fillet_path: radius {user_radius} too large for corner at index {b_ix} (max safe \
-         radius for this corner is ~{max_radius:.6}); reduce radius or pass clamp_radius=true"
+        "fillet_path: radius {user_radius} too large for corner at index {b_ix} (max safe radius \
+         for this corner is ~{max_radius:.6}); reduce radius or pass clamp_radius=true"
       )));
     } else {
       user_radius
@@ -208,11 +208,7 @@ fn build_radius_callback<'a, V: FilletVec>(
     let cb = Rc::clone(cb);
     Ok(Box::new(move |ix, v| {
       let result = ctx
-        .invoke_callable(
-          &cb,
-          &[Value::Int(ix as i64), v.into_value()],
-          EMPTY_KWARGS,
-        )
+        .invoke_callable(&cb, &[Value::Int(ix as i64), v.into_value()], EMPTY_KWARGS)
         .map_err(|err| {
           err.wrap(format!(
             "Error calling user-provided cb passed to `radius` arg in `{fn_name}`"
@@ -220,8 +216,8 @@ fn build_radius_callback<'a, V: FilletVec>(
         })?;
       result.as_float().ok_or_else(|| {
         ErrorStack::new(format!(
-          "Expected Float from user-provided cb passed to `radius` arg in `{fn_name}`, \
-           found: {result:?}"
+          "Expected Float from user-provided cb passed to `radius` arg in `{fn_name}`, found: \
+           {result:?}"
         ))
       })
     }))
@@ -297,11 +293,7 @@ mod tests {
   #[test]
   fn fillet_2d_right_angle_uses_circular_arc() {
     // L-shape: (0,0) -> (1,0) -> (1,1). 90 deg corner.
-    let pts = vec![
-      Vec2::new(0., 0.),
-      Vec2::new(1., 0.),
-      Vec2::new(1., 1.),
-    ];
+    let pts = vec![Vec2::new(0., 0.), Vec2::new(1., 0.), Vec2::new(1., 1.)];
     let r = 0.25;
     let out = fillet_polyline(&pts, 16, false, false, |_, _| Ok(r)).unwrap();
 

@@ -20,7 +20,7 @@ use std::{
 
 use arrayvec::ArrayVec;
 use ast::{Expr, FunctionCallTarget, Statement};
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::{FxHashMap, FxHashSet, FxHasher64};
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::{Matrix4, Vector2};
 use nanoserde::SerJson;
@@ -1461,19 +1461,38 @@ impl<T> AppendOnlyBuffer<T> {
   }
 }
 
-/// A mesh that has been registered for rendering plus the name of the module that
-/// fired the `render` call. JS-side composes ancestor tree-transforms based on
-/// `source_module` at scene-populate time; `None` is used for renders that fire
-/// outside of any module context (e.g. while building the ambient scope from
-/// prelude / `_globals` sources — these are dropped by the scene populator).
+/// A mesh registered for rendering plus the module that fired the `render` call.
+/// `source_module` is `None` for renders fired outside any module (e.g. ambient
+/// scope construction); JS drops those. `mesh_id` is stable across cache replays,
+/// so JS uses it as the reuse key.
+#[derive(Clone)]
 pub struct RenderedMesh {
   pub mesh: Rc<MeshHandle>,
   pub source_module: Option<String>,
+  pub mesh_id: u32,
+}
+
+/// `source_module` is captured for cross-run cache dedupe only: when two cached
+/// entries both transitively replay the same dependency, the second hit must
+/// skip items whose origin module is already in `replayed_this_run`. JS never
+/// reads the field for lights or paths.
+#[derive(Clone)]
+pub struct RenderedLight {
+  pub light: Light,
+  pub source_module: Option<String>,
+  pub light_id: u32,
+}
+
+#[derive(Clone)]
+pub struct RenderedPath {
+  pub points: Vec<Vec3>,
+  pub source_module: Option<String>,
+  pub path_id: u32,
 }
 
 type RenderedMeshes = AppendOnlyBuffer<RenderedMesh>;
-type RenderedLights = AppendOnlyBuffer<Light>;
-type RenderedPaths = AppendOnlyBuffer<Vec<Vec3>>;
+type RenderedLights = AppendOnlyBuffer<RenderedLight>;
+type RenderedPaths = AppendOnlyBuffer<RenderedPath>;
 
 #[derive(Default, Debug)]
 pub struct Scope {
@@ -1717,6 +1736,24 @@ impl SourceMap {
   }
 }
 
+/// Cached result of a successful module evaluation. Side effects + RNG/async
+/// bookkeeping are stored only for this module's own body — deps' work is
+/// reproduced by recursively `resolve_module`ing each direct import on cache
+/// hit, which lets the natural `replayed_this_run` short-circuit handle dedup.
+pub struct ModuleExportsCacheEntry {
+  pub source_hash: u64,
+  pub exports: Rc<FxHashMap<String, Value>>,
+  pub own_renders: Vec<RenderedMesh>,
+  pub own_lights: Vec<RenderedLight>,
+  pub own_paths: Vec<RenderedPath>,
+  pub rng_state_at_start: Pcg32,
+  pub rng_state_at_end: Pcg32,
+  pub direct_imports: Vec<(String, u64)>,
+  pub own_async_deps_bitmask: u32,
+}
+
+const MODULE_CACHE_MAX_ENTRIES: usize = 200;
+
 pub struct EvalCtx {
   pub globals: Scope,
   pub interned_symbols: SymbolInterner,
@@ -1737,11 +1774,18 @@ pub struct EvalCtx {
   pub source_map: RefCell<SourceMap>,
   /// Source code for registered modules, keyed by module name.
   pub module_sources: RefCell<FxHashMap<String, String>>,
+  /// Per-module source hashes; `setModuleSources` diffs against these to pick
+  /// cache entries to evict.
+  pub module_source_hashes: RefCell<FxHashMap<String, u64>>,
   /// Cached export maps for modules that have already been executed.
-  pub module_exports: RefCell<FxHashMap<String, Rc<FxHashMap<String, Value>>>>,
-  /// When evaluating a module body, this holds the export map being built.
-  /// `None` when evaluating the main program.
+  pub module_exports: RefCell<FxHashMap<String, Rc<ModuleExportsCacheEntry>>>,
+  /// LRU order for `module_exports`. Capped to bound long-session growth.
+  pub module_exports_lru: RefCell<VecDeque<String>>,
+  /// Export map being built during a module eval; `None` for the main program.
   pub current_module_exports: RefCell<Option<FxHashMap<Sym, Value>>>,
+  /// Imports observed in the currently-evaluating module body, accumulated for
+  /// the cache entry's `direct_imports`. `None` outside module eval.
+  pub current_module_imports: RefCell<Option<Vec<(String, u64)>>>,
   /// Optional scope cloned as the base of each module evaluation (including the
   /// main `_root` program) in place of the default `pi`/`tau`-only globals scope.
   /// Built externally (typically from prelude + globals sources) and installed
@@ -1754,6 +1798,16 @@ pub struct EvalCtx {
   /// evaluating a module body, and by the wasm-side top-level eval wrapper to
   /// `_root` for the entry-point program. `None` while building the ambient scope.
   pub current_module: RefCell<Option<String>>,
+  /// Modules whose side effects have been produced or replayed in this run.
+  /// Skips redundant work when the same module is imported multiple times; reset
+  /// at run start and after ambient-scope construction.
+  pub replayed_this_run: RefCell<FxHashSet<String>>,
+  /// Hash of the most recently installed ambient sources; lets the next install
+  /// skip cache invalidation when the sources haven't changed.
+  pub last_ambient_hash: RefCell<Option<u64>>,
+  /// Monotonic id counter for renders/lights/paths. Preserved across `reset` so
+  /// fresh pushes can't collide with cached-replay ids.
+  pub next_render_id: Cell<u32>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1781,11 +1835,17 @@ impl Default for EvalCtx {
       scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
       source_map: RefCell::new(SourceMap::new(0)),
       module_sources: RefCell::new(FxHashMap::default()),
+      module_source_hashes: RefCell::new(FxHashMap::default()),
       module_exports: RefCell::new(FxHashMap::default()),
+      module_exports_lru: RefCell::new(VecDeque::new()),
       current_module_exports: RefCell::new(None),
+      current_module_imports: RefCell::new(None),
       ambient_scope: RefCell::new(None),
       modules_in_flight: RefCell::new(FxHashSet::default()),
       current_module: RefCell::new(None),
+      replayed_this_run: RefCell::new(FxHashSet::default()),
+      last_ambient_hash: RefCell::new(None),
+      next_render_id: Cell::new(1),
     }
   }
 }
@@ -1832,6 +1892,12 @@ impl EvalCtx {
 
   pub(crate) fn set_rng_state(&self, state: Pcg32) {
     *self.rng() = state;
+  }
+
+  /// Reseed to the default starting state. Determinism here is what lets the
+  /// cross-run cache replay produce identical bytes.
+  pub fn reset_rng_to_default(&self) {
+    self.set_rng_state(Pcg32::new(7718587666045340534, 17289744314186392832));
   }
 
   pub fn get_args_scratch(&self) -> Vec<Value> {
@@ -3004,6 +3070,56 @@ impl EvalCtx {
 
   pub fn invalidate_module_cache(&self) {
     self.module_exports.borrow_mut().clear();
+    self.module_exports_lru.borrow_mut().clear();
+  }
+
+  pub fn compute_source_hash(src: &str) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = FxHasher64::default();
+    hasher.write(src.as_bytes());
+    hasher.finish()
+  }
+
+  pub fn next_render_id(&self) -> u32 {
+    let id = self.next_render_id.get();
+    self.next_render_id.set(id.wrapping_add(1));
+    id
+  }
+
+  fn touch_module_lru(&self, name: &str) {
+    let mut lru = self.module_exports_lru.borrow_mut();
+    if let Some(pos) = lru.iter().position(|n| n == name) {
+      lru.remove(pos);
+    }
+    lru.push_back(name.to_owned());
+  }
+
+  fn evict_module(&self, name: &str) {
+    self.module_exports.borrow_mut().remove(name);
+    let mut lru = self.module_exports_lru.borrow_mut();
+    if let Some(pos) = lru.iter().position(|n| n == name) {
+      lru.remove(pos);
+    }
+  }
+
+  fn enforce_module_cache_cap(&self) {
+    let mut exports = self.module_exports.borrow_mut();
+    let mut lru = self.module_exports_lru.borrow_mut();
+    let replayed = self.replayed_this_run.borrow();
+    // Evicting an already-replayed module mid-run would force a re-eval on the
+    // next import of it, double-pushing its side effects.
+    let mut scanned = 0;
+    while exports.len() > MODULE_CACHE_MAX_ENTRIES && scanned < lru.len() {
+      let Some(oldest) = lru.pop_front() else {
+        break;
+      };
+      if replayed.contains(&oldest) {
+        lru.push_back(oldest);
+        scanned += 1;
+        continue;
+      }
+      exports.remove(&oldest);
+    }
   }
 
   /// Evaluate `source` as a module body and return the resulting scope. The base scope
@@ -3040,9 +3156,70 @@ impl EvalCtx {
   }
 
   fn resolve_module(&self, module_name: &str) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
-    // Check cache first
-    if let Some(exports) = self.module_exports.borrow().get(module_name) {
-      return Ok(Rc::clone(exports));
+    // Already replayed this run — skip side effects, just return exports.
+    if self.replayed_this_run.borrow().contains(module_name) {
+      if let Some(entry) = self.module_exports.borrow().get(module_name) {
+        let source_hash = entry.source_hash;
+        let exports = Rc::clone(&entry.exports);
+        if let Some(tracker) = self.current_module_imports.borrow_mut().as_mut() {
+          tracker.push((module_name.to_owned(), source_hash));
+        }
+        return Ok(exports);
+      }
+    }
+
+    let cache_entry = self.module_exports.borrow().get(module_name).cloned();
+    if let Some(entry) = cache_entry {
+      // Walk direct deps before validating: recursion reaches each transitive
+      // dep through its own `resolve_module`, so it either replays via cache hit
+      // (advancing RNG to its own end-state), no-ops if already replayed, or
+      // re-evals. After this loop the deps' side effects have fired exactly once
+      // and RNG reflects exactly the path the cached body originally saw.
+      let mut stale = false;
+      for (dep_name, expected_hash) in &entry.direct_imports {
+        self.resolve_module(dep_name)?;
+        let actual = self
+          .module_exports
+          .borrow()
+          .get(dep_name)
+          .map(|e| e.source_hash);
+        if actual != Some(*expected_hash) {
+          stale = true;
+          break;
+        }
+      }
+
+      // RNG-free bodies cache-hit unconditionally; RNG-using ones require the
+      // current state to match what our body originally observed.
+      let rng_ok = entry.rng_state_at_start == entry.rng_state_at_end
+        || entry.rng_state_at_start == self.rng_state();
+
+      if !stale && rng_ok {
+        for mesh in &entry.own_renders {
+          self.rendered_meshes.push(mesh.clone());
+        }
+        for light in &entry.own_lights {
+          self.rendered_lights.push(light.clone());
+        }
+        for path in &entry.own_paths {
+          self.rendered_paths.push(path.clone());
+        }
+        self.set_rng_state(entry.rng_state_at_end.clone());
+        #[cfg(target_arch = "wasm32")]
+        or_async_dep_bit(entry.own_async_deps_bitmask);
+
+        self
+          .replayed_this_run
+          .borrow_mut()
+          .insert(module_name.to_owned());
+        if let Some(tracker) = self.current_module_imports.borrow_mut().as_mut() {
+          tracker.push((module_name.to_owned(), entry.source_hash));
+        }
+        self.touch_module_lru(module_name);
+        return Ok(Rc::clone(&entry.exports));
+      }
+
+      self.evict_module(module_name);
     }
 
     // Circular-import guard. Without this, importing a module that (transitively)
@@ -3070,6 +3247,23 @@ impl EvalCtx {
 
     self.modules_in_flight.borrow_mut().remove(module_name);
 
+    if let Ok(_exports) = &result {
+      let entry_hash = self
+        .module_exports
+        .borrow()
+        .get(module_name)
+        .map(|e| e.source_hash);
+      if let Some(hash) = entry_hash {
+        if let Some(tracker) = self.current_module_imports.borrow_mut().as_mut() {
+          tracker.push((module_name.to_owned(), hash));
+        }
+      }
+      self
+        .replayed_this_run
+        .borrow_mut()
+        .insert(module_name.to_owned());
+    }
+
     result
   }
 
@@ -3078,18 +3272,19 @@ impl EvalCtx {
     module_name: &str,
     source: &str,
   ) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
-    // RAII guard: snapshots `current_module_exports` and `current_module`, installs
-    // the new values, and restores the previous ones on drop so every early return
-    // from below is correct by construction.
+    // RAII guard: swaps in module context, restores on drop so every early
+    // return below is correct by construction.
     struct ModuleCtxGuard<'a> {
       ctx: &'a EvalCtx,
       prev_exports: Option<FxHashMap<Sym, Value>>,
       prev_module: Option<String>,
+      prev_imports: Option<Vec<(String, u64)>>,
     }
     impl<'a> Drop for ModuleCtxGuard<'a> {
       fn drop(&mut self) {
         *self.ctx.current_module_exports.borrow_mut() = self.prev_exports.take();
         *self.ctx.current_module.borrow_mut() = self.prev_module.take();
+        *self.ctx.current_module_imports.borrow_mut() = self.prev_imports.take();
       }
     }
     let _guard = ModuleCtxGuard {
@@ -3102,7 +3297,10 @@ impl EvalCtx {
         .current_module
         .borrow_mut()
         .replace(module_name.to_owned()),
+      prev_imports: self.current_module_imports.borrow_mut().replace(Vec::new()),
     };
+
+    let rng_at_start = self.rng_state();
 
     // Module sources do not include the prelude; suppress any inherited offset around the parse.
     let prev_offset = self.source_map.borrow().prelude_line_count;
@@ -3114,6 +3312,13 @@ impl EvalCtx {
     let mut ast = parse_res.map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
     optimizer::optimize_ast(self, &mut ast)
       .map_err(|err| err.wrap(&format!("Error optimizing module \"{module_name}\"")))?;
+
+    // Snapshot side-effect buffers; diffs become the cache entry's replay set.
+    let renders_before = self.rendered_meshes.len();
+    let lights_before = self.rendered_lights.len();
+    let paths_before = self.rendered_paths.len();
+    #[cfg(target_arch = "wasm32")]
+    let async_before = get_async_dep_bits();
 
     for statement in &ast.statements {
       match self
@@ -3150,11 +3355,68 @@ impl EvalCtx {
       .collect();
     let exports = Rc::new(string_map);
 
-    // Cache for subsequent imports
+    // Recursive imports push their renders tagged with their own module name;
+    // filtering on `source_module` cleanly separates our work from theirs.
+    let module_name_str = module_name.to_owned();
+    let is_own = |sm: &Option<String>| sm.as_deref() == Some(module_name_str.as_str());
+    let own_renders: Vec<RenderedMesh> = self
+      .rendered_meshes
+      .inner
+      .borrow()
+      .get(renders_before..)
+      .map(|s| s.iter().filter(|m| is_own(&m.source_module)).cloned().collect())
+      .unwrap_or_default();
+    let own_lights: Vec<RenderedLight> = self
+      .rendered_lights
+      .inner
+      .borrow()
+      .get(lights_before..)
+      .map(|s| s.iter().filter(|l| is_own(&l.source_module)).cloned().collect())
+      .unwrap_or_default();
+    let own_paths: Vec<RenderedPath> = self
+      .rendered_paths
+      .inner
+      .borrow()
+      .get(paths_before..)
+      .map(|s| s.iter().filter(|p| is_own(&p.source_module)).cloned().collect())
+      .unwrap_or_default();
+    let rng_at_end = self.rng_state();
+    #[cfg(target_arch = "wasm32")]
+    let own_async_deps_bitmask = get_async_dep_bits() & !async_before;
+    #[cfg(not(target_arch = "wasm32"))]
+    let own_async_deps_bitmask: u32 = 0;
+
+    let direct_imports = self
+      .current_module_imports
+      .borrow_mut()
+      .take()
+      .unwrap_or_default();
+
+    let source_hash = self
+      .module_source_hashes
+      .borrow()
+      .get(module_name)
+      .copied()
+      .unwrap_or_else(|| Self::compute_source_hash(source));
+
+    let entry = Rc::new(ModuleExportsCacheEntry {
+      source_hash,
+      exports: Rc::clone(&exports),
+      own_renders,
+      own_lights,
+      own_paths,
+      rng_state_at_start: rng_at_start,
+      rng_state_at_end: rng_at_end,
+      direct_imports,
+      own_async_deps_bitmask,
+    });
+
     self
       .module_exports
       .borrow_mut()
-      .insert(module_name.to_owned(), Rc::clone(&exports));
+      .insert(module_name.to_owned(), entry);
+    self.touch_module_lru(module_name);
+    self.enforce_module_cache_cap();
 
     Ok(exports)
   }
@@ -3229,6 +3491,7 @@ pub fn parse_program_maybe_with_prelude(
     ctx.source_map.borrow_mut().prelude_line_count = prelude_line_count as u32 + 1; // one extra for the newline
     format!("{PRELUDE}\n{src}")
   } else {
+    ctx.source_map.borrow_mut().prelude_line_count = 0;
     src
   };
   parse_program_src(ctx, &src)
@@ -5087,7 +5350,7 @@ p | render
   let ctx = parse_and_eval_program(src).unwrap();
   let paths = ctx.rendered_paths.into_inner();
   assert_eq!(paths.len(), 1);
-  let path = &paths[0];
+  let path = &paths[0].points;
   // 10000 samples + 1 closing point
   assert_eq!(path.len(), 10001);
   // First and last point should be equal (closed)
@@ -5109,7 +5372,7 @@ pts | render
   let ctx = parse_and_eval_program(src).unwrap();
   let paths = ctx.rendered_paths.into_inner();
   assert_eq!(paths.len(), 1);
-  let path = &paths[0];
+  let path = &paths[0].points;
   assert_eq!(path.len(), 4);
   // All points should be in the XZ plane (y == 0)
   for pt in path {
@@ -5161,6 +5424,50 @@ result = first + second
   parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).unwrap();
   assert_eq!(ctx.get_global("result").unwrap().as_int().unwrap(), 84);
   assert!(ctx.module_exports.borrow().contains_key("math"));
+}
+
+#[test]
+fn test_random_module_cache_requires_matching_rng_state() {
+  let ctx = EvalCtx::default();
+  ctx.reset_rng_to_default();
+
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("rng".to_string(), "export x = 2".to_string());
+
+  let rng_start = ctx.rng_state();
+  let mut rng_end = rng_start.clone();
+  rng_end.advance(1);
+
+  let mut stale_exports = FxHashMap::default();
+  stale_exports.insert("x".to_string(), Value::Int(1));
+  let stale_entry = Rc::new(ModuleExportsCacheEntry {
+    source_hash: EvalCtx::compute_source_hash("export x = 2"),
+    exports: Rc::new(stale_exports),
+    own_renders: Vec::new(),
+    own_lights: Vec::new(),
+    own_paths: Vec::new(),
+    rng_state_at_start: rng_start,
+    rng_state_at_end: rng_end,
+    direct_imports: Vec::new(),
+    own_async_deps_bitmask: 0,
+  });
+  ctx
+    .module_exports
+    .borrow_mut()
+    .insert("rng".to_string(), stale_entry);
+  ctx
+    .module_exports_lru
+    .borrow_mut()
+    .push_back("rng".to_string());
+
+  ctx.reset_rng_to_default();
+  ctx.rng().advance(2);
+  let actual_exports = ctx.resolve_module("rng").unwrap();
+  let actual = actual_exports.get("x").unwrap().as_int().unwrap();
+
+  assert_eq!(actual, 2);
 }
 
 #[test]
@@ -5279,7 +5586,7 @@ result = val
     .get("user_mod")
     .cloned()
     .unwrap();
-  assert_eq!(exports.get("val").unwrap().as_int().unwrap(), 43);
+  assert_eq!(exports.exports.get("val").unwrap().as_int().unwrap(), 43);
 }
 
 #[test]
@@ -5331,3 +5638,13 @@ fn test_module_error_reports_module_name_and_local_line() {
   );
 }
 
+#[test]
+fn test_parse_without_prelude_resets_source_map_offset() {
+  let ctx = EvalCtx::default();
+
+  parse_program_maybe_with_prelude(&ctx, "x = 1".to_string(), true).unwrap();
+  assert!(ctx.source_map.borrow().prelude_line_count > 0);
+
+  parse_program_maybe_with_prelude(&ctx, "x = 1".to_string(), false).unwrap();
+  assert_eq!(ctx.source_map.borrow().prelude_line_count, 0);
+}

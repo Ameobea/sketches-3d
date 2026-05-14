@@ -469,9 +469,9 @@ fn ensure_path_sampler(
     return Ok(());
   }
   Err(ErrorStack::new(format!(
-    "`{fn_name}` requires `{arg_name}` to be a path sampler with known topology (e.g. from \
-     `path {{ ... }}`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, \
-     `catmull_rom`). Black-box `|t|: vec2` callables are not supported."
+    "`{fn_name}` requires `{arg_name}` to be a path sampler with known topology (e.g. from `path \
+     {{ ... }}`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`). \
+     Black-box `|t|: vec2` callables are not supported."
   )))
 }
 
@@ -552,8 +552,7 @@ pub fn path_intersects_impl(
         Some(v) => v.max(2) as usize,
         None => {
           return Err(ErrorStack::new(format!(
-            "Invalid sample_count for `path_intersects`; expected int, found: \
-             {sample_count_val:?}"
+            "Invalid sample_count for `path_intersects`; expected int, found: {sample_count_val:?}"
           )))
         }
       };

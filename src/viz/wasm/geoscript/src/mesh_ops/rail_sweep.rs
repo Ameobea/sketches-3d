@@ -921,6 +921,26 @@ fn is_adaptive_spine_scheme(scheme: &Value) -> bool {
   }
 }
 
+fn is_passthrough_str(s: &str) -> bool {
+  s.eq_ignore_ascii_case("passthrough")
+    || s.eq_ignore_ascii_case("pass_through")
+    || s.eq_ignore_ascii_case("as_is")
+    || s.eq_ignore_ascii_case("as-is")
+    || s.eq_ignore_ascii_case("raw")
+}
+
+fn is_passthrough_spine_scheme(scheme: &Value) -> bool {
+  match scheme {
+    Value::String(s) => is_passthrough_str(s),
+    Value::Map(map) => map
+      .get("type")
+      .and_then(|v| v.as_str())
+      .map(is_passthrough_str)
+      .unwrap_or(false),
+    _ => false,
+  }
+}
+
 /// Computes Chebyshev nodes mapped to [0, 1].  These nodes are denser near the endpoints and
 /// sparser in the middle.
 fn chebyshev_nodes(n: usize) -> Vec<f32> {
@@ -941,17 +961,13 @@ fn chebyshev_nodes(n: usize) -> Vec<f32> {
 ///
 /// Parameters:
 /// - `n`: total number of samples
-/// - `bevel_fraction`: fraction of domain at each end that is the bevel zone (0..0.5).
-///    Default when called with just an exponent: `(0.5 / exponent).clamp(0.05, 0.25)`.
-/// - `density`: how many times denser the bevel zones are vs the middle (>= 1.0).
-///    Controls both sample allocation and the power-curve concentration within bevel zones.
+/// - `bevel_fraction`: fraction of domain at each end that is the bevel zone (0..0.5). Default when
+///   called with just an exponent: `(0.5 / exponent).clamp(0.05, 0.25)`.
+/// - `density`: how many times denser the bevel zones are vs the middle (>= 1.0). Controls both
+///   sample allocation and the power-curve concentration within bevel zones.
 ///
 /// Returns `None` if parameters are invalid or produce degenerate results.
-fn superellipse_nodes_with_params(
-  n: usize,
-  bevel_fraction: f32,
-  density: f32,
-) -> Option<Vec<f32>> {
+fn superellipse_nodes_with_params(n: usize, bevel_fraction: f32, density: f32) -> Option<Vec<f32>> {
   if n == 0
     || !bevel_fraction.is_finite()
     || !density.is_finite()
@@ -1373,6 +1389,11 @@ pub(crate) fn rail_sweep_impl(
       let adaptive_profile_sampling = arg_refs[12].resolve(args, kwargs).as_bool().unwrap();
 
       let use_adaptive_spine = is_adaptive_spine_scheme(&spine_sampling_scheme_val);
+      let explicit_passthrough = is_passthrough_spine_scheme(&spine_sampling_scheme_val);
+      let scheme_is_default = matches!(spine_sampling_scheme_val, Value::Nil);
+      // Sequence spines default to using points as-is; explicit passthrough is the
+      // same but with a strict length check.
+      let use_passthrough = explicit_passthrough || scheme_is_default;
 
       let has_profile = !matches!(profile_val, Value::Nil);
       let has_dynamic_profile = !matches!(dynamic_profile_val, Value::Nil);
@@ -1501,18 +1522,52 @@ pub(crate) fn rail_sweep_impl(
           // Resample at the adaptive t values
           let points = resample_spine_points_at_t(&raw_points, &adaptive_ts)?;
           (adaptive_ts, points)
+        } else if use_passthrough {
+          if raw_points.len() != spine_resolution {
+            let hint = if explicit_passthrough {
+              "spine_sampling_scheme \"passthrough\" requires the sequence length to match \
+               spine_resolution"
+            } else {
+              "by default, `rail_sweep` uses the provided spine points as-is when spine is a \
+               sequence. Either set spine_resolution to match the sequence length, or pass \
+               spine_sampling_scheme=\"uniform\" (or another scheme) to resample"
+            };
+            return Err(ErrorStack::new(format!(
+              "`rail_sweep` spine sequence has {} points, but \
+               spine_resolution={spine_resolution}. {hint}",
+              raw_points.len(),
+            )));
+          }
+
+          // Use points directly; u is normalized cumulative arc length so profile
+          // callbacks still receive a fractional arc-length position.
+          let mut cumulative = Vec::with_capacity(raw_points.len());
+          cumulative.push(0.0_f32);
+          for i in 1..raw_points.len() {
+            let seg_len = (raw_points[i] - raw_points[i - 1]).norm();
+            cumulative.push(cumulative[i - 1] + seg_len);
+          }
+          let total = *cumulative.last().unwrap_or(&0.0);
+          let t_values: Vec<f32> = if total > 0. {
+            cumulative.iter().map(|c| c / total).collect()
+          } else {
+            uniform_nodes(raw_points.len())
+          };
+          (t_values, raw_points)
         } else {
-          // Use regular sampling scheme
+          // Explicit non-passthrough scheme: resample the polyline at the scheme's t-values.
           let spine_t_values =
             compute_spine_t_values(ctx, &spine_sampling_scheme_val, spine_resolution)?;
-
-          // Always resample the spine path at the specified t values
-          // This ensures the sampling scheme is respected even when the input
-          // sequence happens to have the same length as spine_resolution
           let points = resample_spine_points_at_t(&raw_points, &spine_t_values)?;
           (spine_t_values, points)
         }
       } else if let Some(cb) = spine.as_callable() {
+        if explicit_passthrough {
+          return Err(ErrorStack::new(
+            "`rail_sweep` spine_sampling_scheme \"passthrough\" requires a sequence spine; \
+             callable spines have no inherent point set to preserve",
+          ));
+        }
         if use_adaptive_spine {
           // Use adaptive sampling with the spine callable
           let sample_spine = |t: f32| -> Result<Vec3, ErrorStack> {
@@ -1830,13 +1885,24 @@ mod tests {
     assert!(nodes[0] > 0.0, "First node should be > 0");
     assert!(nodes[0] < 0.05, "First node should be close to 0");
     assert!(*nodes.last().unwrap() < 1.0, "Last node should be < 1");
-    assert!(*nodes.last().unwrap() > 0.95, "Last node should be close to 1");
+    assert!(
+      *nodes.last().unwrap() > 0.95,
+      "Last node should be close to 1"
+    );
 
     // All nodes in range and strictly increasing
     for (i, &node) in nodes.iter().enumerate() {
-      assert!(node >= 0.0 && node <= 1.0, "Node {} out of range: {}", i, node);
+      assert!(
+        node >= 0.0 && node <= 1.0,
+        "Node {} out of range: {}",
+        i,
+        node
+      );
       if i > 0 {
-        assert!(node > nodes[i - 1], "Nodes should be strictly increasing at {i}");
+        assert!(
+          node > nodes[i - 1],
+          "Nodes should be strictly increasing at {i}"
+        );
       }
     }
   }
@@ -1852,9 +1918,18 @@ mod tests {
     let in_end_bevel = nodes.iter().filter(|&&t| t > 0.9).count();
     let in_middle = nodes.iter().filter(|&&t| t >= 0.1 && t <= 0.9).count();
 
-    assert!(in_start_bevel >= 2, "Should have multiple samples in start bevel, got {in_start_bevel}");
-    assert!(in_end_bevel >= 2, "Should have multiple samples in end bevel, got {in_end_bevel}");
-    assert!(in_middle >= in_start_bevel, "Middle should have at least as many samples as a bevel zone");
+    assert!(
+      in_start_bevel >= 2,
+      "Should have multiple samples in start bevel, got {in_start_bevel}"
+    );
+    assert!(
+      in_end_bevel >= 2,
+      "Should have multiple samples in end bevel, got {in_end_bevel}"
+    );
+    assert!(
+      in_middle >= in_start_bevel,
+      "Middle should have at least as many samples as a bevel zone"
+    );
     assert_eq!(in_start_bevel + in_end_bevel + in_middle, 20);
   }
 
@@ -1865,7 +1940,10 @@ mod tests {
 
     // Collect start bevel samples
     let bevel_samples: Vec<f32> = nodes.iter().copied().filter(|&t| t < 0.15).collect();
-    assert!(bevel_samples.len() >= 3, "Need enough bevel samples to test concentration");
+    assert!(
+      bevel_samples.len() >= 3,
+      "Need enough bevel samples to test concentration"
+    );
 
     // Gaps should increase as we move away from 0
     let gaps: Vec<f32> = bevel_samples.windows(2).map(|w| w[1] - w[0]).collect();
@@ -1873,7 +1951,10 @@ mod tests {
       assert!(
         gaps[i] >= gaps[i - 1] * 0.9, // allow small tolerance
         "Bevel gaps should generally increase away from corner: gap[{}]={} vs gap[{}]={}",
-        i - 1, gaps[i - 1], i, gaps[i]
+        i - 1,
+        gaps[i - 1],
+        i,
+        gaps[i]
       );
     }
   }
@@ -1883,7 +1964,11 @@ mod tests {
     let nodes = superellipse_nodes_with_params(30, 0.1, 3.0).unwrap();
 
     // Collect middle samples
-    let middle: Vec<f32> = nodes.iter().copied().filter(|&t| t >= 0.1 && t <= 0.9).collect();
+    let middle: Vec<f32> = nodes
+      .iter()
+      .copied()
+      .filter(|&t| t >= 0.1 && t <= 0.9)
+      .collect();
     assert!(middle.len() >= 5);
 
     // Middle gaps should be approximately equal
@@ -1892,7 +1977,10 @@ mod tests {
     for (i, &gap) in gaps.iter().enumerate() {
       assert!(
         (gap - avg_gap).abs() < avg_gap * 0.15,
-        "Middle gap {} = {} deviates too much from avg {}", i, gap, avg_gap
+        "Middle gap {} = {} deviates too much from avg {}",
+        i,
+        gap,
+        avg_gap
       );
     }
   }
@@ -1903,14 +1991,22 @@ mod tests {
     let nodes_exp2 = superellipse_nodes(20, 2.0).unwrap(); // bevel_fraction=0.25
     let nodes_exp10 = superellipse_nodes(20, 10.0).unwrap(); // bevel_fraction=0.05
 
-    // With exp=10, the bevel zone is [0, 0.05] ∪ [0.95, 1], much smaller than exp=2's [0, 0.25] ∪ [0.75, 1]
-    // So exp=10 should have more samples concentrated in the middle region [0.25, 0.75]
-    let mid_count_exp2 = nodes_exp2.iter().filter(|&&t| t >= 0.25 && t <= 0.75).count();
-    let mid_count_exp10 = nodes_exp10.iter().filter(|&&t| t >= 0.25 && t <= 0.75).count();
+    // With exp=10, the bevel zone is [0, 0.05] ∪ [0.95, 1], much smaller than exp=2's [0, 0.25] ∪
+    // [0.75, 1] So exp=10 should have more samples concentrated in the middle region [0.25,
+    // 0.75]
+    let mid_count_exp2 = nodes_exp2
+      .iter()
+      .filter(|&&t| t >= 0.25 && t <= 0.75)
+      .count();
+    let mid_count_exp10 = nodes_exp10
+      .iter()
+      .filter(|&&t| t >= 0.25 && t <= 0.75)
+      .count();
     assert!(
       mid_count_exp10 > mid_count_exp2,
       "Higher exponent should have more samples in center: exp10={} vs exp2={}",
-      mid_count_exp10, mid_count_exp2
+      mid_count_exp10,
+      mid_count_exp2
     );
   }
 
@@ -1924,7 +2020,11 @@ mod tests {
       assert!(
         (sum - 1.0).abs() < 0.01,
         "Nodes should be symmetric: nodes[{}]={} + nodes[{}]={} = {} (expected ~1.0)",
-        i, nodes[i], mirror, nodes[mirror], sum
+        i,
+        nodes[i],
+        mirror,
+        nodes[mirror],
+        sum
       );
     }
   }
@@ -2320,6 +2420,54 @@ mod tests {
       mesh.vertices.len() >= 30 && mesh.vertices.len() <= 60,
       "Unexpected vertex count: {}",
       mesh.vertices.len()
+    );
+  }
+
+  /// A non-uniform sequence spine: by default the points are used as-is, but explicit
+  /// "uniform" still resamples by arc length (legacy escape hatch).
+  #[test]
+  fn integration_rail_sweep_sequence_spine_distribution() {
+    let render = |scheme: &str| -> Vec<f32> {
+      let src = format!(
+        r#"
+rail_sweep(
+  spine_resolution=3,
+  ring_resolution=4,
+  spine=[v3(0,0,0), v3(0,0,0.1), v3(0,0,1)],
+  {scheme}
+  profile=|u: float, v: float| v2(cos(v * tau) * 0.1, sin(v * tau) * 0.1),
+  capped=false,
+)
+  | render
+"#
+      );
+      let rendered = crate::parse_and_eval_program(&src)
+        .unwrap()
+        .rendered_meshes
+        .into_inner();
+      let mesh = &rendered[0].mesh;
+      let mut zs: Vec<f32> = mesh
+        .mesh
+        .vertices
+        .values()
+        .map(|v| (mesh.transform * v.position.push(1.)).z)
+        .collect();
+      zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+      zs
+    };
+
+    // Default: middle ring sits at z=0.1 (the input point).
+    let zs = render("");
+    assert!(
+      (zs[5] - 0.1).abs() < 1e-4,
+      "default should preserve points: {zs:?}"
+    );
+
+    // Explicit "uniform": middle ring is at ~z=0.5 (arc-length midpoint).
+    let zs = render(r#"spine_sampling_scheme="uniform","#);
+    assert!(
+      (zs[5] - 0.5).abs() < 0.05,
+      "uniform should resample: {zs:?}"
     );
   }
 }

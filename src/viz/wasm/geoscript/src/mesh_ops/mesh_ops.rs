@@ -597,9 +597,14 @@ pub(crate) fn get_cached_svg_path_str(
   font_style: &str,
   letter_spacing: f32,
 ) -> Result<Option<String>, ErrorStack> {
-  if let Some(err) =
-    get_cached_text_to_svg_err(text, font_family, font_size, font_weight, font_style, letter_spacing)
-  {
+  if let Some(err) = get_cached_text_to_svg_err(
+    text,
+    font_family,
+    font_size,
+    font_weight,
+    font_style,
+    letter_spacing,
+  ) {
     return Err(ErrorStack::new(err));
   }
   Ok(get_cached_text_to_svg_path(
@@ -666,7 +671,12 @@ pub(crate) fn tessellate_svg_path_with_lyon(
   // Scale to fit width/height
   if width > 0. || height > 0. {
     let (min_x, max_x, min_y, max_y) = buffers.vertices.iter().fold(
-      (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY),
+      (
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+      ),
       |(nx, xx, ny, xy), p| (nx.min(p.x), xx.max(p.x), ny.min(p.y), xy.max(p.y)),
     );
     let mw = max_x - min_x;
@@ -691,5 +701,10 @@ pub(crate) fn tessellate_svg_path_with_lyon(
     verts_flat.extend_from_slice(&[p.x, 0., p.y]);
   }
 
-  Ok(LinkedMesh::from_raw_indexed(&verts_flat, &buffers.indices, None, None))
+  Ok(LinkedMesh::from_raw_indexed(
+    &verts_flat,
+    &buffers.indices,
+    None,
+    None,
+  ))
 }

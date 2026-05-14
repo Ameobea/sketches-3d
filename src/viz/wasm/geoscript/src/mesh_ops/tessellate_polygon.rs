@@ -312,7 +312,10 @@ pub fn tessellate_lyon_path(
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   use std::collections::HashMap;
 
-  use lyon_tessellation::{geom::Point, geometry_builder::Positions, BuffersBuilder, FillOptions, FillTessellator, VertexBuffers};
+  use lyon_tessellation::{
+    geom::Point, geometry_builder::Positions, BuffersBuilder, FillOptions, FillTessellator,
+    VertexBuffers,
+  };
 
   let mut buffers: VertexBuffers<Point<f32>, u32> = VertexBuffers::new();
   {

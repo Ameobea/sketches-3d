@@ -14,7 +14,9 @@ fn one_pole(state: &mut f32, target: f32, coeff: f32) -> f32 {
 }
 
 #[inline(always)]
-fn db_to_gain(db: f32) -> f32 { 10f32.powf(db / 20.0) }
+fn db_to_gain(db: f32) -> f32 {
+  10f32.powf(db / 20.0)
+}
 
 #[inline(always)]
 fn gain_to_db(gain: f32) -> f32 {
@@ -26,7 +28,9 @@ fn gain_to_db(gain: f32) -> f32 {
 }
 
 #[inline(always)]
-fn clampf(x: f32, lo: f32, hi: f32) -> f32 { x.max(lo).min(hi) }
+fn clampf(x: f32, lo: f32, hi: f32) -> f32 {
+  x.max(lo).min(hi)
+}
 
 /// Linear interpolation read from a sample buffer at fractional position.
 #[inline(always)]
@@ -88,25 +92,25 @@ fn make_biquad(kind: u32, freq: f32, q: f32, sample_rate: f32) -> Option<BiquadC
       let b0 = b1 * 0.5;
       let b2 = b0;
       (b0, b1, b2, 1.0 + alpha, -2.0 * cos_w, 1.0 - alpha)
-    },
+    }
     FILTER_HP => {
       let b1 = -(1.0 + cos_w);
       let b0 = (1.0 + cos_w) * 0.5;
       let b2 = b0;
       (b0, b1, b2, 1.0 + alpha, -2.0 * cos_w, 1.0 - alpha)
-    },
+    }
     FILTER_BP => {
       let b0 = alpha;
       let b1 = 0.0;
       let b2 = -alpha;
       (b0, b1, b2, 1.0 + alpha, -2.0 * cos_w, 1.0 - alpha)
-    },
+    }
     FILTER_NOTCH => {
       let b0 = 1.0;
       let b1 = -2.0 * cos_w;
       let b2 = 1.0;
       (b0, b1, b2, 1.0 + alpha, -2.0 * cos_w, 1.0 - alpha)
-    },
+    }
     _ => return None,
   };
 
@@ -458,7 +462,11 @@ impl Ctx {
         v.sample_id = ev.sample_id;
         v.pos = 0.0;
         v.gain = ev.params[0];
-        v.rate = if ev.params[1] > 0.0 { ev.params[1] } else { 1.0 };
+        v.rate = if ev.params[1] > 0.0 {
+          ev.params[1]
+        } else {
+          1.0
+        };
         v.mode = VoiceMode::OneshotPan {
           pan: clampf(ev.params[2], -1.0, 1.0),
         };
@@ -468,7 +476,7 @@ impl Ctx {
         v.bq_r = BiquadState::default();
         v.age = self.age_counter;
         v.handle = 0;
-      },
+      }
       EV_START_SPATIAL_LOOP => {
         if !self.samples.contains_key(&ev.sample_id) {
           return;
@@ -490,7 +498,11 @@ impl Ctx {
         v.sample_id = ev.sample_id;
         v.pos = 0.0;
         v.gain = ev.params[3];
-        v.rate = if ev.params[4] > 0.0 { ev.params[4] } else { 1.0 };
+        v.rate = if ev.params[4] > 0.0 {
+          ev.params[4]
+        } else {
+          1.0
+        };
         v.mode = VoiceMode::SpatialLoop {
           pos: [ev.params[0], ev.params[1], ev.params[2]],
           ref_dist: ev.params[9].max(0.01),
@@ -506,7 +518,7 @@ impl Ctx {
         if ev.handle != 0 {
           self.spatial_handles.insert(ev.handle, ix);
         }
-      },
+      }
       EV_UPDATE_SPATIAL_LOOP => {
         if let Some(&ix) = self.spatial_handles.get(&ev.handle) {
           let v = &mut self.voices[ix];
@@ -530,15 +542,15 @@ impl Ctx {
             }
           }
         }
-      },
+      }
       EV_STOP_VOICE => {
         if let Some(&ix) = self.spatial_handles.get(&ev.handle) {
           self.deactivate_voice(ix);
         }
-      },
+      }
       EV_SET_MASTER_GAIN => {
         self.master_gain = ev.params[0].max(0.0);
-      },
+      }
       EV_FREE_SAMPLE => {
         // Stop any voices using this sample.
         for ix in 0..MAX_VOICES {
@@ -547,11 +559,10 @@ impl Ctx {
           }
         }
         self.samples.remove(&ev.sample_id);
-      },
-      _ => {},
+      }
+      _ => {}
     }
   }
-
 }
 
 #[no_mangle]
@@ -575,10 +586,14 @@ pub extern "C" fn sound_engine_get_event_buffer_ptr(ctx: *mut Ctx) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn sound_engine_get_event_buffer_capacity() -> u32 { MAX_EVENTS_PER_TICK as u32 }
+pub extern "C" fn sound_engine_get_event_buffer_capacity() -> u32 {
+  MAX_EVENTS_PER_TICK as u32
+}
 
 #[no_mangle]
-pub extern "C" fn sound_engine_get_event_struct_size() -> u32 { std::mem::size_of::<Event>() as u32 }
+pub extern "C" fn sound_engine_get_event_struct_size() -> u32 {
+  std::mem::size_of::<Event>() as u32
+}
 
 #[no_mangle]
 pub extern "C" fn sound_engine_get_listener_ptr(ctx: *mut Ctx) -> *mut u8 {
@@ -713,7 +728,7 @@ fn mix_voice(
       let l = ((1.0 - p) * 0.5).sqrt();
       let r = ((1.0 + p) * 0.5).sqrt();
       (v.gain * l, v.gain * r)
-    },
+    }
     VoiceMode::SpatialLoop {
       pos,
       ref_dist,
@@ -757,7 +772,7 @@ fn mix_voice(
         return;
       }
       (l, r)
-    },
+    }
   };
 
   let stereo_source = sample.channels >= 2;

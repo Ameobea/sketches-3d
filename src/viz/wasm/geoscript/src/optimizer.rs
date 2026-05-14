@@ -1339,11 +1339,19 @@ fn fold_constants<'a>(
       }
 
       let cf = ctx.with_resolved_sym(id, |resolved_name| {
-        if fn_sigs().contains_key(resolved_name) || FUNCTION_ALIASES.contains_key(resolved_name) {
+        let builtin_name = if fn_sigs().contains_key(resolved_name) {
+          Some(resolved_name)
+        } else {
+          FUNCTION_ALIASES.get(resolved_name).copied()
+        };
+        if let Some(builtin_name) = builtin_name {
+          let Some(fn_entry_ix) = get_builtin_fn_sig_entry_ix(builtin_name) else {
+            return ControlFlow::Continue(());
+          };
           *expr = Expr::Literal {
             value: Value::Callable(Rc::new(Callable::Builtin {
-              fn_entry_ix: get_builtin_fn_sig_entry_ix(resolved_name).unwrap(),
-              fn_impl: resolve_builtin_impl(resolved_name),
+              fn_entry_ix,
+              fn_impl: resolve_builtin_impl(builtin_name),
               pre_resolved_signature: None,
             })),
             loc,
@@ -1849,6 +1857,18 @@ fn | call | print
   let ctx = EvalCtx::default();
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&ctx, &mut ast).unwrap();
+}
+
+#[test]
+fn test_builtin_alias_ident_optimizes_to_callable() {
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, "fn = trans").unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  let TopLevelStatement::Statement(Statement::Assignment { expr, .. }) = &ast.statements[0] else {
+    panic!("Expected assignment");
+  };
+  assert!(matches!(expr.as_literal(), Some(Value::Callable(_))));
 }
 
 #[test]

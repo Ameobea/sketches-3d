@@ -2155,8 +2155,7 @@ fn tessellate_path_impl(
           let actual_closed = (p0 - p1).norm() <= 1e-4;
           let include_end = !actual_closed;
           let effective_sample_count = sample_count.unwrap_or(64);
-          let t_samples =
-            build_topology_samples(effective_sample_count, None, None, include_end);
+          let t_samples = build_topology_samples(effective_sample_count, None, None, include_end);
           let mut points = Vec::with_capacity(t_samples.len());
           for t in t_samples {
             points.push(sample_point(t)?);
@@ -2610,7 +2609,11 @@ fn render_path_impl(
             if is_closed {
               path3d.push(path3d[0]);
             }
-            ctx.rendered_paths.push(path3d);
+            ctx.rendered_paths.push(crate::RenderedPath {
+              points: path3d,
+              source_module: ctx.current_module.borrow().clone(),
+              path_id: ctx.next_render_id(),
+            });
           }
           return Ok(Value::Nil);
         }
@@ -2639,7 +2642,11 @@ fn render_path_impl(
         path3d.push(path3d[0]);
       }
 
-      ctx.rendered_paths.push(path3d);
+      ctx.rendered_paths.push(crate::RenderedPath {
+        points: path3d,
+        source_module: ctx.current_module.borrow().clone(),
+        path_id: ctx.next_render_id(),
+      });
       Ok(Value::Nil)
     }
     _ => unimplemented!(),
@@ -3427,16 +3434,16 @@ fn path_aabb_impl(
 
       let tracer = trace_path::as_path_tracer(callable).ok_or_else(|| {
         ErrorStack::new(
-          "`path_aabb` requires a path sampler with analytic segment topology (e.g. from \
-           `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`). Black-box \
-           callables and samplers like `lerp_path` or `catmull_rom` that don't expose \
-           explicit segments are not supported.",
+          "`path_aabb` requires a path sampler with analytic segment topology (e.g. from `path { \
+           ... }`, `trace_path`, `trace_svg_path`, `text_to_path`). Black-box callables and \
+           samplers like `lerp_path` or `catmull_rom` that don't expose explicit segments are not \
+           supported.",
         )
       })?;
 
-      let (mins, maxs) = tracer.analytic_aabb()?.ok_or_else(|| {
-        ErrorStack::new("`path_aabb`: path contains no contributing segments")
-      })?;
+      let (mins, maxs) = tracer
+        .analytic_aabb()?
+        .ok_or_else(|| ErrorStack::new("`path_aabb`: path contains no contributing segments"))?;
 
       Ok(Value::Sequence(Rc::new(EagerSeq {
         inner: vec![Value::Vec2(mins), Value::Vec2(maxs)],
@@ -3829,6 +3836,7 @@ fn render_impl(
     ctx.rendered_meshes.push(crate::RenderedMesh {
       mesh,
       source_module: ctx.current_module.borrow().clone(),
+      mesh_id: ctx.next_render_id(),
     });
   };
 
@@ -3842,7 +3850,11 @@ fn render_impl(
     }
     1 => {
       let light = arg_refs[0].resolve(args, kwargs).as_light().unwrap();
-      ctx.rendered_lights.push(light.clone());
+      ctx.rendered_lights.push(crate::RenderedLight {
+        light: light.clone(),
+        source_module: ctx.current_module.borrow().clone(),
+        light_id: ctx.next_render_id(),
+      });
       Ok(Value::Nil)
     }
     2 => {
@@ -3870,7 +3882,11 @@ fn render_impl(
           return Ok(());
         }
 
-        ctx.rendered_paths.push(path);
+        ctx.rendered_paths.push(crate::RenderedPath {
+          points: path,
+          source_module: ctx.current_module.borrow().clone(),
+          path_id: ctx.next_render_id(),
+        });
         Ok(())
       }
 
@@ -3941,7 +3957,11 @@ fn render_impl(
       if let Some(&first) = path.first() {
         path.push(first);
       }
-      ctx.rendered_paths.push(path);
+      ctx.rendered_paths.push(crate::RenderedPath {
+        points: path,
+        source_module: ctx.current_module.borrow().clone(),
+        path_id: ctx.next_render_id(),
+      });
       Ok(Value::Nil)
     }
     _ => unimplemented!(),
@@ -5789,18 +5809,14 @@ fn closed_subpath_inward_flip(callable: &Callable, t: f32) -> Result<Option<bool
   }
 
   Err(ErrorStack::new(
-    "path_frame: cannot determine inward normal for a callable without path topology. \
-     Pass `inward_normal=false`, or use `build_path` / `trace_svg_path` / `text_to_path` \
-     to obtain a topology-aware path.",
+    "path_frame: cannot determine inward normal for a callable without path topology. Pass \
+     `inward_normal=false`, or use `build_path` / `trace_svg_path` / `text_to_path` to obtain a \
+     topology-aware path.",
   ))
 }
 
-fn inward_flip_from_polylines(
-  sampler: &dyn trace_path::PathSampler,
-  t: f32,
-) -> Option<bool> {
-  let polylines =
-    sampler.sample_subpaths(INWARD_FLIP_FALLBACK_TOLERANCE_DEG.to_radians())?;
+fn inward_flip_from_polylines(sampler: &dyn trace_path::PathSampler, t: f32) -> Option<bool> {
+  let polylines = sampler.sample_subpaths(INWARD_FLIP_FALLBACK_TOLERANCE_DEG.to_radians())?;
   if polylines.is_empty() {
     return None;
   }
@@ -5920,12 +5936,14 @@ fn path_join_impl(
 
   let tracer_a = extract_path_tracer(cb_a).ok_or_else(|| {
     ErrorStack::new(
-      "path_join: `path1` must be a path sampler from `build_path`/`trace_svg_path`/`text_to_path`.",
+      "path_join: `path1` must be a path sampler from \
+       `build_path`/`trace_svg_path`/`text_to_path`.",
     )
   })?;
   let tracer_b = extract_path_tracer(cb_b).ok_or_else(|| {
     ErrorStack::new(
-      "path_join: `path2` must be a path sampler from `build_path`/`trace_svg_path`/`text_to_path`.",
+      "path_join: `path2` must be a path sampler from \
+       `build_path`/`trace_svg_path`/`text_to_path`.",
     )
   })?;
 
@@ -5990,10 +6008,7 @@ fn is_manifold_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
-  let two_manifold = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_bool()
-    .unwrap_or(true);
+  let two_manifold = arg_refs[1].resolve(args, kwargs).as_bool().unwrap_or(true);
   let result = mesh.mesh.check_is_manifold_dynamic(two_manifold).is_ok();
   Ok(Value::Bool(result))
 }

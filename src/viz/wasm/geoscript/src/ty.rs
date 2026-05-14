@@ -120,8 +120,8 @@ impl AbstractType {
 /// - Concrete + different Concrete → Union of both.
 /// - Union + Concrete → Union with the Concrete added (dedup).
 /// - Union + Union → Union of both (dedup).
-/// - Callable/PartiallyApplied merged with anything else collapses to Concrete(Callable)
-///   or Unknown (we don't support rich unions over structured types).
+/// - Callable/PartiallyApplied merged with anything else collapses to Concrete(Callable) or Unknown
+///   (we don't support rich unions over structured types).
 pub fn merge_types(a: &AbstractType, b: &AbstractType) -> AbstractType {
   /// ArgType doesn't impl PartialEq, but its bitflag is unique per variant.
   fn same(x: ArgType, y: ArgType) -> bool {

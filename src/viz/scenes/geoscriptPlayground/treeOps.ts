@@ -229,6 +229,25 @@ export const setGlobalsSource = (tree: TreeDef, source: string): void => {
   tree.globalsSource = source;
 };
 
+/** Per-node mesh counts summed recursively over each subtree. */
+export const computeMeshCounts = (
+  tree: TreeDef,
+  directCounts: ReadonlyMap<string, number>
+): Map<string, number> => {
+  const out = new Map<string, number>();
+  const visit = (id: string): number => {
+    if (out.has(id)) return out.get(id)!;
+    const node = tree.nodes[id];
+    if (!node) return 0;
+    let total = directCounts.get(id) ?? 0;
+    for (const cid of node.children) total += visit(cid);
+    out.set(id, total);
+    return total;
+  };
+  for (const id of Object.keys(tree.nodes)) visit(id);
+  return out;
+};
+
 /**
  * Returns `[node, parent, ..., _root]` — the chain of nodes from `nodeId` up to and
  * including the root. Returns `null` if `nodeId` is not in the tree or the chain

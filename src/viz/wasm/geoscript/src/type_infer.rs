@@ -140,10 +140,7 @@ pub fn resolve_builtin_call(
   arg_types: &[AbstractType],
   kwarg_types: &[(Sym, AbstractType)],
 ) -> CallResolution {
-  let Some(name_str) = ctx
-    .interned_symbols
-    .with_resolved(name, |s| s.to_string())
-  else {
+  let Some(name_str) = ctx.interned_symbols.with_resolved(name, |s| s.to_string()) else {
     return CallResolution::NotBuiltin;
   };
   let (canonical_name, sigs) = if let Some(def) = fn_sigs().get(&name_str) {
@@ -313,16 +310,15 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
   match expr {
     Expr::Literal { value, .. } => AbstractType::Concrete(value.get_type()),
 
-    Expr::Ident { name, .. } => env
-      .lookup(*name)
-      .cloned()
-      .unwrap_or(AbstractType::Unknown),
+    Expr::Ident { name, .. } => env.lookup(*name).cloned().unwrap_or(AbstractType::Unknown),
 
     Expr::Call { call, .. } => infer_call_expr(ctx, env, call),
 
     Expr::BinOp { op, lhs, rhs, .. } => infer_binop(ctx, env, *op, lhs, rhs),
 
-    Expr::PrefixOp { op, expr: inner, .. } => {
+    Expr::PrefixOp {
+      op, expr: inner, ..
+    } => {
       let arg_ty = infer_expr(ctx, env, inner);
       let Some(arg_concrete) = arg_ty.as_single_arg_type() else {
         return AbstractType::Unknown;
@@ -690,9 +686,7 @@ fn infer_closure(
 
 fn first_ident_name(pat: &crate::ast::DestructurePattern, ctx: &EvalCtx) -> Option<String> {
   if let crate::ast::DestructurePattern::Ident(sym) = pat {
-    ctx
-      .interned_symbols
-      .with_resolved(*sym, |s| s.to_string())
+    ctx.interned_symbols.with_resolved(*sym, |s| s.to_string())
   } else {
     None
   }

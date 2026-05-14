@@ -51,7 +51,12 @@ impl PathSampler for CatmullRomCallable2D {
   }
 
   fn eval_at_raw(&self, t: f32, _ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
-    Ok(eval_cardinal_spline(&self.points, t, self.tension, self.closed))
+    Ok(eval_cardinal_spline(
+      &self.points,
+      t,
+      self.tension,
+      self.closed,
+    ))
   }
 }
 
@@ -94,7 +99,11 @@ impl DynamicCallable for CatmullRomCallable3D {
     };
     let t = t_val
       .as_float()
-      .ok_or_else(|| ErrorStack::new(format!("catmull_rom_3d: `t` must be a number, got {t_val:?}")))?
+      .ok_or_else(|| {
+        ErrorStack::new(format!(
+          "catmull_rom_3d: `t` must be a number, got {t_val:?}"
+        ))
+      })?
       .clamp(0., 1.);
 
     let pos = eval_cardinal_spline(&self.points, t, self.tension, self.closed);

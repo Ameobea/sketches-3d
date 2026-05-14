@@ -379,12 +379,7 @@ fn reconstruct_3d_from_2d(
 }
 
 /// Compute barycentric coordinates of point p in triangle (a, b, c) in 2D.
-fn barycentric_2d(
-  p: (f64, f64),
-  a: (f64, f64),
-  b: (f64, f64),
-  c: (f64, f64),
-) -> (f64, f64, f64) {
+fn barycentric_2d(p: (f64, f64), a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> (f64, f64, f64) {
   let v0 = (b.0 - a.0, b.1 - a.1);
   let v1 = (c.0 - a.0, c.1 - a.1);
   let v2 = (p.0 - a.0, p.1 - a.1);
@@ -443,14 +438,10 @@ fn segment_segment_intersection_2d(
 }
 
 /// Test if a point is inside a triangle in 2D using cross product signs.
-fn point_in_triangle_2d(
-  p: (f64, f64),
-  a: (f64, f64),
-  b: (f64, f64),
-  c: (f64, f64),
-) -> bool {
-  let cross =
-    |o: (f64, f64), p1: (f64, f64), p2: (f64, f64)| (p1.0 - o.0) * (p2.1 - o.1) - (p1.1 - o.1) * (p2.0 - o.0);
+fn point_in_triangle_2d(p: (f64, f64), a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> bool {
+  let cross = |o: (f64, f64), p1: (f64, f64), p2: (f64, f64)| {
+    (p1.0 - o.0) * (p2.1 - o.1) - (p1.1 - o.1) * (p2.0 - o.0)
+  };
 
   let d1 = cross(p, a, b);
   let d2 = cross(p, b, c);
@@ -476,8 +467,7 @@ fn colinear_overlap_point_2d(
   let eps = 1e-12;
 
   // Check colinearity of c and d with segment ab.
-  if cross(ab, (c.0 - a.0, c.1 - a.1)).abs() > eps
-    || cross(ab, (d.0 - a.0, d.1 - a.1)).abs() > eps
+  if cross(ab, (c.0 - a.0, c.1 - a.1)).abs() > eps || cross(ab, (d.0 - a.0, d.1 - a.1)).abs() > eps
   {
     return None;
   }

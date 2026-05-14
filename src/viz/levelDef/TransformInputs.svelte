@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { evalMathExpr } from '../util/mathExpr';
+
   type TransformValue = [number, number, number];
 
   export type TransformPatch = Partial<{
@@ -50,23 +52,9 @@
     if (e.key === 'Escape') { focused = null; (e.target as HTMLInputElement).blur(); }
   };
 
-  /** Parses arithmetic expressions with `pi`/`PI`. Returns null on failure. */
-  const evalExpr = (s: string): number | null => {
-    const trimmed = s.trim();
-    if (!trimmed) return null;
-    const sanitized = trimmed.replace(/\bpi\b/gi, 'PI');
-    if (!/^[\d\s+\-*/().PI]+$/.test(sanitized)) return null;
-    try {
-      const result = new Function('PI', `"use strict"; return (${sanitized});`)(Math.PI);
-      return typeof result === 'number' && isFinite(result) ? result : null;
-    } catch {
-      return null;
-    }
-  };
-
   const commit = () => {
     if (!focused) return;
-    const n = evalExpr(draft);
+    const n = evalMathExpr(draft);
     if (n === null) return;
     const { field, axis } = focused;
     const src = arrFor(field);

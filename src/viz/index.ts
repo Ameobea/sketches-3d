@@ -591,7 +591,21 @@ export class Viz {
   };
 
   private handleKeyDown = (evt: KeyboardEvent) => {
-    if (evt.code === 'Escape' && this.controlState.cameraControlEnabled) {
+    const target = evt.target;
+    const isInputLikeTarget =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement &&
+        (target.isContentEditable || target.getAttribute('role') === 'textbox'));
+
+    // Escape must be free for inputs/CodeMirror (autocomplete close, etc); skip
+    // the pause toggle when typing or when another handler already claimed it.
+    if (
+      evt.code === 'Escape' &&
+      this.controlState.cameraControlEnabled &&
+      !isInputLikeTarget &&
+      !evt.defaultPrevented
+    ) {
       this.paused.update(p => !p);
       if (this.paused.current) {
         this.maybePauseViz();
@@ -604,11 +618,7 @@ export class Viz {
       this.keyStates[evt.code] = true;
     }
 
-    if (
-      evt.target instanceof HTMLInputElement ||
-      evt.target instanceof HTMLTextAreaElement ||
-      (evt.target instanceof HTMLElement && evt.target.getAttribute('role') === 'textbox')
-    ) {
+    if (isInputLikeTarget) {
       return;
     }
 

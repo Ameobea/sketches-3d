@@ -24,7 +24,11 @@ pub fn line_col_to_offset(src: &str, line: u32, col: u32) -> Option<usize> {
   for (i, ch) in src.char_indices() {
     if current_line == line {
       let offset = line_start + (col as usize - 1);
-      return if offset <= src.len() { Some(offset) } else { None };
+      return if offset <= src.len() {
+        Some(offset)
+      } else {
+        None
+      };
     }
     if ch == '\n' {
       current_line += 1;
@@ -33,7 +37,11 @@ pub fn line_col_to_offset(src: &str, line: u32, col: u32) -> Option<usize> {
   }
   if current_line == line {
     let offset = line_start + (col as usize - 1);
-    if offset <= src.len() { Some(offset) } else { None }
+    if offset <= src.len() {
+      Some(offset)
+    } else {
+      None
+    }
   } else {
     None
   }
@@ -104,7 +112,10 @@ pub fn find_enclosing_call(src: &str, offset: usize) -> Option<EnclosingCallInfo
         if depth == 0 {
           // Found the opening paren — extract the identifier before it
           let fn_name = extract_ident_before(src, i)?;
-          return Some(EnclosingCallInfo { fn_name, kwarg_name });
+          return Some(EnclosingCallInfo {
+            fn_name,
+            kwarg_name,
+          });
         }
         depth -= 1;
       }

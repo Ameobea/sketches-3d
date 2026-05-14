@@ -29,6 +29,7 @@ import {
   setTransform as opsSetTransform,
   type CreateNodeOpts,
 } from './treeOps';
+import { TreeUndoSystem, type TreeSnapshot } from './treeUndoSystem';
 
 export interface TreeStateOpts {
   /** Initial tree (e.g. from server load or migrated single-node tree). Cloned. */
@@ -54,9 +55,60 @@ export class TreeState {
    *  live tree on `isDirty()`. */
   private savedSnapshotJson: string;
 
+  /** Tree-snapshot undo/redo stack. See `treeUndoSystem.ts` for semantics. */
+  readonly undoSystem = new TreeUndoSystem();
+
   constructor(opts: TreeStateOpts) {
     this.state.tree = structuredClone(opts.initial);
     this.savedSnapshotJson = JSON.stringify(opts.savedBaseline ?? opts.initial);
+  }
+
+  private currentSnapshot(): TreeSnapshot {
+    return {
+      tree: structuredClone($state.snapshot(this.state.tree)) as TreeDef,
+      selectedId: this.state.selectedId,
+      soloId: this.state.soloId,
+    };
+  }
+
+  /** Run `op` and snapshot one undo entry. Pass `null` for atomic edits; pass a
+   *  stable key (e.g. `transform:<id>`) to coalesce rapid bursts.
+   *
+   *  Hot path: a gizmo drag fires this ~60×/sec. Snapshotting `before` is a
+   *  full-tree clone — skipped when we know we'll coalesce, since the existing
+   *  entry's `before` is the one we want to keep. */
+  applyEdit(coalesceKey: string | null, op: () => void): void {
+    const before = this.undoSystem.wouldCoalesce(coalesceKey) ? null : this.currentSnapshot();
+    op();
+    const after = this.currentSnapshot();
+    this.undoSystem.push(coalesceKey, before, after);
+  }
+
+  undo(): boolean {
+    const snap = this.undoSystem.undo();
+    if (!snap) return false;
+    this.restoreSnapshot(snap);
+    return true;
+  }
+
+  redo(): boolean {
+    const snap = this.undoSystem.redo();
+    if (!snap) return false;
+    this.restoreSnapshot(snap);
+    return true;
+  }
+
+  private restoreSnapshot(snap: TreeSnapshot): void {
+    this.state.tree = structuredClone(snap.tree);
+    // Defensive: ids should still exist (snapshot was taken with this tree).
+    if (snap.selectedId === null || snap.selectedId === GLOBALS_SELECTION_ID) {
+      this.state.selectedId = snap.selectedId;
+    } else {
+      this.state.selectedId = this.state.tree.nodes[snap.selectedId]
+        ? snap.selectedId
+        : this.state.tree.rootId;
+    }
+    this.state.soloId = snap.soloId !== null && this.state.tree.nodes[snap.soloId] ? snap.soloId : null;
   }
 
   /** Plain-object snapshot of the current tree (Svelte $state.snapshot, deeply). */
@@ -74,12 +126,14 @@ export class TreeState {
   }
 
   /** Replace the entire tree (e.g. on "clear local changes" or fork). Clears
-   *  selection/solo and resets the dirty baseline to the new tree. */
+   *  selection/solo and resets the dirty baseline to the new tree. Discards
+   *  undo history — entries from the previous tree would be incoherent. */
   replaceTree(tree: TreeDef): void {
     this.state.tree = structuredClone(tree);
     this.state.selectedId = null;
     this.state.soloId = null;
     this.savedSnapshotJson = JSON.stringify(tree);
+    this.undoSystem.clear();
   }
 
   createNode(opts: CreateNodeOpts = {}): string {

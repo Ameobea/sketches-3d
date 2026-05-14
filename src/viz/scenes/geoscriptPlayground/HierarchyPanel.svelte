@@ -64,10 +64,17 @@
   let renameValue = $state('');
   let renameError = $state<string | null>(null);
 
-  const startRename = (node: NodeDef) => {
+  const beginRename = (node: NodeDef) => {
     renamingId = node.id;
     renameValue = node.name;
     renameError = null;
+  };
+
+  /** External entry point for F2-style keyboard rename; rejects `_root`. */
+  export const startRename = (id: string) => {
+    const node = tree.nodes[id];
+    if (!node || id === tree.rootId) return;
+    beginRename(node);
   };
   const commitRename = () => {
     if (!renamingId) return;
@@ -138,20 +145,10 @@
     dropTargetId = null;
   };
 
-  // Scoped to the `.hierarchy` element below (not `window`) so the shortcut only fires
-  // when focus is within the panel — otherwise typing Backspace in the code editor or
-  // any text input would trigger node deletion. Delete only; not Backspace.
-  const handlePanelKeydown = (e: KeyboardEvent) => {
-    if (renamingId) return;
-    if (e.key !== 'Delete') return;
-    if (!isDeletable(selectedId)) return;
-    e.preventDefault();
-    ondelete(selectedId!);
-  };
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="hierarchy" onkeydown={handlePanelKeydown}>
+<div class="hierarchy" data-hierarchy-panel>
   <div class="toolbar">
     <button
       class="tb-btn"
@@ -210,7 +207,7 @@
     ondrop={(e) => handleDrop(e, node.id)}
     onclick={() => onselect(node.id)}
     onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselect(node.id); }}
-    ondblclick={() => { if (!isRootNode) startRename(node); }}
+    ondblclick={() => { if (!isRootNode) beginRename(node); }}
   >
     {#if hasChildren}
       <button
@@ -239,12 +236,10 @@
         autofocus
       />
     {:else}
-      <span class="node-id" title={node.id}>{node.name}</span>
+      <span class="node-id" title={node.id}>{isRootNode ? 'Root' : node.name}</span>
     {/if}
 
-    {#if isRootNode}
-      <span class="badge root-badge">root</span>
-    {:else if hasChildren}
+    {#if !isRootNode && hasChildren}
       <span class="badge group-badge">{node.children.length}</span>
     {/if}
 
@@ -413,13 +408,9 @@
     border: 1px solid #36a;
   }
 
-  .root-badge {
-    color: #db5;
-    border: 1px solid #864;
-  }
-
   .row.root .node-id {
     font-weight: 600;
+    color: #6af;
   }
 
   .row-btn {

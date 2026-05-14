@@ -2765,10 +2765,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       let (y, r) = if ring < cap_segments - 1 {
         // Bottom hemisphere rings (excluding pole and equator)
         let angle = ((ring + 1) as f32 / cap_segments as f32) * (PI / 2.);
-        (
-          -half_height - radius * angle.cos(),
-          radius * angle.sin(),
-        )
+        (-half_height - radius * angle.cos(), radius * angle.sin())
       } else if ring < cap_segments - 1 + height_segments + 1 {
         // Cylinder section (including both equator rings)
         let t = (ring - (cap_segments - 1)) as f32 / height_segments as f32;
@@ -2777,10 +2774,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         // Top hemisphere rings (excluding pole and equator)
         let j = ring - (cap_segments - 1) - height_segments;
         let angle = (j as f32 / cap_segments as f32) * (PI / 2.);
-        (
-          half_height + radius * angle.sin(),
-          radius * angle.cos(),
-        )
+        (half_height + radius * angle.sin(), radius * angle.cos())
       };
 
       for seg in 0..radial_segments {
@@ -3114,9 +3108,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       let pos_a = face_a.vertex_positions(&self.vertices);
       let pos_b = face_b.vertex_positions(&self.vertices);
 
-      if let Some(isect) = tri_tri_intersection(
-        pos_a[0], pos_a[1], pos_a[2], pos_b[0], pos_b[1], pos_b[2],
-      ) {
+      if let Some(isect) =
+        tri_tri_intersection(pos_a[0], pos_a[1], pos_a[2], pos_b[0], pos_b[1], pos_b[2])
+      {
         result = Some(SelfIntersectionResult {
           face_a: fk_a,
           face_b: fk_b,
@@ -3625,7 +3619,10 @@ mod tests {
       .expect("Capsule should be 2-manifold");
 
     let centroid = mesh.compute_volume_centroid();
-    assert!(centroid.is_some(), "Capsule should be 2-manifold (volume centroid)");
+    assert!(
+      centroid.is_some(),
+      "Capsule should be 2-manifold (volume centroid)"
+    );
 
     let centroid = centroid.unwrap();
     assert!(

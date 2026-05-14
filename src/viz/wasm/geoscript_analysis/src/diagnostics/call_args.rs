@@ -1,8 +1,7 @@
 use geoscript::builtins::fn_defs::FnDef;
 
 use crate::{
-  analysis::Analysis, scope::FunctionCallInfo, AnalysisCtx, AnalysisDiagnostic,
-  DiagnosticSeverity,
+  analysis::Analysis, scope::FunctionCallInfo, AnalysisCtx, AnalysisDiagnostic, DiagnosticSeverity,
 };
 
 pub(super) fn check(
@@ -77,7 +76,8 @@ fn check_arity(
     end_col: col + name.len() as u32,
     severity: DiagnosticSeverity::Error,
     message: format!(
-      "`{name}` accepts at most {max_params} argument(s), but {n_positional} positional argument(s) were provided",
+      "`{name}` accepts at most {max_params} argument(s), but {n_positional} positional \
+       argument(s) were provided",
     ),
   });
 }
@@ -90,10 +90,12 @@ fn check_kwarg_names(
   diagnostics: &mut Vec<AnalysisDiagnostic>,
 ) {
   for &kwarg_sym in &call_info.kwarg_names {
-    let kwarg_valid = fn_def
-      .signatures
-      .iter()
-      .any(|sig| sig.arg_defs.iter().any(|arg| arg.interned_name == kwarg_sym));
+    let kwarg_valid = fn_def.signatures.iter().any(|sig| {
+      sig
+        .arg_defs
+        .iter()
+        .any(|arg| arg.interned_name == kwarg_sym)
+    });
 
     if kwarg_valid {
       continue;
@@ -108,7 +110,9 @@ fn check_kwarg_names(
       .eval_ctx
       .interned_symbols
       .with_resolved(kwarg_sym, |s| s.to_string());
-    let Some(kwarg_name) = kwarg_name else { continue };
+    let Some(kwarg_name) = kwarg_name else {
+      continue;
+    };
 
     diagnostics.push(AnalysisDiagnostic {
       start_line: line,

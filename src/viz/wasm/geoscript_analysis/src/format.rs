@@ -14,7 +14,10 @@ fn format_arg_type(arg: &ArgDef) -> String {
 }
 
 fn format_return_type(rt: &[ArgType]) -> String {
-  rt.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(" | ")
+  rt.iter()
+    .map(|t| t.as_str())
+    .collect::<Vec<_>>()
+    .join(" | ")
 }
 
 pub fn format_signature_oneliner(name: &str, sig: &FnSignature) -> String {
@@ -229,7 +232,11 @@ pub fn format_partial_application(paf: &PartialApplication, ctx: &EvalCtx) -> St
   let multi = def.signatures.len() > 1;
   for (ix, remaining) in &candidates {
     let header = if multi {
-      format!("\nOverload {} of {} — remaining:", ix + 1, def.signatures.len())
+      format!(
+        "\nOverload {} of {} — remaining:",
+        ix + 1,
+        def.signatures.len()
+      )
     } else {
       "\nRemaining params:".to_string()
     };

@@ -1,4 +1,5 @@
 import type { RenderedObject } from 'src/geoscript/runner/types';
+import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
 import type { Viz } from 'src/viz';
 import * as THREE from 'three';
 import { DefaultCameraPos, DefaultCameraTarget } from './types';
@@ -50,6 +51,54 @@ export const centerView = async (viz: Viz, renderedObjects: RenderedObject[]) =>
     center,
     radius,
     animationDurationMs: 0,
+  });
+};
+
+/** Frame the camera on `nodeId`'s subtree. No-op when the subtree rendered no meshes. */
+export const focusOnSubtree = (
+  viz: Viz,
+  renderedObjects: RenderedObject[],
+  tree: TreeDef,
+  nodeId: string
+) => {
+  if (!viz.orbitControls) return;
+  if (!tree.nodes[nodeId]) return;
+
+  const subtreeIds = new Set<string>();
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (subtreeIds.has(id)) continue;
+    subtreeIds.add(id);
+    const node = tree.nodes[id];
+    if (node) stack.push(...node.children);
+  }
+
+  const matching = renderedObjects.filter(obj => {
+    const sourceId = (obj as THREE.Object3D).userData?.sourceNodeId as string | undefined;
+    return sourceId !== undefined && subtreeIds.has(sourceId);
+  });
+  if (matching.length === 0) return;
+
+  const bbox = computeCompositeBoundingBox(matching);
+  if (bbox.isEmpty()) return;
+
+  const sphere = new THREE.Sphere();
+  bbox.getBoundingSphere(sphere);
+  let center = sphere.center;
+  let radius = sphere.radius;
+  if (Number.isNaN(center.x) || Number.isNaN(center.y) || Number.isNaN(center.z)) {
+    center = new THREE.Vector3(0, 0, 0);
+  }
+  if (radius <= 0 || Number.isNaN(radius)) {
+    radius = 1;
+  }
+
+  focusCamera({
+    camera: viz.camera as THREE.PerspectiveCamera,
+    orbitControls: viz.orbitControls,
+    center,
+    radius,
   });
 };
 

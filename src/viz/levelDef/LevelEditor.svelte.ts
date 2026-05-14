@@ -28,6 +28,7 @@ import { CsgEditController } from './csgEditController.svelte';
 import { focusCamera } from '../util/focusCamera';
 import { clearPhysicsBinding } from '../util/physics';
 import { withWorldSpaceTransform } from '../util/three';
+import { installClickRaycaster } from '../util/clickRaycaster';
 import { round } from './mathUtils';
 import { collectSubtreeLeaves } from './editorStructuralOps';
 import { EditorMutationController } from './editorMutationController';
@@ -109,16 +110,13 @@ export class LevelEditor {
     return this.selection.primaryObject;
   }
 
-  private raycaster = new THREE.Raycaster();
   private selectableMeshes: THREE.Mesh[] = [];
   private meshToLevelObject = new Map<THREE.Mesh, LevelObject>();
   allLevelObjects: LevelObject[];
   rootNodes: LevelSceneNode[];
   nodeById: Map<string, LevelSceneNode>;
 
-  // Distinguish clicks from drags — skip raycast if pointer moved significantly
-  private pointerDownPos = new THREE.Vector2();
-  private pointerMoved = false;
+  private clickRaycasterDisposer: (() => void) | null = null;
   private originalSetPointerCapture: ((pointerId: number) => void) | null = null;
   private originalReleasePointerCapture: ((pointerId: number) => void) | null = null;
 
@@ -439,9 +437,11 @@ export class LevelEditor {
 
     const canvas = this.viz.renderer.domElement;
     this.installSafePointerCapture(canvas);
-    canvas.addEventListener('pointerdown', this.onPointerDown);
-    canvas.addEventListener('pointermove', this.onPointerMove);
-    canvas.addEventListener('pointerup', this.onPointerUp);
+    this.clickRaycasterDisposer = installClickRaycaster({
+      canvas,
+      camera: this.viz.camera,
+      onClick: ({ raycaster, event }) => this.handleSceneClick(raycaster, event),
+    });
 
     this.createLightProxies();
     this.createPanel();
@@ -479,9 +479,8 @@ export class LevelEditor {
 
     const canvas = this.viz.renderer.domElement;
     this.restorePointerCapture(canvas);
-    canvas.removeEventListener('pointerdown', this.onPointerDown);
-    canvas.removeEventListener('pointermove', this.onPointerMove);
-    canvas.removeEventListener('pointerup', this.onPointerUp);
+    this.clickRaycasterDisposer?.();
+    this.clickRaycasterDisposer = null;
 
     this.destroyLightProxies();
     this.destroyPanel();
@@ -675,66 +674,33 @@ export class LevelEditor {
     this.orbitControls?.update();
   };
 
-  private onPointerDown = (e: PointerEvent) => {
-    this.pointerDownPos.set(e.clientX, e.clientY);
-    this.pointerMoved = false;
-  };
+  private handleSceneClick = (raycaster: THREE.Raycaster, event: PointerEvent) => {
+    if (this.csgController.doRaycast(raycaster)) return;
 
-  private onPointerMove = (e: PointerEvent) => {
-    const dx = e.clientX - this.pointerDownPos.x;
-    const dy = e.clientY - this.pointerDownPos.y;
-    if (dx * dx + dy * dy > 16) {
-      this.pointerMoved = true;
-    }
-  };
+    const isToggle = event.ctrlKey || event.metaKey;
 
-  private onPointerUp = (e: PointerEvent) => {
-    if (!this.pointerMoved && e.button === 0) {
-      this.doRaycast(e);
-    }
-  };
-
-  private doRaycast(e: PointerEvent) {
-    const rect = this.viz.renderer.domElement.getBoundingClientRect();
-    const mouse = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1
-    );
-
-    this.raycaster.setFromCamera(mouse, this.viz.camera);
-
-    if (this.csgController.doRaycast(this.raycaster)) {
-      return;
-    }
-
-    const isToggle = e.ctrlKey || e.metaKey;
-
-    // Check light proxies first (they're small so prioritize proximity)
-    const lightHits = this.raycaster.intersectObjects(this.lightProxyMeshes, false);
+    // Lights are small targets; resolve them first.
+    const lightHits = raycaster.intersectObjects(this.lightProxyMeshes, false);
     if (lightHits.length > 0) {
       const levelLight = this.meshToLevelLight.get(lightHits[0].object as THREE.Mesh);
       if (levelLight) {
-        // Lights don't participate in multi-select
         this.selectLight(levelLight);
         return;
       }
     }
 
-    const hits = this.raycaster.intersectObjects(this.selectableMeshes, false);
+    const hits = raycaster.intersectObjects(this.selectableMeshes, false);
     if (hits.length > 0) {
       const levelObj = this.meshToLevelObject.get(hits[0].object as THREE.Mesh);
       if (levelObj) {
-        if (isToggle) {
-          this.toggleSelect(levelObj);
-        } else {
-          this.select(levelObj);
-        }
+        if (isToggle) this.toggleSelect(levelObj);
+        else this.select(levelObj);
         return;
       }
     }
 
     this.deselect();
-  }
+  };
 
   private installSafePointerCapture(canvas: HTMLCanvasElement) {
     if (this.originalSetPointerCapture || this.originalReleasePointerCapture) {

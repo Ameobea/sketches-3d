@@ -30,6 +30,8 @@ export interface GeneratedMesh {
    * Empty string for the legacy/flat-source path.
    */
   sourceModule: string;
+  /** Stable across runs for unchanged meshes; used by the populator as a reuse key. */
+  meshId: number;
 }
 
 export interface GeneratedPath {
@@ -38,11 +40,13 @@ export interface GeneratedPath {
   material: THREE.Material;
   castShadow: boolean;
   receiveShadow: boolean;
+  pathId: number;
 }
 
 export interface GeneratedLight {
   type: 'light';
   light: THREE.Light;
+  lightId: number;
 }
 
 export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight;

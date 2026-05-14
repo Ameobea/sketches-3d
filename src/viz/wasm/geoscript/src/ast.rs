@@ -1262,7 +1262,6 @@ impl ClosureBody {
       }
     }
   }
-
 }
 
 #[derive(Clone, Debug)]
@@ -1899,11 +1898,10 @@ fn build_path_block_rewrite_map(ctx: &EvalCtx) -> FxHashMap<Sym, Sym> {
 
 fn rewrite_path_block_calls_in_expr(replacements: &FxHashMap<Sym, Sym>, expr: &mut Expr) {
   if let Expr::Call {
-    call:
-      FunctionCall {
-        target: FunctionCallTarget::Name(sym),
-        ..
-      },
+    call: FunctionCall {
+      target: FunctionCallTarget::Name(sym),
+      ..
+    },
     ..
   } = expr
   {
@@ -2573,12 +2571,7 @@ impl<'a> ScopeTracker<'a> {
   /// Insert a binding whose type is already known.  Writes the tracked value and records
   /// `ty` in the scope's side-table so that [`build_type_env`] can surface it without having
   /// to inspect the stored value.
-  pub fn set_with_type(
-    &mut self,
-    name: Sym,
-    value: TrackedValue,
-    ty: crate::ty::AbstractType,
-  ) {
+  pub fn set_with_type(&mut self, name: Sym, value: TrackedValue, ty: crate::ty::AbstractType) {
     self.vars.insert(name, value);
     self.types.insert(name, ty);
   }
@@ -2635,9 +2628,7 @@ fn swizzle_result_ty(field: &str, valid: impl Fn(char) -> bool) -> Option<ArgTyp
 pub fn infer_static_field_access_ty(lhs_ty: ArgType, field: &str) -> Option<ArgType> {
   match lhs_ty {
     ArgType::Vec2 => swizzle_result_ty(field, |c| matches!(c, 'x' | 'y' | 'r' | 'g')),
-    ArgType::Vec3 => {
-      swizzle_result_ty(field, |c| matches!(c, 'x' | 'y' | 'z' | 'r' | 'g' | 'b'))
-    }
+    ArgType::Vec3 => swizzle_result_ty(field, |c| matches!(c, 'x' | 'y' | 'z' | 'r' | 'g' | 'b')),
     _ => None,
   }
 }

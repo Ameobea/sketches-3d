@@ -153,6 +153,7 @@ export const runGeoscript = async ({
       normals,
       material: materialName,
       sourceModule,
+      meshId,
     } = await repl.getRenderedMesh(ctxPtr, i);
 
     let verts = initialVerts;
@@ -242,12 +243,13 @@ export const runGeoscript = async ({
       castShadow: true,
       receiveShadow: true,
       sourceModule: sourceModule ?? '',
+      meshId,
     });
   }
 
   stats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
   for (let i = 0; i < stats.renderedPathCount; i += 1) {
-    const pathVerts: Float32Array = await repl.getRenderedPathVerts(ctxPtr, i);
+    const { verts: pathVerts, pathId } = await repl.getRenderedPath(ctxPtr, i);
     stats.totalVtxCount += pathVerts.length / 3;
     stats.totalFaceCount += pathVerts.length / 3 - 1;
 
@@ -260,16 +262,18 @@ export const runGeoscript = async ({
       material: LineMat,
       castShadow: false,
       receiveShadow: false,
+      pathId,
     });
   }
 
   stats.renderedLightCount = await repl.getRenderedLightCount(ctxPtr);
   for (let i = 0; i < stats.renderedLightCount; i += 1) {
-    const light = await repl.getRenderedLight(ctxPtr, i);
+    const { light, lightId } = await repl.getRenderedLight(ctxPtr, i);
     const builtLight = buildLight(light, renderMode);
     renderedObjects.push({
       type: 'light',
       light: builtLight,
+      lightId,
     });
   }
 
@@ -287,6 +291,16 @@ export interface PopulateSceneOpts {
   tree?: TreeDef;
   /** Pre-computed `moduleName → nodeId` map. Built by the caller from the tree. */
   moduleNameToNodeId?: Record<string, string>;
+  /**
+   * Previous-run objects keyed by `reuseKey`. Matches are mutated in place and
+   * returned in `reusedKeys`; the caller disposes the rest.
+   */
+  prev?: Map<number, RenderedObject>;
+}
+
+export interface PopulateSceneResult {
+  objects: RenderedObject[];
+  reusedKeys: Set<number>;
 }
 
 const _scratchEuler = new THREE.Euler();
@@ -294,12 +308,48 @@ const _scratchQuat = new THREE.Quaternion();
 const _scratchPos = new THREE.Vector3();
 const _scratchScale = new THREE.Vector3();
 
+const applyLightProps = (target: THREE.Light, source: THREE.Light): void => {
+  target.color.copy(source.color);
+  target.intensity = source.intensity;
+  target.castShadow = source.castShadow;
+  target.position.copy(source.position);
+  target.quaternion.copy(source.quaternion);
+  target.scale.copy(source.scale);
+  if (target instanceof THREE.DirectionalLight && source instanceof THREE.DirectionalLight) {
+    target.target.position.copy(source.target.position);
+    // shadow.map is allocated lazily and doesn't auto-resize; force re-alloc
+    // when mapSize changes so the new size actually takes effect.
+    if (
+      target.shadow.map &&
+      (target.shadow.mapSize.width !== source.shadow.mapSize.width ||
+        target.shadow.mapSize.height !== source.shadow.mapSize.height)
+    ) {
+      target.shadow.map.dispose();
+      target.shadow.map = null as unknown as THREE.WebGLRenderTarget;
+    }
+    target.shadow.mapSize.copy(source.shadow.mapSize);
+    target.shadow.radius = source.shadow.radius;
+    target.shadow.blurSamples = source.shadow.blurSamples;
+    target.shadow.bias = source.shadow.bias;
+    target.shadow.camera.near = source.shadow.camera.near;
+    target.shadow.camera.far = source.shadow.camera.far;
+    target.shadow.camera.left = source.shadow.camera.left;
+    target.shadow.camera.right = source.shadow.camera.right;
+    target.shadow.camera.top = source.shadow.camera.top;
+    target.shadow.camera.bottom = source.shadow.camera.bottom;
+    target.shadow.camera.updateProjectionMatrix();
+  }
+};
+
 /**
  * Memoized world-matrix lookup: each node's matrix = `parent.world × node.local`,
  * computed once per `populateScene` call. Pulls every ancestor through `parentMap`
  * with a guard against malformed cycles.
  */
-const buildWorldMatrixCache = (tree: TreeDef, parentMap: Map<string, string>): Map<string, THREE.Matrix4> => {
+export const buildWorldMatrixCache = (
+  tree: TreeDef,
+  parentMap: Map<string, string>
+): Map<string, THREE.Matrix4> => {
   const cache = new Map<string, THREE.Matrix4>();
   const local = (node: NodeDef): THREE.Matrix4 => {
     _scratchEuler.set(node.transform.rot[0], node.transform.rot[1], node.transform.rot[2], 'YXZ');
@@ -340,9 +390,10 @@ export const populateScene = (
   scene: THREE.Scene,
   geoscriptOutput: GeoscriptRunResult,
   opts: PopulateSceneOpts = {}
-) => {
+): PopulateSceneResult => {
   const newRenderedObjects: RenderedObject[] = [];
-  const { tree, moduleNameToNodeId } = opts;
+  const reusedKeys = new Set<number>();
+  const { tree, moduleNameToNodeId, prev } = opts;
   const worldMatrices = tree ? buildWorldMatrixCache(tree, buildParentMap(tree)) : null;
 
   for (const obj of geoscriptOutput.objects) {
@@ -352,8 +403,43 @@ export const populateScene = (
         continue;
       }
 
+      const reuseKey = obj.meshId;
+
+      const ancestor =
+        worldMatrices && sourceNodeId
+          ? (worldMatrices.get(sourceNodeId)?.clone() ?? new THREE.Matrix4())
+          : new THREE.Matrix4();
+      const finalTransform = ancestor.multiply(obj.transform);
+
+      const existing = prev?.get(reuseKey);
+      if (existing instanceof THREE.Mesh && !reusedKeys.has(reuseKey)) {
+        // Mutate in place to skip the GPU re-upload and scene-graph churn.
+        obj.geometry.dispose();
+        finalTransform.decompose(existing.position, existing.quaternion, existing.scale);
+        existing.userData.localInScript = obj.transform.clone();
+        existing.material = obj.material;
+        existing.userData.materialName = obj.materialName;
+        if (obj.materialPromise) {
+          obj.materialPromise.then(mat => {
+            existing.material = mat;
+          });
+        }
+        existing.castShadow = obj.castShadow;
+        existing.receiveShadow = obj.receiveShadow;
+        if (sourceNodeId) {
+          existing.userData.sourceNodeId = sourceNodeId;
+        }
+        existing.userData.reuseKey = reuseKey;
+        reusedKeys.add(reuseKey);
+        newRenderedObjects.push(existing);
+        continue;
+      }
+
       const mesh = new THREE.Mesh(obj.geometry, obj.material);
       mesh.userData.materialName = obj.materialName;
+      mesh.userData.reuseKey = reuseKey;
+      // Used by ReplUI's transform-only fast path to recompose `ancestor × local`.
+      mesh.userData.localInScript = obj.transform.clone();
       if (sourceNodeId) {
         mesh.userData.sourceNodeId = sourceNodeId;
       }
@@ -364,27 +450,46 @@ export const populateScene = (
         });
       }
 
-      const ancestor =
-        worldMatrices && sourceNodeId
-          ? (worldMatrices.get(sourceNodeId)?.clone() ?? new THREE.Matrix4())
-          : new THREE.Matrix4();
-      const finalTransform = ancestor.multiply(obj.transform);
-      mesh.applyMatrix4(finalTransform);
+      finalTransform.decompose(mesh.position, mesh.quaternion, mesh.scale);
       mesh.castShadow = obj.castShadow;
       mesh.receiveShadow = obj.receiveShadow;
       scene.add(mesh);
       newRenderedObjects.push(mesh);
     } else if (obj.type === 'path') {
+      const reuseKey = obj.pathId;
+      const existing = prev?.get(reuseKey);
+      if (existing instanceof THREE.Line && !reusedKeys.has(reuseKey)) {
+        obj.geometry.dispose();
+        existing.userData.reuseKey = reuseKey;
+        reusedKeys.add(reuseKey);
+        newRenderedObjects.push(existing);
+        continue;
+      }
       const line = new THREE.Line(obj.geometry, obj.material);
       line.castShadow = obj.castShadow;
       line.receiveShadow = obj.receiveShadow;
+      line.userData.reuseKey = reuseKey;
       scene.add(line);
       newRenderedObjects.push(line);
     } else if (obj.type === 'light') {
+      const reuseKey = obj.lightId;
+      const existing = prev?.get(reuseKey);
+      if (
+        existing instanceof THREE.Light &&
+        !reusedKeys.has(reuseKey) &&
+        existing.constructor === obj.light.constructor
+      ) {
+        applyLightProps(existing, obj.light);
+        existing.userData.reuseKey = reuseKey;
+        reusedKeys.add(reuseKey);
+        newRenderedObjects.push(existing);
+        continue;
+      }
       if (obj.light instanceof THREE.DirectionalLight || obj.light instanceof THREE.SpotLight) {
         obj.light.userData.geotoyTarget = obj.light.target;
         scene.add(obj.light.target);
       }
+      obj.light.userData.reuseKey = reuseKey;
       scene.add(obj.light);
       newRenderedObjects.push(obj.light);
     } else {
@@ -393,5 +498,5 @@ export const populateScene = (
     }
   }
 
-  return newRenderedObjects;
+  return { objects: newRenderedObjects, reusedKeys };
 };

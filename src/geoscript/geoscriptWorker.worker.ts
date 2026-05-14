@@ -183,25 +183,28 @@ const methods = {
     const normals = Geoscript.geoscript_repl_get_rendered_mesh_normals(ctxPtr, meshIx);
     const material = Geoscript.geoscript_repl_get_rendered_mesh_material(ctxPtr, meshIx);
     const sourceModule = Geoscript.geoscript_repl_get_rendered_mesh_source_module(ctxPtr, meshIx);
+    const meshId = Geoscript.geoscript_repl_get_rendered_mesh_id(ctxPtr, meshIx);
 
     return Comlink.transfer(
-      { verts, indices, normals, transform, material, sourceModule },
+      { verts, indices, normals, transform, material, sourceModule, meshId },
       filterNils([verts.buffer, indices.buffer, normals?.buffer])
     );
   },
   getRenderedPathCount: (ctxPtr: number) => {
     return Geoscript.geoscript_get_rendered_path_count(ctxPtr);
   },
-  getRenderedPathVerts: (ctxPtr: number, pathIx: number) => {
+  getRenderedPath: (ctxPtr: number, pathIx: number) => {
     const verts = Geoscript.geoscript_get_rendered_path(ctxPtr, pathIx);
-    return Comlink.transfer(verts, [verts.buffer]);
+    const pathId = Geoscript.geoscript_get_rendered_path_id(ctxPtr, pathIx);
+    return Comlink.transfer({ verts, pathId }, [verts.buffer]);
   },
   getRenderedLightCount: (ctxPtr: number) => {
     return Geoscript.geoscript_get_rendered_light_count(ctxPtr);
   },
-  getRenderedLight: (ctxPtr: number, lightIx: number): Light => {
+  getRenderedLight: (ctxPtr: number, lightIx: number): { light: Light; lightId: number } => {
     const light = JSON.parse(Geoscript.geoscript_get_rendered_light(ctxPtr, lightIx));
-    return Comlink.transfer(light, []);
+    const lightId = Geoscript.geoscript_get_rendered_light_id(ctxPtr, lightIx);
+    return Comlink.transfer({ light, lightId }, []);
   },
   setMaterials: (ctxPtr: number, defaultMaterialID: string | null, availableMaterials: string[]) => {
     Geoscript.geoscript_set_default_material(ctxPtr, defaultMaterialID ?? undefined);

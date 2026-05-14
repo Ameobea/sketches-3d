@@ -38,11 +38,10 @@ fn maybe_init() {
 pub struct OutputMesh {
   pub mesh: OwnedIndexedMesh,
   pub material: Option<String>,
-  /// Name of the module that called `render()` to register this mesh. Used JS-side
-  /// to look up the source node's ancestor chain and compose tree-transforms.
-  /// `None` means the render fired outside any module context (e.g. while building
-  /// the ambient scope from `_globals`); JS-side drops these.
+  /// Module that called `render()`; JS composes tree-transforms from this. `None`
+  /// for renders fired outside any module (e.g. ambient construction) — JS drops those.
   pub source_module: Option<String>,
+  pub mesh_id: u32,
 }
 
 pub struct GeoscriptReplCtx {
@@ -95,6 +94,7 @@ impl GeoscriptReplCtx {
           None => None,
         },
         source_module: rendered.source_module,
+        mesh_id: rendered.mesh_id,
       });
     }
   }
@@ -206,35 +206,39 @@ pub fn geoscript_repl_clear_const_eval_cache(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.const_eval_cache.borrow_mut().entries.clear();
 }
 
+/// Reset per-run state. Caches, source map, id counter, and the symbol interner
+/// are intentionally left in place so the cross-run module-result cache (and
+/// `const_eval_cache`) can do its job.
 #[wasm_bindgen]
 pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   let ctx = unsafe { &mut *ctx };
-  let materials = std::mem::take(&mut ctx.geo_ctx.materials);
-  let textures = std::mem::take(&mut ctx.geo_ctx.textures);
-  let default_material = std::mem::take(&mut ctx.geo_ctx.default_material);
-  let const_eval_cache = std::mem::take(&mut ctx.geo_ctx.const_eval_cache);
-  let module_sources = std::mem::take(&mut ctx.geo_ctx.module_sources);
-  *ctx = GeoscriptReplCtx::default();
-  ctx.geo_ctx.materials = materials;
-  ctx.geo_ctx.textures = textures;
-  ctx.geo_ctx.default_material = default_material;
-  ctx.geo_ctx.const_eval_cache = const_eval_cache;
-  ctx.geo_ctx.module_sources = module_sources;
 
-  // #[cfg(target_arch = "wasm32")]
-  // drop_all_mesh_handles();
+  ctx.last_program = Err(ErrorStack::new("No program parsed yet"));
+  ctx.last_result = Ok(());
+  ctx.output_meshes.clear();
 
-  // need to selectively drop only mesh handles that are no longer referenced by the const eval
-  // cache
-  // let mut still_in_use_mesh_manifold_handles: FxHashSet<usize> = FxHashSet::default();
-  // for entry in ctx.geo_ctx.const_eval_cache.borrow().entries.values() {
-  //   if let geoscript::Value::Mesh(mesh_handle) = &entry.value {
-  //     still_in_use_mesh_manifold_handles.insert(mesh_handle.manifold_handle.get());
-  //   }
-  // }
+  ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
 
-  // TODO: why is this necessary?  Manifold handles are automatically dropped in the `Drop` impl for
-  // `ManifoldHandle`, so why do we need to explicitly drop them here?
+  // Eval-scoped trackers: clear in case the previous run was interrupted mid-eval.
+  ctx.geo_ctx.modules_in_flight.borrow_mut().clear();
+  *ctx.geo_ctx.current_module.borrow_mut() = None;
+  *ctx.geo_ctx.current_module_exports.borrow_mut() = None;
+  *ctx.geo_ctx.current_module_imports.borrow_mut() = None;
+  ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
+
+  ctx.geo_ctx.globals = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
+  *ctx.geo_ctx.ambient_scope.borrow_mut() = None;
+
+  ctx.geo_ctx.reset_rng_to_default();
+  #[cfg(target_arch = "wasm32")]
+  geoscript::reset_async_dep_bits();
+
+  *ctx.geo_ctx.sharp_angle_threshold_degrees.borrow_mut() = 45.8366;
+
+  // TODO: drop `MeshHandle`s no longer referenced by either the const-eval
+  // cache or the module-exports cache.
 }
 
 #[wasm_bindgen]
@@ -244,14 +248,33 @@ pub fn geoscript_repl_set_module_sources(
   module_sources: Vec<String>,
 ) {
   let ctx = unsafe { &mut *ctx };
+
+  // Hash incoming sources and diff against last-call hashes; only entries whose
+  // source actually changed (or were removed) get evicted from `module_exports`.
+  let mut new_hashes: fxhash::FxHashMap<String, u64> = fxhash::FxHashMap::default();
+  for (name, source) in module_names.iter().zip(module_sources.iter()) {
+    new_hashes.insert(
+      name.clone(),
+      geoscript::EvalCtx::compute_source_hash(source),
+    );
+  }
+
+  {
+    let mut exports = ctx.geo_ctx.module_exports.borrow_mut();
+    let mut lru = ctx.geo_ctx.module_exports_lru.borrow_mut();
+    exports.retain(|name, entry| {
+      new_hashes.get(name).map(|h| *h == entry.source_hash).unwrap_or(false)
+    });
+    lru.retain(|name| exports.contains_key(name));
+  }
+
+  *ctx.geo_ctx.module_source_hashes.borrow_mut() = new_hashes;
+
   let mut sources = ctx.geo_ctx.module_sources.borrow_mut();
   sources.clear();
   for (name, source) in module_names.into_iter().zip(module_sources.into_iter()) {
     sources.insert(name, source);
   }
-  drop(sources);
-  // Module source changes invalidate any cached evaluations.
-  ctx.geo_ctx.invalidate_module_cache();
 }
 
 /// Build the ambient scope by evaluating each source in order; each source sees the
@@ -267,10 +290,23 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
 ) -> Result<(), String> {
   let ctx = unsafe { &mut *ctx };
 
-  // Ambient changes invalidate any cached module evaluations: their scopes were resolved
-  // against the previous ambient.
+  // Cached evals were resolved against the previous ambient — invalidate iff
+  // the joined sources actually changed.
+  let combined: String = {
+    let mut s = String::new();
+    for src in &sources {
+      s.push_str(src);
+      s.push('\n');
+    }
+    s
+  };
+  let new_hash = geoscript::EvalCtx::compute_source_hash(&combined);
+  let prev_hash = *ctx.geo_ctx.last_ambient_hash.borrow();
+
   ctx.geo_ctx.clear_ambient_scope();
-  ctx.geo_ctx.invalidate_module_cache();
+  if prev_hash != Some(new_hash) {
+    ctx.geo_ctx.invalidate_module_cache();
+  }
 
   let mut scope = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
   for source in sources {
@@ -282,12 +318,14 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
   }
   ctx.geo_ctx.set_ambient_scope(scope);
 
-  // Renders fired inside prelude / `_globals` are spurious — they are not part of
-  // the user-visible composition. Drop anything that got pushed during ambient
-  // construction so it doesn't leak into the next eval.
+  // Renders fired inside prelude / `_globals` aren't part of the user-visible
+  // composition; drop them so they don't leak into the next eval.
   ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
+  // Ambient discarded any replayed side effects; let them fire again in `_root`.
+  ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
+  *ctx.geo_ctx.last_ambient_hash.borrow_mut() = Some(new_hash);
 
   Ok(())
 }
@@ -297,6 +335,8 @@ pub fn geoscript_repl_clear_ambient_scope(ctx: *mut GeoscriptReplCtx) {
   let ctx = unsafe { &mut *ctx };
   ctx.geo_ctx.clear_ambient_scope();
   ctx.geo_ctx.invalidate_module_cache();
+  ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
+  *ctx.geo_ctx.last_ambient_hash.borrow_mut() = None;
 }
 
 #[wasm_bindgen]
@@ -424,6 +464,15 @@ pub fn geoscript_repl_get_rendered_mesh_source_module(
 }
 
 #[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_id(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+) -> u32 {
+  let ctx = unsafe { &*ctx };
+  ctx.output_meshes[mesh_ix].mesh_id
+}
+
+#[wasm_bindgen]
 pub fn geoscript_repl_get_rendered_mesh_material(
   ctx: *const GeoscriptReplCtx,
   mesh_ix: usize,
@@ -450,11 +499,17 @@ pub fn geoscript_get_rendered_path_count(ctx: *const GeoscriptReplCtx) -> usize 
 #[wasm_bindgen]
 pub fn geoscript_get_rendered_path(ctx: *const GeoscriptReplCtx, path_ix: usize) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  let path = { ctx.geo_ctx.rendered_paths.inner.borrow()[path_ix].clone() };
+  let path = { ctx.geo_ctx.rendered_paths.inner.borrow()[path_ix].points.clone() };
   let raw_path: Vec<f32> =
     unsafe { std::slice::from_raw_parts(path.as_ptr() as *const f32, path.len() * 3).to_vec() };
   std::mem::forget(path);
   raw_path
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_path_id(ctx: *const GeoscriptReplCtx, path_ix: usize) -> u32 {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_paths.inner.borrow()[path_ix].path_id
 }
 
 #[wasm_bindgen]
@@ -466,8 +521,14 @@ pub fn geoscript_get_rendered_light_count(ctx: *const GeoscriptReplCtx) -> usize
 #[wasm_bindgen]
 pub fn geoscript_get_rendered_light(ctx: *const GeoscriptReplCtx, light_ix: usize) -> String {
   let ctx = unsafe { &*ctx };
-  let light = &ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix];
+  let light = &ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix].light;
   SerJson::serialize_json(light)
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_light_id(ctx: *const GeoscriptReplCtx, light_ix: usize) -> u32 {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix].light_id
 }
 
 #[wasm_bindgen]
@@ -491,6 +552,13 @@ pub fn geoscript_set_materials(
       material.clone(),
       Rc::new(geoscript::materials::Material::External(material)),
     );
+  }
+  let materials_changed = ctx.geo_ctx.materials.len() != new_materials.len()
+    || new_materials
+      .keys()
+      .any(|material| !ctx.geo_ctx.materials.contains_key(material));
+  if materials_changed {
+    ctx.geo_ctx.invalidate_module_cache();
   }
   ctx.geo_ctx.materials = new_materials;
   if ctx.geo_ctx.materials.len() == 1 {

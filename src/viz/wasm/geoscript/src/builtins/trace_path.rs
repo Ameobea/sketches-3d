@@ -832,10 +832,7 @@ impl PathSegment {
   /// Returns the exact AABB of this segment after applying the given 2D affine transform.
   /// Errors only for arc segments under a non-uniform transform, where the result is not an
   /// arc and an exact bound would require evaluating a transformed conic.
-  pub(crate) fn aabb_under_transform(
-    &self,
-    m: &Matrix3<f32>,
-  ) -> Result<(Vec2, Vec2), ErrorStack> {
+  pub(crate) fn aabb_under_transform(&self, m: &Matrix3<f32>) -> Result<(Vec2, Vec2), ErrorStack> {
     if *m == Matrix3::identity() {
       return Ok(self.aabb());
     }
@@ -879,9 +876,9 @@ impl PathSegment {
       } => {
         if !is_uniform_transform(m) {
           return Err(ErrorStack::new(
-            "exact AABB of an arc segment under a non-uniform transform (e.g. non-uniform \
-             scale or skew) is not supported; bake the transform into the path first or \
-             convert arcs to cubic beziers",
+            "exact AABB of an arc segment under a non-uniform transform (e.g. non-uniform scale \
+             or skew) is not supported; bake the transform into the path first or convert arcs to \
+             cubic beziers",
           ));
         }
         let cos_a = m[(0, 0)];
@@ -1049,8 +1046,26 @@ pub(crate) fn arc_aabb(
   theta_start: f32,
   theta_delta: f32,
 ) -> (Vec2, Vec2) {
-  let start = arc_point(center, rx, ry, cos_phi, sin_phi, theta_start, theta_delta, 0.0);
-  let end = arc_point(center, rx, ry, cos_phi, sin_phi, theta_start, theta_delta, 1.0);
+  let start = arc_point(
+    center,
+    rx,
+    ry,
+    cos_phi,
+    sin_phi,
+    theta_start,
+    theta_delta,
+    0.0,
+  );
+  let end = arc_point(
+    center,
+    rx,
+    ry,
+    cos_phi,
+    sin_phi,
+    theta_start,
+    theta_delta,
+    1.0,
+  );
   let mut min = Vec2::new(start.x.min(end.x), start.y.min(end.y));
   let mut max = Vec2::new(start.x.max(end.x), start.y.max(end.y));
 
@@ -1069,8 +1084,12 @@ pub(crate) fn arc_aabb(
     (theta_end, theta_start)
   };
 
-  for theta_c in [theta_x, theta_x + std::f32::consts::PI, theta_y, theta_y + std::f32::consts::PI]
-  {
+  for theta_c in [
+    theta_x,
+    theta_x + std::f32::consts::PI,
+    theta_y,
+    theta_y + std::f32::consts::PI,
+  ] {
     // Shift theta_c by 2π·k so it falls into [theta_lo, theta_hi], if possible.
     let k = ((theta_lo - theta_c) / two_pi).ceil();
     let theta_in = theta_c + k * two_pi;
@@ -1081,7 +1100,16 @@ pub(crate) fn arc_aabb(
     if !(-1e-6..=1.0 + 1e-6).contains(&t) {
       continue;
     }
-    let p = arc_point(center, rx, ry, cos_phi, sin_phi, theta_start, theta_delta, t.clamp(0.0, 1.0));
+    let p = arc_point(
+      center,
+      rx,
+      ry,
+      cos_phi,
+      sin_phi,
+      theta_start,
+      theta_delta,
+      t.clamp(0.0, 1.0),
+    );
     min.x = min.x.min(p.x);
     min.y = min.y.min(p.y);
     max.x = max.x.max(p.x);
@@ -3101,8 +3129,11 @@ mod tests {
   #[test]
   fn test_quadratic_bezier_aabb_interior_extremum() {
     // Symmetric quadratic peaking at y=1 above the chord (0,0)-(2,0).
-    let (min, max) =
-      quadratic_bezier_aabb(Vec2::new(0.0, 0.0), Vec2::new(1.0, 2.0), Vec2::new(2.0, 0.0));
+    let (min, max) = quadratic_bezier_aabb(
+      Vec2::new(0.0, 0.0),
+      Vec2::new(1.0, 2.0),
+      Vec2::new(2.0, 0.0),
+    );
     // Peak is at t = 0.5 → B(0.5) = 0.25*(0,0) + 0.5*(1,2) + 0.25*(2,0) = (1, 1).
     assert_vec2_close(min, Vec2::new(0.0, 0.0));
     assert_vec2_close(max, Vec2::new(2.0, 1.0));
@@ -3159,14 +3190,17 @@ mod tests {
     // a sign error in the rotation extraction (atan2(b, a) instead of atan2(c, a)) would
     // instead bake -π/2, producing [(-1, 0)...(0, 2)] vs the expected.
     use std::f32::consts::FRAC_PI_2;
-    let cmds = vec![DrawCommand::MoveTo(Vec2::new(2.0, 0.0)), DrawCommand::Arc {
-      rx: 2.0,
-      ry: 1.0,
-      x_axis_rotation: 0.0,
-      large_arc: false,
-      sweep: true,
-      to: Vec2::new(-2.0, 0.0),
-    }];
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(2.0, 0.0)),
+      DrawCommand::Arc {
+        rx: 2.0,
+        ry: 1.0,
+        x_axis_rotation: 0.0,
+        large_arc: false,
+        sweep: true,
+        to: Vec2::new(-2.0, 0.0),
+      },
+    ];
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
     let (lmin, lmax) = tracer.analytic_aabb().unwrap().unwrap();
     assert_vec2_close(lmin, Vec2::new(-2.0, 0.0));
