@@ -16,11 +16,13 @@ import {
   buildRingPickerGeometry,
   buildShaftGeometry,
   buildShaftPickerGeometry,
+  buildTaperedShaftGeometry,
   buildUniformScaleGeometry,
   buildUniformScalePickerGeometry,
 } from './gizmoGeometry';
 import {
   AXIS_COLORS,
+  buildArrowheadMaterial,
   buildAxisMaterial,
   buildPickerMaterial,
   buildPlaneMaterial,
@@ -229,10 +231,11 @@ export class CustomGizmo extends THREE.Object3D {
     visualGeom: THREE.BufferGeometry,
     pickerGeom: THREE.BufferGeometry,
     material: THREE.ShaderMaterial,
-    orient: (mesh: THREE.Object3D) => void
+    orient: (mesh: THREE.Object3D) => void,
+    renderOrder = 1000
   ) {
     const visual = new THREE.Mesh(visualGeom, material);
-    visual.renderOrder = 1000;
+    visual.renderOrder = renderOrder;
     orient(visual);
     parent.add(visual);
 
@@ -252,14 +255,17 @@ export class CustomGizmo extends THREE.Object3D {
       if (axis === 'x') obj.rotation.set(0, 0, -Math.PI / 2);
       else if (axis === 'z') obj.rotation.set(Math.PI / 2, 0, 0);
     };
+    // Shaft tapers into the arrowhead so the line stays inside its silhouette at the tip.
+    const translateShaftLength = 1.0;
+    const translateShaftTaper = translateShaftLength * 0.05;
     for (const axis of ['x', 'y', 'z'] as const) {
       const color = AXIS_COLORS[axis];
       this.addHandle(
         'translate',
         this.translateRoot,
         { kind: 'translate-axis', axis },
-        buildShaftGeometry(),
-        buildShaftPickerGeometry(),
+        buildTaperedShaftGeometry({ length: translateShaftLength, taperLength: translateShaftTaper }),
+        buildShaftPickerGeometry({ length: translateShaftLength }),
         buildAxisMaterial({ color }),
         orientAxis(axis)
       );
@@ -269,7 +275,7 @@ export class CustomGizmo extends THREE.Object3D {
         { kind: 'translate-axis', axis },
         buildArrowheadGeometry(),
         buildArrowheadPickerGeometry(),
-        buildAxisMaterial({ color }),
+        buildArrowheadMaterial({ color }),
         (obj: THREE.Object3D) => {
           orientAxis(axis)(obj);
           const tip = new THREE.Vector3(0, 0, 0);
@@ -277,7 +283,10 @@ export class CustomGizmo extends THREE.Object3D {
           else if (axis === 'y') tip.y = 0.85;
           else tip.z = 0.85;
           obj.position.copy(tip);
-        }
+        },
+        // Force draw-after-shaft; otherwise camera-distance sort flips and the
+        // white outline sparkles where the two meet.
+        1001
       );
     }
 
@@ -378,7 +387,7 @@ export class CustomGizmo extends THREE.Object3D {
         { kind: 'scale-axis', axis },
         new THREE.BoxGeometry(0.1, 0.1, 0.1),
         new THREE.BoxGeometry(0.18, 0.18, 0.18),
-        buildAxisMaterial({ color }),
+        buildAxisMaterial({ color, shadeMin: 0.4, edgeOutline: true }),
         (obj: THREE.Object3D) => {
           orientAxis(axis)(obj);
           const tip = new THREE.Vector3(0, 0, 0);
@@ -432,7 +441,7 @@ export class CustomGizmo extends THREE.Object3D {
       { kind: 'scale-uniform' },
       buildUniformScaleGeometry(),
       buildUniformScalePickerGeometry(),
-      buildAxisMaterial({ color: 0xdddddd }),
+      buildAxisMaterial({ color: 0xdddddd, shadeMin: 0.4, edgeOutline: true }),
       () => {}
     );
   }
@@ -461,6 +470,19 @@ export class CustomGizmo extends THREE.Object3D {
     this.hovered = handle;
     if (handle) (handle.visual.material as THREE.ShaderMaterial).uniforms.uHovered.value = 1;
     this.callbacks.onHoverChange?.(handle?.id ?? null);
+  }
+
+  private setActiveDrag(activeId: GizmoHandleId | null) {
+    for (const h of this.handles) {
+      const mat = h.visual.material as THREE.ShaderMaterial;
+      const u = mat.uniforms.uActive;
+      if (!u) continue;
+      u.value = activeId && isRelatedToDrag(h.id, activeId) ? 1 : 0;
+    }
+    // Active state supersedes hover; don't read both at once.
+    if (activeId && this.hovered) {
+      (this.hovered.visual.material as THREE.ShaderMaterial).uniforms.uHovered.value = 0;
+    }
   }
 
   private setRaycaster(e: PointerEvent) {
@@ -514,6 +536,7 @@ export class CustomGizmo extends THREE.Object3D {
     } catch {
       /* ignore */
     }
+    this.setActiveDrag(handle.id);
     this.callbacks.onDragStart?.();
   };
 
@@ -534,6 +557,7 @@ export class CustomGizmo extends THREE.Object3D {
     this.setRaycaster(e);
     this.applyDrag(this._ndc.x, this._ndc.y, /* commit */ true);
     this.dragState = null;
+    this.setActiveDrag(null);
     try {
       this.domElement.releasePointerCapture(e.pointerId);
     } catch {
@@ -684,6 +708,27 @@ export class CustomGizmo extends THREE.Object3D {
     return a === 'x' ? 0 : a === 'y' ? 1 : 2;
   }
 }
+
+// Plane drags also light their two contributing axes; scale-uniform lights every scale handle.
+const isRelatedToDrag = (handle: GizmoHandleId, dragging: GizmoHandleId): boolean => {
+  switch (dragging.kind) {
+    case 'translate-axis':
+    case 'rotate-axis':
+    case 'scale-axis':
+      return handle.kind === dragging.kind && 'axis' in handle && handle.axis === dragging.axis;
+    case 'translate-plane':
+    case 'scale-plane': {
+      const [a1, a2] = dragging.axes;
+      if (handle.kind === dragging.kind && 'axes' in handle) {
+        return handle.axes[0] === a1 && handle.axes[1] === a2;
+      }
+      const axisKind = dragging.kind === 'translate-plane' ? 'translate-axis' : 'scale-axis';
+      return handle.kind === axisKind && 'axis' in handle && (handle.axis === a1 || handle.axis === a2);
+    }
+    case 'scale-uniform':
+      return handle.kind === 'scale-axis' || handle.kind === 'scale-uniform' || handle.kind === 'scale-plane';
+  }
+};
 
 const _tmpVec3a = new THREE.Vector3();
 const _tmpVec3b = new THREE.Vector3();
