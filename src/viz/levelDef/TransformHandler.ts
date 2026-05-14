@@ -1,5 +1,7 @@
-import * as THREE from 'three';
-import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import type * as THREE from 'three';
+
+import { CustomGizmo } from 'src/viz/gizmos/customGizmo';
+import { Object3DTarget, PivotTarget } from 'src/viz/gizmos/targets';
 
 import type { LevelSceneNode } from './levelSceneTypes';
 import {
@@ -29,7 +31,7 @@ export interface TransformDragResult {
 
 /** Callbacks the TransformHandler invokes during and after drag operations. */
 export interface TransformHandlerCallbacks {
-  /** Called when TransformControls starts/stops dragging (to disable/enable orbit). */
+  /** Called when the gizmo starts/stops dragging (use to disable/enable orbit). */
   onDraggingChanged(isDragging: boolean): void;
   /** Called when a drag completes with changed transforms. */
   onDragComplete(result: TransformDragResult): void;
@@ -52,33 +54,24 @@ export interface TransformHandlerCallbacks {
 }
 
 /**
- * Manages TransformControls, drag snapshots, and transform mode/space.
- *
- * Created when the editor enters edit mode, disposed when it exits.
- * The owner (LevelEditor) provides callbacks for side-effects like
- * undo push, physics sync, and API save.
+ * Wraps `CustomGizmo` with editor-specific routing: CSG / light / regular-object
+ * drags fan out to different callback channels.
  */
 export class TransformHandler {
-  readonly controls: TransformControls;
+  readonly gizmo: CustomGizmo;
   private mode: TransformMode = 'translate';
   private space: 'world' | 'local' = 'world';
 
-  /** Snapshots captured at drag start for the currently selected nodes. */
   private dragStartSnapshots = new Map<LevelSceneNode, TransformSnapshot>();
-  /** True while a light is being dragged. */
   private lightIsDragging = false;
+  /** Empty when attached to a non-node Object3D (light, CSG sub-mesh). */
+  private attachedNodes: LevelSceneNode[] = [];
+  private pivotTarget: PivotTarget | null = null;
 
   lastReplayableAction: ReplayableTransformDelta | null = null;
 
   private callbacks: TransformHandlerCallbacks;
-
-  /** Reference to nodes being transformed (set by attachToSelection). */
-  private attachedNodes: LevelSceneNode[] = [];
-
-  /** Pivot used for multi-select transforms. */
-  private pivot: THREE.Object3D | null = null;
-  private pivotStartPosition = new THREE.Vector3();
-  private pivotStartScale = new THREE.Vector3();
+  private overlayScene: THREE.Scene;
 
   constructor(
     camera: THREE.Camera,
@@ -87,48 +80,25 @@ export class TransformHandler {
     callbacks: TransformHandlerCallbacks
   ) {
     this.callbacks = callbacks;
+    this.overlayScene = overlayScene;
 
-    this.controls = new TransformControls(camera, domElement);
-    this.controls.setMode(this.mode);
-    this.controls.setSpace(this.space);
-
-    this.controls.addEventListener('dragging-changed', (e: any) => {
-      callbacks.onDraggingChanged(e.value);
-
-      if (callbacks.isCsgActive()) {
-        if (e.value) callbacks.onCsgDragStart();
-        else callbacks.onCsgDragEnd();
-        return;
-      }
-
-      if (e.value) {
-        this.onDragStart();
-      } else {
-        this.onDragEnd();
-      }
+    this.gizmo = new CustomGizmo(camera, domElement, {
+      onDragStart: () => this.onDragStart(),
+      onDragEnd: () => this.onDragEnd(),
+      onDrag: () => this.onDrag(),
     });
-
-    this.controls.addEventListener('objectChange', () => {
-      if (callbacks.isCsgActive()) {
-        callbacks.onCsgObjectChange();
-      } else if (callbacks.isLightSelected()) {
-        callbacks.onLightObjectChange();
-      } else {
-        this.onObjectChange();
-        callbacks.onObjectChange();
-      }
-    });
-
-    overlayScene.add(this.controls);
+    this.gizmo.setMode(this.mode);
+    this.gizmo.setSpace(this.space);
+    overlayScene.add(this.gizmo);
   }
 
-  dispose(overlayScene: THREE.Scene) {
-    overlayScene.remove(this.controls);
-    this.controls.dispose();
-    if (this.pivot) {
-      this.pivot.removeFromParent();
-      this.pivot = null;
-    }
+  update() {
+    this.gizmo.update();
+  }
+
+  dispose() {
+    this.overlayScene.remove(this.gizmo);
+    this.gizmo.dispose();
   }
 
   getMode(): TransformMode {
@@ -137,7 +107,7 @@ export class TransformHandler {
 
   setMode(mode: TransformMode) {
     this.mode = mode;
-    this.controls.setMode(mode);
+    this.gizmo.setMode(mode);
   }
 
   getSpace(): 'world' | 'local' {
@@ -146,66 +116,54 @@ export class TransformHandler {
 
   setSpace(space: 'world' | 'local') {
     this.space = space;
-    this.controls.setSpace(space);
+    this.gizmo.setSpace(space);
   }
 
   toggleSpace() {
     this.setSpace(this.space === 'world' ? 'local' : 'world');
   }
 
+  /** For non-LevelSceneNode targets (lights, CSG sub-meshes). */
   attach(object: THREE.Object3D) {
-    this.controls.attach(object);
+    this.attachedNodes = [];
+    this.pivotTarget = null;
+    this.gizmo.setTarget(new Object3DTarget(object));
   }
 
   detach() {
-    this.controls.detach();
+    this.attachedNodes = [];
+    this.pivotTarget = null;
+    this.gizmo.setTarget(null);
   }
 
-  /**
-   * Attach the transform gizmo to the given selection.
-   * For a single node, attaches directly. For multiple nodes,
-   * creates a pivot at their centroid.
-   */
+  /** Single → `Object3DTarget`; multi → `PivotTarget` at the centroid. */
   attachToSelection(nodes: LevelSceneNode[]) {
     this.attachedNodes = nodes;
-
-    // Clean up any previous pivot
-    if (this.pivot) {
-      this.pivot.removeFromParent();
-      this.pivot = null;
-    }
+    this.pivotTarget = null;
 
     if (nodes.length === 0) {
-      this.controls.detach();
+      this.gizmo.setTarget(null);
       return;
     }
 
     if (nodes.length === 1) {
-      this.controls.attach(nodes[0].object);
+      this.gizmo.setTarget(new Object3DTarget(nodes[0].object));
       return;
     }
 
-    // Multi-select: create pivot at centroid
-    this.pivot = new THREE.Object3D();
-    this.pivot.name = '__multiSelectPivot';
-    const centroid = this.computeCentroid(nodes);
-    this.pivot.position.copy(centroid);
-    // Add to the scene so TransformControls can attach to it
-    const parent = nodes[0].object.parent;
-    if (parent) parent.add(this.pivot);
-    this.controls.attach(this.pivot);
-  }
-
-  private computeCentroid(nodes: LevelSceneNode[]): THREE.Vector3 {
-    const center = new THREE.Vector3();
-    for (const node of nodes) {
-      center.add(node.object.getWorldPosition(new THREE.Vector3()));
-    }
-    center.divideScalar(nodes.length);
-    return center;
+    const pivot = new PivotTarget(nodes.map(n => n.object));
+    this.pivotTarget = pivot;
+    this.gizmo.setTarget(pivot);
   }
 
   private onDragStart() {
+    this.callbacks.onDraggingChanged(true);
+
+    if (this.callbacks.isCsgActive()) {
+      this.callbacks.onCsgDragStart();
+      return;
+    }
+
     if (this.callbacks.isLightSelected()) {
       this.lightIsDragging = true;
       return;
@@ -215,15 +173,26 @@ export class TransformHandler {
     for (const node of this.attachedNodes) {
       this.dragStartSnapshots.set(node, snapshotTransform(node.object));
     }
+  }
 
-    // For multi-select, also snapshot the pivot
-    if (this.pivot) {
-      this.pivotStartPosition.copy(this.pivot.position);
-      this.pivotStartScale.copy(this.pivot.scale);
+  private onDrag() {
+    if (this.callbacks.isCsgActive()) {
+      this.callbacks.onCsgObjectChange();
+    } else if (this.callbacks.isLightSelected()) {
+      this.callbacks.onLightObjectChange();
+    } else {
+      this.callbacks.onObjectChange();
     }
   }
 
   private onDragEnd() {
+    this.callbacks.onDraggingChanged(false);
+
+    if (this.callbacks.isCsgActive()) {
+      this.callbacks.onCsgDragEnd();
+      return;
+    }
+
     if (this.callbacks.isLightSelected() && this.lightIsDragging) {
       this.lightIsDragging = false;
       this.callbacks.onLightDragComplete();
@@ -243,10 +212,6 @@ export class TransformHandler {
 
     if (entries.length === 0) return;
 
-    // Capture a replayable delta for any single-node drag (mesh or group).
-    // Replay re-applies position/rotation as additive deltas and scale as a
-    // multiplicative factor; the math doesn't care whether the source or
-    // target node is a group or a leaf, so cross-type replay works too.
     let replayable: ReplayableTransformDelta | null = null;
     if (entries.length === 1) {
       const { before, after } = entries[0];
@@ -273,53 +238,13 @@ export class TransformHandler {
       this.lastReplayableAction = replayable;
     }
 
+    // Reset pivot baselines so the next drag's deltas are measured from here.
+    this.pivotTarget?.rebaseline();
+
     this.callbacks.onDragComplete({ entries, replayable });
   }
 
-  /**
-   * Called during drag for live preview of multi-select transforms.
-   * For single-select, Three.js handles the object transform directly.
-   * For multi-select, we compute the delta from the pivot and apply it
-   * to each selected node.
-   */
-  private onObjectChange() {
-    if (!this.pivot || this.attachedNodes.length <= 1) return;
-
-    const pivotDelta = new THREE.Vector3().subVectors(this.pivot.position, this.pivotStartPosition);
-    const pivotScaleRatio = new THREE.Vector3(
-      this.pivotStartScale.x !== 0 ? this.pivot.scale.x / this.pivotStartScale.x : 1,
-      this.pivotStartScale.y !== 0 ? this.pivot.scale.y / this.pivotStartScale.y : 1,
-      this.pivotStartScale.z !== 0 ? this.pivot.scale.z / this.pivotStartScale.z : 1
-    );
-
-    for (const node of this.attachedNodes) {
-      const startSnap = this.dragStartSnapshots.get(node);
-      if (!startSnap) continue;
-
-      // Translation: add pivot delta to each node's start position
-      if (this.mode === 'translate') {
-        node.object.position.set(
-          startSnap.position[0] + pivotDelta.x,
-          startSnap.position[1] + pivotDelta.y,
-          startSnap.position[2] + pivotDelta.z
-        );
-      }
-
-      // Scale: multiply each node's start scale by pivot scale ratio
-      if (this.mode === 'scale') {
-        node.object.scale.set(
-          startSnap.scale[0] * pivotScaleRatio.x,
-          startSnap.scale[1] * pivotScaleRatio.y,
-          startSnap.scale[2] * pivotScaleRatio.z
-        );
-      }
-    }
-  }
-
-  /**
-   * Replay the last transform action on the given node (Shift+R).
-   * Returns the before/after snapshots if the replay was applied, null otherwise.
-   */
+  /** Shift+R: re-applies the last delta to `node`.  Returns null when there's nothing to replay. */
   replayLastAction(node: LevelSceneNode): { before: TransformSnapshot; after: TransformSnapshot } | null {
     if (!this.lastReplayableAction || node.generated) return null;
 

@@ -79,7 +79,7 @@ export class LevelEditor {
   private savedSceneFog: THREE.FogBase | null = null;
   /** Public accessor for transform controls (used by CsgEditController). */
   get transformControls() {
-    return this.transformHandler?.controls ?? null;
+    return this.transformHandler;
   }
   /**
    * Purge undo/redo entries that reference any of the given node ids.
@@ -434,6 +434,7 @@ export class LevelEditor {
     );
 
     this.viz.registerBeforeRenderCb(this.tickOrbitControls);
+    this.viz.registerBeforeRenderCb(this.tickTransformHandler);
 
     const canvas = this.viz.renderer.domElement;
     this.installSafePointerCapture(canvas);
@@ -473,7 +474,8 @@ export class LevelEditor {
     this.orbitControls = null;
 
     if (this.transformHandler) {
-      this.transformHandler.dispose(this.viz.overlayScene);
+      this.viz.unregisterBeforeRenderCb(this.tickTransformHandler);
+      this.transformHandler.dispose();
       this.transformHandler = null;
     }
 
@@ -672,6 +674,10 @@ export class LevelEditor {
 
   private tickOrbitControls = () => {
     this.orbitControls?.update();
+  };
+
+  private tickTransformHandler = () => {
+    this.transformHandler?.update();
   };
 
   private handleSceneClick = (raycaster: THREE.Raycaster, event: PointerEvent) => {

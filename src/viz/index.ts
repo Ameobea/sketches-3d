@@ -39,6 +39,7 @@ import { LoadOrbitControls } from './preloadCache';
 import { loadLevelDef, type LevelLoadHandle } from './levelDef/loadLevelDef';
 import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { LevelDef } from './levelDef/types';
+import { OverlayMSAARenderer } from './gizmos/overlayMSAA';
 
 export interface PostprocessingController {
   setGamma(value: number): void;
@@ -131,6 +132,8 @@ export class Viz {
    * affected by fog, bloom, or tone mapping.
    */
   public overlayScene: THREE.Scene = new THREE.Scene();
+  /** Lazily allocated so scenes that never use the overlay don't pay for a multisample target. */
+  private overlayRenderer: OverlayMSAARenderer | null = null;
   public paused: TransparentWritable<boolean>;
   public popupCalled: TransparentWritable<PopupScreenFocus>;
   public collisionWorldLoadedCbs: ((fpCtx: BulletPhysics) => void)[] = [];
@@ -310,14 +313,13 @@ export class Viz {
       this.renderer.render(this.scene, this.camera);
     }
 
-    // Render overlay scene (editor gizmos etc.) on top of everything,
-    // bypassing fog, bloom, and tone mapping.
+    // Routed through an MSAA target so gizmo edges get AA — the main pipeline's
+    // SMAA pass runs before this and never sees the overlay scene.
     if (this.overlayScene.children.length > 0) {
-      const prevAutoClear = this.renderer.autoClear;
-      this.renderer.autoClear = false;
-      this.renderer.clearDepth();
-      this.renderer.render(this.overlayScene, this.camera);
-      this.renderer.autoClear = prevAutoClear;
+      if (!this.overlayRenderer) {
+        this.overlayRenderer = new OverlayMSAARenderer(this.renderer);
+      }
+      this.overlayRenderer.render(this.overlayScene, this.camera);
     }
 
     this.afterRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
@@ -926,6 +928,8 @@ export class Viz {
     this.viewportResizeObserver?.disconnect();
     this.viewportResizeObserver = null;
 
+    this.overlayRenderer?.dispose();
+    this.overlayRenderer = null;
     this.renderer.dispose();
     this.beforeRenderCbs.length = 0;
     this.afterRenderCbs.length = 0;

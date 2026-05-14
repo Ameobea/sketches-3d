@@ -223,6 +223,7 @@
 
   let gizmo = $state<TransformGizmo | null>(null);
   let raycastDisposer: (() => void) | null = null;
+  let gizmoTick: (() => void) | null = null;
   let gizmoMode = $state<GizmoMode>('translate');
   let gizmoSpace = $state<GizmoSpace>('local');
 
@@ -234,20 +235,28 @@
       }
       if (cancelled) return;
       const orbit = viz.orbitControls!;
-      const g = new TransformGizmo(viz.camera, viz.renderer.domElement, viz.overlayScene, {
-        onDraggingChanged: dragging => {
-          orbit.enabled = !dragging;
-        },
-        onTransformChange: (id, transform) => {
-          treeState.applyEdit(`transform:${id}`, () => treeState.setTransform(id, transform));
-          isDirty = true;
-          runOrFast();
-        },
-        onDragEnd: () => {
-          // Catches the final state if the last `onTransformChange` was dropped by `isRunning`.
-          runOrFast();
-        },
-      });
+      const g = new TransformGizmo(
+        viz.camera,
+        viz.renderer.domElement,
+        viz.overlayScene,
+        () => treeState.state.tree,
+        {
+          onDraggingChanged: dragging => {
+            orbit.enabled = !dragging;
+          },
+          onTransformChange: (id, transform) => {
+            treeState.applyEdit(`transform:${id}`, () => treeState.setTransform(id, transform));
+            isDirty = true;
+            runOrFast();
+          },
+          onDragEnd: () => {
+            // Catches the final state if the last `onTransformChange` was dropped by `isRunning`.
+            runOrFast();
+          },
+        }
+      );
+      const tickGizmo = () => g.update();
+      viz.registerBeforeRenderCb(tickGizmo);
       const disposer = installRaycastSelect({
         canvas: viz.renderer.domElement,
         camera: viz.camera,
@@ -260,17 +269,21 @@
         isDraggingGizmo: () => g.dragging(),
       });
       if (cancelled) {
+        viz.unregisterBeforeRenderCb(tickGizmo);
         disposer();
         g.dispose();
         return;
       }
       gizmo = g;
       raycastDisposer = disposer;
+      gizmoTick = tickGizmo;
     })();
     return () => {
       cancelled = true;
       raycastDisposer?.();
       raycastDisposer = null;
+      if (gizmoTick) viz.unregisterBeforeRenderCb(gizmoTick);
+      gizmoTick = null;
       gizmo?.dispose();
       gizmo = null;
     };
