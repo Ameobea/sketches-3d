@@ -59,7 +59,7 @@ export interface DashConfig {
 export interface CustomControlsEntry {
   label: string;
   key: string;
-  action: () => void;
+  action: (event?: KeyboardEvent) => void;
 }
 
 export type ViewMode =

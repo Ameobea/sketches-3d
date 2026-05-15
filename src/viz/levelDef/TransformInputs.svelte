@@ -48,8 +48,14 @@
   };
 
   const onKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') { commit(); (e.target as HTMLInputElement).blur(); }
-    if (e.key === 'Escape') { focused = null; (e.target as HTMLInputElement).blur(); }
+    if (e.key === 'Enter') {
+      commit();
+      (e.target as HTMLInputElement).blur();
+    }
+    if (e.key === 'Escape') {
+      focused = null;
+      (e.target as HTMLInputElement).blur();
+    }
   };
 
   const commit = () => {
@@ -70,13 +76,15 @@
 {#each fields as field}
   <div class="tf-row">
     <span class="tf-label">{field.slice(0, 3)}</span>
-    {#each ([0, 1, 2] as const) as axis}
+    {#each [0, 1, 2] as const as axis}
       <span class="axis-label">{axisLabels[axis]}</span>
       <input
         class="tf-input"
         type="text"
         value={displayVal(field, axis)}
-        oninput={(e) => { draft = (e.target as HTMLInputElement).value; }}
+        oninput={e => {
+          draft = (e.target as HTMLInputElement).value;
+        }}
         onfocus={() => onFocus(field, axis)}
         onblur={onBlur}
         onkeydown={onKeydown}

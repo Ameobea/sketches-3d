@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { GizmoMode } from './transformGizmo';
 
 export interface ReplCtx {
   centerView: () => void;
@@ -13,6 +14,14 @@ export interface ReplCtx {
   snapView: (axis: 'x' | 'y' | 'z') => void;
   orbit: (axis: 'vertical' | 'horizontal', angle: number) => void;
   toggleRecording: () => void;
+  setGizmoMode: (mode: GizmoMode) => void;
+  toggleGizmoSpace: () => void;
+  toggleSelectionSolo: () => void;
+  escapeSelection: (event?: KeyboardEvent) => void;
+  deleteSelected: () => void;
+  startRenameSelected: () => void;
+  treeUndo: (event?: KeyboardEvent) => void;
+  treeRedo: (event?: KeyboardEvent) => void;
 }
 
 export interface RunStats {

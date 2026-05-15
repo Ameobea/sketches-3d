@@ -35,7 +35,10 @@
   const selectedAssetLabel = $derived(
     selectedAsset
       ? selectedAsset.startsWith('__ASSETS__/')
-        ? selectedAsset.split('/').pop()?.replace(/\.geo$/, '') ?? selectedAsset
+        ? (selectedAsset
+            .split('/')
+            .pop()
+            ?.replace(/\.geo$/, '') ?? selectedAsset)
         : (selectedAsset.split('/').pop() ?? selectedAsset)
       : '(none)'
   );
@@ -56,8 +59,12 @@
       class="asset-picker-header"
       role="button"
       tabindex="0"
-      onclick={() => { assetPickerExpanded = !assetPickerExpanded; }}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') assetPickerExpanded = !assetPickerExpanded; }}
+      onclick={() => {
+        assetPickerExpanded = !assetPickerExpanded;
+      }}
+      onkeydown={e => {
+        if (e.key === 'Enter' || e.key === ' ') assetPickerExpanded = !assetPickerExpanded;
+      }}
     >
       <span class="picker-arrow">{assetPickerExpanded ? '▾' : '▸'}</span>
       <span class="picker-selected">{selectedAssetLabel}</span>
@@ -67,7 +74,9 @@
         localItems={view.assetIds}
         libFolders={view.libFolders}
         selected={selectedAsset}
-        onselect={(v) => { selectedAsset = v; }}
+        onselect={v => {
+          selectedAsset = v;
+        }}
       />
     {/if}
 
@@ -126,9 +135,13 @@
     <div class="multi-select-panel">
       <div class="multi-select-header">{selectionCount} objects selected</div>
       {#if actions.groupSelected}
-        <button class="action-btn" onclick={actions.groupSelected} disabled={!view.canGroupSelected}>group selected</button>
+        <button class="action-btn" onclick={actions.groupSelected} disabled={!view.canGroupSelected}>
+          group selected
+        </button>
       {/if}
-      <button class="action-btn" onclick={actions.convertToCsg} disabled={!view.canConvertSelectedToCsg}>convert to CSG</button>
+      <button class="action-btn" onclick={actions.convertToCsg} disabled={!view.canConvertSelectedToCsg}>
+        convert to CSG
+      </button>
       <button class="action-btn delete-btn" onclick={actions.deleteSelection}>delete selected</button>
     </div>
   {:else}

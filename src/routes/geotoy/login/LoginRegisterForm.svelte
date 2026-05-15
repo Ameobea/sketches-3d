@@ -31,8 +31,7 @@
       }
     };
 
-    const storedReturnTo =
-      typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(storageKey) : null;
+    const storedReturnTo = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(storageKey) : null;
     const target =
       sanitizeTarget(returnTo) ?? sanitizeTarget(storedReturnTo) ?? sanitizeTarget(document.referrer);
 

@@ -1,11 +1,12 @@
 // Svelte-reactive wrapper around a `TreeDef` and its mutation surface. Logic
-// lives in `treeOps.ts` (pure, plain-node testable); this file only adds the
-// `$state` reactivity, selection/solo tracking, and dirty-vs-saved bookkeeping.
+// lives in `treeOps.ts` (pure, plain-node testable); this file adds the
+// `$state` reactivity, selection/solo tracking, dirty-vs-saved bookkeeping,
+// and action-based undo/redo.
 //
-// Persistence: the saved-tree baseline used for dirty detection comes in via the
-// constructor (e.g. from the server-provided composition version), and is updated
-// via `markSaved()` after a successful save. `serialize()` returns a structural
-// snapshot suitable for sending to the API or writing to localStorage.
+// Undo policy: structural ops (createNode, deleteNode, reparent) push entries
+// themselves; `setTransform` is bare and the gizmo/inspector calls
+// `recordTransformChange` once per gesture. Source edits, globals source,
+// disable, and renames are not tracked here.
 
 import type { Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 
@@ -21,6 +22,7 @@ import {
   createNode as opsCreateNode,
   deleteNode as opsDeleteNode,
   emptyTree,
+  findParentId,
   renameNode as opsRenameNode,
   reparent as opsReparent,
   setDisabled as opsSetDisabled,
@@ -29,7 +31,12 @@ import {
   setTransform as opsSetTransform,
   type CreateNodeOpts,
 } from './treeOps';
-import { TreeUndoSystem, type TreeSnapshot } from './treeUndoSystem';
+import {
+  applyGeotoyUndoEntry,
+  buildGeotoyUndoSystem,
+  captureSubtreeNodes,
+  type GeotoyUndoSystem,
+} from './treeUndoSystem';
 
 export interface TreeStateOpts {
   /** Initial tree (e.g. from server load or migrated single-node tree). Cloned. */
@@ -41,6 +48,31 @@ export interface TreeStateOpts {
    */
   savedBaseline?: TreeDef;
 }
+
+const cloneTransform = (t: Transform3): Transform3 => ({
+  pos: [t.pos[0], t.pos[1], t.pos[2]],
+  rot: [t.rot[0], t.rot[1], t.rot[2]],
+  scale: [t.scale[0], t.scale[1], t.scale[2]],
+});
+
+const transformsEqual = (a: Transform3, b: Transform3): boolean =>
+  a.pos[0] === b.pos[0] &&
+  a.pos[1] === b.pos[1] &&
+  a.pos[2] === b.pos[2] &&
+  a.rot[0] === b.rot[0] &&
+  a.rot[1] === b.rot[1] &&
+  a.rot[2] === b.rot[2] &&
+  a.scale[0] === b.scale[0] &&
+  a.scale[1] === b.scale[1] &&
+  a.scale[2] === b.scale[2];
+
+// Sort `nodes` keys so dirty-detection survives delete+restore undo, which
+// reshuffles insertion order but produces an otherwise-identical tree.
+const stableSerializeTree = (tree: TreeDef): string => {
+  const nodes: Record<string, unknown> = {};
+  for (const id of Object.keys(tree.nodes).sort()) nodes[id] = tree.nodes[id];
+  return JSON.stringify({ rootId: tree.rootId, globalsSource: tree.globalsSource, nodes });
+};
 
 export class TreeState {
   /** Reactive container — mutations to `state.tree`, `state.selectedId`, etc.
@@ -55,89 +87,77 @@ export class TreeState {
    *  live tree on `isDirty()`. */
   private savedSnapshotJson: string;
 
-  /** Tree-snapshot undo/redo stack. See `treeUndoSystem.ts` for semantics. */
-  readonly undoSystem = new TreeUndoSystem();
+  readonly undoSystem: GeotoyUndoSystem = buildGeotoyUndoSystem();
 
   constructor(opts: TreeStateOpts) {
-    this.state.tree = structuredClone(opts.initial);
-    this.savedSnapshotJson = JSON.stringify(opts.savedBaseline ?? opts.initial);
+    this.state.tree = $state.snapshot(opts.initial) as TreeDef;
+    this.savedSnapshotJson = stableSerializeTree(
+      $state.snapshot(opts.savedBaseline ?? opts.initial) as TreeDef
+    );
   }
 
-  private currentSnapshot(): TreeSnapshot {
-    return {
-      tree: structuredClone($state.snapshot(this.state.tree)) as TreeDef,
-      selectedId: this.state.selectedId,
-      soloId: this.state.soloId,
-    };
-  }
-
-  /** Run `op` and snapshot one undo entry. Pass `null` for atomic edits; pass a
-   *  stable key (e.g. `transform:<id>`) to coalesce rapid bursts.
-   *
-   *  Hot path: a gizmo drag fires this ~60×/sec. Snapshotting `before` is a
-   *  full-tree clone — skipped when we know we'll coalesce, since the existing
-   *  entry's `before` is the one we want to keep. */
-  applyEdit(coalesceKey: string | null, op: () => void): void {
-    const before = this.undoSystem.wouldCoalesce(coalesceKey) ? null : this.currentSnapshot();
-    op();
-    const after = this.currentSnapshot();
-    this.undoSystem.push(coalesceKey, before, after);
-  }
+  private applyUndoEntry = (
+    entry: Parameters<typeof applyGeotoyUndoEntry>[1],
+    direction: 'undo' | 'redo'
+  ) => {
+    const res = applyGeotoyUndoEntry(this.state.tree, entry, direction);
+    this.applySelectAfter(res.selectAfter);
+  };
 
   undo(): boolean {
-    const snap = this.undoSystem.undo();
-    if (!snap) return false;
-    this.restoreSnapshot(snap);
-    return true;
+    return this.undoSystem.undo(this.applyUndoEntry);
   }
 
   redo(): boolean {
-    const snap = this.undoSystem.redo();
-    if (!snap) return false;
-    this.restoreSnapshot(snap);
-    return true;
+    return this.undoSystem.redo(this.applyUndoEntry);
   }
 
-  private restoreSnapshot(snap: TreeSnapshot): void {
-    this.state.tree = structuredClone(snap.tree);
-    // Defensive: ids should still exist (snapshot was taken with this tree).
-    if (snap.selectedId === null || snap.selectedId === GLOBALS_SELECTION_ID) {
-      this.state.selectedId = snap.selectedId;
+  private applySelectAfter(selectAfter: string | undefined): void {
+    if (selectAfter === undefined) return;
+    if (this.state.tree.nodes[selectAfter]) {
+      this.state.selectedId = selectAfter;
     } else {
-      this.state.selectedId = this.state.tree.nodes[snap.selectedId]
-        ? snap.selectedId
-        : this.state.tree.rootId;
+      this.state.selectedId = this.state.tree.rootId;
     }
-    this.state.soloId = snap.soloId !== null && this.state.tree.nodes[snap.soloId] ? snap.soloId : null;
+    if (this.state.soloId !== null && !this.state.tree.nodes[this.state.soloId]) {
+      this.state.soloId = null;
+    }
   }
 
   /** Plain-object snapshot of the current tree (Svelte $state.snapshot, deeply). */
   serialize(): TreeDef {
-    return structuredClone($state.snapshot(this.state.tree)) as TreeDef;
+    return $state.snapshot(this.state.tree) as TreeDef;
   }
 
   isDirty(): boolean {
-    return JSON.stringify($state.snapshot(this.state.tree)) !== this.savedSnapshotJson;
+    return stableSerializeTree($state.snapshot(this.state.tree) as TreeDef) !== this.savedSnapshotJson;
   }
 
   /** Record the current tree as the saved baseline. Call after a successful save. */
   markSaved(): void {
-    this.savedSnapshotJson = JSON.stringify($state.snapshot(this.state.tree));
+    this.savedSnapshotJson = stableSerializeTree($state.snapshot(this.state.tree) as TreeDef);
   }
 
   /** Replace the entire tree (e.g. on "clear local changes" or fork). Clears
    *  selection/solo and resets the dirty baseline to the new tree. Discards
    *  undo history — entries from the previous tree would be incoherent. */
   replaceTree(tree: TreeDef): void {
-    this.state.tree = structuredClone(tree);
+    const snap = $state.snapshot(tree) as TreeDef;
+    this.state.tree = snap;
     this.state.selectedId = null;
     this.state.soloId = null;
-    this.savedSnapshotJson = JSON.stringify(tree);
+    this.savedSnapshotJson = stableSerializeTree(snap);
     this.undoSystem.clear();
   }
 
   createNode(opts: CreateNodeOpts = {}): string {
-    return opsCreateNode(this.state.tree, opts);
+    const id = opsCreateNode(this.state.tree, opts);
+    const parentId = opts.parentId ?? this.state.tree.rootId;
+    const parent = this.state.tree.nodes[parentId];
+    const index = parent.children.indexOf(id);
+    const nodeDef = $state.snapshot(this.state.tree.nodes[id]);
+    this.undoSystem.push({ type: 'createNode', nodeDef, parentId, index });
+    return id;
   }
 
   /** Refuses to delete `_root`. Every tree has exactly one root, always present. */
@@ -149,28 +169,73 @@ export class TreeState {
 
   deleteNode(id: string): void {
     if (!this.canDelete(id)) return;
-    opsDeleteNode(this.state.tree, id);
+    const tree = this.state.tree;
+    const parentId = findParentId(tree, id);
+    if (!parentId) return;
+    const parent = tree.nodes[parentId];
+    const index = parent.children.indexOf(id);
+    const nodes = captureSubtreeNodes($state.snapshot(tree) as TreeDef, id);
+
+    opsDeleteNode(tree, id);
+
+    this.undoSystem.push({ type: 'deleteSubtree', rootId: id, nodes, parentId, index });
+
     const sel = this.state.selectedId;
     if (sel !== null && sel !== GLOBALS_SELECTION_ID) {
-      if (sel === id || !this.state.tree.nodes[sel]) {
-        this.state.selectedId = this.state.tree.rootId;
-      }
+      if (sel === id || !tree.nodes[sel]) this.state.selectedId = tree.rootId;
     }
-    if (this.state.soloId === id || (this.state.soloId && !this.state.tree.nodes[this.state.soloId])) {
+    if (this.state.soloId === id || (this.state.soloId && !tree.nodes[this.state.soloId])) {
       this.state.soloId = null;
     }
   }
 
   reparent(id: string, newParentId: string | null, index?: number): void {
-    opsReparent(this.state.tree, id, newParentId, index);
+    const tree = this.state.tree;
+    const oldParentId = findParentId(tree, id);
+    if (oldParentId === null) return;
+    const oldIndex = tree.nodes[oldParentId].children.indexOf(id);
+
+    opsReparent(tree, id, newParentId, index);
+
+    const effectiveNewParentId = newParentId ?? tree.rootId;
+    const newIndex = tree.nodes[effectiveNewParentId].children.indexOf(id);
+    if (oldParentId === effectiveNewParentId && oldIndex === newIndex) return;
+
+    this.undoSystem.push({
+      type: 'reparent',
+      id,
+      oldParentId,
+      oldIndex,
+      newParentId: effectiveNewParentId,
+      newIndex,
+    });
   }
 
   rename(id: string, newName: string): void {
     opsRenameNode(this.state.tree, id, newName);
   }
 
+  /** Does NOT push undo. Pair with `recordTransformChange` on gesture commit. */
   setTransform(id: string, transform: Transform3): void {
     opsSetTransform(this.state.tree, id, transform);
+  }
+
+  /** Plain-value snapshot of a node's transform. Use to capture `before` for a
+   *  drag/edit gesture before subsequent `setTransform` mutations change it. */
+  captureTransform(id: string): Transform3 | null {
+    const node = this.state.tree.nodes[id];
+    return node ? cloneTransform(node.transform) : null;
+  }
+
+  recordTransformChange(id: string, before: Transform3, after: Transform3): void {
+    if (!this.state.tree.nodes[id]) return;
+    if (transformsEqual(before, after)) return;
+    this.undoSystem.push({
+      type: 'transform',
+      id,
+      before: cloneTransform(before),
+      after: cloneTransform(after),
+    });
   }
 
   setSource(id: string, source: string): void {
@@ -186,15 +251,13 @@ export class TreeState {
   }
 
   setSelected(id: string | null): void {
-    if (id === null) {
-      this.state.selectedId = null;
-      return;
-    }
-    if (id === GLOBALS_SELECTION_ID) {
-      this.state.selectedId = GLOBALS_SELECTION_ID;
-      return;
-    }
-    this.state.selectedId = this.state.tree.nodes[id] ? id : null;
+    const next =
+      id === null || id === GLOBALS_SELECTION_ID
+        ? id
+        : this.state.tree.nodes[id]
+          ? id
+          : this.state.tree.rootId;
+    if (this.state.selectedId !== next) this.state.selectedId = next;
   }
 
   get isGlobalsSelected(): boolean {
@@ -202,11 +265,8 @@ export class TreeState {
   }
 
   setSolo(id: string | null): void {
-    if (id === this.state.tree.rootId) {
-      // Soloing _root is equivalent to no solo at all.
-      this.state.soloId = null;
-      return;
-    }
-    this.state.soloId = id !== null && this.state.tree.nodes[id] ? id : null;
+    // Soloing _root is equivalent to no solo at all.
+    const next = id === null || id === this.state.tree.rootId || !this.state.tree.nodes[id] ? null : id;
+    if (this.state.soloId !== next) this.state.soloId = next;
   }
 }

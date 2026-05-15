@@ -2,8 +2,6 @@ import * as THREE from 'three';
 
 import type { GizmoTarget, Transform3 } from './gizmoTypes';
 
-// Object3DTarget ---------------------------------------------------------------
-
 export interface Object3DTargetCallbacks {
   onChange?(phase: 'preview' | 'commit', obj: THREE.Object3D): void;
 }
@@ -58,8 +56,6 @@ export class Object3DTarget implements GizmoTarget {
     this.callbacks.onChange?.(phase, this.obj);
   }
 }
-
-// PivotTarget ------------------------------------------------------------------
 
 export interface PivotChild {
   obj: THREE.Object3D;
@@ -204,8 +200,6 @@ export class PivotTarget implements GizmoTarget {
     this.callbacks.onChange?.(phase, this.children);
   }
 }
-
-// TreeNodeTarget (Geotoy) ------------------------------------------------------
 
 import type { Transform3 as ApiTransform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { buildWorldMatrixCache } from 'src/geoscript/runner/geoscriptRunner';

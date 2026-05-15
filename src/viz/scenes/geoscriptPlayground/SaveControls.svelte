@@ -136,7 +136,7 @@
       {/if}
     </div>
     {#if comp && onForked}
-      <ForkCompositionButton comp={comp} onForked={onForked} />
+      <ForkCompositionButton {comp} {onForked} />
     {/if}
     <button onclick={handleSave} disabled={status?.type === 'loading'}>
       {#if status?.type === 'loading'}

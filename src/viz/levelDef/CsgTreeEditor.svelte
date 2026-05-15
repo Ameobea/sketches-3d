@@ -1,7 +1,15 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { CsgTreeNode, CsgLeafNode, CsgOpNode } from './types';
-  import { isOpNode, cloneTree, getNodeAtPath, setNodeAtPath, deleteAtPath, insertAfterPath, splitPath } from './csgTreeUtils';
+  import {
+    isOpNode,
+    cloneTree,
+    getNodeAtPath,
+    setNodeAtPath,
+    deleteAtPath,
+    insertAfterPath,
+    splitPath,
+  } from './csgTreeUtils';
   import TransformInputs, { type TransformPatch } from './TransformInputs.svelte';
   import { round } from './mathUtils';
 
@@ -20,15 +28,8 @@
     onexitcsg: () => void;
   }
 
-  let {
-    tree,
-    assetIds,
-    selectedNodePath,
-    nodePolarities,
-    ontreechange,
-    onnodeselect,
-    onexitcsg,
-  }: Props = $props();
+  let { tree, assetIds, selectedNodePath, nodePolarities, ontreechange, onnodeselect, onexitcsg }: Props =
+    $props();
 
   let addAssetId = $state(untrack(() => assetIds[0] ?? ''));
   let addOp = $state<'union' | 'difference' | 'intersection'>('union');
@@ -54,8 +55,10 @@
     if (!isOpNode(parent)) return;
     const targetIndex = childIndex + direction;
     if (targetIndex < 0 || targetIndex >= parent.children.length) return;
-    [parent.children[childIndex], parent.children[targetIndex]] =
-      [parent.children[targetIndex], parent.children[childIndex]];
+    [parent.children[childIndex], parent.children[targetIndex]] = [
+      parent.children[targetIndex],
+      parent.children[childIndex],
+    ];
     emitChange(newRoot);
   };
 
@@ -244,7 +247,11 @@
     const nextRot = patch.rotation ? roundVec(patch.rotation as Vec3) : current.rotation;
     const nextScale = patch.scale ? roundVec(patch.scale as Vec3) : current.scale;
 
-    if (arrEq(nextPos, current.position) && arrEq(nextRot, current.rotation) && arrEq(nextScale, current.scale)) {
+    if (
+      arrEq(nextPos, current.position) &&
+      arrEq(nextRot, current.rotation) &&
+      arrEq(nextScale, current.scale)
+    ) {
       return;
     }
 
@@ -284,19 +291,19 @@
           class:dragging={draggedPath === path}
           style="margin-left: {depth * 16}px"
           draggable={path !== ''}
-          ondragstart={(e) => handleDragStart(e, path)}
+          ondragstart={e => handleDragStart(e, path)}
           ondragend={handleDragEnd}
-          ondragover={(e) => handleDragOver(e, path)}
+          ondragover={e => handleDragOver(e, path)}
           ondragleave={handleDragLeave}
-          ondrop={(e) => handleDrop(e, path)}
-          onclick={(e) => handleNodeClick(path, e)}
+          ondrop={e => handleDrop(e, path)}
+          onclick={e => handleNodeClick(path, e)}
         >
           <span class="polarity-dot" style="color: {polarityColor(path)}">●</span>
           <select
             class="op-select"
             value={node.op}
-            onclick={(e) => e.stopPropagation()}
-            onchange={(e) => handleOpChange(path, (e.target as HTMLSelectElement).value as any)}
+            onclick={e => e.stopPropagation()}
+            onchange={e => handleOpChange(path, (e.target as HTMLSelectElement).value as any)}
           >
             <option value="union">union</option>
             <option value="difference">difference</option>
@@ -306,10 +313,38 @@
             {@const info = splitPath(path)}
             {@const siblingCount = getSiblingCount(path)}
             {#if info && siblingCount > 1}
-              <button class="move-btn" disabled={info.childIndex === 0} onclick={(e) => { e.stopPropagation(); handleMoveChild(info.parentPath, info.childIndex, -1); }} title="Move up">↑</button>
-              <button class="move-btn" disabled={info.childIndex === siblingCount - 1} onclick={(e) => { e.stopPropagation(); handleMoveChild(info.parentPath, info.childIndex, 1); }} title="Move down">↓</button>
+              <button
+                class="move-btn"
+                disabled={info.childIndex === 0}
+                onclick={e => {
+                  e.stopPropagation();
+                  handleMoveChild(info.parentPath, info.childIndex, -1);
+                }}
+                title="Move up"
+              >
+                ↑
+              </button>
+              <button
+                class="move-btn"
+                disabled={info.childIndex === siblingCount - 1}
+                onclick={e => {
+                  e.stopPropagation();
+                  handleMoveChild(info.parentPath, info.childIndex, 1);
+                }}
+                title="Move down"
+              >
+                ↓
+              </button>
             {/if}
-            <button class="del-btn" onclick={(e) => { e.stopPropagation(); handleDeleteNode(path); }}>×</button>
+            <button
+              class="del-btn"
+              onclick={e => {
+                e.stopPropagation();
+                handleDeleteNode(path);
+              }}
+            >
+              ×
+            </button>
           {/if}
         </div>
         {#each node.children as child, i}
@@ -324,17 +359,47 @@
           class:dragging={draggedPath === path}
           style="margin-left: {depth * 16}px"
           draggable={true}
-          ondragstart={(e) => handleDragStart(e, path)}
+          ondragstart={e => handleDragStart(e, path)}
           ondragend={handleDragEnd}
-          onclick={(e) => handleNodeClick(path, e)}
+          onclick={e => handleNodeClick(path, e)}
         >
           <span class="polarity-dot" style="color: {polarityColor(path)}">●</span>
           <span class="leaf-name">{node.asset}</span>
           {#if splitPath(path) && getSiblingCount(path) > 1}
-            <button class="move-btn" disabled={splitPath(path)!.childIndex === 0} onclick={(e) => { e.stopPropagation(); const sp = splitPath(path)!; handleMoveChild(sp.parentPath, sp.childIndex, -1); }} title="Move up">↑</button>
-            <button class="move-btn" disabled={splitPath(path)!.childIndex === getSiblingCount(path) - 1} onclick={(e) => { e.stopPropagation(); const sp = splitPath(path)!; handleMoveChild(sp.parentPath, sp.childIndex, 1); }} title="Move down">↓</button>
+            <button
+              class="move-btn"
+              disabled={splitPath(path)!.childIndex === 0}
+              onclick={e => {
+                e.stopPropagation();
+                const sp = splitPath(path)!;
+                handleMoveChild(sp.parentPath, sp.childIndex, -1);
+              }}
+              title="Move up"
+            >
+              ↑
+            </button>
+            <button
+              class="move-btn"
+              disabled={splitPath(path)!.childIndex === getSiblingCount(path) - 1}
+              onclick={e => {
+                e.stopPropagation();
+                const sp = splitPath(path)!;
+                handleMoveChild(sp.parentPath, sp.childIndex, 1);
+              }}
+              title="Move down"
+            >
+              ↓
+            </button>
           {/if}
-          <button class="del-btn" onclick={(e) => { e.stopPropagation(); handleDeleteNode(path); }}>×</button>
+          <button
+            class="del-btn"
+            onclick={e => {
+              e.stopPropagation();
+              handleDeleteNode(path);
+            }}
+          >
+            ×
+          </button>
         </div>
       {/if}
     {/snippet}
@@ -376,9 +441,7 @@
         {/if}
       {/if}
       {#if selectedNodePath !== null && selectedNodePath !== ''}
-        <button class="add-node-btn" onclick={() => handleAddLeaf('after')}>
-          add after selected
-        </button>
+        <button class="add-node-btn" onclick={() => handleAddLeaf('after')}>add after selected</button>
       {/if}
     </div>
   </div>
@@ -439,7 +502,8 @@
     background: #252525;
   }
 
-  .op-node, .leaf-node {
+  .op-node,
+  .leaf-node {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -448,11 +512,13 @@
     cursor: pointer;
   }
 
-  .op-node:hover, .leaf-node:hover {
+  .op-node:hover,
+  .leaf-node:hover {
     background: #252525;
   }
 
-  .op-node.selected, .leaf-node.selected {
+  .op-node.selected,
+  .leaf-node.selected {
     background: #1a3040;
     outline: 1px solid #00ffff;
   }
@@ -462,7 +528,8 @@
     outline: 1px dashed #4a4;
   }
 
-  .op-node.dragging, .leaf-node.dragging {
+  .op-node.dragging,
+  .leaf-node.dragging {
     opacity: 0.5;
   }
 
@@ -492,7 +559,8 @@
     font: 11px monospace;
   }
 
-  .del-btn, .move-btn {
+  .del-btn,
+  .move-btn {
     background: none;
     border: 1px solid #555;
     color: #e8e8e8;

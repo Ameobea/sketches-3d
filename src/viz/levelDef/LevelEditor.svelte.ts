@@ -22,7 +22,7 @@ import { isDescendantOf } from './levelDefTreeUtils';
 import { resolveGeoscriptAsset } from './loadLevelDef';
 import LevelEditorPanel from './LevelEditorPanel.svelte';
 import { LevelEditorApi } from './levelEditorApi';
-import { UndoSystem } from './undoSystem';
+import { UndoSystem } from '../util/undoSystem';
 import { MaterialEditorController } from './materialEditorController';
 import { CsgEditController } from './csgEditController.svelte';
 import { focusCamera } from '../util/focusCamera';

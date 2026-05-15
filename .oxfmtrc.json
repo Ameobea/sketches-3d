@@ -7,6 +7,7 @@
   "arrowParens": "avoid",
   "htmlWhitespaceSensitivity": "ignore",
   "sortPackageJson": false,
+  "svelte": true,
   "ignorePatterns": [
     "node_modules",
     "build",

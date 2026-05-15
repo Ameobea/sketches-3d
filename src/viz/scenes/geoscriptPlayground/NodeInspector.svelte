@@ -138,33 +138,32 @@
                   type="checkbox"
                   checked={!disabled}
                   title={disabled ? 'enable' : 'disable'}
-                  onchange={(e) =>
-                    onDisableToggle(child.id, !(e.currentTarget as HTMLInputElement).checked)}
+                  onchange={e => onDisableToggle(child.id, !(e.currentTarget as HTMLInputElement).checked)}
                 />
-                <button
-                  class="name"
-                  type="button"
-                  title="select"
-                  onclick={() => onselect(child.id)}
-                >{child.name}</button>
+                <button class="name" type="button" title="select" onclick={() => onselect(child.id)}>
+                  {child.name}
+                </button>
                 <span
                   class="mesh-count"
                   title={disabled
                     ? 'disabled — does not evaluate'
                     : `${count} mesh${count === 1 ? '' : 'es'} from this subtree`}
-                >{disabled ? '—' : count}</span>
+                >
+                  {disabled ? '—' : count}
+                </span>
               </div>
               <div class="row-tforms">
-                {#each (['pos', 'rot', 'scale'] as const) as field}
+                {#each ['pos', 'rot', 'scale'] as const as field}
                   <span class="tf-group">
-                    <span class="tf-label" title={FIELD_META[field].title}
-                      >{FIELD_META[field].glyph}</span>
-                    {#each ([0, 1, 2] as const) as axis}
+                    <span class="tf-label" title={FIELD_META[field].title}>{FIELD_META[field].glyph}</span>
+                    {#each [0, 1, 2] as const as axis}
                       <input
                         class="tf-input"
                         type="text"
                         value={displayVal(child, field, axis)}
-                        oninput={(e) => { draft = (e.target as HTMLInputElement).value; }}
+                        oninput={e => {
+                          draft = (e.target as HTMLInputElement).value;
+                        }}
                         onfocus={() => onFocus(child, field, axis)}
                         onblur={onBlur}
                         onkeydown={onKeydown}

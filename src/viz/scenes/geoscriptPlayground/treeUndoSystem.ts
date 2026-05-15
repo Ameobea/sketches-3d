@@ -1,104 +1,122 @@
-// Snapshot-based undo for the geotoy tree. Each entry stores the full tree
-// plus selection/solo before/after — cheap enough at this scale to skip
-// patch-style diffs.
-//
-// Coalescing: same-keyed pushes whose gap to the previous push is < COALESCE_WINDOW_MS
-// merge into one entry. The window is measured against the LAST push, not the burst
-// start — a continuous stream (drag at frame-rate, fast typing) keeps extending one
-// entry indefinitely; any pause > COALESCE_WINDOW_MS ends the burst. This is the
-// natural shape for both drags and keystroke bursts: a single visual gesture
-// collapses to a single undo step.
+// Action-based undo for the geotoy tree. Source edits live outside this
+// system — CodeMirror owns per-node text history. Selection isn't tracked
+// either; entries return a `selectAfter` hint where it matters (e.g. undo of
+// delete re-selects the restored root).
 
-import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 
-const COALESCE_WINDOW_MS = 800;
-const MAX_UNDO = 200;
+import { UndoSystem } from 'src/viz/util/undoSystem';
+import { createNode as opsCreateNode, deleteNode as opsDeleteNode, reparent as opsReparent } from './treeOps';
 
-export interface TreeSnapshot {
-  tree: TreeDef;
-  selectedId: string | null;
-  soloId: string | null;
-}
-
-interface UndoEntry {
-  coalesceKey: string | null;
-  before: TreeSnapshot;
-  after: TreeSnapshot;
-  timestamp: number;
-}
-
-const snapshotsEqual = (a: TreeSnapshot, b: TreeSnapshot): boolean =>
-  a.selectedId === b.selectedId && a.soloId === b.soloId && JSON.stringify(a.tree) === JSON.stringify(b.tree);
-
-export class TreeUndoSystem {
-  private undoStack: UndoEntry[] = [];
-  private redoStack: UndoEntry[] = [];
-
-  /** Would the next `push(coalesceKey, ...)` merge into the previous entry rather
-   *  than add a new one? Lets the caller skip capturing a `before` snapshot it
-   *  knows will be discarded. */
-  wouldCoalesce(coalesceKey: string | null, now: number = Date.now()): boolean {
-    if (coalesceKey === null) return false;
-    const last = this.undoStack[this.undoStack.length - 1];
-    return !!(last && last.coalesceKey === coalesceKey && now - last.timestamp < COALESCE_WINDOW_MS);
-  }
-
-  /** `before === null` is a signal "I predicted coalescing and skipped the
-   *  before-snapshot." If coalescing no longer applies (e.g., the previous entry
-   *  aged out between the prediction and the call) we no-op rather than push a
-   *  half-built entry; the caller is expected to retry with a real `before` if
-   *  it cares. */
-  push(
-    coalesceKey: string | null,
-    before: TreeSnapshot | null,
-    after: TreeSnapshot,
-    now: number = Date.now()
-  ): void {
-    const last = this.undoStack[this.undoStack.length - 1];
-    if (
-      last &&
-      coalesceKey !== null &&
-      last.coalesceKey === coalesceKey &&
-      now - last.timestamp < COALESCE_WINDOW_MS
-    ) {
-      last.after = after;
-      last.timestamp = now;
-      this.redoStack.length = 0;
-      return;
+export type GeotoyUndoEntry =
+  | { type: 'transform'; id: string; before: Transform3; after: Transform3 }
+  | { type: 'createNode'; nodeDef: NodeDef; parentId: string; index: number }
+  | {
+      type: 'deleteSubtree';
+      rootId: string;
+      nodes: Record<string, NodeDef>;
+      parentId: string;
+      index: number;
     }
+  | {
+      type: 'reparent';
+      id: string;
+      oldParentId: string;
+      oldIndex: number;
+      newParentId: string;
+      newIndex: number;
+    };
 
-    if (before === null) return;
-    if (snapshotsEqual(before, after)) return;
+export type GeotoyUndoSystem = UndoSystem<GeotoyUndoEntry>;
+export const buildGeotoyUndoSystem = (): GeotoyUndoSystem => new UndoSystem<GeotoyUndoEntry>();
 
-    this.undoStack.push({ coalesceKey, before, after, timestamp: now });
-    if (this.undoStack.length > MAX_UNDO) this.undoStack.shift();
-    this.redoStack.length = 0;
+export const captureSubtreeNodes = (tree: TreeDef, id: string): Record<string, NodeDef> => {
+  const out: Record<string, NodeDef> = {};
+  const stack = [id];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    const node = tree.nodes[cur];
+    if (!node) continue;
+    out[cur] = structuredClone(node);
+    for (const cid of node.children) stack.push(cid);
   }
+  return out;
+};
 
-  undo(): TreeSnapshot | null {
-    const entry = this.undoStack.pop();
-    if (!entry) return null;
-    this.redoStack.push(entry);
-    return entry.before;
+const restoreSubtree = (
+  tree: TreeDef,
+  rootId: string,
+  nodes: Record<string, NodeDef>,
+  parentId: string,
+  index: number
+): void => {
+  for (const [id, def] of Object.entries(nodes)) {
+    tree.nodes[id] = structuredClone(def);
   }
+  const parent = tree.nodes[parentId];
+  if (!parent) return;
+  // Clamp index in case the parent's children array shrank since capture.
+  const at = Math.min(Math.max(index, 0), parent.children.length);
+  parent.children.splice(at, 0, rootId);
+};
 
-  redo(): TreeSnapshot | null {
-    const entry = this.redoStack.pop();
-    if (!entry) return null;
-    this.undoStack.push(entry);
-    return entry.after;
+// Stale entries (referencing missing nodes) no-op rather than throw.
+// `selectAfter` is a selection hint the caller may honor.
+export const applyGeotoyUndoEntry = (
+  tree: TreeDef,
+  entry: GeotoyUndoEntry,
+  direction: 'undo' | 'redo'
+): { selectAfter?: string } => {
+  switch (entry.type) {
+    case 'transform': {
+      const node = tree.nodes[entry.id];
+      if (!node) return {};
+      const t = direction === 'undo' ? entry.before : entry.after;
+      node.transform = {
+        pos: [t.pos[0], t.pos[1], t.pos[2]],
+        rot: [t.rot[0], t.rot[1], t.rot[2]],
+        scale: [t.scale[0], t.scale[1], t.scale[2]],
+      };
+      return {};
+    }
+    case 'createNode': {
+      if (direction === 'undo') {
+        if (!tree.nodes[entry.nodeDef.id]) return {};
+        opsDeleteNode(tree, entry.nodeDef.id);
+        return { selectAfter: tree.nodes[entry.parentId] ? entry.parentId : tree.rootId };
+      }
+      if (tree.nodes[entry.nodeDef.id]) return {};
+      const def = entry.nodeDef;
+      opsCreateNode(tree, {
+        id: def.id,
+        name: def.name,
+        source: def.source,
+        transform: def.transform,
+        parentId: entry.parentId,
+        index: entry.index,
+      });
+      // createNode's opts don't include `disabled`; carry it over here.
+      if (def.disabled) tree.nodes[def.id].disabled = true;
+      return { selectAfter: def.id };
+    }
+    case 'deleteSubtree': {
+      if (direction === 'undo') {
+        if (tree.nodes[entry.rootId]) return {};
+        restoreSubtree(tree, entry.rootId, entry.nodes, entry.parentId, entry.index);
+        return { selectAfter: entry.rootId };
+      }
+      if (!tree.nodes[entry.rootId]) return {};
+      opsDeleteNode(tree, entry.rootId);
+      return { selectAfter: tree.rootId };
+    }
+    case 'reparent': {
+      if (!tree.nodes[entry.id]) return {};
+      if (direction === 'undo') {
+        opsReparent(tree, entry.id, entry.oldParentId, entry.oldIndex);
+      } else {
+        opsReparent(tree, entry.id, entry.newParentId, entry.newIndex);
+      }
+      return {};
+    }
   }
-
-  canUndo(): boolean {
-    return this.undoStack.length > 0;
-  }
-
-  canRedo(): boolean {
-    return this.redoStack.length > 0;
-  }
-
-  clear(): void {
-    this.undoStack.length = 0;
-    this.redoStack.length = 0;
-  }
-}
+};

@@ -1,11 +1,8 @@
 const MAX_UNDO = 50;
 
 /**
- * Generic undo/redo stack. Each entry is an opaque value — the caller provides
- * an `apply` callback that knows how to execute an entry in either direction.
- *
- * Designed to be extended with new entry types (e.g. CSG tree edits) without
- * changing the undo system itself.
+ * Generic undo/redo stack. Entries are opaque; the caller's `apply` callback
+ * executes them in either direction.
  */
 export class UndoSystem<T> {
   private undoStack: T[] = [];

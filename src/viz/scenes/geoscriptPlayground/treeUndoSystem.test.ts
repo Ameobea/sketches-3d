@@ -1,153 +1,130 @@
-// Focused tests for the snapshot-based tree undo system. Each case mirrors a
-// flow the UI exercises. Run with:
+// Drive live `treeOps` mutations and verify a round-trip through the undo
+// stack matches the original / final tree.
+//
 //   yarn tsx --test src/viz/scenes/geoscriptPlayground/treeUndoSystem.test.ts
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { TreeUndoSystem, type TreeSnapshot } from './treeUndoSystem';
+import { buildEmptyTree, buildIdentityTransform, type TreeDef } from 'src/geoscript/geotoyAPIClient';
+import { createNode as opsCreateNode, deleteNode as opsDeleteNode, reparent as opsReparent } from './treeOps';
+import {
+  applyGeotoyUndoEntry,
+  buildGeotoyUndoSystem,
+  captureSubtreeNodes,
+  type GeotoyUndoSystem,
+} from './treeUndoSystem';
 
-// Minimal hand-rolled tree shape — matches `TreeDef` structurally enough for
-// JSON-equality comparison inside the undo system.
-const tree = (rootId: string, extra: Record<string, unknown> = {}) =>
-  ({ rootId, globalsSource: '', nodes: { [rootId]: { id: rootId, name: '_root' } }, ...extra }) as any;
+const apply = (sys: GeotoyUndoSystem, tree: TreeDef, dir: 'undo' | 'redo') =>
+  dir === 'undo'
+    ? sys.undo((e, d) => applyGeotoyUndoEntry(tree, e, d))
+    : sys.redo((e, d) => applyGeotoyUndoEntry(tree, e, d));
 
-const snap = (
-  rootId: string,
-  selectedId: string | null = null,
-  soloId: string | null = null
-): TreeSnapshot => ({
-  tree: tree(rootId),
-  selectedId,
-  soloId,
+// Compare two trees structurally — `tree.nodes` is a Record so JSON.stringify
+// is sensitive to key-insertion order, which doesn't survive delete + restore.
+const treesEqual = (a: TreeDef, b: TreeDef): boolean =>
+  a.rootId === b.rootId &&
+  a.globalsSource === b.globalsSource &&
+  Object.keys(a.nodes).length === Object.keys(b.nodes).length &&
+  Object.keys(a.nodes).every(k => JSON.stringify(a.nodes[k]) === JSON.stringify(b.nodes[k]));
+
+test('transform: undo restores pre-edit transform; redo reapplies', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  const id = opsCreateNode(tree, { name: 'a' });
+
+  const t0 = structuredClone(tree.nodes[id].transform);
+  const t1 = {
+    pos: [1, 2, 3] as [number, number, number],
+    rot: [0, 0, 0] as [number, number, number],
+    scale: [1, 1, 1] as [number, number, number],
+  };
+  tree.nodes[id].transform = structuredClone(t1);
+  sys.push({ type: 'transform', id, before: t0, after: structuredClone(t1) });
+  const afterPush = structuredClone(tree);
+
+  apply(sys, tree, 'undo');
+  assert.deepEqual(tree.nodes[id].transform, t0);
+
+  apply(sys, tree, 'redo');
+  assert.ok(treesEqual(tree, afterPush));
 });
 
-test('undo/redo round-trips a single edit', () => {
-  const u = new TreeUndoSystem();
-  const before = snap('a');
-  const after = snap('b');
-  u.push(null, before, after, 1000);
+test('deleteSubtree: undo restores the whole subtree at the correct index', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  const a = opsCreateNode(tree, { name: 'a' });
+  const b = opsCreateNode(tree, { name: 'b' });
+  const c = opsCreateNode(tree, { name: 'c' });
+  const aChild = opsCreateNode(tree, { name: 'aChild', parentId: a });
 
-  assert.equal(u.canUndo(), true);
-  assert.equal(u.canRedo(), false);
+  const original = structuredClone(tree);
 
-  assert.deepEqual(u.undo(), before);
-  assert.equal(u.canUndo(), false);
-  assert.equal(u.canRedo(), true);
+  const parentId = tree.rootId;
+  const index = tree.nodes[parentId].children.indexOf(a);
+  const nodes = captureSubtreeNodes(tree, a);
+  // Mutate before pushing (matches treeState.deleteNode order).
+  opsDeleteNode(tree, a);
+  sys.push({ type: 'deleteSubtree', rootId: a, nodes, parentId, index });
 
-  assert.deepEqual(u.redo(), after);
-  assert.equal(u.canUndo(), true);
-  assert.equal(u.canRedo(), false);
+  assert.equal(tree.nodes[a], undefined);
+  assert.equal(tree.nodes[aChild], undefined);
+  assert.deepEqual(tree.nodes[tree.rootId].children, [b, c]);
+
+  apply(sys, tree, 'undo');
+  assert.ok(treesEqual(tree, original));
+
+  apply(sys, tree, 'redo');
+  assert.equal(tree.nodes[a], undefined);
+  assert.deepEqual(tree.nodes[tree.rootId].children, [b, c]);
 });
 
-test('no-op edits (equal before/after) are not pushed', () => {
-  const u = new TreeUndoSystem();
-  const s = snap('a');
-  u.push(null, s, s, 1000);
-  assert.equal(u.canUndo(), false);
+test('createNode: undo deletes the new node; redo recreates with the same id', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  const id = opsCreateNode(tree, { name: 'a', transform: buildIdentityTransform() });
+  const parentId = tree.rootId;
+  const index = tree.nodes[parentId].children.indexOf(id);
+  const nodeDef = structuredClone(tree.nodes[id]);
+  sys.push({ type: 'createNode', nodeDef, parentId, index });
+
+  apply(sys, tree, 'undo');
+  assert.equal(id in tree.nodes, false);
+
+  apply(sys, tree, 'redo');
+  assert.equal(id in tree.nodes, true);
+  assert.equal(tree.nodes[id]?.name, 'a');
 });
 
-test('same coalesce key within window mutates the previous entry', () => {
-  const u = new TreeUndoSystem();
-  // Window measures gap from the *previous* push (not the burst start) — a long
-  // drag extends one entry across many seconds as long as ticks stay close.
-  u.push('transform:n1', snap('a'), snap('b'), 1000);
-  u.push('transform:n1', snap('b'), snap('c'), 1700); // 700ms gap, ok
-  u.push('transform:n1', snap('c'), snap('d'), 2400); // 700ms gap, ok (1400ms from start)
+test('reparent: undo restores the original parent and child-index', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  const group = opsCreateNode(tree, { name: 'group' });
+  const target = opsCreateNode(tree, { name: 'target' });
+  const original = structuredClone(tree);
 
-  // All three collapsed into a single entry: before=a, after=d.
-  assert.deepEqual(u.undo()?.tree.rootId, 'a');
-  assert.equal(u.canUndo(), false);
+  const oldParentId = tree.rootId;
+  const oldIndex = tree.nodes[oldParentId].children.indexOf(target);
+  opsReparent(tree, target, group);
+  const newIndex = tree.nodes[group].children.indexOf(target);
+  sys.push({ type: 'reparent', id: target, oldParentId, oldIndex, newParentId: group, newIndex });
+
+  apply(sys, tree, 'undo');
+  assert.ok(treesEqual(tree, original));
+
+  apply(sys, tree, 'redo');
+  assert.deepEqual(tree.nodes[group].children, [target]);
 });
 
-test('wouldCoalesce + null `before` is the lazy-snapshot fast path', () => {
-  const u = new TreeUndoSystem();
-  // First push has no prior entry to coalesce with — wouldCoalesce reports false.
-  assert.equal(u.wouldCoalesce('transform:n1', 1000), false);
-  u.push('transform:n1', snap('a'), snap('b'), 1000);
-
-  // Now there's a recent same-key entry — coalescing applies, caller can skip
-  // capturing `before`.
-  assert.equal(u.wouldCoalesce('transform:n1', 1100), true);
-  u.push('transform:n1', null, snap('c'), 1100);
-  assert.deepEqual(u.undo()?.tree.rootId, 'a');
-  assert.equal(u.canUndo(), false);
-
-  // If a null-before push arrives but the coalesce target aged out, it's a
-  // no-op (defensive: caller predicted coalescing but it no longer applies).
-  u.push('transform:n1', snap('a'), snap('b'), 1000);
-  u.push('transform:n1', null, snap('z'), 9999);
-  assert.deepEqual(u.undo()?.tree.rootId, 'a'); // 'z' was dropped
-});
-
-test('same coalesce key outside the window pushes a new entry', () => {
-  const u = new TreeUndoSystem();
-  u.push('transform:n1', snap('a'), snap('b'), 1000);
-  u.push('transform:n1', snap('b'), snap('c'), 5000); // 4s gap > 800ms window
-
-  // Two separate entries: undoing once goes back to b, again to a.
-  assert.deepEqual(u.undo()?.tree.rootId, 'b');
-  assert.deepEqual(u.undo()?.tree.rootId, 'a');
-});
-
-test('different coalesce keys never collapse, even back-to-back', () => {
-  const u = new TreeUndoSystem();
-  u.push('transform:n1', snap('a'), snap('b'), 1000);
-  u.push('transform:n2', snap('b'), snap('c'), 1050);
-
-  assert.deepEqual(u.undo()?.tree.rootId, 'b');
-  assert.deepEqual(u.undo()?.tree.rootId, 'a');
-});
-
-test('null coalesce key never collapses', () => {
-  const u = new TreeUndoSystem();
-  u.push(null, snap('a'), snap('b'), 1000);
-  u.push(null, snap('b'), snap('c'), 1050);
-
-  assert.deepEqual(u.undo()?.tree.rootId, 'b');
-  assert.deepEqual(u.undo()?.tree.rootId, 'a');
-});
-
-test('a new push invalidates the redo stack', () => {
-  const u = new TreeUndoSystem();
-  u.push(null, snap('a'), snap('b'), 1000);
-  u.push(null, snap('b'), snap('c'), 2000);
-  u.undo(); // c -> b on redo
-  assert.equal(u.canRedo(), true);
-
-  u.push(null, snap('b'), snap('d'), 3000);
-  assert.equal(u.canRedo(), false);
-});
-
-test('a coalesced push invalidates the redo stack', () => {
-  const u = new TreeUndoSystem();
-  u.push('transform:n1', snap('a'), snap('b'), 1000);
-  u.push(null, snap('b'), snap('c'), 2000);
-  u.undo();
-  assert.equal(u.canRedo(), true);
-
-  u.push('transform:n1', snap('b'), snap('d'), 1700);
-  assert.equal(u.canRedo(), false);
-  assert.deepEqual(u.undo()?.tree.rootId, 'a');
-});
-
-test('selection and solo are captured and round-trip', () => {
-  const u = new TreeUndoSystem();
-  const before: TreeSnapshot = { tree: tree('a'), selectedId: 'n1', soloId: 'n2' };
-  const after: TreeSnapshot = { tree: tree('a', { extra: 1 }), selectedId: 'n3', soloId: null };
-  u.push(null, before, after, 1000);
-
-  const restored = u.undo()!;
-  assert.equal(restored.selectedId, 'n1');
-  assert.equal(restored.soloId, 'n2');
-});
-
-test('clear empties both stacks', () => {
-  const u = new TreeUndoSystem();
-  u.push(null, snap('a'), snap('b'), 1000);
-  u.push(null, snap('b'), snap('c'), 2000);
-  u.undo();
-  u.clear();
-  assert.equal(u.canUndo(), false);
-  assert.equal(u.canRedo(), false);
+test('stale entries no-op rather than throwing', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  sys.push({
+    type: 'transform',
+    id: 'ghost',
+    before: buildIdentityTransform(),
+    after: { pos: [1, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
+  });
+  assert.doesNotThrow(() => apply(sys, tree, 'undo'));
+  assert.doesNotThrow(() => apply(sys, tree, 'redo'));
 });

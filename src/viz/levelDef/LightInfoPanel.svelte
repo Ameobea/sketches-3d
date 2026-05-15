@@ -13,8 +13,7 @@
   let { lightDef, lightPosition, onapplyposition, onpropertychange, ondelete }: Props = $props();
 
   const hasPosition = (def: LightDef): boolean => def.type !== 'ambient';
-  const hasDistanceDecay = (def: LightDef): boolean =>
-    def.type === 'point' || def.type === 'spot';
+  const hasDistanceDecay = (def: LightDef): boolean => def.type === 'point' || def.type === 'spot';
   const hasShadow = (def: LightDef): boolean => def.type !== 'ambient';
   const isSpot = (def: LightDef): boolean => def.type === 'spot';
 
@@ -32,7 +31,9 @@
   // --- Intensity ---
   let intensityDraft = $state('');
   let intensityFocused = $state(false);
-  $effect(() => { if (!intensityFocused) intensityDraft = fmt(lightDef.intensity ?? 1); });
+  $effect(() => {
+    if (!intensityFocused) intensityDraft = fmt(lightDef.intensity ?? 1);
+  });
 
   const commitIntensity = () => {
     const n = parseFloat(intensityDraft);
@@ -71,8 +72,14 @@
   };
 
   const onPosKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') { commitPos(); (e.target as HTMLInputElement).blur(); }
-    if (e.key === 'Escape') { posFocused = null; (e.target as HTMLInputElement).blur(); }
+    if (e.key === 'Enter') {
+      commitPos();
+      (e.target as HTMLInputElement).blur();
+    }
+    if (e.key === 'Escape') {
+      posFocused = null;
+      (e.target as HTMLInputElement).blur();
+    }
   };
 
   // --- Light-type-specific fields ---
@@ -116,8 +123,14 @@
   };
 
   const onExtraKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') { commitExtra(); (e.target as HTMLInputElement).blur(); }
-    if (e.key === 'Escape') { extraFocused = null; (e.target as HTMLInputElement).blur(); }
+    if (e.key === 'Enter') {
+      commitExtra();
+      (e.target as HTMLInputElement).blur();
+    }
+    if (e.key === 'Escape') {
+      extraFocused = null;
+      (e.target as HTMLInputElement).blur();
+    }
   };
 
   // --- Cast shadow ---
@@ -142,12 +155,7 @@
   <!-- Color -->
   <div class="row">
     <span class="tf-label">color</span>
-    <input
-      class="color-input"
-      type="color"
-      value={colorStr}
-      onchange={onColorChange}
-    />
+    <input class="color-input" type="color" value={colorStr} onchange={onColorChange} />
     <span class="color-hex">{colorStr}</span>
   </div>
 
@@ -158,12 +166,23 @@
       class="tf-input flex1"
       type="text"
       value={intensityFocused ? intensityDraft : fmt(lightDef.intensity ?? 1)}
-      oninput={(e) => { intensityDraft = (e.target as HTMLInputElement).value; }}
-      onfocus={() => { intensityDraft = fmt(lightDef.intensity ?? 1); intensityFocused = true; }}
+      oninput={e => {
+        intensityDraft = (e.target as HTMLInputElement).value;
+      }}
+      onfocus={() => {
+        intensityDraft = fmt(lightDef.intensity ?? 1);
+        intensityFocused = true;
+      }}
       onblur={commitIntensity}
-      onkeydown={(e) => {
-        if (e.key === 'Enter') { commitIntensity(); (e.target as HTMLInputElement).blur(); }
-        if (e.key === 'Escape') { intensityFocused = false; (e.target as HTMLInputElement).blur(); }
+      onkeydown={e => {
+        if (e.key === 'Enter') {
+          commitIntensity();
+          (e.target as HTMLInputElement).blur();
+        }
+        if (e.key === 'Escape') {
+          intensityFocused = false;
+          (e.target as HTMLInputElement).blur();
+        }
       }}
     />
   </div>
@@ -172,13 +191,15 @@
   {#if hasPosition(lightDef)}
     <div class="tf-row">
       <span class="tf-label">pos</span>
-      {#each ([0, 1, 2] as const) as axis}
+      {#each [0, 1, 2] as const as axis}
         <span class="axis-label">{axisLabels[axis]}</span>
         <input
           class="tf-input"
           type="text"
           value={posDisplayVal(axis)}
-          oninput={(e) => { posDraft = (e.target as HTMLInputElement).value; }}
+          oninput={e => {
+            posDraft = (e.target as HTMLInputElement).value;
+          }}
           onfocus={() => onPosFocus(axis)}
           onblur={onPosBlur}
           onkeydown={onPosKeydown}
@@ -189,14 +210,16 @@
 
   <!-- Distance / Decay (point + spot) -->
   {#if hasDistanceDecay(lightDef)}
-    {#each (['distance', 'decay'] as const) as key}
+    {#each ['distance', 'decay'] as const as key}
       <div class="row">
         <span class="tf-label">{key}</span>
         <input
           class="tf-input flex1"
           type="text"
           value={extraDisplayVal(key)}
-          oninput={(e) => { extraDraft = (e.target as HTMLInputElement).value; }}
+          oninput={e => {
+            extraDraft = (e.target as HTMLInputElement).value;
+          }}
           onfocus={() => onExtraFocus(key)}
           onblur={onExtraBlur}
           onkeydown={onExtraKeydown}
@@ -207,14 +230,16 @@
 
   <!-- Angle / Penumbra (spot) -->
   {#if isSpot(lightDef)}
-    {#each (['angle', 'penumbra'] as const) as key}
+    {#each ['angle', 'penumbra'] as const as key}
       <div class="row">
         <span class="tf-label">{key}</span>
         <input
           class="tf-input flex1"
           type="text"
           value={extraDisplayVal(key)}
-          oninput={(e) => { extraDraft = (e.target as HTMLInputElement).value; }}
+          oninput={e => {
+            extraDraft = (e.target as HTMLInputElement).value;
+          }}
           onfocus={() => onExtraFocus(key)}
           onblur={onExtraBlur}
           onkeydown={onExtraKeydown}
@@ -227,11 +252,7 @@
   {#if hasShadow(lightDef)}
     <div class="row">
       <span class="tf-label">shadow</span>
-      <input
-        type="checkbox"
-        checked={(lightDef as any).castShadow ?? false}
-        onchange={onShadowChange}
-      />
+      <input type="checkbox" checked={(lightDef as any).castShadow ?? false} onchange={onShadowChange} />
     </div>
   {/if}
 

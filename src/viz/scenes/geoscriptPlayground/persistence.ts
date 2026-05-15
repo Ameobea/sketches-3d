@@ -2,6 +2,7 @@ import {
   APIError,
   buildLegacyRootTree,
   createCompositionVersion,
+  ROOT_NODE_NAME,
   updateComposition,
   type Composition,
   type CompositionVersionMetadata,
@@ -44,12 +45,29 @@ const DefaultView: CompositionVersionMetadata['view'] = {
 
 const parseTreeOrNull = (raw: string | null): TreeDef | null => {
   if (!raw) return null;
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as TreeDef;
+    parsed = JSON.parse(raw);
   } catch (err) {
     console.warn('Error parsing saved tree:', err);
     return null;
   }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const t = parsed as Partial<TreeDef>;
+  if (typeof t.rootId !== 'string' || t.rootId.length === 0) {
+    console.warn('Discarding saved tree: missing/invalid rootId', t);
+    return null;
+  }
+  if (!t.nodes || typeof t.nodes !== 'object') {
+    console.warn('Discarding saved tree: missing nodes', t);
+    return null;
+  }
+  const rootNode = t.nodes[t.rootId];
+  if (!rootNode || rootNode.name !== ROOT_NODE_NAME) {
+    console.warn('Discarding saved tree: rootId does not resolve to a `_root` node', t);
+    return null;
+  }
+  return parsed as TreeDef;
 };
 
 /** Locally-saved draft `TreeDef`, or null if absent / unparseable. */

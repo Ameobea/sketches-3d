@@ -80,7 +80,10 @@
 
   let userData = $state<GeoscriptPlaygroundUserData | undefined>(untrack(() => providedUserData));
 
-  const { toggleRecording, recordingState } = useRecording(untrack(() => viz), untrack(() => providedUserData));
+  const { toggleRecording, recordingState } = useRecording(
+    untrack(() => viz),
+    untrack(() => providedUserData)
+  );
 
   let layoutOrientation = $state<'vertical' | 'horizontal'>(
     (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal') || 'vertical'
@@ -113,8 +116,7 @@
 
   const treeState = new TreeState({
     initial: untrack(() => initialTree),
-    savedBaseline:
-      untrack(() => userData?.initialComposition?.version.tree) ?? untrack(() => initialTree),
+    savedBaseline: untrack(() => userData?.initialComposition?.version.tree) ?? untrack(() => initialTree),
   });
   treeState.setSelected(untrack(() => initialTree).rootId);
 
@@ -126,8 +128,7 @@
     if (sel && treeState.state.tree.nodes[sel]) return treeState.state.tree.nodes[sel].source;
     return '';
   };
-  // Source edits skip `applyEdit`: CM owns per-node text undo; tree undo handles
-  // only structural ops, transforms, disable, etc.
+  // Source edits stay out of tree undo: CodeMirror owns per-node text history.
   const writeActiveSource = (source: string): void => {
     const sel = treeState.state.selectedId;
     if (sel === GLOBALS_SELECTION_ID) {
@@ -227,6 +228,8 @@
   let gizmoMode = $state<GizmoMode>('translate');
   let gizmoSpace = $state<GizmoSpace>('local');
 
+  let dragStartTransform: Transform3 | null = null;
+
   onMount(() => {
     let cancelled = false;
     (async () => {
@@ -244,12 +247,20 @@
           onDraggingChanged: dragging => {
             orbit.enabled = !dragging;
           },
+          onDragStart: id => {
+            dragStartTransform = treeState.captureTransform(id);
+          },
           onTransformChange: (id, transform) => {
-            treeState.applyEdit(`transform:${id}`, () => treeState.setTransform(id, transform));
+            treeState.setTransform(id, transform);
             isDirty = true;
             runOrFast();
           },
-          onDragEnd: () => {
+          onDragEnd: id => {
+            const after = treeState.captureTransform(id);
+            if (dragStartTransform && after) {
+              treeState.recordTransformChange(id, dragStartTransform, after);
+            }
+            dragStartTransform = null;
             // Catches the final state if the last `onTransformChange` was dropped by `isRunning`.
             runOrFast();
           },
@@ -327,121 +338,12 @@
     return true;
   };
 
-  const isEditorFocused = (): boolean => {
-    const active = document.activeElement;
-    if (!active || !codemirrorContainer) return false;
-    return codemirrorContainer.contains(active);
+  const resolveSelectedNode = (): { sel: string; rootId: string } | null => {
+    const sel = treeState.state.selectedId;
+    const tree = treeState.state.tree;
+    if (sel === null || sel === GLOBALS_SELECTION_ID || !tree.nodes[sel]) return null;
+    return { sel, rootId: tree.rootId };
   };
-
-  // Blender-style hotkeys: G/R/S/L/./Esc/Delete plus `/` solo and F2 rename.
-  onMount(() => {
-    const isTypingTarget = (el: Element | null): boolean => {
-      if (!el) return false;
-      const tag = el.tagName.toLowerCase();
-      if (tag === 'input' || tag === 'textarea') return true;
-      return (el as HTMLElement).isContentEditable;
-    };
-
-    const handler = (e: KeyboardEvent) => {
-      // When the editor is focused, let CM's historyKeymap handle undo/redo
-      // (per-node text history); otherwise route to the tree undo system.
-      const isMod = e.ctrlKey || e.metaKey;
-      const isUndoKey = isMod && !e.altKey && (e.key === 'z' || e.key === 'Z');
-      const isRedoKey =
-        isMod &&
-        !e.altKey &&
-        ((e.shiftKey && (e.key === 'z' || e.key === 'Z')) || (!e.shiftKey && e.key === 'y'));
-      if (isUndoKey || isRedoKey) {
-        if (e.defaultPrevented) return;
-        if (isEditorFocused()) return;
-        if (isRedoKey) runRedo();
-        else runUndo();
-        e.preventDefault();
-        return;
-      }
-
-      if (isTypingTarget(document.activeElement)) return;
-      if (isMod || e.altKey) return;
-
-      const sel = treeState.state.selectedId;
-      const tree = treeState.state.tree;
-      const isNodeSelected = sel !== null && sel !== GLOBALS_SELECTION_ID && !!tree.nodes[sel];
-
-      // Delete is destructive enough that we want it only when the user is
-      // demonstrably in a tree-editing context — focused inside the panel or
-      // with no UI focused at all. Other shortcuts are non-destructive and
-      // applied broadly, but still no-op when nothing's selected.
-      const active = document.activeElement;
-      const inHierarchyPanel = !!(active && (active as HTMLElement).closest?.('[data-hierarchy-panel]'));
-      const treeContextFocused = inHierarchyPanel || !active || active === document.body;
-
-      switch (e.key) {
-        case 'g':
-        case 'G':
-          if (!isNodeSelected) return;
-          setGizmoMode('translate');
-          e.preventDefault();
-          return;
-        case 'r':
-        case 'R':
-          if (!isNodeSelected) return;
-          setGizmoMode('rotate');
-          e.preventDefault();
-          return;
-        case 's':
-        case 'S':
-          if (!isNodeSelected) return;
-          setGizmoMode('scale');
-          e.preventDefault();
-          return;
-        case 'l':
-        case 'L':
-          if (!isNodeSelected) return;
-          toggleGizmoSpace();
-          e.preventDefault();
-          return;
-        case '.':
-          if (isNodeSelected) {
-            focusOnSubtree(viz, renderedObjects, tree, sel);
-            e.preventDefault();
-          }
-          return;
-        case '/':
-          if (isNodeSelected && sel !== tree.rootId) {
-            treeState.setSolo(treeState.state.soloId === sel ? null : sel);
-            e.preventDefault();
-          }
-          return;
-        case 'Escape':
-          if (treeState.state.soloId !== null) {
-            treeState.setSolo(null);
-            e.preventDefault();
-          } else if (isNodeSelected && sel !== tree.rootId) {
-            treeState.setSelected(tree.rootId);
-            e.preventDefault();
-          }
-          return;
-        case 'Delete':
-          if (!treeContextFocused) return;
-          if (isNodeSelected && treeState.canDelete(sel)) {
-            e.preventDefault();
-            treeState.applyEdit(null, () => treeState.deleteNode(sel));
-            isDirty = true;
-          }
-          return;
-        case 'F2':
-          if (isNodeSelected && sel !== tree.rootId) {
-            e.preventDefault();
-            hierarchyPanel?.startRename(sel);
-          }
-          return;
-      }
-    };
-
-    // Capture phase so our Escape claims the event before Viz's pause toggle.
-    window.addEventListener('keydown', handler, true);
-    return () => window.removeEventListener('keydown', handler, true);
-  });
 
   const handleMousedown = (e: MouseEvent) => {
     e.preventDefault();
@@ -1032,9 +934,9 @@
       lastEvalInputsHash = computeEvalInputsHash();
       isRunning = false;
     } catch (e) {
-      // cancel() bumped runGen and is taking over teardown — drop this run's
-      // rejection silently. Anything else is a real bug worth surfacing.
-      if (myGen !== runGen) return;
+      if (myGen !== runGen) {
+        return;
+      }
       console.error('geoscript run failed', e);
       err = `Run failed: ${e instanceof Error ? e.message : String(e)}`;
       isRunning = false;
@@ -1042,13 +944,16 @@
   };
 
   const handleInspectorTransformChange = (id: string, transform: Transform3) => {
-    treeState.applyEdit(`transform:${id}`, () => treeState.setTransform(id, transform));
+    const before = treeState.captureTransform(id);
+    if (!before) return;
+    treeState.setTransform(id, transform);
+    treeState.recordTransformChange(id, before, transform);
     isDirty = true;
     runOrFast();
   };
 
   const handleInspectorDisableToggle = (id: string, disabled: boolean) => {
-    treeState.applyEdit(null, () => treeState.setDisabled(id, disabled));
+    treeState.setDisabled(id, disabled);
     isDirty = true;
   };
 
@@ -1152,10 +1057,6 @@
 
     const serverState = getServerState(userData);
 
-    // Reset the tree to the server-side version. `replaceTree` clears selection/solo
-    // and updates the dirty baseline; the editor-swap effect picks up the new
-    // selection and refreshes the doc, but we set selection explicitly here so we
-    // land on a real node rather than null.
     treeState.replaceTree(serverState.tree);
     treeState.setSelected(serverState.tree.rootId);
 
@@ -1204,7 +1105,14 @@
     setTimeout(() => setView(initialView));
 
     setReplCtx({
-      centerView: () => centerView(viz, renderedObjects),
+      centerView: () => {
+        const ns = resolveSelectedNode();
+        if (ns) {
+          focusOnSubtree(viz, renderedObjects, treeState.state.tree, ns.sel);
+        } else {
+          centerView(viz, renderedObjects);
+        }
+      },
       toggleWireframe,
       toggleWireframeXray,
       toggleNormalMat,
@@ -1216,6 +1124,56 @@
       snapView: axis => snapView(viz, axis),
       orbit: (axis, angle) => orbit(viz, axis, angle),
       toggleRecording,
+      setGizmoMode: mode => {
+        if (!resolveSelectedNode()) return;
+        setGizmoMode(mode);
+      },
+      toggleGizmoSpace: () => {
+        if (!resolveSelectedNode()) return;
+        toggleGizmoSpace();
+      },
+      toggleSelectionSolo: () => {
+        const ns = resolveSelectedNode();
+        if (!ns || ns.sel === ns.rootId) return;
+        treeState.setSolo(treeState.state.soloId === ns.sel ? null : ns.sel);
+      },
+      escapeSelection: e => {
+        if (treeState.state.soloId !== null) {
+          treeState.setSolo(null);
+          e?.preventDefault();
+          return;
+        }
+        const ns = resolveSelectedNode();
+        if (ns && ns.sel !== ns.rootId) {
+          treeState.setSelected(ns.rootId);
+          e?.preventDefault();
+        }
+      },
+      deleteSelected: () => {
+        // Destructive, so require a tree-editing context: hierarchy panel focus
+        // or no UI focus at all.
+        const active = document.activeElement;
+        const inHierarchyPanel = !!(active && (active as HTMLElement).closest?.('[data-hierarchy-panel]'));
+        const treeContextFocused = inHierarchyPanel || !active || active === document.body;
+        if (!treeContextFocused) return;
+        const ns = resolveSelectedNode();
+        if (!ns || !treeState.canDelete(ns.sel)) return;
+        treeState.deleteNode(ns.sel);
+        isDirty = true;
+      },
+      startRenameSelected: () => {
+        const ns = resolveSelectedNode();
+        if (!ns || ns.sel === ns.rootId) return;
+        hierarchyPanel?.startRename(ns.sel);
+      },
+      treeUndo: e => {
+        runUndo();
+        e?.preventDefault();
+      },
+      treeRedo: e => {
+        runRedo();
+        e?.preventDefault();
+      },
     });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);
@@ -1305,27 +1263,25 @@
             selectedId={treeState.state.selectedId}
             soloId={treeState.state.soloId}
             {failedNodeIds}
-            onselect={(id) => treeState.setSelected(id)}
-            onsoloToggle={(id) => treeState.setSolo(treeState.state.soloId === id ? null : id)}
-            onDisableToggle={(id) => {
+            onselect={id => treeState.setSelected(id)}
+            onsoloToggle={id => treeState.setSolo(treeState.state.soloId === id ? null : id)}
+            onDisableToggle={id => {
               const node = treeState.state.tree.nodes[id];
-              if (node) treeState.applyEdit(null, () => treeState.setDisabled(id, !node.disabled));
+              if (node) treeState.setDisabled(id, !node.disabled);
               isDirty = true;
             }}
-            oncreate={(parentId) => {
-              treeState.applyEdit(null, () => {
-                const newId = treeState.createNode({ parentId: parentId ?? undefined });
-                treeState.setSelected(newId);
-              });
+            oncreate={parentId => {
+              const newId = treeState.createNode({ parentId: parentId ?? undefined });
+              treeState.setSelected(newId);
               isDirty = true;
             }}
-            ondelete={(id) => {
-              treeState.applyEdit(null, () => treeState.deleteNode(id));
+            ondelete={id => {
+              treeState.deleteNode(id);
               isDirty = true;
             }}
             onrename={(id, newName) => {
               try {
-                treeState.applyEdit(null, () => treeState.rename(id, newName));
+                treeState.rename(id, newName);
                 isDirty = true;
                 return true;
               } catch (err) {
@@ -1335,13 +1291,13 @@
             }}
             onreparent={(id, newParentId) => {
               try {
-                treeState.applyEdit(null, () => treeState.reparent(id, newParentId));
+                treeState.reparent(id, newParentId);
                 isDirty = true;
               } catch (err) {
                 console.warn('reparent failed:', err);
               }
             }}
-            canDelete={(id) => treeState.canDelete(id)}
+            canDelete={id => treeState.canDelete(id)}
           />
         </div>
       {/if}
@@ -1349,23 +1305,18 @@
         {#if treePanelVisible || breadcrumb}
           <div class="editor-header">
             <span class="breadcrumb">{breadcrumb || '(no selection)'}</span>
-            {#if treeState.state.selectedId
-              && treeState.state.selectedId !== GLOBALS_SELECTION_ID
-              && treeState.state.selectedId !== treeState.state.tree.rootId}
-              <span
-                class="gizmo-indicator"
-                title="gizmo mode (G/R/S) · space (L)"
-              >{gizmoMode[0]}·{gizmoSpace === 'world' ? 'W' : 'L'}</span>
+            {#if treeState.state.selectedId && treeState.state.selectedId !== GLOBALS_SELECTION_ID && treeState.state.selectedId !== treeState.state.tree.rootId}
+              <span class="gizmo-indicator" title="gizmo mode (G/R/S) · space (L)">
+                {gizmoMode[0]}·{gizmoSpace === 'world' ? 'W' : 'L'}
+              </span>
             {/if}
             {#if !treePanelVisible}
               <button
                 class="add-node-btn"
                 title="add a sibling node"
                 onclick={() => {
-                  treeState.applyEdit(null, () => {
-                    const newId = treeState.createNode({ name: 'node_2' });
-                    treeState.setSelected(newId);
-                  });
+                  const newId = treeState.createNode({ name: 'node_2' });
+                  treeState.setSelected(newId);
                   isDirty = true;
                 }}
               >
@@ -1374,14 +1325,12 @@
             {/if}
           </div>
         {/if}
-        {#if treeState.state.selectedId
-          && treeState.state.selectedId !== GLOBALS_SELECTION_ID
-          && (treeState.state.tree.nodes[treeState.state.selectedId]?.children.length ?? 0) > 0}
+        {#if treeState.state.selectedId && treeState.state.selectedId !== GLOBALS_SELECTION_ID && (treeState.state.tree.nodes[treeState.state.selectedId]?.children.length ?? 0) > 0}
           <NodeInspector
             tree={treeState.state.tree}
             parentId={treeState.state.selectedId}
             {meshCounts}
-            onselect={(id) => treeState.setSelected(id)}
+            onselect={id => treeState.setSelected(id)}
             onTransformChange={handleInspectorTransformChange}
             onDisableToggle={handleInspectorDisableToggle}
           />
@@ -1441,10 +1390,7 @@
           {/if}
         {:else}
           {#if userData?.initialComposition}
-            <ReadOnlyCompositionDetails
-              comp={userData.initialComposition.comp}
-              showFork={false}
-            />
+            <ReadOnlyCompositionDetails comp={userData.initialComposition.comp} showFork={false} />
           {/if}
           <div class="not-logged-in" style="border-top: 1px solid #333">
             <span style="color: #ddd">you must be logged in to save/share compositions</span>

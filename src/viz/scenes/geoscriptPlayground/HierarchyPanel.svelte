@@ -144,7 +144,6 @@
     draggedNodeId = null;
     dropTargetId = null;
   };
-
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -153,16 +152,18 @@
     <button
       class="tb-btn"
       title="add child of selected (or of _root if nothing selected)"
-      onclick={() => oncreate(
-        selectedId && selectedId !== GLOBALS_SELECTION_ID ? selectedId : null
-      )}
-    >+ child</button>
+      onclick={() => oncreate(selectedId && selectedId !== GLOBALS_SELECTION_ID ? selectedId : null)}
+    >
+      + child
+    </button>
     <button
       class="tb-btn danger"
       title={isDeletable(selectedId) ? 'delete selected' : "the root node can't be deleted"}
       disabled={!isDeletable(selectedId)}
       onclick={() => isDeletable(selectedId) && ondelete(selectedId!)}
-    >×</button>
+    >
+      ×
+    </button>
   </div>
 
   {#if tree.nodes[tree.rootId]}
@@ -175,7 +176,9 @@
     role="button"
     tabindex="0"
     onclick={() => onselect(GLOBALS_SELECTION_ID)}
-    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselect(GLOBALS_SELECTION_ID); }}
+    onkeydown={e => {
+      if (e.key === 'Enter' || e.key === ' ') onselect(GLOBALS_SELECTION_ID);
+    }}
   >
     <span class="node-id">_globals</span>
     <span class="badge globals-badge">ambient</span>
@@ -201,20 +204,29 @@
     role="button"
     tabindex="0"
     draggable={!isRootNode && renamingId !== node.id}
-    ondragstart={(e) => !isRootNode && handleDragStart(e, node)}
-    ondragover={(e) => handleDragOver(e, node.id)}
+    ondragstart={e => !isRootNode && handleDragStart(e, node)}
+    ondragover={e => handleDragOver(e, node.id)}
     ondragleave={handleDragLeave}
-    ondrop={(e) => handleDrop(e, node.id)}
+    ondrop={e => handleDrop(e, node.id)}
     onclick={() => onselect(node.id)}
-    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselect(node.id); }}
-    ondblclick={() => { if (!isRootNode) beginRename(node); }}
+    onkeydown={e => {
+      if (e.key === 'Enter' || e.key === ' ') onselect(node.id);
+    }}
+    ondblclick={() => {
+      if (!isRootNode) beginRename(node);
+    }}
   >
     {#if hasChildren}
       <button
         class="chevron"
-        onclick={(e) => { e.stopPropagation(); toggleExpanded(node.id); }}
+        onclick={e => {
+          e.stopPropagation();
+          toggleExpanded(node.id);
+        }}
         aria-label={isExpanded(node.id) ? 'collapse' : 'expand'}
-      >{isExpanded(node.id) ? '▾' : '▸'}</button>
+      >
+        {isExpanded(node.id) ? '▾' : '▸'}
+      </button>
     {:else}
       <span class="chevron-spacer"></span>
     {/if}
@@ -226,13 +238,13 @@
         class:invalid={renameError !== null}
         type="text"
         bind:value={renameValue}
-        onkeydown={(e) => {
+        onkeydown={e => {
           e.stopPropagation();
           if (e.key === 'Enter') commitRename();
           else if (e.key === 'Escape') cancelRename();
         }}
         onblur={commitRename}
-        onclick={(e) => e.stopPropagation()}
+        onclick={e => e.stopPropagation()}
         autofocus
       />
     {:else}
@@ -248,14 +260,24 @@
         class="row-btn"
         class:active={isSoloed}
         title={isSoloed ? 'unsolo' : 'solo'}
-        onclick={(e) => { e.stopPropagation(); onsoloToggle(node.id); }}
-      >S</button>
+        onclick={e => {
+          e.stopPropagation();
+          onsoloToggle(node.id);
+        }}
+      >
+        S
+      </button>
       <button
         class="row-btn"
         class:active={isDisabled}
         title={isDisabled ? 'enable' : 'disable'}
-        onclick={(e) => { e.stopPropagation(); onDisableToggle(node.id); }}
-      >D</button>
+        onclick={e => {
+          e.stopPropagation();
+          onDisableToggle(node.id);
+        }}
+      >
+        D
+      </button>
     {/if}
   </div>
   {#if hasChildren && isExpanded(node.id)}

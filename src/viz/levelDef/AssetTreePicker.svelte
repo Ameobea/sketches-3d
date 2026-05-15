@@ -14,13 +14,7 @@
     onselect: (value: string | null) => void;
   }
 
-  let {
-    localItems,
-    libFolders = [],
-    selected,
-    allowNone = false,
-    onselect,
-  }: Props = $props();
+  let { localItems, libFolders = [], selected, allowNone = false, onselect }: Props = $props();
 
   let libExpanded = $state(false);
   // Tracks which folder keys are expanded; key is the folder's path string.
@@ -62,10 +56,15 @@
       class="folder-row"
       role="button"
       tabindex="0"
-      onclick={() => { libExpanded = !libExpanded; }}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') libExpanded = !libExpanded; }}
+      onclick={() => {
+        libExpanded = !libExpanded;
+      }}
+      onkeydown={e => {
+        if (e.key === 'Enter' || e.key === ' ') libExpanded = !libExpanded;
+      }}
     >
-      <span class="arrow">{libExpanded ? '▾' : '▸'}</span><span class="folder-name">asset lib</span>
+      <span class="arrow">{libExpanded ? '▾' : '▸'}</span>
+      <span class="folder-name">asset lib</span>
     </div>
     {#if libExpanded}
       {#each libFolders as folder (folder.name)}
@@ -82,8 +81,12 @@
       aria-selected={selected === null}
       tabindex="0"
       onclick={() => onselect(null)}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselect(null); }}
-    >(none)</div>
+      onkeydown={e => {
+        if (e.key === 'Enter' || e.key === ' ') onselect(null);
+      }}
+    >
+      (none)
+    </div>
   {/if}
 
   {#each localTree.folders as folder (folder.name)}
@@ -98,8 +101,12 @@
       aria-selected={selected === id}
       tabindex="0"
       onclick={() => onselect(id)}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselect(id); }}
-    >{id}</div>
+      onkeydown={e => {
+        if (e.key === 'Enter' || e.key === ' ') onselect(id);
+      }}
+    >
+      {id}
+    </div>
   {/each}
 </div>
 
@@ -110,9 +117,12 @@
     role="button"
     tabindex="0"
     onclick={() => toggleFolder(key)}
-    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleFolder(key); }}
+    onkeydown={e => {
+      if (e.key === 'Enter' || e.key === ' ') toggleFolder(key);
+    }}
   >
-    <span class="arrow">{expandedFolders.has(key) ? '▾' : '▸'}</span><span class="folder-name">{folder.name}</span>
+    <span class="arrow">{expandedFolders.has(key) ? '▾' : '▸'}</span>
+    <span class="folder-name">{folder.name}</span>
   </div>
   {#if expandedFolders.has(key)}
     {#each folder.files as file (file.path)}
@@ -124,8 +134,12 @@
         tabindex="0"
         style:padding-left="{(depth + 1) * 10}px"
         onclick={() => onselect(file.path)}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselect(file.path); }}
-      >{file.name}</div>
+        onkeydown={e => {
+          if (e.key === 'Enter' || e.key === ' ') onselect(file.path);
+        }}
+      >
+        {file.name}
+      </div>
     {/each}
     {#each folder.subfolders as sub (sub.name)}
       {@render folderNode(sub, `${key}/${sub.name}`, depth + 1)}

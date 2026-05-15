@@ -4,7 +4,7 @@ import type { CsgAssetDef, CsgTreeNode, CsgOpNode } from './types';
 import type { LevelObject } from './loadLevelDef';
 import { cloneTree, getNodeAtPath, insertAfterPath, isOpNode, splitPath } from './csgTreeUtils';
 import type { LevelEditor } from './LevelEditor.svelte';
-import { UndoSystem } from './undoSystem';
+import { UndoSystem } from '../util/undoSystem';
 import { round } from './mathUtils';
 import { CsgResolveRuntime } from './csgResolveRuntime';
 import { CsgEditorPanelController } from './csgEditorPanelController.svelte';

@@ -12,14 +12,7 @@
     ondelete: (id: string) => void;
   }
 
-  let {
-    materials,
-    textureKeys,
-    initialSelectedId = null,
-    onchange,
-    onadd,
-    ondelete,
-  }: Props = $props();
+  let { materials, textureKeys, initialSelectedId = null, onchange, onadd, ondelete }: Props = $props();
 
   let selectedId = $state<string | null>(untrack(() => initialSelectedId ?? null));
 
@@ -137,11 +130,9 @@
     <!-- Left column: material list -->
     <div class="mat-list">
       {#each Object.keys(materials) as id (id)}
-        <button
-          class="mat-item"
-          class:active={id === selectedId}
-          onclick={() => (selectedId = id)}
-        >{id}</button>
+        <button class="mat-item" class:active={id === selectedId} onclick={() => (selectedId = id)}>
+          {id}
+        </button>
       {/each}
 
       {#if nameInputMode !== 'none'}
@@ -172,7 +163,7 @@
           <input
             type="color"
             value={hexIntToStr(p.color)}
-            oninput={(e) => {
+            oninput={e => {
               ensureProps().color = strToHexInt((e.target as HTMLInputElement).value);
               emit();
             }}
@@ -181,36 +172,60 @@
 
         <FormField label="roughness">
           <input
-            type="range" min="0" max="1" step="0.01"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
             value={p.roughness ?? 0.5}
-            oninput={(e) => { ensureProps().roughness = Number((e.target as HTMLInputElement).value); emit(); }}
+            oninput={e => {
+              ensureProps().roughness = Number((e.target as HTMLInputElement).value);
+              emit();
+            }}
           />
           <span class="val">{(p.roughness ?? 0.5).toFixed(2)}</span>
         </FormField>
 
         <FormField label="metalness">
           <input
-            type="range" min="0" max="1" step="0.01"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
             value={p.metalness ?? 0}
-            oninput={(e) => { ensureProps().metalness = Number((e.target as HTMLInputElement).value); emit(); }}
+            oninput={e => {
+              ensureProps().metalness = Number((e.target as HTMLInputElement).value);
+              emit();
+            }}
           />
           <span class="val">{(p.metalness ?? 0).toFixed(2)}</span>
         </FormField>
 
         <FormField label="normalScale">
           <input
-            type="range" min="0" max="5" step="0.01"
+            type="range"
+            min="0"
+            max="5"
+            step="0.01"
             value={p.normalScale ?? 1}
-            oninput={(e) => { ensureProps().normalScale = Number((e.target as HTMLInputElement).value); emit(); }}
+            oninput={e => {
+              ensureProps().normalScale = Number((e.target as HTMLInputElement).value);
+              emit();
+            }}
           />
           <span class="val">{(p.normalScale ?? 1).toFixed(2)}</span>
         </FormField>
 
         <FormField label="iridescence">
           <input
-            type="range" min="0" max="1" step="0.01"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
             value={p.iridescence ?? 0}
-            oninput={(e) => { ensureProps().iridescence = Number((e.target as HTMLInputElement).value); emit(); }}
+            oninput={e => {
+              ensureProps().iridescence = Number((e.target as HTMLInputElement).value);
+              emit();
+            }}
           />
           <span class="val">{(p.iridescence ?? 0).toFixed(2)}</span>
         </FormField>
@@ -218,7 +233,7 @@
         <FormField label="map">
           <select
             value={p.map ?? ''}
-            onchange={(e) => setTexture('map', (e.target as HTMLSelectElement).value)}
+            onchange={e => setTexture('map', (e.target as HTMLSelectElement).value)}
           >
             <option value="">(none)</option>
             {#each textureKeys as k}
@@ -230,7 +245,7 @@
         <FormField label="normalMap">
           <select
             value={p.normalMap ?? ''}
-            onchange={(e) => setTexture('normalMap', (e.target as HTMLSelectElement).value)}
+            onchange={e => setTexture('normalMap', (e.target as HTMLSelectElement).value)}
           >
             <option value="">(none)</option>
             {#each textureKeys as k}
@@ -242,7 +257,7 @@
         <FormField label="roughnessMap">
           <select
             value={p.roughnessMap ?? ''}
-            onchange={(e) => setTexture('roughnessMap', (e.target as HTMLSelectElement).value)}
+            onchange={e => setTexture('roughnessMap', (e.target as HTMLSelectElement).value)}
           >
             <option value="">(none)</option>
             {#each textureKeys as k}
@@ -254,7 +269,7 @@
         <FormField label="metalnessMap">
           <select
             value={p.metalnessMap ?? ''}
-            onchange={(e) => setTexture('metalnessMap', (e.target as HTMLSelectElement).value)}
+            onchange={e => setTexture('metalnessMap', (e.target as HTMLSelectElement).value)}
           >
             <option value="">(none)</option>
             {#each textureKeys as k}
@@ -265,18 +280,22 @@
 
         <FormField label="uvScale">
           <input
-            type="number" step="0.1" style="width:80px"
+            type="number"
+            step="0.1"
+            style="width:80px"
             value={p.uvScale?.[0] ?? 1}
-            onchange={(e) => {
+            onchange={e => {
               const pr = ensureProps();
               pr.uvScale = [Number((e.target as HTMLInputElement).value), pr.uvScale?.[1] ?? 1];
               emit();
             }}
           />
           <input
-            type="number" step="0.1" style="width:80px"
+            type="number"
+            step="0.1"
+            style="width:80px"
             value={p.uvScale?.[1] ?? 1}
-            onchange={(e) => {
+            onchange={e => {
               const pr = ensureProps();
               pr.uvScale = [pr.uvScale?.[0] ?? 1, Number((e.target as HTMLInputElement).value)];
               emit();
@@ -291,7 +310,10 @@
           <input
             type="checkbox"
             checked={o.useGeneratedUVs ?? false}
-            onchange={(e) => { ensureOpts().useGeneratedUVs = (e.target as HTMLInputElement).checked; emit(); }}
+            onchange={e => {
+              ensureOpts().useGeneratedUVs = (e.target as HTMLInputElement).checked;
+              emit();
+            }}
           />
         </FormField>
 
@@ -299,14 +321,17 @@
           <input
             type="checkbox"
             checked={!!o.useTriplanarMapping}
-            onchange={(e) => { ensureOpts().useTriplanarMapping = (e.target as HTMLInputElement).checked; emit(); }}
+            onchange={e => {
+              ensureOpts().useTriplanarMapping = (e.target as HTMLInputElement).checked;
+              emit();
+            }}
           />
         </FormField>
 
         <FormField label="tileBreaking">
           <select
             value={tileBreakingType(o)}
-            onchange={(e) => setTileBreaking((e.target as HTMLSelectElement).value)}
+            onchange={e => setTileBreaking((e.target as HTMLSelectElement).value)}
           >
             <option value="">(none)</option>
             <option value="neyret">neyret</option>
@@ -317,9 +342,11 @@
         {#if o.tileBreaking?.type === 'neyret'}
           <FormField label="patchScale">
             <input
-              type="number" step="0.1" style="width:80px"
+              type="number"
+              step="0.1"
+              style="width:80px"
               value={o.tileBreaking.patchScale ?? 1}
-              onchange={(e) => {
+              onchange={e => {
                 const opts = ensureOpts();
                 if (opts.tileBreaking?.type === 'neyret') {
                   opts.tileBreaking.patchScale = Number((e.target as HTMLInputElement).value);
@@ -334,14 +361,17 @@
           <input
             type="checkbox"
             checked={o.randomizeUVOffset ?? false}
-            onchange={(e) => { ensureOpts().randomizeUVOffset = (e.target as HTMLInputElement).checked; emit(); }}
+            onchange={e => {
+              ensureOpts().randomizeUVOffset = (e.target as HTMLInputElement).checked;
+              emit();
+            }}
           />
         </FormField>
 
         <FormField label="materialClass">
           <select
             value={o.materialClass ?? 'default'}
-            onchange={(e) => {
+            onchange={e => {
               ensureOpts().materialClass = (e.target as HTMLSelectElement).value as any;
               emit();
             }}
@@ -364,27 +394,45 @@
           <div class="advanced-content">
             <FormField label="clearcoat">
               <input
-                type="range" min="0" max="1" step="0.01"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
                 value={p.clearcoat ?? 0}
-                oninput={(e) => { ensureProps().clearcoat = Number((e.target as HTMLInputElement).value); emit(); }}
+                oninput={e => {
+                  ensureProps().clearcoat = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
               <span class="val">{(p.clearcoat ?? 0).toFixed(2)}</span>
             </FormField>
 
             <FormField label="clearcoatRoughness">
               <input
-                type="range" min="0" max="1" step="0.01"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
                 value={p.clearcoatRoughness ?? 0}
-                oninput={(e) => { ensureProps().clearcoatRoughness = Number((e.target as HTMLInputElement).value); emit(); }}
+                oninput={e => {
+                  ensureProps().clearcoatRoughness = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
               <span class="val">{(p.clearcoatRoughness ?? 0).toFixed(2)}</span>
             </FormField>
 
             <FormField label="clearcoatNormalScale">
               <input
-                type="range" min="0" max="5" step="0.01"
+                type="range"
+                min="0"
+                max="5"
+                step="0.01"
                 value={p.clearcoatNormalScale ?? 0}
-                oninput={(e) => { ensureProps().clearcoatNormalScale = Number((e.target as HTMLInputElement).value); emit(); }}
+                oninput={e => {
+                  ensureProps().clearcoatNormalScale = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
               <span class="val">{(p.clearcoatNormalScale ?? 0).toFixed(2)}</span>
             </FormField>
@@ -392,7 +440,7 @@
             <FormField label="clearcoatNormalMap">
               <select
                 value={p.clearcoatNormalMap ?? ''}
-                onchange={(e) => setTexture('clearcoatNormalMap', (e.target as HTMLSelectElement).value)}
+                onchange={e => setTexture('clearcoatNormalMap', (e.target as HTMLSelectElement).value)}
               >
                 <option value="">(none)</option>
                 {#each textureKeys as k}
@@ -403,18 +451,30 @@
 
             <FormField label="sheen">
               <input
-                type="range" min="0" max="1" step="0.01"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
                 value={p.sheen ?? 0}
-                oninput={(e) => { ensureProps().sheen = Number((e.target as HTMLInputElement).value); emit(); }}
+                oninput={e => {
+                  ensureProps().sheen = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
               <span class="val">{(p.sheen ?? 0).toFixed(2)}</span>
             </FormField>
 
             <FormField label="sheenRoughness">
               <input
-                type="range" min="0" max="1" step="0.01"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
                 value={p.sheenRoughness ?? 0}
-                oninput={(e) => { ensureProps().sheenRoughness = Number((e.target as HTMLInputElement).value); emit(); }}
+                oninput={e => {
+                  ensureProps().sheenRoughness = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
               <span class="val">{(p.sheenRoughness ?? 0).toFixed(2)}</span>
             </FormField>
@@ -423,7 +483,7 @@
               <input
                 type="color"
                 value={hexIntToStr(p.sheenColor)}
-                oninput={(e) => {
+                oninput={e => {
                   ensureProps().sheenColor = strToHexInt((e.target as HTMLInputElement).value);
                   emit();
                 }}
@@ -432,17 +492,27 @@
 
             <FormField label="fogMultiplier">
               <input
-                type="number" step="0.1" style="width:80px"
+                type="number"
+                step="0.1"
+                style="width:80px"
                 value={p.fogMultiplier ?? 1}
-                onchange={(e) => { ensureProps().fogMultiplier = Number((e.target as HTMLInputElement).value); emit(); }}
+                onchange={e => {
+                  ensureProps().fogMultiplier = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
             </FormField>
 
             <FormField label="ambientLightScale">
               <input
-                type="number" step="0.1" style="width:80px"
+                type="number"
+                step="0.1"
+                style="width:80px"
                 value={p.ambientLightScale ?? 1}
-                onchange={(e) => { ensureProps().ambientLightScale = Number((e.target as HTMLInputElement).value); emit(); }}
+                onchange={e => {
+                  ensureProps().ambientLightScale = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
             </FormField>
 
@@ -450,46 +520,71 @@
               <input
                 type="checkbox"
                 checked={p.mapDisableDistance != null}
-                onchange={(e) => {
+                onchange={e => {
                   ensureProps().mapDisableDistance = (e.target as HTMLInputElement).checked ? 100 : undefined;
                   emit();
                 }}
               />
               {#if p.mapDisableDistance != null}
                 <input
-                  type="number" step="1" style="width:80px"
+                  type="number"
+                  step="1"
+                  style="width:80px"
                   value={p.mapDisableDistance}
-                  onchange={(e) => { ensureProps().mapDisableDistance = Number((e.target as HTMLInputElement).value); emit(); }}
+                  onchange={e => {
+                    ensureProps().mapDisableDistance = Number((e.target as HTMLInputElement).value);
+                    emit();
+                  }}
                 />
               {/if}
             </FormField>
 
             <FormField label="opacity">
               <input
-                type="number" min="0" max="1" step="0.01" style="width:80px"
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                style="width:80px"
                 value={p.opacity ?? 1}
-                onchange={(e) => { ensureProps().opacity = Number((e.target as HTMLInputElement).value); emit(); }}
+                onchange={e => {
+                  ensureProps().opacity = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
             </FormField>
 
             <FormField label="transmission">
               <input
-                type="number" min="0" max="1" step="0.01" style="width:80px"
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                style="width:80px"
                 value={p.transmission ?? 0}
-                onchange={(e) => { ensureProps().transmission = Number((e.target as HTMLInputElement).value); emit(); }}
+                onchange={e => {
+                  ensureProps().transmission = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
             </FormField>
 
             <FormField label="ior">
               <input
-                type="number" min="1" max="2.5" step="0.01" style="width:80px"
+                type="number"
+                min="1"
+                max="2.5"
+                step="0.01"
+                style="width:80px"
                 value={p.ior ?? 1.5}
-                onchange={(e) => { ensureProps().ior = Number((e.target as HTMLInputElement).value); emit(); }}
+                onchange={e => {
+                  ensureProps().ior = Number((e.target as HTMLInputElement).value);
+                  emit();
+                }}
               />
             </FormField>
           </div>
         {/if}
-
       {:else if localDef?.type === 'customBasicShader'}
         <div class="placeholder">customBasicShader — no live editor</div>
       {:else}
@@ -518,7 +613,9 @@
     width: 640px;
     background: #1a1a1a;
     color: #e8e8e8;
-    font: 12px 'IBM Plex Mono', monospace;
+    font:
+      12px 'IBM Plex Mono',
+      monospace;
     border: 1px solid #444;
     z-index: 9999;
     display: flex;
@@ -559,7 +656,9 @@
     border: none;
     border-bottom: 1px solid #333;
     color: #ccc;
-    font: 11px 'IBM Plex Mono', monospace;
+    font:
+      11px 'IBM Plex Mono',
+      monospace;
     padding: 6px 8px;
     text-align: left;
     cursor: pointer;
@@ -594,7 +693,9 @@
     color: #e8e8e8;
     border: 1px solid #555;
     padding: 3px 4px;
-    font: 11px 'IBM Plex Mono', monospace;
+    font:
+      11px 'IBM Plex Mono',
+      monospace;
   }
 
   .confirm-btn,
@@ -612,7 +713,9 @@
     flex: 1;
     overflow-y: auto;
     padding: 10px 12px;
-    font: 12px 'IBM Plex Mono', monospace;
+    font:
+      12px 'IBM Plex Mono',
+      monospace;
   }
 
   .placeholder {
@@ -639,7 +742,9 @@
     border: none;
     color: #888;
     cursor: pointer;
-    font: 11px 'IBM Plex Mono', monospace;
+    font:
+      11px 'IBM Plex Mono',
+      monospace;
     padding: 2px 0;
     margin-bottom: 8px;
   }
@@ -676,7 +781,9 @@
     color: #e8e8e8;
     cursor: pointer;
     padding: 3px 8px;
-    font: 11px 'IBM Plex Mono', monospace;
+    font:
+      11px 'IBM Plex Mono',
+      monospace;
   }
 
   .footer button:disabled {

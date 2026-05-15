@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * Drag projection math for the custom gizmo.  Pure and DOM-free so it's
- * testable under `node:test`.
+ * Drag projection math for the custom gizmo.
  *
  * Conventions: vectors are world-space; mouse positions are NDC (x, y in
  * [-1, 1], +y up); axis / normal arguments are unit length.
@@ -28,13 +27,7 @@ export const ndcToRay = (
   return out;
 };
 
-/**
- * Returns the signed scalar `s` such that `linePoint + s * lineDir` is the
- * closest point on the infinite line to the ray.  `null` when parallel.
- *
- * Derivation: minimise |L(s) - R(t)|² over (s,t) with unit-length `u`, `v`.
- * Determinant is `1 - (u·v)²`, zero iff line ∥ ray.
- */
+/** Parameter `s` for the closest point `linePoint + s * lineDir` to the ray. */
 export const closestPointOnLineParam = (
   linePoint: THREE.Vector3,
   lineDir: THREE.Vector3,
@@ -43,7 +36,9 @@ export const closestPointOnLineParam = (
 ): number | null => {
   const b = lineDir.dot(rayDir);
   const det = 1 - b * b;
-  if (Math.abs(det) < EPS) return null;
+  if (Math.abs(det) < EPS) {
+    return null;
+  }
   const dx = rayOrigin.x - linePoint.x;
   const dy = rayOrigin.y - linePoint.y;
   const dz = rayOrigin.z - linePoint.z;

@@ -134,10 +134,12 @@
   <div
     class="section-label root-drop-target"
     class:drop-over={dropTargetId === 'root'}
-    ondragover={(e) => handleDragOver(e, 'root')}
+    ondragover={e => handleDragOver(e, 'root')}
     ondragleave={handleDragLeave}
-    ondrop={(e) => handleDrop(e, 'root')}
-  >scene</div>
+    ondrop={e => handleDrop(e, 'root')}
+  >
+    scene
+  </div>
   {#each sortNodes(rootNodes) as node (node.id)}
     {@render renderNode(node, 0)}
   {/each}
@@ -151,7 +153,9 @@
         role="button"
         tabindex="0"
         onclick={() => onselectlight(light)}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectlight(light); }}
+        onkeydown={e => {
+          if (e.key === 'Enter' || e.key === ' ') onselectlight(light);
+        }}
       >
         <span class="node-id">{light.id}</span>
         <span class="badge light-type-badge">{light.def.type}</span>
@@ -171,18 +175,25 @@
       role="button"
       tabindex="0"
       draggable={!node.generated}
-      ondragstart={(e) => handleDragStart(e, node)}
-      ondragover={(e) => handleDragOver(e, node)}
+      ondragstart={e => handleDragStart(e, node)}
+      ondragover={e => handleDragOver(e, node)}
       ondragleave={handleDragLeave}
-      ondrop={(e) => handleDrop(e, node)}
-      onclick={(e) => onselectnode(node, e.ctrlKey || e.metaKey)}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey); }}
+      ondrop={e => handleDrop(e, node)}
+      onclick={e => onselectnode(node, e.ctrlKey || e.metaKey)}
+      onkeydown={e => {
+        if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey);
+      }}
     >
       <button
         class="chevron"
-        onclick={(e) => { e.stopPropagation(); toggle(node.id); }}
+        onclick={e => {
+          e.stopPropagation();
+          toggle(node.id);
+        }}
         aria-label={expanded.get(node.id) ? 'collapse' : 'expand'}
-      >{expanded.get(node.id) ? '▾' : '▸'}</button>
+      >
+        {expanded.get(node.id) ? '▾' : '▸'}
+      </button>
       <span class="node-id">{node.id}</span>
       <span class="badge group-badge">{node.children.length}</span>
       {#if isGeneratedDef(node.def)}
@@ -202,9 +213,11 @@
       role="button"
       tabindex="0"
       draggable={!node.generated}
-      ondragstart={(e) => handleDragStart(e, node)}
-      onclick={(e) => onselectnode(node, e.ctrlKey || e.metaKey)}
-      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey); }}
+      ondragstart={e => handleDragStart(e, node)}
+      onclick={e => onselectnode(node, e.ctrlKey || e.metaKey)}
+      onkeydown={e => {
+        if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey);
+      }}
     >
       <span class="node-id">{node.id}</span>
       {#if isGeneratedDef(node.def)}

@@ -9,6 +9,8 @@ export type GizmoSpace = 'world' | 'local';
 
 export interface TransformGizmoCallbacks {
   onDraggingChanged(isDragging: boolean): void;
+  /** Fires once at the start of a drag with the id being edited. */
+  onDragStart?(id: string): void;
   /** Fires every frame during a drag (preview) and once on commit. */
   onTransformChange(id: string, transform: Transform3): void;
   onDragEnd(id: string): void;
@@ -33,7 +35,10 @@ export class TransformGizmo {
     this.getTree = getTree;
     this.callbacks = callbacks;
     this.gizmo = new CustomGizmo(camera, domElement, {
-      onDragStart: () => callbacks.onDraggingChanged(true),
+      onDragStart: () => {
+        callbacks.onDraggingChanged(true);
+        if (this.attachedId) callbacks.onDragStart?.(this.attachedId);
+      },
       onDragEnd: () => {
         callbacks.onDraggingChanged(false);
         if (this.attachedId) callbacks.onDragEnd(this.attachedId);

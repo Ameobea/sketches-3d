@@ -54,10 +54,14 @@
   };
 
   const onIdKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }
-    if (e.key === 'Escape') { idDraft = nodeId ?? ''; (e.target as HTMLInputElement).blur(); }
+    if (e.key === 'Enter') {
+      (e.target as HTMLInputElement).blur();
+    }
+    if (e.key === 'Escape') {
+      idDraft = nodeId ?? '';
+      (e.target as HTMLInputElement).blur();
+    }
   };
-
 </script>
 
 {#if nodeId !== null}
@@ -70,8 +74,14 @@
           class="node-id-input"
           type="text"
           value={idFocused ? idDraft : (nodeId ?? '')}
-          oninput={(e) => { idDraft = (e.target as HTMLInputElement).value; }}
-          onfocus={(e) => { idDraft = nodeId ?? ''; idFocused = true; (e.target as HTMLInputElement).select(); }}
+          oninput={e => {
+            idDraft = (e.target as HTMLInputElement).value;
+          }}
+          onfocus={e => {
+            idDraft = nodeId ?? '';
+            idFocused = true;
+            (e.target as HTMLInputElement).select();
+          }}
           onblur={commitRename}
           onkeydown={onIdKeydown}
         />
@@ -82,12 +92,7 @@
 
     {#if !isGenerated}
       <!-- Transform section -->
-      <TransformInputs
-        {position}
-        {rotation}
-        {scale}
-        onapply={(patch) => onapplytransform(patch)}
-      />
+      <TransformInputs {position} {rotation} {scale} onapply={patch => onapplytransform(patch)} />
 
       <!-- Material assignment (leaf objects) -->
       {#if !isGroup}
@@ -98,7 +103,7 @@
               localItems={materialIds}
               selected={materialId}
               allowNone={true}
-              onselect={(v) => onmaterialchange(v)}
+              onselect={v => onmaterialchange(v)}
             />
           </div>
         </div>

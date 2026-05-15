@@ -212,7 +212,7 @@ export class Viz {
   private clockStopTime = 0;
   private unsubscribePauseStateChange: Unsubscriber | null = null;
   private lastPauseState: boolean | null = null;
-  private customKeyEventMap = new Map<string, () => void>();
+  private customKeyEventMap = new Map<string, (event: KeyboardEvent) => void>();
   public levelLoadHandle: LevelLoadHandle | null = null;
 
   constructor(
@@ -600,22 +600,6 @@ export class Viz {
       (target instanceof HTMLElement &&
         (target.isContentEditable || target.getAttribute('role') === 'textbox'));
 
-    // Escape must be free for inputs/CodeMirror (autocomplete close, etc); skip
-    // the pause toggle when typing or when another handler already claimed it.
-    if (
-      evt.code === 'Escape' &&
-      this.controlState.cameraControlEnabled &&
-      !isInputLikeTarget &&
-      !evt.defaultPrevented
-    ) {
-      this.paused.update(p => !p);
-      if (this.paused.current) {
-        this.maybePauseViz();
-      } else {
-        this.maybeResumeViz();
-      }
-    }
-
     if (!this.inlineConsole?.isOpen) {
       this.keyStates[evt.code] = true;
     }
@@ -626,7 +610,18 @@ export class Viz {
 
     const key = `${evt.ctrlKey ? 'ctrl+' : ''}${evt.shiftKey ? 'shift+' : ''}${evt.key.toLowerCase()}`;
 
-    this.customKeyEventMap.get(key)?.();
+    // Dispatch scene-level shortcuts first so they can preventDefault() to
+    // claim a key — that's how a scene's Escape handler suppresses pause.
+    this.customKeyEventMap.get(key)?.(evt);
+
+    if (evt.code === 'Escape' && this.controlState.cameraControlEnabled && !evt.defaultPrevented) {
+      this.paused.update(p => !p);
+      if (this.paused.current) {
+        this.maybePauseViz();
+      } else {
+        this.maybeResumeViz();
+      }
+    }
   };
 
   private handleKeyUp = (evt: KeyboardEvent) => {
