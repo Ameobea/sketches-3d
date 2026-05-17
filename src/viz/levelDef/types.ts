@@ -186,7 +186,6 @@ export const ReverseColorRampParamsSchema = z.object({
   colorSpace: z.enum(['srgb', 'linear']).optional(),
 });
 
-/** Serializable CustomShaderShaders — GLSL snippet fields as inline strings. */
 export const ShaderShadersJsonSchema = z.object({
   customVertexFragment: z.string().optional(),
   colorShader: z.string().optional(),
@@ -200,6 +199,7 @@ export const ShaderShadersJsonSchema = z.object({
   iridescenceReverseColorRamp: ReverseColorRampParamsSchema.optional(),
   displacementShader: z.string().optional(),
   includeNoiseShadersVertex: z.boolean().optional(),
+  pomHeightShader: z.string().optional(),
 });
 
 /** Serializable CustomShaderProps — texture slots as string keys into textures registry */
@@ -272,6 +272,15 @@ export const ShaderOptionsJsonSchema = z.object({
   randomizeUVOffset: z.boolean().optional(),
   useNoise2: z.boolean().optional(),
   materialClass: z.enum(materialClassNameValues).optional(),
+  pom: z
+    .object({
+      depth: z.number(),
+      steps: z.number().int().min(1),
+      lodFadeStart: z.number().optional(),
+      lodFadeRange: z.number().optional(),
+      boundedSilhouette: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const CustomShaderMatDefSchema = z.object({
@@ -335,8 +344,6 @@ export type CustomBasicShaderMatDef = z.infer<typeof CustomBasicShaderMatDefSche
 export type GeneratedMatDef = z.infer<typeof GeneratedMatDefSchema>;
 export type MaterialDef = z.infer<typeof MaterialDefSchema>;
 
-// ---- Raw (disk-facing) variants that accept hex color strings and shader file refs ----
-
 /** Like ShaderPropsJsonSchema but `color` and `sheenColor` accept "#rrggbb" strings. */
 const ShaderPropsJsonRawSchema = ShaderPropsJsonSchema.extend({
   color: ColorInputSchema.optional(),
@@ -356,6 +363,7 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
   emissiveShader: ShaderGlslFieldRawSchema.optional(),
   iridescenceShader: ShaderGlslFieldRawSchema.optional(),
   displacementShader: ShaderGlslFieldRawSchema.optional(),
+  pomHeightShader: ShaderGlslFieldRawSchema.optional(),
 });
 
 const CustomShaderMatDefRawSchema = CustomShaderMatDefSchema.extend({

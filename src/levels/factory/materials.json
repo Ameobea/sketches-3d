@@ -182,6 +182,36 @@
         "randomizeUVOffset": true
       }
     },
+    "temp_pom_test_mat": {
+      "type": "customShader",
+      "props": {
+        "color": "#b0b0b0",
+        "roughness": 0.63,
+        "metalness": 0.75,
+        "normalScale": 0.74,
+        "uvScale": [0.2, 0.2],
+        "map": "horizontal_metal_1_diffuse",
+        "normalMap": "horizontal_metal_1_normal",
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50
+      },
+      "options": {
+        "useTriplanarMapping": true,
+        "useGeneratedUVs": false,
+        "useWorldSpaceUVs": true,
+        "randomizeUVOffset": true,
+        "pom": {
+          "depth": 0.15,
+          "steps": 24,
+          "lodFadeStart": 400,
+          "lodFadeRange": 100,
+          "boundedSilhouette": true
+        }
+      },
+      "shaders": {
+        "pomHeightShader": "float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {float cell = fract(pos.y * 3.0);return 1.0 - smoothstep(0.08, 0.42, abs(cell - 0.5));}"
+      }
+    },
     "rusty_metal_decoration": {
       "type": "customShader",
       "props": {

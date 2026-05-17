@@ -3,14 +3,19 @@
 A single-pass procedural sky / horizon / ground renderer. One full-screen
 fragment shader produces both the tone-mapped sky color and the
 emissive-bypass content (stars, building windows, ground paint) in one MRT
-draw, slotted into the engine's postprocessing pipeline between the depth
-prepass and the main scene render.
+draw, slotted into the engine's postprocessing pipeline immediately after
+the main scene render.
 
 ## Pipeline placement
 
 ```
-DepthPass → SkyStackPass → MainRenderPass → ... → EmissiveBypassPass → ... → FinalPass
+DepthPass → MainRenderPass → SkyStackPass → ... → EmissiveBypassPass → ... → FinalPass
 ```
+
+Running after `MainRenderPass` matters: as the first non-`RenderPass` in the
+loop, it triggers `StableDepthEffectComposer`'s depth blit immediately before
+this pass — capturing depth from materials that opt out of the prepass (e.g.
+bounded-silhouette POM) so `discardIfOccluded()` doesn't paint sky over them.
 
 `SkyStackPass` (see `SkyStackPass.ts`) owns:
 
@@ -22,10 +27,10 @@ DepthPass → SkyStackPass → MainRenderPass → ... → EmissiveBypassPass →
 
 Per frame: rebind `skyMRT`'s color attachments to `inputBuffer.texture` and
 `emissiveRT.texture`'s GL textures (cache-skipped when unchanged); clear
-`skyMRT` (clears through the hijacked attachments → clears `inputBuffer.color`
-and `emissiveRT.color`); render the unified shader — its two fragment outputs
-(`oColor`, `oEmissive`) land **directly** in `inputBuffer` and `emissiveRT`
-with zero intermediate blits.
+attachment 1 only (attachment 0 holds the scene color `MainRenderPass` just
+wrote and must be preserved through the sky shader's discards); render the
+unified shader — its two fragment outputs land **directly** in `inputBuffer`
+and `emissiveRT` with zero intermediate blits.
 
 The hijack-attachment trick is load-bearing for smooth frames on TBDR GPUs
 (Apple Silicon) alongside screen-space effects like n8ao: per-frame

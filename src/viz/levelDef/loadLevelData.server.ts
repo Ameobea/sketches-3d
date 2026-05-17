@@ -18,7 +18,8 @@ const prodGeneratorLoaders = import.meta.glob<{ default: GeneratorFn }>('/src/le
 
 const loadGeneratorModule = async (filePath: string): Promise<GeneratorFn> => {
   if (dev) {
-    // In dev, use the Vite dev server's ssrLoadModule (set on globalThis by generatorsPlugin).
+    // In dev, use the Vite dev server's ssrLoadModule.
+    //
     // Invalidate first so edits are always reflected without restart.
     const server = (globalThis as Record<string, any>).__viteDevServer;
     if (!server) {
@@ -32,7 +33,6 @@ const loadGeneratorModule = async (filePath: string): Promise<GeneratorFn> => {
     return (mod.default ?? mod) as GeneratorFn;
   }
 
-  // Production: use pre-compiled chunks from import.meta.glob.
   const key = filePath.replace(process.cwd(), '');
   const loader = prodGeneratorLoaders[key];
   if (!loader) {
@@ -74,16 +74,10 @@ const markGeneratedNode = (node: ObjectDef | ObjectGroupDef): ObjectDef | Object
  *
  * Intended for use in SvelteKit `+page.server.ts` load functions so the level
  * definition is baked into the page response rather than fetched separately.
- *
- * In development, reads fresh from disk on every request — supporting the
- * level editor workflow of edit → reload → see changes.
  */
 export const loadLevelData = async (name: string): Promise<LevelDef> => {
   const { levelDir, def: json } = readLevelSourceFiles(name, { syncSchemas: dev });
 
-  // Run generator modules for any anchor groups that declare a `generator` field.
-  // The generator's output becomes the group's children; the group's own transform
-  // is fully editable in the level editor.
   const generators = json.generators as
     | Record<string, { file: string; params?: Record<string, unknown> }>
     | undefined;
@@ -118,7 +112,6 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           });
           groupNode.children = result.objects.map(markGeneratedNode);
         }
-        // Recurse into children (after potential generator fill) to handle nested anchors.
         await runGeneratorsInTree(groupNode.children);
       }
     };
@@ -126,21 +119,14 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     await runGeneratorsInTree(json.objects ?? []);
   }
 
-  // Normalize hex color strings (e.g. "#rrggbb") to integers before Zod validation.
-  // LevelDefRawSchema documents that colors may be strings, but LevelDefSchema (and all
-  // downstream runtime code) expects plain integers, so we coerce here.
   const normalized = normalizeRawDefColors(json);
 
-  // Parse with the raw schema, which accepts both `code` and `file` geoscript assets.
   const rawResult = LevelDefRawSchema.safeParse(normalized);
   if (!rawResult.success) {
     const msg = rawResult.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`[loadLevelData] Invalid level def "${name}":\n${msg}`);
   }
 
-  // Inline any `file` geoscript assets: read the file and substitute `code`.
-  // Paths starting with `__ASSETS__/` are resolved relative to getAssetsDir();
-  // all other paths are relative to the level directory.
   const resolvedAssets = Object.fromEntries(
     Object.entries(rawResult.data.assets).map(([assetId, assetDef]) => {
       if (assetDef.type === 'geoscript' && 'file' in assetDef) {
@@ -148,8 +134,6 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
           : join(levelDir, assetDef.file);
         const code = readFileSync(codePath, 'utf-8');
-        // Spread every other field through (e.g. `colliderShape`, `_meta`,
-        // `includePrelude`) so asset-level metadata survives the file→code inlining.
         const { file: _file, ...rest } = assetDef;
         return [assetId, { ...rest, type: 'geoscript' as const, code }];
       }
@@ -157,7 +141,6 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     })
   );
 
-  // Inline any `{ file }` GLSL shader references in material shaders.
   const SHADER_GLSL_FIELDS = [
     'customVertexFragment',
     'colorShader',
@@ -167,6 +150,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     'emissiveShader',
     'iridescenceShader',
     'displacementShader',
+    'pomHeightShader',
   ] as const;
 
   const resolveGlslPath = (file: string): string =>
@@ -192,7 +176,6 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
 
   const inlinedDef = { ...rawResult.data, assets: resolvedAssets, materials: resolvedMaterials };
 
-  // Validate the fully-inlined def (includes cross-reference checks).
   const result = LevelDefSchema.safeParse(inlinedDef);
   if (!result.success) {
     const msg = result.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');

@@ -145,10 +145,11 @@ export const buildPomMainBlock = (pomBounded: boolean): string => /* glsl */ `
       vec2 _pomUv = gl_FragCoord.xy / pomResolution;
       float _pomExitDist = texture(pomBackDepth, _pomUv).r;
       float _pomChord = _pomExitDist - distance(vWorldPos, cameraPosition);
-      // No valid bound for us: empty texel (exit<=0), or the recorded exit is
-      // nearer than our own front surface (chord<=0 => it belongs to a nearer
-      // POM mesh — combined-buffer aliasing / pool overflow).
-      bool _pomNoBound = (_pomExitDist <= 0.0) || (_pomChord <= 0.0);
+      // No valid bound: empty texel; chord<=0 means a nearer POM mesh stole
+      // this texel (combined-buffer aliasing); or we're a back face (camera
+      // inside the hull during occlusion-xray DoubleSide) where exit and
+      // front converge and the chord is ULP noise — fall back to Phase 1.
+      bool _pomNoBound = (_pomExitDist <= 0.0) || (_pomChord <= 0.0) || !gl_FrontFacing;
       float _pomMaxLen = _pomNoBound ? 1e9 : _pomChord;
       bool _pomCarved = false;
       vec3 _pomHit = pomMarchBounded(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);

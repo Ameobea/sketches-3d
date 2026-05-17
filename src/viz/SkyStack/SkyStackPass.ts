@@ -1,7 +1,7 @@
 import { Pass } from 'postprocessing';
 import * as THREE from 'three';
 
-const BLACK = new THREE.Color(0, 0, 0);
+const EMISSIVE_CLEAR = new Float32Array([0, 0, 0, 0]);
 
 /**
  * MRT-owning pass that runs the unified SkyStack fragment shader and writes
@@ -18,15 +18,16 @@ const BLACK = new THREE.Color(0, 0, 0);
  *   1. Rebind skyMRT's COLOR_ATTACHMENT0/1 to inputBuffer.texture and
  *      emissiveRT.texture's GL textures (only when those textures change —
  *      first run, resize, or RT reallocation).
- *   2. Clear skyMRT (clears through the hijacked attachments → clears
- *      inputBuffer.color and emissiveRT.color).
- *   3. Render the fullscreen triangle with the unified material — fragment
- *      outputs go directly into inputBuffer and emissiveRT.
+ *   2. Clear only attachment 1 — attachment 0 holds the scene color that
+ *      MainRenderPass just wrote and `discardIfOccluded()` will preserve it
+ *      at geometry pixels.
+ *   3. Render the fullscreen triangle; fragment outputs land directly in
+ *      inputBuffer and emissiveRT.
  *
- * Placement: between DepthPass and MainRenderPass. As the first non-RenderPass
- * in the composer loop, inserting this pass triggers the StableDepth blit
- * right before it runs — so `stableDepthTarget` holds the freshly-rendered
- * scene depth from DepthPass (consumed by the sky shader via `uSceneDepth`).
+ * Placement: AFTER MainRenderPass, so the StableDepth blit (triggered by
+ * the first non-RenderPass) captures the full scene depth including
+ * materials with `skipDepthPrepass` like bounded POM — otherwise the sky
+ * would draw over those pixels.
  *
  * `emissiveRT` depth: this pass constructs `emissiveRT` without a depth
  * attachment, and a wiring step in `defaultPostprocessing` attaches
@@ -142,19 +143,14 @@ export class SkyStackPass extends Pass {
       this.boundAttachment1 = emGLTex;
     }
 
-    // Clear both attachments (→ clears inputBuffer.color and emissiveRT.color
-    // since those are what's attached). Sky-occluded fragments will discard
-    // and leave the cleared value; MainRenderPass writes scene color on top.
+    // Clear only attachment 1; attachment 0 holds MainRenderPass's scene
+    // color which discarded sky fragments must leave intact.
     renderer.setRenderTarget(this.skyMRT);
-    renderer.setClearColor(BLACK, 0);
-    renderer.clearColor();
+    gl.clearBufferfv(gl.COLOR, 1, EMISSIVE_CLEAR);
 
-    // Render fragment outputs go straight into the consumer RT textures.
     renderer.render(this.fsScene, this.fsCamera);
 
-    // Intentionally NOT calling setRenderTarget(null) here — the next pass
-    // (MainRenderPass) immediately rebinds inputBuffer, so a default-FBO
-    // bind in between is wasted work.
+    // Skip setRenderTarget(null) — the next pass rebinds its own target.
   }
 
   override dispose(): void {

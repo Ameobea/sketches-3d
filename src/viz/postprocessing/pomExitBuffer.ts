@@ -50,12 +50,17 @@ const buildBackFaceDistMaterial = () =>
     depthTest: true,
     depthWrite: true,
     uniforms: { uCamPos: { value: new THREE.Vector3() } },
+    // `gl_Position` must match Three.js's `project_vertex` association order
+    // exactly — different orderings drift at ULP scale and z-fight the main pass.
     vertexShader: /* glsl */ `
       varying vec3 vWP;
       void main() {
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWP = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp;
+        vec4 localPos = vec4(position, 1.0);
+        #ifdef USE_INSTANCING
+          localPos = instanceMatrix * localPos;
+        #endif
+        vWP = (modelMatrix * localPos).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * localPos;
       }
     `,
     fragmentShader: /* glsl */ `
@@ -105,7 +110,6 @@ export class PomExitBufferManager {
   private readonly corner = new THREE.Vector3();
   private readonly scratchColor = new THREE.Color();
 
-  private readonly beforeRenderCb: () => void;
   private readonly resizeCb: () => void;
   private disposed = false;
 
@@ -163,18 +167,9 @@ export class PomExitBufferManager {
     }
     this.syncResolutionUniform();
 
-    this.beforeRenderCb = () => this.update();
     this.resizeCb = () => this.onResize();
-    // Priority 2: after scene before-render cbs (matrix/animation updates) so
-    // the exit prerender sees the final transforms, still before the composite.
-    viz.registerBeforeRenderCb(this.beforeRenderCb, 2);
     viz.registerResizeCb(this.resizeCb);
     viz.registerDestroyedCb(() => this.dispose());
-
-    // Created from the one-shot detector during the first frame's before-render
-    // phase (before the composite). Run one prerender now so that very first
-    // main pass already samples correct exit buffers — no Phase-1 transient.
-    this.update();
   }
 
   /**
@@ -252,7 +247,13 @@ export class PomExitBufferManager {
     return { minX, minY, maxX, maxY };
   }
 
-  private update(): void {
+  /**
+   * Render the back-face exit buffers. Must be called immediately before
+   * `effectComposer.render` so `viz.camera` matches the matrix the main pass
+   * uses — a before-render cb would see last-frame's camera and shimmer the
+   * silhouettes by one frame.
+   */
+  update(): void {
     if (this.disposed) {
       return;
     }
@@ -389,7 +390,6 @@ export class PomExitBufferManager {
       return;
     }
     this.disposed = true;
-    this.viz.unregisterBeforeRenderCb(this.beforeRenderCb);
     for (const rt of this.pool) {
       rt.dispose();
     }

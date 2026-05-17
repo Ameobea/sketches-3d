@@ -51,6 +51,7 @@ export interface PostprocessingController {
   setFogEnabled(enabled: boolean): void;
   readonly hasFinalPass: boolean;
   readonly emissiveBypassPass: { addBypassMesh(mesh: THREE.Mesh): void } | null;
+  rescanPomMeshes(): void;
 }
 
 export interface FpPlayerStateGetters {

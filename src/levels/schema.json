@@ -388,6 +388,33 @@
                       "instakill",
                       "metalplate"
                     ]
+                  },
+                  "pom": {
+                    "type": "object",
+                    "properties": {
+                      "depth": {
+                        "type": "number"
+                      },
+                      "steps": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "lodFadeStart": {
+                        "type": "number"
+                      },
+                      "lodFadeRange": {
+                        "type": "number"
+                      },
+                      "boundedSilhouette": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "depth",
+                      "steps"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -756,6 +783,25 @@
                   },
                   "includeNoiseShadersVertex": {
                     "type": "boolean"
+                  },
+                  "pomHeightShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": false

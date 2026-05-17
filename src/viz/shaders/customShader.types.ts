@@ -27,11 +27,6 @@ export enum MaterialClass {
   MetalPlate,
 }
 
-/**
- * Maps each MaterialClass variant to its canonical string name.
- * `satisfies Record<MaterialClass, string>` ensures the map stays exhaustive —
- * adding a new enum variant without updating this object is a compile error.
- */
 export const MATERIAL_CLASS_NAMES = {
   [MaterialClass.Default]: 'default',
   [MaterialClass.Rock]: 'rock',
@@ -218,58 +213,30 @@ export interface CustomShaderOptions {
   useWorldSpaceUVs?: boolean;
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
   /**
-   * Enables procedural Parallax Occlusion Mapping (POM): the fragment shader
-   * raymarches a procedural height field (supplied via `shaders.pomHeightShader`)
-   * in world space and shades the displaced hit point, giving the illusion of
-   * carved micro-geometry without extra tesselation.
+   * Enables procedural Parallax Occlusion Mapping.  The fragment shader
+   * raymarches a procedural height field supplied via `shaders.pomHeightShader`
+   * and shades the displaced hit point, giving the illusion of carved or inset
+   * geometry without extra tesselation.
    *
-   * MVP constraints (validated at build time):
-   *   - requires `shaders.pomHeightShader`
-   *   - requires `useTriplanarMapping` in world space (the displaced hit
-   *     position is fed back through the triplanar samplers 1:1)
-   *   - cannot be combined with `normalShader` (POM owns the normal)
-   *
-   * Heightfield-only by default (ray clamps to the slab floor, silhouettes
-   * unchanged). Opt into subtractive silhouette carving via `boundedSilhouette`
-   * below. Technique, prior-art citations, limitations and authoring guidance:
-   * `pom-known-limitations-and-authoring-guide.md` (repo root); formulation
-   * rationale in `pom-implementation-plan.md` Appendix A.
+   * - requires `shaders.pomHeightShader`
+   * - requires `useTriplanarMapping` in world space (the displaced hit position is fed back through the triplanar samplers 1:1)
    */
   pom?: {
     /** Max carve depth in world units. Also scales the analytic normal. */
     depth: number;
-    /** Linear search step count. Default 24. Becomes a shader `#define`. */
+    /** Linear search step count. Default 24. */
     steps?: number;
     /**
      * Distance (world units) at which POM begins fading to the flat base
-     * surface, over `lodFadeRange` units, to suppress sub-pixel aliasing
-     * (brief §4). Defaults are derived from `depth` if omitted.
+     * surface, over `lodFadeRange` units, to suppress sub-pixel aliasing.
+     * Defaults are derived from `depth` if omitted.
      */
     lodFadeStart?: number;
     lodFadeRange?: number;
     /**
-     * **Opt-in, prototype.** Enables subtractive *silhouette* carving for
-     * **convex** meshes via the back-face-depth-bounded relief formulation
-     * (see `pom-silhouette-research-direction.md` / `pom-implementation-plan.md`
-     * Appendix A).
+     * Enables subtractive silhouette carving via the back-face-depth-bounded relief formulation.
      *
-     * The Phase-1 floored core is reused byte-identical for the interior;
-     * additionally the raymarch is bounded by the mesh's own nearest back face
-     * (the convex exit). Where the local chord is thinner than the carve depth
-     * (only near the silhouette) the ray exits the body before reaching the
-     * carved floor and the fragment is `discard`ed, so the silhouette recedes
-     * by exactly the groove depth — never expands (subtractive only).
-     *
-     * The caller MUST assert the mesh is convex and MUST supply the per-pixel
-     * back-face exit distance via the `pomBackDepth` sampler uniform: a render
-     * target holding the **Euclidean distance from the camera to the nearest
-     * back face**, rendered with a front-face-culled depth-style pass of the
-     * POM meshes (R channel, large sentinel where there is no back face).
-     *
-     * Concave/instanced/skinned/transparent meshes are out of scope and will
-     * show artifacts. `discard` reintroduces the depth-prepass-bypass /
-     * explicit-LOD-triplanar concerns from the phased plan §3.6/§4 — not yet
-     * addressed at the prototype stage.
+     * Only works well on convex meshes.
      */
     boundedSilhouette?: boolean;
   };
@@ -281,20 +248,18 @@ export interface CustomShaderOptions {
   /**
    * If true, the soft camera occlusion dither effect will NOT be applied to this material.
    * Use this for meshes that should always be fully visible (e.g. the player character).
-   * Also sets `userData.occlusionExclude = true` on the built material so the depth pre-pass
-   * can identify and skip these objects.
    */
   noOcclusion?: boolean;
   /**
    * Enables retro-style vertex lighting (Gouraud shading). Lighting is evaluated per-vertex in
    * the vertex shader and interpolated across fragments, giving a classic faceted/low-poly look.
    *
-   * Shadow maps are still sampled per-fragment for crisp shadow edges (hybrid approach).
+   * Shadow maps are still sampled per-fragment for crisp shadow edges.
    *
    * Incompatible with clearcoat, iridescence, sheen, and transmission — those are PBR fragment
    * effects that have no vertex-lighting equivalent.
    *
-   * Normal maps have no effect on lighting when this is enabled (lighting uses geometric normals).
+   * Normal maps have no effect on lighting when this is enabled.
    */
   vertexLighting?: boolean;
   /**

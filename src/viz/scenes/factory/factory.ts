@@ -133,6 +133,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     emissiveBypass: true,
     skyBypassTonemap: false,
     skyStack,
+    pomExitBuffers: true,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
         ? { intensity: 6.0, levels: 3, luminanceThreshold: 0.02, radius: 0.45, luminanceSoftKnee: 0.02 }

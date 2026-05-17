@@ -1025,6 +1025,7 @@ export const loadLevelDef = (
         );
       }
     }
+    viz.postprocessingController?.rescanPomMeshes();
     return meshes;
   });
 

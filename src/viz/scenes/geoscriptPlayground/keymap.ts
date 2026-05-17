@@ -14,7 +14,7 @@ export const buildGeotoyKeymap = (getCtx?: () => ReplCtx | null | undefined): Ke
   { key: 'shift+w', action: () => getCtx?.()?.toggleWireframeXray(), label: 'toggle wireframe x-ray' },
   { key: 'n', action: () => getCtx?.()?.toggleNormalMat(), label: 'toggle normal material' },
   { key: 'ctrl+enter', action: () => getCtx?.()?.run(), label: 'run code' },
-  { key: 'ctrl+l', action: () => getCtx?.()?.toggleLightHelpers(), label: 'toggle light helpers' },
+  { key: 'shift+l', action: () => getCtx?.()?.toggleLightHelpers(), label: 'toggle light helpers' },
   { key: 'a', action: () => getCtx?.()?.toggleAxesHelper(), label: 'toggle axes helper' },
 
   { key: '.', action: () => getCtx?.()?.centerView(), label: 'center view on selection', group: 'camera' },

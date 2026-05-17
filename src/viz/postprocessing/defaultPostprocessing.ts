@@ -36,6 +36,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
   private readonly finalPass: FinalPass | null;
   private readonly renderFrameCb: (timeDiffSeconds: number) => void;
+  private pomRescanCb: (() => void) | null = null;
 
   constructor(
     effectComposer: StableDepthEffectComposer,
@@ -85,12 +86,6 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     this.emissiveBypassPass?.addBypassMesh(mesh);
   }
 
-  /**
-   * Scan `scene` for any meshes whose material has `userData.emissiveBypass` set
-   * and register them with the emissive bypass pass. Safe to call multiple times —
-   * already-registered meshes are skipped. Use this when bypass meshes are added
-   * to the scene after the initial first-frame auto-scan (e.g. deferred async setup).
-   */
   rescanBypassMeshes(scene: THREE.Scene): void {
     if (!this.emissiveBypassPass) return;
     scene.traverse(obj => {
@@ -100,6 +95,14 @@ export class PostprocessingPipelineController implements PostprocessingControlle
         this.emissiveBypassPass!.addBypassMesh(obj);
       }
     });
+  }
+
+  setPomRescanCb(cb: () => void): void {
+    this.pomRescanCb = cb;
+  }
+
+  rescanPomMeshes(): void {
+    this.pomRescanCb?.();
   }
 
   setEmissiveBloom({
@@ -160,8 +163,8 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    */
   skyBypassTonemap?: boolean;
   /**
-   * Unified sky sub-pipeline. When provided, its pass is inserted between the depth
-   * pre-pass and the main render pass; it owns the emissive RT that is then shared
+   * Unified sky sub-pipeline. When provided, its pass is inserted immediately
+   * after the main render pass; it owns the emissive RT that is then shared
    * with the emissive bypass pass (bypass meshes render on top of sky content).
    * Requires `useDepthPrePass: true` and `emissiveBypass: true`.
    */
@@ -242,7 +245,7 @@ export const configureDefaultPostprocessingPipeline = ({
       // EmissiveBypassPass depth-tests bypass meshes without a per-frame depth blit.
       skyStack.pass.setEmissiveDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
       viz.scene.background = null;
-      effectComposer.addPass(skyStack.pass, 1);
+      effectComposer.addPass(skyStack.pass);
     }
   } else {
     renderPass = new RenderPass(viz.scene, viz.camera);
@@ -325,15 +328,16 @@ export const configureDefaultPostprocessingPipeline = ({
     });
   }
 
+  let pomManager: PomExitBufferManager | null = null;
+  let pomRescanCb: (() => void) | null = null;
   if (pomExitBuffers) {
-    // One-shot deferred detector. Runs once on the first frame (by then the
-    // scene is fully populated, like the emissive-bypass auto-scan above),
-    // instantiates the manager only if a bounded-POM mesh exists, then removes
-    // itself. Non-POM scenes that enable the flag pay exactly one scene scan
-    // and nothing thereafter; scenes that leave it off pay nothing at all.
+    pomRescanCb = () => {
+      if (pomManager) return;
+      pomManager = PomExitBufferManager.tryCreate(viz);
+    };
     const detect = () => {
       viz.unregisterBeforeRenderCb(detect);
-      PomExitBufferManager.tryCreate(viz);
+      pomRescanCb!();
     };
     viz.registerBeforeRenderCb(detect);
   }
@@ -377,6 +381,12 @@ export const configureDefaultPostprocessingPipeline = ({
 
   viz.renderer.shadowMap.autoUpdate = autoUpdateShadowMap;
   viz.renderer.shadowMap.needsUpdate = autoUpdateShadowMap;
+  // POM exit-buffer prerender must run here, not in a before-render cb — see
+  // `PomExitBufferManager.update` for why.
+  const composerRender = (timeDiffSeconds: number) => {
+    pomManager?.update();
+    effectComposer.render(timeDiffSeconds);
+  };
   const renderFrame = (timeDiffSeconds: number) => {
     if (!didRenderShadowMap && viz.renderer.shadowMap.enabled && !autoUpdateShadowMap && sceneGeomReady) {
       didRenderShadowMap = true;
@@ -388,7 +398,7 @@ export const configureDefaultPostprocessingPipeline = ({
         obj.shadow.camera.updateProjectionMatrix();
         obj.shadow.needsUpdate = true;
       });
-      effectComposer.render(timeDiffSeconds);
+      composerRender(timeDiffSeconds);
       viz.scene.traverse(obj => {
         if (!(obj instanceof THREE.DirectionalLight)) {
           return;
@@ -399,7 +409,7 @@ export const configureDefaultPostprocessingPipeline = ({
       viz.renderer.shadowMap.autoUpdate = false;
     }
 
-    effectComposer.render(timeDiffSeconds);
+    composerRender(timeDiffSeconds);
   };
   viz.setRenderOverride(renderFrame);
 
@@ -413,6 +423,9 @@ export const configureDefaultPostprocessingPipeline = ({
     emissiveBlurPass,
     finalPass
   );
+  if (pomRescanCb) {
+    controller.setPomRescanCb(pomRescanCb);
+  }
   viz.postprocessingController = controller;
   viz.registerResizeCb(() => {
     const logicalSize = viz.renderer.getSize(new THREE.Vector2());

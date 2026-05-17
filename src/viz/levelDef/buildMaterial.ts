@@ -17,7 +17,6 @@ const SIDE_MAP: Record<NonNullable<ShaderPropsJson['side']>, THREE.Side> = {
   double: THREE.DoubleSide,
 };
 
-// Reverse of MATERIAL_CLASS_NAMES: string name → MaterialClass integer
 const MATERIAL_CLASS_MAP = Object.fromEntries(
   (Object.entries(MATERIAL_CLASS_NAMES) as [string, MaterialClassName][]).map(([k, v]) => [
     v,
@@ -103,6 +102,7 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
   if (optionsJson.useNoise2 !== undefined) options.useNoise2 = optionsJson.useNoise2;
   if (optionsJson.materialClass !== undefined)
     options.materialClass = MATERIAL_CLASS_MAP[optionsJson.materialClass];
+  if (optionsJson.pom !== undefined) options.pom = optionsJson.pom;
 
   return options;
 };
@@ -127,6 +127,7 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
     shaders.displacementShader = shadersJson.displacementShader;
   if (shadersJson.includeNoiseShadersVertex !== undefined)
     shaders.includeNoiseShadersVertex = shadersJson.includeNoiseShadersVertex;
+  if (shadersJson.pomHeightShader !== undefined) shaders.pomHeightShader = shadersJson.pomHeightShader;
   return shaders;
 };
 
