@@ -143,6 +143,20 @@ export interface CustomShaderShaders {
   iridescenceShader?: string;
   iridescenceReverseColorRamp?: ReverseColorRampParams;
   displacementShader?: string;
+  /**
+   * GLSL defining `float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds)`,
+   * the procedural height field for Parallax Occlusion Mapping.
+   *
+   * Returns the carved depth in `[0, 1]` where `0` = the base (undisplaced)
+   * surface and `1` = a full `pom.depth` units carved inward along `-normal`.
+   * `pos` is the world-space sample position; `normal` is the base surface
+   * normal. The marcher owns the world-unit depth scaling so this function
+   * stays dimensionless and reusable.
+   *
+   * Requires `opts.pom` to be set, and `useTriplanarMapping` in world space.
+   * Mutually exclusive with `normalShader` (both fully define `normal`).
+   */
+  pomHeightShader?: string;
   includeNoiseShadersVertex?: boolean;
 }
 
@@ -155,13 +169,6 @@ export interface CustomShaderOptions {
    */
   useNoise2?: boolean;
   enableFog?: boolean;
-  /**
-   * If set, a normal map will be generated based on derivatives in magnitude of generated diffuse colors.
-   *
-   * Note that this is a pretty broken implementation right now. There are huge aliasing issues and it looks
-   * very bad on surfaces that have a high angle.
-   */
-  useComputedNormalMap?: boolean;
   /**
    * If set, the provided `map` will be treated as a combined grayscale diffuse + normal map. The diffuse
    * component will be read from the R channel and the normal map will be read from the GBA channels.
@@ -210,6 +217,62 @@ export interface CustomShaderOptions {
    */
   useWorldSpaceUVs?: boolean;
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
+  /**
+   * Enables procedural Parallax Occlusion Mapping (POM): the fragment shader
+   * raymarches a procedural height field (supplied via `shaders.pomHeightShader`)
+   * in world space and shades the displaced hit point, giving the illusion of
+   * carved micro-geometry without extra tesselation.
+   *
+   * MVP constraints (validated at build time):
+   *   - requires `shaders.pomHeightShader`
+   *   - requires `useTriplanarMapping` in world space (the displaced hit
+   *     position is fed back through the triplanar samplers 1:1)
+   *   - cannot be combined with `normalShader` (POM owns the normal)
+   *
+   * Heightfield-only by default (ray clamps to the slab floor, silhouettes
+   * unchanged). Opt into subtractive silhouette carving via `boundedSilhouette`
+   * below. Technique, prior-art citations, limitations and authoring guidance:
+   * `pom-known-limitations-and-authoring-guide.md` (repo root); formulation
+   * rationale in `pom-implementation-plan.md` Appendix A.
+   */
+  pom?: {
+    /** Max carve depth in world units. Also scales the analytic normal. */
+    depth: number;
+    /** Linear search step count. Default 24. Becomes a shader `#define`. */
+    steps?: number;
+    /**
+     * Distance (world units) at which POM begins fading to the flat base
+     * surface, over `lodFadeRange` units, to suppress sub-pixel aliasing
+     * (brief §4). Defaults are derived from `depth` if omitted.
+     */
+    lodFadeStart?: number;
+    lodFadeRange?: number;
+    /**
+     * **Opt-in, prototype.** Enables subtractive *silhouette* carving for
+     * **convex** meshes via the back-face-depth-bounded relief formulation
+     * (see `pom-silhouette-research-direction.md` / `pom-implementation-plan.md`
+     * Appendix A).
+     *
+     * The Phase-1 floored core is reused byte-identical for the interior;
+     * additionally the raymarch is bounded by the mesh's own nearest back face
+     * (the convex exit). Where the local chord is thinner than the carve depth
+     * (only near the silhouette) the ray exits the body before reaching the
+     * carved floor and the fragment is `discard`ed, so the silhouette recedes
+     * by exactly the groove depth — never expands (subtractive only).
+     *
+     * The caller MUST assert the mesh is convex and MUST supply the per-pixel
+     * back-face exit distance via the `pomBackDepth` sampler uniform: a render
+     * target holding the **Euclidean distance from the camera to the nearest
+     * back face**, rendered with a front-face-culled depth-style pass of the
+     * POM meshes (R channel, large sentinel where there is no back face).
+     *
+     * Concave/instanced/skinned/transparent meshes are out of scope and will
+     * show artifacts. `discard` reintroduces the depth-prepass-bypass /
+     * explicit-LOD-triplanar concerns from the phased plan §3.6/§4 — not yet
+     * addressed at the prototype stage.
+     */
+    boundedSilhouette?: boolean;
+  };
   /**
    * Material class controls things like the sfx that are played when players land on the surface and
    * may also impact physics or other behavior in the future.

@@ -17,6 +17,7 @@ import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissi
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
+import { PomExitBufferManager } from 'src/viz/postprocessing/pomExitBuffer';
 import type { SkyStack } from 'src/viz/SkyStack';
 
 export const DEFAULT_EMISSIVE_BLOOM_CONFIG: Omit<EmissiveBloomConfig, 'levels'> = {
@@ -165,6 +166,15 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    * Requires `useDepthPrePass: true` and `emissiveBypass: true`.
    */
   skyStack?: SkyStack;
+  /**
+   * Enable the back-face-depth-bounded POM silhouette runtime (exit-distance
+   * prerender + capped RT pool) for any `pom.boundedSilhouette` materials in
+   * the scene. Default `false` — when off, nothing POM-related is registered or
+   * allocated. When on, a one-shot deferred scene scan instantiates the
+   * machinery only if such a mesh actually exists (otherwise it stays inert).
+   * See `src/viz/postprocessing/pomExitBuffer.ts`.
+   */
+  pomExitBuffers?: boolean;
 }
 
 export const configureDefaultPostprocessingPipeline = ({
@@ -182,6 +192,7 @@ export const configureDefaultPostprocessingPipeline = ({
   fogShader,
   skyBypassTonemap = false,
   skyStack,
+  pomExitBuffers = false,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
   if (skyStack) {
     if (!useDepthPrePass) {
@@ -312,6 +323,19 @@ export const configureDefaultPostprocessingPipeline = ({
         }
       });
     });
+  }
+
+  if (pomExitBuffers) {
+    // One-shot deferred detector. Runs once on the first frame (by then the
+    // scene is fully populated, like the emissive-bypass auto-scan above),
+    // instantiates the manager only if a bounded-POM mesh exists, then removes
+    // itself. Non-POM scenes that enable the flag pay exactly one scene scan
+    // and nothing thereafter; scenes that leave it off pay nothing at all.
+    const detect = () => {
+      viz.unregisterBeforeRenderCb(detect);
+      PomExitBufferManager.tryCreate(viz);
+    };
+    viz.registerBeforeRenderCb(detect);
   }
 
   // we do our own tone mapping in `FinalPass`

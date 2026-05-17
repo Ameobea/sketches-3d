@@ -190,6 +190,13 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     metadata: { title: 'terrain sandbox' },
     legacyLights: true,
   },
+  pomDemo: {
+    modulePath: 'src/viz/scenes/pomDemo/pomDemo',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'POM demo' },
+    legacyLights: false,
+  },
   runeGenTest: {
     modulePath: 'src/viz/scenes/experiments/runeGen/runeGen',
     sceneName: 'Scene',

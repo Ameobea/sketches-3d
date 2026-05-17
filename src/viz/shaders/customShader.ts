@@ -13,6 +13,13 @@ import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
 import { buildTriplanarDefsFragment, type TriplanarMappingParams } from './triplanarMapping';
 import ssrDefsFragment from './ssr/ssrDefs.frag?raw';
 import { buildReverseColorRampGenerator, ReverseColorRampCommonFunctions } from './reverseColorRamp';
+import {
+  buildPomDefs,
+  buildPomMainBlock,
+  buildPomUniformDecls,
+  POM_BOUNDED_SILHOUETTE_FLAG,
+  POM_NORMAL_OVERRIDE,
+} from './pom';
 import { MaterialClass } from './customShader.types';
 import type {
   AmbientDistanceAmpParams,
@@ -638,6 +645,7 @@ export const buildCustomShaderArgs = (
     iridescenceShader,
     iridescenceReverseColorRamp,
     displacementShader,
+    pomHeightShader,
     includeNoiseShadersVertex,
   }: CustomShaderShaders = {},
   {
@@ -646,7 +654,6 @@ export const buildCustomShaderArgs = (
     tileBreaking,
     useNoise2,
     enableFog = true,
-    useComputedNormalMap,
     usePackedDiffuseNormalGBA,
     readRoughnessMapFromRChannel,
     disableToneMapping: _disableToneMapping,
@@ -656,6 +663,7 @@ export const buildCustomShaderArgs = (
     useGeneratedUVs,
     useWorldSpaceUVs,
     useTriplanarMapping,
+    pom,
     noOcclusion,
     vertexLighting = false,
     vertexLightingShininess = 0,
@@ -727,6 +735,16 @@ export const buildCustomShaderArgs = (
   uniforms.transmissionSamplerMap = { value: null };
 
   uniforms.curTimeSeconds = { value: 0.0 };
+  if (pom) {
+    uniforms.pomDepth = { value: pom.depth };
+    if (pom.boundedSilhouette) {
+      // Wired by `PomExitBufferManager` (src/viz/postprocessing/pomExitBuffer.ts)
+      // on the first frame, before anything samples them. Declared here so the
+      // material is self-contained and valid even before that runs.
+      uniforms.pomBackDepth = { value: null };
+      uniforms.pomResolution = { value: new THREE.Vector2(1, 1) };
+    }
+  }
   uniforms.diffuse = { value: typeof color === 'number' ? new THREE.Color(color) : color };
   uniforms.mapTransform = { value: new THREE.Matrix3().identity() };
   if (uvTransform) {
@@ -765,18 +783,11 @@ export const buildCustomShaderArgs = (
     throw new Error('Tile breaking requires a normal map with tangent space');
   }
 
-  if (useComputedNormalMap && normalMap) {
-    throw new Error('Cannot use computed normal map with a normal map');
-  }
-
   if (usePackedDiffuseNormalGBA && !map) {
     throw new Error('Cannot use packed diffuse/normal map without a map');
   }
   if (usePackedDiffuseNormalGBA && normalMap) {
     throw new Error('Cannot use packed diffuse/normal map with a normal map');
-  }
-  if (usePackedDiffuseNormalGBA && useComputedNormalMap) {
-    throw new Error('Cannot use packed diffuse/normal map with computed normal map');
   }
   // if (useGeneratedUVs && !map) {
   //   throw new Error('Cannot use generated UVs without a map');
@@ -793,6 +804,29 @@ export const buildCustomShaderArgs = (
   if (typeof usePackedDiffuseNormalGBA === 'object' && usePackedDiffuseNormalGBA.lut && tileBreaking) {
     throw new Error('LUT and tile breaking are currently broken together');
   }
+
+  if (pom) {
+    if (!pomHeightShader) {
+      throw new Error('`pom` requires `shaders.pomHeightShader` defining getPomHeight()');
+    }
+    if (!useTriplanarMapping) {
+      throw new Error(
+        '`pom` requires `useTriplanarMapping` (the displaced hit position is fed back through the triplanar samplers)'
+      );
+    }
+    if (!triplanarUsesWorldSpace) {
+      throw new Error(
+        '`pom` requires world-space triplanar (`useWorldSpaceUVs` must not be false); the POM hit position is world-space'
+      );
+    }
+    if (normalShader) {
+      throw new Error('`pom` cannot be combined with `normalShader`; both fully define `normal`');
+    }
+  }
+  const pomSteps = pom?.steps ?? 24;
+  // Opt-in convex back-face-bounded silhouette mode (prototype). The Phase-1
+  // floored core stays byte-identical; this only adds an extra march variant.
+  const pomBounded = !!pom?.boundedSilhouette;
 
   if (roughnessShader && roughnessReverseColorRamp) {
     throw new Error('Cannot use both roughness shader and roughness reverse color ramp');
@@ -825,12 +859,23 @@ export const buildCustomShaderArgs = (
   const mapDisableDistance =
     rawMapDisableDistance === undefined ? DEFAULT_MAP_DISABLE_DISTANCE : rawMapDisableDistance;
 
+  const triplanarPosSym = pom ? 'triplanarSamplePos' : 'vTriplanarPos';
+
+  const buildPomDefsFragment = () => {
+    if (!pom) {
+      return '';
+    }
+    const lodFadeStart = pom.lodFadeStart ?? 50;
+    const lodFadeEnd = lodFadeStart + (pom.lodFadeRange ?? 50);
+    return buildPomDefs({ pomSteps, pomBounded, lodFadeStart, lodFadeEnd });
+  };
+
   const buildMapFragment = () => {
     const inner = (() => {
       if (useTriplanarMapping) {
         return `
         #ifdef USE_MAP
-          sampledDiffuseColor_ = triplanarTextureFixContrast(map, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal);
+          sampledDiffuseColor_ = triplanarTextureFixContrast(map, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal);
         #endif`;
       }
 
@@ -875,7 +920,7 @@ export const buildCustomShaderArgs = (
     const inner = (() => {
       if (useTriplanarMapping && roughnessMap) {
         return `
-          vec3 texelRoughness = triplanarTexture(roughnessMap, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal).xyz;
+          vec3 texelRoughness = triplanarTexture(roughnessMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal).xyz;
         `;
       }
 
@@ -919,30 +964,6 @@ export const buildCustomShaderArgs = (
   };
 
   const buildNormalMapFragment = () => {
-    // \/ this works very poorly due to aliasing issues
-    if (useComputedNormalMap) {
-      return `
-      float diffuseMagnitude = diffuseColor.r;
-      float dDiffuseX = dFdx(diffuseMagnitude);
-      float dDiffuseY = dFdy(diffuseMagnitude);
-
-      float computeNormalBias = 0.1;
-      vec3 mapN = normalize(vec3(
-        dDiffuseX,
-        dDiffuseY,
-        1.0 - ((computeNormalBias - 0.1) / 100.0)
-      ));
-
-      mapN.xy *= normalScale;
-
-      #ifdef USE_NORMALMAP_TANGENTSPACE
-        normal = normalize( tbn * mapN );
-      #else
-        UNIMPLEMENTED_1
-      #endif
-    `;
-    }
-
     if (usePackedDiffuseNormalGBA) {
       if (typeof mapDisableDistance === 'number') {
         return `
@@ -996,7 +1017,7 @@ export const buildCustomShaderArgs = (
           ? '(viewMatrix * vec4(perturbedNormal, 0.)).xyz'
           : '(viewMatrix * modelMatrix * vec4(perturbedNormal, 0.)).xyz';
         return `
-          vec3 perturbedNormal = triplanarTextureNormalMap(normalMap, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, normalScale).xyz;
+          vec3 perturbedNormal = triplanarTextureNormalMap(normalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, normalScale).xyz;
           normal = normalize(${transform});
           `;
       }
@@ -1340,6 +1361,7 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 
 uniform float curTimeSeconds;
 varying vec3 vWorldPos;
+${buildPomUniformDecls(!!pom, pomBounded)}
 
 uniform vec3 playerShadowPos;
 uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=centerDropDist
@@ -1359,7 +1381,7 @@ ${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
 
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
-// ${useComputedNormalMap || usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
+// ${usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
 ${typeof usePackedDiffuseNormalGBA === 'object' ? 'uniform sampler2D diffuseLUT;' : ''}
 
 struct SceneCtx {
@@ -1399,6 +1421,8 @@ ${
       )
     : ''
 }
+${pomHeightShader ?? ''}
+${buildPomDefsFragment()}
 ${usingSSR ? ssrDefsFragment : ''}
 
 void main() {
@@ -1466,6 +1490,8 @@ void main() {
 
   SceneCtx ctx = SceneCtx(cameraPosition, vMapUv, diffuseColor);
 
+  ${pom ? buildPomMainBlock(pomBounded) : ''}
+
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
 	#include <logdepthbuf_fragment>
@@ -1480,6 +1506,7 @@ void main() {
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
   ${buildNormalMapFragment()}
+  ${pom ? POM_NORMAL_OVERRIDE : ''}
 
 	#include <clearcoat_normal_fragment_begin>
 	// #include <clearcoat_normal_fragment_maps>
@@ -1787,7 +1814,7 @@ export const buildCustomShader = (
     mat.side = props.side;
   }
 
-  if (opts?.useComputedNormalMap || opts?.usePackedDiffuseNormalGBA) {
+  if (opts?.usePackedDiffuseNormalGBA) {
     mat.defines.USE_NORMALMAP_TANGENTSPACE = '1';
     mat.defines.USE_NORMALMAP = '1';
     mat.uniforms.normalScale = { value: new THREE.Vector2(props.normalScale ?? 1, props.normalScale ?? 1) };
@@ -1901,6 +1928,23 @@ export const buildCustomShader = (
   } else {
     // Materials opt into runtime occlusion backface toggling unless explicitly excluded.
     setMaterialOcclusionBackfaceRendering(mat, occlusionBackfaceRenderingEnabled);
+  }
+
+  if (opts?.pom?.boundedSilhouette) {
+    // The bounded path `discard`s notch fragments; the shared prepass uses a
+    // generic override material that can't reproduce that, so it would write
+    // full-footprint depth and occlude what shows through the notches. Locked
+    // design = bypass (not raymarch replication): exclude from the prepass (see
+    // `DepthPass`) and write own depth in the main pass. Main-pass depth func
+    // is LEQUAL (global, from `DepthPass`), so explicit LessEqualDepth + write
+    // keeps occlusion correct against the prepass buffer.
+    mat.userData.skipDepthPrepass = true;
+    mat.depthFunc = THREE.LessEqualDepth;
+    mat.depthWrite = true;
+    mat.depthTest = true;
+    // Lets `PomExitBufferManager` discover this material's meshes by a scene
+    // scan, so scenes opt in with just the pipeline flag (no manual wiring).
+    mat.userData[POM_BOUNDED_SILHOUETTE_FLAG] = true;
   }
 
   if (opts?.randomizeUVOffset) {

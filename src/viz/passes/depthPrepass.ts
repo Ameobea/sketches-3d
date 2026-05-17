@@ -56,6 +56,11 @@ export class DepthPass extends RenderPass implements Resizable {
     // picking up the camera-occlusion dither pattern.
     const selection: THREE.Object3D[] = [];
     const occlusionExcluded: THREE.Object3D[] = [];
+    // Meshes whose material `discard`s in a way the generic override material
+    // can't reproduce (bounded-silhouette POM). Kept out of the prepass
+    // entirely so their full-footprint depth doesn't occlude geometry visible
+    // through their carved notches; they write own depth in the main pass.
+    const pomExcluded: THREE.Object3D[] = [];
     this.scene.traverse(c => {
       if (c instanceof THREE.Mesh && c.material.transparent) {
         return;
@@ -67,6 +72,10 @@ export class DepthPass extends RenderPass implements Resizable {
       // The flag may be set on the mesh's userData or on the material's userData
       // (`buildCustomShader` with `noOcclusion: true` sets it on `material.userData`).
       const matUserData = !Array.isArray(mat) ? mat?.userData : undefined;
+      if (matUserData?.skipDepthPrepass) {
+        pomExcluded.push(c);
+        return;
+      }
       if ((c as THREE.Mesh).userData?.occlusionExclude || matUserData?.occlusionExclude) {
         occlusionExcluded.push(c);
         return;
@@ -86,6 +95,10 @@ export class DepthPass extends RenderPass implements Resizable {
     for (const obj of occlusionExcluded) {
       obj.visible = false;
     }
+    // Hidden across the whole prepass: these write depth only in the main pass.
+    for (const obj of pomExcluded) {
+      obj.visible = false;
+    }
 
     const shadowMapWasEnabled = renderer.shadowMap.enabled;
     renderer.shadowMap.enabled = false;
@@ -99,6 +112,11 @@ export class DepthPass extends RenderPass implements Resizable {
     }
 
     for (const obj of occlusionExcluded) {
+      obj.visible = true;
+    }
+    // Restore for the main color pass (step 2 below re-hides/-restores them as
+    // part of its "hide everything not occlusion-excluded" sweep if it runs).
+    for (const obj of pomExcluded) {
       obj.visible = true;
     }
 
