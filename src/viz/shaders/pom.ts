@@ -126,12 +126,27 @@ float pomLodFade(float distanceToCamera) {
 `;
 };
 
-export const buildPomMainBlock = (pomBounded: boolean): string => /* glsl */ `
+export type PomTexturing = 'triplanar' | 'generated' | 'baseline';
+
+export const buildPomMainBlock = (pomBounded: boolean, pomTexturing: PomTexturing): string => {
+  const tail = (() => {
+    switch (pomTexturing) {
+      case 'triplanar':
+        return `vec3 triplanarSamplePos = vTriplanarPos + (_pomHit - vWorldPos);`;
+      case 'generated':
+        // Generated UV recomputed at the displaced hit. Axis pick uses the base
+        // normal (not the floor normal) to avoid per-fragment axis flips.
+        return `vec2 _pomGenUv = ( uvTransform * vec3( generateUV(_pomHit, normalize(vWorldNormal)), 1.0 ) ).xy;`;
+      case 'baseline':
+        // Reuse the interpolated pre-POM UV; texture warps with parallax.
+        return '';
+    }
+  })();
+
+  return /* glsl */ `
   // --- Procedural Parallax Occlusion Mapping (phase 1: heightfield, no discard) ---
-  // Raymarch the view ray through the procedural slab, then redirect the
-  // triplanar samplers to the displaced world-space hit point and replace the
-  // shading normal with the analytic floor normal.
-  vec3 triplanarSamplePos = vTriplanarPos;
+  // Raymarch the slab; expose displaced world hit + analytic floor normal.
+  vec3 _pomHit = vWorldPos;
   vec3 _pomNormalW = normalize(vWorldNormal);
   {
     vec3 _pomRd = normalize(vWorldPos - cameraPosition);
@@ -152,7 +167,7 @@ export const buildPomMainBlock = (pomBounded: boolean): string => /* glsl */ `
       bool _pomNoBound = (_pomExitDist <= 0.0) || (_pomChord <= 0.0) || !gl_FrontFacing;
       float _pomMaxLen = _pomNoBound ? 1e9 : _pomChord;
       bool _pomCarved = false;
-      vec3 _pomHit = pomMarchBounded(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);
+      _pomHit = pomMarchBounded(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);
       // A positive but sub-epsilon chord is ill-conditioned (differencing two
       // near-equal large distances) -> kept/discarded flickers (edge shimmer).
       // Commit it to carved for a stable edge; valid-bound path only.
@@ -162,9 +177,8 @@ export const buildPomMainBlock = (pomBounded: boolean): string => /* glsl */ `
       if (_pomCarved) {
         discard;
       }`
-          : /* glsl */ `vec3 _pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+          : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
       }
-      triplanarSamplePos = vTriplanarPos + (_pomHit - vWorldPos);
       float _pomEps = max(unitsPerPx, _pomD * 0.02);
       _pomNormalW = mix(
         _pomNormalW,
@@ -173,9 +187,52 @@ export const buildPomMainBlock = (pomBounded: boolean): string => /* glsl */ `
       );
     }
   }
+  ${tail}
   `;
+};
 
-export const POM_NORMAL_OVERRIDE = /* glsl */ `
-  // POM owns the shading normal; override the (view-space) normal with the analytic floor normal.
-  normal = normalize((viewMatrix * vec4(_pomNormalW, 0.)).xyz);
-`;
+// POM owns the shading normal. Without a normal map the analytic floor normal
+// is used directly; with one, its tangent-space detail is added to the floor
+// normal (UDN-style: add the world-space perturbation, then normalize) so the
+// map layers onto the carved relief instead of replacing it.
+export const buildPomNormalApply = (pomTexturing: PomTexturing, hasNormalMap: boolean): string => {
+  if (!hasNormalMap) {
+    return `normal = normalize((viewMatrix * vec4(_pomNormalW, 0.)).xyz);`;
+  }
+
+  if (pomTexturing === 'triplanar') {
+    // Reuse the analytic per-axis triplanar frame, added onto the floor normal
+    // instead of the geometric normal.
+    return /* glsl */ `
+  vec3 _pomNormalDetailW = normalize(
+    triplanarNormalMapPerturbation(normalMap, triplanarSamplePos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, normalScale)
+    + _pomNormalW
+  );
+  normal = normalize((viewMatrix * vec4(_pomNormalDetailW, 0.)).xyz);
+  `;
+  }
+
+  // Generated UVs: single-axis case of the same swizzle. Axis is picked from
+  // the (stable) base normal so it matches generateUV's projection. Inlined
+  // because `_pomGenUv` is a main()-scope local.
+  return /* glsl */ `
+  {
+    vec3 _pgN = normalize(vWorldNormal);
+    vec3 _pgA = abs(_pgN);
+    vec2 _pgT = (texture2D(normalMap, _pomGenUv).xy * 2.0 - 1.0) * normalScale;
+    vec3 _pgP;
+    if (_pgA.x >= _pgA.y && _pgA.x >= _pgA.z) {
+      _pgT.x *= sign(_pgN.x);
+      _pgP = vec3(0.0, _pgT.y, _pgT.x);
+    } else if (_pgA.y >= _pgA.z) {
+      _pgT.x *= sign(_pgN.y);
+      _pgP = vec3(_pgT.x, 0.0, _pgT.y);
+    } else {
+      _pgT.x *= sign(_pgN.z);
+      _pgP = vec3(_pgT.x, _pgT.y, 0.0);
+    }
+    vec3 _pomNormalDetailW = normalize(_pgP + _pomNormalW);
+    normal = normalize((viewMatrix * vec4(_pomNormalDetailW, 0.)).xyz);
+  }
+  `;
+};

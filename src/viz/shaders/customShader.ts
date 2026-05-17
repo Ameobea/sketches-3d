@@ -17,8 +17,9 @@ import {
   buildPomDefs,
   buildPomMainBlock,
   buildPomUniformDecls,
+  buildPomNormalApply,
   POM_BOUNDED_SILHOUETTE_FLAG,
-  POM_NORMAL_OVERRIDE,
+  type PomTexturing,
 } from './pom';
 import { MaterialClass } from './customShader.types';
 import type {
@@ -167,11 +168,16 @@ const buildUVVertexFragment = (randomizeUVOffset: boolean | undefined): string =
 
 const buildRunColorShaderFragment = (
   colorShader: string | undefined,
-  antialiasColorShader: boolean | undefined
+  antialiasColorShader: boolean | undefined,
+  pomActive: boolean
 ): string => {
   if (!colorShader) {
     return '';
   }
+
+  // Under POM the procedural shader must see the displaced hit + floor normal.
+  const posSym = pomActive ? '_pomHit' : 'vWorldPos';
+  const normalSym = pomActive ? '_pomNormalW' : 'vObjectNormal';
 
   if (antialiasColorShader) {
     return `
@@ -180,12 +186,12 @@ const buildRunColorShaderFragment = (
   for (int i = 0; i < 2; i++) {
     for (int j = 0; j < 2; j++) {
       for (int k = 0; k < 2; k++) {
-        vec3 offsetPos = vWorldPos;
+        vec3 offsetPos = ${posSym};
         // TODO use better method, only sample in plane the fragment lies on rather than in 3D
         offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
         offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
         offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getFragColor(diffuseColor.xyz, offsetPos, vObjectNormal, curTimeSeconds, ctx);
+        acc += getFragColor(diffuseColor.xyz, offsetPos, ${normalSym}, curTimeSeconds, ctx);
       }
     }
   }
@@ -194,7 +200,7 @@ const buildRunColorShaderFragment = (
   ctx.diffuseColor = diffuseColor;`;
   } else {
     return `
-  diffuseColor = getFragColor(diffuseColor.xyz, vWorldPos, vObjectNormal, curTimeSeconds, ctx);
+  diffuseColor = getFragColor(diffuseColor.xyz, ${posSym}, ${normalSym}, curTimeSeconds, ctx);
   ctx.diffuseColor = diffuseColor;`;
   }
 };
@@ -691,11 +697,14 @@ export const buildCustomShaderArgs = (
   ]);
   uniforms.normalScale = { value: new THREE.Vector2(normalScale, normalScale) };
 
-  // Mode-dependent default for `useWorldSpaceUVs` to preserve legacy behavior:
-  //  - triplanar historically only had world-space, so default true.
-  //  - generated UVs historically defaulted to local-space, so default false.
   const triplanarUsesWorldSpace = useTriplanarMapping ? (useWorldSpaceUVs ?? true) : false;
   const generatedUVsUseWorldSpace = useGeneratedUVs ? (useWorldSpaceUVs ?? false) : false;
+
+  const pomTexturing: PomTexturing = useTriplanarMapping
+    ? 'triplanar'
+    : useGeneratedUVs
+      ? 'generated'
+      : 'baseline';
 
   if (randomizeUVOffset) {
     uniforms.uvOffsetSeed = { value: 0 };
@@ -809,14 +818,29 @@ export const buildCustomShaderArgs = (
     if (!pomHeightShader) {
       throw new Error('`pom` requires `shaders.pomHeightShader` defining getPomHeight()');
     }
-    if (!useTriplanarMapping) {
-      throw new Error(
-        '`pom` requires `useTriplanarMapping` (the displaced hit position is fed back through the triplanar samplers)'
-      );
-    }
-    if (!triplanarUsesWorldSpace) {
+    // The POM hit is world-space, so any reprojection scheme must also be
+    // world-space. `baseline` reuses the interpolated UV and is space-agnostic.
+    if (pomTexturing === 'triplanar' && !triplanarUsesWorldSpace) {
       throw new Error(
         '`pom` requires world-space triplanar (`useWorldSpaceUVs` must not be false); the POM hit position is world-space'
+      );
+    }
+    if (pomTexturing === 'generated' && !generatedUVsUseWorldSpace) {
+      throw new Error(
+        '`pom` with `useGeneratedUVs` requires world-space UVs (`useWorldSpaceUVs: true`); the POM hit position is world-space'
+      );
+    }
+    // Normal maps combine onto the floor normal via an analytic frame
+    // (triplanar per-axis, or generated single-axis). Baseline/warped UVs have
+    // no such frame, so reject rather than produce garbage.
+    if (pomTexturing === 'baseline' && normalMap) {
+      throw new Error(
+        '`pom` with baseline/warped UVs cannot use a normal map (no analytic tangent frame for the displaced hit); use `useTriplanarMapping` or `useGeneratedUVs`, or drop the normal map'
+      );
+    }
+    if (pomTexturing !== 'triplanar' && (clearcoatNormalMap || usePackedDiffuseNormalGBA)) {
+      throw new Error(
+        '`pom` without `useTriplanarMapping` cannot use a clearcoat normal map / packed diffuse-normal map'
       );
     }
     if (normalShader) {
@@ -861,6 +885,12 @@ export const buildCustomShaderArgs = (
 
   const triplanarPosSym = pom ? 'triplanarSamplePos' : 'vTriplanarPos';
 
+  // POM + generated UVs: sample maps at the displaced UV recomputed in
+  // `buildPomMainBlock`. All maps collapse to one UV (mapTransform et al.
+  // assumed identity, as the generated-UV path already does).
+  const pomGen = !!pom && pomTexturing === 'generated';
+  const mapUvSym = pomGen ? '_pomGenUv' : 'vMapUv';
+
   const buildPomDefsFragment = () => {
     if (!pom) {
       return '';
@@ -882,12 +912,12 @@ export const buildCustomShaderArgs = (
       if (!tileBreaking) {
         return `
         #ifdef USE_MAP
-          vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+          vec4 sampledDiffuseColor = texture2D( map, ${mapUvSym} );
           sampledDiffuseColor_ = sampledDiffuseColor;
         #endif`;
       }
 
-      return `sampledDiffuseColor_ = ${buildTileBreakSampleExpr('map', 'vMapUv', tileBreaking)};`;
+      return `sampledDiffuseColor_ = ${buildTileBreakSampleExpr('map', mapUvSym, tileBreaking)};`;
     })();
 
     if (typeof mapDisableDistance !== 'number') {
@@ -925,10 +955,10 @@ export const buildCustomShaderArgs = (
       }
 
       if (tileBreaking && roughnessMap)
-        return `vec3 texelRoughness = ${buildTileBreakSampleExpr('roughnessMap', 'vMapUv', tileBreaking)}.xyz;`;
+        return `vec3 texelRoughness = ${buildTileBreakSampleExpr('roughnessMap', mapUvSym, tileBreaking)}.xyz;`;
       else
         return `
-      vec4 texelRoughness = texture2D( roughnessMap, vMapUv );
+      vec4 texelRoughness = texture2D( roughnessMap, ${mapUvSym} );
       `;
     })();
 
@@ -964,6 +994,11 @@ export const buildCustomShaderArgs = (
   };
 
   const buildNormalMapFragment = () => {
+    if (pom) {
+      // POM owns the shading normal; the normal map (if any) is combined onto
+      // the analytic floor normal in `buildPomNormalApply`.
+      return '';
+    }
     if (usePackedDiffuseNormalGBA) {
       if (typeof mapDisableDistance === 'number') {
         return `
@@ -1421,6 +1456,7 @@ ${
       )
     : ''
 }
+${pomGen ? GeneratedUVsFragment : ''}
 ${pomHeightShader ?? ''}
 ${buildPomDefsFragment()}
 ${usingSSR ? ssrDefsFragment : ''}
@@ -1490,7 +1526,7 @@ void main() {
 
   SceneCtx ctx = SceneCtx(cameraPosition, vMapUv, diffuseColor);
 
-  ${pom ? buildPomMainBlock(pomBounded) : ''}
+  ${pom ? buildPomMainBlock(pomBounded, pomTexturing) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
@@ -1506,7 +1542,7 @@ void main() {
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
   ${buildNormalMapFragment()}
-  ${pom ? POM_NORMAL_OVERRIDE : ''}
+  ${pom ? buildPomNormalApply(pomTexturing, !!normalMap) : ''}
 
 	#include <clearcoat_normal_fragment_begin>
 	// #include <clearcoat_normal_fragment_maps>
@@ -1514,7 +1550,7 @@ void main() {
     ${buildClearcoatNormalMapFragment()}
   #endif
 
-  ${buildRunColorShaderFragment(colorShader, antialiasColorShader)}
+  ${buildRunColorShaderFragment(colorShader, antialiasColorShader, !!pom)}
 
   ${
     normalShader

@@ -52,7 +52,11 @@ export const buildTriplanarDefsFragment = ({
   //
   // Also see:
   // https://bgolus.medium.com/normal-mapping-for-a-triplanar-shader-10bf39dca05a
-  vec4 triplanarTextureNormalMap(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale) {
+  // World-space tangent-plane perturbation (UDN-style) from a tangent-space
+  // normal map, *without* the base normal added back. Adding it to a unit
+  // normal and normalizing reproduces the classic triplanar normal map; POM
+  // adds it to the analytic floor normal instead.
+  vec3 triplanarNormalMapPerturbation(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale) {
     vec3 weights = generateTriplanarWeights(normal);
     if (weights.x < 0.01) {
       weights.x = 0.;
@@ -64,29 +68,15 @@ export const buildTriplanarDefsFragment = ({
       weights.z = 0.;
     }
 
-    vec3 tnormalX = vec3(0.);
-    if (weights.x > 0.) {
-      tnormalX = (texture2D(map, pos.yz * uvScale).xyz * vec3(normalScale, 1.)) * 2. - 1.;
-    }
-    vec3 tnormalY = vec3(0.);
-    if (weights.y > 0.) {
-      tnormalY = (texture2D(map, pos.zx * uvScale).xyz * vec3(normalScale, 1.)) * 2. - 1.;
-    }
-    vec3 tnormalZ = vec3(0.);
-    if (weights.z > 0.) {
-      tnormalZ = (texture2D(map, pos.xy * uvScale).xyz * vec3(normalScale, 1.)) * 2. - 1.;
-    }
-
     vec3 axisSign = sign(normal);
 
     vec2 tnormalX_xy = (texture2D(map, pos.yz * uvScale).xy * 2. - 1.) * normalScale;
     vec2 tnormalY_xy = (texture2D(map, pos.zx * uvScale).xy * 2. - 1.) * normalScale;
     vec2 tnormalZ_xy = (texture2D(map, pos.xy * uvScale).xy * 2. - 1.) * normalScale;
 
-    // correct for back-side projection by flipping the x-component of the tangent-space normal
+    // correct for back-side projection by flipping the x-component
     tnormalX_xy.x *= axisSign.x;
     tnormalY_xy.x *= axisSign.y;
-    // tnormalZ_xy.x *= -axisSign.z;
     tnormalZ_xy.x *= axisSign.z;
 
     // swizzle tangent-space normals to world-space perturbation vectors
@@ -94,15 +84,12 @@ export const buildTriplanarDefsFragment = ({
     vec3 normalY = vec3(tnormalY_xy.x, 0.0, tnormalY_xy.y);
     vec3 normalZ = vec3(tnormalZ_xy.x, tnormalZ_xy.y, 0.0);
 
-    // blend the perturbation vectors and add to the base geometric normal
-    vec3 worldNormal = normalize(
-      normalX * weights.x +
-      normalY * weights.y +
-      normalZ * weights.z +
-      normal
-    );
+    return normalX * weights.x + normalY * weights.y + normalZ * weights.z;
+  }
 
-    return vec4(worldNormal, 1.0);
+  vec4 triplanarTextureNormalMap(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale) {
+    vec3 perturbation = triplanarNormalMapPerturbation(map, pos, uvScale, normal, normalScale);
+    return vec4(normalize(perturbation + normal), 1.0);
   }
 
   vec4 triplanarTextureFixContrast(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {

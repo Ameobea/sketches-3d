@@ -36,7 +36,7 @@
     "plat1": {
       "type": "geoscript",
       "file": "geo/plat1.geo",
-      "_meta": { "runtimeMs": 12.367000000551343, "count": 5, "codeHash": "8a28e5d2", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 12.214999996498227, "count": 5, "codeHash": "8a28e5d2", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "box": {
       "type": "geoscript",
@@ -65,7 +65,7 @@
     "angled_plat": {
       "type": "geoscript",
       "file": "geo/angled_plat.geo",
-      "_meta": { "runtimeMs": 3.5859999999403955, "count": 5, "codeHash": "29fbcb7", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 3.8839999992400407, "count": 5, "codeHash": "29fbcb7", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "pipes1": {
       "type": "geoscript",
@@ -90,23 +90,23 @@
     "cheese_wheel": {
       "type": "geoscript",
       "file": "geo/cheese_wheel.geo",
-      "_meta": { "runtimeMs": 40.09900000020862, "count": 5, "codeHash": "be768f85", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 45.407000000029804, "count": 5, "codeHash": "be768f85", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "grate": {
       "type": "geoscript",
       "file": "geo/grate.geo",
-      "_meta": { "runtimeMs": 131.59300000071525, "count": 5, "codeHash": "7cfaf93b", "asyncDeps": [ "clipper2" ] }
+      "_meta": { "runtimeMs": 141.0489999976009, "count": 5, "codeHash": "7cfaf93b", "asyncDeps": [ "clipper2" ] }
     },
     "small_grate": {
       "type": "geoscript",
       "file": "geo/small_grate.geo",
       "colliderShape": "convexHull",
-      "_meta": { "runtimeMs": 110.54700000062584, "count": 5, "codeHash": "39b1992", "asyncDeps": [ "clipper2" ] }
+      "_meta": { "runtimeMs": 119.04000000655651, "count": 5, "codeHash": "39b1992", "asyncDeps": [ "clipper2" ] }
     },
     "tank": {
       "type": "geoscript",
       "file": "geo/tank.geo",
-      "_meta": { "runtimeMs": 19.96499999985099, "count": 5, "codeHash": "643f1a95", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 23.31900000050664, "count": 5, "codeHash": "643f1a95", "asyncDeps": [ "cgal" ] }
     },
     "wire": {
       "type": "geoscript",
@@ -289,7 +289,7 @@
     "center_fenced_ring/railing": {
       "type": "geoscript",
       "file": "geo/center_fenced_ring/railing.geo",
-      "_meta": { "runtimeMs": 6.304999999701977, "count": 5, "codeHash": "de8de8f6" }
+      "_meta": { "runtimeMs": 7.219000001624226, "count": 5, "codeHash": "de8de8f6" }
     }
   },
   "objects": [],

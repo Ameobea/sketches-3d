@@ -660,7 +660,6 @@ export const loadLevelDef = (
 
   preCreateGroups(levelDef.objects, viz.scene);
 
-  // --- Instantiate lights ---
   const levelLights: LevelLight[] = [];
   for (const lightDef of levelDef.lights ?? []) {
     const levelLight = createLevelLight(lightDef, quality);
@@ -670,11 +669,9 @@ export const loadLevelDef = (
 
   if (levelDef.audio) {
     if (levelDef.audio.sfxDefs) {
-      console.log(`[levelDef] Registering ${Object.keys(levelDef.audio.sfxDefs).length} SFX definitions`);
       viz.sfxManager.registerSfxDefs(levelDef.audio.sfxDefs);
     }
     for (const loop of levelDef.audio.spatialLoops ?? []) {
-      console.log(`[levelDef] Starting spatial loop for "${loop.sfx}" at pos ${loop.pos.join(',')}`);
       viz.sfxManager.playSpatialLoop(loop.sfx, {
         pos: loop.pos,
         gain: loop.gain,
@@ -688,8 +685,6 @@ export const loadLevelDef = (
     }
   }
 
-  // Track physics: push one callback to collisionWorldLoadedCbs; for objects placed
-  // after physics is ready, register directly.
   let physicsReady = false;
   let resolvePhysicsWorldReady!: (fpCtx: PhysicsContext) => void;
   const physicsWorldReady = new Promise<PhysicsContext>(resolve => {

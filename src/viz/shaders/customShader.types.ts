@@ -148,8 +148,8 @@ export interface CustomShaderShaders {
    * normal. The marcher owns the world-unit depth scaling so this function
    * stays dimensionless and reusable.
    *
-   * Requires `opts.pom` to be set, and `useTriplanarMapping` in world space.
-   * Mutually exclusive with `normalShader` (both fully define `normal`).
+   * Requires `opts.pom` to be set. Mutually exclusive with `normalShader`
+   * (both fully define `normal`). See `pom` for the texturing modes.
    */
   pomHeightShader?: string;
   includeNoiseShadersVertex?: boolean;
@@ -219,7 +219,16 @@ export interface CustomShaderOptions {
    * geometry without extra tesselation.
    *
    * - requires `shaders.pomHeightShader`
-   * - requires `useTriplanarMapping` in world space (the displaced hit position is fed back through the triplanar samplers 1:1)
+   * - texturing of the displaced hit is inferred from the active UV scheme:
+   *   - `useTriplanarMapping` (world space): resample at the displaced 3D point
+   *   - `useGeneratedUVs` (world space): recompute the projected UV there
+   *   - neither: reuse the pre-POM UV (texture warps/stretches with parallax)
+   * - a `colorShader` always receives the displaced hit position + floor normal
+   * - a tangent-space normal map is combined onto the analytic floor normal
+   *   (added, not replaced) for `useTriplanarMapping` and `useGeneratedUVs`;
+   *   it is rejected with baseline/warped UVs (no analytic frame). Generated
+   *   has a hard tangent-frame seam where the projection axis switches.
+   * - clearcoat-normal / packed maps still require `useTriplanarMapping`
    */
   pom?: {
     /** Max carve depth in world units. Also scales the analytic normal. */

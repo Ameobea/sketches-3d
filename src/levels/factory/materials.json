@@ -12,9 +12,6 @@
       "url": "https://geotoy.b-cdn.net/textures/1/e4b1c4dc-e2a4-400a-90a7-14f2f25197ab.avif",
       "colorSpace": "srgb"
     },
-    "chipped_rusty_gray_painted_wall_normal": {
-      "url": "https://geotoy.b-cdn.net/textures/1/ca6d2f18-91ee-46ce-b1e8-54cb411ba647.avif"
-    },
     "concrete_diffuse": {
       "url": "https://geotoy.b-cdn.net/textures/1/3a5937da-07f7-4fbf-a086-4cc664ada8f3.avif",
       "colorSpace": "srgb"
@@ -93,26 +90,35 @@
         "color": "#545454",
         "roughness": 0.9,
         "metalness": 0.18,
-        "normalScale": 0.23,
+        "normalScale": 0.83,
         "mapDisableDistance": 300,
         "mapDisableDistanceAxes": "xz",
         "mapDisableTransitionThreshold": 20,
-        "uvScale": [0.15, 0.15],
+        "uvScale": [0.02, 0.02],
         "map": "chipped_rusty_gray_painted_wall_diffuse",
-        "normalMap": "chipped_rusty_gray_painted_wall_normal",
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [60, 200]
         }
+      },
+      "shaders": {
+        "pomHeightShader": "float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {float cell = fract(pos.y * 0.4);return 1.0 - smoothstep(0.18, 0.32, abs(cell - 0.5));}"
       },
       "options": {
         "useGeneratedUVs": true,
         "useWorldSpaceUVs": true,
         "tileBreaking": {
           "type": "neyret",
-          "patchScale": 3
+          "patchScale": 1
         },
-        "randomizeUVOffset": true
+        "randomizeUVOffset": true,
+        "pom": {
+          "depth": 0.5,
+          "steps": 12,
+          "lodFadeStart": 50,
+          "lodFadeRange": 30,
+          "boundedSilhouette": true
+        }
       },
       "nonPermeable": true
     },
@@ -147,15 +153,14 @@
         "roughness": 0.63,
         "metalness": 0.75,
         "normalScale": 0.74,
-        "uvScale": [0.2, 0.2],
+        "uvScale": [0.04, 0.04],
         "map": "horizontal_metal_1_diffuse",
         "normalMap": "horizontal_metal_1_normal",
         "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50
       },
       "options": {
-        "useTriplanarMapping": false,
-        "useGeneratedUVs": true,
+        "useTriplanarMapping": true,
         "useWorldSpaceUVs": true,
         "randomizeUVOffset": true
       }
@@ -180,36 +185,6 @@
       "options": {
         "useTriplanarMapping": true,
         "randomizeUVOffset": true
-      }
-    },
-    "temp_pom_test_mat": {
-      "type": "customShader",
-      "props": {
-        "color": "#b0b0b0",
-        "roughness": 0.63,
-        "metalness": 0.75,
-        "normalScale": 0.74,
-        "uvScale": [0.2, 0.2],
-        "map": "horizontal_metal_1_diffuse",
-        "normalMap": "horizontal_metal_1_normal",
-        "mapDisableDistance": 300,
-        "mapDisableTransitionThreshold": 50
-      },
-      "options": {
-        "useTriplanarMapping": true,
-        "useGeneratedUVs": false,
-        "useWorldSpaceUVs": true,
-        "randomizeUVOffset": true,
-        "pom": {
-          "depth": 0.15,
-          "steps": 24,
-          "lodFadeStart": 400,
-          "lodFadeRange": 100,
-          "boundedSilhouette": true
-        }
-      },
-      "shaders": {
-        "pomHeightShader": "float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {float cell = fract(pos.y * 3.0);return 1.0 - smoothstep(0.08, 0.42, abs(cell - 0.5));}"
       }
     },
     "rusty_metal_decoration": {
