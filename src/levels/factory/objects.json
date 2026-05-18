@@ -951,10 +951,11 @@
     {
       "id": "wrap_arrow2_1",
       "asset": "wrap_arrow2",
-      "position": [404.6851, 84.2193, -68.6615],
+      "position": [404.6851, 80.0962, -68.6615],
       "rotation": [1.5708, 1.5708, 0],
       "scale": [0.3, 0.3, 0.3],
-      "material": "highlight"
+      "material": "highlight",
+      "nocollide": true
     },
     {
       "id": "pipes2_4",

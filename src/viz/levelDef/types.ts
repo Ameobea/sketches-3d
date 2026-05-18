@@ -258,12 +258,7 @@ export const ShaderOptionsJsonSchema = z.object({
   useTriplanarMapping: z.union([z.boolean(), TriplanarMappingParamsJsonSchema]).optional(),
   useGeneratedUVs: z.boolean().optional(),
   useWorldSpaceUVs: z.boolean().optional(),
-  tileBreaking: z
-    .union([
-      z.object({ type: z.literal('neyret'), patchScale: z.number().optional() }),
-      z.object({ type: z.literal('fastFixMipmap') }),
-    ])
-    .optional(),
+  tileBreaking: z.object({ type: z.literal('neyret'), patchScale: z.number().optional() }).optional(),
   enableFog: z.boolean().optional(),
   antialiasColorShader: z.boolean().optional(),
   antialiasRoughnessShader: z.boolean().optional(),
@@ -279,6 +274,8 @@ export const ShaderOptionsJsonSchema = z.object({
       lodFadeStart: z.number().optional(),
       lodFadeRange: z.number().optional(),
       boundedSilhouette: z.boolean().optional(),
+      refinement: z.enum(['secant', 'binary']).optional(),
+      refinementSteps: z.number().int().min(1).optional(),
     })
     .optional(),
 });

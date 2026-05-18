@@ -7,15 +7,21 @@ export const buildPomUniformDecls = (pom: boolean, pomBounded: boolean): string 
     pomBounded ? 'uniform vec2 pomResolution; // drawing-buffer size; the back-face RT may be lower-res' : '',
   ].join('\n');
 
+export type PomRefinement = 'secant' | 'binary';
+
 export const buildPomDefs = (opts: {
   pomSteps: number;
   pomBounded: boolean;
   lodFadeStart: number;
   lodFadeEnd: number;
+  pomRefinement: PomRefinement;
+  pomBinarySteps: number;
 }): string => {
-  const { pomSteps, pomBounded, lodFadeStart, lodFadeEnd } = opts;
+  const { pomSteps, pomBounded, lodFadeStart, lodFadeEnd, pomRefinement, pomBinarySteps } = opts;
+  const useBinary = pomRefinement === 'binary';
   return /* glsl */ `
 #define POM_STEPS ${pomSteps}
+${useBinary ? `#define POM_REFINE_BINARY\n#define POM_BINARY_STEPS ${pomBinarySteps}` : ''}
 
 // --- Procedural Parallax Occlusion Mapping (world space, subtractive only) ---
 // The base polygon is the TOP of a virtual slab of thickness \`pomDepth\`
@@ -44,10 +50,24 @@ vec3 pomMarch(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
     float rayDepth = -dot(p - ro, N);
     float surfH = _pomSurf(p, N, depth, t);
     if (rayDepth >= surfH) {
+#ifdef POM_REFINE_BINARY
+      // Bisection: robust on step heightfields where secant's linear
+      // between-samples assumption fails.
+      vec3 lo = pPrev;
+      vec3 hi = p;
+      for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
+        vec3 mid = 0.5 * (lo + hi);
+        float midDepth = -dot(mid - ro, N);
+        float midSurf = _pomSurf(mid, N, depth, t);
+        if (midDepth >= midSurf) hi = mid; else lo = mid;
+      }
+      return hi;
+#else
       float a = surfH - rayDepth;
       float b = hPrev - dPrev;
       float w = clamp(a / (a - b), 0.0, 1.0);   // secant root between samples
       return mix(p, pPrev, w);
+#endif
     }
     pPrev = p; hPrev = surfH; dPrev = rayDepth;
   }
@@ -84,10 +104,22 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
     float rayDepth = -dot(p - ro, N);
     float surfH = _pomSurf(p, N, depth, t);
     if (rayDepth >= surfH) {
+#ifdef POM_REFINE_BINARY
+      vec3 lo = pPrev;
+      vec3 hi = p;
+      for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
+        vec3 mid = 0.5 * (lo + hi);
+        float midDepth = -dot(mid - ro, N);
+        float midSurf = _pomSurf(mid, N, depth, t);
+        if (midDepth >= midSurf) hi = mid; else lo = mid;
+      }
+      return hi;
+#else
       float a = surfH - rayDepth;
       float b = hPrev - dPrev;
       float w = clamp(a / (a - b), 0.0, 1.0);
       return mix(p, pPrev, w);
+#endif
     }
     if (sRaw >= maxRayLen) {
       // Reached the back-face exit (tested the floor there) without crossing:
@@ -134,9 +166,10 @@ export const buildPomMainBlock = (pomBounded: boolean, pomTexturing: PomTexturin
       case 'triplanar':
         return `vec3 triplanarSamplePos = vTriplanarPos + (_pomHit - vWorldPos);`;
       case 'generated':
-        // Generated UV recomputed at the displaced hit. Axis pick uses the base
-        // normal (not the floor normal) to avoid per-fragment axis flips.
-        return `vec2 _pomGenUv = ( uvTransform * vec3( generateUV(_pomHit, normalize(vWorldNormal)), 1.0 ) ).xy;`;
+        // Axis pick uses the base normal, not the POM-perturbed one: the
+        // perturbed normal causes dominant-axis flips at bevels near a 45°
+        // boundary, producing UV seams. Tradeoff: stretching on steep walls.
+        return `vec2 _pomGenUv = ( uvTransform * vec3( generateUV(_pomHit, vWorldNormal), 1.0 ) ).xy;`;
       case 'baseline':
         // Reuse the interpolated pre-POM UV; texture warps with parallax.
         return '';
@@ -205,19 +238,18 @@ export const buildPomNormalApply = (pomTexturing: PomTexturing, hasNormalMap: bo
     // instead of the geometric normal.
     return /* glsl */ `
   vec3 _pomNormalDetailW = normalize(
-    triplanarNormalMapPerturbation(normalMap, triplanarSamplePos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, normalScale)
+    triplanarNormalMapPerturbation(normalMap, triplanarSamplePos, vec2(uvTransform[0][0], uvTransform[1][1]), _pomNormalW, normalScale)
     + _pomNormalW
   );
   normal = normalize((viewMatrix * vec4(_pomNormalDetailW, 0.)).xyz);
   `;
   }
 
-  // Generated UVs: single-axis case of the same swizzle. Axis is picked from
-  // the (stable) base normal so it matches generateUV's projection. Inlined
-  // because `_pomGenUv` is a main()-scope local.
+  // Single-axis swizzle; axis picked from base normal to match `_pomGenUv`
+  // and avoid the perturbed-normal axis-flip seam.
   return /* glsl */ `
   {
-    vec3 _pgN = normalize(vWorldNormal);
+    vec3 _pgN = vWorldNormal;
     vec3 _pgA = abs(_pgN);
     vec2 _pgT = (texture2D(normalMap, _pomGenUv).xy * 2.0 - 1.0) * normalScale;
     vec3 _pgP;

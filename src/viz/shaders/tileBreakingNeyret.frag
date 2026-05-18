@@ -23,6 +23,7 @@ vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
 
     vec4 m = vec4(0.);
     if (CON > 0.) {
+        // TODO: should pre-compute this and pass as uniform
         m = texture(samp, U, 99.); // mean texture color
     }
 
@@ -35,29 +36,17 @@ vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
         W = pow(W, vec3(LOOKUP_SKIP_POW));
         W = W / dot(W, vec3(1.));
 
-        if (W.x > LOOKUP_SKIP_THRESHOLD) {
-            fragColor += C(I) * W.x;
-        }
-        if (W.y > LOOKUP_SKIP_THRESHOLD) {
-            fragColor += C(I + vec2(0, 1)) * W.y;
-        }
-        if (W.z > LOOKUP_SKIP_THRESHOLD) {
-            fragColor += C(I + vec2(1, 0)) * W.z;
-        }
+        if (W.x > LOOKUP_SKIP_THRESHOLD) fragColor += C(I) * W.x;
+        if (W.y > LOOKUP_SKIP_THRESHOLD) fragColor += C(I + vec2(0, 1)) * W.y;
+        if (W.z > LOOKUP_SKIP_THRESHOLD) fragColor += C(I + vec2(1, 0)) * W.z;
     } else {
         W = vec3(-F.z, 1. - F.y, 1. - F.x);
         W = pow(W, vec3(LOOKUP_SKIP_POW));
         W = W / dot(W, vec3(1.));
 
-        if (W.x > LOOKUP_SKIP_THRESHOLD) {
-            fragColor += C(I + 1.) * W.x;
-        }
-        if (W.y > LOOKUP_SKIP_THRESHOLD) {
-            fragColor += C(I + vec2(1, 0)) * W.y;
-        }
-        if (W.z > LOOKUP_SKIP_THRESHOLD) {
-            fragColor += C(I + vec2(0, 1)) * W.z;
-        }
+        if (W.x > LOOKUP_SKIP_THRESHOLD) fragColor += C(I + 1.) * W.x;
+        if (W.y > LOOKUP_SKIP_THRESHOLD) fragColor += C(I + vec2(1, 0)) * W.y;
+        if (W.z > LOOKUP_SKIP_THRESHOLD) fragColor += C(I + vec2(0, 1)) * W.z;
     }
 
     if (CON > 0.) {
@@ -69,4 +58,22 @@ vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
     }
 
     return fragColor;
+}
+
+// Mirrors `textureNoTileNeyret`'s weight math without texture reads to count
+// active hex taps. Branchless (derivative-safe); returns 1.0–3.0.
+float getNeyretTapCount(vec2 uv) {
+    mat2 M0 = mat2(1, 0, .5, sqrt(3.) / 2.);
+    mat2 M = inverse(M0);
+    vec2 z = vec2(0.2);
+    vec2 U = uv * Z / 8. * exp2(z.y == 0. ? 2. : 4. * z.y + 1.);
+    vec2 V = M * U;
+    vec3 F = vec3(fract(V), 0);
+    F.z = 1. - F.x - F.y;
+    vec3 W = F.z > 0. ? vec3(F.z, F.y, F.x) : vec3(-F.z, 1. - F.y, 1. - F.x);
+    W = pow(W, vec3(LOOKUP_SKIP_POW));
+    W = W / dot(W, vec3(1.));
+    return step(LOOKUP_SKIP_THRESHOLD, W.x)
+         + step(LOOKUP_SKIP_THRESHOLD, W.y)
+         + step(LOOKUP_SKIP_THRESHOLD, W.z);
 }

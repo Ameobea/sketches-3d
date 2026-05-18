@@ -158,7 +158,7 @@ export interface CustomShaderShaders {
 export interface CustomShaderOptions {
   antialiasColorShader?: boolean;
   antialiasRoughnessShader?: boolean;
-  tileBreaking?: { type: 'neyret'; patchScale?: number } | { type: 'fastFixMipmap' };
+  tileBreaking?: { type: 'neyret'; patchScale?: number };
   /**
    * If set, the alternative noise functions in `noise2.frag` will be included
    */
@@ -248,6 +248,15 @@ export interface CustomShaderOptions {
      * Only works well on convex meshes.
      */
     boundedSilhouette?: boolean;
+    /**
+     * Refinement after the linear search brackets the surface.
+     * - `"secant"` (default): one-step linear interp. ~Free; ideal for smooth heightfields.
+     * - `"binary"`: bisection over `refinementSteps`. Use on cliffs/step
+     *   heightfields where secant produces sample-interval banding.
+     */
+    refinement?: 'secant' | 'binary';
+    /** Bisection count when `refinement: "binary"`. Default 5; 4–6 is the sweet spot. */
+    refinementSteps?: number;
   };
   /**
    * Material class controls things like the sfx that are played when players land on the surface and

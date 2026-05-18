@@ -94,7 +94,7 @@
         "mapDisableDistance": 300,
         "mapDisableDistanceAxes": "xz",
         "mapDisableTransitionThreshold": 20,
-        "uvScale": [0.02, 0.02],
+        "uvScale": [0.04, 0.04],
         "map": "chipped_rusty_gray_painted_wall_diffuse",
         "heightAlpha": {
           "bottomFade": [-230, -50],
@@ -102,22 +102,30 @@
         }
       },
       "shaders": {
-        "pomHeightShader": "float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {float cell = fract(pos.y * 0.4);return 1.0 - smoothstep(0.18, 0.32, abs(cell - 0.5));}"
+        "pomHeightShader": {
+          "file": "masonryTiles.height.glsl"
+        },
+        "colorShader": {
+          "file": "masonryTiles.color.glsl"
+        }
       },
       "options": {
-        "useGeneratedUVs": true,
+        "useGeneratedUVs": false,
+        "useTriplanarMapping": true,
         "useWorldSpaceUVs": true,
         "tileBreaking": {
           "type": "neyret",
-          "patchScale": 1
+          "patchScale": 2
         },
         "randomizeUVOffset": true,
         "pom": {
-          "depth": 0.5,
-          "steps": 12,
-          "lodFadeStart": 50,
-          "lodFadeRange": 30,
-          "boundedSilhouette": true
+          "depth": 0.4,
+          "steps": 16,
+          "lodFadeStart": 10,
+          "lodFadeRange": 50,
+          "boundedSilhouette": true,
+          "refinement": "binary",
+          "refinementSteps": 5
         }
       },
       "nonPermeable": true

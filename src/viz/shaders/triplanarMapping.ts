@@ -15,10 +15,20 @@ export interface TriplanarMappingParams {
   sharpenFactor: number;
 }
 
-export const buildTriplanarDefsFragment = ({
-  contrastPreservationFactor,
-  sharpenFactor,
-}: TriplanarMappingParams) => `
+/**
+ * `buildSampleExpr` substitutes the per-axis texture fetch (e.g. a
+ * tile-breaking wrapper). `tileBreakingMode` controls how
+ * `getCombinedTriplanarTapCount` reports per-axis cost.
+ */
+export const buildTriplanarDefsFragment = (
+  { contrastPreservationFactor, sharpenFactor }: TriplanarMappingParams,
+  buildSampleExpr: (sampler: string, uv: string) => string = (s, u) => `texture2D(${s}, ${u})`,
+  tileBreakingMode: 'none' | 'neyret' = 'none'
+) => {
+  const perAxisTapCountExpr = (axisUv: string) =>
+    tileBreakingMode === 'neyret' ? `getNeyretTapCount(${axisUv})` : '1.0';
+
+  return `
   // sharpenFactor < 1 smooths, > 1 sharpens
   vec3 generateTriplanarWeights(vec3 normal) {
     vec3 weights = abs(normal);
@@ -29,18 +39,29 @@ export const buildTriplanarDefsFragment = ({
     return weights;
   }
 
+  // Per-fragment tap count matching the > 0.01 weight skip in the real
+  // sample path, for cost visualization.
+  float getCombinedTriplanarTapCount(vec3 pos, vec3 normal, vec2 uvScale) {
+    vec3 w = generateTriplanarWeights(normal);
+    float total = 0.0;
+    if (w.x > 0.01) total += ${perAxisTapCountExpr('pos.yz * uvScale')};
+    if (w.y > 0.01) total += ${perAxisTapCountExpr('pos.zx * uvScale')};
+    if (w.z > 0.01) total += ${perAxisTapCountExpr('pos.xy * uvScale')};
+    return total;
+  }
+
   vec4 triplanarTexture(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
     vec3 weights = generateTriplanarWeights(normal);
 
     vec4 outColor = vec4(0.);
     if (weights.x > 0.01) {
-      outColor += texture2D(map, pos.yz * uvScale) * weights.x;
+      outColor += ${buildSampleExpr('map', 'pos.yz * uvScale')} * weights.x;
     }
     if (weights.y > 0.01) {
-      outColor += texture2D(map, pos.zx * uvScale) * weights.y;
+      outColor += ${buildSampleExpr('map', 'pos.zx * uvScale')} * weights.y;
     }
     if (weights.z > 0.01) {
-      outColor += texture2D(map, pos.xy * uvScale) * weights.z;
+      outColor += ${buildSampleExpr('map', 'pos.xy * uvScale')} * weights.z;
     }
     return outColor;
   }
@@ -70,9 +91,9 @@ export const buildTriplanarDefsFragment = ({
 
     vec3 axisSign = sign(normal);
 
-    vec2 tnormalX_xy = (texture2D(map, pos.yz * uvScale).xy * 2. - 1.) * normalScale;
-    vec2 tnormalY_xy = (texture2D(map, pos.zx * uvScale).xy * 2. - 1.) * normalScale;
-    vec2 tnormalZ_xy = (texture2D(map, pos.xy * uvScale).xy * 2. - 1.) * normalScale;
+    vec2 tnormalX_xy = (${buildSampleExpr('map', 'pos.yz * uvScale')}.xy * 2. - 1.) * normalScale;
+    vec2 tnormalY_xy = (${buildSampleExpr('map', 'pos.zx * uvScale')}.xy * 2. - 1.) * normalScale;
+    vec2 tnormalZ_xy = (${buildSampleExpr('map', 'pos.xy * uvScale')}.xy * 2. - 1.) * normalScale;
 
     // correct for back-side projection by flipping the x-component
     tnormalX_xy.x *= axisSign.x;
@@ -97,13 +118,13 @@ export const buildTriplanarDefsFragment = ({
 
     vec4 outColor = vec4(0.);
     if (weights.x > 0.01) {
-      outColor += texture2D(map, pos.yz * uvScale) * weights.x;
+      outColor += ${buildSampleExpr('map', 'pos.yz * uvScale')} * weights.x;
     }
     if (weights.y > 0.01) {
-      outColor += texture2D(map, pos.zx * uvScale) * weights.y;
+      outColor += ${buildSampleExpr('map', 'pos.zx * uvScale')} * weights.y;
     }
     if (weights.z > 0.01) {
-      outColor += texture2D(map, pos.xy * uvScale) * weights.z;
+      outColor += ${buildSampleExpr('map', 'pos.xy * uvScale')} * weights.z;
     }
 
     ${
@@ -119,3 +140,4 @@ export const buildTriplanarDefsFragment = ({
     }
     return outColor;
   }`;
+};

@@ -114,10 +114,8 @@
     const o = ensureOpts();
     if (val === '') {
       o.tileBreaking = undefined;
-    } else if (val === 'neyret') {
-      o.tileBreaking = { type: 'neyret', patchScale: 1.0 };
     } else {
-      o.tileBreaking = { type: 'fastFixMipmap' };
+      o.tileBreaking = { type: 'neyret', patchScale: 1.0 };
     }
     emit();
   };
@@ -335,7 +333,6 @@
           >
             <option value="">(none)</option>
             <option value="neyret">neyret</option>
-            <option value="fastFixMipmap">fastFixMipmap</option>
           </select>
         </FormField>
 

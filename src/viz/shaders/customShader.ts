@@ -5,7 +5,6 @@ import commonShaderCode from './common.frag?raw';
 import softOcclusionPreamble from './softOcclusionPreamble.frag?raw';
 import softOcclusionDiscard from './softOcclusionDiscard.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
-import tileBreakingFragment from './fasterTileBreakingFixMipmap.frag?raw';
 import GeneratedUVsFragment from './generatedUVs.vert?raw';
 import depthExactVertexBody from './depthExactVertex.glsl?raw';
 import noiseShaders from './noise.frag?raw';
@@ -43,7 +42,6 @@ export type {
 const noise2Shaders = 'DISABLED TO SAVE SPACE';
 
 const DEFAULT_MAP_DISABLE_DISTANCE = 2000;
-const fastFixMipMapTileBreakingScale = (240.2).toFixed(3);
 
 /**
  * Builds a GLSL expression for sampling a texture using the configured tile-breaking mode.
@@ -53,33 +51,7 @@ const buildTileBreakSampleExpr = (
   sampler: string,
   uv: string,
   tileBreaking: CustomShaderOptions['tileBreaking']
-): string => {
-  if (!tileBreaking) return `texture2D(${sampler}, ${uv})`;
-  if (tileBreaking.type === 'neyret') return `textureNoTileNeyret(${sampler}, ${uv})`;
-  return `textureNoTile(${sampler}, noiseSampler, ${uv}, 0., ${fastFixMipMapTileBreakingScale})`;
-};
-
-const buildNoiseTexture = (): THREE.DataTexture => {
-  const noise = new Float32Array(256 * 256 * 4);
-  for (let i = 0; i < noise.length; i++) {
-    noise[i] = Math.random();
-  }
-  const texture = new THREE.DataTexture(
-    noise,
-    256,
-    256,
-    THREE.RGBAFormat,
-    THREE.FloatType,
-    undefined,
-    THREE.RepeatWrapping,
-    THREE.RepeatWrapping,
-    // We need linear interpolation for the noise texture
-    THREE.LinearFilter,
-    THREE.LinearFilter
-  );
-  texture.needsUpdate = true;
-  return texture;
-};
+): string => (tileBreaking ? `textureNoTileNeyret(${sampler}, ${uv})` : `texture2D(${sampler}, ${uv})`);
 
 const AntialiasedRoughnessShaderFragment = `
   float roughnessAcc = 0.;
@@ -710,10 +682,6 @@ export const buildCustomShaderArgs = (
     uniforms.uvOffsetSeed = { value: 0 };
   }
 
-  if (tileBreaking?.type === 'fastFixMipmap') {
-    uniforms.noiseSampler = { value: buildNoiseTexture() };
-  }
-
   uniforms.roughness = { value: roughness };
   uniforms.metalness = { value: metalness };
   uniforms.ior = { value: ior };
@@ -801,12 +769,14 @@ export const buildCustomShaderArgs = (
   // if (useGeneratedUVs && !map) {
   //   throw new Error('Cannot use generated UVs without a map');
   // }
-  if (useTriplanarMapping && (useGeneratedUVs || !!tileBreaking)) {
-    // We could technically use it with tile breaking, but at that point we'd be doing up to like
-    // 3 * 3 * 3 = 27 texture lookups per fragment which is a bit ridiculous and there's no way
-    // it would look good either.
-    throw new Error('Triplanar mapping cannot be used with generated UVs or tile breaking');
+  if (useTriplanarMapping && useGeneratedUVs) {
+    throw new Error(
+      'Triplanar mapping cannot be combined with generated UVs (both define how UVs are computed)'
+    );
   }
+  // Triplanar + tile breaking is allowed; the per-axis > 0.01 weight skip in
+  // `triplanarTexture` keeps the worst-case 3×3 cost down on axis-aligned
+  // surfaces. `getCombinedTriplanarTapCount(normal)` reports actual cost.
   // if (useTriplanarMapping && !map) {
   //   throw new Error('Triplanar mapping requires a map');
   // }
@@ -884,6 +854,7 @@ export const buildCustomShaderArgs = (
     rawMapDisableDistance === undefined ? DEFAULT_MAP_DISABLE_DISTANCE : rawMapDisableDistance;
 
   const triplanarPosSym = pom ? 'triplanarSamplePos' : 'vTriplanarPos';
+  const triplanarNormalSym = pom ? '_pomNormalW' : 'vTriplanarNormal';
 
   // POM + generated UVs: sample maps at the displaced UV recomputed in
   // `buildPomMainBlock`. All maps collapse to one UV (mapTransform et al.
@@ -897,7 +868,16 @@ export const buildCustomShaderArgs = (
     }
     const lodFadeStart = pom.lodFadeStart ?? 50;
     const lodFadeEnd = lodFadeStart + (pom.lodFadeRange ?? 50);
-    return buildPomDefs({ pomSteps, pomBounded, lodFadeStart, lodFadeEnd });
+    const pomRefinement = pom.refinement ?? 'secant';
+    const pomBinarySteps = pom.refinementSteps ?? 5;
+    return buildPomDefs({
+      pomSteps,
+      pomBounded,
+      lodFadeStart,
+      lodFadeEnd,
+      pomRefinement,
+      pomBinarySteps,
+    });
   };
 
   const buildMapFragment = () => {
@@ -905,7 +885,7 @@ export const buildCustomShaderArgs = (
       if (useTriplanarMapping) {
         return `
         #ifdef USE_MAP
-          sampledDiffuseColor_ = triplanarTextureFixContrast(map, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal);
+          sampledDiffuseColor_ = triplanarTextureFixContrast(map, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym});
         #endif`;
       }
 
@@ -950,7 +930,7 @@ export const buildCustomShaderArgs = (
     const inner = (() => {
       if (useTriplanarMapping && roughnessMap) {
         return `
-          vec3 texelRoughness = triplanarTexture(roughnessMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal).xyz;
+          vec3 texelRoughness = triplanarTexture(roughnessMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}).xyz;
         `;
       }
 
@@ -1046,13 +1026,13 @@ export const buildCustomShaderArgs = (
 
     const inner = (() => {
       if (useTriplanarMapping) {
-        // The perturbed normal is in the same space as the input normal we passed (vTriplanarNormal).
+        // The perturbed normal is in the same space as the input normal we passed.
         // For world-space, transform world->view directly. For local-space, go object->world->view.
         const transform = triplanarUsesWorldSpace
           ? '(viewMatrix * vec4(perturbedNormal, 0.)).xyz'
           : '(viewMatrix * modelMatrix * vec4(perturbedNormal, 0.)).xyz';
         return `
-          vec3 perturbedNormal = triplanarTextureNormalMap(normalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, normalScale).xyz;
+          vec3 perturbedNormal = triplanarTextureNormalMap(normalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, normalScale).xyz;
           normal = normalize(${transform});
           `;
       }
@@ -1091,7 +1071,7 @@ export const buildCustomShaderArgs = (
           ? '(viewMatrix * vec4(perturbedClearcoatNormal, 0.)).xyz'
           : '(viewMatrix * modelMatrix * vec4(perturbedClearcoatNormal, 0.)).xyz';
         return `
-          vec3 perturbedClearcoatNormal = triplanarTextureNormalMap(clearcoatNormalMap, vTriplanarPos, vec2(uvTransform[0][0], uvTransform[1][1]), vTriplanarNormal, clearcoatNormalScale).xyz;
+          vec3 perturbedClearcoatNormal = triplanarTextureNormalMap(clearcoatNormalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, clearcoatNormalScale).xyz;
           clearcoatNormal = normalize(${transform});
           `;
       }
@@ -1415,7 +1395,6 @@ ${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
 
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
-${tileBreaking?.type === 'fastFixMipmap' ? 'uniform sampler2D noiseSampler;' : ''}
 // ${usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
 ${typeof usePackedDiffuseNormalGBA === 'object' ? 'uniform sampler2D diffuseLUT;' : ''}
 
@@ -1423,22 +1402,17 @@ struct SceneCtx {
   vec3 cameraPosition;
   vec2 vUv;
   vec4 diffuseColor;
+  // Base-mesh world pos/normal, stable across POM displacement (unlike the
+  // per-sample \`pos\` / per-pixel \`normal\` color shaders normally see).
+  vec3 vWorldPos;
+  vec3 vWorldNormal;
 };
 
 ${commonShaderCode}
 ${noiseShaders}
 ${useNoise2 ? noise2Shaders : ''}
-${colorShader ?? ''}
-${normalShader ?? ''}
-${roughnessShader ?? ''}
-${metalnessShader ?? ''}
-${emissiveShader ?? ''}
-${[roughnessReverseColorRamp, metalnessReverseColorRamp, iridescenceReverseColorRamp].some(p => p && (p.colorSpace ?? 'srgb') === 'srgb') ? ReverseColorRampCommonFunctions : ''}
-${roughnessReverseColorRamp ? buildReverseColorRampGenerator('roughnessFromColor', roughnessReverseColorRamp) : ''}
-${metalnessReverseColorRamp ? buildReverseColorRampGenerator('metalnessFromColor', metalnessReverseColorRamp) : ''}
-${iridescenceShader ?? ''}
-${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
-${tileBreaking?.type === 'fastFixMipmap' ? tileBreakingFragment : ''}
+
+// Helpers emitted before user shaders so user shaders can call them.
 ${
   tileBreaking?.type === 'neyret'
     ? tileBreakingNeyretFragment.replace(
@@ -1452,11 +1426,24 @@ ${
     ? buildTriplanarDefsFragment(
         typeof useTriplanarMapping === 'boolean'
           ? buildDefaultTriplanarParams()
-          : { ...buildDefaultTriplanarParams(), ...useTriplanarMapping }
+          : { ...buildDefaultTriplanarParams(), ...useTriplanarMapping },
+        (sampler, uv) => buildTileBreakSampleExpr(sampler, uv, tileBreaking),
+        tileBreaking ? 'neyret' : 'none'
       )
     : ''
 }
 ${pomGen ? GeneratedUVsFragment : ''}
+
+${colorShader ?? ''}
+${normalShader ?? ''}
+${roughnessShader ?? ''}
+${metalnessShader ?? ''}
+${emissiveShader ?? ''}
+${[roughnessReverseColorRamp, metalnessReverseColorRamp, iridescenceReverseColorRamp].some(p => p && (p.colorSpace ?? 'srgb') === 'srgb') ? ReverseColorRampCommonFunctions : ''}
+${roughnessReverseColorRamp ? buildReverseColorRampGenerator('roughnessFromColor', roughnessReverseColorRamp) : ''}
+${metalnessReverseColorRamp ? buildReverseColorRampGenerator('metalnessFromColor', metalnessReverseColorRamp) : ''}
+${iridescenceShader ?? ''}
+${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${pomHeightShader ?? ''}
 ${buildPomDefsFragment()}
 ${usingSSR ? ssrDefsFragment : ''}
@@ -1524,7 +1511,7 @@ void main() {
     vec2 vMapUv = vec2(0.);
   #endif
 
-  SceneCtx ctx = SceneCtx(cameraPosition, vMapUv, diffuseColor);
+  SceneCtx ctx = SceneCtx(cameraPosition, vMapUv, diffuseColor, vWorldPos, vWorldNormal);
 
   ${pom ? buildPomMainBlock(pomBounded, pomTexturing) : ''}
 
