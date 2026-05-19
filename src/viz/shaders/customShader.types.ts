@@ -56,6 +56,22 @@ export interface CustomShaderProps {
   normalMap?: THREE.Texture;
   roughnessMap?: THREE.Texture;
   metalnessMap?: THREE.Texture;
+  /**
+   * Optional heightmap texture sampled during Parallax Occlusion Mapping.
+   *
+   * Sampled value (read from the R channel, in `[0,1]`) is interpreted as the
+   * carved depth at that texel — `0` is the base surface, `1` is a full
+   * `pom.depth` carved inward. Sampled with the same UV scheme as the rest of
+   * the material (triplanar or generated UVs), at each marcher sample.
+   *
+   * Requires `opts.pom` and a non-baseline `pomTexturing` (i.e. either
+   * `useTriplanarMapping` or `useGeneratedUVs`); the baseline path has no
+   * analytic UV frame at the displaced sample point.
+   *
+   * Combined additively with `shaders.pomHeightShader` if both are provided;
+   * the sum is clamped to `[0, 1]` before scaling by `pom.depth`.
+   */
+  pomHeightMap?: THREE.Texture;
   normalMapType?: THREE.NormalMapTypes;
   /**
    * If set to `true`, an attribute called `displacementNormal` is expected to be set on the geometry.
@@ -128,6 +144,16 @@ export interface CustomShaderProps {
 
 export interface CustomShaderShaders {
   customVertexFragment?: string;
+  /**
+   * GLSL emitted into the fragment shader before all other user shader slots
+   * (`colorShader`, `pomHeightShader`, etc.) and after the engine helpers
+   * (noise, triplanar, generated-UV). Use it to declare structs and helper
+   * functions shared by multiple slots so the logic lives in one place.
+   *
+   * Everything lands in a single translation unit with shared global scope,
+   * so anything declared here is visible to every other slot.
+   */
+  commonShader?: string;
   colorShader?: string;
   normalShader?: string;
   roughnessShader?: string;
@@ -148,8 +174,11 @@ export interface CustomShaderShaders {
    * normal. The marcher owns the world-unit depth scaling so this function
    * stays dimensionless and reusable.
    *
-   * Requires `opts.pom` to be set. Mutually exclusive with `normalShader`
-   * (both fully define `normal`). See `pom` for the texturing modes.
+   * Requires `opts.pom` to be set, and at least one of this or
+   * `props.pomHeightMap` must be provided. If both are provided, their values
+   * are added together (then clamped to `[0, 1]`). Mutually exclusive with
+   * `normalShader` (both fully define `normal`). See `pom` for the texturing
+   * modes.
    */
   pomHeightShader?: string;
   includeNoiseShadersVertex?: boolean;
@@ -214,11 +243,11 @@ export interface CustomShaderOptions {
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
   /**
    * Enables procedural Parallax Occlusion Mapping.  The fragment shader
-   * raymarches a procedural height field supplied via `shaders.pomHeightShader`
-   * and shades the displaced hit point, giving the illusion of carved or inset
-   * geometry without extra tesselation.
+   * raymarches a height field and shades the displaced hit point, giving the
+   * illusion of carved or inset geometry without extra tesselation.
    *
-   * - requires `shaders.pomHeightShader`
+   * - requires at least one of `shaders.pomHeightShader` (procedural) or
+   *   `props.pomHeightMap` (heightmap texture); both may be combined (added)
    * - texturing of the displaced hit is inferred from the active UV scheme:
    *   - `useTriplanarMapping` (world space): resample at the displaced 3D point
    *   - `useGeneratedUVs` (world space): recompute the projected UV there
@@ -257,6 +286,32 @@ export interface CustomShaderOptions {
     refinement?: 'secant' | 'binary';
     /** Bisection count when `refinement: "binary"`. Default 5; 4–6 is the sweet spot. */
     refinementSteps?: number;
+    /**
+     * World-space floor for the analytic-normal finite-difference radius
+     * `_pomEps`. Effective `_pomEps = max(unitsPerPx, pomDepth * 0.02, normalEps)`.
+     *
+     * Use this with `pomHeightMap` to widen the gradient kernel beyond a single
+     * texel — without this floor the 4 taps land on adjacent texels with very
+     * different heights and the resulting normal is per-pixel noise. A good
+     * starting value is 3–4× the texel size in world units, i.e. roughly
+     * `4 / (uvScale * heightmapResolution)`. Default: unset (no floor).
+     */
+    normalEps?: number;
+    /**
+     * Replaces the final fragment color with a diagnostic visualization of an
+     * intermediate POM quantity. Bypasses the color shader, normal map, and
+     * fog so the value lands on screen untouched (tonemapping still applies).
+     *
+     * - `'heightmap'`   — raw `samplePomHeightMap(_pomHit, vWorldNormal)` as grayscale
+     * - `'depth'`       — final `_pomSurf / pomDepth` (combined procedural + map carved depth)
+     * - `'normal'`      — `_pomNormalW * 0.5 + 0.5` (perturbed shading normal, world space)
+     * - `'normalDelta'` — `length(_pomNormalW - vWorldNormal)` as red (size of perturbation)
+     * - `'axis'`        — triplanar dominant-axis pick of `_pomNormalW` (R=X, G=Y, B=Z).
+     *                     Per-pixel speckle here is the smoking gun for heightmap-driven
+     *                     gradient noise flipping triplanar axes.
+     * - `'hit'`         — `fract(_pomHit)` as RGB (sanity-check displacement spread)
+     */
+    debug?: 'heightmap' | 'depth' | 'normal' | 'normalDelta' | 'axis' | 'hit';
   };
   /**
    * Material class controls things like the sfx that are played when players land on the surface and

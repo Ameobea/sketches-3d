@@ -61,6 +61,14 @@
               "srgb",
               ""
             ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rgba",
+              "rg",
+              "red"
+            ]
           }
         },
         "required": [
@@ -234,6 +242,9 @@
                   "clearcoatNormalMap": {
                     "type": "string"
                   },
+                  "pomHeightMap": {
+                    "type": "string"
+                  },
                   "ambientDistanceAmp": {
                     "type": "object",
                     "properties": {
@@ -403,6 +414,21 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 9007199254740991
+                      },
+                      "normalEps": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "debug": {
+                        "type": "string",
+                        "enum": [
+                          "heightmap",
+                          "depth",
+                          "normal",
+                          "normalDelta",
+                          "axis",
+                          "hit"
+                        ]
                       }
                     },
                     "required": [
@@ -418,6 +444,25 @@
                 "type": "object",
                 "properties": {
                   "customVertexFragment": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "commonShader": {
                     "anyOf": [
                       {
                         "type": "string"

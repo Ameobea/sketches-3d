@@ -26,6 +26,12 @@ const COLOR_SPACE_MAP = {
   '': THREE.NoColorSpace,
 } as const;
 
+const FORMAT_MAP = {
+  rgba: THREE.RGBAFormat,
+  rg: THREE.RGFormat,
+  red: THREE.RedFormat,
+} as const;
+
 const toTextureArgs = (def: TextureDef) => ({
   wrapS: WRAPPING_MAP[def.wrapS ?? 'repeat'],
   wrapT: WRAPPING_MAP[def.wrapT ?? 'repeat'],
@@ -33,6 +39,7 @@ const toTextureArgs = (def: TextureDef) => ({
   minFilter: MIN_FILTER_MAP[def.minFilter ?? 'nearestMipLinear'],
   anisotropy: def.anisotropy ?? 1,
   colorSpace: COLOR_SPACE_MAP[def.colorSpace ?? ''],
+  format: def.format ? FORMAT_MAP[def.format] : undefined,
 });
 
 const loadWithRetry = async (

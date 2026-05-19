@@ -17,6 +17,8 @@ import {
   buildPomMainBlock,
   buildPomUniformDecls,
   buildPomNormalApply,
+  buildPomHeightSources,
+  buildPomDebug,
   POM_BOUNDED_SILHOUETTE_FLAG,
   type PomTexturing,
 } from './pom';
@@ -28,6 +30,9 @@ import type {
   CustomShaderShaders,
   CustomShaderOptions,
 } from './customShader.types';
+import { buildHeightAlphaEarlyOut, buildHeightAlphaFragment } from './heightAlpha';
+import VERTEX_LIGHTING_FRAGMENT from './vertexLighting.frag?raw';
+import PLAYER_SHADOW_FRAGMENT from './playerShadow.frag?raw';
 
 export { MaterialClass } from './customShader.types';
 export type {
@@ -51,9 +56,12 @@ const buildTileBreakSampleExpr = (
   sampler: string,
   uv: string,
   tileBreaking: CustomShaderOptions['tileBreaking']
-): string => (tileBreaking ? `textureNoTileNeyret(${sampler}, ${uv})` : `texture2D(${sampler}, ${uv})`);
+): string =>
+  tileBreaking
+    ? /* glsl */ `textureNoTileNeyret(${sampler}, ${uv})`
+    : /* glsl */ `texture2D(${sampler}, ${uv})`;
 
-const AntialiasedRoughnessShaderFragment = `
+const AntialiasedRoughnessShaderFragment = /* glsl */ `
   float roughnessAcc = 0.;
   // 2x oversampling
   for (int i = 0; i < 2; i++) {
@@ -73,7 +81,7 @@ const AntialiasedRoughnessShaderFragment = `
 `;
 
 const NonAntialiasedRoughnessShaderFragment =
-  'roughnessFactor = getCustomRoughness(vWorldPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);';
+  /* glsl */ `roughnessFactor = getCustomRoughness(vWorldPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);`;
 
 const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   if (antialiasRoughnessShader) {
@@ -85,12 +93,12 @@ const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
 
 const buildUnpackDiffuseNormalGBAFragment = (params: true | { lut: Uint8Array }): string => {
   if (params === true) {
-    return `
+    return /* glsl */ `
     mapN = sampledDiffuseColor_.gba;
     sampledDiffuseColor_ = vec4(sampledDiffuseColor_.rrr, 1.);
   `;
   } else {
-    return `
+    return /* glsl */ `
     mapN = sampledDiffuseColor_.gba;
     float index = sampledDiffuseColor_.r;
     vec4 lutEntry = texelFetch(diffuseLUT, ivec2(index * 255., 0), 0);
@@ -99,7 +107,7 @@ const buildUnpackDiffuseNormalGBAFragment = (params: true | { lut: Uint8Array })
   }
 };
 
-const hashSeedToVec2GLSL = `
+const hashSeedToVec2GLSL = /* glsl */ `
 vec2 hashSeedToVec2(float seed) {
   return vec2(
     fract(sin(seed * 127.1 + 311.7) * 43758.5453),
@@ -107,7 +115,7 @@ vec2 hashSeedToVec2(float seed) {
   );
 }`;
 
-const hashSeedToVec3GLSL = `
+const hashSeedToVec3GLSL = /* glsl */ `
 vec3 hashSeedToVec3(float seed) {
   return vec3(
     fract(sin(seed * 127.1 + 311.7) * 43758.5453),
@@ -118,7 +126,7 @@ vec3 hashSeedToVec3(float seed) {
 
 const buildUVVertexFragment = (randomizeUVOffset: boolean | undefined): string => {
   if (randomizeUVOffset) {
-    return `
+    return /* glsl */ `
       #ifdef USE_UV
         vec2 uvOffset = hashSeedToVec2(uvOffsetSeed);
 
@@ -152,7 +160,7 @@ const buildRunColorShaderFragment = (
   const normalSym = pomActive ? '_pomNormalW' : 'vObjectNormal';
 
   if (antialiasColorShader) {
-    return `
+    return /* glsl */ `
   vec4 acc = vec4(0.);
   // 2x oversampling
   for (int i = 0; i < 2; i++) {
@@ -171,7 +179,7 @@ const buildRunColorShaderFragment = (
   diffuseColor = acc;
   ctx.diffuseColor = diffuseColor;`;
   } else {
-    return `
+    return /* glsl */ `
   diffuseColor = getFragColor(diffuseColor.xyz, ${posSym}, ${normalSym}, curTimeSeconds, ctx);
   ctx.diffuseColor = diffuseColor;`;
   }
@@ -182,7 +190,7 @@ const buildRunIridescenceShaderFragment = (iridescenceShader: string | undefined
     return '';
   }
 
-  return `
+  return /* glsl */ `
 material.iridescence = getCustomIridescence(vWorldPos, vObjectNormal, material.iridescence, curTimeSeconds, ctx);`;
 };
 
@@ -197,7 +205,7 @@ const buildTextureDisableFragment = (
   const startEdge = (mapDisableDistance - mapDisableTransitionThreshold).toFixed(3);
   const endEdge = mapDisableDistance.toFixed(3);
 
-  return `
+  return /* glsl */ `
     float textureActivation = 1. - smoothstep(${startEdge}, ${endEdge}, texDisableDistance);
   `;
 };
@@ -278,11 +286,6 @@ export const configureCustomShaderGlobals = (config: Partial<CustomShaderGlobalC
   }
 };
 
-/**
- * Batch-toggle backface rendering on all CustomShaderMaterial instances in a scene.
- * When `enable` is true, materials that support occlusion get DoubleSide;
- * when false, they get FrontSide (saving vertex shader work for backfaces).
- */
 export const setOcclusionBackfaceRendering = (scene: THREE.Scene, enable: boolean) => {
   occlusionBackfaceRenderingEnabled = enable;
   scene.traverse(obj => {
@@ -295,14 +298,6 @@ export const setOcclusionBackfaceRendering = (scene: THREE.Scene, enable: boolea
   });
 };
 
-/**
- * Eagerly compile both the FrontSide and DoubleSide+BackSide shadow-side variants of
- * every `CustomShaderMaterial` in the scene. Toggling `shadowSide` at runtime changes
- * the program cache key in three.js, so the first occlusion-induced switch causes a
- * fresh shader compile/link — visible as a hitch. Call this once during scene load
- * for scenes that have (or can switch into) third-person mode to pay that cost up
- * front while a loading screen is showing.
- */
 export const precompileOcclusionShaderVariants = (
   scene: THREE.Scene,
   renderer: THREE.WebGLRenderer,
@@ -323,15 +318,6 @@ export const resetCustomShaderGlobals = () => {
   occlusionParams.set(0, 0, 0, 0);
 };
 
-/**
- * Shared uniforms for player shadow, referenced by all `CustomShaderMaterial` instances.
- * `playerShadowPos` is updated per-frame with player feet position.
- * `playerShadowParams` packs (radius, intensity, centerReceiverY, centerDropDistance).
- * `psRingData` is a mat4 storing per-angle receiverY for 8 angles on 2 concentric rings
- * (cols 0-1 = outer at radius, cols 2-3 = inner at radius/2), enabling polar bilinear
- * interpolation for partial overhang shadows.
- * Left at default zeros to disable (intensity=0 → early-out in shader).
- */
 const playerShadowPos = new THREE.Vector3();
 const playerShadowParams = new THREE.Vector4(0, 0, 0, 0);
 // mat4 packing: columns 0-1 = outer ring receiverY (angles 0-7), columns 2-3 = inner ring (angles 0-7)
@@ -343,12 +329,6 @@ export const getPlayerShadowUniforms = () => ({
   psRingData,
 });
 
-/**
- * Shared uniforms for soft camera occlusion dithering, referenced by all CustomShaderMaterial instances.
- * `occlusionStart` = player eye position, `occlusionEnd` = camera position.
- * `occlusionParams`: x=revealRadius, y=revealFade, z=active(0|1), w=unused.
- * Set z=0 to disable (shader early-outs with no discard).
- */
 const occlusionStart = new THREE.Vector3();
 const occlusionEnd = new THREE.Vector3();
 const occlusionParams = new THREE.Vector4(0, 0, 0, 0);
@@ -360,7 +340,7 @@ export const getOcclusionUniforms = () => ({
 });
 
 /**
- * Creates a minimal ShaderMaterial for use as the depth pre-pass override material.
+ * Creates a minimal `ShaderMaterial` for use as the depth pre-pass override material.
  * It mirrors the Bayer dither discard logic from the main CustomShaderMaterial so that
  * the depth buffer matches what the main pass will actually render.
  *
@@ -368,7 +348,7 @@ export const getOcclusionUniforms = () => ({
  */
 export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
   new THREE.ShaderMaterial({
-    vertexShader: `
+    vertexShader: /* glsl */ `
       #ifdef USE_INSTANCING
         attribute mat4 instanceMatrix;
       #endif
@@ -383,7 +363,7 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
         vWorldNormal = normalize((modelMatrix * vec4(localNormal, 0.0)).xyz);
       }
     `,
-    fragmentShader: `
+    fragmentShader: /* glsl */ `
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
       ${softOcclusionPreamble}
@@ -400,15 +380,11 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
   });
 
 /**
- * A bit-exact depth-only override material with no dithering. Used by the depth pre-pass
- * for `noOcclusion` meshes (player, `nonPermeable` walls) — they need their depth written
- * so downstream consumers (SkyStack's `discardIfOccluded`, FinalPass's sky-bypass detection,
- * and the FinalPass emissive composite gate) see them as scene geometry, but they should
- * never get the camera-occlusion dither pattern punched into them.
+ * A bit-exact depth-only override material with no dithering.
  */
 export const buildPlainDepthMaterial = (): THREE.ShaderMaterial =>
   new THREE.ShaderMaterial({
-    vertexShader: `
+    vertexShader: /* glsl */ `
       #ifdef USE_INSTANCING
         attribute mat4 instanceMatrix;
       #endif
@@ -416,7 +392,7 @@ export const buildPlainDepthMaterial = (): THREE.ShaderMaterial =>
         ${depthExactVertexBody}
       }
     `,
-    fragmentShader: `
+    fragmentShader: /* glsl */ `
       void main() {
         gl_FragColor = vec4(1.0);
       }
@@ -432,7 +408,7 @@ const buildDefaultTriplanarParams = (): TriplanarMappingParams => ({
 });
 
 /** Gouraud shading for vertex lighting */
-const buildRunVertexLightingFragment = (vertexLightingShininess: number) => `
+const buildRunVertexLightingFragment = (vertexLightingShininess: number) => /* glsl */ `
   // Compute a simple Lambertian diffuse per-vertex, split into direct + indirect.
   // Shadow maps are still sampled per-fragment for crisp edges and only applied to direct.
   vec3 vtxDirectAccum = vec3(0.0);
@@ -454,7 +430,7 @@ const buildRunVertexLightingFragment = (vertexLightingShininess: number) => `
       vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
       ${
         vertexLightingShininess > 0
-          ? `{
+          ? /* glsl */ `{
         vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
         float vtxNdotH = saturate(dot(vtxNormal, vtxH));
         vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
@@ -475,7 +451,7 @@ const buildRunVertexLightingFragment = (vertexLightingShininess: number) => `
       vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
       ${
         vertexLightingShininess > 0
-          ? `{
+          ? /* glsl */ `{
         vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
         float vtxNdotH = saturate(dot(vtxNormal, vtxH));
         vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
@@ -496,7 +472,7 @@ const buildRunVertexLightingFragment = (vertexLightingShininess: number) => `
       vtxDirectAccum += vtxDirectLight.color * vtxNdotL;
       ${
         vertexLightingShininess > 0
-          ? `{
+          ? /* glsl */ `{
         vec3 vtxH = normalize(vtxDirectLight.direction + vtxViewDir);
         float vtxNdotH = saturate(dot(vtxNormal, vtxH));
         vtxSpecAccum += vtxDirectLight.color * pow(vtxNdotH, ${vertexLightingShininess.toFixed(1)});
@@ -522,58 +498,6 @@ const buildRunVertexLightingFragment = (vertexLightingShininess: number) => `
   ${vertexLightingShininess > 0 ? 'vVertexSpecular = vtxSpecAccum;' : ''}
   `;
 
-/**
- * Builds the GLSL that computes `heightAlphaFactor` from `vWorldPos.y` and, when the
- * factor is exactly 0, writes black and returns immediately — skipping all texture
- * lookups, lighting, and shadow work.  Emitted near the top of `main()`.
- */
-const buildHeightAlphaEarlyOut = (
-  heightAlpha: { bottomFade?: [number, number]; topFade?: [number, number] } | undefined
-): string => {
-  if (!heightAlpha) return '';
-  const { bottomFade, topFade } = heightAlpha;
-  if (!bottomFade && !topFade) return '';
-
-  const lines: string[] = [];
-  if (bottomFade) {
-    lines.push(
-      `heightAlphaFactor *= smoothstep(${bottomFade[0].toFixed(3)}, ${bottomFade[1].toFixed(3)}, vWorldPos.y);`
-    );
-  }
-  if (topFade) {
-    lines.push(
-      `heightAlphaFactor *= 1.0 - smoothstep(${topFade[0].toFixed(3)}, ${topFade[1].toFixed(3)}, vWorldPos.y);`
-    );
-  }
-
-  return `
-    float heightAlphaFactor = 1.0;
-    ${lines.join('\n    ')}
-    if (heightAlphaFactor < 0.001) {
-      outFragColor = vec4(0.0, 0.0, 0.0, 1.0);
-      return;
-    }
-  `;
-};
-
-/**
- * Applies the height-alpha darkening to `outgoingLight` using the already-computed
- * `heightAlphaFactor`.  Emitted near the end of `main()`.
- */
-const buildHeightAlphaFragment = (
-  heightAlpha: { bottomFade?: [number, number]; topFade?: [number, number] } | undefined
-): string => {
-  if (!heightAlpha) return '';
-  const { bottomFade, topFade } = heightAlpha;
-  if (!bottomFade && !topFade) return '';
-
-  // heightAlphaFactor was already computed by the early-out block; just apply it.
-  return `{
-    // heightAlphaFactor computed earlier near top of main()
-    outgoingLight.rgb = mix(outgoingLight.rgb, vec3(0.0), 1. - heightAlphaFactor);
-  }`;
-};
-
 export const buildCustomShaderArgs = (
   {
     roughness = 0.9,
@@ -598,6 +522,7 @@ export const buildCustomShaderArgs = (
     useDisplacementNormals,
     roughnessMap,
     metalnessMap: _metalnessMap,
+    pomHeightMap,
     emissiveIntensity,
     lightMapIntensity,
     fogMultiplier,
@@ -613,6 +538,7 @@ export const buildCustomShaderArgs = (
   }: CustomShaderProps = {},
   {
     customVertexFragment,
+    commonShader,
     colorShader,
     normalShader,
     roughnessShader,
@@ -715,11 +641,11 @@ export const buildCustomShaderArgs = (
   if (pom) {
     uniforms.pomDepth = { value: pom.depth };
     if (pom.boundedSilhouette) {
-      // Wired by `PomExitBufferManager` (src/viz/postprocessing/pomExitBuffer.ts)
-      // on the first frame, before anything samples them. Declared here so the
-      // material is self-contained and valid even before that runs.
       uniforms.pomBackDepth = { value: null };
       uniforms.pomResolution = { value: new THREE.Vector2(1, 1) };
+    }
+    if (pomHeightMap) {
+      uniforms.pomHeightMap = { value: pomHeightMap };
     }
   }
   uniforms.diffuse = { value: typeof color === 'number' ? new THREE.Color(color) : color };
@@ -732,7 +658,6 @@ export const buildCustomShaderArgs = (
   }
   uniforms.specularIntensity = { value: 1 };
   uniforms.specularColor = { value: new THREE.Color(0xffffff) };
-  // TODO: Need to handle swapping uvs to `uv2` if light map is provided
   if (lightMapIntensity !== undefined) {
     uniforms.lightMapIntensity = { value: lightMapIntensity };
   }
@@ -746,10 +671,6 @@ export const buildCustomShaderArgs = (
   const usingSSR = !!providedReflectionParams;
 
   // TODO: enable physically correct lights, look into it at least
-
-  // if (tileBreaking && !map && !normalMap && !clearcoatNormalMap && !roughnessMap && !metalnessMap) {
-  //   throw new Error('Tile breaking requires a map');
-  // }
 
   if (
     normalMap &&
@@ -774,22 +695,16 @@ export const buildCustomShaderArgs = (
       'Triplanar mapping cannot be combined with generated UVs (both define how UVs are computed)'
     );
   }
-  // Triplanar + tile breaking is allowed; the per-axis > 0.01 weight skip in
-  // `triplanarTexture` keeps the worst-case 3×3 cost down on axis-aligned
-  // surfaces. `getCombinedTriplanarTapCount(normal)` reports actual cost.
-  // if (useTriplanarMapping && !map) {
-  //   throw new Error('Triplanar mapping requires a map');
-  // }
   if (typeof usePackedDiffuseNormalGBA === 'object' && usePackedDiffuseNormalGBA.lut && tileBreaking) {
     throw new Error('LUT and tile breaking are currently broken together');
   }
 
   if (pom) {
-    if (!pomHeightShader) {
-      throw new Error('`pom` requires `shaders.pomHeightShader` defining getPomHeight()');
+    if (!pomHeightShader && !pomHeightMap) {
+      throw new Error(
+        '`pom` requires at least one of `shaders.pomHeightShader` (procedural) or `props.pomHeightMap` (heightmap texture)'
+      );
     }
-    // The POM hit is world-space, so any reprojection scheme must also be
-    // world-space. `baseline` reuses the interpolated UV and is space-agnostic.
     if (pomTexturing === 'triplanar' && !triplanarUsesWorldSpace) {
       throw new Error(
         '`pom` requires world-space triplanar (`useWorldSpaceUVs` must not be false); the POM hit position is world-space'
@@ -800,12 +715,14 @@ export const buildCustomShaderArgs = (
         '`pom` with `useGeneratedUVs` requires world-space UVs (`useWorldSpaceUVs: true`); the POM hit position is world-space'
       );
     }
-    // Normal maps combine onto the floor normal via an analytic frame
-    // (triplanar per-axis, or generated single-axis). Baseline/warped UVs have
-    // no such frame, so reject rather than produce garbage.
     if (pomTexturing === 'baseline' && normalMap) {
       throw new Error(
         '`pom` with baseline/warped UVs cannot use a normal map (no analytic tangent frame for the displaced hit); use `useTriplanarMapping` or `useGeneratedUVs`, or drop the normal map'
+      );
+    }
+    if (pomTexturing === 'baseline' && pomHeightMap) {
+      throw new Error(
+        '`pom` with `pomHeightMap` requires `useTriplanarMapping` or `useGeneratedUVs` (no UV scheme at the displaced sample point under baseline)'
       );
     }
     if (pomTexturing !== 'triplanar' && (clearcoatNormalMap || usePackedDiffuseNormalGBA)) {
@@ -818,8 +735,6 @@ export const buildCustomShaderArgs = (
     }
   }
   const pomSteps = pom?.steps ?? 24;
-  // Opt-in convex back-face-bounded silhouette mode (prototype). The Phase-1
-  // floored core stays byte-identical; this only adds an extra march variant.
   const pomBounded = !!pom?.boundedSilhouette;
 
   if (roughnessShader && roughnessReverseColorRamp) {
@@ -856,9 +771,6 @@ export const buildCustomShaderArgs = (
   const triplanarPosSym = pom ? 'triplanarSamplePos' : 'vTriplanarPos';
   const triplanarNormalSym = pom ? '_pomNormalW' : 'vTriplanarNormal';
 
-  // POM + generated UVs: sample maps at the displaced UV recomputed in
-  // `buildPomMainBlock`. All maps collapse to one UV (mapTransform et al.
-  // assumed identity, as the generated-UV path already does).
   const pomGen = !!pom && pomTexturing === 'generated';
   const mapUvSym = pomGen ? '_pomGenUv' : 'vMapUv';
 
@@ -883,25 +795,25 @@ export const buildCustomShaderArgs = (
   const buildMapFragment = () => {
     const inner = (() => {
       if (useTriplanarMapping) {
-        return `
+        return /* glsl */ `
         #ifdef USE_MAP
           sampledDiffuseColor_ = triplanarTextureFixContrast(map, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym});
         #endif`;
       }
 
       if (!tileBreaking) {
-        return `
+        return /* glsl */ `
         #ifdef USE_MAP
           vec4 sampledDiffuseColor = texture2D( map, ${mapUvSym} );
           sampledDiffuseColor_ = sampledDiffuseColor;
         #endif`;
       }
 
-      return `sampledDiffuseColor_ = ${buildTileBreakSampleExpr('map', mapUvSym, tileBreaking)};`;
+      return /* glsl */ `sampledDiffuseColor_ = ${buildTileBreakSampleExpr('map', mapUvSym, tileBreaking)};`;
     })();
 
     if (typeof mapDisableDistance !== 'number') {
-      return `
+      return /* glsl */ `
       #ifdef USE_MAP
         ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
         ${inner}
@@ -910,14 +822,13 @@ export const buildCustomShaderArgs = (
       #endif`;
     }
 
-    return `
+    return /* glsl */ `
     #ifdef USE_MAP
       ${usePackedDiffuseNormalGBA ? 'vec3 mapN = vec3(0.);' : ''}
 
       vec4 averageTextureColor = texture(map, vec2(0.5, 0.5), 99.);
       if (textureActivation < 0.01) {
         diffuseColor *= averageTextureColor;
-        // avoid any texture lookups, relieve pressure on the texture unit
       } else {
         ${inner}
         ${usePackedDiffuseNormalGBA ? buildUnpackDiffuseNormalGBAFragment(usePackedDiffuseNormalGBA) : ''}
@@ -929,21 +840,21 @@ export const buildCustomShaderArgs = (
   const buildRoughnessMapFragment = () => {
     const inner = (() => {
       if (useTriplanarMapping && roughnessMap) {
-        return `
+        return /* glsl */ `
           vec3 texelRoughness = triplanarTexture(roughnessMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}).xyz;
         `;
       }
 
       if (tileBreaking && roughnessMap)
-        return `vec3 texelRoughness = ${buildTileBreakSampleExpr('roughnessMap', mapUvSym, tileBreaking)}.xyz;`;
+        return /* glsl */ `vec3 texelRoughness = ${buildTileBreakSampleExpr('roughnessMap', mapUvSym, tileBreaking)}.xyz;`;
       else
-        return `
+        return /* glsl */ `
       vec4 texelRoughness = texture2D( roughnessMap, ${mapUvSym} );
       `;
     })();
 
     if (typeof mapDisableDistance !== 'number') {
-      return `
+      return /* glsl */ `
       float roughnessFactor = roughness;
       #ifdef USE_ROUGHNESSMAP
         ${inner}
@@ -956,11 +867,10 @@ export const buildCustomShaderArgs = (
       #endif`;
     }
 
-    return `
+    return /* glsl */ `
       float roughnessFactor = roughness;
       #ifdef USE_ROUGHNESSMAP
         if (textureActivation < 0.01) {
-          // avoid any texture lookups, relieve pressure on the texture unit
         } else {
           ${inner}
           ${
@@ -981,7 +891,7 @@ export const buildCustomShaderArgs = (
     }
     if (usePackedDiffuseNormalGBA) {
       if (typeof mapDisableDistance === 'number') {
-        return `
+        return /* glsl */ `
         if (textureActivation < 0.01) {
           // we didn't read anything from the normal map, so we can't use it
         } else {
@@ -997,7 +907,7 @@ export const buildCustomShaderArgs = (
         `;
       }
 
-      return `
+      return /* glsl */ `
         mapN = mapN * 2.0 - 1.0;
         mapN.xy *= normalScale;
 
@@ -1013,7 +923,7 @@ export const buildCustomShaderArgs = (
       return '';
     }
 
-    const normalMapSuffix = `
+    const normalMapSuffix = /* glsl */ `
     mapN = mapN * 2.0 - 1.0;
     mapN = normalize(mapN);
     mapN.xy *= normalScale;
@@ -1026,19 +936,17 @@ export const buildCustomShaderArgs = (
 
     const inner = (() => {
       if (useTriplanarMapping) {
-        // The perturbed normal is in the same space as the input normal we passed.
-        // For world-space, transform world->view directly. For local-space, go object->world->view.
         const transform = triplanarUsesWorldSpace
           ? '(viewMatrix * vec4(perturbedNormal, 0.)).xyz'
           : '(viewMatrix * modelMatrix * vec4(perturbedNormal, 0.)).xyz';
-        return `
+        return /* glsl */ `
           vec3 perturbedNormal = triplanarTextureNormalMap(normalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, normalScale).xyz;
           normal = normalize(${transform});
           `;
       }
 
       if (tileBreaking)
-        return `
+        return /* glsl */ `
     vec3 mapN = ${buildTileBreakSampleExpr('normalMap', 'vMapUv', tileBreaking)}.xyz;
 
     ${normalMapSuffix}
@@ -1050,10 +958,9 @@ export const buildCustomShaderArgs = (
       return inner;
     }
 
-    return `
+    return /* glsl */ `
       vec3 baseNormal = normal;
       if (textureActivation < 0.01) {
-        // avoid any texture lookups, relieve pressure on the texture unit
       } else {
         ${inner}
         normal = mix(baseNormal, normal, textureActivation);
@@ -1070,14 +977,14 @@ export const buildCustomShaderArgs = (
         const transform = triplanarUsesWorldSpace
           ? '(viewMatrix * vec4(perturbedClearcoatNormal, 0.)).xyz'
           : '(viewMatrix * modelMatrix * vec4(perturbedClearcoatNormal, 0.)).xyz';
-        return `
+        return /* glsl */ `
           vec3 perturbedClearcoatNormal = triplanarTextureNormalMap(clearcoatNormalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, clearcoatNormalScale).xyz;
           clearcoatNormal = normalize(${transform});
           `;
       }
 
       if (tileBreaking) {
-        return `
+        return /* glsl */ `
     vec3 clearcoatMapN = ${buildTileBreakSampleExpr('clearcoatNormalMap', 'vClearcoatNormalMapUv', tileBreaking)}.xyz;
 
     clearcoatMapN = clearcoatMapN * 2.0 - 1.0;
@@ -1091,7 +998,7 @@ export const buildCustomShaderArgs = (
     #endif
 `;
       } else {
-        return `
+        return /* glsl */ `
 #ifdef USE_CLEARCOAT_NORMALMAP
 
 	vec3 clearcoatMapN = texture2D( clearcoatNormalMap, vClearcoatNormalMapUv ).xyz * 2.0 - 1.0;
@@ -1108,10 +1015,9 @@ export const buildCustomShaderArgs = (
       return inner;
     }
 
-    return `
+    return /* glsl */ `
       vec3 baseClearcoatNormal = clearcoatNormal;
       if (textureActivation < 0.01) {
-        // avoid any texture lookups, relieve pressure on the texture unit
       } else {
         ${inner}
         clearcoatNormal = mix(baseClearcoatNormal, clearcoatNormal, textureActivation);
@@ -1122,7 +1028,6 @@ export const buildCustomShaderArgs = (
     fog: true,
     lights: true,
     dithering: false,
-    // transparent: heightAlpha ? true : (transparent ?? false),
     transparent: transparent ?? false,
     uniforms,
     vertexShader: /* glsl */ `
@@ -1185,11 +1090,11 @@ void main() {
   ${(() => {
     const normalAttribute = useDisplacementNormals ? 'displacementNormal' : 'objectNormal';
     return displacementShader
-      ? `
+      ? /* glsl */ `
     float computedDisplacement = getDisplacement(position, ${normalAttribute}, curTimeSeconds);
     transformed += normalize( ${normalAttribute} ) * computedDisplacement;
   `
-      : `
+      : /* glsl */ `
 #ifdef USE_DISPLACEMENTMAP
 	transformed += normalize( ${normalAttribute} ) * ( texture2D( displacementMap, vDisplacementMapUv ).x * displacementScale + displacementBias );
 #endif
@@ -1203,7 +1108,7 @@ void main() {
 
   #include <worldpos_vertex>
 
-  vec4 worldPositionMine = vec4( transformed, 1.0 );
+  vec4 worldPositionMine = vec4(transformed, 1.);
   worldPositionMine = modelMatrix * worldPositionMine;
   vWorldPos = worldPositionMine.xyz;
 
@@ -1219,17 +1124,17 @@ void main() {
     const pos = triplanarUsesWorldSpace ? 'vWorldPos' : 'position';
     const norm = triplanarUsesWorldSpace ? 'vWorldNormal' : 'vObjectNormal';
     const offsetExpr = randomizeUVOffset
-      ? `
+      ? /* glsl */ `
       vec2 _uvScaleVec = vec2(uvTransform[0][0], uvTransform[1][1]);
       vec3 _uvOffset3 = hashSeedToVec3(uvOffsetSeed);
       vec3 _safeScale = vec3(
-        _uvScaleVec.x != 0.0 ? 1.0 / _uvScaleVec.x : 0.0,
-        _uvScaleVec.y != 0.0 ? 1.0 / _uvScaleVec.y : 0.0,
-        _uvScaleVec.x != 0.0 ? 1.0 / _uvScaleVec.x : 0.0
+        _uvScaleVec.x != 0. ? 1. / _uvScaleVec.x : 0.,
+        _uvScaleVec.y != 0. ? 1. / _uvScaleVec.y : 0.,
+        _uvScaleVec.x != 0. ? 1. / _uvScaleVec.x : 0.
       );
       vTriplanarPos = ${pos} + _uvOffset3 * _safeScale;`
-      : `vTriplanarPos = ${pos};`;
-    return `${offsetExpr}
+      : /* glsl */ `vTriplanarPos = ${pos};`;
+    return /* glsl */ `${offsetExpr}
       vTriplanarNormal = ${norm};`;
   })()}
 
@@ -1238,7 +1143,7 @@ void main() {
     if (useGeneratedUVs) {
       const uvPos = generatedUVsUseWorldSpace ? 'vWorldPos' : 'position';
       const uvNormal = generatedUVsUseWorldSpace ? 'worldNormal' : 'normal';
-      return `
+      return /* glsl */ `
       vec3 worldNormal = normalize(mat3(modelMatrix[0].xyz, modelMatrix[1].xyz, modelMatrix[2].xyz) * normal);
       vUv = generateUV(${uvPos}, ${uvNormal});
       vUv = ( uvTransform * vec3( vUv, 1 ) ).xy;
@@ -1251,7 +1156,7 @@ void main() {
     }
 
     // default uv transform
-    return 'vUv = ( uvTransform * vec3( uv, 1 ) ).xy;';
+    return 'vUv = (uvTransform * vec3( uv, 1 )).xy;';
   })()}
   #endif
 
@@ -1280,7 +1185,7 @@ void main() {
 
   ${customVertexFragment ?? ''}
 }`,
-    fragmentShader: `
+    fragmentShader: /* glsl */ `
 layout(location = 0) out vec4 outFragColor;
 ${usingSSR ? 'layout(location = 1) out vec4 outReflectionData;' : ''}
 
@@ -1376,7 +1281,7 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 
 uniform float curTimeSeconds;
 varying vec3 vWorldPos;
-${buildPomUniformDecls(!!pom, pomBounded)}
+${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap)}
 
 uniform vec3 playerShadowPos;
 uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=centerDropDist
@@ -1434,6 +1339,8 @@ ${
 }
 ${pomGen ? GeneratedUVsFragment : ''}
 
+${commonShader ?? ''}
+
 ${colorShader ?? ''}
 ${normalShader ?? ''}
 ${roughnessShader ?? ''}
@@ -1445,6 +1352,7 @@ ${metalnessReverseColorRamp ? buildReverseColorRampGenerator('metalnessFromColor
 ${iridescenceShader ?? ''}
 ${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${pomHeightShader ?? ''}
+${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, pomTexturing }) : ''}
 ${buildPomDefsFragment()}
 ${usingSSR ? ssrDefsFragment : ''}
 
@@ -1468,7 +1376,7 @@ void main() {
   vec4 diffuseColor = vec4(diffuse, opacity);
   ${
     !noOcclusion
-      ? `
+      ? /* glsl */ `
   if (highlightFactor > 0.) {
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.3, 0.3, 0.3), highlightFactor * 0.7);
   }
@@ -1513,7 +1421,7 @@ void main() {
 
   SceneCtx ctx = SceneCtx(cameraPosition, vMapUv, diffuseColor, vWorldPos, vWorldNormal);
 
-  ${pom ? buildPomMainBlock(pomBounded, pomTexturing) : ''}
+  ${pom ? buildPomMainBlock(pomBounded, pomTexturing, pom.normalEps) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
@@ -1541,7 +1449,7 @@ void main() {
 
   ${
     normalShader
-      ? `
+      ? /* glsl */ `
   normal = getCustomNormal(vWorldPos, vObjectNormal, curTimeSeconds);
   normal = normalize(normalMatrix * normal);
   `
@@ -1561,7 +1469,7 @@ void main() {
 	#include <emissivemap_fragment>
   ${
     emissiveShader
-      ? `
+      ? /* glsl */ `
     totalEmissiveRadiance = getCustomEmissive(vWorldPos, totalEmissiveRadiance, curTimeSeconds, ctx);
   `
       : ''
@@ -1570,61 +1478,8 @@ void main() {
 	// accumulation
   ${
     vertexLighting
-      ? `
-  // --- Vertex lighting path ---
-  // Lighting was computed per-vertex; we only need per-fragment shadow map sampling here.
-  // Shadows only affect direct light; ambient/indirect passes through unshadowed.
-  float totalShadow = 1.0;
-
-  #if defined(USE_SHADOWMAP)
-    float computedShadow;
-
-    #if (NUM_DIR_LIGHTS > 0) && (NUM_DIR_LIGHT_SHADOWS > 0)
-      DirectionalLightShadow vtxDirShadow;
-      #pragma unroll_loop_start
-      for (int i = 0; i < NUM_DIR_LIGHTS; i++) {
-        #if (UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS)
-          vtxDirShadow = directionalLightShadows[i];
-          computedShadow = getShadow(directionalShadowMap[i], vtxDirShadow.shadowMapSize, vtxDirShadow.shadowBias, vtxDirShadow.shadowRadius, vDirectionalShadowCoord[i]);
-          totalShadow *= computedShadow;
-        #endif
-      }
-      #pragma unroll_loop_end
-    #endif
-
-    #if (NUM_SPOT_LIGHTS > 0) && (NUM_SPOT_LIGHT_SHADOWS > 0)
-      SpotLightShadow vtxSpotShadow;
-      #pragma unroll_loop_start
-      for (int i = 0; i < NUM_SPOT_LIGHTS; i++) {
-        #if (UNROLLED_LOOP_INDEX < NUM_SPOT_LIGHT_SHADOWS)
-          vtxSpotShadow = spotLightShadows[i];
-          computedShadow = getShadow(spotShadowMap[i], vtxSpotShadow.shadowMapSize, vtxSpotShadow.shadowBias, vtxSpotShadow.shadowRadius, vSpotLightCoord[i]);
-          totalShadow *= computedShadow;
-        #endif
-      }
-      #pragma unroll_loop_end
-    #endif
-
-    #if (NUM_POINT_LIGHTS > 0) && (NUM_POINT_LIGHT_SHADOWS > 0)
-      PointLightShadow vtxPointShadow;
-      #pragma unroll_loop_start
-      for (int i = 0; i < NUM_POINT_LIGHTS; i++) {
-        #if (UNROLLED_LOOP_INDEX < NUM_POINT_LIGHT_SHADOWS)
-          vtxPointShadow = pointLightShadows[i];
-          computedShadow = getPointShadow(pointShadowMap[i], vtxPointShadow.shadowMapSize, vtxPointShadow.shadowBias, vtxPointShadow.shadowRadius, vPointShadowCoord[i], vtxPointShadow.shadowCameraNear, vtxPointShadow.shadowCameraFar);
-          totalShadow *= computedShadow;
-        #endif
-      }
-      #pragma unroll_loop_end
-    #endif
-  #endif
-
-  // Apply RECIPROCAL_PI to match PBR energy conservation (BRDF_Lambert divides by PI).
-  // Shadows only darken direct light; indirect (ambient + hemisphere) is unshadowed.
-  vec3 totalDiffuse = diffuseColor.rgb * RECIPROCAL_PI * (vVertexDirect * totalShadow + vVertexIndirect);
-  vec3 totalSpecular = ${vertexLightingShininess > 0 ? 'vVertexSpecular * totalShadow' : 'vec3(0.0)'};
-  `
-      : `
+      ? VERTEX_LIGHTING_FRAGMENT
+      : /* glsl */ `
 	#include <lights_physical_fragment>
   ${buildRunIridescenceShaderFragment(iridescenceShader)}
   ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(sampledDiffuseColor_.rgb);' : ''}
@@ -1642,58 +1497,7 @@ void main() {
   `
   }
 
-	if (playerShadowParams.y > 0.0) {
-		float psRadius = playerShadowParams.x;
-		float psCenterReceiverY = playerShadowParams.z;
-		float psCenterDropDist = playerShadowParams.w;
-
-		vec2 psDelta = vWorldPos.xz - playerShadowPos.xz;
-		float psDist = length(psDelta);
-		float psCircle = 1.0 - smoothstep(psRadius * 0.6, psRadius, psDist);
-
-		// Polar bilinear interpolation of receiver Y from ring probes
-		// Compute angle index (8 sectors, 45° each)
-		float psAngle = atan(psDelta.y, psDelta.x); // -PI to PI
-		float psSector = fract(psAngle / 6.2831853) * 8.0; // 0 to 8
-		float psSectorFrac = fract(psSector);
-		int psIdx0 = int(mod(floor(psSector), 8.0));
-		int psIdx1 = int(mod(floor(psSector) + 1.0, 8.0));
-
-		// Look up receiverY from ring mat4 by index, using max() to bias toward closest surface
-		// mat4 layout: cols 0-1 = outer ring, cols 2-3 = inner ring
-		// psRingData[col][row] where col = i/4, row = i%4
-		float psOuterY = max(psRingData[psIdx0 / 4][psIdx0 - (psIdx0 / 4) * 4], psRingData[psIdx1 / 4][psIdx1 - (psIdx1 / 4) * 4]);
-		float psInnerY = max(psRingData[2 + psIdx0 / 4][psIdx0 - (psIdx0 / 4) * 4], psRingData[2 + psIdx1 / 4][psIdx1 - (psIdx1 / 4) * 4]);
-
-		// Radial interpolation: center → inner ring → outer ring, biased toward closest surface
-		float psRadialT = clamp(psDist / psRadius, 0.0, 1.0);
-		float psReceiverY;
-		if (psRadialT < 0.5) {
-			psReceiverY = max(psCenterReceiverY, psInnerY);
-		} else {
-			psReceiverY = max(psInnerY, psOuterY);
-		}
-
-		// Drop distance derived from final receiverY
-		float psDropDist = playerShadowPos.y - psReceiverY;
-
-		// Asymmetric surface check: tight above, gradual bleed below
-		float psYDiff = vWorldPos.y - psReceiverY;
-		float psOnSurface = psYDiff > 0.0
-			? 1.0 - smoothstep(0.0, 0.3, psYDiff)
-			: 1.0 - smoothstep(0.0, 1.5, -psYDiff);
-
-		// Skip undersides and vertical walls (vWorldNormal is the actual world-space normal)
-		float psNormalUp = smoothstep(0.2, 0.5, vWorldNormal.y);
-
-		// Fade shadow with height above surface
-		float psHeightFade = 1.0 - smoothstep(0.0, 40.0, psDropDist);
-
-		float psShadow = psCircle * psOnSurface * psNormalUp * psHeightFade * playerShadowParams.y;
-		totalDiffuse *= (1.0 - psShadow);
-		totalSpecular *= (1.0 - psShadow);
-		totalShadow *= (1.0 - psShadow);
-	}
+  ${PLAYER_SHADOW_FRAGMENT}
 
 	#include <transmission_fragment>
 
@@ -1703,20 +1507,20 @@ void main() {
 
 		// Sheen energy compensation approximation calculation can be found at the end of
 		// https://drive.google.com/file/d/1T0D1VSyR4AllqIJTQAraEIzjlb5h4FKH/view?usp=sharing
-		float sheenEnergyComp = 1.0 - 0.157 * max3( material.sheenColor );
+		float sheenEnergyComp = 1. - 0.157 * max3(material.sheenColor);
 
 		outgoingLight = outgoingLight * sheenEnergyComp + sheenSpecularDirect + sheenSpecularIndirect;
 	#endif
 
 	#ifdef USE_CLEARCOAT
-    float dotNVcc = saturate( dot( geometryClearcoatNormal, geometryViewDir ) );
-		vec3 Fcc = F_Schlick( material.clearcoatF0, material.clearcoatF90, dotNVcc );
-		outgoingLight = outgoingLight * ( 1.0 - material.clearcoat * Fcc ) + ( clearcoatSpecularDirect + clearcoatSpecularIndirect ) * material.clearcoat;
+    float dotNVcc = saturate(dot( geometryClearcoatNormal, geometryViewDir ));
+		vec3 Fcc = F_Schlick(material.clearcoatF0, material.clearcoatF90, dotNVcc);
+		outgoingLight = outgoingLight * (1. - material.clearcoat * Fcc) + (clearcoatSpecularDirect + clearcoatSpecularIndirect) * material.clearcoat;
 	#endif
 
 	// #include <opaque_fragment>
   #ifdef OPAQUE
-  diffuseColor.a = 1.0;
+  diffuseColor.a = 1.;
   #endif
 
   #ifdef USE_TRANSMISSION
@@ -1729,26 +1533,25 @@ void main() {
 
   ${
     !noOcclusion
-      ? `if (hasBackfaceHit) outFragColor.rgb = mix(outFragColor.rgb, vec3(168. / 255., 190. / 255., 155. / 255.), 0.01);`
+      ? /* glsl */ `if (hasBackfaceHit) outFragColor.rgb = mix(outFragColor.rgb, vec3(168. / 255., 190. / 255., 155. / 255.), 0.01);`
       : ''
   }
 
 	${
     enableFog
-      ? `
+      ? /* glsl */ `
   #ifdef USE_FOG
     #ifdef FOG_EXP2
       float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
     #else
       float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
     #endif
-    ${typeof fogMultiplier === 'number' ? `fogFactor *= ${fogMultiplier.toFixed(4)};` : ''}
+    ${typeof fogMultiplier === 'number' ? /* glsl */ `fogFactor *= ${fogMultiplier.toFixed(4)};` : ''}
     // \`totalShadow\` is 0 if the fragment is fully shadowed and 1 if it is fully lit
-    vec3 shadowColor = vec3( 0.0 );
+    vec3 shadowColor = vec3(0.);
     float fogShadowFactor = ${fogShadowFactor.toFixed(4)};
     vec3 shadowedFogColor = mix(fogColor, shadowColor, fogShadowFactor * (1. - totalShadow) * clamp(0., 1., fogFactor * 1.5));
-    outFragColor.rgb = mix( outFragColor.rgb, shadowedFogColor, fogFactor );
-    // outFragColor.w = mix( outFragColor.a, 0., fogFactor );
+    outFragColor.rgb = mix(outFragColor.rgb, shadowedFogColor, fogFactor);
   #endif
   `
       : ''
@@ -1757,6 +1560,8 @@ void main() {
   #ifdef PREMULTIPLIED_ALPHA
     outFragColor.rgb *= outFragColor.a;
   #endif
+
+  ${pom ? buildPomDebug(pom.debug) : ''}
 }`,
     glslVersion: THREE.GLSL3,
   };
@@ -1770,14 +1575,6 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
   public flatShading: boolean = false;
   public isMeshStandardMaterial = false;
   public isMeshPhysicalMaterial = false;
-  /**
-   * This flag is set when the material makes use of SSR and expects a second color attachment to be
-   * set on the framebuffer.
-   *
-   * This is read in `defaultPostprocessing.ts` which does some hacky patching of Three.JS to handle
-   * binding/unbinding the second buffer as needed to prevent errors that WebGL throws if an output
-   * texture is bound but not written to.
-   */
   public needsSSRBuffer = false;
 
   public specularMap?: THREE.Texture;
@@ -1865,7 +1662,6 @@ export const buildCustomShader = (
 
   if (props.reflection) {
     const reflectionParams = { ...DefaultReflectionParams, ...props.reflection };
-    // Setting alpha to 1. causes no reflections to be emitted since that's the default value for the cleared buffer
     mat.defines.SSR_ALPHA = Math.min(reflectionParams.alpha, 0.9999).toFixed(4);
   } else {
     mat.defines.SSR_ALPHA = '0.';
@@ -1890,6 +1686,9 @@ export const buildCustomShader = (
     mat.roughnessMap = props.roughnessMap;
     mat.uniforms.roughnessMap.value = props.roughnessMap;
   }
+  if (props.pomHeightMap && mat.uniforms.pomHeightMap) {
+    mat.uniforms.pomHeightMap.value = props.pomHeightMap;
+  }
   if (props.clearcoatNormalMap) {
     mat.clearcoatNormalMap = props.clearcoatNormalMap;
     mat.uniforms.clearcoatNormalMap.value = props.clearcoatNormalMap;
@@ -1898,11 +1697,6 @@ export const buildCustomShader = (
     (mat as any).emissiveIntensity = props.emissiveIntensity;
     mat.uniforms.emissiveIntensity.value = props.emissiveIntensity;
   }
-  // if (props.lightMap) {
-  //   (mat as any).lightMap = props.lightMap;
-  //   mat.uniforms.lightMap.value = props.lightMap;
-  //   mat.uniforms.lightMapIntensity.value = props.lightMapIntensity ?? 1;
-  // }
   if (props.transparent) {
     (mat as any).transparent = props.transparent;
   }
@@ -1949,24 +1743,14 @@ export const buildCustomShader = (
   if (opts?.noOcclusion) {
     mat.userData.occlusionExclude = true;
   } else {
-    // Materials opt into runtime occlusion backface toggling unless explicitly excluded.
     setMaterialOcclusionBackfaceRendering(mat, occlusionBackfaceRenderingEnabled);
   }
 
   if (opts?.pom?.boundedSilhouette) {
-    // The bounded path `discard`s notch fragments; the shared prepass uses a
-    // generic override material that can't reproduce that, so it would write
-    // full-footprint depth and occlude what shows through the notches. Locked
-    // design = bypass (not raymarch replication): exclude from the prepass (see
-    // `DepthPass`) and write own depth in the main pass. Main-pass depth func
-    // is LEQUAL (global, from `DepthPass`), so explicit LessEqualDepth + write
-    // keeps occlusion correct against the prepass buffer.
     mat.userData.skipDepthPrepass = true;
     mat.depthFunc = THREE.LessEqualDepth;
     mat.depthWrite = true;
     mat.depthTest = true;
-    // Lets `PomExitBufferManager` discover this material's meshes by a scene
-    // scan, so scenes opt in with just the pipeline flag (no manual wiring).
     mat.userData[POM_BOUNDED_SILHOUETTE_FLAG] = true;
   }
 

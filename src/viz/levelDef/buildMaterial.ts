@@ -73,6 +73,7 @@ const resolveShaderProps = (
   props.lightMap = resolveTexture(propsJson.lightMap);
   props.transmissionMap = resolveTexture(propsJson.transmissionMap);
   props.clearcoatNormalMap = resolveTexture(propsJson.clearcoatNormalMap);
+  props.pomHeightMap = resolveTexture(propsJson.pomHeightMap);
 
   if (propsJson.uvScale !== undefined) {
     props.uvTransform = new THREE.Matrix3().scale(propsJson.uvScale[0], propsJson.uvScale[1]);
@@ -111,6 +112,7 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
   const shaders: CustomShaderShaders = {};
   if (shadersJson.customVertexFragment !== undefined)
     shaders.customVertexFragment = shadersJson.customVertexFragment;
+  if (shadersJson.commonShader !== undefined) shaders.commonShader = shadersJson.commonShader;
   if (shadersJson.colorShader !== undefined) shaders.colorShader = shadersJson.colorShader;
   if (shadersJson.normalShader !== undefined) shaders.normalShader = shadersJson.normalShader;
   if (shadersJson.roughnessShader !== undefined) shaders.roughnessShader = shadersJson.roughnessShader;

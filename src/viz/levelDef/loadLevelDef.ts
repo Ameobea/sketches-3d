@@ -464,11 +464,8 @@ export const loadLevelDef = (
   levelDef: LevelDef,
   quality: GraphicsQuality
 ): LevelLoadHandle => {
-  // For each material, the set of texture keys it still needs before it can be built.
   const matTexPending = new Map<string, Set<string>>();
-  // For each material, the textures loaded so far.
   const matTexLoaded = new Map<string, Map<string, THREE.Texture>>();
-  // Generated material names still waiting for a factory to be registered.
   const pendingGeneratedMats = new Set<string>();
   const matAssignedCbs = new Map<string, (mesh: THREE.Mesh) => void>();
   const getTextureRefsForMaterial = (matName: string): string[] => {
@@ -483,13 +480,13 @@ export const loadLevelDef = (
       p.lightMap,
       p.transmissionMap,
       p.clearcoatNormalMap,
+      p.pomHeightMap,
     ].filter((x): x is string => typeof x === 'string');
   };
 
   for (const matName of Object.keys(levelDef.materials ?? {})) {
     const def = levelDef.materials![matName];
     if (def.type === 'generated') {
-      // Generated materials are built only when setMaterialFactories() is called.
       pendingGeneratedMats.add(matName);
     } else {
       matTexPending.set(matName, new Set(getTextureRefsForMaterial(matName)));

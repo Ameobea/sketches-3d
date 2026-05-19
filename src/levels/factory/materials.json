@@ -26,6 +26,11 @@
     "horizontal_metal_1_normal": {
       "url": "https://geotoy.b-cdn.net/textures/1/8a4f8add-ac59-4d23-b74e-472d488c7469.avif"
     },
+    "horizontal_metal_1_height": {
+      "url": "https://i.ameo.link/dq2.avif",
+      "magFilter": "linear",
+      "format": "red"
+    },
     "rusty_metal_diffuse": {
       "url": "https://geotoy.b-cdn.net/textures/1/5ce2808a-543c-4409-b827-d858c79432a3.avif",
       "colorSpace": "srgb"
@@ -102,6 +107,9 @@
         }
       },
       "shaders": {
+        "commonShader": {
+          "file": "masonryTiles.common.glsl"
+        },
         "pomHeightShader": {
           "file": "masonryTiles.height.glsl"
         },
@@ -115,7 +123,7 @@
         "useWorldSpaceUVs": true,
         "tileBreaking": {
           "type": "neyret",
-          "patchScale": 2
+          "patchScale": 1.62
         },
         "randomizeUVOffset": true,
         "pom": {
@@ -164,13 +172,24 @@
         "uvScale": [0.04, 0.04],
         "map": "horizontal_metal_1_diffuse",
         "normalMap": "horizontal_metal_1_normal",
+        "pomHeightMap": "horizontal_metal_1_height",
         "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50
       },
       "options": {
         "useTriplanarMapping": true,
         "useWorldSpaceUVs": true,
-        "randomizeUVOffset": true
+        "randomizeUVOffset": true,
+        "pom": {
+          "depth": 0.2,
+          "steps": 16,
+          "lodFadeStart": 10,
+          "lodFadeRange": 50,
+          "boundedSilhouette": true,
+          "refinement": "binary",
+          "refinementSteps": 5,
+          "normalEps": 0.3
+        }
       }
     },
     "rusty_metal": {

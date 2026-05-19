@@ -1,11 +1,57 @@
 export const POM_BOUNDED_SILHOUETTE_FLAG = 'pomBoundedSilhouette';
 
-export const buildPomUniformDecls = (pom: boolean, pomBounded: boolean): string =>
+export const buildPomUniformDecls = (pom: boolean, pomBounded: boolean, pomHeightMap: boolean): string =>
   [
     pom ? 'uniform float pomDepth;' : '',
     pomBounded ? 'uniform highp sampler2D pomBackDepth; // R = euclidean dist camera->nearest back face' : '',
     pomBounded ? 'uniform vec2 pomResolution; // drawing-buffer size; the back-face RT may be lower-res' : '',
+    pomHeightMap ? 'uniform sampler2D pomHeightMap;' : '',
   ].join('\n');
+
+export type PomTexturing = 'triplanar' | 'generated' | 'baseline';
+
+// Emits `getPomHeight()` + `samplePomHeightMap()`. The marcher sums both, so a
+// no-op (returning 0) is emitted for whichever source the material omits.
+//
+// `textureLod(.,0)` rather than `texture2D`: the marcher calls this in
+// non-uniform control flow (loop + conditional return) where implicit
+// derivatives are undefined and the GPU picks a runaway mip. Triplanar is
+// inlined for the same reason — the shared `triplanarTexture()` uses
+// `texture2D`. `1. - x` matches white-is-high heightmap convention.
+export const buildPomHeightSources = (opts: {
+  hasHeightShader: boolean;
+  hasHeightMap: boolean;
+  pomTexturing: PomTexturing;
+}): string => {
+  const { hasHeightShader, hasHeightMap, pomTexturing } = opts;
+  const proceduralDefault = hasHeightShader
+    ? ''
+    : 'float getPomHeight(vec3 _p, vec3 _N, float _t) { return 0.; }';
+  const sampleFn = (() => {
+    if (!hasHeightMap) {
+      return 'float samplePomHeightMap(vec3 _p, vec3 _N) { return 0.; }';
+    }
+    if (pomTexturing === 'triplanar') {
+      return /* glsl */ `
+float samplePomHeightMap(vec3 p, vec3 N) {
+  vec3 sp = vTriplanarPos + (p - vWorldPos);
+  vec2 _phUvScale = vec2(uvTransform[0][0], uvTransform[1][1]);
+  vec3 w = generateTriplanarWeights(N);
+  float h = 0.;
+  if (w.x > 0.01) h += textureLod(pomHeightMap, sp.yz * _phUvScale, 0.0).r * w.x;
+  if (w.y > 0.01) h += textureLod(pomHeightMap, sp.zx * _phUvScale, 0.0).r * w.y;
+  if (w.z > 0.01) h += textureLod(pomHeightMap, sp.xy * _phUvScale, 0.0).r * w.z;
+  return 1. - h;
+}`;
+    }
+    return /* glsl */ `
+float samplePomHeightMap(vec3 p, vec3 N) {
+  vec2 uv = (uvTransform * vec3(generateUV(p, N), 1.)).xy;
+  return 1. - textureLod(pomHeightMap, uv, 0.0).r;
+}`;
+  })();
+  return `${proceduralDefault}\n${sampleFn}`;
+};
 
 export type PomRefinement = 'secant' | 'binary';
 
@@ -28,7 +74,7 @@ ${useBinary ? `#define POM_REFINE_BINARY\n#define POM_BINARY_STEPS ${pomBinarySt
 // extending inward along -N. \`getPomHeight()\` returns carved depth in [0,1];
 // this wrapper scales it to world units.
 float _pomSurf(vec3 p, vec3 N, float depth, float t) {
-  return getPomHeight(p, N, t) * depth;
+  return clamp(getPomHeight(p, N, t) + samplePomHeightMap(p, N), 0., 0.8) * depth;
 }
 
 // Linear-search + secant-refine relief intersection (Policarpo & Oliveira,
@@ -158,9 +204,11 @@ float pomLodFade(float distanceToCamera) {
 `;
 };
 
-export type PomTexturing = 'triplanar' | 'generated' | 'baseline';
-
-export const buildPomMainBlock = (pomBounded: boolean, pomTexturing: PomTexturing): string => {
+export const buildPomMainBlock = (
+  pomBounded: boolean,
+  pomTexturing: PomTexturing,
+  normalEps: number | undefined
+): string => {
   const tail = (() => {
     switch (pomTexturing) {
       case 'triplanar':
@@ -213,6 +261,7 @@ export const buildPomMainBlock = (pomBounded: boolean, pomTexturing: PomTexturin
           : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
       }
       float _pomEps = max(unitsPerPx, _pomD * 0.02);
+      ${typeof normalEps === 'number' ? /* glsl */ `_pomEps = max(_pomEps, ${normalEps.toFixed(6)});` : ''}
       _pomNormalW = mix(
         _pomNormalW,
         pomAnalyticNormal(_pomHit, _pomNormalW, _pomD, curTimeSeconds, _pomEps),
@@ -267,4 +316,30 @@ export const buildPomNormalApply = (pomTexturing: PomTexturing, hasNormalMap: bo
     normal = normalize((viewMatrix * vec4(_pomNormalDetailW, 0.)).xyz);
   }
   `;
+};
+
+export type PomDebugMode = 'heightmap' | 'depth' | 'normal' | 'normalDelta' | 'axis' | 'hit';
+
+// Overrides `outFragColor` at the end of `main()` with a diagnostic, bypassing
+// the color shader, normal map, and fog (tonemapping still applies downstream).
+export const buildPomDebug = (debug: PomDebugMode | undefined): string => {
+  if (!debug) return '';
+  if (debug === 'axis') {
+    return /* glsl */ `
+  {
+    vec3 _dbgN = abs(_pomNormalW);
+    vec3 _dbgAxis = (_dbgN.x >= _dbgN.y && _dbgN.x >= _dbgN.z) ? vec3(1.0, 0.0, 0.0)
+                  : (_dbgN.y >= _dbgN.z)                       ? vec3(0.0, 1.0, 0.0)
+                  :                                              vec3(0.0, 0.0, 1.0);
+    outFragColor = vec4(_dbgAxis, 1.0);
+  }`;
+  }
+  const expr: Record<Exclude<PomDebugMode, 'axis'>, string> = {
+    heightmap: 'vec3(samplePomHeightMap(_pomHit, vWorldNormal))',
+    depth: 'vec3(_pomSurf(_pomHit, vWorldNormal, 1.0, curTimeSeconds))',
+    normal: '_pomNormalW * 0.5 + 0.5',
+    normalDelta: 'vec3(length(_pomNormalW - normalize(vWorldNormal)), 0.0, 0.0)',
+    hit: 'fract(_pomHit)',
+  };
+  return `\n  outFragColor = vec4(${expr[debug]}, 1.0);`;
 };

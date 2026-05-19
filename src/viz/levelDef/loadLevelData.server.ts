@@ -143,6 +143,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
 
   const SHADER_GLSL_FIELDS = [
     'customVertexFragment',
+    'commonShader',
     'colorShader',
     'normalShader',
     'roughnessShader',

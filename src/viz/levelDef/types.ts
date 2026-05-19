@@ -154,6 +154,10 @@ export const TextureDefSchema = z.object({
   anisotropy: z.number().optional(),
   /** Default: '' (NoColorSpace) */
   colorSpace: z.enum(['srgb', '']).optional(),
+  /**
+   * Default: 'rgba' (RGBA8)
+   */
+  format: z.enum(['rgba', 'rg', 'red']).optional(),
 });
 
 export type TextureDef = z.infer<typeof TextureDefSchema>;
@@ -188,6 +192,8 @@ export const ReverseColorRampParamsSchema = z.object({
 
 export const ShaderShadersJsonSchema = z.object({
   customVertexFragment: z.string().optional(),
+  /** Shared GLSL emitted before all other user shader slots; see `CustomShaderShaders.commonShader`. */
+  commonShader: z.string().optional(),
   colorShader: z.string().optional(),
   normalShader: z.string().optional(),
   roughnessShader: z.string().optional(),
@@ -242,6 +248,8 @@ export const ShaderPropsJsonSchema = z.object({
   lightMap: z.string().optional(),
   transmissionMap: z.string().optional(),
   clearcoatNormalMap: z.string().optional(),
+  /** Optional heightmap texture sampled during Parallax Occlusion Mapping. Requires `options.pom`. */
+  pomHeightMap: z.string().optional(),
   // complex but JSON-safe
   ambientDistanceAmp: AmbientDistanceAmpParamsSchema.optional(),
   reflection: ReflectionParamsSchema.optional(),
@@ -276,6 +284,8 @@ export const ShaderOptionsJsonSchema = z.object({
       boundedSilhouette: z.boolean().optional(),
       refinement: z.enum(['secant', 'binary']).optional(),
       refinementSteps: z.number().int().min(1).optional(),
+      normalEps: z.number().positive().optional(),
+      debug: z.enum(['heightmap', 'depth', 'normal', 'normalDelta', 'axis', 'hit']).optional(),
     })
     .optional(),
 });
@@ -353,6 +363,7 @@ const ShaderGlslFieldRawSchema = z.union([z.string(), z.object({ file: z.string(
 /** Like ShaderShadersJsonSchema but GLSL string fields also accept `{ file: string }`. */
 const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
   customVertexFragment: ShaderGlslFieldRawSchema.optional(),
+  commonShader: ShaderGlslFieldRawSchema.optional(),
   colorShader: ShaderGlslFieldRawSchema.optional(),
   normalShader: ShaderGlslFieldRawSchema.optional(),
   roughnessShader: ShaderGlslFieldRawSchema.optional(),
@@ -823,6 +834,7 @@ export const LevelDefSchema = z
         'lightMap',
         'transmissionMap',
         'clearcoatNormalMap',
+        'pomHeightMap',
       ] as const;
       for (const slot of texSlots) {
         const ref = p[slot];
