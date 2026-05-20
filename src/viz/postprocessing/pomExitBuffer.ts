@@ -5,8 +5,7 @@ import { POM_BOUNDED_SILHOUETTE_FLAG } from 'src/viz/shaders/pom';
 
 /**
  * Runtime support for the back-face-depth-bounded POM silhouette mode (the
- * shader side is in `src/viz/shaders/pom.ts`; full rationale + VRAM analysis in
- * `pom-known-limitations-and-authoring-guide.md` §2/§4).
+ * shader side is in `pom.ts`
  *
  * Each `boundedSilhouette` POM mesh needs, per pixel, the Euclidean distance
  * from the camera to its own nearest back face so the raymarch can clamp itself
@@ -19,16 +18,11 @@ import { POM_BOUNDED_SILHOUETTE_FLAG } from 'src/viz/shaders/pom';
  *    from a capped, lazily-allocated pool, rendered alone, so a rear mesh seen
  *    through a front mesh's carved notch bounds its march by its *own* exit.
  *
- * Overlap is detected conservatively (projected world-AABB screen rects);
- * pool overflow / mis-assignment degrades safely to Phase-1 via the shader's
- * non-positive-chord guard. VRAM is bounded at `poolCap + 1` RTs regardless of
- * scene POM count; the common (no-overlap) case keeps only the combined buffer.
+ * Overlap is detected conservatively based on projected world-AABB screen rects.
  */
 
 export interface PomExitBufferOptions {
-  /** Max dedicated buffers. Typical on-screen overlap depth is 2-3; 4 = headroom. */
   poolCap?: number;
-  /** Idle frames (~4s @60fps) the pool stays oversized before releasing extras. */
   poolShrinkAfter?: number;
 }
 
@@ -41,8 +35,7 @@ const isPomBoundedMaterial = (m: THREE.Material | null | undefined): m is PomMat
  * Front-face-culled "distance to camera" material. For a convex mesh the single
  * surviving (nearest) back-face fragment per pixel is the ray's exit point; its
  * Euclidean distance from the camera is what the POM marcher needs to bound
- * itself. R channel only; the RT is cleared to 0 so uncovered texels read as
- * the shader's "unbounded" sentinel. Generic — one shared instance.
+ * itself.
  */
 const buildBackFaceDistMaterial = () =>
   new THREE.ShaderMaterial({
@@ -51,7 +44,7 @@ const buildBackFaceDistMaterial = () =>
     depthWrite: true,
     uniforms: { uCamPos: { value: new THREE.Vector3() } },
     // `gl_Position` must match Three.js's `project_vertex` association order
-    // exactly — different orderings drift at ULP scale and z-fight the main pass.
+    // exactly; different orderings drift at ULP scale and z-fight the main pass.
     vertexShader: /* glsl */ `
       varying vec3 vWP;
       void main() {
@@ -82,27 +75,40 @@ interface Rect {
 const rectsOverlap = (a: Rect, b: Rect): boolean =>
   a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
 
+const collectPomBoundedMeshes = (scene: THREE.Scene): THREE.Mesh[] => {
+  const out: THREE.Mesh[] = [];
+  scene.traverse(o => {
+    if (!(o instanceof THREE.Mesh)) {
+      return;
+    }
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    if (mats.some(isPomBoundedMaterial)) {
+      out.push(o);
+    }
+  });
+  return out;
+};
+
 export class PomExitBufferManager {
   private readonly viz: Viz;
   private readonly poolCap: number;
   private readonly poolShrinkAfter: number;
 
-  private readonly meshes: THREE.Mesh[];
+  private meshes: THREE.Mesh[];
   /** Each mesh's bounded-POM material (multiple meshes may share one). */
   private readonly matOf = new Map<THREE.Mesh, PomMaterial>();
   private readonly pomMaterials = new Set<PomMaterial>();
+  /** Pre-install `onBeforeRender` per mesh, so `unregisterMesh` can restore it. */
+  private readonly prevHook = new Map<THREE.Mesh, THREE.Object3D['onBeforeRender'] | undefined>();
 
   private readonly bfMat = buildBackFaceDistMaterial();
   private readonly dbSize = new THREE.Vector2();
 
-  // Pool grows lazily up to `poolCap` (most frames need 0 dedicated RTs) and
-  // shrinks after a sustained idle. The combined buffer is always live.
   private pool: THREE.WebGLRenderTarget[] = [];
   private poolIdleFrames = 0;
   private combinedRT: THREE.WebGLRenderTarget;
   private readonly assignedRT = new Map<THREE.Mesh, THREE.WebGLRenderTarget>();
 
-  // Scratch reused each frame (no per-frame allocation).
   private readonly camMatInv = new THREE.Matrix4();
   private readonly viewProj = new THREE.Matrix4();
   private readonly frustum = new THREE.Frustum();
@@ -119,16 +125,7 @@ export class PomExitBufferManager {
    * nothing is allocated.
    */
   static tryCreate(viz: Viz, opts?: PomExitBufferOptions): PomExitBufferManager | null {
-    const meshes: THREE.Mesh[] = [];
-    viz.scene.traverse(o => {
-      if (!(o instanceof THREE.Mesh)) {
-        return;
-      }
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      if (mats.some(isPomBoundedMaterial)) {
-        meshes.push(o);
-      }
-    });
+    const meshes = collectPomBoundedMeshes(viz.scene);
     if (meshes.length === 0) {
       return null;
     }
@@ -145,25 +142,7 @@ export class PomExitBufferManager {
     this.combinedRT = this.makeRT();
 
     for (const mesh of meshes) {
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const pomMat = mats.find(isPomBoundedMaterial)!;
-      this.matOf.set(mesh, pomMat);
-      this.pomMaterials.add(pomMat);
-      this.assignedRT.set(mesh, this.combinedRT);
-
-      // The shared material samples one buffer per draw; rebind it to this
-      // mesh's assigned RT right before the mesh draws (forced re-upload via
-      // `uniformsNeedUpdate`, the same pattern `randomizeUVOffset` relies on).
-      // Chain any pre-existing hook rather than clobbering it.
-      const prev = mesh.onBeforeRender;
-      mesh.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
-        if (typeof prev === 'function') {
-          prev.call(mesh, renderer, scene, camera, geometry, material, group);
-        }
-        const m = this.matOf.get(mesh)!;
-        m.uniforms.pomBackDepth.value = (this.assignedRT.get(mesh) ?? this.combinedRT).texture;
-        m.uniformsNeedUpdate = true;
-      };
+      this.registerMesh(mesh);
     }
     this.syncResolutionUniform();
 
@@ -172,12 +151,66 @@ export class PomExitBufferManager {
     viz.registerDestroyedCb(() => this.dispose());
   }
 
-  /**
-   * Color = R32F: must match the shader's full-float `frontDist` precision, or
-   * `exitDist - frontDist` quantizes at the silhouette and the discard edge
-   * shimmers. Depth = 16-bit DepthTexture (front-culled convex => ~1 back face
-   * per pixel, so depth precision is irrelevant; pure VRAM win, never sampled).
-   */
+  /** Idempotent; the hook reads `matOf`/`assignedRT` live each draw. */
+  private registerMesh(mesh: THREE.Mesh): void {
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const pomMat = mats.find(isPomBoundedMaterial)!;
+    this.matOf.set(mesh, pomMat);
+    this.pomMaterials.add(pomMat);
+    if (!this.assignedRT.has(mesh)) {
+      this.assignedRT.set(mesh, this.combinedRT);
+    }
+
+    if (this.prevHook.has(mesh)) {
+      return;
+    }
+    const prev = mesh.onBeforeRender;
+    this.prevHook.set(mesh, prev);
+    mesh.onBeforeRender = (renderer, scene, camera, geometry, material, group) => {
+      if (typeof prev === 'function') {
+        prev.call(mesh, renderer, scene, camera, geometry, material, group);
+      }
+      const m = this.matOf.get(mesh);
+      if (!m) {
+        return;
+      }
+      m.uniforms.pomBackDepth.value = (this.assignedRT.get(mesh) ?? this.combinedRT).texture;
+      m.uniformsNeedUpdate = true;
+    };
+  }
+
+  private unregisterMesh(mesh: THREE.Mesh): void {
+    this.matOf.delete(mesh);
+    this.assignedRT.delete(mesh);
+    if (this.prevHook.has(mesh)) {
+      mesh.onBeforeRender = this.prevHook.get(mesh) ?? (() => {});
+      this.prevHook.delete(mesh);
+    }
+  }
+
+  rescan(): void {
+    if (this.disposed) {
+      return;
+    }
+    const current = new Set(collectPomBoundedMeshes(this.viz.scene));
+
+    for (const mesh of this.meshes) {
+      if (!current.has(mesh)) {
+        this.unregisterMesh(mesh);
+      }
+    }
+    for (const mesh of current) {
+      this.registerMesh(mesh);
+    }
+    this.meshes = Array.from(current);
+
+    this.pomMaterials.clear();
+    for (const m of this.matOf.values()) {
+      this.pomMaterials.add(m);
+    }
+    this.syncResolutionUniform();
+  }
+
   private makeRT(): THREE.WebGLRenderTarget {
     const w = Math.max(1, this.dbSize.x);
     const h = Math.max(1, this.dbSize.y);
@@ -204,7 +237,6 @@ export class PomExitBufferManager {
   private onResize(): void {
     this.viz.renderer.getDrawingBufferSize(this.dbSize);
     this.syncResolutionUniform();
-    // Recreate (not setSize): reliably resizes the attached DepthTexture too.
     for (const rt of this.pool) {
       rt.dispose();
     }
@@ -215,8 +247,9 @@ export class PomExitBufferManager {
   }
 
   /** Project a mesh's world AABB to an NDC-xy screen rect. Returns null if the
-   * box straddles/behind the camera (perspective divide unreliable) -> caller
-   * treats that conservatively as "overlaps" so the mesh gets a dedicated RT. */
+   * box straddles/behind the camera -> caller treats that conservatively as
+   * "overlaps" so the mesh gets a dedicated RT.
+   */
   private projectedRect(mesh: THREE.Mesh): Rect | null {
     const box = mesh.geometry.boundingBox!;
     let minX = Infinity;
@@ -390,6 +423,10 @@ export class PomExitBufferManager {
       return;
     }
     this.disposed = true;
+    for (const mesh of this.meshes) {
+      this.unregisterMesh(mesh);
+    }
+    this.meshes = [];
     for (const rt of this.pool) {
       rt.dispose();
     }

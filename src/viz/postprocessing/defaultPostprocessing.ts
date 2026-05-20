@@ -332,7 +332,10 @@ export const configureDefaultPostprocessingPipeline = ({
   let pomRescanCb: (() => void) | null = null;
   if (pomExitBuffers) {
     pomRescanCb = () => {
-      if (pomManager) return;
+      if (pomManager) {
+        pomManager.rescan();
+        return;
+      }
       pomManager = PomExitBufferManager.tryCreate(viz);
     };
     const detect = () => {

@@ -154,8 +154,9 @@ export class StableDepthEffectComposer extends EffectComposer {
     }
   }
 
-  override setSize(width: number, height: number): void {
-    super.setSize(width, height);
+  override setSize(width: number, height: number, updateStyle?: boolean): void {
+    // postprocessing's types omit `updateStyle` even though the runtime supports it.
+    (super.setSize as (w: number, h: number, updateStyle?: boolean) => void)(width, height, updateStyle);
     if (this.stableDepth) {
       const renderer = this.getRenderer();
       if (renderer) {

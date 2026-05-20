@@ -90,6 +90,7 @@ export const processLoadedScene = async (
     },
     autoUpdateShadowMap: !userData?.renderMode,
     toneMapping: { mode: 'neutral', exposure: 1 },
+    pomExitBuffers: true,
   });
 
   if (userData?.renderMode) {
@@ -126,20 +127,26 @@ export const processLoadedScene = async (
       return;
     }
 
+    let canvasWidth: number;
+    let canvasHeight: number;
     if (layoutOrientation === 'horizontal') {
       const newWidth = isEditorCollapsed ? 36 : controlsSize;
-      const canvasWidth = Math.max(window.innerWidth - newWidth, 0);
-      viz.renderer.setSize(canvasWidth, window.innerHeight, true);
-      if (viz.camera.isPerspectiveCamera) {
-        viz.camera.aspect = canvasWidth / window.innerHeight;
-      }
+      canvasWidth = Math.max(window.innerWidth - newWidth, 0);
+      canvasHeight = window.innerHeight;
     } else {
       const newHeight = isEditorCollapsed ? 36 : controlsSize;
-      const canvasHeight = Math.max(window.innerHeight - newHeight, 0);
-      viz.renderer.setSize(window.innerWidth, canvasHeight, true);
-      if (viz.camera.isPerspectiveCamera) {
-        viz.camera.aspect = window.innerWidth / canvasHeight;
-      }
+      canvasWidth = window.innerWidth;
+      canvasHeight = Math.max(window.innerHeight - newHeight, 0);
+    }
+
+    if (pipelineController) {
+      pipelineController.effectComposer.setSize(canvasWidth, canvasHeight, true);
+    } else {
+      viz.renderer.setSize(canvasWidth, canvasHeight, true);
+    }
+
+    if (viz.camera.isPerspectiveCamera) {
+      viz.camera.aspect = canvasWidth / canvasHeight;
     }
     viz.camera.updateProjectionMatrix();
   };

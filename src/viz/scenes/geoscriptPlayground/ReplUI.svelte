@@ -24,6 +24,7 @@
     type MaterialDefinitions,
   } from 'src/geoscript/materials';
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
+  import { Textures } from './materialEditor/state.svelte';
   import {
     type Composition,
     type CompositionVersion,
@@ -371,6 +372,7 @@
   };
 
   let err: string | null = $state(null);
+  let materialErr: string | null = $state(null);
   let isRunning: boolean = $state(false);
   let runStats: RunStats | null = $state(null);
   let renderedObjects: RenderedObject[] = $state([]);
@@ -673,14 +675,18 @@
   });
 
   const loader = new THREE.ImageBitmapLoader();
-  let customMaterials: Record<string, MatEntry> = $derived.by(() =>
+  let customMaterials: Record<string, MatEntry> = $derived.by(() => {
+    // Re-run when async-fetched texture metadata arrives.
+    void Textures.textures;
     // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
-    buildCustomMaterials(
+    return buildCustomMaterials(
       loader,
       $state.snapshot(materialDefinitions.materials) as Record<string, MaterialDef>,
-      viz
-    )
-  );
+      viz,
+      // queueMicrotask: synchronous `$state` writes inside `$derived.by` are disallowed.
+      msg => queueMicrotask(() => (materialErr = msg))
+    );
+  });
 
   // avoid a ton of before render callbacks from being stuck around, which also prevents
   // old materials from being garbage collected
@@ -722,6 +728,7 @@
   });
 
   $effect(() => {
+    const pendingSwaps: Promise<unknown>[] = [];
     for (const obj of renderedObjects) {
       if (!(obj instanceof THREE.Mesh)) {
         continue;
@@ -732,13 +739,23 @@
           if (matEntry.resolved) {
             obj.material = matEntry.resolved;
           } else {
-            matEntry.promise.then(mat => {
-              obj.material = mat;
-            });
+            pendingSwaps.push(
+              matEntry.promise.then(mat => {
+                obj.material = mat;
+              })
+            );
           }
           break;
         }
       }
+    }
+    // Material swaps invalidate the bounded-silhouette manager's per-mesh
+    // registry, so reconcile after swaps settle.
+    const reconcile = () => viz.postprocessingController?.rescanPomMeshes();
+    if (pendingSwaps.length === 0) {
+      reconcile();
+    } else {
+      Promise.allSettled(pendingSwaps).then(reconcile);
     }
   });
 
@@ -912,6 +929,20 @@
         removeRenderedObject(obj);
       }
       lastRunTree = tree;
+
+      // populateScene's own `materialPromise.then` swaps `HiddenMat` for the
+      // real material later, but that mutation isn't reactive — rescan manually.
+      const pendingMatPromises = Object.values(customMaterials)
+        .filter(m => !m.resolved)
+        .map(m => m.promise);
+      if (pendingMatPromises.length > 0) {
+        Promise.allSettled(pendingMatPromises).then(() => {
+          if (myGen !== runGen) {
+            return;
+          }
+          viz.postprocessingController?.rescanPomMeshes();
+        });
+      }
 
       const directCounts = new Map<string, number>();
       for (const obj of renderedObjects) {
@@ -1365,7 +1396,7 @@
             }}
             {toggleLayoutOrientation}
           />
-          <ReplOutput {err} {runStats} />
+          <ReplOutput err={err ?? materialErr} {runStats} />
         </div>
         {#if userData?.me}
           {#if !userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id}

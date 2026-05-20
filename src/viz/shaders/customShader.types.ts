@@ -171,8 +171,7 @@ export interface CustomShaderShaders {
    * Returns the carved depth in `[0, 1]` where `0` = the base (undisplaced)
    * surface and `1` = a full `pom.depth` units carved inward along `-normal`.
    * `pos` is the world-space sample position; `normal` is the base surface
-   * normal. The marcher owns the world-unit depth scaling so this function
-   * stays dimensionless and reusable.
+   * normal.
    *
    * Requires `opts.pom` to be set, and at least one of this or
    * `props.pomHeightMap` must be provided. If both are provided, their values
@@ -205,11 +204,7 @@ export interface CustomShaderOptions {
   disabledSpotLightIndices?: number[];
   /**
    * If true, applies a stable per-mesh random offset to texture sampling. Works with both
-   * `useGeneratedUVs` (offsets `vUv`) and `useTriplanarMapping` (offsets the 3D sample position).
-   *
-   * The random key is sourced from a per-mesh uniform pushed via `onBeforeRender`, defaulting
-   * to a hash of the mesh's id (or `mesh.userData.uvOffsetSeed` if explicitly set). Unlike the
-   * old transform-based hash, this is stable across animation/movement.
+   * `useGeneratedUVs` (offsets `vUv`) and `useTriplanarMapping`.
    *
    * For meshes built outside the level-JSON pipeline, call `attachRandomizedUVOffset(mesh)`
    * once after assigning the material so the seed gets pushed each render.
@@ -235,9 +230,6 @@ export interface CustomShaderOptions {
    * World-space is necessary for LOD terrain where each tile mesh has a unique local origin
    * — without it, the same world-space point yields different UVs in different tiles, causing
    * visible texture popping on LOD transitions.
-   *
-   * **Constraint**: do not use world-space on animated/moving geometry. Textures will slide
-   * across the surface as the object moves, which is usually undesirable.
    */
   useWorldSpaceUVs?: boolean;
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
@@ -246,18 +238,8 @@ export interface CustomShaderOptions {
    * raymarches a height field and shades the displaced hit point, giving the
    * illusion of carved or inset geometry without extra tesselation.
    *
-   * - requires at least one of `shaders.pomHeightShader` (procedural) or
-   *   `props.pomHeightMap` (heightmap texture); both may be combined (added)
-   * - texturing of the displaced hit is inferred from the active UV scheme:
-   *   - `useTriplanarMapping` (world space): resample at the displaced 3D point
-   *   - `useGeneratedUVs` (world space): recompute the projected UV there
-   *   - neither: reuse the pre-POM UV (texture warps/stretches with parallax)
-   * - a `colorShader` always receives the displaced hit position + floor normal
-   * - a tangent-space normal map is combined onto the analytic floor normal
-   *   (added, not replaced) for `useTriplanarMapping` and `useGeneratedUVs`;
-   *   it is rejected with baseline/warped UVs (no analytic frame). Generated
-   *   has a hard tangent-frame seam where the projection axis switches.
-   * - clearcoat-normal / packed maps still require `useTriplanarMapping`
+   * Requires at least one of `shaders.pomHeightShader` (procedural) or
+   * `props.pomHeightMap` (heightmap texture).
    */
   pom?: {
     /** Max carve depth in world units. Also scales the analytic normal. */

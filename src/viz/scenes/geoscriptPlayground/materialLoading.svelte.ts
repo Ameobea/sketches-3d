@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import { getMultipleTextures, type TextureID } from 'src/geoscript/geotoyAPIClient';
-import { buildMaterial, LoadedTextures, type MaterialDef } from 'src/geoscript/materials';
+import { buildMaterial, FallbackMat, LoadedTextures, type MaterialDef } from 'src/geoscript/materials';
 import type { MatEntry } from 'src/geoscript/runner/types';
 import type { Viz } from 'src/viz';
 import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
@@ -47,13 +47,33 @@ export const fetchAndSetTextures = async (loader: THREE.ImageBitmapLoader, textu
 export const buildCustomMaterials = (
   loader: THREE.ImageBitmapLoader,
   materialDefinitions: Record<string, MaterialDef>,
-  viz: Viz
+  viz: Viz,
+  /** Called with the combined failure message, or `null` once all builds succeed.
+   *  Failed materials fall back to `FallbackMat`. */
+  onError?: (msg: string | null) => void
 ) => {
   const builtMats: Record<string, MatEntry> = {};
+  const errorsById: Record<string, string> = {};
+  const report = () => {
+    if (!onError) {
+      return;
+    }
+    const msgs = Object.values(errorsById);
+    onError(msgs.length ? msgs.join('\n\n') : null);
+  };
+  const recordError = (def: MaterialDef, e: unknown) => {
+    errorsById[def.name] = `Material "${def.name}": ${e instanceof Error ? e.message : String(e)}`;
+  };
 
   // TODO: needs hashing to avoid re-building materials that haven't changed
   for (const [id, def] of Object.entries(materialDefinitions)) {
-    const matMaybeP = buildMaterial(loader, def as MaterialDef, id);
+    let matMaybeP: Promise<THREE.Material> | THREE.Material;
+    try {
+      matMaybeP = buildMaterial(loader, def as MaterialDef, id);
+    } catch (e) {
+      recordError(def as MaterialDef, e);
+      matMaybeP = FallbackMat;
+    }
     const entry: MatEntry = {
       promise: matMaybeP instanceof Promise ? matMaybeP : Promise.resolve(matMaybeP),
       resolved: matMaybeP instanceof Promise ? null : matMaybeP,
@@ -79,7 +99,14 @@ export const buildCustomMaterials = (
     };
 
     if (matMaybeP instanceof Promise) {
-      matMaybeP.then(mat => {
+      // Fall back on async failures too, so they don't surface as unhandled rejections.
+      const safeP = matMaybeP.catch(e => {
+        recordError(def as MaterialDef, e);
+        report();
+        return FallbackMat as THREE.Material;
+      });
+      entry.promise = safeP;
+      safeP.then(mat => {
         maybeRegisterBeforeRenderCb(mat);
         entry.resolved = mat;
       });
@@ -88,6 +115,7 @@ export const buildCustomMaterials = (
     }
     builtMats[id] = entry;
   }
+  report();
   return builtMats;
 };
 
@@ -112,6 +140,9 @@ export const getReferencedTextureIDs = (materials: Record<string, MaterialDef>):
     }
     if (mat.clearcoatNormalMap) {
       textureIDs.push(mat.clearcoatNormalMap);
+    }
+    if (mat.pomHeightMap) {
+      textureIDs.push(mat.pomHeightMap);
     }
   }
   return textureIDs;

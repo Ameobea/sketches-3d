@@ -18,17 +18,28 @@
     state: shaderState,
     onchange,
     onclose,
-  }: { state: State; onchange: (newState: State) => void; onclose: () => void } = $props();
+    pomEnabled = false,
+  }: {
+    state: State;
+    onchange: (newState: State) => void;
+    onclose: () => void;
+    pomEnabled?: boolean;
+  } = $props();
 
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
 
-  const shaderTypes = {
-    physical: ['color', 'roughness', 'metalness', 'iridescence'] as const,
-    basic: ['color'] as const,
-  };
+  type ShaderName = 'color' | 'roughness' | 'metalness' | 'iridescence' | 'pomHeight';
 
-  let activeShader = $state<(typeof shaderTypes.physical)[number]>('color');
+  const shaderList = $derived<readonly ShaderName[]>(
+    shaderState.type === 'basic'
+      ? ['color']
+      : pomEnabled
+        ? ['color', 'roughness', 'metalness', 'iridescence', 'pomHeight']
+        : ['color', 'roughness', 'metalness', 'iridescence']
+  );
+
+  let activeShader = $state<ShaderName>('color');
 
   let localShaders = $state(untrack(() => ({ ...shaderState.shaders })));
   const initialShaders = untrack(() => ({ ...shaderState.shaders }));
@@ -99,7 +110,7 @@
     <div class="content">
       <div class="sidebar">
         <div class="shader-list">
-          {#each shaderTypes[shaderState.type] as shaderName (shaderName)}
+          {#each shaderList as shaderName (shaderName)}
             <div class="shader-item" class:selected={activeShader === shaderName}>
               <button
                 class="select-button"

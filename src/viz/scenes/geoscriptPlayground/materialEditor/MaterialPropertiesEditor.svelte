@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { MaterialDef, PhysicalMaterialDef } from 'src/geoscript/materials';
+  import type {
+    MaterialDef,
+    PhysicalMaterialDef,
+    PhysicalMaterialTextureField,
+  } from 'src/geoscript/materials';
   import FormField from './FormField.svelte';
   import ColorPicker from './ColorPicker.svelte';
   import TexturePreview from './TexturePreview.svelte';
@@ -19,9 +23,7 @@
     me,
   }: {
     material: MaterialDef;
-    onpicktexture: (
-      name: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'clearcoatNormalMap'
-    ) => void;
+    onpicktexture: (name: PhysicalMaterialTextureField) => void;
     oneditshaders: () => void;
     onviewuvmappings: () => void;
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
@@ -290,6 +292,111 @@
             <input type="range" min="0" max="1" step="0.01" bind:value={material.sheenRoughness} />
             <span>{material.sheenRoughness?.toFixed(2)}</span>
           </FormField>
+
+          <div class="pom-section">
+            <div class="pom-header">parallax occlusion mapping</div>
+            <FormField
+              label="enable POM"
+              help="Raymarches a height field to fake carved/inset geometry. Requires a procedural height shader and/or a height map. Needs triplanar mapping for height-map / normal-map combos; a procedural height field works with any mapping."
+            >
+              <input
+                type="checkbox"
+                checked={!!material.pom}
+                onchange={() => {
+                  material.pom = material.pom ? undefined : { depth: 0.1 };
+                }}
+              />
+            </FormField>
+
+            {#if material.pom}
+              <FormField label="depth" help="Max carve depth in world units.">
+                <input type="number" step="0.01" bind:value={material.pom.depth} style="width: 80px" />
+              </FormField>
+              <FormField label="steps" help="Linear search step count. Default 24.">
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  placeholder="24"
+                  bind:value={material.pom.steps}
+                  style="width: 80px"
+                />
+              </FormField>
+              <FormField
+                label="bounded silhouette"
+                help="Subtractive silhouette carving. Only works well on convex meshes."
+              >
+                <input type="checkbox" bind:checked={material.pom.boundedSilhouette} />
+              </FormField>
+              <FormField
+                label="refinement"
+                help="Surface refinement after the linear search brackets the hit. 'binary' fixes banding on cliff/step height fields."
+              >
+                <select bind:value={material.pom.refinement}>
+                  <option value={undefined}>secant (default)</option>
+                  <option value="secant">secant</option>
+                  <option value="binary">binary</option>
+                </select>
+              </FormField>
+              {#if material.pom.refinement === 'binary'}
+                <FormField label="refinement steps" help="Bisection count. Default 5; 4–6 is the sweet spot.">
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    placeholder="5"
+                    bind:value={material.pom.refinementSteps}
+                    style="width: 80px"
+                  />
+                </FormField>
+              {/if}
+              <FormField
+                label="LOD fade start"
+                help="World-units distance at which POM starts fading to the flat base surface. Derived from depth if unset."
+              >
+                <input type="number" step="1" bind:value={material.pom.lodFadeStart} style="width: 80px" />
+              </FormField>
+              <FormField label="LOD fade range" help="World-units range over which the LOD fade completes.">
+                <input type="number" step="1" bind:value={material.pom.lodFadeRange} style="width: 80px" />
+              </FormField>
+              <FormField
+                label="normal eps"
+                help="World-space floor for the analytic-normal finite-difference radius. Widen this when using a height map to avoid per-pixel normal noise (~3-4x texel size)."
+              >
+                <input type="number" step="0.001" bind:value={material.pom.normalEps} style="width: 80px" />
+              </FormField>
+              <FormField label="height map">
+                <TexturePreview
+                  texture={material.pomHeightMap ? Textures.textures[material.pomHeightMap] : undefined}
+                  onclick={() => onpicktexture('pomHeightMap')}
+                />
+              </FormField>
+              <FormField
+                label="height map filter"
+                help="Bilinear is the recommended default — nearest-neighbor sampling on a height field aliases badly in the parallax marcher. Switch to nearest only for retro/pixel-art looks."
+              >
+                <select bind:value={material.pomHeightMapFilter}>
+                  <option value={undefined}>linear (default)</option>
+                  <option value="linear">linear</option>
+                  <option value="nearest">nearest</option>
+                </select>
+              </FormField>
+              <FormField
+                label="debug viz"
+                help="Replaces the final color with a diagnostic visualization of an intermediate POM quantity."
+              >
+                <select bind:value={material.pom.debug}>
+                  <option value={undefined}>off</option>
+                  <option value="heightmap">heightmap</option>
+                  <option value="depth">depth</option>
+                  <option value="normal">normal</option>
+                  <option value="normalDelta">normalDelta</option>
+                  <option value="axis">axis</option>
+                  <option value="hit">hit</option>
+                </select>
+              </FormField>
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
@@ -362,6 +469,18 @@
 
   .advanced-content {
     padding-left: 16px;
+    font-size: 12px;
+  }
+
+  .pom-section {
+    margin-top: 16px;
+    border-top: 1px solid #444;
+    padding-top: 8px;
+  }
+
+  .pom-header {
+    color: #aaa;
+    margin-bottom: 12px;
     font-size: 12px;
   }
 

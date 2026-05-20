@@ -32,10 +32,23 @@ export interface BasicMaterialDef {
 
 import { Textures } from 'src/viz/scenes/geoscriptPlayground/materialEditor/state.svelte';
 import { buildCustomShader, type CustomShaderShaders } from 'src/viz/shaders/customShader';
+import type { CustomShaderOptions } from 'src/viz/shaders/customShader.types';
 import { loadTexture } from 'src/viz/textureLoading';
 import * as THREE from 'three';
 import type { TextureID } from './geotoyAPIClient';
 import type { ReverseColorRampParams } from 'src/viz/shaders/reverseColorRamp';
+
+export type PomConfig = NonNullable<CustomShaderOptions['pom']>;
+
+export type TextureFilterMode = 'linear' | 'nearest';
+
+export type PhysicalMaterialTextureField =
+  | 'map'
+  | 'normalMap'
+  | 'roughnessMap'
+  | 'metalnessMap'
+  | 'clearcoatNormalMap'
+  | 'pomHeightMap';
 
 export interface PhysicalMaterialDef {
   type: 'physical';
@@ -57,6 +70,11 @@ export interface PhysicalMaterialDef {
   normalMap?: TextureID;
   roughnessMap?: TextureID;
   metalnessMap?: TextureID;
+  /** Requires `pom` to be set and a non-baseline texturing mode (triplanar or generated UVs). */
+  pomHeightMap?: TextureID;
+  /** Defaults to 'linear' */
+  pomHeightMapFilter?: TextureFilterMode;
+  pom?: PomConfig;
   fogMultiplier?: number;
   mapDisableDistance?: number | null;
   mapDisableTransitionThreshold?: number;
@@ -72,6 +90,7 @@ export interface PhysicalMaterialDef {
     roughness?: string;
     metalness?: string;
     iridescence?: string;
+    pomHeight?: string;
   };
   reverseColorRamps?: {
     roughness?: ReverseColorRampParams;
@@ -98,6 +117,40 @@ export interface MaterialDescriptor {
 }
 
 export const LoadedTextures: Map<TextureID, Promise<THREE.Texture> | THREE.Texture> = new Map();
+
+/* Separate cache: POM heightmaps use RedFormat + mipmaps-off */
+const LoadedPomHeightTextures: Map<string, Promise<THREE.Texture> | THREE.Texture> = new Map();
+
+const maybeLoadPomHeightTexture = (
+  loader: THREE.ImageBitmapLoader,
+  textureId: TextureID | undefined,
+  filterPref: TextureFilterMode
+): Promise<THREE.Texture> | THREE.Texture | undefined => {
+  if (typeof textureId !== 'number') {
+    return undefined;
+  }
+  const key = `${textureId}:${filterPref}`;
+  const cached = LoadedPomHeightTextures.get(key);
+  if (cached) {
+    return cached;
+  }
+  const mapDef = Textures.textures[textureId];
+  if (!mapDef) {
+    return undefined;
+  }
+  const f = filterPref === 'nearest' ? THREE.NearestFilter : THREE.LinearFilter;
+  const texP = loadTexture(loader, mapDef.url, {
+    format: THREE.RedFormat,
+    magFilter: f,
+    minFilter: f,
+  });
+  texP.then(tex => {
+    tex.generateMipmaps = false;
+    LoadedPomHeightTextures.set(key, tex);
+  });
+  LoadedPomHeightTextures.set(key, texP);
+  return texP;
+};
 
 const maybeLoadTexture = (
   loader: THREE.ImageBitmapLoader,
@@ -126,14 +179,20 @@ const maybeLoadTexture = (
   return texP;
 };
 
+interface LoadedTextureBag {
+  map: THREE.Texture | undefined;
+  normalMap: THREE.Texture | undefined;
+  roughnessMap: THREE.Texture | undefined;
+  clearcoatNormalMap: THREE.Texture | undefined;
+  pomHeightMap: THREE.Texture | undefined;
+}
+
 const buildPhysicalShader = (
   def: Extract<MaterialDef, { type: 'physical' }>,
   id: MaterialID,
-  map: THREE.Texture | undefined,
-  normalMap: THREE.Texture | undefined,
-  roughnessMap: THREE.Texture | undefined,
-  clearcoatNormalMap: THREE.Texture | undefined
+  textures: LoadedTextureBag
 ) => {
+  const { map, normalMap, roughnessMap, clearcoatNormalMap, pomHeightMap } = textures;
   if (map) {
     map.colorSpace = THREE.SRGBColorSpace;
   }
@@ -160,7 +219,12 @@ const buildPhysicalShader = (
     } else if (def.shaders.iridescence && def.shaders.iridescence !== defaultShaders.iridescence) {
       customShaders.iridescenceShader = def.shaders.iridescence;
     }
+    if (def.pom && def.shaders.pomHeight && def.shaders.pomHeight !== defaultShaders.pomHeight) {
+      customShaders.pomHeightShader = def.shaders.pomHeight;
+    }
   }
+
+  const pomActive = !!def.pom && (!!pomHeightMap || !!customShaders.pomHeightShader);
 
   return buildCustomShader(
     {
@@ -183,6 +247,7 @@ const buildPhysicalShader = (
       map,
       normalMap,
       roughnessMap,
+      pomHeightMap,
       fogMultiplier: def.fogMultiplier,
       mapDisableDistance: def.mapDisableDistance,
       mapDisableTransitionThreshold: def.mapDisableTransitionThreshold,
@@ -197,6 +262,7 @@ const buildPhysicalShader = (
           ? { type: 'neyret', patchScale: def.textureMapping.tileBreaking.patchScale }
           : undefined,
       useGeneratedUVs: false,
+      pom: pomActive ? def.pom : undefined,
     }
   );
 };
@@ -212,32 +278,28 @@ export const buildMaterial = (
       color: new THREE.Color(def.color.r, def.color.g, def.color.b),
     });
   } else if (def.type === 'physical') {
-    const mapP: Promise<THREE.Texture> | THREE.Texture | undefined = maybeLoadTexture(loader, def.map);
-    const normalMapP: Promise<THREE.Texture> | THREE.Texture | undefined = maybeLoadTexture(
+    const mapP = maybeLoadTexture(loader, def.map);
+    const normalMapP = maybeLoadTexture(loader, def.normalMap);
+    const roughnessMapP = maybeLoadTexture(loader, def.roughnessMap);
+    const clearcoatNormalMapP = maybeLoadTexture(loader, def.clearcoatNormalMap);
+    const pomHeightMapP = maybeLoadPomHeightTexture(
       loader,
-      def.normalMap
-    );
-    const roughnessMapP: Promise<THREE.Texture> | THREE.Texture | undefined = maybeLoadTexture(
-      loader,
-      def.roughnessMap
-    );
-    const clearcoatNormalMapP: Promise<THREE.Texture> | THREE.Texture | undefined = maybeLoadTexture(
-      loader,
-      def.clearcoatNormalMap
+      def.pomHeightMap,
+      def.pomHeightMapFilter ?? 'linear'
     );
 
-    if (
-      !(mapP instanceof Promise) &&
-      !(normalMapP instanceof Promise) &&
-      !(roughnessMapP instanceof Promise) &&
-      !(clearcoatNormalMapP instanceof Promise)
-    ) {
-      return buildPhysicalShader(def, id, mapP, normalMapP, roughnessMapP, clearcoatNormalMapP);
+    const slotsP = [mapP, normalMapP, roughnessMapP, clearcoatNormalMapP, pomHeightMapP] as const;
+    if (slotsP.every(v => !(v instanceof Promise))) {
+      return buildPhysicalShader(def, id, {
+        map: mapP as THREE.Texture | undefined,
+        normalMap: normalMapP as THREE.Texture | undefined,
+        roughnessMap: roughnessMapP as THREE.Texture | undefined,
+        clearcoatNormalMap: clearcoatNormalMapP as THREE.Texture | undefined,
+        pomHeightMap: pomHeightMapP as THREE.Texture | undefined,
+      });
     }
-
-    return Promise.all([mapP, normalMapP, roughnessMapP, clearcoatNormalMapP] as const).then(
-      ([map, normalMap, roughnessMap, clearcoatNormalMap]) =>
-        buildPhysicalShader(def, id, map, normalMap, roughnessMap, clearcoatNormalMap)
+    return Promise.all(slotsP).then(([map, normalMap, roughnessMap, clearcoatNormalMap, pomHeightMap]) =>
+      buildPhysicalShader(def, id, { map, normalMap, roughnessMap, clearcoatNormalMap, pomHeightMap })
     );
   } else {
     def satisfies never;
@@ -257,6 +319,10 @@ export const buildDefaultShaders = (): NonNullable<PhysicalMaterialDef['shaders'
 }`,
   iridescence: `float getCustomIridescence(vec3 pos, vec3 normal, float baseIridescence, float curTimeSeconds, SceneCtx ctx) {
   return baseIridescence;
+}`,
+  pomHeight: `// Carved depth in [0, 1]: 0 = base surface, 1 = a full pom.depth carved inward.
+float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {
+  return 0.0;
 }`,
 });
 
@@ -292,6 +358,7 @@ export const buildDefaultMaterial = (name: string): MaterialDef => ({
     roughness: undefined,
     metalness: undefined,
     iridescence: undefined,
+    pomHeight: undefined,
   },
 });
 

@@ -10,6 +10,7 @@
     type MaterialDefinitions,
     type MaterialID,
     type PhysicalMaterialDef,
+    type PhysicalMaterialTextureField,
   } from 'src/geoscript/materials';
   import TexturePicker from './TexturePicker.svelte';
   import TextureUploader from './TextureUploader.svelte';
@@ -42,14 +43,8 @@
 
   let view = $state<
     | { type: 'properties' }
-    | {
-        type: 'texture_picker';
-        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'clearcoatNormalMap';
-      }
-    | {
-        type: 'texture_uploader';
-        field: 'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'clearcoatNormalMap';
-      }
+    | { type: 'texture_picker'; field: PhysicalMaterialTextureField }
+    | { type: 'texture_uploader'; field: PhysicalMaterialTextureField }
     | { type: 'shader_editor' }
     | { type: 'uv_viewer' }
     | { type: 'material_library' }
@@ -267,6 +262,8 @@
           <ShaderEditor
             {state}
             {onchange}
+            pomEnabled={materials.materials[selectedMaterialID].type === 'physical' &&
+              !!(materials.materials[selectedMaterialID] as PhysicalMaterialDef).pom}
             onclose={() => {
               view = { type: 'properties' };
             }}
