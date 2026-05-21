@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, cmp::Reverse, ptr::addr_of, rc::Rc, str::FromStr};
+use std::{borrow::Borrow, ptr::addr_of, rc::Rc, str::FromStr};
 
 use fxhash::FxHashMap;
 use pest::iterators::Pair;
@@ -1686,10 +1686,6 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       };
 
       let body = match next.as_rule() {
-        Rule::simple_closure_body => {
-          let expr = parse_expr(ctx, next.clone().into_inner().next().unwrap())?;
-          ClosureBody(vec![Statement::Expr(expr)])
-        }
         Rule::bracketed_closure_body => {
           let stmts = next
             .into_inner()
@@ -2132,6 +2128,7 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   PRATT_PARSER
     .map_primary(|primary| -> Result<Expr, ErrorStack> {
       match primary.as_rule() {
+        Rule::chained_term => parse_chained_term(ctx, primary),
         Rule::term => parse_node(ctx, primary),
         _ => unimplemented!("Unexpected primary rule: {:?}", primary.as_rule()),
       }
@@ -2196,36 +2193,71 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         loc,
       })
     })
-    .map_postfix(|expr, op| {
-      let expr = expr?;
-      let loc = expr.loc();
-
-      if op.as_rule() != Rule::postfix {
-        unreachable!("Expected postfix rule, found: {:?}", op.as_rule());
-      }
-
-      let inner = op.into_inner().next().unwrap();
-      match inner.as_rule() {
-        Rule::static_field_access => {
-          let field = inner.into_inner().next().unwrap().as_str().to_owned();
-          Ok(Expr::StaticFieldAccess {
-            lhs: Box::new(expr),
-            field,
-            loc,
-          })
-        }
-        Rule::field_access => {
-          let index_expr = parse_expr(ctx, inner.into_inner().next().unwrap())?;
-          Ok(Expr::FieldAccess {
-            lhs: Box::new(expr),
-            field: Box::new(index_expr),
-            loc,
-          })
-        }
-        other => unreachable!("Unexpected postfix rule: {other:?} in expression: {expr:?}",),
-      }
-    })
     .parse(expr.into_inner())
+}
+
+fn parse_chained_term(ctx: &EvalCtx, chained: Pair<Rule>) -> Result<Expr, ErrorStack> {
+  if chained.as_rule() != Rule::chained_term {
+    unreachable!(
+      "`parse_chained_term` can only handle `chained_term` rules, found: {:?}",
+      chained.as_rule()
+    );
+  }
+
+  let mut inner = chained.into_inner();
+  let term = inner.next().expect("chained_term must contain a term");
+  let mut prev_end = term.as_span().end();
+  let mut expr = parse_node(ctx, term)?;
+
+  for postfix in inner {
+    if postfix.as_rule() != Rule::chained_postfix {
+      unreachable!(
+        "expected chained_postfix in chained_term, found: {:?}",
+        postfix.as_rule()
+      );
+    }
+    let access = postfix
+      .into_inner()
+      .next()
+      .expect("chained_postfix must contain a field access");
+    let access_span = access.as_span();
+    let access_start = access_span.start();
+    let access_rule = access.as_rule();
+    let loc = expr.loc();
+    match access_rule {
+      Rule::static_field_access => {
+        let field = access.into_inner().next().unwrap().as_str().to_owned();
+        expr = Expr::StaticFieldAccess {
+          lhs: Box::new(expr),
+          field,
+          loc,
+        };
+      }
+      Rule::field_access => {
+        // Tight `[` rule, enforced post-parse — see notes in `geoscript.pest`.
+        if access_start != prev_end {
+          let (line, col) = access.line_col();
+          return Err(
+            ErrorStack::new(
+              "dynamic field access `[...]` must directly follow the preceding expression \
+               with no whitespace before `[`",
+            )
+            .with_loc(line as u32, col as u32),
+          );
+        }
+        let index_expr = parse_expr(ctx, access.into_inner().next().unwrap())?;
+        expr = Expr::FieldAccess {
+          lhs: Box::new(expr),
+          field: Box::new(index_expr),
+          loc,
+        };
+      }
+      other => unreachable!("Unexpected chained_postfix inner rule: {other:?}"),
+    }
+    prev_end = access_span.end();
+  }
+
+  Ok(expr)
 }
 
 fn parse_assignment(ctx: &EvalCtx, assignment: Pair<Rule>) -> Result<Statement, ErrorStack> {
@@ -2895,77 +2927,6 @@ pub fn traverse_fn_calls(program: &Program, mut cb: impl FnMut(Sym)) {
   for stmt in &program.statements {
     stmt.traverse_exprs(&mut cb);
   }
-}
-
-/// In order to simplify the syntax and make it more ergonomic to chain unbracketed closures in
-/// pipelines, we apply a transform to transform non-bracketed closures into bracketed ones,
-/// treating newline characters as ending the closure body.
-pub(crate) fn bracketify_closures(
-  ctx: &EvalCtx,
-  program: &mut Pair<Rule>,
-  src: &str,
-) -> Result<String, ErrorStack> {
-  #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-  enum CurlyBracketType {
-    Open,
-    Close,
-  }
-
-  let mut curly_bracket_positions: Vec<(usize, CurlyBracketType)> = Vec::new();
-
-  fn traverse(
-    ctx: &EvalCtx,
-    curly_bracket_positions: &mut Vec<(usize, CurlyBracketType)>,
-    pair: Pair<Rule>,
-  ) -> Result<(), ErrorStack> {
-    match &pair.as_rule() {
-      Rule::simple_closure_body => {
-        let expr = parse_expr(ctx, pair.clone().into_inner().next().unwrap())?;
-        match expr {
-          Expr::BinOp { .. } => (),
-          _ => return Ok(()),
-        }
-
-        let start_pos = pair.as_span().start();
-        match pair.as_str().split_once('\n') {
-          Some((body, _rest)) => {
-            let end_pos = start_pos + body.len();
-            curly_bracket_positions.push((start_pos, CurlyBracketType::Open));
-            curly_bracket_positions.push((end_pos, CurlyBracketType::Close));
-          }
-          None => (),
-        }
-      }
-      _ => (),
-    }
-
-    for inner_pair in pair.into_inner() {
-      traverse(ctx, curly_bracket_positions, inner_pair)?;
-    }
-
-    Ok(())
-  }
-
-  for pair in program.clone().into_inner() {
-    traverse(ctx, &mut curly_bracket_positions, pair)?;
-  }
-
-  curly_bracket_positions.sort_unstable_by_key(|(pos, _)| Reverse(*pos));
-  let mut transformed_src = String::new();
-
-  transformed_src.push_str(&src[..]);
-  for (pos, bracket_type) in curly_bracket_positions {
-    match bracket_type {
-      CurlyBracketType::Open => {
-        transformed_src.insert(pos, '{');
-      }
-      CurlyBracketType::Close => {
-        transformed_src.insert(pos, '}');
-      }
-    }
-  }
-
-  Ok(transformed_src)
 }
 
 #[test]

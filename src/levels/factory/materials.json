@@ -38,19 +38,19 @@
     "rusty_metal_normal": {
       "url": "https://geotoy.b-cdn.net/textures/1/5be1798e-97a6-42cd-95bd-3d2f324255ba.avif"
     },
-    "bumpy_copper_diffuse": {
-      "url": "https://geotoy.b-cdn.net/textures/1/4f58c10d-8d3f-42c9-9add-6c08e0b641b6.avif",
+    "rust_metal_2_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/d267e546-3249-467b-8f7e-3efc049f1b64.avif",
       "colorSpace": "srgb"
     },
-    "bumpy_copper_normal": {
-      "url": "https://geotoy.b-cdn.net/textures/1/ac7cf4ba-4d5e-4c88-9c70-707af3c2ed4a.avif"
+    "rust_metal_2_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/1f5bed23-f5be-4b50-9cc0-72879e9476e9.avif"
     },
     "sooty_silver_metal_1_diffuse": {
-      "url": "https://geotoy.b-cdn.net/textures/1/7ec70215-9a28-40df-9415-319f1568badf.avif",
+      "url": "https://geotoy.b-cdn.net/textures/1/4ffe3d80-6010-44b7-988f-b4c527b7a608.avif",
       "colorSpace": "srgb"
     },
     "sooty_silver_metal_1_normal": {
-      "url": "https://geotoy.b-cdn.net/textures/1/b9a228a1-a58e-4c83-95de-eadb42cfe48c.avif"
+      "url": "https://geotoy.b-cdn.net/textures/1/192af346-4129-4f76-82ff-9798dcb3aa2b.avif"
     }
   },
   "materials": {
@@ -264,20 +264,20 @@
       "type": "customShader",
       "props": {
         "color": "#a7c3a7",
-        "roughness": 0.47,
-        "metalness": 0.76,
+        "roughness": 0.72,
+        "metalness": 0.75,
         "normalScale": 0.54,
         "transparent": false,
+        "iridescence": 0,
         "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50,
         "uvScale": [0.01, 0.01],
-        "map": "bumpy_copper_diffuse",
-        "normalMap": "bumpy_copper_normal",
+        "map": "rust_metal_2_diffuse",
+        "normalMap": "rust_metal_2_normal",
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [100, 200]
-        },
-        "iridescence": 0
+        }
       },
       "options": {
         "useTriplanarMapping": true,

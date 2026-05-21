@@ -1,12 +1,10 @@
 #![feature(
   impl_trait_in_bindings,
   adt_const_params,
-  impl_trait_in_fn_trait_return,
-  unsafe_cell_access,
-  likely_unlikely,
-  iter_array_chunks,
-  thread_local
+  likely_unlikely
 )]
+#![cfg_attr(target_arch = "wasm32", feature(unsafe_cell_access))]
+#![cfg_attr(not(target_arch = "wasm32"), feature(thread_local))]
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::UnsafeCell;
@@ -41,8 +39,8 @@ use smallvec::SmallVec;
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
 use crate::{
   ast::{
-    bracketify_closures, maybe_init_op_def_shorthands, parse_top_level_statement, BinOp,
-    ClosureArg, ClosureBody, DestructurePattern, FunctionCall, MapLiteralEntry, TopLevelStatement,
+    maybe_init_op_def_shorthands, parse_top_level_statement, BinOp, ClosureArg, ClosureBody,
+    DestructurePattern, FunctionCall, MapLiteralEntry, TopLevelStatement,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
@@ -63,6 +61,7 @@ pub mod mesh_ops;
 pub mod noise;
 pub mod optimizer;
 pub mod path_building;
+pub mod preprocess;
 mod seq;
 pub mod ty;
 pub mod type_infer;
@@ -128,8 +127,9 @@ lazy_static::lazy_static! {
       Op::prefix(Rule::neg_op)
         | Op::prefix(Rule::pos_op)
         | Op::prefix(Rule::negate_op)
-    )
-    .op(Op::postfix(Rule::postfix));
+    );
+  // Postfixes (`.field`, `[idx]`) live inside `chained_term` instead of `expr`, so no
+  // postfix op is registered here.
 }
 
 #[derive(Clone)]
@@ -1688,21 +1688,26 @@ impl Default for SymbolInterner {
 }
 
 use crate::ast::SourceLoc;
+use crate::preprocess::Edit;
 
-/// Maps SourceLoc indices to (line, col) pairs.
+/// Maps SourceLoc indices to (line, col) pairs in *original-source coordinates*.
+///
+/// Preprocessor edits are applied at `add()` time, not `get()` time: a single
+/// `SourceMap` outlives many parses (imports, REPL, ambient scope), and lazy
+/// translation would re-apply a later parse's edits to an earlier parse's locs.
 #[derive(Default)]
 pub struct SourceMap {
-  /// (line, col, prelude_offset) triples. Index 0 is reserved as a sentinel for unknown locations.
-  /// `prelude_offset` is the number of lines prepended to this entry's source at parse time;
-  /// it is subtracted from `line` when resolving. Stored per-entry (rather than as a single
-  /// global subtract) so that imported-module source locations are not falsely offset by the
-  /// root program's prelude.
+  /// (line, col, prelude_offset) triples. Index 0 is the "unknown" sentinel.
+  /// `prelude_offset` is recorded per-entry (not globally) so module sources, which
+  /// don't include the root prelude, aren't falsely shifted.
   locations: Vec<(u32, u32, u32)>,
-  /// Number of lines in the prelude included before user code at the time `add` is called.
-  /// New entries record this value; it is subtracted from their line numbers when resolved.
-  /// Callers that parse module sources (which do not include the prelude) should save, set to 0,
-  /// and restore this around the parse.
+  /// Lines of prelude prepended at the time of the current parse. Callers parsing
+  /// module sources should save/zero/restore this around the parse.
   pub prelude_line_count: u32,
+  /// Active preprocessor edits, set by `parse_program_src` and consumed only by
+  /// `add()`. INVARIANT: replacements contain no newlines, so each edit only shifts
+  /// columns within a single line.
+  pub edits: Vec<Edit>,
 }
 
 impl SourceMap {
@@ -1710,30 +1715,58 @@ impl SourceMap {
     let mut map = SourceMap {
       locations: Vec::new(),
       prelude_line_count,
+      edits: Vec::new(),
     };
     // Reserve index 0 as "unknown location" sentinel
     map.locations.push((0, 0, 0));
     map
   }
 
-  /// Add a location and return its SourceLoc index.
+  /// Add a location and return its SourceLoc index. `line`/`col` are in
+  /// rewritten-source coords (as Pest reports them); they're translated through the
+  /// active preprocessor edits before storage.
   pub fn add(&mut self, line: usize, col: usize) -> SourceLoc {
+    let (orig_line, orig_col) = translate_through_edits(&self.edits, line as u32, col as u32);
     let idx = self.locations.len() as u32;
     self
       .locations
-      .push((line as u32, col as u32, self.prelude_line_count));
+      .push((orig_line, orig_col, self.prelude_line_count));
     SourceLoc(idx)
   }
 
   /// Get the (line, col) for a SourceLoc. Returns (0, 0) for unknown locations.
   pub fn get(&self, loc: SourceLoc) -> (u32, u32) {
-    self
-      .locations
-      .get(loc.0 as usize)
-      .copied()
-      .map(|(line, col, prelude)| (line.saturating_sub(prelude), col))
-      .unwrap_or((0, 0))
+    let (line, col, prelude) = match self.locations.get(loc.0 as usize).copied() {
+      Some(triple) => triple,
+      None => return (0, 0),
+    };
+    (line.saturating_sub(prelude), col)
   }
+}
+
+fn translate_through_edits(edits: &[Edit], line: u32, col: u32) -> (u32, u32) {
+  if edits.is_empty() {
+    return (line, col);
+  }
+  let mut col_shift: i32 = 0;
+  for edit in edits {
+    if edit.line != line {
+      if edit.line > line {
+        break;
+      }
+      continue;
+    }
+    let edit_end_col_in_rewritten = edit.col_in_rewritten + edit.replacement.len() as u32;
+    if edit_end_col_in_rewritten <= col {
+      let original_len = (edit.original_end - edit.original_start) as i32;
+      col_shift += edit.replacement.len() as i32 - original_len;
+    } else if edit.col_in_rewritten <= col {
+      return (line, edit.col_in_original);
+    } else {
+      break;
+    }
+  }
+  (line, ((col as i32) - col_shift).max(1) as u32)
 }
 
 /// Cached result of a successful module evaluation. Side effects + RNG/async
@@ -3439,29 +3472,30 @@ impl EvalCtx {
 pub fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, ErrorStack> {
   maybe_init_op_def_shorthands();
 
-  let pairs = GSParser::parse(Rule::program, src)
+  // Edits are stashed on the source map so locations Pest reports in rewritten coords
+  // translate back to the original source.
+  let preprocessed = preprocess::preprocess(src).map_err(|err| {
+    ErrorStack::new(format!("Preprocessor error: {}", err.message)).with_loc(err.line, err.col)
+  })?;
+  ctx.source_map.borrow_mut().edits = preprocessed.edits.clone();
+
+  let pairs = GSParser::parse(Rule::program, &preprocessed.rewritten)
     .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
 
-  let Some(mut program) = pairs.into_iter().next() else {
-    return Err(ErrorStack::new("No program found in input"));
-  };
+  let program = pairs
+    .into_iter()
+    .next()
+    .ok_or_else(|| ErrorStack::new("No program found in input"))?;
 
-  let transformed_src = bracketify_closures(ctx, &mut program, src)?;
+  finalize_program(ctx, &preprocessed.rewritten, program, &preprocessed)
+}
 
-  if transformed_src != src {
-    let pairs = GSParser::parse(Rule::program, &transformed_src)
-      .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
-
-    program = match pairs.into_iter().next() {
-      Some(prog) => prog,
-      None => {
-        return Err(ErrorStack::new(
-          "No program found in input after transforming closures",
-        ));
-      }
-    };
-  }
-
+fn finalize_program(
+  ctx: &EvalCtx,
+  src: &str,
+  program: pest::iterators::Pair<Rule>,
+  preprocessed: &preprocess::Preprocessed,
+) -> Result<Program, ErrorStack> {
   if program.as_rule() != Rule::program {
     return Err(ErrorStack::new(format!(
       "`parse_program` can only handle `program` rules, found: {:?}",
@@ -3469,8 +3503,11 @@ pub fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, Err
     )));
   }
 
-  let statements = program
-    .into_inner()
+  let stmt_pairs: Vec<_> = program.into_inner().collect();
+  check_adjacent_tight_array_literal(src, &stmt_pairs, preprocessed)?;
+
+  let statements = stmt_pairs
+    .into_iter()
     .filter_map(|stmt| match parse_top_level_statement(ctx, stmt) {
       Ok(Some(statement)) => Some(Ok(statement)),
       Ok(None) => None,
@@ -3479,6 +3516,65 @@ pub fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, Err
     .collect::<Result<Vec<_>, ErrorStack>>()?;
 
   Ok(Program { statements })
+}
+
+/// Reject `arr[1,2,3]`: Pest would otherwise backtrack to two adjacent statements
+/// (`arr`, then `[1,2,3]`), which the Lezer parser rejects. Aligns the two parsers.
+fn check_adjacent_tight_array_literal(
+  src: &str,
+  stmts: &[pest::iterators::Pair<Rule>],
+  preprocessed: &preprocess::Preprocessed,
+) -> Result<(), ErrorStack> {
+  let bytes = src.as_bytes();
+  for window in stmts.windows(2) {
+    let prev_end = window[0].as_span().end();
+    let next_start = window[1].as_span().start();
+    if prev_end > next_start {
+      continue;
+    }
+    if next_start >= bytes.len() || bytes[next_start] != b'[' {
+      continue;
+    }
+    let between = &src[prev_end..next_start];
+    if between.bytes().any(|b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == b';') {
+      continue;
+    }
+    if between.contains("//") {
+      continue;
+    }
+    let prev_last_byte = if prev_end == 0 { None } else { Some(bytes[prev_end - 1]) };
+    let is_expr_ender = matches!(
+      prev_last_byte,
+      Some(b) if b.is_ascii_alphanumeric() || b == b'_' || b == b')' || b == b']' || b == b'}',
+    );
+    if !is_expr_ender {
+      continue;
+    }
+    let (line, col) = byte_to_line_col(src, next_start);
+    let (orig_line, orig_col) = preprocessed.rewritten_line_col_to_original(line, col);
+    return Err(
+      ErrorStack::new(
+        "`[…]` after an expression must be tight and contain a single value; saw multiple \
+         comma-separated values. To write an array literal instead, separate the statements \
+         with `;` or a newline.",
+      )
+      .with_loc(orig_line, orig_col),
+    );
+  }
+  Ok(())
+}
+
+fn byte_to_line_col(src: &str, byte: usize) -> (u32, u32) {
+  let byte = byte.min(src.len());
+  let mut line = 1u32;
+  let mut line_start = 0usize;
+  for (i, &b) in src.as_bytes()[..byte].iter().enumerate() {
+    if b == b'\n' {
+      line += 1;
+      line_start = i + 1;
+    }
+  }
+  (line, (byte - line_start + 1) as u32)
 }
 
 pub fn parse_program_maybe_with_prelude(
@@ -3579,6 +3675,25 @@ outer()
 }
 
 #[test]
+fn test_source_locs_survive_subsequent_parse_with_different_edits() {
+  // Locs minted by parse A must not be re-translated through parse B's edits.
+  let ctx = EvalCtx::default();
+
+  let src1 = "f = |x| x + 1\n";
+  let ast1 = parse_program_src(&ctx, src1).unwrap();
+  let f_name_loc = match &ast1.statements[0] {
+    TopLevelStatement::Statement(Statement::Assignment { name_loc, .. }) => *name_loc,
+    _ => panic!("expected an Assignment"),
+  };
+  assert_eq!(ctx.resolve_loc(f_name_loc), (1, 1));
+
+  let src2 = "y = 0\n[1, 2, 3]\n";
+  let _ast2 = parse_program_src(&ctx, src2).unwrap();
+
+  assert_eq!(ctx.resolve_loc(f_name_loc), (1, 1));
+}
+
+#[test]
 fn test_const_eval_cache_preserves_loc_across_runs() {
   let ctx = EvalCtx::default();
 
@@ -3614,6 +3729,92 @@ b = [1, 2]"#;
   };
   assert!(Rc::ptr_eq(&seq1, &seq2));
   assert_eq!(ctx.resolve_loc(loc2), (3, 5));
+}
+
+/// Pest/Lezer parser parity cases. Mirror in `src/geoscript/parser/parser.test.ts`;
+/// keep the two in sync by hand. `Ok(n)` = `n` statements; `Err(needle)` = error
+/// message contains `needle`.
+#[cfg(test)]
+const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
+  ("1", ParseOutcome::Ok(1)),
+  ("1 + 2", ParseOutcome::Ok(1)),
+  ("a = 1", ParseOutcome::Ok(1)),
+  ("f(1, 2)", ParseOutcome::Ok(1)),
+  // Tight `[` field access
+  ("arr[0]", ParseOutcome::Ok(1)),
+  ("arr[0][1]", ParseOutcome::Ok(1)),
+  ("arr[0].field", ParseOutcome::Ok(1)),
+  ("[1,2,3][0]", ParseOutcome::Ok(1)),
+  ("{ 1 }[0]", ParseOutcome::Ok(1)),
+  ("f(1)[0]", ParseOutcome::Ok(1)),
+  // `.field` is whitespace-permissive
+  ("arr.field", ParseOutcome::Ok(1)),
+  ("arr .field", ParseOutcome::Ok(1)),
+  ("arr\n  .field", ParseOutcome::Ok(1)),
+  ("arr.a.b.c", ParseOutcome::Ok(1)),
+  ("arr [0]", ParseOutcome::Err("no whitespace before `[`")),
+  ("{ 1 } [0]", ParseOutcome::Err("no whitespace before `[`")),
+  ("arr[1,2,3]", ParseOutcome::Err("must be tight and contain a single value")),
+  // `\n[`/`\n(` — preprocessor splits into two statements.
+  ("arr\n[0]", ParseOutcome::Ok(2)),
+  ("arr\n[1,2,3]", ParseOutcome::Ok(2)),
+  ("foo\n(x)", ParseOutcome::Ok(2)),
+  ("{ 1 }\n[0]", ParseOutcome::Ok(2)),
+  ("{ 1 }\n[1, 2, 3]", ParseOutcome::Ok(2)),
+  ("x = { 1 }\n[1, 2, 3]", ParseOutcome::Ok(2)),
+  ("[1,2,3]\n[4,5,6]", ParseOutcome::Ok(2)),
+  ("foo()", ParseOutcome::Ok(1)),
+  ("foo ()", ParseOutcome::Err("")),
+  // Shorthand closures (preprocessor wraps body in `{}`)
+  ("|| 1", ParseOutcome::Ok(1)),
+  ("|x| x", ParseOutcome::Ok(1)),
+  ("|x| x + 1", ParseOutcome::Ok(1)),
+  ("|x| x | 1", ParseOutcome::Ok(1)),
+  ("|x| x || y", ParseOutcome::Ok(1)),
+  ("|x| |y| x + y", ParseOutcome::Ok(1)),
+  ("|x = 1| x", ParseOutcome::Ok(1)),
+  ("|x: int| x", ParseOutcome::Ok(1)),
+  ("foo(x=|a| a + 1, b=2)", ParseOutcome::Ok(1)),
+  ("foo(|a| a, |b| b)", ParseOutcome::Ok(1)),
+  ("[|x| x + 1, |y| y * 2]", ParseOutcome::Ok(1)),
+  ("{key: |x| x + 1}", ParseOutcome::Ok(1)),
+  ("x = |a| a + 1\ny = 2", ParseOutcome::Ok(2)),
+  ("a || b", ParseOutcome::Ok(1)),
+  ("a | b", ParseOutcome::Ok(1)),
+  ("x = ||\n 1", ParseOutcome::Err("empty body")),
+];
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+enum ParseOutcome {
+  Ok(usize),
+  Err(&'static str),
+}
+
+#[test]
+fn test_parser_parity_pest() {
+  let ctx = EvalCtx::default();
+  let mut failures = Vec::new();
+  for (src, expected) in PARSER_PARITY_CASES {
+    let actual = parse_program_src(&ctx, src);
+    let outcome_matches = match (&actual, expected) {
+      (Ok(prog), ParseOutcome::Ok(n)) => prog.statements.len() == *n,
+      (Err(e), ParseOutcome::Err(needle)) => format!("{e}").contains(needle),
+      _ => false,
+    };
+    if !outcome_matches {
+      let actual_desc = match actual {
+        Ok(p) => format!("Ok({} statements)", p.statements.len()),
+        Err(e) => format!("Err({})", format!("{e}").lines().next().unwrap_or("")),
+      };
+      failures.push(format!("  {src:?} — expected {expected:?}, got {actual_desc}"));
+    }
+  }
+  assert!(
+    failures.is_empty(),
+    "Pest parser parity mismatches:\n{}",
+    failures.join("\n")
+  );
 }
 
 #[test]
@@ -4340,6 +4541,56 @@ result = outer(w=500, 3)
 }
 
 #[test]
+#[ignore]
+fn check_all_repo_geo_files_parse() {
+  use std::fs;
+  use std::path::PathBuf;
+
+  fn collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+      let p = entry.path();
+      if p.is_dir() {
+        collect(&p, out);
+      } else if p.extension().map_or(false, |e| e == "geo") {
+        out.push(p);
+      }
+    }
+  }
+
+  let mut files = Vec::new();
+  collect(
+    std::path::Path::new("/home/casey/dream/src/levels"),
+    &mut files,
+  );
+  collect(
+    std::path::Path::new("/home/casey/dream/src/viz/wasm/geoscript/examples"),
+    &mut files,
+  );
+  files.push(PathBuf::from("/home/casey/dream/silo.geo"));
+
+  let ctx = EvalCtx::default();
+  let mut failures = Vec::new();
+  for f in &files {
+    let src = fs::read_to_string(f).unwrap_or_default();
+    if src.is_empty() {
+      continue;
+    }
+    if let Err(e) = parse_program_src(&ctx, &src) {
+      failures.push(format!(
+        "FAIL {}: {}",
+        f.display(),
+        format!("{e}").lines().next().unwrap_or("")
+      ));
+    }
+  }
+  if !failures.is_empty() {
+    panic!("Failures:\n{}", failures.join("\n"));
+  }
+  println!("All {} .geo files parsed successfully", files.len());
+}
+
+#[test]
 fn test_example_programs() {
   use std::fs;
 
@@ -4360,7 +4611,9 @@ fn test_example_programs() {
     println!("Testing example: {example_name}");
 
     if parse_only.contains(&example_name) {
-      match GSParser::parse(Rule::program, &src) {
+      // Use `parse_program_src` so the preprocessor runs before Pest.
+      let ctx = EvalCtx::default();
+      match parse_program_src(&ctx, &src) {
         Ok(_) => println!("Example {example_name} parsed successfully"),
         Err(err) => panic!("Example {example_name} failed to parse with error: {err}"),
       }

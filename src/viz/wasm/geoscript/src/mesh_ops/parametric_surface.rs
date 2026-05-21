@@ -11,10 +11,93 @@ use super::fku_stitch::{
   dp_stitch_presampled, should_use_fku, stitch_apex_to_row, uniform_stitch_rows,
 };
 use super::helpers::{compute_centroid, vertices_are_collapsed};
+use super::tessellate_polygon::{tessellate_ring_cap_with_indices, PlaneFrame};
 
 struct RowInfo {
   start_ix: usize,
   count: usize,
+}
+
+/// Newell's method. Magnitude is proportional to polygon area; callers must guard
+/// against near-zero length before normalizing.
+fn newell_normal(ring: &[Vec3]) -> Vec3 {
+  let mut normal = Vec3::new(0., 0., 0.);
+  let n = ring.len();
+  for i in 0..n {
+    let p = ring[i];
+    let q = ring[(i + 1) % n];
+    normal.x += (p.y - q.y) * (p.z + q.z);
+    normal.y += (p.z - q.z) * (p.x + q.x);
+    normal.z += (p.x - q.x) * (p.y + q.y);
+  }
+  normal
+}
+
+/// Plane frame for projecting a ring to 2D for triangulation. Normal is Newell's,
+/// oriented along `outward_dir`; `outward_dir` itself is the fallback when degenerate.
+fn compute_cap_frame(ring: &[Vec3], outward_dir: Vec3) -> PlaneFrame {
+  let centroid = compute_centroid(ring);
+
+  let newell = newell_normal(ring);
+  let plane_normal = if newell.norm_squared() > 1e-10 {
+    let n = newell.normalize();
+    if n.dot(&outward_dir) < 0.0 {
+      -n
+    } else {
+      n
+    }
+  } else {
+    outward_dir
+  };
+
+  let up = if plane_normal.x.abs() < 0.9 {
+    Vec3::new(1., 0., 0.)
+  } else {
+    Vec3::new(0., 1., 0.)
+  };
+  let u_axis = plane_normal.cross(&up).normalize();
+  let v_axis = plane_normal.cross(&u_axis).normalize();
+
+  PlaneFrame {
+    center: centroid,
+    u_axis,
+    v_axis,
+  }
+}
+
+/// Triangulates an end-ring. `other_centroid` (the opposite ring's centroid) defines
+/// outward direction for consistent winding. `flip_normals` matches the surface-side
+/// parameter. Rings with fewer than 3 verts (collapsed poles) are skipped.
+fn cap_one_end(
+  this_ring_indices: &[u32],
+  this_ring_verts: &[Vec3],
+  other_centroid: Vec3,
+  flip_normals: bool,
+  indices: &mut Vec<u32>,
+) -> Result<(), ErrorStack> {
+  if this_ring_indices.len() < 3 {
+    return Ok(());
+  }
+
+  let this_centroid = compute_centroid(this_ring_verts);
+  let diff = this_centroid - other_centroid;
+  let outward_dir = if diff.norm_squared() > 1e-10 {
+    diff.normalize()
+  } else {
+    // Both ends coincident — cap orientation may not match the body, but it triangulates.
+    Vec3::new(0., 1., 0.)
+  };
+
+  let frame = compute_cap_frame(this_ring_verts, outward_dir);
+
+  let cap_indices = tessellate_ring_cap_with_indices(
+    this_ring_verts,
+    this_ring_indices,
+    flip_normals,
+    &frame,
+  )?;
+  indices.extend(cap_indices);
+  Ok(())
 }
 
 /// Allows creating any genus 0 or 1 surface (generalized spheres or tori) by mapping a 2D plane
@@ -34,6 +117,7 @@ pub fn parametric_surface(
   u_closed: bool,
   v_closed: bool,
   flip_normals: bool,
+  capped: bool,
   fku_stitching: bool,
   adaptive_u_sampling: bool,
   adaptive_v_sampling: bool,
@@ -220,6 +304,54 @@ pub fn parametric_surface(
     }
   }
 
+  // End caps. Only meaningful for tubes (one axis closed); torus/sheet are no-ops.
+  if capped {
+    if u_closed && !v_closed {
+      let v0_indices: Vec<u32> = row_infos.iter().map(|r| r.start_ix as u32).collect();
+      let v_end_indices: Vec<u32> = row_infos
+        .iter()
+        .map(|r| (r.start_ix + r.count - 1) as u32)
+        .collect();
+      let v0_ring: Vec<Vec3> = v0_indices.iter().map(|&i| verts[i as usize]).collect();
+      let v_end_ring: Vec<Vec3> = v_end_indices.iter().map(|&i| verts[i as usize]).collect();
+
+      let v0_centroid = compute_centroid(&v0_ring);
+      let v_end_centroid = compute_centroid(&v_end_ring);
+
+      cap_one_end(&v0_indices, &v0_ring, v_end_centroid, flip_normals, &mut indices)?;
+      cap_one_end(
+        &v_end_indices,
+        &v_end_ring,
+        v0_centroid,
+        flip_normals,
+        &mut indices,
+      )?;
+    } else if !u_closed && v_closed {
+      let u0_row = &row_infos[0];
+      let u_end_row = row_infos.last().unwrap();
+      let u0_indices: Vec<u32> = (u0_row.start_ix..u0_row.start_ix + u0_row.count)
+        .map(|i| i as u32)
+        .collect();
+      let u_end_indices: Vec<u32> = (u_end_row.start_ix..u_end_row.start_ix + u_end_row.count)
+        .map(|i| i as u32)
+        .collect();
+      let u0_ring: Vec<Vec3> = u0_indices.iter().map(|&i| verts[i as usize]).collect();
+      let u_end_ring: Vec<Vec3> = u_end_indices.iter().map(|&i| verts[i as usize]).collect();
+
+      let u0_centroid = compute_centroid(&u0_ring);
+      let u_end_centroid = compute_centroid(&u_end_ring);
+
+      cap_one_end(&u0_indices, &u0_ring, u_end_centroid, flip_normals, &mut indices)?;
+      cap_one_end(
+        &u_end_indices,
+        &u_end_ring,
+        u0_centroid,
+        flip_normals,
+        &mut indices,
+      )?;
+    }
+  }
+
   Ok(LinkedMesh::from_indexed_vertices(
     &verts, &indices, None, None,
   ))
@@ -243,6 +375,7 @@ pub(crate) fn parametric_surface_impl(
       let fku_stitching = arg_refs[6].resolve(args, kwargs).as_bool().unwrap();
       let adaptive_u_sampling = arg_refs[7].resolve(args, kwargs).as_bool().unwrap();
       let adaptive_v_sampling = arg_refs[8].resolve(args, kwargs).as_bool().unwrap();
+      let capped = arg_refs[9].resolve(args, kwargs).as_bool().unwrap();
 
       if u_res < 1 {
         return Err(ErrorStack::new(format!(
@@ -261,6 +394,7 @@ pub(crate) fn parametric_surface_impl(
         u_closed,
         v_closed,
         flip_normals,
+        capped,
         fku_stitching,
         adaptive_u_sampling,
         adaptive_v_sampling,
@@ -302,7 +436,7 @@ mod tests {
   #[test]
   fn test_parametric_surface_simple_plane() {
     // Simple plane: z = 0, x and y from 0 to 1
-    let mesh = parametric_surface(2, 2, false, false, false, false, false, false, |u, v| {
+    let mesh = parametric_surface(2, 2, false, false, false, false, false, false, false, |u, v| {
       Ok(Vec3::new(u, v, 0.0))
     })
     .unwrap();
@@ -315,7 +449,7 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_cylinder() {
-    let mesh = parametric_surface(2, 8, false, true, true, false, false, false, |u, v| {
+    let mesh = parametric_surface(2, 8, false, true, true, false, false, false, false, |u, v| {
       let angle = v * 2.0 * PI;
       Ok(Vec3::new(angle.cos(), u, angle.sin()))
     })
@@ -328,8 +462,36 @@ mod tests {
   }
 
   #[test]
+  fn test_parametric_surface_capped_cylinder() {
+    let mesh = parametric_surface(2, 8, false, true, true, true, false, false, false, |u, v| {
+      let angle = v * 2.0 * PI;
+      Ok(Vec3::new(angle.cos(), u, angle.sin()))
+    })
+    .unwrap();
+
+    assert_eq!(mesh.vertices.len(), 24);
+    // 32 side tris + (8-2)*2 cap tris
+    assert_eq!(mesh.faces.len(), 44);
+    mesh.check_is_manifold::<true>().expect("capped cylinder should be manifold");
+  }
+
+  #[test]
+  fn test_parametric_surface_capped_torus_is_noop() {
+    let mesh = parametric_surface(8, 8, true, true, true, true, false, false, false, |u, v| {
+      let theta = u * 2.0 * PI;
+      let phi = v * 2.0 * PI;
+      let r = 2.0 + 0.5 * phi.cos();
+      Ok(Vec3::new(r * theta.cos(), 0.5 * phi.sin(), r * theta.sin()))
+    })
+    .unwrap();
+
+    assert_eq!(mesh.vertices.len(), 64);
+    assert_eq!(mesh.faces.len(), 128);
+  }
+
+  #[test]
   fn test_parametric_surface_sphere_with_poles() {
-    let mesh = parametric_surface(4, 8, false, true, false, false, false, false, |u, v| {
+    let mesh = parametric_surface(4, 8, false, true, false, false, false, false, false, |u, v| {
       let phi = u * PI; // 0 to PI (south to north)
       let theta = v * 2.0 * PI; // 0 to 2PI (around)
       Ok(Vec3::new(
@@ -359,7 +521,7 @@ mod tests {
     // flip_normals=true for outward-facing normals with this parameterization
     let major_r = 2.0;
     let minor_r = 0.5;
-    let mesh = parametric_surface(8, 8, true, true, true, false, false, false, |u, v| {
+    let mesh = parametric_surface(8, 8, true, true, true, false, false, false, false, |u, v| {
       let theta = u * 2.0 * PI; // around the major circle
       let phi = v * 2.0 * PI; // around the minor circle
       let r = major_r + minor_r * phi.cos();
@@ -379,12 +541,12 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_error_on_zero_resolution() {
-    let result = parametric_surface(0, 4, false, false, false, false, false, false, |u, v| {
+    let result = parametric_surface(0, 4, false, false, false, false, false, false, false, |u, v| {
       Ok(Vec3::new(u, v, 0.0))
     });
     assert!(result.is_err());
 
-    let result = parametric_surface(4, 0, false, false, false, false, false, false, |u, v| {
+    let result = parametric_surface(4, 0, false, false, false, false, false, false, false, |u, v| {
       Ok(Vec3::new(u, v, 0.0))
     });
     assert!(result.is_err());

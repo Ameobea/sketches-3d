@@ -19,7 +19,13 @@ destructure_assignment       = { (array_destructure | map_destructure) ~ "=" ~ e
 assignment                   = { ident ~ type_hint? ~ "=" ~ expr }
 type_hint                    = { ":" ~ ident }
 
-expr                         = { prefix_op* ~ term ~ postfix* ~ (operator ~ prefix_op* ~ term ~ postfix*)* }
+expr                         = { prefix_op* ~ chained_term ~ (operator ~ prefix_op* ~ chained_term)* }
+
+// Tightness of `[` is enforced post-parse in `parse_chained_term` (ast.rs) rather than
+// here — making it a grammar-level constraint would require an atomic rule and break
+// whitespace handling inside the inner `expr`. `.field` stays whitespace-permissive.
+chained_term                 = { term ~ chained_postfix* }
+chained_postfix              = { field_access | static_field_access }
 
 prefix_op                    = _{ neg_op | pos_op | negate_op }
 parenthized_term             = _{ "(" ~ expr ~ ")" }
@@ -30,7 +36,6 @@ path_block                   = { "path" ~ "{" ~ statement* ~ "}" }
 
 static_field_access          = { "." ~ ident }
 field_access                 = { "[" ~ expr ~ "]" }
-postfix                      = { static_field_access | field_access }
 
 // need these to work around ambiguity where a range expression starting with an
 // integer literal looks like a float
@@ -81,9 +86,9 @@ fn_def_arg                   = { (ident | array_destructure | map_destructure) ~
 // from spiraling out of control and avoiding horrific edge cases like `|x: int = 1 | 1| 1 || 1`
 fn_arg_default_val           = { func_call | literal | array_literal | map_literal | ident | parenthized_term | block_expr | if_expression }
 fn_def_arg_list              = { (fn_def_arg* ~ ("," ~ fn_def_arg)*)}
-closure_body                 = _{ bracketed_closure_body | simple_closure_body }
+// Shorthand bodies (`|x| x + 1`) are wrapped in `{`/`}` by `preprocess.rs` before parsing.
+closure_body                 = _{ bracketed_closure_body }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }
-simple_closure_body          = { expr }
 
 array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
 map_kv                       = { (ident | string_literal) ~ ":" ~ expr }

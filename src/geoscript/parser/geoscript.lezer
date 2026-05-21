@@ -51,7 +51,9 @@ TypeHint { ":" Identifier }
 UnaryOp { "+" | "-" | "!" }
 
 ParenthesizedExpr { "(" Expr ")" }
-CallExpr { Identifier !call "(" commaSep<FunctionArg> ")" }
+// `TightLParen` mirrors the Pest runtime's `func_call_start = @{ ident ~ "(" }` — a
+// space before `(` means a separate `ParenthesizedExpr`, not a call.
+CallExpr { Identifier !call TightLParen commaSep<FunctionArg> ")" }
 IfExpr { If !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
 PathBlock { Path "{" statement* "}" }
 
@@ -107,8 +109,11 @@ StaticFieldAccessExpr {
   Expr !fieldAccess "." Identifier
 }
 
+// `TightLBrack` keeps `x = { 1 }\n[1, 2, 3]` from being parsed as a field access on the
+// block (which then errors on the comma). With whitespace before `[`, the `[` falls back
+// to a regular token and starts a fresh `ArrayExpr` statement.
 FieldAccessExpr {
-  Expr !fieldAccess "[" Expr "]"
+  Expr !fieldAccess TightLBrack Expr "]"
 }
 
 literal { Float | HexInteger | Integer | BoolLiteral | NilLiteral | StringLiteral }
@@ -132,6 +137,8 @@ MapSplat { "*" Expr }
 MapEntry { MapKV | MapSplat }
 
 @external tokens literalTokens from "./tokens" { Float }
+// Emitted only when `[`/`(` directly follows a non-whitespace char — see `tokens.ts`.
+@external tokens tightPostfixTokens from "./tokens" { TightLBrack, TightLParen }
 
 @tokens {
   whitespace { $[ \t\r\n] }

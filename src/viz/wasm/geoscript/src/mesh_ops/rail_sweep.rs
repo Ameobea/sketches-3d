@@ -444,8 +444,14 @@ fn validate_profile_topology(sampler: &Callable, u_ix: usize, u: f32) -> Result<
   )))
 }
 
-/// Samples the 2D profile offset at the given t value.
-fn sample_profile_offset(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Vec2, ErrorStack> {
+/// `v_ix` is the vertex index around the ring, or `-1` for out-of-band probes
+/// (adaptive sampler, collapse check).
+fn sample_profile_offset(
+  ctx: &EvalCtx,
+  ring: &RingContext,
+  v: f32,
+  v_ix: i64,
+) -> Result<Vec2, ErrorStack> {
   // If the critical points were rotated to align t=0 with a real feature, undo the rotation
   // before calling the sampler so it receives t-values in its original parameterization.
   let v = if ring.profile_data.rotation_offset != 0.0 {
@@ -454,7 +460,11 @@ fn sample_profile_offset(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Ve
     v
   };
   let offset_2d = ctx
-    .invoke_callable(&ring.profile_data.sampler, &[Value::Float(v)], EMPTY_KWARGS)
+    .invoke_callable(
+      &ring.profile_data.sampler,
+      &[Value::Float(v), Value::Int(v_ix)],
+      EMPTY_KWARGS,
+    )
     .map_err(|err| err.wrap("Error calling user-provided sampler returned by `dynamic_profile`"))?;
   offset_2d.as_vec2().copied().ok_or_else(|| {
     ErrorStack::new(format!(
@@ -464,8 +474,13 @@ fn sample_profile_offset(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Ve
 }
 
 /// Samples the 3D position by applying the profile offset to the ring's coordinate frame.
-fn sample_profile_at(ctx: &EvalCtx, ring: &RingContext, v: f32) -> Result<Vec3, ErrorStack> {
-  let offset = sample_profile_offset(ctx, ring, v)?;
+fn sample_profile_at(
+  ctx: &EvalCtx,
+  ring: &RingContext,
+  v: f32,
+  v_ix: i64,
+) -> Result<Vec3, ErrorStack> {
+  let offset = sample_profile_offset(ctx, ring, v, v_ix)?;
   Ok(ring.center + ring.normal * offset.x + ring.binormal * offset.y)
 }
 
@@ -474,7 +489,7 @@ fn ring_is_collapsed_dynamic(ctx: &EvalCtx, ring: &RingContext) -> Result<bool, 
   let mut first: Option<Vec3> = None;
   let epsilon_sq = COLLAPSE_EPSILON * COLLAPSE_EPSILON;
   for t in samples {
-    let p = sample_profile_at(ctx, ring, t)?;
+    let p = sample_profile_at(ctx, ring, t, -1)?;
     if let Some(first) = first {
       if (p - first).norm_squared() > epsilon_sq {
         return Ok(false);
@@ -684,7 +699,11 @@ fn rail_sweep_dynamic(
 
     let result = ctx.invoke_callable(
       dynamic_profile_cb,
-      &[Value::Float(u), Value::Int(u_ix as i64)],
+      &[
+        Value::Float(u),
+        Value::Int(u_ix as i64),
+        Value::Vec3(frame.center),
+      ],
       EMPTY_KWARGS,
     )?;
     let mut profile_data = extract_dynamic_profile_data(ctx, result)?;
@@ -724,7 +743,7 @@ fn rail_sweep_dynamic(
     .map(|ring| {
       let start = verts.len();
       let (count, t_values, critical_mask) = if ring.collapsed {
-        let apex = sample_profile_at(ctx, &ring, 0.0)?;
+        let apex = sample_profile_at(ctx, &ring, 0.0, 0)?;
         verts.push(apex);
         (1, None, None)
       } else {
@@ -740,7 +759,7 @@ fn rail_sweep_dynamic(
           adaptive_sample_fallible(
             ring_resolution,
             &ring.profile_data.critical_points,
-            |t| sample_profile_offset(ctx, &ring, t),
+            |t| sample_profile_offset(ctx, &ring, t, -1),
             min_segment_length,
           )?
         } else {
@@ -780,8 +799,8 @@ fn rail_sweep_dynamic(
         };
 
         let t_vals = samples.clone();
-        for v in samples {
-          verts.push(sample_profile_at(ctx, &ring, v)?);
+        for (v_ix, v) in samples.iter().enumerate() {
+          verts.push(sample_profile_at(ctx, &ring, *v, v_ix as i64)?);
         }
         (verts.len() - start, Some(t_vals), crit_mask)
       };
@@ -1269,6 +1288,15 @@ impl DynamicCallable for StaticProfileOuter {
         )))
       }
     };
+    let u_ix = match args.get(1) {
+      Some(Value::Int(i)) => *i,
+      Some(Value::Float(f)) => *f as i64,
+      _ => 0,
+    };
+    let spine_center = match args.get(2) {
+      Some(Value::Vec3(v)) => *v,
+      _ => Vec3::new(0., 0., 0.),
+    };
     // If profile is itself a path sampler (|v| -> vec2), use it directly as both sampler and
     // path_samplers so critical t values flow through to the dynamic profile machinery.
     if as_path_sampler(&self.profile).is_some() {
@@ -1283,12 +1311,15 @@ impl DynamicCallable for StaticProfileOuter {
       );
       return Ok(Value::Map(Rc::new(map)));
     }
-    // Regular |u, v| -> vec2 callable: wrap in an inner sampler that captures u.
+    // Wrap a |u, v, u_ix, v_ix, spine_center| callable: captures the spine-level args and
+    // forwards `v`/`v_ix` from each per-vertex call.
     let inner = Rc::new(Callable::Dynamic {
       name: "static_profile_inner".to_owned(),
       inner: Box::new(StaticProfileInner {
         profile: Rc::clone(&self.profile),
         u,
+        u_ix,
+        spine_center,
       }),
     });
     match &self.profile_samplers {
@@ -1312,6 +1343,8 @@ impl DynamicCallable for StaticProfileOuter {
 struct StaticProfileInner {
   profile: Rc<Callable>,
   u: f32,
+  u_ix: i64,
+  spine_center: Vec3,
 }
 
 impl DynamicCallable for StaticProfileInner {
@@ -1339,10 +1372,22 @@ impl DynamicCallable for StaticProfileInner {
         )))
       }
     };
+    // -1 signals out-of-band probes (adaptive sampler, collapse check).
+    let v_ix = match args.get(1) {
+      Some(Value::Int(i)) => *i,
+      Some(Value::Float(f)) => *f as i64,
+      _ => -1,
+    };
     ctx
       .invoke_callable(
         &self.profile,
-        &[Value::Float(self.u), Value::Float(v)],
+        &[
+          Value::Float(self.u),
+          Value::Float(v),
+          Value::Int(self.u_ix),
+          Value::Int(v_ix),
+          Value::Vec3(self.spine_center),
+        ],
         EMPTY_KWARGS,
       )
       .map_err(|err| err.wrap("Error calling user-provided `profile` callable in `rail_sweep`"))

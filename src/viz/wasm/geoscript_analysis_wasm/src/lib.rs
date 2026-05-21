@@ -1,3 +1,4 @@
+use geoscript::preprocess::preprocess;
 use geoscript_analysis::AnalysisCtx;
 use wasm_bindgen::prelude::*;
 
@@ -67,6 +68,21 @@ pub fn analysis_completions(
   let ctx = unsafe { &*ctx };
   let items = ctx.completions(src, line, col, include_prelude);
   nanoserde::SerJson::serialize_json(&items)
+}
+
+/// Returns JSON `{ rewritten, edits }` on success, or `{ error: { message, line, col } }`
+/// on preprocessor error. Callers distinguish by checking for an `error` key.
+#[wasm_bindgen]
+pub fn preprocess_source(src: &str) -> String {
+  match preprocess(src) {
+    Ok(out) => nanoserde::SerJson::serialize_json(&out),
+    Err(err) => format!(
+      "{{\"error\":{{\"message\":{},\"line\":{},\"col\":{}}}}}",
+      nanoserde::SerJson::serialize_json(&err.message),
+      err.line,
+      err.col,
+    ),
+  }
 }
 
 /// Get go-to-definition location at (line, col).  Returns JSON-serialized `DefinitionLocation`

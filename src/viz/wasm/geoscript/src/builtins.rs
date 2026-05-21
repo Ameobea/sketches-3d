@@ -71,6 +71,7 @@ pub mod fn_defs;
 pub(crate) mod lerp_path;
 pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod path_critical_points;
 pub(crate) mod trace_path;
 

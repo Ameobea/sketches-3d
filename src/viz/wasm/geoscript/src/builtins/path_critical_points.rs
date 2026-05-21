@@ -29,6 +29,7 @@ impl Default for CriticalPointConfig {
 const MIN_SEGMENT_CRITICAL_ANGLE: f32 = 1e-4;
 const DEFAULT_SEGMENT_FRACTION: f32 = 0.05;
 
+#[allow(dead_code)] // used only by wasm-gated path_boolean
 pub(crate) fn collect_vertex_set(coords: &[f64]) -> VertexSet {
   let mut set = VertexSet::default();
   let mut i = 0;
@@ -41,6 +42,7 @@ pub(crate) fn collect_vertex_set(coords: &[f64]) -> VertexSet {
   set
 }
 
+#[allow(dead_code)] // used only by wasm-gated path_boolean
 pub(crate) fn collect_vertex_set_multi(a: &[f64], b: &[f64]) -> VertexSet {
   let mut set = collect_vertex_set(a);
   let mut i = 0;

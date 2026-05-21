@@ -379,6 +379,7 @@ name = "geoscript_analysis_wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "geoscript",
  "geoscript_analysis",
  "log",
  "nanoserde 0.2.1",

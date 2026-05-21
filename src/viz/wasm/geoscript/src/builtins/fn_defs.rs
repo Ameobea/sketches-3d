@@ -6005,6 +6005,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "When true, uses curvature-aware adaptive sampling along the V axis within each row. Concentrates vertices in high-curvature V regions. Works well with FKU stitching which can handle rows with non-uniform vertex distributions. Disabled by default since parametric_surface is very general-purpose and adaptive sampling may not always be appropriate."
           },
+          ArgDef {
+            name: "capped",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, triangulates the open ends of a tube-like surface (exactly one of `u_closed`/`v_closed` is true).  Each end-ring is projected to its best-fit plane (via Newell's normal oriented along the axis) and triangulated with CGAL's constrained Delaunay triangulation — the same machinery rail_sweep uses, and it handles concave/non-convex ring shapes correctly.  Rings that aren't co-planar are projected as a best effort.  Cap winding follows `flip_normals` so the caps match the surface's facing direction.  No-op when both axes are closed (torus) or neither is (sheet)."
+          },
         ],
         description: "Generates a mesh from a parametric function over a 2D domain. Handles topological wrapping via the closed flags and automatically welds coincident vertices at boundary poles to maintain manifold topology. By default, normals point outward when V increases counter-clockwise (looking down +Y); use flip_normals=true to reverse.",
         return_type: &[ArgType::Mesh],
@@ -9608,7 +9615,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
-  // TODO: builtin that parses a subset of SVG path data strings and returns a sampler callable like above
 };
 
 #[inline(always)]
