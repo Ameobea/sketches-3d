@@ -603,21 +603,28 @@ export class BulletPhysics {
           };
 
           const centerReceiverY = castShadowRay(px, pz);
-          const centerDrop = feetY - centerReceiverY;
           shadowUniforms.playerShadowParams.z = centerReceiverY;
-          shadowUniforms.playerShadowParams.w = centerDrop;
+
+          // Track the highest receiver Y across all probes so the shader can early-out
+          // fragments above it (they can never be on a shadowed surface). All rays are
+          // cast straight down from the player center, so every probe is <= player center.
+          let maxReceiverY = centerReceiverY;
 
           // 8 angles at 45° intervals, two rings (outer=radius, inner=radius/2)
-          // mat4 layout (column-major): cols 0-1 = outer ring (angles 0-7), cols 2-3 = inner ring
+          // flat layout: [0..7] = outer ring (angles 0-7), [8..15] = inner ring
           const ringRadii = [radius, radius * 0.5];
-          const elems = shadowUniforms.psRingData.elements;
+          const elems = shadowUniforms.psRingData;
           for (let ring = 0; ring < 2; ring++) {
             const r = ringRadii[ring];
             const offset = ring * 8; // 0 for outer, 8 for inner
             for (let i = 0; i < 8; i++) {
-              elems[offset + i] = castShadowRay(px + SHADOW_PROBE_COS[i] * r, pz + SHADOW_PROBE_SIN[i] * r);
+              const probeY = castShadowRay(px + SHADOW_PROBE_COS[i] * r, pz + SHADOW_PROBE_SIN[i] * r);
+              elems[offset + i] = probeY;
+              maxReceiverY = Math.max(maxReceiverY, probeY);
             }
           }
+
+          shadowUniforms.playerShadowParams.w = maxReceiverY;
         }
 
         if (this.viz.controlState.cameraControlEnabled) {

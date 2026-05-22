@@ -65,7 +65,15 @@ export const buildPomDefs = (opts: {
   // Material supplies `getPomNormal(...)`; use it instead of finite differences.
   pomHasNormalShader: boolean;
 }): string => {
-  const { pomSteps, pomBounded, lodFadeStart, lodFadeEnd, pomRefinement, pomBinarySteps, pomHasNormalShader } = opts;
+  const {
+    pomSteps,
+    pomBounded,
+    lodFadeStart,
+    lodFadeEnd,
+    pomRefinement,
+    pomBinarySteps,
+    pomHasNormalShader,
+  } = opts;
   const useBinary = pomRefinement === 'binary';
   return /* glsl */ `
 #define POM_STEPS ${pomSteps}

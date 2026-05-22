@@ -4,7 +4,7 @@ import {
   RenderPass,
   SMAAEffect,
   SMAAPreset,
-  type Effect
+  type Effect,
 } from 'postprocessing';
 import * as THREE from 'three';
 

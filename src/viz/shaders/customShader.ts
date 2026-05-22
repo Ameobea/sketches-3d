@@ -314,14 +314,14 @@ export const resetCustomShaderGlobals = () => {
   occlusionBackfaceRenderingEnabled = false;
   playerShadowPos.set(0, 0, 0);
   playerShadowParams.set(0, 0, 0, 0);
-  psRingData.identity();
+  psRingData.fill(0);
   occlusionParams.set(0, 0, 0, 0);
 };
 
 const playerShadowPos = new THREE.Vector3();
 const playerShadowParams = new THREE.Vector4(0, 0, 0, 0);
-// mat4 packing: columns 0-1 = outer ring receiverY (angles 0-7), columns 2-3 = inner ring (angles 0-7)
-const psRingData = new THREE.Matrix4();
+// flat packing: [0..7] = outer ring receiverY (angles 0-7), [8..15] = inner ring (angles 0-7)
+const psRingData = new Float32Array(16);
 
 export const getPlayerShadowUniforms = () => ({
   playerShadowPos,
@@ -1286,8 +1286,8 @@ varying vec3 vWorldPos;
 ${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap)}
 
 uniform vec3 playerShadowPos;
-uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=centerDropDist
-uniform mat4 psRingData; // cols 0-1: outer ring receiverY (angles 0-7), cols 2-3: inner ring (angles 0-7)
+uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=maxReceiverY (highest probe, for early-out)
+uniform float psRingData[16]; // [0..7]: outer ring receiverY (angles 0-7), [8..15]: inner ring (angles 0-7)
 
 ${softOcclusionPreamble}
 
@@ -1355,7 +1355,7 @@ ${iridescenceShader ?? ''}
 ${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${pomHeightShader ?? ''}
 ${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, pomTexturing }) : ''}
-${(pom && pomNormalShader) ? pomNormalShader : ''}
+${pom && pomNormalShader ? pomNormalShader : ''}
 ${buildPomDefsFragment()}
 ${usingSSR ? ssrDefsFragment : ''}
 
