@@ -130,6 +130,7 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
   if (shadersJson.includeNoiseShadersVertex !== undefined)
     shaders.includeNoiseShadersVertex = shadersJson.includeNoiseShadersVertex;
   if (shadersJson.pomHeightShader !== undefined) shaders.pomHeightShader = shadersJson.pomHeightShader;
+  if (shadersJson.pomNormalShader !== undefined) shaders.pomNormalShader = shadersJson.pomNormalShader;
   return shaders;
 };
 

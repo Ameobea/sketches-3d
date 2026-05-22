@@ -8,6 +8,7 @@ uniform float bloomIntensity;
 #endif
 uniform float gammaExponent;
 varying vec2 vUv;
+varying vec3 vWorldRay;
 
 #if defined(HAS_FOG) || defined(SKY_BYPASS_TONEMAP)
 uniform sampler2D depthBuffer;
@@ -24,11 +25,11 @@ uniform float curTimeSeconds;
 #include <tonemapping_pars_fragment>
 
 vec3 linearToSRGB(vec3 value) {
-  return mix(
-    value * 12.92,
-    pow(clamp(value, 0.0, 1.0), vec3(1.0 / 2.4)) * 1.055 - 0.055,
-    step(vec3(0.0031308), value)
-  );
+  value = clamp(value, 0., 1.);
+  vec3 s1 = sqrt(value);
+  vec3 s2 = sqrt(s1);
+  vec3 hi = 0.83333 * s1 + 0.29857 * s2 - 0.05526 * value - 0.07712;
+  return mix(value * 12.92, hi, step(vec3(0.0031308), value));
 }
 
 // Interleaved Gradient Noise (Jimenez et al. 2014) — blue-noise-like spectral
@@ -43,18 +44,17 @@ float ign(vec2 p) {
 float tpdfDither(vec2 seed) {
   float a = ign(seed);
   float b = ign(seed + vec2(1.7269, 2.3891));
-  return a + b - 1.0;
+  return a + b - 1.;
 }
 
 #if defined(HAS_FOG) && !defined(FOG_DISABLED)
 // Reconstructs the world-space position of the fragment from the depth buffer.
 // depth is the raw depth buffer value in [0, 1]; a value at or near 1.0 indicates
 // the far plane (sky / no geometry) and should be handled in getFogEffect accordingly.
-vec3 reconstructWorldPos(float depth, vec2 uv) {
-  vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-  vec4 viewPos = projectionMatrixInverse * ndc;
-  viewPos /= viewPos.w;
-  return (cameraWorldMatrix * viewPos).xyz;
+vec3 reconstructWorldPos(float depth) {
+  float ndcZ = depth * 2. - 1.;
+  float invW = 1. / (projectionMatrixInverse[2][3] * ndcZ + projectionMatrixInverse[3][3]);
+  return (vWorldRay * invW) + cameraWorldMatrix[3].xyz;
 }
 #endif
 
@@ -79,10 +79,10 @@ void main() {
   // can reuse the same factor — that's what lets us avoid a separate
   // emissive-fog pass for the no-bloom case.
   #if defined(HAS_FOG) && !defined(FOG_DISABLED)
-  vec4 fogResult = vec4(0.0);
+  vec4 fogResult = vec4(0.);
   {
     float depth = texture2D(depthBuffer, vUv).r;
-    vec3 worldPos = reconstructWorldPos(depth, vUv);
+    vec3 worldPos = reconstructWorldPos(depth);
     // getFogEffect is defined by the injected fogShader string.
     // Signature: vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos,
     //                              float depth, float curTimeSeconds)
@@ -138,7 +138,7 @@ void main() {
 
   // User gamma adjustment in sRGB space. gammaExponent = 1/gamma, so 1.0 is identity.
   // Clamp before pow to avoid undefined behavior on values >1 from additive bloom.
-  color.rgb = pow(clamp(color.rgb, 0.0, 1.0), vec3(gammaExponent));
+  color.rgb = pow(clamp(color.rgb, 0., 1.), vec3(gammaExponent));
 
   // Per-channel TPDF dither in sRGB space.
   // Decorrelate R/G/B by using different seed offsets so noise appears as

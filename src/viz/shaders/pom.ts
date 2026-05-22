@@ -62,12 +62,15 @@ export const buildPomDefs = (opts: {
   lodFadeEnd: number;
   pomRefinement: PomRefinement;
   pomBinarySteps: number;
+  // Material supplies `getPomNormal(...)`; use it instead of finite differences.
+  pomHasNormalShader: boolean;
 }): string => {
-  const { pomSteps, pomBounded, lodFadeStart, lodFadeEnd, pomRefinement, pomBinarySteps } = opts;
+  const { pomSteps, pomBounded, lodFadeStart, lodFadeEnd, pomRefinement, pomBinarySteps, pomHasNormalShader } = opts;
   const useBinary = pomRefinement === 'binary';
   return /* glsl */ `
 #define POM_STEPS ${pomSteps}
 ${useBinary ? `#define POM_REFINE_BINARY\n#define POM_BINARY_STEPS ${pomBinarySteps}` : ''}
+${pomHasNormalShader ? '#define POM_HAS_NORMAL_SHADER' : ''}
 
 // --- Procedural Parallax Occlusion Mapping (world space, subtractive only) ---
 // The base polygon is the TOP of a virtual slab of thickness \`pomDepth\`
@@ -182,18 +185,25 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
 `
     : ''
 }
-// finite-difference normal of the carved floor.  \`eps\` is in world space.
+// finite-difference normal of the carved floor (\`eps\` in world space). 3-tap
+// forward differences rather than 4-tap central: one fewer \`_pomSurf\` eval, and
+// the bias is imperceptible on this relief.
 vec3 pomAnalyticNormal(vec3 pHit, vec3 N, float depth, float t, float eps) {
+#ifdef POM_HAS_NORMAL_SHADER
+  // Closed-form floor normal from the material; skips the taps below.
+  return getPomNormal(pHit, N, depth, t);
+#else
   vec3 up = abs(N.y) < 0.99 ? vec3(0., 1., 0.) : vec3(1., 0., 0.);
   vec3 T = normalize(cross(N, up));
   vec3 B = cross(N, T);
-  float hL = _pomSurf(pHit - T * eps, N, depth, t);
+  float h0 = _pomSurf(pHit,           N, depth, t);
   float hR = _pomSurf(pHit + T * eps, N, depth, t);
-  float hD = _pomSurf(pHit - B * eps, N, depth, t);
   float hU = _pomSurf(pHit + B * eps, N, depth, t);
-  // Surface point = base + uT + vB - h*N  =>  outward normal ∝ N + h_u T + h_v B
-  vec3 grad = T * (hR - hL) + B * (hU - hD);
-  return normalize(N * (2.0 * eps) + grad);
+  // Surface point = base + uT + vB - h*N  =>  outward normal ∝ N + h_u T + h_v B.
+  // Forward differences over distance \`eps\`, so N is scaled by eps (not 2*eps).
+  vec3 grad = T * (hR - h0) + B * (hU - h0);
+  return normalize(N * eps + grad);
+#endif
 }
 
 // 1 = full POM, 0 = flat base surface. Smoothly retracts grooves with
@@ -260,13 +270,17 @@ export const buildPomMainBlock = (
       }`
           : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
       }
-      float _pomEps = max(unitsPerPx, _pomD * 0.02);
-      ${typeof normalEps === 'number' ? /* glsl */ `_pomEps = max(_pomEps, ${normalEps.toFixed(6)});` : ''}
-      _pomNormalW = mix(
-        _pomNormalW,
-        pomAnalyticNormal(_pomHit, _pomNormalW, _pomD, curTimeSeconds, _pomEps),
-        _pomFade
-      );
+      // Skip the analytic-normal taps once the LOD fade is negligible (<=2%):
+      // saves the _pomSurf evals on distant fragments.
+      if (_pomFade > 0.02) {
+        float _pomEps = max(unitsPerPx, _pomD * 0.02);
+        ${typeof normalEps === 'number' ? /* glsl */ `_pomEps = max(_pomEps, ${normalEps.toFixed(6)});` : ''}
+        _pomNormalW = mix(
+          _pomNormalW,
+          pomAnalyticNormal(_pomHit, _pomNormalW, _pomD, curTimeSeconds, _pomEps),
+          _pomFade
+        );
+      }
     }
   }
   ${tail}
@@ -279,6 +293,7 @@ export const buildPomMainBlock = (
 // map layers onto the carved relief instead of replacing it.
 export const buildPomNormalApply = (pomTexturing: PomTexturing, hasNormalMap: boolean): string => {
   if (!hasNormalMap) {
+    return '';
     return `normal = normalize((viewMatrix * vec4(_pomNormalW, 0.)).xyz);`;
   }
 

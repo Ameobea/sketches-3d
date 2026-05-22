@@ -177,6 +177,8 @@ export class Viz {
   }[] = [];
   private afterRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
   private animateHandle: number = 0;
+  private captureFrozen = false;
+  private captureElapsedSeconds = 0;
   private distanceSwapEntries: {
     mesh: THREE.Mesh;
     baseMat: THREE.Material;
@@ -246,6 +248,12 @@ export class Viz {
         }
       }
     });
+
+    (window as any).vizCapture = {
+      freeze: this.captureFreeze,
+      frame: this.captureFrame,
+      resume: this.captureResume,
+    };
   }
 
   private setupCameraAndRenderer = (sceneDef: SceneDef) => {
@@ -273,6 +281,9 @@ export class Viz {
       antialias: false,
       powerPreference: 'high-performance',
       stencil: false,
+      depth: false,
+      logarithmicDepthBuffer: false,
+      premultipliedAlpha: false,
     });
 
     // backwards compat
@@ -297,15 +308,7 @@ export class Viz {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   };
 
-  public animate = () => {
-    if (this.isBlurred || this.paused.current) {
-      this.animateHandle = requestAnimationFrame(this.animate);
-      return;
-    }
-
-    const deltaTime = this.clock.getDelta();
-    const curTimeSeconds = this.clock.getElapsedTime();
-
+  private renderFrame = (deltaTime: number, curTimeSeconds: number) => {
     this.beforeRenderCbs.forEach(({ cb }) => cb(curTimeSeconds, deltaTime));
 
     if (this.renderOverride) {
@@ -326,8 +329,59 @@ export class Viz {
     this.afterRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));
 
     this.stats?.update();
+  };
+
+  public animate = () => {
+    if (this.isBlurred || this.paused.current) {
+      this.animateHandle = requestAnimationFrame(this.animate);
+      return;
+    }
+
+    if (this.captureFrozen) {
+      return;
+    }
+
+    const deltaTime = this.clock.getDelta();
+    const curTimeSeconds = this.clock.getElapsedTime();
+
+    this.renderFrame(deltaTime, curTimeSeconds);
 
     this.animateHandle = requestAnimationFrame(this.animate);
+  };
+
+  public captureFreeze = () => {
+    if (this.captureFrozen) {
+      return;
+    }
+    this.captureFrozen = true;
+    this.captureElapsedSeconds = 0;
+    if (this.animateHandle) {
+      cancelAnimationFrame(this.animateHandle);
+      this.animateHandle = 0;
+    }
+    console.info('[vizCapture] render loop frozen — call vizCapture.frame() to render one frame');
+  };
+
+  public captureFrame = (deltaTimeSeconds = 1 / 60) => {
+    if (!this.captureFrozen) {
+      console.warn('[vizCapture] not frozen — call vizCapture.freeze() first');
+      return;
+    }
+    this.captureElapsedSeconds += deltaTimeSeconds;
+    const curTimeSeconds = this.clock.elapsedTime + this.captureElapsedSeconds;
+    this.renderFrame(deltaTimeSeconds, curTimeSeconds);
+    this.renderer.getContext().flush();
+    console.info('[vizCapture] rendered one frame');
+  };
+
+  public captureResume = () => {
+    if (!this.captureFrozen) {
+      return;
+    }
+    this.captureFrozen = false;
+    this.clock.getDelta();
+    this.animateHandle = requestAnimationFrame(this.animate);
+    console.info('[vizCapture] render loop resumed');
   };
 
   private onWindowResize = () => {

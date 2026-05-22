@@ -47,12 +47,12 @@
     "graphviz-builder": "^0.1.1",
     "lezer-glsl": "^0.6.0",
     "manifold-3d": "^3.3.2",
-    "n8ao": "^1.10.1",
+    "n8ao": "Ameobea/n8ao#faster-getworldpos",
     "postprocessing": "^6.38.3",
     "rand-seed": "^2.1.7",
     "svelte": "^5.55.0",
     "three": "^0.165.0",
-    "three-good-godrays": "=0.11.2",
+    "three-good-godrays": "=0.12.0",
     "tweakpane": "^4.0.5",
     "zod": "^4.1.13"
   }

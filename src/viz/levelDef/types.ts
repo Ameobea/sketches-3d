@@ -206,6 +206,7 @@ export const ShaderShadersJsonSchema = z.object({
   displacementShader: z.string().optional(),
   includeNoiseShadersVertex: z.boolean().optional(),
   pomHeightShader: z.string().optional(),
+  pomNormalShader: z.string().optional(),
 });
 
 /** Serializable CustomShaderProps — texture slots as string keys into textures registry */
@@ -372,6 +373,7 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
   iridescenceShader: ShaderGlslFieldRawSchema.optional(),
   displacementShader: ShaderGlslFieldRawSchema.optional(),
   pomHeightShader: ShaderGlslFieldRawSchema.optional(),
+  pomNormalShader: ShaderGlslFieldRawSchema.optional(),
 });
 
 const CustomShaderMatDefRawSchema = CustomShaderMatDefSchema.extend({

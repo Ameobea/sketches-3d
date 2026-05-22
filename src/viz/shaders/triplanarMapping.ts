@@ -28,7 +28,7 @@ export const buildTriplanarDefsFragment = (
   const perAxisTapCountExpr = (axisUv: string) =>
     tileBreakingMode === 'neyret' ? `getNeyretTapCount(${axisUv})` : '1.0';
 
-  return `
+  return /* glsl */ `
   // sharpenFactor < 1 smooths, > 1 sharpens
   vec3 generateTriplanarWeights(vec3 normal) {
     vec3 weights = abs(normal);

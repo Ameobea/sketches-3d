@@ -4,7 +4,6 @@ varying vec2 vUv;
 #ifdef HAS_THRESHOLD
 uniform float threshold;
 uniform float smoothing;
-// When > 0, selects the UE4-style soft-knee gate.
 uniform float softKnee;
 #endif
 
@@ -15,12 +14,12 @@ uniform mat4 cameraWorldMatrix;
 uniform vec3 fogCameraPos;
 uniform vec3 fogPlayerPos;
 uniform float curTimeSeconds;
+varying vec3 vWorldRay;
 
-vec3 reconstructWorldPos(float depth, vec2 uv) {
-  vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-  vec4 viewPos = projectionMatrixInverse * ndc;
-  viewPos /= viewPos.w;
-  return (cameraWorldMatrix * viewPos).xyz;
+vec3 reconstructWorldPos(float depth) {
+  float ndcZ = depth * 2. - 1.;
+  float invW = 1. / (projectionMatrixInverse[2][3] * ndcZ + projectionMatrixInverse[3][3]);
+  return (vWorldRay * invW) + cameraWorldMatrix[3].xyz;
 }
 #endif
 
@@ -30,7 +29,7 @@ void main() {
 #if defined(HAS_FOG) && !defined(FOG_DISABLED)
   if (color.a > 0.0) {
     float depth = texture2D(depthBuffer, vUv).r;
-    vec3 worldPos = reconstructWorldPos(depth, vUv);
+    vec3 worldPos = reconstructWorldPos(depth);
     vec4 fogResult = getFogEffect(worldPos, fogCameraPos, fogPlayerPos, depth, curTimeSeconds);
     color.rgb = mix(color.rgb, fogResult.rgb, fogResult.a);
     color.a *= (1.0 - fogResult.a);

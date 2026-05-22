@@ -550,6 +550,7 @@ export const buildCustomShaderArgs = (
     iridescenceReverseColorRamp,
     displacementShader,
     pomHeightShader,
+    pomNormalShader,
     includeNoiseShadersVertex,
   }: CustomShaderShaders = {},
   {
@@ -789,6 +790,7 @@ export const buildCustomShaderArgs = (
       lodFadeEnd,
       pomRefinement,
       pomBinarySteps,
+      pomHasNormalShader: !!pomNormalShader,
     });
   };
 
@@ -1353,6 +1355,7 @@ ${iridescenceShader ?? ''}
 ${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${pomHeightShader ?? ''}
 ${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, pomTexturing }) : ''}
+${(pom && pomNormalShader) ? pomNormalShader : ''}
 ${buildPomDefsFragment()}
 ${usingSSR ? ssrDefsFragment : ''}
 

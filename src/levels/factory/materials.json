@@ -95,7 +95,6 @@
         "color": "#545454",
         "roughness": 0.9,
         "metalness": 0.18,
-        "normalScale": 0.83,
         "mapDisableDistance": 300,
         "mapDisableDistanceAxes": "xz",
         "mapDisableTransitionThreshold": 20,
@@ -113,6 +112,9 @@
         "pomHeightShader": {
           "file": "masonryTiles.height.glsl"
         },
+        "pomNormalShader": {
+          "file": "masonryTiles.normal.glsl"
+        },
         "colorShader": {
           "file": "masonryTiles.color.glsl"
         }
@@ -128,12 +130,12 @@
         "randomizeUVOffset": true,
         "pom": {
           "depth": 0.4,
-          "steps": 16,
+          "steps": 12,
           "lodFadeStart": 10,
           "lodFadeRange": 50,
-          "boundedSilhouette": true,
+          "boundedSilhouette": false,
           "refinement": "binary",
-          "refinementSteps": 5
+          "refinementSteps": 4
         }
       },
       "nonPermeable": true

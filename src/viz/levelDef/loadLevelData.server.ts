@@ -152,6 +152,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     'iridescenceShader',
     'displacementShader',
     'pomHeightShader',
+    'pomNormalShader',
   ] as const;
 
   const resolveGlslPath = (file: string): string =>

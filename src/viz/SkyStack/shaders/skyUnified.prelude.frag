@@ -50,8 +50,9 @@ void skyCoords(vec3 dir, out float elev, out float azimuth, out float cosElev) {
 
 void discardIfOccluded() {
   float depth = texture(uSceneDepth, vUv).r;
-  if (depth < 0.9999)
+  if (depth < 0.9999) {
     discard;
+  }
 }
 
 // Oklab perceptually-uniform color mixing.

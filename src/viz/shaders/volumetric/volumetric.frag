@@ -7,6 +7,7 @@
  */
 
 in vec2 vUv;
+in vec3 vWorldRay;
 
 #ifdef NEEDS_COMPOSITING
 // Raw scene depth captured at each half-res pixel so the compositor can use it
@@ -43,14 +44,14 @@ uniform float shadowBias;
  * Returns xyz where xy = UV coordinates and z = normalized depth in light space.
  */
 vec3 projectToShadowMapUV(vec3 worldPos) {
-  vec4 lightSpacePos = shadowMatrix * vec4(worldPos, 1.0);
+  vec4 lightSpacePos = shadowMatrix * vec4(worldPos, 1.);
   lightSpacePos /= lightSpacePos.w;
   lightSpacePos = lightSpacePos * 0.5 + 0.5;
   return lightSpacePos.xyz;
 }
 
 /**
- * Returns 0.0 if the position is in shadow, 1.0 if lit.
+ * Returns 0. if the position is in shadow, 1. if lit.
  *
  * TODO: Investigate small PCF kernel (2x2) for softer volumetric shadows.
  * The raymarch integration already provides some natural softening across steps,
@@ -60,10 +61,10 @@ float sampleShadow(vec3 worldPos) {
   vec3 shadowCoord = projectToShadowMapUV(worldPos);
 
   // Outside the shadow map frustum = fully lit
-  if (shadowCoord.x < 0.0 || shadowCoord.x > 1.0 ||
-    shadowCoord.y < 0.0 || shadowCoord.y > 1.0 ||
-    shadowCoord.z < 0.0 || shadowCoord.z > 1.0) {
-    return 1.0;
+  if (shadowCoord.x < 0. || shadowCoord.x > 1. ||
+    shadowCoord.y < 0. || shadowCoord.y > 1. ||
+    shadowCoord.z < 0. || shadowCoord.z > 1.) {
+    return 1.;
   }
 
   float shadowMapDepth = unpackRGBAToDepth(texture2D(shadowMap, shadowCoord.xy));
@@ -71,11 +72,10 @@ float sampleShadow(vec3 worldPos) {
   float fragDepth = shadowCameraNear + (shadowCameraFar - shadowCameraNear) * shadowCoord.z;
 
   float inShadow = float(fragDepth - lightSpaceDepth > shadowBias);
-  return 1.0 - inShadow;
+  return 1. - inShadow;
 }
 #endif
 
-// params
 uniform float ambientLightIntensity;
 uniform vec3 ambientLightColor;
 uniform float fogMinY;
@@ -102,16 +102,6 @@ uniform vec2 noiseMovementPerSecond;
 uniform float postDensityMultiplier;
 uniform float postDensityPow;
 uniform float globalScale;
-
-vec3 computeWorldPosFromDepth(float depth, vec2 coord) {
-  float z = depth * 2.0 - 1.0;
-  vec4 clipSpacePosition = vec4(coord * 2. - 1., z, 1.);
-  vec4 viewSpacePosition = cameraProjectionMatrixInv * clipSpacePosition;
-  // Perspective division
-  viewSpacePosition /= viewSpacePosition.w;
-  vec4 worldSpacePosition = cameraMatrixWorld * viewSpacePosition;
-  return worldSpacePosition.xyz;
-}
 
 float sampleFogFromNoise(vec3 worldPos) {
   return texture(noiseTexture, worldPos * 0.006).r * 2. - 1.;
@@ -353,8 +343,10 @@ vec4 march(in vec3 startPos, in vec3 endPos) {
 
 void main() {
   float depth = texture2D(sceneDepth, vUv).x;
+  float ndcZ = depth * 2. - 1.;
+  float invW = 1. / (cameraProjectionMatrixInv[2][3] * ndcZ + cameraProjectionMatrixInv[3][3]);
 
-  vec3 worldPos = computeWorldPosFromDepth(depth, vUv);
+  vec3 worldPos = vWorldRay * invW + cameraMatrixWorld[3].xyz;
   vec3 rayStartPos = cameraPos;
   vec3 rayEndPos = worldPos;
 
@@ -371,9 +363,7 @@ void main() {
   // Raw NDC depth in HalfFloat loses too much precision for distant values
   // (they cluster near 1.0), causing quantization banding in the depth comparison.
   // Linear depth is uniformly distributed so HalfFloat is more than adequate.
-  vec4 ndcForDepth = vec4(0.0, 0.0, depth * 2.0 - 1.0, 1.0);
-  vec4 viewPosForDepth = cameraProjectionMatrixInv * ndcForDepth;
-  outSceneDepth = -viewPosForDepth.z / viewPosForDepth.w;
+  outSceneDepth = -cameraProjectionMatrixInv[3][2] * invW;
   #endif
   #endif
 }

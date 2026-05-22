@@ -180,6 +180,16 @@ export interface CustomShaderShaders {
    * modes.
    */
   pomHeightShader?: string;
+  /**
+   * GLSL defining `vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t)`,
+   * a closed-form world-space normal for the carved POM floor. Replaces the
+   * engine's finite-difference normal (several extra `getPomHeight` evals per
+   * fragment) with one analytic call.
+   *
+   * Requires `pomHeightShader`. Only for procedural-height materials with no
+   * `pomHeightMap` — an analytic gradient can't see a heightmap's contribution.
+   */
+  pomNormalShader?: string;
   includeNoiseShadersVertex?: boolean;
 }
 

@@ -33,10 +33,9 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   float dist = distance(ctx.cameraPosition, ctx.vWorldPos);
   Masonry m = evalMasonry(pos, ctx.vWorldNormal, dist);
 
-  const float GROOVE_DEPTH = 0.65;
   const float DENT_DEPTH = 0.4;
   float tileH = m.bowl * DENT_DEPTH * m.dentZone;
-  float grooveH = GROOVE_DEPTH * m.grooveZone;
+  float grooveH = m.grooveZone;
 
   // small randomization of fake-AO intensity for each brick
   float brickHash = fract(sin(dot(m.cellId, vec2(127.1, 311.7))) * 43758.5453);
