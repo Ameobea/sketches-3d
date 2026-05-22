@@ -783,6 +783,7 @@ export const buildCustomShaderArgs = (
     const lodFadeEnd = lodFadeStart + (pom.lodFadeRange ?? 50);
     const pomRefinement = pom.refinement ?? 'secant';
     const pomBinarySteps = pom.refinementSteps ?? 5;
+    const pomRefineSkip = pom.refineSkipThreshold ?? 0.5;
     return buildPomDefs({
       pomSteps,
       pomBounded,
@@ -790,7 +791,9 @@ export const buildCustomShaderArgs = (
       lodFadeEnd,
       pomRefinement,
       pomBinarySteps,
+      pomRefineSkip,
       pomHasNormalShader: !!pomNormalShader,
+      pomDebug: pom.debug,
     });
   };
 

@@ -62,8 +62,14 @@ export const buildPomDefs = (opts: {
   lodFadeEnd: number;
   pomRefinement: PomRefinement;
   pomBinarySteps: number;
+  // Skip binary refinement when the linear hit already pierced the floor by less
+  // than this fraction of one step (in depth). 0 disables the skip.
+  pomRefineSkip: number;
   // Material supplies `getPomNormal(...)`; use it instead of finite differences.
   pomHasNormalShader: boolean;
+  // Active debug view, if any; the `samples`/`skip` views enable per-fragment
+  // instrumentation (compiled out otherwise).
+  pomDebug?: PomDebugMode;
 }): string => {
   const {
     pomSteps,
@@ -72,20 +78,93 @@ export const buildPomDefs = (opts: {
     lodFadeEnd,
     pomRefinement,
     pomBinarySteps,
+    pomRefineSkip,
     pomHasNormalShader,
+    pomDebug,
   } = opts;
   const useBinary = pomRefinement === 'binary';
+  const debugCounters = pomDebug === 'samples' || pomDebug === 'skip';
+  // Worst-case _pomSurf evals per fragment: linear march + binary refine (secant
+  // adds none) + the 3 finite-difference normal taps (none with a normal shader).
+  const maxSamples = pomSteps + (useBinary ? pomBinarySteps : 0) + (pomHasNormalShader ? 0 : 3);
   return /* glsl */ `
 #define POM_STEPS ${pomSteps}
 ${useBinary ? `#define POM_REFINE_BINARY\n#define POM_BINARY_STEPS ${pomBinarySteps}` : ''}
+${useBinary && pomRefineSkip > 0 ? `#define POM_REFINE_SKIP ${pomRefineSkip.toFixed(4)}` : ''}
+${debugCounters ? `#define POM_DEBUG_COUNTERS\n#define POM_DEBUG_MAX_SAMPLES ${maxSamples}` : ''}
 ${pomHasNormalShader ? '#define POM_HAS_NORMAL_SHADER' : ''}
+
+#ifdef POM_DEBUG_COUNTERS
+// Per-fragment instrumentation for the \`samples\` / \`skip\` debug views. File-scope
+// globals reset per fragment invocation; written by _pomSurf / _pomRefineHit.
+int _pomSampleCount = 0;   // total _pomSurf evals (march + refine + normal taps)
+int _pomRefineState = 0;   // 0 = no refinement, 1 = refine skipped, 2 = bisected
+vec3 _pomHeat(float t) {   // blue (cheap) -> green -> red (expensive)
+  return clamp(vec3(1.5 - abs(4.0 * t - 3.0),
+                    1.5 - abs(4.0 * t - 2.0),
+                    1.5 - abs(4.0 * t - 1.0)), 0.0, 1.0);
+}
+#endif
 
 // --- Procedural Parallax Occlusion Mapping (world space, subtractive only) ---
 // The base polygon is the TOP of a virtual slab of thickness \`pomDepth\`
 // extending inward along -N. \`getPomHeight()\` returns carved depth in [0,1];
 // this wrapper scales it to world units.
 float _pomSurf(vec3 p, vec3 N, float depth, float t) {
+#ifdef POM_DEBUG_COUNTERS
+  _pomSampleCount++;
+#endif
   return clamp(getPomHeight(p, N, t) + samplePomHeightMap(p, N), 0., 0.8) * depth;
+}
+
+// Refine the bracketed crossing between \`pPrev\` (above floor) and \`p\` (below).
+// Shared by both marchers so the secant/bisection logic stays in one place.
+//   hPrev/dPrev = carved depth / ray-depth-below-base at pPrev
+//   surfH/rayDepth = same quantities at p
+vec3 _pomRefineHit(vec3 ro, vec3 N, float depth, float t,
+                   vec3 pPrev, float hPrev, float dPrev,
+                   vec3 p, float surfH, float rayDepth) {
+#ifdef POM_REFINE_BINARY
+  // The free secant root reuses the four values the linear search already has,
+  // so it costs no \`_pomSurf\` eval. \`w\` is the fraction from p back toward pPrev.
+  float overshoot = rayDepth - surfH;        // depth pierced past the floor at p (>=0)
+  float prevGap   = hPrev - dPrev;           // depth above the floor at pPrev (>=0)
+  float span      = overshoot + prevGap;     // residual swing across the bracketing step
+  float w = span > 1e-6 ? overshoot / span : 0.0;
+#ifdef POM_REFINE_SKIP
+  // rayDepth advances by exactly depth/POM_STEPS per step, so \`overshoot\` is how
+  // far (in depth) the linear search overstepped the floor. Below a small
+  // fraction of a step the secant root is already sub-step accurate and
+  // bisection would not move it -> skip all refine evals. Safe on step
+  // heightfields too: a small overshoot forces w->0, i.e. the secant collapses
+  // onto p, which is the correct top-of-wall hit.
+  if (overshoot <= POM_REFINE_SKIP * (depth / float(POM_STEPS))) {
+#ifdef POM_DEBUG_COUNTERS
+    _pomRefineState = 1;   // refine skipped
+#endif
+    return mix(p, pPrev, w);
+  }
+#endif
+#ifdef POM_DEBUG_COUNTERS
+  _pomRefineState = 2;     // full bisection
+#endif
+  // Deep plunge (steep wall / true step): bisect for robustness. Robust on step
+  // heightfields where secant's linear between-samples assumption fails.
+  vec3 lo = pPrev;
+  vec3 hi = p;
+  for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
+    vec3 mid = 0.5 * (lo + hi);
+    float midDepth = -dot(mid - ro, N);
+    float midSurf = _pomSurf(mid, N, depth, t);
+    if (midDepth >= midSurf) hi = mid; else lo = mid;
+  }
+  return hi;
+#else
+  float a = surfH - rayDepth;
+  float b = hPrev - dPrev;
+  float w = clamp(a / (a - b), 0.0, 1.0);   // secant root between samples
+  return mix(p, pPrev, w);
+#endif
 }
 
 // Linear-search + secant-refine relief intersection (Policarpo & Oliveira,
@@ -107,24 +186,7 @@ vec3 pomMarch(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
     float rayDepth = -dot(p - ro, N);
     float surfH = _pomSurf(p, N, depth, t);
     if (rayDepth >= surfH) {
-#ifdef POM_REFINE_BINARY
-      // Bisection: robust on step heightfields where secant's linear
-      // between-samples assumption fails.
-      vec3 lo = pPrev;
-      vec3 hi = p;
-      for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
-        vec3 mid = 0.5 * (lo + hi);
-        float midDepth = -dot(mid - ro, N);
-        float midSurf = _pomSurf(mid, N, depth, t);
-        if (midDepth >= midSurf) hi = mid; else lo = mid;
-      }
-      return hi;
-#else
-      float a = surfH - rayDepth;
-      float b = hPrev - dPrev;
-      float w = clamp(a / (a - b), 0.0, 1.0);   // secant root between samples
-      return mix(p, pPrev, w);
-#endif
+      return _pomRefineHit(ro, N, depth, t, pPrev, hPrev, dPrev, p, surfH, rayDepth);
     }
     pPrev = p; hPrev = surfH; dPrev = rayDepth;
   }
@@ -161,22 +223,7 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
     float rayDepth = -dot(p - ro, N);
     float surfH = _pomSurf(p, N, depth, t);
     if (rayDepth >= surfH) {
-#ifdef POM_REFINE_BINARY
-      vec3 lo = pPrev;
-      vec3 hi = p;
-      for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
-        vec3 mid = 0.5 * (lo + hi);
-        float midDepth = -dot(mid - ro, N);
-        float midSurf = _pomSurf(mid, N, depth, t);
-        if (midDepth >= midSurf) hi = mid; else lo = mid;
-      }
-      return hi;
-#else
-      float a = surfH - rayDepth;
-      float b = hPrev - dPrev;
-      float w = clamp(a / (a - b), 0.0, 1.0);
-      return mix(p, pPrev, w);
-#endif
+      return _pomRefineHit(ro, N, depth, t, pPrev, hPrev, dPrev, p, surfH, rayDepth);
     }
     if (sRaw >= maxRayLen) {
       // Reached the back-face exit (tested the floor there) without crossing:
@@ -341,7 +388,15 @@ export const buildPomNormalApply = (pomTexturing: PomTexturing, hasNormalMap: bo
   `;
 };
 
-export type PomDebugMode = 'heightmap' | 'depth' | 'normal' | 'normalDelta' | 'axis' | 'hit';
+export type PomDebugMode =
+  | 'heightmap'
+  | 'depth'
+  | 'normal'
+  | 'normalDelta'
+  | 'axis'
+  | 'hit'
+  | 'samples'
+  | 'skip';
 
 // Overrides `outFragColor` at the end of `main()` with a diagnostic, bypassing
 // the color shader, normal map, and fog (tonemapping still applies downstream).
@@ -357,7 +412,29 @@ export const buildPomDebug = (debug: PomDebugMode | undefined): string => {
     outFragColor = vec4(_dbgAxis, 1.0);
   }`;
   }
-  const expr: Record<Exclude<PomDebugMode, 'axis'>, string> = {
+  if (debug === 'skip') {
+    // Refinement decision per fragment (binary refinement only):
+    //   green     = bisection skipped, the linear/secant hit was accepted
+    //   red       = full bisection ran (deep plunge / steep wall)
+    //   dark blue = no refinement reached (no crossing, or POM faded to flat)
+    return /* glsl */ `
+  {
+    vec3 _dbgSkip = _pomRefineState == 1 ? vec3(0.0, 1.0, 0.0)
+                  : _pomRefineState == 2 ? vec3(1.0, 0.0, 0.0)
+                  :                        vec3(0.0, 0.0, 0.3);
+    outFragColor = vec4(_dbgSkip, 1.0);
+  }`;
+  }
+  if (debug === 'samples') {
+    // Total height-field evals this fragment (linear march + binary refine +
+    // analytic-normal taps), heat-mapped against the per-fragment worst case.
+    return /* glsl */ `
+  {
+    float _dbgT = clamp(float(_pomSampleCount) / float(POM_DEBUG_MAX_SAMPLES), 0.0, 1.0);
+    outFragColor = vec4(_pomHeat(_dbgT), 1.0);
+  }`;
+  }
+  const expr: Record<Exclude<PomDebugMode, 'axis' | 'skip' | 'samples'>, string> = {
     heightmap: 'vec3(samplePomHeightMap(_pomHit, vWorldNormal))',
     depth: 'vec3(_pomSurf(_pomHit, vWorldNormal, 1.0, curTimeSeconds))',
     normal: '_pomNormalW * 0.5 + 0.5',

@@ -135,7 +135,7 @@
           "lodFadeRange": 50,
           "boundedSilhouette": false,
           "refinement": "binary",
-          "refinementSteps": 4
+          "refinementSteps": 2
         }
       },
       "nonPermeable": true
@@ -183,13 +183,13 @@
         "useWorldSpaceUVs": true,
         "randomizeUVOffset": true,
         "pom": {
-          "depth": 0.2,
-          "steps": 16,
+          "depth": 0.25,
+          "steps": 12,
           "lodFadeStart": 10,
           "lodFadeRange": 50,
           "boundedSilhouette": true,
           "refinement": "binary",
-          "refinementSteps": 5,
+          "refinementSteps": 2,
           "normalEps": 0.3
         }
       }

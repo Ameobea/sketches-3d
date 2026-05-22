@@ -285,8 +285,11 @@ export const ShaderOptionsJsonSchema = z.object({
       boundedSilhouette: z.boolean().optional(),
       refinement: z.enum(['secant', 'binary']).optional(),
       refinementSteps: z.number().int().min(1).optional(),
+      refineSkipThreshold: z.number().min(0).optional(),
       normalEps: z.number().positive().optional(),
-      debug: z.enum(['heightmap', 'depth', 'normal', 'normalDelta', 'axis', 'hit']).optional(),
+      debug: z
+        .enum(['heightmap', 'depth', 'normal', 'normalDelta', 'axis', 'hit', 'samples', 'skip'])
+        .optional(),
     })
     .optional(),
 });

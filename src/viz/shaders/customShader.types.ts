@@ -279,6 +279,20 @@ export interface CustomShaderOptions {
     /** Bisection count when `refinement: "binary"`. Default 5; 4–6 is the sweet spot. */
     refinementSteps?: number;
     /**
+     * `refinement: "binary"` only. Skip bisection when the linear search already
+     * pierced the floor by less than this fraction of one march step (measured in
+     * depth, where each step advances `depth / steps`). Reuses the free secant
+     * root in that case, eliminating the fixed refinement evals on the common
+     * "hit just past the surface" fragments while still bisecting the deep-plunge
+     * (steep wall / step) fragments where refinement is load-bearing.
+     *
+     * Safe on step heightfields: a small overshoot drives the secant weight to 0,
+     * collapsing the result onto the linear hit. Higher = more aggressive skip
+     * (more perf, more sample-interval error on walls). `0` disables (compiles out
+     * to the original always-bisect path). Default `0.5`.
+     */
+    refineSkipThreshold?: number;
+    /**
      * World-space floor for the analytic-normal finite-difference radius
      * `_pomEps`. Effective `_pomEps = max(unitsPerPx, pomDepth * 0.02, normalEps)`.
      *
@@ -302,8 +316,14 @@ export interface CustomShaderOptions {
      *                     Per-pixel speckle here is the smoking gun for heightmap-driven
      *                     gradient noise flipping triplanar axes.
      * - `'hit'`         — `fract(_pomHit)` as RGB (sanity-check displacement spread)
+     * - `'samples'`     — per-fragment height-field eval count (linear march +
+     *                     binary refine + analytic-normal taps) as a heat map
+     *                     (blue = cheap → red = worst case). Estimated march cost.
+     * - `'skip'`        — refinement decision (binary refinement only): green =
+     *                     bisection skipped (linear hit accepted), red = full
+     *                     bisection ran, dark blue = no refinement reached.
      */
-    debug?: 'heightmap' | 'depth' | 'normal' | 'normalDelta' | 'axis' | 'hit';
+    debug?: 'heightmap' | 'depth' | 'normal' | 'normalDelta' | 'axis' | 'hit' | 'samples' | 'skip';
   };
   /**
    * Material class controls things like the sfx that are played when players land on the surface and

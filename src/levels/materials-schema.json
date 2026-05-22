@@ -411,6 +411,10 @@
                         "minimum": 1,
                         "maximum": 9007199254740991
                       },
+                      "refineSkipThreshold": {
+                        "type": "number",
+                        "minimum": 0
+                      },
                       "normalEps": {
                         "type": "number",
                         "exclusiveMinimum": 0
@@ -423,7 +427,9 @@
                           "normal",
                           "normalDelta",
                           "axis",
-                          "hit"
+                          "hit",
+                          "samples",
+                          "skip"
                         ]
                       }
                     },

@@ -383,7 +383,7 @@
               </FormField>
               <FormField
                 label="debug viz"
-                help="Replaces the final color with a diagnostic visualization of an intermediate POM quantity."
+                help="Replaces the final color with a diagnostic visualization of an intermediate POM quantity. 'samples' heat-maps per-fragment march cost (blue=cheap, red=worst case). 'skip' shows the refine decision (binary only): green=bisection skipped, red=full bisection, dark blue=no refinement."
               >
                 <select bind:value={material.pom.debug}>
                   <option value={undefined}>off</option>
@@ -393,6 +393,8 @@
                   <option value="normalDelta">normalDelta</option>
                   <option value="axis">axis</option>
                   <option value="hit">hit</option>
+                  <option value="samples">samples (cost heatmap)</option>
+                  <option value="skip">skip (refine decision)</option>
                 </select>
               </FormField>
             {/if}
