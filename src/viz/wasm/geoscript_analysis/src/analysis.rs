@@ -10,7 +10,10 @@ use geoscript::{
   },
   match_binop_by_arg_types, match_unop_by_arg_types,
   ty::{merge_types, AbstractType, CallableParam, CallableType, PartialApplication},
-  type_infer::{resolve_builtin_call, resolve_paf_call, CallResolution},
+  type_infer::{
+    infer_bitor_op_result_type, infer_map_op_result_type, infer_reduce_fold_result,
+    resolve_builtin_call, resolve_paf_call, CallResolution,
+  },
   ArgType, EvalCtx, Program, Sym,
 };
 
@@ -551,9 +554,9 @@ impl<'a> AnalysisWalker<'a> {
         return AbstractType::Concrete(ArgType::Sequence);
       }
       BinOp::Map => {
-        self.walk_expr(lhs);
-        self.walk_expr(rhs);
-        return AbstractType::Concrete(ArgType::Sequence);
+        let lhs_ty = self.walk_expr(lhs);
+        let rhs_ty = self.walk_expr(rhs);
+        return infer_map_op_result_type(&lhs_ty, &rhs_ty);
       }
       BinOp::Pipeline => {
         return self.walk_pipeline(lhs, rhs);
@@ -622,6 +625,13 @@ impl<'a> AnalysisWalker<'a> {
             self.resolve_builtin_call_with_diagnostics(*name, &piped, &kwarg_types, *loc)
           };
 
+          let return_ty = if is_shadowed {
+            return_ty
+          } else {
+            infer_reduce_fold_result(self.ctx, call, &piped, piped.len(), |s| self.is_defined(s))
+              .unwrap_or(return_ty)
+          };
+
           self.function_calls.push(FunctionCallInfo {
             name: *name,
             loc: *loc,
@@ -651,12 +661,13 @@ impl<'a> AnalysisWalker<'a> {
             self.resolve_paf_call_with_diagnostics(&paf, &[lhs_ty], &[], *loc)
           }
           Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
-          _ => AbstractType::Unknown,
+          Some(other) => infer_bitor_op_result_type(&lhs_ty, &other),
+          None => AbstractType::Unknown,
         }
       }
       _ => {
-        self.walk_expr(rhs);
-        AbstractType::Unknown
+        let rhs_ty = self.walk_expr(rhs);
+        infer_bitor_op_result_type(&lhs_ty, &rhs_ty)
       }
     }
   }
@@ -689,6 +700,15 @@ impl<'a> AnalysisWalker<'a> {
           }
         } else {
           self.resolve_builtin_call_with_diagnostics(*name, &arg_types, &kwarg_types, loc)
+        };
+
+        let return_ty = if is_shadowed {
+          return_ty
+        } else {
+          infer_reduce_fold_result(self.ctx, call, &arg_types, call.args.len(), |s| {
+            self.is_defined(s)
+          })
+          .unwrap_or(return_ty)
         };
 
         self.function_calls.push(FunctionCallInfo {

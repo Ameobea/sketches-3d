@@ -478,6 +478,112 @@ pub fn infer_statement(ctx: &EvalCtx, env: &mut TypeEnv, stmt: &Statement) {
   }
 }
 
+/// `lhs -> rhs` lowers to `map(rhs, lhs)`. Yields a `Sequence`, except `mesh -> |v, n| {..}` is
+/// `warp` shorthand and yields a `Mesh` — so resolve the actual `map` signature from the operands.
+pub fn infer_map_op_result_type(lhs_ty: &AbstractType, rhs_ty: &AbstractType) -> AbstractType {
+  let (Some(seq_c), Some(fn_c)) = (lhs_ty.as_single_arg_type(), rhs_ty.as_single_arg_type()) else {
+    return AbstractType::Unknown;
+  };
+  let Some(entry_ix) = get_builtin_fn_sig_entry_ix("map") else {
+    return AbstractType::Unknown;
+  };
+  match match_binop_by_arg_types(entry_ix, fn_c, seq_c) {
+    Some((_def_ix, rt)) => AbstractType::from_return_type(rt),
+    None => AbstractType::Unknown,
+  }
+}
+
+/// Result type of `lhs | rhs` when `rhs` is not callable: `|` falls through from pipeline to
+/// `bit_or` — a boolean union for meshes, a bitwise-or for ints.
+pub fn infer_bitor_op_result_type(lhs_ty: &AbstractType, rhs_ty: &AbstractType) -> AbstractType {
+  let (Some(lhs_c), Some(rhs_c)) = (lhs_ty.as_single_arg_type(), rhs_ty.as_single_arg_type()) else {
+    return AbstractType::Unknown;
+  };
+  let Some(entry_ix) = get_builtin_fn_sig_entry_ix("bit_or") else {
+    return AbstractType::Unknown;
+  };
+  match match_binop_by_arg_types(entry_ix, lhs_c, rhs_c) {
+    Some((_def_ix, rt)) => AbstractType::from_return_type(rt),
+    None => AbstractType::Unknown,
+  }
+}
+
+/// Return type of a builtin (resolving aliases), merged across its signatures — a `Union` when
+/// they disagree, so an ambiguous reducer stays permissive rather than falsely concrete.
+pub fn builtin_fn_return_type(name: &str) -> AbstractType {
+  let resolved = FUNCTION_ALIASES.get(name).copied().unwrap_or(name);
+  let Some(def) = fn_sigs().get(resolved) else {
+    return AbstractType::Unknown;
+  };
+  let mut merged: Option<AbstractType> = None;
+  for sig in def.signatures {
+    let rt = AbstractType::from_return_type(sig.return_type);
+    merged = Some(match merged {
+      Some(acc) => merge_types(&acc, &rt),
+      None => rt,
+    });
+  }
+  merged.unwrap_or(AbstractType::Unknown)
+}
+
+/// Return type of a reducer (its accumulator type). A bare builtin reference like `reduce(union)`
+/// infers to `Unknown`, so its name is passed in `bare_builtin_name` and resolved separately.
+fn reducer_result_type(reducer_ty: &AbstractType, bare_builtin_name: Option<&str>) -> AbstractType {
+  match reducer_ty {
+    AbstractType::Callable(ct) => (*ct.return_type).clone(),
+    AbstractType::PartiallyApplied(paf) => builtin_fn_return_type(&paf.name),
+    _ => match bare_builtin_name {
+      Some(name) => builtin_fn_return_type(name),
+      None => AbstractType::Unknown,
+    },
+  }
+}
+
+/// `reduce`/`fold` declare an `Any` return, but it equals the reducer's return type — so
+/// `reduce(union, seq)` yields a `Mesh`. Returns `None` (no refinement) unless this is an
+/// unshadowed, *complete* call; a bare `reduce(union)` partial application is left alone.
+///
+/// `total_positional_args` includes a value piped in via `|`.
+pub fn infer_reduce_fold_result(
+  ctx: &EvalCtx,
+  call: &FunctionCall,
+  arg_types: &[AbstractType],
+  total_positional_args: usize,
+  is_local: impl Fn(Sym) -> bool,
+) -> Option<AbstractType> {
+  let FunctionCallTarget::Name(name) = &call.target else {
+    return None;
+  };
+  if is_local(*name) {
+    return None;
+  }
+  let name_str = ctx.interned_symbols.with_resolved(*name, |s| s.to_string())?;
+  let canonical = FUNCTION_ALIASES
+    .get(name_str.as_str())
+    .copied()
+    .unwrap_or(name_str.as_str());
+  let (reducer_idx, min_args) = match canonical {
+    "reduce" => (0usize, 2usize),
+    "fold" => (1usize, 3usize),
+    _ => return None,
+  };
+  if total_positional_args < min_args {
+    return None;
+  }
+  let reducer_expr = call.args.get(reducer_idx)?;
+  let reducer_ty = arg_types.get(reducer_idx)?;
+  let bare_builtin_name = match reducer_expr {
+    Expr::Ident { name: reducer_name, .. } if !is_local(*reducer_name) => ctx
+      .interned_symbols
+      .with_resolved(*reducer_name, |s| s.to_string()),
+    _ => None,
+  };
+  match reducer_result_type(reducer_ty, bare_builtin_name.as_deref()) {
+    AbstractType::Unknown => None,
+    rt => Some(rt),
+  }
+}
+
 fn infer_binop(
   ctx: &EvalCtx,
   env: &mut TypeEnv,
@@ -486,10 +592,15 @@ fn infer_binop(
   rhs: &Expr,
 ) -> AbstractType {
   match op {
-    BinOp::Range | BinOp::RangeInclusive | BinOp::Map => {
+    BinOp::Range | BinOp::RangeInclusive => {
       infer_expr(ctx, env, lhs);
       infer_expr(ctx, env, rhs);
       return AbstractType::Concrete(ArgType::Sequence);
+    }
+    BinOp::Map => {
+      let lhs_ty = infer_expr(ctx, env, lhs);
+      let rhs_ty = infer_expr(ctx, env, rhs);
+      return infer_map_op_result_type(&lhs_ty, &rhs_ty);
     }
     BinOp::Pipeline => return infer_pipeline(ctx, env, lhs, rhs),
     _ => {}
@@ -540,7 +651,9 @@ fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> A
             _ => AbstractType::Unknown,
           }
         } else {
-          resolve_builtin_call(ctx, *name, &piped, &kwarg_types).into_abstract_type()
+          let resolved = resolve_builtin_call(ctx, *name, &piped, &kwarg_types).into_abstract_type();
+          infer_reduce_fold_result(ctx, call, &piped, piped.len(), |s| env.contains(s))
+            .unwrap_or(resolved)
         }
       } else {
         AbstractType::Unknown
@@ -553,7 +666,8 @@ fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> A
             resolve_paf_call(&paf, &[lhs_ty], &[]).into_abstract_type()
           }
           Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
-          _ => AbstractType::Unknown,
+          Some(other) => infer_bitor_op_result_type(&lhs_ty, &other),
+          None => AbstractType::Unknown,
         }
       } else {
         resolve_builtin_call(ctx, *name, &[lhs_ty], &[]).into_abstract_type()
@@ -567,8 +681,8 @@ fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> A
       .map(AbstractType::Concrete)
       .unwrap_or(AbstractType::Unknown),
     _ => {
-      infer_expr(ctx, env, rhs);
-      AbstractType::Unknown
+      let rhs_ty = infer_expr(ctx, env, rhs);
+      infer_bitor_op_result_type(&lhs_ty, &rhs_ty)
     }
   }
 }
@@ -592,7 +706,9 @@ fn infer_call_expr(ctx: &EvalCtx, env: &mut TypeEnv, call: &FunctionCall) -> Abs
           _ => AbstractType::Unknown,
         }
       } else {
-        resolve_builtin_call(ctx, *name, &arg_types, &kwarg_types).into_abstract_type()
+        let resolved = resolve_builtin_call(ctx, *name, &arg_types, &kwarg_types).into_abstract_type();
+        infer_reduce_fold_result(ctx, call, &arg_types, call.args.len(), |s| env.contains(s))
+          .unwrap_or(resolved)
       }
     }
     FunctionCallTarget::Literal(callable) => callable

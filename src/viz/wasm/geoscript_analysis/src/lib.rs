@@ -441,6 +441,65 @@ y = x
   }
 
   #[test]
+  fn test_hover_reduce_fold_result_from_reducer() {
+    let ctx = AnalysisCtx::new();
+    // `union` always returns a Mesh, so reduce/fold over a sequence of meshes is a Mesh.
+    for src in [
+      "s = 0..3 -> |i| box()\nm = reduce(union, s)",
+      "s = 0..3 -> |i| box()\nm = s | reduce(union)",
+      "s = 0..3 -> |i| box()\nm = fold(box(), union, s)",
+      "s = 0..3 -> |i| box()\nm = s | fold(box(), union)",
+    ] {
+      let hover = ctx.hover(src, 2, 1, false).expect("hover for `m`");
+      assert!(
+        hover.content.contains("mesh"),
+        "expected `mesh` result for `{src}`, got: {}",
+        hover.content
+      );
+    }
+
+    // A bare `reduce(union)` is a partial application, not a Mesh.
+    let hover = ctx.hover("m = reduce(union)", 1, 1, false).expect("hover for `m`");
+    assert!(
+      !hover.content.contains("mesh"),
+      "expected partial application (not `mesh`) for `reduce(union)`, got: {}",
+      hover.content
+    );
+
+    // A shadowing local `reduce` must not be treated as the builtin.
+    let hover = ctx
+      .hover("reduce = |f, s| 1\nm = reduce(union, s)", 2, 1, false)
+      .expect("hover for `m`");
+    assert!(
+      !hover.content.contains("mesh"),
+      "shadowed `reduce` should not infer `mesh`, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_pipeline_mesh_union() {
+    let ctx = AnalysisCtx::new();
+    // rhs is a non-callable Mesh, so `|` is a boolean union → Mesh.
+    let hover = ctx
+      .hover("a = box()\nb = box()\nc = a | b", 3, 1, false)
+      .expect("hover for `c`");
+    assert!(
+      hover.content.contains("mesh"),
+      "expected `mesh` type for mesh-union pipeline, got: {}",
+      hover.content
+    );
+
+    // The union result flows into a downstream Mesh builtin without error.
+    let result = analyze("a = box()\nb = box()\nc = (a | b) | remesh_planar_patches");
+    assert!(
+      result.diagnostics.is_empty(),
+      "expected no diagnostics for `(mesh | mesh) | remesh_planar_patches`, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
   fn test_hover_pipeline_propagates_type() {
     let ctx = AnalysisCtx::new();
     // `m = box() | scale(2)` — pipeline should produce Mesh
@@ -470,6 +529,59 @@ y = x
       hover.content.contains("mesh"),
       "expected `mesh` type for multi-stage piped chain, got: {}",
       hover.content
+    );
+  }
+
+  #[test]
+  fn test_hover_map_op_result_type() {
+    let ctx = AnalysisCtx::new();
+
+    let hover = ctx
+      .hover(
+        "m = box()\nw = m -> |v: vec3, norm: vec3|: vec3 vec3(0)",
+        2,
+        1,
+        false,
+      )
+      .expect("hover for `w`");
+    assert!(
+      hover.content.contains("mesh"),
+      "expected `mesh` type for the `mesh -> ..` warp shorthand, got: {}",
+      hover.content
+    );
+
+    let hover = ctx
+      .hover("nums = 0..10\ns = nums -> |x| x", 2, 1, false)
+      .expect("hover for `s`");
+    assert!(
+      hover.content.contains("seq"),
+      "expected `seq` type for mapping over a sequence, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_map_over_unknown_no_false_overload_error() {
+    // `reduce(union)` returns `Any`, so `walls` is Unknown; mapping over it must not assume `Sequence`.
+    let src = "\
+walls = 0..4
+  -> |i| { box() }
+  | reduce(union)
+
+out = (walls)
+  -> |v| v3(v.x, v.y, v.z)
+  | remesh_planar_patches";
+    let result = analyze(src);
+    let overload_errs: Vec<&str> = result
+      .diagnostics
+      .iter()
+      .filter(|d| d.message.contains("remesh_planar_patches"))
+      .map(|d| d.message.as_str())
+      .collect();
+    assert!(
+      overload_errs.is_empty(),
+      "expected no overload error on remesh_planar_patches, got: {:?}",
+      overload_errs
     );
   }
 

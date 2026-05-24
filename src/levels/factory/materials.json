@@ -129,13 +129,14 @@
         },
         "randomizeUVOffset": true,
         "pom": {
-          "depth": 0.4,
-          "steps": 12,
+          "depth": 0.3,
+          "steps": 16,
           "lodFadeStart": 10,
           "lodFadeRange": 50,
           "boundedSilhouette": false,
           "refinement": "binary",
-          "refinementSteps": 2
+          "refinementSteps": 4,
+          "refineSkipThreshold": 0
         }
       },
       "nonPermeable": true
