@@ -92,6 +92,88 @@ export const loadNamedTextures = async <
   return result as Record<keyof typeof textureMap, THREE.Texture>;
 };
 
+export interface SceneEnvironment {
+  envMap: THREE.Texture;
+  /** Source equirect texture, suitable for `scene.background`. */
+  background: THREE.Texture;
+}
+
+/** Loads an equirectangular image and PMREM-prefilters it for IBL. */
+export const loadEnvironment = async (
+  renderer: THREE.WebGLRenderer,
+  loader: THREE.ImageBitmapLoader,
+  url: string
+): Promise<SceneEnvironment> => {
+  const equirect = await loadTexture(loader, url, {
+    mapping: THREE.EquirectangularReflectionMapping,
+    colorSpace: THREE.SRGBColorSpace,
+    wrapS: THREE.RepeatWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+    magFilter: THREE.LinearFilter,
+    minFilter: THREE.LinearMipMapLinearFilter,
+  });
+  return { envMap: pmremPrefilter(renderer, equirect), background: equirect };
+};
+
+/** Procedural sky-gradient environment (ground → horizon → sky), PMREM-prefiltered. */
+export const generateGradientEnvironment = (
+  renderer: THREE.WebGLRenderer,
+  opts: {
+    skyColor: THREE.ColorRepresentation;
+    horizonColor: THREE.ColorRepresentation;
+    groundColor: THREE.ColorRepresentation;
+  }
+): SceneEnvironment => {
+  const sky = new THREE.Color(opts.skyColor);
+  const horizon = new THREE.Color(opts.horizonColor);
+  const ground = new THREE.Color(opts.groundColor);
+
+  const width = 256;
+  const height = 128;
+  const data = new Uint16Array(width * height * 4);
+  const tmp = new THREE.Color();
+  const alpha = THREE.DataUtils.toHalfFloat(1);
+  for (let y = 0; y < height; y += 1) {
+    const v = (y + 0.5) / height;
+    if (v >= 0.5) {
+      tmp.copy(horizon).lerp(sky, (v - 0.5) * 2);
+    } else {
+      tmp.copy(ground).lerp(horizon, v * 2);
+    }
+    const rowOff = y * width * 4;
+    data[rowOff] = THREE.DataUtils.toHalfFloat(tmp.r);
+    data[rowOff + 1] = THREE.DataUtils.toHalfFloat(tmp.g);
+    data[rowOff + 2] = THREE.DataUtils.toHalfFloat(tmp.b);
+    data[rowOff + 3] = alpha;
+    for (let filled = 1; filled < width; ) {
+      const n = Math.min(filled, width - filled);
+      data.copyWithin(rowOff + filled * 4, rowOff, rowOff + n * 4);
+      filled += n;
+    }
+  }
+
+  const equirect = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.HalfFloatType);
+  equirect.mapping = THREE.EquirectangularReflectionMapping;
+  // THREE.Color already converted the hex colors from sRGB to linear.
+  equirect.colorSpace = THREE.LinearSRGBColorSpace;
+  equirect.magFilter = THREE.LinearFilter;
+  equirect.minFilter = THREE.LinearFilter;
+  equirect.wrapS = THREE.RepeatWrapping;
+  equirect.wrapT = THREE.ClampToEdgeWrapping;
+  equirect.needsUpdate = true;
+
+  return { envMap: pmremPrefilter(renderer, equirect), background: equirect };
+};
+
+const pmremPrefilter = (renderer: THREE.WebGLRenderer, equirect: THREE.Texture): THREE.Texture => {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  // Dispose only the generator; the render target must outlive the returned texture.
+  const target = pmrem.fromEquirectangular(equirect);
+  pmrem.dispose();
+  return target.texture;
+};
+
 export const generateNormalMapFromTexture = async (
   texture: THREE.Texture,
   {

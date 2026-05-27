@@ -101,7 +101,7 @@ const getGPUPerformanceInfo = async (): Promise<{ graphicsQuality: GraphicsQuali
 };
 
 const buildDefaultVizConfig = (): VizConfig => ({
-  graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV, gamma: 1.0, showFPSStats: true },
+  graphics: { quality: GraphicsQuality.High, fov: DEFAULT_FOV, gamma: 1.1, showFPSStats: true },
   audio: { globalVolume: 0.4, musicVolume: 0.4, sfxVolume: 0.4 },
   gameplay: { thirdPersonXray: SoftOcclusionEnabled },
   controls: { mouseSensitivity: 2 },

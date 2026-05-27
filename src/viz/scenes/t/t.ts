@@ -24,7 +24,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   viz.scene.add(ambientLight);
 
   const sunLight = new THREE.DirectionalLight(0xffffff, 1.7);
-  sunLight.position.set(40, 80, 40);
+  sunLight.position.set(190, 280, 10);
   sunLight.castShadow = true;
 
   const loader = new THREE.ImageBitmapLoader();
@@ -43,11 +43,11 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   sunLight.shadow.mapSize.width = shadowMapSize;
   sunLight.shadow.mapSize.height = shadowMapSize;
   sunLight.shadow.camera.near = 0.1;
-  sunLight.shadow.camera.far = 300;
-  sunLight.shadow.camera.left = -80;
-  sunLight.shadow.camera.right = 80;
-  sunLight.shadow.camera.top = 80;
-  sunLight.shadow.camera.bottom = -80;
+  sunLight.shadow.camera.far = 600;
+  sunLight.shadow.camera.left = -200;
+  sunLight.shadow.camera.right = 200;
+  sunLight.shadow.camera.top = 200;
+  sunLight.shadow.camera.bottom = -200;
   viz.scene.add(sunLight);
 
   const playerHeight = 3.5;

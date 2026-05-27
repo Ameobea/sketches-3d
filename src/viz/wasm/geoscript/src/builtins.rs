@@ -41,7 +41,7 @@ use crate::noise::{
 };
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
-  lights::{AmbientLight, DirectionalLight, Light},
+  lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight},
   mesh_ops::{
     extrude::extrude,
     extrude_pipe::{extrude_pipe, EndMode},
@@ -823,13 +823,14 @@ pub(crate) fn translate_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  // 0/2: Vec3 form, 1/3: x,y,z form (mesh vs light).
   let (translation, obj) = match def_ix {
-    0 => {
+    0 | 2 => {
       let translation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       let obj = arg_refs[1].resolve(args, kwargs);
       (*translation, obj)
     }
-    1 => {
+    1 | 3 => {
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
@@ -866,13 +867,14 @@ fn translate_global_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  // 0/2: Vec3 form, 1/3: x,y,z form (mesh vs light).
   let (translation, obj) = match def_ix {
-    0 => {
+    0 | 2 => {
       let translation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       let obj = arg_refs[1].resolve(args, kwargs);
       (*translation, obj)
     }
-    1 => {
+    1 | 3 => {
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
@@ -1027,6 +1029,47 @@ fn ambient_light_impl(
       let light = AmbientLight::new(color, intensity)
         .map_err(|err| ErrorStack::new(format!("Error creating ambient light: {err}")))?;
       Ok(Value::Light(Box::new(Light::Ambient(light))))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn hemisphere_light_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let sky_color = arg_refs[0].resolve(args, kwargs);
+      let ground_color = arg_refs[1].resolve(args, kwargs);
+      let intensity = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+
+      let light = HemisphereLight::new(sky_color, ground_color, intensity)
+        .map_err(|err| ErrorStack::new(format!("Error creating hemisphere light: {err}")))?;
+      Ok(Value::Light(Box::new(Light::Hemisphere(light))))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn rect_area_light_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let color = arg_refs[0].resolve(args, kwargs);
+      let intensity = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let width = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let height = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+
+      let light = RectAreaLight::new(color, intensity, width, height)
+        .map_err(|err| ErrorStack::new(format!("Error creating rect-area light: {err}")))?;
+      Ok(Value::Light(Box::new(Light::RectArea(light))))
     }
     _ => unimplemented!(),
   }
@@ -3840,6 +3883,13 @@ fn render_impl(
       mesh_id: ctx.next_render_id(),
     });
   };
+  let push_light = |light: Light| {
+    ctx.rendered_lights.push(crate::RenderedLight {
+      light,
+      source_module: ctx.current_module.borrow().clone(),
+      light_id: ctx.next_render_id(),
+    });
+  };
 
   match def_ix {
     0 => {
@@ -3851,11 +3901,7 @@ fn render_impl(
     }
     1 => {
       let light = arg_refs[0].resolve(args, kwargs).as_light().unwrap();
-      ctx.rendered_lights.push(crate::RenderedLight {
-        light: light.clone(),
-        source_module: ctx.current_module.borrow().clone(),
-        light_id: ctx.next_render_id(),
-      });
+      push_light(light.clone());
       Ok(Value::Nil)
     }
     2 => {
@@ -3896,14 +3942,17 @@ fn render_impl(
           Ok(Value::Mesh(mesh)) => {
             push_mesh(mesh);
           }
+          Ok(Value::Light(light)) => {
+            push_light(*light);
+          }
           Ok(Value::Sequence(inner_seq)) => {
             let iter = inner_seq.consume(ctx);
             render_path(ctx, iter)?;
           }
           Ok(other) => {
             return Err(ErrorStack::new(format!(
-              "Invalid type yielded from sequence passed to `render`; expected seq<Mesh> or \
-               seq<seq<Vec3>> representing a path, found: {other:?}",
+              "Invalid type yielded from sequence passed to `render`; expected seq<Mesh | Light> \
+               or seq<seq<Vec3>> representing a path, found: {other:?}",
             )))
           }
           Err(err) => {
@@ -3915,8 +3964,8 @@ fn render_impl(
 
       let mut iter = sequence.consume(ctx).peekable();
       match iter.peek() {
-        // rendering a sequence of meshes and/or paths
-        Some(Ok(Value::Mesh(_) | Value::Sequence(_))) | Some(Err(_)) => (),
+        // rendering a sequence of meshes, lights, and/or paths
+        Some(Ok(Value::Mesh(_) | Value::Light(_) | Value::Sequence(_))) | Some(Err(_)) => (),
         // rendering a single top-level path (Vec3 or Vec2 projected to the XZ plane)
         Some(Ok(Value::Vec3(_) | Value::Vec2(_))) => {
           render_path(ctx, iter)?;
@@ -7531,6 +7580,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "spot_light" => builtin_fn!(spot_light, |def_ix, arg_refs, args, kwargs, _ctx| {
     spot_light_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "hemisphere_light" => builtin_fn!(hemisphere_light, |def_ix, arg_refs, args, kwargs, _ctx| {
+    hemisphere_light_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "rect_area_light" => builtin_fn!(rect_area_light, |def_ix, arg_refs, args, kwargs, _ctx| {
+    rect_area_light_impl(def_ix, arg_refs, args, kwargs)
   }),
   "set_material" => builtin_fn!(set_material, |def_ix, arg_refs, args, kwargs, ctx| {
     set_material_impl(ctx, def_ix, arg_refs, args, kwargs)

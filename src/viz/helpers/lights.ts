@@ -49,3 +49,42 @@ export const configureShadowMap = ({
     }
   }
 };
+
+interface DeriveShadowNormalBiasParams {
+  /**
+   * Multiplier on the shadow texel's world size. ~1.5 is a good default; raise toward 2 for a
+   * safety margin, lower if the residual offset reopens a visible contact gap.
+   */
+  texelMultiplier?: number;
+  /**
+   * Constant depth bias to set alongside. If omitted, the light's existing `bias` is left
+   * untouched (used by the auto-default path so it never stomps a scene's deliberate bias).
+   * With `DoubleSide` casting there is no contact gap left for a positive `bias` to fight.
+   */
+  bias?: number;
+}
+
+/**
+ * Derives `shadow.normalBias` from the directional light's shadow-map texel world size
+ * (`orthoFrustumExtent / mapSize`) — the scale at which front/double-side self-shadow acne
+ * appears — so one multiplier stays robust across scenes and surface slopes, unlike a fixed
+ * constant `bias` whose world meaning shifts with each scene's depth range. Pair with
+ * `DoubleSide` shadow casting (`setShadowCastSide` in customShader). Call after the shadow
+ * camera frustum and `mapSize` are finalized. Returns the computed `normalBias` for logging.
+ */
+export const deriveDirectionalShadowNormalBias = (
+  light: THREE.DirectionalLight,
+  { texelMultiplier = 1.5, bias }: DeriveShadowNormalBiasParams = {}
+): number => {
+  const cam = light.shadow.camera;
+  const texelWorld = Math.max(
+    Math.abs(cam.right - cam.left) / light.shadow.mapSize.width,
+    Math.abs(cam.top - cam.bottom) / light.shadow.mapSize.height
+  );
+  const normalBias = texelMultiplier * texelWorld;
+  light.shadow.normalBias = normalBias;
+  if (bias !== undefined) {
+    light.shadow.bias = bias;
+  }
+  return normalBias;
+};

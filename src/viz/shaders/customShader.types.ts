@@ -86,6 +86,9 @@ export interface CustomShaderProps {
   emissiveIntensity?: number;
   lightMap?: THREE.Texture;
   lightMapIntensity?: number;
+  /** Prefiltered (PMREM) env texture; falls back to the scene env when omitted. */
+  envMap?: THREE.Texture;
+  envMapIntensity?: number;
   transparent?: boolean;
   opacity?: number;
   alphaTest?: number;

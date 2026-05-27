@@ -57,10 +57,10 @@
     "chipped_yellow_painted_cracked_stone": {
       "type": "customShader",
       "props": {
-        "color": "#c1bcb8",
-        "roughness": 0.65,
-        "metalness": 0.77,
-        "normalScale": 0.82,
+        "color": "#9c9c9c",
+        "roughness": 0.73,
+        "metalness": 0.34,
+        "normalScale": 0.83,
         "uvScale": [0.02, 0.02],
         "map": "chipped_yellow_painted_cracked_stone_diffuse",
         "normalMap": "chipped_yellow_painted_cracked_stone_normal"
@@ -93,8 +93,8 @@
       "type": "customShader",
       "props": {
         "color": "#545454",
-        "roughness": 0.9,
-        "metalness": 0.18,
+        "roughness": 1,
+        "metalness": 0.06,
         "mapDisableDistance": 300,
         "mapDisableDistanceAxes": "xz",
         "mapDisableTransitionThreshold": 20,
@@ -105,23 +105,9 @@
           "topFade": [60, 200]
         }
       },
-      "shaders": {
-        "commonShader": {
-          "file": "masonryTiles.common.glsl"
-        },
-        "pomHeightShader": {
-          "file": "masonryTiles.height.glsl"
-        },
-        "pomNormalShader": {
-          "file": "masonryTiles.normal.glsl"
-        },
-        "colorShader": {
-          "file": "masonryTiles.color.glsl"
-        }
-      },
       "options": {
-        "useGeneratedUVs": false,
         "useTriplanarMapping": true,
+        "useGeneratedUVs": false,
         "useWorldSpaceUVs": true,
         "tileBreaking": {
           "type": "neyret",
@@ -137,6 +123,20 @@
           "refinement": "binary",
           "refinementSteps": 4,
           "refineSkipThreshold": 0
+        }
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "masonryTiles.common.glsl"
+        },
+        "colorShader": {
+          "file": "masonryTiles.color.glsl"
+        },
+        "pomHeightShader": {
+          "file": "masonryTiles.height.glsl"
+        },
+        "pomNormalShader": {
+          "file": "masonryTiles.normal.glsl"
         }
       },
       "nonPermeable": true
@@ -168,16 +168,17 @@
     "horizontal_metal_1": {
       "type": "customShader",
       "props": {
-        "color": "#b0b0b0",
-        "roughness": 0.63,
-        "metalness": 0.75,
-        "normalScale": 0.74,
+        "color": "#999999",
+        "roughness": 0.67,
+        "metalness": 0.82,
+        "normalScale": 0.38,
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50,
         "uvScale": [0.04, 0.04],
         "map": "horizontal_metal_1_diffuse",
         "normalMap": "horizontal_metal_1_normal",
         "pomHeightMap": "horizontal_metal_1_height",
-        "mapDisableDistance": 300,
-        "mapDisableTransitionThreshold": 50
+        "iridescence": 0
       },
       "options": {
         "useTriplanarMapping": true,
@@ -198,19 +199,20 @@
     "rusty_metal": {
       "type": "customShader",
       "props": {
-        "color": "#868483",
-        "roughness": 0.78,
-        "metalness": 0.79,
-        "normalScale": 0.56,
-        "uvScale": [0.1, 0.1],
-        "map": "rusty_metal_diffuse",
-        "normalMap": "rusty_metal_normal",
+        "color": "#b1afaf",
+        "roughness": 0.76,
+        "metalness": 0.83,
+        "normalScale": 0.95,
         "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50,
+        "uvScale": [0.12, 0.12],
+        "map": "rusty_metal_diffuse",
+        "normalMap": "rusty_metal_normal",
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [60, 200]
-        }
+        },
+        "iridescence": 0
       },
       "options": {
         "useTriplanarMapping": true,
@@ -243,15 +245,16 @@
     "sooty_silver_metal_1": {
       "type": "customShader",
       "props": {
-        "color": "#ededed",
-        "roughness": 0.76,
-        "metalness": 0.78,
-        "normalScale": 0.31,
-        "uvScale": [0.15, 0.15],
-        "map": "sooty_silver_metal_1_diffuse",
-        "normalMap": "sooty_silver_metal_1_normal",
+        "color": "#cdcbcb",
+        "roughness": 0.71,
+        "metalness": 0.77,
+        "normalScale": 1.94,
+        "iridescence": 0,
         "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50,
+        "uvScale": [0.25, 0.25],
+        "map": "sooty_silver_metal_1_diffuse",
+        "normalMap": "sooty_silver_metal_1_normal",
         "heightAlpha": {
           "bottomFade": [-230, -50],
           "topFade": [60, 200]

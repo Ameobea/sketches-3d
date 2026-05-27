@@ -6,6 +6,7 @@ import {
   updateComposition,
   type Composition,
   type CompositionVersionMetadata,
+  type EnvironmentConfig,
   type TreeDef,
 } from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
@@ -23,6 +24,7 @@ export interface PlaygroundState {
   view: CompositionVersionMetadata['view'];
   lastRunWasSuccessful: boolean;
   preludeEjected: boolean;
+  environment?: EnvironmentConfig;
 }
 
 const getLocalStorageKeySuffix = (userData: GeoscriptPlaygroundUserData | undefined): string => {
@@ -103,6 +105,7 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   const savedMaterialsRaw = localStorage.getItem(`geoscriptPlaygroundMaterials${suffix}`);
   const savedView = localStorage.getItem(`geoscriptPlaygroundView${suffix}`);
   const savedPreludeEjected = localStorage.getItem(`geoscriptPlaygroundPreludeEjected${suffix}`);
+  const savedEnvironment = localStorage.getItem(`geoscriptPlaygroundEnvironment${suffix}`);
 
   const lastRunWasSuccessful = localStorage.getItem(`lastGeoscriptRunCompleted${suffix}`) !== 'false';
 
@@ -110,6 +113,7 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   const serverMaterials = userData?.initialComposition?.version.metadata?.materials;
   const serverView = userData?.initialComposition?.version.metadata?.view;
   const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected;
+  const serverEnvironment = userData?.initialComposition?.version.metadata?.environment;
 
   const tree: TreeDef = savedTree ?? serverTree ?? buildLegacyRootTree(DefaultCode);
 
@@ -139,7 +143,16 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
     ? savedPreludeEjected === 'true'
     : (serverPreludeEjected ?? false);
 
-  return { tree, materials, view, lastRunWasSuccessful, preludeEjected };
+  let environment: EnvironmentConfig | undefined = serverEnvironment;
+  if (savedEnvironment !== null) {
+    try {
+      environment = savedEnvironment === '' ? undefined : JSON.parse(savedEnvironment);
+    } catch (err) {
+      console.warn('Error parsing saved environment metadata:', err);
+    }
+  }
+
+  return { tree, materials, view, lastRunWasSuccessful, preludeEjected, environment };
 };
 
 export const getView = (viz: Viz): CompositionVersionMetadata['view'] => ({
@@ -158,12 +171,18 @@ export const saveState = (
   localStorage.setItem(`geoscriptPlaygroundMaterials${suffix}`, JSON.stringify(state.materials));
   localStorage.setItem(`geoscriptPlaygroundView${suffix}`, JSON.stringify(state.view));
   localStorage.setItem(`geoscriptPlaygroundPreludeEjected${suffix}`, state.preludeEjected ? 'true' : 'false');
+  // Persist '' to mean "explicitly no environment" so it overrides a server default.
+  localStorage.setItem(
+    `geoscriptPlaygroundEnvironment${suffix}`,
+    state.environment ? JSON.stringify(state.environment) : ''
+  );
 };
 
 export const buildCompositionVersionMetadata = (
   viz: Viz,
   materials: MaterialDefinitions,
-  preludeEjected: boolean
+  preludeEjected: boolean,
+  environment: EnvironmentConfig | undefined
 ): { type: 'ok'; metadata: CompositionVersionMetadata } | { type: 'error'; msg: string } => {
   const controls: OrbitControls | null = viz.orbitControls;
   if (!controls) {
@@ -183,6 +202,7 @@ export const buildCompositionVersionMetadata = (
     view,
     materials,
     preludeEjected,
+    environment,
   };
 
   return { type: 'ok', metadata };
@@ -194,13 +214,14 @@ export const saveNewVersion = async (
   viz: Viz,
   materials: MaterialDefinitions,
   preludeEjected: boolean,
+  environment: EnvironmentConfig | undefined,
   title: string,
   description: string,
   isShared: boolean,
   userData?: GeoscriptPlaygroundUserData
 ): Promise<{ type: 'ok' } | { type: 'error'; msg: string }> => {
   try {
-    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected);
+    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected, environment);
     if (metadataRes.type === 'error') {
       return metadataRes;
     }
@@ -220,6 +241,7 @@ export const saveNewVersion = async (
         materials,
         view: metadata.view,
         preludeEjected,
+        environment,
       },
       userData
     );
@@ -242,19 +264,23 @@ export const getIsDirty = (userData: GeoscriptPlaygroundUserData | undefined): b
   const savedTreeRaw = localStorage.getItem(`lastGeoscriptPlaygroundTree${suffix}`);
   const savedMaterialsRaw = localStorage.getItem(`geoscriptPlaygroundMaterials${suffix}`);
   const savedPreludeEjected = localStorage.getItem(`geoscriptPlaygroundPreludeEjected${suffix}`);
+  const savedEnvironment = localStorage.getItem(`geoscriptPlaygroundEnvironment${suffix}`);
 
   const serverTree = userData?.initialComposition?.version.tree;
   const serverTreeJson = serverTree ? JSON.stringify(serverTree) : null;
   const serverMaterials =
     userData?.initialComposition?.version.metadata?.materials || buildDefaultMaterialDefinitions();
   const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected || false;
+  const serverEnvironment = userData?.initialComposition?.version.metadata?.environment;
+  const serverEnvironmentJson = serverEnvironment ? JSON.stringify(serverEnvironment) : '';
 
   return (
     (savedTreeRaw !== null && serverTreeJson !== null
       ? savedTreeRaw !== serverTreeJson
       : savedTreeRaw !== null) ||
     (savedMaterialsRaw ? savedMaterialsRaw !== JSON.stringify(serverMaterials) : false) ||
-    (savedPreludeEjected !== null ? (savedPreludeEjected === 'true') !== serverPreludeEjected : false)
+    (savedPreludeEjected !== null ? (savedPreludeEjected === 'true') !== serverPreludeEjected : false) ||
+    (savedEnvironment !== null ? savedEnvironment !== serverEnvironmentJson : false)
   );
 };
 
@@ -264,6 +290,7 @@ export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined
     userData?.initialComposition?.version.metadata?.materials || buildDefaultMaterialDefinitions();
   const serverView = userData?.initialComposition?.version.metadata?.view || DefaultView;
   const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected || false;
+  const serverEnvironment = userData?.initialComposition?.version.metadata?.environment;
 
   return {
     tree: serverTree,
@@ -271,6 +298,7 @@ export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined
     view: serverView,
     lastRunWasSuccessful: true,
     preludeEjected: serverPreludeEjected,
+    environment: serverEnvironment,
   };
 };
 
@@ -280,6 +308,7 @@ export const clearSavedState = (userData: GeoscriptPlaygroundUserData | undefine
   localStorage.removeItem(`geoscriptPlaygroundMaterials${suffix}`);
   localStorage.removeItem(`geoscriptPlaygroundView${suffix}`);
   localStorage.removeItem(`geoscriptPlaygroundPreludeEjected${suffix}`);
+  localStorage.removeItem(`geoscriptPlaygroundEnvironment${suffix}`);
 };
 
 export const setLastRunWasSuccessful = (

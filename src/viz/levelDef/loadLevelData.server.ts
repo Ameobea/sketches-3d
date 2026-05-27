@@ -6,6 +6,7 @@ import type { GeneratorFn } from './generatorTypes';
 import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils';
 import { getAssetsDir } from './levelPaths.server';
 import { readLevelSourceFiles } from './levelSourceFiles.server';
+import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
 import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 
@@ -141,25 +142,6 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     })
   );
 
-  const SHADER_GLSL_FIELDS = [
-    'customVertexFragment',
-    'commonShader',
-    'colorShader',
-    'normalShader',
-    'roughnessShader',
-    'metalnessShader',
-    'emissiveShader',
-    'iridescenceShader',
-    'displacementShader',
-    'pomHeightShader',
-    'pomNormalShader',
-  ] as const;
-
-  const resolveGlslPath = (file: string): string =>
-    file.startsWith('__ASSETS__/')
-      ? join(getAssetsDir(), file.slice('__ASSETS__/'.length))
-      : join(levelDir, file);
-
   const resolvedMaterials = rawResult.data.materials
     ? Object.fromEntries(
         Object.entries(rawResult.data.materials).map(([matId, matDef]) => {
@@ -168,7 +150,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           for (const field of SHADER_GLSL_FIELDS) {
             const val = shaders[field];
             if (val !== null && typeof val === 'object' && 'file' in val) {
-              shaders[field] = readFileSync(resolveGlslPath(val.file), 'utf-8');
+              shaders[field] = readFileSync(resolveGlslPath(levelDir, val.file), 'utf-8');
             }
           }
           return [matId, { ...matDef, shaders }];

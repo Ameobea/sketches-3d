@@ -2,23 +2,34 @@
   "$schema": "../schema.json",
   "version": 1,
   "lights": [
-    { "id": "ambient", "type": "ambient", "color": 16777215, "intensity": 0.2 },
     {
       "id": "sun",
       "type": "directional",
-      "color": 16777215,
-      "intensity": 2.0,
+      "color": "#ffffff",
+      "intensity": 2,
       "position": [40, 80, 40],
       "castShadow": true,
       "shadow": {
-        "mapSize": { "low": 1024, "medium": 2048, "high": 4096 },
-        "near": 0.1,
+        "mapSize": {
+          "low": 1024,
+          "medium": 2048,
+          "high": 4096
+        },
+        "near": 5,
         "far": 300,
-        "left": -80,
-        "right": 80,
-        "top": 80,
-        "bottom": -80
+        "left": -280,
+        "right": 280,
+        "top": 280,
+        "bottom": -280,
+        "bias": -0.0001,
+        "normalBias": 0.05
       }
+    },
+    {
+      "id": "hemisphere",
+      "type": "hemisphere",
+      "skyColor": 11128529,
+      "intensity": 1
     }
   ],
   "textures": {
@@ -64,7 +75,7 @@
     "ground_mat": {
       "type": "customShader",
       "props": {
-        "color": 11184810,
+        "color": "#aaaaaa",
         "roughness": 1,
         "metalness": 0.3,
         "iridescence": 0.2,
@@ -108,7 +119,8 @@
         "uvScale": [0.1, 0.1],
         "map": "gold_albedo",
         "normalMap": "gold_normal",
-        "roughnessMap": "gold_roughness"
+        "roughnessMap": "gold_roughness",
+        "normalScale": 1
       },
       "options": {
         "useTriplanarMapping": true
@@ -117,7 +129,7 @@
     "plastered_concrete": {
       "type": "customShader",
       "props": {
-        "color": 14671839,
+        "color": "#dfdfdf",
         "roughness": 0.9,
         "metalness": 0.4,
         "uvScale": [0.04, 0.04],
@@ -132,19 +144,23 @@
   "assets": {
     "ground": {
       "type": "geoscript",
-      "code": "export mesh = box(30, 1, 30)"
+      "code": "export mesh = box(30, 1, 30)",
+      "_meta": { "runtimeMs": 5.190000000596046, "count": 5, "codeHash": "8ac357e0" }
     },
     "platform_small": {
       "type": "geoscript",
-      "code": "export mesh = box(4, 0.5, 4)"
+      "code": "export mesh = box(4, 0.5, 4)",
+      "_meta": { "runtimeMs": 0.11399999856948853, "count": 5, "codeHash": "73139d64" }
     },
     "platform_long": {
       "type": "geoscript",
-      "code": "export mesh = box(10, 0.5, 3)"
+      "code": "export mesh = box(10, 0.5, 3)",
+      "_meta": { "runtimeMs": 0.08600000143051148, "count": 5, "codeHash": "919ce730" }
     },
     "coil": {
       "type": "geoscript",
-      "file": "coil.geo"
+      "file": "coil.geo",
+      "_meta": { "runtimeMs": 36.186000001430514, "count": 5, "codeHash": "3b744c8d", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_coil_1": {
       "type": "csg",
@@ -223,19 +239,23 @@
             "scale": [1, 1, 1]
           }
         ]
-      }
+      },
+      "_meta": { "runtimeMs": 47.094000002741815, "count": 5, "codeHash": "2b38982f", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "capsule": {
       "type": "geoscript",
-      "code": "export mesh = capsule(height=4)"
+      "code": "export mesh = capsule(height=4)",
+      "_meta": { "runtimeMs": 0.3330000013113022, "count": 5, "codeHash": "6549123f" }
     },
     "t1": {
       "type": "geoscript",
-      "file": "t_1.geo"
+      "file": "t_1.geo",
+      "_meta": { "runtimeMs": 131.9740000039339, "count": 5, "codeHash": "f66e2241", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "ring": {
       "type": "geoscript",
-      "file": "ring.geo"
+      "file": "ring.geo",
+      "_meta": { "runtimeMs": 57.684999999403956, "count": 5, "codeHash": "eee7937e", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "t2": {
       "type": "geoscript",
@@ -256,7 +276,8 @@
             "scale": [8.3449, 8.3449, 8.3449]
           }
         ]
-      }
+      },
+      "_meta": { "runtimeMs": 231.08899999856948, "count": 5, "codeHash": "d92f689b", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_ring": {
       "type": "csg",
@@ -273,7 +294,8 @@
             "scale": [-15.0835, -7.5788, -15.8001]
           }
         ]
-      }
+      },
+      "_meta": { "runtimeMs": 76.51900000274182, "count": 5, "codeHash": "976d5b9d", "asyncDeps": [ "cgal", "clipper2" ] }
     }
   },
   "objects": [
@@ -432,7 +454,12 @@
       "position": [15, 3, 0],
       "material": "gold_mat",
       "behaviors": [
-        { "fn": "spinner", "params": { "rps": [0, 0.25, 0] } }
+        {
+          "fn": "spinner",
+          "params": {
+            "rps": [0, 0.25, 0]
+          }
+        }
       ]
     },
     {
@@ -442,10 +469,16 @@
       "scale": [0.5, 0.5, 0.5],
       "material": "platform_mat",
       "spawner": {
-        "interval": 2.0,
+        "interval": 2,
         "initialDelay": 0.5,
         "behaviors": [
-          { "fn": "linearSlide", "params": { "velocity": [0, 0, 8], "maxDistance": 60 } }
+          {
+            "fn": "linearSlide",
+            "params": {
+              "velocity": [0, 0, 8],
+              "maxDistance": 60
+            }
+          }
         ]
       }
     }

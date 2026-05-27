@@ -93,6 +93,17 @@
       <input type="range" min="0" max="1" step="0.01" bind:value={material.metalness} />
       <span>{material.metalness.toFixed(2)}</span>
     </FormField>
+    <FormField label="env intensity">
+      <input
+        type="range"
+        min="0"
+        max="3"
+        step="0.01"
+        value={material.envMapIntensity ?? 1}
+        oninput={e => (material.envMapIntensity = (e.target as HTMLInputElement).valueAsNumber)}
+      />
+      <span>{(material.envMapIntensity ?? 1).toFixed(2)}</span>
+    </FormField>
 
     <FormField label="map">
       <TexturePreview

@@ -73,6 +73,7 @@ IncidentLight directLight;
 		directLight.color *= computedShadow;
 		#endif
 
+		directLight.color *= softenTerminator( normalize( nonPerturbedNormal ), directLight.direction );
 		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 
 	}
@@ -104,6 +105,7 @@ IncidentLight directLight;
 		directLight.color *= computedShadow;
 		#endif
 
+		directLight.color *= softenTerminator( normalize( nonPerturbedNormal ), directLight.direction );
 		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 		#endif
 	}
@@ -135,6 +137,7 @@ IncidentLight directLight;
 		directLight.color *= computedShadow;
 		#endif
 
+		directLight.color *= softenTerminator( normalize( nonPerturbedNormal ), directLight.direction );
 		RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );
 		#endif
 	}

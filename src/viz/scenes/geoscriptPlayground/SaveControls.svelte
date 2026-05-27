@@ -5,6 +5,7 @@
     createComposition,
     type Composition,
     type CompositionVersion,
+    type EnvironmentConfig,
     type TreeDef,
   } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
@@ -22,6 +23,7 @@
     getCurrentTree,
     onSave,
     preludeEjected,
+    environment,
     userData,
     onForked,
   }: {
@@ -31,6 +33,7 @@
     getCurrentTree: () => TreeDef;
     onSave: () => void;
     preludeEjected: boolean;
+    environment: EnvironmentConfig | undefined;
     userData: GeoscriptPlaygroundUserData | undefined;
     onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
   } = $props();
@@ -46,7 +49,7 @@
   const createNewComposition = async (): Promise<
     { type: 'ok'; comp: Composition } | { type: 'error'; msg: string }
   > => {
-    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected);
+    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected, environment);
     if (metadataRes.type === 'error') {
       return metadataRes;
     }
@@ -81,6 +84,7 @@
           viz,
           materials,
           preludeEjected,
+          environment,
           title,
           description,
           isShared,

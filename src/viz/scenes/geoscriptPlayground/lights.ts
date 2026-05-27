@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+import { deriveDirectionalShadowNormalBias } from 'src/viz/helpers/lights';
+
 export interface ShadowMapSize {
   width: number;
   height: number;
@@ -14,6 +16,9 @@ export interface ShadowCamera {
   bottom: number;
 }
 
+// prettier-ignore
+type Mat4 = [[number,number,number,number,number,number,number,number,number,number,number,number,number,number,number,number]];
+
 export type Light =
   | { Ambient: [{ color: number; intensity: number }] }
   | {
@@ -22,8 +27,7 @@ export type Light =
           target: [[number, number, number]];
           color: number;
           intensity: number;
-          // prettier-ignore
-          transform: [[number,number,number,number,number,number,number,number,number,number,number,number,number,number,number,number]];
+          transform: Mat4;
           cast_shadow: boolean;
           shadow_map_size: ShadowMapSize;
           shadow_map_radius: number;
@@ -33,11 +37,17 @@ export type Light =
           shadow_camera: ShadowCamera;
         },
       ];
+    }
+  | { Hemisphere: [{ sky_color: number; ground_color: number; intensity: number; transform: Mat4 }] }
+  | {
+      RectArea: [{ color: number; intensity: number; width: number; height: number; transform: Mat4 }];
     };
 
 enum LightType {
   Ambient,
   Directional,
+  Hemisphere,
+  RectArea,
 }
 
 export const buildLight = (light: Light, renderMode: boolean): THREE.Light => {
@@ -46,6 +56,10 @@ export const buildLight = (light: Light, renderMode: boolean): THREE.Light => {
     lightType = LightType.Ambient;
   } else if ('Directional' in light) {
     lightType = LightType.Directional;
+  } else if ('Hemisphere' in light) {
+    lightType = LightType.Hemisphere;
+  } else if ('RectArea' in light) {
+    lightType = LightType.RectArea;
   } else {
     throw new Error(`Unknown light type: ${Object.keys(light)[0]}`);
   }
@@ -78,6 +92,9 @@ export const buildLight = (light: Light, renderMode: boolean): THREE.Light => {
       directionalLight.shadow.camera.bottom = dirLight.shadow_camera.bottom;
       directionalLight.shadow.mapSize.width = dirLight.shadow_map_size.width;
       directionalLight.shadow.mapSize.height = dirLight.shadow_map_size.height;
+      // Texel-scaled normalBias so the DoubleSide shadow casting the playground sets on geoscript
+      // materials doesn't reintroduce self-shadow acne. Preserves the user-supplied bias.
+      deriveDirectionalShadowNormalBias(directionalLight, { bias: dirLight.shadow_map_bias });
       directionalLight.applyMatrix4(new THREE.Matrix4().fromArray(dirLight.transform[0]));
       directionalLight.target.position.set(
         dirLight.target[0][0],
@@ -85,6 +102,23 @@ export const buildLight = (light: Light, renderMode: boolean): THREE.Light => {
         dirLight.target[0][2]
       );
       return directionalLight;
+    }
+    case LightType.Hemisphere: {
+      const hemiLight = (light as Extract<Light, { Hemisphere: any }>).Hemisphere[0];
+      // Non-positional: applying the transform would collapse the sky/ground gradient.
+      return new THREE.HemisphereLight(hemiLight.sky_color, hemiLight.ground_color, hemiLight.intensity);
+    }
+    case LightType.RectArea: {
+      const rectLight = (light as Extract<Light, { RectArea: any }>).RectArea[0];
+      const builtLight = new THREE.RectAreaLight(
+        rectLight.color,
+        rectLight.intensity,
+        rectLight.width,
+        rectLight.height
+      );
+      // Position + orientation come from the transform; emits from local -Z.
+      builtLight.applyMatrix4(new THREE.Matrix4().fromArray(rectLight.transform[0]));
+      return builtLight;
     }
   }
 };

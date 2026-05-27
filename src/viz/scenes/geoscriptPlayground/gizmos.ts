@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RectAreaLightHelper } from 'three/examples/jsm/helpers/RectAreaLightHelper.js';
 
 import type { RenderedObject } from 'src/geoscript/runner/types';
 import type { Viz } from 'src/viz';
@@ -36,6 +37,15 @@ export const buildLightHelpers = (viz: Viz, renderedObjects: RenderedObject[]): 
       const helper = new THREE.SpotLightHelper(obj);
       viz.scene.add(helper);
       helpers.push(helper);
+    } else if (obj instanceof THREE.HemisphereLight) {
+      const helper = new THREE.HemisphereLightHelper(obj, 5);
+      viz.scene.add(helper);
+      helpers.push(helper);
+    } else if (obj instanceof THREE.RectAreaLight) {
+      // RectAreaLightHelper parents to the light, inheriting its transform.
+      const helper = new RectAreaLightHelper(obj);
+      obj.add(helper);
+      helpers.push(helper);
     }
   }
   return helpers;
@@ -49,7 +59,8 @@ export const toggleLightHelpers = (
   const lightHelpersEnabled = localStorage['geoscript-light-helpers'] === 'true';
   if (lightHelpersEnabled) {
     for (const helper of lightHelpers) {
-      viz.scene.remove(helper);
+      // May be parented to the scene or to their light, so detach from either.
+      helper.removeFromParent();
     }
     localStorage['geoscript-light-helpers'] = 'false';
     return [];

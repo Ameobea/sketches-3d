@@ -39,6 +39,24 @@ export interface Composition {
   is_featured: boolean;
 }
 
+/** Scene-wide image-based lighting (IBL). */
+export type EnvironmentConfig =
+  | {
+      kind: 'gradient';
+      skyColor: number;
+      horizonColor: number;
+      groundColor: number;
+      intensity?: number;
+      setBackground?: boolean;
+    }
+  | {
+      kind: 'equirect';
+      /** Texture-library id of an equirectangular image, PMREM-prefiltered for IBL. */
+      textureId: TextureID;
+      intensity?: number;
+      setBackground?: boolean;
+    };
+
 export interface CompositionVersionMetadata {
   view: {
     cameraPosition: [number, number, number];
@@ -48,6 +66,7 @@ export interface CompositionVersionMetadata {
   };
   materials?: MaterialDefinitions;
   preludeEjected?: boolean;
+  environment?: EnvironmentConfig;
 }
 
 export interface Transform3 {

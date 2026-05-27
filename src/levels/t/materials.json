@@ -42,11 +42,12 @@
       "type": "customShader",
       "props": {
         "color": "#dfdfdf",
-        "roughness": 0.9,
-        "metalness": 0.4,
+        "roughness": 1,
+        "metalness": 0,
         "uvScale": [0.04, 0.04],
         "map": "plastered_concrete_color",
-        "normalMap": "plastered_concrete_normal"
+        "normalMap": "plastered_concrete_normal",
+        "normalScale": 1
       },
       "options": {
         "useTriplanarMapping": true

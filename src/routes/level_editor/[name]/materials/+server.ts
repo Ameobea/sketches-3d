@@ -1,5 +1,7 @@
 import { error, type RequestHandler } from '@sveltejs/kit';
 
+import { getLevelDir } from 'src/viz/levelDef/levelPaths.server';
+import { externalizeShaderFiles } from 'src/viz/levelDef/shaderFiles.server';
 import type { MaterialDef } from 'src/viz/levelDef/types';
 import { guardDev, openLevel, validateName } from '../../levelEditorUtils.server';
 
@@ -13,7 +15,9 @@ export const PUT: RequestHandler = async ({ params, request }) => {
 
   const level = openLevel(name);
   if (!level.def.materials) level.def.materials = {};
-  level.def.materials[body.name] = body.def;
+  // Re-attach the prior `{ file }` shader refs so GLSL isn't inlined into materials.json.
+  const prevRaw = level.def.materials[body.name];
+  level.def.materials[body.name] = externalizeShaderFiles(body.def, prevRaw, getLevelDir(name));
 
   level.save();
   return new Response(null, { status: 204 });

@@ -30,7 +30,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 16.91499999910593, "count": 1, "codeHash": "b0979b95", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 17.03999999910593, "count": 5, "codeHash": "b0979b95", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_coil": {
       "type": "csg",
@@ -90,7 +90,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 27.825000002980232, "count": 1, "codeHash": "c7f26fd6", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 26.684999999403953, "count": 5, "codeHash": "c7f26fd6", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_capsule": {
       "type": "csg",
@@ -142,12 +142,12 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 26.80000000447035, "count": 1, "codeHash": "63384502", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 25.96499999910593, "count": 5, "codeHash": "63384502", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "block": {
       "type": "geoscript",
       "file": "geo/block.geo",
-      "_meta": { "runtimeMs": 2.725000001490116, "count": 1, "codeHash": "dcfd427c", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 2.593999998271465, "count": 5, "codeHash": "dcfd427c", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "coil": {
       "type": "geoscript",
@@ -157,22 +157,22 @@
     "plat1": {
       "type": "geoscript",
       "file": "geo/plat1.geo",
-      "_meta": { "runtimeMs": 5.549999997019768, "count": 1, "codeHash": "c7991691", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 5.806000003218651, "count": 5, "codeHash": "c7991691", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "plat2": {
       "type": "geoscript",
       "file": "geo/plat2.geo",
-      "_meta": { "runtimeMs": 44.67500000447035, "count": 1, "codeHash": "81761012", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 45.86199999898672, "count": 5, "codeHash": "81761012", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "puck": {
       "type": "geoscript",
       "file": "geo/puck.geo",
-      "_meta": { "runtimeMs": 9.625, "count": 1, "codeHash": "c948a6c5", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 9.49399999976158, "count": 5, "codeHash": "c948a6c5", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "ring": {
       "type": "geoscript",
       "file": "geo/ring.geo",
-      "_meta": { "runtimeMs": 42.25999999791384, "count": 1, "codeHash": "eee7937e", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 43.854999999701974, "count": 5, "codeHash": "eee7937e", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "t3": {
       "type": "geoscript",
@@ -187,7 +187,7 @@
     "telephone_pole": {
       "type": "geoscript",
       "file": "geo/telephone_pole.geo",
-      "_meta": { "runtimeMs": 15.009999997913837, "count": 1, "codeHash": "e0c8192", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 15.359000001847743, "count": 5, "codeHash": "e0c8192", "asyncDeps": [ "cgal", "clipper2" ] }
     }
   },
   "physics": {

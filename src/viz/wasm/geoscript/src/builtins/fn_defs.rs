@@ -6,7 +6,7 @@ use nanoserde::SerJson;
 
 use crate::{
   builtins::FUNCTION_ALIASES,
-  lights::{AmbientLight, DirectionalLight},
+  lights::{AmbientLight, DirectionalLight, HemisphereLight, RectAreaLight},
   ArgType, Sym, Value, Vec2,
 };
 
@@ -198,12 +198,12 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "mesh",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
         ],
-        description: "Translates a mesh or light in local space (right-multiply: M = M * T). The translation is relative to the object's current orientation. Alias: `trans`.",
+        description: "Translates a mesh in local space (right-multiply: M = M * T). The translation is relative to the object's current orientation. Alias: `trans`.",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -230,15 +230,69 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
           ArgDef {
-            name: "object",
+            name: "mesh",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
         ],
-        description: "Translates a mesh or light in local space (right-multiply: M = M * T). Alias: `trans`.",
+        description: "Translates a mesh in local space (right-multiply: M = M * T). Alias: `trans`.",
         return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "translation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a light in local space (right-multiply: M = M * T). The translation is relative to the light's current orientation. Alias: `trans`.",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a light in local space (right-multiply: M = M * T). Alias: `trans`.",
+        return_type: &[ArgType::Light],
       },
     ],
   },
@@ -258,12 +312,12 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "mesh",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
         ],
-        description: "Translates a mesh or light in world space (left-multiply: M = T * M). The translation is always along world axes regardless of the object's current orientation. Alias: `trans_global`.",
+        description: "Translates a mesh in world space (left-multiply: M = T * M). The translation is always along world axes regardless of the object's current orientation. Alias: `trans_global`.",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -290,15 +344,69 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
           ArgDef {
-            name: "object",
+            name: "mesh",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Mesh, ArgType::Light),
+            valid_types: argtype_flags!(ArgType::Mesh),
             default_value: DefaultValue::Required,
             description: ""
           },
         ],
-        description: "Translates a mesh or light in world space (left-multiply: M = T * M). Alias: `trans_global`.",
+        description: "Translates a mesh in world space (left-multiply: M = T * M). Alias: `trans_global`.",
         return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "translation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a light in world space (left-multiply: M = T * M). The translation is always along world axes regardless of the light's current orientation. Alias: `trans_global`.",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a light in world space (left-multiply: M = T * M). Alias: `trans_global`.",
+        return_type: &[ArgType::Light],
       },
     ],
   },
@@ -7907,6 +8015,79 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Creates an ambient light.\n\nNote: This will not do anything until it is added to the scene via `render`",
+        return_type: &[ArgType::Light],
+      }
+    ],
+  },
+  "hemisphere_light" => FnDef {
+    module: "light",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "sky_color",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Int(HemisphereLight::default().sky_color as i64)),
+            description: "Color of the light coming from above (the sky), in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+          },
+          ArgDef {
+            name: "ground_color",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Int(HemisphereLight::default().ground_color as i64)),
+            description: "Color of the light coming from below (the ground), in hex format (like 0x444444) or webgl format (like `vec3(0.2, 0.2, 0.2)`)"
+          },
+          ArgDef {
+            name: "intensity",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(HemisphereLight::default().intensity)),
+            description: ""
+          },
+        ],
+        description: "Creates a hemisphere light: a cheap directional ambient that blends `sky_color` (from above) and `ground_color` (from below) by surface normal.\n\nNote: This will not do anything until it is added to the scene via `render`",
+        return_type: &[ArgType::Light],
+      }
+    ],
+  },
+  "rect_area_light" => FnDef {
+    module: "light",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "color",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Int(RectAreaLight::default().color as i64)),
+            description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+          },
+          ArgDef {
+            name: "intensity",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(RectAreaLight::default().intensity)),
+            description: ""
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(RectAreaLight::default().width)),
+            description: "Width of the emitting rectangle"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(RectAreaLight::default().height)),
+            description: "Height of the emitting rectangle"
+          },
+        ],
+        description: "Creates a rectangular area light (e.g. a softbox or window). The rectangle emits from its local -Z face; position and orientation come from transforms applied via `translate`/`rotate`/etc. Does not cast shadows.\n\nNote: This will not do anything until it is added to the scene via `render`",
         return_type: &[ArgType::Light],
       }
     ],

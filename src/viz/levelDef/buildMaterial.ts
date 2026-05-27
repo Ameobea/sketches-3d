@@ -36,6 +36,7 @@ const resolveShaderProps = (
   if (propsJson.normalScale !== undefined) props.normalScale = propsJson.normalScale;
   if (propsJson.emissiveIntensity !== undefined) props.emissiveIntensity = propsJson.emissiveIntensity;
   if (propsJson.lightMapIntensity !== undefined) props.lightMapIntensity = propsJson.lightMapIntensity;
+  if (propsJson.envMapIntensity !== undefined) props.envMapIntensity = propsJson.envMapIntensity;
   if (propsJson.opacity !== undefined) props.opacity = propsJson.opacity;
   if (propsJson.alphaTest !== undefined) props.alphaTest = propsJson.alphaTest;
   if (propsJson.transparent !== undefined) props.transparent = propsJson.transparent;

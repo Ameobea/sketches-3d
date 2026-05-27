@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as Stats from 'three/examples/jsm/libs/stats.module.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 
 import { initSentry } from 'src/sentry';
 import { buildDefaultSfxConfig, SoundEngine } from './audio/SoundEngine';
@@ -40,6 +41,17 @@ import { loadLevelDef, type LevelLoadHandle } from './levelDef/loadLevelDef';
 import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { LevelDef } from './levelDef/types';
 import { OverlayMSAARenderer } from './gizmos/overlayMSAA';
+
+// `RectAreaLight`s render with undefined data unless their LTC lookup textures
+// are bound. `init()` recreates them, so it's guarded to run once.
+let ltcUniformsInitialized = false;
+const ensureRectAreaLightUniforms = () => {
+  if (ltcUniformsInitialized) {
+    return;
+  }
+  RectAreaLightUniformsLib.init();
+  ltcUniformsInitialized = true;
+};
 
 export interface PostprocessingController {
   setGamma(value: number): void;
@@ -286,6 +298,8 @@ export class Viz {
       premultipliedAlpha: false,
     });
 
+    ensureRectAreaLightUniforms();
+
     // backwards compat
     if (sceneDef.legacyLights) {
       (this.renderer as any).useLegacyLights = true;
@@ -305,6 +319,7 @@ export class Viz {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
+    // this.renderer.shadowMap.type = THREE.VSMShadowMap;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   };
 
@@ -1098,6 +1113,8 @@ export const initViz = (
     if (geoscriptExecutor) {
       viz.seedGeoscriptExecutor(geoscriptExecutor);
     }
+    // Must run before `loadLevelDef`, which sets globals that outlive into the new scene.
+    resetCustomShaderGlobals();
     if (useSceneDef) {
       // TODO: would be ideal to start this before we even load the glTF.  Could update the level def loading
       // code to accept the asset library glTF as a promise and just await it where needed.
@@ -1109,7 +1126,6 @@ export const initViz = (
       );
     }
     applyAudioSettings(vizConfig.current.audio);
-    resetCustomShaderGlobals();
     const sceneLoader = await sceneLoaderP;
     const sceneConf = {
       ...buildDefaultSceneConfig(),

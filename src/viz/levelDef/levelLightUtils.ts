@@ -96,6 +96,26 @@ const instantiateThreeLightFromDef = (
       }
       return { light, target: light.target };
     }
+    case 'hemisphere':
+      return {
+        light: new THREE.HemisphereLight(
+          def.skyColor ?? 0xffffff,
+          def.groundColor ?? 0x444444,
+          def.intensity ?? 1
+        ),
+      };
+    case 'rectArea': {
+      const light = new THREE.RectAreaLight(
+        def.color ?? 0xffffff,
+        def.intensity ?? 1,
+        def.width ?? 10,
+        def.height ?? 10
+      );
+      if (def.position) light.position.fromArray(def.position);
+      // Orient via lookAt rather than a target Object3D (RectAreaLight has none).
+      light.lookAt(def.target ? new THREE.Vector3().fromArray(def.target) : new THREE.Vector3());
+      return { light };
+    }
   }
 };
 
@@ -161,6 +181,23 @@ export const applyLightDefToLevelLight = (levelLight: LevelLight, quality: Graph
       light.penumbra = def.penumbra ?? 0;
       light.castShadow = def.castShadow ?? false;
       if (light.castShadow && def.shadow) applyShadowConfig(light, def.shadow, quality);
+      return;
+    }
+    case 'hemisphere': {
+      if (!(light instanceof THREE.HemisphereLight)) return;
+      light.color.setHex(def.skyColor ?? 0xffffff);
+      light.groundColor.setHex(def.groundColor ?? 0x444444);
+      light.intensity = def.intensity ?? 1;
+      return;
+    }
+    case 'rectArea': {
+      if (!(light instanceof THREE.RectAreaLight)) return;
+      light.color.setHex(def.color ?? 0xffffff);
+      light.intensity = def.intensity ?? 1;
+      light.width = def.width ?? 10;
+      light.height = def.height ?? 10;
+      if (def.position) light.position.fromArray(def.position);
+      light.lookAt(def.target ? new THREE.Vector3().fromArray(def.target) : new THREE.Vector3());
       return;
     }
   }

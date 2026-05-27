@@ -85,6 +85,49 @@ impl Default for AmbientLight {
 }
 
 #[derive(Debug, Clone, SerJson)]
+pub struct HemisphereLight {
+  pub sky_color: u32,
+  pub ground_color: u32,
+  pub intensity: f32,
+  #[nserde(proxy = "SerializableMat4")]
+  pub transform: Matrix4<f32>,
+}
+
+impl HemisphereLight {
+  pub(crate) fn new(
+    sky_color: &Value,
+    ground_color: &Value,
+    intensity: f32,
+  ) -> Result<Self, ErrorStack> {
+    let sky_color = parse_color_value(sky_color)?;
+    let ground_color = parse_color_value(ground_color)?;
+    if intensity < 0. {
+      return Err(ErrorStack::new(
+        "Hemisphere light intensity cannot be negative",
+      ));
+    }
+
+    Ok(Self {
+      sky_color,
+      ground_color,
+      intensity,
+      transform: Matrix4::identity(),
+    })
+  }
+}
+
+impl Default for HemisphereLight {
+  fn default() -> Self {
+    Self {
+      sky_color: 0xffffff,
+      ground_color: 0x444444,
+      intensity: 1.0,
+      transform: Matrix4::identity(),
+    }
+  }
+}
+
+#[derive(Debug, Clone, SerJson)]
 pub struct ShadowMapSize {
   pub width: u32,
   pub height: u32,
@@ -313,11 +356,65 @@ pub struct PointLight {
   pub transform: Matrix4<f32>,
 }
 
+#[derive(Debug, Clone, SerJson)]
+pub struct RectAreaLight {
+  pub color: u32,
+  pub intensity: f32,
+  pub width: f32,
+  pub height: f32,
+  /// Emits from local -Z, matching `THREE.RectAreaLight`.
+  #[nserde(proxy = "SerializableMat4")]
+  pub transform: Matrix4<f32>,
+}
+
+impl RectAreaLight {
+  pub(crate) fn new(
+    color: &Value,
+    intensity: f32,
+    width: f32,
+    height: f32,
+  ) -> Result<Self, ErrorStack> {
+    let color = parse_color_value(color)?;
+    if intensity < 0. {
+      return Err(ErrorStack::new(
+        "Rect-area light intensity cannot be negative",
+      ));
+    }
+    if width <= 0. || height <= 0. {
+      return Err(ErrorStack::new(
+        "Rect-area light width and height must be positive",
+      ));
+    }
+
+    Ok(Self {
+      color,
+      intensity,
+      width,
+      height,
+      transform: Matrix4::identity(),
+    })
+  }
+}
+
+impl Default for RectAreaLight {
+  fn default() -> Self {
+    Self {
+      color: 0xffffff,
+      intensity: 1.0,
+      width: 10.0,
+      height: 10.0,
+      transform: Matrix4::identity(),
+    }
+  }
+}
+
 #[derive(Clone, Debug, SerJson)]
 pub enum Light {
   Ambient(AmbientLight),
   Directional(DirectionalLight),
   Point(PointLight),
+  Hemisphere(HemisphereLight),
+  RectArea(RectAreaLight),
 }
 
 impl Light {
@@ -326,6 +423,8 @@ impl Light {
       Light::Ambient(a) => &mut a.transform,
       Light::Directional(d) => &mut d.transform,
       Light::Point(p) => &mut p.transform,
+      Light::Hemisphere(h) => &mut h.transform,
+      Light::RectArea(r) => &mut r.transform,
     }
   }
 }

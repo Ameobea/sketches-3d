@@ -269,9 +269,16 @@ interface CustomShaderGlobalConfig {
 let globalConfig: CustomShaderGlobalConfig = {};
 let occlusionBackfaceRenderingEnabled = false;
 
+// Which face custom-shader materials cast into shadow maps. `null` keeps three's default
+// (back faces for a FrontSide material), which produces a second-depth "peter-panning" gap at
+// wall/floor contacts. `THREE.DoubleSide` casts the near face and closes that gap. When set, it
+// is pinned here so the third-person occlusion toggle can't revert it mid-scene. Per-scene
+// opt-in via setShadowCastSide; reset on scene teardown.
+let shadowCastSideOverride: THREE.Side | null = null;
+
 const setMaterialOcclusionBackfaceRendering = (mat: CustomShaderMaterial, enable: boolean) => {
   const targetSide = enable ? THREE.DoubleSide : THREE.FrontSide;
-  const targetShadowSide = enable ? THREE.BackSide : null;
+  const targetShadowSide = shadowCastSideOverride ?? (enable ? THREE.BackSide : null);
 
   if (mat.side !== targetSide || mat.shadowSide !== targetShadowSide) {
     mat.side = targetSide;
@@ -298,6 +305,73 @@ export const setOcclusionBackfaceRendering = (scene: THREE.Scene, enable: boolea
   });
 };
 
+/**
+ * Sets the face all custom-shader materials cast into shadow maps and pins it through the
+ * occlusion toggle. `THREE.DoubleSide` closes the second-depth ("peter-panning") gap at the
+ * base of walls by casting the near face; `null` restores legacy back-face casting. Newly
+ * built materials pick this up automatically (see the `setMaterialOcclusionBackfaceRendering`
+ * call in `buildCustomShader`), so setting it early also covers geometry whose materials
+ * resolve asynchronously. Pair with a texel-scaled `normalBias` on the casting light
+ * (`deriveDirectionalShadowNormalBias`) to suppress the self-shadow acne front-face casting
+ * reintroduces.
+ */
+export const setShadowCastSide = (scene: THREE.Scene, side: THREE.Side | null) => {
+  shadowCastSideOverride = side;
+  scene.traverse(obj => {
+    const materials = (obj as THREE.Mesh).material;
+    for (const mat of Array.isArray(materials) ? materials : [materials]) {
+      if (mat instanceof CustomShaderMaterial && !mat.userData.occlusionExclude) {
+        setMaterialOcclusionBackfaceRendering(mat, occlusionBackfaceRenderingEnabled);
+      }
+    }
+  });
+};
+
+let currentSceneEnvironment: { envMap: THREE.Texture; intensity: number } | null = null;
+
+let warnedVertexLightingEnv = false;
+
+const applySceneEnvironmentToMaterial = (mat: CustomShaderMaterial) => {
+  const overrideEnvMap = mat.userData.envMapOverride as THREE.Texture | undefined;
+  const overrideIntensity = mat.userData.envMapIntensityOverride as number | undefined;
+
+  let envMap = overrideEnvMap ?? currentSceneEnvironment?.envMap ?? null;
+  if (envMap && mat.userData.vertexLighting) {
+    if (!warnedVertexLightingEnv) {
+      console.warn(
+        'Vertex lighting does not support env-map (IBL); ignoring scene environment for those materials'
+      );
+      warnedVertexLightingEnv = true;
+    }
+    envMap = null;
+  }
+  const intensity = overrideIntensity ?? currentSceneEnvironment?.intensity ?? 1;
+
+  if (!!envMap !== !!mat.envMap) {
+    mat.needsUpdate = true;
+  }
+  mat.envMap = envMap;
+  mat.uniforms.envMap.value = envMap;
+  mat.uniforms.envMapIntensity.value = intensity;
+  // PMREM output is a render-target texture (not a CubeTexture), so no flip.
+  mat.uniforms.flipEnvMap.value = 1;
+};
+
+export const setSceneEnvironment = (
+  scene: THREE.Scene,
+  env: { envMap: THREE.Texture; intensity: number } | null
+) => {
+  currentSceneEnvironment = env;
+  scene.traverse(obj => {
+    const materials = (obj as THREE.Mesh).material;
+    for (const mat of Array.isArray(materials) ? materials : [materials]) {
+      if (mat instanceof CustomShaderMaterial) {
+        applySceneEnvironmentToMaterial(mat);
+      }
+    }
+  });
+};
+
 export const precompileOcclusionShaderVariants = (
   scene: THREE.Scene,
   renderer: THREE.WebGLRenderer,
@@ -312,6 +386,8 @@ export const precompileOcclusionShaderVariants = (
 export const resetCustomShaderGlobals = () => {
   globalConfig = {};
   occlusionBackfaceRenderingEnabled = false;
+  shadowCastSideOverride = null;
+  currentSceneEnvironment = null;
   playerShadowPos.set(0, 0, 0);
   playerShadowParams.set(0, 0, 0, 0);
   psRingData.fill(0);
@@ -576,7 +652,7 @@ export const buildCustomShaderArgs = (
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
-    // UniformsLib.envmap,
+    UniformsLib.envmap,
     // UniformsLib.aomap,
     // UniformsLib.lightmap,
     // UniformsLib.emissivemap,
@@ -591,7 +667,8 @@ export const buildCustomShaderArgs = (
       emissive: { value: new THREE.Color(0x000000) },
       roughness: { value: 1.0 },
       metalness: { value: 0.0 },
-      // envMapIntensity: { value: 1 },
+      // Not in `UniformsLib.envmap`; lives in the physical material's own uniforms upstream.
+      envMapIntensity: { value: 1 },
     },
   ]);
   uniforms.normalScale = { value: new THREE.Vector2(normalScale, normalScale) };
@@ -764,6 +841,7 @@ export const buildCustomShaderArgs = (
     if (normalMap) {
       console.warn('Normal maps have no effect on lighting when vertex lighting is enabled');
     }
+    // Vertex lighting ignores rect-area lights and env-map IBL (hemisphere diffuse is supported).
   }
 
   const mapDisableDistance =
@@ -1286,6 +1364,12 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 
 uniform float curTimeSeconds;
 varying vec3 vWorldPos;
+
+// Bound direct light by the geometric (pre-normal-map) horizon so a normal map
+// can't illuminate micro-facets whose underlying face points away from the light.
+float softenTerminator(vec3 geoN, vec3 lightDir) {
+  return smoothstep(-0.4, 0.4, dot(geoN, lightDir));
+}
 ${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap)}
 
 uniform vec3 playerShadowPos;
@@ -1592,6 +1676,8 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
   public ior: number = 1.5;
 
   public map?: THREE.Texture;
+  /** Read by `WebGLPrograms.getParameters` to drive the `USE_ENVMAP` defines. */
+  public envMap: THREE.Texture | null = null;
 
   public normalScale?: THREE.Vector2;
   public normalMap?: THREE.Texture;
@@ -1723,6 +1809,16 @@ export const buildCustomShader = (
     mat.defines.USE_TRANSMISSIONMAP = '1';
     mat.uniforms.transmissionMap.value = props.transmissionMap;
   }
+  if (opts?.vertexLighting) {
+    mat.userData.vertexLighting = true;
+  }
+  if (props.envMap) {
+    mat.userData.envMapOverride = props.envMap;
+  }
+  if (props.envMapIntensity !== undefined) {
+    mat.userData.envMapIntensityOverride = props.envMapIntensity;
+  }
+  applySceneEnvironmentToMaterial(mat);
   if (typeof opts?.usePackedDiffuseNormalGBA === 'object') {
     const dataTexture = new THREE.DataTexture(
       opts.usePackedDiffuseNormalGBA.lut,

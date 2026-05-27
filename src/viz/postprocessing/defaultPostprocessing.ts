@@ -12,7 +12,12 @@ import type { Viz } from 'src/viz';
 import type { PostprocessingController } from 'src/viz';
 import { GraphicsQuality } from 'src/viz/conf';
 import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
-import { buildOcclusionDepthMaterial, buildPlainDepthMaterial } from 'src/viz/shaders/customShader';
+import {
+  buildOcclusionDepthMaterial,
+  buildPlainDepthMaterial,
+  setShadowCastSide,
+} from 'src/viz/shaders/customShader';
+import { deriveDirectionalShadowNormalBias } from 'src/viz/helpers/lights';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
@@ -178,6 +183,16 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    * See `src/viz/postprocessing/pomExitBuffer.ts`.
    */
   pomExitBuffers?: boolean;
+  /**
+   * Close the second-depth ("peter-panning") shadow gap at wall/floor contacts: cast
+   * `DoubleSide` into shadow maps and auto-derive a texel-scaled `normalBias` for every
+   * shadow-casting directional light (which suppresses the self-shadow acne DoubleSide casting
+   * would otherwise reintroduce). Default `true`. Automatically skipped when
+   * `renderer.shadowMap.type === VSMShadowMap` (VSM already front-casts). Opt a single light out
+   * of the bias derivation with `light.userData.skipAutoShadowBias = true`. See
+   * `setShadowCastSide` / `deriveDirectionalShadowNormalBias`.
+   */
+  shadowContactFix?: boolean;
 }
 
 export const configureDefaultPostprocessingPipeline = ({
@@ -196,7 +211,15 @@ export const configureDefaultPostprocessingPipeline = ({
   skyBypassTonemap = false,
   skyStack,
   pomExitBuffers = false,
+  shadowContactFix = true,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
+  // DoubleSide shadow casting + texel-scaled normalBias closes the second-depth contact gap.
+  // VSM already front-casts, so skip it there (and let scenes opt out explicitly).
+  const applyShadowContactFix = shadowContactFix && viz.renderer.shadowMap.type !== THREE.VSMShadowMap;
+  if (applyShadowContactFix) {
+    setShadowCastSide(viz.scene, THREE.DoubleSide);
+  }
+
   if (skyStack) {
     if (!useDepthPrePass) {
       throw new Error('skyStack requires useDepthPrePass: true (needs stable depth target).');
@@ -377,6 +400,7 @@ export const configureDefaultPostprocessingPipeline = ({
   }
 
   let didRenderShadowMap = false;
+  let didShadowContactSetup = false;
   let sceneGeomReady = false;
   viz.awaitPhysicsStartupBarriers().then(() => {
     sceneGeomReady = true;
@@ -391,6 +415,19 @@ export const configureDefaultPostprocessingPipeline = ({
     effectComposer.render(timeDiffSeconds);
   };
   const renderFrame = (timeDiffSeconds: number) => {
+    if (applyShadowContactFix && !didShadowContactSetup && sceneGeomReady) {
+      didShadowContactSetup = true;
+      // Re-affirm DoubleSide casting (catches materials added after pipeline setup) and derive a
+      // texel-scaled normalBias for each shadow-casting directional light, so DoubleSide casting
+      // can't reintroduce self-shadow acne. Runs once, before the one-time shadow render below.
+      setShadowCastSide(viz.scene, THREE.DoubleSide);
+      viz.scene.traverse(obj => {
+        if (obj instanceof THREE.DirectionalLight && obj.castShadow && !obj.userData.skipAutoShadowBias) {
+          deriveDirectionalShadowNormalBias(obj);
+        }
+      });
+    }
+
     if (!didRenderShadowMap && viz.renderer.shadowMap.enabled && !autoUpdateShadowMap && sceneGeomReady) {
       didRenderShadowMap = true;
       viz.renderer.shadowMap.needsUpdate = true;

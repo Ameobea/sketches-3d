@@ -32,7 +32,8 @@ import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
 export { isLevelGroup } from './levelSceneTypes';
 import { buildMaterial } from './buildMaterial';
-import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
+import { CustomShaderMaterial, setSceneEnvironment } from 'src/viz/shaders/customShader';
+import { generateGradientEnvironment, loadEnvironment } from 'src/viz/textureLoading';
 import { extractHullInputVertices, type CollisionMeshOverride } from '../collisionShapes';
 import { Entity } from '../sceneRuntime/Entity';
 import { TextureFetchPool } from './texturePool';
@@ -662,6 +663,29 @@ export const loadLevelDef = (
     const levelLight = createLevelLight(lightDef, quality);
     addLevelLightToScene(viz.scene, levelLight);
     levelLights.push(levelLight);
+  }
+
+  const envDef = levelDef.environment;
+  if (envDef) {
+    if (envDef.kind === 'gradient') {
+      const { envMap, background } = generateGradientEnvironment(viz.renderer, {
+        skyColor: envDef.skyColor ?? 0xffffff,
+        horizonColor: envDef.horizonColor ?? 0x888888,
+        groundColor: envDef.groundColor ?? 0x444444,
+      });
+      setSceneEnvironment(viz.scene, { envMap, intensity: envDef.intensity ?? 1 });
+      if (envDef.setBackground !== false) viz.scene.background = background;
+    } else {
+      // Async so the level load isn't blocked on the image fetch.
+      const envLoader = new THREE.ImageBitmapLoader();
+      void loadEnvironment(viz.renderer, envLoader, envDef.url).then(
+        ({ envMap, background }) => {
+          setSceneEnvironment(viz.scene, { envMap, intensity: envDef.intensity ?? 1 });
+          if (envDef.setBackground !== false) viz.scene.background = background;
+        },
+        err => console.error(`[levelDef] Failed to load environment "${envDef.url}":`, err)
+      );
+    }
   }
 
   if (levelDef.audio) {

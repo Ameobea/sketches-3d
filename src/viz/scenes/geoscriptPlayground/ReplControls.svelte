@@ -17,6 +17,7 @@
     toggleAxisHelpers,
     toggleLightHelpers,
     toggleMaterialEditorOpen,
+    toggleEnvironmentSettingsOpen,
     isDirty,
     togglePreludeEjected,
     preludeEjected,
@@ -36,6 +37,7 @@
     toggleAxisHelpers: () => void;
     toggleLightHelpers: () => void;
     toggleMaterialEditorOpen: () => void;
+    toggleEnvironmentSettingsOpen: () => void;
     isDirty: boolean;
     togglePreludeEjected: () => void;
     preludeEjected: boolean;
@@ -81,6 +83,7 @@
     {#if !isEditorCollapsed}
       <ActionsMenu>
         <button onclick={toggleMaterialEditorOpen}>edit materials</button>
+        <button onclick={toggleEnvironmentSettingsOpen}>scene environment</button>
         <button onclick={onExport}>export scene</button>
         <button onclick={onRecord}>
           {{ initializing: 'initializing', 'not-recording': 'start recording', recording: 'stop-recording' }[

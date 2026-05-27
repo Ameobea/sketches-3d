@@ -101,6 +101,8 @@
         <option value="directional">directional</option>
         <option value="point">point</option>
         <option value="spot">spot</option>
+        <option value="hemisphere">hemisphere</option>
+        <option value="rectArea">rectArea</option>
       </select>
       <button class="add-btn" onclick={() => actions.addLight(selectedLightType)}>add light</button>
     </div>

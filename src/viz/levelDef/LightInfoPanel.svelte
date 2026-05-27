@@ -12,20 +12,35 @@
 
   let { lightDef, lightPosition, onapplyposition, onpropertychange, ondelete }: Props = $props();
 
-  const hasPosition = (def: LightDef): boolean => def.type !== 'ambient';
+  const hasColor = (def: LightDef): boolean => def.type !== 'hemisphere';
+  const isHemisphere = (def: LightDef): boolean => def.type === 'hemisphere';
+  const isRectArea = (def: LightDef): boolean => def.type === 'rectArea';
+  const hasPosition = (def: LightDef): boolean => def.type !== 'ambient' && def.type !== 'hemisphere';
   const hasDistanceDecay = (def: LightDef): boolean => def.type === 'point' || def.type === 'spot';
-  const hasShadow = (def: LightDef): boolean => def.type !== 'ambient';
+  const hasShadow = (def: LightDef): boolean =>
+    def.type === 'directional' || def.type === 'point' || def.type === 'spot';
   const isSpot = (def: LightDef): boolean => def.type === 'spot';
 
   // --- Color ---
   const numToHex = (n: number): string => '#' + n.toString(16).padStart(6, '0');
   const hexToNum = (s: string): number => parseInt(s.slice(1), 16);
 
-  const colorStr = $derived(numToHex(lightDef.color ?? 0xffffff));
+  const colorStr = $derived(numToHex((lightDef as any).color ?? 0xffffff));
 
   const onColorChange = (e: Event) => {
     const val = (e.target as HTMLInputElement).value;
     onpropertychange({ color: hexToNum(val) } as Partial<LightDef>);
+  };
+
+  // --- Hemisphere sky/ground colors ---
+  const skyColorStr = $derived(numToHex((lightDef as any).skyColor ?? 0xffffff));
+  const groundColorStr = $derived(numToHex((lightDef as any).groundColor ?? 0x444444));
+
+  const onSkyColorChange = (e: Event) => {
+    onpropertychange({ skyColor: hexToNum((e.target as HTMLInputElement).value) } as Partial<LightDef>);
+  };
+  const onGroundColorChange = (e: Event) => {
+    onpropertychange({ groundColor: hexToNum((e.target as HTMLInputElement).value) } as Partial<LightDef>);
   };
 
   // --- Intensity ---
@@ -83,7 +98,7 @@
   };
 
   // --- Light-type-specific fields ---
-  type FieldKey = 'distance' | 'decay' | 'angle' | 'penumbra';
+  type FieldKey = 'distance' | 'decay' | 'angle' | 'penumbra' | 'width' | 'height';
 
   const getFieldValue = (key: FieldKey): number => {
     const def = lightDef as any;
@@ -94,6 +109,7 @@
     if (key === 'distance') return 0;
     if (key === 'decay') return 2;
     if (key === 'angle') return Math.PI / 4;
+    if (key === 'width' || key === 'height') return 10;
     return 0; // penumbra
   };
 
@@ -152,12 +168,28 @@
     <span class="badge type-badge">{lightDef.type}</span>
   </div>
 
-  <!-- Color -->
-  <div class="row">
-    <span class="tf-label">color</span>
-    <input class="color-input" type="color" value={colorStr} onchange={onColorChange} />
-    <span class="color-hex">{colorStr}</span>
-  </div>
+  <!-- Color (single-color lights) -->
+  {#if hasColor(lightDef)}
+    <div class="row">
+      <span class="tf-label">color</span>
+      <input class="color-input" type="color" value={colorStr} onchange={onColorChange} />
+      <span class="color-hex">{colorStr}</span>
+    </div>
+  {/if}
+
+  <!-- Sky / ground colors (hemisphere) -->
+  {#if isHemisphere(lightDef)}
+    <div class="row">
+      <span class="tf-label">sky</span>
+      <input class="color-input" type="color" value={skyColorStr} onchange={onSkyColorChange} />
+      <span class="color-hex">{skyColorStr}</span>
+    </div>
+    <div class="row">
+      <span class="tf-label">ground</span>
+      <input class="color-input" type="color" value={groundColorStr} onchange={onGroundColorChange} />
+      <span class="color-hex">{groundColorStr}</span>
+    </div>
+  {/if}
 
   <!-- Intensity -->
   <div class="row">
@@ -248,7 +280,27 @@
     {/each}
   {/if}
 
-  <!-- Cast shadow (non-ambient) -->
+  <!-- Width / Height (rectArea) -->
+  {#if isRectArea(lightDef)}
+    {#each ['width', 'height'] as const as key}
+      <div class="row">
+        <span class="tf-label">{key}</span>
+        <input
+          class="tf-input flex1"
+          type="text"
+          value={extraDisplayVal(key)}
+          oninput={e => {
+            extraDraft = (e.target as HTMLInputElement).value;
+          }}
+          onfocus={() => onExtraFocus(key)}
+          onblur={onExtraBlur}
+          onkeydown={onExtraKeydown}
+        />
+      </div>
+    {/each}
+  {/if}
+
+  <!-- Cast shadow (shadow-casting lights) -->
   {#if hasShadow(lightDef)}
     <div class="row">
       <span class="tf-label">shadow</span>

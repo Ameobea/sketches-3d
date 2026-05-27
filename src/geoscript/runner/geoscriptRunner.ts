@@ -331,6 +331,7 @@ const applyLightProps = (target: THREE.Light, source: THREE.Light): void => {
     target.shadow.radius = source.shadow.radius;
     target.shadow.blurSamples = source.shadow.blurSamples;
     target.shadow.bias = source.shadow.bias;
+    target.shadow.normalBias = source.shadow.normalBias;
     target.shadow.camera.near = source.shadow.camera.near;
     target.shadow.camera.far = source.shadow.camera.far;
     target.shadow.camera.left = source.shadow.camera.left;

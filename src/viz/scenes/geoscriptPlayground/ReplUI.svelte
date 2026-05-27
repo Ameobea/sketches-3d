@@ -24,11 +24,13 @@
     type MaterialDefinitions,
   } from 'src/geoscript/materials';
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
+  import EnvironmentSettings from './EnvironmentSettings.svelte';
   import { Textures } from './materialEditor/state.svelte';
   import {
     type Composition,
     type CompositionVersion,
     type CompositionVersionMetadata,
+    type EnvironmentConfig,
     type Transform3,
     type TreeDef,
   } from 'src/geoscript/geotoyAPIClient';
@@ -60,6 +62,7 @@
   } from './materialLoading.svelte';
   import { centerView, focusOnSubtree, snapView, orbit } from './cameraControls';
   import { buildLightHelpers, toggleAxisHelpers, toggleLightHelpers } from './gizmos';
+  import { applyGeoscriptSceneEnvironment } from './sceneEnvironment';
   import { useRecording } from './recording';
   import type { PostprocessingPipelineController } from 'src/viz/postprocessing/defaultPostprocessing';
 
@@ -113,6 +116,7 @@
     lastRunWasSuccessful,
     view: initialView,
     preludeEjected: initialPreludeEjected,
+    environment: initialEnvironment,
   } = $derived(loadState(userData));
 
   const treeState = new TreeState({
@@ -198,6 +202,7 @@
       viz,
       materialDefinitions,
       preludeEjected,
+      environment,
       userData?.initialComposition?.comp?.title ?? 'untitled (fork)',
       userData?.initialComposition?.comp?.description ?? '',
       userData?.initialComposition?.comp?.is_shared ?? false,
@@ -466,6 +471,7 @@
         materials: materialDefinitions,
         view: getView(viz),
         preludeEjected,
+        environment,
       },
       userData
     );
@@ -646,11 +652,16 @@
   };
 
   let materialEditorOpen = $state(false);
+  let environmentSettingsOpen = $state(false);
   let materialDefinitions = $state<MaterialDefinitions>(untrack(() => initialMatDefs));
   let preludeEjected = $state(untrack(() => initialPreludeEjected));
+  let environment = $state<EnvironmentConfig | undefined>(untrack(() => initialEnvironment));
 
   onMount(() => {
     const referencedTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
+    if (environment?.kind === 'equirect' && environment.textureId >= 0) {
+      referencedTextureIDs.push(environment.textureId);
+    }
     if (referencedTextureIDs.length > 0) {
       fetchAndSetTextures(loader, referencedTextureIDs);
     }
@@ -712,6 +723,26 @@
       }
     } else {
       throw new Error('unreachable');
+    }
+  });
+
+  // Re-apply on env change, texture-metadata arrival, and after each run rebuilds
+  // materials (the `void` refs are the deps). PMREM is cached, so this is cheap.
+  $effect(() => {
+    void Textures.textures;
+    void renderedObjects;
+    const env = $state.snapshot(environment) as EnvironmentConfig | undefined;
+    void applyGeoscriptSceneEnvironment(viz, loader, env, id => Textures.textures[id]?.url);
+  });
+
+  // Editing the environment marks the composition dirty (mirrors materials).
+  let didInitEnv = false;
+  $effect(() => {
+    void $state.snapshot(environment);
+    if (!didInitEnv) {
+      didInitEnv = true;
+    } else {
+      isDirty = true;
     }
   });
 
@@ -1024,6 +1055,7 @@
         materials: materialDefinitions,
         view: getView(viz),
         preludeEjected,
+        environment,
       },
       userData
     );
@@ -1095,6 +1127,9 @@
 
     materialDefinitions = serverState.materials;
     const referencedTextureIDs = getReferencedTextureIDs(materialDefinitions.materials);
+    if (serverState.environment?.kind === 'equirect' && serverState.environment.textureId >= 0) {
+      referencedTextureIDs.push(serverState.environment.textureId);
+    }
     fetchAndSetTextures(loader, referencedTextureIDs).then(() => {
       didInitMats = false;
       materialDefinitions = { ...serverState.materials };
@@ -1104,6 +1139,7 @@
       setView(serverState.view);
     }
     preludeEjected = serverState.preludeEjected;
+    environment = serverState.environment;
 
     run();
 
@@ -1113,6 +1149,7 @@
         materials: serverState.materials,
         view: serverState.view,
         preludeEjected: serverState.preludeEjected,
+        environment: serverState.environment,
       },
       userData
     );
@@ -1247,6 +1284,8 @@
   me={userData?.me}
 />
 
+<EnvironmentSettings bind:isOpen={environmentSettingsOpen} bind:environment me={userData?.me} />
+
 {#if isEditorCollapsed}
   <div
     class={['root', 'collapsed', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
@@ -1270,6 +1309,7 @@
       {preludeEjected}
       {togglePreludeEjected}
       toggleMaterialEditorOpen={() => (materialEditorOpen = true)}
+      toggleEnvironmentSettingsOpen={() => (environmentSettingsOpen = true)}
       {toggleLayoutOrientation}
     />
   </div>
@@ -1394,6 +1434,9 @@
             toggleMaterialEditorOpen={() => {
               materialEditorOpen = !materialEditorOpen;
             }}
+            toggleEnvironmentSettingsOpen={() => {
+              environmentSettingsOpen = !environmentSettingsOpen;
+            }}
             {toggleLayoutOrientation}
           />
           <ReplOutput err={err ?? materialErr} {runStats} />
@@ -1406,6 +1449,7 @@
               materials={materialDefinitions}
               {viz}
               {preludeEjected}
+              {environment}
               onSave={() => {
                 isDirty = false;
                 treeState.markSaved();

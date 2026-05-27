@@ -65,6 +65,7 @@ export interface PhysicalMaterialDef {
   sheenColor?: RGBColor;
   sheenRoughness?: number;
   normalScale: number;
+  envMapIntensity?: number;
   uvScale: { x: number; y: number };
   map?: TextureID;
   normalMap?: TextureID;
@@ -243,6 +244,7 @@ const buildPhysicalShader = (
         : new THREE.Color(0x000000),
       sheenRoughness: def.sheenRoughness ?? 1,
       normalScale: def.normalScale,
+      envMapIntensity: def.envMapIntensity,
       uvTransform: new THREE.Matrix3().scale(def.uvScale.x, def.uvScale.y),
       map,
       normalMap,

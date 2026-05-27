@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
 import type { CollisionMeshOverride } from 'src/viz/collisionShapes';
-import type { EditorBookmark, LevelDef, LightDef } from './types';
+import type { AmbientLightDef, EditorBookmark, HemisphereLightDef, LevelDef, LightDef } from './types';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
 import { SelectionManager } from './SelectionManager.svelte';
@@ -42,6 +42,10 @@ import {
 } from './levelLightUtils';
 
 export type { TransformSnapshot } from './TransformHandler';
+
+/** Lights with no meaningful world position — no transform gizmo or proxy mesh. */
+const isNonPositionalLight = (def: LightDef): def is AmbientLightDef | HemisphereLightDef =>
+  def.type === 'ambient' || def.type === 'hemisphere';
 
 type UndoEntry =
   | {
@@ -883,7 +887,7 @@ export class LevelEditor {
 
   private createLightProxies() {
     for (const levelLight of this.allLevelLights) {
-      if (levelLight.def.type === 'ambient') continue; // no position to show
+      if (isNonPositionalLight(levelLight.def)) continue; // no position to show
       const mat = new THREE.MeshBasicMaterial({
         color: levelLight.def.color ?? 0xffffff,
         transparent: true,
@@ -918,7 +922,7 @@ export class LevelEditor {
     this.selection.selectLight(levelLight);
 
     // Force translate mode for lights (only position is meaningful)
-    if (levelLight.def.type !== 'ambient') {
+    if (!isNonPositionalLight(levelLight.def)) {
       this.preLightTransformMode = this.transformHandler?.getMode() ?? 'translate';
       this.setTransformMode('translate');
       this.transformHandler?.attach(levelLight.light);
@@ -950,7 +954,7 @@ export class LevelEditor {
   }
 
   private saveLightPosition(levelLight: LevelLight) {
-    if (levelLight.def.type === 'ambient') return;
+    if (isNonPositionalLight(levelLight.def)) return;
     const pos = levelLight.light.position;
     const position: [number, number, number] = [round(pos.x), round(pos.y), round(pos.z)];
     levelLight.def = { ...levelLight.def, position } as LightDef;
@@ -962,7 +966,7 @@ export class LevelEditor {
   /** Apply a position change from the info panel inputs. */
   applyLightPositionInput(pos: [number, number, number]) {
     const light = this.selectedLight;
-    if (!light || light.def.type === 'ambient') return;
+    if (!light || isNonPositionalLight(light.def)) return;
     light.light.position.fromArray(pos);
     const proxy = this.lightToProxy.get(light.id);
     if (proxy) proxy.position.fromArray(pos);
@@ -1028,7 +1032,7 @@ export class LevelEditor {
     ];
 
     const candidate: Partial<LightDef> & { type: LightDef['type'] } = { type: lightType };
-    if (lightType !== 'ambient') {
+    if (lightType !== 'ambient' && lightType !== 'hemisphere') {
       (candidate as any).position = position;
     }
 
@@ -1041,7 +1045,7 @@ export class LevelEditor {
     this.levelDef.lights.push(newDef);
 
     // Create proxy if positional
-    if (newDef.type !== 'ambient') {
+    if (!isNonPositionalLight(newDef)) {
       const mat = new THREE.MeshBasicMaterial({
         color: newDef.color ?? 0xffffff,
         transparent: true,

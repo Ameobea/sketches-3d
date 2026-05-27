@@ -152,10 +152,10 @@ export const TextureDefSchema = z.object({
   minFilter: z.enum(['nearest', 'nearestMipNearest', 'nearestMipLinear', 'linearMipLinear']).optional(),
   /** Default: 1 */
   anisotropy: z.number().optional(),
-  /** Default: '' (NoColorSpace) */
+  /** Default: '' (`NoColorSpace`) */
   colorSpace: z.enum(['srgb', '']).optional(),
   /**
-   * Default: 'rgba' (RGBA8)
+   * Default: 'rgba' (`RGBA8`)
    */
   format: z.enum(['rgba', 'rg', 'red']).optional(),
 });
@@ -217,6 +217,7 @@ export const ShaderPropsJsonSchema = z.object({
   normalScale: z.number().optional(),
   emissiveIntensity: z.number().optional(),
   lightMapIntensity: z.number().optional(),
+  envMapIntensity: z.number().optional(),
   opacity: z.number().optional(),
   alphaTest: z.number().optional(),
   transparent: z.boolean().optional(),
@@ -404,9 +405,11 @@ export type MaterialDefRaw = z.infer<typeof MaterialDefRawSchema>;
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/i;
 
+const COLOR_KEYS = new Set(['color', 'sheenColor', 'skyColor', 'groundColor', 'horizonColor']);
+
 /** Recursively walk a plain JSON object and convert hex color strings to integers in-place for known color keys. */
 export const normalizeRawDefColors = (obj: unknown, key = ''): unknown => {
-  if ((key === 'color' || key === 'sheenColor') && typeof obj === 'string' && HEX_COLOR_RE.test(obj)) {
+  if (COLOR_KEYS.has(key) && typeof obj === 'string' && HEX_COLOR_RE.test(obj)) {
     return parseInt(obj.slice(1), 16);
   }
   if (Array.isArray(obj)) return obj.map(v => normalizeRawDefColors(v));
@@ -646,17 +649,42 @@ export const SpotLightDefSchema = z.object({
   shadow: ShadowConfigDefSchema.optional(),
 });
 
+export const HemisphereLightDefSchema = z.object({
+  id: z.string(),
+  type: z.literal('hemisphere'),
+  skyColor: z.number().int().optional(),
+  groundColor: z.number().int().optional(),
+  intensity: z.number().optional(),
+});
+
+export const RectAreaLightDefSchema = z.object({
+  id: z.string(),
+  type: z.literal('rectArea'),
+  color: z.number().int().optional(),
+  intensity: z.number().optional(),
+  position: Vec3.optional(),
+  /** Point the light faces; emits from its local -Z toward here. Default: [0, 0, 0] */
+  target: Vec3.optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  // three.js rect-area lights cast no shadow.
+});
+
 export const LightDefSchema = z.discriminatedUnion('type', [
   AmbientLightDefSchema,
   DirectionalLightDefSchema,
   PointLightDefSchema,
   SpotLightDefSchema,
+  HemisphereLightDefSchema,
+  RectAreaLightDefSchema,
 ]);
 
 export type AmbientLightDef = z.infer<typeof AmbientLightDefSchema>;
 export type DirectionalLightDef = z.infer<typeof DirectionalLightDefSchema>;
 export type PointLightDef = z.infer<typeof PointLightDefSchema>;
 export type SpotLightDef = z.infer<typeof SpotLightDefSchema>;
+export type HemisphereLightDef = z.infer<typeof HemisphereLightDefSchema>;
+export type RectAreaLightDef = z.infer<typeof RectAreaLightDefSchema>;
 export type LightDef = z.infer<typeof LightDefSchema>;
 
 // ---- Raw (disk-facing) light variants that accept hex color strings ----
@@ -665,12 +693,19 @@ const AmbientLightDefRawSchema = AmbientLightDefSchema.extend({ color: ColorInpu
 const DirectionalLightDefRawSchema = DirectionalLightDefSchema.extend({ color: ColorInputSchema.optional() });
 const PointLightDefRawSchema = PointLightDefSchema.extend({ color: ColorInputSchema.optional() });
 const SpotLightDefRawSchema = SpotLightDefSchema.extend({ color: ColorInputSchema.optional() });
+const HemisphereLightDefRawSchema = HemisphereLightDefSchema.extend({
+  skyColor: ColorInputSchema.optional(),
+  groundColor: ColorInputSchema.optional(),
+});
+const RectAreaLightDefRawSchema = RectAreaLightDefSchema.extend({ color: ColorInputSchema.optional() });
 
 const LightDefRawSchema = z.discriminatedUnion('type', [
   AmbientLightDefRawSchema,
   DirectionalLightDefRawSchema,
   PointLightDefRawSchema,
   SpotLightDefRawSchema,
+  HemisphereLightDefRawSchema,
+  RectAreaLightDefRawSchema,
 ]);
 
 const GeneratorDefSchema = z.object({
@@ -757,6 +792,38 @@ const collectObjectDefs = (
   return result;
 };
 
+export const GradientEnvironmentDefSchema = z.object({
+  kind: z.literal('gradient'),
+  skyColor: z.number().int().optional(),
+  horizonColor: z.number().int().optional(),
+  groundColor: z.number().int().optional(),
+  intensity: z.number().optional(),
+  setBackground: z.boolean().optional(),
+});
+
+export const EquirectEnvironmentDefSchema = z.object({
+  kind: z.literal('equirect'),
+  url: z.string(),
+  intensity: z.number().optional(),
+  setBackground: z.boolean().optional(),
+});
+
+export const EnvironmentDefSchema = z.discriminatedUnion('kind', [
+  GradientEnvironmentDefSchema,
+  EquirectEnvironmentDefSchema,
+]);
+export type EnvironmentDef = z.infer<typeof EnvironmentDefSchema>;
+
+const GradientEnvironmentDefRawSchema = GradientEnvironmentDefSchema.extend({
+  skyColor: ColorInputSchema.optional(),
+  horizonColor: ColorInputSchema.optional(),
+  groundColor: ColorInputSchema.optional(),
+});
+const EnvironmentDefRawSchema = z.discriminatedUnion('kind', [
+  GradientEnvironmentDefRawSchema,
+  EquirectEnvironmentDefSchema,
+]);
+
 export const LevelDefSchema = z
   .object({
     $schema: z.string().optional(),
@@ -768,6 +835,8 @@ export const LevelDefSchema = z
     assets: z.record(z.string(), AssetDefSchema),
     objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
     lights: z.array(LightDefSchema).optional(),
+    /** Scene-wide image-based lighting (IBL) + optional matching background. */
+    environment: EnvironmentDefSchema.optional(),
     physics: ScenePhysicsDefSchema.optional(),
     generators: GeneratorsRecordSchema.optional(),
     audio: AudioDefSchema.optional(),
@@ -869,6 +938,7 @@ export const LevelDefRawSchema = z.object({
   assets: z.record(z.string(), AssetDefRawSchema),
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
   lights: z.array(LightDefRawSchema).optional(),
+  environment: EnvironmentDefRawSchema.optional(),
   physics: ScenePhysicsDefSchema.optional(),
   generators: GeneratorsRecordSchema.optional(),
   audio: AudioDefSchema.optional(),

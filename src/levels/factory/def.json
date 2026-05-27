@@ -3,10 +3,17 @@
   "version": 1,
   "lights": [
     {
+      "id": "hemi",
+      "type": "hemisphere",
+      "skyColor": "#976b45",
+      "groundColor": "#744c02",
+      "intensity": 3.6
+    },
+    {
       "id": "ambient",
       "type": "ambient",
-      "color": "#d7ab85",
-      "intensity": 3.8
+      "color": "#f7ab85",
+      "intensity": 1
     },
     {
       "id": "sun",
@@ -17,6 +24,14 @@
       "castShadow": false
     }
   ],
+  "environment": {
+    "kind": "gradient",
+    "skyColor": "#291112",
+    "horizonColor": "#684c3b",
+    "groundColor": "#b16710",
+    "intensity": 0.8,
+    "setBackground": false
+  },
   "assets": {
     "platform": {
       "type": "geoscript",
