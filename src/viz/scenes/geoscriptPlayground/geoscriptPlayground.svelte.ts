@@ -100,6 +100,12 @@ export const processLoadedScene = async (
         return;
       }
 
+      viz.renderer.shadowMap.needsUpdate = true;
+      viz.scene.traverse(o => {
+        if (o instanceof THREE.DirectionalLight && o.castShadow) {
+          o.shadow.needsUpdate = true;
+        }
+      });
       pipelineController?.renderFrame(timeDiffSeconds);
       didRender = true;
       (window as any).onRenderReady?.();

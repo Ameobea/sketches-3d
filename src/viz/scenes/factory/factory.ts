@@ -30,7 +30,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   const playerHeight = 5;
   const playerRadius = 1.5;
   const playerMesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
+    new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 64),
     buildCustomShader(
       {
         color: new THREE.Color(0x8d3d9f),

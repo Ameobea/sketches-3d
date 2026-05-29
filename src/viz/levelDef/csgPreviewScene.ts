@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import type { CsgAssetDef, CsgTreeNode } from './types';
-import type { LevelObject } from './loadLevelDef';
+import { UNBAKED_RENDER_WRAPPER, type LevelObject } from './loadLevelDef';
 import { LEVEL_PLACEHOLDER_MAT } from './levelObjectUtils';
 import { generateComplementCode, generateSubtreeCode } from './csgCodeGen';
 import { isOpNode, getNodeAtPath, computeNodePolarities } from './csgTreeUtils';
@@ -345,7 +345,7 @@ export class CsgPreviewScene {
       this.editor.levelDef.assets
     );
     const modules = { ...subModules, code: subCode };
-    const renderWrapper = 'import { mesh } from "code"\nmesh | render';
+    const renderWrapper = UNBAKED_RENDER_WRAPPER;
 
     let result;
     try {
@@ -422,7 +422,7 @@ export class CsgPreviewScene {
     if (!complementResult) return; // selected root — no complement
 
     const modules = { ...complementResult.modules, code: complementResult.code };
-    const renderWrapper = 'import { mesh } from "code"\nmesh | render';
+    const renderWrapper = UNBAKED_RENDER_WRAPPER;
 
     let result;
     try {

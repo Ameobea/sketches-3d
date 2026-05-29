@@ -43,7 +43,6 @@ import {
 
 export type { TransformSnapshot } from './TransformHandler';
 
-/** Lights with no meaningful world position — no transform gizmo or proxy mesh. */
 const isNonPositionalLight = (def: LightDef): def is AmbientLightDef | HemisphereLightDef =>
   def.type === 'ambient' || def.type === 'hemisphere';
 
@@ -264,12 +263,10 @@ export class LevelEditor {
       return;
     }
 
-    // Don't fire editor binds when the user is typing in an input or textarea.
     const activeTag = (document.activeElement as HTMLElement | null)?.tagName?.toLowerCase();
     const isTypingInput = activeTag === 'input' || activeTag === 'textarea';
 
-    // Bookmark binds — work in BOTH edit and play mode.
-    // Ctrl+0..9: teleport to slot. Ctrl+Shift+0..9: save current state to slot.
+    // Bookmark binds
     if ((e.ctrlKey || e.metaKey) && !isTypingInput && /^Digit[0-9]$/.test(e.code)) {
       e.preventDefault();
       const slot = parseInt(e.code.slice(5), 10);

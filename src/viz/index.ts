@@ -296,6 +296,8 @@ export class Viz {
       depth: false,
       logarithmicDepthBuffer: false,
       premultipliedAlpha: false,
+      preserveDrawingBuffer:
+        new URLSearchParams(window.location.search).get('render') === 'true',
     });
 
     ensureRectAreaLightUniforms();

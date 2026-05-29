@@ -388,10 +388,8 @@ export class CsgEditController {
     delete primary.def.rotation;
     delete primary.def.scale;
 
-    // Register a placeholder prototype under the new asset name so the level
-    // object continues to render until the asynchronous re-resolve completes.
-    // For single-object: the source asset's prototype is correct as-is.
-    // For multi-object: any of the input prototypes works as a stand-in.
+    // Placeholder prototype to render with until the async re-resolve lands.
+    // Visibly wrong when the source had non-identity R/S or multiple inputs were unioned.
     const findFirstLeafAsset = (node: CsgTreeNode): string | undefined => {
       if ('asset' in node) return node.asset;
       for (const child of node.children) {
@@ -410,11 +408,7 @@ export class CsgEditController {
 
     this.editor.select(primary);
 
-    // For multi-object, the unioned geometry differs from any single input
-    // prototype, so kick off a re-resolve to replace the placeholder.
-    if (deletedIds.length > 0) {
-      void this.assetResolver.reResolveCsgAsset(csgAssetName);
-    }
+    void this.assetResolver.reResolveCsgAsset(csgAssetName);
   }
 
   private selectNode(path: string) {

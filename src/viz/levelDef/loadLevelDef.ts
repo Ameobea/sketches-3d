@@ -265,8 +265,15 @@ const extractPrototype = (
   return meshes[0];
 };
 
-/** The render wrapper imports the asset's exported mesh and pipes it through `render`. */
-const RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_transforms | render';
+/**
+ * Bakes the asset's root transform into vertices before rendering, so `obj.transform`
+ * comes back as identity. Use for any path that hands the mesh to `instantiateLevelObject`,
+ * which overwrites the prototype's Object3D transform with the level def's.
+ */
+export const BAKED_RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_transforms | render';
+
+/** Leaves the root transform on `obj.transform`. Use when the consumer wants it separable (e.g. editor gizmo). */
+export const UNBAKED_RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | render';
 
 /**
  * Runs a single geoscript code string through the geoscript worker and returns the
@@ -281,7 +288,7 @@ export const resolveGeoscriptAsset = async (code: string): Promise<THREE.Mesh | 
     {
       id: '__resolveGeoscriptAsset__',
       modules: { code },
-      code: RENDER_WRAPPER,
+      code: BAKED_RENDER_WRAPPER,
       includePrelude: false,
       asyncDeps: [],
       deps: [],
@@ -403,7 +410,7 @@ const resolveScriptAssets = async (
         d => d !== 'text_to_path'
       ) ?? [];
     const collectMetadata = dev && shouldCollectMeta(def, modules, includePrelude);
-    return { id, modules, code: RENDER_WRAPPER, includePrelude, asyncDeps, deps: [], collectMetadata };
+    return { id, modules, code: BAKED_RENDER_WRAPPER, includePrelude, asyncDeps, deps: [], collectMetadata };
   });
 
   const promises = executor.submit(jobs);

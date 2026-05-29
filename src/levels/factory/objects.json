@@ -359,10 +359,8 @@
             },
             {
               "id": "wall_28",
-              "asset": "wall",
+              "asset": "csg_wall_2",
               "position": [-464.8584, 1.4, 0],
-              "rotation": [0, 1.5708, 0],
-              "scale": [5.1331, 3.6108, 0.4334],
               "material": "chipped_rusty_gray_painted_wall"
             },
             {
@@ -382,7 +380,7 @@
               "material": "chipped_rusty_gray_painted_wall"
             }
           ],
-          "position": [376.7928, -9.6554, -311.1543],
+          "position": [376.7928, -9.6554, -390.6209],
           "rotation": [0, 0, 0],
           "scale": [1, 1, 1]
         },
@@ -433,6 +431,118 @@
           "position": [-414.2539, -8.2554, -6.1315],
           "rotation": [0, 0, 0],
           "scale": [1, 1, 1]
+        },
+        {
+          "id": "group_2",
+          "children": [
+            {
+              "id": "wall_35",
+              "asset": "wall",
+              "position": [-116.6801, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_36",
+              "asset": "wall",
+              "position": [-233.4145, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_39",
+              "asset": "wall",
+              "position": [-353.7488, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_42",
+              "asset": "wall",
+              "position": [-584.5711, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_43",
+              "asset": "wall",
+              "position": [-464.8584, 1.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_45",
+              "asset": "wall",
+              "position": [-700.0521, 1.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            }
+          ],
+          "position": [376.7928, 4.768, -267.5596],
+          "rotation": [-0.6187, 0, 0],
+          "scale": [1, 0.386, 0.1992]
+        },
+        {
+          "id": "group_2_1",
+          "children": [
+            {
+              "id": "wall_46",
+              "asset": "wall",
+              "position": [-116.6801, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_47",
+              "asset": "wall",
+              "position": [-233.4145, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_48",
+              "asset": "wall",
+              "position": [-353.7488, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_49",
+              "asset": "wall",
+              "position": [-584.5711, 0.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_50",
+              "asset": "wall",
+              "position": [-464.8584, 1.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            },
+            {
+              "id": "wall_51",
+              "asset": "wall",
+              "position": [-700.0521, 1.4, 0],
+              "rotation": [0, 1.5708, 0],
+              "scale": [5.1331, 3.6108, 0.2669],
+              "material": "chipped_rusty_gray_painted_wall"
+            }
+          ],
+          "position": [376.7928, 327.986, -267.5596],
+          "rotation": [-0.7291, -3.1416, -3.1416],
+          "scale": [1, 0.386, 0.1992]
         }
       ],
       "position": [60, -121.8664, 0],
@@ -1075,6 +1185,38 @@
           }
         ]
       }
+    },
+    {
+      "id": "wrap_arrow2_2",
+      "asset": "wrap_arrow2",
+      "position": [170.7084, 82.482, -216.639],
+      "rotation": [1.5708, -1.5708, 0],
+      "scale": [0.3, 0.3, 0.3],
+      "material": "highlight"
+    },
+    {
+      "id": "pipes5",
+      "asset": "pipes5",
+      "position": [371.375, 174.8174, -182.1068],
+      "rotation": [0, -1.5708, 0],
+      "scale": [7.919, 7.919, 7.919],
+      "material": "rusty_metal_decoration"
+    },
+    {
+      "id": "pipes6",
+      "asset": "pipes6",
+      "position": [13.5423, 189.7606, -257.261],
+      "rotation": [0, 0, 0],
+      "scale": [1.8423, 2, 2],
+      "material": "rusty_metal_decoration"
+    },
+    {
+      "id": "pipes6_1",
+      "asset": "pipes6",
+      "position": [13.5423, 190.2606, -237.2731],
+      "rotation": [0, 0, 0],
+      "scale": [1.8423, 2, 2],
+      "material": "rusty_metal_decoration"
     }
   ]
 }

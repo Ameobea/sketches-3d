@@ -243,7 +243,7 @@
                 "asset": "wall",
                 "position": [-5.2115, 143.7328, -5],
                 "rotation": [0, 1.5708, 0],
-                "scale": [8, 2.6589, 7]
+                "scale": [8, 4.865, 7]
               }
             ]
           },
@@ -279,7 +279,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 6.220999999716878, "count": 5, "codeHash": "28ba5116", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 6.009999999403954, "count": 5, "codeHash": "63a0825f", "asyncDeps": [ "cgal" ] }
     },
     "pipes3": {
       "type": "geoscript",
@@ -305,6 +305,48 @@
       "type": "geoscript",
       "file": "geo/center_fenced_ring/railing.geo",
       "_meta": { "runtimeMs": 7.219000001624226, "count": 5, "codeHash": "de8de8f6" }
+    },
+    "csg_wall_2": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "wall",
+            "rotation": [0, 1.5708, 0],
+            "scale": [5.1331, 3.6108, 0.4334]
+          },
+          {
+            "asset": "box",
+            "position": [-20.6158, 136.2787, 46.2862],
+            "rotation": [0, 0, 0],
+            "scale": [0.8345, 1.81, 1.0013]
+          },
+          {
+            "asset": "box",
+            "position": [-17.5813, 136.2787, 38.0311],
+            "rotation": [0, 0, 0],
+            "scale": [0.8345, 1.81, 4.3138]
+          },
+          {
+            "asset": "box",
+            "position": [-12.2617, 136.2787, 30.8896],
+            "rotation": [0, 1.5708, 0],
+            "scale": [1.4609, 1.81, 1.3202]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 1.7190000012516975, "count": 5, "codeHash": "8a950bf5", "asyncDeps": [ "cgal" ] }
+    },
+    "pipes5": {
+      "type": "geoscript",
+      "file": "geo/pipes5.geo",
+      "_meta": { "runtimeMs": 0.5410000011324883, "count": 5, "codeHash": "18ae7b60", "asyncDeps": [ "cgal" ] }
+    },
+    "pipes6": {
+      "type": "geoscript",
+      "file": "geo/pipes6.geo",
+      "_meta": { "runtimeMs": 0.48999999910593034, "count": 5, "codeHash": "bcf4d61", "asyncDeps": [ "cgal" ] }
     }
   },
   "objects": [],

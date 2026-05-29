@@ -57,13 +57,17 @@
     "chipped_yellow_painted_cracked_stone": {
       "type": "customShader",
       "props": {
-        "color": "#9c9c9c",
-        "roughness": 0.73,
-        "metalness": 0.34,
-        "normalScale": 0.83,
+        "color": "#d1d1d1",
+        "roughness": 0.78,
+        "metalness": 0.66,
+        "normalScale": 0.93,
         "uvScale": [0.02, 0.02],
         "map": "chipped_yellow_painted_cracked_stone_diffuse",
-        "normalMap": "chipped_yellow_painted_cracked_stone_normal"
+        "normalMap": "chipped_yellow_painted_cracked_stone_normal",
+        "iridescence": 0,
+        "clearcoat": 0,
+        "ambientLightScale": 2,
+        "ior": 0.8
       },
       "options": {
         "useTriplanarMapping": true,

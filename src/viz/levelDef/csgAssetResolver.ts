@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import type { CsgAssetDef } from './types';
-import type { LevelObject } from './loadLevelDef';
+import { BAKED_RENDER_WRAPPER, type LevelObject } from './loadLevelDef';
 import { LEVEL_PLACEHOLDER_MAT, instantiateLevelObject } from './levelObjectUtils';
 import { replaceLeafInstance } from './editorStructuralOps';
 import { generateCsgCode } from './csgCodeGen';
@@ -81,7 +81,7 @@ export class CsgAssetResolver {
     const csgDef = this.editor.levelDef.assets[assetId] as CsgAssetDef;
     const { modules: csgModules, code: csgCode } = generateCsgCode(csgDef, this.editor.levelDef.assets);
     const modules = { ...csgModules, code: csgCode };
-    const renderWrapper = 'import { mesh } from "code"\nmesh | render';
+    const renderWrapper = BAKED_RENDER_WRAPPER;
 
     let result;
     try {
