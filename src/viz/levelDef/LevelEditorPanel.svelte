@@ -114,16 +114,18 @@
     {view.materialEditorOpen ? 'close materials' : 'edit materials'}
   </button>
 
-  <HierarchyPanel
-    rootNodes={view.rootNodes}
-    selectedNodeIds={view.selectedNodeIds}
-    lights={view.lights}
-    selectedLightId={view.selectedLightId}
-    treeVersion={view.treeVersion}
-    onselectnode={actions.selectNode}
-    onselectlight={actions.selectLight}
-    onreparent={actions.reparent}
-  />
+  <div class="hierarchy-scroll">
+    <HierarchyPanel
+      rootNodes={view.rootNodes}
+      selectedNodeIds={view.selectedNodeIds}
+      lights={view.lights}
+      selectedLightId={view.selectedLightId}
+      treeVersion={view.treeVersion}
+      onselectnode={actions.selectNode}
+      onselectlight={actions.selectLight}
+      onreparent={actions.reparent}
+    />
+  </div>
 
   {#if view.selectedLightDef}
     <LightInfoPanel
@@ -157,10 +159,12 @@
       position={view.position}
       rotation={view.rotation}
       scale={view.scale}
+      canRecenterGroupOrigin={view.canRecenterGroupOrigin}
       onapplytransform={actions.applyTransform}
       onrename={actions.rename}
       onmaterialchange={actions.changeMaterial}
       onconvertToCsg={actions.convertToCsg}
+      onrecenterorigin={actions.recenterGroupOrigin}
       ondelete={actions.deleteSelection}
     />
   {/if}
@@ -179,9 +183,16 @@
     z-index: 10001;
     min-width: 260px;
     max-height: calc(100vh - 24px);
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     pointer-events: auto;
     user-select: none;
+  }
+
+  .hierarchy-scroll {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .add-section {

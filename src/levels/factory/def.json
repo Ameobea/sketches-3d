@@ -40,8 +40,8 @@
     },
     "rod": {
       "type": "geoscript",
-      "code": "set_sharp_angle_threshold(190);export mesh = extrude_pipe(radius=0.08, resolution=8, path=[v3(0), v3(0, 5, 0)]);",
-      "_meta": { "runtimeMs": 4.257999992370605, "count": 5, "codeHash": "c786ed9d", "asyncDeps": [ "cgal" ] }
+      "code": "export mesh = extrude_pipe(radius=0.08, resolution=8, path=[v3(0), v3(0, 5, 0)])",
+      "_meta": { "runtimeMs": 4.489999997615814, "count": 5, "codeHash": "2deff9e1", "asyncDeps": [ "cgal" ] }
     },
     "wall": {
       "type": "geoscript",
@@ -240,10 +240,27 @@
                 ]
               },
               {
-                "asset": "wall",
-                "position": [-5.2115, 143.7328, -5],
-                "rotation": [0, 1.5708, 0],
-                "scale": [8, 4.865, 7]
+                "op": "union",
+                "children": [
+                  {
+                    "asset": "wall",
+                    "position": [-5.2115, 143.7328, -5],
+                    "rotation": [0, 1.5708, 0],
+                    "scale": [8, 4.865, 7]
+                  },
+                  {
+                    "asset": "platform",
+                    "position": [-359.636, 131.1139, 17.9985],
+                    "rotation": [0, 0, 0],
+                    "scale": [0.5656, 124.0958, 5.6851]
+                  },
+                  {
+                    "asset": "platform",
+                    "position": [-359.636, 186.1468, 17.9985],
+                    "rotation": [0, 0, 0],
+                    "scale": [0.5656, 124.0958, 0.7544]
+                  }
+                ]
               }
             ]
           },
@@ -279,7 +296,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 6.009999999403954, "count": 5, "codeHash": "63a0825f", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 7.1110000014305115, "count": 5, "codeHash": "b5937ae0", "asyncDeps": [ "cgal" ] }
     },
     "pipes3": {
       "type": "geoscript",
@@ -347,6 +364,156 @@
       "type": "geoscript",
       "file": "geo/pipes6.geo",
       "_meta": { "runtimeMs": 0.48999999910593034, "count": 5, "codeHash": "bcf4d61", "asyncDeps": [ "cgal" ] }
+    },
+    "csg_box_1": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "box",
+            "scale": [1, 6.0881, 4.4627]
+          },
+          {
+            "asset": "box",
+            "position": [0, -3.0846, 6.4784],
+            "rotation": [0, 0, 0],
+            "scale": [8.2836, 0.4311, 2.2109]
+          },
+          {
+            "asset": "box",
+            "position": [-0.0453, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [0.8619, 5.4411, 4.0424]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 1.3549999982118606, "count": 5, "codeHash": "c4382ae1", "asyncDeps": [ "cgal" ] }
+    },
+    "elbow_pipe": {
+      "type": "geoscript",
+      "file": "geo/elbow_pipe.geo",
+      "_meta": { "runtimeMs": 0.35999999940395355, "count": 5, "codeHash": "1df6d04f", "asyncDeps": [ "cgal" ] }
+    },
+    "vertical_pipe": {
+      "type": "geoscript",
+      "file": "geo/vertical_pipe.geo",
+      "_meta": { "runtimeMs": 0.37799999713897703, "count": 5, "codeHash": "a2c97b18", "asyncDeps": [ "cgal" ] }
+    },
+    "csg_cheese_wheel": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "op": "union",
+            "children": [
+              {
+                "asset": "cheese_wheel",
+                "position": [-13.4182, 0, 0],
+                "rotation": [0, 3.1416, 0],
+                "scale": [4.6589, 4.6589, 4.6589]
+              },
+              {
+                "asset": "cheese_wheel",
+                "position": [55.8007, 0, 0],
+                "rotation": [0, -3.1416, 0],
+                "scale": [4.6589, 4.6589, 4.6589]
+              },
+              {
+                "asset": "box",
+                "position": [-52.9314, 35.7416, 13.9941],
+                "rotation": [0.5993, 0, 0],
+                "scale": [2.6677, 12.5856, 1.8953]
+              },
+              {
+                "asset": "box",
+                "position": [-30.5626, 35.7416, 13.9941],
+                "rotation": [0.5993, 0, 0],
+                "scale": [2.6677, 12.5856, 1.8953]
+              },
+              {
+                "asset": "box",
+                "position": [38.4614, 35.7416, 13.9941],
+                "rotation": [0.5993, 0, 0],
+                "scale": [2.6677, 12.5856, 1.8953]
+              },
+              {
+                "asset": "box",
+                "position": [15.8793, 35.7416, 13.9941],
+                "rotation": [0.5993, 0, 0],
+                "scale": [2.6677, 12.5856, 1.8953]
+              },
+              {
+                "asset": "box",
+                "position": [-2.5422, 9.6187, 5.523],
+                "rotation": [0, 0, 0],
+                "scale": [7.6667, 1.72, 4.2666]
+              },
+              {
+                "asset": "box",
+                "position": [-2.5422, 9.6187, -19.3721],
+                "rotation": [0, 0, 0],
+                "scale": [7.6667, 1.72, 4.2666]
+              }
+            ]
+          },
+          {
+            "asset": "platform",
+            "position": [0, 2.9778, 9.2981],
+            "rotation": [0, 0, 0],
+            "scale": [6.3408, 1, 0.7639]
+          },
+          {
+            "asset": "platform",
+            "position": [0, 2.9778, -11.55],
+            "rotation": [0, 0, 0],
+            "scale": [6.3408, 1, 0.7639]
+          },
+          {
+            "asset": "platform",
+            "position": [0, -7.1369, -22.3828],
+            "rotation": [0, 0, 0],
+            "scale": [6.3408, 3.6542, 0.363]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 43.58100000023842, "count": 5, "codeHash": "2f630a36", "asyncDeps": [ "cgal", "clipper2" ] }
+    },
+    "i_beam": {
+      "type": "geoscript",
+      "file": "geo/i_beam.geo",
+      "_meta": { "runtimeMs": 0.6910000026226044, "count": 5, "codeHash": "e04bbac8", "asyncDeps": [ "cgal", "clipper2" ] }
+    },
+    "capsule": {
+      "type": "geoscript",
+      "code": "export mesh = capsule(radius=8, height=4)",
+      "_meta": { "runtimeMs": 0.11800000369548798, "count": 5, "codeHash": "d0e5b28" }
+    },
+    "csg_i_beam": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "i_beam",
+            "rotation": [0, 1.5708, 0],
+            "scale": [1.6428, 2.371, 1.4532]
+          },
+          {
+            "asset": "capsule",
+            "position": [-11.2517, -5.6821, 0],
+            "rotation": [0, 0, -1.3107],
+            "scale": [1.3839, 2.0603, 1.3839]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 2.877000001072884, "count": 5, "codeHash": "35f2266f", "asyncDeps": [ "cgal", "clipper2" ] }
+    },
+    "warped_core": {
+      "type": "geoscript",
+      "file": "geo/warped_core.geo",
+      "_meta": { "runtimeMs": 1.0740000039339066, "count": 5, "codeHash": "68a7efa0" }
     }
   },
   "objects": [],

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
 
+  import 'src/viz/hierarchyPanel.css';
   import type { NodeDef, TreeDef } from 'src/geoscript/geotoyAPIClient';
   import { findParentId, isAncestorOf } from './treeOps';
   import { GLOBALS_SELECTION_ID } from './treeState.svelte';
@@ -332,21 +333,8 @@
   }
 
   .row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
     padding: 2px 4px;
-    cursor: pointer;
-    border: 1px solid transparent;
     user-select: none;
-  }
-
-  .row:hover {
-    background: #252525;
-  }
-
-  .row.selected {
-    background: #2a3a2a;
   }
 
   .row.failed {
@@ -371,30 +359,10 @@
     outline: 1px dashed #4a4;
   }
 
-  .chevron {
-    background: none;
-    border: none;
-    color: #aaa;
-    font-size: 10px;
-    cursor: pointer;
-    padding: 0;
-    width: 12px;
-    flex-shrink: 0;
-    line-height: 1;
-  }
-
   .chevron-spacer {
     display: inline-block;
     width: 12px;
     flex-shrink: 0;
-  }
-
-  .node-id {
-    flex: 1;
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .rename-input {
@@ -411,18 +379,6 @@
 
   .rename-input.invalid {
     border-color: #a44;
-  }
-
-  .badge {
-    font-size: 10px;
-    border-radius: 2px;
-    padding: 0 3px;
-    flex-shrink: 0;
-  }
-
-  .group-badge {
-    color: #888;
-    border: 1px solid #444;
   }
 
   .globals-badge {

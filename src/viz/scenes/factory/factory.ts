@@ -61,10 +61,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   loadedWorld.add(dashToken);
 
   const scoreThresholds: ScoreThresholds = {
-    [Score.SPlus]: Infinity,
-    [Score.S]: Infinity,
-    [Score.A]: Infinity,
-    [Score.B]: Infinity,
+    [Score.SPlus]: 75,
+    [Score.S]: 80,
+    [Score.A]: 85,
+    [Score.B]: 90,
   };
   const pkManager = new ParkourManager(
     viz,

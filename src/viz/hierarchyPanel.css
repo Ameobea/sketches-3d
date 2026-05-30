@@ -1,0 +1,53 @@
+/* Shared row/chevron/badge styles for hierarchy/tree panels. Used by:
+ *   src/viz/levelDef/HierarchyPanel.svelte
+ *   src/viz/scenes/geoscriptPlayground/HierarchyPanel.svelte
+ * Each component layers its own scoped overrides on top (padding, drop-over
+ * background, feature-specific badges, etc.). */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.row:hover {
+  background: #252525;
+}
+
+.row.selected {
+  background: #2a3a2a;
+}
+
+.chevron {
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0;
+  width: 12px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.node-id {
+  flex: 1;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  font-size: 10px;
+  border-radius: 2px;
+  padding: 0 3px;
+  flex-shrink: 0;
+}
+
+.group-badge {
+  color: #888;
+  border: 1px solid #444;
+}

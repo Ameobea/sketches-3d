@@ -20,11 +20,10 @@ export interface ReplaceLeafOptions {
 }
 
 /**
- * Replace a level object's Three.js instance in place, preserving its parent in the
- * scene hierarchy. Updates physics and mesh registration.
- *
- * This is the authoritative path for in-place instance replacement. Both geo hot-reload
- * and CSG asset re-resolution go through here.
+ * Replace a level object's Three.js instance in place, preserving its parent in
+ * the scene hierarchy and re-running physics + mesh registration. Authoritative
+ * path for in-place instance replacement; both geo hot-reload and CSG asset
+ * re-resolution funnel through here.
  */
 export function replaceLeafInstance(
   ctx: StructuralCtx,
@@ -54,6 +53,15 @@ export function replaceLeafInstance(
   ctx.syncPhysics(levelObj);
 }
 
+/** True if `id` matches any descendant (not the group itself) of `group`. */
+export function groupContainsDescendantId(group: LevelGroup, id: string): boolean {
+  for (const child of group.children) {
+    if (child.id === id) return true;
+    if (isLevelGroup(child) && groupContainsDescendantId(child, id)) return true;
+  }
+  return false;
+}
+
 /** Collect all LevelObjects that are leaves of this subtree. */
 export function collectSubtreeLeaves(node: LevelSceneNode): LevelObject[] {
   if (!isLevelGroup(node)) return [node];
@@ -65,7 +73,7 @@ export function collectSubtreeLeaves(node: LevelSceneNode): LevelObject[] {
 }
 
 /** Collect every LevelSceneNode in the subtree (root first, depth-first). */
-export function collectAllSubtreeNodes(node: LevelSceneNode): LevelSceneNode[] {
+function collectAllSubtreeNodes(node: LevelSceneNode): LevelSceneNode[] {
   if (!isLevelGroup(node)) return [node];
   const result: LevelSceneNode[] = [node];
   for (const child of node.children) {
@@ -90,10 +98,7 @@ function findPlacementInChildren(
   return null;
 }
 
-/**
- * Capture the current logical placement of a node (parent ref + index within
- * the parent's children array). Throws if the node is not in the tree.
- */
+/** Throws if the node is not in the tree. */
 export function capturePlacement(ctx: StructuralCtx, node: LevelSceneNode): Placement {
   const result = findPlacementInChildren(ctx.rootNodes, { type: 'root' }, node);
   if (!result) throw new Error(`[StructuralOps] capturePlacement: node "${node.id}" not found in tree`);
@@ -109,7 +114,6 @@ export function detachSubtree(ctx: StructuralCtx, node: LevelSceneNode): Runtime
   const leaves = collectSubtreeLeaves(node);
   const transform = snapshotTransform(node.object);
 
-  // Remove from logical tree
   if (placement.parent.type === 'root') {
     ctx.rootNodes.splice(placement.index, 1);
   } else {
@@ -117,10 +121,8 @@ export function detachSubtree(ctx: StructuralCtx, node: LevelSceneNode): Runtime
     parentGroup.children.splice(placement.index, 1);
   }
 
-  // Remove Three.js object from its parent
   (node.object.parent ?? ctx.viz.scene).remove(node.object);
 
-  // Deregister leaves
   for (const leaf of leaves) {
     const idx = ctx.allLevelObjects.indexOf(leaf);
     if (idx !== -1) ctx.allLevelObjects.splice(idx, 1);
@@ -128,7 +130,6 @@ export function detachSubtree(ctx: StructuralCtx, node: LevelSceneNode): Runtime
     ctx.removePhysics(leaf);
   }
 
-  // Clean up nodeById for the entire subtree
   for (const n of collectAllSubtreeNodes(node)) {
     ctx.nodeById.delete(n.id);
   }
@@ -136,15 +137,10 @@ export function detachSubtree(ctx: StructuralCtx, node: LevelSceneNode): Runtime
   return { root: node, placement, transform, leaves };
 }
 
-/**
- * Insert a subtree into the scene and all editor tracking structures at the
- * placement stored in the subtree. Works for both newly-built subtrees and
- * previously-detached ones.
- */
+/** Works for both newly-built subtrees and previously-detached ones. */
 export function attachSubtree(ctx: StructuralCtx, subtree: RuntimeSubtree): void {
   const { root, placement, transform, leaves } = subtree;
 
-  // Resolve Three.js parent and logical children array
   let threeParent: THREE.Object3D;
   let logicalChildren: LevelSceneNode[];
 
@@ -160,7 +156,7 @@ export function attachSubtree(ctx: StructuralCtx, subtree: RuntimeSubtree): void
     logicalChildren = parentNode.children;
   }
 
-  // Insert into logical tree (clamp index to avoid out-of-bounds splice)
+  // Clamp to handle re-attachments whose recorded index is past the current end.
   const insertIdx = Math.min(placement.index, logicalChildren.length);
   logicalChildren.splice(insertIdx, 0, root);
 
@@ -169,15 +165,14 @@ export function attachSubtree(ctx: StructuralCtx, subtree: RuntimeSubtree): void
   root.def.rotation = [...transform.rotation];
   root.def.scale = [...transform.scale];
 
-  // Add Three.js object to parent (children within a group are already parented to the group)
+  // Only the root needs re-parenting in the Three.js scene graph; descendants are
+  // already parented under it from when they were detached together.
   threeParent.add(root.object);
 
-  // Register all nodes in nodeById
   for (const n of collectAllSubtreeNodes(root)) {
     ctx.nodeById.set(n.id, n);
   }
 
-  // Register leaves with editor tracking
   for (const leaf of leaves) {
     ctx.allLevelObjects.push(leaf);
     ctx.registerMeshes(leaf);
@@ -185,10 +180,7 @@ export function attachSubtree(ctx: StructuralCtx, subtree: RuntimeSubtree): void
   }
 }
 
-/**
- * Apply a structural op and return its inverse.
- * Used by the undo system to replay ops in either direction.
- */
+/** Returns the inverse op so the undo system can replay in either direction. */
 export function applyStructuralOp(ctx: StructuralCtx, op: StructuralOp): StructuralOp {
   switch (op.type) {
     case 'attach_subtree': {

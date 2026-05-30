@@ -26,10 +26,7 @@ export const forEachMesh = (object: THREE.Object3D, cb: (mesh: THREE.Mesh) => vo
   });
 };
 
-export const applyShadowFlags = (
-  object: THREE.Object3D,
-  def: Pick<ObjectDef, 'castShadow' | 'receiveShadow'>
-) => {
+const applyShadowFlags = (object: THREE.Object3D, def: Pick<ObjectDef, 'castShadow' | 'receiveShadow'>) => {
   const castShadow = def.castShadow ?? true;
   const receiveShadow = def.receiveShadow ?? true;
   forEachMesh(object, mesh => {

@@ -64,7 +64,7 @@ export const applyShapeBuildResult = (
  * @param scale     Scale to apply to vertices before detection
  * @returns Box parameters if detected, or null
  */
-export const tryDetectBoxFromVertices = (
+const tryDetectBoxFromVertices = (
   vertices: Float32Array,
   indices: Uint16Array | undefined,
   scale: THREE.Vector3
@@ -204,7 +204,7 @@ export const tryDetectBoxFromVertices = (
   return null;
 };
 
-export const buildTrimeshShape = (
+const buildTrimeshShape = (
   Ammo: AmmoInterface,
   indices: Uint16Array | Uint32Array | undefined,
   vertices: Float32Array,

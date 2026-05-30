@@ -222,9 +222,9 @@
           "id": "wall",
           "asset": "csg_wall_1",
           "position": [0.1, -71.8664, -138.7516],
-          "material": "chipped_rusty_gray_painted_wall",
           "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "scale": [1, 1, 1],
+          "material": "chipped_rusty_gray_painted_wall"
         },
         {
           "id": "wall_7",
@@ -433,7 +433,7 @@
           "scale": [1, 1, 1]
         },
         {
-          "id": "group_2",
+          "id": "struts",
           "children": [
             {
               "id": "wall_35",
@@ -1068,20 +1068,28 @@
       "nocollide": true
     },
     {
-      "id": "pipes2_4",
-      "asset": "pipes2",
-      "position": [234.2467, -26.9131, -141.8446],
-      "rotation": [0, -1.5708, 0],
-      "scale": [1.3728, 1.3728, 1.3728],
-      "material": "rusty_metal"
-    },
-    {
-      "id": "pipes2_5",
-      "asset": "pipes2",
-      "position": [218.2908, -40.2063, -141.8446],
-      "rotation": [0, -1.5708, 0],
-      "scale": [1.3728, 1.3728, 1.3728],
-      "material": "rusty_metal"
+      "id": "pit_pipes",
+      "children": [
+        {
+          "id": "pipes2_4",
+          "asset": "pipes2",
+          "position": [7.9779, 6.6466, 0],
+          "rotation": [0, -1.5708, 0],
+          "scale": [1.3728, 1.3728, 1.3728],
+          "material": "rusty_metal"
+        },
+        {
+          "id": "pipes2_5",
+          "asset": "pipes2",
+          "position": [-7.978, -6.6466, 0],
+          "rotation": [0, -1.5708, 0],
+          "scale": [1.3728, 1.3728, 1.3728],
+          "material": "rusty_metal"
+        }
+      ],
+      "position": [226.2688, -33.5597, -141.8446],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     },
     {
       "id": "pipe_decoration2_3",
@@ -1108,54 +1116,6 @@
       "material": "rusty_metal_decoration"
     },
     {
-      "id": "center_jump_loop",
-      "children": [
-        {
-          "id": "plat_2",
-          "asset": "center_fenced_ring/plat",
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1],
-          "material": "horizontal_metal_1"
-        },
-        {
-          "id": "railing",
-          "asset": "center_fenced_ring/railing",
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
-          "scale": [1, 1, 1],
-          "material": "horizontal_metal_1"
-        },
-        {
-          "id": "bottom",
-          "asset": "center_fenced_ring/bottom",
-          "position": [0, -0.8731, 0],
-          "rotation": [0, 3.1416, 0],
-          "scale": [2, 1.5, 2],
-          "material": "horizontal_metal_1"
-        }
-      ],
-      "position": [205.1395, 75.4446, -170.5167],
-      "rotation": [0, 0, 0],
-      "scale": [1.4372, 1.8675, 1.4372]
-    },
-    {
-      "id": "plat1_13",
-      "asset": "plat1",
-      "position": [205.4123, 51.1845, -175.2693],
-      "rotation": [0, 0, 0],
-      "scale": [0.6971, 1, 1],
-      "material": "chipped_yellow_painted_cracked_stone"
-    },
-    {
-      "id": "plat1_14",
-      "asset": "plat1",
-      "position": [205.4123, 62.6133, -175.2693],
-      "rotation": [0, 0, 0],
-      "scale": [0.6971, 1, 1],
-      "material": "chipped_yellow_painted_cracked_stone"
-    },
-    {
       "id": "box_6",
       "asset": "box",
       "position": [206.1485, 77.2059, -214.9817],
@@ -1165,6 +1125,62 @@
       "parkour": {
         "checkpoint": 0
       }
+    },
+    {
+      "id": "jump_loop",
+      "children": [
+        {
+          "id": "plat1_13",
+          "asset": "plat1",
+          "position": [0.0909, -11.8963, -1.5842],
+          "rotation": [0, 0, 0],
+          "scale": [0.6971, 1, 1],
+          "material": "chipped_yellow_painted_cracked_stone"
+        },
+        {
+          "id": "plat1_14",
+          "asset": "plat1",
+          "position": [0.0909, -0.4675, -1.5842],
+          "rotation": [0, 0, 0],
+          "scale": [0.6971, 1, 1],
+          "material": "chipped_yellow_painted_cracked_stone"
+        },
+        {
+          "id": "center_jump_loop",
+          "children": [
+            {
+              "id": "plat_2",
+              "asset": "center_fenced_ring/plat",
+              "position": [0, 0, 0],
+              "rotation": [0, 0, 0],
+              "scale": [1, 1, 1],
+              "material": "horizontal_metal_1"
+            },
+            {
+              "id": "railing",
+              "asset": "center_fenced_ring/railing",
+              "position": [0, 0, 0],
+              "rotation": [0, 0, 0],
+              "scale": [1, 1, 1],
+              "material": "horizontal_metal_1"
+            },
+            {
+              "id": "bottom",
+              "asset": "center_fenced_ring/bottom",
+              "position": [0, -0.8731, 0],
+              "rotation": [0, 3.1416, 0],
+              "scale": [2, 1.5, 2],
+              "material": "horizontal_metal_1"
+            }
+          ],
+          "position": [-0.1819, 12.3638, 3.1684],
+          "rotation": [0, 0, 0],
+          "scale": [1.4372, 1.8675, 1.4372]
+        }
+      ],
+      "position": [205.3214, 63.0808, -173.6851],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     },
     {
       "id": "outside_platform_spawner",
@@ -1179,8 +1195,8 @@
           {
             "fn": "linearSlide",
             "params": {
-              "velocity": [-16, 0, 0],
-              "maxDistance": 360
+              "velocity": [-17, 0, 0],
+              "maxDistance": 150
             }
           }
         ]
@@ -1205,7 +1221,7 @@
     {
       "id": "pipes6",
       "asset": "pipes6",
-      "position": [13.5423, 189.7606, -257.261],
+      "position": [13.5423, 189.7606, -261.059],
       "rotation": [0, 0, 0],
       "scale": [1.8423, 2, 2],
       "material": "rusty_metal_decoration"
@@ -1213,10 +1229,247 @@
     {
       "id": "pipes6_1",
       "asset": "pipes6",
-      "position": [13.5423, 190.2606, -237.2731],
+      "position": [13.5423, 190.2606, -241.0711],
       "rotation": [0, 0, 0],
       "scale": [1.8423, 2, 2],
       "material": "rusty_metal_decoration"
+    },
+    {
+      "id": "furnace",
+      "children": [
+        {
+          "id": "box_7",
+          "asset": "csg_box_1",
+          "position": [-0.0097, 2.1094, 0],
+          "material": "horizontal_metal_1",
+          "rotation": [0, 0, 0],
+          "scale": [3.1453, 1, 1]
+        },
+        {
+          "id": "platform",
+          "asset": "platform",
+          "position": [-0.0097, -4.065, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.7072, 1, 1],
+          "material": "orange_emissive"
+        },
+        {
+          "id": "platform_1",
+          "asset": "platform",
+          "position": [0.0195, 1.9557, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.7071, 1, 1],
+          "material": "orange_emissive"
+        }
+      ],
+      "position": [92.5597, 76.8107, -233],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "plat1_15",
+      "asset": "plat1",
+      "position": [92.55, 78.9201, -247.781],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1.0162],
+      "material": "chipped_yellow_painted_cracked_stone"
+    },
+    {
+      "id": "vertical_pipe",
+      "asset": "vertical_pipe",
+      "position": [92.55, 125.0992, -231.4401],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "material": "rusty_metal_decoration"
+    },
+    {
+      "id": "elbow_pipe",
+      "asset": "elbow_pipe",
+      "position": [92.55, 55.147, -233],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "material": "rusty_metal_decoration"
+    },
+    {
+      "id": "cheese_wheel_1",
+      "asset": "csg_cheese_wheel",
+      "position": [-9.7545, 114.8768, -243.229],
+      "material": "horizontal_metal_1",
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "hanging_ibeam",
+      "children": [
+        {
+          "id": "rod_14",
+          "asset": "rod",
+          "position": [-28.2133, 2.6473, 0],
+          "rotation": [0, 0, 0],
+          "scale": [16.6542, 18.4857, 16.6542],
+          "material": "bumpy_copper"
+        },
+        {
+          "id": "rod_13",
+          "asset": "rod",
+          "position": [27.6846, 2.8506, 0],
+          "rotation": [0, 0, 0],
+          "scale": [16.6542, 18.4857, 16.6542],
+          "material": "bumpy_copper"
+        },
+        {
+          "id": "i_beam",
+          "asset": "csg_i_beam",
+          "position": [0.5285, -5.498, 0],
+          "material": "bumpy_copper",
+          "rotation": [0, 0, 0],
+          "scale": [1, 1.0589, 1.1611]
+        }
+      ],
+      "position": [-36.026, 111.8787, -285.1113],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "hanging_ibeam2",
+      "children": [
+        {
+          "id": "rod_14_2",
+          "asset": "rod",
+          "position": [-28.2133, 2.6473, 0],
+          "rotation": [0, 0, 0],
+          "scale": [16.6542, 18.4857, 16.6542],
+          "material": "bumpy_copper"
+        },
+        {
+          "id": "rod_13_2",
+          "asset": "rod",
+          "position": [27.6846, 2.8506, 0],
+          "rotation": [0, 0, 0],
+          "scale": [16.6542, 18.4857, 16.6542],
+          "material": "bumpy_copper"
+        },
+        {
+          "id": "i_beam_2",
+          "asset": "i_beam",
+          "position": [0.5285, -5.498, 0],
+          "material": "bumpy_copper",
+          "rotation": [0, 1.5708, 0],
+          "scale": [1.6428, 2.371, 1.4532]
+        }
+      ],
+      "position": [-128.8715, 111.8787, -285.1113],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "propeller",
+      "children": [
+        {
+          "id": "warped_core",
+          "asset": "warped_core",
+          "position": [0, 98.5926, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1],
+          "material": "sooty_silver_metal_localspace",
+          "behaviors": []
+        },
+        {
+          "id": "angled_plat_1",
+          "asset": "angled_plat",
+          "position": [28.4705, -56.5412, 0.5461],
+          "rotation": [0, -1.5708, 0],
+          "scale": [2.0111, 1.5, 1.8098],
+          "material": "chipped_yellow_painted_cracked_stone"
+        },
+        {
+          "id": "angled_plat_2",
+          "asset": "angled_plat",
+          "position": [-8.6439, -44.3348, -26.9545],
+          "rotation": [0, 0.3, 0],
+          "scale": [2.0111, 1.5, 1.8098],
+          "material": "chipped_yellow_painted_cracked_stone"
+        },
+        {
+          "id": "angled_plat_3",
+          "asset": "angled_plat",
+          "position": [-28.8262, -31.0219, 0.8952],
+          "rotation": [0, 1.6, 0],
+          "scale": [2.0111, 1.5, 1.8098],
+          "material": "chipped_yellow_painted_cracked_stone"
+        }
+      ],
+      "position": [-218.8732, 154.9822, -283.8876],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "propeller_1",
+      "children": [
+        {
+          "id": "warped_core_1",
+          "asset": "warped_core",
+          "position": [0, 98.5926, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1],
+          "material": "sooty_silver_metal_localspace",
+          "behaviors": []
+        },
+        {
+          "id": "angled_plat_4",
+          "asset": "angled_plat",
+          "position": [28.4705, -56.5412, 0.5461],
+          "rotation": [0, -1.5708, 0],
+          "scale": [2.0111, 1.5, 1.8098],
+          "material": "chipped_yellow_painted_cracked_stone"
+        },
+        {
+          "id": "angled_plat_5",
+          "asset": "angled_plat",
+          "position": [-8.6439, -44.3348, -26.9545],
+          "rotation": [0, 0.3, 0],
+          "scale": [2.0111, 1.5, 1.8098],
+          "material": "chipped_yellow_painted_cracked_stone"
+        },
+        {
+          "id": "angled_plat_6",
+          "asset": "angled_plat",
+          "position": [-28.8262, -31.0219, 0.8952],
+          "rotation": [0, 1.6, 0],
+          "scale": [2.0111, 1.5, 1.8098],
+          "material": "chipped_yellow_painted_cracked_stone"
+        }
+      ],
+      "position": [-295.184, 187.7619, -255.4062],
+      "rotation": [0, 1.0538, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "plat1_16",
+      "asset": "plat1",
+      "position": [-300.8079, 158.747, -200.1245],
+      "rotation": [0, 1.5708, 0],
+      "scale": [0.814, 1, 1.4259],
+      "material": "chipped_yellow_painted_cracked_stone"
+    },
+    {
+      "id": "wrap_arrow2_3",
+      "asset": "wrap_arrow2",
+      "position": [-300.2909, 135.7246, -128.4098],
+      "rotation": [1.5708, 0, 0],
+      "scale": [0.25, 0.3, 0.3],
+      "material": "highlight"
+    },
+    {
+      "id": "winpad",
+      "asset": "box",
+      "position": [-299.9151, 128.1291, -96.3055],
+      "rotation": [0, 0, 0],
+      "scale": [1.8896, 1.8587, 1.5166],
+      "material": "checkpoint",
+      "parkour": {
+        "win": true
+      }
     }
   ]
 }

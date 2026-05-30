@@ -13,10 +13,12 @@
     position: [number, number, number];
     rotation: [number, number, number];
     scale: [number, number, number];
+    canRecenterGroupOrigin: boolean;
     onapplytransform: (snap: Partial<TransformSnapshot>) => void;
     onrename: (newId: string) => void;
     onmaterialchange: (matId: string | null) => void;
     onconvertToCsg: () => void;
+    onrecenterorigin: () => void;
     ondelete: () => void;
   }
 
@@ -30,10 +32,12 @@
     position,
     rotation,
     scale,
+    canRecenterGroupOrigin,
     onapplytransform,
     onrename,
     onmaterialchange,
     onconvertToCsg,
+    onrecenterorigin,
     ondelete,
   }: Props = $props();
 
@@ -116,6 +120,12 @@
         {:else}
           <button class="action-btn" onclick={onconvertToCsg}>convert to CSG</button>
         {/if}
+      {/if}
+
+      {#if isGroup}
+        <button class="action-btn" onclick={onrecenterorigin} disabled={!canRecenterGroupOrigin}>
+          recenter origin
+        </button>
       {/if}
 
       <!-- Delete -->

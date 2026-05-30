@@ -5,25 +5,16 @@ import type { AssetLibFolder } from './assetLibTypes';
 
 /**
  * Manages selection state for the level editor, including multi-selection.
- *
- * The selection is an ordered array of scene nodes. The last element is the
+ * The selection is an ordered array of scene nodes; the last element is the
  * "primary" node — used for the info panel, transform anchor, etc.
- *
- * Light selection remains separate (single-select only, managed via
- * `selectedLight`).
+ * Light selection (`selectedLight`) is tracked separately and is single-select.
  */
 export class SelectionManager {
-  /** Ordered selection — last element is the primary node. */
   private _selectedNodes: LevelSceneNode[] = [];
-  /** Currently selected light (separate track from scene nodes). */
   selectedLight: LevelLight | null = null;
 
-  /**
-   * Reactive state object that drives the Svelte UI panels.
-   * Mutations to its properties are picked up by Svelte's reactivity system.
-   */
+  /** Reactive state driving the Svelte UI panels. */
   readonly state = $state({
-    /** IDs of all selected nodes (multi-select). */
     selectedNodeIds: [] as string[],
     /** ID of the primary (last-selected) node, or null. */
     nodeId: null as string | null,
@@ -36,13 +27,11 @@ export class SelectionManager {
     scale: [1, 1, 1] as [number, number, number],
     /** When non-null, a light is selected instead of a scene node. */
     selectedLightDef: null as LightDef | null,
-    /** Position of the selected light, synced from TransformControls. */
     lightPosition: [0, 0, 0] as [number, number, number],
     /** Incremented whenever rootNodes changes — triggers hierarchy panel re-render. */
     treeVersion: 0,
-    /** Incremented when a new asset is added — triggers asset list re-render in panel. */
+    /** Incremented when a new asset is added — triggers asset list re-render. */
     assetsVersion: 0,
-    /** Asset library folder tree, populated after fetch on editor open. */
     libFolders: [] as AssetLibFolder[],
   });
 
@@ -54,23 +43,19 @@ export class SelectionManager {
     return this._selectedNodes.length;
   }
 
-  /** The primary (last-selected) node, or null if nothing is selected. */
   get primaryNode(): LevelSceneNode | null {
     return this._selectedNodes.length > 0 ? this._selectedNodes[this._selectedNodes.length - 1] : null;
   }
 
-  /** Convenience: the primary node if it's a leaf object, otherwise null. */
   get primaryObject(): LevelObject | null {
     const node = this.primaryNode;
     return node && !isLevelGroup(node) ? node : null;
   }
 
-  /** True when exactly one node is selected. */
   get isSingle(): boolean {
     return this._selectedNodes.length === 1;
   }
 
-  /** True when more than one node is selected. */
   get isMulti(): boolean {
     return this._selectedNodes.length > 1;
   }
@@ -112,40 +97,26 @@ export class SelectionManager {
     return this._selectedNodes.every(n => getParentId(n) === firstParentId);
   }
 
-  isSelected(node: LevelSceneNode): boolean {
-    return this._selectedNodes.includes(node);
-  }
-
-  /**
-   * Replace the entire selection with a single node.
-   * Clears any active light selection.
-   */
   select(node: LevelSceneNode) {
     this.selectedLight = null;
     this._selectedNodes = [node];
   }
 
   /**
-   * Toggle a node in/out of the selection (ctrl+click behavior).
-   * Handles ancestor/descendant pruning: adding a group removes its
-   * descendants from the selection, and adding a child removes ancestor
-   * groups.
+   * Ctrl+click behavior. Adding a group removes any descendants already in the
+   * selection; adding a child removes any ancestor groups.
    */
   toggleSelect(node: LevelSceneNode) {
     this.selectedLight = null;
 
     const idx = this._selectedNodes.indexOf(node);
     if (idx !== -1) {
-      // Remove from selection
       this._selectedNodes = this._selectedNodes.filter((_, i) => i !== idx);
       return;
     }
 
-    // Prune ancestors and descendants
     this._selectedNodes = this._selectedNodes.filter(existing => {
-      // Remove if `existing` is an ancestor of `node`
       if (isLevelGroup(existing) && this.isDescendantOf(node, existing)) return false;
-      // Remove if `existing` is a descendant of `node`
       if (isLevelGroup(node) && this.isDescendantOf(existing, node)) return false;
       return true;
     });
@@ -153,42 +124,30 @@ export class SelectionManager {
     this._selectedNodes.push(node);
   }
 
-  /** Clear all node selection (does not clear light selection). */
   deselect() {
     this._selectedNodes = [];
   }
 
-  /**
-   * Replace the entire selection with the given list of nodes. Used for
-   * batch operations (e.g. selecting all clones produced by a multi-paste).
-   */
   selectMany(nodes: LevelSceneNode[]) {
     this.selectedLight = null;
     this._selectedNodes = [...nodes];
   }
 
-  /** Clear light selection. */
   deselectLight() {
     this.selectedLight = null;
   }
 
-  /** Select a light, clearing any node selection. */
   selectLight(light: LevelLight) {
     this._selectedNodes = [];
     this.selectedLight = light;
   }
 
-  /** Clear everything — nodes and lights. */
   clear() {
     this._selectedNodes = [];
     this.selectedLight = null;
   }
 
-  /**
-   * Sync the reactive `state` object from the current selection.
-   * Called after any selection change. The `isCsgAsset` flag is set
-   * by the caller since it depends on the CSG controller state.
-   */
+  /** `isCsgAsset` is passed in because it depends on the CSG controller's state. */
   syncState(opts: { isCsgAsset: boolean }) {
     if (this.selectedLight) {
       this.state.selectedNodeIds = [];
@@ -213,11 +172,6 @@ export class SelectionManager {
     this.syncTransformDisplay();
   }
 
-  /**
-   * Read the current Three.js object transform of the primary node into
-   * the reactive state. Called after selection changes, drag events,
-   * undo/redo, and replay.
-   */
   syncTransformDisplay() {
     const node = this.primaryNode;
     if (!node) {
@@ -233,17 +187,12 @@ export class SelectionManager {
     this.state.scale = obj.scale.toArray() as [number, number, number];
   }
 
-  /** Sync the light position into the reactive state. */
   syncLightPosition() {
     if (!this.selectedLight) return;
     const pos = this.selectedLight.light.position;
     this.state.lightPosition = [pos.x, pos.y, pos.z];
   }
 
-  /**
-   * Check whether `node` is a descendant of `group` by walking the
-   * group's children recursively.
-   */
   private isDescendantOf(node: LevelSceneNode, group: LevelGroup): boolean {
     for (const child of group.children) {
       if (child === node) return true;

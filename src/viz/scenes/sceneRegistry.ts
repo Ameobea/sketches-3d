@@ -1,21 +1,7 @@
 import type { SceneMetadata } from './index';
 
-/**
- * Source-of-truth list of every playable scene.  The `generated-scene-routes`
- * Vite plugin reads this at build/dev time and writes a per-scene SvelteKit
- * route under `src/routes/(generated)/<route>/+page.{svelte,server.ts}` for
- * each entry.  See `viteGeneratedScenesPlugin.ts` for the rationale behind
- * the static-import-based approach (modulepreload coverage).
- *
- * IMPORTANT: This file is intentionally *pure data* — it does not import any
- * scene module.  Anything that statically imports this file will pull every
- * scene into its chunk graph, defeating the whole point of the plugin.
- * Consumers other than the plugin should not exist.
- */
-
 export interface SceneRegistryEntry {
-  /** Path (relative to project root, via `src/...` alias) of the scene module
-   * exporting `processLoadedScene`. */
+  /** Path (relative to project root, via `src/...` alias) of the scene module exporting `processLoadedScene`. */
   modulePath: string;
   sceneName: string | null;
   gltfName?: string | null;

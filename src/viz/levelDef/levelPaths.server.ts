@@ -9,7 +9,7 @@ const resolveConfiguredPath = (configuredPath: string): string =>
  * Defaults to the source tree for local development, but can be overridden at
  * runtime for container builds that copy levels elsewhere.
  */
-export const getLevelsDir = (): string => {
+const getLevelsDir = (): string => {
   const configuredDir = process.env.LEVELS_DIR;
   return configuredDir ? resolveConfiguredPath(configuredDir) : join(process.cwd(), 'src', 'levels');
 };

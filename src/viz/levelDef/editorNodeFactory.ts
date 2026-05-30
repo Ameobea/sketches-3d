@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { ObjectDef, ObjectGroupDef } from './types';
 import type { LevelObject, LevelGroup } from './levelSceneTypes';
+import { isLevelGroup } from './levelSceneTypes';
 import { isObjectGroup } from './levelDefTreeUtils';
 import { LEVEL_PLACEHOLDER_MAT, applyTransform, instantiateLevelObject } from './levelObjectUtils';
 import { Entity } from '../sceneRuntime/Entity';
@@ -44,15 +45,17 @@ export function buildGroupSubtree(ctx: BuildCtx, def: ObjectGroupDef): LevelGrou
   const groupObj = new THREE.Group();
   applyTransform(groupObj, def);
 
+  // Strip `children` from the runtime def: hierarchy lives only in `levelGroup.children`.
+  const { children: childDefs, ...body } = def;
   const levelGroup: LevelGroup = {
     id: def.id,
     object: groupObj,
-    def,
+    def: body,
     children: [],
     generated: false,
   };
 
-  for (const childDef of def.children) {
+  for (const childDef of childDefs) {
     if (isObjectGroup(childDef)) {
       const child = buildGroupSubtree(ctx, childDef);
       groupObj.add(child.object);
@@ -65,4 +68,17 @@ export function buildGroupSubtree(ctx: BuildCtx, def: ObjectGroupDef): LevelGrou
   }
 
   return levelGroup;
+}
+
+/**
+ * Project a runtime group subtree into a fresh `ObjectGroupDef`. The result is
+ * safe to send over the wire or stash on the clipboard; descendant defs are
+ * shallow-cloned (callers that need a fully detached snapshot should JSON-clone
+ * the result).
+ */
+export function serializeGroup(group: LevelGroup): ObjectGroupDef {
+  return {
+    ...group.def,
+    children: group.children.map(child => (isLevelGroup(child) ? serializeGroup(child) : { ...child.def })),
+  };
 }

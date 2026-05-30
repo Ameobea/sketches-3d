@@ -10,13 +10,6 @@ p = build_path(
 )
 p = path_scale(4, p)
 
-// 0..10000
-//   -> |i| {
-//     v = p(i/10000)
-//     vec3(v.x, 0, v.y)
-//   }
-//   | render
-
 spine_bevel_exponent = 5
 
 export mesh = rail_sweep(

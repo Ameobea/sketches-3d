@@ -6,7 +6,7 @@ import type { ObjectDef, ObjectGroupDef } from './types';
 import type { StructuralCtx, RuntimeSubtree, StructuralOp, ParentRef } from './editorStructuralTypes';
 import type { BuildCtx } from './editorNodeFactory';
 import type { LevelEditorApi } from './levelEditorApi';
-import { buildLeafNode, buildGroupSubtree } from './editorNodeFactory';
+import { buildLeafNode, buildGroupSubtree, serializeGroup } from './editorNodeFactory';
 import {
   attachSubtree,
   detachSubtree,
@@ -26,11 +26,10 @@ export type StructuralUndoEntry = {
 };
 
 /**
- * A single clipboard entry produced by Ctrl+C on a selected node.
- * Stores the def (deep-cloned), the source node's parent, and the source's
- * world-space transform at copy-time. At paste-time, the target parent is
- * resolved (falling back to root if the original parent is gone) and the
- * world transform is projected into the resolved parent's local space.
+ * A clipboard entry from Ctrl+C. `worldTransform` is captured at copy time so
+ * paste can place the clone sensibly even if the original parent is gone — in
+ * that case it falls back to root and the world transform is projected into
+ * root-local space.
  */
 export type ClipboardEntry =
   | {
@@ -53,16 +52,11 @@ const PASTE_Y_OFFSET = 0.5;
 type MutationCtx = StructuralCtx & BuildCtx;
 
 /**
- * Coordinator for all structural mutation workflows in the level editor.
- *
- * Sits above `editorStructuralOps.ts` and owns:
- * - applying structural ops locally
- * - deriving persistence actions from structural ops
- * - sequencing structural server sync
- * - building compound structural undo entries for higher-level operations
- *
- * LevelEditor delegates structural operations here and handles selection / UI
- * state updates based on the returned results.
+ * Coordinator for structural mutations in the level editor. Sits above
+ * `editorStructuralOps.ts`: applies ops locally, derives persistence calls
+ * from them, sequences server sync, and bundles compound structural undo
+ * entries for higher-level operations. LevelEditor delegates here and reacts
+ * to the returned results for selection / UI updates.
  */
 export class EditorMutationController {
   private structuralSyncQueue: Promise<void> = Promise.resolve();
@@ -75,10 +69,6 @@ export class EditorMutationController {
     /** Purge matching entries from both undo and redo stacks. */
     private undoPurge: (pred: (entry: any) => boolean) => void
   ) {}
-
-  // ---------------------------------------------------------------------------
-  // Persistence queueing
-  // ---------------------------------------------------------------------------
 
   enqueueStructuralSync(task: () => Promise<void>): Promise<void> {
     this.structuralSyncQueue = this.structuralSyncQueue
@@ -135,12 +125,8 @@ export class EditorMutationController {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Undo application
-  // ---------------------------------------------------------------------------
-
   /**
-   * Apply the ops from a structural undo/redo entry and enqueue persistence.
+   * Apply ops from a structural undo/redo entry and enqueue persistence.
    * Returns the last attached node (to select) or null (to deselect).
    */
   applyStructuralUndoEntry(entry: StructuralUndoEntry, direction: 'undo' | 'redo'): LevelSceneNode | null {
@@ -154,15 +140,6 @@ export class EditorMutationController {
     return nodeToSelect;
   }
 
-  // ---------------------------------------------------------------------------
-  // Spawn / paste operations
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Spawn a new leaf object at the given position.
-   * Handles the server call, local attach, and undo registration.
-   * Returns the new node or null on server failure.
-   */
   async spawnLeaf(
     assetId: string,
     materialId: string | undefined,
@@ -177,11 +154,7 @@ export class EditorMutationController {
     return this._finalizeSpawnLeaf(assetId, newDef);
   }
 
-  /**
-   * Spawn a new empty group at the given position.
-   * Handles the server call and local attach. No undo entry (matches original behavior).
-   * Returns the new group or null on server failure.
-   */
+  /** No undo entry — matches the pre-mutation-controller behavior. */
   async spawnGroup(position: [number, number, number]): Promise<LevelGroup | null> {
     const newDef = await this.api.sendAddGroup({ position });
     if (!newDef) return null;
@@ -189,10 +162,12 @@ export class EditorMutationController {
     const groupObj = new THREE.Group();
     groupObj.position.fromArray(newDef.position ?? [0, 0, 0]);
 
+    // Strip `children` from the runtime def — the hierarchy lives only on `LevelGroup.children`.
+    const { children: _omitChildren, ...body } = newDef;
     const levelGroup: LevelGroup = {
       id: newDef.id,
       object: groupObj,
-      def: newDef as ObjectGroupDef,
+      def: body,
       children: [],
       generated: false,
     };
@@ -216,7 +191,7 @@ export class EditorMutationController {
     if (isLevelGroup(node)) {
       return {
         kind: 'group',
-        def: JSON.parse(JSON.stringify(node.def)),
+        def: JSON.parse(JSON.stringify(serializeGroup(node))),
         parent,
         worldTransform,
       };
@@ -231,13 +206,10 @@ export class EditorMutationController {
   }
 
   /**
-   * Paste a batch of clipboard entries. Each entry is placed as a sibling of
-   * its original source (or at root, if the source's parent is gone). World
-   * placement is preserved via world→local projection, with a small local-Y
-   * offset per clone to avoid overlapping the source.
-   *
-   * All successfully pasted clones are bundled into a single compound
-   * structural undo entry. Returns the new root nodes in paste order.
+   * Each entry is placed as a sibling of its original source (or at root, if
+   * the source's parent is gone) with a small local-Y offset to avoid overlap.
+   * All clones are bundled into a single structural undo entry. Returns the
+   * new root nodes in paste order.
    */
   async pasteEntries(entries: ClipboardEntry[]): Promise<LevelSceneNode[]> {
     const newSubtrees: RuntimeSubtree[] = [];
@@ -262,7 +234,6 @@ export class EditorMutationController {
   }
 
   private async _pasteOne(entry: ClipboardEntry): Promise<{ subtree: RuntimeSubtree } | null> {
-    // Validate asset prototypes are available.
     if (entry.kind === 'object') {
       if (!this.ctx.prototypes.has(entry.assetId)) {
         console.warn(
@@ -279,7 +250,7 @@ export class EditorMutationController {
       }
     }
 
-    // Resolve target parent, falling back to root if the original is gone or generated.
+    // Fall back to root if the source parent is gone or has become generated (read-only).
     let parentRef: ParentRef = entry.parent;
     let targetParentObj: THREE.Object3D = this.ctx.viz.scene;
     let targetChildren: LevelSceneNode[] = this.ctx.rootNodes;
@@ -293,7 +264,6 @@ export class EditorMutationController {
       }
     }
 
-    // Project world transform into the resolved parent's local space and apply offset.
     const local = worldToLocalSnapshot(entry.worldTransform, targetParentObj);
     local.position = [local.position[0], local.position[1] + PASTE_Y_OFFSET, local.position[2]];
     const position = local.position.map(round) as [number, number, number];
@@ -339,14 +309,7 @@ export class EditorMutationController {
     return { subtree };
   }
 
-  // ---------------------------------------------------------------------------
-  // Delete
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Detach and delete the given nodes. Purges stale transform undo entries.
-   * The caller is responsible for deselecting before calling this.
-   */
+  /** Caller is responsible for deselecting before this runs. */
   deleteNodes(nodes: LevelSceneNode[]): void {
     const undoOps: StructuralOp[] = [];
     const redoOps: StructuralOp[] = [];
@@ -364,7 +327,6 @@ export class EditorMutationController {
 
     if (undoOps.length === 0) return;
 
-    // Remove stale transform entries for deleted nodes before pushing the structural entry.
     this.undoPurge(
       (e: any) => e.type === 'transform' && e.entries?.some((te: any) => deletedNodes.has(te.node))
     );
@@ -377,22 +339,13 @@ export class EditorMutationController {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Group / reparent
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Group a set of sibling nodes into a new parent group.
-   * The caller is responsible for deselecting before calling this.
-   * Returns the new group or null on server failure.
-   */
+  /** Caller is responsible for deselecting before this runs. */
   async groupNodes(editableNodes: LevelSceneNode[]): Promise<LevelGroup | null> {
     // Capture placements before any mutation so indices remain valid.
     const placements = editableNodes.map(n => ({ node: n, placement: capturePlacement(this.ctx, n) }));
     const insertIndex = Math.min(...placements.map(p => p.placement.index));
     const sharedParent = placements[0].placement.parent;
 
-    // Compute the group origin in the shared parent's local space.
     const centroid = new THREE.Vector3();
     for (const node of editableNodes) {
       centroid.add(node.object.getWorldPosition(new THREE.Vector3()));
@@ -421,14 +374,13 @@ export class EditorMutationController {
 
     const groupOrigin = new THREE.Vector3().fromArray(newDef.position ?? requestedPosition);
 
-    // Detach each selected node. Collect subtrees in order for correct undo reversal.
     const detachedSubtrees: RuntimeSubtree[] = [];
     for (const node of editableNodes) {
       detachedSubtrees.push(detachSubtree(this.ctx, node));
     }
 
-    // Adjust each node's local position relative to the new group origin so world
-    // placement is preserved when they are re-parented under the group.
+    // Subtract the new group origin so each child's world position is preserved
+    // when it's re-parented under the group.
     for (const sub of detachedSubtrees) {
       sub.root.object.position.sub(groupOrigin);
       sub.root.object.position.set(
@@ -446,16 +398,15 @@ export class EditorMutationController {
       groupObj.add(sub.root.object);
     }
 
+    // Strip `children` from the runtime def — the hierarchy lives only on `LevelGroup.children`.
+    const { children: _omitChildren, ...body } = newDef;
     const levelGroup: LevelGroup = {
       id: newDef.id,
       object: groupObj,
-      def: newDef as ObjectGroupDef,
+      def: body,
       children: detachedSubtrees.map(s => s.root),
       generated: false,
     };
-    // Rebind def.children to live child def references so subsequent mutations
-    // (transform, material) are reflected when the group is serialized.
-    levelGroup.def.children = detachedSubtrees.map(s => s.root.def);
 
     const allLeaves = detachedSubtrees.flatMap(s => s.leaves);
     const groupSubtree: RuntimeSubtree = {
@@ -482,14 +433,13 @@ export class EditorMutationController {
   }
 
   /**
-   * Reparent nodes to a new parent (or to root if targetParentId is null).
-   * Preserves world-space transforms. The caller is responsible for pre-validating
-   * that validNodes are non-generated, non-circular, and that the target is a valid group.
+   * Reparent nodes to `targetParentId` (or to root if null), preserving world-space
+   * transforms. Caller validates that the nodes are non-generated, non-circular, and
+   * that the target is a valid group.
    */
   async reparentNodes(validNodes: LevelSceneNode[], targetParentId: string | null): Promise<void> {
     const targetParent = targetParentId ? (this.ctx.nodeById.get(targetParentId) as LevelGroup) : null;
 
-    // Capture world transforms BEFORE detachment.
     const worldTransforms = validNodes.map(node => {
       const worldPos = new THREE.Vector3();
       const worldQuat = new THREE.Quaternion();
@@ -500,13 +450,11 @@ export class EditorMutationController {
       return { worldPos, worldQuat, worldScale };
     });
 
-    // Detach all nodes.
     const detachedSubtrees: RuntimeSubtree[] = [];
     for (const node of validNodes) {
       detachedSubtrees.push(detachSubtree(this.ctx, node));
     }
 
-    // Determine insertion index after detach (append to the target's current children).
     const targetChildren: LevelSceneNode[] = targetParentId ? targetParent!.children : this.ctx.rootNodes;
     const insertionIndex = targetChildren.length;
 
@@ -522,7 +470,7 @@ export class EditorMutationController {
 
       attachSubtree(this.ctx, sub);
 
-      // Restore world-space transform expressed in the new parent's local space.
+      // Restore the world-space transform, re-expressed in the new parent's local frame.
       const parent = node.object.parent ?? this.ctx.viz.scene;
       parent.updateMatrixWorld();
       const parentInv = parent.matrixWorld.clone().invert();
@@ -551,7 +499,6 @@ export class EditorMutationController {
 
       node.object.updateMatrixWorld(true);
 
-      // Re-sync physics for all leaves in the subtree (world transform changed).
       for (const leaf of collectSubtreeLeaves(node)) {
         this.ctx.syncPhysics(leaf);
       }
@@ -584,10 +531,6 @@ export class EditorMutationController {
         .then(() => undefined)
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // Internal helpers
-  // ---------------------------------------------------------------------------
 
   private _finalizeSpawnLeaf(assetId: string, newDef: ObjectDef): LevelObject {
     const leaf = buildLeafNode(this.ctx, assetId, newDef);

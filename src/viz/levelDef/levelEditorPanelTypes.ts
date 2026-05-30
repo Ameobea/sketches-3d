@@ -21,6 +21,7 @@ export interface LevelEditorPanelActions {
   convertToCsg(): void;
   groupSelected?(): void;
   reparent?(parentId: string | null): void;
+  recenterGroupOrigin(): void;
 }
 
 export interface LevelEditorPanelViewState {
@@ -45,4 +46,5 @@ export interface LevelEditorPanelViewState {
   scale: [number, number, number];
   canGroupSelected?: boolean;
   canConvertSelectedToCsg?: boolean;
+  canRecenterGroupOrigin: boolean;
 }

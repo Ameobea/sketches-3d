@@ -1,7 +1,6 @@
-import type { CsgTreeNode, CsgLeafNode, CsgOpNode } from './types';
+import type { CsgTreeNode, CsgOpNode } from './types';
 
 export const isOpNode = (node: CsgTreeNode): node is CsgOpNode => 'op' in node;
-export const isLeafNode = (node: CsgTreeNode): node is CsgLeafNode => 'asset' in node;
 
 export const cloneTree = (node: CsgTreeNode): CsgTreeNode => JSON.parse(JSON.stringify(node));
 
@@ -101,20 +100,4 @@ export const computeNodePolarities = (tree: CsgTreeNode): Map<string, 'positive'
 
   walk(tree, 'positive', '');
   return out;
-};
-
-/** Collect paths of all leaf nodes in the tree. */
-export const collectLeafPaths = (tree: CsgTreeNode): string[] => {
-  const paths: string[] = [];
-  const walk = (node: CsgTreeNode, path: string) => {
-    if (isLeafNode(node)) {
-      paths.push(path);
-    } else {
-      for (let i = 0; i < node.children.length; i++) {
-        walk(node.children[i], path ? `${path}.${i}` : `${i}`);
-      }
-    }
-  };
-  walk(tree, '');
-  return paths;
 };

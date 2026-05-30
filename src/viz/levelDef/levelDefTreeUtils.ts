@@ -4,7 +4,7 @@ export const GENERATED_NODE_USERDATA_KEY = '__generated';
 
 export const isObjectGroup = (n: ObjectDef | ObjectGroupDef): n is ObjectGroupDef => 'children' in n;
 
-export const isGeneratedDef = (n: ObjectDef | ObjectGroupDef) =>
+export const isGeneratedDef = (n: { userData?: Record<string, unknown> }) =>
   n.userData?.[GENERATED_NODE_USERDATA_KEY] === true;
 
 /** Recursive DFS search by id. Returns null if not found. */
@@ -21,26 +21,6 @@ export const findNodeById = (
   }
   return null;
 };
-
-/** Immutable update of a node's transform fields. Returns a new array. */
-export const updateNodeTransform = (
-  nodes: (ObjectDef | ObjectGroupDef)[],
-  id: string,
-  snap: {
-    position?: [number, number, number];
-    rotation?: [number, number, number];
-    scale?: [number, number, number];
-  }
-): (ObjectDef | ObjectGroupDef)[] =>
-  nodes.map(node => {
-    if (node.id === id) {
-      return { ...node, ...snap };
-    }
-    if (isObjectGroup(node)) {
-      return { ...node, children: updateNodeTransform(node.children, id, snap) };
-    }
-    return node;
-  });
 
 /** Collect all leaf ObjectDefs from the tree (flattened). */
 export const flattenLeaves = (nodes: (ObjectDef | ObjectGroupDef)[]): ObjectDef[] => {
@@ -116,26 +96,4 @@ export const findNodeWithParent = (
     }
   }
   return null;
-};
-
-/**
- * Check whether a node is a descendant of a potential ancestor group.
- */
-export const isDescendantOf = (
-  nodes: (ObjectDef | ObjectGroupDef)[],
-  potentialAncestorId: string,
-  targetId: string
-): boolean => {
-  const ancestor = findNodeById(nodes, potentialAncestorId);
-  if (!ancestor || !isObjectGroup(ancestor)) return false;
-
-  const walk = (node: ObjectGroupDef): boolean => {
-    for (const child of node.children) {
-      if (child.id === targetId) return true;
-      if (isObjectGroup(child) && walk(child)) return true;
-    }
-    return false;
-  };
-
-  return walk(ancestor);
 };

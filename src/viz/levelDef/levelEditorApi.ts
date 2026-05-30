@@ -11,6 +11,8 @@ import type { LevelSceneNode } from './loadLevelDef';
 import type { RuntimeSubtree } from './editorStructuralTypes';
 import type { TransformSnapshot } from './TransformHandler';
 import { round } from './mathUtils';
+import { isLevelGroup } from './levelSceneTypes';
+import { serializeGroup } from './editorNodeFactory';
 
 export class LevelEditorApi {
   constructor(private levelName: string) {}
@@ -136,7 +138,10 @@ export class LevelEditorApi {
   };
 
   restoreSubtree = async (subtree: RuntimeSubtree): Promise<void> => {
-    const def = JSON.parse(JSON.stringify(subtree.root.def)) as ObjectDef | ObjectGroupDef;
+    // For groups, materialize the full subtree from the runtime tree; leaves serialize
+    // directly from their (non-children-bearing) def.
+    const sourceDef = isLevelGroup(subtree.root) ? serializeGroup(subtree.root) : subtree.root.def;
+    const def = JSON.parse(JSON.stringify(sourceDef)) as ObjectDef | ObjectGroupDef;
     def.position = subtree.transform.position.map(round) as [number, number, number];
     def.rotation = subtree.transform.rotation.map(round) as [number, number, number];
     def.scale = subtree.transform.scale.map(round) as [number, number, number];

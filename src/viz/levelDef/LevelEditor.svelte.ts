@@ -18,7 +18,6 @@ import {
 } from './TransformHandler';
 import type { TransformSnapshot, TransformMode } from './TransformHandler';
 import { LEVEL_PLACEHOLDER_MAT, SELECTION_HIGHLIGHT_MAT, assignMaterial } from './levelObjectUtils';
-import { isDescendantOf } from './levelDefTreeUtils';
 import { resolveGeoscriptAsset } from './loadLevelDef';
 import LevelEditorPanel from './LevelEditorPanel.svelte';
 import { LevelEditorApi } from './levelEditorApi';
@@ -30,7 +29,7 @@ import { clearPhysicsBinding } from '../util/physics';
 import { withWorldSpaceTransform } from '../util/three';
 import { installClickRaycaster } from '../util/clickRaycaster';
 import { round } from './mathUtils';
-import { collectSubtreeLeaves } from './editorStructuralOps';
+import { collectSubtreeLeaves, groupContainsDescendantId } from './editorStructuralOps';
 import { EditorMutationController } from './editorMutationController';
 import type { StructuralUndoEntry, ClipboardEntry } from './editorMutationController';
 import type { LevelEditorPanelActions, LevelEditorPanelViewState } from './levelEditorPanelTypes';
@@ -252,9 +251,6 @@ export class LevelEditor {
       }
     }
   }
-
-  private snapshotTransform = snapshotTransform;
-  private applySnapshot = applySnapshot;
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Tab') {
@@ -568,6 +564,12 @@ export class LevelEditor {
         void state.selectedNodeIds;
         return self.canConvertSelectedToCsg;
       },
+      get canRecenterGroupOrigin() {
+        void state.treeVersion;
+        void state.selectedNodeIds;
+        const node = self.selectedNode;
+        return !!node && isLevelGroup(node) && !node.generated && node.children.length > 0;
+      },
     };
     const actions: LevelEditorPanelActions = {
       selectNode: (node, ctrlKey) => {
@@ -602,6 +604,7 @@ export class LevelEditor {
       convertToCsg: () => void this.convertSelectedToCsg(),
       groupSelected: () => void this.groupSelected(),
       reparent: parentId => void this.reparentSelected(parentId),
+      recenterGroupOrigin: () => this.recenterSelectedGroupOrigin(),
     };
 
     this.panelComponent = mount(LevelEditorPanel, {
@@ -650,7 +653,7 @@ export class LevelEditor {
     const node = this.selectedNode;
     if (!node || node.generated) return;
     const obj = node.object;
-    const before = this.snapshotTransform(obj);
+    const before = snapshotTransform(obj);
 
     if (snap.position) {
       obj.position.fromArray(snap.position);
@@ -665,7 +668,7 @@ export class LevelEditor {
       this.selectionState.scale = snap.scale;
     }
 
-    const after = this.snapshotTransform(obj);
+    const after = snapshotTransform(obj);
     if (!snapshotsEqual(before, after)) {
       this.undoSystem.push({ type: 'transform', entries: [{ node, before, after }] });
       this.api.saveTransform(node);
@@ -882,23 +885,25 @@ export class LevelEditor {
     });
   }
 
+  private createLightProxy(levelLight: LevelLight) {
+    if (isNonPositionalLight(levelLight.def)) return;
+    const mat = new THREE.MeshBasicMaterial({
+      color: levelLight.def.color ?? 0xffffff,
+      transparent: true,
+      opacity: 0.75,
+      depthTest: false,
+    });
+    const proxy = new THREE.Mesh(this.lightProxyGeometry, mat);
+    if (levelLight.def.position) proxy.position.fromArray(levelLight.def.position);
+    proxy.renderOrder = 999;
+    this.viz.scene.add(proxy);
+    this.lightProxyMeshes.push(proxy);
+    this.meshToLevelLight.set(proxy, levelLight);
+    this.lightToProxy.set(levelLight.id, proxy);
+  }
+
   private createLightProxies() {
-    for (const levelLight of this.allLevelLights) {
-      if (isNonPositionalLight(levelLight.def)) continue; // no position to show
-      const mat = new THREE.MeshBasicMaterial({
-        color: levelLight.def.color ?? 0xffffff,
-        transparent: true,
-        opacity: 0.75,
-        depthTest: false,
-      });
-      const proxy = new THREE.Mesh(this.lightProxyGeometry, mat);
-      if (levelLight.def.position) proxy.position.fromArray(levelLight.def.position);
-      proxy.renderOrder = 999;
-      this.viz.scene.add(proxy);
-      this.lightProxyMeshes.push(proxy);
-      this.meshToLevelLight.set(proxy, levelLight);
-      this.lightToProxy.set(levelLight.id, proxy);
-    }
+    for (const levelLight of this.allLevelLights) this.createLightProxy(levelLight);
   }
 
   private destroyLightProxies() {
@@ -997,7 +1002,6 @@ export class LevelEditor {
 
     removeLevelLightFromScene(this.viz.scene, levelLight);
 
-    // Remove proxy
     const proxy = this.lightToProxy.get(levelLight.id);
     if (proxy) {
       this.viz.scene.remove(proxy);
@@ -1008,7 +1012,6 @@ export class LevelEditor {
       this.lightToProxy.delete(levelLight.id);
     }
 
-    // Remove from allLevelLights and levelDef
     const idx = this.allLevelLights.indexOf(levelLight);
     if (idx !== -1) this.allLevelLights.splice(idx, 1);
     if (this.levelDef.lights) {
@@ -1041,22 +1044,7 @@ export class LevelEditor {
     if (!this.levelDef.lights) this.levelDef.lights = [];
     this.levelDef.lights.push(newDef);
 
-    // Create proxy if positional
-    if (!isNonPositionalLight(newDef)) {
-      const mat = new THREE.MeshBasicMaterial({
-        color: newDef.color ?? 0xffffff,
-        transparent: true,
-        opacity: 0.75,
-        depthTest: false,
-      });
-      const proxy = new THREE.Mesh(this.lightProxyGeometry, mat);
-      if (newDef.position) proxy.position.fromArray(newDef.position);
-      proxy.renderOrder = 999;
-      this.viz.scene.add(proxy);
-      this.lightProxyMeshes.push(proxy);
-      this.meshToLevelLight.set(proxy, levelLight);
-      this.lightToProxy.set(newDef.id, proxy);
-    }
+    this.createLightProxy(levelLight);
 
     this.selectionState.treeVersion++;
     this.selectLight(levelLight);
@@ -1087,7 +1075,7 @@ export class LevelEditor {
     if (entry.type === 'transform') {
       for (const te of entry.entries) {
         const snap = direction === 'undo' ? te.before : te.after;
-        this.applySnapshot(te.node.object, snap);
+        applySnapshot(te.node.object, snap);
         this.api.saveTransform(te.node);
         this.syncSceneNodePhysics(te.node);
       }
@@ -1134,6 +1122,99 @@ export class LevelEditor {
   }
 
   /**
+   * Move the selected group's origin to the centroid of its direct children's
+   * world positions, preserving every child's world transform by re-projecting
+   * it into the group's new local frame.
+   */
+  private recenterSelectedGroupOrigin() {
+    const node = this.selectedNode;
+    if (!node || !isLevelGroup(node) || node.generated) return;
+    if (node.children.length === 0) return;
+
+    const groupObj = node.object;
+    const groupParent = groupObj.parent ?? this.viz.scene;
+    groupParent.updateMatrixWorld(true);
+
+    const worldCentroid = new THREE.Vector3();
+    const tmp = new THREE.Vector3();
+    for (const child of node.children) {
+      worldCentroid.add(child.object.getWorldPosition(tmp));
+    }
+    worldCentroid.divideScalar(node.children.length);
+    const localCentroid = groupParent.worldToLocal(worldCentroid);
+    const newGroupPos: [number, number, number] = [
+      round(localCentroid.x),
+      round(localCentroid.y),
+      round(localCentroid.z),
+    ];
+
+    if (
+      Math.abs(newGroupPos[0] - groupObj.position.x) < 1e-6 &&
+      Math.abs(newGroupPos[1] - groupObj.position.y) < 1e-6 &&
+      Math.abs(newGroupPos[2] - groupObj.position.z) < 1e-6
+    ) {
+      return;
+    }
+
+    // Capture children's world matrices BEFORE moving the group; we'll re-project
+    // them into the new local frame so world transforms are preserved.
+    const childWorldMatrices = node.children.map(child => {
+      child.object.updateMatrixWorld(true);
+      return child.object.matrixWorld.clone();
+    });
+    const groupBefore = snapshotTransform(groupObj);
+    const childrenBefore = node.children.map(c => snapshotTransform(c.object));
+
+    groupObj.position.fromArray(newGroupPos);
+    groupObj.updateMatrixWorld(true);
+    const groupWorldInv = new THREE.Matrix4().copy(groupObj.matrixWorld).invert();
+
+    const newLocal = new THREE.Matrix4();
+    const decomposedPos = new THREE.Vector3();
+    const decomposedQuat = new THREE.Quaternion();
+    const decomposedScale = new THREE.Vector3();
+    for (let i = 0; i < node.children.length; i++) {
+      const child = node.children[i];
+      newLocal.copy(groupWorldInv).multiply(childWorldMatrices[i]);
+      newLocal.decompose(decomposedPos, decomposedQuat, decomposedScale);
+      child.object.position.copy(decomposedPos);
+      child.object.quaternion.copy(decomposedQuat);
+      child.object.scale.copy(decomposedScale);
+      // Match the precision used elsewhere when serializing transforms.
+      child.object.position.set(
+        round(child.object.position.x),
+        round(child.object.position.y),
+        round(child.object.position.z)
+      );
+      child.object.scale.set(
+        round(child.object.scale.x),
+        round(child.object.scale.y),
+        round(child.object.scale.z)
+      );
+      child.object.updateMatrixWorld(true);
+    }
+
+    const entries: Array<{ node: LevelSceneNode; before: TransformSnapshot; after: TransformSnapshot }> = [
+      { node, before: groupBefore, after: snapshotTransform(groupObj) },
+    ];
+    for (let i = 0; i < node.children.length; i++) {
+      const after = snapshotTransform(node.children[i].object);
+      if (!snapshotsEqual(childrenBefore[i], after)) {
+        entries.push({ node: node.children[i], before: childrenBefore[i], after });
+      }
+    }
+    this.undoSystem.push({ type: 'transform', entries });
+
+    void this.api.saveTransform(node);
+    for (const child of node.children) {
+      void this.api.saveTransform(child);
+      this.syncSceneNodePhysics(child);
+    }
+
+    this.syncTransformFromNode();
+  }
+
+  /**
    * True when the current selection is eligible for "convert to CSG":
    * - At least one node selected
    * - All selected nodes are leaf objects (no groups), non-generated
@@ -1171,26 +1252,19 @@ export class LevelEditor {
 
     const { resolvedId } = result;
 
-    // Update the in-memory node and its def.
     node.id = resolvedId;
     node.def.id = resolvedId;
 
-    // Re-key the nodeById map.
     this.nodeById.delete(oldId);
     this.nodeById.set(resolvedId, node);
 
-    // Sync the selection display.
     if (this.selectionState.nodeId === oldId) {
       this.selectionState.nodeId = resolvedId;
     }
 
-    // Trigger hierarchy panel re-render.
     this.selectionState.treeVersion++;
   }
 
-  /**
-   * Delete all currently selected nodes. Creates a single compound undo entry.
-   */
   private deleteSelected() {
     const nodes = [...this.selection.selectedNodes];
     if (nodes.length === 0) return;
@@ -1205,27 +1279,15 @@ export class LevelEditor {
     this.selectionState.treeVersion++;
   }
 
-  /**
-   * Reparent the currently selected nodes to a new parent group (or root).
-   * Maintains world-space transforms.
-   */
   private async reparentSelected(targetParentId: string | null) {
     const nodes = [...this.selection.selectedNodes].filter(n => !n.generated);
     if (nodes.length === 0) return;
 
-    // Filter out invalid reparents (e.g. into self or descendant).
+    // Reject reparents into self or a descendant of self.
     const validNodes = nodes.filter(node => {
       if (targetParentId === null) return true;
       if (node.id === targetParentId) return false;
-      if (
-        isLevelGroup(node) &&
-        isDescendantOf(
-          this.rootNodes.map(n => n.def),
-          node.id,
-          targetParentId
-        )
-      )
-        return false;
+      if (isLevelGroup(node) && groupContainsDescendantId(node, targetParentId)) return false;
       return true;
     });
     if (validNodes.length === 0) return;
@@ -1239,13 +1301,11 @@ export class LevelEditor {
   }
 
   private async onAddLibraryClick(libPath: string, materialId: string | undefined) {
-    // Register the file as an asset in the level def (idempotent if already registered).
     const result = await this.api.registerLibraryAsset(libPath);
     if (!result) return;
 
     const { id, code } = result;
 
-    // Build a prototype if we don't already have one for this id.
     if (!this.prototypes.has(id)) {
       const prototype = await resolveGeoscriptAsset(code);
       if (!prototype) {
@@ -1316,14 +1376,11 @@ export class LevelEditor {
     const fpCtx: BulletPhysics | undefined = this.viz.fpCtx;
     if (!fpCtx) return;
 
-    // The entity's `object` may have been swapped by `replaceLeafInstance`; point
-    // it at the current object so future behavior ticks and transforms use the
-    // live scene-graph node.  Existing bodies were detached in `removePhysics`.
+    // The entity's `object` may have been swapped by `replaceLeafInstance`; re-point it
+    // at the current scene-graph node before re-adding any physics bodies.
     levelObj.entity.object = levelObj.object;
-    // Resync def-derived physics flags in case the def was edited since placement.
     levelObj.entity.nonPermeable = levelObj.def.nonPermeable;
-    // Authored placement may have changed (transform commit, group, reparent);
-    // re-base behaviors off the new local transform so they don't fight it.
+    // Re-base behaviors off the new local transform so they don't fight authored placement.
     levelObj.entity.refreshBaseTransform();
 
     clearPhysicsBinding(levelObj.object, fpCtx);

@@ -67,10 +67,9 @@ interface DeriveShadowNormalBiasParams {
 /**
  * Derives `shadow.normalBias` from the directional light's shadow-map texel world size
  * (`orthoFrustumExtent / mapSize`) — the scale at which front/double-side self-shadow acne
- * appears — so one multiplier stays robust across scenes and surface slopes, unlike a fixed
- * constant `bias` whose world meaning shifts with each scene's depth range. Pair with
- * `DoubleSide` shadow casting (`setShadowCastSide` in customShader). Call after the shadow
- * camera frustum and `mapSize` are finalized. Returns the computed `normalBias` for logging.
+ * appears — so one multiplier stays robust across scenes and surface slopes.  Pair with
+ * `DoubleSide` shadow casting (`setShadowCastSide` in customShader).  Returns the computed
+ * `normalBias`.
  */
 export const deriveDirectionalShadowNormalBias = (
   light: THREE.DirectionalLight,

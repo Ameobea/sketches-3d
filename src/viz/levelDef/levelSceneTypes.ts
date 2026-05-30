@@ -25,10 +25,17 @@ export interface LevelObject {
   entity: Entity;
 }
 
+/**
+ * Runtime view of an `ObjectGroupDef` minus its `children` field. The runtime
+ * hierarchy lives only in `LevelGroup.children`; serialize via `serializeGroup`
+ * when a wire-format `ObjectGroupDef` is needed.
+ */
+export type LevelGroupBody = Omit<ObjectGroupDef, 'children'>;
+
 export interface LevelGroup {
   id: string;
   object: THREE.Group;
-  def: ObjectGroupDef;
+  def: LevelGroupBody;
   children: LevelSceneNode[];
   /** True when this group was produced by a generator (read-only in the editor). */
   generated: boolean;

@@ -30,7 +30,6 @@ import { type LevelObject, type LevelGroup, type LevelSceneNode, type LevelLight
 import { replaceLeafInstance } from './editorStructuralOps';
 import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
-export { isLevelGroup } from './levelSceneTypes';
 import { buildMaterial } from './buildMaterial';
 import { CustomShaderMaterial, setSceneEnvironment } from 'src/viz/shaders/customShader';
 import { generateGradientEnvironment, loadEnvironment } from 'src/viz/textureLoading';
@@ -40,11 +39,6 @@ import { TextureFetchPool } from './texturePool';
 import { generateCsgCode } from './csgCodeGen';
 
 type PhysicsContext = NonNullable<Viz['fpCtx']>;
-
-/** @deprecated Use LevelLoadHandle instead */
-export interface LoadedLevel {
-  objects: LevelObject[];
-}
 
 export interface LevelLoadHandle {
   /**
@@ -624,6 +618,10 @@ export const loadLevelDef = (
   // Each leaf def gets mapped to its parent Object3D so placeObject can add to the right parent.
   const parentMap = new Map<string, THREE.Object3D>(); // objectId → parent container
   const parentGroupForLeaf = new Map<string, { group: LevelGroup; index: number }>();
+  // For every node that's a child of some group in the input def, its sibling index
+  // within that group. Lets async leaf placement find the right insertion slot
+  // without consulting the runtime def (whose `children` is intentionally omitted).
+  const inputChildIndex = new Map<string, number>();
   const nodeById = new Map<string, LevelSceneNode>();
   const rootNodes: LevelSceneNode[] = [];
 
@@ -634,14 +632,16 @@ export const loadLevelDef = (
   ): void => {
     for (let childIx = 0; childIx < nodes.length; childIx += 1) {
       const node = nodes[childIx];
+      if (parentGroup) inputChildIndex.set(node.id, childIx);
       if (isObjectGroup(node)) {
         const group = new THREE.Group();
         applyTransform(group, node);
         parent.add(group);
+        const { children: _omitChildren, ...body } = node;
         const levelGroup: LevelGroup = {
           id: node.id,
           object: group,
-          def: node,
+          def: body,
           children: [],
           generated: isGeneratedDef(node),
         };
@@ -772,9 +772,7 @@ export const loadLevelDef = (
     const parentGroupEntry = parentGroupForLeaf.get(objDef.id);
     if (parentGroupEntry) {
       const insertAt = parentGroupEntry.group.children.findIndex(existingChild => {
-        const existingIx = parentGroupEntry.group.def.children.findIndex(
-          defChild => defChild.id === existingChild.id
-        );
+        const existingIx = inputChildIndex.get(existingChild.id) ?? -1;
         return existingIx > parentGroupEntry.index;
       });
       if (insertAt === -1) {

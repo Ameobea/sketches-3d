@@ -216,6 +216,7 @@ export const configureDefaultPostprocessingPipeline = ({
   // DoubleSide shadow casting + texel-scaled normalBias closes the second-depth contact gap.
   // VSM already front-casts, so skip it there (and let scenes opt out explicitly).
   const applyShadowContactFix = shadowContactFix && viz.renderer.shadowMap.type !== THREE.VSMShadowMap;
+  console.log(viz.renderer.shadowMap.type, shadowContactFix, applyShadowContactFix);
   if (applyShadowContactFix) {
     setShadowCastSide(viz.scene, THREE.DoubleSide);
   }
@@ -422,7 +423,9 @@ export const configureDefaultPostprocessingPipeline = ({
       // can't reintroduce self-shadow acne. Runs once, before the one-time shadow render below.
       setShadowCastSide(viz.scene, THREE.DoubleSide);
       viz.scene.traverse(obj => {
+        console.log(obj);
         if (obj instanceof THREE.DirectionalLight && obj.castShadow && !obj.userData.skipAutoShadowBias) {
+          console.log('calling');
           deriveDirectionalShadowNormalBias(obj);
         }
       });

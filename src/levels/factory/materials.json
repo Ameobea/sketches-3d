@@ -256,7 +256,7 @@
         "iridescence": 0,
         "mapDisableDistance": 300,
         "mapDisableTransitionThreshold": 50,
-        "uvScale": [0.25, 0.25],
+        "uvScale": [0.05, 0.05],
         "map": "sooty_silver_metal_1_diffuse",
         "normalMap": "sooty_silver_metal_1_normal",
         "heightAlpha": {
@@ -265,8 +265,34 @@
         }
       },
       "options": {
-        "useTriplanarMapping": false,
-        "useGeneratedUVs": true,
+        "useTriplanarMapping": true,
+        "useWorldSpaceUVs": false,
+        "useGeneratedUVs": false,
+        "randomizeUVOffset": true
+      }
+    },
+    "sooty_silver_metal_localspace": {
+      "type": "customShader",
+      "props": {
+        "color": "#cdcbcb",
+        "roughness": 0.71,
+        "metalness": 0.77,
+        "normalScale": 1.94,
+        "iridescence": 0,
+        "mapDisableDistance": 300,
+        "mapDisableTransitionThreshold": 50,
+        "uvScale": [0.05, 0.05],
+        "map": "sooty_silver_metal_1_diffuse",
+        "normalMap": "sooty_silver_metal_1_normal",
+        "heightAlpha": {
+          "bottomFade": [-230, -50],
+          "topFade": [60, 200]
+        }
+      },
+      "options": {
+        "useTriplanarMapping": true,
+        "useWorldSpaceUVs": true,
+        "useGeneratedUVs": false,
         "randomizeUVOffset": true
       }
     },
@@ -299,6 +325,17 @@
       "type": "customShader",
       "props": {
         "color": "#b8a033",
+        "roughness": 1,
+        "metalness": 0.4,
+        "transparent": true,
+        "ambientLightScale": 0.5
+      },
+      "emissiveBypass": true
+    },
+    "orange_emissive": {
+      "type": "customShader",
+      "props": {
+        "color": "#f08800",
         "roughness": 1,
         "metalness": 0.4,
         "transparent": true,

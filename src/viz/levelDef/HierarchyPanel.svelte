@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
 
+  import 'src/viz/hierarchyPanel.css';
   import type { LevelLight, LevelSceneNode } from './levelSceneTypes';
   import { isLevelGroup } from './levelSceneTypes';
   import { isGeneratedDef } from './levelDefTreeUtils';
@@ -32,7 +33,6 @@
   const sortNodes = (nodes: LevelSceneNode[]) => [...nodes].sort((a, b) => compareIds(a.id, b.id));
   const sortLights = (items: LevelLight[]) => [...items].sort((a, b) => compareIds(a.id, b.id));
 
-  // Track expanded state per group id
   const expanded = new SvelteMap<string, boolean>();
 
   const toggle = (id: string) => {
@@ -51,7 +51,7 @@
     return null;
   }
 
-  // Auto-expand ancestor groups when a node is selected (e.g. via raycast).
+  // Auto-expand ancestor groups when a node is selected
   $effect(() => {
     for (const id of selectedNodeIds) {
       const ancestors = findAncestorGroupIds(rootNodes, id);
@@ -62,8 +62,6 @@
       }
     }
   });
-
-  // --- Drag and Drop ---
 
   let draggedNodeId = $state<string | null>(null);
   let dropTargetId = $state<string | null | 'root'>(null);
@@ -83,9 +81,6 @@
       return;
     }
 
-    // Ensure the node being dragged is selected.
-    // If it's not already selected, select it (and clear others).
-    // If it IS already selected, we leave the multi-selection as-is to drag it all.
     if (!isNodeSelected(node.id)) {
       onselectnode(node, false);
     }
@@ -121,7 +116,6 @@
       return;
     }
 
-    // Perform reparenting
     onreparent?.(target === 'root' ? null : target.id);
 
     draggedNodeId = null;
@@ -249,23 +243,10 @@
   }
 
   .row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
     padding-top: 2px;
     padding-bottom: 2px;
     padding-right: 4px;
-    cursor: pointer;
     border-radius: 2px;
-    border: 1px solid transparent;
-  }
-
-  .row:hover {
-    background: #252525;
-  }
-
-  .row.selected {
-    background: #2a3a2a;
   }
 
   .row.drop-over {
@@ -273,40 +254,8 @@
     outline: 1px dashed #4a4;
   }
 
-  .chevron {
-    background: none;
-    border: none;
-    color: #aaa;
-    font-size: 10px;
-    cursor: pointer;
-    padding: 0;
-    width: 12px;
-    flex-shrink: 0;
-    line-height: 1;
-  }
-
   .leaf-row {
     padding-left: 20px;
-  }
-
-  .node-id {
-    flex: 1;
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .badge {
-    font-size: 10px;
-    border-radius: 2px;
-    padding: 0 3px;
-    flex-shrink: 0;
-  }
-
-  .group-badge {
-    color: #888;
-    border: 1px solid #444;
   }
 
   .generated-badge {
