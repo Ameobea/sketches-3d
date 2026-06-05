@@ -2,7 +2,7 @@
 
 use std::f32::consts::PI;
 
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg32;
 
 const SQRT_5: f32 = 2.2360679775;
@@ -20,7 +20,7 @@ impl<const N: usize> HillNoise2D<N> {
   pub fn new(seed: u64, wavelengths: [f32; N]) -> Self {
     let mut rng = Pcg32::from_seed(unsafe { std::mem::transmute([seed, seed]) });
     // Returns a random number in the range [0, 1)
-    let mut random = || -> f32 { rng.gen() };
+    let mut random = || -> f32 { rng.random() };
 
     let offsets = {
       let mut offsets = [(0., 0.); N];

@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use common::{rand::Rng, rand_pcg::Pcg32};
+use common::{rand::RngExt, rand_pcg::Pcg32};
 use const_chunks::IteratorConstChunks;
 use fnv::FnvHashMap;
 use lyon::{
@@ -101,23 +101,23 @@ impl RuneGenCtx {
     let mut delta_angle = match start_delta_angle {
       Some(start_delta_angle) => start_delta_angle,
       None => {
-        let turn_dir = if self.rng.gen::<f32>() < 0.5 {
+        let turn_dir = if self.rng.random::<f32>() < 0.5 {
           -1.0
         } else {
           1.0
         };
         // in radians
-        let delta_angle = self.rng.gen_range(0.04..0.9);
+        let delta_angle = self.rng.random_range(0.04..0.9);
         delta_angle * turn_dir
       }
     };
-    let delta_delta_angle = self.rng.gen_range(-0.09..0.09);
+    let delta_delta_angle = self.rng.random_range(-0.09..0.09);
 
     // TODO: look into other methods of altering turn angle
     let get_new_turn_angle = move |rng: &mut Pcg32, delta_angle: &mut f32, cur_angle: f32| -> f32 {
       let new_turn_angle = add_angles(cur_angle, *delta_angle);
       *delta_angle += delta_delta_angle;
-      if rng.gen::<f32>() < 0.02 {
+      if rng.random::<f32>() < 0.02 {
         *delta_angle *= -1.0;
       }
       new_turn_angle
@@ -179,11 +179,11 @@ impl RuneGenCtx {
       let (start_pos, start_delta_angle, start_dir) = if self.segments.is_empty() {
         let start_pos = point(0.0, 0.0);
         let start_dir =
-          vector(self.rng.gen_range(-1.0..1.0), self.rng.gen_range(-1.0..1.0)).normalize();
+          vector(self.rng.random_range(-1.0..1.0), self.rng.random_range(-1.0..1.0)).normalize();
         let start_dir = dir_to_angle(start_dir);
         (start_pos, None, start_dir)
       } else {
-        let starting_seg_ix = self.rng.gen_range(0..self.segments.len());
+        let starting_seg_ix = self.rng.random_range(0..self.segments.len());
         let starting_seg = &self.segments[starting_seg_ix];
         let start_pos = starting_seg.seg.to;
         // if we were turning left, turn right the same amount, and vice versa
@@ -390,7 +390,7 @@ pub fn extrude_along_normals(
     let mut displacement = *normal * height;
     // slightly randomize displacement to try to help with z-fighting and other
     // issues
-    displacement += *normal * (common::rng().gen_range(-0.1..0.1) * height);
+    displacement += *normal * (common::rng().random_range(-0.1..0.1) * height);
 
     vertices_3d.push(Point3D::new(
       point.x + displacement.x,

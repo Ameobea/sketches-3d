@@ -19,9 +19,9 @@ use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, UnitQuaternion};
 use parry3d::bounding_volume::Aabb;
 use parry3d::math::{Isometry, Point};
 use parry3d::query::Ray;
-use rand::Rng;
+use rand::RngExt;
 #[cfg(target_arch = "wasm32")]
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, SeedableRng};
 
 use crate::builtins::trace_path::{
   as_path_sampler, build_segment_dicts, build_topology_samples, PathSubpath, PathTracerCallable,
@@ -43,7 +43,7 @@ use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight},
   mesh_ops::{
-    extrude::extrude,
+    extrude::{extrude, extrude_along_normals},
     extrude_pipe::{extrude_pipe, EndMode},
     fan_fill::fan_fill,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
@@ -1625,9 +1625,9 @@ fn randi_impl(
         return Ok(Value::Int(min));
       }
 
-      Ok(Value::Int(ctx.rng().gen_range(min..max)))
+      Ok(Value::Int(ctx.rng().random_range(min..max)))
     }
-    1 => Ok(Value::Int(ctx.rng().gen())),
+    1 => Ok(Value::Int(ctx.rng().random())),
     _ => unimplemented!(),
   }
 }
@@ -1655,9 +1655,9 @@ fn randv_impl(
         return Err(invalid_bounds_err(min, max));
       }
       Ok(Value::Vec3(Vec3::new(
-        ctx.rng().gen_range(min.x..max.x),
-        ctx.rng().gen_range(min.y..max.y),
-        ctx.rng().gen_range(min.z..max.z),
+        ctx.rng().random_range(min.x..max.x),
+        ctx.rng().random_range(min.y..max.y),
+        ctx.rng().random_range(min.z..max.z),
       )))
     }
     1 => {
@@ -1669,15 +1669,15 @@ fn randv_impl(
         return Ok(Value::Vec3(Vec3::new(min, min, min)));
       }
       Ok(Value::Vec3(Vec3::new(
-        ctx.rng().gen_range(min..max),
-        ctx.rng().gen_range(min..max),
-        ctx.rng().gen_range(min..max),
+        ctx.rng().random_range(min..max),
+        ctx.rng().random_range(min..max),
+        ctx.rng().random_range(min..max),
       )))
     }
     2 => Ok(Value::Vec3(Vec3::new(
-      ctx.rng().gen(),
-      ctx.rng().gen(),
-      ctx.rng().gen(),
+      ctx.rng().random(),
+      ctx.rng().random(),
+      ctx.rng().random(),
     ))),
     _ => unimplemented!(),
   }
@@ -1694,9 +1694,9 @@ fn randf_impl(
     0 => {
       let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(ctx.rng().gen_range(min..max)))
+      Ok(Value::Float(ctx.rng().random_range(min..max)))
     }
-    1 => Ok(Value::Float(ctx.rng().gen())),
+    1 => Ok(Value::Float(ctx.rng().random())),
     _ => unimplemented!(),
   }
 }
@@ -2004,15 +2004,57 @@ fn tessellate_path_impl(
         }
       };
 
-      if requested_engine == TessEngine::Cgal {
-        if let Some(fr) = fill_rule_override {
-          if fr != trace_path::FillRule::NonZero {
-            return Err(ErrorStack::new(format!(
-              "`tessellate_path` with engine=\"cgal\" does not support the \"{fr:?}\" fill rule; \
-               use engine=\"lyon\" or omit the fill_rule argument"
-            )));
-          }
+      let max_edge_len: Option<f32> = match arg_refs[7].resolve(args, kwargs) {
+        Value::Nil => None,
+        Value::Int(n) if *n > 0 => Some(*n as f32),
+        Value::Float(f) if *f > 0.0 => Some(*f),
+        Value::Int(_) | Value::Float(_) => {
+          return Err(ErrorStack::new(
+            "Invalid max_edge_len for `tessellate_path`; expected a positive number or nil",
+          ))
         }
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid max_edge_len for `tessellate_path`; expected number or nil, found: {other:?}"
+          )))
+        }
+      };
+
+      // CGAL only guarantees Delaunay-refinement termination for aspect_bound <= 0.125, which
+      // corresponds to min angle ≲ arcsin(sqrt(0.125)) ≈ 20.7°.  Higher values can loop
+      // indefinitely, so we cap there.
+      const MIN_ANGLE_DEGREES_CAP: f32 = 20.7;
+      let min_angle_squared_sine: Option<f32> = match arg_refs[8].resolve(args, kwargs) {
+        Value::Nil => None,
+        Value::Int(n) => Some(*n as f32),
+        Value::Float(f) => Some(*f),
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid min_angle_degrees for `tessellate_path`; expected number or nil, found: \
+             {other:?}"
+          )))
+        }
+      }
+      .map(|deg| -> Result<f32, ErrorStack> {
+        if deg < 0.0 || deg > MIN_ANGLE_DEGREES_CAP {
+          return Err(ErrorStack::new(format!(
+            "Invalid min_angle_degrees for `tessellate_path`: {deg} is out of range \
+             [0, {MIN_ANGLE_DEGREES_CAP}].  CGAL's Delaunay refinement is only guaranteed to \
+             terminate up to ~20.7°; pass 0 to disable the shape criterion entirely."
+          )));
+        }
+        let sin = deg.to_radians().sin();
+        Ok(sin * sin)
+      })
+      .transpose()?;
+
+      if (max_edge_len.is_some() || min_angle_squared_sine.is_some())
+        && requested_engine == TessEngine::Lyon
+      {
+        return Err(ErrorStack::new(
+          "`tessellate_path` refinement (`max_edge_len`, `min_angle_degrees`) is only supported \
+           by the CGAL engine; omit `engine` or set engine=\"cgal\"",
+        ));
       }
 
       if let Some(n) = sample_count {
@@ -2035,8 +2077,12 @@ fn tessellate_path_impl(
         curve_angle_degrees.to_radians()
       };
 
-      // `lyon` can consume discrete path features directly
-      if requested_engine != TessEngine::Cgal {
+      // `lyon` can consume discrete path features directly.  Skip when refinement was requested,
+      // since `max_edge_len` and `min_angle_degrees` are CGAL-only features.
+      if requested_engine != TessEngine::Cgal
+        && max_edge_len.is_none()
+        && min_angle_squared_sine.is_none()
+      {
         if let Some(cb) = path_val.as_callable() {
           if let Some(sampler) = as_path_sampler(cb) {
             let sampler_fr = sampler.fill_rule();
@@ -2214,26 +2260,39 @@ fn tessellate_path_impl(
         )));
       }
 
-      // Validate: cgal engine cannot handle a non-default fill rule from the path sampler
+      // CGAL implements nesting-based fill (equivalent to evenodd).  Any fill rule that depends
+      // on winding direction can only be honored exactly by the lyon backend, but for a single
+      // subpath all rules collapse to the same result, so we still allow them through CGAL.
+      let fr_incompatible_with_cgal = |fr: trace_path::FillRule| -> bool {
+        if paths.len() <= 1 {
+          return false;
+        }
+        match fr {
+          trace_path::FillRule::EvenOdd => false,
+          trace_path::FillRule::NonZero
+          | trace_path::FillRule::Positive
+          | trace_path::FillRule::Negative => true,
+        }
+      };
+      let cgal_incompatible_fr = fill_rule_override
+        .filter(|fr| fr_incompatible_with_cgal(*fr))
+        .or_else(|| sampler_fill_rule.filter(|fr| fr_incompatible_with_cgal(*fr)));
+
       if requested_engine == TessEngine::Cgal {
-        if let Some(fr) = sampler_fill_rule {
-          if fr != trace_path::FillRule::NonZero {
-            return Err(ErrorStack::new(format!(
-              "`tessellate_path` with engine=\"cgal\" does not support the \"{fr:?}\" fill rule \
-               embedded in this path sampler; use engine=\"lyon\" or remove the fill rule"
-            )));
-          }
+        if let Some(fr) = cgal_incompatible_fr {
+          return Err(ErrorStack::new(format!(
+            "`tessellate_path` with engine=\"cgal\" does not support the {fr:?} fill rule combined \
+             with multiple subpaths (CGAL uses nesting-based fill, equivalent to evenodd); use \
+             engine=\"lyon\" or change the fill_rule"
+          )));
         }
       }
 
-      // Determine final engine: Lyon if explicitly requested, or if any non-default fill rule is
-      // in play; CGAL otherwise (explicit or auto with no fill rule).
-      let is_non_default_sampler_fr = sampler_fill_rule
-        .map(|fr| fr != trace_path::FillRule::NonZero)
-        .unwrap_or(false);
-      let use_lyon = requested_engine == TessEngine::Lyon
-        || (requested_engine == TessEngine::Auto
-          && (fill_rule_override.is_some() || is_non_default_sampler_fr));
+      // Route to lyon only when explicitly requested, or when CGAL can't honor the requested
+      // fill rule.  Otherwise prefer CGAL (cleaner topology, no T-junctions, supports holes via
+      // nesting, and is the only backend that can run mesh refinement).
+      let use_lyon =
+        requested_engine == TessEngine::Lyon || cgal_incompatible_fr.is_some();
 
       let mesh = if use_lyon {
         let lyon_fill_rule = fill_rule_override
@@ -2246,7 +2305,11 @@ fn tessellate_path_impl(
           flipped,
         )?
       } else {
-        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths(&paths, flipped)?
+        let options = crate::mesh_ops::tessellate_polygon::CgalCdtOptions {
+          max_edge_len,
+          min_angle_squared_sine,
+        };
+        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths_multi(&paths, flipped, options)?
       };
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
@@ -2898,6 +2961,60 @@ fn extrude_impl(
         _ => {
           return Err(ErrorStack::new(format!(
             "Invalid up argument for `extrude`; expected Vec3 or Callable, found: {up:?}"
+          )))
+        }
+      }
+
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(out_mesh),
+        transform: mesh.transform,
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: mesh.material.clone(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn extrude_along_normals_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let distance = arg_refs[0].resolve(args, kwargs);
+      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+      let mut out_mesh = (*mesh.mesh).clone();
+
+      match distance {
+        Value::Int(_) | Value::Float(_) => {
+          let d = distance.as_float().unwrap();
+          extrude_along_normals(&mut out_mesh, |_| Ok(d))?;
+        }
+        Value::Callable(cb) => extrude_along_normals(&mut out_mesh, |vtx| {
+          let out = ctx
+            .invoke_callable(cb, &[Value::Vec3(vtx)], EMPTY_KWARGS)
+            .map_err(|err| {
+              err.wrap(
+                "Error calling user-provided cb passed to `distance` arg in `extrude_along_normals`",
+              )
+            })?;
+          out.as_float().ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Expected number from user-provided cb passed to `distance` arg in \
+               `extrude_along_normals`, found: {out:?}"
+            ))
+          })
+        })?,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid distance argument for `extrude_along_normals`; expected number or Callable, \
+             found: {distance:?}"
           )))
         }
       }
@@ -5765,6 +5882,67 @@ fn path_close_impl(
   )]))
 }
 
+fn path_reverse_impl(
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let path_val = arg_refs[0].resolve(args, kwargs);
+  match path_val {
+    Value::Map(map) => {
+      let ty = map
+        .get("type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorStack::new("path_reverse: input map is missing a `type` field"))?
+        .to_owned();
+      match ty.as_str() {
+        "rect" | "circle" => {
+          let cur = map
+            .get("reversed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+          let mut new_map: FxHashMap<String, Value> = (**map).clone();
+          new_map.insert("reversed".to_owned(), Value::Bool(!cur));
+          Ok(Value::Map(Rc::new(new_map)))
+        }
+        other => Err(ErrorStack::new(format!(
+          "path_reverse: cannot reverse draw command of type \"{other}\"; only `rect` and `circle` \
+           support per-shape reversal.  To reverse an entire built path, pass the path tracer \
+           callable instead."
+        ))),
+      }
+    }
+    Value::Callable(cb) => {
+      let tracer = extract_path_tracer(cb).ok_or_else(|| {
+        ErrorStack::new(
+          "path_reverse: callable is not a path tracer (must come from `build_path`, \
+           `trace_svg_path`, `text_to_path`, etc.)",
+        )
+      })?;
+      let toggled = PathTracerCallable {
+        interned_t_kwarg: tracer.interned_t_kwarg,
+        subpaths: tracer.subpaths.clone(),
+        subpath_cumulative_lengths: tracer.subpath_cumulative_lengths.clone(),
+        total_length: tracer.total_length,
+        reverse: !tracer.reverse,
+        override_critical_points: tracer.override_critical_points.clone(),
+        fill_rule: tracer.fill_rule,
+        transform: tracer.transform,
+        inward_flip_cache: RefCell::new(None),
+      };
+      Ok(Value::Callable(Rc::new(Callable::Dynamic {
+        name: "trace_path".to_owned(),
+        inner: Box::new(toggled),
+      })))
+    }
+    other => Err(ErrorStack::new(format!(
+      "path_reverse: expected a draw command map (e.g. from `rect`/`circle`) or a path tracer \
+       callable; found: {other:?}.  To reverse a bare sequence of points, use sequence operations."
+    ))),
+  }
+}
+
 fn extract_path_tracer<'a>(callable: &'a Callable) -> Option<&'a PathTracerCallable> {
   match callable {
     Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
@@ -7473,6 +7651,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "path_close" => builtin_fn!(path_close, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_close_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "path_reverse" => builtin_fn!(path_reverse, |def_ix, arg_refs, args, kwargs, _ctx| {
+    path_reverse_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "path_segments" => builtin_fn!(path_segments, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_segments_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -7487,6 +7668,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "path_scale" => builtin_fn!(path_scale, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_scale_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "extrude_along_normals" => builtin_fn!(extrude_along_normals, |def_ix, arg_refs, args, kwargs, ctx| {
+    extrude_along_normals_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "extrude" => builtin_fn!(extrude, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_impl(ctx, def_ix, arg_refs, args, kwargs)

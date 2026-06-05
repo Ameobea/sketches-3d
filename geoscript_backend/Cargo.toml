@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-foundations = { version = "4.5", default-features = false, features = ["settings", "metrics", "telemetry-server", "testing", "jemalloc", "tokio-runtime-metrics", "memory-profiling", "cli"] }
+foundations = { version = "5", default-features = false, features = ["settings", "metrics", "telemetry-server", "testing", "jemalloc", "tokio-runtime-metrics", "memory-profiling", "cli"] }
 axum = { version = "0.8", features = ["tower-log"] }
-axum-extra = { version = "0.10", features = ["query"] }
+axum-extra = { version = "0.12", features = ["query"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 tokio = { version = "1.36", features = ["full"] }
 tracing = "0.1"
@@ -17,13 +17,13 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 serde_path_to_error = "0.1"
 serde_default_utils = "0.3"
 uuid = { version = "1", features = ["serde", "v4"] }
-sqlx = { version = "=0.8.6", features = ["runtime-tokio", "sqlite", "migrate", "chrono"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate", "chrono"] }
 argon2 = "0.5"
-rand = { version = "0.8", features = ["getrandom"] }
+getrandom = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 tower-cookies = "0.11"
 async-trait = "0.1"
-reqwest = "0.12"
+reqwest = "0.13"
 bytes = "1.10.1"
 url = { version = "2", features = ["serde"] }

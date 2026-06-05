@@ -9,11 +9,16 @@ use smallvec::SmallVec;
 
 use crate::ErrorStack;
 
-fn extrude_single_component(
+/// Duplicates each vertex in `faces` (offset by the corresponding entry in `offsets`), adds the
+/// duplicated triangles, flips the originals to face the other way, and stitches the two layers
+/// with side walls along boundary edges.
+///
+/// `offsets` must contain an entry for every vertex referenced by `faces`.
+fn extrude_with_offsets(
   mesh: &mut LinkedMesh<()>,
-  up: impl Fn(Vec3) -> Result<Vec3, ErrorStack>,
   faces: &[FaceKey],
-) -> Result<(), ErrorStack> {
+  offsets: &FxHashMap<VertexKey, Vec3>,
+) {
   let mut border_edges = FxHashSet::default();
   for &face_key in faces {
     for &edge_key in &mesh.faces[face_key].edges {
@@ -31,8 +36,9 @@ fn extrude_single_component(
         Entry::Occupied(o) => *o.get(),
         Entry::Vacant(v) => {
           let pos = mesh.vertices[vtx_key].position;
+          let offset = offsets[&vtx_key];
           let new_vtx_key = mesh.vertices.insert(Vertex {
-            position: pos + up(pos)?,
+            position: pos + offset,
             shading_normal: None,
             displacement_normal: None,
             edges: SmallVec::new(),
@@ -77,8 +83,53 @@ fn extrude_single_component(
     mesh.add_face::<false>([nv1, v1, v0], ());
     mesh.add_face::<false>([nv0, nv1, v0], ());
   }
+}
 
-  Ok(())
+/// Walks `faces` and computes a per-vertex normal as the cross-product-weighted average of
+/// adjacent face normals.  Cross product magnitude is proportional to triangle area, so this is
+/// area-weighted.  Returned normals are unit-length; zero-length accumulators (e.g. for vertices
+/// on degenerate fans) collapse to a zero vector.
+fn compute_area_weighted_vertex_normals(
+  mesh: &LinkedMesh<()>,
+  faces: &[FaceKey],
+) -> FxHashMap<VertexKey, Vec3> {
+  let mut accumulators: FxHashMap<VertexKey, Vec3> = FxHashMap::default();
+  for &face_key in faces {
+    let vs = mesh.faces[face_key].vertices;
+    let p0 = mesh.vertices[vs[0]].position;
+    let p1 = mesh.vertices[vs[1]].position;
+    let p2 = mesh.vertices[vs[2]].position;
+    let cross = (p1 - p0).cross(&(p2 - p0));
+    for &vk in &vs {
+      *accumulators.entry(vk).or_insert(Vec3::zeros()) += cross;
+    }
+  }
+  for n in accumulators.values_mut() {
+    let len = n.norm();
+    if len > 1e-12 {
+      *n /= len;
+    } else {
+      *n = Vec3::zeros();
+    }
+  }
+  accumulators
+}
+
+fn build_offsets_per_vertex(
+  mesh: &LinkedMesh<()>,
+  faces: &[FaceKey],
+  mut compute: impl FnMut(VertexKey, Vec3) -> Result<Vec3, ErrorStack>,
+) -> Result<FxHashMap<VertexKey, Vec3>, ErrorStack> {
+  let mut offsets: FxHashMap<VertexKey, Vec3> = FxHashMap::default();
+  for &face_key in faces {
+    for &vtx_key in &mesh.faces[face_key].vertices {
+      if let Entry::Vacant(v) = offsets.entry(vtx_key) {
+        let pos = mesh.vertices[vtx_key].position;
+        v.insert(compute(vtx_key, pos)?);
+      }
+    }
+  }
+  Ok(offsets)
 }
 
 pub fn extrude(
@@ -87,7 +138,25 @@ pub fn extrude(
 ) -> Result<(), ErrorStack> {
   let components = mesh.connected_components();
   for faces in components {
-    extrude_single_component(mesh, &up, &faces)?;
+    let offsets = build_offsets_per_vertex(mesh, &faces, |_, pos| up(pos))?;
+    extrude_with_offsets(mesh, &faces, &offsets);
+  }
+  Ok(())
+}
+
+pub fn extrude_along_normals(
+  mesh: &mut LinkedMesh<()>,
+  distance: impl Fn(Vec3) -> Result<f32, ErrorStack>,
+) -> Result<(), ErrorStack> {
+  let components = mesh.connected_components();
+  for faces in components {
+    let normals = compute_area_weighted_vertex_normals(mesh, &faces);
+    let offsets = build_offsets_per_vertex(mesh, &faces, |vk, pos| {
+      let n = normals.get(&vk).copied().unwrap_or_else(Vec3::zeros);
+      let d = distance(pos)?;
+      Ok(n * d)
+    })?;
+    extrude_with_offsets(mesh, &faces, &offsets);
   }
   Ok(())
 }
@@ -122,4 +191,37 @@ fn test_extrude_issue() {
 
   extrude(&mut mesh, |_| Ok(Vec3::new(0., 1., 0.))).unwrap();
   mesh.check_is_manifold::<true>().expect("not two-manifold");
+}
+
+#[test]
+fn test_extrude_along_normals_flat_plane() {
+  // Two triangles forming a unit square in the XZ plane; normal is +Y.
+  // Extruding along normals by 1 should produce a 2-manifold box of unit thickness.
+  let verts = &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+  let indices = &[0u32, 1, 2, 0, 2, 3];
+  let mut mesh = LinkedMesh::from_raw_indexed(verts, indices, None, None);
+  mesh
+    .check_is_manifold::<false>()
+    .expect("not manifold before extrude");
+
+  extrude_along_normals(&mut mesh, |_| Ok(1.0)).unwrap();
+  mesh
+    .check_is_manifold::<true>()
+    .expect("not two-manifold after extrude_along_normals");
+
+  // Top layer should sit at Y ~= ±1 depending on input winding; check that some vertex moved.
+  let max_y = mesh
+    .vertices
+    .iter()
+    .map(|(_, v)| v.position.y)
+    .fold(f32::NEG_INFINITY, f32::max);
+  let min_y = mesh
+    .vertices
+    .iter()
+    .map(|(_, v)| v.position.y)
+    .fold(f32::INFINITY, f32::min);
+  assert!(
+    (max_y - min_y - 1.0).abs() < 1e-4,
+    "expected unit thickness between layers, got max={max_y} min={min_y}"
+  );
 }

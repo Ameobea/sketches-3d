@@ -1242,6 +1242,9 @@
         runRedo();
         e?.preventDefault();
       },
+      autoFrameForRender: () => {
+        void centerView(viz, renderedObjects);
+      },
     });
 
     window.addEventListener('beforeunload', beforeUnloadHandler);

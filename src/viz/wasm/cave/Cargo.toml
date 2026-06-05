@@ -13,7 +13,7 @@ point_distribute = { path = "../point_distribute" }
 # using an older version because new versions don't allow f32 noise anymore
 noise = "0.4"
 nalgebra = "0.34"
-rand = { version = "0.8", default-features = false, features = ["nightly"] }
+rand = { version = "0.10", default-features = false }
 console_error_panic_hook = "0.1"
 common = { path = "../common" }
 mesh = { path = "../mesh" }

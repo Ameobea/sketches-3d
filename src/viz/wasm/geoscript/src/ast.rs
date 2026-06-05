@@ -1880,6 +1880,7 @@ const PATH_BLOCK_REWRITE_MAP: &[(&str, &str)] = &[
   ("circle", "path_circle"),
   ("rect", "path_rect"),
   ("close", "path_close"),
+  ("reverse", "path_reverse"),
 ];
 
 fn build_path_block_rewrite_map(ctx: &EvalCtx) -> FxHashMap<Sym, Sym> {
@@ -1893,17 +1894,33 @@ fn build_path_block_rewrite_map(ctx: &EvalCtx) -> FxHashMap<Sym, Sym> {
 }
 
 fn rewrite_path_block_calls_in_expr(replacements: &FxHashMap<Sym, Sym>, expr: &mut Expr) {
-  if let Expr::Call {
-    call: FunctionCall {
-      target: FunctionCallTarget::Name(sym),
+  match expr {
+    Expr::Call {
+      call: FunctionCall {
+        target: FunctionCallTarget::Name(sym),
+        ..
+      },
       ..
-    },
-    ..
-  } = expr
-  {
-    if let Some(&new_sym) = replacements.get(sym) {
-      *sym = new_sym;
+    } => {
+      if let Some(&new_sym) = replacements.get(sym) {
+        *sym = new_sym;
+      }
     }
+    // Pipe-rhs identifiers like `rect(...) | reverse`: the rhs is looked up as a value rather
+    // than called by name, so the `Expr::Call` branch above doesn't catch it.  Restrict to
+    // bare-ident rhs to avoid surprising rewrites of complex expressions.
+    Expr::BinOp {
+      op: BinOp::Pipeline,
+      rhs,
+      ..
+    } => {
+      if let Expr::Ident { name, .. } = rhs.as_mut() {
+        if let Some(&new_sym) = replacements.get(name) {
+          *name = new_sym;
+        }
+      }
+    }
+    _ => {}
   }
 }
 

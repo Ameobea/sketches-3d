@@ -1,6 +1,8 @@
 use std::{cell::RefCell, hash::Hash, ops::ControlFlow, rc::Rc};
 
 use fxhash::FxHashMap;
+use rand::Rng;
+use rand_pcg::Pcg32;
 use siphasher::sip128::{Hasher128, SipHasher};
 
 use crate::{
@@ -104,9 +106,12 @@ fn callable_requires_rng_state(callable: &Callable) -> bool {
   }
 }
 
-fn hash_rng_state(hasher: &mut SipHasher, rng_state: &impl std::fmt::Debug) {
-  let debug = format!("{rng_state:?}");
-  debug.hash(hasher);
+fn hash_rng_state(hasher: &mut SipHasher, rng_state: &Pcg32) {
+  // `Pcg32` has a custom `Debug` impl that hides its internal state and no
+  // public accessors for it, so fingerprint by pulling bits from a clone.
+  let mut clone = rng_state.clone();
+  clone.next_u64().hash(hasher);
+  clone.next_u64().hash(hasher);
 }
 
 #[derive(Clone, Copy)]

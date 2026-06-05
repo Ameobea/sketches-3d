@@ -5,5 +5,5 @@ authors = ["Casey Primozic <casey@cprimozic.net>"]
 edition = "2021"
 
 [dependencies]
-rand_pcg = "0.3"
-rand = { version = "0.8", default-features = false, features = ["nightly"] }
+rand_pcg = "0.10"
+rand = { version = "0.10", default-features = false }

@@ -11,6 +11,13 @@ extern "C" {
   fn cgal_get_is_loaded() -> bool;
   fn cgal_get_last_error() -> Option<String>;
   fn cgal_triangulate_polygon_2d(vertices: &[f32]) -> bool;
+  fn cgal_triangulate_polygon_2d_with_holes(
+    vertices: &[f32],
+    subpath_lengths: &[u32],
+    max_edge_len: f32,
+    min_angle_bound: f32,
+    refine: bool,
+  ) -> bool;
   fn cgal_get_cdt2d_vertices() -> Vec<f32>;
   fn cgal_get_cdt2d_indices() -> Vec<u32>;
   fn cgal_get_cdt2d_vertex_mapping() -> Vec<i32>;
@@ -253,39 +260,136 @@ pub fn tessellate_2d_paths(
   paths: &[Vec<Vec2>],
   flipped: bool,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
+  tessellate_2d_paths_multi(paths, flipped, CgalCdtOptions::default())
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CgalCdtOptions {
+  /// Upper bound on triangle edge length.  Triangles with any edge longer than this are split
+  /// by the Delaunay mesher.
+  pub max_edge_len: Option<f32>,
+  /// Aspect bound passed to `Delaunay_mesh_size_criteria_2` — squared sine of the minimum
+  /// allowed angle.  0.125 (≈ 20.6°) is the CGAL default and the upper limit at which
+  /// termination is provably guaranteed.  Setting this explicitly to `Some(0.0)` disables the
+  /// shape criterion entirely (size-only refinement).
+  pub min_angle_squared_sine: Option<f32>,
+}
+
+impl CgalCdtOptions {
+  /// Refinement is requested when either constraint is set; if both are `None`, the raw CDT
+  /// is returned and the strict input-vertex-to-output-vertex mapping is preserved.
+  pub fn refine(&self) -> bool {
+    self.max_edge_len.is_some() || self.min_angle_squared_sine.is_some()
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn run_triangulation_with_holes(
+  vertices: &[f32],
+  subpath_lengths: &[u32],
+  options: CgalCdtOptions,
+) -> Result<(Vec<f32>, Vec<u32>), ErrorStack> {
+  crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
+  if !cgal_get_is_loaded() {
+    return Err(ErrorStack::new_uninitialized_module("cgal"));
+  }
+
+  let refine = options.refine();
+  // CGAL treats 0 as "no size constraint"; aspect_bound defaults to 0.125 when not specified
+  // by the user.  Both are ignored when `refine == false`.
+  let max_edge_len = options.max_edge_len.unwrap_or(0.0);
+  let min_angle_squared_sine = options.min_angle_squared_sine.unwrap_or(0.125);
+
+  if !cgal_triangulate_polygon_2d_with_holes(
+    vertices,
+    subpath_lengths,
+    max_edge_len,
+    min_angle_squared_sine,
+    refine,
+  ) {
+    let err = cgal_get_last_error()
+      .unwrap_or_else(|| "CGAL multi-subpath triangulation failed".to_owned());
+    return Err(ErrorStack::new(err).wrap("Error triangulating multi-subpath polygon with CGAL"));
+  }
+
+  let out_vertices = cgal_get_cdt2d_vertices();
+  let out_indices = cgal_get_cdt2d_indices();
+  cgal_clear_cdt2d_output();
+
+  if out_vertices.len() % 2 != 0 {
+    return Err(ErrorStack::new(format!(
+      "CGAL triangulation returned invalid vertex buffer length: {}",
+      out_vertices.len()
+    )));
+  }
+  if out_indices.len() % 3 != 0 {
+    return Err(ErrorStack::new(format!(
+      "CGAL triangulation returned invalid triangle index count: {}",
+      out_indices.len()
+    )));
+  }
+
+  Ok((out_vertices, out_indices))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_triangulation_with_holes(
+  vertices: &[f32],
+  subpath_lengths: &[u32],
+  options: CgalCdtOptions,
+) -> Result<(Vec<f32>, Vec<u32>), ErrorStack> {
+  // Native builds only support the single-subpath, non-refining case, matching the legacy
+  // fan-fill fallback that backed `tessellate_2d_paths`.  Real CDT and Delaunay refinement live
+  // in the CGAL wasm.
+  if subpath_lengths.len() != 1 || options.refine() {
+    return Err(ErrorStack::new(
+      "Multi-subpath / refining CGAL triangulation is only available in wasm builds",
+    ));
+  }
+  let vertex_count = subpath_lengths[0] as usize;
+  let indices = run_triangulation(vertices, vertex_count)?;
+  Ok((vertices.to_vec(), indices))
+}
+
+pub fn tessellate_2d_paths_multi(
+  paths: &[Vec<Vec2>],
+  flipped: bool,
+  options: CgalCdtOptions,
+) -> Result<LinkedMesh<()>, ErrorStack> {
   if paths.is_empty() {
     return Ok(LinkedMesh::default());
   }
 
-  if paths.len() != 1 {
-    return Err(ErrorStack::new(
-      "CGAL tessellation currently supports only a single closed path (no holes)",
-    ));
+  let mut coords: Vec<f32> = Vec::new();
+  let mut subpath_lengths: Vec<u32> = Vec::with_capacity(paths.len());
+  for (ix, path) in paths.iter().enumerate() {
+    if path.len() < 3 {
+      return Err(ErrorStack::new(format!(
+        "Cannot tessellate subpath {ix} with fewer than 3 points, found: {}",
+        path.len()
+      )));
+    }
+    for pt in path {
+      coords.push(pt.x);
+      coords.push(pt.y);
+    }
+    subpath_lengths.push(path.len() as u32);
   }
 
-  let mut coords = Vec::new();
-  let mut verts = Vec::new();
-
-  let points = &paths[0];
-  if points.len() < 3 {
-    return Err(ErrorStack::new(format!(
-      "Cannot tessellate path with fewer than 3 points, found: {}",
-      points.len()
-    )));
-  }
-  for pt in points {
-    coords.push(pt.x);
-    coords.push(pt.y);
-    verts.push(Vec3::new(pt.x, 0.0, pt.y));
-  }
-
-  let mut indices = run_triangulation(&coords, points.len())?;
+  let (out_vertices_xy, mut indices) =
+    run_triangulation_with_holes(&coords, &subpath_lengths, options)?;
   if indices.is_empty() {
     return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
   }
 
-  // CGAL triangulation winding is opposite of the previous tessellator.
-  // Flip to preserve existing winding expectations, then apply optional flip.
+  let mut verts: Vec<Vec3> = Vec::with_capacity(out_vertices_xy.len() / 2);
+  for xy in out_vertices_xy.chunks_exact(2) {
+    verts.push(Vec3::new(xy[0], 0.0, xy[1]));
+  }
+
+  // CGAL winding is CCW in the XY plane.  When dropped onto XZ via (x, 0, y), the apparent
+  // orientation flips, so we swap to keep faces facing +Y by default — matching the old
+  // tessellate_2d_paths behavior.  `flipped` then opts back into the other side.
   for tri in indices.chunks_mut(3) {
     tri.swap(0, 2);
   }

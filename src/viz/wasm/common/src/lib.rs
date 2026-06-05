@@ -20,7 +20,7 @@ pub fn maybe_init_rng() {
     // pump the rng a few times to avoid possible issues with seeding
     let rng = addr_of_mut!(RNG);
     for _ in 0..8 {
-      let _ = (*rng).gen::<f32>();
+      let _ = (*rng).random::<f32>();
     }
   }
 }
@@ -37,7 +37,7 @@ pub fn build_rng(seed: (u64, u64)) -> Pcg32 {
 /// Returns a random f32 in the range [0, 1).
 #[inline(always)]
 pub fn random() -> f32 {
-  rng().gen::<f32>()
+  rng().random::<f32>()
 }
 
 pub fn uninit<T>() -> T {

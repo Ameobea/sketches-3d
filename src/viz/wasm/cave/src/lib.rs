@@ -3,7 +3,7 @@ use mesh::Mesh;
 use nalgebra::{Matrix4, Point2, Point3, Vector3};
 use noise::{NoiseModule, Perlin, Seedable};
 use point_distribute::MeshSurfaceSampler;
-use rand::Rng;
+use rand::RngExt;
 use wasm_bindgen::prelude::*;
 
 const STALAG_COUNT: usize = 300;
@@ -59,7 +59,7 @@ pub fn compute_stalags(cave_mesh_vertices: &[f32], cave_mesh_normals: &[f32], tr
 
   // We want the stalags to generate in small pockets, so we filter the generated
   // samples using a noise function.
-  let noise_samp = Perlin::new().set_seed(rng().gen::<usize>() + 1);
+  let noise_samp = Perlin::new().set_seed(rng().random::<u32>() as usize + 1);
 
   let mut iters = 0usize;
   let mut points: Vec<Point3<f32>> = Vec::with_capacity(STALAG_COUNT);
@@ -111,12 +111,12 @@ pub fn compute_stalags(cave_mesh_vertices: &[f32], cave_mesh_normals: &[f32], tr
     }
 
     // randomize the rotation about the y axis
-    euler_angle.y = rng().gen_range(0.0..std::f32::consts::PI * 2.0);
+    euler_angle.y = rng().random_range(0.0..std::f32::consts::PI * 2.0);
 
     scales.push(Point3::new(
-      rng().gen_range(1.8..3.0),
-      rng().gen_range(0.5..2.0),
-      rng().gen_range(1.8..3.0),
+      rng().random_range(1.8..3.0),
+      rng().random_range(0.5..2.0),
+      rng().random_range(1.8..3.0),
     ));
 
     euler_angles.push(euler_angle);

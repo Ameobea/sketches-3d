@@ -28,15 +28,40 @@ interface MaterialRender {
 const activeCompositionRenders = new Map<string, CompositionRender>();
 const activeMaterialRenders = new Map<string, MaterialRender>();
 
+const PROD_TRANSIENT_URL = 'https://3d.ameo.design/geotoy/render';
+const DEV_TRANSIENT_URL = 'http://localhost:4800/geotoy/render';
+
+interface TransientRenderOptions {
+  /** 'png' (default) | 'avif' | 'jpeg' */
+  format?: 'png' | 'avif' | 'jpeg';
+  /** Viewport width in pixels. Defaults to 800. */
+  width?: number;
+  /** Viewport height in pixels. Defaults to 800. */
+  height?: number;
+  /** Quality for lossy formats (avif/jpeg). 0-100. */
+  quality?: number;
+  /** If true, navigate to the local dev frontend instead of the prod URL. */
+  dev?: boolean;
+}
+
+interface TransientRenderBody {
+  tree?: unknown;
+  metadata?: unknown;
+  options?: TransientRenderOptions;
+}
+
 async function setupPage(
   page: Page,
   url: string,
-  abortController: AbortController
+  abortController: AbortController,
+  opts: { width?: number; height?: number; allowLocalhost?: boolean; timeoutMs?: number } = {}
 ): Promise<{ promise: Promise<void> }> {
-  await page.setViewport({ width: 600, height: 600 });
+  await page.setViewport({ width: opts.width ?? 600, height: opts.height ?? 600 });
+  const allowLocalhost = !!opts.allowLocalhost;
+  const timeoutMs = opts.timeoutMs ?? 30 * 60 * 1000;
 
   const renderReadyPromise = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Render timed out after 30 minutes')), 30 * 60 * 1000);
+    const timeout = setTimeout(() => reject(new Error(`Render timed out after ${timeoutMs}ms`)), timeoutMs);
 
     const onAbort = () => {
       clearTimeout(timeout);
@@ -82,8 +107,13 @@ async function setupPage(
       return;
     }
 
-    // Block requests to the file protocol, or localhost (which might not be an IP if not resolved yet)
-    if (requestUrl.protocol === 'file:' || requestUrl.hostname === 'localhost') {
+    // Block file: always; block localhost unless explicitly allowed (dev mode).
+    if (requestUrl.protocol === 'file:') {
+      console.log(`Blocking request to local resource: ${requestUrlString}`);
+      request.abort();
+      return;
+    }
+    if (requestUrl.hostname === 'localhost' && !allowLocalhost) {
       console.log(`Blocking request to local resource: ${requestUrlString}`);
       request.abort();
       return;
@@ -103,13 +133,37 @@ async function setupPage(
   return { promise: renderReadyPromise };
 }
 
-async function render(url: string, abortController: AbortController): Promise<Buffer> {
+interface RenderOpts {
+  /** Output image post-processing. If unset, AVIF q70 (legacy thumbnail behavior). */
+  encode?: (raw: Buffer) => Promise<Buffer>;
+  /** Viewport dimensions. */
+  width?: number;
+  height?: number;
+  /** Allow puppeteer to load localhost resources (dev mode). */
+  allowLocalhost?: boolean;
+  /** Setup hook called before navigation (e.g. `evaluateOnNewDocument` for payload injection). */
+  beforeNavigate?: (page: Page) => Promise<void>;
+}
+
+async function render(
+  url: string,
+  abortController: AbortController,
+  opts: RenderOpts = {}
+): Promise<Buffer> {
   console.log('Launching browser...');
   const browser: Browser = await puppeteer.launch({ args: BROWSER_ARGS });
 
   try {
     const page = await browser.newPage();
-    const { promise: renderReadyPromise } = await setupPage(page, url, abortController);
+    const { promise: renderReadyPromise } = await setupPage(page, url, abortController, {
+      width: opts.width,
+      height: opts.height,
+      allowLocalhost: opts.allowLocalhost,
+    });
+
+    if (opts.beforeNavigate) {
+      await opts.beforeNavigate(page);
+    }
 
     console.log(`Navigating to ${url}...`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -120,12 +174,12 @@ async function render(url: string, abortController: AbortController): Promise<Bu
     console.log('Taking screenshot...');
     const screenshotBuffer = await page.screenshot();
 
-    console.log('Encoding screenshot to AVIF...');
-    const avifBuffer = await sharp(screenshotBuffer).avif({ quality: 70, effort: 7 }).toBuffer();
+    const encode = opts.encode ?? (raw => sharp(raw).avif({ quality: 70, effort: 7 }).toBuffer());
+    const encoded = await encode(screenshotBuffer);
 
     console.log('Successfully captured + encoded screenshot.');
 
-    return avifBuffer;
+    return encoded;
   } finally {
     console.log('Closing browser...');
     await browser.close();
@@ -222,6 +276,70 @@ app.get('/render_material/:id', async (req: Request, res: Response) => {
     res.status(500).send('Error generating screenshot');
   } finally {
     activeMaterialRenders.delete(materialId);
+  }
+});
+
+const jsonBodyParser = express.json({ limit: '50mb' });
+
+app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response) => {
+  const body = req.body as TransientRenderBody | undefined;
+  if (!body || typeof body !== 'object') {
+    return res.status(400).send('Invalid JSON body');
+  }
+  const tree = body.tree;
+  const metadata = body.metadata ?? {};
+  if (tree !== undefined && (tree === null || typeof tree !== 'object')) {
+    return res.status(400).send('`tree` must be an object');
+  }
+  const options = body.options ?? {};
+  const format: 'png' | 'avif' | 'jpeg' = options.format ?? 'png';
+  const width = options.width ?? 800;
+  const height = options.height ?? 800;
+  const quality = options.quality;
+  const dev = !!options.dev;
+
+  if (width < 16 || width > 4096 || height < 16 || height > 4096) {
+    return res.status(400).send('width/height must be in [16, 4096]');
+  }
+
+  const encode = (raw: Buffer): Promise<Buffer> => {
+    switch (format) {
+      case 'png':
+        return sharp(raw).png({ compressionLevel: 8 }).toBuffer();
+      case 'avif':
+        return sharp(raw).avif({ quality: quality ?? 70, effort: 6 }).toBuffer();
+      case 'jpeg':
+        return sharp(raw).jpeg({ quality: quality ?? 90, mozjpeg: true }).toBuffer();
+    }
+  };
+  const contentType = format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
+
+  const url = dev ? DEV_TRANSIENT_URL + '?render=true' : PROD_TRANSIENT_URL + '?render=true';
+  const abortController = new AbortController();
+  // Only abort on premature client disconnect — `req.on('close')` fires for normal completion too
+  // once the body parser drains the stream, which would cancel before the render even starts.
+  res.on('close', () => {
+    if (!res.writableEnded) abortController.abort();
+  });
+
+  try {
+    const payload = { tree, metadata };
+    const image = await render(url, abortController, {
+      encode,
+      width,
+      height,
+      allowLocalhost: dev,
+      beforeNavigate: async page => {
+        await page.evaluateOnNewDocument((p: unknown) => {
+          (window as any).__transientCompositionPayload = p;
+        }, payload);
+      },
+    });
+    res.set('Content-Type', contentType);
+    res.send(image);
+  } catch (error) {
+    console.error('Transient render failed:', error);
+    res.status(500).send(error instanceof Error ? error.message : 'Render failed');
   }
 });
 

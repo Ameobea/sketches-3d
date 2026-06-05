@@ -440,6 +440,110 @@ export const cgal_triangulate_polygon_2d = (vertices: Float32Array): boolean => 
   return true;
 };
 
+/**
+ * Multi-subpath / refining CDT.  Supports holes (each subpath inserted as its own
+ * closed constraint loop; nesting determines in/out) and optional size-bounded
+ * Delaunay refinement.
+ *
+ * @param vertices flat [x0, y0, x1, y1, ...] across all subpaths
+ * @param subpathLengths vertex count per subpath; their sum must equal vertices.length/2
+ * @param maxEdgeLen if refine=true, upper bound on triangle edge length
+ * @param minAngleBound if refine=true, shape bound passed to Delaunay_mesh_size_criteria_2 (0.125 ≈ 20.6°)
+ * @param refine if true, run Delaunay_mesher_2 refinement after marking the domain.  When false, the
+ *   strict input-vertex-to-output-vertex mapping is preserved; when true, Steiner points may appear
+ *   and the mapping is empty.
+ * @returns true on success; use cgal_get_cdt2d_* to retrieve the result
+ */
+export const cgal_triangulate_polygon_2d_with_holes = (
+  vertices: Float32Array,
+  subpathLengths: Uint32Array,
+  maxEdgeLen: number,
+  minAngleBound: number,
+  refine: boolean
+): boolean => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+
+  const CGAL = CGALWasm.getSync();
+
+  const HEAPF32 = () => CGAL.HEAPF32 as Float32Array;
+  const HEAPU32 = () => CGAL.HEAPU32 as Uint32Array;
+  const HEAP32 = () => CGAL.HEAP32 as Int32Array;
+
+  const vec_f32 = (vals: Float32Array): any => {
+    const vec = new CGAL.vector$float$();
+    vec.resize(vals.length, 0);
+    const ptr = vec.data();
+    HEAPF32().subarray(ptr / 4, ptr / 4 + vals.length).set(vals);
+    return vec;
+  };
+  const vec_u32 = (vals: Uint32Array): any => {
+    const vec = new CGAL.vector$uint32_t$();
+    vec.resize(vals.length, 0);
+    const ptr = vec.data();
+    HEAPU32().subarray(ptr / 4, ptr / 4 + vals.length).set(vals);
+    return vec;
+  };
+
+  const from_vec_f32 = (vec: any): Float32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAPF32().subarray(ptr / 4, ptr / 4 + length).slice();
+  };
+  const from_vec_uint32 = (vec: any): Uint32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAPU32().subarray(ptr / 4, ptr / 4 + length).slice();
+  };
+  const from_vec_int32 = (vec: any): Int32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAP32().subarray(ptr / 4, ptr / 4 + length).slice();
+  };
+
+  const inputVec = vec_f32(vertices);
+  const lensVec = vec_u32(subpathLengths);
+  let result: any;
+
+  try {
+    result = CGAL.triangulatePolygon2DWithHoles(inputVec, lensVec, maxEdgeLen, minAngleBound, refine);
+  } catch (err) {
+    inputVec.delete();
+    lensVec.delete();
+    LastBuildPolymeshError = `CDT2DWithHoles exception: ${err}`;
+    return false;
+  }
+
+  inputVec.delete();
+  lensVec.delete();
+
+  if (!result.success()) {
+    LastBuildPolymeshError = result.getError();
+    result.delete();
+    return false;
+  }
+
+  LastBuildPolymeshError = null;
+
+  const outVerts = result.getVertices();
+  const outIndices = result.getIndices();
+  const outMapping = result.getVertexMapping();
+
+  CDT2DOutput = {
+    vertices: from_vec_f32(outVerts),
+    indices: from_vec_uint32(outIndices),
+    vertexMapping: from_vec_int32(outMapping),
+  };
+
+  outVerts.delete();
+  outIndices.delete();
+  outMapping.delete();
+  result.delete();
+
+  return true;
+};
+
 export const cgal_get_cdt2d_vertices = (): Float32Array => {
   if (!CDT2DOutput) {
     throw new Error('No CDT2D output set');
@@ -463,4 +567,126 @@ export const cgal_get_cdt2d_vertex_mapping = (): Int32Array => {
 
 export const cgal_clear_cdt2d_output = (): void => {
   CDT2DOutput = null;
+};
+
+interface PathBoolean2DOutput {
+  coords: Float32Array;
+  pathLengths: Uint32Array;
+}
+
+let PathBoolean2DOutput: PathBoolean2DOutput | null = null;
+
+/**
+ * Exact-arithmetic 2D path boolean using CGAL `Polygon_set_2` over the
+ * `Exact_predicates_exact_constructions_kernel` (EPECK).  Inputs and outputs
+ * use the flat-coords + per-subpath-lengths format; within an input, subpaths
+ * combine under even-odd / XOR semantics (matching the nesting-based fill model
+ * used by `tessellate_path` CGAL backend).
+ *
+ * @param op 0=union, 1=intersect, 2=difference (subject minus clip), 3=xor
+ * @returns true on success; use `cgal_get_path_boolean_2d_*` to retrieve output
+ */
+export const cgal_path_boolean_2d = (
+  subjectCoords: Float32Array,
+  subjectPathLengths: Uint32Array,
+  clipCoords: Float32Array,
+  clipPathLengths: Uint32Array,
+  op: number
+): boolean => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+
+  const CGAL = CGALWasm.getSync();
+
+  const HEAPF32 = () => CGAL.HEAPF32 as Float32Array;
+  const HEAPU32 = () => CGAL.HEAPU32 as Uint32Array;
+
+  const vec_f32 = (vals: Float32Array): any => {
+    const vec = new CGAL.vector$float$();
+    vec.resize(vals.length, 0);
+    const ptr = vec.data();
+    HEAPF32().subarray(ptr / 4, ptr / 4 + vals.length).set(vals);
+    return vec;
+  };
+  const vec_u32 = (vals: Uint32Array): any => {
+    const vec = new CGAL.vector$uint32_t$();
+    vec.resize(vals.length, 0);
+    const ptr = vec.data();
+    HEAPU32().subarray(ptr / 4, ptr / 4 + vals.length).set(vals);
+    return vec;
+  };
+
+  const from_vec_f32 = (vec: any): Float32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAPF32().subarray(ptr / 4, ptr / 4 + length).slice();
+  };
+  const from_vec_uint32 = (vec: any): Uint32Array => {
+    const length = vec.size();
+    const ptr = vec.data();
+    return HEAPU32().subarray(ptr / 4, ptr / 4 + length).slice();
+  };
+
+  const subjVec = vec_f32(subjectCoords);
+  const subjLensVec = vec_u32(subjectPathLengths);
+  const clipVec = vec_f32(clipCoords);
+  const clipLensVec = vec_u32(clipPathLengths);
+  let result: any;
+
+  try {
+    result = CGAL.pathBoolean2D(subjVec, subjLensVec, clipVec, clipLensVec, op);
+  } catch (err) {
+    subjVec.delete();
+    subjLensVec.delete();
+    clipVec.delete();
+    clipLensVec.delete();
+    LastBuildPolymeshError = `pathBoolean2D exception: ${err}`;
+    return false;
+  }
+
+  subjVec.delete();
+  subjLensVec.delete();
+  clipVec.delete();
+  clipLensVec.delete();
+
+  if (!result.success()) {
+    LastBuildPolymeshError = result.getError();
+    result.delete();
+    return false;
+  }
+
+  LastBuildPolymeshError = null;
+
+  const outCoords = result.getCoords();
+  const outLens = result.getPathLengths();
+
+  PathBoolean2DOutput = {
+    coords: from_vec_f32(outCoords),
+    pathLengths: from_vec_uint32(outLens),
+  };
+
+  outCoords.delete();
+  outLens.delete();
+  result.delete();
+
+  return true;
+};
+
+export const cgal_get_path_boolean_2d_coords = (): Float32Array => {
+  if (!PathBoolean2DOutput) {
+    throw new Error('No pathBoolean2D output set');
+  }
+  return PathBoolean2DOutput.coords;
+};
+
+export const cgal_get_path_boolean_2d_path_lengths = (): Uint32Array => {
+  if (!PathBoolean2DOutput) {
+    throw new Error('No pathBoolean2D output set');
+  }
+  return PathBoolean2DOutput.pathLengths;
+};
+
+export const cgal_clear_path_boolean_2d_output = (): void => {
+  PathBoolean2DOutput = null;
 };

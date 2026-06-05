@@ -1,6 +1,6 @@
 use mesh::{linked_mesh::FaceKey, LinkedMesh, Mesh, Triangle};
 use nalgebra::{Point3, Vector3};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg32;
 
 pub enum MeshImpl<'a, T = ()> {
@@ -166,7 +166,7 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
   }
 
   pub fn sample_face_index(&mut self) -> usize {
-    let rand: f32 = self.rand().gen();
+    let rand: f32 = self.rand().random();
     let cumulative_total = *self.distribution.last().expect("distribution is empty");
     self.binary_search(rand * cumulative_total)
   }
@@ -191,8 +191,8 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
 
   /// Returns `(position, normal)`.
   pub fn sample_face(&mut self, face_index: usize) -> (Point3<f32>, Vector3<f32>) {
-    let mut u = self.rand().gen();
-    let mut v = self.rand().gen();
+    let mut u = self.rand().random();
+    let mut v = self.rand().random();
     if u + v > 1. {
       u = 1. - u;
       v = 1. - v;

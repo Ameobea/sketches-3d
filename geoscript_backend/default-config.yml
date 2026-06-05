@@ -31,6 +31,7 @@ port: 5810
 sql:
   db_url: ""
 admin_token: 'youshouldsetthistosomethingsecure'
+cli_token: 'changeme-cli'
 object_storage:
   endpoint: ""
   bucket_name: ""

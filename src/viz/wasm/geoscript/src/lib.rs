@@ -5724,6 +5724,24 @@ fn test_random_module_cache_requires_matching_rng_state() {
 }
 
 #[test]
+fn test_repeated_randv_calls_return_distinct_values() {
+  let ctx = EvalCtx::default();
+  ctx.reset_rng_to_default();
+  parse_and_eval_program_with_ctx(
+    r#"a = randv()
+b = randv()
+"#
+    .to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  let a = ctx.get_global("a").unwrap().as_vec3().unwrap().clone();
+  let b = ctx.get_global("b").unwrap().as_vec3().unwrap().clone();
+  assert_ne!(a, b, "two randv() calls produced identical values: {a:?}");
+}
+
+#[test]
 fn test_module_scope_isolation_and_export_in_main() {
   let ctx = EvalCtx::default();
 

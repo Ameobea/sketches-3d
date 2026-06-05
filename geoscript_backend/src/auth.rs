@@ -12,7 +12,6 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{Duration, Utc};
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 use tower_cookies::{Cookie, Cookies};
@@ -57,7 +56,15 @@ pub async fn register(
     ));
   }
 
-  let salt = SaltString::generate(&mut OsRng);
+  let mut salt_bytes = [0u8; 16];
+  getrandom::fill(&mut salt_bytes)
+    .map_err(|_| APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate salt."))?;
+  let salt = SaltString::encode_b64(&salt_bytes).map_err(|_| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      "Failed to encode salt.",
+    )
+  })?;
   let hashed_password = Argon2::default()
     .hash_password(registration.password.as_bytes(), &salt)
     .map_err(|_| {
@@ -162,7 +169,12 @@ pub async fn logout(
 
 async fn create_session(pool: &SqlitePool, user_id: i64) -> Result<String, APIError> {
   let mut session_id_bytes = [0u8; 32];
-  OsRng.fill_bytes(&mut session_id_bytes);
+  getrandom::fill(&mut session_id_bytes).map_err(|_| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      "Failed to generate session id.",
+    )
+  })?;
   let session_id = URL_SAFE_NO_PAD.encode(session_id_bytes);
 
   sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")

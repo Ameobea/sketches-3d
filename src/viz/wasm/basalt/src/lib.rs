@@ -9,7 +9,7 @@ use mesh::{
 };
 use nalgebra::Vector3;
 use noise::{self, Fbm, MultiFractal, NoiseModule, Seedable};
-use rand::Rng;
+use rand::RngExt;
 use wasm_bindgen::prelude::*;
 
 mod crystals;
@@ -446,7 +446,7 @@ fn gen_stand_alone_pillar_instance_transforms(instance_count: usize, hex_width: 
       return false;
     }
 
-    if (x.abs() > 4 || y.abs() > 4) && rng().gen_range(0.0..1.) < 0.8 {
+    if (x.abs() > 4 || y.abs() > 4) && rng().random_range(0.0..1.) < 0.8 {
       return false;
     }
 
@@ -456,11 +456,11 @@ fn gen_stand_alone_pillar_instance_transforms(instance_count: usize, hex_width: 
   let (offset_x, offset_z) = get_hex_center_coords(-1, -1, hex_width, hex_height_z);
   for _ in 0..instance_count {
     let (x, y) = loop {
-      let mut y = rng().gen_range(-19..19);
-      let mut x = rng().gen_range(-19..19);
+      let mut y = rng().random_range(-19i32..19) as isize;
+      let mut x = rng().random_range(-19i32..19) as isize;
       while !coords_are_valid(x, y) {
-        y = rng().gen_range(-15..15);
-        x = rng().gen_range(-15..15);
+        y = rng().random_range(-15i32..15) as isize;
+        x = rng().random_range(-15i32..15) as isize;
       }
 
       let is_new = placed_coords.insert((x, y));
@@ -475,7 +475,7 @@ fn gen_stand_alone_pillar_instance_transforms(instance_count: usize, hex_width: 
     let mut transform = Mat4::identity();
     let hex_distance = (x.abs() + y.abs()) as f32;
     let mut y = -450. + (hex_distance * 30.).max(100.);
-    y *= rng().gen_range(0.2..0.9);
+    y *= rng().random_range(0.2..0.9);
 
     transform.append_translation_mut(&Vec3::new(
       hex_center.0 + offset_x,

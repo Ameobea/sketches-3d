@@ -1,7 +1,7 @@
 #![allow(deprecated)]
 
 use nanoserde::{DeJson, SerJson};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -159,7 +159,7 @@ impl ConduitParticlesState {
 
     // pump the rng a few times to avoid possible issues with seeding
     for _ in 0..8 {
-      let _ = rng.gen::<f32>();
+      let _ = rng.random::<f32>();
     }
 
     let conf = ConduitParticlesConf::default();
@@ -191,8 +191,8 @@ impl ConduitParticlesState {
     for coord in &mut initial_position {
       *coord += self
         .rng
-        //   .gen_range(-self.conduit_radius..self.conduit_radius);
-        .gen_range(-3.01..3.01);
+        //   .random_range(-self.conduit_radius..self.conduit_radius);
+        .random_range(-3.01..3.01);
     }
     let particle_ix = self.live_particle_count;
     self.live_particle_count += 1;
@@ -200,7 +200,7 @@ impl ConduitParticlesState {
 
     let mut new_velocity = [0.0f32; 3];
     for coord in &mut new_velocity {
-      *coord += self.rng.gen_range(-10.01..10.01) + cur_time_secs.sin() * self.conf.conduit_radius;
+      *coord += self.rng.random_range(-10.01..10.01) + cur_time_secs.sin() * self.conf.conduit_radius;
     }
     self.velocities[particle_ix] = Vec3::new(new_velocity[0], new_velocity[1], new_velocity[2]);
   }

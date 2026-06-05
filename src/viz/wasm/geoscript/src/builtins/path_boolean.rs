@@ -58,6 +58,47 @@ extern "C" {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(module = "src/viz/wasm/cgal/cgal")]
+extern "C" {
+  fn cgal_get_is_loaded() -> bool;
+  fn cgal_path_boolean_2d(
+    subject_coords: &[f32],
+    subject_path_lengths: &[u32],
+    clip_coords: &[f32],
+    clip_path_lengths: &[u32],
+    op: u32,
+  ) -> bool;
+  fn cgal_get_path_boolean_2d_coords() -> Vec<f32>;
+  fn cgal_get_path_boolean_2d_path_lengths() -> Vec<u32>;
+  fn cgal_clear_path_boolean_2d_output();
+  fn cgal_get_last_error() -> Option<String>;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BooleanEngine {
+  Clipper,
+  Cgal,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn parse_engine(val: &Value, fn_name: &str) -> Result<BooleanEngine, ErrorStack> {
+  match val {
+    Value::Nil => Ok(BooleanEngine::Clipper),
+    Value::String(s) => match s.as_str() {
+      "clipper" | "clipper2" => Ok(BooleanEngine::Clipper),
+      "cgal" => Ok(BooleanEngine::Cgal),
+      other => Err(ErrorStack::new(format!(
+        "Invalid `engine` for `{fn_name}`; expected \"clipper\" or \"cgal\", found: {other:?}"
+      ))),
+    },
+    other => Err(ErrorStack::new(format!(
+      "Invalid `engine` for `{fn_name}`; expected string, found: {other:?}"
+    ))),
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOp {
   Union,
@@ -169,6 +210,87 @@ fn run_clipper_boolean(
 }
 
 #[cfg(target_arch = "wasm32")]
+fn run_cgal_boolean(
+  subject_coords: &[f64],
+  subject_path_lengths: &[u32],
+  clip_coords: &[f64],
+  clip_path_lengths: &[u32],
+  op: BooleanOp,
+  fn_name: &str,
+) -> Result<BooleanResult, ErrorStack> {
+  if subject_coords.is_empty() || subject_path_lengths.is_empty() {
+    return Ok(BooleanResult {
+      paths: Vec::new(),
+      critical_t_values: Vec::new(),
+    });
+  }
+
+  let is_self_op = subject_coords == clip_coords && subject_path_lengths == clip_path_lengths;
+  let pre_op_vertices = if is_self_op {
+    collect_vertex_set(subject_coords)
+  } else {
+    collect_vertex_set_multi(subject_coords, clip_coords)
+  };
+
+  let subj_f32: Vec<f32> = subject_coords.iter().map(|&v| v as f32).collect();
+  let clip_f32: Vec<f32> = clip_coords.iter().map(|&v| v as f32).collect();
+
+  let op_id: u32 = match op {
+    BooleanOp::Union => 0,
+    BooleanOp::Intersect => 1,
+    BooleanOp::Difference => 2,
+    BooleanOp::Xor => 3,
+  };
+
+  let ok = cgal_path_boolean_2d(
+    &subj_f32,
+    subject_path_lengths,
+    &clip_f32,
+    clip_path_lengths,
+    op_id,
+  );
+  if !ok {
+    let err = cgal_get_last_error().unwrap_or_else(|| "unknown CGAL error".to_owned());
+    return Err(ErrorStack::new(format!(
+      "`{fn_name}` (cgal engine) failed: {err}"
+    )));
+  }
+
+  let out_coords = cgal_get_path_boolean_2d_coords();
+  let out_lengths = cgal_get_path_boolean_2d_path_lengths();
+  cgal_clear_path_boolean_2d_output();
+
+  let mut paths = Vec::with_capacity(out_lengths.len());
+  let mut coord_ix = 0usize;
+  for len in out_lengths {
+    let mut path = Vec::with_capacity(len as usize);
+    for _ in 0..len {
+      if coord_ix + 1 >= out_coords.len() {
+        break;
+      }
+      path.push(Vec2::new(out_coords[coord_ix], out_coords[coord_ix + 1]));
+      coord_ix += 2;
+    }
+    if path.len() >= 2 {
+      paths.push(path);
+    }
+  }
+
+  // detect_critical_points takes f64 vertex coordinates; the pre-op set was
+  // collected from the f64 sample buffer so the comparison is apples-to-apples.
+  let critical_t_values = detect_critical_points(
+    &paths,
+    &CriticalPointConfig::default(),
+    Some(&pre_op_vertices),
+  );
+
+  Ok(BooleanResult {
+    paths,
+    critical_t_values,
+  })
+}
+
+#[cfg(target_arch = "wasm32")]
 fn sample_path_to_coords(
   ctx: &EvalCtx,
   path_callable: &Rc<Callable>,
@@ -210,12 +332,6 @@ pub fn path_boolean_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      #[cfg(target_arch = "wasm32")]
-      crate::or_async_dep_bit(crate::DEP_BIT_CLIPPER2);
-      if !clipper2_get_is_loaded() {
-        return Err(ErrorStack::new_uninitialized_module("clipper2"));
-      }
-
       let subject_val = arg_refs[0].resolve(args, kwargs);
       let subject_callable = subject_val.as_callable().ok_or_else(|| {
         ErrorStack::new(format!(
@@ -230,8 +346,7 @@ pub fn path_boolean_impl(
         ))
       })?;
 
-      let fill_rule_enum = FillRule::parse(arg_refs[2].resolve(args, kwargs), fn_name)?;
-      let fill_rule = fill_rule_enum.to_clipper2_u32();
+      let fill_rule_val = arg_refs[2].resolve(args, kwargs);
 
       let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap() as f64;
       if curve_angle_degrees <= 0.0 {
@@ -264,6 +379,41 @@ pub fn path_boolean_impl(
         }
       };
 
+      let engine = parse_engine(arg_refs[6].resolve(args, kwargs), fn_name)?;
+
+      // Engine-specific default fill rule when caller leaves it unset (nil): Clipper2's
+      // historical default is NonZero; CGAL's `Polygon_set_2` natively combines subpaths
+      // under EvenOdd so we default to that to avoid forcing the user to opt in twice.
+      let fill_rule_enum = if matches!(fill_rule_val, Value::Nil) {
+        match engine {
+          BooleanEngine::Clipper => FillRule::NonZero,
+          BooleanEngine::Cgal => FillRule::EvenOdd,
+        }
+      } else {
+        FillRule::parse(fill_rule_val, fn_name)?
+      };
+
+      match engine {
+        BooleanEngine::Clipper => {
+          crate::or_async_dep_bit(crate::DEP_BIT_CLIPPER2);
+          if !clipper2_get_is_loaded() {
+            return Err(ErrorStack::new_uninitialized_module("clipper2"));
+          }
+        }
+        BooleanEngine::Cgal => {
+          crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
+          if !cgal_get_is_loaded() {
+            return Err(ErrorStack::new_uninitialized_module("cgal"));
+          }
+          if fill_rule_enum != FillRule::EvenOdd {
+            return Err(ErrorStack::new(format!(
+              "`{fn_name}` with engine=\"cgal\" only supports fill_rule=\"evenodd\"; got \
+               {fill_rule_enum:?}.  Re-run with engine=\"clipper\" for other fill rules."
+            )));
+          }
+        }
+      }
+
       let (subject_coords, subject_lengths) = sample_path_to_coords(
         ctx,
         subject_callable,
@@ -282,14 +432,24 @@ pub fn path_boolean_impl(
         fn_name,
       )?;
 
-      let boolean_result = run_clipper_boolean(
-        &subject_coords,
-        &subject_lengths,
-        &clip_coords,
-        &clip_lengths,
-        fill_rule,
-        op,
-      );
+      let boolean_result = match engine {
+        BooleanEngine::Clipper => run_clipper_boolean(
+          &subject_coords,
+          &subject_lengths,
+          &clip_coords,
+          &clip_lengths,
+          fill_rule_enum.to_clipper2_u32(),
+          op,
+        ),
+        BooleanEngine::Cgal => run_cgal_boolean(
+          &subject_coords,
+          &subject_lengths,
+          &clip_coords,
+          &clip_lengths,
+          op,
+          fn_name,
+        )?,
+      };
 
       let critical_points = if boolean_result.paths.len() == 1 {
         Some(boolean_result.critical_t_values)
@@ -309,7 +469,8 @@ pub fn path_boolean_impl(
         interned_t_kwarg,
         critical_points,
       );
-      // The output has been resolved by Clipper2 using this fill rule, so carry it forward.
+      // The output has been resolved by the chosen engine using this fill rule, so carry it
+      // forward.
       tracer.fill_rule = Some(fill_rule_enum);
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: fn_name.to_owned(),

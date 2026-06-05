@@ -62,7 +62,7 @@ const buildPathD = (Clipper2: any, coords: Float64Array): any => {
   const path = new Clipper2.PathD();
   const pointCount = coords.length / 2;
   for (let i = 0; i < pointCount; i++) {
-    const pt = new Clipper2.PointD(coords[i * 2], coords[i * 2 + 1], 0);
+    const pt = new Clipper2.PointD(coords[i * 2], coords[i * 2 + 1]);
     path.push_back(pt);
   }
   return path;
@@ -156,7 +156,7 @@ const simplifyPathD = (Clipper2: any, path: any, epsilon: number, isClosed: bool
     const copy = new Clipper2.PathD();
     for (let i = 0; i < result.size(); i++) {
       const pt = result.get(i);
-      copy.push_back(new Clipper2.PointD(pt.x, pt.y, 0));
+      copy.push_back(new Clipper2.PointD(pt.x, pt.y));
     }
     simplified.delete();
     return copy;

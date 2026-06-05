@@ -1,5 +1,5 @@
 use nalgebra::{Rotation3, Transform3, Translation3};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg32;
 use wasm_bindgen::prelude::*;
 
@@ -42,13 +42,13 @@ impl Default for PillarCtx {
       for z_row_ix in 0..PILLAR_ROWS_Z {
         let z = START_POS[2]
           + (END_POS[2] - START_POS[2]) * (z_row_ix as f32 / (PILLAR_ROWS_Z - 1) as f32);
-        let y = base_y + rng.gen_range(-8.0..8.);
+        let y = base_y + rng.random_range(-8.0..8.);
 
         let mut pillar_type: usize = 0;
         for _ in 0..3 {
-          pillar_type = rng.gen_range(0..PILLAR_TYPE_COUNT);
-          if pillar_type == last_pillar_type && rng.gen_range(0..6usize) > 1 {
-            pillar_type = rng.gen_range(0..PILLAR_TYPE_COUNT);
+          pillar_type = rng.random_range(0..PILLAR_TYPE_COUNT);
+          if pillar_type == last_pillar_type && rng.random_range(0..6usize) > 1 {
+            pillar_type = rng.random_range(0..PILLAR_TYPE_COUNT);
           } else {
             break;
           }
@@ -61,7 +61,7 @@ impl Default for PillarCtx {
         // Rotate randomly in 90 degree increments about the y axis
         transform *= Rotation3::from_euler_angles(
           0.,
-          std::f32::consts::FRAC_PI_2 * rng.gen_range(0..4usize) as f32,
+          std::f32::consts::FRAC_PI_2 * rng.random_range(0..4usize) as f32,
           0.,
         );
 

@@ -22,6 +22,8 @@ export interface ReplCtx {
   startRenameSelected: () => void;
   treeUndo: (event?: KeyboardEvent) => void;
   treeRedo: (event?: KeyboardEvent) => void;
+  /** Instant fit-all framing, ignoring selection — used by transient render auto-framing. */
+  autoFrameForRender: () => void;
 }
 
 export interface RunStats {

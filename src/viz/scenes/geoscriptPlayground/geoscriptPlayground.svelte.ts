@@ -47,6 +47,8 @@ export interface GeoscriptPlaygroundUserData {
   workerManager: WorkerManager | null;
   initialComposition: { comp: Composition; version: CompositionVersion } | null;
   renderMode?: boolean;
+  /** Transient render only: auto-frame the camera to fit all rendered geometry before capturing. */
+  transientAutoFrame?: boolean;
   me?: User | null | undefined;
 }
 
@@ -98,6 +100,10 @@ export const processLoadedScene = async (
     viz.setRenderOverride(timeDiffSeconds => {
       if (!ctx?.getLastRunOutcome() || didRender || !ctx?.getAreAllMaterialsLoaded()) {
         return;
+      }
+
+      if (userData.transientAutoFrame) {
+        ctx.autoFrameForRender();
       }
 
       viz.renderer.shadowMap.needsUpdate = true;

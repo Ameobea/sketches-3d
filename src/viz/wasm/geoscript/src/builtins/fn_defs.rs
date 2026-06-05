@@ -6239,6 +6239,32 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       }
     ],
   },
+  "extrude_along_normals" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "distance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Distance to extrude each vertex along its computed normal.  If a callable is provided, it should have signature `|vertex_pos: vec3|: num` and return the per-vertex distance."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          }
+        ],
+        description: "Extrudes a 2D mesh into a shell along its per-vertex normals.  Normals are computed per connected component as the area-weighted average of adjacent face normals.\n\nUseful for adding thickness to a surface that follows a curve through space — e.g. a mesh draped over a curved surface via `warp` — where a single global `up` direction won't follow the surface curvature.\n\nLike `extrude`, designed for 2D (single-layer) meshes: the input is duplicated, displaced, the original is flipped to face the other way, and boundary edges are stitched into side walls to produce a closed 2-manifold shell.\n\nFails to produce a clean shell when the offset distance exceeds the local radius of curvature on concave regions — adjacent normals converge past their starting positions and the duplicated layer self-intersects.  For mild undulation this is a non-issue.",
+        return_type: &[ArgType::Mesh],
+      }
+    ],
+  },
   "stitch_contours" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 22 }],
@@ -6904,17 +6930,31 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Fill rule for determining the interior of the shape: \"nonzero\" (default) or \"evenodd\". If nil, the fill rule is inherited from the path sampler (e.g. set via `trace_path`), falling back to \"nonzero\". Supports multiple subpaths (holes) when combined with \"evenodd\" or a path carrying subpath topology."
+            description: "Fill rule used to identify the interior of the shape: \"nonzero\", \"evenodd\", \"positive\", or \"negative\".  If nil, inherited from the path sampler (e.g. set via `trace_path`) and otherwise defaulting to \"nonzero\".\n\nThe CGAL engine always uses nesting-based fill (equivalent to \"evenodd\"); requesting any winding-dependent rule (\"nonzero\"/\"positive\"/\"negative\") with multiple subpaths under CGAL is a runtime error.  The lyon engine honors all four rules per its tessellator semantics."
           },
           ArgDef {
             name: "engine",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Tessellation engine to use: \"cgal\" or \"lyon\". If nil (default), the engine is chosen automatically: CGAL is used when no special fill rule is in play (producing cleaner topology with no T-junctions, better for extrusion), and lyon is used when an explicit fill_rule argument is provided or the path sampler carries a non-default fill rule. Specifying engine=\"cgal\" with a non-default fill rule is a runtime error."
+            description: "Tessellation engine: \"cgal\" or \"lyon\".  If nil (default), the engine is chosen automatically.\n\n- CGAL is preferred: cleaner topology (no T-junctions), supports holes via nesting (any number of subpaths), supports mesh refinement via `max_edge_len`.\n- lyon is chosen when a winding-dependent fill rule (\"nonzero\"/\"positive\"/\"negative\") is requested with multiple subpaths, since CGAL only implements nesting-based fill.\n\nForcing engine=\"cgal\" in a case lyon would be auto-selected is a runtime error."
+          },
+          ArgDef {
+            name: "max_edge_len",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Upper bound on the length of any triangle edge after refinement.  Triangles with a longer edge are split.  When set together with `min_angle_degrees` or used with the default angle bound, drives the density of the refined mesh.  CGAL-only; setting this with engine=\"lyon\" is a runtime error."
+          },
+          ArgDef {
+            name: "min_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Lower bound (in degrees) on the smallest angle in any triangle after refinement.  Triangles with a smaller angle are split.  Range: [0, ~20.7]; 0 disables the shape criterion entirely (refinement then driven purely by `max_edge_len`).\n\nThe upper limit comes from CGAL: Delaunay refinement only provably terminates for aspect bounds up to 0.125 (squared sine), i.e. min angle ≲ 20.7°.  When this kwarg is omitted but `max_edge_len` is set, CGAL's default ~20.6° applies — narrow regions (e.g. slivers between holes) can then split well below `max_edge_len`.  Pass 0 if you want only the edge-length constraint."
           },
         ],
-        description: "Tessellates a 2D path into a triangle mesh in the XZ plane.",
+        description: "Tessellates a 2D path into a triangle mesh in the XZ plane.\n\nPath topology — subpaths and the holes they imply via nesting — is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `build_path(path { rect(...) rect(...) | reverse })`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it — a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
         return_type: &[ArgType::Mesh],
       }
     ],
@@ -8625,9 +8665,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "fill_rule",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
-            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3).  Defaults to `nonzero` for the `clipper` engine and `evenodd` for `cgal` (the only rule `cgal` accepts)."
           },
           ArgDef {
             name: "curve_angle_degrees",
@@ -8650,8 +8690,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Optional override for treating the inputs as closed/open."
           },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Backend: `clipper` (default; fast, fixed-point) or `cgal` (slower, exact-arithmetic via `Polygon_set_2` over EPECK)."
+          },
         ],
-        description: "Computes the union of two 2D paths using Clipper2. The union contains all areas inside either path.",
+        description: "Computes the union of two 2D paths. The union contains all areas inside either path.\n\nWhich regions count as \"inside\" depends on `fill_rule` (default `nonzero`):\n- `nonzero`: a point is inside if the signed-crossing count of a ray from it to infinity is non-zero.  Inner subpaths must wind opposite to outer subpaths to register as holes.\n- `evenodd`: a point is inside if the unsigned crossing count is odd.  Winding direction is ignored; holes arise purely from nesting.\n- `positive` / `negative`: like `nonzero` but keep only regions with positive or negative winding number respectively.\n\n**Engine selection** (`engine` kwarg, default `clipper`):\n- `clipper`: Clipper2, fast but operates in fixed-point internally so float coordinates are quantized and exact-coincident points may shift slightly.  This can cause T-junctions and tiny gaps in the output topology that break downstream operations like 2-manifold extrusion.\n- `cgal`: CGAL `Polygon_set_2` over `Exact_predicates_exact_constructions_kernel`; exact arithmetic preserves coincident edges precisely.  Slower (often 10–100×) but produces clean topology suitable for `extrude` / `tessellate_path`.  Only `evenodd` fill rule is supported; within each input, subpaths combine under XOR (matching the nesting-based fill model).\n\nFor paths built procedurally as non-overlapping subpaths (e.g. an outer shape plus enclosed holes), skip the boolean op entirely and pass the multi-subpath path directly to downstream consumers — they will treat nested subpaths as holes under their own fill rule.",
         return_type: &[ArgType::Callable],
       }
     ]
@@ -8679,9 +8726,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "fill_rule",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
-            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3).  Defaults to `nonzero` for the `clipper` engine and `evenodd` for `cgal` (the only rule `cgal` accepts)."
           },
           ArgDef {
             name: "curve_angle_degrees",
@@ -8704,8 +8751,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Optional override for treating the inputs as closed/open."
           },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Backend: `clipper` (default; fast, fixed-point) or `cgal` (slower, exact-arithmetic)."
+          },
         ],
-        description: "Computes the intersection of two 2D paths using Clipper2. The intersection contains only areas inside both paths.",
+        description: "Computes the intersection of two 2D paths. The intersection contains only areas inside both paths.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
         return_type: &[ArgType::Callable],
       }
     ]
@@ -8787,9 +8841,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "fill_rule",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
-            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3).  Defaults to `nonzero` for the `clipper` engine and `evenodd` for `cgal` (the only rule `cgal` accepts)."
           },
           ArgDef {
             name: "curve_angle_degrees",
@@ -8812,8 +8866,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Optional override for treating the inputs as closed/open."
           },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Backend: `clipper` (default; fast, fixed-point) or `cgal` (slower, exact-arithmetic)."
+          },
         ],
-        description: "Computes the difference of two 2D paths using Clipper2 (subject minus clip). The result contains areas inside subject but not inside clip.",
+        description: "Computes the difference of two 2D paths (subject minus clip). The result contains areas inside subject but not inside clip.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
         return_type: &[ArgType::Callable],
       }
     ]
@@ -8841,9 +8902,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "fill_rule",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::String("nonzero".to_owned())),
-            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3)."
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3).  Defaults to `nonzero` for the `clipper` engine and `evenodd` for `cgal` (the only rule `cgal` accepts)."
           },
           ArgDef {
             name: "curve_angle_degrees",
@@ -8866,8 +8927,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Optional override for treating the inputs as closed/open."
           },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Backend: `clipper` (default; fast, fixed-point) or `cgal` (slower, exact-arithmetic)."
+          },
         ],
-        description: "Computes the exclusive-or (XOR) of two 2D paths using Clipper2. The result contains areas inside either path but not both.",
+        description: "Computes the exclusive-or (XOR) of two 2D paths. The result contains areas inside either path but not both.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
         return_type: &[ArgType::Callable],
       }
     ]
@@ -8904,17 +8972,17 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path is sampled in reverse direction.",
+            description: "If true, the path is sampled in reverse direction.  Applies to the whole path uniformly.  To reverse the winding of individual subpaths (e.g. to mark some `rect`/`circle` subpaths as holes), use `path_reverse` / `| reverse` on the relevant draw commands inside the `path { ... }` block.",
           },
           ArgDef {
             name: "fill_rule",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional fill rule: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.",
+            description: "Optional fill rule: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.  Consumed only by downstream operations that respect it (Clipper2 boolean ops; lyon tessellation).  The CGAL tessellation engine uses nesting-based domain identification regardless of this value.",
           },
         ],
-        description: "Builds a 2D path sampler from a sequence of draw command maps.\n\nThe canonical input source is the `path { ... }` macro, which evaluates to a sequence of draw command maps.  This function turns that sequence into a `|t: num|: vec2` callable, where `t` ranges over the path's arc length from 0 to 1.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
+        description: "Builds a 2D path sampler from a sequence of draw command maps.\n\nThe canonical input source is the `path { ... }` macro, which evaluates to a sequence of draw command maps.  This function turns that sequence into a `|t: num|: vec2` callable, where `t` ranges over the path's arc length from 0 to 1.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.\n\nThe resulting tracer preserves subpath identity — each `rect`, `circle`, or explicit `move`-delimited run becomes its own subpath.  Multi-subpath paths are consumed correctly by boolean ops, tessellation, and the various sampling builtins.",
         return_type: &[ArgType::Callable],
       },
     ],
@@ -9509,7 +9577,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Radius of the circle."
           },
         ],
-        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.",
+        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.\n\nTraced CCW (math Y-up) starting at the rightmost point: right -> top -> left -> bottom -> right.  Pipe through `reverse` (i.e. `circle(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
         return_type: &[ArgType::Map],
       },
       FnSignature {
@@ -9536,7 +9604,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Radius of the circle."
           },
         ],
-        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.",
+        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.\n\nTraced CCW (math Y-up) starting at the rightmost point: right -> top -> left -> bottom -> right.  Pipe through `reverse` (i.e. `circle(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
         return_type: &[ArgType::Map],
       },
     ],
@@ -9562,7 +9630,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Size of the rectangle as a `vec2` of `(width, height)`, or a single number for a square."
           },
         ],
-        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.",
+        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.\n\nTraced CCW (math Y-up) starting at the top-right corner: top-right -> top-left -> bottom-left -> bottom-right -> top-right.  Pipe through `reverse` (i.e. `rect(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
         return_type: &[ArgType::Map],
       },
       FnSignature {
@@ -9596,7 +9664,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Height along the Y axis."
           },
         ],
-        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.",
+        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.\n\nTraced CCW (math Y-up) starting at the top-right corner: top-right -> top-left -> bottom-left -> bottom-right -> top-right.  Pipe through `reverse` (i.e. `rect(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
         return_type: &[ArgType::Map],
       },
     ],
@@ -9609,6 +9677,25 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         arg_defs: &[],
         description: "Builds a `close` draw command tagged dict.  Closes the current subpath by drawing a straight line from the current point back to the initial point of the subpath (the position of the last `move` command).  Mirrors the SVG `z` command.",
         return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "path_reverse" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map, ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Either a `rect`/`circle` draw command tagged dict (built by `rect` / `circle` inside a `path { ... }` block) or a path tracer callable (from `build_path`, `trace_svg_path`, `text_to_path`, etc.)."
+          },
+        ],
+        description: "Reverses the winding of a path.  For a `rect` or `circle` draw command, toggles its `reversed` flag so the shape is traced in the opposite direction (same start point, opposite orientation).  For a path tracer callable, returns a new tracer with the whole-path `reverse` flag toggled.\n\nUseful for building paths-with-holes: the standard convention is that an outer shape and its enclosed holes have opposite winding.  Under the CGAL tessellation engine, winding doesn't matter (holes are identified by nesting), but reversing is still required when feeding the path through fill rules that depend on winding (`nonzero`, `positive`, `negative`).\n\nDoes not accept bare point sequences — to reverse a `Sequence<Vec2>`, use a sequence operation directly.\n\nAliased to `reverse` inside `path { ... }` blocks.",
+        return_type: &[ArgType::Map, ArgType::Callable],
       },
     ],
   },

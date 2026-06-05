@@ -12,14 +12,14 @@ const TOTAL_CRYSTALS_TO_GENERATE: usize = 258;
 
 fn generate_crystal_mesh() -> LinkedMesh {
   // hexagonal prism with random height pointed straight up from origin
-  let hex_width = rng().gen_range(1.5f32..3.3f32);
-  let extrude_height = rng().gen_range(2.5f32..12.5);
+  let hex_width = rng().random_range(1.5f32..3.3f32);
+  let extrude_height = rng().random_range(2.5f32..12.5);
 
   let mut tris = Vec::new();
   let mut base_tris: [Triangle; 6] = uninit();
   let mut top_tris: [Triangle; 6] = uninit();
 
-  let top_scale = rng().gen_range(0.4f32..0.94);
+  let top_scale = rng().random_range(0.4f32..0.94);
   for (i, tri) in gen_hex_triangles([0., 0.], hex_width, 0.).enumerate() {
     top_tris[i] = Triangle::new(
       tri.a * top_scale + Vector3::new(0., extrude_height, 0.),

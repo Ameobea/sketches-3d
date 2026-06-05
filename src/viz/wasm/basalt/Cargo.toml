@@ -20,6 +20,6 @@ common = { path = "../common" }
 tessellation = { path = "../tessellation", default-features = false }
 bitvec = "1"
 smallvec = "1.15"
-rand = { version = "0.8", default-features = false, features = ["nightly"] }
+rand = { version = "0.10", default-features = false }
 point_distribute = { path = "../point_distribute" }
 fxhash = "0.2"

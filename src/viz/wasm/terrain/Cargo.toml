@@ -8,10 +8,10 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-rand_pcg = "0.3"
-rand = { version = "0.8", default-features = false, features = ["nightly"] }
+rand_pcg = "0.10"
+rand = { version = "0.10", default-features = false }
 common = { path = "../common" }
-nanoserde = "0.1"
+nanoserde = { version = "0.2", default-features = false, features = ["std", "json"], git = "https://github.com/ameobea/nanoserde", branch = "all-fixes" }
 opensimplex_noise_rs = "0.3.0"
 
 [features]

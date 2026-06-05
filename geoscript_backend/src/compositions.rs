@@ -643,7 +643,7 @@ ORDER BY c.updated_at DESC
     }
   );
 
-  let mut query = sqlx::query_as::<_, PublicCompositionRow>(&query_str);
+  let mut query = sqlx::query_as::<_, PublicCompositionRow>(sqlx::AssertSqlSafe(query_str));
   if let Some(limit) = limit {
     query = query.bind(limit);
   }
@@ -785,7 +785,7 @@ pub async fn update_composition(
   let query = format!("UPDATE compositions SET {set_clause} WHERE id = ? AND author_id = ?;");
   args.add(composition_id).unwrap();
   args.add(user.id).unwrap();
-  let result = sqlx::query_with(&query, args)
+  let result = sqlx::query_with(sqlx::AssertSqlSafe(query), args)
     .execute(&pool)
     .await
     .map_err(|err| {

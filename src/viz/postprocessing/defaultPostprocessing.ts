@@ -213,10 +213,7 @@ export const configureDefaultPostprocessingPipeline = ({
   pomExitBuffers = false,
   shadowContactFix = true,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
-  // DoubleSide shadow casting + texel-scaled normalBias closes the second-depth contact gap.
-  // VSM already front-casts, so skip it there (and let scenes opt out explicitly).
   const applyShadowContactFix = shadowContactFix && viz.renderer.shadowMap.type !== THREE.VSMShadowMap;
-  console.log(viz.renderer.shadowMap.type, shadowContactFix, applyShadowContactFix);
   if (applyShadowContactFix) {
     setShadowCastSide(viz.scene, THREE.DoubleSide);
   }

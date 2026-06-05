@@ -176,7 +176,7 @@ pub async fn get_multiple_textures(
     "#
     )
   };
-  let textures = sqlx::query_as::<_, TextureRow>(&query)
+  let textures = sqlx::query_as::<_, TextureRow>(sqlx::AssertSqlSafe(query))
     .bind(user_id)
     .fetch_all(&pool)
     .await

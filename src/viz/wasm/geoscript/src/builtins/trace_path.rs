@@ -1603,26 +1603,31 @@ impl PathTracerCallable {
           builder.last_cubic_ctrl = None;
           builder.last_quad_ctrl = None;
         }
-        DrawCommand::Circle { center, radius } => {
+        DrawCommand::Circle {
+          center,
+          radius,
+          reversed,
+        } => {
           // Emit as: move to right of circle, two semicircular arcs, close.
           finalize_subpath(&mut builder, closed, &mut subpaths);
 
           let right = center + Vec2::new(radius, 0.0);
           let left = center - Vec2::new(radius, 0.0);
+          // sweep=true here means CCW under math Y-up (right -> top -> left -> bottom -> right).
+          // Flipping sweep walks the same start/end points in CW order.
+          let sweep = !reversed;
 
           builder = Some(SubpathBuilder::new(right));
           let b = builder.as_mut().unwrap();
 
-          // First semicircle: right -> left (sweep = true => goes through top)
-          if let Some(seg) = build_arc_segment(right, left, radius, radius, 0.0, false, true) {
+          if let Some(seg) = build_arc_segment(right, left, radius, radius, 0.0, false, sweep) {
             if seg.length() > LENGTH_EPSILON {
               b.segments.push(seg);
             }
           }
           b.current = left;
 
-          // Second semicircle: left -> right (sweep = true => completes the circle)
-          if let Some(seg) = build_arc_segment(left, right, radius, radius, 0.0, false, true) {
+          if let Some(seg) = build_arc_segment(left, right, radius, radius, 0.0, false, sweep) {
             if seg.length() > LENGTH_EPSILON {
               b.segments.push(seg);
             }
@@ -1636,6 +1641,7 @@ impl PathTracerCallable {
           center,
           width,
           height,
+          reversed,
         } => {
           finalize_subpath(&mut builder, closed, &mut subpaths);
 
@@ -1647,11 +1653,16 @@ impl PathTracerCallable {
           let br = Vec2::new(center.x + hw, center.y - hh);
 
           // Trace the rectangle CCW (in math Y-up) starting at top-right, mirroring `circle`'s
-          // start-on-the-right convention.
+          // start-on-the-right convention.  Reversed flips to CW with the same start point.
           builder = Some(SubpathBuilder::new(tr));
           let b = builder.as_mut().unwrap();
 
-          for (start, end) in [(tr, tl), (tl, bl), (bl, br), (br, tr)] {
+          let edges: [(Vec2, Vec2); 4] = if reversed {
+            [(tr, br), (br, bl), (bl, tl), (tl, tr)]
+          } else {
+            [(tr, tl), (tl, bl), (bl, br), (br, tr)]
+          };
+          for (start, end) in edges {
             let length = (end - start).norm();
             if length > LENGTH_EPSILON {
               b.segments.push(PathSegment::Line { start, end, length });
@@ -2521,11 +2532,13 @@ pub(crate) fn map_to_draw_command(
     "circle" => Ok(DrawCommand::Circle {
       center: get_vec2(map, "center")?,
       radius: get_float(map, "radius")?,
+      reversed: map.get("reversed").and_then(|v| v.as_bool()).unwrap_or(false),
     }),
     "rect" => Ok(DrawCommand::Rect {
       center: get_vec2(map, "center")?,
       width: get_float(map, "width")?,
       height: get_float(map, "height")?,
+      reversed: map.get("reversed").and_then(|v| v.as_bool()).unwrap_or(false),
     }),
     "close" => Ok(DrawCommand::Close),
     other => Err(ErrorStack::new(format!(
@@ -2673,11 +2686,13 @@ pub enum DrawCommand {
   Circle {
     center: Vec2,
     radius: f32,
+    reversed: bool,
   },
   Rect {
     center: Vec2,
     width: f32,
     height: f32,
+    reversed: bool,
   },
   Close,
 }
@@ -3177,6 +3192,7 @@ mod tests {
     let cmds = vec![DrawCommand::Circle {
       center: Vec2::new(3.0, -2.0),
       radius: 4.0,
+      reversed: false,
     }];
     let tracer = PathTracerCallable::new(true, false, false, cmds, Sym(0));
     let (min, max) = tracer.analytic_aabb().unwrap().unwrap();
@@ -4042,6 +4058,7 @@ p0 = centered(0)
       center: Vec2::new(0.0, 0.0),
       width: 4.0,
       height: 2.0,
+      reversed: false,
     }];
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
 
@@ -4401,6 +4418,7 @@ closed_flags = segs -> |s, _i| s.closed
     let cmds = vec![DrawCommand::Circle {
       center: Vec2::new(0.0, 0.0),
       radius: 5.0,
+      reversed: false,
     }];
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
     let dicts = build_segment_dicts(&tracer).unwrap();
