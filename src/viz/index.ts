@@ -30,7 +30,6 @@ import {
 } from './shaders/customShader';
 import { clearPhysicsBinding } from './util/physics';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
-import type { BtPairCachingGhostObject } from 'src/ammojs/ammoTypes.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
 import { buildEasingFn, EasingFnType } from './util/easingFns.ts';
 import type { Unsubscriber } from 'svelte/store';
@@ -74,6 +73,8 @@ export interface FpPlayerStateGetters {
   getIsDashing: () => boolean;
   getIsOnGround: () => boolean;
   getPlayerPos: () => [number, number, number];
+  /** Magnitude of (walk + external + vertical * up). */
+  getTotalVelocityMagnitude: () => number;
 }
 
 const setupOrbitControls = async (
@@ -219,9 +220,6 @@ export class Viz {
     !window.location.href.includes('geotoy')
       ? new InlineConsole()
       : undefined;
-  private customOnInstakillTerrainCollisionCb:
-    | ((sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => void)
-    | null = null;
   private didManuallyLockPointer = false;
   private pointerLockRequestInFlight = false;
   private clockStopTime = 0;
@@ -655,6 +653,7 @@ export class Viz {
 
   private onBlur = () => {
     this.isBlurred = true;
+    this.keyStates['Mouse0'] = false;
     this.maybePauseViz();
   };
 
@@ -701,7 +700,11 @@ export class Viz {
     }
   };
 
-  private handleMouseDown = async (_evt: MouseEvent) => {
+  private handleMouseDown = async (evt: MouseEvent) => {
+    if (evt.button === 0 && !this.inlineConsole?.isOpen) {
+      this.keyStates['Mouse0'] = true;
+    }
+
     if (
       (this.viewMode.type === 'firstPerson' ||
         this.viewMode.type === 'top-down' ||
@@ -711,6 +714,12 @@ export class Viz {
     ) {
       this.didManuallyLockPointer = true;
       await this.requestPointerLock();
+    }
+  };
+
+  private handleMouseUp = (evt: MouseEvent) => {
+    if (evt.button === 0) {
+      this.keyStates['Mouse0'] = false;
     }
   };
 
@@ -809,6 +818,7 @@ export class Viz {
     window.addEventListener('keyup', this.handleKeyUp);
     document.addEventListener('pointerlockchange', this.handlePointerLockChange);
     document.addEventListener('mousedown', this.handleMouseDown);
+    document.addEventListener('mouseup', this.handleMouseUp);
     this.unsubscribePauseStateChange = this.paused.subscribe(paused => {
       this.handlePauseStateChange(paused);
       this.sfxManager.setPaused(paused);
@@ -828,35 +838,13 @@ export class Viz {
     window.removeEventListener('keyup', this.handleKeyUp);
     document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
     document.removeEventListener('mousedown', this.handleMouseDown);
+    document.removeEventListener('mouseup', this.handleMouseUp);
     this.unsubscribePauseStateChange?.();
   };
 
   public respawnPlayer = () => {
     this.fpCtx?.teleportPlayer(this.spawnPos.pos, this.spawnPos.rot);
     this.onRespawnCBs.forEach(cb => cb());
-  };
-
-  private defaultOnInstakillTerrainCollision = (
-    _sensor: BtPairCachingGhostObject,
-    _mesh: THREE.Mesh | null
-  ) => {
-    // TODO: Should at least play a sfx...
-    this.respawnPlayer();
-  };
-
-  public onInstakillTerrainCollision = (sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => {
-    if (this.customOnInstakillTerrainCollisionCb) {
-      this.customOnInstakillTerrainCollisionCb(sensor, mesh);
-      return;
-    }
-
-    this.defaultOnInstakillTerrainCollision(sensor, mesh);
-  };
-
-  public setOnInstakillTerrainCollisionCb = (
-    cb: ((sensor: BtPairCachingGhostObject, mesh: THREE.Mesh | null) => void) | null
-  ) => {
-    this.customOnInstakillTerrainCollisionCb = cb;
   };
 
   public registerOnRespawnCb = (cb: () => void) => this.onRespawnCBs.push(cb);

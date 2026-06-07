@@ -500,7 +500,7 @@ export class LevelEditor {
         return Object.keys(self.levelDef.assets);
       },
       get materialIds() {
-        return Object.keys(self.levelDef.materials ?? {});
+        return Object.keys(self.levelDef.materials ?? {}).filter(id => !id.startsWith('__ASSETS__/'));
       },
       get libFolders() {
         return state.libFolders;

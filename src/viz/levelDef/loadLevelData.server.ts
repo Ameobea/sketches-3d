@@ -7,6 +7,7 @@ import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils'
 import { getAssetsDir } from './levelPaths.server';
 import { readLevelSourceFiles } from './levelSourceFiles.server';
 import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
+import { resolveLibraryMaterials } from './libraryMaterials.server';
 import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 
@@ -128,8 +129,10 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     throw new Error(`[loadLevelData] Invalid level def "${name}":\n${msg}`);
   }
 
+  const withLibrary = resolveLibraryMaterials(rawResult.data);
+
   const resolvedAssets = Object.fromEntries(
-    Object.entries(rawResult.data.assets).map(([assetId, assetDef]) => {
+    Object.entries(withLibrary.assets).map(([assetId, assetDef]) => {
       if (assetDef.type === 'geoscript' && 'file' in assetDef) {
         const codePath = assetDef.file.startsWith('__ASSETS__/')
           ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
@@ -142,9 +145,9 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     })
   );
 
-  const resolvedMaterials = rawResult.data.materials
+  const resolvedMaterials = withLibrary.materials
     ? Object.fromEntries(
-        Object.entries(rawResult.data.materials).map(([matId, matDef]) => {
+        Object.entries(withLibrary.materials).map(([matId, matDef]) => {
           if (matDef.type !== 'customShader' || !matDef.shaders) return [matId, matDef];
           const shaders = { ...matDef.shaders };
           for (const field of SHADER_GLSL_FIELDS) {
@@ -156,9 +159,9 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           return [matId, { ...matDef, shaders }];
         })
       )
-    : rawResult.data.materials;
+    : withLibrary.materials;
 
-  const inlinedDef = { ...rawResult.data, assets: resolvedAssets, materials: resolvedMaterials };
+  const inlinedDef = { ...withLibrary, assets: resolvedAssets, materials: resolvedMaterials };
 
   const result = LevelDefSchema.safeParse(inlinedDef);
   if (!result.success) {

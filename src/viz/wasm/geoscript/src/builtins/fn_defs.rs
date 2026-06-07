@@ -6265,6 +6265,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       }
     ],
   },
+  "extrude_path" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Either:\n - A path callable: a `PathSampler` (e.g. from `trace_path`, `trace_svg_path`, `catmull_rom`, `lerp_paths`) sampled adaptively per `curve_angle_degrees` and optionally capped by `sample_count`; or a black-box `|t: float|: vec2`, sampled uniformly at `sample_count` points (default 64).  Returned 2D points are embedded in the XZ plane (`vec2(x, y)` → `vec3(x, 0, y)`).\n - A `Seq<Vec2 | Vec3>` of pre-discretized points used as-is (no resampling).  `Vec2` points are embedded in the XZ plane; `Vec3` points are used directly, which lets you extrude a polyline that already lives in 3D space.  Errors if the sequence has fewer than 2 points or contains any other element type."
+          },
+          ArgDef {
+            name: "up",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Direction to sweep the path along.  Each point in the path is duplicated at `+up` to form the top of the strip."
+          },
+          ArgDef {
+            name: "flipped",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, reverses the winding order of the generated triangles, flipping the strip's facing direction."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            description: "Max turning angle (degrees) per segment when discretizing curves in a `PathSampler` input.  Ignored for black-box callables."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "For black-box `|t|: vec2` callables: number of uniform samples (defaults to 64 when nil).  For `PathSampler` inputs: optional cap on total points across all subpaths after adaptive sampling."
+          },
+        ],
+        description: "Sweeps a path along an `up` vector to produce a triangle-strip surface mesh.  Each point along the path is duplicated at `+up` to form the top edge of the strip.\n\nMultiple subpaths (from `PathSampler` inputs) are extruded independently; closed paths are not supported and trigger an error.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "stitch_contours" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 22 }],

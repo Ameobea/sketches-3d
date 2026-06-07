@@ -30,10 +30,13 @@ export class MaterialEditorController {
     document.body.appendChild(target);
     this.target = target;
 
+    const localMaterials = Object.fromEntries(
+      Object.entries(this.levelDef.materials ?? {}).filter(([id]) => !id.startsWith('__ASSETS__/'))
+    );
     this.component = mount(LevelMaterialEditor, {
       target,
       props: {
-        materials: this.levelDef.materials ?? {},
+        materials: localMaterials,
         textureKeys: Object.keys(this.levelDef.textures ?? {}),
         initialSelectedId: initialSelectedId ?? null,
         onchange: (id: string, def: MaterialDef) => this.onChange(id, def),

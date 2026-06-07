@@ -55,6 +55,7 @@ export function packKeyFlags(keyStates: Record<string, boolean>): number {
   if (keyStates['KeyD']) flags |= 8;
   if (keyStates['Space']) flags |= 16;
   if (keyStates['ShiftLeft'] || keyStates['ShiftRight']) flags |= 32;
+  if (keyStates['Mouse0']) flags |= 64;
   return flags;
 }
 
@@ -109,7 +110,7 @@ export class FlightRecorder {
 
     this.physicsStatePtr = this.exports.fr_malloc(40); // 10 f32s
     this.inputStatePtr = this.exports.fr_malloc(12); // 3 f32s
-    this.headerPtr = this.exports.fr_malloc(132); // 33 f32s
+    this.headerPtr = this.exports.fr_malloc(160); // 40 f32s
     this.eventDataPtr = this.exports.fr_malloc(32); // 8 f32s
 
     this.ready = true;
@@ -128,6 +129,7 @@ export class FlightRecorder {
     colliderHeight: number;
     colliderRadius: number;
     extVelAirDamping: [number, number, number];
+    extVelAirIdleDamping: [number, number, number];
     extVelGroundDamping: [number, number, number];
     gravityShapeRiseMult: number;
     gravityShapeApexMult: number;
@@ -147,13 +149,17 @@ export class FlightRecorder {
     dashMagnitude: number;
     minDashDelaySeconds: number;
     dashUseExternalVelocity: boolean;
+    dashDirectionMode: number; // 0=free, 1=horizontal, 2=vertical-up, 3=vertical-down
+    dashVerticalUseJump: boolean;
+    dashCancelFallVelocity: boolean;
+    boostArmLeniencySeconds: number;
     mapIdHash?: bigint;
   }): void {
     if (!this.ready) {
       return;
     }
 
-    const HEADER_FLOATS = 33;
+    const HEADER_FLOATS = 40;
     const view = new Float32Array(this.exports.memory.buffer, this.headerPtr, HEADER_FLOATS);
     view[0] = header.tickRateHz;
     view[1] = header.gravity;
@@ -198,6 +204,13 @@ export class FlightRecorder {
     view[30] = header.dashMagnitude;
     view[31] = header.minDashDelaySeconds;
     view[32] = header.dashUseExternalVelocity ? 1.0 : 0.0;
+    view[33] = header.dashDirectionMode;
+    view[34] = header.dashVerticalUseJump ? 1.0 : 0.0;
+    view[35] = header.dashCancelFallVelocity ? 1.0 : 0.0;
+    view[36] = header.boostArmLeniencySeconds;
+    view[37] = header.extVelAirIdleDamping[0];
+    view[38] = header.extVelAirIdleDamping[1];
+    view[39] = header.extVelAirIdleDamping[2];
 
     this.exports.set_header(this.ctx, this.headerPtr, HEADER_FLOATS);
   }
@@ -317,7 +330,7 @@ export class FlightRecorder {
 
     this.exports.fr_free(this.physicsStatePtr, 40);
     this.exports.fr_free(this.inputStatePtr, 12);
-    this.exports.fr_free(this.headerPtr, 132);
+    this.exports.fr_free(this.headerPtr, 160);
     this.exports.fr_free(this.eventDataPtr, 32);
     this.exports.destroy_recorder(this.ctx);
     this.ready = false;
@@ -333,6 +346,7 @@ export interface ReplayHeader {
   colliderHeight: number;
   colliderRadius: number;
   extVelAirDamping: [number, number, number];
+  extVelAirIdleDamping: [number, number, number];
   extVelGroundDamping: [number, number, number];
   gravityShapeRiseMult: number;
   gravityShapeApexMult: number;
@@ -352,6 +366,10 @@ export interface ReplayHeader {
   dashMagnitude: number;
   minDashDelaySeconds: number;
   dashUseExternalVelocity: boolean;
+  dashDirectionMode: number;
+  dashVerticalUseJump: boolean;
+  dashCancelFallVelocity: boolean;
+  boostArmLeniencySeconds: number;
 }
 
 export interface ReplayHeaderMismatch {
@@ -387,7 +405,7 @@ export class FlightPlayer {
   private ctx = 0;
   private subtickPtr = 0; // 13 f32s
   private eventPtr = 0; // 6 f32s
-  private headerPtr = 0; // 33 f32s
+  private headerPtr = 0; // 40 f32s
   private metadataOutPtr = 0; // scratch buffer for metadata reads
   private ready = false;
 
@@ -404,7 +422,7 @@ export class FlightPlayer {
       this.eventPtr = 0;
     }
     if (this.headerPtr !== 0) {
-      this.exports.fr_free(this.headerPtr, 132);
+      this.exports.fr_free(this.headerPtr, 160);
       this.headerPtr = 0;
     }
     if (this.metadataOutPtr !== 0) {
@@ -420,7 +438,7 @@ export class FlightPlayer {
 
     this.subtickPtr = this.exports.fr_malloc(52); // 13 f32s
     this.eventPtr = this.exports.fr_malloc(40); // 10 f32s (type + subtick + 8 data)
-    this.headerPtr = this.exports.fr_malloc(132); // 33 f32s
+    this.headerPtr = this.exports.fr_malloc(160); // 40 f32s — player side
     this.metadataOutPtr = this.exports.fr_malloc(1024); // 1KB scratch for metadata reads
 
     const dataPtr = this.exports.fr_malloc(replayData.byteLength);
@@ -466,7 +484,7 @@ export class FlightPlayer {
 
   getHeader(): ReplayHeader {
     this.exports.player_get_header(this.ctx, this.headerPtr);
-    const v = new Float32Array(this.exports.memory.buffer, this.headerPtr, 33);
+    const v = new Float32Array(this.exports.memory.buffer, this.headerPtr, 40);
     return {
       tickRateHz: v[0],
       gravity: v[1],
@@ -476,6 +494,7 @@ export class FlightPlayer {
       colliderHeight: v[5],
       colliderRadius: v[6],
       extVelAirDamping: [v[7], v[8], v[9]],
+      extVelAirIdleDamping: [v[37], v[38], v[39]],
       extVelGroundDamping: [v[10], v[11], v[12]],
       gravityShapeRiseMult: v[13],
       gravityShapeApexMult: v[14],
@@ -495,6 +514,10 @@ export class FlightPlayer {
       dashMagnitude: v[30],
       minDashDelaySeconds: v[31],
       dashUseExternalVelocity: v[32] > 0.5,
+      dashDirectionMode: v[33],
+      dashVerticalUseJump: v[34] > 0.5,
+      dashCancelFallVelocity: v[35] > 0.5,
+      boostArmLeniencySeconds: v[36],
     };
   }
 
@@ -609,6 +632,7 @@ export interface ReplayValidationConfig {
   colliderHeight: number;
   colliderRadius: number;
   extVelAirDamping: [number, number, number];
+  extVelAirIdleDamping: [number, number, number];
   extVelGroundDamping: [number, number, number];
   gravityShapeRiseMult: number;
   gravityShapeApexMult: number;
@@ -628,6 +652,10 @@ export interface ReplayValidationConfig {
   dashMagnitude: number;
   minDashDelaySeconds: number;
   dashUseExternalVelocity: boolean;
+  dashDirectionMode: number;
+  dashVerticalUseJump: boolean;
+  dashCancelFallVelocity: boolean;
+  boostArmLeniencySeconds: number;
 }
 
 /**
@@ -652,7 +680,7 @@ export function validateReplayHeader(
     }
   };
   const checkVec3 = (
-    field: 'extVelAirDamping' | 'extVelGroundDamping',
+    field: 'extVelAirDamping' | 'extVelAirIdleDamping' | 'extVelGroundDamping',
     recorded: [number, number, number],
     current: [number, number, number],
     tol = 1e-6
@@ -675,6 +703,7 @@ export function validateReplayHeader(
   check('colliderHeight', header.colliderHeight, config.colliderHeight);
   check('colliderRadius', header.colliderRadius, config.colliderRadius);
   checkVec3('extVelAirDamping', header.extVelAirDamping, config.extVelAirDamping);
+  checkVec3('extVelAirIdleDamping', header.extVelAirIdleDamping, config.extVelAirIdleDamping);
   checkVec3('extVelGroundDamping', header.extVelGroundDamping, config.extVelGroundDamping);
   check('gravityShapeRiseMult', header.gravityShapeRiseMult, config.gravityShapeRiseMult);
   check('gravityShapeApexMult', header.gravityShapeApexMult, config.gravityShapeApexMult);
@@ -694,6 +723,10 @@ export function validateReplayHeader(
   check('dashMagnitude', header.dashMagnitude, config.dashMagnitude);
   check('minDashDelaySeconds', header.minDashDelaySeconds, config.minDashDelaySeconds);
   checkBool('dashUseExternalVelocity', header.dashUseExternalVelocity, config.dashUseExternalVelocity);
+  check('dashDirectionMode', header.dashDirectionMode, config.dashDirectionMode);
+  checkBool('dashVerticalUseJump', header.dashVerticalUseJump, config.dashVerticalUseJump);
+  checkBool('dashCancelFallVelocity', header.dashCancelFallVelocity, config.dashCancelFallVelocity);
+  check('boostArmLeniencySeconds', header.boostArmLeniencySeconds, config.boostArmLeniencySeconds);
 
   return mismatches;
 }

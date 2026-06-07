@@ -24,8 +24,8 @@ use rand::RngExt;
 use rand::{Rng, SeedableRng};
 
 use crate::builtins::trace_path::{
-  as_path_sampler, build_segment_dicts, build_topology_samples, PathSubpath, PathTracerCallable,
-  SubpathsSeq,
+  as_path_sampler, build_segment_dicts, build_topology_samples, sample_path_subpaths, PathSubpath,
+  PathTracerCallable, SubpathsSeq,
 };
 use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
@@ -44,6 +44,7 @@ use crate::{
   lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight},
   mesh_ops::{
     extrude::{extrude, extrude_along_normals},
+    extrude_path::extrude_path,
     extrude_pipe::{extrude_pipe, EndMode},
     fan_fill::fan_fill,
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
@@ -2361,6 +2362,102 @@ fn stitch_contours_impl(
 
       let mesh = stitch_contours(&mut contours, flipped, closed, cap_start, cap_end)
         .map_err(|err| err.wrap("Error in `stitch_contours`"))?;
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: None,
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn extrude_path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let path_val = arg_refs[0].resolve(args, kwargs);
+      let up = *arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let flipped = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+      let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      if curve_angle_degrees <= 0.0 {
+        return Err(ErrorStack::new(format!(
+          "Invalid curve_angle_degrees for `extrude_path`; expected > 0, found: \
+           {curve_angle_degrees}"
+        )));
+      }
+      let curve_angle_radians = curve_angle_degrees.to_radians();
+      let sample_count: Option<usize> = match arg_refs[4].resolve(args, kwargs) {
+        Value::Nil => None,
+        Value::Int(n) if *n >= 2 => Some(*n as usize),
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid sample_count for `extrude_path`; expected int >= 2 or nil, found: {other:?}"
+          )))
+        }
+      };
+
+      let subpaths: Vec<(Vec<Vec3>, bool)> = if let Some(seq) = path_val.as_sequence() {
+        let points: Vec<Vec3> = seq
+          .consume(ctx)
+          .enumerate()
+          .map(|(ix, res)| match res {
+            Ok(Value::Vec3(v)) => Ok(v),
+            Ok(Value::Vec2(v)) => Ok(Vec3::new(v.x, 0., v.y)),
+            Ok(other) => Err(ErrorStack::new(format!(
+              "Invalid element at index {ix} in sequence passed to `extrude_path`; expected \
+               Vec2 or Vec3, found: {other:?}"
+            ))),
+            Err(err) => Err(err),
+          })
+          .collect::<Result<_, _>>()?;
+        if points.len() < 2 {
+          return Err(ErrorStack::new(format!(
+            "`extrude_path` requires a sequence of at least 2 points; got {}",
+            points.len()
+          )));
+        }
+        vec![(points, false)]
+      } else if let Some(path_callable) = path_val.as_callable() {
+        let raw = if let Some(s) = as_path_sampler(path_callable) {
+          s.sample_subpaths_with_limit(curve_angle_radians, sample_count)
+            .unwrap_or_default()
+        } else {
+          sample_path_subpaths(
+            ctx,
+            path_callable,
+            curve_angle_radians,
+            sample_count.unwrap_or(64),
+            Some(false),
+            "extrude_path",
+          )?
+        };
+        raw
+          .into_iter()
+          .map(|(pts, closed)| {
+            (
+              pts.into_iter().map(|p| Vec3::new(p.x, 0., p.y)).collect(),
+              closed,
+            )
+          })
+          .collect()
+      } else {
+        return Err(ErrorStack::new(format!(
+          "Invalid path argument for `extrude_path`; expected Sequence or Callable, found: \
+           {path_val:?}"
+        )));
+      };
+
+      let mesh = extrude_path(subpaths, up, flipped)
+        .map_err(|err| err.wrap("Error in `extrude_path`"))?;
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
@@ -7677,6 +7774,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "stitch_contours" => builtin_fn!(stitch_contours, |def_ix, arg_refs, args, kwargs, ctx| {
     stitch_contours_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "extrude_path" => builtin_fn!(extrude_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    extrude_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "trace_geodesic_path" => builtin_fn!(trace_geodesic_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_geodesic_path_impl(ctx, def_ix, arg_refs, args, kwargs)

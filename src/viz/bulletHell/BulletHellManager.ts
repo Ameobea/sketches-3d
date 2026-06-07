@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 import type { Viz } from '../index';
-import { buildCustomShader, MaterialClass } from '../shaders/customShader';
-import type { BtCollisionObject, BtPairCachingGhostObject } from 'src/ammojs/ammoTypes';
+import { buildCustomShader } from '../shaders/customShader';
+import type { BtCollisionObject } from 'src/ammojs/ammoTypes';
 import { delay } from '../util/util';
 import killerBulletColorShader from './shaders/killerBulletColor.frag?raw';
 import { EasingFnType } from '../util/easingFns';
@@ -82,11 +82,7 @@ const DefaultBulletVelocity = 14;
 const DefaultBulletShape: BulletShape = Object.freeze({ type: 'sphere', radius: 0.45 });
 const MinBulletCollisionDepth = 0.05;
 
-const StandardBulletMat = buildCustomShader(
-  { color: 0xc32308, roughness: 0.5, metalness: 0.4 },
-  {},
-  { materialClass: MaterialClass.Instakill }
-);
+const StandardBulletMat = buildCustomShader({ color: 0xc32308, roughness: 0.5, metalness: 0.4 }, {}, {});
 const KillerBulletMaterial = buildCustomShader({}, { colorShader: killerBulletColorShader }, {});
 
 type BulletHellOutcome = { type: 'win' } | { type: 'loss' };
@@ -95,10 +91,12 @@ class BulletManager {
   private viz: Viz;
   private bullets: Bullet[] = [];
   private bounds: THREE.Box3;
+  private onBulletHit: (bulletMesh: THREE.Mesh) => void;
 
-  constructor(viz: Viz, bounds: THREE.Box3) {
+  constructor(viz: Viz, bounds: THREE.Box3, onBulletHit: (bulletMesh: THREE.Mesh) => void) {
     this.viz = viz;
     this.bounds = bounds;
+    this.onBulletHit = onBulletHit;
   }
 
   public size = () => this.bullets.length;
@@ -163,7 +161,6 @@ class BulletManager {
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(def.spawnPos);
-    mesh.userData.instakill = true;
     this.viz.scene.add(mesh);
 
     return {
@@ -179,7 +176,7 @@ class BulletManager {
     this.viz.scene.add(bullet.mesh);
     const collisionObj = this.viz.fpCtx!.addPlayerRegionContactCb(
       { type: 'mesh', mesh: bullet.mesh },
-      () => this.viz.onInstakillTerrainCollision(collisionObj, bullet.mesh),
+      () => this.onBulletHit(bullet.mesh),
       undefined,
       MinBulletCollisionDepth
     );
@@ -219,7 +216,7 @@ export class BulletHellManager {
 
     this.viz = viz;
     this.events = events;
-    this.bulletManager = new BulletManager(viz, bounds);
+    this.bulletManager = new BulletManager(viz, bounds, mesh => void this.onBulletHit(mesh));
   }
 
   /**
@@ -353,7 +350,6 @@ export class BulletHellManager {
     this.pausePhysicsTimeSeconds = 0;
     this.physicsTickerHandle = fpCtx.registerPhysicsTicker({ tick: this.tickPhysics });
     this.viz.registerOnRespawnCb(this.reset);
-    this.viz.setOnInstakillTerrainCollisionCb(this.onBulletHit);
 
     return promise;
   };
@@ -369,7 +365,6 @@ export class BulletHellManager {
     this.physicsTickerHandle?.unregister();
     this.physicsTickerHandle = null;
     this.viz.unregisterOnRespawnCb(this.reset);
-    this.viz.setOnInstakillTerrainCollisionCb(null);
   };
 
   public pause = () => {
@@ -388,7 +383,7 @@ export class BulletHellManager {
     this.isPaused = false;
   };
 
-  private onBulletHit = async (_sensor: BtPairCachingGhostObject, bulletMesh: THREE.Mesh | null) => {
+  private onBulletHit = async (bulletMesh: THREE.Mesh) => {
     if (this.isPaused) {
       return;
     }
@@ -405,42 +400,38 @@ export class BulletHellManager {
     const animationLengthSecs = 2;
     let didRunDeathAnimation = false;
 
-    if (bulletMesh) {
-      bulletMesh.material = KillerBulletMaterial;
+    bulletMesh.material = KillerBulletMaterial;
 
-      const startCameraPos = this.viz.camera.position.clone();
-      const endCameraPos = bulletMesh!.position.clone().lerp(startCameraPos, 0.2);
-      const startCameraRot = this.viz.camera.rotation.clone();
+    const startCameraPos = this.viz.camera.position.clone();
+    const endCameraPos = bulletMesh.position.clone().lerp(startCameraPos, 0.2);
+    const startCameraRot = this.viz.camera.rotation.clone();
 
-      try {
-        let animationDoneCb!: () => void;
-        const animationDonePromise = new Promise<void>(resolve => {
-          animationDoneCb = resolve;
-        });
+    try {
+      let animationDoneCb!: () => void;
+      const animationDonePromise = new Promise<void>(resolve => {
+        animationDoneCb = resolve;
+      });
 
-        this.viz.startViewModeInterpolation(
-          {
-            durationSecs: animationLengthSecs,
-            endCameraFov: this.viz.camera.fov,
-            endCameraPos,
-            endCameraRot: startCameraRot,
-            startCameraFov: this.viz.camera.fov,
-            startCameraPos,
-            startCameraRot,
-            startTimeSecs: this.viz.clock.getElapsedTime(),
-          },
-          EasingFnType.OutCubic,
-          animationDoneCb,
-          0.3
-        );
+      this.viz.startViewModeInterpolation(
+        {
+          durationSecs: animationLengthSecs,
+          endCameraFov: this.viz.camera.fov,
+          endCameraPos,
+          endCameraRot: startCameraRot,
+          startCameraFov: this.viz.camera.fov,
+          startCameraPos,
+          startCameraRot,
+          startTimeSecs: this.viz.clock.getElapsedTime(),
+        },
+        EasingFnType.OutCubic,
+        animationDoneCb,
+        0.3
+      );
 
-        await animationDonePromise;
-        didRunDeathAnimation = true;
-      } catch (err) {
-        console.warn('Some view mode interpolation already going on; skipping death animation', err);
-      }
-    } else {
-      console.error('No bullet mesh found');
+      await animationDonePromise;
+      didRunDeathAnimation = true;
+    } catch (err) {
+      console.warn('Some view mode interpolation already going on; skipping death animation', err);
     }
 
     if (!didRunDeathAnimation) {

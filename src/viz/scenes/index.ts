@@ -37,6 +37,8 @@ export interface DashChargeConfig {
   curCharges: TransparentWritable<number>;
 }
 
+export type DashDirectionMode = 'free' | 'horizontal' | 'vertical-up' | 'vertical-down';
+
 export interface DashConfig {
   /**
    * Default: true
@@ -49,6 +51,35 @@ export interface DashConfig {
   dashMagnitude: number;
   minDashDelaySeconds: number;
   useExternalVelocity?: boolean;
+  /**
+   * Constrain the computed dash direction.  Default: `free` (use camera-derived direction).
+   *  - `horizontal`: zero the Y component, renormalize in the XZ plane.
+   *  - `vertical-up`: dash purely upward along the up axis.
+   *  - `vertical-down`: dash purely downward along the up axis.
+   *
+   * `horizontal` requires `useExternalVelocity: true`.
+   */
+  directionMode?: DashDirectionMode;
+  /**
+   * Only meaningful when `directionMode` is `vertical-up` / `vertical-down`.
+   *  - `true`: apply the dash as a jump (writes vertical velocity; integrates with gravity shaping
+   *    for a sustained "double jump" feel).
+   *  - `false` (default): apply as external velocity (quick punch that damps via the configured
+   *    `externalVelocityAirDampingFactor`).
+   */
+  verticalUseJump?: boolean;
+  /**
+   * When true, the dash clears the player's downward vertical state before the dash is applied:
+   * `m_verticalVelocity` is clamped to ≥ 0 and the downward component of external velocity is
+   * stripped.  Rising / upward state is untouched.  Useful to make the dash extend a jump or
+   * recover a fall.
+   *
+   * Inverted special-case for `directionMode: 'vertical-down'` — strips *upward* vy and ext
+   * components instead, so a down-dash hard-cancels rising momentum and propels straight down.
+   *
+   * Default: false.
+   */
+  cancelFallVelocity?: boolean;
   sfx?: {
     play?: boolean;
     name?: string;
@@ -196,12 +227,23 @@ export interface SceneConfig {
     terminalVelocity?: number;
     /** Grace period in seconds after leaving a ledge during which the player can still jump. Default: 0 (disabled) */
     coyoteTimeSeconds?: number;
+    /** If > 0, an aux rising edge that fired this many seconds before touching a boost strip still
+     *  arms the strip on landing (relaxes the "must press aux while already on strip" rule).
+     *  Default: 0 (disabled). */
+    boostArmLeniencySeconds?: number;
     /**
      * Over the course of a second `externalVelocityAirDampingFactor` percent of the external velocity
      * will bleed off while the player is in the air.  So vec3(0.5, 0.5, 0.5) means that 50% of external
      * velocity will be lost every second while in the air.
      */
     externalVelocityAirDampingFactor?: THREE.Vector3;
+    /**
+     * Same shape as `externalVelocityAirDampingFactor`, but applied only while airborne AND no
+     * directional input is held.  Lets a scene bleed off in-air velocity more aggressively when
+     * the player lets go of the keyboard, to make it easier to land on platforms without
+     * overshooting.  Defaults to `externalVelocityAirDampingFactor` (no behavior change).
+     */
+    externalVelocityAirIdleDampingFactor?: THREE.Vector3;
     /**
      * Over the course of a second `externalVelocityGroundDampingFactor` percent of the external velocity
      * will bleed off while the player is on the ground.  So vec3(0.5, 0.5, 0.5) means that 50% of external

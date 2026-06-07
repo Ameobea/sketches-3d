@@ -382,7 +382,6 @@
                       "default",
                       "rock",
                       "crystal",
-                      "instakill",
                       "metalplate"
                     ]
                   },
@@ -879,6 +878,62 @@
               },
               "nonPermeable": {
                 "type": "boolean"
+              },
+              "parkour": {
+                "type": "object",
+                "properties": {
+                  "boostSurface": {
+                    "type": "object",
+                    "properties": {
+                      "targetSpeed": {
+                        "type": "number"
+                      },
+                      "jumpRetention": {
+                        "type": "number"
+                      },
+                      "rampUpSeconds": {
+                        "type": "number"
+                      },
+                      "followSurfaceSlope": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "targetSpeed",
+                      "jumpRetention"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "externalVelocityAirDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "externalVelocityGroundDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
               }
             },
             "required": [
@@ -935,6 +990,62 @@
               },
               "nonPermeable": {
                 "type": "boolean"
+              },
+              "parkour": {
+                "type": "object",
+                "properties": {
+                  "boostSurface": {
+                    "type": "object",
+                    "properties": {
+                      "targetSpeed": {
+                        "type": "number"
+                      },
+                      "jumpRetention": {
+                        "type": "number"
+                      },
+                      "rampUpSeconds": {
+                        "type": "number"
+                      },
+                      "followSurfaceSlope": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "targetSpeed",
+                      "jumpRetention"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "externalVelocityAirDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "externalVelocityGroundDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
               }
             },
             "required": [
@@ -954,6 +1065,62 @@
               },
               "nonPermeable": {
                 "type": "boolean"
+              },
+              "parkour": {
+                "type": "object",
+                "properties": {
+                  "boostSurface": {
+                    "type": "object",
+                    "properties": {
+                      "targetSpeed": {
+                        "type": "number"
+                      },
+                      "jumpRetention": {
+                        "type": "number"
+                      },
+                      "rampUpSeconds": {
+                        "type": "number"
+                      },
+                      "followSurfaceSlope": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "targetSpeed",
+                      "jumpRetention"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              },
+              "externalVelocityAirDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "externalVelocityGroundDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
               }
             },
             "required": [
@@ -1245,9 +1412,59 @@
                   },
                   "win": {
                     "type": "boolean"
+                  },
+                  "boostSurface": {
+                    "type": "object",
+                    "properties": {
+                      "targetSpeed": {
+                        "type": "number"
+                      },
+                      "jumpRetention": {
+                        "type": "number"
+                      },
+                      "rampUpSeconds": {
+                        "type": "number"
+                      },
+                      "followSurfaceSlope": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "targetSpeed",
+                      "jumpRetention"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
+              },
+              "externalVelocityAirDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "externalVelocityGroundDampingFactor": {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
               },
               "behaviors": {
                 "type": "array",
@@ -2408,9 +2625,59 @@
                       },
                       "win": {
                         "type": "boolean"
+                      },
+                      "boostSurface": {
+                        "type": "object",
+                        "properties": {
+                          "targetSpeed": {
+                            "type": "number"
+                          },
+                          "jumpRetention": {
+                            "type": "number"
+                          },
+                          "rampUpSeconds": {
+                            "type": "number"
+                          },
+                          "followSurfaceSlope": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "targetSpeed",
+                          "jumpRetention"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "externalVelocityAirDampingFactor": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "externalVelocityGroundDampingFactor": {
+                    "type": "array",
+                    "items": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
                   },
                   "behaviors": {
                     "type": "array",

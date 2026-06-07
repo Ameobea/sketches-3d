@@ -415,14 +415,9 @@ export const configureDefaultPostprocessingPipeline = ({
   const renderFrame = (timeDiffSeconds: number) => {
     if (applyShadowContactFix && !didShadowContactSetup && sceneGeomReady) {
       didShadowContactSetup = true;
-      // Re-affirm DoubleSide casting (catches materials added after pipeline setup) and derive a
-      // texel-scaled normalBias for each shadow-casting directional light, so DoubleSide casting
-      // can't reintroduce self-shadow acne. Runs once, before the one-time shadow render below.
       setShadowCastSide(viz.scene, THREE.DoubleSide);
       viz.scene.traverse(obj => {
-        console.log(obj);
         if (obj instanceof THREE.DirectionalLight && obj.castShadow && !obj.userData.skipAutoShadowBias) {
-          console.log('calling');
           deriveDirectionalShadowNormalBias(obj);
         }
       });

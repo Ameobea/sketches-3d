@@ -1,0 +1,71 @@
+{
+  "$schema": "../objects-schema.json",
+  "objects": [
+    {
+      "id": "8",
+      "children": [
+        {
+          "id": "plat",
+          "asset": "plat",
+          "position": [-7.9273, -2.524, 5.0465],
+          "rotation": [0, 0, 0],
+          "scale": [5.7575, 1, 2.7639]
+        },
+        {
+          "id": "boost_strip_material_level",
+          "asset": "boost_strip",
+          "material": "__ASSETS__/materials/parkour/boost_strip_active",
+          "position": [21.5699, -2.2972, -5.843],
+          "behaviors": [
+            {
+              "fn": "boostSurfaceVisual",
+              "params": {
+                "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+                "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+                "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+              }
+            }
+          ],
+          "rotation": [0, 0, 0],
+          "scale": [1.768, 1, 1.6136]
+        },
+        {
+          "id": "ramp1",
+          "asset": "ramp1",
+          "position": [27.9297, -2.3549, -12.5155],
+          "rotation": [0, 3.1416, 0],
+          "scale": [2.9845, 2.7193, 0.6664],
+          "material": "__ASSETS__/materials/parkour/boost_strip_active",
+          "parkour": {
+            "boostSurface": {
+              "targetSpeed": 32,
+              "jumpRetention": 0.8,
+              "rampUpSeconds": 0.07
+            }
+          },
+          "behaviors": [
+            {
+              "fn": "boostSurfaceVisual",
+              "params": {
+                "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+                "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+                "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+              }
+            }
+          ]
+        },
+        {
+          "id": "cyl",
+          "asset": "cyl",
+          "position": [-41.5724, 7.1759, 13.312],
+          "rotation": [0, 0, 0],
+          "scale": [3.6213, 0.4817, 3.6213],
+          "material": "goal"
+        }
+      ],
+      "position": [5.1586, 2.3972, -13.225],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    }
+  ]
+}

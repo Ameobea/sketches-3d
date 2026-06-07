@@ -63,23 +63,6 @@ const initLevel = async (viz: Viz) => {
     fpCtx.Ammo.destroy(btQuat);
   });
 
-  // const bulletGeo = new THREE.SphereGeometry(2, 16, 16);
-  // const bulletMat = buildCustomShader({ color: 0xff0000 }, {}, { materialClass: MaterialClass.Instakill });
-  // const bullet = new THREE.Mesh(bulletGeo, bulletMat);
-  // bullet.castShadow = true;
-  // bullet.receiveShadow = true;
-  // viz.scene.add(bullet);
-  // fpCtx.addTriMesh(bullet);
-  // const bulletCollider: BtCollisionObject = bullet.userData.collisionObj;
-
-  // viz.registerBeforeRenderCb(curTimeSeconds => {
-  //   const t = curTimeSeconds * 0.5 * 3;
-  //   bullet.position.set(10 + Math.sin(t) * 20, -4, 0);
-  //   const tfn = bulletCollider.getWorldTransform();
-  //   tfn.setOrigin(btvec3(bullet.position.x, bullet.position.y, bullet.position.z));
-  //   bulletCollider.setWorldTransform(tfn);
-  // });
-
   const bulletHellEvents: BulletHellEvent[] = [
     {
       type: 'spawnPattern',

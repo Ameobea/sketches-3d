@@ -32,6 +32,7 @@ export interface BtJumpPad {
   setCooldownSeconds(seconds: number): void;
   getZoneId(): number;
   setEnabled(enabled: boolean): void;
+  setUseExternalVelocity(useExternal: boolean): void;
 }
 
 export interface BtBoostZone {
@@ -71,16 +72,37 @@ export enum ZoneEventType {
 export interface BtKinematicCharacterController {
   setInputState(keyFlags: number, theta: number, phi: number, movementEnabled: boolean): void;
   setMoveSpeed(ground: number, air: number): void;
+  setCurrentFloorBoost(
+    targetSpeed: number,
+    jumpRetention: number,
+    rampSeconds: number,
+    followSlope: boolean
+  ): void;
+  isBoostEffective(): boolean;
+  setCurrentFloorExtVelDamping(
+    gx: number,
+    gy: number,
+    gz: number,
+    ax: number,
+    ay: number,
+    az: number,
+    active: boolean
+  ): void;
   setTopDownMode(topDown: boolean): void;
   setMinJumpDelay(seconds: number): void;
   setCoyoteTime(seconds: number): void;
+  setBoostArmLeniency(seconds: number): void;
   setDashConfig(enabled: boolean, magnitude: number, minDelay: number, useExternalVelocity: boolean): void;
+  setDashDirectionMode(mode: number): void;
+  setDashVerticalUseJump(useJump: boolean): void;
+  setDashCancelFallVelocity(cancel: boolean): void;
   setDashCharges(charges: number): void;
   getLastJumpTime(): number;
   getLastDashTime(): number;
   getDashCharges(): number;
   getLastMoveDir(): BtVec3;
   getLastDashDir(): BtVec3;
+  getWalkDirection(): BtVec3;
 
   warp(position: BtVec3): void;
   getPosition(): BtVec3;
@@ -93,6 +115,7 @@ export interface BtKinematicCharacterController {
   setFallSpeed(fallSpeed: number): void;
   setExternalVelocity(velocity: BtVec3): void;
   setExternalVelocityAirDampingFactor(factor: BtVec3): void;
+  setExternalVelocityAirIdleDampingFactor(factor: BtVec3): void;
   setExternalVelocityGroundDampingFactor(factor: BtVec3): void;
   setSlopeSlide(minAngle: number, maxSpeed: number): void;
   setOnGround(onGround: boolean): void;

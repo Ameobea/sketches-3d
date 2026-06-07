@@ -1,0 +1,24 @@
+{
+  "$schema": "../materials-schema.json",
+  "materials": {
+    "plain_strip_mat": {
+      "type": "customShader",
+      "props": {
+        "color": "#6e8aa6",
+        "roughness": 0.85,
+        "metalness": 0.05
+      },
+      "externalVelocityGroundDampingFactor": [0.99, 0.99, 0.99]
+    },
+    "goal": {
+      "type": "customShader",
+      "props": {
+        "color": "#03a800",
+        "emissiveIntensity": 0.55,
+        "roughness": 0.45,
+        "metalness": 0.15
+      },
+      "externalVelocityGroundDampingFactor": [1, 1, 1]
+    }
+  }
+}

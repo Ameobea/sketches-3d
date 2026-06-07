@@ -1,5 +1,6 @@
 pub mod adaptive_sampler;
 pub mod extrude;
+pub mod extrude_path;
 pub mod extrude_pipe;
 pub mod fan_fill;
 pub mod fku_stitch;

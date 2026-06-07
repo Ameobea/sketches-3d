@@ -1,0 +1,1131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "textures": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "wrapS": {
+            "type": "string",
+            "enum": [
+              "repeat",
+              "clamp",
+              "mirror"
+            ]
+          },
+          "wrapT": {
+            "type": "string",
+            "enum": [
+              "repeat",
+              "clamp",
+              "mirror"
+            ]
+          },
+          "magFilter": {
+            "type": "string",
+            "enum": [
+              "nearest",
+              "linear"
+            ]
+          },
+          "minFilter": {
+            "type": "string",
+            "enum": [
+              "nearest",
+              "nearestMipNearest",
+              "nearestMipLinear",
+              "linearMipLinear"
+            ]
+          },
+          "anisotropy": {
+            "type": "number"
+          },
+          "colorSpace": {
+            "type": "string",
+            "enum": [
+              "srgb",
+              ""
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "rgba",
+              "rg",
+              "red"
+            ]
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "material": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "customShader"
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "color": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ]
+                },
+                "roughness": {
+                  "type": "number"
+                },
+                "metalness": {
+                  "type": "number"
+                },
+                "normalScale": {
+                  "type": "number"
+                },
+                "emissiveIntensity": {
+                  "type": "number"
+                },
+                "lightMapIntensity": {
+                  "type": "number"
+                },
+                "envMapIntensity": {
+                  "type": "number"
+                },
+                "opacity": {
+                  "type": "number"
+                },
+                "alphaTest": {
+                  "type": "number"
+                },
+                "transparent": {
+                  "type": "boolean"
+                },
+                "transmission": {
+                  "type": "number"
+                },
+                "ior": {
+                  "type": "number"
+                },
+                "clearcoat": {
+                  "type": "number"
+                },
+                "clearcoatRoughness": {
+                  "type": "number"
+                },
+                "clearcoatNormalScale": {
+                  "type": "number"
+                },
+                "iridescence": {
+                  "type": "number"
+                },
+                "sheen": {
+                  "type": "number"
+                },
+                "sheenColor": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ]
+                },
+                "sheenRoughness": {
+                  "type": "number"
+                },
+                "fogMultiplier": {
+                  "type": "number"
+                },
+                "fogShadowFactor": {
+                  "type": "number"
+                },
+                "ambientLightScale": {
+                  "type": "number"
+                },
+                "mapDisableDistance": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mapDisableDistanceAxes": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "xyz"
+                    },
+                    {
+                      "type": "string",
+                      "const": "xz"
+                    }
+                  ]
+                },
+                "mapDisableTransitionThreshold": {
+                  "type": "number"
+                },
+                "side": {
+                  "type": "string",
+                  "enum": [
+                    "front",
+                    "back",
+                    "double"
+                  ]
+                },
+                "uvScale": {
+                  "type": "array",
+                  "items": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "map": {
+                  "type": "string"
+                },
+                "normalMap": {
+                  "type": "string"
+                },
+                "roughnessMap": {
+                  "type": "string"
+                },
+                "metalnessMap": {
+                  "type": "string"
+                },
+                "lightMap": {
+                  "type": "string"
+                },
+                "transmissionMap": {
+                  "type": "string"
+                },
+                "clearcoatNormalMap": {
+                  "type": "string"
+                },
+                "pomHeightMap": {
+                  "type": "string"
+                },
+                "ambientDistanceAmp": {
+                  "type": "object",
+                  "properties": {
+                    "falloffStartDistance": {
+                      "type": "number"
+                    },
+                    "falloffEndDistance": {
+                      "type": "number"
+                    },
+                    "exponent": {
+                      "type": "number"
+                    },
+                    "ampFactor": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "falloffStartDistance",
+                    "falloffEndDistance",
+                    "ampFactor"
+                  ],
+                  "additionalProperties": false
+                },
+                "reflection": {
+                  "type": "object",
+                  "properties": {
+                    "alpha": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "heightAlpha": {
+                  "type": "object",
+                  "properties": {
+                    "bottomFade": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "topFade": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "useTriplanarMapping": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "contrastPreservationFactor": {
+                          "type": "number"
+                        },
+                        "sharpenFactor": {
+                          "type": "number"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "useGeneratedUVs": {
+                  "type": "boolean"
+                },
+                "useWorldSpaceUVs": {
+                  "type": "boolean"
+                },
+                "tileBreaking": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "neyret"
+                    },
+                    "patchScale": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "enableFog": {
+                  "type": "boolean"
+                },
+                "antialiasColorShader": {
+                  "type": "boolean"
+                },
+                "antialiasRoughnessShader": {
+                  "type": "boolean"
+                },
+                "readRoughnessMapFromRChannel": {
+                  "type": "boolean"
+                },
+                "disableToneMapping": {
+                  "type": "boolean"
+                },
+                "randomizeUVOffset": {
+                  "type": "boolean"
+                },
+                "useNoise2": {
+                  "type": "boolean"
+                },
+                "materialClass": {
+                  "type": "string",
+                  "enum": [
+                    "default",
+                    "rock",
+                    "crystal",
+                    "metalplate"
+                  ]
+                },
+                "pom": {
+                  "type": "object",
+                  "properties": {
+                    "depth": {
+                      "type": "number"
+                    },
+                    "steps": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "lodFadeStart": {
+                      "type": "number"
+                    },
+                    "lodFadeRange": {
+                      "type": "number"
+                    },
+                    "boundedSilhouette": {
+                      "type": "boolean"
+                    },
+                    "refinement": {
+                      "type": "string",
+                      "enum": [
+                        "secant",
+                        "binary"
+                      ]
+                    },
+                    "refinementSteps": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "refineSkipThreshold": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "normalEps": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "debug": {
+                      "type": "string",
+                      "enum": [
+                        "heightmap",
+                        "depth",
+                        "normal",
+                        "normalDelta",
+                        "axis",
+                        "hit",
+                        "samples",
+                        "skip"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "depth",
+                    "steps"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "shaders": {
+              "type": "object",
+              "properties": {
+                "customVertexFragment": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "commonShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "colorShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "normalShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "roughnessShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "roughnessReverseColorRamp": {
+                  "type": "object",
+                  "properties": {
+                    "colorA_srgb": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "colorB_srgb": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "vMin": {
+                      "type": "number"
+                    },
+                    "vMax": {
+                      "type": "number"
+                    },
+                    "curveSteepness": {
+                      "type": "number"
+                    },
+                    "curveOffset": {
+                      "type": "number"
+                    },
+                    "perpSigma": {
+                      "type": "number"
+                    },
+                    "baseFallback": {
+                      "type": "number"
+                    },
+                    "colorSpace": {
+                      "type": "string",
+                      "enum": [
+                        "srgb",
+                        "linear"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "colorA_srgb",
+                    "colorB_srgb",
+                    "vMin",
+                    "vMax",
+                    "curveSteepness",
+                    "curveOffset",
+                    "perpSigma",
+                    "baseFallback"
+                  ],
+                  "additionalProperties": false
+                },
+                "metalnessShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "metalnessReverseColorRamp": {
+                  "type": "object",
+                  "properties": {
+                    "colorA_srgb": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "colorB_srgb": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "vMin": {
+                      "type": "number"
+                    },
+                    "vMax": {
+                      "type": "number"
+                    },
+                    "curveSteepness": {
+                      "type": "number"
+                    },
+                    "curveOffset": {
+                      "type": "number"
+                    },
+                    "perpSigma": {
+                      "type": "number"
+                    },
+                    "baseFallback": {
+                      "type": "number"
+                    },
+                    "colorSpace": {
+                      "type": "string",
+                      "enum": [
+                        "srgb",
+                        "linear"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "colorA_srgb",
+                    "colorB_srgb",
+                    "vMin",
+                    "vMax",
+                    "curveSteepness",
+                    "curveOffset",
+                    "perpSigma",
+                    "baseFallback"
+                  ],
+                  "additionalProperties": false
+                },
+                "emissiveShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "iridescenceShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "iridescenceReverseColorRamp": {
+                  "type": "object",
+                  "properties": {
+                    "colorA_srgb": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "colorB_srgb": {
+                      "type": "array",
+                      "items": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    },
+                    "vMin": {
+                      "type": "number"
+                    },
+                    "vMax": {
+                      "type": "number"
+                    },
+                    "curveSteepness": {
+                      "type": "number"
+                    },
+                    "curveOffset": {
+                      "type": "number"
+                    },
+                    "perpSigma": {
+                      "type": "number"
+                    },
+                    "baseFallback": {
+                      "type": "number"
+                    },
+                    "colorSpace": {
+                      "type": "string",
+                      "enum": [
+                        "srgb",
+                        "linear"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "colorA_srgb",
+                    "colorB_srgb",
+                    "vMin",
+                    "vMax",
+                    "curveSteepness",
+                    "curveOffset",
+                    "perpSigma",
+                    "baseFallback"
+                  ],
+                  "additionalProperties": false
+                },
+                "displacementShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "includeNoiseShadersVertex": {
+                  "type": "boolean"
+                },
+                "pomHeightShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "pomNormalShader": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "file": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "file"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "emissiveBypass": {
+              "type": "boolean"
+            },
+            "nonPermeable": {
+              "type": "boolean"
+            },
+            "parkour": {
+              "type": "object",
+              "properties": {
+                "boostSurface": {
+                  "type": "object",
+                  "properties": {
+                    "targetSpeed": {
+                      "type": "number"
+                    },
+                    "jumpRetention": {
+                      "type": "number"
+                    },
+                    "rampUpSeconds": {
+                      "type": "number"
+                    },
+                    "followSurfaceSlope": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "targetSpeed",
+                    "jumpRetention"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "externalVelocityAirDampingFactor": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "externalVelocityGroundDampingFactor": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "customBasicShader"
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "color": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ]
+                },
+                "transparent": {
+                  "type": "boolean"
+                },
+                "alphaTest": {
+                  "type": "number"
+                },
+                "fogMultiplier": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            },
+            "options": {
+              "type": "object",
+              "properties": {
+                "enableFog": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "emissiveBypass": {
+              "type": "boolean"
+            },
+            "nonPermeable": {
+              "type": "boolean"
+            },
+            "parkour": {
+              "type": "object",
+              "properties": {
+                "boostSurface": {
+                  "type": "object",
+                  "properties": {
+                    "targetSpeed": {
+                      "type": "number"
+                    },
+                    "jumpRetention": {
+                      "type": "number"
+                    },
+                    "rampUpSeconds": {
+                      "type": "number"
+                    },
+                    "followSurfaceSlope": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "targetSpeed",
+                    "jumpRetention"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "externalVelocityAirDampingFactor": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "externalVelocityGroundDampingFactor": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "generated"
+            },
+            "emissiveBypass": {
+              "type": "boolean"
+            },
+            "nonPermeable": {
+              "type": "boolean"
+            },
+            "parkour": {
+              "type": "object",
+              "properties": {
+                "boostSurface": {
+                  "type": "object",
+                  "properties": {
+                    "targetSpeed": {
+                      "type": "number"
+                    },
+                    "jumpRetention": {
+                      "type": "number"
+                    },
+                    "rampUpSeconds": {
+                      "type": "number"
+                    },
+                    "followSurfaceSlope": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "targetSpeed",
+                    "jumpRetention"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "externalVelocityAirDampingFactor": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "externalVelocityGroundDampingFactor": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "material"
+  ],
+  "additionalProperties": false,
+  "title": "LibraryMaterialFile",
+  "$id": "https://ameo.design/schemas/library-material.json"
+}

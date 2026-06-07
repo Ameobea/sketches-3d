@@ -38,16 +38,52 @@ const filterTypeCode = (t: FilterType | undefined): number => {
 
 const LISTENER_F32_COUNT = 10;
 
-// -- Sample defs ---------------------------------------------------------------
-//
+/** A scalar, or a `[lo, hi]` tuple sampled uniformly at each play. */
+export type Range = number | [number, number];
+
+// PCG XSH RR 64/32. Matches `rand_pcg::Pcg32` algorithm; not seeded for
+// reproducibility — game-audio jitter only.
+class Pcg32 {
+  private state = 0n;
+  private readonly inc = 1442695040888963407n;
+  constructor() {
+    const seed =
+      (BigInt(Math.floor(Math.random() * 0x100000000)) << 32n) |
+      BigInt(Math.floor(Math.random() * 0x100000000));
+    this.state = (seed * 6364136223846793005n + this.inc) & 0xffffffffffffffffn;
+  }
+  nextU32(): number {
+    const old = this.state;
+    this.state = (old * 6364136223846793005n + this.inc) & 0xffffffffffffffffn;
+    const x = Number(((old >> 18n) ^ old) >> 27n) >>> 0;
+    const r = Number(old >> 59n) & 31;
+    return ((x >>> r) | (x << (-r & 31))) >>> 0;
+  }
+  uniform(lo: number, hi: number): number {
+    return lo + (this.nextU32() / 0x100000000) * (hi - lo);
+  }
+}
+
 // `BUILTIN_SFX_DEFS` is the registry of always-available core SFX (used
 // across many scenes). Per-scene one-offs should be added at runtime via
 // `registerSfxDefs` — this avoids polluting the global registry with
 // scene-specific entries.
 
+export interface SfxFilter {
+  type: FilterType;
+  freq: Range;
+  q?: Range;
+}
+
 export interface SfxDef {
   url: string;
-  playbackRate?: number;
+  playbackRate?: Range;
+  /** Linear gain baked into the def; multiplied with per-call gain. */
+  gain?: Range;
+  /** Play the sample backwards. */
+  reverse?: boolean;
+  /** Default biquad filter; overridden by per-call `opts.filter`. */
+  filter?: SfxFilter;
 }
 
 const BUILTIN_SFX_DEFS: Record<string, SfxDef> = {
@@ -62,8 +98,6 @@ const BUILTIN_SFX_DEFS: Record<string, SfxDef> = {
 
 const METAL_PLATE_LAND_SFX = ['metal_plate_land_0', 'metal_plate_land_1'] as const;
 
-// -- Config (preserved from old SfxManager) -------------------------------------
-
 export interface SfxWalkConfig {
   playWalkSound?: (mat: MaterialClass) => void;
   timeBetweenStepsSeconds: number;
@@ -74,10 +108,30 @@ export interface SfxLandConfig {
   materialLandSounds: Partial<Record<MaterialClass, (() => void) | string[]>>;
 }
 
+export interface SfxBoostConfig {
+  /** Oneshot played on rising edge of "actively boosting on a boost surface". */
+  startSfx?: string;
+  /** Oneshot played on falling edge (when boost ends with movement still enabled). */
+  endSfx?: string;
+  /** Spatial loop sample anchored to the player while boost is active. */
+  loopSfx?: string;
+  loopGain?: number;
+  loopRefDistance?: number;
+  loopRolloff?: number;
+  /** Oneshot played when the player first stands on any boost strip (independent of aux). */
+  contactStartSfx?: string;
+  /** Oneshot played when the player leaves a boost strip. */
+  contactEndSfx?: string;
+  /** Oneshot played when a jump fires while boost is effective — either actively boosted on
+   *  an armed strip, or during the post-leave coyote window. */
+  boostedJumpSfx?: string;
+}
+
 export interface SfxConfig {
   walk: SfxWalkConfig;
   land?: Partial<SfxLandConfig>;
   neededSfx?: string[];
+  boost?: SfxBoostConfig;
 }
 
 export const buildDefaultSfxConfig = (): SfxConfig => ({
@@ -90,18 +144,21 @@ export const buildDefaultSfxConfig = (): SfxConfig => ({
 // -- Public types --------------------------------------------------------------
 
 export interface PlaySfxOpts {
-  gain?: number; // linear, default 1
-  playbackRate?: number; // default 1 (or sfx-def override)
-  pan?: number; // -1..1, default 0
+  gain?: Range; // linear, default 1; multiplied with def.gain
+  playbackRate?: Range; // default 1 (or sfx-def override)
+  pan?: Range; // -1..1, default 0
+  /** Overrides `SfxDef.filter`. */
+  filter?: SfxFilter;
 }
 
 export interface SpatialLoopOpts {
   pos: [number, number, number];
-  gain?: number; // linear, default 1
-  playbackRate?: number; // default 1
+  gain?: Range; // linear, default 1; multiplied with def.gain
+  playbackRate?: Range; // default 1 (or sfx-def override)
   /** 0..1 fraction of the sample for crossfade ramp on each end. Default 0.1. */
   xfade?: number;
-  filter?: { type: FilterType; freq: number; q?: number };
+  /** Overrides `SfxDef.filter`. */
+  filter?: SfxFilter;
   /** Distance at which attenuation begins. Default 1. */
   refDistance?: number;
   /** Attenuation curve exponent: gain = 1 / max(1, dist/ref)^rolloff. Default 1. */
@@ -120,9 +177,19 @@ export interface SpatialVoiceHandle {
   stop(): void;
 }
 
+interface ResolvedLoopParams {
+  gain: number;
+  rate: number;
+  filterFreq: number;
+  filterQ: number;
+  /** Per-instance resolved `def.gain`; multiplied into every `setGain` on the handle. */
+  defGain: number;
+}
+
 interface PendingSpatialLoop {
   name: string;
   opts: SpatialLoopOpts;
+  resolved: ResolvedLoopParams;
   handle: number;
 }
 
@@ -167,6 +234,14 @@ export class SoundEngine {
   private camera: THREE.Camera | null = null;
   private cameraDir = new THREE.Vector3();
   private cameraRight = new THREE.Vector3();
+
+  private rng = new Pcg32();
+
+  private resolveRange(r: Range | undefined, fallback: number): number {
+    if (r === undefined) return fallback;
+    if (typeof r === 'number') return r;
+    return this.rng.uniform(r[0], r[1]);
+  }
 
   private masterGain = 1;
   private vizConfigUnsubscribe: (() => void) | null = null;
@@ -259,7 +334,7 @@ export class SoundEngine {
     const stillPending: PendingSpatialLoop[] = [];
     for (const p of this.pendingSpatial) {
       if (this.uploadedSamples.has(p.name)) {
-        this.startSpatialLoopByHandle(p.handle, p.name, p.opts);
+        this.startSpatialLoopByHandle(p.handle, p.name, p.opts, p.resolved);
       } else {
         stillPending.push(p);
       }
@@ -441,22 +516,55 @@ export class SoundEngine {
 
     const id = this.samplesByName.get(name)!;
     const def = this.sfxDefs[name];
-    const rate = opts?.playbackRate ?? def?.playbackRate ?? 1;
-    const gain = opts?.gain ?? 1;
-    const pan = opts?.pan ?? 0;
+    const baseRate =
+      opts?.playbackRate !== undefined
+        ? this.resolveRange(opts.playbackRate, 1)
+        : this.resolveRange(def?.playbackRate, 1);
+    const rate = def?.reverse ? -baseRate : baseRate;
+    const gain = this.resolveRange(opts?.gain, 1) * this.resolveRange(def?.gain, 1);
+    const pan = this.resolveRange(opts?.pan, 0);
+    const filter = opts?.filter ?? def?.filter;
     this.postEvent({
       kind: EV_PLAY_ONESHOT,
       sampleId: id,
-      params: [gain, rate, pan],
+      params: [
+        gain,
+        rate,
+        pan,
+        filterTypeCode(filter?.type),
+        this.resolveRange(filter?.freq, 1000),
+        this.resolveRange(filter?.q, 0.707),
+      ],
     });
+  }
+
+  /** Resolve all randomizable params once, at play time, so a delayed start
+   *  (pending sample upload) sees the same values as the handle returned to
+   *  the caller. */
+  private resolveLoopParams(name: string, opts: SpatialLoopOpts): ResolvedLoopParams {
+    const def = this.sfxDefs[name];
+    const baseRate =
+      opts.playbackRate !== undefined
+        ? this.resolveRange(opts.playbackRate, 1)
+        : this.resolveRange(def?.playbackRate, 1);
+    const rate = def?.reverse ? -baseRate : baseRate;
+    const defGain = this.resolveRange(def?.gain, 1);
+    const gain = this.resolveRange(opts.gain, 1) * defGain;
+    const filter = opts.filter ?? def?.filter;
+    return {
+      gain,
+      rate,
+      filterFreq: this.resolveRange(filter?.freq, 1000),
+      filterQ: this.resolveRange(filter?.q, 0.707),
+      defGain,
+    };
   }
 
   public playSpatialLoop(name: string, opts: SpatialLoopOpts): SpatialVoiceHandle {
     const handle = this.nextHandle++;
+    if (!this.enabled) return this.makeHandle(handle, 1);
 
-    if (!this.enabled) {
-      return this.makeHandle(handle);
-    }
+    const resolved = this.resolveLoopParams(name, opts);
 
     // Always kick off the loop-aware fetch if we haven't already; we need the
     // crossfade-pre-baked upload regardless of whether the node is ready yet.
@@ -465,12 +573,12 @@ export class SoundEngine {
     }
 
     if (this.nodeReady && this.uploadedSamples.has(name)) {
-      this.startSpatialLoopByHandle(handle, name, opts);
+      this.startSpatialLoopByHandle(handle, name, opts, resolved);
     } else {
-      this.pendingSpatial.push({ name, opts, handle });
+      this.pendingSpatial.push({ name, opts, resolved, handle });
     }
 
-    return this.makeHandle(handle);
+    return this.makeHandle(handle, resolved.defGain);
   }
 
   private loadSfxForLoop(name: string, xfade: number) {
@@ -490,17 +598,21 @@ export class SoundEngine {
         if (this.nodeReady) {
           const pending = this.pendingSpatial.filter(p => p.name === name);
           this.pendingSpatial = this.pendingSpatial.filter(p => p.name !== name);
-          for (const p of pending) this.startSpatialLoopByHandle(p.handle, p.name, p.opts);
+          for (const p of pending) this.startSpatialLoopByHandle(p.handle, p.name, p.opts, p.resolved);
         }
       })
       .catch(err => console.error(`Failed to load looping sfx "${name}":`, err));
   }
 
-  private startSpatialLoopByHandle(handle: number, name: string, opts: SpatialLoopOpts) {
+  private startSpatialLoopByHandle(
+    handle: number,
+    name: string,
+    opts: SpatialLoopOpts,
+    resolved: ResolvedLoopParams
+  ) {
     const id = this.samplesByName.get(name);
     if (id === undefined) return;
-    const filter = opts.filter;
-    const filterCode = filterTypeCode(filter?.type);
+    const filter = opts.filter ?? this.sfxDefs[name]?.filter;
     this.postEvent({
       kind: EV_START_SPATIAL_LOOP,
       handle,
@@ -509,12 +621,12 @@ export class SoundEngine {
         opts.pos[0],
         opts.pos[1],
         opts.pos[2],
-        opts.gain ?? 1,
-        opts.playbackRate ?? 1,
+        resolved.gain,
+        resolved.rate,
         opts.xfade ?? 0.1,
-        filterCode,
-        filter?.freq ?? 1000,
-        filter?.q ?? 0.707,
+        filterTypeCode(filter?.type),
+        resolved.filterFreq,
+        resolved.filterQ,
         opts.refDistance ?? 1,
         opts.rolloff ?? 1,
         opts.cullThreshold ?? 0.001,
@@ -522,7 +634,7 @@ export class SoundEngine {
     });
   }
 
-  private makeHandle(handle: number): SpatialVoiceHandle {
+  private makeHandle(handle: number, defGain: number): SpatialVoiceHandle {
     const post = (params: number[], flags = 0) =>
       this.postEvent({ kind: EV_UPDATE_SPATIAL_LOOP, handle, flags, params });
 
@@ -534,12 +646,12 @@ export class SoundEngine {
       setPosition: (x, y, z) => {
         if (stopped) return;
         pos = [x, y, z];
-        post([x, y, z, gain]);
+        post([x, y, z, gain * defGain]);
       },
       setGain: g => {
         if (stopped) return;
         gain = g;
-        post([pos[0], pos[1], pos[2], gain]);
+        post([pos[0], pos[1], pos[2], gain * defGain]);
       },
       stop: () => {
         if (stopped) return;

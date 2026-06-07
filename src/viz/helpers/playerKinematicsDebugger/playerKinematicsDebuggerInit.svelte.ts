@@ -18,6 +18,7 @@ export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, t
     externalVelocity: [0, 0, 0] as [number, number, number],
     isOnGround: false,
     isDashing: false,
+    totalVelocityMagnitude: 0,
   });
   const comp = mount(PlayerKinematicsDebugger, { target: targetDisplayElem, props });
 
@@ -29,6 +30,7 @@ export const initPlayerKinematicsDebugger = (viz: Viz, container: HTMLElement, t
       props.externalVelocity = fpCtx.playerStateGetters.getExternalVelocity();
       props.isOnGround = fpCtx.playerStateGetters.getIsOnGround();
       props.isDashing = fpCtx.playerStateGetters.getIsDashing();
+      props.totalVelocityMagnitude = fpCtx.playerStateGetters.getTotalVelocityMagnitude();
     });
   });
 

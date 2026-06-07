@@ -9,17 +9,25 @@ import { z } from 'zod';
 import {
   AudioFileSchema,
   LevelDefRawSchema,
+  LibraryMaterialFileSchema,
   LocationsFileSchema,
   MaterialsFileSchema,
   ObjectsFileSchema,
 } from './types';
 
 const schemasDir = join(import.meta.dirname, '../../../src/levels');
+const assetsSchemasDir = join(import.meta.dirname, '../../../src/assets');
 
-const write = (filename: string, schema: Record<string, unknown>, title: string, id: string) => {
+const write = (
+  filename: string,
+  schema: Record<string, unknown>,
+  title: string,
+  id: string,
+  dir: string = schemasDir
+) => {
   schema.title = title;
   schema.$id = id;
-  const outPath = join(schemasDir, filename);
+  const outPath = join(dir, filename);
   writeFileSync(outPath, JSON.stringify(schema, null, 2) + '\n', 'utf-8');
   console.log('Wrote', outPath);
 };
@@ -57,4 +65,12 @@ write(
   z.toJSONSchema(AudioFileSchema, { target: 'draft-7' }) as Record<string, unknown>,
   'AudioFile',
   'https://ameo.design/schemas/level-audio.json'
+);
+
+write(
+  'library-material-schema.json',
+  z.toJSONSchema(LibraryMaterialFileSchema, { target: 'draft-7' }) as Record<string, unknown>,
+  'LibraryMaterialFile',
+  'https://ameo.design/schemas/library-material.json',
+  assetsSchemasDir
 );

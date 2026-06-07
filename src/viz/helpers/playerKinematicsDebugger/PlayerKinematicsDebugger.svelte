@@ -15,8 +15,10 @@
   export let externalVelocity: [number, number, number];
   export let isDashing: boolean;
   export let isOnGround: boolean;
+  export let totalVelocityMagnitude: number;
 
   $: formattedVerticalVelocity = formatNumber(verticalVelocity);
+  $: formattedTotalVelocity = formatNumber(totalVelocityMagnitude);
 
   const getBoolColor = (bool: boolean) => (bool ? 'green' : 'red');
 
@@ -26,6 +28,9 @@
 <div class="root">
   <div>
     m_verticalVelocity: <pre>{formattedVerticalVelocity}</pre>
+  </div>
+  <div>
+    |velocity|: <pre>{formattedTotalVelocity}</pre>
   </div>
   <div>
     isJumping: <pre style="color: {getBoolColor(isJumping)}"> {formatBool(isJumping)}</pre>

@@ -136,6 +136,27 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
 };
 
 /**
+ * Stamp the channels a MaterialDef carries into `mat.userData` so the level loader's
+ * post-build propagation (`propagateMatUserDataToEntity` in loadLevelDef.ts) can push
+ * them onto owning entities.  Add new material-driven channels here AND in the loader's
+ * entity-propagation helper — those two are the matched pair.
+ */
+export const stampMaterialMetaUserData = (matDef: MaterialDef, mat: THREE.Material) => {
+  if (matDef.nonPermeable) {
+    mat.userData.nonPermeable = true;
+  }
+  if (matDef.parkour?.boostSurface) {
+    mat.userData.boostSurfaceConfig = matDef.parkour.boostSurface;
+  }
+  if (matDef.externalVelocityAirDampingFactor) {
+    mat.userData.externalVelocityAirDampingFactor = matDef.externalVelocityAirDampingFactor;
+  }
+  if (matDef.externalVelocityGroundDampingFactor) {
+    mat.userData.externalVelocityGroundDampingFactor = matDef.externalVelocityGroundDampingFactor;
+  }
+};
+
+/**
  * Build a Three.js material from a serializable `MaterialDef` and the resolved texture registry.
  */
 export const buildMaterial = (
@@ -150,9 +171,7 @@ export const buildMaterial = (
       options.noOcclusion = true;
     }
     const mat = buildCustomShader(props, shaders, options);
-    if (matDef.nonPermeable) {
-      mat.userData.nonPermeable = true;
-    }
+    stampMaterialMetaUserData(matDef, mat);
     return mat;
   }
 
@@ -170,8 +189,6 @@ export const buildMaterial = (
     {},
     matDef.options ?? {}
   ) as unknown as THREE.Material;
-  if (matDef.nonPermeable) {
-    mat.userData.nonPermeable = true;
-  }
+  stampMaterialMetaUserData(matDef, mat);
   return mat;
 };

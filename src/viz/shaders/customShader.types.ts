@@ -23,7 +23,6 @@ export enum MaterialClass {
   Default,
   Rock,
   Crystal,
-  Instakill,
   MetalPlate,
 }
 
@@ -31,7 +30,6 @@ export const MATERIAL_CLASS_NAMES = {
   [MaterialClass.Default]: 'default',
   [MaterialClass.Rock]: 'rock',
   [MaterialClass.Crystal]: 'crystal',
-  [MaterialClass.Instakill]: 'instakill',
   [MaterialClass.MetalPlate]: 'metalplate',
 } as const satisfies Record<MaterialClass, string>;
 

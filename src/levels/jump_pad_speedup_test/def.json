@@ -1,0 +1,158 @@
+{
+  "$schema": "../schema.json",
+  "version": 1,
+  "materials": {
+    "plain_strip_mat": {
+      "type": "customShader",
+      "props": {
+        "color": "#6e8aa6",
+        "roughness": 0.85,
+        "metalness": 0.05
+      },
+      "externalVelocityGroundDampingFactor": [0.972, 0.972, 0.972]
+    }
+  },
+  "assets": {
+    "boost_strip": {
+      "type": "geoscript",
+      "code": "export mesh = box(28, 0.2, 4)",
+      "_meta": { "runtimeMs": 5.100000005960465, "count": 5, "codeHash": "3717dc17" }
+    },
+    "ramp1": {
+      "type": "geoscript",
+      "file": "geo/ramp1.geo",
+      "_meta": { "runtimeMs": 1.8600000023841858, "count": 5, "codeHash": "56a1c84e" }
+    },
+    "cyl": {
+      "type": "geoscript",
+      "code": "export mesh = cylinder(radius=1, height=1, radial_segments=16)",
+      "_meta": { "runtimeMs": 0.4050000000279397, "count": 2, "codeHash": "5393f9cd" }
+    }
+  },
+  "objects": [
+    {
+      "id": "boost_strip_material_level",
+      "asset": "boost_strip",
+      "material": "__ASSETS__/materials/parkour/boost_strip_active",
+      "position": [22, 0.1, -16],
+      "behaviors": [
+        {
+          "fn": "boostSurfaceVisual",
+          "params": {
+            "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+            "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+            "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "boost_strip_object_override",
+      "asset": "boost_strip",
+      "material": "__ASSETS__/materials/parkour/boost_strip_active",
+      "position": [22, 0.1, -6],
+      "parkour": {
+        "boostSurface": {
+          "targetSpeed": 32,
+          "jumpRetention": 0.4,
+          "rampUpSeconds": 0.25
+        }
+      },
+      "behaviors": [
+        {
+          "fn": "boostSurfaceVisual",
+          "params": {
+            "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+            "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+            "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "boost_strip_pulsing",
+      "asset": "boost_strip",
+      "material": "plain_strip_mat",
+      "position": [22, 0.1, 4],
+      "behaviors": [
+        {
+          "fn": "pulseBoostSurface",
+          "params": {
+            "activeSeconds": 1.5,
+            "inactiveSeconds": 1.5,
+            "config": {
+              "targetSpeed": 32,
+              "jumpRetention": 0.5
+            }
+          }
+        },
+        {
+          "fn": "boostSurfaceVisual",
+          "params": {
+            "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+            "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+            "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed",
+            "disabledMaterial": "plain_strip_mat"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ramp1",
+      "asset": "ramp1",
+      "position": [33.0883, 0.0423, -25.7405],
+      "rotation": [0, 3.1416, 0],
+      "scale": [2.9845, 2.7193, 0.6664],
+      "material": "__ASSETS__/materials/parkour/boost_strip_active",
+      "parkour": {
+        "boostSurface": {
+          "targetSpeed": 62,
+          "jumpRetention": 0.4,
+          "rampUpSeconds": 0.07
+        }
+      },
+      "behaviors": [
+        {
+          "fn": "boostSurfaceVisual",
+          "params": {
+            "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+            "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+            "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ramp1_1",
+      "asset": "ramp1",
+      "position": [-24.4142, 6.1332, -10.4532],
+      "rotation": [0, 3.1416, 0],
+      "scale": [2.9845, 2.7193, 0.6664],
+      "material": "__ASSETS__/materials/parkour/boost_strip_active",
+      "parkour": {
+        "boostSurface": {
+          "targetSpeed": 62,
+          "jumpRetention": 0.4,
+          "rampUpSeconds": 0.07
+        }
+      },
+      "behaviors": [
+        {
+          "fn": "boostSurfaceVisual",
+          "params": {
+            "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+            "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+            "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cyl",
+      "asset": "cyl",
+      "position": [-36.4138, 9.5731, 0.087],
+      "rotation": [0, 0, 0],
+      "scale": [3.6213, 0.4817, 3.6213]
+    }
+  ]
+}

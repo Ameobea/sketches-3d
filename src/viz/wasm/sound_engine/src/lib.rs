@@ -452,41 +452,57 @@ impl Ctx {
   fn handle_event(&mut self, ev: &Event) {
     match ev.kind {
       EV_PLAY_ONESHOT => {
-        if !self.samples.contains_key(&ev.sample_id) {
+        let Some(sample_len) = self.samples.get(&ev.sample_id).map(|s| s.len) else {
           return;
-        }
+        };
         let ix = self.alloc_voice();
         self.age_counter += 1;
-        let v = &mut self.voices[ix];
-        v.active = true;
-        v.sample_id = ev.sample_id;
-        v.pos = 0.0;
-        v.gain = ev.params[0];
-        v.rate = if ev.params[1] > 0.0 {
+        let rate = if ev.params[1] != 0.0 {
           ev.params[1]
         } else {
           1.0
         };
+        let coeffs = make_biquad(
+          ev.params[3] as u32,
+          ev.params[4],
+          ev.params[5],
+          self.sample_rate,
+        );
+        let v = &mut self.voices[ix];
+        v.active = true;
+        v.sample_id = ev.sample_id;
+        v.pos = if rate < 0.0 {
+          (sample_len as f32 - 2.0).max(0.0)
+        } else {
+          0.0
+        };
+        v.gain = ev.params[0];
+        v.rate = rate;
         v.mode = VoiceMode::OneshotPan {
           pan: clampf(ev.params[2], -1.0, 1.0),
         };
         v.is_loop = false;
-        v.biquad_coeffs = None;
+        v.biquad_coeffs = coeffs;
         v.bq_l = BiquadState::default();
         v.bq_r = BiquadState::default();
         v.age = self.age_counter;
         v.handle = 0;
       }
       EV_START_SPATIAL_LOOP => {
-        if !self.samples.contains_key(&ev.sample_id) {
+        let Some(sample_len) = self.samples.get(&ev.sample_id).map(|s| s.len) else {
           return;
-        }
+        };
         // If a voice already exists for this handle, stop it first.
         if let Some(&old_ix) = self.spatial_handles.get(&ev.handle) {
           self.deactivate_voice(old_ix);
         }
         let ix = self.alloc_voice();
         self.age_counter += 1;
+        let rate = if ev.params[4] != 0.0 {
+          ev.params[4]
+        } else {
+          1.0
+        };
         let coeffs = make_biquad(
           ev.params[6] as u32,
           ev.params[7],
@@ -496,13 +512,13 @@ impl Ctx {
         let v = &mut self.voices[ix];
         v.active = true;
         v.sample_id = ev.sample_id;
-        v.pos = 0.0;
-        v.gain = ev.params[3];
-        v.rate = if ev.params[4] > 0.0 {
-          ev.params[4]
+        v.pos = if rate < 0.0 {
+          (sample_len as f32 - 2.0).max(0.0)
         } else {
-          1.0
+          0.0
         };
+        v.gain = ev.params[3];
+        v.rate = rate;
         v.mode = VoiceMode::SpatialLoop {
           pos: [ev.params[0], ev.params[1], ev.params[2]],
           ref_dist: ev.params[9].max(0.01),
@@ -762,10 +778,9 @@ fn mix_voice(
         // Skip mixing, but advance the playhead so the loop stays in phase.
         let span = len - 2.0;
         if span > 0.0 {
-          let advance = v.rate * FRAME_SIZE as f32;
-          let mut p = v.pos + advance;
+          let mut p = v.pos + v.rate * FRAME_SIZE as f32;
           if v.is_loop {
-            p -= span * (p / span).floor();
+            p = p.rem_euclid(span);
           }
           v.pos = p;
         }
@@ -778,13 +793,13 @@ fn mix_voice(
   let stereo_source = sample.channels >= 2;
   let use_xfade = v.is_loop && !sample.xfade_data.is_empty();
   let coeffs = v.biquad_coeffs;
+  let span = len - 2.0;
 
   for i in 0..FRAME_SIZE {
-    if v.pos >= len - 2.0 {
+    if v.pos < 0.0 || v.pos > span {
       if v.is_loop {
-        let span = len - 2.0;
         if span > 0.0 {
-          v.pos -= span * (v.pos / span).floor();
+          v.pos = v.pos.rem_euclid(span);
         } else {
           v.pos = 0.0;
         }

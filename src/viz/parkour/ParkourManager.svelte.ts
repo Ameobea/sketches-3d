@@ -70,6 +70,11 @@ export class ParkourManager {
     this.useExternalVelocity = useExternalVelocity;
     this.sceneConfigOverrides = sceneConfigOverrides;
 
+    const overrideCharges = sceneConfigOverrides.player?.dashConfig?.chargeConfig?.curCharges;
+    if (overrideCharges) {
+      this.curDashCharges = overrideCharges as TransparentWritable<number>;
+    }
+
     this.runtime = new SceneRuntime(viz);
 
     if (materials) {

@@ -48,9 +48,18 @@
     }
     return { folders: root.subfolders, flatIds: root.files.map(f => f.path) };
   });
+
+  // Show a small readonly indicator when `selected` is an asset-library path that we don't
+  // surface in the local tree (and the lib tree either isn't shown here or doesn't include it).
+  const orphanLibSelection = $derived(
+    selected && selected.startsWith('__ASSETS__/') && !localItems.includes(selected) ? selected : null
+  );
 </script>
 
 <div class="tree-picker">
+  {#if orphanLibSelection}
+    <div class="lib-selection" title={orphanLibSelection}>lib: {orphanLibSelection}</div>
+  {/if}
   {#if libFolders.length > 0}
     <div
       class="folder-row"
@@ -155,6 +164,16 @@
     background: #111;
     font: 11px monospace;
     color: #aaa;
+  }
+
+  .lib-selection {
+    padding: 2px 6px;
+    background: #1a1f28;
+    color: #8cb4d4;
+    border-bottom: 1px solid #2a2f38;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .item {

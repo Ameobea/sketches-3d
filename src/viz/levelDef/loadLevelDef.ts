@@ -30,7 +30,7 @@ import { type LevelObject, type LevelGroup, type LevelSceneNode, type LevelLight
 import { replaceLeafInstance } from './editorStructuralOps';
 import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
-import { buildMaterial } from './buildMaterial';
+import { buildMaterial, stampMaterialMetaUserData } from './buildMaterial';
 import { CustomShaderMaterial, setSceneEnvironment } from 'src/viz/shaders/customShader';
 import { generateGradientEnvironment, loadEnvironment } from 'src/viz/textureLoading';
 import { extractHullInputVertices, type CollisionMeshOverride } from '../collisionShapes';
@@ -365,7 +365,8 @@ const computeUpdatedMeta = (
   const baseRuntimeMs = hashChanged ? 0 : existing!.runtimeMs;
 
   const newCount = Math.min(baseCount + 1, 5);
-  const newRuntimeMs = (baseRuntimeMs * baseCount + sampled.runtimeMs) / (baseCount + 1);
+  const rawRuntimeMs = (baseRuntimeMs * baseCount + sampled.runtimeMs) / (baseCount + 1);
+  const newRuntimeMs = Math.round(rawRuntimeMs * 10) / 10;
 
   const result: GeoscriptAssetMeta = { runtimeMs: newRuntimeMs, count: newCount, codeHash };
   if (sampled.asyncDeps.length > 0) {
@@ -745,6 +746,23 @@ export const loadLevelDef = (
     }
   });
 
+  // Material `userData` channels that propagate to the owning Entity if the entity didn't
+  // already get an explicit value from the object def.  Centralized so the three sites that
+  // bind a material to an entity (placement w/ already-built mat, post-texture build,
+  // generated-mat factory) all stay in sync.  Add new propagated channels here.
+  const propagateMatUserDataToEntity = (mat: THREE.Material, entity: Entity) => {
+    const ud = mat.userData;
+    if (ud.boostSurfaceConfig && !entity.boostSurfaceConfig) {
+      entity.setBoostSurfaceConfig(ud.boostSurfaceConfig);
+    }
+    if (ud.externalVelocityAirDampingFactor && !entity.externalVelocityAirDampingFactor) {
+      entity.externalVelocityAirDampingFactor = ud.externalVelocityAirDampingFactor;
+    }
+    if (ud.externalVelocityGroundDampingFactor && !entity.externalVelocityGroundDampingFactor) {
+      entity.externalVelocityGroundDampingFactor = ud.externalVelocityGroundDampingFactor;
+    }
+  };
+
   const placeObject = (assetId: string, prototype: THREE.Mesh, objDef: ObjectDef) => {
     const clone = instantiateLevelObject(prototype, objDef, {
       builtMaterials,
@@ -757,6 +775,21 @@ export const loadLevelDef = (
     const entity = new Entity(viz, objDef.id, clone);
     if (objDef.nonPermeable !== undefined) {
       entity.nonPermeable = objDef.nonPermeable;
+    }
+    if (objDef.parkour?.boostSurface) {
+      entity.setBoostSurfaceConfig(objDef.parkour.boostSurface);
+    }
+    if (objDef.externalVelocityAirDampingFactor) {
+      entity.externalVelocityAirDampingFactor = objDef.externalVelocityAirDampingFactor;
+    }
+    if (objDef.externalVelocityGroundDampingFactor) {
+      entity.externalVelocityGroundDampingFactor = objDef.externalVelocityGroundDampingFactor;
+    }
+    // Texture-less materials build before any placement, so tryBuildMaterial's post-build
+    // propagation runs against an empty placedObjects map; cover the already-built case here.
+    const earlyMat = objDef.material ? builtMaterials.get(objDef.material) : undefined;
+    if (earlyMat) {
+      propagateMatUserDataToEntity(earlyMat, entity);
     }
     const levelObj: LevelObject = {
       id: objDef.id,
@@ -837,6 +870,8 @@ export const loadLevelDef = (
         if (mat instanceof CustomShaderMaterial && mat.materialClass !== undefined) {
           levelObj.entity.setMaterialClass(mat.materialClass);
         }
+
+        propagateMatUserDataToEntity(mat, levelObj.entity);
 
         if (mat.userData.nonPermeable && physicsReady) {
           const fpCtx = viz.fpCtx;
@@ -1060,12 +1095,17 @@ export const loadLevelDef = (
       if (!(result instanceof THREE.Material)) {
         matAssignedCbs.set(matName, result.onAssigned);
       }
+      const matDef = levelDef.materials![matName];
+      if (matDef.type === 'generated') {
+        stampMaterialMetaUserData(matDef, mat);
+      }
       builtMaterials.set(matName, mat);
       // Assign to any already-placed objects referencing this material
       for (const objId of matToObjIds.get(matName) ?? []) {
         const levelObj = placedObjects.get(objId);
         if (levelObj) {
           assignMaterial(levelObj.object, mat);
+          propagateMatUserDataToEntity(mat, levelObj.entity);
           const cb = matAssignedCbs.get(matName);
           if (cb) forEachMesh(levelObj.object, cb);
         }

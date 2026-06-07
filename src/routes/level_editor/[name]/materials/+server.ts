@@ -12,6 +12,9 @@ export const PUT: RequestHandler = async ({ params, request }) => {
 
   const body = (await request.json()) as { name: string; def: MaterialDef };
   if (!body.name) error(400, 'Missing material name');
+  if (body.name.startsWith('__ASSETS__/')) {
+    error(400, 'Library-prefixed materials are read-only; edit the file under src/assets/materials/ instead');
+  }
 
   const level = openLevel(name);
   if (!level.def.materials) level.def.materials = {};

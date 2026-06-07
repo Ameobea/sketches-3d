@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
-import { generateParkourPlatforms, jumpSimParamsFromSceneConfig } from 'src/viz/parkour/platformGen';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import type { SceneConfig } from '..';
@@ -15,144 +14,6 @@ const locations = {
     pos: new THREE.Vector3(0, 3, -24),
     rot: new THREE.Vector3(0, Math.PI, 0),
   },
-};
-
-const addPlatform = (
-  viz: Viz,
-  pos: THREE.Vector3,
-  size: THREE.Vector3,
-  material: THREE.Material
-): THREE.Mesh<THREE.BoxGeometry, THREE.Material> => {
-  const platform = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), material);
-  platform.position.copy(pos);
-  platform.receiveShadow = true;
-  platform.castShadow = true;
-  viz.scene.add(platform);
-  viz.fpCtx!.addTriMesh(platform);
-  return platform;
-};
-
-const addZoneVisual = (viz: Viz, pos: THREE.Vector3, halfExtents: THREE.Vector3, color: number) => {
-  const visual = new THREE.Mesh(
-    new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.2, wireframe: true })
-  );
-  visual.position.copy(pos);
-  viz.scene.add(visual);
-};
-
-const initLevel = (viz: Viz, sceneConfig: SceneConfig) => {
-  const fpCtx = viz.fpCtx!;
-
-  const floorMat = new THREE.MeshStandardMaterial({ color: 0x515763, roughness: 0.95, metalness: 0.04 });
-  const platformMat = new THREE.MeshStandardMaterial({ color: 0x6f7f96, roughness: 0.85, metalness: 0.06 });
-  const jumpPadMat = new THREE.MeshStandardMaterial({
-    color: 0x31a0ff,
-    emissive: 0x14334e,
-    roughness: 0.38,
-    metalness: 0.12,
-  });
-
-  addPlatform(viz, new THREE.Vector3(0, -1, 20), new THREE.Vector3(120, 2, 140), floorMat);
-  addPlatform(viz, new THREE.Vector3(0, 10, 68), new THREE.Vector3(32, 2, 30), platformMat);
-  addPlatform(viz, new THREE.Vector3(42, 18, 100), new THREE.Vector3(28, 2, 28), platformMat);
-
-  addPlatform(viz, new THREE.Vector3(0, 0.25, 18), new THREE.Vector3(6, 0.5, 6), jumpPadMat);
-  addPlatform(viz, new THREE.Vector3(0, 11.25, 68), new THREE.Vector3(6, 0.5, 6), jumpPadMat);
-
-  fpCtx.addJumpPad(
-    {
-      type: 'box',
-      pos: new THREE.Vector3(0, 1.1, 18),
-      halfExtents: new THREE.Vector3(3.2, 1.2, 3.2),
-    },
-    {
-      baseImpulse: 56,
-      speedScaling: 0.3,
-      cooldownSeconds: 0.15,
-      direction: new THREE.Vector3(0, 1, 0),
-    }
-  );
-
-  fpCtx.addJumpPad(
-    {
-      type: 'box',
-      pos: new THREE.Vector3(0, 12.1, 68),
-      halfExtents: new THREE.Vector3(3.2, 1.2, 3.2),
-    },
-    {
-      baseImpulse: 58,
-      speedScaling: 0.3,
-      cooldownSeconds: 0.15,
-      direction: new THREE.Vector3(0.45, 1, 0.15).normalize(),
-    }
-  );
-
-  // fpCtx.addBoostZone(
-  //   {
-  //     type: 'box',
-  //     pos: new THREE.Vector3(0, 1.2, 6),
-  //     halfExtents: new THREE.Vector3(5, 1.2, 12),
-  //   },
-  //   {
-  //     strength: 26,
-  //     directionalBias: 1.0,
-  //     direction: new THREE.Vector3(0, 0, 1),
-  //   }
-  // );
-
-  // fpCtx.addBoostZone(
-  //   {
-  //     type: 'box',
-  //     pos: new THREE.Vector3(16, 12.2, 78),
-  //     halfExtents: new THREE.Vector3(14, 1.2, 6),
-  //   },
-  //   {
-  //     strength: 24,
-  //     directionalBias: 0.9,
-  //     direction: new THREE.Vector3(1, 0, 0.35).normalize(),
-  //   }
-  // );
-
-  // addZoneVisual(viz, new THREE.Vector3(0, 1.2, 6), new THREE.Vector3(5, 1.2, 12), 0x88ff88);
-  // addZoneVisual(viz, new THREE.Vector3(16, 12.2, 78), new THREE.Vector3(14, 1.2, 6), 0x88ff88);
-  addZoneVisual(viz, new THREE.Vector3(0, 1.1, 18), new THREE.Vector3(3.2, 1.2, 3.2), 0x5db9ff);
-  addZoneVisual(viz, new THREE.Vector3(0, 12.1, 68), new THREE.Vector3(3.2, 1.2, 3.2), 0x5db9ff);
-
-  const spline = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0, 1, -22),
-    new THREE.Vector3(-30, 8, -5),
-    new THREE.Vector3(-52, 16, 20),
-    new THREE.Vector3(-0, 24, 55),
-    new THREE.Vector3(0, 32, 82),
-  ]);
-  // const spline = new THREE.CatmullRomCurve3([
-  //   new THREE.Vector3(0, 1, -22),
-  //   new THREE.Vector3(-30, 5, -5),
-  //   new THREE.Vector3(-42, 10, 20),
-  //   new THREE.Vector3(-30, 15, 45),
-  //   new THREE.Vector3(0, 20, 82),
-  // ]);
-
-  const jumpParams = jumpSimParamsFromSceneConfig(sceneConfig);
-
-  const positions = generateParkourPlatforms(
-    spline,
-    { ...jumpParams, initialExternalVelocity: 10 * 1.28 },
-    1.03
-  );
-
-  const platHeight = 0.4;
-  const genMat = new THREE.MeshStandardMaterial({ color: 0x44aa66, roughness: 0.7, metalness: 0.1 });
-
-  for (const pos of positions) {
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, platHeight, 24), genMat);
-    mesh.position.set(pos.x, pos.y - platHeight / 2, pos.z);
-    mesh.receiveShadow = true;
-    mesh.castShadow = true;
-    viz.scene.add(mesh);
-    fpCtx.addTriMesh(mesh);
-  }
 };
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
@@ -288,9 +149,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
 
   const sceneConfig = pkManager.buildSceneConfig();
 
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.62);
-  viz.scene.add(ambientLight);
-
   const sunLight = new THREE.DirectionalLight(0xffffff, 2.6);
   sunLight.position.set(70, 105, -45);
   sunLight.castShadow = true;
@@ -311,8 +169,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   viz.scene.add(sunLight);
 
   viz.levelLoadHandle?.setSceneRuntime(pkManager.runtime, 'jump_pad_speedup_test');
-
-  viz.collisionWorldLoadedCbs.push(() => initLevel(viz, sceneConfig));
 
   configureDefaultPostprocessingPipeline({
     viz,

@@ -22,6 +22,7 @@ const FATAL_REPLAY_HEADER_FIELDS = new Set<keyof ReplayValidationConfig>([
   'colliderHeight',
   'colliderRadius',
   'extVelAirDamping',
+  'extVelAirIdleDamping',
   'extVelGroundDamping',
   'gravityShapeRiseMult',
   'gravityShapeApexMult',
@@ -41,6 +42,10 @@ const FATAL_REPLAY_HEADER_FIELDS = new Set<keyof ReplayValidationConfig>([
   'dashMagnitude',
   'minDashDelaySeconds',
   'dashUseExternalVelocity',
+  'dashDirectionMode',
+  'dashVerticalUseJump',
+  'dashCancelFallVelocity',
+  'boostArmLeniencySeconds',
 ]);
 
 /** A single field mismatch detected during replay validation. */

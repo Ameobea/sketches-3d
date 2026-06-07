@@ -19,11 +19,12 @@ import {
   SoftOcclusionRevealFade,
   SoftOcclusionEyeMargin,
 } from './sceneDefaults.js';
-import type { SceneConfig } from './scenes/index.js';
+import type { DashDirectionMode, SceneConfig } from './scenes/index.js';
 import { CameraController } from './cameraController.js';
 import { CustomShaderMaterial } from './shaders/customShader';
 import { MaterialClass } from './shaders/customShader.js';
 import { Entity } from './sceneRuntime/Entity';
+import type { SpatialVoiceHandle } from './audio/SoundEngine';
 import {
   DefaultGravity,
   DefaultJumpSpeed,
@@ -71,6 +72,13 @@ import {
   buildCollisionShapeFromMesh,
   extractHullInputVertices,
 } from './collisionShapes.js';
+
+const DASH_DIR_MODE_MAP: Record<DashDirectionMode, number> = {
+  free: 0,
+  horizontal: 1,
+  'vertical-up': 2,
+  'vertical-down': 3,
+};
 
 /** Per-subtick input state consumed by the shared subtick execution path. */
 export interface SubtickInputState {
@@ -200,6 +208,12 @@ export class BulletPhysics {
   private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
   private dashCbs: ((curTimeSeconds: number) => void)[] = [];
   private isWalking = false;
+  private boostActive = false;
+  private boostLoopHandle: SpatialVoiceHandle | null = null;
+  private wasOnBoostStrip = false;
+  private preStepBoostEffective = false;
+  private prevLastJumpTime = -1e30;
+  private prevFloorEntity: Entity | null = null;
   public simulationTickRate: number;
   /**
    * Maps Ammo `btRigidBody` user indices (assigned from {@link Entity.numericId}) back to
@@ -287,6 +301,15 @@ export class BulletPhysics {
       getIsDashing: () =>
         this.playerController.isJumping() &&
         this.playerController.getLastDashTime() > this.playerController.getLastJumpTime(),
+      getTotalVelocityMagnitude: () => {
+        const walk = this.playerController.getWalkDirection();
+        const ext = this.playerController.getExternalVelocity();
+        const vy = this.playerController.getVerticalVelocity();
+        const x = walk.x() + ext.x();
+        const y = walk.y() + ext.y() + vy;
+        const z = walk.z() + ext.z();
+        return Math.hypot(x, y, z);
+      },
     };
   }
 
@@ -295,6 +318,20 @@ export class BulletPhysics {
   }
   public get playerColliderRadius() {
     return this.viz.sceneConf.player?.colliderSize?.radius ?? DefaultPlayerColliderRadius;
+  }
+  public get extVelAirDampingDefault() {
+    return (
+      this.viz.sceneConf.player?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor
+    );
+  }
+  public get extVelAirIdleDampingDefault() {
+    return this.viz.sceneConf.player?.externalVelocityAirIdleDampingFactor ?? this.extVelAirDampingDefault;
+  }
+  public get extVelGroundDampingDefault() {
+    return (
+      this.viz.sceneConf.player?.externalVelocityGroundDampingFactor ??
+      DefaultExternalVelocityGroundDampingFactor
+    );
   }
 
   private initBtvec3Scratch = (Ammo: AmmoInterface) => {
@@ -399,32 +436,22 @@ export class BulletPhysics {
       }
     }
 
-    const externalVelocityAirDampingFactor =
-      this.viz.sceneConf.player?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor;
-    const externalVelocityGroundDampingFactor =
-      this.viz.sceneConf.player?.externalVelocityGroundDampingFactor ??
-      DefaultExternalVelocityGroundDampingFactor;
-    this.playerController.setExternalVelocityAirDampingFactor(
-      this.btvec3(
-        externalVelocityAirDampingFactor.x,
-        externalVelocityAirDampingFactor.y,
-        externalVelocityAirDampingFactor.z
-      )
+    const air = this.extVelAirDampingDefault;
+    const airIdle = this.extVelAirIdleDampingDefault;
+    const ground = this.extVelGroundDampingDefault;
+    this.playerController.setExternalVelocityAirDampingFactor(this.btvec3(air.x, air.y, air.z));
+    this.playerController.setExternalVelocityAirIdleDampingFactor(
+      this.btvec3(airIdle.x, airIdle.y, airIdle.z)
     );
-    this.playerController.setExternalVelocityGroundDampingFactor(
-      this.btvec3(
-        externalVelocityGroundDampingFactor.x,
-        externalVelocityGroundDampingFactor.y,
-        externalVelocityGroundDampingFactor.z
-      )
-    );
+    this.playerController.setExternalVelocityGroundDampingFactor(this.btvec3(ground.x, ground.y, ground.z));
 
     // Static controller config — values that come from scene config and don't
-    // change at runtime.  Set once here so the per-subtick path stays lean.
+    // change at runtime.
     const { player: playerConf } = this.viz.sceneConf;
     this.playerController.setJumpSpeed(playerConf?.jumpVelocity ?? DefaultJumpSpeed);
     this.playerController.setMinJumpDelay(playerConf?.minJumpDelaySeconds ?? DefaultMinJumpDelaySeconds);
     this.playerController.setCoyoteTime(playerConf?.coyoteTimeSeconds ?? 0);
+    this.playerController.setBoostArmLeniency(playerConf?.boostArmLeniencySeconds ?? 0);
     const dashConf = { ...DefaultDashConfig, ...(playerConf?.dashConfig ?? {}) };
     this.playerController.setDashConfig(
       dashConf.enable,
@@ -432,6 +459,21 @@ export class BulletPhysics {
       dashConf.minDashDelaySeconds,
       dashConf.useExternalVelocity ?? false
     );
+    if (dashConf.directionMode && dashConf.directionMode !== 'free') {
+      if (dashConf.directionMode === 'horizontal' && !dashConf.useExternalVelocity) {
+        throw new Error(
+          `dashConfig: directionMode='horizontal' requires useExternalVelocity=true ` +
+            `(a horizontal-only jump-style dash collapses to a vertical jump).`
+        );
+      }
+      this.playerController.setDashDirectionMode(DASH_DIR_MODE_MAP[dashConf.directionMode]);
+    }
+    if (dashConf.verticalUseJump) {
+      this.playerController.setDashVerticalUseJump(true);
+    }
+    if (dashConf.cancelFallVelocity) {
+      this.playerController.setDashCancelFallVelocity(true);
+    }
     // Initial charge count — authoritative starting value before any tokens are collected.
     // C++ owns charge state after this; the JS store is a read-only UI mirror.
     this.playerController.setDashCharges(dashConf.chargeConfig?.curCharges.current ?? Infinity);
@@ -684,10 +726,9 @@ export class BulletPhysics {
     const conf = this.viz.sceneConf;
     const playerConf = conf.player;
     const moveSpeed = playerConf?.moveSpeed ?? DefaultMoveSpeed;
-    const extAirDamp =
-      playerConf?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor;
-    const extGndDamp =
-      playerConf?.externalVelocityGroundDampingFactor ?? DefaultExternalVelocityGroundDampingFactor;
+    const extAirDamp = this.extVelAirDampingDefault;
+    const extAirIdleDamp = this.extVelAirIdleDampingDefault;
+    const extGndDamp = this.extVelGroundDampingDefault;
     const gs = conf.gravityShaping;
     const dashConf = { ...DefaultDashConfig, ...(playerConf?.dashConfig ?? {}) };
     const shapeMap = { capsule: 0, cylinder: 1, sphere: 2 } as const;
@@ -700,6 +741,7 @@ export class BulletPhysics {
       colliderHeight: this.playerColliderHeight,
       colliderRadius: this.playerColliderRadius,
       extVelAirDamping: [extAirDamp.x, extAirDamp.y, extAirDamp.z],
+      extVelAirIdleDamping: [extAirIdleDamp.x, extAirIdleDamp.y, extAirIdleDamp.z],
       extVelGroundDamping: [extGndDamp.x, extGndDamp.y, extGndDamp.z],
       gravityShapeRiseMult: gs?.riseMultiplier ?? 1.0,
       gravityShapeApexMult: gs?.apexMultiplier ?? 1.0,
@@ -712,6 +754,7 @@ export class BulletPhysics {
       maxSlopeRadians: playerConf?.maxSlopeRadians ?? DefaultMaxSlopeRadians,
       maxPenetrationDepth: playerConf?.maxPenetrationDepth ?? DefaultMaxPenetrationDepth,
       coyoteTimeSeconds: playerConf?.coyoteTimeSeconds ?? 0,
+      boostArmLeniencySeconds: playerConf?.boostArmLeniencySeconds ?? 0,
       minJumpDelaySeconds: playerConf?.minJumpDelaySeconds ?? DefaultMinJumpDelaySeconds,
       easyModeMovement: true,
       colliderShape: shapeMap[playerConf?.playerColliderShape ?? DefaultPlayerColliderShape],
@@ -719,6 +762,9 @@ export class BulletPhysics {
       dashMagnitude: dashConf.dashMagnitude,
       minDashDelaySeconds: dashConf.minDashDelaySeconds,
       dashUseExternalVelocity: dashConf.useExternalVelocity ?? false,
+      dashDirectionMode: DASH_DIR_MODE_MAP[dashConf.directionMode ?? 'free'],
+      dashVerticalUseJump: dashConf.verticalUseJump ?? false,
+      dashCancelFallVelocity: dashConf.cancelFallVelocity ?? false,
     };
   };
 
@@ -768,6 +814,37 @@ export class BulletPhysics {
     }
 
     this.syncDynamicControllerConfig();
+
+    const floorIx = this.playerController.getFloorUserIndex();
+    const floorEntity = floorIx >= 0 ? this.entitiesByUserIndex.get(floorIx) : undefined;
+    const boostCfg = floorEntity?.boostSurfaceConfig;
+    this.playerController.setCurrentFloorBoost(
+      boostCfg?.targetSpeed ?? 0,
+      boostCfg?.jumpRetention ?? 0,
+      boostCfg?.rampUpSeconds ?? 0,
+      boostCfg?.followSurfaceSlope ?? true
+    );
+
+    const airOv = floorEntity?.externalVelocityAirDampingFactor;
+    const groundOv = floorEntity?.externalVelocityGroundDampingFactor;
+    if (airOv || groundOv) {
+      const airF = this.extVelAirDampingDefault;
+      const groundF = this.extVelGroundDampingDefault;
+      const air = airOv ?? [airF.x, airF.y, airF.z];
+      const ground = groundOv ?? [groundF.x, groundF.y, groundF.z];
+      this.playerController.setCurrentFloorExtVelDamping(
+        ground[0],
+        ground[1],
+        ground[2],
+        air[0],
+        air[1],
+        air[2],
+        true
+      );
+    } else {
+      this.playerController.setCurrentFloorExtVelDamping(0, 0, 0, 0, 0, 0, false);
+    }
+
     const effectiveInput = { ...input, keyFlags: this.getEffectiveKeyFlags(input) };
 
     const wasWalking = this.isWalking;
@@ -785,8 +862,12 @@ export class BulletPhysics {
       effectiveInput.movementEnabled
     );
 
+    this.updateBoostSfx(boostCfg, effectiveInput.keyFlags, effectiveInput.movementEnabled);
+
     this.tickPhysicsTickers(fixedTimeStep);
     this.collisionWorld.substepSimulation(fixedTimeStep);
+
+    this.detectBoostedJumpSfx(effectiveInput.movementEnabled);
 
     this.drainZoneEvents();
 
@@ -820,14 +901,74 @@ export class BulletPhysics {
     }
 
     const nowOnGround = this.playerController.onGround();
+    const newFloorIx = this.playerController.getFloorUserIndex();
+    const newFloorEntity =
+      nowOnGround && newFloorIx >= 0 ? (this.entitiesByUserIndex.get(newFloorIx) ?? null) : null;
+
+    if (newFloorEntity !== this.prevFloorEntity) {
+      this.prevFloorEntity?._firePlayerLeave();
+      newFloorEntity?._firePlayerEnter();
+      this.prevFloorEntity = newFloorEntity;
+    }
+
     if (!prevOnGround && nowOnGround) {
-      const landedOnObjectIx: number = this.playerController.getFloorUserIndex();
-      const landedEntity = this.entitiesByUserIndex.get(landedOnObjectIx);
-      const materialClass = landedEntity?.materialClass ?? MaterialClass.Default;
+      const materialClass = newFloorEntity?.materialClass ?? MaterialClass.Default;
       this.viz.sfxManager.onPlayerLand(materialClass);
     }
 
     return { nowOnGround };
+  };
+
+  private updateBoostSfx = (
+    boostCfg: { targetSpeed: number; jumpRetention: number } | undefined,
+    _effectiveKeyFlags: number,
+    movementEnabled: boolean
+  ) => {
+    const sfxCfg = this.viz.sceneConf.sfx?.boost;
+    if (!sfxCfg) return;
+    const onGround = this.playerController.onGround();
+    const onBoostStrip = !!boostCfg && onGround && boostCfg.targetSpeed > 0;
+    const active = this.playerController.isBoostEffective();
+
+    if (onBoostStrip && !this.wasOnBoostStrip) {
+      if (movementEnabled && sfxCfg.contactStartSfx) this.viz.sfxManager.playSfx(sfxCfg.contactStartSfx);
+    } else if (!onBoostStrip && this.wasOnBoostStrip) {
+      if (movementEnabled && sfxCfg.contactEndSfx) this.viz.sfxManager.playSfx(sfxCfg.contactEndSfx);
+    }
+    this.wasOnBoostStrip = onBoostStrip;
+
+    if (active && !this.boostActive) {
+      if (movementEnabled && sfxCfg.startSfx) this.viz.sfxManager.playSfx(sfxCfg.startSfx);
+      if (sfxCfg.loopSfx) {
+        const pos = this.playerController.getPosition();
+        this.boostLoopHandle = this.viz.sfxManager.playSpatialLoop(sfxCfg.loopSfx, {
+          pos: [pos.x(), pos.y(), pos.z()],
+          gain: sfxCfg.loopGain ?? 1,
+          refDistance: sfxCfg.loopRefDistance,
+          rolloff: sfxCfg.loopRolloff,
+        });
+      }
+    } else if (!active && this.boostActive) {
+      if (movementEnabled && sfxCfg.endSfx) this.viz.sfxManager.playSfx(sfxCfg.endSfx);
+      this.boostLoopHandle?.stop();
+      this.boostLoopHandle = null;
+    }
+    if (active && this.boostLoopHandle) {
+      const pos = this.playerController.getPosition();
+      this.boostLoopHandle.setPosition(pos.x(), pos.y(), pos.z());
+    }
+    this.boostActive = active;
+    this.preStepBoostEffective = active;
+  };
+
+  private detectBoostedJumpSfx = (movementEnabled: boolean) => {
+    const sfxCfg = this.viz.sceneConf.sfx?.boost;
+    if (!sfxCfg?.boostedJumpSfx) return;
+    const t = this.playerController.getLastJumpTime();
+    if (t > this.prevLastJumpTime && this.preStepBoostEffective && movementEnabled) {
+      this.viz.sfxManager.playSfx(sfxCfg.boostedJumpSfx);
+    }
+    this.prevLastJumpTime = t;
   };
 
   public setGravity = (gravity: number) => {
@@ -1270,10 +1411,6 @@ export class BulletPhysics {
    * an anonymous Entity is created internally.  Either way, callers that only
    * hold the mesh can resolve the owning Entity (and its rigid body) via
    * {@link getEntity}.
-   *
-   * For the instakill path (an Instakill-classed material or `userData.instakill`),
-   * a ghost-object sensor is registered instead of a rigid body, the mesh carries
-   * the sensor in `userData.collisionObj`, and no Entity is involved.
    */
   public addTriMesh = (
     mesh: THREE.Mesh,
@@ -1282,18 +1419,6 @@ export class BulletPhysics {
     collisionMeshOverride?: CollisionMeshOverride
   ): BtRigidBody | undefined => {
     if (mesh.userData.nocollide || mesh.name.includes('nocollide')) {
-      return undefined;
-    }
-
-    if (
-      (mesh.material instanceof CustomShaderMaterial &&
-        mesh.material.materialClass === MaterialClass.Instakill) ||
-      mesh.userData.instakill
-    ) {
-      const collisionObj = this.addPlayerRegionContactCb({ type: 'mesh', mesh }, () =>
-        this.viz.onInstakillTerrainCollision(collisionObj, mesh)
-      );
-      mesh.userData.collisionObj = collisionObj;
       return undefined;
     }
 
@@ -1393,6 +1518,7 @@ export class BulletPhysics {
       speedScaling: number;
       cooldownSeconds: number;
       direction: THREE.Vector3;
+      useExternalVelocity?: boolean;
     },
     onTrigger?: () => void
   ): JumpPadEntry => {
@@ -1406,6 +1532,9 @@ export class BulletPhysics {
       config.cooldownSeconds
     );
     pad.setDirection(this.btvec3(config.direction.x, config.direction.y, config.direction.z));
+    if (config.useExternalVelocity) {
+      pad.setUseExternalVelocity(true);
+    }
     this.playerController.addJumpPad(pad);
 
     this.viz.sfxManager.onJumpPadPresent();

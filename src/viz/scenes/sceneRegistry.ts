@@ -274,6 +274,7 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     gltfName: null,
     metadata: { title: 'jump pad + speedup test' },
     legacyLights: false,
+    useSceneDef: true,
   },
   plats: {
     modulePath: 'src/viz/scenes/plats/plats.svelte.ts',
@@ -367,6 +368,14 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     sceneName: null,
     gltfName: null,
     metadata: { title: 'sunrise' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
+  boost_nova: {
+    modulePath: 'src/viz/scenes/boost_nova/boost_nova',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'boost nova' },
     legacyLights: false,
     useSceneDef: true,
   },

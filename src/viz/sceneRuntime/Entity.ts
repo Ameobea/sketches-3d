@@ -5,10 +5,26 @@ import type { Viz } from 'src/viz';
 import type { MaterialClass } from '../shaders/customShader.types';
 import type { Behavior, BehaviorHandle } from './types';
 
+export interface BoostSurfaceConfig {
+  /** Override for ground walk speed while aux is held and player stands on this entity. */
+  targetSpeed: number;
+  /** 0..1; fraction of live walk velocity locked into external vel on jump from this surface. */
+  jumpRetention: number;
+  /** Seconds to ramp from base walk speed up to `targetSpeed` after aux arms boost.  Default 0. */
+  rampUpSeconds?: number;
+  /** If true (default), boost retention follows the floor tangent (capped at ±45°). */
+  followSurfaceSlope?: boolean;
+}
+
 interface BehaviorEntry {
   behavior: Behavior;
   id: number;
   removed: boolean;
+}
+
+export interface PlayerContactListener {
+  onEnter?: () => void;
+  onLeave?: () => void;
 }
 
 let nextNumericId = 1;
@@ -53,10 +69,24 @@ export class Entity {
    * `true`/`false` on the entity wins over the material default.
    */
   public nonPermeable: boolean | undefined = undefined;
+  /**
+   * Per-object boost-surface config.  When the player is standing on this entity
+   * and the aux key is held, walk speed is overridden to `targetSpeed` and a jump
+   * snapshots `walkVel * jumpRetention` into external velocity.
+   */
+  public boostSurfaceConfig: BoostSurfaceConfig | undefined = undefined;
+  /** Per-axis override for the in-air external-velocity damping factor while standing on
+   *  this entity.  Replaces the scene-level player.externalVelocityAirDampingFactor.
+   *  Reverts to scene defaults the tick the player leaves the surface. */
+  public externalVelocityAirDampingFactor: [number, number, number] | undefined = undefined;
+  /** Per-axis override for the on-ground external-velocity damping factor while standing
+   *  on this entity.  Replaces the scene-level player.externalVelocityGroundDampingFactor. */
+  public externalVelocityGroundDampingFactor: [number, number, number] | undefined = undefined;
 
   private viz: Viz;
   private behaviors: BehaviorEntry[] = [];
   private nextBehaviorId = 0;
+  private playerContactListeners: Set<PlayerContactListener> | null = null;
 
   // Reusable scratch objects to avoid per-tick allocations
   private readonly _pos = new THREE.Vector3();
@@ -118,6 +148,33 @@ export class Entity {
     }
     this.materialClass = mc;
     this.viz.sfxManager.onMaterialClassPresent(mc);
+  }
+
+  setBoostSurfaceConfig(cfg: BoostSurfaceConfig | undefined): void {
+    this.boostSurfaceConfig = cfg;
+  }
+
+  /**
+   * Subscribe to "player started/stopped standing on this entity" events.  Fires on every
+   * floor-entity transition observed by the collision system.  Returns an unsubscribe fn.
+   */
+  addPlayerContactListener(listener: PlayerContactListener): () => void {
+    (this.playerContactListeners ??= new Set()).add(listener);
+    return () => {
+      this.playerContactListeners?.delete(listener);
+    };
+  }
+
+  /** @internal Called by BulletPhysics on the floor-entity rising edge. */
+  _firePlayerEnter(): void {
+    if (!this.playerContactListeners) return;
+    for (const l of this.playerContactListeners) l.onEnter?.();
+  }
+
+  /** @internal Called by BulletPhysics on the floor-entity falling edge. */
+  _firePlayerLeave(): void {
+    if (!this.playerContactListeners) return;
+    for (const l of this.playerContactListeners) l.onLeave?.();
   }
 
   addBehavior(behavior: Behavior): BehaviorHandle {

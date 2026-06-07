@@ -376,7 +376,7 @@
             <option value="default">default</option>
             <option value="rock">rock</option>
             <option value="crystal">crystal</option>
-            <option value="instakill">instakill</option>
+            <option value="metalplate">metalplate</option>
           </select>
         </FormField>
 

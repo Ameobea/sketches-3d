@@ -4,7 +4,7 @@ import type { ObjectDef, ObjectGroupDef } from './types';
 
 export const LEVEL_PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
 
-/** Material applied to selected objects in the level editor. */
+/** Material applied to selected objects in the level editor */
 export const SELECTION_HIGHLIGHT_MAT = new THREE.MeshBasicMaterial({ color: 0x4488ff });
 
 type TransformDef = Pick<ObjectDef, 'position' | 'rotation' | 'scale'> | ObjectGroupDef;
@@ -18,13 +18,12 @@ export const applyTransform = (object: THREE.Object3D, def: TransformDef) => {
   object.scale.set(sx, sy, sz);
 };
 
-export const forEachMesh = (object: THREE.Object3D, cb: (mesh: THREE.Mesh) => void) => {
+export const forEachMesh = (object: THREE.Object3D, cb: (mesh: THREE.Mesh) => void) =>
   object.traverse(child => {
     if (child instanceof THREE.Mesh) {
       cb(child);
     }
   });
-};
 
 const applyShadowFlags = (object: THREE.Object3D, def: Pick<ObjectDef, 'castShadow' | 'receiveShadow'>) => {
   const castShadow = def.castShadow ?? true;
@@ -35,11 +34,10 @@ const applyShadowFlags = (object: THREE.Object3D, def: Pick<ObjectDef, 'castShad
   });
 };
 
-export const assignMaterial = (object: THREE.Object3D, mat: THREE.Material) => {
+export const assignMaterial = (object: THREE.Object3D, mat: THREE.Material) =>
   forEachMesh(object, mesh => {
     mesh.material = mat;
   });
-};
 
 interface InstantiateLevelObjectOpts {
   builtMaterials?: Map<string, THREE.Material>;

@@ -209,6 +209,19 @@ export const ShaderShadersJsonSchema = z.object({
   pomNormalShader: z.string().optional(),
 });
 
+/** Texture-bearing slots on `CustomShaderMatDef.props`; values are texture-registry keys. */
+export const TEXTURE_SLOTS = [
+  'map',
+  'normalMap',
+  'roughnessMap',
+  'metalnessMap',
+  'lightMap',
+  'transmissionMap',
+  'clearcoatNormalMap',
+  'pomHeightMap',
+] as const;
+export type TextureSlot = (typeof TEXTURE_SLOTS)[number];
+
 /** Serializable CustomShaderProps — texture slots as string keys into textures registry */
 export const ShaderPropsJsonSchema = z.object({
   color: z.number().optional(),
@@ -295,6 +308,36 @@ export const ShaderOptionsJsonSchema = z.object({
     .optional(),
 });
 
+export const BoostSurfaceConfigSchema = z.object({
+  /** Ground walk-speed override while the aux key is held and the player stands on this surface. */
+  targetSpeed: z.number(),
+  /** 0..1; fraction of live walk velocity locked into external vel on jump from this surface. */
+  jumpRetention: z.number(),
+  /** Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.
+   *  Curve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap. */
+  rampUpSeconds: z.number().optional(),
+  /** If true (default), boost jump-retention launches along the floor's tangent plane (capped
+   *  at ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp. */
+  followSurfaceSlope: z.boolean().optional(),
+});
+export type BoostSurfaceConfigDef = z.infer<typeof BoostSurfaceConfigSchema>;
+
+export const ParkourMaterialMetaSchema = z.object({
+  /** Default boost-surface config for objects using this material; an object's own
+   *  `parkour.boostSurface` overrides this if set. */
+  boostSurface: BoostSurfaceConfigSchema.optional(),
+});
+export type ParkourMaterialMeta = z.infer<typeof ParkourMaterialMetaSchema>;
+
+/** Per-axis (0..1) damping factor for the in-air external-velocity term while the player is
+ *  standing on (or just left) a surface using this material/object.  Higher = velocity bleeds
+ *  off faster.  Either field may be omitted to fall back to the scene-level default for that
+ *  axis-pair. */
+export const ExternalVelocityDampingOverrideFields = {
+  externalVelocityAirDampingFactor: z.tuple([z.number(), z.number(), z.number()]).optional(),
+  externalVelocityGroundDampingFactor: z.tuple([z.number(), z.number(), z.number()]).optional(),
+} as const;
+
 export const CustomShaderMatDefSchema = z.object({
   type: z.literal('customShader'),
   props: ShaderPropsJsonSchema.optional(),
@@ -304,6 +347,8 @@ export const CustomShaderMatDefSchema = z.object({
   /** If true, the camera will hard-snap rather than dither through this material, and the
    *  soft-occlusion shader effect is disabled for it. */
   nonPermeable: z.boolean().optional(),
+  parkour: ParkourMaterialMetaSchema.optional(),
+  ...ExternalVelocityDampingOverrideFields,
 });
 
 export const CustomBasicShaderMatDefSchema = z.object({
@@ -324,6 +369,8 @@ export const CustomBasicShaderMatDefSchema = z.object({
   emissiveBypass: z.boolean().optional(),
   /** If true, the camera will hard-snap rather than dither through this material. */
   nonPermeable: z.boolean().optional(),
+  parkour: ParkourMaterialMetaSchema.optional(),
+  ...ExternalVelocityDampingOverrideFields,
 });
 
 /**
@@ -336,6 +383,8 @@ export const GeneratedMatDefSchema = z.object({
   /** If true, the camera will hard-snap rather than dither through this material.
    *  The runtime-provided material must have `userData.nonPermeable = true` set manually. */
   nonPermeable: z.boolean().optional(),
+  parkour: ParkourMaterialMetaSchema.optional(),
+  ...ExternalVelocityDampingOverrideFields,
 });
 
 export const MaterialDefSchema = z.discriminatedUnion('type', [
@@ -403,6 +452,20 @@ export const MaterialDefRawSchema = z.discriminatedUnion('type', [
 ]);
 export type MaterialDefRaw = z.infer<typeof MaterialDefRawSchema>;
 
+/**
+ * File shape for a shared-library material at `src/assets/materials/<sub>/<name>.json`.
+ * Referenced from a level def as `material: "__ASSETS__/materials/<sub>/<name>"`.
+ *
+ * `textures` are local to this file; on import their keys are prefixed with the
+ * library path so they can't collide with the consuming level's textures.
+ */
+export const LibraryMaterialFileSchema = z.object({
+  $schema: z.string().optional(),
+  textures: z.record(z.string(), TextureDefSchema).optional(),
+  material: MaterialDefRawSchema,
+});
+export type LibraryMaterialFile = z.infer<typeof LibraryMaterialFileSchema>;
+
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/i;
 
 const COLOR_KEYS = new Set(['color', 'sheenColor', 'skyColor', 'groundColor', 'horizonColor']);
@@ -446,6 +509,8 @@ export const ParkourObjectMetaSchema = z.object({
   checkpoint: z.number().optional(),
   /** If true, reaching this object ends the run. */
   win: z.boolean().optional(),
+  /** Per-object boost-surface config; overrides any material-level config on the same object. */
+  boostSurface: BoostSurfaceConfigSchema.optional(),
 });
 export type ParkourObjectMeta = z.infer<typeof ParkourObjectMetaSchema>;
 
@@ -479,6 +544,7 @@ export const ObjectDefSchema = z
     nonPermeable: z.boolean().optional(),
     /** Parkour-specific metadata: marks this object as a checkpoint or win zone. */
     parkour: ParkourObjectMetaSchema.optional(),
+    ...ExternalVelocityDampingOverrideFields,
     /** Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`. */
     behaviors: z.array(BehaviorSpecSchema).optional(),
     /** Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`. */
@@ -900,17 +966,7 @@ export const LevelDefSchema = z
     for (const [matName, matDef] of Object.entries(def.materials ?? {})) {
       if (matDef.type !== 'customShader' || !matDef.props) continue;
       const p = matDef.props;
-      const texSlots = [
-        'map',
-        'normalMap',
-        'roughnessMap',
-        'metalnessMap',
-        'lightMap',
-        'transmissionMap',
-        'clearcoatNormalMap',
-        'pomHeightMap',
-      ] as const;
-      for (const slot of texSlots) {
+      for (const slot of TEXTURE_SLOTS) {
         const ref = p[slot];
         if (ref !== undefined && !texKeys.has(ref)) {
           ctx.addIssue({
@@ -946,12 +1002,6 @@ export const LevelDefRawSchema = z.object({
 
 export type LevelDefRaw = z.infer<typeof LevelDefRawSchema>;
 
-/**
- * Schema for an optional `materials.json` file alongside `def.json`.
- * When present, its textures and materials are merged over (and replace) any
- * same-named entries in `def.json`, allowing the materials layer to live in a
- * separate file and keeping `def.json` focused on assets and objects.
- */
 export const MaterialsFileSchema = z.object({
   $schema: z.string().optional(),
   textures: z.record(z.string(), TextureDefSchema).optional(),
@@ -959,23 +1009,12 @@ export const MaterialsFileSchema = z.object({
 });
 export type MaterialsFile = z.infer<typeof MaterialsFileSchema>;
 
-/**
- * Schema for an optional `objects.json` file alongside `def.json`.
- * When present, its `objects` array is used in place of the one in `def.json`,
- * so the high-churn placement data can be diffed separately from the rest of
- * the level definition.
- */
 export const ObjectsFileSchema = z.object({
   $schema: z.string().optional(),
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
 });
 export type ObjectsFile = z.infer<typeof ObjectsFileSchema>;
 
-/**
- * Schema for an optional `audio.json` file alongside `def.json`.
- * When present, its contents are merged over (and replace) any same-named
- * entries in `def.json`'s `audio` field.
- */
 export const AudioFileSchema = z.object({
   $schema: z.string().optional(),
   sfxDefs: z.record(z.string(), SfxDefSchema).optional(),
@@ -1002,11 +1041,6 @@ export const EditBookmarkSchema = z.object({
 export const EditorBookmarkSchema = z.discriminatedUnion('mode', [PlayBookmarkSchema, EditBookmarkSchema]);
 export type EditorBookmark = z.infer<typeof EditorBookmarkSchema>;
 
-/**
- * Schema for an optional `locations.json` file alongside `def.json`.
- * Holds editor-only data (currently just camera bookmarks) that should never
- * ship to production — the prod load path doesn't read this file.
- */
 export const LocationsFileSchema = z.object({
   $schema: z.string().optional(),
   editor_bookmarks: z.array(EditorBookmarkSchema).optional(),

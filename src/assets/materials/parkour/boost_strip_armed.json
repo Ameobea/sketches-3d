@@ -1,0 +1,13 @@
+{
+  "$schema": "../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#ffe566",
+      "emissiveIntensity": 1.4,
+      "roughness": 0.35,
+      "metalness": 0.2
+    },
+    "externalVelocityGroundDampingFactor": [0.99, 0.99, 0.99]
+  }
+}

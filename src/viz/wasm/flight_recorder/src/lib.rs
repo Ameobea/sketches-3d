@@ -278,6 +278,9 @@ pub unsafe extern "C" fn fr_free(ptr: *mut u8, size: usize) {
 ///   [30]:    dash_magnitude
 ///   [31]:    min_dash_delay_seconds
 ///   [32]:    dash_use_external_velocity (0.0 or 1.0)
+///   [33]:    dash_direction_mode (0=free, 1=horizontal, 2=vertical-up, 3=vertical-down)
+///   [34]:    dash_vertical_use_jump (0.0 or 1.0)
+///   [35]:    dash_cancel_fall_velocity (0.0 or 1.0)
 #[no_mangle]
 pub unsafe extern "C" fn set_header(ctx: *mut RecorderCtx, header_ptr: *const f32, len: u32) {
   let ctx = &mut *ctx;
@@ -320,6 +323,12 @@ pub unsafe extern "C" fn set_header(ctx: *mut RecorderCtx, header_ptr: *const f3
     md.set_f32(b"dash_magnitude", data[30]);
     md.set_f32(b"min_dash_delay_secs", data[31]);
     md.set_u32(b"dash_use_ext_vel", if data[32] > 0.5 { 1 } else { 0 });
+  }
+
+  if len >= 36 {
+    md.set_u32(b"dash_direction_mode", data[33] as u32);
+    md.set_u32(b"dash_vert_use_jump", if data[34] > 0.5 { 1 } else { 0 });
+    md.set_u32(b"dash_cancel_fall_vel", if data[35] > 0.5 { 1 } else { 0 });
   }
 }
 
@@ -929,12 +938,12 @@ pub unsafe extern "C" fn player_load(ctx: *mut PlayerCtx, data_ptr: *const u8, l
   }
 }
 
-/// Write header data to the output buffer (33 f32s, same layout as set_header input).
+/// Write header data to the output buffer (36 f32s, same layout as set_header input).
 /// Reads from metadata map entries.
 #[no_mangle]
 pub unsafe extern "C" fn player_get_header(ctx: *mut PlayerCtx, out_ptr: *mut f32) {
   let ctx = &*ctx;
-  let out = std::slice::from_raw_parts_mut(out_ptr, 33);
+  let out = std::slice::from_raw_parts_mut(out_ptr, 36);
   let md = &ctx.metadata;
 
   let get_f32 = |key: &[u8]| -> f32 {
@@ -1027,6 +1036,17 @@ pub unsafe extern "C" fn player_get_header(ctx: *mut PlayerCtx, out_ptr: *mut f3
   out[30] = get_f32(b"dash_magnitude");
   out[31] = get_f32(b"min_dash_delay_secs");
   out[32] = if get_u32(b"dash_use_ext_vel") != 0 {
+    1.0
+  } else {
+    0.0
+  };
+  out[33] = get_u32(b"dash_direction_mode") as f32;
+  out[34] = if get_u32(b"dash_vert_use_jump") != 0 {
+    1.0
+  } else {
+    0.0
+  };
+  out[35] = if get_u32(b"dash_cancel_fall_vel") != 0 {
     1.0
   } else {
     0.0

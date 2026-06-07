@@ -1,0 +1,20 @@
+{
+  "$schema": "../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#ff7733",
+      "emissiveIntensity": 0.4,
+      "roughness": 0.5,
+      "metalness": 0.1
+    },
+    "externalVelocityGroundDampingFactor": [0.99, 0.99, 0.99],
+    "parkour": {
+      "boostSurface": {
+        "targetSpeed": 32,
+        "jumpRetention": 0.8,
+        "rampUpSeconds": 0.25
+      }
+    }
+  }
+}

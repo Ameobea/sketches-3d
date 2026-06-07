@@ -5615,6 +5615,71 @@ p | render
 }
 
 #[test]
+fn test_extrude_path_sampler() {
+  // Open L-shaped path swept along +Y → 2 quads = 4 triangles, 8 verts.
+  let src = r#"
+p = build_path(path {
+  move(0, 0)
+  line(1, 0)
+  line(1, 1)
+})
+m = extrude_path(p, up=vec3(0, 2, 0))
+render(m)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let rendered = ctx.rendered_meshes.into_inner();
+  assert_eq!(rendered.len(), 1);
+  let mesh = &rendered[0].mesh.mesh;
+  assert_eq!(mesh.vertices.len(), 6);
+  assert_eq!(mesh.faces.len(), 4);
+  let max_y = mesh
+    .vertices
+    .iter()
+    .map(|(_, v)| v.position.y)
+    .fold(f32::NEG_INFINITY, f32::max);
+  assert!((max_y - 2.0).abs() < 1e-5, "expected top at y=2, got {max_y}");
+}
+
+#[test]
+fn test_extrude_path_blackbox_callable() {
+  // Black-box `|t|: vec2` callable — straight line along X from 0 to 1.
+  let src = r#"
+f = |t| vec2(t, 0)
+m = extrude_path(f, up=vec3(0, 1, 0), sample_count=5)
+render(m)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let rendered = ctx.rendered_meshes.into_inner();
+  assert_eq!(rendered.len(), 1);
+  let mesh = &rendered[0].mesh.mesh;
+  // 5 samples → 5 bottom + 5 top = 10 verts, 4 quads = 8 tris.
+  assert_eq!(mesh.vertices.len(), 10);
+  assert_eq!(mesh.faces.len(), 8);
+}
+
+#[test]
+fn test_extrude_path_closed_errors() {
+  let src = r#"
+p = build_path(path {
+  move(0, 0)
+  line(1, 0)
+  line(1, 1)
+  line(0, 1)
+}, closed=true)
+m = extrude_path(p, up=vec3(0, 1, 0))
+render(m)
+"#;
+
+  let err = parse_and_eval_program(src).expect_err("expected closed-path error");
+  assert!(
+    format!("{err:?}").contains("closed"),
+    "expected error to mention closed; got: {err:?}"
+  );
+}
+
+#[test]
 fn test_render_vec2_sequence() {
   // A sequence of Vec2 should be rendered as a path in the XZ plane.
   let src = r#"
