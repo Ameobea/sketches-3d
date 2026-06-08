@@ -31,5 +31,29 @@
     "intensity": 0.8,
     "setBackground": false
   },
+  "lights": [
+    {
+      "id": "sun",
+      "type": "directional",
+      "color": "#ffffff",
+      "intensity": 2.6,
+      "position": [70, 105, -45],
+      "target": [0, 0, 0],
+      "castShadow": true,
+      "shadow": {
+        "mapSize": {
+          "low": 1024,
+          "medium": 2048,
+          "high": 4096
+        },
+        "near": 0.1,
+        "far": 250,
+        "left": -90,
+        "right": 90,
+        "top": 90,
+        "bottom": -90
+      }
+    }
+  ],
   "objects": []
 }

@@ -1,11 +1,11 @@
 // Companion to masonryTiles.height.glsl. Recomputes the tile decomposition at
 // the displaced hit (`pos`) via the shared `evalMasonry` to drive pseudo-AO.
-// Axis selection uses ctx.vWorldNormal (stable base-mesh normal) rather than
+// Axis selection uses vWorldNormal (stable base-mesh normal) rather than
 // the POM-perturbed `normal`, which tilts at rims.
 //
 // Debug visualizations (set to 0 to disable):
 //   1 = projection-axis pick (R=X-wall, G=Y-horiz, B=Z-wall)
-//   2 = ctx.vWorldNormal as RGB
+//   2 = vWorldNormal as RGB
 //   3 = POM-perturbed `normal` as RGB
 //   4 = combined triplanar × tile-breaking diffuse-tap count (REQUIRES
 //       useTriplanarMapping:true; otherwise fails to compile)
@@ -13,13 +13,13 @@
 
 vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
 #if DEBUG_MODE == 1
-  vec3 absN = abs(ctx.vWorldNormal);
+  vec3 absN = abs(vWorldNormal);
   vec3 dbg = (absN.y >= absN.x && absN.y >= absN.z) ? vec3(0., 1., 0.)
     : (absN.x >= absN.z) ? vec3(1., 0., 0.)
     : vec3(0., 0., 1.);
   return vec4(dbg, 1.);
 #elif DEBUG_MODE == 2
-  return vec4(ctx.vWorldNormal * 0.5 + 0.5, 1.);
+  return vec4(vWorldNormal * 0.5 + 0.5, 1.);
 #elif DEBUG_MODE == 3
   return vec4(normal * 0.5 + 0.5, 1.);
 #elif DEBUG_MODE == 4
@@ -30,8 +30,8 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   return vec4(dbg, 1.);
 #endif
 
-  float dist = distance(ctx.cameraPosition, ctx.vWorldPos);
-  Masonry m = evalMasonry(pos, ctx.vWorldNormal, dist);
+  float dist = ctx.distanceToCamera;
+  Masonry m = evalMasonry(pos, vWorldNormal, dist);
 
   const float DENT_DEPTH = 0.4;
   float tileH = m.bowl * DENT_DEPTH * m.dentZone;

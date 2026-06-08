@@ -195,6 +195,7 @@ export const ShaderShadersJsonSchema = z.object({
   /** Shared GLSL emitted before all other user shader slots; see `CustomShaderShaders.commonShader`. */
   commonShader: z.string().optional(),
   colorShader: z.string().optional(),
+  lightAttenuationShader: z.string().optional(),
   normalShader: z.string().optional(),
   roughnessShader: z.string().optional(),
   roughnessReverseColorRamp: ReverseColorRampParamsSchema.optional(),
@@ -297,6 +298,15 @@ export const ShaderOptionsJsonSchema = z.object({
       lodFadeStart: z.number().optional(),
       lodFadeRange: z.number().optional(),
       boundedSilhouette: z.boolean().optional(),
+      applyReliefNormal: z.boolean().optional(),
+      selfShadow: z
+        .object({
+          lightDir: z.tuple([z.number(), z.number(), z.number()]),
+          steps: z.number().int().min(1).optional(),
+          strength: z.number().min(0).optional(),
+          softness: z.number().positive().optional(),
+        })
+        .optional(),
       refinement: z.enum(['secant', 'binary']).optional(),
       refinementSteps: z.number().int().min(1).optional(),
       refineSkipThreshold: z.number().min(0).optional(),
@@ -419,6 +429,7 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
   customVertexFragment: ShaderGlslFieldRawSchema.optional(),
   commonShader: ShaderGlslFieldRawSchema.optional(),
   colorShader: ShaderGlslFieldRawSchema.optional(),
+  lightAttenuationShader: ShaderGlslFieldRawSchema.optional(),
   normalShader: ShaderGlslFieldRawSchema.optional(),
   roughnessShader: ShaderGlslFieldRawSchema.optional(),
   metalnessShader: ShaderGlslFieldRawSchema.optional(),

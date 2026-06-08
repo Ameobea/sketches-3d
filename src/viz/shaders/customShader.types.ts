@@ -156,6 +156,15 @@ export interface CustomShaderShaders {
    */
   commonShader?: string;
   colorShader?: string;
+  /**
+   * GLSL defining `vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx)`,
+   * returning `(directMul, indirectMul)` in `[0,1]`. Applied after `<lights_fragment_end>`,
+   * scaling `reflectedLight.direct{Diffuse,Specular}` and `…indirect{Diffuse,Specular}`
+   * respectively — for procedural shadows / AO that must dim the actual light (specular
+   * included), not just the albedo a `colorShader` reaches. Under POM `pos`/`normal` are
+   * the displaced hit + relief normal.
+   */
+  lightAttenuationShader?: string;
   normalShader?: string;
   roughnessShader?: string;
   roughnessReverseColorRamp?: ReverseColorRampParams;
@@ -270,6 +279,31 @@ export interface CustomShaderOptions {
      * Only works well on convex meshes.
      */
     boundedSilhouette?: boolean;
+    /**
+     * Applies the carved relief's per-pixel normal (`_pomNormalW`) to the shading
+     * normal so the inset walls catch direct light and specular even without a
+     * `normalMap`. Off by default: materials that lean on flat-normal lighting
+     * plus a color-shader pseudo-AO (e.g. the masonry tiles) would otherwise
+     * change appearance. No effect when a `normalMap` is set — that path already
+     * folds the relief normal into the shading normal.
+     */
+    applyReliefNormal?: boolean;
+    /**
+     * Opt-in relief self-shadowing: marches the height field from the displaced
+     * hit toward an explicit light direction and darkens the direct lighting
+     * where the relief occludes it. Independent of the scene's lights — the
+     * direction is set here. Off by default.
+     */
+    selfShadow?: {
+      /** World-space direction toward the light (normalized internally). */
+      lightDir: [number, number, number];
+      /** March step count. Default 12. */
+      steps?: number;
+      /** Shadow opacity in `[0,1]`. Default 1. */
+      strength?: number;
+      /** Penumbra softness; carved fraction giving full local occlusion. Default 0.5. */
+      softness?: number;
+    };
     /**
      * Refinement after the linear search brackets the surface.
      * - `"secant"` (default): one-step linear interp. ~Free; ideal for smooth heightfields.

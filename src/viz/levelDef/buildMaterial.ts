@@ -115,6 +115,8 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
     shaders.customVertexFragment = shadersJson.customVertexFragment;
   if (shadersJson.commonShader !== undefined) shaders.commonShader = shadersJson.commonShader;
   if (shadersJson.colorShader !== undefined) shaders.colorShader = shadersJson.colorShader;
+  if (shadersJson.lightAttenuationShader !== undefined)
+    shaders.lightAttenuationShader = shadersJson.lightAttenuationShader;
   if (shadersJson.normalShader !== undefined) shaders.normalShader = shadersJson.normalShader;
   if (shadersJson.roughnessShader !== undefined) shaders.roughnessShader = shadersJson.roughnessShader;
   if (shadersJson.roughnessReverseColorRamp !== undefined)

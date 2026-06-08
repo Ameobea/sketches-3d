@@ -405,6 +405,45 @@
                       "boundedSilhouette": {
                         "type": "boolean"
                       },
+                      "applyReliefNormal": {
+                        "type": "boolean"
+                      },
+                      "selfShadow": {
+                        "type": "object",
+                        "properties": {
+                          "lightDir": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          },
+                          "steps": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "strength": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "softness": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        },
+                        "required": [
+                          "lightDir"
+                        ],
+                        "additionalProperties": false
+                      },
                       "refinement": {
                         "type": "string",
                         "enum": [
@@ -490,6 +529,25 @@
                     ]
                   },
                   "colorShader": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "lightAttenuationShader": {
                     "anyOf": [
                       {
                         "type": "string"

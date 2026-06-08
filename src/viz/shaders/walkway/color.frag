@@ -14,7 +14,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
   outColor = mix(outColor, newColor, mixFactor);
 
   float xNoise = noise(pos.x * 4. + curTimeSeconds * 1.);
-  if (distance(pos, ctx.cameraPosition) > 1000.) {
+  if (distance(pos, cameraPosition) > 1000.) {
     xNoise += noise((pos.x + 0.1) * 4. + curTimeSeconds * 1.);
     xNoise *= 0.5;
   }
@@ -26,7 +26,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
     outColor *= 0.1;
   }
   float zNoise = noise(pos.z * 4. + curTimeSeconds * 1.);
-  if (distance(pos, ctx.cameraPosition) > 1000.) {
+  if (distance(pos, cameraPosition) > 1000.) {
     zNoise += noise((pos.z + 1.) * 4. + curTimeSeconds * 1.);
     zNoise *= 0.5;
   }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
-import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
+import type { VizConfig } from 'src/viz/conf';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
@@ -43,8 +43,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       roughness: 0.82,
     })
   );
-  playerMesh.castShadow = true;
-  playerMesh.receiveShadow = true;
+  playerMesh.castShadow = false;
+  playerMesh.receiveShadow = false;
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: Infinity,
@@ -149,31 +149,13 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
 
   const sceneConfig = pkManager.buildSceneConfig();
 
-  const sunLight = new THREE.DirectionalLight(0xffffff, 2.6);
-  sunLight.position.set(70, 105, -45);
-  sunLight.castShadow = true;
-  const shadowMapSize = {
-    [GraphicsQuality.Low]: 1024,
-    [GraphicsQuality.Medium]: 2048,
-    [GraphicsQuality.High]: 4096,
-  }[vizConf.graphics.quality];
-  sunLight.shadow.mapSize.width = shadowMapSize;
-  sunLight.shadow.mapSize.height = shadowMapSize;
-  sunLight.shadow.camera.near = 0.1;
-  sunLight.shadow.camera.far = 250;
-  sunLight.shadow.camera.left = -90;
-  sunLight.shadow.camera.right = 90;
-  sunLight.shadow.camera.top = 90;
-  sunLight.shadow.camera.bottom = -90;
-  sunLight.shadow.camera.updateProjectionMatrix();
-  viz.scene.add(sunLight);
-
   viz.levelLoadHandle?.setSceneRuntime(pkManager.runtime, 'jump_pad_speedup_test');
 
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
-    autoUpdateShadowMap: true,
+    // autoUpdateShadowMap: true,
+    pomExitBuffers: true,
   });
 
   return sceneConfig;

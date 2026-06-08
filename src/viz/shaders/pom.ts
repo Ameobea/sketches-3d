@@ -1,11 +1,17 @@
 export const POM_BOUNDED_SILHOUETTE_FLAG = 'pomBoundedSilhouette';
 
-export const buildPomUniformDecls = (pom: boolean, pomBounded: boolean, pomHeightMap: boolean): string =>
+export const buildPomUniformDecls = (
+  pom: boolean,
+  pomBounded: boolean,
+  pomHeightMap: boolean,
+  pomSelfShadow: boolean
+): string =>
   [
     pom ? 'uniform float pomDepth;' : '',
     pomBounded ? 'uniform highp sampler2D pomBackDepth; // R = euclidean dist camera->nearest back face' : '',
     pomBounded ? 'uniform vec2 pomResolution; // drawing-buffer size; the back-face RT may be lower-res' : '',
     pomHeightMap ? 'uniform sampler2D pomHeightMap;' : '',
+    pomSelfShadow ? 'uniform vec3 pomShadowLightDir; // world-space direction toward the light' : '',
   ].join('\n');
 
 export type PomTexturing = 'triplanar' | 'generated' | 'baseline';
@@ -67,6 +73,8 @@ export const buildPomDefs = (opts: {
   pomRefineSkip: number;
   // Material supplies `getPomNormal(...)`; use it instead of finite differences.
   pomHasNormalShader: boolean;
+  // Opt-in relief self-shadowing toward an explicit light direction.
+  pomSelfShadow?: { steps: number; strength: number; softness: number };
   // Active debug view, if any; the `samples`/`skip` views enable per-fragment
   // instrumentation (compiled out otherwise).
   pomDebug?: PomDebugMode;
@@ -80,6 +88,7 @@ export const buildPomDefs = (opts: {
     pomBinarySteps,
     pomRefineSkip,
     pomHasNormalShader,
+    pomSelfShadow,
     pomDebug,
   } = opts;
   const useBinary = pomRefinement === 'binary';
@@ -131,6 +140,15 @@ vec3 _pomRefineHit(vec3 ro, vec3 N, float depth, float t,
   float prevGap   = hPrev - dPrev;           // depth above the floor at pPrev (>=0)
   float span      = overshoot + prevGap;     // residual swing across the bracketing step
   float w = span > 1e-6 ? overshoot / span : 0.0;
+  // pPrev sits exactly on the surface (prevGap==0, e.g. the first step from an
+  // uncarved/max-height start): the secant root is exact, so bisection would only
+  // re-derive it. Independent of POM_REFINE_SKIP since this is exact, not a tolerance.
+  if (prevGap <= 1e-6) {
+#ifdef POM_DEBUG_COUNTERS
+    _pomRefineState = 1;
+#endif
+    return mix(p, pPrev, w);
+  }
 #ifdef POM_REFINE_SKIP
   // rayDepth advances by exactly depth/POM_STEPS per step, so \`overshoot\` is how
   // far (in depth) the linear search overstepped the floor. Below a small
@@ -173,7 +191,8 @@ vec3 _pomRefineHit(vec3 ro, vec3 N, float depth, float t,
 // procedural height field. Phase 1: no \`discard\` — on no crossing, clamp to
 // the deepest sample so the silhouette stays the base mesh.
 vec3 pomMarch(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
-  float NdotV = max(dot(N, -rd), 1e-3);          // grazing-angle clamp
+  float NdotVraw = dot(N, -rd);                  // ray descent rate per unit ray length
+  float NdotV = max(NdotVraw, 1e-3);             // grazing clamp (step sizing only)
   float marchLen = depth / NdotV;
   float dStep = marchLen / float(POM_STEPS);
 
@@ -182,8 +201,9 @@ vec3 pomMarch(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
   float dPrev = 0.0;   // ray depth-below-base at previous sample
 
   for (int i = 1; i <= POM_STEPS; i++) {
-    vec3 p = ro + rd * (dStep * float(i));
-    float rayDepth = -dot(p - ro, N);
+    float s = dStep * float(i);
+    vec3 p = ro + rd * s;
+    float rayDepth = s * NdotVraw;                // == -dot(p-ro,N), no large-coordinate cancellation
     float surfH = _pomSurf(p, N, depth, t);
     if (rayDepth >= surfH) {
       return _pomRefineHit(ro, N, depth, t, pPrev, hPrev, dPrev, p, surfH, rayDepth);
@@ -206,7 +226,8 @@ ${
 // surface stays inside the hull, so the silhouette only ever recedes.
 vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRayLen, out bool carved) {
   carved = false;
-  float NdotV = max(dot(N, -rd), 1e-3);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
   float marchLen = depth / NdotV;
   float dStep = marchLen / float(POM_STEPS);
 
@@ -220,7 +241,7 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
     // still evaluated there before declaring the fragment carved away.
     float s = min(sRaw, maxRayLen);
     vec3 p = ro + rd * s;
-    float rayDepth = -dot(p - ro, N);
+    float rayDepth = s * NdotVraw;                 // == -dot(p-ro,N), no large-coordinate cancellation
     float surfH = _pomSurf(p, N, depth, t);
     if (rayDepth >= surfH) {
       return _pomRefineHit(ro, N, depth, t, pPrev, hPrev, dPrev, p, surfH, rayDepth);
@@ -266,13 +287,49 @@ vec3 pomAnalyticNormal(vec3 pHit, vec3 N, float depth, float t, float eps) {
 float pomLodFade(float distanceToCamera) {
   return 1.0 - smoothstep(${lodFadeStart.toFixed(3)}, ${lodFadeEnd.toFixed(3)}, distanceToCamera);
 }
+${
+  pomSelfShadow
+    ? /* glsl */ `
+#define POM_SHADOW_STEPS ${pomSelfShadow.steps}
+#define POM_SHADOW_SOFTNESS ${pomSelfShadow.softness.toFixed(4)}
+
+// Relief self-shadowing: march from the displaced hit toward \`L\`; occlusion in
+// [0,1] (0 = lit). \`N\`/\`ro\` are the base surface normal/point. Soft, contact-
+// hardened (cf. Policarpo & Oliveira relief shadows, soft variant).
+float pomSelfShadow(vec3 hit, vec3 ro, vec3 N, vec3 L, float depth, float t) {
+  float NdotL = dot(N, L);
+  if (NdotL <= 1e-3) { return 1.0; }              // light at/below the surface plane
+  float h0 = -dot(hit - ro, N);                    // start depth below base
+  if (h0 <= depth * 0.03) { return 0.0; }          // on the top surface: nothing casts onto it
+  float marchLen = depth / NdotL;
+  float stepLen = marchLen / float(POM_SHADOW_STEPS);
+  float bias = depth * 0.02;
+  float occ = 0.0;
+  for (int i = 1; i <= POM_SHADOW_STEPS; i++) {
+    float s = stepLen * float(i);
+    vec3 p = hit + L * s;
+    float rayH = -dot(p - ro, N);                  // ray depth below base (shrinks as it rises)
+    if (rayH <= 0.0) { break; }                     // cleared the base plane: rest of the ray is in open air
+    float surfH = _pomSurf(p, N, depth, t);        // local carved-surface depth below base
+    float pen = rayH - surfH - bias;               // >0 => ray buried inside the wall
+    if (pen > 0.0) {
+      float prox = 1.0 - s / marchLen;             // 1 at the hit -> 0 a full march away
+      occ = max(occ, clamp(pen / (depth * POM_SHADOW_SOFTNESS), 0.0, 1.0) * prox);
+    }
+  }
+  return occ;
+}
+`
+    : ''
+}
 `;
 };
 
 export const buildPomMainBlock = (
   pomBounded: boolean,
   pomTexturing: PomTexturing,
-  normalEps: number | undefined
+  normalEps: number | undefined,
+  pomSelfShadow: { strength: number } | null
 ): string => {
   const tail = (() => {
     switch (pomTexturing) {
@@ -294,6 +351,7 @@ export const buildPomMainBlock = (
   // Raymarch the slab; expose displaced world hit + analytic floor normal.
   vec3 _pomHit = vWorldPos;
   vec3 _pomNormalW = normalize(vWorldNormal);
+  ${pomSelfShadow ? 'float _pomShadowVis = 1.0;' : ''}
   {
     vec3 _pomRd = normalize(vWorldPos - cameraPosition);
     float _pomFade = pomLodFade(distanceToCamera);
@@ -305,21 +363,21 @@ export const buildPomMainBlock = (
       // drawing-buffer size (the exit RT may be lower-res than the framebuffer).
       vec2 _pomUv = gl_FragCoord.xy / pomResolution;
       float _pomExitDist = texture(pomBackDepth, _pomUv).r;
-      float _pomChord = _pomExitDist - distance(vWorldPos, cameraPosition);
+      float _pomChord = _pomExitDist - distanceToCamera;
       // No valid bound: empty texel; chord<=0 means a nearer POM mesh stole
       // this texel (combined-buffer aliasing); or we're a back face (camera
       // inside the hull during occlusion-xray DoubleSide) where exit and
       // front converge and the chord is ULP noise — fall back to Phase 1.
       bool _pomNoBound = (_pomExitDist <= 0.0) || (_pomChord <= 0.0) || !gl_FrontFacing;
+      // A positive but sub-epsilon chord is ill-conditioned (differencing two
+      // near-equal large distances) -> kept/discarded flickers (edge shimmer).
+      // Commit to carved up front, skipping the doomed march; valid-bound path only.
+      if (!_pomNoBound && _pomChord < max(2e-3, _pomD * 0.05)) {
+        discard;
+      }
       float _pomMaxLen = _pomNoBound ? 1e9 : _pomChord;
       bool _pomCarved = false;
       _pomHit = pomMarchBounded(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);
-      // A positive but sub-epsilon chord is ill-conditioned (differencing two
-      // near-equal large distances) -> kept/discarded flickers (edge shimmer).
-      // Commit it to carved for a stable edge; valid-bound path only.
-      if (!_pomNoBound && _pomChord < max(2e-3, _pomD * 0.05)) {
-        _pomCarved = true;
-      }
       if (_pomCarved) {
         discard;
       }`
@@ -336,20 +394,36 @@ export const buildPomMainBlock = (
           _pomFade
         );
       }
+      ${
+        pomSelfShadow
+          ? /* glsl */ `_pomShadowVis = 1.0 - pomSelfShadow(_pomHit, vWorldPos, normalize(vWorldNormal), normalize(pomShadowLightDir), _pomD, curTimeSeconds) * ${pomSelfShadow.strength.toFixed(4)} * _pomFade;`
+          : ''
+      }
     }
   }
   ${tail}
   `;
 };
 
+// Applies the relief self-shadow term to the direct lighting only (ambient /
+// indirect stay lit). Emitted after `<lights_fragment_end>`.
+export const buildPomSelfShadowApply = (): string => /* glsl */ `
+  reflectedLight.directDiffuse *= _pomShadowVis;
+  reflectedLight.directSpecular *= _pomShadowVis;`;
+
 // POM owns the shading normal. Without a normal map the analytic floor normal
 // is used directly; with one, its tangent-space detail is added to the floor
 // normal (UDN-style: add the world-space perturbation, then normalize) so the
 // map layers onto the carved relief instead of replacing it.
-export const buildPomNormalApply = (pomTexturing: PomTexturing, hasNormalMap: boolean): string => {
+export const buildPomNormalApply = (
+  pomTexturing: PomTexturing,
+  hasNormalMap: boolean,
+  applyReliefNormal: boolean
+): string => {
   if (!hasNormalMap) {
-    return '';
-    return `normal = normalize((viewMatrix * vec4(_pomNormalW, 0.)).xyz);`;
+    return applyReliefNormal
+      ? /* glsl */ `normal = normalize((viewMatrix * vec4(_pomNormalW, 0.)).xyz);`
+      : '';
   }
 
   if (pomTexturing === 'triplanar') {

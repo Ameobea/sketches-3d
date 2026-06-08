@@ -9,6 +9,7 @@ export const SHADER_GLSL_FIELDS = [
   'customVertexFragment',
   'commonShader',
   'colorShader',
+  'lightAttenuationShader',
   'normalShader',
   'roughnessShader',
   'metalnessShader',

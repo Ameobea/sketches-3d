@@ -17,6 +17,7 @@ import {
   buildPomMainBlock,
   buildPomUniformDecls,
   buildPomNormalApply,
+  buildPomSelfShadowApply,
   buildPomHeightSources,
   buildPomDebug,
   POM_BOUNDED_SILHOUETTE_FLAG,
@@ -61,34 +62,63 @@ const buildTileBreakSampleExpr = (
     ? /* glsl */ `textureNoTileNeyret(${sampler}, ${uv})`
     : /* glsl */ `texture2D(${sampler}, ${uv})`;
 
-const AntialiasedRoughnessShaderFragment = /* glsl */ `
-  float roughnessAcc = 0.;
-  // 2x oversampling
-  for (int i = 0; i < 2; i++) {
-    for (int j = 0; j < 2; j++) {
-      for (int k = 0; k < 2; k++) {
-        vec3 offsetPos = vWorldPos;
-        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
-        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        roughnessAcc += getCustomRoughness(offsetPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);
+const MAX_ANISO_TAPS = 6;
+
+// Anisotropic in-plane oversampling for the procedural color + roughness shaders.
+// The footprint is built analytically (not from `dFdx`/`dFdy`, which are
+// unreliable on the POM `discard` path): an in-plane ellipse with minor axis ≈
+// `unitsPerPx` and major axis stretched by `1/NdotV` along the view direction.
+// Taps spread along the major axis (where grazing aliasing lives) × a 2-wide
+// minor pair, so head-on fragments cost 4 taps and only grazing ones pay more.
+const buildAnisotropicOversample = (opts: {
+  basePos: string;
+  accType: 'vec4' | 'float';
+  sampleExpr: (offsetPos: string) => string;
+  resultStmt: (acc: string) => string;
+}): string => {
+  const { basePos, accType, sampleExpr, resultStmt } = opts;
+  const zero = accType === 'vec4' ? 'vec4(0.)' : '0.';
+  return /* glsl */ `
+  {
+    vec3 _aaN = normalize(vWorldNormal);
+    vec3 _aaV = normalize(vWorldPos - cameraPosition);
+    float _aaNdotV = max(abs(dot(_aaN, _aaV)), 1e-3);
+    float _aaAniso = clamp(1. / _aaNdotV, 1., float(${MAX_ANISO_TAPS}));
+    vec3 _aaProj = _aaV - dot(_aaV, _aaN) * _aaN;
+    float _aaProjLen = length(_aaProj);
+    vec3 _aaUp = abs(_aaN.y) < 0.99 ? vec3(0., 1., 0.) : vec3(1., 0., 0.);
+    vec3 _aaU = _aaProjLen > 1e-4 ? _aaProj / _aaProjLen : normalize(cross(_aaN, _aaUp));
+    vec3 _aaW = cross(_aaN, _aaU);
+    float _aaMajor = unitsPerPx * _aaAniso;
+    float _aaMinor = unitsPerPx;
+    int _aaCount = clamp(int(ceil(_aaAniso)), 2, ${MAX_ANISO_TAPS});
+    float _aaCountF = float(_aaCount);
+    ${accType} _aaAcc = ${zero};
+    for (int _i = 0; _i < ${MAX_ANISO_TAPS}; _i++) {
+      if (_i >= _aaCount) { break; }
+      float _aaT = float(_i) / (_aaCountF - 1.) - 0.5;
+      for (int _j = 0; _j < 2; _j++) {
+        float _aaS = (float(_j) - 0.5) * 0.5;
+        vec3 _aaP = ${basePos} + _aaU * (_aaT * _aaMajor) + _aaW * (_aaS * _aaMinor);
+        _aaAcc += ${sampleExpr('_aaP')};
       }
     }
-  }
-  roughnessAcc /= 8.;
-  roughnessFactor = roughnessAcc;
-`;
-
-const NonAntialiasedRoughnessShaderFragment =
-  /* glsl */ `roughnessFactor = getCustomRoughness(vWorldPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);`;
+    _aaAcc /= (_aaCountF * 2.);
+    ${resultStmt('_aaAcc')}
+  }`;
+};
 
 const buildRoughnessShaderFragment = (antialiasRoughnessShader?: boolean) => {
   if (antialiasRoughnessShader) {
-    return AntialiasedRoughnessShaderFragment;
+    return buildAnisotropicOversample({
+      basePos: 'vWorldPos',
+      accType: 'float',
+      sampleExpr: P => `getCustomRoughness(${P}, vObjectNormal, roughnessFactor, curTimeSeconds, ctx)`,
+      resultStmt: acc => `roughnessFactor = ${acc};`,
+    });
   }
 
-  return NonAntialiasedRoughnessShaderFragment;
+  return /* glsl */ `roughnessFactor = getCustomRoughness(vWorldPos, vObjectNormal, roughnessFactor, curTimeSeconds, ctx);`;
 };
 
 const buildUnpackDiffuseNormalGBAFragment = (params: true | { lut: Uint8Array }): string => {
@@ -160,29 +190,38 @@ const buildRunColorShaderFragment = (
   const normalSym = pomActive ? '_pomNormalW' : 'vObjectNormal';
 
   if (antialiasColorShader) {
-    return /* glsl */ `
-  vec4 acc = vec4(0.);
-  // 2x oversampling
-  for (int i = 0; i < 2; i++) {
-    for (int j = 0; j < 2; j++) {
-      for (int k = 0; k < 2; k++) {
-        vec3 offsetPos = ${posSym};
-        // TODO use better method, only sample in plane the fragment lies on rather than in 3D
-        offsetPos.x += ((float(k) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.y += ((float(i) - 1.) * 0.5) * unitsPerPx;
-        offsetPos.z += ((float(j) - 1.) * 0.5) * unitsPerPx;
-        acc += getFragColor(diffuseColor.xyz, offsetPos, ${normalSym}, curTimeSeconds, ctx);
-      }
-    }
-  }
-  acc /= 8.;
-  diffuseColor = acc;
-  ctx.diffuseColor = diffuseColor;`;
+    return buildAnisotropicOversample({
+      basePos: posSym,
+      accType: 'vec4',
+      sampleExpr: P => `getFragColor(diffuseColor.xyz, ${P}, ${normalSym}, curTimeSeconds, ctx)`,
+      resultStmt: acc => `diffuseColor = ${acc};\n    ctx.diffuseColor = diffuseColor;`,
+    });
   } else {
     return /* glsl */ `
   diffuseColor = getFragColor(diffuseColor.xyz, ${posSym}, ${normalSym}, curTimeSeconds, ctx);
   ctx.diffuseColor = diffuseColor;`;
   }
+};
+
+// Scales direct/indirect light by the slot's `(directMul, indirectMul)`. Emitted
+// after `<lights_fragment_end>` so it reaches specular too, not just albedo.
+const buildRunLightAttenuationFragment = (
+  lightAttenuationShader: string | undefined,
+  pomActive: boolean
+): string => {
+  if (!lightAttenuationShader) {
+    return '';
+  }
+  const posSym = pomActive ? '_pomHit' : 'vWorldPos';
+  const normalSym = pomActive ? '_pomNormalW' : 'vObjectNormal';
+  return /* glsl */ `
+  {
+    vec2 _lightAtten = getLightAttenuation(${posSym}, ${normalSym}, curTimeSeconds, ctx);
+    reflectedLight.directDiffuse *= _lightAtten.x;
+    reflectedLight.directSpecular *= _lightAtten.x;
+    reflectedLight.indirectDiffuse *= _lightAtten.y;
+    reflectedLight.indirectSpecular *= _lightAtten.y;
+  }`;
 };
 
 const buildRunIridescenceShaderFragment = (iridescenceShader: string | undefined): string => {
@@ -616,6 +655,7 @@ export const buildCustomShaderArgs = (
     customVertexFragment,
     commonShader,
     colorShader,
+    lightAttenuationShader,
     normalShader,
     roughnessShader,
     roughnessReverseColorRamp,
@@ -715,6 +755,15 @@ export const buildCustomShaderArgs = (
   uniforms.transmissionSamplerSize = { value: new THREE.Vector2() };
   uniforms.transmissionSamplerMap = { value: null };
 
+  const pomSelfShadow = pom?.selfShadow
+    ? {
+        lightDir: pom.selfShadow.lightDir,
+        steps: pom.selfShadow.steps ?? 12,
+        strength: pom.selfShadow.strength ?? 1,
+        softness: pom.selfShadow.softness ?? 0.5,
+      }
+    : null;
+
   uniforms.curTimeSeconds = { value: 0.0 };
   if (pom) {
     uniforms.pomDepth = { value: pom.depth };
@@ -724,6 +773,11 @@ export const buildCustomShaderArgs = (
     }
     if (pomHeightMap) {
       uniforms.pomHeightMap = { value: pomHeightMap };
+    }
+    if (pomSelfShadow) {
+      uniforms.pomShadowLightDir = {
+        value: new THREE.Vector3(...pomSelfShadow.lightDir).normalize(),
+      };
     }
   }
   uniforms.diffuse = { value: typeof color === 'number' ? new THREE.Color(color) : color };
@@ -853,6 +907,15 @@ export const buildCustomShaderArgs = (
   const pomGen = !!pom && pomTexturing === 'generated';
   const mapUvSym = pomGen ? '_pomGenUv' : 'vMapUv';
 
+  const usesSceneCtx = !!(
+    colorShader ||
+    lightAttenuationShader ||
+    roughnessShader ||
+    metalnessShader ||
+    emissiveShader ||
+    iridescenceShader
+  );
+
   const buildPomDefsFragment = () => {
     if (!pom) {
       return '';
@@ -871,6 +934,13 @@ export const buildCustomShaderArgs = (
       pomBinarySteps,
       pomRefineSkip,
       pomHasNormalShader: !!pomNormalShader,
+      pomSelfShadow: pomSelfShadow
+        ? {
+            steps: pomSelfShadow.steps,
+            strength: pomSelfShadow.strength,
+            softness: pomSelfShadow.softness,
+          }
+        : undefined,
       pomDebug: pom.debug,
     });
   };
@@ -1370,7 +1440,7 @@ varying vec3 vWorldPos;
 float softenTerminator(vec3 geoN, vec3 lightDir) {
   return smoothstep(-0.4, 0.4, dot(geoN, lightDir));
 }
-${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap)}
+${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap, !!pomSelfShadow)}
 
 uniform vec3 playerShadowPos;
 uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=maxReceiverY (highest probe, for early-out)
@@ -1393,13 +1463,13 @@ ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 ${typeof usePackedDiffuseNormalGBA === 'object' ? 'uniform sampler2D diffuseLUT;' : ''}
 
 struct SceneCtx {
-  vec3 cameraPosition;
   vec2 vUv;
   vec4 diffuseColor;
-  // Base-mesh world pos/normal, stable across POM displacement (unlike the
-  // per-sample \`pos\` / per-pixel \`normal\` color shaders normally see).
-  vec3 vWorldPos;
-  vec3 vWorldNormal;
+  // Camera distance + world-units-per-screen-pixel footprint, mirrored from
+  // main() so slots reuse them instead of recomputing the sqrt. Globals
+  // \`cameraPosition\`/\`vWorldPos\`/\`vWorldNormal\` are already in slot scope.
+  float distanceToCamera;
+  float unitsPerPx;
 };
 
 ${commonShaderCode}
@@ -1431,6 +1501,7 @@ ${pomGen ? GeneratedUVsFragment : ''}
 ${commonShader ?? ''}
 
 ${colorShader ?? ''}
+${lightAttenuationShader ?? ''}
 ${normalShader ?? ''}
 ${roughnessShader ?? ''}
 ${metalnessShader ?? ''}
@@ -1509,9 +1580,9 @@ void main() {
     vec2 vMapUv = vec2(0.);
   #endif
 
-  SceneCtx ctx = SceneCtx(cameraPosition, vMapUv, diffuseColor, vWorldPos, vWorldNormal);
+  ${usesSceneCtx ? 'SceneCtx ctx = SceneCtx(vMapUv, diffuseColor, distanceToCamera, unitsPerPx);' : ''}
 
-  ${pom ? buildPomMainBlock(pomBounded, pomTexturing, pom.normalEps) : ''}
+  ${pom ? buildPomMainBlock(pomBounded, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
@@ -1520,14 +1591,14 @@ void main() {
 	${buildMapFragment()}
 
 	#include <color_fragment>
-  ctx.diffuseColor = diffuseColor;
+  ${usesSceneCtx ? 'ctx.diffuseColor = diffuseColor;' : ''}
 	#include <alphamap_fragment>
 	#include <alphatest_fragment>
   ${buildRoughnessMapFragment()}
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
   ${buildNormalMapFragment()}
-  ${pom ? buildPomNormalApply(pomTexturing, !!normalMap) : ''}
+  ${pom ? buildPomNormalApply(pomTexturing, !!normalMap, !!pom.applyReliefNormal) : ''}
 
 	#include <clearcoat_normal_fragment_begin>
 	// #include <clearcoat_normal_fragment_maps>
@@ -1581,6 +1652,8 @@ void main() {
 
 	// modulation
 	#include <aomap_fragment>
+  ${pomSelfShadow ? buildPomSelfShadowApply() : ''}
+  ${buildRunLightAttenuationFragment(lightAttenuationShader, !!pom)}
 
 	vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;
 	vec3 totalSpecular = reflectedLight.directSpecular + reflectedLight.indirectSpecular;

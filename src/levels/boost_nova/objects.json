@@ -7,9 +7,10 @@
         {
           "id": "plat",
           "asset": "plat",
-          "position": [-7.9273, -2.524, 5.0465],
+          "material": "triangle_grid",
+          "position": [-7.9273, -3.8111, 5.225],
           "rotation": [0, 0, 0],
-          "scale": [5.7575, 1, 2.7639]
+          "scale": [5.7575, 5.9927, 2.7639]
         },
         {
           "id": "boost_strip_material_level",
@@ -66,6 +67,14 @@
       "position": [5.1586, 2.3972, -13.225],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
+    },
+    {
+      "id": "plat_1",
+      "asset": "plat",
+      "position": [0, 1.9831, -40.0404],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "material": "triangle_grid"
     }
   ]
 }

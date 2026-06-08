@@ -19,6 +19,46 @@
         "metalness": 0.15
       },
       "externalVelocityGroundDampingFactor": [1, 1, 1]
+    },
+    "triangle_grid": {
+      "type": "customShader",
+      "props": {
+        "color": "#2f7d7a",
+        "roughness": 0.7,
+        "metalness": 0.05
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false,
+        "antialiasColorShader": true,
+        "pom": {
+          "depth": 0.45,
+          "steps": 16,
+          "lodFadeStart": 15,
+          "lodFadeRange": 60,
+          "boundedSilhouette": true,
+          "refinement": "binary",
+          "refinementSteps": 3,
+          "applyReliefNormal": true
+        }
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "triangleGrid.common.glsl"
+        },
+        "colorShader": {
+          "file": "triangleGrid.color.glsl"
+        },
+        "lightAttenuationShader": {
+          "file": "triangleGrid.attenuation.glsl"
+        },
+        "pomHeightShader": {
+          "file": "triangleGrid.height.glsl"
+        },
+        "pomNormalShader": {
+          "file": "triangleGrid.normal.glsl"
+        }
+      }
     }
   }
 }
