@@ -107,12 +107,12 @@ export const applyGraphicsSettings = (viz: Viz, graphics: Conf.GraphicsSettings)
 };
 
 export const applyAudioSettings = (audio: Conf.AudioSettings) => {
-  delete localStorage.globalVolume;
   const ctx = new AudioContext();
-  const GlobalVolumeNode = (ctx as any).globalVolume as GainNode;
-  GlobalVolumeNode.gain.value = 0;
-  GlobalVolumeNode.gain.linearRampToValueAtTime(audio.globalVolume, ctx.currentTime + 0.1);
-  // TODO: Music volume
+  const masterVolumeNode = (ctx as any).masterVolume as GainNode;
+  masterVolumeNode.gain.value = 0;
+  masterVolumeNode.gain.linearRampToValueAtTime(audio.globalVolume, ctx.currentTime + 0.1);
+  const musicVolumeNode = (ctx as any).globalVolume as GainNode;
+  musicVolumeNode.gain.setTargetAtTime(audio.musicVolume, ctx.currentTime, 0.03);
 };
 
 export interface ControlState {

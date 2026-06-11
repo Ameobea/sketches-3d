@@ -8,6 +8,8 @@ import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/d
 import type { SceneConfig } from '..';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
+import { initWebSynth } from 'src/viz/webSynth';
+import { delay } from 'src/viz/util/util';
 
 const locations = {
   spawn: {
@@ -55,12 +57,12 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   viz.sfxManager.registerSfxDefs({
     engage: {
       url: 'https://i.ameo.link/dsj.ogg',
-      playbackRate: [3.95, 4.02],
+      playbackRate: [3.65, 3.7],
       gain: 0.5,
     },
     disengage: {
       url: 'https://i.ameo.link/dsj.ogg',
-      playbackRate: [3.95, 4.02],
+      playbackRate: [3.65, 3.7],
       gain: 0.5,
       reverse: true,
     },
@@ -156,6 +158,13 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     quality: vizConf.graphics.quality,
     // autoUpdateShadowMap: true,
     pomExitBuffers: true,
+  });
+
+  initWebSynth({ compositionIDToLoad: 184 }).then(async ctx => {
+    await delay(1200);
+
+    ctx.setGlobalBpm(180);
+    ctx.startAll();
   });
 
   return sceneConfig;

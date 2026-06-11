@@ -6,15 +6,15 @@ use smallvec::SmallVec;
 
 use crate::ErrorStack;
 
-pub fn fan_fill(
+fn fan_fill_into(
+  mesh: &mut LinkedMesh<()>,
   path: &[Vec3],
   closed: bool,
   flipped: bool,
   center: Option<Vec3>,
-) -> Result<LinkedMesh<()>, ErrorStack> {
-  let mut mesh = LinkedMesh::new(0, 0, None);
-  if path.is_empty() {
-    return Ok(mesh);
+) {
+  if path.len() < 2 {
+    return;
   }
 
   let center = center.unwrap_or_else(|| {
@@ -61,6 +61,27 @@ pub fn fan_fill(
     };
     mesh.add_face::<true>(tri, ());
   }
+}
 
+pub fn fan_fill(
+  path: &[Vec3],
+  closed: bool,
+  flipped: bool,
+  center: Option<Vec3>,
+) -> Result<LinkedMesh<()>, ErrorStack> {
+  let mut mesh = LinkedMesh::new(0, 0, None);
+  fan_fill_into(&mut mesh, path, closed, flipped, center);
+  Ok(mesh)
+}
+
+pub fn fan_fill_subpaths(
+  subpaths: &[(Vec<Vec3>, bool)],
+  flipped: bool,
+  center: Option<Vec3>,
+) -> Result<LinkedMesh<()>, ErrorStack> {
+  let mut mesh = LinkedMesh::new(0, 0, None);
+  for (path, closed) in subpaths {
+    fan_fill_into(&mut mesh, path, *closed, flipped, center);
+  }
   Ok(mesh)
 }

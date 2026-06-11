@@ -1,0 +1,16 @@
+{
+  "name": "geotoy-cli",
+  "version": "0.1.0",
+  "description": "Headless renderer for Geoscript compositions. Bundles a composition directory and posts to the geoscript_backend render service, returning the rendered image.",
+  "type": "module",
+  "bin": {
+    "geotoy": "./bin/geotoy"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/cli.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.9.1"
+  }
+}

@@ -7,9 +7,9 @@ displacement = displacement + highFreqDisplacement * highFreqDisplacementActivat
 
 displacement = displacement * 0.8;
 // Only start pulsing once the player gets closer
-float distanceActivation = 1. - smoothstep(350., 400., distance(pos, cameraPosition));
+float distanceActivation = 1. - smoothstep(350., 400., distance(vWorldPos, cameraPosition));
 // Don't pulse at the top, or at least not for now when we're only pulsing in the Z direction
-float heightActivation = 1. - smoothstep(300., 330., pos.y);
+float heightActivation = 1. - smoothstep(300., 330., vWorldPos.y);
 vec3 newPosition = vec3(position.x-0.2, position.y+0.2, position.z + position.z * heightActivation * distanceActivation * 0.12);
 newPosition = newPosition + vec3(0., 0., sign(position.z)) * displacement * heightActivation * 0.46;
 gl_Position = projectionMatrix * modelViewMatrix * vec4( newPosition, 1.0 );

@@ -80,14 +80,13 @@ export interface SfxDef {
   playbackRate?: Range;
   /** Linear gain baked into the def; multiplied with per-call gain. */
   gain?: Range;
-  /** Play the sample backwards. */
   reverse?: boolean;
-  /** Default biquad filter; overridden by per-call `opts.filter`. */
+  /** default; overridden by per-call `opts.filter` */
   filter?: SfxFilter;
 }
 
 const BUILTIN_SFX_DEFS: Record<string, SfxDef> = {
-  dash: { url: 'https://i.ameo.link/cta.ogg' },
+  dash: { url: 'https://i.ameo.link/cta.ogg', gain: 0.7 },
   dash_pickup: { url: 'https://i.ameo.link/ctb.ogg', playbackRate: 1.4 },
   land_default: { url: 'https://i.ameo.link/cvk.ogg' },
   player_die: { url: 'https://i.ameo.link/cx8.ogg' },
@@ -300,9 +299,9 @@ export class SoundEngine {
       outputChannelCount: [2],
     });
 
-    const globalVolumeNode = (ctx as any).globalVolume as GainNode | undefined;
-    if (globalVolumeNode) {
-      this.node.connect(globalVolumeNode);
+    const masterVolumeNode = (ctx as any).masterVolume as GainNode | undefined;
+    if (masterVolumeNode) {
+      this.node.connect(masterVolumeNode);
     } else {
       this.node.connect(ctx.destination);
     }

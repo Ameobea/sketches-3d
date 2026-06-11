@@ -497,6 +497,93 @@ fn colinear_overlap_point_2d(
   Some((a.0 + t * ab.0, a.1 + t * ab.1))
 }
 
+/// Classification of an infinite line vs a triangle in 3D.  `Vertex`/`Edge` snap within `eps`.
+pub enum LineTriHit {
+  None,
+  Vertex,
+  Edge { face_edge_ix: usize, t_along: f32 },
+  Interior { point: Vec3, bary: [f32; 3] },
+}
+
+const LINE_TRI_PARALLEL_EPS: f32 = 1e-6;
+
+/// Classifies an infinite line against a triangle.  `dir` must be unit-length; `eps` is a
+/// world-space snap tolerance applied vertex-first, then edge, then interior.  Lines coplanar
+/// with the triangle's plane return `None`.
+///
+/// Reference: Ericson, *Real-Time Collision Detection*, ch. 5.
+pub fn classify_line_triangle(
+  origin: Vec3,
+  dir: Vec3,
+  a: Vec3,
+  b: Vec3,
+  c: Vec3,
+  eps: f32,
+) -> LineTriHit {
+  let e1 = b - a;
+  let e2 = c - a;
+  let n = e1.cross(&e2);
+  let n_mag_sq = n.magnitude_squared();
+  if n_mag_sq < LINE_TRI_PARALLEL_EPS * LINE_TRI_PARALLEL_EPS {
+    return LineTriHit::None;
+  }
+
+  let denom = dir.dot(&n);
+  if denom * denom < LINE_TRI_PARALLEL_EPS * LINE_TRI_PARALLEL_EPS * n_mag_sq {
+    return LineTriHit::None;
+  }
+
+  let p = origin + ((a - origin).dot(&n) / denom) * dir;
+
+  let eps_sq = eps * eps;
+  let verts = [a, b, c];
+  for v in &verts {
+    if (p - v).magnitude_squared() < eps_sq {
+      return LineTriHit::Vertex;
+    }
+  }
+
+  for face_edge_ix in 0..3 {
+    let v0 = verts[face_edge_ix];
+    let v1 = verts[(face_edge_ix + 1) % 3];
+    let d = v1 - v0;
+    let len2 = d.magnitude_squared();
+    if len2 < LINE_TRI_PARALLEL_EPS * LINE_TRI_PARALLEL_EPS {
+      continue;
+    }
+    let t_along = (p - v0).dot(&d) / len2;
+    if !(0. ..=1.).contains(&t_along) {
+      continue;
+    }
+    let closest = v0 + t_along * d;
+    if (p - closest).magnitude_squared() < eps_sq {
+      return LineTriHit::Edge {
+        face_edge_ix,
+        t_along,
+      };
+    }
+  }
+
+  let v2 = p - a;
+  let d00 = e1.dot(&e1);
+  let d01 = e1.dot(&e2);
+  let d11 = e2.dot(&e2);
+  let d20 = v2.dot(&e1);
+  let d21 = v2.dot(&e2);
+  let beta = (d11 * d20 - d01 * d21) / n_mag_sq;
+  let gamma = (d00 * d21 - d01 * d20) / n_mag_sq;
+  let alpha = 1. - beta - gamma;
+
+  if alpha >= 0. && beta >= 0. && gamma >= 0. {
+    LineTriHit::Interior {
+      point: p,
+      bary: [alpha, beta, gamma],
+    }
+  } else {
+    LineTriHit::None
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

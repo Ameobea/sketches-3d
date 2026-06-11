@@ -46,7 +46,7 @@ use crate::{
     extrude::{extrude, extrude_along_normals},
     extrude_path::extrude_path,
     extrude_pipe::{extrude_pipe, EndMode},
-    fan_fill::fan_fill,
+    fan_fill::{fan_fill, fan_fill_subpaths},
     mesh_boolean::{eval_mesh_boolean, MeshBooleanOp},
     mesh_ops::{
       convex_hull_from_verts, get_geodesic_error, simplify_mesh, split_mesh_by_plane,
@@ -102,6 +102,7 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "sign" => "signum",
   "worley" => "worley_noise",
   "path_render" => "render_path",
+  "skewer" => "subdivide_by_line",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -1927,6 +1928,70 @@ fn fan_fill_impl(
 
       let mesh =
         fan_fill(&path, closed, flipped, center).map_err(|err| err.wrap("Error in `fan_fill`"))?;
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: None,
+      })))
+    }
+    1 => {
+      let path_callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let closed_override: Option<bool> = match arg_refs[1].resolve(args, kwargs) {
+        Value::Bool(b) => Some(*b),
+        _ => None,
+      };
+      let flipped = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+      let center: Option<Vec3> = match arg_refs[3].resolve(args, kwargs) {
+        Value::Vec3(v) => Some(*v),
+        Value::Vec2(v) => Some(Vec3::new(v.x, 0., v.y)),
+        _ => None,
+      };
+      let curve_angle_degrees = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      if curve_angle_degrees <= 0.0 {
+        return Err(ErrorStack::new(format!(
+          "Invalid curve_angle_degrees for `fan_fill`; expected > 0, found: {curve_angle_degrees}"
+        )));
+      }
+      let curve_angle_radians = curve_angle_degrees.to_radians();
+      let sample_count: Option<usize> = match arg_refs[5].resolve(args, kwargs) {
+        Value::Nil => None,
+        Value::Int(n) if *n >= 2 => Some(*n as usize),
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid sample_count for `fan_fill`; expected int >= 2 or nil, found: {other:?}"
+          )))
+        }
+      };
+
+      let raw = match as_path_sampler(path_callable)
+        .and_then(|s| s.sample_subpaths_with_limit(curve_angle_radians, sample_count))
+      {
+        Some(v) => v,
+        None => sample_path_subpaths(
+          ctx,
+          path_callable,
+          curve_angle_radians,
+          sample_count.unwrap_or(64),
+          closed_override,
+          "fan_fill",
+        )?,
+      };
+
+      let subpaths: Vec<(Vec<Vec3>, bool)> = raw
+        .into_iter()
+        .map(|(pts, is_closed)| {
+          (
+            pts.into_iter().map(|p| Vec3::new(p.x, 0., p.y)).collect(),
+            closed_override.unwrap_or(is_closed),
+          )
+        })
+        .collect();
+
+      let mesh = fan_fill_subpaths(&subpaths, flipped, center)
+        .map_err(|err| err.wrap("Error in `fan_fill`"))?;
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
@@ -3943,6 +4008,54 @@ fn subdivide_by_plane_impl(
           w: *offset,
         });
       }
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: mesh_handle.transform,
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: mesh_handle.material.clone(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn subdivide_by_line_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let line_origin = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let line_dir = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let mesh_handle = arg_refs[2].resolve(args, kwargs).as_mesh().unwrap();
+      let eps = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+
+      if mesh_handle.transform != Matrix4::identity() {
+        return Err(ErrorStack::new(
+          "subdivide_by_line does not currently support meshes with transforms.  Either call \
+           this function before transforming or use `apply_transforms` to bake the transforms \
+           into the mesh vertex positions.",
+        ));
+      }
+
+      if line_dir.magnitude_squared() < 1e-12 {
+        return Err(ErrorStack::new(
+          "subdivide_by_line: line_dir must be non-zero",
+        ));
+      }
+      if !eps.is_finite() || eps <= 0. {
+        return Err(ErrorStack::new(
+          "subdivide_by_line: eps must be a positive finite number",
+        ));
+      }
+
+      let mut mesh = (*mesh_handle.mesh).clone();
+      mesh.subdivide_by_line(*line_origin, *line_dir, eps);
+
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: mesh_handle.transform,
@@ -7618,6 +7731,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "subdivide_by_plane" => builtin_fn!(subdivide_by_plane, |def_ix, arg_refs, args, kwargs, _ctx| {
     subdivide_by_plane_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "subdivide_by_line" => builtin_fn!(subdivide_by_line, |def_ix, arg_refs, args, kwargs, _ctx| {
+    subdivide_by_line_impl(def_ix, arg_refs, args, kwargs)
   }),
   "split_by_plane" => builtin_fn!(split_by_plane, |def_ix, arg_refs, args, kwargs, _ctx| {
     split_by_plane_impl(def_ix, arg_refs, args, kwargs)

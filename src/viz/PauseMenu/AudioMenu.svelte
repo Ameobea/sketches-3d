@@ -31,7 +31,6 @@
 <div class="slider-input">
   <label for="music-volume-slider">Music Volume</label>
   <input
-    disabled
     type="range"
     id="music-volume-slider"
     name="volume"

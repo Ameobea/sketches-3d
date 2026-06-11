@@ -42,9 +42,14 @@
         // This value came up in google chrome bug database conversation and seems to fix it
         latencyHint: latencyHint,
       });
+      globalContext.masterVolume = new GainNode(globalContext);
+      globalContext.masterVolume.gain.value = 0;
+      globalContext.masterVolume.connect(globalContext.destination);
+
+      // web-synth's headless build connects its composition output to `globalVolume`, so that key
+      // serves as the music bus while `masterVolume` is the game's actual master gain
       globalContext.globalVolume = new GainNode(globalContext);
-      globalContext.globalVolume.gain.value = 0;
-      globalContext.globalVolume.connect(globalContext.destination);
+      globalContext.globalVolume.connect(globalContext.masterVolume);
 
       globalThis.AudioContext = function SingletonAudioContext() {
         return globalContext;

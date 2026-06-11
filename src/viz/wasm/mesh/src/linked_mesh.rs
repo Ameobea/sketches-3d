@@ -2470,6 +2470,124 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
+  /// Skewers the mesh with an infinite line.  `eps` is a world-space snap tolerance for the
+  /// hit point against nearby vertices/edges.  No-op for lines coplanar with a triangle's plane.
+  pub fn subdivide_by_line(&mut self, origin: Vec3, dir: Vec3, eps: f32) {
+    if dir.magnitude_squared() < 1e-12 || !eps.is_finite() || eps <= 0. {
+      return;
+    }
+    let dir = dir.normalize();
+
+    let face_keys: Vec<FaceKey> = self.faces.keys().collect();
+    let mut edge_events: FxHashMap<EdgeKey, (f32, u32)> = FxHashMap::default();
+    let mut interior_events: Vec<(FaceKey, Vec3, [f32; 3])> = Vec::new();
+
+    for face_key in face_keys {
+      let face = &self.faces[face_key];
+      let [va_key, vb_key, vc_key] = face.vertices;
+      let a = self.vertices[va_key].position;
+      let b = self.vertices[vb_key].position;
+      let c = self.vertices[vc_key].position;
+
+      use crate::triangle_intersection::{classify_line_triangle, LineTriHit};
+      match classify_line_triangle(origin, dir, a, b, c, eps) {
+        LineTriHit::None | LineTriHit::Vertex => {}
+        LineTriHit::Edge {
+          face_edge_ix,
+          t_along,
+        } => {
+          let edge_key = face.edges[face_edge_ix];
+          let face_v0 = face.vertices[face_edge_ix];
+          let edge_v0 = self.edges[edge_key].vertices[0];
+          let t_canonical = if face_v0 == edge_v0 {
+            t_along
+          } else {
+            1. - t_along
+          };
+          let entry = edge_events.entry(edge_key).or_insert((0., 0));
+          entry.0 += t_canonical;
+          entry.1 += 1;
+        }
+        LineTriHit::Interior { point, bary } => {
+          interior_events.push((face_key, point, bary));
+        }
+      }
+    }
+
+    for (edge_key, (sum_t, count)) in edge_events {
+      let t_avg = (sum_t / count as f32).clamp(0., 1.);
+      let start_vtx_key = self.edges[edge_key].vertices[0];
+      self.split_edge(
+        edge_key,
+        EdgeSplitPos {
+          pos: t_avg,
+          start_vtx_key,
+        },
+        DisplacementNormalMethod::Interpolate,
+      );
+    }
+
+    for (face_key, point, bary) in interior_events {
+      // Skip if a prior edge_event already removed this face (adjacent-face classifier
+      // disagreement near a shared edge under f32 jitter).
+      if self.faces.contains_key(face_key) {
+        self.split_face_interior(face_key, point, bary);
+      }
+    }
+  }
+
+  fn split_face_interior(&mut self, face_key: FaceKey, point: Vec3, bary: [f32; 3]) {
+    let face = &self.faces[face_key];
+    let face_normal = face.normal(&self.vertices);
+    let [va, vb, vc] = face.vertices;
+    let [alpha, beta, gamma] = bary;
+    let outer_edge_data: [(Option<Vec3>, bool); 3] = std::array::from_fn(|i| {
+      let e = &self.edges[face.edges[i]];
+      (e.displacement_normal, e.sharp)
+    });
+
+    let lerp3 = |na: Vec3, nb: Vec3, nc: Vec3| {
+      (na * alpha + nb * beta + nc * gamma)
+        .try_normalize(0.)
+        .unwrap_or(face_normal)
+    };
+    let blend = |get: fn(&Vertex) -> Option<Vec3>| {
+      get(&self.vertices[va])
+        .zip(get(&self.vertices[vb]))
+        .zip(get(&self.vertices[vc]))
+        .map(|((na, nb), nc)| lerp3(na, nb, nc))
+    };
+    let shading_normal = blend(|v| v.shading_normal);
+    let displacement_normal = blend(|v| v.displacement_normal);
+
+    let m_key = self.vertices.insert(Vertex {
+      position: point,
+      shading_normal,
+      displacement_normal,
+      edges: SmallVec::new(),
+      _padding: Default::default(),
+    });
+
+    self.remove_face(face_key);
+
+    for (i, (v0, v1)) in [(va, vb), (vb, vc), (vc, va)].into_iter().enumerate() {
+      let new_face_key = self.add_face::<false>([v0, v1, m_key], Default::default());
+      let new_face_edges = self.faces[new_face_key].edges;
+      let outer = &mut self.edges[new_face_edges[0]];
+      let (outer_n, outer_sharp) = outer_edge_data[i];
+      if outer.displacement_normal.is_none() {
+        outer.displacement_normal = outer_n;
+      }
+      outer.sharp |= outer_sharp;
+      for &edge_key in &[new_face_edges[1], new_face_edges[2]] {
+        let edge = &mut self.edges[edge_key];
+        if edge.displacement_normal.is_none() {
+          edge.displacement_normal = Some(face_normal);
+        }
+      }
+    }
+  }
+
   pub fn compute_aabb(&self, transform: &Matrix4<f32>) -> Aabb {
     if self.vertices.is_empty() {
       return Aabb::new_invalid();
@@ -3542,6 +3660,40 @@ mod tests {
       .expect("Mesh should remain manifold after plane subdivision");
 
     assert!(mesh.faces.len() > 12);
+  }
+
+  #[test]
+  fn skewer_cube_through_origin_hits_diagonal_edges() {
+    let mut mesh: LinkedMesh<()> = LinkedMesh::new_box(1., 1., 1.);
+    mesh.subdivide_by_line(Vec3::zeros(), Vec3::new(0., 1., 0.), 1e-4);
+    mesh
+      .check_is_manifold::<true>()
+      .expect("Mesh should remain manifold after edge-hit skewer");
+    // 12 base tris, top+bottom diagonal edge splits each turn 2 tris into 4 (+2 each, +4 total)
+    assert_eq!(mesh.faces.len(), 16);
+  }
+
+  #[test]
+  fn skewer_cube_through_corners_no_change() {
+    let mut mesh: LinkedMesh<()> = LinkedMesh::new_box(1., 1., 1.);
+    let face_count_before = mesh.faces.len();
+    mesh.subdivide_by_line(Vec3::zeros(), Vec3::new(1., 1., 1.).normalize(), 1e-4);
+    mesh
+      .check_is_manifold::<true>()
+      .expect("Mesh should remain manifold after vertex-hit skewer");
+    assert_eq!(mesh.faces.len(), face_count_before);
+  }
+
+  #[test]
+  fn skewer_cube_interior_hits() {
+    let mut mesh: LinkedMesh<()> = LinkedMesh::new_box(1., 1., 1.);
+    // (0.2, 0, 0.2) is well inside one of the top/bottom face tris, not on the diagonal (z = -x)
+    mesh.subdivide_by_line(Vec3::new(0.2, 0., 0.2), Vec3::new(0., 1., 0.), 1e-4);
+    mesh
+      .check_is_manifold::<true>()
+      .expect("Mesh should remain manifold after interior-hit skewer");
+    // Two interior fan splits: each removes 1 tri, adds 3 (+2 each, +4 total)
+    assert_eq!(mesh.faces.len(), 16);
   }
 
   #[test]

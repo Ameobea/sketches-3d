@@ -3865,6 +3865,21 @@ c | render
 }
 
 #[test]
+fn test_skewer_cube() {
+  let src = r#"
+b = box(1, 1, 1) | skewer(vec3(0.2, 0, 0.2), vec3(0, 1, 0))
+b | render
+"#;
+  let result = parse_and_eval_program(src);
+  assert!(result.is_ok(), "Failed to evaluate: {:?}", result.err());
+  let rendered_meshes = result.unwrap().rendered_meshes.into_inner();
+  assert_eq!(rendered_meshes.len(), 1);
+  let mesh = &rendered_meshes[0].mesh;
+  // 12 base tris + 4 from two interior fan-splits
+  assert_eq!(mesh.mesh.faces.len(), 16);
+}
+
+#[test]
 fn test_functions_as_values() {
   let src = r#"
 my_scale = scale(1,2,3)
@@ -5677,6 +5692,54 @@ render(m)
     format!("{err:?}").contains("closed"),
     "expected error to mention closed; got: {err:?}"
   );
+}
+
+#[test]
+fn test_fan_fill_path_sampler() {
+  // Closed square path sampler -> fan of 4 triangles around centroid in XZ plane.
+  let src = r#"
+p = build_path(path {
+  move(0, 0)
+  line(1, 0)
+  line(1, 1)
+  line(0, 1)
+}, closed=true)
+m = fan_fill(p)
+render(m)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let rendered = ctx.rendered_meshes.into_inner();
+  assert_eq!(rendered.len(), 1);
+  let mesh = &rendered[0].mesh.mesh;
+  // 4 perimeter verts + 1 center, 4 triangles.
+  assert_eq!(mesh.vertices.len(), 5);
+  assert_eq!(mesh.faces.len(), 4);
+  for (_, v) in mesh.vertices.iter() {
+    assert_eq!(v.position.y, 0.0);
+  }
+}
+
+#[test]
+fn test_fan_fill_blackbox_callable() {
+  // Black-box `|t|: vec2` callable approximating a unit circle, sampled uniformly.
+  let src = r#"
+f = |t| vec2(cos(t * 2 * pi), sin(t * 2 * pi))
+m = fan_fill(f, sample_count=16, center=vec2(0, 0))
+render(m)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let rendered = ctx.rendered_meshes.into_inner();
+  assert_eq!(rendered.len(), 1);
+  let mesh = &rendered[0].mesh.mesh;
+  // 16 samples close -> last duplicates the first; perimeter + center vertex.
+  // closed inferred via p(0) ~= p(1).
+  assert!(mesh.vertices.len() >= 16);
+  assert!(mesh.faces.len() >= 15);
+  for (_, v) in mesh.vertices.iter() {
+    assert_eq!(v.position.y, 0.0);
+  }
 }
 
 #[test]

@@ -5384,6 +5384,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "subdivide_by_line" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "line_origin",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "A point on the line that skewers the mesh"
+          },
+          ArgDef {
+            name: "line_dir",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Direction of the line.  Need not be unit-length; it will be normalized internally."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "eps",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1e-4)),
+            description: "World-space tolerance for snapping the hit point to a nearby vertex or edge.  Larger values make the skewer more forgiving of near-coincident geometry; smaller values snap less aggressively."
+          },
+        ],
+        description: "Skewers a mesh with an infinite line.  Triangles whose interiors are intersected by the line are split into three fan triangles around the hit point.  Hits coincident with an edge split the edge (and both adjacent triangles).  Hits coincident with a vertex are no-ops.  Aliased as `skewer`.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
   "split_by_plane" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 29 }],
@@ -6927,6 +6967,54 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           }
         ],
         description: "Builds a fan of triangles from a sequence of points, filling the area inside them.  One triangle will be built for each pair of adjacent points in the path, connecting them to the center point.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A `PathSampler` callable (e.g. from `trace_path`, `trace_svg_path`, `lerp_path`, `catmull_rom`) or any `|t: num|: vec2` callable.  Sampled in the XZ plane (`vec2(x, y)` -> `vec3(x, 0, y)`).  Multi-subpath inputs are fanned independently and combined into one mesh."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating each subpath as closed.  When nil (default), closedness is inherited from the path sampler's topology (or inferred from `p(0) ~= p(1)` for black-box callables)."
+          },
+          ArgDef {
+            name: "flipped",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, the winding order of the triangles generated will be flipped - inverting the inside/outside of the generated mesh."
+          },
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Vec2, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "If provided, the center point for each fan will be placed at this position.  A `Vec2` is embedded in the XZ plane.  Otherwise, the center is computed as the average of each subpath's discretized points."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            description: "Max turning angle (degrees) per segment when adaptively discretizing curves.  Currently honored by traced-path samplers (`trace_path`, `trace_svg_path`); other `PathSampler` inputs (`lerp_path`, `catmull_rom`) and black-box callables fall back to uniform `sample_count` sampling."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Uniform sample count, used when adaptive sampling is unavailable (black-box callables, `lerp_path`, `catmull_rom`).  Defaults to 64 when nil.  For traced-path samplers, optionally caps the total points across all subpaths after adaptive sampling."
+          }
+        ],
+        description: "Builds a fan of triangles by discretizing a path callable and filling the area inside each subpath.  One triangle will be built per pair of adjacent points in each subpath, connecting to that subpath's center.  Output lives in the XZ plane.",
         return_type: &[ArgType::Mesh],
       }
     ],
