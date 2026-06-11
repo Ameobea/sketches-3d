@@ -38,15 +38,17 @@ export const buildPomHeightSources = (opts: {
       return 'float samplePomHeightMap(vec3 _p, vec3 _N) { return 0.; }';
     }
     if (pomTexturing === 'triplanar') {
+      // Triplanar weights are invariant across the march (the base normal never changes), so
+      // they're computed once per fragment into `_pomTriW` at the top of the POM main block.
       return /* glsl */ `
-float samplePomHeightMap(vec3 p, vec3 N) {
+vec3 _pomTriW;
+float samplePomHeightMap(vec3 p, vec3 _N) {
   vec3 sp = vTriplanarPos + (p - vWorldPos);
   vec2 _phUvScale = vec2(uvTransform[0][0], uvTransform[1][1]);
-  vec3 w = generateTriplanarWeights(N);
   float h = 0.;
-  if (w.x > 0.01) h += textureLod(pomHeightMap, sp.yz * _phUvScale, 0.0).r * w.x;
-  if (w.y > 0.01) h += textureLod(pomHeightMap, sp.zx * _phUvScale, 0.0).r * w.y;
-  if (w.z > 0.01) h += textureLod(pomHeightMap, sp.xy * _phUvScale, 0.0).r * w.z;
+  if (_pomTriW.x > 0.01) h += textureLod(pomHeightMap, sp.yz * _phUvScale, 0.0).r * _pomTriW.x;
+  if (_pomTriW.y > 0.01) h += textureLod(pomHeightMap, sp.zx * _phUvScale, 0.0).r * _pomTriW.y;
+  if (_pomTriW.z > 0.01) h += textureLod(pomHeightMap, sp.xy * _phUvScale, 0.0).r * _pomTriW.z;
   return 1. - h;
 }`;
     }
@@ -73,6 +75,8 @@ export const buildPomDefs = (opts: {
   pomRefineSkip: number;
   // Material supplies `getPomNormal(...)`; use it instead of finite differences.
   pomHasNormalShader: boolean;
+  // Per-pixel IGN phase offset for the linear march (turns step banding into noise).
+  pomJitter: boolean;
   // Opt-in relief self-shadowing toward an explicit light direction.
   pomSelfShadow?: { steps: number; strength: number; softness: number };
   // Active debug view, if any; the `samples`/`skip` views enable per-fragment
@@ -88,6 +92,7 @@ export const buildPomDefs = (opts: {
     pomBinarySteps,
     pomRefineSkip,
     pomHasNormalShader,
+    pomJitter,
     pomSelfShadow,
     pomDebug,
   } = opts;
@@ -102,6 +107,18 @@ ${useBinary ? `#define POM_REFINE_BINARY\n#define POM_BINARY_STEPS ${pomBinarySt
 ${useBinary && pomRefineSkip > 0 ? `#define POM_REFINE_SKIP ${pomRefineSkip.toFixed(4)}` : ''}
 ${debugCounters ? `#define POM_DEBUG_COUNTERS\n#define POM_DEBUG_MAX_SAMPLES ${maxSamples}` : ''}
 ${pomHasNormalShader ? '#define POM_HAS_NORMAL_SHADER' : ''}
+${pomJitter ? '#define POM_JITTER' : ''}
+
+#ifdef POM_JITTER
+// Interleaved gradient noise (Jimenez 2014): per-pixel phase for the march so
+// sample-interval banding becomes unstructured noise instead of coherent steps.
+float pomIGN() {
+  return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+}
+#define POM_JITTER_OFF pomIGN()
+#else
+#define POM_JITTER_OFF 0.0
+#endif
 
 #ifdef POM_DEBUG_COUNTERS
 // Per-fragment instrumentation for the \`samples\` / \`skip\` debug views. File-scope
@@ -195,13 +212,14 @@ vec3 pomMarch(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
   float NdotV = max(NdotVraw, 1e-3);             // grazing clamp (step sizing only)
   float marchLen = depth / NdotV;
   float dStep = marchLen / float(POM_STEPS);
+  float jit = POM_JITTER_OFF;
 
   vec3 pPrev = ro;
   float hPrev = 0.0;   // carved depth at previous sample
   float dPrev = 0.0;   // ray depth-below-base at previous sample
 
   for (int i = 1; i <= POM_STEPS; i++) {
-    float s = dStep * float(i);
+    float s = dStep * (float(i) - jit);
     vec3 p = ro + rd * s;
     float rayDepth = s * NdotVraw;                // == -dot(p-ro,N), no large-coordinate cancellation
     float surfH = _pomSurf(p, N, depth, t);
@@ -230,13 +248,14 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
   float NdotV = max(NdotVraw, 1e-3);
   float marchLen = depth / NdotV;
   float dStep = marchLen / float(POM_STEPS);
+  float jit = POM_JITTER_OFF;
 
   vec3 pPrev = ro;
   float hPrev = 0.0;
   float dPrev = 0.0;
 
   for (int i = 1; i <= POM_STEPS; i++) {
-    float sRaw = dStep * float(i);
+    float sRaw = dStep * (float(i) - jit);
     // Clamp the final tested point to the exact convex exit so the floor is
     // still evaluated there before declaring the fragment carved away.
     float s = min(sRaw, maxRayLen);
@@ -254,6 +273,20 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
     }
     pPrev = p; hPrev = surfH; dPrev = rayDepth;
   }
+#ifdef POM_JITTER
+  // The jitter offset shortens the last raw step, so an exit lying in the final
+  // sub-step sliver is never reached in-loop; test it exactly here.
+  if (maxRayLen <= marchLen) {
+    vec3 p = ro + rd * maxRayLen;
+    float rayDepth = maxRayLen * NdotVraw;
+    float surfH = _pomSurf(p, N, depth, t);
+    if (rayDepth >= surfH) {
+      return _pomRefineHit(ro, N, depth, t, pPrev, hPrev, dPrev, p, surfH, rayDepth);
+    }
+    carved = true;
+    return p;
+  }
+#endif
   // Full slab traversed without crossing and the exit was never reached
   // (thick interior): Phase-1 clamp, NOT carved.
   return pPrev;
@@ -304,9 +337,10 @@ float pomSelfShadow(vec3 hit, vec3 ro, vec3 N, vec3 L, float depth, float t) {
   float marchLen = depth / NdotL;
   float stepLen = marchLen / float(POM_SHADOW_STEPS);
   float bias = depth * 0.02;
+  float jit = POM_JITTER_OFF;
   float occ = 0.0;
   for (int i = 1; i <= POM_SHADOW_STEPS; i++) {
-    float s = stepLen * float(i);
+    float s = stepLen * (float(i) - jit);
     vec3 p = hit + L * s;
     float rayH = -dot(p - ro, N);                  // ray depth below base (shrinks as it rises)
     if (rayH <= 0.0) { break; }                     // cleared the base plane: rest of the ray is in open air
@@ -329,7 +363,8 @@ export const buildPomMainBlock = (
   pomBounded: boolean,
   pomTexturing: PomTexturing,
   normalEps: number | undefined,
-  pomSelfShadow: { strength: number } | null
+  pomSelfShadow: { strength: number } | null,
+  hasHeightMap: boolean
 ): string => {
   const tail = (() => {
     switch (pomTexturing) {
@@ -351,6 +386,7 @@ export const buildPomMainBlock = (
   // Raymarch the slab; expose displaced world hit + analytic floor normal.
   vec3 _pomHit = vWorldPos;
   vec3 _pomNormalW = normalize(vWorldNormal);
+  ${pomTexturing === 'triplanar' && hasHeightMap ? '_pomTriW = generateTriplanarWeights(_pomNormalW);' : ''}
   ${pomSelfShadow ? 'float _pomShadowVis = 1.0;' : ''}
   {
     vec3 _pomRd = normalize(vWorldPos - cameraPosition);
@@ -431,7 +467,7 @@ export const buildPomNormalApply = (
     // instead of the geometric normal.
     return /* glsl */ `
   vec3 _pomNormalDetailW = normalize(
-    triplanarNormalMapPerturbation(normalMap, triplanarSamplePos, vec2(uvTransform[0][0], uvTransform[1][1]), _pomNormalW, normalScale)
+    triplanarNormalMapPerturbation(normalMap, triplanarSamplePos, vec2(uvTransform[0][0], uvTransform[1][1]), _pomNormalW, normalScale, normalMapMeanColor)
     + _pomNormalW
   );
   normal = normalize((viewMatrix * vec4(_pomNormalDetailW, 0.)).xyz);

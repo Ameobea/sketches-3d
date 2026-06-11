@@ -81,7 +81,7 @@
         "roughness": 0.65,
         "metalness": 0.77,
         "normalScale": 0.82,
-        "uvScale": [0.16, 0.16],
+        "uvScale": [0.0256, 0.0256],
         "map": "chipped_yellow_painted_cracked_stone_diffuse",
         "normalMap": "chipped_yellow_painted_cracked_stone_normal"
       },

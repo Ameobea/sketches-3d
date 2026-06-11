@@ -15,20 +15,19 @@ if (playerShadowParams.y > 0.) {
       float psSector = fract(psAngle / 6.2831853) * 8.; // 0 to 8
       int psIdx0 = int(floor(psSector)); // 0..7, fract() keeps this in range
       int psIdx1 = int(mod(float(psIdx0) + 1., 8.));
+      float psAngFrac = fract(psSector);
 
-      // Look up receiverY by sector index, using max() to bias toward closest surface.
+      // Bilinear receiver Y: angular lerp between adjacent probes, radial lerp
+      // center -> inner ring (0.5R) -> outer ring (R). Tracks sloped ground;
+      // the old per-sector max() popped at sector/ring boundaries on slopes.
       // Flat layout: [0..7] = outer ring (angles 0-7), [8..15] = inner ring.
-      float psOuterY = max(psRingData[psIdx0], psRingData[psIdx1]);
-      float psInnerY = max(psRingData[8 + psIdx0], psRingData[8 + psIdx1]);
+      float psOuterY = mix(psRingData[psIdx0], psRingData[psIdx1], psAngFrac);
+      float psInnerY = mix(psRingData[8 + psIdx0], psRingData[8 + psIdx1], psAngFrac);
 
-      // Radial interpolation: center → inner ring → outer ring, biased toward closest surface
       float psRadialT = clamp(psDist / psRadius, 0., 1.);
-      float psReceiverY;
-      if (psRadialT < 0.5) {
-        psReceiverY = max(psCenterReceiverY, psInnerY);
-      } else {
-        psReceiverY = max(psInnerY, psOuterY);
-      }
+      float psReceiverY = psRadialT < 0.5
+        ? mix(psCenterReceiverY, psInnerY, psRadialT * 2.)
+        : mix(psInnerY, psOuterY, psRadialT * 2. - 1.);
 
       // Drop distance derived from final receiverY
       float psDropDist = playerShadowPos.y - psReceiverY;
@@ -46,7 +45,7 @@ if (playerShadowParams.y > 0.) {
       float lightFactor = 1. - psShadow;
       totalDiffuse *= lightFactor;
       totalSpecular *= lightFactor;
-      totalShadow *= psShadow;
+      totalShadow *= lightFactor;
     }
   }
 }

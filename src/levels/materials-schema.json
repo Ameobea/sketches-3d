@@ -267,15 +267,6 @@
                     ],
                     "additionalProperties": false
                   },
-                  "reflection": {
-                    "type": "object",
-                    "properties": {
-                      "alpha": {
-                        "type": "number"
-                      }
-                    },
-                    "additionalProperties": false
-                  },
                   "heightAlpha": {
                     "type": "object",
                     "properties": {
@@ -391,6 +382,9 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 9007199254740991
+                      },
+                      "jitter": {
+                        "type": "boolean"
                       },
                       "lodFadeStart": {
                         "type": "number"

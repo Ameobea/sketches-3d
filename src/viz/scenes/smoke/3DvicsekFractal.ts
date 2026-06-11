@@ -140,7 +140,7 @@ export const buildAndAddFractals = (
       roughnessMap: cubesTextureRoughness,
       metalness: 0.7,
       roughness: 0.4,
-      uvTransform: new THREE.Matrix3().scale(0.21, 0.21),
+      uvTransform: new THREE.Matrix3().scale(0.0441, 0.0441),
       mapDisableDistance: 300,
       normalScale: 1.2,
       ambientLightScale: 1.3,

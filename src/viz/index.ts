@@ -291,7 +291,8 @@ export class Viz {
       antialias: false,
       powerPreference: 'high-performance',
       stencil: false,
-      depth: false,
+      // older scenes render directly to the canvas without a composer and need the default depth buffer
+      depth: true,
       logarithmicDepthBuffer: false,
       premultipliedAlpha: false,
       preserveDrawingBuffer: new URLSearchParams(window.location.search).get('render') === 'true',

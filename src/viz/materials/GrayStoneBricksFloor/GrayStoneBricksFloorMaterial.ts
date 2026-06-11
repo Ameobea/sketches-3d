@@ -27,7 +27,7 @@ export const buildGrayStoneBricksFloorMaterial = async (
       map: tilesDiffuse,
       roughness: 0.9,
       metalness: 0.3,
-      uvTransform: new THREE.Matrix3().scale(0.148, 0.148),
+      uvTransform: new THREE.Matrix3().scale(0.021904, 0.021904),
       mapDisableDistance: null,
       ...(propsOverrides ?? {}),
     },

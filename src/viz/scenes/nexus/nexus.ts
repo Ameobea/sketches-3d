@@ -321,7 +321,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   const portalFrameMat = buildCustomShader(
     {
       color: 0x080808,
-      uvTransform: new THREE.Matrix3().scale(0.24073, 0.24073),
+      uvTransform: new THREE.Matrix3().scale(0.0579509329, 0.0579509329),
       normalMap: platformNormal,
       normalScale: 0.75,
       normalMapType: THREE.TangentSpaceNormalMap,

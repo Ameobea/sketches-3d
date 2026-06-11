@@ -5,8 +5,8 @@ float segLen = 0.;
 vec3 segDir = vec3(0., 0., 0.);
 float segLenSq = 0.;
 // Soft camera occlusion: discard fragments inside the reveal cylinder via Bayer dithering.
-// Requires: vWorldPos (vec3 world-space fragment position), getBayer4x4, occlusionParams,
-//           occlusionStart, occlusionEnd — all provided by softOcclusionPreamble.frag.
+// Requires: vWorldPos (vec3 world-space fragment position), a `distanceToCamera` float in
+// scope, getBayer4x4, occlusionParams, occlusionStart, occlusionEnd (preamble).
 if (occlusionParams.z > 0.5) {
   vec3 seg = occlusionEnd - occlusionStart;
   segLenSq = dot(seg, seg);
@@ -35,7 +35,6 @@ if (occlusionParams.z > 0.5) {
       float dist = distance(vWorldPos, occlusionStart + t * seg);
       float revealRadius = occlusionParams.x;
       // TEST: approximately normalize `revealRadius` based on distance to camera with a baseline of 25 units
-      float distanceToCamera = distance(cameraPosition, vWorldPos);
       revealRadius = max(revealRadius * mix(distanceToCamera / 15.0, 1., 0.5), revealRadius * 0.7);
 
       float revealFade = occlusionParams.y;

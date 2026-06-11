@@ -11,21 +11,18 @@
 // (textureGrad handles MIPmap through patch borders)
 #define C(I)  ( textureGrad(samp, U/Z-rnd22(I) ,Gx,Gy) - m*float(CON) )
 
-vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
+// ZOOM = 2^-1.2: folded legacy `z = 0.2` zoom factor (exp2(4*z+1) / 8)
+#define NEYRET_ZOOM 0.4352752816480621
+
+// `m` is the precomputed mean texture color in sampled space (see meanTextureColor.ts).
+vec4 textureNoTileNeyret(sampler2D samp, vec2 uv, vec4 m) {
     mat2 M0 = mat2(1, 0, .5, sqrt(3.) / 2.);
     mat2 M = inverse(M0);
 
-    vec2 z = vec2(0.2);
-    vec2 U = uv * Z / 8. * exp2(z.y == 0. ? 2. : 4. * z.y + 1.);
+    vec2 U = uv * Z * NEYRET_ZOOM;
     vec2 V = M * U;
     vec2 I = floor(V);
     vec2 Gx = dFdx(U / Z), Gy = dFdy(U / Z); // (for cross-borders MIPmap)
-
-    vec4 m = vec4(0.);
-    if (CON > 0.) {
-        // TODO: should pre-compute this and pass as uniform
-        m = texture(samp, U, 99.); // mean texture color
-    }
 
     vec3 F = vec3(fract(V), 0), A, W;
     F.z = 1. - F.x - F.y; // local hexa coordinates
@@ -65,8 +62,7 @@ vec4 textureNoTileNeyret(sampler2D samp, vec2 uv) {
 float getNeyretTapCount(vec2 uv) {
     mat2 M0 = mat2(1, 0, .5, sqrt(3.) / 2.);
     mat2 M = inverse(M0);
-    vec2 z = vec2(0.2);
-    vec2 U = uv * Z / 8. * exp2(z.y == 0. ? 2. : 4. * z.y + 1.);
+    vec2 U = uv * Z * NEYRET_ZOOM;
     vec2 V = M * U;
     vec3 F = vec3(fract(V), 0);
     F.z = 1. - F.x - F.y;

@@ -12,10 +12,6 @@ export interface AmbientDistanceAmpParams {
   ampFactor: number;
 }
 
-export interface ReflectionParams {
-  alpha: number;
-}
-
 /**
  * Used for determining default behavior like sound effects for when the player lands on a surface
  */
@@ -67,7 +63,7 @@ export interface CustomShaderProps {
    * analytic UV frame at the displaced sample point.
    *
    * Combined additively with `shaders.pomHeightShader` if both are provided;
-   * the sum is clamped to `[0, 1]` before scaling by `pom.depth`.
+   * the sum is clamped to `[0, 0.8]` before scaling by `pom.depth`.
    */
   pomHeightMap?: THREE.Texture;
   normalMapType?: THREE.NormalMapTypes;
@@ -125,15 +121,12 @@ export interface CustomShaderProps {
    */
   ambientDistanceAmp?: AmbientDistanceAmpParams;
   /**
-   * Controls screen-space reflections.
-   */
-  reflection?: Partial<ReflectionParams>;
-  /**
-   * Fades the fragment's alpha to zero based on world-space Y position. Auto-sets
-   * `transparent: true` on the material so alpha blending is actually applied.
+   * Darkens the fragment toward black based on world-space Y position. Despite the name, this
+   * does NOT touch alpha — true alpha fading proved too hard to make look good, so the
+   * implementation fades the output color to black instead (works well against dark fog/sky).
    *
-   * `bottomFade: [fadeStart, fadeEnd]` — alpha ramps from 0 (at fadeStart) to 1 (at fadeEnd).
-   * `topFade: [fadeStart, fadeEnd]`    — alpha ramps from 1 (at fadeStart) to 0 (at fadeEnd).
+   * `bottomFade: [fadeStart, fadeEnd]` — fully black at fadeStart, unfaded at fadeEnd.
+   * `topFade: [fadeStart, fadeEnd]`    — unfaded at fadeStart, fully black at fadeEnd.
    *
    * Both are optional; omit either to skip that direction.
    */
@@ -185,7 +178,7 @@ export interface CustomShaderShaders {
    *
    * Requires `opts.pom` to be set, and at least one of this or
    * `props.pomHeightMap` must be provided. If both are provided, their values
-   * are added together (then clamped to `[0, 1]`). Mutually exclusive with
+   * are added together (then clamped to `[0, 0.8]`). Mutually exclusive with
    * `normalShader` (both fully define `normal`). See `pom` for the texturing
    * modes.
    */
@@ -266,6 +259,13 @@ export interface CustomShaderOptions {
     depth: number;
     /** Linear search step count. Default 24. */
     steps?: number;
+    /**
+     * Offsets each fragment's march phase by interleaved gradient noise, converting
+     * sample-interval banding into unstructured per-pixel noise (which the dithering
+     * pipeline already hides well). Often allows reducing `steps` at equal perceived
+     * quality. Applies to the linear, bounded, and self-shadow marches. Default true.
+     */
+    jitter?: boolean;
     /**
      * Distance (world units) at which POM begins fading to the flat base
      * surface, over `lodFadeRange` units, to suppress sub-pixel aliasing.

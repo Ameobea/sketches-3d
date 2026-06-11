@@ -59,7 +59,6 @@ const resolveShaderProps = (
   if (propsJson.mapDisableTransitionThreshold !== undefined)
     props.mapDisableTransitionThreshold = propsJson.mapDisableTransitionThreshold;
   if (propsJson.ambientDistanceAmp !== undefined) props.ambientDistanceAmp = propsJson.ambientDistanceAmp;
-  if (propsJson.reflection !== undefined) props.reflection = propsJson.reflection;
   if (propsJson.heightAlpha !== undefined) props.heightAlpha = propsJson.heightAlpha;
 
   if (propsJson.side !== undefined) props.side = SIDE_MAP[propsJson.side];

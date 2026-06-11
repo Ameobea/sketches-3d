@@ -17,12 +17,13 @@ export interface TriplanarMappingParams {
 
 /**
  * `buildSampleExpr` substitutes the per-axis texture fetch (e.g. a
- * tile-breaking wrapper). `tileBreakingMode` controls how
+ * tile-breaking wrapper); `mean` is a GLSL expression for the texture's
+ * precomputed mean color. `tileBreakingMode` controls how
  * `getCombinedTriplanarTapCount` reports per-axis cost.
  */
 export const buildTriplanarDefsFragment = (
   { contrastPreservationFactor, sharpenFactor }: TriplanarMappingParams,
-  buildSampleExpr: (sampler: string, uv: string) => string = (s, u) => `texture2D(${s}, ${u})`,
+  buildSampleExpr: (sampler: string, uv: string, mean: string) => string = (s, u) => `texture2D(${s}, ${u})`,
   tileBreakingMode: 'none' | 'neyret' = 'none'
 ) => {
   const perAxisTapCountExpr = (axisUv: string) =>
@@ -50,18 +51,18 @@ export const buildTriplanarDefsFragment = (
     return total;
   }
 
-  vec4 triplanarTexture(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
+  vec4 triplanarTexture(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec4 meanColor) {
     vec3 weights = generateTriplanarWeights(normal);
 
     vec4 outColor = vec4(0.);
     if (weights.x > 0.01) {
-      outColor += ${buildSampleExpr('map', 'pos.yz * uvScale')} * weights.x;
+      outColor += ${buildSampleExpr('map', 'pos.yz * uvScale', 'meanColor')} * weights.x;
     }
     if (weights.y > 0.01) {
-      outColor += ${buildSampleExpr('map', 'pos.zx * uvScale')} * weights.y;
+      outColor += ${buildSampleExpr('map', 'pos.zx * uvScale', 'meanColor')} * weights.y;
     }
     if (weights.z > 0.01) {
-      outColor += ${buildSampleExpr('map', 'pos.xy * uvScale')} * weights.z;
+      outColor += ${buildSampleExpr('map', 'pos.xy * uvScale', 'meanColor')} * weights.z;
     }
     return outColor;
   }
@@ -77,7 +78,7 @@ export const buildTriplanarDefsFragment = (
   // normal map, *without* the base normal added back. Adding it to a unit
   // normal and normalizing reproduces the classic triplanar normal map; POM
   // adds it to the analytic floor normal instead.
-  vec3 triplanarNormalMapPerturbation(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale) {
+  vec3 triplanarNormalMapPerturbation(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale, vec4 meanColor) {
     vec3 weights = generateTriplanarWeights(normal);
     if (weights.x < 0.01) {
       weights.x = 0.;
@@ -91,9 +92,9 @@ export const buildTriplanarDefsFragment = (
 
     vec3 axisSign = sign(normal);
 
-    vec2 tnormalX_xy = (${buildSampleExpr('map', 'pos.yz * uvScale')}.xy * 2. - 1.) * normalScale;
-    vec2 tnormalY_xy = (${buildSampleExpr('map', 'pos.zx * uvScale')}.xy * 2. - 1.) * normalScale;
-    vec2 tnormalZ_xy = (${buildSampleExpr('map', 'pos.xy * uvScale')}.xy * 2. - 1.) * normalScale;
+    vec2 tnormalX_xy = (${buildSampleExpr('map', 'pos.yz * uvScale', 'meanColor')}.xy * 2. - 1.) * normalScale;
+    vec2 tnormalY_xy = (${buildSampleExpr('map', 'pos.zx * uvScale', 'meanColor')}.xy * 2. - 1.) * normalScale;
+    vec2 tnormalZ_xy = (${buildSampleExpr('map', 'pos.xy * uvScale', 'meanColor')}.xy * 2. - 1.) * normalScale;
 
     // correct for back-side projection by flipping the x-component
     tnormalX_xy.x *= axisSign.x;
@@ -108,32 +109,31 @@ export const buildTriplanarDefsFragment = (
     return normalX * weights.x + normalY * weights.y + normalZ * weights.z;
   }
 
-  vec4 triplanarTextureNormalMap(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale) {
-    vec3 perturbation = triplanarNormalMapPerturbation(map, pos, uvScale, normal, normalScale);
+  vec4 triplanarTextureNormalMap(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale, vec4 meanColor) {
+    vec3 perturbation = triplanarNormalMapPerturbation(map, pos, uvScale, normal, normalScale, meanColor);
     return vec4(normalize(perturbation + normal), 1.0);
   }
 
-  vec4 triplanarTextureFixContrast(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal) {
+  vec4 triplanarTextureFixContrast(sampler2D map, vec3 pos, vec2 uvScale, vec3 normal, vec4 meanColor) {
     vec3 weights = generateTriplanarWeights(normal);
 
     vec4 outColor = vec4(0.);
     if (weights.x > 0.01) {
-      outColor += ${buildSampleExpr('map', 'pos.yz * uvScale')} * weights.x;
+      outColor += ${buildSampleExpr('map', 'pos.yz * uvScale', 'meanColor')} * weights.x;
     }
     if (weights.y > 0.01) {
-      outColor += ${buildSampleExpr('map', 'pos.zx * uvScale')} * weights.y;
+      outColor += ${buildSampleExpr('map', 'pos.zx * uvScale', 'meanColor')} * weights.y;
     }
     if (weights.z > 0.01) {
-      outColor += ${buildSampleExpr('map', 'pos.xy * uvScale')} * weights.z;
+      outColor += ${buildSampleExpr('map', 'pos.xy * uvScale', 'meanColor')} * weights.z;
     }
 
     ${
       contrastPreservationFactor > 0
         ? `
-      vec4 meanTextureColor = texture(map, vec2(0.5, 0.5), 99.);
       // contrast preserving interp. cf https://www.shadertoy.com/view/4dcSDr
       float divisor = sqrt(weights.x * weights.x + weights.y * weights.y + weights.z * weights.z);
-      vec4 contrastCorrected = meanTextureColor + (outColor - meanTextureColor) * divisor;
+      vec4 contrastCorrected = meanColor + (outColor - meanColor) * divisor;
       outColor = mix(outColor, contrastCorrected, ${contrastPreservationFactor.toFixed(3)});
     `
         : ''

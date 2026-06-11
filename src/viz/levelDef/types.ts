@@ -169,10 +169,6 @@ export const AmbientDistanceAmpParamsSchema = z.object({
   ampFactor: z.number(),
 });
 
-export const ReflectionParamsSchema = z.object({
-  alpha: z.number().optional(),
-});
-
 export const TriplanarMappingParamsJsonSchema = z.object({
   contrastPreservationFactor: z.number().optional(),
   sharpenFactor: z.number().optional(),
@@ -268,7 +264,6 @@ export const ShaderPropsJsonSchema = z.object({
   pomHeightMap: z.string().optional(),
   // complex but JSON-safe
   ambientDistanceAmp: AmbientDistanceAmpParamsSchema.optional(),
-  reflection: ReflectionParamsSchema.optional(),
   heightAlpha: z
     .object({
       bottomFade: Vec2.optional(),
@@ -295,6 +290,7 @@ export const ShaderOptionsJsonSchema = z.object({
     .object({
       depth: z.number(),
       steps: z.number().int().min(1),
+      jitter: z.boolean().optional(),
       lodFadeStart: z.number().optional(),
       lodFadeRange: z.number().optional(),
       boundedSilhouette: z.boolean().optional(),
@@ -404,7 +400,6 @@ export const MaterialDefSchema = z.discriminatedUnion('type', [
 ]);
 
 export type AmbientDistanceAmpParams = z.infer<typeof AmbientDistanceAmpParamsSchema>;
-export type ReflectionParams = z.infer<typeof ReflectionParamsSchema>;
 export type TriplanarMappingParamsJson = z.infer<typeof TriplanarMappingParamsJsonSchema>;
 export type ReverseColorRampParamsJson = z.infer<typeof ReverseColorRampParamsSchema>;
 export type ShaderShadersJson = z.infer<typeof ShaderShadersJsonSchema>;

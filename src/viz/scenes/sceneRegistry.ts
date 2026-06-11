@@ -238,14 +238,6 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     metadata: { title: 'CSG sandbox' },
     legacyLights: false,
   },
-  ssrSandbox: {
-    modulePath: 'src/viz/scenes/ssrSandbox/ssrSandbox',
-    sceneName: 'Scene',
-    gltfName: 'basalt',
-    extension: 'glb',
-    metadata: { title: 'SSR sandbox' },
-    legacyLights: false,
-  },
   movement_v2: {
     modulePath: 'src/viz/scenes/movement_v2/movement_v2.svelte.ts',
     sceneName: 'Scene',
