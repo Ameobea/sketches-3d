@@ -79,6 +79,12 @@ export interface BtKinematicCharacterController {
     followSlope: boolean
   ): void;
   isBoostEffective(): boolean;
+  /**
+   * Boost chargeup blend factor in [0, 1]: the fraction of the boost surface's speed bonus
+   * currently applied (post ramp curve, tapered through the coyote window).  0 when no boost
+   * is active.
+   */
+  getBoostChargeRatio(): number;
   setCurrentFloorExtVelDamping(
     gx: number,
     gy: number,

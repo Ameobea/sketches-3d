@@ -763,17 +763,24 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
-            description: "Source position"
+            description: "Source position (the eye)"
           },
           ArgDef {
             name: "target",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
-            description: "Target position"
+            description: "Target position to look at"
+          },
+          ArgDef {
+            name: "up",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
+            description: "Up hint used to control roll"
           },
         ],
-        description: "TODO: this is currently broken",
+        description: "Euler angles (radians, XYZ) for an orientation whose local -Z points from `pos` toward `target`, with local +Y aligned to `up`. Feed the result to `rot`.",
         return_type: &[ArgType::Vec3],
       },
       FnSignature {
@@ -790,19 +797,134 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Required,
-            description: ""
+            description: "Target position to look at"
           },
           ArgDef {
             name: "up",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
-            description: ""
+            description: "Up hint used to control roll"
           },
         ],
-        description: "Orients a mesh to look at a target point.  This replaces any currently applied rotation.\n\nThere's a good chance this implementation is broken too...",
-        return_type: &[ArgType::Vec3],
+        description: "Orients a mesh so its local -Z points at `target`, with `up` controlling roll. Replaces the current rotation while preserving position and scale.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "target",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Target position to look at"
+          },
+          ArgDef {
+            name: "up",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
+            description: "Up hint used to control roll"
+          },
+        ],
+        description: "Orients a light so its local -Z (emission direction) points at `target`, with `up` controlling roll. Replaces the current rotation while preserving position.",
+        return_type: &[ArgType::Light],
       }
+    ],
+  },
+  "align" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "World-space direction to point the `from` axis along (auto-normalized)"
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "from",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 0., -1.))),
+            description: "Local-space axis to align (auto-normalized); defaults to -Z"
+          },
+          ArgDef {
+            name: "up_from",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional secondary local axis for roll control, rolled toward `up_to` (best-effort, projected perpendicular to `from`). Must be paired with `up_to`."
+          },
+          ArgDef {
+            name: "up_to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "World-space target for `up_from`. Must be paired with `up_from`."
+          },
+        ],
+        description: "Rotates a mesh so its local `from` axis points along world-space direction `to`. Without `up_from`/`up_to` this is the minimal rotation (no roll control); supplying them additionally rolls about `to` so `up_from` points toward `up_to`. Replaces the current rotation while preserving position and scale.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "World-space direction to point the `from` axis along (auto-normalized)"
+          },
+          ArgDef {
+            name: "light",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Light),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "from",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 0., -1.))),
+            description: "Local-space axis to align (auto-normalized); defaults to -Z"
+          },
+          ArgDef {
+            name: "up_from",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional secondary local axis for roll control, rolled toward `up_to` (best-effort, projected perpendicular to `from`). Must be paired with `up_to`."
+          },
+          ArgDef {
+            name: "up_to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "World-space target for `up_from`. Must be paired with `up_from`."
+          },
+        ],
+        description: "Rotates a light so its local `from` axis points along world-space direction `to`. Without `up_from`/`up_to` this is the minimal rotation (no roll control); supplying them additionally rolls about `to` so `up_from` points toward `up_to`. Replaces the current rotation while preserving position.",
+        return_type: &[ArgType::Light],
+      },
     ],
   },
   "scale" => FnDef {
@@ -5793,6 +5915,78 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "dot" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Dot product of two Vec3s: `a.x*b.x + a.y*b.y + a.z*b.z`",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Dot product of two Vec2s: `a.x*b.x + a.y*b.y`",
+        return_type: &[ArgType::Float],
+      },
+    ],
+  },
+  "cross" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Cross product of two Vec3s, returning the Vec3 perpendicular to both (right-handed)",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
   "bezier3d" => FnDef {
     module: "path",
     examples: &[],
@@ -7814,6 +8008,115 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Generates an icosphere mesh",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "octahedron" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Circumradius (center-to-vertex distance)"
+          },
+        ],
+        description: "Regular octahedron with vertices on the ±X/±Y/±Z axes (a vertex points straight up). Alias: `diamond`.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "tetrahedron" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Circumradius (center-to-vertex distance)"
+          },
+        ],
+        description: "Regular tetrahedron with circumradius `radius`, inscribed in the cube (sits edge-up).",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "dodecahedron" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Circumradius (center-to-vertex distance)"
+          },
+        ],
+        description: "Regular dodecahedron with circumradius `radius` (sits edge-up).",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "icosahedron" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Circumradius (center-to-vertex distance)"
+          },
+        ],
+        description: "Regular icosahedron with circumradius `radius` (sits edge-up; same as `icosphere(radius, 0)`).",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "bipyramid" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "n",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Number of sides of the equatorial polygon (>= 3)"
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Circumradius of the equatorial polygon"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Distance from the center to each apex along Y"
+          },
+        ],
+        description: "N-gonal bipyramid: a regular `n`-gon equator (radius) in the XZ plane with apexes at ±`height` on Y. `bipyramid(4)` is the axis-aligned octahedron; larger `n` gives gem-like diamonds.",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -10014,6 +10317,137 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Scales a 2D path by (x, y), returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "path_reflect" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "axis",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Direction of the mirror line (need not be normalized)."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Reflects a 2D path across the line running through the origin in the `axis` direction, returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "axis",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Direction of the mirror line (need not be normalized)."
+          },
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Signed perpendicular offset of the mirror line from the origin, measured along the normal `(-axis.y, axis.x)`."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Reflects a 2D path across the line running in the `axis` direction, shifted perpendicular from the origin by `offset`, returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "path_reflect_x" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Reflects a 2D path across the x-axis (negating y), returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y position of the horizontal mirror line."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Reflects a 2D path across the horizontal line `y = offset`, returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "path_reflect_y" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Reflects a 2D path across the y-axis (negating x), returning a new path sampler with the transform composed.",
+        return_type: &[ArgType::Callable],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X position of the vertical mirror line."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Path sampler callable of signature `|t: num|: vec2`."
+          },
+        ],
+        description: "Reflects a 2D path across the vertical line `x = offset`, returning a new path sampler with the transform composed.",
         return_type: &[ArgType::Callable],
       },
     ],

@@ -3915,6 +3915,46 @@ p1 = result(1)
   }
 
   #[test]
+  fn test_path_reflect_e2e() {
+    let src = r#"
+path = trace_svg_path("M 2 3 L 8 3")
+rx = path_reflect_x(path)
+rx_off = path_reflect_x(10, path)
+ry = path_reflect_y(path)
+ry_off = path | path_reflect_y(10)
+diag = path_reflect(vec2(1, 1), path)
+diag_off = path_reflect(vec2(1, 0), 4, path)
+rx0 = rx(0)
+rx1 = rx(1)
+rx_off0 = rx_off(0)
+ry0 = ry(0)
+ry_off0 = ry_off(0)
+ry_off1 = ry_off(1)
+diag0 = diag(0)
+diag1 = diag(1)
+diag_off0 = diag_off(0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let g = |name: &str| *ctx.get_global(name).unwrap().as_vec2().unwrap();
+
+    // reflect_x negates y about the x-axis
+    assert_vec2_close(g("rx0"), Vec2::new(2.0, -3.0));
+    assert_vec2_close(g("rx1"), Vec2::new(8.0, -3.0));
+    // reflect_x(10): mirror over y = 10
+    assert_vec2_close(g("rx_off0"), Vec2::new(2.0, 17.0));
+    // reflect_y negates x about the y-axis
+    assert_vec2_close(g("ry0"), Vec2::new(-2.0, 3.0));
+    // reflect_y(10) via pipe: mirror over x = 10
+    assert_vec2_close(g("ry_off0"), Vec2::new(18.0, 3.0));
+    assert_vec2_close(g("ry_off1"), Vec2::new(12.0, 3.0));
+    // reflect across the y = x diagonal swaps coords
+    assert_vec2_close(g("diag0"), Vec2::new(3.0, 2.0));
+    assert_vec2_close(g("diag1"), Vec2::new(3.0, 8.0));
+    // reflect across the line running along +x, offset perpendicular by 4 (mirror over y = 4)
+    assert_vec2_close(g("diag_off0"), Vec2::new(2.0, 5.0));
+  }
+
+  #[test]
   fn test_apply_transforms_and_origin_to_geometry_for_paths() {
     // Test apply_transforms: bake transform into geometry
     let src = r#"

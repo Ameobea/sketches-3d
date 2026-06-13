@@ -310,6 +310,7 @@ export class BulletPhysics {
         const z = walk.z() + ext.z();
         return Math.hypot(x, y, z);
       },
+      getBoostChargeRatio: () => this.playerController.getBoostChargeRatio(),
     };
   }
 

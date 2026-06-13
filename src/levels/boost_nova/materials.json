@@ -59,6 +59,161 @@
           "file": "triangleGrid.normal.glsl"
         }
       }
+    },
+    "grooved_plastic": {
+      "type": "customShader",
+      "props": {
+        "color": "#5d5e60",
+        "roughness": 0.6,
+        "metalness": 0
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false,
+        "antialiasColorShader": true,
+        "pom": {
+          "depth": 0.07,
+          "steps": 8,
+          "lodFadeStart": 12,
+          "lodFadeRange": 30,
+          "refinement": "binary",
+          "refinementSteps": 3,
+          "applyReliefNormal": true
+        }
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "groovedPlastic.common.glsl"
+        },
+        "colorShader": {
+          "file": "groovedPlastic.color.glsl"
+        },
+        "lightAttenuationShader": {
+          "file": "groovedPlastic.attenuation.glsl"
+        },
+        "pomHeightShader": {
+          "file": "groovedPlastic.height.glsl"
+        },
+        "pomNormalShader": {
+          "file": "groovedPlastic.normal.glsl"
+        }
+      }
+    },
+    "panel_seams": {
+      "type": "customShader",
+      "props": {
+        "color": "#5d5e60",
+        "roughness": 0.6,
+        "metalness": 0
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false,
+        "antialiasColorShader": true,
+        "pom": {
+          "depth": 0.05,
+          "steps": 6,
+          "lodFadeStart": 10,
+          "lodFadeRange": 25,
+          "refinement": "binary",
+          "refinementSteps": 3,
+          "applyReliefNormal": true
+        }
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "panelSeams.common.glsl"
+        },
+        "colorShader": {
+          "file": "panelSeams.color.glsl"
+        },
+        "lightAttenuationShader": {
+          "file": "panelSeams.attenuation.glsl"
+        },
+        "pomHeightShader": {
+          "file": "panelSeams.height.glsl"
+        },
+        "pomNormalShader": {
+          "file": "panelSeams.normal.glsl"
+        }
+      }
+    },
+    "superellipse_tiles": {
+      "type": "customShader",
+      "props": {
+        "color": "#7d796f",
+        "roughness": 0.5,
+        "metalness": 0
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false,
+        "pom": {
+          "depth": 0.16,
+          "steps": 10,
+          "lodFadeStart": 16,
+          "lodFadeRange": 40,
+          "refinement": "binary",
+          "refinementSteps": 4,
+          "applyReliefNormal": true
+        }
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "superellipseTiles.common.glsl"
+        },
+        "colorShader": {
+          "file": "superellipseTiles.color.glsl"
+        },
+        "lightAttenuationShader": {
+          "file": "superellipseTiles.attenuation.glsl"
+        },
+        "pomHeightShader": {
+          "file": "superellipseTiles.height.glsl"
+        },
+        "pomNormalShader": {
+          "file": "superellipseTiles.normal.glsl"
+        }
+      }
+    },
+    "grate_trench": {
+      "type": "customShader",
+      "props": {
+        "color": "#5d5e60",
+        "roughness": 0.6,
+        "metalness": 0
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false,
+        "antialiasColorShader": true,
+        "pom": {
+          "depth": 0.12,
+          "steps": 10,
+          "lodFadeStart": 12,
+          "lodFadeRange": 30,
+          "refinement": "binary",
+          "refinementSteps": 3,
+          "applyReliefNormal": true
+        }
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "grateTrench.common.glsl"
+        },
+        "colorShader": {
+          "file": "grateTrench.color.glsl"
+        },
+        "lightAttenuationShader": {
+          "file": "grateTrench.attenuation.glsl"
+        },
+        "pomHeightShader": {
+          "file": "grateTrench.height.glsl"
+        },
+        "pomNormalShader": {
+          "file": "grateTrench.normal.glsl"
+        }
+      }
     }
   }
 }

@@ -4046,6 +4046,168 @@ c = vec3(1) * 2 + (vec3(4,4,4) / 2)
 }
 
 #[test]
+fn test_dot_cross_builtins() {
+  let src = r#"
+d3 = dot(vec3(1,2,3), vec3(4,5,6))
+d2 = dot(vec2(1,2), vec2(3,4))
+d2_pipe = vec2(1,0) | dot(vec2(0,1))
+c = cross(vec3(1,0,0), vec3(0,1,0))
+c_pipe = vec3(0,0,1) | cross(vec3(1,0,0))
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let Value::Float(d3) = ctx.get_global("d3").unwrap() else {
+    panic!("expected Float");
+  };
+  assert_eq!(d3, 32.); // 4 + 10 + 18
+
+  let Value::Float(d2) = ctx.get_global("d2").unwrap() else {
+    panic!("expected Float");
+  };
+  assert_eq!(d2, 11.); // 3 + 8
+
+  let Value::Float(d2_pipe) = ctx.get_global("d2_pipe").unwrap() else {
+    panic!("expected Float");
+  };
+  assert_eq!(d2_pipe, 0.);
+
+  let Value::Vec3(c) = ctx.get_global("c").unwrap() else {
+    panic!("expected Vec3");
+  };
+  assert_eq!(c, Vec3::new(0., 0., 1.));
+
+  // pipe appends the piped value as the final arg, so this is `cross(vec3(1,0,0), vec3(0,0,1))`
+  let Value::Vec3(c_pipe) = ctx.get_global("c_pipe").unwrap() else {
+    panic!("expected Vec3");
+  };
+  assert_eq!(c_pipe, Vec3::new(0., -1., 0.));
+}
+
+#[test]
+fn test_look_at() {
+  // -Z forward convention: after look_at, the object's local -Z (negated 3rd transform column)
+  // points at the target; position and scale are preserved.
+  let src = r#"
+m = box(1,1,1) | scale(2) | trans_global(0, 5, 0) | look_at(target=vec3(10, 5, 0))
+angles = look_at(vec3(0,0,0), vec3(1, 0, 0))
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let Value::Mesh(m) = ctx.get_global("m").unwrap() else {
+    panic!("expected Mesh");
+  };
+  let t = &m.transform;
+  let forward = -t.column(2).xyz().normalize();
+  assert!((forward - Vec3::new(1., 0., 0.)).norm() < 1e-5, "forward={forward:?}");
+  assert!((t.column(3).xyz() - Vec3::new(0., 5., 0.)).norm() < 1e-5);
+  assert!((t.column(0).norm() - 2.).abs() < 1e-5, "scale preserved");
+
+  // Euler-angle form: feeding the result to `from_euler_angles` and rotating local -Z must
+  // reproduce the look direction.
+  let Value::Vec3(a) = ctx.get_global("angles").unwrap() else {
+    panic!("expected Vec3");
+  };
+  let r = nalgebra::UnitQuaternion::from_euler_angles(a.x, a.y, a.z);
+  let fwd = r * Vec3::new(0., 0., -1.);
+  assert!((fwd - Vec3::new(1., 0., 0.)).norm() < 1e-5, "fwd={fwd:?}");
+}
+
+#[test]
+fn test_align() {
+  let src = r#"
+// default `from` = -Z, pointed at world +X; piped object with positional `to`
+a = box(1,1,1) | scale(3) | trans_global(2, 0, 0) | align(vec3(1, 0, 0))
+// custom `from`: point local +Z at world +Y
+b = box(1,1,1) | align(vec3(0, 1, 0), from=vec3(0, 0, 1))
+// absolute: replaces any prior rotation
+c = box(1,1,1) | rot(vec3(0.3, 1.0, -0.7)) | align(vec3(1, 0, 0))
+// roll control: stand cube on its (1,1,1) corner, with the (1,-1,1) corner toward +X
+d = box() | align(from=v3(1,1,1), to=v3(0,1,0), up_from=v3(1,-1,1), up_to=v3(1,0,0))
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let Value::Mesh(a) = ctx.get_global("a").unwrap() else {
+    panic!("expected Mesh");
+  };
+  let fwd = -a.transform.column(2).xyz().normalize();
+  assert!((fwd - Vec3::new(1., 0., 0.)).norm() < 1e-5, "fwd={fwd:?}");
+  assert!((a.transform.column(3).xyz() - Vec3::new(2., 0., 0.)).norm() < 1e-5);
+  assert!((a.transform.column(0).norm() - 3.).abs() < 1e-5, "scale preserved");
+
+  let Value::Mesh(b) = ctx.get_global("b").unwrap() else {
+    panic!("expected Mesh");
+  };
+  let local_z = b.transform.column(2).xyz().normalize();
+  assert!((local_z - Vec3::new(0., 1., 0.)).norm() < 1e-5, "local_z={local_z:?}");
+
+  let Value::Mesh(c) = ctx.get_global("c").unwrap() else {
+    panic!("expected Mesh");
+  };
+  let fwd_c = -c.transform.column(2).xyz().normalize();
+  assert!((fwd_c - Vec3::new(1., 0., 0.)).norm() < 1e-5, "fwd_c={fwd_c:?}");
+
+  let Value::Mesh(d) = ctx.get_global("d").unwrap() else {
+    panic!("expected Mesh");
+  };
+  let basis = d.transform.fixed_view::<3, 3>(0, 0).clone_owned();
+  let up_corner = basis * Vec3::new(1., 1., 1.);
+  assert!(
+    (up_corner.normalize() - Vec3::new(0., 1., 0.)).norm() < 1e-5,
+    "up_corner={up_corner:?}"
+  );
+  // (1,-1,1) corner rolled so its horizontal projection lands on +X (z≈0, x>0)
+  let x_corner = basis * Vec3::new(1., -1., 1.);
+  assert!(x_corner.z.abs() < 1e-5 && x_corner.x > 0., "x_corner={x_corner:?}");
+}
+
+#[test]
+fn test_platonic_solids() {
+  let src = r#"
+oct = octahedron(2)
+dia = diamond()
+cub = cube(3)
+tet = tetrahedron()
+ico = icosahedron()
+dod = dodecahedron()
+bip = bipyramid(6, 2, 3)
+all_manifold = is_manifold(oct) and is_manifold(dia) and is_manifold(cub) and is_manifold(tet) and is_manifold(ico) and is_manifold(dod) and is_manifold(bip)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let get = |name: &str| match ctx.get_global(name).unwrap() {
+    Value::Mesh(m) => m,
+    other => panic!("{name} is not a Mesh: {other:?}"),
+  };
+  let counts = |name: &str| {
+    let m = get(name);
+    (m.mesh.vertices.len(), m.mesh.faces.len())
+  };
+  assert_eq!(counts("oct"), (6, 8));
+  assert_eq!(counts("dia"), (6, 8)); // diamond == octahedron
+  assert_eq!(counts("cub"), (8, 12)); // cube == box
+  assert_eq!(counts("tet"), (4, 4));
+  assert_eq!(counts("ico"), (12, 20));
+  assert_eq!(counts("dod"), (20, 36)); // 12 pentagons, fan-triangulated
+  assert_eq!(counts("bip"), (8, 12)); // hexagonal bipyramid: 6 equator + 2 apex
+
+  // every solid is a closed 2-manifold (validates winding + the dodecahedron dual)
+  let Value::Bool(true) = ctx.get_global("all_manifold").unwrap() else {
+    panic!("a generated solid is not manifold");
+  };
+
+  // octahedron: all verts on the circumsphere of radius 2, with a vertex straight up
+  let oct = get("oct");
+  for v in oct.mesh.vertices.values() {
+    assert!((v.position.norm() - 2.).abs() < 1e-4, "vtx off sphere: {:?}", v.position);
+  }
+  assert!(
+    oct.mesh.vertices.values().any(|v| (v.position - Vec3::new(0., 2., 0.)).norm() < 1e-4),
+    "octahedron should have a vertex pointing straight up"
+  );
+}
+
+#[test]
 fn test_range_op_edge_cases() {
   let src = r#"
 a = 0..5

@@ -75,6 +75,8 @@ export interface FpPlayerStateGetters {
   getPlayerPos: () => [number, number, number];
   /** Magnitude of (walk + external + vertical * up). */
   getTotalVelocityMagnitude: () => number;
+  /** Boost surface chargeup blend factor in [0, 1]; 0 when no boost is active. */
+  getBoostChargeRatio: () => number;
 }
 
 const setupOrbitControls = async (

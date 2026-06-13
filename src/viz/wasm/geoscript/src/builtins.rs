@@ -90,6 +90,8 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "magnitude" => "len",
   "bezier" => "bezier3d",
   "sphere" => "icosphere",
+  "cube" => "box",
+  "diamond" => "octahedron",
   "cyl" => "cylinder",
   "rounded_rectangle" => "superellipse_path",
   "rounded_rect" => "superellipse_path",
@@ -3524,6 +3526,43 @@ fn distance_impl(
   }
 }
 
+fn dot_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let a = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      Ok(Value::Float(a.dot(b)))
+    }
+    1 => {
+      let a = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
+      Ok(Value::Float(a.dot(b)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn cross_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let a = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let b = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      Ok(Value::Vec3(a.cross(b)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn len_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -5089,6 +5128,32 @@ fn icosphere_impl(
   }
 }
 
+fn platonic_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  build: fn(f32) -> LinkedMesh<()>,
+) -> Result<Value, ErrorStack> {
+  let radius = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+  Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(build(radius))))))
+}
+
+fn bipyramid_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let n = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+  if n < 3 {
+    return Err(ErrorStack::new("`bipyramid`: `n` must be >= 3"));
+  }
+  let radius = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+  let height = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+  Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
+    LinkedMesh::new_bipyramid(n as usize, radius, height),
+  )))))
+}
+
 fn cylinder_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -5457,6 +5522,35 @@ fn rot_around_center_impl(
   }
 }
 
+/// Right-handed orientation whose local -Z (forward) points along `dir`, with local +Y aligned
+/// as closely as possible to `up`.  Columns are the local X/Y/Z axes in world space.  Matches the
+/// camera/light forward convention (`-Z` emission).  Falls back to an alternate up if `up` is
+/// parallel to `dir`.
+fn look_at_rotation(dir: Vec3, up: Vec3) -> Matrix3<f32> {
+  let f = dir.normalize();
+  let mut up = up.normalize();
+  if f.cross(&up).norm() < 1e-6 {
+    up = if f.x.abs() < 0.9 { Vec3::x() } else { Vec3::y() };
+  }
+  let s = f.cross(&up).normalize();
+  let u = s.cross(&f);
+  Matrix3::from_columns(&[s, u, -f])
+}
+
+/// Replace the rotational part of `transform` with `rot`, preserving translation and per-axis
+/// scale.
+fn replace_orientation(transform: &Matrix4<f32>, rot: &Matrix3<f32>) -> Matrix4<f32> {
+  let basis = transform.fixed_view::<3, 3>(0, 0);
+  let rs = Matrix3::from_columns(&[
+    rot.column(0) * basis.column(0).norm(),
+    rot.column(1) * basis.column(1).norm(),
+    rot.column(2) * basis.column(2).norm(),
+  ]);
+  let mut out = *transform;
+  out.fixed_view_mut::<3, 3>(0, 0).copy_from(&rs);
+  out
+}
+
 fn look_at_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -5464,63 +5558,105 @@ fn look_at_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
-    // TODO: I'm pretty sure this isn't working like I was expecting it to
     0 => {
-      let pos = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
-      let target = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let pos = *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let target = *arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let up = *arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
 
-      let dir = target - *pos;
-      let up = Vec3::new(0., 1., 0.);
-      let rot = UnitQuaternion::look_at_rh(&dir, &up);
-      let (x, y, z) = rot.euler_angles();
+      let r = look_at_rotation(target - pos, up);
+      let (x, y, z) = Rotation3::from_matrix_unchecked(r).euler_angles();
       Ok(Value::Vec3(Vec3::new(x, y, z)))
     }
-    1 => {
-      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
-      let target = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
-      let up = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
+    // 1: mesh, 2: light — orient so local -Z faces the target, replacing rotation while
+    // preserving translation and per-axis scale.
+    1 | 2 => {
+      let obj = arg_refs[0].resolve(args, kwargs);
+      let target = *arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let up = *arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
 
-      let mut mesh = mesh.clone(true, false, false);
+      let reorient = |transform: &Matrix4<f32>| -> Matrix4<f32> {
+        let pos = transform.column(3).xyz();
+        replace_orientation(transform, &look_at_rotation(target - pos, up))
+      };
 
-      // extract translation
-      let translation = mesh.transform.column(3).xyz();
-
-      // extract current scale
-      let basis3 = mesh.transform.fixed_view::<3, 3>(0, 0).clone_owned();
-      let scale_x = basis3.column(0).norm();
-      let scale_y = basis3.column(1).norm();
-      let scale_z = basis3.column(2).norm();
-
-      let dir = (target - translation).normalize();
-
-      let rotation = Rotation3::rotation_between(up, &dir).ok_or_else(|| {
-        ErrorStack::new(format!(
-          "Error computing rotation; degenerate direction or parallel to up? dir={dir:?}, \
-           up={up:?}"
-        ))
-      })?;
-
-      let rot_mat = rotation
-        .to_homogeneous()
-        .fixed_view::<3, 3>(0, 0)
-        .clone_owned();
-      let new_rs = Matrix3::from_columns(&[
-        rot_mat.column(0) * scale_x,
-        rot_mat.column(1) * scale_y,
-        rot_mat.column(2) * scale_z,
-      ]);
-
-      mesh
-        .transform
-        .fixed_view_mut::<3, 3>(0, 0)
-        .copy_from(&new_rs);
-      mesh.transform[(0, 3)] = translation.x;
-      mesh.transform[(1, 3)] = translation.y;
-      mesh.transform[(2, 3)] = translation.z;
-
-      Ok(Value::Mesh(Rc::new(mesh)))
+      match obj {
+        Value::Mesh(mesh) => {
+          let mut mesh = (**mesh).clone(true, false, false);
+          mesh.transform = reorient(&mesh.transform);
+          Ok(Value::Mesh(Rc::new(mesh)))
+        }
+        Value::Light(light) => {
+          let mut light = (**light).clone();
+          let transform = light.transform_mut();
+          *transform = reorient(transform);
+          Ok(Value::Light(Box::new(light)))
+        }
+        _ => unreachable!(),
+      }
     }
     _ => unimplemented!(),
+  }
+}
+
+fn min_rotation(from: Vec3, to: Vec3) -> Matrix3<f32> {
+  Rotation3::rotation_between(&from, &to)
+    .map(|r| *r.matrix())
+    .unwrap_or_else(Matrix3::identity)
+}
+
+/// Rotation mapping the orthonormal frame built from (`from`, `up_from`) onto the one built from
+/// (`to`, `up_to`): `from`→`to` exactly, and `up_from`'s component perpendicular to `from` onto
+/// `up_to`'s perpendicular component.  Falls back to the minimal `from`→`to` rotation if either
+/// secondary axis is degenerate (zero, or parallel to its primary).
+fn orient_two(from: Vec3, to: Vec3, up_from: Vec3, up_to: Vec3) -> Matrix3<f32> {
+  let frame = |primary: Vec3, secondary: Vec3| -> Option<Matrix3<f32>> {
+    let x = primary.try_normalize(1e-6)?;
+    let y = (secondary - x * secondary.dot(&x)).try_normalize(1e-6)?;
+    Some(Matrix3::from_columns(&[x, y, x.cross(&y)]))
+  };
+  match (frame(from, up_from), frame(to, up_to)) {
+    (Some(a), Some(b)) => b * a.transpose(),
+    _ => min_rotation(from, to),
+  }
+}
+
+/// Rotates so the local-space axis `from` points along world-space direction `to` (both
+/// auto-normalized), set as an absolute orientation that replaces the object's current rotation
+/// while preserving position and scale.  An optional `up_from`/`up_to` pair adds roll control.
+fn align_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let to = *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+  let obj = arg_refs[1].resolve(args, kwargs);
+  let from = *arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
+  let up_from = arg_refs[3].resolve(args, kwargs);
+  let up_to = arg_refs[4].resolve(args, kwargs);
+
+  let rot = match (up_from, up_to) {
+    (Value::Nil, Value::Nil) => min_rotation(from, to),
+    (Value::Vec3(up_from), Value::Vec3(up_to)) => orient_two(from, to, *up_from, *up_to),
+    _ => {
+      return Err(ErrorStack::new(
+        "`align`: `up_from` and `up_to` must be provided together",
+      ))
+    }
+  };
+
+  match obj {
+    Value::Mesh(mesh) => {
+      let mut mesh = (**mesh).clone(true, false, false);
+      mesh.transform = replace_orientation(&mesh.transform, &rot);
+      Ok(Value::Mesh(Rc::new(mesh)))
+    }
+    Value::Light(light) => {
+      let mut light = (**light).clone();
+      let transform = light.transform_mut();
+      *transform = replace_orientation(transform, &rot);
+      Ok(Value::Light(Box::new(light)))
+    }
+    _ => unreachable!(),
   }
 }
 
@@ -5812,6 +5948,84 @@ fn path_scale_impl(
 
   let s = nalgebra::Matrix3::new(sx, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 1.0);
   apply_path_transform(&cb, s)
+}
+
+/// Reflection across the line `n·p = c`, where `n` is a unit normal.
+fn reflect_matrix(n: Vec2, c: f32) -> nalgebra::Matrix3<f32> {
+  let (nx, ny) = (n.x, n.y);
+  nalgebra::Matrix3::new(
+    1.0 - 2.0 * nx * nx,
+    -2.0 * nx * ny,
+    2.0 * c * nx,
+    -2.0 * nx * ny,
+    1.0 - 2.0 * ny * ny,
+    2.0 * c * ny,
+    0.0,
+    0.0,
+    1.0,
+  )
+}
+
+fn path_reflect_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (axis, offset, path_arg) = match def_ix {
+    0 => (
+      *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
+      0.0,
+      &arg_refs[1],
+    ),
+    1 => (
+      *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
+      arg_refs[1].resolve(args, kwargs).as_float().unwrap(),
+      &arg_refs[2],
+    ),
+    _ => unimplemented!(),
+  };
+
+  let len = axis.magnitude();
+  if len < 1e-9 {
+    return Err(ErrorStack::new(
+      "path_reflect: `axis` direction must be non-zero",
+    ));
+  }
+  let d = axis / len;
+  let n = Vec2::new(-d.y, d.x);
+
+  let cb = path_arg
+    .resolve(args, kwargs)
+    .as_callable()
+    .ok_or_else(|| ErrorStack::new("path_reflect: expected a callable path sampler"))?;
+
+  apply_path_transform(&cb, reflect_matrix(n, offset))
+}
+
+fn path_reflect_axis_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  n: Vec2,
+  name: &str,
+) -> Result<Value, ErrorStack> {
+  let (offset, path_arg) = match def_ix {
+    0 => (0.0, &arg_refs[0]),
+    1 => (
+      arg_refs[0].resolve(args, kwargs).as_float().unwrap(),
+      &arg_refs[1],
+    ),
+    _ => unimplemented!(),
+  };
+
+  let cb = path_arg
+    .resolve(args, kwargs)
+    .as_callable()
+    .ok_or_else(|| ErrorStack::new(format!("{name}: expected a callable path sampler")))?;
+
+  apply_path_transform(&cb, reflect_matrix(n, offset))
 }
 
 pub(crate) fn make_tagged_map(entries: &[(&str, Value)]) -> Value {
@@ -7359,6 +7573,21 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "icosphere" => builtin_fn!(icosphere, |def_ix, arg_refs, args, kwargs, _ctx| {
     icosphere_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "octahedron" => builtin_fn!(octahedron, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    platonic_impl(arg_refs, args, kwargs, LinkedMesh::<()>::new_octahedron)
+  }),
+  "tetrahedron" => builtin_fn!(tetrahedron, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    platonic_impl(arg_refs, args, kwargs, LinkedMesh::<()>::new_tetrahedron)
+  }),
+  "dodecahedron" => builtin_fn!(dodecahedron, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    platonic_impl(arg_refs, args, kwargs, LinkedMesh::<()>::new_dodecahedron)
+  }),
+  "icosahedron" => builtin_fn!(icosahedron, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    platonic_impl(arg_refs, args, kwargs, LinkedMesh::<()>::new_icosahedron)
+  }),
+  "bipyramid" => builtin_fn!(bipyramid, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    bipyramid_impl(arg_refs, args, kwargs)
+  }),
   "cylinder" => builtin_fn!(cylinder, |def_ix, arg_refs, args, kwargs, _ctx| {
     cylinder_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -7397,6 +7626,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "look_at" => builtin_fn!(look_at, |def_ix, arg_refs, args, kwargs, _ctx| {
     look_at_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "align" => builtin_fn!(align, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    align_impl(arg_refs, args, kwargs)
   }),
   "origin_to_geometry" => builtin_fn!(origin_to_geometry, |def_ix, arg_refs, args, kwargs, _ctx| {
     origin_to_geometry_impl(def_ix, arg_refs, args, kwargs)
@@ -7771,6 +8003,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "normalize" => builtin_fn!(normalize, |def_ix, arg_refs, args, kwargs, _ctx| {
     normalize_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "dot" => builtin_fn!(dot, |def_ix, arg_refs, args, kwargs, _ctx| {
+    dot_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "cross" => builtin_fn!(cross, |def_ix, arg_refs, args, kwargs, _ctx| {
+    cross_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "bezier3d" => builtin_fn!(bezier3d, |def_ix, arg_refs, args, kwargs, _ctx| {
     bezier3d_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -7881,6 +8119,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "path_scale" => builtin_fn!(path_scale, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_scale_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "path_reflect" => builtin_fn!(path_reflect, |def_ix, arg_refs, args, kwargs, _ctx| {
+    path_reflect_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "path_reflect_x" => builtin_fn!(path_reflect_x, |def_ix, arg_refs, args, kwargs, _ctx| {
+    path_reflect_axis_impl(def_ix, arg_refs, args, kwargs, Vec2::new(0.0, 1.0), "path_reflect_x")
+  }),
+  "path_reflect_y" => builtin_fn!(path_reflect_y, |def_ix, arg_refs, args, kwargs, _ctx| {
+    path_reflect_axis_impl(def_ix, arg_refs, args, kwargs, Vec2::new(1.0, 0.0), "path_reflect_y")
   }),
   "extrude_along_normals" => builtin_fn!(extrude_along_normals, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_along_normals_impl(ctx, def_ix, arg_refs, args, kwargs)

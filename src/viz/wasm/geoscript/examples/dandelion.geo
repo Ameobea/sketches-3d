@@ -24,7 +24,7 @@ build_spoke = |pos: vec3, norm: vec3| {
   }
 
   spoke = cyl(radius=0.2, height=14, radial_segments=8, height_segments=1)
-  (spoke + pos + norm*6.99) | look_at(target=pos + norm)
+  (spoke + pos + norm*6.99) | align(norm, from=v3(0, 1, 0))
 }
 
 spokes = sph

@@ -21,6 +21,31 @@
       "type": "geoscript",
       "code": "export mesh = box(20, 0.5, 20)",
       "_meta": { "runtimeMs": 0.1, "count": 5, "codeHash": "f62d2760" }
+    },
+    "csg_plat": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "plat",
+            "scale": [5.7575, 183.9949, 2.7639]
+          },
+          {
+            "asset": "cyl",
+            "position": [49.3398, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [11.6366, 100.8851, 11.6366]
+          },
+          {
+            "asset": "cyl",
+            "position": [28.3691, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [11.6366, 100.8851, 11.6366]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 25.6, "count": 1, "codeHash": "c17961", "asyncDeps": [ "cgal" ] }
     }
   },
   "environment": {

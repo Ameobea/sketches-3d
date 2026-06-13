@@ -14,7 +14,7 @@ path = |count: int|: seq {
       -> |pos: vec3| {
         norm = normalize(pos - center)
         window = box(5, 3.2, 5) | trans(pos + norm)
-        window | look_at(target=center, up=v3(0, 0, -1)) | trans_global(0, 0.8, 0)
+        window | look_at(target=center) | trans_global(0, 0.8, 0)
       }
       | join
     )
@@ -24,7 +24,7 @@ path = |count: int|: seq {
       | filter(|pos, i| i % 2 == 0)
       -> |pos: vec3| {
         norm = normalize(pos - center)
-        dir = look_at(pos, center - vec3(0, 4, 0))
+        yaw = atan2(pos.x - center.x, pos.z - center.z)
         pillar = box(0.7, 7.5, 2)
           | tess(target_edge_length=1.6)
           | warp(|v| {
@@ -33,7 +33,7 @@ path = |count: int|: seq {
             }
             v - vec3(0, 0, pow(-v.y * 0.2, 2.4)*4)
           })
-          | rot(vec3(-0.1, -dir.y, 0))
+          | rot(vec3(-0.1, yaw, 0))
         pillar | trans_global(vec3(0, -0.1, 0) + pos + norm*2.5)
       }
       | join
@@ -42,9 +42,9 @@ path = |count: int|: seq {
       | skip(1)
       | take(27)
       -> |pos| {
-        dir = look_at(pos, center)
+        yaw = atan2(pos.x - center.x, pos.z - center.z)
         box(1, 14, 2.3)
-          | rot(vec3(0, -dir.y, 0))
+          | rot(vec3(0, yaw, 0))
           | trans_global(pos - vec3(0, 9, 0))
       }
       | join

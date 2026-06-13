@@ -62,6 +62,54 @@
           "rotation": [0, 0, 0],
           "scale": [3.6213, 0.4817, 3.6213],
           "material": "goal"
+        },
+        {
+          "id": "grooved_border_strip",
+          "asset": "plat",
+          "material": "grooved_plastic",
+          "position": [-7.9273, -2.563, 35.864],
+          "rotation": [0, 0, 0],
+          "scale": [5.7575, 1, 0.3]
+        },
+        {
+          "id": "grooved_test_pad",
+          "asset": "plat",
+          "material": "grooved_plastic",
+          "position": [61.1, -2.563, 5.225],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "panel_seams_test_pad",
+          "asset": "plat",
+          "material": "panel_seams",
+          "position": [61.1, -2.563, -16.9],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "superellipse_test_pad",
+          "asset": "plat",
+          "material": "superellipse_tiles",
+          "position": [61.1, -2.563, 27.35],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "grate_trench_test_pad",
+          "asset": "plat",
+          "material": "grate_trench",
+          "position": [83.25, -2.563, 5.225],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "plat_1",
+          "asset": "csg_plat",
+          "position": [-224.8278, 10.8588, 5.225],
+          "material": "grooved_plastic",
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
         }
       ],
       "position": [5.1586, 2.3972, -13.225],

@@ -558,6 +558,59 @@ fn generate_cap_indices(
   }
 }
 
+/// Regular icosahedron with unit circumradius: three orthogonal golden rectangles aligned to the
+/// coordinate planes (2-fold symmetric about each axis).  Shared by the icosphere, icosahedron, and
+/// dodecahedron (built as its dual).
+const ICOSAHEDRON_VERTICES: &[Vec3] = &[
+  Vec3::new(-0.5257311, 0.8506508, 0.),
+  Vec3::new(0.5257311, 0.8506508, 0.),
+  Vec3::new(-0.5257311, -0.8506508, 0.),
+  Vec3::new(0.5257311, -0.8506508, 0.),
+  Vec3::new(0., -0.5257311, 0.8506508),
+  Vec3::new(0., 0.5257311, 0.8506508),
+  Vec3::new(0., -0.5257311, -0.8506508),
+  Vec3::new(0., 0.5257311, -0.8506508),
+  Vec3::new(0.8506508, 0., -0.5257311),
+  Vec3::new(0.8506508, 0., 0.5257311),
+  Vec3::new(-0.8506508, 0., -0.5257311),
+  Vec3::new(-0.8506508, 0., 0.5257311),
+];
+
+const ICOSAHEDRON_FACES: &[[usize; 3]] = &[
+  [0, 11, 5],
+  [0, 5, 1],
+  [0, 1, 7],
+  [0, 7, 10],
+  [0, 10, 11],
+  [1, 5, 9],
+  [5, 11, 4],
+  [11, 10, 2],
+  [10, 7, 6],
+  [7, 1, 8],
+  [3, 9, 4],
+  [3, 4, 2],
+  [3, 2, 6],
+  [3, 6, 8],
+  [3, 8, 9],
+  [4, 9, 5],
+  [2, 4, 11],
+  [6, 2, 10],
+  [8, 6, 7],
+  [9, 8, 1],
+];
+
+/// Triangle indices wound so the face normal points away from the origin, for origin-centered
+/// convex solids (where "outward" means the normal agrees with the face centroid direction).
+fn outward_tri(verts: &[Vec3], a: usize, b: usize, c: usize) -> [u32; 3] {
+  let normal = (verts[b] - verts[a]).cross(&(verts[c] - verts[a]));
+  let centroid = verts[a] + verts[b] + verts[c];
+  if normal.dot(&centroid) >= 0. {
+    [a as u32, b as u32, c as u32]
+  } else {
+    [a as u32, c as u32, b as u32]
+  }
+}
+
 impl<FaceData: Default> LinkedMesh<FaceData> {
   pub fn new(vertex_count: usize, face_count: usize, transform: Option<Mat4>) -> Self {
     Self {
@@ -2717,57 +2770,18 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     //   Vec3::new(-t, 0., 1.).normalize(),
     // ];
 
-    // same as above but pre-computed::
-    const BASE_VERTICES: &[Vec3] = &[
-      Vec3::new(-0.5257311, 0.8506508, 0.),
-      Vec3::new(0.5257311, 0.8506508, 0.),
-      Vec3::new(-0.5257311, -0.8506508, 0.),
-      Vec3::new(0.5257311, -0.8506508, 0.),
-      Vec3::new(0., -0.5257311, 0.8506508),
-      Vec3::new(0., 0.5257311, 0.8506508),
-      Vec3::new(0., -0.5257311, -0.8506508),
-      Vec3::new(0., 0.5257311, -0.8506508),
-      Vec3::new(0.8506508, 0., -0.5257311),
-      Vec3::new(0.8506508, 0., 0.5257311),
-      Vec3::new(-0.8506508, 0., -0.5257311),
-      Vec3::new(-0.8506508, 0., 0.5257311),
-    ];
-
-    const BASE_FACES: &[[usize; 3]] = &[
-      [0, 11, 5],
-      [0, 5, 1],
-      [0, 1, 7],
-      [0, 7, 10],
-      [0, 10, 11],
-      [1, 5, 9],
-      [5, 11, 4],
-      [11, 10, 2],
-      [10, 7, 6],
-      [7, 1, 8],
-      [3, 9, 4],
-      [3, 4, 2],
-      [3, 2, 6],
-      [3, 6, 8],
-      [3, 8, 9],
-      [4, 9, 5],
-      [2, 4, 11],
-      [6, 2, 10],
-      [8, 6, 7],
-      [9, 8, 1],
-    ];
-
     let total_vtx_count = 10 * (4usize).pow(subdivisions) + 2;
 
     let mut faces: Vec<[usize; 3]> = Vec::new();
     let mut vertices: Vec<Vec3> = Vec::with_capacity(total_vtx_count);
-    vertices.extend_from_slice(BASE_VERTICES);
+    vertices.extend_from_slice(ICOSAHEDRON_VERTICES);
 
     if subdivisions == 0 {
-      faces = BASE_FACES.to_vec();
+      faces = ICOSAHEDRON_FACES.to_vec();
     }
 
     for _ in 0..subdivisions {
-      let old_faces: &[_] = if faces.is_empty() { BASE_FACES } else { &faces };
+      let old_faces: &[_] = if faces.is_empty() { ICOSAHEDRON_FACES } else { &faces };
       let new_face_count = old_faces.len() * 4;
       let mut new_faces = Vec::with_capacity(new_face_count);
       let mut midpoint_cache = FxHashMap::<(usize, usize), usize>::default();
@@ -2818,6 +2832,109 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       .collect();
 
     LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
+  }
+
+  /// Regular octahedron with circumradius `radius`; vertices sit on the ±X/±Y/±Z axes, so a vertex
+  /// points straight up.
+  pub fn new_octahedron(radius: f32) -> Self {
+    let verts = [
+      Vec3::new(radius, 0., 0.),
+      Vec3::new(-radius, 0., 0.),
+      Vec3::new(0., radius, 0.),
+      Vec3::new(0., -radius, 0.),
+      Vec3::new(0., 0., radius),
+      Vec3::new(0., 0., -radius),
+    ];
+    let mut indices = Vec::with_capacity(24);
+    for &x in &[0usize, 1] {
+      for &y in &[2usize, 3] {
+        for &z in &[4usize, 5] {
+          indices.extend_from_slice(&outward_tri(&verts, x, y, z));
+        }
+      }
+    }
+    LinkedMesh::from_indexed_vertices(&verts, &indices, None, None)
+  }
+
+  /// Regular tetrahedron with circumradius `radius`, inscribed in the cube (vertices at four
+  /// alternating cube corners; 2-fold symmetric about each axis).
+  pub fn new_tetrahedron(radius: f32) -> Self {
+    let k = radius / 3f32.sqrt();
+    let verts = [
+      Vec3::new(k, k, k),
+      Vec3::new(k, -k, -k),
+      Vec3::new(-k, k, -k),
+      Vec3::new(-k, -k, k),
+    ];
+    let mut indices = Vec::with_capacity(12);
+    for [a, b, c] in [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]] {
+      indices.extend_from_slice(&outward_tri(&verts, a, b, c));
+    }
+    LinkedMesh::from_indexed_vertices(&verts, &indices, None, None)
+  }
+
+  /// Regular icosahedron with circumradius `radius` (the icosphere's base mesh).
+  pub fn new_icosahedron(radius: f32) -> Self {
+    Self::new_icosphere(radius, 0)
+  }
+
+  /// Regular dodecahedron with circumradius `radius`, built as the dual of the icosahedron: dual
+  /// vertices are the icosahedron's face centroids; dual faces are the pentagons ringing each
+  /// icosahedron vertex.
+  pub fn new_dodecahedron(radius: f32) -> Self {
+    let verts: Vec<Vec3> = ICOSAHEDRON_FACES
+      .iter()
+      .map(|&[a, b, c]| {
+        (ICOSAHEDRON_VERTICES[a] + ICOSAHEDRON_VERTICES[b] + ICOSAHEDRON_VERTICES[c]).normalize()
+          * radius
+      })
+      .collect();
+    let mut indices: Vec<u32> = Vec::with_capacity(108);
+    for vi in 0..ICOSAHEDRON_VERTICES.len() {
+      let mut ring: Vec<usize> = (0..ICOSAHEDRON_FACES.len())
+        .filter(|&f| ICOSAHEDRON_FACES[f].contains(&vi))
+        .collect();
+      // order the ring cyclically by angle in the plane perpendicular to the vertex direction
+      let axis = ICOSAHEDRON_VERTICES[vi];
+      let seed = if axis.x.abs() < 0.9 {
+        Vec3::x()
+      } else {
+        Vec3::y()
+      };
+      let u = (seed - axis * seed.dot(&axis)).normalize();
+      let w = axis.cross(&u);
+      ring.sort_by(|&f1, &f2| {
+        let a1 = verts[f1].dot(&w).atan2(verts[f1].dot(&u));
+        let a2 = verts[f2].dot(&w).atan2(verts[f2].dot(&u));
+        a1.partial_cmp(&a2).unwrap()
+      });
+      for k in 1..ring.len() - 1 {
+        indices.extend_from_slice(&outward_tri(&verts, ring[0], ring[k], ring[k + 1]));
+      }
+    }
+    LinkedMesh::from_indexed_vertices(&verts, &indices, None, None)
+  }
+
+  /// N-gonal bipyramid: a regular `n`-gon equator of circumradius `radius` in the XZ plane with
+  /// apexes at ±`height` on the Y axis.  `new_bipyramid(4, r, r)` is the axis-aligned octahedron.
+  pub fn new_bipyramid(n: usize, radius: f32, height: f32) -> Self {
+    let mut verts: Vec<Vec3> = (0..n)
+      .map(|i| {
+        let a = std::f32::consts::TAU * (i as f32) / (n as f32);
+        Vec3::new(radius * a.cos(), 0., radius * a.sin())
+      })
+      .collect();
+    let top = verts.len();
+    verts.push(Vec3::new(0., height, 0.));
+    let bot = verts.len();
+    verts.push(Vec3::new(0., -height, 0.));
+    let mut indices = Vec::with_capacity(n * 6);
+    for i in 0..n {
+      let j = (i + 1) % n;
+      indices.extend_from_slice(&outward_tri(&verts, top, i, j));
+      indices.extend_from_slice(&outward_tri(&verts, bot, i, j));
+    }
+    LinkedMesh::from_indexed_vertices(&verts, &indices, None, None)
   }
 
   pub fn new_cylinder(
