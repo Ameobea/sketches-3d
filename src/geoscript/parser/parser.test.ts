@@ -89,6 +89,10 @@ const CASES: Case[] = [
   // Empty body before newline — Pest preprocessor errors. Lezer accepts with the
   // body being whatever follows on the next line.
   { src: 'x = ||\n 1', expected: { err: true }, lezerOnlyOk: 1 },
+  // `from` is contextual: a valid identifier/kwarg name everywhere except an import.
+  { src: 'align(from=1, to=2)', expected: { ok: 1 } },
+  { src: 'from = 5', expected: { ok: 1 } },
+  { src: 'import { a, b } from "mod"', expected: { ok: 1 } },
 ];
 
 interface LezerResult {

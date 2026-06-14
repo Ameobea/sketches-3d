@@ -3782,6 +3782,9 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   ("a || b", ParseOutcome::Ok(1)),
   ("a | b", ParseOutcome::Ok(1)),
   ("x = ||\n 1", ParseOutcome::Err("empty body")),
+  // `from` is contextual: a valid identifier/kwarg name except inside an import.
+  ("align(from=1, to=2)", ParseOutcome::Ok(1)),
+  ("from = 5", ParseOutcome::Ok(1)),
 ];
 
 #[cfg(test)]

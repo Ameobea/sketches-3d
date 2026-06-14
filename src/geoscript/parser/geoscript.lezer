@@ -58,6 +58,7 @@ IfExpr { If !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
 PathBlock { Path "{" statement* "}" }
 
 Path { @extend<Identifier, "path"> }
+From { @extend<Identifier, "from"> }
 
 FnArgDefaultValue { Identifier | literal | ArrayExpr | MapExpr | ParenthesizedExpr | CallExpr | BlockExpr | IfExpr }
 
@@ -168,8 +169,7 @@ MapEntry { MapKV | MapSplat }
   Break { "break" }
   Import { "import" }
   Export { "export" }
-  From { "from" }
-  @precedence { Return, Break, If, ElseIf, Else, Import, Export, From, BoolLiteral, NilLiteral, Identifier }
+  @precedence { Return, Break, If, ElseIf, Else, Import, Export, BoolLiteral, NilLiteral, Identifier }
 
   doubleQuoteStringContent { !["\\\n]+ }
   singleQuoteStringContent { !['\\\n]+ }
