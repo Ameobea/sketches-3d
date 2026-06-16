@@ -24,7 +24,11 @@ pub struct NodeDef {
   pub id: String,
   pub name: String,
   pub source: String,
-  pub transform: Transform3,
+  /// Per-node placements; length >= 1. The single-copy case is `instances.len() == 1`.
+  pub instances: Vec<Transform3>,
+  /// Opaque gizmo-value passthrough (populated by the editor; stored verbatim here).
+  #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+  pub handles: serde_json::Map<String, serde_json::Value>,
   pub children: Vec<String>,
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub disabled: bool,
@@ -32,6 +36,7 @@ pub struct NodeDef {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TreeDef {
+  pub version: u32,
   /// Id of the always-present `_root` compositor node.
   #[serde(rename = "rootId")]
   pub root_id: String,
@@ -633,7 +638,7 @@ ORDER BY c.updated_at DESC
     } else {
       // Stub TreeDef containing only an empty `_root`. Used as a placeholder when the
       // caller didn't ask for the actual code.
-      "'{\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"name\":\"_root\",\"source\":\"\",\"transform\":{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":[1,1,1]},\"children\":[]}}}' as latest_tree"
+      "'{\"version\":1,\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"name\":\"_root\",\"source\":\"\",\"instances\":[{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":[1,1,1]}],\"children\":[]}}}' as latest_tree"
     },
     match (limit, offset) {
       (Some(limit), Some(offset)) => format!("LIMIT {limit} OFFSET {offset}"),

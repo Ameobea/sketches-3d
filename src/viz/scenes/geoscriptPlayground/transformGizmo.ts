@@ -2,18 +2,19 @@ import type * as THREE from 'three';
 
 import type { Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { CustomGizmo } from 'src/viz/gizmos/customGizmo';
-import { TreeNodeTarget } from 'src/viz/gizmos/targets';
+import { InstanceTarget } from 'src/viz/gizmos/targets';
+import { type GizmoTargetRef, gizmoTargetRefsEqual } from 'src/viz/gizmos/gizmoTypes';
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 export type GizmoSpace = 'world' | 'local';
 
 export interface TransformGizmoCallbacks {
   onDraggingChanged(isDragging: boolean): void;
-  /** Fires once at the start of a drag with the id being edited. */
-  onDragStart?(id: string): void;
+  /** Fires once at the start of a drag with the ref being edited. */
+  onDragStart?(ref: GizmoTargetRef): void;
   /** Fires every frame during a drag (preview) and once on commit. */
-  onTransformChange(id: string, transform: Transform3): void;
-  onDragEnd(id: string): void;
+  onTransformChange(ref: GizmoTargetRef, transform: Transform3): void;
+  onDragEnd(ref: GizmoTargetRef): void;
 }
 
 /** Geotoy adapter around `CustomGizmo`; caller must `update()` per frame. */
@@ -22,7 +23,7 @@ export class TransformGizmo {
   private readonly overlay: THREE.Scene;
   private readonly getTree: () => TreeDef;
   private readonly callbacks: TransformGizmoCallbacks;
-  private attachedId: string | null = null;
+  private attachedRef: GizmoTargetRef | null = null;
 
   constructor(
     camera: THREE.Camera,
@@ -37,11 +38,11 @@ export class TransformGizmo {
     this.gizmo = new CustomGizmo(camera, domElement, {
       onDragStart: () => {
         callbacks.onDraggingChanged(true);
-        if (this.attachedId) callbacks.onDragStart?.(this.attachedId);
+        if (this.attachedRef) callbacks.onDragStart?.(this.attachedRef);
       },
       onDragEnd: () => {
         callbacks.onDraggingChanged(false);
-        if (this.attachedId) callbacks.onDragEnd(this.attachedId);
+        if (this.attachedRef) callbacks.onDragEnd(this.attachedRef);
       },
     });
     overlayScene.add(this.gizmo);
@@ -77,23 +78,32 @@ export class TransformGizmo {
     return this.gizmo.isDragging();
   }
 
-  /** `null` / root / unknown id all detach. */
-  syncTo(nodeId: string | null, tree: TreeDef): void {
+  /** `null` / root / unknown node all detach. `handle` refs are unused until M3. */
+  syncTo(ref: GizmoTargetRef | null, tree: TreeDef): void {
     if (this.gizmo.isDragging()) return; // don't yank mid-drag
 
-    if (nodeId === null || nodeId === tree.rootId || !tree.nodes[nodeId]) {
-      if (this.attachedId !== null) {
+    const node = ref && ref.kind === 'instance' ? tree.nodes[ref.nodeId] : undefined;
+    const detached =
+      ref === null ||
+      ref.kind !== 'instance' ||
+      ref.nodeId === tree.rootId ||
+      !node ||
+      ref.index < 0 ||
+      ref.index >= node.instances.length;
+    if (detached) {
+      if (this.attachedRef !== null) {
         this.gizmo.setTarget(null);
-        this.attachedId = null;
+        this.attachedRef = null;
       }
       return;
     }
 
-    if (this.attachedId === nodeId) return;
-    this.attachedId = nodeId;
+    if (gizmoTargetRefsEqual(this.attachedRef, ref)) return;
+    this.attachedRef = ref;
     this.gizmo.setTarget(
-      new TreeNodeTarget(nodeId, this.getTree, {
-        onChange: (_phase, id, transform) => this.callbacks.onTransformChange(id, transform),
+      new InstanceTarget(ref.nodeId, ref.index, this.getTree, {
+        onChange: (_phase, nodeId, index, transform) =>
+          this.callbacks.onTransformChange({ kind: 'instance', nodeId, index }, transform),
       })
     );
   }

@@ -16,27 +16,37 @@ interface NodeDef {
   id: string;
   name: string;
   source: string;
-  transform: Transform3;
+  instances: Transform3[];
   children: string[];
   disabled?: boolean;
 }
 interface TreeDef {
+  version: 1;
   rootId: string;
   globalsSource: string;
   nodes: Record<string, NodeDef>;
 }
 
 import {
+  addInstance,
   computeMeshCounts,
   createNode,
   deleteNode,
   emptyTree,
   getNodeAncestorChain,
   isAncestorOf,
+  removeInstance,
   renameNode,
   reparent,
+  setInstanceTransform,
   setSource,
 } from './treeOps';
+
+const xform = (x: number, y: number, z: number): Transform3 => ({
+  pos: [x, y, z],
+  rot: [0, 0, 0],
+  scale: [1, 1, 1],
+});
 
 test('emptyTree contains exactly the _root node', () => {
   const t = emptyTree() as TreeDef;
@@ -163,6 +173,45 @@ test('computeMeshCounts returns zero for nodes with no renders', () => {
   const counts = computeMeshCounts(t, new Map());
   assert.equal(counts.get(t.rootId), 0);
   assert.equal(counts.get(a), 0);
+});
+
+test('createNode seeds exactly one identity instance', () => {
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+  assert.equal(t.nodes[a].instances.length, 1);
+  assert.deepEqual(t.nodes[a].instances[0], xform(0, 0, 0));
+});
+
+test('addInstance appends and returns its index; removeInstance refuses the last', () => {
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+
+  assert.equal(addInstance(t, a, xform(1, 2, 3)), 1);
+  assert.equal(t.nodes[a].instances.length, 2);
+  assert.deepEqual(t.nodes[a].instances[1].pos, [1, 2, 3]);
+
+  removeInstance(t, a, 0);
+  assert.equal(t.nodes[a].instances.length, 1);
+  removeInstance(t, a, 0); // last instance: no-op
+  assert.equal(t.nodes[a].instances.length, 1);
+});
+
+test('instance ops refuse _root', () => {
+  const t = emptyTree() as TreeDef;
+  assert.equal(addInstance(t, t.rootId, xform(1, 0, 0)), -1);
+  assert.equal(t.nodes[t.rootId].instances.length, 1);
+});
+
+test('setInstanceTransform writes one index; out-of-range is a no-op', () => {
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+  addInstance(t, a, xform(0, 0, 0));
+
+  setInstanceTransform(t, a, 1, xform(7, 8, 9));
+  assert.deepEqual(t.nodes[a].instances[1].pos, [7, 8, 9]);
+
+  setInstanceTransform(t, a, 5, xform(1, 1, 1));
+  assert.equal(t.nodes[a].instances.length, 2);
 });
 
 test('getNodeAncestorChain returns [node, ..., _root]', () => {

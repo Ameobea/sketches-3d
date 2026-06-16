@@ -56,6 +56,11 @@ const parseTreeOrNull = (raw: string | null): TreeDef | null => {
   }
   if (!parsed || typeof parsed !== 'object') return null;
   const t = parsed as Partial<TreeDef>;
+  // Drafts predating the v1 instances migration are dropped, not upgraded.
+  if (t.version !== 1) {
+    console.warn('Discarding saved tree: not version 1', t);
+    return null;
+  }
   if (typeof t.rootId !== 'string' || t.rootId.length === 0) {
     console.warn('Discarding saved tree: missing/invalid rootId', t);
     return null;

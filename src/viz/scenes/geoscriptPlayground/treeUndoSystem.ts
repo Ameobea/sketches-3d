@@ -9,7 +9,7 @@ import { UndoSystem } from 'src/viz/util/undoSystem';
 import { createNode as opsCreateNode, deleteNode as opsDeleteNode, reparent as opsReparent } from './treeOps';
 
 export type GeotoyUndoEntry =
-  | { type: 'transform'; id: string; before: Transform3; after: Transform3 }
+  | { type: 'transform'; id: string; index: number; before: Transform3; after: Transform3 }
   | { type: 'createNode'; nodeDef: NodeDef; parentId: string; index: number }
   | {
       type: 'deleteSubtree';
@@ -70,9 +70,9 @@ export const applyGeotoyUndoEntry = (
   switch (entry.type) {
     case 'transform': {
       const node = tree.nodes[entry.id];
-      if (!node) return {};
+      if (!node || !node.instances[entry.index]) return {};
       const t = direction === 'undo' ? entry.before : entry.after;
-      node.transform = {
+      node.instances[entry.index] = {
         pos: [t.pos[0], t.pos[1], t.pos[2]],
         rot: [t.rot[0], t.rot[1], t.rot[2]],
         scale: [t.scale[0], t.scale[1], t.scale[2]],
@@ -91,12 +91,15 @@ export const applyGeotoyUndoEntry = (
         id: def.id,
         name: def.name,
         source: def.source,
-        transform: def.transform,
         parentId: entry.parentId,
         index: entry.index,
       });
-      // createNode's opts don't include `disabled`; carry it over here.
-      if (def.disabled) tree.nodes[def.id].disabled = true;
+      // createNode seeds a single identity instance and no handles/disabled;
+      // carry the captured node's full placement state over.
+      const created = tree.nodes[def.id];
+      created.instances = structuredClone(def.instances);
+      if (def.handles) created.handles = structuredClone(def.handles);
+      if (def.disabled) created.disabled = true;
       return { selectAfter: def.id };
     }
     case 'deleteSubtree': {

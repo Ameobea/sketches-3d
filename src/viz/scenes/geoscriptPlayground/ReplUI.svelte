@@ -53,7 +53,11 @@
   import { installRaycastSelect } from './raycastSelect';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
   import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
-  import { populateScene, buildWorldMatrixCache } from 'src/geoscript/runner/geoscriptRunner';
+  import {
+    populateScene,
+    buildWorldMatrixCache,
+    instancePathKey,
+  } from 'src/geoscript/runner/geoscriptRunner';
   import type { MatEntry, RenderedObject } from 'src/geoscript/runner/types';
   import {
     buildCustomMaterials,
@@ -253,18 +257,23 @@
           onDraggingChanged: dragging => {
             orbit.enabled = !dragging;
           },
-          onDragStart: id => {
-            dragStartTransform = treeState.captureTransform(id);
+          onDragStart: ref => {
+            if (ref.kind !== 'instance') return;
+            dragStartTransform = treeState.captureInstanceTransform(ref.nodeId, ref.index);
+            dragSession = { parentMap: buildParentMap(treeState.state.tree) };
           },
-          onTransformChange: (id, transform) => {
-            treeState.setTransform(id, transform);
+          onTransformChange: (ref, transform) => {
+            if (ref.kind !== 'instance') return;
+            treeState.setInstanceTransform(ref.nodeId, ref.index, transform);
             isDirty = true;
             runOrFast();
           },
-          onDragEnd: id => {
-            const after = treeState.captureTransform(id);
+          onDragEnd: ref => {
+            if (ref.kind !== 'instance') return;
+            dragSession = null;
+            const after = treeState.captureInstanceTransform(ref.nodeId, ref.index);
             if (dragStartTransform && after) {
-              treeState.recordTransformChange(id, dragStartTransform, after);
+              treeState.recordInstanceTransformChange(ref.nodeId, ref.index, dragStartTransform, after);
             }
             dragStartTransform = null;
             // Catches the final state if the last `onTransformChange` was dropped by `isRunning`.
@@ -313,7 +322,7 @@
     void lastRunTree;
     if (!gizmo) return;
     const id = sel === null || sel === GLOBALS_SELECTION_ID ? null : sel;
-    gizmo.syncTo(id, treeState.state.tree);
+    gizmo.syncTo(id === null ? null : { kind: 'instance', nodeId: id, index: 0 }, treeState.state.tree);
   });
 
   let hierarchyPanel = $state<{ startRename: (id: string) => void } | null>(null);
@@ -842,7 +851,11 @@
     for (const k of nodeKeys) {
       const n = tree.nodes[k];
       // `children` matters: reparenting changes `compileTree`'s emitted imports.
-      parts.push(`n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.source}:${n.children.join(',')}`);
+      // `instances.length` (not the transforms) matters: add/remove changes the
+      // rendered-object set, so it must force a full re-run while drags stay fast.
+      parts.push(
+        `n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.instances.length}:${n.source}:${n.children.join(',')}`
+      );
     }
     parts.push(`pe:${preludeEjected ? 1 : 0}`);
     const matIds = Object.keys(materialDefinitions.materials).sort();
@@ -854,25 +867,39 @@
   };
 
   let lastEvalInputsHash: string | null = null;
+  // Set for the duration of a gizmo drag, where the tree structure is frozen, so the
+  // fast path can skip the eval-hash recompute + parent-map rebuild every frame.
+  let dragSession: { parentMap: Map<string, string> } | null = null;
+  const _fastScratch = new THREE.Matrix4();
 
   /** Recompose each mesh's `ancestor × localInScript` if only transforms changed. */
   const tryTransformOnlyFastPath = (): boolean => {
     if (isRunning) return false;
     if (lastEvalInputsHash === null) return false;
-    if (computeEvalInputsHash() !== lastEvalInputsHash) return false;
+    const drag = dragSession;
+    if (!drag && computeEvalInputsHash() !== lastEvalInputsHash) return false;
 
-    const tree = treeState.serialize();
-    const worldMatrices = buildWorldMatrixCache(tree, buildParentMap(tree));
+    const tree = treeState.state.tree;
+    const worldMatrices = buildWorldMatrixCache(tree, drag?.parentMap ?? buildParentMap(tree));
+    const worldByKey = new Map<string, THREE.Matrix4>();
+    for (const [nodeId, list] of worldMatrices) {
+      for (const e of list) worldByKey.set(`${nodeId}\x00${instancePathKey(e.path)}`, e.world);
+    }
     for (const obj of renderedObjects) {
       if (!(obj instanceof THREE.Mesh)) continue;
       const sourceNodeId = obj.userData.sourceNodeId as string | undefined;
       const localInScript = obj.userData.localInScript as THREE.Matrix4 | undefined;
-      if (!sourceNodeId || !localInScript) continue;
-      const ancestor = worldMatrices.get(sourceNodeId)?.clone() ?? new THREE.Matrix4();
-      const final = ancestor.multiply(localInScript);
-      final.decompose(obj.position, obj.quaternion, obj.scale);
+      const instancePath = obj.userData.instancePath as number[] | undefined;
+      if (!sourceNodeId || !localInScript || !instancePath) continue;
+      const world = worldByKey.get(`${sourceNodeId}\x00${instancePathKey(instancePath)}`);
+      if (world) _fastScratch.copy(world);
+      else _fastScratch.identity();
+      _fastScratch.multiply(localInScript);
+      _fastScratch.decompose(obj.position, obj.quaternion, obj.scale);
     }
-    lastRunTree = tree;
+    // Skip the snapshot mid-drag: structure is frozen, so `lastRunTree`-derived effects
+    // (solo/disabled visibility) needn't re-run; `onDragEnd`'s final run refreshes it.
+    if (!drag) lastRunTree = treeState.serialize();
     return true;
   };
 
@@ -895,10 +922,10 @@
 
     // Defer disposal until after populate so unchanged objects can be reused.
     const prevObjects = renderedObjects;
-    const prevByReuseKey = new Map<number, RenderedObject>();
+    const prevByReuseKey = new Map<string, RenderedObject>();
     for (const obj of prevObjects) {
-      const key = obj.userData.reuseKey as number | undefined;
-      if (typeof key === 'number') prevByReuseKey.set(key, obj);
+      const key = obj.userData.reuseKey as string | undefined;
+      if (typeof key === 'string') prevByReuseKey.set(key, obj);
     }
     runStats = null;
 
@@ -955,8 +982,8 @@
       });
       renderedObjects = populated.objects;
       for (const obj of prevObjects) {
-        const key = obj.userData.reuseKey as number | undefined;
-        if (typeof key === 'number' && populated.reusedKeys.has(key)) continue;
+        const key = obj.userData.reuseKey as string | undefined;
+        if (typeof key === 'string' && populated.reusedKeys.has(key)) continue;
         removeRenderedObject(obj);
       }
       lastRunTree = tree;
@@ -1006,10 +1033,10 @@
   };
 
   const handleInspectorTransformChange = (id: string, transform: Transform3) => {
-    const before = treeState.captureTransform(id);
+    const before = treeState.captureInstanceTransform(id, 0);
     if (!before) return;
-    treeState.setTransform(id, transform);
-    treeState.recordTransformChange(id, before, transform);
+    treeState.setInstanceTransform(id, 0, transform);
+    treeState.recordInstanceTransformChange(id, 0, before, transform);
     isDirty = true;
     runOrFast();
   };

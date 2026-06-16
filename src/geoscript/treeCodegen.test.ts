@@ -20,11 +20,12 @@ interface NodeDef {
   id: string;
   name: string;
   source: string;
-  transform: Transform3;
+  instances: Transform3[];
   children: string[];
   disabled?: boolean;
 }
 interface TreeDef {
+  version: 1;
   rootId: string;
   globalsSource: string;
   nodes: Record<string, NodeDef>;
@@ -34,12 +35,13 @@ const identity = (): Transform3 => ({ pos: [0, 0, 0], rot: [0, 0, 0], scale: [1,
 
 const node = (overrides: Partial<NodeDef> & Pick<NodeDef, 'id' | 'name'>): NodeDef => ({
   source: '',
-  transform: identity(),
+  instances: [identity()],
   children: [],
   ...overrides,
 });
 
 const tree = (rootId: string, nodes: NodeDef[], globalsSource = ''): TreeDef => ({
+  version: 1,
   rootId,
   globalsSource,
   nodes: Object.fromEntries(nodes.map(n => [n.id, n])),

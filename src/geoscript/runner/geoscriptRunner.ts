@@ -7,9 +7,12 @@ import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../mat
 import type { RenderedObject } from './types';
 import type { GeoscriptAsyncDeps, GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
 import { bitmaskToAsyncDepNames } from '../asyncDepBits';
-import type { TreeDef, NodeDef } from '../geotoyAPIClient';
+import type { TreeDef } from '../geotoyAPIClient';
 import { ROOT_NODE_NAME } from '../geotoyAPIClient';
 import { buildParentMap } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { buildWorldMatrixCache, instancePathKey, type NodeWorldInstance } from './worldMatrixCache';
+export { buildWorldMatrixCache, instancePathKey };
+export type { NodeWorldInstance, WorldMatrixCache } from './worldMatrixCache';
 
 const buildEmptyRunStats = (): RunStats => ({
   runtimeMs: 0,
@@ -295,18 +298,13 @@ export interface PopulateSceneOpts {
    * Previous-run objects keyed by `reuseKey`. Matches are mutated in place and
    * returned in `reusedKeys`; the caller disposes the rest.
    */
-  prev?: Map<number, RenderedObject>;
+  prev?: Map<string, RenderedObject>;
 }
 
 export interface PopulateSceneResult {
   objects: RenderedObject[];
-  reusedKeys: Set<number>;
+  reusedKeys: Set<string>;
 }
-
-const _scratchEuler = new THREE.Euler();
-const _scratchQuat = new THREE.Quaternion();
-const _scratchPos = new THREE.Vector3();
-const _scratchScale = new THREE.Vector3();
 
 const applyLightProps = (target: THREE.Light, source: THREE.Light): void => {
   target.color.copy(source.color);
@@ -342,50 +340,8 @@ const applyLightProps = (target: THREE.Light, source: THREE.Light): void => {
   }
 };
 
-/**
- * Memoized world-matrix lookup: each node's matrix = `parent.world × node.local`,
- * computed once per `populateScene` call. Pulls every ancestor through `parentMap`
- * with a guard against malformed cycles.
- */
-export const buildWorldMatrixCache = (
-  tree: TreeDef,
-  parentMap: Map<string, string>
-): Map<string, THREE.Matrix4> => {
-  const cache = new Map<string, THREE.Matrix4>();
-  const local = (node: NodeDef): THREE.Matrix4 => {
-    _scratchEuler.set(node.transform.rot[0], node.transform.rot[1], node.transform.rot[2], 'YXZ');
-    _scratchQuat.setFromEuler(_scratchEuler);
-    _scratchPos.set(node.transform.pos[0], node.transform.pos[1], node.transform.pos[2]);
-    _scratchScale.set(node.transform.scale[0], node.transform.scale[1], node.transform.scale[2]);
-    return new THREE.Matrix4().compose(_scratchPos, _scratchQuat, _scratchScale);
-  };
-  const get = (id: string, visiting: Set<string>): THREE.Matrix4 => {
-    const cached = cache.get(id);
-    if (cached) return cached;
-    const node = tree.nodes[id];
-    if (!node) {
-      const ident = new THREE.Matrix4();
-      cache.set(id, ident);
-      return ident;
-    }
-    if (visiting.has(id)) {
-      const ident = new THREE.Matrix4();
-      cache.set(id, ident);
-      return ident;
-    }
-    visiting.add(id);
-    const m = local(node);
-    const parentId = parentMap.get(id);
-    if (parentId) {
-      m.premultiply(get(parentId, visiting));
-    }
-    visiting.delete(id);
-    cache.set(id, m);
-    return m;
-  };
-  for (const id of Object.keys(tree.nodes)) get(id, new Set());
-  return cache;
-};
+const _identityMatrix = new THREE.Matrix4();
+const _scratchFinal = new THREE.Matrix4();
 
 export const populateScene = (
   scene: THREE.Scene,
@@ -393,7 +349,7 @@ export const populateScene = (
   opts: PopulateSceneOpts = {}
 ): PopulateSceneResult => {
   const newRenderedObjects: RenderedObject[] = [];
-  const reusedKeys = new Set<number>();
+  const reusedKeys = new Set<string>();
   const { tree, moduleNameToNodeId, prev } = opts;
   const worldMatrices = tree ? buildWorldMatrixCache(tree, buildParentMap(tree)) : null;
 
@@ -404,60 +360,65 @@ export const populateScene = (
         continue;
       }
 
-      const reuseKey = obj.meshId;
+      const insts =
+        (worldMatrices && sourceNodeId ? worldMatrices.get(sourceNodeId) : null) ??
+        ([{ world: _identityMatrix, path: [] }] as NodeWorldInstance[]);
 
-      const ancestor =
-        worldMatrices && sourceNodeId
-          ? (worldMatrices.get(sourceNodeId)?.clone() ?? new THREE.Matrix4())
-          : new THREE.Matrix4();
-      const finalTransform = ancestor.multiply(obj.transform);
+      // The first new copy adopts `obj.geometry`; further copies clone so each live
+      // mesh owns its geometry and disposes independently. If every copy reused a
+      // prior mesh, the freshly-generated geometry is leftover and gets disposed.
+      let baseGeomConsumed = false;
+      const localInScript = obj.transform.clone();
+      const objMeshes: THREE.Mesh[] = [];
+      for (const inst of insts) {
+        const reuseKey = `${obj.meshId}:${instancePathKey(inst.path)}`;
+        _scratchFinal.copy(inst.world).multiply(obj.transform);
 
-      const existing = prev?.get(reuseKey);
-      if (existing instanceof THREE.Mesh && !reusedKeys.has(reuseKey)) {
-        // Mutate in place to skip the GPU re-upload and scene-graph churn.
-        obj.geometry.dispose();
-        finalTransform.decompose(existing.position, existing.quaternion, existing.scale);
-        existing.userData.localInScript = obj.transform.clone();
-        existing.material = obj.material;
-        existing.userData.materialName = obj.materialName;
-        if (obj.materialPromise) {
-          obj.materialPromise.then(mat => {
-            existing.material = mat;
-          });
+        const existing = prev?.get(reuseKey);
+        if (existing instanceof THREE.Mesh && !reusedKeys.has(reuseKey)) {
+          // Mutate in place to skip the GPU re-upload and scene-graph churn.
+          _scratchFinal.decompose(existing.position, existing.quaternion, existing.scale);
+          existing.userData.localInScript = localInScript;
+          existing.userData.instancePath = inst.path;
+          existing.material = obj.material;
+          existing.userData.materialName = obj.materialName;
+          existing.castShadow = obj.castShadow;
+          existing.receiveShadow = obj.receiveShadow;
+          if (sourceNodeId) {
+            existing.userData.sourceNodeId = sourceNodeId;
+          }
+          existing.userData.reuseKey = reuseKey;
+          reusedKeys.add(reuseKey);
+          objMeshes.push(existing);
+          newRenderedObjects.push(existing);
+          continue;
         }
-        existing.castShadow = obj.castShadow;
-        existing.receiveShadow = obj.receiveShadow;
+
+        const geometry = baseGeomConsumed ? obj.geometry.clone() : ((baseGeomConsumed = true), obj.geometry);
+        const mesh = new THREE.Mesh(geometry, obj.material);
+        mesh.userData.materialName = obj.materialName;
+        mesh.userData.reuseKey = reuseKey;
+        mesh.userData.localInScript = localInScript;
+        mesh.userData.instancePath = inst.path;
         if (sourceNodeId) {
-          existing.userData.sourceNodeId = sourceNodeId;
+          mesh.userData.sourceNodeId = sourceNodeId;
         }
-        existing.userData.reuseKey = reuseKey;
-        reusedKeys.add(reuseKey);
-        newRenderedObjects.push(existing);
-        continue;
-      }
 
-      const mesh = new THREE.Mesh(obj.geometry, obj.material);
-      mesh.userData.materialName = obj.materialName;
-      mesh.userData.reuseKey = reuseKey;
-      // Used by ReplUI's transform-only fast path to recompose `ancestor × local`.
-      mesh.userData.localInScript = obj.transform.clone();
-      if (sourceNodeId) {
-        mesh.userData.sourceNodeId = sourceNodeId;
+        _scratchFinal.decompose(mesh.position, mesh.quaternion, mesh.scale);
+        mesh.castShadow = obj.castShadow;
+        mesh.receiveShadow = obj.receiveShadow;
+        scene.add(mesh);
+        objMeshes.push(mesh);
+        newRenderedObjects.push(mesh);
       }
-
       if (obj.materialPromise) {
         obj.materialPromise.then(mat => {
-          mesh.material = mat;
+          for (const m of objMeshes) m.material = mat;
         });
       }
-
-      finalTransform.decompose(mesh.position, mesh.quaternion, mesh.scale);
-      mesh.castShadow = obj.castShadow;
-      mesh.receiveShadow = obj.receiveShadow;
-      scene.add(mesh);
-      newRenderedObjects.push(mesh);
+      if (!baseGeomConsumed) obj.geometry.dispose();
     } else if (obj.type === 'path') {
-      const reuseKey = obj.pathId;
+      const reuseKey = String(obj.pathId);
       const existing = prev?.get(reuseKey);
       if (existing instanceof THREE.Line && !reusedKeys.has(reuseKey)) {
         obj.geometry.dispose();
@@ -473,7 +434,7 @@ export const populateScene = (
       scene.add(line);
       newRenderedObjects.push(line);
     } else if (obj.type === 'light') {
-      const reuseKey = obj.lightId;
+      const reuseKey = String(obj.lightId);
       const existing = prev?.get(reuseKey);
       if (
         existing instanceof THREE.Light &&

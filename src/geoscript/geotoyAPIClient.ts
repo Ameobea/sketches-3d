@@ -75,21 +75,36 @@ export interface Transform3 {
   scale: [number, number, number];
 }
 
+export interface GizmoValue {
+  kind: 'vec3' | 'transform';
+  mode: 'delta' | 'absolute';
+  value: [number, number, number] | Transform3;
+}
+
 export interface NodeDef {
   id: string;
   name: string;
   source: string;
-  transform: Transform3;
+  /** Per-node placements; length >= 1. The single-copy case is `instances.length === 1`. */
+  instances: Transform3[];
+  /** Gizmo values keyed by handleId; sparse. Populated by the gizmo runtime (M3). */
+  handles?: Record<string, GizmoValue>;
   children: string[];
   disabled?: boolean;
 }
 
 export interface TreeDef {
+  version: 1;
   /** Id of the always-present `_root` compositor node. */
   rootId: string;
   globalsSource: string;
   nodes: Record<string, NodeDef>;
 }
+
+export const isTreeDefV1 = (raw: unknown): raw is TreeDef => {
+  const t = raw as TreeDef | null;
+  return !!t && t.version === 1 && typeof t.rootId === 'string' && !!t.nodes && typeof t.nodes === 'object';
+};
 
 /** The reserved name of the always-present root compositor node. */
 export const ROOT_NODE_NAME = '_root';
@@ -129,6 +144,7 @@ export const buildIdentityTransform = (): Transform3 => ({
 export const buildLegacyRootTree = (source: string): TreeDef => {
   const id = crypto.randomUUID();
   return {
+    version: 1,
     rootId: id,
     globalsSource: '',
     nodes: {
@@ -136,7 +152,7 @@ export const buildLegacyRootTree = (source: string): TreeDef => {
         id,
         name: ROOT_NODE_NAME,
         source,
-        transform: buildIdentityTransform(),
+        instances: [buildIdentityTransform()],
         children: [],
       },
     },

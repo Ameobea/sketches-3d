@@ -33,18 +33,18 @@ test('transform: undo restores pre-edit transform; redo reapplies', () => {
   const sys = buildGeotoyUndoSystem();
   const id = opsCreateNode(tree, { name: 'a' });
 
-  const t0 = structuredClone(tree.nodes[id].transform);
+  const t0 = structuredClone(tree.nodes[id].instances[0]);
   const t1 = {
     pos: [1, 2, 3] as [number, number, number],
     rot: [0, 0, 0] as [number, number, number],
     scale: [1, 1, 1] as [number, number, number],
   };
-  tree.nodes[id].transform = structuredClone(t1);
-  sys.push({ type: 'transform', id, before: t0, after: structuredClone(t1) });
+  tree.nodes[id].instances[0] = structuredClone(t1);
+  sys.push({ type: 'transform', id, index: 0, before: t0, after: structuredClone(t1) });
   const afterPush = structuredClone(tree);
 
   apply(sys, tree, 'undo');
-  assert.deepEqual(tree.nodes[id].transform, t0);
+  assert.deepEqual(tree.nodes[id].instances[0], t0);
 
   apply(sys, tree, 'redo');
   assert.ok(treesEqual(tree, afterPush));
@@ -122,6 +122,7 @@ test('stale entries no-op rather than throwing', () => {
   sys.push({
     type: 'transform',
     id: 'ghost',
+    index: 0,
     before: buildIdentityTransform(),
     after: { pos: [1, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
   });

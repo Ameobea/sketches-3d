@@ -29,7 +29,7 @@ export type GizmoHandleId =
 
 /**
  * Decouples the gizmo from what it's editing.  Implementations:
- * `Object3DTarget`, `PivotTarget`, `TreeNodeTarget`.  The gizmo always works
+ * `Object3DTarget`, `PivotTarget`, `InstanceTarget`.  The gizmo always works
  * in world space and converts to local via `inverse(parentWorld)`.
  */
 export interface GizmoTarget {
@@ -47,6 +47,22 @@ export interface GizmoTarget {
   /** `preview`: per-frame during drag, no undo. `commit`: drag end, target should snapshot/persist. */
   applyLocalTransform(t: Readonly<Transform3>, phase: 'preview' | 'commit'): void;
 }
+
+/**
+ * What a Geotoy viewport gizmo is bound to. `instance` index 0 is a node's default
+ * placement (the old "node transform"); `handle` names a `gizmo(...)` value site (M3).
+ */
+export type GizmoTargetRef =
+  | { kind: 'instance'; nodeId: string; index: number }
+  | { kind: 'handle'; nodeId: string; name: string };
+
+export const gizmoTargetRefsEqual = (a: GizmoTargetRef | null, b: GizmoTargetRef | null): boolean => {
+  if (a === null || b === null) return a === b;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'instance' && b.kind === 'instance') return a.nodeId === b.nodeId && a.index === b.index;
+  if (a.kind === 'handle' && b.kind === 'handle') return a.nodeId === b.nodeId && a.name === b.name;
+  return false;
+};
 
 export const makeTransform3 = (): Transform3 => ({
   pos: [0, 0, 0],

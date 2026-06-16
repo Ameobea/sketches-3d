@@ -4,9 +4,9 @@
 // and action-based undo/redo.
 //
 // Undo policy: structural ops (createNode, deleteNode, reparent) push entries
-// themselves; `setTransform` is bare and the gizmo/inspector calls
-// `recordTransformChange` once per gesture. Source edits, globals source,
-// disable, and renames are not tracked here.
+// themselves; `setInstanceTransform` is bare and the gizmo/inspector calls
+// `recordInstanceTransformChange` once per gesture. Source edits, globals
+// source, disable, and renames are not tracked here.
 
 import type { Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 
@@ -28,7 +28,7 @@ import {
   setDisabled as opsSetDisabled,
   setGlobalsSource as opsSetGlobalsSource,
   setSource as opsSetSource,
-  setTransform as opsSetTransform,
+  setInstanceTransform as opsSetInstanceTransform,
   type CreateNodeOpts,
 } from './treeOps';
 import {
@@ -71,7 +71,12 @@ const transformsEqual = (a: Transform3, b: Transform3): boolean =>
 const stableSerializeTree = (tree: TreeDef): string => {
   const nodes: Record<string, unknown> = {};
   for (const id of Object.keys(tree.nodes).sort()) nodes[id] = tree.nodes[id];
-  return JSON.stringify({ rootId: tree.rootId, globalsSource: tree.globalsSource, nodes });
+  return JSON.stringify({
+    version: tree.version,
+    rootId: tree.rootId,
+    globalsSource: tree.globalsSource,
+    nodes,
+  });
 };
 
 export class TreeState {
@@ -215,24 +220,25 @@ export class TreeState {
     opsRenameNode(this.state.tree, id, newName);
   }
 
-  /** Does NOT push undo. Pair with `recordTransformChange` on gesture commit. */
-  setTransform(id: string, transform: Transform3): void {
-    opsSetTransform(this.state.tree, id, transform);
+  /** Does NOT push undo. Pair with `recordInstanceTransformChange` on gesture commit. */
+  setInstanceTransform(id: string, index: number, transform: Transform3): void {
+    opsSetInstanceTransform(this.state.tree, id, index, transform);
   }
 
-  /** Plain-value snapshot of a node's transform. Use to capture `before` for a
-   *  drag/edit gesture before subsequent `setTransform` mutations change it. */
-  captureTransform(id: string): Transform3 | null {
-    const node = this.state.tree.nodes[id];
-    return node ? cloneTransform(node.transform) : null;
+  /** Plain-value snapshot of one instance's transform, for capturing the `before`
+   *  of a drag/edit gesture before subsequent `setInstanceTransform` mutations. */
+  captureInstanceTransform(id: string, index: number): Transform3 | null {
+    const t = this.state.tree.nodes[id]?.instances[index];
+    return t ? cloneTransform(t) : null;
   }
 
-  recordTransformChange(id: string, before: Transform3, after: Transform3): void {
-    if (!this.state.tree.nodes[id]) return;
+  recordInstanceTransformChange(id: string, index: number, before: Transform3, after: Transform3): void {
+    if (!this.state.tree.nodes[id]?.instances[index]) return;
     if (transformsEqual(before, after)) return;
     this.undoSystem.push({
       type: 'transform',
       id,
+      index,
       before: cloneTransform(before),
       after: cloneTransform(after),
     });

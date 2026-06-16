@@ -103,7 +103,7 @@ export const createNode = (tree: TreeDef, opts: CreateNodeOpts = {}): string => 
     id,
     name,
     source: opts.source ?? '',
-    transform: opts.transform ?? buildIdentityTransform(),
+    instances: [opts.transform ?? buildIdentityTransform()],
     children: [],
   };
   tree.nodes[id] = node;
@@ -200,11 +200,33 @@ export const renameNode = (tree: TreeDef, id: string, newName: string): void => 
   node.name = newName;
 };
 
-export const setTransform = (tree: TreeDef, id: string, transform: Transform3): void => {
+export const setInstanceTransform = (
+  tree: TreeDef,
+  id: string,
+  index: number,
+  transform: Transform3
+): void => {
   const node = tree.nodes[id];
-  if (node) {
-    node.transform = transform;
+  if (node && node.instances[index]) {
+    node.instances[index] = transform;
   }
+};
+
+/** Appends an instance placement; returns its index. Refuses `_root`. */
+export const addInstance = (tree: TreeDef, id: string, transform?: Transform3): number => {
+  const node = tree.nodes[id];
+  if (!node || id === tree.rootId) return -1;
+  node.instances.push(transform ?? buildIdentityTransform());
+  return node.instances.length - 1;
+};
+
+/** Removes instance `index`. Refuses to remove the last instance or any of `_root`. */
+export const removeInstance = (tree: TreeDef, id: string, index: number): void => {
+  const node = tree.nodes[id];
+  if (!node || id === tree.rootId) return;
+  if (node.instances.length <= 1) return;
+  if (index < 0 || index >= node.instances.length) return;
+  node.instances.splice(index, 1);
 };
 
 export const setSource = (tree: TreeDef, id: string, source: string): void => {

@@ -202,52 +202,55 @@ export class PivotTarget implements GizmoTarget {
 }
 
 import type { Transform3 as ApiTransform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
-import { buildWorldMatrixCache } from 'src/geoscript/runner/geoscriptRunner';
-import { buildParentMap } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
+import { getNodeAncestorChain } from 'src/viz/scenes/geoscriptPlayground/treeOps';
 
-export interface TreeNodeTargetCallbacks {
-  onChange?(phase: 'preview' | 'commit', id: string, transform: ApiTransform3): void;
+export interface InstanceTargetCallbacks {
+  onChange?(phase: 'preview' | 'commit', nodeId: string, index: number, transform: ApiTransform3): void;
 }
 
 /**
- * Edits a geoscript tree node.  Walks the tree's parent chain to compute the
- * render matrix — there's no stable THREE.js scene graph to attach to since the
- * scene is rebuilt from scratch each run.
+ * Edits one placement (`node.instances[index]`) of a geoscript tree node. There's no
+ * persistent scene graph to attach to (the scene is rebuilt each run), so the render
+ * matrix is composed from the ancestor chain (each ancestor at instance 0 — the
+ * representative copy). Editing the shared instance moves every copy that uses it.
  */
-export class TreeNodeTarget implements GizmoTarget {
+export class InstanceTarget implements GizmoTarget {
   constructor(
     private readonly nodeId: string,
+    private readonly index: number,
     private readonly getTree: () => TreeDef,
-    private readonly callbacks: TreeNodeTargetCallbacks = {}
+    private readonly callbacks: InstanceTargetCallbacks = {}
   ) {}
 
-  get id(): string {
-    return this.nodeId;
+  // Composes the representative copy's world into `world` and its parent's into
+  // `parentWorld` in one O(depth) ancestor walk. False if the instance no longer exists.
+  private compose(world: THREE.Matrix4, parentWorld: THREE.Matrix4): boolean {
+    const tree = this.getTree();
+    const node = tree.nodes[this.nodeId];
+    if (!node || this.index < 0 || this.index >= node.instances.length) return false;
+    parentWorld.identity();
+    const chain = getNodeAncestorChain(tree, this.nodeId);
+    if (chain) {
+      for (let i = chain.length - 1; i >= 1; i--) {
+        parentWorld.multiply(composeTransform3(_scratchMat, chain[i].instances[0]));
+      }
+    }
+    world.copy(parentWorld).multiply(composeTransform3(_scratchMat, node.instances[this.index]));
+    return true;
   }
 
   getRenderMatrix(out: THREE.Matrix4): THREE.Matrix4 {
-    const tree = this.getTree();
-    const parentMap = buildParentMap(tree);
-    const cache = buildWorldMatrixCache(tree, parentMap);
-    const m = cache.get(this.nodeId);
-    return m ? out.copy(m) : out.identity();
+    return this.compose(out, _scratchMatB) ? out : out.identity();
   }
 
   getParentWorldMatrix(out: THREE.Matrix4): THREE.Matrix4 {
-    const tree = this.getTree();
-    const parentMap = buildParentMap(tree);
-    const parentId = parentMap.get(this.nodeId);
-    if (!parentId) return out.identity();
-    const cache = buildWorldMatrixCache(tree, parentMap);
-    const m = cache.get(parentId);
-    return m ? out.copy(m) : out.identity();
+    return this.compose(_scratchMatB, out) ? out : out.identity();
   }
 
   getLocalTransform(out: Transform3): Transform3 {
-    const tree = this.getTree();
-    const node = tree.nodes[this.nodeId];
-    if (!node) return out;
-    const t = node.transform;
+    const t = this.getTree().nodes[this.nodeId]?.instances[this.index];
+    if (!t) return out;
     out.pos[0] = t.pos[0];
     out.pos[1] = t.pos[1];
     out.pos[2] = t.pos[2];
@@ -265,12 +268,11 @@ export class TreeNodeTarget implements GizmoTarget {
   }
 
   applyLocalTransform(t: Readonly<Transform3>, phase: 'preview' | 'commit'): void {
-    const transform: ApiTransform3 = {
+    this.callbacks.onChange?.(phase, this.nodeId, this.index, {
       pos: [t.pos[0], t.pos[1], t.pos[2]],
       rot: [t.rot[0], t.rot[1], t.rot[2]],
       scale: [t.scale[0], t.scale[1], t.scale[2]],
-    };
-    this.callbacks.onChange?.(phase, this.nodeId, transform);
+    });
   }
 }
 

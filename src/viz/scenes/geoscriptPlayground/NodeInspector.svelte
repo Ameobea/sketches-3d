@@ -66,7 +66,7 @@
   };
 
   const underlying = (node: NodeDef, field: Field, axis: Axis): number => {
-    const raw = node.transform[field][axis];
+    const raw = node.instances[0][field][axis];
     return field === 'rot' ? raw * RAD_TO_DEG : raw;
   };
 
@@ -89,7 +89,7 @@
     const parsed = evalMathExpr(draft);
     if (parsed === null) return;
     const value = focused.field === 'rot' ? parsed * DEG_TO_RAD : parsed;
-    const t = node.transform;
+    const t = node.instances[0];
     if (t[focused.field][focused.axis] === value) return;
     const next: Transform3 = {
       pos: [t.pos[0], t.pos[1], t.pos[2]],
