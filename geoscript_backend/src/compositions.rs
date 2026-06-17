@@ -19,13 +19,31 @@ pub struct Transform3 {
   pub scale: [f64; 3],
 }
 
+/// 8 lowercase hex chars, matching the `lower(hex(randomblob(4)))` instance-id migration.
+fn gen_instance_id() -> String {
+  let mut b = [0u8; 4];
+  getrandom::fill(&mut b).expect("getrandom failed");
+  format!("{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3])
+}
+
+/// A node placement: a `Transform3` plus a short id the editor uses to address gizmo
+/// targets and undo by identity rather than array index (uniqueness is per node). `id`
+/// is defaulted so trees from before the id migration deserialize and self-heal on load.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Instance {
+  #[serde(flatten)]
+  pub transform: Transform3,
+  #[serde(default = "gen_instance_id")]
+  pub id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeDef {
   pub id: String,
   pub name: String,
   pub source: String,
   /// Per-node placements; length >= 1. The single-copy case is `instances.len() == 1`.
-  pub instances: Vec<Transform3>,
+  pub instances: Vec<Instance>,
   /// Opaque gizmo-value passthrough (populated by the editor; stored verbatim here).
   #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
   pub handles: serde_json::Map<String, serde_json::Value>,
@@ -841,4 +859,32 @@ pub async fn delete_composition(
   }
 
   Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  const WITH_ID: &str = r#"{"version":1,"rootId":"r","globalsSource":"","nodes":{"r":{"id":"r","name":"_root","source":"","instances":[{"pos":[0,0,0],"rot":[0,0,0],"scale":[1,1,1],"id":"deadbeef"}],"children":[]}}}"#;
+  const NO_ID: &str = r#"{"version":1,"rootId":"r","globalsSource":"","nodes":{"r":{"id":"r","name":"_root","source":"","instances":[{"pos":[1.5,0,0],"rot":[0,0,0],"scale":[1,1,1]}],"children":[]}}}"#;
+
+  #[test]
+  fn instance_id_preserved_and_flat_on_round_trip() {
+    let tree: TreeDef = serde_json::from_str(WITH_ID).unwrap();
+    assert_eq!(tree.nodes["r"].instances[0].id, "deadbeef");
+    let out = serde_json::to_value(&tree).unwrap();
+    let inst = &out["nodes"]["r"]["instances"][0];
+    assert_eq!(inst["id"], "deadbeef");
+    assert!(inst.get("transform").is_none(), "id/pos must sit flat, not nested");
+    assert_eq!(inst["pos"][0].as_f64(), Some(0.0));
+  }
+
+  #[test]
+  fn missing_instance_id_is_backfilled() {
+    let tree: TreeDef = serde_json::from_str(NO_ID).unwrap();
+    let inst = &tree.nodes["r"].instances[0];
+    assert_eq!(inst.transform.pos[0], 1.5);
+    assert_eq!(inst.id.len(), 8);
+    assert!(inst.id.chars().all(|c| c.is_ascii_hexdigit()));
+  }
 }
