@@ -1,7 +1,7 @@
 import * as Comlink from 'comlink';
 
 import { runGeoscript } from './runner/geoscriptRunner';
-import type { GeneratedObject } from './runner/types';
+import type { GeneratedObject, GizmoValuesByModule } from './runner/types';
 import type { GeoscriptAsyncDeps } from './geoscriptWorker.worker';
 import { WorkerManager } from './workerManager';
 import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
@@ -17,6 +17,10 @@ export interface GeoscriptJob {
   deps: string[];
   /** If true, clear the const-eval cache before running so timing is standalone. */
   collectMetadata: boolean;
+  /** Ambient scope sources (e.g. `[prelude, globalsSource]`); for composition-tree jobs. */
+  ambientSources?: string[];
+  /** Baked gizmo handle values, keyed `moduleName → handleId`; for composition-tree jobs. */
+  gizmoValues?: GizmoValuesByModule;
 }
 
 export interface GeoscriptJobResult {
@@ -85,6 +89,8 @@ export class GeoscriptExecutor {
               repl,
               includePrelude: job.includePrelude,
               modules: job.modules,
+              ambientSources: job.ambientSources,
+              gizmoValues: job.gizmoValues,
             });
 
             const result: GeoscriptJobResult = {
@@ -120,6 +126,12 @@ export class GeoscriptExecutor {
     await this.ctxPtrPromise;
     const repl = this.workerManager.getWorker();
     return repl.computeConvexHull(Comlink.transfer(verts, [verts.buffer]));
+  }
+
+  /** The standard geoscript prelude source — for building a composition run's ambient scope. */
+  async getPrelude(): Promise<string> {
+    await this.ctxPtrPromise;
+    return this.workerManager.getWorker().getPrelude();
   }
 
   terminate(): void {

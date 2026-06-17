@@ -3,13 +3,23 @@
 // either; entries return a `selectAfter` hint where it matters (e.g. undo of
 // delete re-selects the restored root).
 
-import type { NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { GizmoValue, Instance, NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import { cloneTransform3 } from 'src/geoscript/geotoyAPIClient';
 
 import { UndoSystem } from 'src/viz/util/undoSystem';
 import { createNode as opsCreateNode, deleteNode as opsDeleteNode, reparent as opsReparent } from './treeOps';
 
 export type GeotoyUndoEntry =
-  | { type: 'transform'; id: string; index: number; before: Transform3; after: Transform3 }
+  | { type: 'transform'; id: string; instanceId: string; before: Transform3; after: Transform3 }
+  | {
+      type: 'setHandle';
+      nodeId: string;
+      handleId: string;
+      before: GizmoValue | null;
+      after: GizmoValue | null;
+    }
+  | { type: 'addInstance'; nodeId: string; instance: Instance }
+  | { type: 'removeInstance'; nodeId: string; instance: Instance; index: number }
   | { type: 'createNode'; nodeDef: NodeDef; parentId: string; index: number }
   | {
       type: 'deleteSubtree';
@@ -69,14 +79,48 @@ export const applyGeotoyUndoEntry = (
 ): { selectAfter?: string } => {
   switch (entry.type) {
     case 'transform': {
-      const node = tree.nodes[entry.id];
-      if (!node || !node.instances[entry.index]) return {};
-      const t = direction === 'undo' ? entry.before : entry.after;
-      node.instances[entry.index] = {
-        pos: [t.pos[0], t.pos[1], t.pos[2]],
-        rot: [t.rot[0], t.rot[1], t.rot[2]],
-        scale: [t.scale[0], t.scale[1], t.scale[2]],
-      };
+      const inst = tree.nodes[entry.id]?.instances.find(i => i.id === entry.instanceId);
+      if (!inst) return {};
+      Object.assign(inst, cloneTransform3(direction === 'undo' ? entry.before : entry.after));
+      return {};
+    }
+    case 'setHandle': {
+      const node = tree.nodes[entry.nodeId];
+      if (!node) return {};
+      const target = direction === 'undo' ? entry.before : entry.after;
+      if (target === null) {
+        if (node.handles) {
+          delete node.handles[entry.handleId];
+          if (Object.keys(node.handles).length === 0) delete node.handles;
+        }
+      } else {
+        (node.handles ??= {})[entry.handleId] = structuredClone(target);
+      }
+      return {};
+    }
+    case 'addInstance': {
+      const node = tree.nodes[entry.nodeId];
+      if (!node) return {};
+      if (direction === 'undo') {
+        const ix = node.instances.findIndex(i => i.id === entry.instance.id);
+        if (ix >= 0 && node.instances.length > 1) node.instances.splice(ix, 1);
+      } else if (!node.instances.some(i => i.id === entry.instance.id)) {
+        node.instances.push(structuredClone(entry.instance));
+      }
+      return {};
+    }
+    case 'removeInstance': {
+      const node = tree.nodes[entry.nodeId];
+      if (!node) return {};
+      if (direction === 'undo') {
+        if (!node.instances.some(i => i.id === entry.instance.id)) {
+          const at = Math.min(Math.max(entry.index, 0), node.instances.length);
+          node.instances.splice(at, 0, structuredClone(entry.instance));
+        }
+      } else {
+        const ix = node.instances.findIndex(i => i.id === entry.instance.id);
+        if (ix >= 0 && node.instances.length > 1) node.instances.splice(ix, 1);
+      }
       return {};
     }
     case 'createNode': {

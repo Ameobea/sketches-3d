@@ -205,7 +205,6 @@
     background: #2a6e2a;
     color: #90ee90;
     padding: 2px 6px;
-    border-radius: 3px;
   }
 
   .version-meta {

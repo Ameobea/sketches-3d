@@ -6,8 +6,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildEmptyTree, buildIdentityTransform, type TreeDef } from 'src/geoscript/geotoyAPIClient';
-import { createNode as opsCreateNode, deleteNode as opsDeleteNode, reparent as opsReparent } from './treeOps';
+import {
+  buildEmptyTree,
+  buildIdentityTransform,
+  type GizmoValue,
+  type TreeDef,
+} from 'src/geoscript/geotoyAPIClient';
+import {
+  addInstance as opsAddInstance,
+  createNode as opsCreateNode,
+  deleteNode as opsDeleteNode,
+  removeInstance as opsRemoveInstance,
+  reparent as opsReparent,
+  setHandle as opsSetHandle,
+} from './treeOps';
 import {
   applyGeotoyUndoEntry,
   buildGeotoyUndoSystem,
@@ -28,26 +40,72 @@ const treesEqual = (a: TreeDef, b: TreeDef): boolean =>
   Object.keys(a.nodes).length === Object.keys(b.nodes).length &&
   Object.keys(a.nodes).every(k => JSON.stringify(a.nodes[k]) === JSON.stringify(b.nodes[k]));
 
-test('transform: undo restores pre-edit transform; redo reapplies', () => {
+test('transform: undo restores pre-edit transform (preserving id); redo reapplies', () => {
   const tree = buildEmptyTree();
   const sys = buildGeotoyUndoSystem();
   const id = opsCreateNode(tree, { name: 'a' });
+  const instanceId = tree.nodes[id].instances[0].id;
 
-  const t0 = structuredClone(tree.nodes[id].instances[0]);
-  const t1 = {
+  const before = buildIdentityTransform();
+  const after = {
     pos: [1, 2, 3] as [number, number, number],
     rot: [0, 0, 0] as [number, number, number],
     scale: [1, 1, 1] as [number, number, number],
   };
-  tree.nodes[id].instances[0] = structuredClone(t1);
-  sys.push({ type: 'transform', id, index: 0, before: t0, after: structuredClone(t1) });
+  Object.assign(tree.nodes[id].instances[0], structuredClone(after)); // in-place edit keeps id
+  sys.push({ type: 'transform', id, instanceId, before, after: structuredClone(after) });
   const afterPush = structuredClone(tree);
 
   apply(sys, tree, 'undo');
-  assert.deepEqual(tree.nodes[id].instances[0], t0);
+  assert.deepEqual(tree.nodes[id].instances[0].pos, [0, 0, 0]);
+  assert.equal(tree.nodes[id].instances[0].id, instanceId);
 
   apply(sys, tree, 'redo');
   assert.ok(treesEqual(tree, afterPush));
+});
+
+test('addInstance: undo removes the added placement; redo re-adds it with the same id', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  const id = opsCreateNode(tree, { name: 'a' });
+  const newId = opsAddInstance(tree, id, { pos: [5, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] })!;
+  const instance = structuredClone(tree.nodes[id].instances.find(i => i.id === newId)!);
+  sys.push({ type: 'addInstance', nodeId: id, instance });
+  assert.equal(tree.nodes[id].instances.length, 2);
+
+  apply(sys, tree, 'undo');
+  assert.equal(tree.nodes[id].instances.length, 1);
+  assert.equal(
+    tree.nodes[id].instances.some(i => i.id === newId),
+    false
+  );
+
+  apply(sys, tree, 'redo');
+  assert.equal(tree.nodes[id].instances.length, 2);
+  assert.deepEqual(tree.nodes[id].instances[1].pos, [5, 0, 0]);
+  assert.equal(tree.nodes[id].instances[1].id, newId);
+});
+
+test('removeInstance: undo restores the placement at its index; redo removes it again', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  const id = opsCreateNode(tree, { name: 'a' });
+  const aId = tree.nodes[id].instances[0].id;
+  const bId = opsAddInstance(tree, id, { pos: [1, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] })!;
+
+  const instance = structuredClone(tree.nodes[id].instances[0]); // removing index 0 (aId)
+  opsRemoveInstance(tree, id, aId);
+  sys.push({ type: 'removeInstance', nodeId: id, instance, index: 0 });
+  assert.equal(tree.nodes[id].instances.length, 1);
+  assert.equal(tree.nodes[id].instances[0].id, bId);
+
+  apply(sys, tree, 'undo');
+  assert.equal(tree.nodes[id].instances.length, 2);
+  assert.equal(tree.nodes[id].instances[0].id, aId);
+
+  apply(sys, tree, 'redo');
+  assert.equal(tree.nodes[id].instances.length, 1);
+  assert.equal(tree.nodes[id].instances[0].id, bId);
 });
 
 test('deleteSubtree: undo restores the whole subtree at the correct index', () => {
@@ -122,10 +180,26 @@ test('stale entries no-op rather than throwing', () => {
   sys.push({
     type: 'transform',
     id: 'ghost',
-    index: 0,
+    instanceId: 'ghost-inst',
     before: buildIdentityTransform(),
     after: { pos: [1, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] },
   });
   assert.doesNotThrow(() => apply(sys, tree, 'undo'));
   assert.doesNotThrow(() => apply(sys, tree, 'redo'));
+});
+
+test('setHandle: undo restores the prior value (null when first set); redo reapplies', () => {
+  const tree = buildEmptyTree();
+  const sys = buildGeotoyUndoSystem();
+  const id = opsCreateNode(tree, { name: 'a' });
+
+  const v: GizmoValue = { kind: 'vec3', mode: 'delta', value: [1, 2, 3] };
+  opsSetHandle(tree, id, 'cut', v);
+  sys.push({ type: 'setHandle', nodeId: id, handleId: 'cut', before: null, after: v });
+
+  apply(sys, tree, 'undo');
+  assert.equal(tree.nodes[id].handles, undefined); // back to no handle
+
+  apply(sys, tree, 'redo');
+  assert.deepEqual(tree.nodes[id].handles, { cut: v });
 });

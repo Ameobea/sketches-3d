@@ -39,6 +39,13 @@ export interface LevelGroup {
   children: LevelSceneNode[];
   /** True when this group was produced by a generator (read-only in the editor). */
   generated: boolean;
+  /**
+   * Set when this group is the runtime expansion of a `geotoyComposition` placement. Holds the
+   * source leaf `ObjectDef` (the persisted pointer: asset/material/nocollide); its transform is
+   * stale after edits — use the live group transform. Drives composition-aware clone/restore so
+   * the def only ever round-trips the pointer, never the expanded children.
+   */
+  compositionDef?: ObjectDef;
 }
 
 export type LevelSceneNode = LevelObject | LevelGroup;

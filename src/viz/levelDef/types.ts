@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { MATERIAL_CLASS_NAMES, type MaterialClassName } from 'src/viz/shaders/customShader.types';
+import type { TreeDef as GeotoyTreeDef } from 'src/geoscript/geotoyAPIClient';
 
 // Extract values from the enum→name map as a non-empty tuple for z.enum
 const materialClassNameValues = Object.values(MATERIAL_CLASS_NAMES) as [
@@ -118,11 +119,42 @@ export const CsgAssetDefSchema = z.object({
 
 export type CsgAssetDef = z.infer<typeof CsgAssetDefSchema>;
 
-/** Return type after server-side inlining: always has `code`. */
+/** A geotoy composition tree (validated structurally; produced by the trusted backend). */
+const TreeDefSchema = z.custom<GeotoyTreeDef>(
+  v =>
+    !!v &&
+    typeof v === 'object' &&
+    (v as GeotoyTreeDef).version === 1 &&
+    typeof (v as { nodes?: unknown }).nodes === 'object'
+);
+
+/** Composition reference as authored on disk; the `tree` is inlined server-side. */
+export const GeotoyCompositionAssetDefRawSchema = z.object({
+  type: z.literal('geotoyComposition'),
+  compositionId: z.number().int().positive(),
+  /** Pin a specific version; omitted = latest. */
+  version: z.number().int().optional(),
+  /** geotoy material NAME -> level-def material id. Unmapped names fall back. */
+  materialMap: z.record(z.string(), z.string()).optional(),
+  /** Restrict the import to a subtree by node name; omitted = whole tree. */
+  rootNodeName: z.string().optional(),
+  colliderShape: AssetColliderShapeSchema.optional(),
+  _meta: GeoscriptAssetMetaSchema.optional(),
+});
+
+/** Resolved form (post server-side inlining): carries the full composition tree. */
+export const GeotoyCompositionAssetDefSchema = GeotoyCompositionAssetDefRawSchema.extend({
+  tree: TreeDefSchema,
+  /** Mirrors the composition's run config; drives prelude inclusion when baking the tree. */
+  preludeEjected: z.boolean().optional(),
+});
+
+/** Return type after server-side inlining: always has `code` / `tree`. */
 export const AssetDefSchema = z.discriminatedUnion('type', [
   GltfAssetDefSchema,
   GeoscriptAssetDefSchema,
   CsgAssetDefSchema,
+  GeotoyCompositionAssetDefSchema,
 ]);
 
 /** Input type for JSON files on disk: geoscript assets may have `code` or `file`. */
@@ -131,12 +163,15 @@ export const AssetDefRawSchema = z.union([
   GeoscriptAssetDefSchema,
   GeoscriptAssetDefFileSchema,
   CsgAssetDefSchema,
+  GeotoyCompositionAssetDefRawSchema,
 ]);
 
 export type GltfAssetDef = z.infer<typeof GltfAssetDefSchema>;
 export type GeoscriptAssetDef = z.infer<typeof GeoscriptAssetDefSchema>;
 export type GeoscriptAssetDefFile = z.infer<typeof GeoscriptAssetDefFileSchema>;
 export type GeoscriptAssetDefRaw = z.infer<typeof GeoscriptAssetDefRawSchema>;
+export type GeotoyCompositionAssetDef = z.infer<typeof GeotoyCompositionAssetDefSchema>;
+export type GeotoyCompositionAssetDefRaw = z.infer<typeof GeotoyCompositionAssetDefRawSchema>;
 export type AssetDef = z.infer<typeof AssetDefSchema>;
 export type AssetDefRaw = z.infer<typeof AssetDefRawSchema>;
 

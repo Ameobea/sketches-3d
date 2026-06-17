@@ -2,7 +2,18 @@ import * as Comlink from 'comlink';
 
 import { compute_convex_hull_mesh, initManifoldWasm, setManifoldWasmURL } from './manifold';
 import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
+import type { GizmoValuesByModule } from './runner/types';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
+
+/** Raw shape of `geoscript_repl_get_rendered_gizmo`'s JSON (snake_case from Rust). */
+interface RawRenderedGizmo {
+  source_module: string | null;
+  handle_id: string;
+  kind: 'vec3' | 'transform';
+  origin: [number, number, number];
+  value: number[];
+  absolute: boolean;
+}
 import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
 import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';
 import { initClipper2, setClipper2WasmURL } from 'src/viz/wasm/clipper2/clipper2';
@@ -206,6 +217,22 @@ const methods = {
     const lightId = Geoscript.geoscript_get_rendered_light_id(ctxPtr, lightIx);
     return Comlink.transfer({ light, lightId }, []);
   },
+  setGizmoValues: (ctxPtr: number, valuesByModule: GizmoValuesByModule) => {
+    const modules: string[] = [];
+    const handles: string[] = [];
+    const valuesJson: string[] = [];
+    for (const [mod, handleMap] of Object.entries(valuesByModule)) {
+      for (const [handle, v] of Object.entries(handleMap)) {
+        modules.push(mod);
+        handles.push(handle);
+        valuesJson.push(JSON.stringify(v));
+      }
+    }
+    Geoscript.geoscript_repl_set_gizmo_values(ctxPtr, modules, handles, valuesJson);
+  },
+  getRenderedGizmoCount: (ctxPtr: number) => Geoscript.geoscript_repl_get_rendered_gizmo_count(ctxPtr),
+  getRenderedGizmo: (ctxPtr: number, ix: number): RawRenderedGizmo =>
+    JSON.parse(Geoscript.geoscript_repl_get_rendered_gizmo(ctxPtr, ix)),
   setMaterials: (ctxPtr: number, defaultMaterialID: string | null, availableMaterials: string[]) => {
     Geoscript.geoscript_set_default_material(ctxPtr, defaultMaterialID ?? undefined);
     Geoscript.geoscript_set_materials(ctxPtr, availableMaterials);

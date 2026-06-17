@@ -27,10 +27,12 @@
   import EnvironmentSettings from './EnvironmentSettings.svelte';
   import { Textures } from './materialEditor/state.svelte';
   import {
+    cloneTransform3,
     type Composition,
     type CompositionVersion,
     type CompositionVersionMetadata,
     type EnvironmentConfig,
+    type GizmoValue,
     type Transform3,
     type TreeDef,
   } from 'src/geoscript/geotoyAPIClient';
@@ -44,12 +46,15 @@
     saveState,
     setLastRunWasSuccessful,
   } from './persistence';
-  import { compileTree } from 'src/geoscript/treeCodegen';
+  import { compileTree, buildGizmoValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
   import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
   import { buildParentMap, computeMeshCounts, findParentId } from './treeOps';
   import HierarchyPanel from './HierarchyPanel.svelte';
   import NodeInspector from './NodeInspector.svelte';
   import { TransformGizmo, type GizmoMode, type GizmoSpace } from './transformGizmo';
+  import type { GizmoTargetRef } from 'src/viz/gizmos/gizmoTypes';
+  import { scanGizmoHandleIds } from 'src/geoscript/gizmoScan';
+  import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
   import { installRaycastSelect } from './raycastSelect';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
   import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
@@ -58,7 +63,8 @@
     buildWorldMatrixCache,
     instancePathKey,
   } from 'src/geoscript/runner/geoscriptRunner';
-  import type { MatEntry, RenderedObject } from 'src/geoscript/runner/types';
+  import { decomposeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
+  import type { MatEntry, RenderedObject, RenderedGizmo } from 'src/geoscript/runner/types';
   import {
     buildCustomMaterials,
     fetchAndSetTextures,
@@ -238,7 +244,24 @@
   let gizmoMode = $state<GizmoMode>('translate');
   let gizmoSpace = $state<GizmoSpace>('local');
 
+  // What the viewport gizmo edits. Defaults to the selected node's first instance, but
+  // the inspector / a viewport click can arm any specific instance without changing
+  // selection. `armedForSel` (plain) records which selection the default was applied for,
+  // so an explicit arm in the same tick isn't clobbered by the selection-tracking effect.
+  let armedRef = $state<GizmoTargetRef | null>(null);
+  let armedForSel: string | null = null;
+
   let dragStartTransform: Transform3 | null = null;
+  let dragStartHandle: GizmoValue | null = null;
+  /** Gizmos reported by the last successful run; feeds handle arming + GC. */
+  let lastGizmos: RenderedGizmo[] = [];
+  /** Inline-readout subscribers + armed-state pusher, wired once the editor's gizmo extensions install. */
+  // Editor push channels, wired once the gizmo extensions install (null until then).
+  let dispatchArmed: ((handleId: string | null) => void) | null = null;
+  let dispatchValues: ((values: Map<string, GizmoReadout>) => void) | null = null;
+  let dispatchValuePatch: ((id: string, readout: GizmoReadout) => void) | null = null;
+  /** nodeId → last-scanned {source, handleIds}; skips re-parsing unchanged sources on GC. */
+  const handleScanCache = new Map<string, { source: string; ids: Set<string> }>();
 
   onMount(() => {
     let cancelled = false;
@@ -258,22 +281,40 @@
             orbit.enabled = !dragging;
           },
           onDragStart: ref => {
+            if (ref.kind === 'handle') {
+              dragStartHandle = treeState.captureHandle(ref.nodeId, ref.name);
+              return;
+            }
             if (ref.kind !== 'instance') return;
-            dragStartTransform = treeState.captureInstanceTransform(ref.nodeId, ref.index);
+            dragStartTransform = treeState.captureInstanceTransform(ref.nodeId, ref.instanceId);
             dragSession = { parentMap: buildParentMap(treeState.state.tree) };
           },
           onTransformChange: (ref, transform) => {
             if (ref.kind !== 'instance') return;
-            treeState.setInstanceTransform(ref.nodeId, ref.index, transform);
+            treeState.setInstanceTransform(ref.nodeId, ref.instanceId, transform);
             isDirty = true;
             runOrFast();
           },
+          onHandleChange: (nodeId, handleId, value) => {
+            // Store + live readout per drag-tick, but defer the (geometry-changing) re-eval
+            // to drag end — per-tick re-runs aren't smooth enough to be worth it.
+            treeState.setHandle(nodeId, handleId, value);
+            isDirty = true;
+            dispatchValuePatch?.(handleId, storedReadout(value)); // single-handle, no full rebuild
+          },
           onDragEnd: ref => {
+            if (ref.kind === 'handle') {
+              const after = treeState.captureHandle(ref.nodeId, ref.name);
+              treeState.recordHandleChange(ref.nodeId, ref.name, dragStartHandle, after);
+              dragStartHandle = null;
+              runOrFast();
+              return;
+            }
             if (ref.kind !== 'instance') return;
             dragSession = null;
-            const after = treeState.captureInstanceTransform(ref.nodeId, ref.index);
+            const after = treeState.captureInstanceTransform(ref.nodeId, ref.instanceId);
             if (dragStartTransform && after) {
-              treeState.recordInstanceTransformChange(ref.nodeId, ref.index, dragStartTransform, after);
+              treeState.recordInstanceTransformChange(ref.nodeId, ref.instanceId, dragStartTransform, after);
             }
             dragStartTransform = null;
             // Catches the final state if the last `onTransformChange` was dropped by `isRunning`.
@@ -281,6 +322,23 @@
           },
         }
       );
+      // Resolve a handle's origin/kind/mode from the last run's channel + stored value.
+      g.setHandleContextResolver((nodeId, handleId) => {
+        const node = treeState.state.tree.nodes[nodeId];
+        if (!node) return null;
+        const reported = lastGizmos.find(gz => gz.sourceModule === node.name && gz.handleId === handleId);
+        const stored = node.handles?.[handleId];
+        const kind = reported?.kind ?? stored?.kind ?? 'vec3';
+        return {
+          kind,
+          mode: reported ? (reported.absolute ? 'absolute' : 'delta') : (stored?.mode ?? 'delta'),
+          origin: reported?.origin ?? [0, 0, 0],
+          transform:
+            kind === 'transform' && reported?.value.length === 16
+              ? decomposeTransform3(new THREE.Matrix4().fromArray(reported.value))
+              : undefined,
+        };
+      });
       const tickGizmo = () => g.update();
       viz.registerBeforeRenderCb(tickGizmo);
       const disposer = installRaycastSelect({
@@ -288,9 +346,28 @@
         camera: viz.camera,
         getCandidates: () =>
           renderedObjects.filter(o => o instanceof THREE.Mesh && !!o.userData.sourceNodeId),
-        onSelect: id => {
-          // Empty-space click deselects to root — same neutral state Escape produces.
-          treeState.setSelected(id ?? treeState.state.tree.rootId);
+        onSelect: (id, instancePath) => {
+          if (id === null) {
+            // Background click: deselect to root and unarm the gizmo entirely.
+            treeState.setSelected(treeState.state.tree.rootId);
+            armedForSel = treeState.state.tree.rootId;
+            armedRef = null;
+            return;
+          }
+          const tree = treeState.state.tree;
+          const node = tree.nodes[id];
+          if (!node || id === tree.rootId) {
+            treeState.setSelected(id);
+            return;
+          }
+          // The clicked copy's own instance is the last element of its instance path.
+          const clickedIdx = instancePath?.at(-1) ?? 0;
+          const armId = (node.instances[clickedIdx] ?? node.instances[0]).id;
+          // Multi-instance: select the parent so the inspector surfaces this node's
+          // instance list (with the clicked instance armed); single-instance: select
+          // the node itself, as before.
+          treeState.setSelected(node.instances.length > 1 ? (findParentId(tree, id) ?? tree.rootId) : id);
+          armInstance(id, armId);
         },
         isDraggingGizmo: () => g.dragging(),
       });
@@ -315,15 +392,112 @@
     };
   });
 
-  // Re-sync gizmo on selection change and after each run (ancestor world transforms
-  // refresh). Reading `lastRunTree` subscribes the effect to reruns.
+  const defaultArmFor = (sel: string | null): GizmoTargetRef | null => {
+    if (sel === null || sel === GLOBALS_SELECTION_ID || sel === treeState.state.tree.rootId) {
+      return null;
+    }
+    const node = treeState.state.tree.nodes[sel];
+    if (!node || node.instances.length === 0) return null;
+    return { kind: 'instance', nodeId: sel, instanceId: node.instances[0].id };
+  };
+
+  /** Arm a specific instance without disturbing selection (inspector / viewport click). */
+  const armInstance = (nodeId: string, instanceId: string) => {
+    armedForSel = treeState.state.selectedId;
+    armedRef = { kind: 'instance', nodeId, instanceId };
+  };
+
+  // Default-arm the selected node's first instance whenever selection changes. Guarded by
+  // `armedForSel` so an explicit arm (raycast/inspector) in the same tick survives.
   $effect(() => {
     const sel = treeState.state.selectedId;
-    void lastRunTree;
-    if (!gizmo) return;
-    const id = sel === null || sel === GLOBALS_SELECTION_ID ? null : sel;
-    gizmo.syncTo(id === null ? null : { kind: 'instance', nodeId: id, index: 0 }, treeState.state.tree);
+    if (sel === armedForSel) return;
+    armedForSel = sel;
+    armedRef = defaultArmFor(sel);
   });
+
+  // Keep the gizmo bound to whatever is armed; re-sync after each run (ancestor world
+  // transforms refresh). Reading `armedRef`/`lastRunTree` subscribes the effect to both.
+  $effect(() => {
+    void armedRef;
+    void lastRunTree;
+    gizmo?.syncTo(armedRef, treeState.state.tree);
+  });
+
+  // Mirror the armed handle into the editor so the armed chip highlights (and clears on
+  // node switch / instance arm, which reset `armedRef` to a non-handle). Read `armedRef`
+  // into a local first: `dispatchArmed?.(…)` would short-circuit arg eval while
+  // `dispatchArmed` is still null (pre-import), leaving the effect with no tracked dep.
+  $effect(() => {
+    const armedHandle = armedRef?.kind === 'handle' ? armedRef.name : null;
+    dispatchArmed?.(armedHandle);
+  });
+
+  const channelReadout = (gz: RenderedGizmo): GizmoReadout =>
+    gz.kind === 'transform'
+      ? { kind: 'transform', transform: { pos: gz.origin, rot: [0, 0, 0], scale: [1, 1, 1] } }
+      : { kind: 'vec3', vec3: [gz.value[0], gz.value[1], gz.value[2]] };
+
+  const storedReadout = (v: GizmoValue): GizmoReadout =>
+    v.kind === 'transform'
+      ? { kind: 'transform', transform: v.value as GizmoReadout['transform'] }
+      : { kind: 'vec3', vec3: v.value as [number, number, number] };
+
+  // Per-node readout map: last run's reported values, overridden by the locally-stored
+  // (live-edited) handle value so a drag updates the inline readout before re-eval.
+  const buildGizmoReadouts = (nodeId: string | null): Map<string, GizmoReadout> => {
+    const map = new Map<string, GizmoReadout>();
+    const node = nodeId ? treeState.state.tree.nodes[nodeId] : null;
+    if (!node) return map;
+    for (const gz of lastGizmos) if (gz.sourceModule === node.name) map.set(gz.handleId, channelReadout(gz));
+    if (node.handles) for (const [id, v] of Object.entries(node.handles)) map.set(id, storedReadout(v));
+    return map;
+  };
+
+  const publishGizmoReadouts = () => {
+    dispatchValues?.(buildGizmoReadouts(treeState.state.selectedId));
+  };
+
+  const gizmoEditorHooks: GizmoEditorHooks = {
+    arm: (handleId, kind) => {
+      const sel = treeState.state.selectedId;
+      // Handles are valid on any real node, including `_root` (unlike instance arming).
+      if (!sel || sel === GLOBALS_SELECTION_ID || !treeState.state.tree.nodes[sel]) return;
+      armedForSel = sel;
+      armedRef = { kind: 'handle', nodeId: sel, name: handleId };
+      if (kind === 'vec3') setGizmoMode('translate');
+      editorView?.contentDOM.blur(); // viewport mode → Ctrl-Z routes to the tree undo stack
+    },
+    disarm: () => {
+      if (armedRef?.kind === 'handle') armedRef = defaultArmFor(treeState.state.selectedId);
+    },
+    resetHandle: handleId => {
+      const sel = treeState.state.selectedId;
+      const before = sel ? treeState.captureHandle(sel, handleId) : null;
+      if (!sel || before === null) return; // already at default
+      treeState.deleteHandle(sel, handleId);
+      treeState.recordHandleChange(sel, handleId, before, null);
+      isDirty = true;
+      publishGizmoReadouts();
+      runOrFast();
+    },
+    setHandleVec3: (handleId, value) => {
+      const sel = treeState.state.selectedId;
+      if (!sel || !treeState.state.tree.nodes[sel]) return;
+      const before = treeState.captureHandle(sel, handleId);
+      const after: GizmoValue = {
+        kind: 'vec3',
+        mode: treeState.state.tree.nodes[sel].handles?.[handleId]?.mode ?? 'delta',
+        value,
+      };
+      treeState.setHandle(sel, handleId, after);
+      treeState.recordHandleChange(sel, handleId, before, after);
+      isDirty = true;
+      publishGizmoReadouts();
+      runOrFast();
+    },
+    getArmedHandleId: () => (armedRef?.kind === 'handle' ? armedRef.name : null),
+  };
 
   let hierarchyPanel = $state<{ startRename: (id: string) => void } | null>(null);
 
@@ -556,6 +730,17 @@
     import('../../../geoscript/analysisExtensions').then(({ buildAnalysisExtensions }) => {
       editor.setAnalysisExtensions(buildAnalysisExtensions(() => !preludeEjected));
     });
+
+    import('../../../geoscript/gizmoExtensions').then(
+      ({ buildGizmoExtensions, pushGizmoArmed, pushGizmoValues, pushGizmoValue }) => {
+        editor.setGizmoExtensions(buildGizmoExtensions(gizmoEditorHooks));
+        dispatchArmed = h => editorView && pushGizmoArmed(editorView, h);
+        dispatchValues = m => editorView && pushGizmoValues(editorView, m);
+        dispatchValuePatch = (id, r) => editorView && pushGizmoValue(editorView, id, r);
+        dispatchArmed(gizmoEditorHooks.getArmedHandleId());
+        publishGizmoReadouts(); // seed inline readouts
+      }
+    );
   };
 
   // Swap the editor doc on selection change; clear CM undo so Ctrl-Z can't
@@ -574,6 +759,7 @@
     });
     resetEditorHistory?.();
     lastSwappedSelection = sel;
+    publishGizmoReadouts();
   });
 
   onDestroy(() => {
@@ -826,14 +1012,6 @@
     }
   };
 
-  const buildModuleNameToNodeId = (tree: TreeDef): Record<string, string> => {
-    const out: Record<string, string> = {};
-    for (const node of Object.values(tree.nodes)) {
-      if (!node.disabled) out[node.name] = node.id;
-    }
-    return out;
-  };
-
   const extractFailedModuleName = (msg: string): string | null => {
     const m = msg.match(/module\s+["']([^"']+)["']/i);
     return m ? m[1] : null;
@@ -853,8 +1031,9 @@
       // `children` matters: reparenting changes `compileTree`'s emitted imports.
       // `instances.length` (not the transforms) matters: add/remove changes the
       // rendered-object set, so it must force a full re-run while drags stay fast.
+      // `handles` matters: a gizmo value can change geometry, so it must force re-eval.
       parts.push(
-        `n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.instances.length}:${n.source}:${n.children.join(',')}`
+        `n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.instances.length}:${n.source}:${n.children.join(',')}:${JSON.stringify(n.handles ?? null)}`
       );
     }
     parts.push(`pe:${preludeEjected ? 1 : 0}`);
@@ -958,6 +1137,7 @@
         includePrelude: !preludeEjected,
         materialOverride,
         renderMode: userData?.renderMode ?? false,
+        gizmoValues: buildGizmoValues(tree),
       });
 
       if (myGen !== runGen) return;
@@ -1011,6 +1191,34 @@
       }
       meshCounts = computeMeshCounts(tree, directCounts);
 
+      lastGizmos = result.gizmos;
+      publishGizmoReadouts();
+      // GC orphaned handles: keep ids the channel reported this run (covers dynamic names
+      // the static scan can't see), plus the static handle ids in each node's source
+      // (covers gizmos in branches that didn't execute this run).
+      const liveByNode = new Map<string, Set<string>>();
+      for (const gz of result.gizmos) {
+        const nid = gz.sourceModule ? moduleNameToNodeId[gz.sourceModule] : undefined;
+        if (!nid) continue;
+        let set = liveByNode.get(nid);
+        if (!set) {
+          set = new Set();
+          liveByNode.set(nid, set);
+        }
+        set.add(gz.handleId);
+      }
+      for (const node of Object.values(tree.nodes)) {
+        if (!node.handles) continue;
+        const live = liveByNode.get(node.id) ?? new Set<string>();
+        let scan = handleScanCache.get(node.id);
+        if (!scan || scan.source !== node.source) {
+          scan = { source: node.source, ids: scanGizmoHandleIds(node.source) };
+          handleScanCache.set(node.id, scan);
+        }
+        for (const id of scan.ids) live.add(id);
+        treeState.pruneHandles(node.id, live);
+      }
+
       for (const helper of lightHelpers) {
         viz.scene.remove(helper);
       }
@@ -1032,11 +1240,33 @@
     }
   };
 
-  const handleInspectorTransformChange = (id: string, transform: Transform3) => {
-    const before = treeState.captureInstanceTransform(id, 0);
+  const handleInstanceTransformChange = (nodeId: string, instanceId: string, transform: Transform3) => {
+    const before = treeState.captureInstanceTransform(nodeId, instanceId);
     if (!before) return;
-    treeState.setInstanceTransform(id, 0, transform);
-    treeState.recordInstanceTransformChange(id, 0, before, transform);
+    treeState.setInstanceTransform(nodeId, instanceId, transform);
+    treeState.recordInstanceTransformChange(nodeId, instanceId, before, transform);
+    isDirty = true;
+    runOrFast();
+  };
+
+  const handleAddInstance = (nodeId: string) => {
+    const node = treeState.state.tree.nodes[nodeId];
+    if (!node) return;
+    const last = node.instances[node.instances.length - 1];
+    const seed = cloneTransform3(last);
+    seed.pos[0] += 0.5;
+    seed.pos[2] += 0.5;
+    const newId = treeState.addInstance(nodeId, seed);
+    isDirty = true;
+    runOrFast();
+    if (newId) armInstance(nodeId, newId);
+  };
+
+  const handleRemoveInstance = (nodeId: string, instanceId: string) => {
+    treeState.removeInstance(nodeId, instanceId);
+    if (armedRef?.kind === 'instance' && armedRef.nodeId === nodeId && armedRef.instanceId === instanceId) {
+      armedRef = defaultArmFor(treeState.state.selectedId);
+    }
     isDirty = true;
     runOrFast();
   };
@@ -1233,6 +1463,7 @@
         treeState.setSolo(treeState.state.soloId === ns.sel ? null : ns.sel);
       },
       escapeSelection: e => {
+        if (gizmo?.dragging()) return;
         if (treeState.state.soloId !== null) {
           treeState.setSolo(null);
           e?.preventDefault();
@@ -1245,6 +1476,7 @@
         }
       },
       deleteSelected: () => {
+        if (gizmo?.dragging()) return; // never delete a node mid gizmo-drag
         // Destructive, so require a tree-editing context: hierarchy panel focus
         // or no UI focus at all.
         const active = document.activeElement;
@@ -1262,10 +1494,12 @@
         hierarchyPanel?.startRename(ns.sel);
       },
       treeUndo: e => {
+        if (gizmo?.dragging()) return;
         runUndo();
         e?.preventDefault();
       },
       treeRedo: e => {
+        if (gizmo?.dragging()) return;
         runRedo();
         e?.preventDefault();
       },
@@ -1431,8 +1665,12 @@
             tree={treeState.state.tree}
             parentId={treeState.state.selectedId}
             {meshCounts}
+            {armedRef}
             onselect={id => treeState.setSelected(id)}
-            onTransformChange={handleInspectorTransformChange}
+            onInstanceTransformChange={handleInstanceTransformChange}
+            onArmInstance={armInstance}
+            onAddInstance={handleAddInstance}
+            onRemoveInstance={handleRemoveInstance}
             onDisableToggle={handleInspectorDisableToggle}
           />
         {/if}
@@ -1598,9 +1836,11 @@
   }
 
   .tree-pane.horizontal {
-    flex: 0 0 180px;
+    /* Height follows content (basis: auto, no grow); can still shrink + scroll when
+     * the tree is taller than the pane. `flex: 0` would collapse it (basis 0%). */
+    flex: 0 1 auto;
     width: auto;
-    height: 180px;
+    min-height: 0;
     border-right: none;
     border-bottom: 1px solid #444;
   }
@@ -1639,7 +1879,6 @@
     font-size: 10px;
     font-family: monospace;
     border: 1px solid #333;
-    border-radius: 2px;
     padding: 0 4px;
     line-height: 14px;
     flex-shrink: 0;
@@ -1650,7 +1889,6 @@
     background: #1c1c1c;
     color: #ddd;
     border: 1px solid #444;
-    border-radius: 2px;
     padding: 0 6px;
     font-size: 11px;
     cursor: pointer;

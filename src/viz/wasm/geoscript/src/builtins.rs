@@ -105,6 +105,7 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "worley" => "worley_noise",
   "path_render" => "render_path",
   "skewer" => "subdivide_by_line",
+  "transform_gizmo" => "gizmo_transform",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -954,11 +955,19 @@ pub(crate) fn scale_impl(
 }
 
 fn apply_mat4_impl(
-  _def_ix: usize,
+  def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix == 1 {
+    let mat = *arg_refs[0].resolve(args, kwargs).as_mat4().unwrap();
+    let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+    let mut new_mesh = mesh.clone(true, false, false);
+    new_mesh.transform = mat;
+    return Ok(Value::Mesh(Rc::new(new_mesh)));
+  }
+
   let m00 = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
   let m01 = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
   let m02 = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
@@ -4231,6 +4240,102 @@ fn point_distribute_impl(
     }
     _ => unimplemented!(),
   }
+}
+
+/// The handle's stable id: the first string arg if given (literal or runtime-computed),
+/// else a per-module positional `@N` counted across all unnamed gizmo-family calls.
+fn resolve_gizmo_handle_id(ctx: &EvalCtx, name_val: &Value) -> String {
+  if let Some(s) = name_val.as_str() {
+    return s.to_owned();
+  }
+  let n = ctx.current_module_unnamed_gizmo_count.get();
+  ctx.current_module_unnamed_gizmo_count.set(n + 1);
+  format!("@{n}")
+}
+
+fn record_gizmo_read(ctx: &EvalCtx, handle_id: &str) {
+  if let Some(set) = ctx.current_module_gizmo_reads.borrow_mut().as_mut() {
+    set.insert(handle_id.to_owned());
+  }
+}
+
+fn injected_gizmo_value(ctx: &EvalCtx, module: &Option<String>, handle_id: &str) -> Option<Value> {
+  let m = module.as_ref()?;
+  ctx
+    .gizmo_values
+    .borrow()
+    .get(m)
+    .and_then(|h| h.get(handle_id))
+    .cloned()
+}
+
+fn gizmo_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let name_val = arg_refs[0].resolve(args, kwargs);
+  let origin = arg_refs[1]
+    .resolve(args, kwargs)
+    .as_vec3()
+    .copied()
+    .unwrap_or_else(Vec3::zeros);
+  let absolute = arg_refs[2].resolve(args, kwargs).as_bool().unwrap_or(false);
+  let default = arg_refs[3].resolve(args, kwargs).as_vec3().copied();
+
+  let handle_id = resolve_gizmo_handle_id(ctx, name_val);
+  let module = ctx.current_module.borrow().clone();
+
+  // delta (default) ⇒ stored offset, zero until dragged; absolute ⇒ the value itself.
+  let value = match injected_gizmo_value(ctx, &module, &handle_id) {
+    Some(Value::Vec3(v)) => v,
+    _ => default.unwrap_or(if absolute { origin } else { Vec3::zeros() }),
+  };
+
+  record_gizmo_read(ctx, &handle_id);
+  ctx.rendered_gizmos.push(crate::RenderedGizmo {
+    source_module: module,
+    handle_id,
+    kind: crate::GizmoKind::Vec3,
+    resolved_origin: origin,
+    current_value: Value::Vec3(value),
+    absolute,
+  });
+  Ok(Value::Vec3(value))
+}
+
+fn gizmo_transform_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let name_val = arg_refs[0].resolve(args, kwargs);
+  let default = arg_refs[1].resolve(args, kwargs).as_mat4().copied();
+
+  let handle_id = resolve_gizmo_handle_id(ctx, name_val);
+  let module = ctx.current_module.borrow().clone();
+
+  let mat = match injected_gizmo_value(ctx, &module, &handle_id) {
+    Some(Value::Mat4(m)) => *m,
+    _ => default.unwrap_or_else(|| crate::Mat4::identity()),
+  };
+
+  record_gizmo_read(ctx, &handle_id);
+  let origin = Vec3::new(mat[(0, 3)], mat[(1, 3)], mat[(2, 3)]);
+  let mat = Rc::new(mat);
+  ctx.rendered_gizmos.push(crate::RenderedGizmo {
+    source_module: module,
+    handle_id,
+    kind: crate::GizmoKind::Transform,
+    resolved_origin: origin,
+    current_value: Value::Mat4(Rc::clone(&mat)),
+    absolute: true,
+  });
+  Ok(Value::Mat4(mat))
 }
 
 fn render_impl(
@@ -7509,6 +7614,7 @@ fn str_impl(
         Value::Bool(b) => format!("{b}"),
         Value::String(s) => s.clone(),
         Value::Material(material) => format!("{material:?}"),
+        Value::Mat4(m) => format!("{m:?}"),
         Value::Nil => String::from("nil"),
       };
       Ok(Value::String(s))
@@ -7948,6 +8054,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "render" => builtin_fn!(render, |def_ix, arg_refs, args, kwargs, ctx| {
     render_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "gizmo" => builtin_fn!(gizmo, |def_ix, arg_refs, args, kwargs, ctx| {
+    gizmo_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "gizmo_transform" => builtin_fn!(gizmo_transform, |def_ix, arg_refs, args, kwargs, ctx| {
+    gizmo_transform_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "point_distribute" => builtin_fn!(point_distribute, |def_ix, arg_refs, args, kwargs, _ctx| {
     point_distribute_impl(def_ix, arg_refs, args, kwargs)

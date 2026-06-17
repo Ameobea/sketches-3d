@@ -43,6 +43,7 @@ impl FromStr for ArgType {
       "fn" | "callable" => Ok(ArgType::Callable),
       "nil" => Ok(ArgType::Nil),
       "mat" => Ok(ArgType::Material),
+      "mat4" => Ok(ArgType::Mat4),
       "light" => Ok(ArgType::Light),
       _ => Err(format!("Unknown type name: {s}")),
     }
@@ -66,6 +67,7 @@ impl ArgType {
       (ArgType::String, Value::String(_)) => Ok(()),
       (ArgType::Nil, Value::Nil) => Ok(()),
       (ArgType::Material, Value::Material(_)) => Ok(()),
+      (ArgType::Mat4, Value::Mat4(_)) => Ok(()),
       (ArgType::Light, Value::Light(_)) => Ok(()),
       _ => Err(ErrorStack::new(format!(
         "Value {val:?} does not match type {self:?}"

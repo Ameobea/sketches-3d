@@ -18,16 +18,24 @@ import type {
   CsgAssetDef,
   CsgTreeNode,
   GeoscriptAssetMeta,
+  GeotoyCompositionAssetDef,
   LevelDef,
   ObjectDef,
   ObjectGroupDef,
 } from './types';
+import { compileTree, buildGizmoValues } from 'src/geoscript/treeCodegen';
+import {
+  bakeCompositionMeshes,
+  resolveCompositionMaterial,
+  type BakedCompositionMesh,
+} from 'src/geoscript/runner/bakeComposition';
 import type { GraphicsQuality } from 'src/viz/conf';
 import type { SceneRuntime } from '../sceneRuntime';
 import type { BehaviorFn } from '../sceneRuntime/types';
 import { isObjectGroup, flattenLeaves, isGeneratedDef } from './levelDefTreeUtils';
 import { type LevelObject, type LevelGroup, type LevelSceneNode, type LevelLight } from './levelSceneTypes';
 import { replaceLeafInstance } from './editorStructuralOps';
+import { buildCompositionChild } from './editorNodeFactory';
 import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
 import { buildMaterial, stampMaterialMetaUserData } from './buildMaterial';
@@ -531,6 +539,9 @@ export const loadLevelDef = (
   }
 
   const placedObjects = new Map<string, LevelObject>();
+  // Baked mesh prototypes per composition asset, retained so the editor can re-expand a
+  // placement (add-from-library / clone) without re-running the geoscript worker.
+  const compositionBaked = new Map<string, BakedCompositionMesh[]>();
   const builtMaterials = new Map<string, THREE.Material>();
   const loadedTextures = new Map<string, THREE.Texture>();
   const assetPrototypes = new Map<string, THREE.Mesh>();
@@ -551,7 +562,11 @@ export const loadLevelDef = (
   // geoscript runtime.  Acquire it lazily — only if some asset actually needs the worker
   // (geoscript/csg assets or assets with `colliderShape: 'convexHull'`).
   const needsExecutor = Object.values(levelDef.assets).some(
-    def => def.type === 'geoscript' || def.type === 'csg' || def.colliderShape === 'convexHull'
+    def =>
+      def.type === 'geoscript' ||
+      def.type === 'csg' ||
+      def.type === 'geotoyComposition' ||
+      def.colliderShape === 'convexHull'
   );
   const sharedExecutor: GeoscriptExecutor | undefined = needsExecutor
     ? viz.getGeoscriptExecutor()
@@ -625,6 +640,11 @@ export const loadLevelDef = (
   const inputChildIndex = new Map<string, number>();
   const nodeById = new Map<string, LevelSceneNode>();
   const rootNodes: LevelSceneNode[] = [];
+  // Composition placements: each referencing ObjectDef pre-creates an (initially empty)
+  // editable LevelGroup; its read-only children are filled once the tree is baked.
+  const compositionGroups = new Map<string, { group: LevelGroup; objDef: ObjectDef }>();
+  const isCompositionAsset = (assetKey: string): boolean =>
+    levelDef.assets[assetKey]?.type === 'geotoyComposition';
 
   const preCreateGroups = (
     nodes: (ObjectDef | ObjectGroupDef)[],
@@ -634,7 +654,28 @@ export const loadLevelDef = (
     for (let childIx = 0; childIx < nodes.length; childIx += 1) {
       const node = nodes[childIx];
       if (parentGroup) inputChildIndex.set(node.id, childIx);
-      if (isObjectGroup(node)) {
+      if (!isObjectGroup(node) && isCompositionAsset(node.asset)) {
+        const group = new THREE.Group();
+        applyTransform(group, node);
+        parent.add(group);
+        const levelGroup: LevelGroup = {
+          id: node.id,
+          object: group,
+          def: {
+            id: node.id,
+            position: node.position,
+            rotation: node.rotation,
+            scale: node.scale,
+            userData: node.userData,
+          },
+          children: [],
+          generated: isGeneratedDef(node),
+          compositionDef: node,
+        };
+        nodeById.set(node.id, levelGroup);
+        if (parent === viz.scene) rootNodes.push(levelGroup);
+        compositionGroups.set(node.id, { group: levelGroup, objDef: node });
+      } else if (isObjectGroup(node)) {
         const group = new THREE.Group();
         applyTransform(group, node);
         parent.add(group);
@@ -851,6 +892,128 @@ export const loadLevelDef = (
     initialPlacementPromises.push(promise);
   };
 
+  // --- Composition assets: run the tree headlessly, bake meshes, expand each placement ---
+
+  const warnedUnmappedComposition = new Set<string>();
+  const levelMaterialNames = new Set(Object.keys(levelDef.materials ?? {}));
+  const resolveChildMaterial = (
+    def: GeotoyCompositionAssetDef,
+    objDef: ObjectDef,
+    geotoyName: string,
+    assetId: string
+  ): string | undefined => {
+    const { name, unmapped } = resolveCompositionMaterial(
+      levelMaterialNames,
+      def.materialMap,
+      objDef.material,
+      geotoyName
+    );
+    if (unmapped) {
+      const key = `${assetId}:${geotoyName}`;
+      if (!warnedUnmappedComposition.has(key)) {
+        warnedUnmappedComposition.add(key);
+        console.warn(
+          `[levelDef] composition "${assetId}": material "${geotoyName}" is unmapped; falling back`
+        );
+      }
+    }
+    return name;
+  };
+
+  const placeCompositionChild = (
+    group: LevelGroup,
+    objDef: ObjectDef,
+    assetId: string,
+    def: GeotoyCompositionAssetDef,
+    baked: BakedCompositionMesh,
+    childIndex: number
+  ) => {
+    const levelObj = buildCompositionChild({ viz, builtMaterials }, objDef, baked, childIndex, g =>
+      resolveChildMaterial(def, objDef, g, assetId)
+    );
+    group.object.add(levelObj.object);
+
+    const matName = levelObj.def.material;
+    const builtMat = matName ? builtMaterials.get(matName) : undefined;
+    if (builtMat) propagateMatUserDataToEntity(builtMat, levelObj.entity);
+
+    allLevelObjects.push(levelObj);
+    placedObjects.set(levelObj.id, levelObj);
+    nodeById.set(levelObj.id, levelObj);
+    group.children.push(levelObj);
+
+    // Register for the post-texture material build, or fire the assigned-cb if already built.
+    if (matName) {
+      const list = matToObjIds.get(matName) ?? [];
+      list.push(levelObj.id);
+      matToObjIds.set(matName, list);
+      if (builtMat) {
+        const cb = matAssignedCbs.get(matName);
+        if (cb) forEachMesh(levelObj.object, cb);
+      }
+    }
+
+    if (physicsReady) maybeRegisterPhysics(viz.fpCtx!, levelObj);
+  };
+
+  const resolveCompositionAssets = async (): Promise<void> => {
+    const compIds = sortedAssetIds.filter(id => levelDef.assets[id].type === 'geotoyComposition');
+    if (compIds.length === 0) return;
+    if (!sharedExecutor) {
+      console.error('[levelDef] geotoyComposition assets present but no geoscript executor available');
+      return;
+    }
+
+    const prelude = await sharedExecutor.getPrelude();
+
+    const jobs: GeoscriptJob[] = compIds.map(id => {
+      const def = levelDef.assets[id] as GeotoyCompositionAssetDef;
+      if (def.rootNodeName) {
+        console.warn(
+          `[levelDef] composition "${id}": rootNodeName scoping is not supported in v1; importing the whole tree`
+        );
+      }
+      const compiled = compileTree(def.tree);
+      const preludeEjected = def.preludeEjected ?? false;
+      const ambientSources: string[] = [];
+      if (!preludeEjected) ambientSources.push(prelude);
+      if (def.tree.globalsSource.trim().length > 0) ambientSources.push(def.tree.globalsSource);
+      const asyncDeps = def._meta?.asyncDeps?.filter(d => d !== 'text_to_path') ?? [];
+      return {
+        id,
+        modules: compiled.modules,
+        code: compiled.rootSource,
+        includePrelude: !preludeEjected,
+        ambientSources,
+        gizmoValues: buildGizmoValues(def.tree),
+        asyncDeps,
+        deps: [],
+        collectMetadata: false,
+      };
+    });
+
+    const promises = sharedExecutor.submit(jobs);
+    await Promise.all(
+      compIds.map(id =>
+        promises.get(id)!.then(res => {
+          if (res.error) {
+            console.error(`[levelDef] composition asset "${id}" error:`, res.error);
+            return;
+          }
+          const def = levelDef.assets[id] as GeotoyCompositionAssetDef;
+          const baked = bakeCompositionMeshes(def.tree, res.objects);
+          compositionBaked.set(id, baked);
+          if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);
+          for (const objDef of assetToObjDefs.get(id) ?? []) {
+            const entry = compositionGroups.get(objDef.id);
+            if (!entry) continue;
+            baked.forEach((bm, i) => placeCompositionChild(entry.group, objDef, id, def, bm, i));
+          }
+        })
+      )
+    );
+  };
+
   const tryBuildMaterial = (matName: string) => {
     const pending = matTexPending.get(matName);
     if (!pending || pending.size > 0) return;
@@ -961,10 +1124,14 @@ export const loadLevelDef = (
     sharedExecutor
   );
 
+  // Composition jobs share the worker ctx with script assets, so run them after the script
+  // batch settles (concurrent `submit()` calls would interleave resets on the shared ctx).
+  const compositionsDone = geoscriptDone.then(() => resolveCompositionAssets());
+
   // `geoscriptDone` resolves after every `onAssetResolved` has been called (so every
-  // `initialPlacementPromises` entry exists); awaiting those then gives us "all assets
-  // resolved + all hulls computed + all objects placed".
-  const objectsPromise: Promise<LevelObject[]> = geoscriptDone
+  // `initialPlacementPromises` entry exists); awaiting those + composition expansion then
+  // gives us "all assets resolved + all hulls computed + all objects placed".
+  const objectsPromise: Promise<LevelObject[]> = Promise.all([geoscriptDone, compositionsDone])
     .then(() => Promise.all(initialPlacementPromises))
     .then(() => allLevelObjects);
   const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(
@@ -998,7 +1165,8 @@ export const loadLevelDef = (
           nodeById,
           levelLights,
           assetCollisionMeshes,
-          resolveAssetPrototype
+          resolveAssetPrototype,
+          compositionBaked
         );
 
         // Subscribe to geo file changes for in-place hot reload.

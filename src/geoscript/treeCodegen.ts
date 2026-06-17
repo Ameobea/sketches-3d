@@ -1,5 +1,9 @@
-import type { NodeDef, TreeDef } from './geotoyAPIClient';
+import * as THREE from 'three';
+
+import type { GizmoValue, NodeDef, Transform3, TreeDef } from './geotoyAPIClient';
 import { ROOT_NODE_NAME } from './geotoyAPIClient';
+import type { GizmoValuesByModule, GizmoValueWire } from './runner/types';
+import { composeTransform3 } from './runner/worldMatrixCache';
 
 /**
  * Compile a `TreeDef` into a set of geoscript module sources plus a root program
@@ -34,6 +38,36 @@ export const compileTree = (tree: TreeDef): CompiledTree => {
   delete modules[ROOT_NODE_NAME];
 
   return { modules, rootSource };
+};
+
+/** Map from compiled module name → node id, for resolving a rendered mesh's owning node. */
+export const buildModuleNameToNodeId = (tree: TreeDef): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const node of Object.values(tree.nodes)) {
+    if (!node.disabled) out[node.name] = node.id;
+  }
+  return out;
+};
+
+const gizmoValueToWire = (v: GizmoValue): GizmoValueWire => {
+  if (v.kind === 'vec3') {
+    const a = v.value as [number, number, number];
+    return { kind: 'vec3', value: [a[0], a[1], a[2]] };
+  }
+  const m = composeTransform3(new THREE.Matrix4(), v.value as Transform3);
+  return { kind: 'transform', value: Array.from(m.elements) };
+};
+
+/** Tree handle values → per-module injection map keyed by node name (matches `compileTree`). */
+export const buildGizmoValues = (tree: TreeDef): GizmoValuesByModule => {
+  const out: GizmoValuesByModule = {};
+  for (const node of Object.values(tree.nodes)) {
+    if (!node.handles) continue;
+    const handles: Record<string, GizmoValueWire> = {};
+    for (const [id, v] of Object.entries(node.handles)) handles[id] = gizmoValueToWire(v);
+    out[node.name] = handles;
+  }
+  return out;
 };
 
 const buildModuleSource = (node: NodeDef, tree: TreeDef): string => {

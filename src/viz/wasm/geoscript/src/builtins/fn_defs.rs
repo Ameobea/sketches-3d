@@ -1092,6 +1092,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Sets the transform of a mesh to an explicit 4x4 matrix (row-major order)",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "matrix", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Sets the transform of a mesh to the given `mat4`",
+        return_type: &[ArgType::Mesh],
+      },
     ],
   },
   "flip_normals" => FnDef {
@@ -3679,6 +3687,36 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Renders a `PathSampler` as a closed path in the XZ plane.  The sampler is evaluated at 10,000 evenly-spaced points and the resulting 2D positions are projected onto the XZ plane (y=0).",
         return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "gizmo" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Stable handle id, scoped to the node. Omit for a positional `@N` id." },
+          ArgDef { name: "origin", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::zeros())), description: "Node-local anchor where the handle is drawn in the viewport." },
+          ArgDef { name: "absolute", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Bool(false)), description: "If true the returned value is the handle position itself; otherwise it's the drag offset from `origin` (zero until dragged)." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Optional(|| Value::Nil), description: "Value to return when no value has been stored for this handle." },
+        ],
+        description: "A viewport-draggable `vec3` handle. Interactive only inside the Geotoy editor; everywhere else (level loader, tests) it returns the stored baked value, or the `default`/zero when unset.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "gizmo_transform" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Stable handle id, scoped to the node. Omit for a positional `@N` id." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Optional(|| Value::Nil), description: "Transform to return when no value has been stored for this handle." },
+        ],
+        description: "A viewport-draggable `mat4` transform handle (absolute). Consume it with `apply_mat4`. Returns the stored baked transform, or the `default`/identity when unset.",
+        return_type: &[ArgType::Mat4],
       },
     ],
   },

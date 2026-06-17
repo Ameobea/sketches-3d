@@ -425,7 +425,17 @@ impl Callable {
         let name = fn_sigs().entries[*fn_entry_ix].0;
         matches!(
           name,
-          "print" | "render" | "call" | "randv" | "randf" | "randi" | "assert" | "set_rng_seed"
+          "print"
+            | "render"
+            | "call"
+            | "randv"
+            | "randf"
+            | "randi"
+            | "assert"
+            | "set_rng_seed"
+            | "gizmo"
+            | "gizmo_transform"
+            | "transform_gizmo"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
@@ -624,6 +634,7 @@ impl Drop for ManifoldHandle {
 }
 
 pub type Vec2 = Vector2<f32>;
+pub type Mat4 = Matrix4<f32>;
 
 #[repr(u8)]
 pub enum Value {
@@ -640,7 +651,15 @@ pub enum Value {
   Material(Rc<Material>),
   Light(Box<Light>),
   String(String),
+  // Boxed out-of-line: a bare `Mat4` (64 bytes) would blow the enum size. On
+  // wasm32 the `Rc` is a 4-byte thin pointer, keeping `Value` at 16 bytes.
+  // Must stay after discriminant 5 so the `clone` fast path doesn't shallow-copy it.
+  Mat4(Rc<Mat4>),
 }
+
+// The wasm-side `maybe_init` also asserts this at runtime; this fails the build.
+#[cfg(target_arch = "wasm32")]
+const _: () = assert!(std::mem::size_of::<Value>() == 16);
 
 impl Value {
   fn discriminant(&self) -> u8 {
@@ -684,6 +703,7 @@ fn clone_value_slow(val: &Value) -> Value {
     Value::Map(map) => Value::Map(Rc::clone(map)),
     Value::String(s) => Value::String(s.clone()),
     Value::Material(material) => Value::Material(Rc::clone(material)),
+    Value::Mat4(mat) => Value::Mat4(Rc::clone(mat)),
   }
 }
 
@@ -714,6 +734,7 @@ impl Debug for Value {
       Value::Bool(b) => write!(f, "Bool({b})"),
       Value::String(s) => write!(f, "String({s})"),
       Value::Material(material) => write!(f, "Material({material:?})"),
+      Value::Mat4(mat) => write!(f, "Mat4({mat:?})"),
       Value::Nil => write!(f, "Nil"),
     }
   }
@@ -821,6 +842,7 @@ const BOOL_FLAG: u16 = 0b0000_0010_0000_0000;
 const STRING_FLAG: u16 = 0b0000_0100_0000_0000;
 const MATERIAL_FLAG: u16 = 0b0000_1000_0000_0000;
 const NIL_FLAG: u16 = 0b0001_0000_0000_0000;
+const MAT4_FLAG: u16 = 0b0010_0000_0000_0000;
 const ANY_FLAG: u16 = 0xFFFF;
 
 impl Value {
@@ -877,6 +899,13 @@ impl Value {
   fn as_vec3(&self) -> Option<&Vec3> {
     match self {
       Value::Vec3(v3) => Some(v3),
+      _ => None,
+    }
+  }
+
+  fn as_mat4(&self) -> Option<&Mat4> {
+    match self {
+      Value::Mat4(m) => Some(m),
       _ => None,
     }
   }
@@ -943,6 +972,7 @@ impl Value {
       Value::Bool(_) => ArgType::Bool,
       Value::String(_) => ArgType::String,
       Value::Material(_) => ArgType::Material,
+      Value::Mat4(_) => ArgType::Mat4,
       Value::Nil => ArgType::Nil,
     }
   }
@@ -961,6 +991,7 @@ impl Value {
       Value::Bool(_) => BOOL_FLAG,
       Value::String(_) => STRING_FLAG,
       Value::Material(_) => MATERIAL_FLAG,
+      Value::Mat4(_) => MAT4_FLAG,
       Value::Nil => NIL_FLAG,
     }
   }
@@ -981,6 +1012,7 @@ pub enum ArgType {
   Bool,
   String,
   Material,
+  Mat4,
   Nil,
   Any,
 }
@@ -1005,6 +1037,7 @@ impl ArgType {
       ArgType::Bool => BOOL_FLAG,
       ArgType::String => STRING_FLAG,
       ArgType::Material => MATERIAL_FLAG,
+      ArgType::Mat4 => MAT4_FLAG,
       ArgType::Nil => NIL_FLAG,
       ArgType::Any => ANY_FLAG,
     }
@@ -1025,6 +1058,7 @@ impl ArgType {
       ArgType::Bool => "bool",
       ArgType::String => "str",
       ArgType::Material => "material",
+      ArgType::Mat4 => "mat4",
       ArgType::Nil => "nil",
       ArgType::Any => "any",
     }
@@ -1047,6 +1081,7 @@ impl ArgType {
       ArgType::Bool,
       ArgType::String,
       ArgType::Material,
+      ArgType::Mat4,
       ArgType::Nil,
     ] {
       if valid_types & arg_type.as_bitflags() != 0 {
@@ -1494,6 +1529,30 @@ type RenderedMeshes = AppendOnlyBuffer<RenderedMesh>;
 type RenderedLights = AppendOnlyBuffer<RenderedLight>;
 type RenderedPaths = AppendOnlyBuffer<RenderedPath>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GizmoKind {
+  Vec3,
+  Transform,
+}
+
+/// A `gizmo(...)` / `gizmo_transform(...)` value site reported to the host so the
+/// editor can draw an interactive handle. `current_value` is the value the program
+/// actually saw this eval (injected, defaulted, or zero); `resolved_origin` is where
+/// the 3D gizmo is drawn. Replayed from the module cache like `RenderedMesh`.
+#[derive(Clone)]
+pub struct RenderedGizmo {
+  pub source_module: Option<String>,
+  pub handle_id: String,
+  pub kind: GizmoKind,
+  pub resolved_origin: Vec3,
+  pub current_value: Value,
+  /// vec3 `absolute=` kwarg (transform handles are always absolute). Lets the host
+  /// resolve delta-vs-absolute without re-parsing source.
+  pub absolute: bool,
+}
+
+type RenderedGizmos = AppendOnlyBuffer<RenderedGizmo>;
+
 #[derive(Default, Debug)]
 pub struct Scope {
   vars: RefCell<FxHashMap<Sym, Value>>,
@@ -1779,9 +1838,14 @@ pub struct ModuleExportsCacheEntry {
   pub own_renders: Vec<RenderedMesh>,
   pub own_lights: Vec<RenderedLight>,
   pub own_paths: Vec<RenderedPath>,
+  pub own_gizmos: Vec<RenderedGizmo>,
   pub rng_state_at_start: Pcg32,
   pub rng_state_at_end: Pcg32,
   pub direct_imports: Vec<(String, u64)>,
+  /// Handle ids this module read via `gizmo(...)`, paired with a content hash of the
+  /// injected value it saw. A cache hit requires each handle's current injected value
+  /// to still hash the same — so dragging one gizmo re-evals only its owning module.
+  pub gizmo_reads: Vec<(String, u64)>,
   pub own_async_deps_bitmask: u32,
 }
 
@@ -1793,6 +1857,7 @@ pub struct EvalCtx {
   pub rendered_meshes: RenderedMeshes,
   pub rendered_lights: RenderedLights,
   pub rendered_paths: RenderedPaths,
+  pub rendered_gizmos: RenderedGizmos,
   pub log_fn: fn(&str),
   #[cfg(target_arch = "wasm32")]
   rng: UnsafeCell<Pcg32>,
@@ -1841,6 +1906,16 @@ pub struct EvalCtx {
   /// Monotonic id counter for renders/lights/paths. Preserved across `reset` so
   /// fresh pushes can't collide with cached-replay ids.
   pub next_render_id: Cell<u32>,
+  /// Host-injected gizmo values: `module name -> handleId -> Value` (Vec3 or Mat4).
+  /// Replaces the entire map per run (set via the wasm boundary before eval); a
+  /// missing entry means the call falls back to its `default`/zero.
+  pub gizmo_values: RefCell<FxHashMap<String, FxHashMap<String, Value>>>,
+  /// Handle ids read by the currently-evaluating module body, accumulated for the
+  /// cache entry's `gizmo_reads`. `None` outside module eval.
+  pub current_module_gizmo_reads: RefCell<Option<FxHashSet<String>>>,
+  /// Per-module-eval counter assigning `@N` ids to unnamed gizmo calls. Saved/reset
+  /// by the module-context guard so nested module evals don't interfere.
+  pub current_module_unnamed_gizmo_count: Cell<u32>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1856,6 +1931,7 @@ impl Default for EvalCtx {
       rendered_meshes: RenderedMeshes::default(),
       rendered_lights: RenderedLights::default(),
       rendered_paths: RenderedPaths::default(),
+      rendered_gizmos: RenderedGizmos::default(),
       log_fn: |msg| println!("{msg}"),
       #[cfg(target_arch = "wasm32")]
       rng: UnsafeCell::new(Pcg32::new(7718587666045340534, 17289744314186392832)),
@@ -1879,6 +1955,9 @@ impl Default for EvalCtx {
       replayed_this_run: RefCell::new(FxHashSet::default()),
       last_ambient_hash: RefCell::new(None),
       next_render_id: Cell::new(1),
+      gizmo_values: RefCell::new(FxHashMap::default()),
+      current_module_gizmo_reads: RefCell::new(None),
+      current_module_unnamed_gizmo_count: Cell::new(0),
     }
   }
 }
@@ -3119,6 +3198,31 @@ impl EvalCtx {
     id
   }
 
+  /// Content hash of the injected value a module would see for `handle_id`, used to
+  /// validate gizmo-read cache entries. A missing value hashes to a stable sentinel
+  /// (the call fell back to its source default, which `source_hash` already covers).
+  pub fn gizmo_value_hash(&self, module_name: &str, handle_id: &str) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = FxHasher64::default();
+    let vals = self.gizmo_values.borrow();
+    match vals.get(module_name).and_then(|m| m.get(handle_id)) {
+      Some(Value::Vec3(v)) => {
+        hasher.write_u8(1);
+        for c in [v.x, v.y, v.z] {
+          hasher.write_u32(c.to_bits());
+        }
+      }
+      Some(Value::Mat4(m)) => {
+        hasher.write_u8(2);
+        for c in m.as_slice() {
+          hasher.write_u32(c.to_bits());
+        }
+      }
+      _ => hasher.write_u8(0),
+    }
+    hasher.finish()
+  }
+
   fn touch_module_lru(&self, name: &str) {
     let mut lru = self.module_exports_lru.borrow_mut();
     if let Some(pos) = lru.iter().position(|n| n == name) {
@@ -3227,7 +3331,14 @@ impl EvalCtx {
       let rng_ok = entry.rng_state_at_start == entry.rng_state_at_end
         || entry.rng_state_at_start == self.rng_state();
 
-      if !stale && rng_ok {
+      // Each read handle's injected value must still hash the same, else the body
+      // would see a different gizmo value and must re-eval.
+      let gizmos_ok = entry
+        .gizmo_reads
+        .iter()
+        .all(|(h, hash)| self.gizmo_value_hash(module_name, h) == *hash);
+
+      if !stale && rng_ok && gizmos_ok {
         for mesh in &entry.own_renders {
           self.rendered_meshes.push(mesh.clone());
         }
@@ -3236,6 +3347,9 @@ impl EvalCtx {
         }
         for path in &entry.own_paths {
           self.rendered_paths.push(path.clone());
+        }
+        for gizmo in &entry.own_gizmos {
+          self.rendered_gizmos.push(gizmo.clone());
         }
         self.set_rng_state(entry.rng_state_at_end.clone());
         #[cfg(target_arch = "wasm32")]
@@ -3312,12 +3426,19 @@ impl EvalCtx {
       prev_exports: Option<FxHashMap<Sym, Value>>,
       prev_module: Option<String>,
       prev_imports: Option<Vec<(String, u64)>>,
+      prev_gizmo_reads: Option<FxHashSet<String>>,
+      prev_unnamed_gizmo_count: u32,
     }
     impl<'a> Drop for ModuleCtxGuard<'a> {
       fn drop(&mut self) {
         *self.ctx.current_module_exports.borrow_mut() = self.prev_exports.take();
         *self.ctx.current_module.borrow_mut() = self.prev_module.take();
         *self.ctx.current_module_imports.borrow_mut() = self.prev_imports.take();
+        *self.ctx.current_module_gizmo_reads.borrow_mut() = self.prev_gizmo_reads.take();
+        self
+          .ctx
+          .current_module_unnamed_gizmo_count
+          .set(self.prev_unnamed_gizmo_count);
       }
     }
     let _guard = ModuleCtxGuard {
@@ -3331,6 +3452,11 @@ impl EvalCtx {
         .borrow_mut()
         .replace(module_name.to_owned()),
       prev_imports: self.current_module_imports.borrow_mut().replace(Vec::new()),
+      prev_gizmo_reads: self
+        .current_module_gizmo_reads
+        .borrow_mut()
+        .replace(FxHashSet::default()),
+      prev_unnamed_gizmo_count: self.current_module_unnamed_gizmo_count.replace(0),
     };
 
     let rng_at_start = self.rng_state();
@@ -3350,6 +3476,7 @@ impl EvalCtx {
     let renders_before = self.rendered_meshes.len();
     let lights_before = self.rendered_lights.len();
     let paths_before = self.rendered_paths.len();
+    let gizmos_before = self.rendered_gizmos.len();
     #[cfg(target_arch = "wasm32")]
     let async_before = get_async_dep_bits();
 
@@ -3413,6 +3540,24 @@ impl EvalCtx {
       .get(paths_before..)
       .map(|s| s.iter().filter(|p| is_own(&p.source_module)).cloned().collect())
       .unwrap_or_default();
+    let own_gizmos: Vec<RenderedGizmo> = self
+      .rendered_gizmos
+      .inner
+      .borrow()
+      .get(gizmos_before..)
+      .map(|s| s.iter().filter(|g| is_own(&g.source_module)).cloned().collect())
+      .unwrap_or_default();
+    let gizmo_reads: Vec<(String, u64)> = self
+      .current_module_gizmo_reads
+      .borrow_mut()
+      .take()
+      .unwrap_or_default()
+      .into_iter()
+      .map(|h| {
+        let hash = self.gizmo_value_hash(module_name, &h);
+        (h, hash)
+      })
+      .collect();
     let rng_at_end = self.rng_state();
     #[cfg(target_arch = "wasm32")]
     let own_async_deps_bitmask = get_async_dep_bits() & !async_before;
@@ -3438,9 +3583,11 @@ impl EvalCtx {
       own_renders,
       own_lights,
       own_paths,
+      own_gizmos,
       rng_state_at_start: rng_at_start,
       rng_state_at_end: rng_at_end,
       direct_imports,
+      gizmo_reads,
       own_async_deps_bitmask,
     });
 
@@ -5994,9 +6141,11 @@ fn test_random_module_cache_requires_matching_rng_state() {
     own_renders: Vec::new(),
     own_lights: Vec::new(),
     own_paths: Vec::new(),
+    own_gizmos: Vec::new(),
     rng_state_at_start: rng_start,
     rng_state_at_end: rng_end,
     direct_imports: Vec::new(),
+    gizmo_reads: Vec::new(),
     own_async_deps_bitmask: 0,
   });
   ctx
@@ -6014,6 +6163,166 @@ fn test_random_module_cache_requires_matching_rng_state() {
   let actual = actual_exports.get("x").unwrap().as_int().unwrap();
 
   assert_eq!(actual, 2);
+}
+
+#[cfg(test)]
+fn inject_gizmo(ctx: &EvalCtx, module: &str, handle: &str, value: Value) {
+  ctx
+    .gizmo_values
+    .borrow_mut()
+    .entry(module.to_string())
+    .or_default()
+    .insert(handle.to_string(), value);
+}
+
+#[test]
+fn test_gizmo_returns_injected_vec3() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("node".to_string(), "export p = gizmo(\"cut1\")".to_string());
+  inject_gizmo(&ctx, "node", "cut1", Value::Vec3(Vec3::new(1., 2., 3.)));
+
+  parse_and_eval_program_with_ctx(
+    "import { p } from \"node\"\nresult = p".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  assert_eq!(
+    ctx.get_global("result").unwrap().as_vec3().unwrap(),
+    &Vec3::new(1., 2., 3.)
+  );
+}
+
+#[test]
+fn test_gizmo_unset_returns_default() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export p = gizmo(\"x\", default=vec3(4, 5, 6))".to_string(),
+  );
+  parse_and_eval_program_with_ctx(
+    "import { p } from \"node\"\nresult = p".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  assert_eq!(
+    ctx.get_global("result").unwrap().as_vec3().unwrap(),
+    &Vec3::new(4., 5., 6.)
+  );
+}
+
+/// Changing the injected value must re-eval the owning module — which also proves the
+/// `gizmo` call wasn't const-folded into a stale literal (it sits in an otherwise-const expr).
+#[test]
+fn test_gizmo_reinjection_invalidates_cache() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export p = gizmo(\"a\") + vec3(10, 0, 0)".to_string(),
+  );
+
+  let run = |x: f32| -> f32 {
+    inject_gizmo(&ctx, "node", "a", Value::Vec3(Vec3::new(x, 0., 0.)));
+    ctx.replayed_this_run.borrow_mut().clear();
+    parse_and_eval_program_with_ctx(
+      "import { p } from \"node\"\nresult = p".to_string(),
+      &ctx,
+      false,
+    )
+    .unwrap();
+    ctx.get_global("result").unwrap().as_vec3().unwrap().x
+  };
+
+  assert_eq!(run(1.), 11.);
+  assert_eq!(run(2.), 12.);
+}
+
+/// An unrelated handle changing must NOT change a module that only reads a different one.
+#[test]
+fn test_gizmo_unrelated_handle_change_keeps_value() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("node".to_string(), "export p = gizmo(\"a\")".to_string());
+  inject_gizmo(&ctx, "node", "a", Value::Vec3(Vec3::new(5., 0., 0.)));
+
+  let run = || -> f32 {
+    ctx.replayed_this_run.borrow_mut().clear();
+    parse_and_eval_program_with_ctx(
+      "import { p } from \"node\"\nresult = p".to_string(),
+      &ctx,
+      false,
+    )
+    .unwrap();
+    ctx.get_global("result").unwrap().as_vec3().unwrap().x
+  };
+
+  assert_eq!(run(), 5.);
+  inject_gizmo(&ctx, "node", "b", Value::Vec3(Vec3::new(9., 0., 0.)));
+  assert_eq!(run(), 5.);
+}
+
+#[test]
+fn test_unnamed_gizmo_positional_ids() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export a = gizmo()\nexport b = gizmo()".to_string(),
+  );
+  inject_gizmo(&ctx, "node", "@0", Value::Vec3(Vec3::new(1., 0., 0.)));
+  inject_gizmo(&ctx, "node", "@1", Value::Vec3(Vec3::new(2., 0., 0.)));
+
+  parse_and_eval_program_with_ctx(
+    "import { a, b } from \"node\"\nra = a\nrb = b".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  assert_eq!(ctx.get_global("ra").unwrap().as_vec3().unwrap().x, 1.);
+  assert_eq!(ctx.get_global("rb").unwrap().as_vec3().unwrap().x, 2.);
+}
+
+#[test]
+fn test_gizmo_transform_returns_injected_mat4_and_applies() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export m = gizmo_transform(\"t\")".to_string(),
+  );
+  let mut t = Mat4::identity();
+  t[(0, 3)] = 7.;
+  inject_gizmo(&ctx, "node", "t", Value::Mat4(Rc::new(t)));
+
+  parse_and_eval_program_with_ctx(
+    "import { m } from \"node\"\nresult = m".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  let Value::Mat4(m) = ctx.get_global("result").unwrap() else {
+    panic!("expected mat4");
+  };
+  assert_eq!(m[(0, 3)], 7.);
+}
+
+#[test]
+fn test_apply_mat4_accepts_mat4_overload() {
+  let ctx = EvalCtx::default();
+  parse_and_eval_program_with_ctx(
+    "m = gizmo_transform(\"t\")\nresult = box(1) | apply_mat4(m)".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  assert!(matches!(
+    ctx.get_global("result").unwrap(),
+    Value::Mesh(_)
+  ));
 }
 
 #[test]

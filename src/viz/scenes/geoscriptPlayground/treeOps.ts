@@ -1,8 +1,14 @@
 // Pure functions for mutating a `TreeDef`. Svelte-free so the logic is
 // unit-testable under plain node.
 
-import type { NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
-import { ROOT_NODE_NAME, buildEmptyTree, buildIdentityTransform } from 'src/geoscript/geotoyAPIClient';
+import type { GizmoValue, NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import {
+  ROOT_NODE_NAME,
+  buildEmptyTree,
+  buildIdentityTransform,
+  buildInstance,
+  cloneTransform3,
+} from 'src/geoscript/geotoyAPIClient';
 
 const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const RESERVED_NAMES: ReadonlySet<string> = new Set([ROOT_NODE_NAME, '_globals']);
@@ -103,7 +109,7 @@ export const createNode = (tree: TreeDef, opts: CreateNodeOpts = {}): string => 
     id,
     name,
     source: opts.source ?? '',
-    instances: [opts.transform ?? buildIdentityTransform()],
+    instances: [buildInstance(opts.transform)],
     children: [],
   };
   tree.nodes[id] = node;
@@ -200,33 +206,62 @@ export const renameNode = (tree: TreeDef, id: string, newName: string): void => 
   node.name = newName;
 };
 
+/** Writes a placement's transform in place, preserving its id. */
 export const setInstanceTransform = (
   tree: TreeDef,
-  id: string,
-  index: number,
+  nodeId: string,
+  instanceId: string,
   transform: Transform3
 ): void => {
-  const node = tree.nodes[id];
-  if (node && node.instances[index]) {
-    node.instances[index] = transform;
-  }
+  const inst = tree.nodes[nodeId]?.instances.find(i => i.id === instanceId);
+  if (!inst) return;
+  Object.assign(inst, cloneTransform3(transform));
 };
 
-/** Appends an instance placement; returns its index. Refuses `_root`. */
-export const addInstance = (tree: TreeDef, id: string, transform?: Transform3): number => {
-  const node = tree.nodes[id];
-  if (!node || id === tree.rootId) return -1;
-  node.instances.push(transform ?? buildIdentityTransform());
-  return node.instances.length - 1;
+/** Appends a placement (id unique within the node); returns its id, or null for `_root`/missing. */
+export const addInstance = (tree: TreeDef, nodeId: string, transform?: Transform3): string | null => {
+  const node = tree.nodes[nodeId];
+  if (!node || nodeId === tree.rootId) return null;
+  const inst = buildInstance(
+    transform,
+    node.instances.map(i => i.id)
+  );
+  node.instances.push(inst);
+  return inst.id;
 };
 
-/** Removes instance `index`. Refuses to remove the last instance or any of `_root`. */
-export const removeInstance = (tree: TreeDef, id: string, index: number): void => {
-  const node = tree.nodes[id];
-  if (!node || id === tree.rootId) return;
+/** Removes a placement by id. Refuses to remove the last instance or any of `_root`. */
+export const removeInstance = (tree: TreeDef, nodeId: string, instanceId: string): void => {
+  const node = tree.nodes[nodeId];
+  if (!node || nodeId === tree.rootId) return;
   if (node.instances.length <= 1) return;
-  if (index < 0 || index >= node.instances.length) return;
-  node.instances.splice(index, 1);
+  const ix = node.instances.findIndex(i => i.id === instanceId);
+  if (ix >= 0) node.instances.splice(ix, 1);
+};
+
+/** Stores a gizmo handle value on a node (creates the `handles` map if needed). */
+export const setHandle = (tree: TreeDef, nodeId: string, handleId: string, value: GizmoValue): void => {
+  const node = tree.nodes[nodeId];
+  if (!node) return;
+  (node.handles ??= {})[handleId] = structuredClone(value);
+};
+
+/** Removes a stored handle value; drops the `handles` map when it empties. */
+export const deleteHandle = (tree: TreeDef, nodeId: string, handleId: string): void => {
+  const handles = tree.nodes[nodeId]?.handles;
+  if (!handles) return;
+  delete handles[handleId];
+  if (Object.keys(handles).length === 0) delete tree.nodes[nodeId].handles;
+};
+
+/** Drops stored handle values whose handleId is no longer live (GC of orphans). */
+export const pruneHandles = (tree: TreeDef, nodeId: string, liveHandleIds: ReadonlySet<string>): void => {
+  const handles = tree.nodes[nodeId]?.handles;
+  if (!handles) return;
+  for (const id of Object.keys(handles)) {
+    if (!liveHandleIds.has(id)) delete handles[id];
+  }
+  if (Object.keys(handles).length === 0) delete tree.nodes[nodeId].handles;
 };
 
 export const setSource = (tree: TreeDef, id: string, source: string): void => {
@@ -276,6 +311,7 @@ export const computeMeshCounts = (
  * doesn't terminate at `_root`.
  */
 export const getNodeAncestorChain = (tree: TreeDef, nodeId: string): NodeDef[] | null => {
+  const parent = buildParentMap(tree); // once, vs findParentId's O(n) per ancestor (hot: per frame)
   const chain: NodeDef[] = [];
   let cur: string | null = nodeId;
   const visited = new Set<string>();
@@ -285,7 +321,7 @@ export const getNodeAncestorChain = (tree: TreeDef, nodeId: string): NodeDef[] |
     if (!node) return null;
     chain.push(node);
     if (cur === tree.rootId) return chain;
-    cur = findParentId(tree, cur);
+    cur = parent.get(cur) ?? null;
   }
   return null;
 };

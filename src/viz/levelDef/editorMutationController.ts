@@ -1,12 +1,17 @@
 import * as THREE from 'three';
 
-import type { LevelObject, LevelGroup, LevelSceneNode } from './levelSceneTypes';
+import type { LevelGroup, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
 import type { ObjectDef, ObjectGroupDef } from './types';
 import type { StructuralCtx, RuntimeSubtree, StructuralOp, ParentRef } from './editorStructuralTypes';
 import type { BuildCtx } from './editorNodeFactory';
+import {
+  buildLeafNode,
+  buildGroupSubtree,
+  buildCompositionGroupFromCtx,
+  serializeGroup,
+} from './editorNodeFactory';
 import type { LevelEditorApi } from './levelEditorApi';
-import { buildLeafNode, buildGroupSubtree, serializeGroup } from './editorNodeFactory';
 import {
   attachSubtree,
   detachSubtree,
@@ -42,6 +47,14 @@ export type ClipboardEntry =
   | {
       kind: 'group';
       def: ObjectGroupDef;
+      parent: ParentRef;
+      worldTransform: TransformSnapshot;
+    }
+  | {
+      kind: 'composition';
+      assetId: string;
+      /** The leaf-pointer ObjectDef (asset/material/...); re-expanded from cached baked meshes. */
+      def: ObjectDef;
       parent: ParentRef;
       worldTransform: TransformSnapshot;
     };
@@ -144,14 +157,19 @@ export class EditorMutationController {
     assetId: string,
     materialId: string | undefined,
     position: [number, number, number]
-  ): Promise<LevelObject | null> {
-    if (!this.ctx.prototypes.has(assetId)) {
+  ): Promise<LevelSceneNode | null> {
+    const isComposition = this.ctx.compositionBaked?.has(assetId) ?? false;
+    if (!isComposition && !this.ctx.prototypes.has(assetId)) {
       console.warn(`[EditorMutationController] No prototype for asset "${assetId}"`);
       return null;
     }
     const newDef = await this.api.sendAdd({ asset: assetId, material: materialId, position });
     if (!newDef) return null;
-    return this._finalizeSpawnLeaf(assetId, newDef);
+    const root = isComposition
+      ? buildCompositionGroupFromCtx(this.ctx, newDef)
+      : buildLeafNode(this.ctx, assetId, newDef);
+    if (!root) return null;
+    return this._finalizeSpawnNode(root);
   }
 
   /** No undo entry — matches the pre-mutation-controller behavior. */
@@ -188,6 +206,15 @@ export class EditorMutationController {
    */
   captureClipboardEntry(node: LevelSceneNode, worldTransform: TransformSnapshot): ClipboardEntry {
     const parent = capturePlacement(this.ctx, node).parent;
+    if (isLevelGroup(node) && node.compositionDef) {
+      return {
+        kind: 'composition',
+        assetId: node.compositionDef.asset,
+        def: JSON.parse(JSON.stringify(node.compositionDef)),
+        parent,
+        worldTransform,
+      };
+    }
     if (isLevelGroup(node)) {
       return {
         kind: 'group',
@@ -241,9 +268,16 @@ export class EditorMutationController {
         );
         return null;
       }
+    } else if (entry.kind === 'composition') {
+      if (!this.ctx.compositionBaked?.has(entry.assetId)) {
+        console.warn(`[EditorMutationController] No baked meshes for composition asset "${entry.assetId}"`);
+        return null;
+      }
     } else {
       for (const leaf of flattenLeaves([entry.def])) {
-        if (!this.ctx.prototypes.has(leaf.asset)) {
+        const known =
+          this.ctx.prototypes.has(leaf.asset) || (this.ctx.compositionBaked?.has(leaf.asset) ?? false);
+        if (!known) {
           console.warn(`[EditorMutationController] No prototype for asset "${leaf.asset}" in pasted group`);
           return null;
         }
@@ -274,7 +308,7 @@ export class EditorMutationController {
     const index = targetChildren.length;
 
     let root: LevelSceneNode;
-    if (entry.kind === 'object') {
+    if (entry.kind === 'object' || entry.kind === 'composition') {
       const newDef = await this.api.sendAdd({
         asset: entry.assetId,
         material: entry.def.material,
@@ -285,7 +319,12 @@ export class EditorMutationController {
         index,
       });
       if (!newDef) return null;
-      root = buildLeafNode(this.ctx, entry.assetId, newDef);
+      const built =
+        entry.kind === 'composition'
+          ? buildCompositionGroupFromCtx(this.ctx, newDef)
+          : buildLeafNode(this.ctx, entry.assetId, newDef);
+      if (!built) return null;
+      root = built;
     } else {
       const patchedDef: ObjectGroupDef = {
         ...JSON.parse(JSON.stringify(entry.def)),
@@ -532,13 +571,12 @@ export class EditorMutationController {
     );
   }
 
-  private _finalizeSpawnLeaf(assetId: string, newDef: ObjectDef): LevelObject {
-    const leaf = buildLeafNode(this.ctx, assetId, newDef);
+  private _finalizeSpawnNode(root: LevelSceneNode): LevelSceneNode {
     const subtree: RuntimeSubtree = {
-      root: leaf,
+      root,
       placement: { parent: { type: 'root' }, index: this.ctx.rootNodes.length },
-      transform: snapshotTransform(leaf.object),
-      leaves: [leaf],
+      transform: snapshotTransform(root.object),
+      leaves: collectSubtreeLeaves(root),
     };
     attachSubtree(this.ctx, subtree);
     this.undoPush({
@@ -546,6 +584,6 @@ export class EditorMutationController {
       undoOps: [{ type: 'detach_subtree', subtree }],
       redoOps: [{ type: 'attach_subtree', subtree }],
     });
-    return leaf;
+    return root;
   }
 }

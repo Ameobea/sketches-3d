@@ -18,7 +18,7 @@ const node = (id: string, instances: Transform3[], children: string[] = []): Nod
   id,
   name: id,
   source: '',
-  instances,
+  instances: instances.map((t, i) => ({ ...t, id: `${id}-${i}` })),
   children,
 });
 

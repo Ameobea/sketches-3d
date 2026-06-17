@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 
-import type { GizmoTarget, Transform3 } from './gizmoTypes';
+import {
+  type GizmoTarget,
+  type HandleContext,
+  type Transform3,
+  copyTransform3,
+  makeTransform3,
+} from './gizmoTypes';
 
 export interface Object3DTargetCallbacks {
   onChange?(phase: 'preview' | 'commit', obj: THREE.Object3D): void;
@@ -201,24 +207,24 @@ export class PivotTarget implements GizmoTarget {
   }
 }
 
-import type { Transform3 as ApiTransform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { GizmoValue, Transform3 as ApiTransform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
 import { getNodeAncestorChain } from 'src/viz/scenes/geoscriptPlayground/treeOps';
 
 export interface InstanceTargetCallbacks {
-  onChange?(phase: 'preview' | 'commit', nodeId: string, index: number, transform: ApiTransform3): void;
+  onChange?(phase: 'preview' | 'commit', nodeId: string, instanceId: string, transform: ApiTransform3): void;
 }
 
 /**
- * Edits one placement (`node.instances[index]`) of a geoscript tree node. There's no
- * persistent scene graph to attach to (the scene is rebuilt each run), so the render
- * matrix is composed from the ancestor chain (each ancestor at instance 0 — the
- * representative copy). Editing the shared instance moves every copy that uses it.
+ * Edits one placement (the `instances` entry with id `instanceId`) of a geoscript tree
+ * node. There's no persistent scene graph to attach to (the scene is rebuilt each run),
+ * so the render matrix is composed from the ancestor chain (each ancestor at instance 0 —
+ * the representative copy). Editing the shared instance moves every copy that uses it.
  */
 export class InstanceTarget implements GizmoTarget {
   constructor(
     private readonly nodeId: string,
-    private readonly index: number,
+    private readonly instanceId: string,
     private readonly getTree: () => TreeDef,
     private readonly callbacks: InstanceTargetCallbacks = {}
   ) {}
@@ -228,7 +234,8 @@ export class InstanceTarget implements GizmoTarget {
   private compose(world: THREE.Matrix4, parentWorld: THREE.Matrix4): boolean {
     const tree = this.getTree();
     const node = tree.nodes[this.nodeId];
-    if (!node || this.index < 0 || this.index >= node.instances.length) return false;
+    const inst = node?.instances.find(i => i.id === this.instanceId);
+    if (!node || !inst) return false;
     parentWorld.identity();
     const chain = getNodeAncestorChain(tree, this.nodeId);
     if (chain) {
@@ -236,7 +243,7 @@ export class InstanceTarget implements GizmoTarget {
         parentWorld.multiply(composeTransform3(_scratchMat, chain[i].instances[0]));
       }
     }
-    world.copy(parentWorld).multiply(composeTransform3(_scratchMat, node.instances[this.index]));
+    world.copy(parentWorld).multiply(composeTransform3(_scratchMat, inst));
     return true;
   }
 
@@ -249,18 +256,8 @@ export class InstanceTarget implements GizmoTarget {
   }
 
   getLocalTransform(out: Transform3): Transform3 {
-    const t = this.getTree().nodes[this.nodeId]?.instances[this.index];
-    if (!t) return out;
-    out.pos[0] = t.pos[0];
-    out.pos[1] = t.pos[1];
-    out.pos[2] = t.pos[2];
-    out.rot[0] = t.rot[0];
-    out.rot[1] = t.rot[1];
-    out.rot[2] = t.rot[2];
-    out.scale[0] = t.scale[0];
-    out.scale[1] = t.scale[1];
-    out.scale[2] = t.scale[2];
-    return out;
+    const t = this.getTree().nodes[this.nodeId]?.instances.find(i => i.id === this.instanceId);
+    return t ? copyTransform3(out, t) : out;
   }
 
   getEulerOrder(): THREE.EulerOrder {
@@ -268,7 +265,7 @@ export class InstanceTarget implements GizmoTarget {
   }
 
   applyLocalTransform(t: Readonly<Transform3>, phase: 'preview' | 'commit'): void {
-    this.callbacks.onChange?.(phase, this.nodeId, this.index, {
+    this.callbacks.onChange?.(phase, this.nodeId, this.instanceId, {
       pos: [t.pos[0], t.pos[1], t.pos[2]],
       rot: [t.rot[0], t.rot[1], t.rot[2]],
       scale: [t.scale[0], t.scale[1], t.scale[2]],
@@ -276,6 +273,102 @@ export class InstanceTarget implements GizmoTarget {
   }
 }
 
+export interface HandleTargetCallbacks {
+  onChange?(phase: 'preview' | 'commit', nodeId: string, handleId: string, value: GizmoValue): void;
+}
+
+/**
+ * Edits a `gizmo(...)` handle value stored in `node.handles[handleId]`. The handle
+ * lives in the node's local space (where its geoscript renders), so it's drawn composed
+ * with the node's representative (instance 0) world matrix. vec3 handles are translate-only;
+ * `delta` handles store the offset from `origin`, `absolute` ones store the position itself.
+ * `origin` is the runtime-reported anchor (from the rendered-gizmos channel).
+ */
+export class HandleTarget implements GizmoTarget {
+  constructor(
+    private readonly nodeId: string,
+    private readonly handleId: string,
+    // Resolved fresh each frame — origin/mode/transform follow the run channel without
+    // rebuilding the target, so the gizmo never holds a stale anchor.
+    private readonly getContext: () => HandleContext | null,
+    private readonly getTree: () => TreeDef,
+    private readonly callbacks: HandleTargetCallbacks = {}
+  ) {}
+
+  // Full world of the node's representative (instance 0) copy, root → node inclusive.
+  private nodeWorld(out: THREE.Matrix4): boolean {
+    const chain = getNodeAncestorChain(this.getTree(), this.nodeId);
+    if (!chain) return false;
+    out.identity();
+    for (let i = chain.length - 1; i >= 0; i--) {
+      out.multiply(composeTransform3(_scratchMat, chain[i].instances[0]));
+    }
+    return true;
+  }
+
+  private localTransform(out: Transform3, ctx: HandleContext): Transform3 {
+    const stored = this.getTree().nodes[this.nodeId]?.handles?.[this.handleId];
+    if (ctx.kind === 'transform') {
+      const src = (stored?.value as ApiTransform3 | undefined) ??
+        ctx.transform ?? { pos: [...ctx.origin], rot: [0, 0, 0], scale: [1, 1, 1] };
+      return copyTransform3(out, src);
+    }
+    out.rot[0] = out.rot[1] = out.rot[2] = 0;
+    out.scale[0] = out.scale[1] = out.scale[2] = 1;
+    const v = stored?.value as [number, number, number] | undefined;
+    const base = ctx.mode === 'delta' ? ctx.origin : (v ?? ctx.origin);
+    const d = ctx.mode === 'delta' ? (v ?? [0, 0, 0]) : [0, 0, 0];
+    out.pos[0] = base[0] + d[0];
+    out.pos[1] = base[1] + d[1];
+    out.pos[2] = base[2] + d[2];
+    return out;
+  }
+
+  getRenderMatrix(out: THREE.Matrix4): THREE.Matrix4 {
+    const ctx = this.getContext();
+    if (!ctx || !this.nodeWorld(out)) return out.identity();
+    return out.multiply(composeTransform3(_scratchMatB, this.localTransform(_handleScratchT, ctx)));
+  }
+
+  getParentWorldMatrix(out: THREE.Matrix4): THREE.Matrix4 {
+    return this.nodeWorld(out) ? out : out.identity();
+  }
+
+  getLocalTransform(out: Transform3): Transform3 {
+    const ctx = this.getContext();
+    return ctx ? copyTransform3(out, this.localTransform(_handleScratchT, ctx)) : out;
+  }
+
+  getEulerOrder(): THREE.EulerOrder {
+    return 'YXZ';
+  }
+
+  applyLocalTransform(t: Readonly<Transform3>, phase: 'preview' | 'commit'): void {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    let value: GizmoValue;
+    if (ctx.kind === 'transform') {
+      value = {
+        kind: 'transform',
+        mode: ctx.mode,
+        value: {
+          pos: [t.pos[0], t.pos[1], t.pos[2]],
+          rot: [t.rot[0], t.rot[1], t.rot[2]],
+          scale: [t.scale[0], t.scale[1], t.scale[2]],
+        },
+      };
+    } else {
+      const pos: [number, number, number] =
+        ctx.mode === 'delta'
+          ? [t.pos[0] - ctx.origin[0], t.pos[1] - ctx.origin[1], t.pos[2] - ctx.origin[2]]
+          : [t.pos[0], t.pos[1], t.pos[2]];
+      value = { kind: 'vec3', mode: ctx.mode, value: pos };
+    }
+    this.callbacks.onChange?.(phase, this.nodeId, this.handleId, value);
+  }
+}
+
+const _handleScratchT: Transform3 = makeTransform3();
 const _scratchPos = new THREE.Vector3();
 const _scratchScale = new THREE.Vector3();
 const _scratchQuat = new THREE.Quaternion();

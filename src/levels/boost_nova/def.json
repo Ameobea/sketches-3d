@@ -45,7 +45,11 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 25.6, "count": 1, "codeHash": "c17961", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 32.5, "count": 5, "codeHash": "c17961", "asyncDeps": [ "cgal" ] }
+    },
+    "pylon": {
+      "type": "geotoyComposition",
+      "compositionId": 12
     }
   },
   "environment": {

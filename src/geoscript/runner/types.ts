@@ -51,6 +51,26 @@ export interface GeneratedLight {
 
 export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight;
 
+/** A `gizmo(...)` value the host injects per-run, keyed `moduleName → handleId`.
+ *  `value` is 3 numbers for `vec3` or a 16-element column-major matrix for `transform`. */
+export interface GizmoValueWire {
+  kind: 'vec3' | 'transform';
+  value: number[];
+}
+export type GizmoValuesByModule = Record<string, Record<string, GizmoValueWire>>;
+
+/** A `gizmo(...)`/`gizmo_transform(...)` site reported by the runtime for the last eval. */
+export interface RenderedGizmo {
+  sourceModule: string | null;
+  handleId: string;
+  kind: 'vec3' | 'transform';
+  origin: [number, number, number];
+  /** vec3: 3 numbers; transform: 16 (column-major mat4). */
+  value: number[];
+  /** vec3 `absolute=` (transform always true); host resolves delta-vs-absolute mode from this. */
+  absolute: boolean;
+}
+
 export type RenderedObject =
   | THREE.Mesh<THREE.BufferGeometry, THREE.Material>
   | THREE.Line<THREE.BufferGeometry, THREE.Material>
@@ -86,10 +106,17 @@ export interface RunGeoscriptOptions {
    * clearing it via a prior `reset()`).
    */
   ambientSources?: string[];
+  /**
+   * Gizmo handle values to inject, keyed `moduleName → handleId`. Always sent before
+   * eval (the runner defaults to `{}`) so a prior run's values can't leak.
+   */
+  gizmoValues?: GizmoValuesByModule;
 }
 
 export interface GeoscriptRunResult {
   objects: GeneratedObject[];
   stats: RunStats;
   error: string | null;
+  /** Gizmos evaluated this run, for the editor's interactive overlay (empty on error). */
+  gizmos: RenderedGizmo[];
 }

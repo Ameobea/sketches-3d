@@ -69,6 +69,8 @@
   const isValidDropTarget = (target: LevelSceneNode | 'root') => {
     if (target === 'root') return true;
     if (target.generated) return false;
+    // Composition groups own baked, read-only children — nothing can be reparented into them.
+    if (isLevelGroup(target) && target.compositionDef) return false;
     if (draggedNodeId === target.id) return false;
 
     const ancestors = findAncestorGroupIds(rootNodes, target.id);
@@ -160,6 +162,9 @@
 
 {#snippet renderNode(node: LevelSceneNode, depth: number)}
   {#if isLevelGroup(node)}
+    <!-- A composition placement is an editable group whose baked children are hidden (read-only),
+         so it has no chevron and rejects drops. -->
+    {@const isComp = !!node.compositionDef}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="row group-row"
@@ -170,31 +175,39 @@
       tabindex="0"
       draggable={!node.generated}
       ondragstart={e => handleDragStart(e, node)}
-      ondragover={e => handleDragOver(e, node)}
-      ondragleave={handleDragLeave}
-      ondrop={e => handleDrop(e, node)}
+      ondragover={isComp ? undefined : e => handleDragOver(e, node)}
+      ondragleave={isComp ? undefined : handleDragLeave}
+      ondrop={isComp ? undefined : e => handleDrop(e, node)}
       onclick={e => onselectnode(node, e.ctrlKey || e.metaKey)}
       onkeydown={e => {
         if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey);
       }}
     >
-      <button
-        class="chevron"
-        onclick={e => {
-          e.stopPropagation();
-          toggle(node.id);
-        }}
-        aria-label={expanded.get(node.id) ? 'collapse' : 'expand'}
-      >
-        {expanded.get(node.id) ? '▾' : '▸'}
-      </button>
+      {#if isComp}
+        <span class="chevron-spacer"></span>
+      {:else}
+        <button
+          class="chevron"
+          onclick={e => {
+            e.stopPropagation();
+            toggle(node.id);
+          }}
+          aria-label={expanded.get(node.id) ? 'collapse' : 'expand'}
+        >
+          {expanded.get(node.id) ? '▾' : '▸'}
+        </button>
+      {/if}
       <span class="node-id">{node.id}</span>
-      <span class="badge group-badge">{node.children.length}</span>
-      {#if isGeneratedDef(node.def)}
-        <span class="badge generated-badge">generated</span>
+      {#if isComp}
+        <span class="badge composition-badge">comp</span>
+      {:else}
+        <span class="badge group-badge">{node.children.length}</span>
+        {#if isGeneratedDef(node.def)}
+          <span class="badge generated-badge">generated</span>
+        {/if}
       {/if}
     </div>
-    {#if expanded.get(node.id)}
+    {#if !isComp && expanded.get(node.id)}
       {#each sortNodes(treeVersion >= 0 ? node.children : node.children) as child (child.id)}
         {@render renderNode(child, depth + 1)}
       {/each}
@@ -233,7 +246,6 @@
     letter-spacing: 0.05em;
     margin-bottom: 4px;
     padding: 2px 4px;
-    border-radius: 2px;
   }
 
   .root-drop-target.drop-over {
@@ -246,7 +258,15 @@
     padding-top: 2px;
     padding-bottom: 2px;
     padding-right: 4px;
-    border-radius: 2px;
+    cursor: pointer;
+  }
+
+  .row:hover {
+    background: #252525;
+  }
+
+  .row.selected {
+    background: #2a3a2a;
   }
 
   .row.drop-over {
@@ -261,6 +281,17 @@
   .generated-badge {
     color: #f2c66d;
     border: 1px solid #6a5526;
+  }
+
+  .composition-badge {
+    color: #c9a8e8;
+    border: 1px solid #5a4078;
+  }
+
+  /* Keeps a composition row's id aligned with expandable groups (no chevron). */
+  .chevron-spacer {
+    width: 12px;
+    flex-shrink: 0;
   }
 
   .lights-label {

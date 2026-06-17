@@ -339,7 +339,6 @@
 
   .badge {
     font-size: 10px;
-    border-radius: 2px;
     padding: 0 3px;
     flex-shrink: 0;
   }

@@ -1,9 +1,11 @@
 import type * as THREE from 'three';
 
-import type { Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { GizmoValue, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { CustomGizmo } from 'src/viz/gizmos/customGizmo';
-import { InstanceTarget } from 'src/viz/gizmos/targets';
-import { type GizmoTargetRef, gizmoTargetRefsEqual } from 'src/viz/gizmos/gizmoTypes';
+import { HandleTarget, InstanceTarget } from 'src/viz/gizmos/targets';
+import { type GizmoTargetRef, type HandleContext, gizmoTargetRefsEqual } from 'src/viz/gizmos/gizmoTypes';
+
+export type { HandleContext };
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 export type GizmoSpace = 'world' | 'local';
@@ -14,6 +16,8 @@ export interface TransformGizmoCallbacks {
   onDragStart?(ref: GizmoTargetRef): void;
   /** Fires every frame during a drag (preview) and once on commit. */
   onTransformChange(ref: GizmoTargetRef, transform: Transform3): void;
+  /** Like `onTransformChange` but for a `gizmo(...)` handle ref. */
+  onHandleChange?(nodeId: string, handleId: string, value: GizmoValue): void;
   onDragEnd(ref: GizmoTargetRef): void;
 }
 
@@ -24,6 +28,8 @@ export class TransformGizmo {
   private readonly getTree: () => TreeDef;
   private readonly callbacks: TransformGizmoCallbacks;
   private attachedRef: GizmoTargetRef | null = null;
+  /** Supplies origin/kind/mode for a handle ref; set by the editor once it has run output. */
+  private handleContextResolver: ((nodeId: string, handleId: string) => HandleContext | null) | null = null;
 
   constructor(
     camera: THREE.Camera,
@@ -78,9 +84,40 @@ export class TransformGizmo {
     return this.gizmo.isDragging();
   }
 
-  /** `null` / root / unknown node all detach. `handle` refs are unused until M3. */
+  setHandleContextResolver(fn: (nodeId: string, handleId: string) => HandleContext | null): void {
+    this.handleContextResolver = fn;
+  }
+
+  private detach(): void {
+    if (this.attachedRef !== null) {
+      this.gizmo.setTarget(null);
+      this.attachedRef = null;
+    }
+  }
+
+  /** `null` / root / unknown node all detach. */
   syncTo(ref: GizmoTargetRef | null, tree: TreeDef): void {
     if (this.gizmo.isDragging()) return; // don't yank mid-drag
+
+    if (ref && ref.kind === 'handle') {
+      const resolve = this.handleContextResolver;
+      // Handles are valid on any node incl. `_root` (only instance targeting excludes root).
+      if (!resolve || !tree.nodes[ref.nodeId]) {
+        this.detach();
+        return;
+      }
+      // The target reads its context per-frame via `resolve`, so origin/mode/transform stay
+      // fresh without rebuilding — restoring the equal-ref dedupe the instance path has.
+      if (gizmoTargetRefsEqual(this.attachedRef, ref)) return;
+      this.attachedRef = ref;
+      this.gizmo.setTarget(
+        new HandleTarget(ref.nodeId, ref.name, () => resolve(ref.nodeId, ref.name), this.getTree, {
+          onChange: (_phase, nodeId, handleId, value) =>
+            this.callbacks.onHandleChange?.(nodeId, handleId, value),
+        })
+      );
+      return;
+    }
 
     const node = ref && ref.kind === 'instance' ? tree.nodes[ref.nodeId] : undefined;
     const detached =
@@ -88,22 +125,18 @@ export class TransformGizmo {
       ref.kind !== 'instance' ||
       ref.nodeId === tree.rootId ||
       !node ||
-      ref.index < 0 ||
-      ref.index >= node.instances.length;
+      !node.instances.some(i => i.id === ref.instanceId);
     if (detached) {
-      if (this.attachedRef !== null) {
-        this.gizmo.setTarget(null);
-        this.attachedRef = null;
-      }
+      this.detach();
       return;
     }
 
     if (gizmoTargetRefsEqual(this.attachedRef, ref)) return;
     this.attachedRef = ref;
     this.gizmo.setTarget(
-      new InstanceTarget(ref.nodeId, ref.index, this.getTree, {
-        onChange: (_phase, nodeId, index, transform) =>
-          this.callbacks.onTransformChange({ kind: 'instance', nodeId, index }, transform),
+      new InstanceTarget(ref.nodeId, ref.instanceId, this.getTree, {
+        onChange: (_phase, nodeId, instanceId, transform) =>
+          this.callbacks.onTransformChange({ kind: 'instance', nodeId, instanceId }, transform),
       })
     );
   }

@@ -8,7 +8,8 @@
 // `recordInstanceTransformChange` once per gesture. Source edits, globals
 // source, disable, and renames are not tracked here.
 
-import type { Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { GizmoValue, Instance, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import { cloneTransform3 } from 'src/geoscript/geotoyAPIClient';
 
 /**
  * Sentinel selection id for the tree's `globalsSource` editor scope. Picked to
@@ -19,13 +20,18 @@ import type { Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 export const GLOBALS_SELECTION_ID = '_globals';
 
 import {
+  addInstance as opsAddInstance,
   createNode as opsCreateNode,
   deleteNode as opsDeleteNode,
   emptyTree,
   findParentId,
+  deleteHandle as opsDeleteHandle,
+  pruneHandles as opsPruneHandles,
+  removeInstance as opsRemoveInstance,
   renameNode as opsRenameNode,
   reparent as opsReparent,
   setDisabled as opsSetDisabled,
+  setHandle as opsSetHandle,
   setGlobalsSource as opsSetGlobalsSource,
   setSource as opsSetSource,
   setInstanceTransform as opsSetInstanceTransform,
@@ -48,12 +54,6 @@ export interface TreeStateOpts {
    */
   savedBaseline?: TreeDef;
 }
-
-const cloneTransform = (t: Transform3): Transform3 => ({
-  pos: [t.pos[0], t.pos[1], t.pos[2]],
-  rot: [t.rot[0], t.rot[1], t.rot[2]],
-  scale: [t.scale[0], t.scale[1], t.scale[2]],
-});
 
 const transformsEqual = (a: Transform3, b: Transform3): boolean =>
   a.pos[0] === b.pos[0] &&
@@ -221,27 +221,83 @@ export class TreeState {
   }
 
   /** Does NOT push undo. Pair with `recordInstanceTransformChange` on gesture commit. */
-  setInstanceTransform(id: string, index: number, transform: Transform3): void {
-    opsSetInstanceTransform(this.state.tree, id, index, transform);
+  setInstanceTransform(nodeId: string, instanceId: string, transform: Transform3): void {
+    opsSetInstanceTransform(this.state.tree, nodeId, instanceId, transform);
   }
 
   /** Plain-value snapshot of one instance's transform, for capturing the `before`
    *  of a drag/edit gesture before subsequent `setInstanceTransform` mutations. */
-  captureInstanceTransform(id: string, index: number): Transform3 | null {
-    const t = this.state.tree.nodes[id]?.instances[index];
-    return t ? cloneTransform(t) : null;
+  captureInstanceTransform(nodeId: string, instanceId: string): Transform3 | null {
+    const t = this.state.tree.nodes[nodeId]?.instances.find(i => i.id === instanceId);
+    return t ? cloneTransform3(t) : null;
   }
 
-  recordInstanceTransformChange(id: string, index: number, before: Transform3, after: Transform3): void {
-    if (!this.state.tree.nodes[id]?.instances[index]) return;
+  recordInstanceTransformChange(
+    nodeId: string,
+    instanceId: string,
+    before: Transform3,
+    after: Transform3
+  ): void {
+    if (!this.state.tree.nodes[nodeId]?.instances.some(i => i.id === instanceId)) return;
     if (transformsEqual(before, after)) return;
     this.undoSystem.push({
       type: 'transform',
-      id,
-      index,
-      before: cloneTransform(before),
-      after: cloneTransform(after),
+      id: nodeId,
+      instanceId,
+      before: cloneTransform3(before),
+      after: cloneTransform3(after),
     });
+  }
+
+  /** Appends a placement (undo-tracked); returns its id, or null for `_root`/missing. */
+  addInstance(nodeId: string, seed?: Transform3): string | null {
+    const newId = opsAddInstance(this.state.tree, nodeId, seed);
+    if (newId === null) return null;
+    const inst = this.state.tree.nodes[nodeId].instances.find(i => i.id === newId)!;
+    this.undoSystem.push({ type: 'addInstance', nodeId, instance: $state.snapshot(inst) as Instance });
+    return newId;
+  }
+
+  /** Removes a placement by id (undo-tracked). Refuses the last instance / `_root`. */
+  removeInstance(nodeId: string, instanceId: string): void {
+    const node = this.state.tree.nodes[nodeId];
+    if (!node || nodeId === this.state.tree.rootId || node.instances.length <= 1) return;
+    const index = node.instances.findIndex(i => i.id === instanceId);
+    if (index < 0) return;
+    const instance = $state.snapshot(node.instances[index]) as Instance;
+    opsRemoveInstance(this.state.tree, nodeId, instanceId);
+    this.undoSystem.push({ type: 'removeInstance', nodeId, instance, index });
+  }
+
+  /** Does NOT push undo. Pair with `recordHandleChange` on gesture commit. */
+  setHandle(nodeId: string, handleId: string, value: GizmoValue): void {
+    opsSetHandle(this.state.tree, nodeId, handleId, value);
+  }
+
+  /** Plain-value snapshot of one handle's stored value (or null), for capturing a gesture's `before`. */
+  captureHandle(nodeId: string, handleId: string): GizmoValue | null {
+    const v = this.state.tree.nodes[nodeId]?.handles?.[handleId];
+    return v ? (structuredClone($state.snapshot(v)) as GizmoValue) : null;
+  }
+
+  recordHandleChange(
+    nodeId: string,
+    handleId: string,
+    before: GizmoValue | null,
+    after: GizmoValue | null
+  ): void {
+    if (!this.state.tree.nodes[nodeId]) return;
+    if (JSON.stringify(before) === JSON.stringify(after)) return; // skip no-op (e.g. click without drag)
+    this.undoSystem.push({ type: 'setHandle', nodeId, handleId, before, after });
+  }
+
+  /** GC orphaned handle values (no undo entry — automatic cleanup on run/save). */
+  pruneHandles(nodeId: string, liveHandleIds: ReadonlySet<string>): void {
+    opsPruneHandles(this.state.tree, nodeId, liveHandleIds);
+  }
+
+  deleteHandle(nodeId: string, handleId: string): void {
+    opsDeleteHandle(this.state.tree, nodeId, handleId);
   }
 
   setSource(id: string, source: string): void {

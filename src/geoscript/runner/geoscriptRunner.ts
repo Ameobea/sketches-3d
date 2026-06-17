@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import type * as Comlink from 'comlink';
-import type { RunGeoscriptOptions, GeoscriptRunResult, RunStats, GeneratedObject, MatEntry } from './types';
+import type {
+  RunGeoscriptOptions,
+  GeoscriptRunResult,
+  RunStats,
+  GeneratedObject,
+  MatEntry,
+  RenderedGizmo,
+} from './types';
 import { buildLight } from 'src/viz/scenes/geoscriptPlayground/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
@@ -68,6 +75,7 @@ export const runGeoscript = async ({
   renderMode = false,
   modules,
   ambientSources,
+  gizmoValues,
 }: RunGeoscriptOptions): Promise<GeoscriptRunResult> => {
   await repl.reset(ctxPtr);
 
@@ -91,15 +99,20 @@ export const runGeoscript = async ({
           renderMode,
           modules,
           ambientSources,
+          gizmoValues,
         });
       }
       return {
         objects: [],
         stats: buildEmptyRunStats(),
         error: `Error building ambient scope: ${err}`,
+        gizmos: [],
       };
     }
   }
+
+  // Always sent (default `{}`) so a previous run's handle values can't leak in.
+  await repl.setGizmoValues(ctxPtr, gizmoValues ?? {});
 
   let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
   try {
@@ -111,6 +124,7 @@ export const runGeoscript = async ({
       objects: [],
       stats: buildEmptyRunStats(),
       error: errorMessage,
+      gizmos: [],
     };
   }
 
@@ -135,6 +149,7 @@ export const runGeoscript = async ({
       objects: [],
       stats: buildEmptyRunStats(),
       error: err,
+      gizmos: [],
     };
   }
 
@@ -201,6 +216,7 @@ export const runGeoscript = async ({
           objects: [],
           stats,
           error: errorMessage,
+          gizmos: [],
         };
       }
     }
@@ -280,10 +296,26 @@ export const runGeoscript = async ({
     });
   }
 
+  // Gizmos are interactive overlay state, not scene meshes — kept off `objects`.
+  const gizmos: RenderedGizmo[] = [];
+  const gizmoCount = await repl.getRenderedGizmoCount(ctxPtr);
+  for (let i = 0; i < gizmoCount; i += 1) {
+    const g = await repl.getRenderedGizmo(ctxPtr, i);
+    gizmos.push({
+      sourceModule: g.source_module,
+      handleId: g.handle_id,
+      kind: g.kind,
+      origin: g.origin,
+      value: g.value,
+      absolute: g.absolute,
+    });
+  }
+
   const result: GeoscriptRunResult = {
     objects: renderedObjects,
     stats,
     error: null,
+    gizmos,
   };
 
   return result;

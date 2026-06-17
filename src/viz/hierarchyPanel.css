@@ -4,20 +4,14 @@
  * Each component layers its own scoped overrides on top (padding, drop-over
  * background, feature-specific badges, etc.). */
 
+/* Structural only. Interactive styling (cursor, :hover, .selected) lives in each
+ * consumer's scoped block so it doesn't leak to unrelated `.row` users (e.g. the
+ * geoscript NodeInspector, which reuses the class name for layout only). */
 .row {
   display: flex;
   align-items: center;
   gap: 4px;
-  cursor: pointer;
   border: 1px solid transparent;
-}
-
-.row:hover {
-  background: #252525;
-}
-
-.row.selected {
-  background: #2a3a2a;
 }
 
 .chevron {
@@ -42,7 +36,6 @@
 
 .badge {
   font-size: 10px;
-  border-radius: 2px;
   padding: 0 3px;
   flex-shrink: 0;
 }

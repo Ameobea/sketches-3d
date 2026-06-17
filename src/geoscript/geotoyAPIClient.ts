@@ -75,6 +75,12 @@ export interface Transform3 {
   scale: [number, number, number];
 }
 
+/** A node placement: a transform plus a short id stable across edits (gizmo target +
+ *  undo address instances by id, not array index). Id uniqueness is scoped per node. */
+export interface Instance extends Transform3 {
+  id: string;
+}
+
 export interface GizmoValue {
   kind: 'vec3' | 'transform';
   mode: 'delta' | 'absolute';
@@ -86,7 +92,7 @@ export interface NodeDef {
   name: string;
   source: string;
   /** Per-node placements; length >= 1. The single-copy case is `instances.length === 1`. */
-  instances: Transform3[];
+  instances: Instance[];
   /** Gizmo values keyed by handleId; sparse. Populated by the gizmo runtime (M3). */
   handles?: Record<string, GizmoValue>;
   children: string[];
@@ -137,6 +143,34 @@ export const buildIdentityTransform = (): Transform3 => ({
   scale: [1, 1, 1],
 });
 
+export const cloneTransform3 = (t: Transform3): Transform3 => ({
+  pos: [t.pos[0], t.pos[1], t.pos[2]],
+  rot: [t.rot[0], t.rot[1], t.rot[2]],
+  scale: [t.scale[0], t.scale[1], t.scale[2]],
+});
+
+const randHex8 = (): string => {
+  const b = new Uint8Array(4);
+  crypto.getRandomValues(b);
+  let s = '';
+  for (const x of b) s += x.toString(16).padStart(2, '0');
+  return s;
+};
+
+/** A short (8 hex char) id unique among `existing`. Per-node scope keeps collisions
+ *  vanishingly unlikely; the loop is belt-and-suspenders. */
+export const newInstanceId = (existing?: Iterable<string>): string => {
+  const taken = existing instanceof Set ? existing : new Set(existing);
+  let id = randHex8();
+  while (taken.has(id)) id = randHex8();
+  return id;
+};
+
+export const buildInstance = (transform?: Transform3, existingIds?: Iterable<string>): Instance => ({
+  ...cloneTransform3(transform ?? buildIdentityTransform()),
+  id: newInstanceId(existingIds),
+});
+
 /**
  * Build a fresh tree containing only `_root` with the given source. Used for legacy
  * single-source compositions and as the empty-state default.
@@ -152,7 +186,7 @@ export const buildLegacyRootTree = (source: string): TreeDef => {
         id,
         name: ROOT_NODE_NAME,
         source,
-        instances: [buildIdentityTransform()],
+        instances: [buildInstance()],
         children: [],
       },
     },

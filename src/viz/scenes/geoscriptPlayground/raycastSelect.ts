@@ -6,7 +6,7 @@ export interface RaycastSelectOpts {
   canvas: HTMLCanvasElement;
   camera: THREE.Camera;
   getCandidates: () => THREE.Object3D[];
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, instancePath?: number[]) => void;
   /** Suppresses selection when a drag (e.g. gizmo) is in progress. */
   isDraggingGizmo: () => boolean;
 }
@@ -21,7 +21,7 @@ export const installRaycastSelect = (opts: RaycastSelectOpts): (() => void) =>
       for (const hit of hits) {
         const id = hit.object.userData?.sourceNodeId as string | undefined;
         if (id) {
-          opts.onSelect(id);
+          opts.onSelect(id, hit.object.userData?.instancePath as number[] | undefined);
           return;
         }
       }

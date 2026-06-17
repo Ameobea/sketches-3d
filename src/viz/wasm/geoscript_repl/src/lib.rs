@@ -7,7 +7,7 @@ use geoscript::{
   Program, Scope, Sym, PRELUDE,
 };
 use mesh::OwnedIndexedMesh;
-use nanoserde::SerJson;
+use nanoserde::{DeJson, SerJson};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -220,12 +220,17 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
 
   // Eval-scoped trackers: clear in case the previous run was interrupted mid-eval.
   ctx.geo_ctx.modules_in_flight.borrow_mut().clear();
   *ctx.geo_ctx.current_module.borrow_mut() = None;
   *ctx.geo_ctx.current_module_exports.borrow_mut() = None;
   *ctx.geo_ctx.current_module_imports.borrow_mut() = None;
+  *ctx.geo_ctx.current_module_gizmo_reads.borrow_mut() = None;
+  ctx.geo_ctx.current_module_unnamed_gizmo_count.set(0);
+  // Gizmo inputs are eval-scoped host state; the runner re-pushes them each run.
+  ctx.geo_ctx.gizmo_values.borrow_mut().clear();
   ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
 
   ctx.geo_ctx.globals = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
@@ -323,6 +328,7 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
   ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
   // Ambient discarded any replayed side effects; let them fire again in `_root`.
   ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
   *ctx.geo_ctx.last_ambient_hash.borrow_mut() = Some(new_hash);
@@ -529,6 +535,100 @@ pub fn geoscript_get_rendered_light(ctx: *const GeoscriptReplCtx, light_ix: usiz
 pub fn geoscript_get_rendered_light_id(ctx: *const GeoscriptReplCtx, light_ix: usize) -> u32 {
   let ctx = unsafe { &*ctx };
   ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix].light_id
+}
+
+/// One host-injected gizmo value. `value` is 3 floats for `vec3` or a 16-float
+/// column-major matrix for `transform`.
+#[derive(DeJson)]
+struct GizmoValueWire {
+  kind: String,
+  value: Vec<f32>,
+}
+
+/// Replace the full gizmo-value map. Parallel arrays: the i-th value is keyed by
+/// `module_names[i]` → `handle_ids[i]`. Called before `eval`, like `set_ambient_scope`.
+#[wasm_bindgen]
+pub fn geoscript_repl_set_gizmo_values(
+  ctx: *mut GeoscriptReplCtx,
+  module_names: Vec<String>,
+  handle_ids: Vec<String>,
+  values_json: Vec<String>,
+) {
+  let ctx = unsafe { &mut *ctx };
+  let mut map: FxHashMap<String, FxHashMap<String, geoscript::Value>> = FxHashMap::default();
+  for ((module, handle), vjson) in module_names
+    .iter()
+    .zip(handle_ids.iter())
+    .zip(values_json.iter())
+  {
+    let Ok(wire) = GizmoValueWire::deserialize_json(vjson) else {
+      continue;
+    };
+    let value = match wire.kind.as_str() {
+      "vec3" if wire.value.len() >= 3 => geoscript::Value::Vec3(mesh::linked_mesh::Vec3::new(
+        wire.value[0],
+        wire.value[1],
+        wire.value[2],
+      )),
+      "transform" if wire.value.len() >= 16 => {
+        geoscript::Value::Mat4(Rc::new(geoscript::Mat4::from_column_slice(&wire.value[..16])))
+      }
+      _ => continue,
+    };
+    map
+      .entry(module.clone())
+      .or_default()
+      .insert(handle.clone(), value);
+  }
+  *ctx.geo_ctx.gizmo_values.borrow_mut() = map;
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_gizmo_count(ctx: *const GeoscriptReplCtx) -> usize {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_gizmos.len()
+}
+
+#[derive(SerJson)]
+struct RenderedGizmoWire {
+  source_module: Option<String>,
+  handle_id: String,
+  kind: String,
+  origin: Vec<f32>,
+  value: Vec<f32>,
+  absolute: bool,
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_gizmo(ctx: *const GeoscriptReplCtx, gizmo_ix: usize) -> String {
+  let ctx = unsafe { &*ctx };
+  let gizmos = ctx.geo_ctx.rendered_gizmos.inner.borrow();
+  let g = &gizmos[gizmo_ix];
+  let (kind, value) = match g.kind {
+    geoscript::GizmoKind::Vec3 => {
+      let v = match &g.current_value {
+        geoscript::Value::Vec3(v) => vec![v.x, v.y, v.z],
+        _ => vec![0., 0., 0.],
+      };
+      ("vec3".to_owned(), v)
+    }
+    geoscript::GizmoKind::Transform => {
+      let v = match &g.current_value {
+        geoscript::Value::Mat4(m) => m.as_slice().to_vec(),
+        _ => Vec::new(),
+      };
+      ("transform".to_owned(), v)
+    }
+  };
+  RenderedGizmoWire {
+    source_module: g.source_module.clone(),
+    handle_id: g.handle_id.clone(),
+    kind,
+    origin: vec![g.resolved_origin.x, g.resolved_origin.y, g.resolved_origin.z],
+    value,
+    absolute: g.absolute,
+  }
+  .serialize_json()
 }
 
 #[wasm_bindgen]

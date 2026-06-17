@@ -572,6 +572,9 @@ fn hash_value(value: &Value, hasher: &mut SipHasher) -> Option<()> {
     Value::Map(map) => {
       (Rc::as_ptr(map) as *const () as usize).hash(hasher);
     }
+    Value::Mat4(mat) => {
+      (Rc::as_ptr(mat) as *const () as usize).hash(hasher);
+    }
     Value::Material(material) => {
       (Rc::as_ptr(material) as usize).hash(hasher);
     }

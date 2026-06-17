@@ -23,6 +23,17 @@ export const composeTransform3 = (out: THREE.Matrix4, t: Transform3): THREE.Matr
   return out.compose(_scratchPos, _scratchQuat, _scratchScale);
 };
 
+/** Matrix4 → Transform3 with the geoscript 'YXZ' euler convention (inverse of composeTransform3). */
+export const decomposeTransform3 = (m: THREE.Matrix4): Transform3 => {
+  m.decompose(_scratchPos, _scratchQuat, _scratchScale);
+  _scratchEuler.setFromQuaternion(_scratchQuat, 'YXZ');
+  return {
+    pos: [_scratchPos.x, _scratchPos.y, _scratchPos.z],
+    rot: [_scratchEuler.x, _scratchEuler.y, _scratchEuler.z],
+    scale: [_scratchScale.x, _scratchScale.y, _scratchScale.z],
+  };
+};
+
 /** Canonical string key for an instance path — the identity shared by reuse keys and fast-path lookup. */
 export const instancePathKey = (path: number[]): string => path.join(',');
 

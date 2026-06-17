@@ -9,7 +9,19 @@ import { readLevelSourceFiles } from './levelSourceFiles.server';
 import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
 import { resolveLibraryMaterials } from './libraryMaterials.server';
 import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
-import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
+import type {
+  GeotoyCompositionAssetDef,
+  GeotoyCompositionAssetDefRaw,
+  LevelDef,
+  ObjectDef,
+  ObjectGroupDef,
+} from './types';
+import {
+  getCompositionLatest,
+  getCompositionVersion,
+  getGeotoyAPIBaseURL,
+  isTreeDefV1,
+} from 'src/geoscript/geotoyAPIClient';
 
 /**
  * Pre-compiled generator modules for production.  Vite processes this glob at
@@ -61,6 +73,46 @@ const markGeneratedNode = (node: ObjectDef | ObjectGroupDef): ObjectDef | Object
     ...node,
     userData: nextUserData,
   };
+};
+
+/**
+ * Resolves a `geotoyComposition` asset by fetching its tree from the geotoy backend and
+ * inlining it, so the client receives a self-contained payload (no compositions-API auth at
+ * level load). Private/unshared comps resolve via `GEOTOY_ADMIN_TOKEN`; missing, inaccessible,
+ * or non-v1 comps are hard failures.
+ */
+const resolveCompositionAsset = async (
+  assetId: string,
+  def: GeotoyCompositionAssetDefRaw
+): Promise<GeotoyCompositionAssetDef> => {
+  const adminToken = process.env.GEOTOY_ADMIN_TOKEN || undefined;
+  const baseUrl = getGeotoyAPIBaseURL();
+  let version;
+  try {
+    version =
+      def.version !== undefined
+        ? await getCompositionVersion(
+            def.compositionId,
+            def.version,
+            globalThis.fetch,
+            undefined,
+            adminToken,
+            baseUrl
+          )
+        : await getCompositionLatest(def.compositionId, globalThis.fetch, undefined, adminToken, baseUrl);
+  } catch (err) {
+    throw new Error(
+      `[loadLevelData] Failed to resolve geotoyComposition asset "${assetId}" (composition ${def.compositionId}): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  if (!isTreeDefV1(version.tree)) {
+    throw new Error(
+      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) returned a non-v1 tree`
+    );
+  }
+  const resolved: GeotoyCompositionAssetDef = { ...def, tree: version.tree };
+  if (version.metadata?.preludeEjected) resolved.preludeEjected = true;
+  return resolved;
 };
 
 /**
@@ -132,17 +184,22 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
   const withLibrary = resolveLibraryMaterials(rawResult.data);
 
   const resolvedAssets = Object.fromEntries(
-    Object.entries(withLibrary.assets).map(([assetId, assetDef]) => {
-      if (assetDef.type === 'geoscript' && 'file' in assetDef) {
-        const codePath = assetDef.file.startsWith('__ASSETS__/')
-          ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
-          : join(levelDir, assetDef.file);
-        const code = readFileSync(codePath, 'utf-8');
-        const { file: _file, ...rest } = assetDef;
-        return [assetId, { ...rest, type: 'geoscript' as const, code }];
-      }
-      return [assetId, assetDef];
-    })
+    await Promise.all(
+      Object.entries(withLibrary.assets).map(async ([assetId, assetDef]) => {
+        if (assetDef.type === 'geoscript' && 'file' in assetDef) {
+          const codePath = assetDef.file.startsWith('__ASSETS__/')
+            ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
+            : join(levelDir, assetDef.file);
+          const code = readFileSync(codePath, 'utf-8');
+          const { file: _file, ...rest } = assetDef;
+          return [assetId, { ...rest, type: 'geoscript' as const, code }];
+        }
+        if (assetDef.type === 'geotoyComposition') {
+          return [assetId, await resolveCompositionAsset(assetId, assetDef)];
+        }
+        return [assetId, assetDef];
+      })
+    )
   );
 
   const resolvedMaterials = withLibrary.materials

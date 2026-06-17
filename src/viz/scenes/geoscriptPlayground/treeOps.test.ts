@@ -12,11 +12,20 @@ interface Transform3 {
   rot: [number, number, number];
   scale: [number, number, number];
 }
+interface Instance extends Transform3 {
+  id: string;
+}
+interface GizmoValue {
+  kind: 'vec3' | 'transform';
+  mode: 'delta' | 'absolute';
+  value: [number, number, number] | Transform3;
+}
 interface NodeDef {
   id: string;
   name: string;
   source: string;
-  instances: Transform3[];
+  instances: Instance[];
+  handles?: Record<string, GizmoValue>;
   children: string[];
   disabled?: boolean;
 }
@@ -31,13 +40,16 @@ import {
   addInstance,
   computeMeshCounts,
   createNode,
+  deleteHandle,
   deleteNode,
   emptyTree,
   getNodeAncestorChain,
   isAncestorOf,
+  pruneHandles,
   removeInstance,
   renameNode,
   reparent,
+  setHandle,
   setInstanceTransform,
   setSource,
 } from './treeOps';
@@ -47,6 +59,8 @@ const xform = (x: number, y: number, z: number): Transform3 => ({
   rot: [0, 0, 0],
   scale: [1, 1, 1],
 });
+
+const stripId = (i: Instance): Transform3 => ({ pos: i.pos, rot: i.rot, scale: i.scale });
 
 test('emptyTree contains exactly the _root node', () => {
   const t = emptyTree() as TreeDef;
@@ -179,39 +193,53 @@ test('createNode seeds exactly one identity instance', () => {
   const t = emptyTree() as TreeDef;
   const a = createNode(t, { id: 'a', name: 'a' });
   assert.equal(t.nodes[a].instances.length, 1);
-  assert.deepEqual(t.nodes[a].instances[0], xform(0, 0, 0));
+  assert.deepEqual(stripId(t.nodes[a].instances[0]), xform(0, 0, 0));
+  assert.match(t.nodes[a].instances[0].id, /^[0-9a-f]{8}$/);
 });
 
-test('addInstance appends and returns its index; removeInstance refuses the last', () => {
+test('addInstance appends with a fresh id and returns it; removeInstance refuses the last', () => {
   const t = emptyTree() as TreeDef;
   const a = createNode(t, { id: 'a', name: 'a' });
+  const id0 = t.nodes[a].instances[0].id;
 
-  assert.equal(addInstance(t, a, xform(1, 2, 3)), 1);
+  const id1 = addInstance(t, a, xform(1, 2, 3));
+  assert.ok(id1 && id1 !== id0);
   assert.equal(t.nodes[a].instances.length, 2);
   assert.deepEqual(t.nodes[a].instances[1].pos, [1, 2, 3]);
 
-  removeInstance(t, a, 0);
+  removeInstance(t, a, id0);
   assert.equal(t.nodes[a].instances.length, 1);
-  removeInstance(t, a, 0); // last instance: no-op
+  assert.equal(t.nodes[a].instances[0].id, id1); // the survivor is the one we kept
+  removeInstance(t, a, id1!); // last instance: no-op
   assert.equal(t.nodes[a].instances.length, 1);
 });
 
 test('instance ops refuse _root', () => {
   const t = emptyTree() as TreeDef;
-  assert.equal(addInstance(t, t.rootId, xform(1, 0, 0)), -1);
+  assert.equal(addInstance(t, t.rootId, xform(1, 0, 0)), null);
   assert.equal(t.nodes[t.rootId].instances.length, 1);
 });
 
-test('setInstanceTransform writes one index; out-of-range is a no-op', () => {
+test('setInstanceTransform writes by id (preserving it); unknown id is a no-op', () => {
   const t = emptyTree() as TreeDef;
   const a = createNode(t, { id: 'a', name: 'a' });
-  addInstance(t, a, xform(0, 0, 0));
+  const id1 = addInstance(t, a, xform(0, 0, 0))!;
 
-  setInstanceTransform(t, a, 1, xform(7, 8, 9));
+  setInstanceTransform(t, a, id1, xform(7, 8, 9));
   assert.deepEqual(t.nodes[a].instances[1].pos, [7, 8, 9]);
+  assert.equal(t.nodes[a].instances[1].id, id1);
 
-  setInstanceTransform(t, a, 5, xform(1, 1, 1));
+  setInstanceTransform(t, a, 'nope', xform(1, 1, 1));
   assert.equal(t.nodes[a].instances.length, 2);
+});
+
+test('addInstance ids are unique and well-formed within a node', () => {
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+  for (let i = 0; i < 32; i++) addInstance(t, a);
+  const ids = t.nodes[a].instances.map(i => i.id);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const id of ids) assert.match(id, /^[0-9a-f]{8}$/);
 });
 
 test('getNodeAncestorChain returns [node, ..., _root]', () => {
@@ -226,4 +254,28 @@ test('getNodeAncestorChain returns [node, ..., _root]', () => {
     chain.map(n => n.id),
     [leaf, p, gp, t.rootId]
   );
+});
+
+test('setHandle stores a value (creating the map); deleteHandle drops it and the empty map', () => {
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+  const v: GizmoValue = { kind: 'vec3', mode: 'delta', value: [1, 2, 3] };
+  setHandle(t, a, 'cut', v);
+  assert.deepEqual(t.nodes[a].handles, { cut: v });
+
+  deleteHandle(t, a, 'cut');
+  assert.equal(t.nodes[a].handles, undefined);
+});
+
+test('pruneHandles drops handles whose id is not live', () => {
+  const t = emptyTree() as TreeDef;
+  const a = createNode(t, { id: 'a', name: 'a' });
+  setHandle(t, a, 'keep', { kind: 'vec3', mode: 'delta', value: [0, 0, 0] });
+  setHandle(t, a, 'orphan', { kind: 'vec3', mode: 'delta', value: [9, 9, 9] });
+
+  pruneHandles(t, a, new Set(['keep']));
+  assert.deepEqual(Object.keys(t.nodes[a].handles ?? {}), ['keep']);
+
+  pruneHandles(t, a, new Set());
+  assert.equal(t.nodes[a].handles, undefined);
 });

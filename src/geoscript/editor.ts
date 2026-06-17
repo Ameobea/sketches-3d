@@ -217,10 +217,11 @@ export const buildEditor = ({
   ]);
 
   const analysisCompartment = new Compartment();
+  const gizmoCompartment = new Compartment();
 
   const editorState = EditorState.create({
     doc: initialCode,
-    extensions: [extensions, analysisCompartment.of([])],
+    extensions: [extensions, analysisCompartment.of([]), gizmoCompartment.of([])],
   });
 
   const editorView = new EditorView({
@@ -240,6 +241,10 @@ export const buildEditor = ({
     /** Hot-swap analysis extensions without recreating the editor. */
     setAnalysisExtensions: (exts: Extension[]) => {
       editorView.dispatch({ effects: analysisCompartment.reconfigure(exts) });
+    },
+    /** Hot-swap gizmo (inline chip/readout) extensions without recreating the editor. */
+    setGizmoExtensions: (exts: Extension[]) => {
+      editorView.dispatch({ effects: gizmoCompartment.reconfigure(exts) });
     },
     /** Clears CM undo history; call after swapping the doc to a new logical source. */
     resetHistory: () => {

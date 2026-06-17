@@ -20,7 +20,7 @@ interface NodeDef {
   id: string;
   name: string;
   source: string;
-  instances: Transform3[];
+  instances: (Transform3 & { id: string })[];
   children: string[];
   disabled?: boolean;
 }
@@ -35,7 +35,7 @@ const identity = (): Transform3 => ({ pos: [0, 0, 0], rot: [0, 0, 0], scale: [1,
 
 const node = (overrides: Partial<NodeDef> & Pick<NodeDef, 'id' | 'name'>): NodeDef => ({
   source: '',
-  instances: [identity()],
+  instances: [{ ...identity(), id: `${overrides.id}-0` }],
   children: [],
   ...overrides,
 });

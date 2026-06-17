@@ -508,7 +508,6 @@
     align-items: center;
     gap: 6px;
     padding: 3px 4px;
-    border-radius: 2px;
     cursor: pointer;
   }
 

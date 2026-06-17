@@ -310,7 +310,6 @@
     background: #1c1c1c;
     color: #ddd;
     border: 1px solid #444;
-    border-radius: 2px;
     padding: 2px 8px;
     font-size: 11px;
     cursor: pointer;
@@ -335,6 +334,15 @@
   .row {
     padding: 2px 4px;
     user-select: none;
+    cursor: pointer;
+  }
+
+  .row:hover {
+    background: #252525;
+  }
+
+  .row.selected {
+    background: #2a3a2a;
   }
 
   .row.failed {
@@ -370,7 +378,6 @@
     background: #111;
     color: #ddd;
     border: 1px solid #555;
-    border-radius: 2px;
     font: inherit;
     font-size: 12px;
     padding: 0 4px;
@@ -395,7 +402,6 @@
     background: transparent;
     color: #888;
     border: 1px solid #333;
-    border-radius: 2px;
     padding: 0 4px;
     font-size: 10px;
     cursor: pointer;

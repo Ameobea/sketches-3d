@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
 import type { CollisionMeshOverride } from 'src/viz/collisionShapes';
+import type { BakedCompositionMesh } from 'src/geoscript/runner/bakeComposition';
 import type { AmbientLightDef, EditorBookmark, HemisphereLightDef, LevelDef, LightDef } from './types';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup } from './levelSceneTypes';
@@ -57,6 +58,8 @@ export class LevelEditor {
   levelDef: LevelDef;
   prototypes: Map<string, THREE.Mesh>;
   builtMaterials: Map<string, THREE.Material>;
+  /** Baked mesh prototypes per `geotoyComposition` asset, for add-from-library / clone. */
+  compositionBaked: Map<string, BakedCompositionMesh[]>;
   /** Shared with `loadLevelDef`: precomputed collision-hull data for `convexHull` assets. */
   assetCollisionMeshes: Map<string, CollisionMeshOverride>;
   /**
@@ -162,12 +165,14 @@ export class LevelEditor {
     nodeById: Map<string, LevelSceneNode>,
     levelLights: LevelLight[],
     assetCollisionMeshes: Map<string, CollisionMeshOverride>,
-    resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null
+    resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null,
+    compositionBaked: Map<string, BakedCompositionMesh[]>
   ) {
     this.viz = viz;
     this.levelDef = levelDef;
     this.prototypes = prototypes;
     this.builtMaterials = builtMaterials;
+    this.compositionBaked = compositionBaked;
     this.assetCollisionMeshes = assetCollisionMeshes;
     this.resolveAssetPrototype = resolveAssetPrototype;
     this.allLevelObjects = objects;
@@ -703,14 +708,24 @@ export class LevelEditor {
     if (hits.length > 0) {
       const levelObj = this.meshToLevelObject.get(hits[0].object as THREE.Mesh);
       if (levelObj) {
-        if (isToggle) this.toggleSelect(levelObj);
-        else this.select(levelObj);
+        const target = this.compositionSelectionTarget(levelObj);
+        if (isToggle) this.toggleSelect(target);
+        else this.select(target);
         return;
       }
     }
 
     this.deselect();
   };
+
+  // Redirect a click on a read-only composition child to its owning editable group.
+  private compositionSelectionTarget(levelObj: LevelObject): LevelSceneNode {
+    if (!levelObj.generated) return levelObj;
+    const sep = levelObj.id.lastIndexOf('::');
+    if (sep === -1) return levelObj;
+    const group = this.nodeById.get(levelObj.id.slice(0, sep));
+    return group && isLevelGroup(group) && group.compositionDef ? group : levelObj;
+  }
 
   private installSafePointerCapture(canvas: HTMLCanvasElement) {
     if (this.originalSetPointerCapture || this.originalReleasePointerCapture) {
@@ -1475,7 +1490,8 @@ export const initLevelEditor = (
   nodeById: Map<string, LevelSceneNode>,
   levelLights: LevelLight[],
   assetCollisionMeshes: Map<string, CollisionMeshOverride>,
-  resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null
+  resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null,
+  compositionBaked: Map<string, BakedCompositionMesh[]>
 ): LevelEditor =>
   new LevelEditor(
     viz,
@@ -1489,5 +1505,6 @@ export const initLevelEditor = (
     nodeById,
     levelLights,
     assetCollisionMeshes,
-    resolveAssetPrototype
+    resolveAssetPrototype,
+    compositionBaked
   );

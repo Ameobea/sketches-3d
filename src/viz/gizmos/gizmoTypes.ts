@@ -49,17 +49,28 @@ export interface GizmoTarget {
 }
 
 /**
- * What a Geotoy viewport gizmo is bound to. `instance` index 0 is a node's default
- * placement (the old "node transform"); `handle` names a `gizmo(...)` value site (M3).
+ * What a Geotoy viewport gizmo is bound to. `instance` names a node placement by its
+ * stable id; `handle` names a `gizmo(...)` value site (M3).
  */
 export type GizmoTargetRef =
-  | { kind: 'instance'; nodeId: string; index: number }
+  | { kind: 'instance'; nodeId: string; instanceId: string }
   | { kind: 'handle'; nodeId: string; name: string };
+
+/** Live binding context for a `gizmo(...)` handle, resolved fresh each frame from the
+ *  run channel + stored value so a `HandleTarget` never holds stale origin/mode/transform. */
+export interface HandleContext {
+  kind: 'vec3' | 'transform';
+  mode: 'delta' | 'absolute';
+  origin: [number, number, number];
+  /** For `transform` handles: the runtime-reported transform (full pos/rot/scale). */
+  transform?: Transform3;
+}
 
 export const gizmoTargetRefsEqual = (a: GizmoTargetRef | null, b: GizmoTargetRef | null): boolean => {
   if (a === null || b === null) return a === b;
   if (a.kind !== b.kind) return false;
-  if (a.kind === 'instance' && b.kind === 'instance') return a.nodeId === b.nodeId && a.index === b.index;
+  if (a.kind === 'instance' && b.kind === 'instance')
+    return a.nodeId === b.nodeId && a.instanceId === b.instanceId;
   if (a.kind === 'handle' && b.kind === 'handle') return a.nodeId === b.nodeId && a.name === b.name;
   return false;
 };
