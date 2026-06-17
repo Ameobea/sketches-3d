@@ -112,6 +112,17 @@ const resolveCompositionAsset = async (
   }
   const resolved: GeotoyCompositionAssetDef = { ...def, tree: version.tree };
   if (version.metadata?.preludeEjected) resolved.preludeEjected = true;
+
+  const palette = version.metadata?.materials;
+  if (palette) {
+    resolved.materialNames = [...new Set(Object.values(palette.materials).map(m => m.name))];
+    const defId = palette.defaultMaterialID;
+    if (defId != null) resolved.defaultMaterialName = palette.materials[defId]?.name;
+  } else {
+    console.warn(
+      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no material palette in metadata; \`set_material\` calls in its tree may fail`
+    );
+  }
   return resolved;
 };
 

@@ -47,9 +47,17 @@
       },
       "_meta": { "runtimeMs": 32.5, "count": 5, "codeHash": "c17961", "asyncDeps": [ "cgal" ] }
     },
-    "pylon": {
+    "planter": {
       "type": "geotoyComposition",
-      "compositionId": 12
+      "compositionId": 102,
+      "materialMap": {
+        "dirt": "grate_trench",
+        "grate_trench": "dirt"
+      }
+    },
+    "palm_tree": {
+      "type": "geotoyComposition",
+      "compositionId": 103
     }
   },
   "environment": {

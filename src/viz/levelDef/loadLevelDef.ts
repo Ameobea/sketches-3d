@@ -989,6 +989,8 @@ export const loadLevelDef = (
         asyncDeps,
         deps: [],
         collectMetadata: false,
+        availableMaterials: def.materialNames ?? [],
+        defaultMaterialName: def.defaultMaterialName ?? null,
       };
     });
 

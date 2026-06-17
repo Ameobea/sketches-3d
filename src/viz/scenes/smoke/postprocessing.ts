@@ -107,7 +107,6 @@ export const configurePostprocessing = (
     n8aoPass.gammaCorrection = false;
     n8aoPass.configuration.intensity = 7;
     n8aoPass.configuration.aoRadius = 9;
-    // \/ this breaks rendering and makes the background black if enabled
     n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
     n8aoPass.setQualityMode(
       {

@@ -10,7 +10,7 @@ export interface BakedCompositionMesh {
   geometry: THREE.BufferGeometry;
   /** Composition-space transform: nodeWorld(instance copy) × in-script mesh transform. */
   matrix: THREE.Matrix4;
-  /** geotoy material name (`''` when the mesh used the default material). */
+  /** geotoy material name; the palette default name for meshes that didn't call `set_material` (`''` if the runtime had no default). */
   materialName: string;
 }
 

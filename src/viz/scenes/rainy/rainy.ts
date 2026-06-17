@@ -508,8 +508,7 @@ export const processLoadedScene = async (
     n8aoPass.gammaCorrection = false;
     n8aoPass.configuration.intensity = 2;
     n8aoPass.configuration.aoRadius = 5;
-    // \/ this breaks rendering and makes the background black if enabled
-    // n8aoPass.configuration.halfRes = vizConfig.graphics.quality <= GraphicsQuality.Medium;
+    n8aoPass.configuration.halfRes = vizConfig.graphics.quality <= GraphicsQuality.Medium;
     n8aoPass.configuration.accumulate = true;
     n8aoPass.setQualityMode(
       {

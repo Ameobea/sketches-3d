@@ -21,6 +21,14 @@ export interface GeoscriptJob {
   ambientSources?: string[];
   /** Baked gizmo handle values, keyed `moduleName → handleId`; for composition-tree jobs. */
   gizmoValues?: GizmoValuesByModule;
+  /**
+   * geotoy material names to register on the shared ctx before running, so the tree's
+   * `set_material('<name>')` calls resolve; for composition-tree jobs. Survives the per-run
+   * reset, so it's set fresh per job rather than relying on prior ctx state.
+   */
+  availableMaterials?: string[];
+  /** Default material name applied to meshes that don't call `set_material`. */
+  defaultMaterialName?: string | null;
 }
 
 export interface GeoscriptJobResult {
@@ -80,6 +88,10 @@ export class GeoscriptExecutor {
 
             if (job.collectMetadata) {
               await repl.clearConstEvalCache(ctxPtr);
+            }
+
+            if (job.availableMaterials) {
+              await repl.setMaterials(ctxPtr, job.defaultMaterialName ?? null, job.availableMaterials);
             }
 
             // runGeoscript handles reset + setModuleSources internally.

@@ -117,11 +117,33 @@
       "scale": [1, 1, 1]
     },
     {
-      "id": "pylon",
-      "asset": "pylon",
-      "position": [-36.353, 22.6756, -17.7721],
+      "id": "group",
+      "children": [
+        {
+          "id": "planter",
+          "asset": "planter",
+          "position": [0.4869, -2.5209, -0.209],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "palm_tree",
+          "asset": "palm_tree",
+          "position": [-5.5427, 1.0105, -0.0008],
+          "rotation": [0, 0, 0.1441],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "palm_tree_1",
+          "asset": "palm_tree",
+          "position": [5.0557, 1.5105, 0.2099],
+          "rotation": [0.0958, 2.0279, 0.047],
+          "scale": [1, 1, 1]
+        }
+      ],
+      "position": [-0.7304, 12.0185, -53.693],
       "rotation": [0, 0, 0],
-      "scale": [1, 1, 1]
+      "scale": [1.5, 1.5, 1.5]
     }
   ]
 }

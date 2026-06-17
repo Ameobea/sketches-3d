@@ -47,7 +47,7 @@
     "graphviz-builder": "^0.1.1",
     "lezer-glsl": "^0.6.0",
     "manifold-3d": "^3.3.2",
-    "n8ao": "Ameobea/n8ao#experimental-optimizations",
+    "n8ao": "Ameobea/n8ao#fix-halfres-background-black",
     "postprocessing": "^6.38.3",
     "rand-seed": "^2.1.7",
     "svelte": "^5.55.0",
