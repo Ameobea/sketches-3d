@@ -5,7 +5,7 @@ vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx c
   vec3 sgns;
   vec3 d = triEdgeDist3(triProjectUV(pos, vWorldNormal), sgns);
   float ed = min(d.x, min(d.y, d.z));
-  float aa = max(ctx.unitsPerPx, 1e-4);
+  float aa = max(ctx.aaFootprint, 1e-4);
 
   float cd = smoothstep(TRI_BORDER_END, TRI_WALL_END, ed);              // 0 top → 1 floor
   float pitMask = smoothstep(TRI_BORDER_END - aa, TRI_BORDER_END + aa, ed);
@@ -21,7 +21,9 @@ vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx c
   float indirectMul = depthAO * creaseAO;
 
   // Cast shadow → direct.
-  float shadow = triPitShadowFromEdges(d, sgns, cd, normalize(vWorldNormal)) * pitMask;
+  // worldN is used only scale-invariantly here (a dot-sign test + abs-based axis
+  // pick), so the interpolated varying needs no normalize.
+  float shadow = triPitShadowFromEdges(d, sgns, cd, vWorldNormal) * pitMask;
   float directMul = mix(1., TRI_SHADOW_DARKEN, shadow);
 
   return vec2(directMul, indirectMul);

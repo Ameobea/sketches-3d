@@ -297,10 +297,11 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
 // finite-difference normal of the carved floor (\`eps\` in world space). 3-tap
 // forward differences rather than 4-tap central: one fewer \`_pomSurf\` eval, and
 // the bias is imperceptible on this relief.
-vec3 pomAnalyticNormal(vec3 pHit, vec3 N, float depth, float t, float eps) {
+vec3 pomAnalyticNormal(vec3 pHit, vec3 N, float depth, float t, float eps, float aa) {
 #ifdef POM_HAS_NORMAL_SHADER
-  // Closed-form floor normal from the material; skips the taps below.
-  return getPomNormal(pHit, N, depth, t);
+  // Closed-form floor normal from the material; skips the taps below. \`aa\` is
+  // the anisotropic pixel footprint, for the material's analytic relief AA.
+  return getPomNormal(pHit, N, depth, t, aa);
 #else
   vec3 up = abs(N.y) < 0.99 ? vec3(0., 1., 0.) : vec3(1., 0., 0.);
   vec3 T = normalize(cross(N, up));
@@ -424,9 +425,12 @@ export const buildPomMainBlock = (
       if (_pomFade > 0.02) {
         float _pomEps = max(unitsPerPx, _pomD * 0.02);
         ${typeof normalEps === 'number' ? /* glsl */ `_pomEps = max(_pomEps, ${normalEps.toFixed(6)});` : ''}
+        // Anisotropic footprint (one pixel stretched by 1/NdotV toward grazing,
+        // clamped to ~6.7x) for the material's analytic relief AA.
+        float _pomAA = unitsPerPx / max(abs(dot(_pomNormalW, _pomRd)), 0.15);
         _pomNormalW = mix(
           _pomNormalW,
-          pomAnalyticNormal(_pomHit, _pomNormalW, _pomD, curTimeSeconds, _pomEps),
+          pomAnalyticNormal(_pomHit, _pomNormalW, _pomD, curTimeSeconds, _pomEps, _pomAA),
           _pomFade
         );
       }

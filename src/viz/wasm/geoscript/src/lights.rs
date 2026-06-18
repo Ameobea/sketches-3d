@@ -183,10 +183,13 @@ pub struct ShadowCamera {
   pub right: f32,
   pub top: f32,
   pub bottom: f32,
+  /// When set, the host fits the frustum to the scene's bounding box after all meshes render;
+  /// the explicit `near/far/left/right/top/bottom` are ignored.
+  pub auto: bool,
 }
 
 impl ShadowCamera {
-  fn from_map(map: &FxHashMap<String, Value>) -> Result<Self, ErrorStack> {
+  pub(crate) fn from_map(map: &FxHashMap<String, Value>) -> Result<Self, ErrorStack> {
     let mut this = Self::default();
     for (key, val) in map {
       match key.as_str() {
@@ -232,6 +235,15 @@ impl ShadowCamera {
   }
 }
 
+impl ShadowCamera {
+  pub fn auto() -> Self {
+    Self {
+      auto: true,
+      ..Self::default()
+    }
+  }
+}
+
 impl Default for ShadowCamera {
   fn default() -> Self {
     Self {
@@ -241,6 +253,7 @@ impl Default for ShadowCamera {
       right: 380.,
       top: 94.,
       bottom: -140.,
+      auto: false,
     }
   }
 }
@@ -300,7 +313,7 @@ impl DirectionalLight {
     shadow_map_blur_samples: usize,
     shadow_map_type: &str,
     shadow_map_bias: f32,
-    shadow_camera: &FxHashMap<String, Value>,
+    shadow_camera: ShadowCamera,
   ) -> Result<Self, ErrorStack> {
     let color = parse_color_value(color)?;
 
@@ -312,9 +325,6 @@ impl DirectionalLight {
       },
       _ => return Err(ErrorStack::new("Invalid shadow map size value")),
     };
-
-    let shadow_camera = ShadowCamera::from_map(shadow_camera)
-      .map_err(|err| err.wrap("Invalid shadow camera parameters"))?;
 
     Ok(Self {
       target: *target,

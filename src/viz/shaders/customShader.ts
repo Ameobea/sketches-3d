@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { UniformsLib } from 'three';
 
 import commonShaderCode from './common.frag?raw';
+import proceduralMaterialAACode from './proceduralMaterialAA.glsl?raw';
 import softOcclusionPreamble from './softOcclusionPreamble.frag?raw';
 import softOcclusionDiscard from './softOcclusionDiscard.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
@@ -472,6 +473,25 @@ export const getOcclusionUniforms = () => ({
   occlusionParams,
 });
 
+// World units spanned by one device pixel at unit camera distance:
+// `2*tan(fov/2) / drawingBufferHeight`. `unitsPerPx` in the shader is this times
+// `distanceToCamera`. Shared by reference into every material's `unitsPerPxScale`
+// uniform (mirrors the `playerShadowPos` pattern) and mutated once per frame, so
+// the analytic-AA footprint tracks the real FOV + resolution + devicePixelRatio
+// instead of the legacy hardcoded 0.001 rad/px. Default ≈ that legacy value.
+const aaPixelScale = { value: 0.001 };
+const _aaDrawingBufferSize = new THREE.Vector2();
+
+export const updateAaPixelScale = (camera: THREE.Camera, renderer: THREE.WebGLRenderer) => {
+  if (!(camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+    return;
+  }
+  renderer.getDrawingBufferSize(_aaDrawingBufferSize);
+  const h = Math.max(1, _aaDrawingBufferSize.y);
+  const fovRad = ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 180;
+  aaPixelScale.value = (2 * Math.tan(fovRad / 2)) / h;
+};
+
 /**
  * Creates a minimal `ShaderMaterial` for use as the depth pre-pass override material.
  * It mirrors the Bayer dither discard logic from the main CustomShaderMaterial so that
@@ -770,6 +790,7 @@ export const buildCustomShaderArgs = (
     : null;
 
   uniforms.curTimeSeconds = { value: 0.0 };
+  uniforms.unitsPerPxScale = aaPixelScale;
   if (pom) {
     uniforms.pomDepth = { value: pom.depth };
     if (pom.boundedSilhouette) {
@@ -937,6 +958,14 @@ export const buildCustomShaderArgs = (
     metalnessShader ||
     emissiveShader ||
     iridescenceShader
+  );
+
+  const hasCustomShaderSnippet = !!(
+    commonShader ||
+    usesSceneCtx ||
+    normalShader ||
+    pomNormalShader ||
+    displacementShader
   );
 
   const buildPomDefsFragment = () => {
@@ -1464,6 +1493,7 @@ ${enableFog ? '#include <fog_pars_fragment>' : ''}
 #include <clipping_planes_pars_fragment>
 
 uniform float curTimeSeconds;
+uniform float unitsPerPxScale;
 varying vec3 vWorldPos;
 
 // Bound direct light by the geometric (pre-normal-map) horizon so a normal map
@@ -1496,11 +1526,14 @@ ${typeof usePackedDiffuseNormalGBA === 'object' ? 'uniform sampler2D diffuseLUT;
 struct SceneCtx {
   vec2 vUv;
   vec4 diffuseColor;
-  // Camera distance + world-units-per-screen-pixel footprint, mirrored from
-  // main() so slots reuse them instead of recomputing the sqrt. Globals
+  // Camera distance + the anisotropic pixel-footprint half-width in world units
+  // (\`aaFootprint\` = one pixel stretched by 1/NdotV toward grazing), mirrored
+  // from main() so slots reuse them. \`aaFootprint\` is the footprint to drive
+  // analytic AA (edge widen + fade-to-mean) with; the isotropic value, if ever
+  // needed, is \`distanceToCamera * unitsPerPxScale\`. Globals
   // \`cameraPosition\`/\`vWorldPos\`/\`vWorldNormal\` are already in slot scope.
   float distanceToCamera;
-  float unitsPerPx;
+  float aaFootprint;
 };
 
 ${commonShaderCode}
@@ -1529,6 +1562,8 @@ ${
 }
 ${pomGen ? GeneratedUVsFragment : ''}
 
+${hasCustomShaderSnippet ? proceduralMaterialAACode : ''}
+
 ${commonShader ?? ''}
 
 ${colorShader ?? ''}
@@ -1554,7 +1589,7 @@ void main() {
 
   ${!noOcclusion ? softOcclusionDiscard : ''}
 
-  float unitsPerPx = abs(2. * distanceToCamera * tan(0.001 / 2.));
+  float unitsPerPx = distanceToCamera * unitsPerPxScale;
   ${
     mapDisableDistanceAxes === 'xz'
       ? 'float texDisableDistance = distance(cameraPosition.xz, vWorldPos.xz);'
@@ -1611,7 +1646,13 @@ void main() {
     vec2 vMapUv = vec2(0.);
   #endif
 
-  ${usesSceneCtx ? 'SceneCtx ctx = SceneCtx(vMapUv, diffuseColor, distanceToCamera, unitsPerPx);' : ''}
+  ${
+    usesSceneCtx
+      ? /* glsl */ `float aaNdotV = abs(dot(normalize(vWorldNormal), vWorldPos - cameraPosition)) / distanceToCamera;
+  float aaFootprint = unitsPerPx / max(aaNdotV, 0.1);
+  SceneCtx ctx = SceneCtx(vMapUv, diffuseColor, distanceToCamera, aaFootprint);`
+      : ''
+  }
 
   ${pom ? buildPomMainBlock(pomBounded, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap) : ''}
 

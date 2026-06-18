@@ -51,13 +51,19 @@
       "type": "geotoyComposition",
       "compositionId": 102,
       "materialMap": {
-        "dirt": "grate_trench",
-        "grate_trench": "dirt"
+        "dirt": "triangle_grid",
+        "ground": "grate_trench",
+        "default": "panel_seams"
       }
     },
     "palm_tree": {
       "type": "geotoyComposition",
-      "compositionId": 103
+      "compositionId": 103,
+      "materialMap": {
+        "leaf": "panel_seams",
+        "default": "grooved_plastic",
+        "coconut": "triangle_grid"
+      }
     }
   },
   "environment": {

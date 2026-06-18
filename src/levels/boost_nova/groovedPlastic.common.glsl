@@ -71,10 +71,10 @@ float gpSlotCarve(vec2 cl, vec2 cellId, float aa) {
   bool alongX = gpSlotsAlongX(cellId);
   float g = abs(gpSlotOffset(alongX ? cl.y : cl.x));
   float a = abs(alongX ? cl.x : cl.y);
-  float w = max(0.5 * GP_WALL, aa);
+  float slot = aaSlot(g, GP_PITCH, GP_HW, GP_WALL, aa);
   float we = max(0.5 * GP_END_WALL, aa);
-  return (1. - smoothstep(GP_HW + 0.5 * GP_WALL - w, GP_HW + 0.5 * GP_WALL + w, g))
-       * (1. - smoothstep(GP_END_OUT - 0.5 * GP_END_WALL - we, GP_END_OUT - 0.5 * GP_END_WALL + we, a));
+  float end = 1. - smoothstep(GP_END_OUT - 0.5 * GP_END_WALL - we, GP_END_OUT - 0.5 * GP_END_WALL + we, a);
+  return slot * end;
 }
 
 // Seam carve vs distance-to-cell-boundary `b`; the gap notch lies inside the chamfer.
@@ -87,5 +87,8 @@ float gpSeamCarve(float b) {
 vec2 gpSeamVis(float b, float aa) {
   float mid = GP_HAIR_HW + 0.5 * GP_HAIR_WALL;
   float w = max(0.5 * GP_HAIR_WALL, aa);
-  return vec2(1. - smoothstep(0., GP_SEAM_W, b), 1. - smoothstep(mid - w, mid + w, b));
+  float chamfer = 1. - smoothstep(0., GP_SEAM_W, b);
+  float hair = 1. - smoothstep(mid - w, mid + w, b);
+  // Isolated lines at the cell boundary: dissolve as they go sub-pixel.
+  return vec2(aaThinFeature(chamfer, aa, 2. * GP_SEAM_W), aaThinFeature(hair, aa, 2. * mid));
 }

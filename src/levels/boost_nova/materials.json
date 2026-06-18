@@ -30,7 +30,6 @@
       "options": {
         "useTriplanarMapping": false,
         "useGeneratedUVs": false,
-        "antialiasColorShader": true,
         "pom": {
           "depth": 0.45,
           "steps": 16,
@@ -70,7 +69,6 @@
       "options": {
         "useTriplanarMapping": false,
         "useGeneratedUVs": false,
-        "antialiasColorShader": true,
         "pom": {
           "depth": 0.07,
           "steps": 8,
@@ -109,7 +107,6 @@
       "options": {
         "useTriplanarMapping": false,
         "useGeneratedUVs": false,
-        "antialiasColorShader": true,
         "pom": {
           "depth": 0.05,
           "steps": 6,
@@ -186,7 +183,6 @@
       "options": {
         "useTriplanarMapping": false,
         "useGeneratedUVs": false,
-        "antialiasColorShader": true,
         "pom": {
           "depth": 0.12,
           "steps": 10,

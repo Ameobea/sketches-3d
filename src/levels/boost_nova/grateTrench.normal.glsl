@@ -2,7 +2,7 @@
 // GT_CARVE·(end·gap'·∇g + gap·end'·∇dv); both gradients are axis-aligned in
 // UV. Outward normal = normalize(N + tangential(depth·∇carve)). Mirrors
 // grateTrench.height.glsl — keep in sync.
-vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
+vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
   vec2 uv = gtProjectUV(pos, N);
   float vOff = gtTrenchOffset(uv);
   float dv = abs(vOff);
@@ -24,6 +24,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
   vec2 uDir = GT_ALONG_X ? vec2(1., 0.) : vec2(0., 1.);
   vec2 vDir = GT_ALONG_X ? vec2(0., 1.) : vec2(1., 0.);
   vec2 gradUV = GT_CARVE * (endMask * dGap * uDir + gap * dEnd * vDir);
+  gradUV *= reliefAAFade(aa, GT_WALL);
 
   vec3 na = abs(N);
   vec3 gradW;

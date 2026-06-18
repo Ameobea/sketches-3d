@@ -184,10 +184,12 @@ export interface CustomShaderShaders {
    */
   pomHeightShader?: string;
   /**
-   * GLSL defining `vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t)`,
+   * GLSL defining `vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa)`,
    * a closed-form world-space normal for the carved POM floor. Replaces the
    * engine's finite-difference normal (several extra `getPomHeight` evals per
-   * fragment) with one analytic call.
+   * fragment) with one analytic call. `aa` is the anisotropic pixel-footprint
+   * half-width in world units at the hit; scale the relief gradient by
+   * `reliefAAFade(aa, featureWidth)` so detail flattens before it aliases.
    *
    * Requires `pomHeightShader`. Only for procedural-height materials with no
    * `pomHeightMap` — an analytic gradient can't see a heightmap's contribution.
@@ -197,6 +199,7 @@ export interface CustomShaderShaders {
 }
 
 export interface CustomShaderOptions {
+  /** Multi-tap anisotropic footprint oversampling for the color slot. */
   antialiasColorShader?: boolean;
   antialiasRoughnessShader?: boolean;
   tileBreaking?: { type: 'neyret'; patchScale?: number };

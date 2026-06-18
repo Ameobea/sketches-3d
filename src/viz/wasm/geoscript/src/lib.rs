@@ -4055,6 +4055,50 @@ render(a)
 }
 
 #[test]
+fn test_dir_light_shadow_camera_auto() {
+  use crate::lights::Light;
+
+  let dir = |src: &str| -> crate::lights::DirectionalLight {
+    let lights = parse_and_eval_program(src).unwrap().rendered_lights.into_inner();
+    assert_eq!(lights.len(), 1);
+    match lights.into_iter().next().unwrap().light {
+      Light::Directional(d) => d,
+      other => panic!("expected directional light, got {other:?}"),
+    }
+  };
+
+  assert!(dir(r#"dir_light(shadow_camera="auto") | render"#).shadow_camera.auto);
+  assert!(dir(r#"dir_light(shadow_camera=nil) | render"#).shadow_camera.auto);
+  assert!(dir(r#"dir_light() | render"#).shadow_camera.auto);
+
+  let explicit = dir(
+    r#"dir_light(shadow_camera={near: 1, far: 2, left: -3, right: 4, top: 5, bottom: -6}) | render"#,
+  );
+  assert!(!explicit.shadow_camera.auto);
+  assert_eq!(explicit.shadow_camera.near, 1.);
+  assert_eq!(explicit.shadow_camera.far, 2.);
+  assert_eq!(explicit.shadow_camera.right, 4.);
+}
+
+#[test]
+fn test_prelude_dir_light_is_auto() {
+  use crate::lights::Light;
+
+  let ctx = EvalCtx::default();
+  parse_and_eval_program_with_ctx("render(box(1))".to_owned(), &ctx, true).unwrap();
+  let dir = ctx
+    .rendered_lights
+    .borrow()
+    .iter()
+    .find_map(|l| match &l.light {
+      Light::Directional(d) => Some(d.clone()),
+      _ => None,
+    })
+    .expect("prelude should render a directional light");
+  assert!(dir.shadow_camera.auto);
+}
+
+#[test]
 fn test_partial_application_with_only_kwargs() {
   let ctx = EvalCtx::default();
   let interned_x = ctx.interned_symbols.intern("x");

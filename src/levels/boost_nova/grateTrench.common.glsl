@@ -49,8 +49,8 @@ float gtGapOffset(vec2 uv) {
 // must already be inside the trench.
 float gtVisCarve(vec2 uv, float dv, float aa) {
   float g = abs(gtGapOffset(uv));
-  float w = max(0.5 * GT_WALL, aa);
+  float gap = aaSlot(g, GT_SLAT_PITCH, GT_GAP_HW, GT_WALL, aa);
   float we = max(0.5 * GT_END_WALL, aa);
-  return (1. - smoothstep(GT_GAP_HW + 0.5 * GT_WALL - w, GT_GAP_HW + 0.5 * GT_WALL + w, g))
-       * (1. - smoothstep(GT_END_OUT - 0.5 * GT_END_WALL - we, GT_END_OUT - 0.5 * GT_END_WALL + we, dv));
+  float end = 1. - smoothstep(GT_END_OUT - 0.5 * GT_END_WALL - we, GT_END_OUT - 0.5 * GT_END_WALL + we, dv);
+  return gap * end;
 }

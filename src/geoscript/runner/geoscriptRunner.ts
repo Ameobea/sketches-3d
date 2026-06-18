@@ -8,7 +8,7 @@ import type {
   MatEntry,
   RenderedGizmo,
 } from './types';
-import { buildLight } from 'src/viz/scenes/geoscriptPlayground/lights';
+import { buildLight, fitAutoShadowFrusta } from 'src/viz/scenes/geoscriptPlayground/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
@@ -347,6 +347,7 @@ const applyLightProps = (target: THREE.Light, source: THREE.Light): void => {
   target.scale.copy(source.scale);
   if (target instanceof THREE.DirectionalLight && source instanceof THREE.DirectionalLight) {
     target.target.position.copy(source.target.position);
+    target.userData.autoShadowFrustum = source.userData.autoShadowFrustum;
     // shadow.map is allocated lazily and doesn't auto-resize; force re-alloc
     // when mapSize changes so the new size actually takes effect.
     if (
@@ -491,6 +492,8 @@ export const populateScene = (
       console.error('Unhandled rendered object type', obj);
     }
   }
+
+  fitAutoShadowFrusta(scene, newRenderedObjects);
 
   return { objects: newRenderedObjects, reusedKeys };
 };

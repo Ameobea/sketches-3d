@@ -41,7 +41,7 @@ use crate::noise::{
 };
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
-  lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight},
+  lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight, ShadowCamera},
   mesh_ops::{
     extrude::{extrude, extrude_along_normals},
     extrude_path::extrude_path,
@@ -1105,7 +1105,17 @@ fn dir_light_impl(
       let shadow_map_blur_samples = arg_refs[6].resolve(args, kwargs).as_int().unwrap() as usize;
       let shadow_map_type = arg_refs[7].resolve(args, kwargs).as_str().unwrap();
       let shadow_map_bias = arg_refs[8].resolve(args, kwargs).as_float().unwrap();
-      let shadow_camera = arg_refs[9].resolve(args, kwargs).as_map().unwrap();
+      let shadow_camera = match arg_refs[9].resolve(args, kwargs) {
+        Value::Map(map) => ShadowCamera::from_map(map)
+          .map_err(|err| err.wrap("Invalid shadow camera parameters"))?,
+        Value::Nil => ShadowCamera::auto(),
+        Value::String(s) if s.as_str() == "auto" => ShadowCamera::auto(),
+        other => {
+          return Err(ErrorStack::new(format!(
+            "`shadow_camera` must be a map, `nil`, or the string \"auto\"; found: {other:?}"
+          )))
+        }
+      };
       let light = DirectionalLight::new(
         target,
         color,

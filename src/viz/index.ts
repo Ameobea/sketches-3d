@@ -27,6 +27,7 @@ import {
   resetCustomShaderGlobals,
   getPlayerShadowUniforms,
   precompileOcclusionShaderVariants,
+  updateAaPixelScale,
 } from './shaders/customShader';
 import { clearPhysicsBinding } from './util/physics';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
@@ -326,6 +327,7 @@ export class Viz {
   };
 
   private renderFrame = (deltaTime: number, curTimeSeconds: number) => {
+    updateAaPixelScale(this.camera, this.renderer);
     this.beforeRenderCbs.forEach(({ cb }) => cb(curTimeSeconds, deltaTime));
 
     if (this.renderOverride) {

@@ -8489,19 +8489,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "shadow_camera",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Map),
-            default_value: DefaultValue::Optional(|| {
-              let shadow_camera = DirectionalLight::default().shadow_camera;
-              Value::Map(Rc::new(FxHashMap::from_iter([
-                ("near".to_string(), Value::Float(shadow_camera.near)),
-                ("far".to_string(), Value::Float(shadow_camera.far)),
-                ("left".to_string(), Value::Float(shadow_camera.left)),
-                ("right".to_string(), Value::Float(shadow_camera.right)),
-                ("top".to_string(), Value::Float(shadow_camera.top)),
-                ("bottom".to_string(), Value::Float(shadow_camera.bottom)),
-              ].into_iter())))
-            }),
-            description: "Camera parameters for the shadow map.  Allowed keys: `near`, `far`, `left`, `right`, `top`, `bottom`"
+            valid_types: argtype_flags!(ArgType::Map, ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Orthographic shadow frustum.  `\"auto\"` or `nil` (the default) fits the frustum and light distance to the scene's bounding box automatically.  Pass a map to set it explicitly.  Allowed keys: `near`, `far`, `left`, `right`, `top`, `bottom`"
           },
         ],
         description: "Creates a directional light.\n\nNote: This will not do anything until it is added to the scene via `render`",

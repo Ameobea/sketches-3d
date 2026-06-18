@@ -4,7 +4,7 @@
 // edge-distance gradient is the signed family normal (triEdgeDistGrad); chain it
 // through smoothstep'(x)=6t(1-t)/w, then lift to world via the dominant axis.
 // Mirrors triangleGrid.height.glsl — keep in sync.
-vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
+vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
   vec2 uv = triProjectUV(pos, N);
   vec2 gradDir;
   float ed = triEdgeDistGrad(uv, gradDir);
@@ -16,6 +16,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
   }
 
   vec2 gradUV = dCarved * gradDir;
+  gradUV *= reliefAAFade(aa, TRI_WALL_WIDTH);
   vec3 a = abs(N);
   vec3 gradW;
   if (a.y >= a.x && a.y >= a.z) {

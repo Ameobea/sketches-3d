@@ -10,7 +10,7 @@
 // Result is consistent with the engine's finite-difference form:
 //   surface = base - H*N  (H = depth * carvedDepth, carved inward along -N)
 //   outward normal = normalize(N + tangential(gradient of H))
-vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
+vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
   vec3 absN = abs(N);
   vec2 uv;
   if (absN.y >= absN.x && absN.y >= absN.z) {
@@ -28,7 +28,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
 
   vec2 q = abs(cellLocal) - MASONRY_TILE_HALF + MASONRY_CORNER_RADIUS;
   float sdf = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - MASONRY_CORNER_RADIUS;
-  float band = max(MASONRY_BEVEL, distance(cameraPosition, vWorldPos) * 0.001);
+  float band = max(MASONRY_BEVEL, aa);
 
   float dentZone = 1. - smoothstep(-band, 0., sdf);
   float grooveZone = smoothstep(0., band, sdf);
@@ -73,6 +73,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
   if (hRaw <= 0. || hRaw >= 0.8) {
     gradUV = vec2(0.);
   }
+  gradUV *= reliefAAFade(aa, MASONRY_BEVEL);
 
   // Lift the uv-plane gradient back into world space via the same axis pick.
   vec3 gradW;

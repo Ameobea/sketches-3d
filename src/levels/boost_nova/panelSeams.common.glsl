@@ -11,6 +11,7 @@ const float PS_SEAM_DEPTH = 0.18;  // chamfer carve at the boundary (0.8 = full 
 const float PS_HAIR_HW    = 0.012; // gap notch half-width
 const float PS_HAIR_WALL  = 0.025;
 const float PS_HAIR_DEPTH = 0.14;  // extra carve of the gap notch
+const float PS_SEAM_FADE_W = 8. * PS_SEAM_W; // footprint scale at which seams dissolve; raise = persist longer
 
 const vec3 PS_BASE_COLOR = vec3(0.106, 0.110, 0.117);
 const vec3 PS_DARK_COLOR = vec3(0.012, 0.013, 0.014);
@@ -48,5 +49,10 @@ float psSeamCarve(float b) {
 vec2 psSeamVis(float b, float aa) {
   float mid = PS_HAIR_HW + 0.5 * PS_HAIR_WALL;
   float w = max(0.5 * PS_HAIR_WALL, aa);
-  return vec2(1. - smoothstep(0., PS_SEAM_W, b), 1. - smoothstep(mid - w, mid + w, b));
+  float chamfer = 1. - smoothstep(0., PS_SEAM_W, b);
+  float hair = 1. - smoothstep(mid - w, mid + w, b);
+  // Isolated lines at the cell boundary: dissolve as they go sub-pixel. Keyed to
+  // the joint width (PS_SEAM_FADE_W), not the hair's own tiny width, so the dark
+  // seam line persists as long as the joint is resolvable instead of popping out.
+  return vec2(aaThinFeature(chamfer, aa, PS_SEAM_FADE_W), aaThinFeature(hair, aa, PS_SEAM_FADE_W));
 }

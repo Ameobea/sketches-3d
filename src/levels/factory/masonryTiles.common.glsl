@@ -29,7 +29,7 @@ struct MasonryCore {
   float staggerX;
 };
 
-MasonryCore evalMasonryCore(vec3 pos, vec3 axisNormal, float viewDist) {
+MasonryCore evalMasonryCore(vec3 pos, vec3 axisNormal, float band) {
   vec3 absN = abs(axisNormal);
   vec2 uv;
   if (absN.y >= absN.x && absN.y >= absN.z) {
@@ -49,8 +49,6 @@ MasonryCore evalMasonryCore(vec3 pos, vec3 axisNormal, float viewDist) {
   vec2 q = abs(cellLocal) - MASONRY_TILE_HALF + MASONRY_CORNER_RADIUS;
   float sdf = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - MASONRY_CORNER_RADIUS;
 
-  float band = max(MASONRY_BEVEL, viewDist * 0.001);
-
   MasonryCore c;
   c.dentZone = 1. - smoothstep(-band, 0., sdf);
   c.grooveZone = smoothstep(0., band, sdf);
@@ -64,8 +62,8 @@ MasonryCore evalMasonryCore(vec3 pos, vec3 axisNormal, float viewDist) {
   return c;
 }
 
-Masonry evalMasonry(vec3 pos, vec3 axisNormal, float viewDist) {
-  MasonryCore c = evalMasonryCore(pos, axisNormal, viewDist);
+Masonry evalMasonry(vec3 pos, vec3 axisNormal, float band) {
+  MasonryCore c = evalMasonryCore(pos, axisNormal, band);
   Masonry m;
   m.dentZone = c.dentZone;
   m.grooveZone = c.grooveZone;

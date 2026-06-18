@@ -3,7 +3,7 @@
 // b = CELL/2 − chebyshev(d) ⇒ ∇b = −∇d. All gradients are axis-aligned in UV.
 // Outward normal = normalize(N + tangential(depth·∇carve)). Mirrors
 // groovedPlastic.height.glsl — keep in sync.
-vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
+vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
   vec2 cl, cellId;
   float d = gpSquareDist(gpProjectUV(pos, N), cl, cellId);
 
@@ -26,6 +26,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
     vec2 perpDir = alongX ? vec2(0., 1.) : vec2(1., 0.);
     vec2 alongDir = alongX ? vec2(1., 0.) : vec2(0., 1.);
     gradUV = GP_CARVE * (endMask * dSlot * perpDir + slot * dEnd * alongDir);
+    gradUV *= reliefAAFade(aa, GP_WALL);
   } else {
     float b = 0.5 * GP_CELL - d;
     if (b >= GP_SEAM_W) {
@@ -37,6 +38,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t) {
     dCarveDb -= 6. * GP_HAIR_DEPTH * th * (1. - th) / GP_HAIR_WALL;
     vec2 chebDir = abs(cl.x) >= abs(cl.y) ? vec2(sign(cl.x), 0.) : vec2(0., sign(cl.y));
     gradUV = -dCarveDb * chebDir;
+    gradUV *= reliefAAFade(aa, GP_HAIR_WALL);
   }
 
   vec3 na = abs(N);

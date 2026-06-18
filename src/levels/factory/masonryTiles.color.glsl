@@ -31,7 +31,7 @@ vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, S
 #endif
 
   float dist = ctx.distanceToCamera;
-  Masonry m = evalMasonry(pos, vWorldNormal, dist);
+  Masonry m = evalMasonry(pos, vWorldNormal, max(MASONRY_BEVEL, ctx.aaFootprint));
 
   const float DENT_DEPTH = 0.4;
   float tileH = m.bowl * DENT_DEPTH * m.dentZone;

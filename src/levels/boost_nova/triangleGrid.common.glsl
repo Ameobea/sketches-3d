@@ -12,6 +12,7 @@ const float TRI_FLOOR_DEPTH   = 0.8;  // [0,1]; the POM marcher clamps carved de
 const float TRI_WALL_BAND_PAD = 0.04; // insets the wall *color* band so POM hit imprecision can't bleed it out
 const float TRI_BORDER_END = TRI_GAP_HALF + TRI_BORDER_WIDTH;
 const float TRI_WALL_END   = TRI_BORDER_END + TRI_WALL_WIDTH;
+const float TRI_FADE_PERIOD = 2.0 * TRI_WALL_END; // footprint at which the grid dissolves to fill; raise = persist longer
 
 const vec3  TRI_BG_COLOR     = vec3(0.55, 0.57, 0.57); // light gray
 const vec3  TRI_BORDER_COLOR = vec3(0.015, 0.017, 0.017); // dark charcoal
