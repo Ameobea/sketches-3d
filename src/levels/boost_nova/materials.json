@@ -1,5 +1,31 @@
 {
   "$schema": "../materials-schema.json",
+  "textures": {
+    "shiny_patchwork_stone_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/20165df3-fe44-49dd-84a7-9e8112e0d94b.avif",
+      "colorSpace": "srgb"
+    },
+    "shiny_patchwork_stone_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/74ac0b42-56d5-4999-ab1d-397e8fef2173.avif"
+    },
+    "rusty_metal_1_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/d267e546-3249-467b-8f7e-3efc049f1b64.avif",
+      "colorSpace": "srgb"
+    },
+    "rusty_metal_2_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/192af346-4129-4f76-82ff-9798dcb3aa2b.avif"
+    },
+    "gravel_1_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/274d5411-047b-42c3-b939-4114b34d5df1.avif"
+    },
+    "rocky_soil_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/4278eaeb-5c4c-45a3-8f6e-60a19e04f6f6.avif",
+      "colorSpace": "srgb"
+    },
+    "rocky_soil_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/98823d8e-463e-4a34-b24e-fb7f266ab730.avif"
+    }
+  },
   "materials": {
     "plain_strip_mat": {
       "type": "customShader",
@@ -209,6 +235,67 @@
         "pomNormalShader": {
           "file": "grateTrench.normal.glsl"
         }
+      }
+    },
+    "palm_leaf": {
+      "type": "customShader",
+      "props": {
+        "color": "#4f9622",
+        "roughness": 0.95,
+        "metalness": 0.23,
+        "normalScale": 1,
+        "uvScale": [0.23, 0.23],
+        "map": "shiny_patchwork_stone_diffuse",
+        "normalMap": "shiny_patchwork_stone_normal",
+        "ambientLightScale": 2
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "palm_trunk": {
+      "type": "customShader",
+      "props": {
+        "color": "#d9ca96",
+        "roughness": 0.99,
+        "metalness": 0.09,
+        "normalScale": 0.72,
+        "uvScale": [0.2, 0.2],
+        "map": "rusty_metal_1_diffuse",
+        "normalMap": "gravel_1_normal"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "palm_coconut": {
+      "type": "customShader",
+      "props": {
+        "color": "#a59f91",
+        "roughness": 1,
+        "metalness": 0.35,
+        "normalScale": 1.2,
+        "uvScale": [0.13, 0.13],
+        "map": "rusty_metal_1_diffuse",
+        "normalMap": "rusty_metal_2_normal"
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
+    "planter_dirt": {
+      "type": "customShader",
+      "props": {
+        "color": "#9f886e",
+        "roughness": 0.95,
+        "metalness": 0.1,
+        "normalScale": 1,
+        "uvScale": [0.2, 0.2],
+        "map": "rocky_soil_diffuse",
+        "normalMap": "rocky_soil_normal"
+      },
+      "options": {
+        "useTriplanarMapping": true
       }
     }
   }

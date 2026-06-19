@@ -87,11 +87,17 @@ export interface PhysicalMaterialDef {
     ampFactor: number;
   };
   shaders?: {
+    /** Shared GLSL emitted before all other slots; declare structs/helpers used by multiple slots. */
+    common?: string;
     color?: string;
+    /** `vec2 getLightAttenuation(...)` → `(directMul, indirectMul)` for procedural shadow/AO. */
+    lightAttenuation?: string;
     roughness?: string;
     metalness?: string;
     iridescence?: string;
     pomHeight?: string;
+    /** Analytic POM relief normal; requires `pomHeight`. */
+    pomNormal?: string;
   };
   reverseColorRamps?: {
     roughness?: ReverseColorRampParams;
@@ -202,8 +208,14 @@ const buildPhysicalShader = (
   const customShaders: Partial<CustomShaderShaders> = {};
 
   if (def.shaders) {
+    if (def.shaders.common && def.shaders.common !== defaultShaders.common) {
+      customShaders.commonShader = def.shaders.common;
+    }
     if (def.shaders.color && def.shaders.color !== defaultShaders.color) {
       customShaders.colorShader = def.shaders.color;
+    }
+    if (def.shaders.lightAttenuation && def.shaders.lightAttenuation !== defaultShaders.lightAttenuation) {
+      customShaders.lightAttenuationShader = def.shaders.lightAttenuation;
     }
     if (def.reverseColorRamps?.roughness) {
       customShaders.roughnessReverseColorRamp = def.reverseColorRamps.roughness;
@@ -222,6 +234,9 @@ const buildPhysicalShader = (
     }
     if (def.pom && def.shaders.pomHeight && def.shaders.pomHeight !== defaultShaders.pomHeight) {
       customShaders.pomHeightShader = def.shaders.pomHeight;
+    }
+    if (def.pom && def.shaders.pomNormal && def.shaders.pomNormal !== defaultShaders.pomNormal) {
+      customShaders.pomNormalShader = def.shaders.pomNormal;
     }
   }
 
@@ -310,8 +325,15 @@ export const buildMaterial = (
 };
 
 export const buildDefaultShaders = (): NonNullable<PhysicalMaterialDef['shaders']> => ({
+  common: `// Shared GLSL emitted before every other slot — declare structs, constants, and
+// helper functions used by multiple slots here so the logic lives in one place.`,
   color: `vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   return vec4(baseColor, 1.0);
+}`,
+  lightAttenuation: `// Returns (directMul, indirectMul) in [0,1], scaling direct/indirect light for
+// procedural shadow + AO. (1.0, 1.0) = no attenuation.
+vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
+  return vec2(1.0);
 }`,
   roughness: `float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
   return baseRoughness;
@@ -325,6 +347,11 @@ export const buildDefaultShaders = (): NonNullable<PhysicalMaterialDef['shaders'
   pomHeight: `// Carved depth in [0, 1]: 0 = base surface, 1 = a full pom.depth carved inward.
 float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {
   return 0.0;
+}`,
+  pomNormal: `// Closed-form relief normal for the carved POM floor (world space); requires pomHeight.
+// \`aa\` is the pixel-footprint half-width in world units — fade detail with reliefAAFade(aa, w).
+vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
+  return N;
 }`,
 });
 

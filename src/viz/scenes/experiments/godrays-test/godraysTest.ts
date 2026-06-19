@@ -138,7 +138,7 @@ export const processLoadedScene = async (viz: Viz, _loadedWorld: THREE.Group): P
     upsampleQuality: GodraysUpsampleQuality.HIGH,
   };
 
-  const godraysEffect = new GodraysPass(pointLight, viz.camera, godraysParams);
+  const godraysEffect = new GodraysPass(pointLight, viz.camera as THREE.PerspectiveCamera, godraysParams);
   godraysEffect.renderToScreen = true;
   effectComposer.addPass(godraysEffect);
 

@@ -56,7 +56,7 @@ export const processLoadedScene = async (
   const viewportSize = viz.renderer.getSize(new THREE.Vector2());
   const buildTerrain = () =>
     new LODTerrain(
-      viz.camera,
+      viz.camera as THREE.PerspectiveCamera,
       {
         boundingBox: new THREE.Box2(new THREE.Vector2(-2000, -2000), new THREE.Vector2(2000, 2000)),
         material: buildCustomShader(

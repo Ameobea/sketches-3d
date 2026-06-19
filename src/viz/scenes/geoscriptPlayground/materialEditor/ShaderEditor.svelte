@@ -29,14 +29,31 @@
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
 
-  type ShaderName = 'color' | 'roughness' | 'metalness' | 'iridescence' | 'pomHeight';
+  type ShaderName =
+    | 'color'
+    | 'common'
+    | 'lightAttenuation'
+    | 'roughness'
+    | 'metalness'
+    | 'iridescence'
+    | 'pomHeight'
+    | 'pomNormal';
 
   const shaderList = $derived<readonly ShaderName[]>(
     shaderState.type === 'basic'
       ? ['color']
       : pomEnabled
-        ? ['color', 'roughness', 'metalness', 'iridescence', 'pomHeight']
-        : ['color', 'roughness', 'metalness', 'iridescence']
+        ? [
+            'color',
+            'common',
+            'lightAttenuation',
+            'roughness',
+            'metalness',
+            'iridescence',
+            'pomHeight',
+            'pomNormal',
+          ]
+        : ['color', 'common', 'lightAttenuation', 'roughness', 'metalness', 'iridescence']
   );
 
   let activeShader = $state<ShaderName>('color');

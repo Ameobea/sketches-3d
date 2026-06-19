@@ -18,6 +18,12 @@ export const buildGeotoyKeymap = (getCtx?: () => ReplCtx | null | undefined): Ke
   { key: 'a', action: () => getCtx?.()?.toggleAxesHelper(), label: 'toggle axes helper' },
 
   { key: '.', action: () => getCtx?.()?.centerView(), label: 'center view on selection', group: 'camera' },
+  {
+    key: 'o',
+    label: 'toggle perspective/orthographic',
+    action: () => getCtx?.()?.toggleProjection(),
+    group: 'camera',
+  },
   { key: '1', label: 'front/back view', action: () => getCtx?.()?.snapView('z'), group: 'camera' },
   { key: '2', label: 'top/bottom view', action: () => getCtx?.()?.snapView('y'), group: 'camera' },
   { key: '3', label: 'right/left view', action: () => getCtx?.()?.snapView('x'), group: 'camera' },

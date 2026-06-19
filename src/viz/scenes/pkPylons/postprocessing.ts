@@ -36,7 +36,7 @@ export const initPylonsPostprocessing = (
         [GraphicsQuality.Medium]: { baseRaymarchStepCount: 80, renderScale: 0.4 },
         [GraphicsQuality.High]: { baseRaymarchStepCount: 128, renderScale: 0.75 },
       }[quality];
-      const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+      const volumetricPass = new VolumetricPass(viz.scene, viz.camera as THREE.PerspectiveCamera, {
         fogMinY: -140,
         fogMaxY: -5,
         fogColorHighDensity: new THREE.Vector3(0.12, 0.15, 0.18).multiplyScalar(0.7),

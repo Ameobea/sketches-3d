@@ -488,7 +488,7 @@ export class BulletPhysics {
     const viewMode = viz.sceneConf.viewMode!;
 
     viz.cameraController = new CameraController({
-      camera: viz.camera,
+      camera: viz.camera as THREE.PerspectiveCamera,
       getMouseSensitivity: () => viz.vizConfig.current.controls.mouseSensitivity,
       getCameraControlEnabled: () => viz.controlState.cameraControlEnabled,
       getPointerLocked: () => document.pointerLockElement === document.body,

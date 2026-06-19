@@ -119,7 +119,7 @@ export const configurePostprocessing = (
     effectComposer.addPass(n8aoPass, USE_DEPTH_PREPASS ? 2 : 1);
   }
 
-  const godraysEffect = new GodraysPass(dirLight, viz.camera, godraysParams);
+  const godraysEffect = new GodraysPass(dirLight, viz.camera as THREE.PerspectiveCamera, godraysParams);
   effectComposer.addPass(godraysEffect);
 
   // Make the pipe lights glow through the godrays

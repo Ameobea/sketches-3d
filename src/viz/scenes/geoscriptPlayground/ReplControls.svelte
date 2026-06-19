@@ -18,6 +18,8 @@
     toggleLightHelpers,
     toggleMaterialEditorOpen,
     toggleEnvironmentSettingsOpen,
+    cameraProjection,
+    toggleProjection,
     isDirty,
     togglePreludeEjected,
     preludeEjected,
@@ -38,6 +40,8 @@
     toggleLightHelpers: () => void;
     toggleMaterialEditorOpen: () => void;
     toggleEnvironmentSettingsOpen: () => void;
+    cameraProjection: 'perspective' | 'orthographic';
+    toggleProjection: () => void;
     isDirty: boolean;
     togglePreludeEjected: () => void;
     preludeEjected: boolean;
@@ -93,6 +97,9 @@
         <button onclick={clearLocalChanges}>clear local changes</button>
         <button onclick={toggleAxisHelpers}>toggle axis helpers</button>
         <button onclick={toggleLightHelpers}>toggle light helpers</button>
+        <button onclick={toggleProjection}>
+          camera: {cameraProjection === 'orthographic' ? 'orthographic' : 'perspective'} (O)
+        </button>
         <button onclick={toggleLayoutOrientation}>toggle layout horizontal/vertical</button>
         <button onclick={togglePreludeEjected}>{preludeEjected ? 'un-eject' : 'eject'} prelude</button>
         <button onclick={() => void window.open('/geotoy/docs', '_blank')}>open docs</button>

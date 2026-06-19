@@ -166,11 +166,15 @@ composition from the editor and want a faithful local copy. Documented by the
 
 ```json
 {
+  "version": 1,
   "rootId": "...",
   "globalsSource": "",
-  "nodes": { "...": { "id": "...", "name": "_root", "source": "...", "transform": {"pos":[0,0,0],"rot":[0,0,0],"scale":[1,1,1]}, "children": [] } }
+  "nodes": { "...": { "id": "...", "name": "_root", "source": "...", "instances": [{ "pos": [0,0,0], "rot": [0,0,0], "scale": [1,1,1], "id": "00000000" }], "children": [] } }
 }
 ```
+
+Each node carries `instances` — a list of placements (each a transform plus a
+short `id`); `instances.length === 1` is the common single-copy case.
 
 ## CLI reference
 
@@ -188,8 +192,14 @@ Options:
   --height <n>         Render height in px (default 800)
   --format <fmt>       png (default) | avif | jpeg
   --quality <n>        Quality 0-100 for avif/jpeg
+  --no-prelude         Skip the standard geoscript prelude (default: included)
   --stdout             Write image to stdout (suppresses progress)
 ```
+
+The standard prelude (default lights, camera, helpers) is included on every
+render unless you pass `--no-prelude` or drop a `.prelude_ejected` marker in the
+composition directory. Without it, a bare `box(8) | render` has no lights and
+renders black.
 
 ### Defaults & overrides
 

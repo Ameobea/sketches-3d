@@ -63,6 +63,7 @@ export interface CompositionVersionMetadata {
     target: [number, number, number];
     fov?: number; // for `PerspectiveCamera`
     zoom?: number; // for `OrthographicCamera`
+    projection?: 'perspective' | 'orthographic'; // defaults to perspective when absent
   };
   materials?: MaterialDefinitions;
   preludeEjected?: boolean;

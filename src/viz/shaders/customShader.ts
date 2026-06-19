@@ -482,14 +482,23 @@ export const getOcclusionUniforms = () => ({
 const aaPixelScale = { value: 0.001 };
 const _aaDrawingBufferSize = new THREE.Vector2();
 
-export const updateAaPixelScale = (camera: THREE.Camera, renderer: THREE.WebGLRenderer) => {
-  if (!(camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
-    return;
-  }
+export const updateAaPixelScale = (
+  camera: THREE.Camera,
+  renderer: THREE.WebGLRenderer,
+  refDistance?: number
+) => {
   renderer.getDrawingBufferSize(_aaDrawingBufferSize);
   const h = Math.max(1, _aaDrawingBufferSize.y);
-  const fovRad = ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 180;
-  aaPixelScale.value = (2 * Math.tan(fovRad / 2)) / h;
+  if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+    const fovRad = ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 180;
+    aaPixelScale.value = (2 * Math.tan(fovRad / 2)) / h;
+  } else if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+    const oc = camera as THREE.OrthographicCamera;
+    // Ortho footprints are distance-independent, but the shader multiplies this by per-fragment
+    // distanceToCamera; normalize by the focus distance so it's exact at the framed subject.
+    const worldPerPx = (oc.top - oc.bottom) / oc.zoom / h;
+    aaPixelScale.value = worldPerPx / Math.max(refDistance ?? 1, 1e-3);
+  }
 };
 
 /**

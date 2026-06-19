@@ -25,7 +25,7 @@ export const configurePostprocessing = (viz: Viz, quality: GraphicsQuality) => {
   renderPass.needsDepthTexture = true;
   effectComposer.addPass(renderPass);
 
-  const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+  const volumetricPass = new VolumetricPass(viz.scene, viz.camera as THREE.PerspectiveCamera, {
     fogMinY: -50,
     fogMaxY: 56,
     fogColorLowDensity: new THREE.Vector3(0.23, 0.27, 0.27),

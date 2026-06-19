@@ -468,7 +468,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
         [GraphicsQuality.Medium]: { baseRaymarchStepCount: 30 },
         [GraphicsQuality.High]: { baseRaymarchStepCount: 60 },
       }[quality];
-      const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+      const volumetricPass = new VolumetricPass(viz.scene, viz.camera as THREE.PerspectiveCamera, {
         fogMinY: -90,
         fogMaxY: -40,
         fogColorHighDensity: new THREE.Vector3(0.024, 0.024, 0.01).multiplyScalar(0.3),

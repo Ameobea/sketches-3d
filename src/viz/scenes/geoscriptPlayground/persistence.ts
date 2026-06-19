@@ -43,6 +43,7 @@ const DefaultView: CompositionVersionMetadata['view'] = {
   target: [DefaultCameraTarget.x, DefaultCameraTarget.y, DefaultCameraTarget.z],
   fov: DefaultCameraFOV,
   zoom: DefaultCameraZoom,
+  projection: 'perspective',
 };
 
 const parseTreeOrNull = (raw: string | null): TreeDef | null => {
@@ -163,8 +164,9 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
 export const getView = (viz: Viz): CompositionVersionMetadata['view'] => ({
   cameraPosition: viz.camera.position.toArray(),
   target: viz.orbitControls?.target.toArray() || DefaultCameraTarget.toArray(),
-  fov: 'fov' in viz.camera ? viz.camera.fov : undefined,
-  zoom: 'zoom' in viz.camera ? viz.camera.zoom : undefined,
+  fov: viz.camera instanceof PerspectiveCamera ? viz.camera.fov : undefined,
+  zoom: viz.camera.zoom,
+  projection: viz.camera instanceof OrthographicCamera ? 'orthographic' : 'perspective',
 });
 
 export const saveState = (
@@ -196,12 +198,13 @@ export const buildCompositionVersionMetadata = (
   const view: CompositionVersionMetadata['view'] = {
     cameraPosition: [viz.camera.position.x, viz.camera.position.y, viz.camera.position.z],
     target: [controls.target.x, controls.target.y, controls.target.z],
+    projection: viz.camera instanceof OrthographicCamera ? 'orthographic' : 'perspective',
   };
   if (viz.camera instanceof PerspectiveCamera) {
-    view.fov = (viz.camera as any).fov;
+    view.fov = viz.camera.fov;
   }
   if (viz.camera instanceof OrthographicCamera) {
-    view.zoom = (viz.camera as any).zoom;
+    view.zoom = viz.camera.zoom;
   }
   const metadata: CompositionVersionMetadata = {
     view,

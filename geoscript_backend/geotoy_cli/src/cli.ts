@@ -13,16 +13,22 @@ interface Transform3 {
   scale: [number, number, number];
 }
 
+interface Instance extends Transform3 {
+  id: string;
+}
+
 interface NodeDef {
   id: string;
   name: string;
   source: string;
-  transform: Transform3;
+  /** Per-node placements; length >= 1. A single identity instance = one un-transformed copy. */
+  instances: Instance[];
   children: string[];
   disabled?: boolean;
 }
 
 interface TreeDef {
+  version: 1;
   rootId: string;
   globalsSource: string;
   nodes: Record<string, NodeDef>;
@@ -56,6 +62,11 @@ interface TransientPayload {
 
 const identityTransform = (): Transform3 => ({ pos: [0, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] });
 
+const identityInstance = (): Instance => ({
+  ...identityTransform(),
+  id: randomUUID().replace(/-/g, '').slice(0, 8),
+});
+
 const usage = `Usage: geotoy render <path> [options]
 
   <path>  Either a directory containing a composition, or a single .geo file
@@ -70,6 +81,7 @@ Options:
   --height <n>         Render height in px (default 800)
   --format <fmt>       png (default) | avif | jpeg
   --quality <n>        Quality 0-100 for avif/jpeg
+  --no-prelude         Skip the standard geoscript prelude (default: included)
   --stdout             Write image to stdout (suppresses progress)
   -h, --help           Show this message
 `;
@@ -167,7 +179,7 @@ const buildPayload = (input: string): TransientPayload => {
         id: rootId,
         name: ROOT_NODE_NAME,
         source: rootSource,
-        transform: identityTransform(),
+        instances: [identityInstance()],
         children: [],
       },
     };
@@ -177,12 +189,12 @@ const buildPayload = (input: string): TransientPayload => {
         id,
         name,
         source,
-        transform: identityTransform(),
+        instances: [identityInstance()],
         children: [],
       };
       nodes[rootId].children.push(id);
     }
-    tree = { rootId, globalsSource, nodes };
+    tree = { version: 1, rootId, globalsSource, nodes };
   }
 
   return {
@@ -250,6 +262,9 @@ const parseArgs = (argv: string[]) => {
       case '--quality':
         i = val('quality', i);
         break;
+      case '--no-prelude':
+        flag('no-prelude');
+        break;
       case '--stdout':
         flag('stdout');
         break;
@@ -284,6 +299,7 @@ const main = async () => {
   if (height !== undefined && (!Number.isFinite(height) || height < 16)) die(`Invalid --height ${height}`);
 
   const payload = buildPayload(input);
+  if (opts['no-prelude']) payload.metadata.preludeEjected = true;
   payload.options = { format, dev, width, height, quality };
 
   const toStdout = !!opts.stdout;

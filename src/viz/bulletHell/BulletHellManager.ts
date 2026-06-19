@@ -415,10 +415,10 @@ export class BulletHellManager {
       this.viz.startViewModeInterpolation(
         {
           durationSecs: animationLengthSecs,
-          endCameraFov: this.viz.camera.fov,
+          endCameraFov: (this.viz.camera as THREE.PerspectiveCamera).fov,
           endCameraPos,
           endCameraRot: startCameraRot,
-          startCameraFov: this.viz.camera.fov,
+          startCameraFov: (this.viz.camera as THREE.PerspectiveCamera).fov,
           startCameraPos,
           startCameraRot,
           startTimeSecs: this.viz.clock.getElapsedTime(),

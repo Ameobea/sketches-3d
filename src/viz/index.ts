@@ -64,6 +64,8 @@ export interface PostprocessingController {
   readonly hasFinalPass: boolean;
   readonly emissiveBypassPass: { addBypassMesh(mesh: THREE.Mesh): void } | null;
   rescanPomMeshes(): void;
+  /** Re-point every pass at a new scene camera (e.g. perspective↔orthographic swap). */
+  setCamera?(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): void;
 }
 
 export interface FpPlayerStateGetters {
@@ -103,8 +105,10 @@ const setupOrbitControls = async (
 };
 
 export const applyGraphicsSettings = (viz: Viz, graphics: Conf.GraphicsSettings) => {
-  viz.camera.fov = graphics.fov;
-  viz.camera.updateProjectionMatrix();
+  if (viz.camera instanceof THREE.PerspectiveCamera) {
+    viz.camera.fov = graphics.fov;
+    viz.camera.updateProjectionMatrix();
+  }
   viz.setStatsEnabled(graphics.showFPSStats);
   viz.postprocessingController?.setGamma(graphics.gamma);
 };
@@ -135,7 +139,7 @@ interface ViewModeInterpolationState {
 }
 
 export class Viz {
-  public camera!: THREE.PerspectiveCamera;
+  public camera!: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   public renderer!: THREE.WebGLRenderer;
   public stats: Stats | null = null;
   public sceneName: string;
@@ -327,7 +331,11 @@ export class Viz {
   };
 
   private renderFrame = (deltaTime: number, curTimeSeconds: number) => {
-    updateAaPixelScale(this.camera, this.renderer);
+    updateAaPixelScale(
+      this.camera,
+      this.renderer,
+      this.orbitControls ? this.camera.position.distanceTo(this.orbitControls.target) : undefined
+    );
     this.beforeRenderCbs.forEach(({ cb }) => cb(curTimeSeconds, deltaTime));
 
     if (this.renderOverride) {
@@ -404,12 +412,35 @@ export class Viz {
   };
 
   private onWindowResize = () => {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    if (this.camera instanceof THREE.PerspectiveCamera) {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+    }
     this.camera.updateProjectionMatrix();
 
     this.renderer.setSize(window.innerWidth, window.innerHeight);
 
     this.resizeCbs.forEach(cb => cb());
+  };
+
+  /**
+   * Swaps the active scene camera (e.g. perspective↔orthographic), preserving transform and
+   * re-pointing the orbit controls and every postprocessing pass at the new camera.
+   */
+  public setCamera = (camera: THREE.PerspectiveCamera | THREE.OrthographicCamera) => {
+    const prev = this.camera;
+    camera.position.copy(prev.position);
+    camera.quaternion.copy(prev.quaternion);
+    camera.up.copy(prev.up);
+    camera.rotation.order = 'YXZ';
+    camera.matrixAutoUpdate = true;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    this.camera = camera;
+    if (this.orbitControls) {
+      this.orbitControls.object = camera;
+      this.orbitControls.update();
+    }
+    this.postprocessingController?.setCamera?.(camera);
   };
 
   public callPopup = (screen: PopupScreenFocus) => {
@@ -487,7 +518,7 @@ export class Viz {
       );
       this.camera.position.copy(cameraPos);
       this.camera.rotation.copy(cameraRot);
-      this.camera.fov = mix(
+      (this.camera as THREE.PerspectiveCamera).fov = mix(
         this.viewModeInterpolationState!.startCameraFov,
         this.viewModeInterpolationState!.endCameraFov,
         t
@@ -566,7 +597,7 @@ export class Viz {
 
     if (transitionTimeSeconds === 0) {
       this.sceneConf.viewMode = newViewMode;
-      this.camera.fov = endFOV;
+      (this.camera as THREE.PerspectiveCamera).fov = endFOV;
       this.camera.updateProjectionMatrix();
       return Promise.resolve();
     }
@@ -581,7 +612,7 @@ export class Viz {
         startTimeSecs: this.clock.getElapsedTime(),
         startCameraPos: this.camera.position.clone(),
         startCameraRot: this.camera.rotation.clone(),
-        startCameraFov: this.camera.fov,
+        startCameraFov: (this.camera as THREE.PerspectiveCamera).fov,
         endCameraPos,
         endCameraRot,
         endCameraFov: endFOV,
@@ -1138,7 +1169,7 @@ export const initViz = (
     vizCb(viz, vizConfig, sceneConf);
 
     if (sceneConf.viewMode.type === 'top-down') {
-      viz.camera.fov = sceneConf.viewMode.cameraFOV ?? DefaultTopDownCameraFOV;
+      (viz.camera as THREE.PerspectiveCamera).fov = sceneConf.viewMode.cameraFOV ?? DefaultTopDownCameraFOV;
       viz.camera.updateProjectionMatrix();
     }
     // FP and TP FOV is managed by the CameraController (created in BulletPhysics init)

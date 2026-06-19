@@ -51,7 +51,7 @@
       "type": "geotoyComposition",
       "compositionId": 102,
       "materialMap": {
-        "dirt": "triangle_grid",
+        "dirt": "planter_dirt",
         "ground": "grate_trench",
         "default": "panel_seams"
       }
@@ -60,17 +60,17 @@
       "type": "geotoyComposition",
       "compositionId": 103,
       "materialMap": {
-        "leaf": "panel_seams",
-        "default": "grooved_plastic",
-        "coconut": "triangle_grid"
+        "leaf": "palm_leaf",
+        "default": "palm_trunk",
+        "coconut": "palm_coconut"
       }
     }
   },
   "environment": {
     "kind": "gradient",
-    "skyColor": "#291112",
-    "horizonColor": "#684c3b",
-    "groundColor": "#b16710",
+    "skyColor": "#99caf2",
+    "horizonColor": "#dbd5b6",
+    "groundColor": "#585e48",
     "intensity": 0.8,
     "setBackground": false
   },
@@ -96,6 +96,12 @@
         "top": 90,
         "bottom": -90
       }
+    },
+    {
+      "id": "ambient",
+      "type": "ambient",
+      "color": "#ffffff",
+      "intensity": 0.4
     }
   ],
   "objects": []

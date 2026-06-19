@@ -1064,7 +1064,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   viz.scene.add(furnaceInteriorsInstancedMesh);
   // furnaceInteriorsInstancedMesh.visible = false;
 
-  const godraysPass = new GodraysPass(dLight, viz.camera, {
+  const godraysPass = new GodraysPass(dLight, viz.camera as THREE.PerspectiveCamera, {
     color: dLight.color,
     density: 1 / 80,
     maxDensity: 0.8,

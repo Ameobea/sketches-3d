@@ -101,7 +101,7 @@ const initTerrain = async (
 
   const viewportSize = viz.renderer.getSize(new THREE.Vector2());
   const terrain = new LODTerrain(
-    viz.camera,
+    viz.camera as THREE.PerspectiveCamera,
     {
       boundingBox: new THREE.Box2(new THREE.Vector2(-2000, -2000), new THREE.Vector2(2000, 2000)),
       maxPolygonWidth: 2000,
@@ -569,10 +569,10 @@ export const processLoadedScene = async (
 
         const t = (curTimeSeconds - now) / fovChangeDurationSeconds;
         if (t >= 1) {
-          viz.camera.fov = targetFOV;
+          (viz.camera as THREE.PerspectiveCamera).fov = targetFOV;
           viz.unregisterBeforeRenderCb(cb);
         } else {
-          viz.camera.fov = initialFOV + t * (targetFOV - initialFOV);
+          (viz.camera as THREE.PerspectiveCamera).fov = initialFOV + t * (targetFOV - initialFOV);
         }
 
         viz.camera.updateProjectionMatrix();
@@ -606,7 +606,7 @@ export const processLoadedScene = async (
     viz,
     quality: vizConf.graphics.quality,
     addMiddlePasses: (composer, viz, quality) => {
-      const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+      const volumetricPass = new VolumetricPass(viz.scene, viz.camera as THREE.PerspectiveCamera, {
         fogMinY: -50,
         fogMaxY: -4,
         fogDensityMultiplier: 0.046,

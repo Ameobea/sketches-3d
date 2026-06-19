@@ -366,7 +366,7 @@ return vec4(outColor, 1.);
         );
       }
 
-      const volumetricPass = new VolumetricPass(viz.scene, viz.camera, {
+      const volumetricPass = new VolumetricPass(viz.scene, viz.camera as THREE.PerspectiveCamera, {
         fogMinY: -60,
         fogMaxY: -40,
         fogColorHighDensity: new THREE.Vector3(0.04, 0.024, 0.02).multiplyScalar(0.1),

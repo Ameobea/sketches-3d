@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export interface FocusCameraParams {
-  camera: THREE.PerspectiveCamera;
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   orbitControls: OrbitControls;
   center: THREE.Vector3;
   radius: number;
@@ -34,14 +34,32 @@ export const computeFitDistance = (
 export const focusCamera = (params: FocusCameraParams) => {
   const { camera, orbitControls, center, radius, animationDurationMs = 150, paddingFactor = 1.1 } = params;
 
-  const distance = computeFitDistance(camera, radius, paddingFactor);
-
   // Preserve current look direction
   const lookDir = new THREE.Vector3().subVectors(camera.position, orbitControls.target);
   if (lookDir.lengthSq() === 0) {
     lookDir.set(1, 1, 1);
   }
   lookDir.normalize();
+
+  if (camera instanceof THREE.OrthographicCamera) {
+    // Ortho scale is set by the frustum, not the camera distance; size it to fit the sphere in
+    // whichever axis binds, keep the camera at its current distance, and snap (no animation).
+    const aspect = (camera.right - camera.left) / (camera.top - camera.bottom);
+    const halfH = Math.max(radius, radius / Math.max(aspect, 1e-3)) * paddingFactor;
+    const distance = camera.position.distanceTo(orbitControls.target) || radius * 3;
+    orbitControls.target.copy(center);
+    camera.position.copy(center).add(lookDir.multiplyScalar(distance));
+    camera.left = -halfH * aspect;
+    camera.right = halfH * aspect;
+    camera.top = halfH;
+    camera.bottom = -halfH;
+    camera.zoom = 1;
+    camera.updateProjectionMatrix();
+    orbitControls.update();
+    return;
+  }
+
+  const distance = computeFitDistance(camera, radius, paddingFactor);
 
   const newTarget = center.clone();
   const newPosition = center.clone().add(lookDir.multiplyScalar(distance));

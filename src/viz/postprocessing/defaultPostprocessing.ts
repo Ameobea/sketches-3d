@@ -76,6 +76,24 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     this.emissiveBloomPass?.setFogEnabled(enabled);
   }
 
+  setCamera(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): void {
+    const ortho = camera instanceof THREE.OrthographicCamera;
+    for (const pass of (this.effectComposer as unknown as { passes: any[] }).passes) {
+      if (pass instanceof RenderPass) {
+        // DepthPass / MainRenderPass render the scene with `pass.camera` (protected on the base).
+        (pass as any).camera = camera;
+      } else if (typeof pass.configureSampleDependentPasses === 'function') {
+        // n8ao: set its scene camera and recompile the ORTHO define (only injected at configure time).
+        pass.camera = camera;
+        pass.configureSampleDependentPasses();
+        pass.configureEffectCompositer(pass.configuration.depthBufferType, ortho);
+      } else {
+        // EffectPass (SMAA) consumes the scene camera via `mainCamera`; pure fullscreen passes no-op.
+        pass.mainCamera = camera;
+      }
+    }
+  }
+
   renderFrame(timeDiffSeconds: number): void {
     this.renderFrameCb(timeDiffSeconds);
   }

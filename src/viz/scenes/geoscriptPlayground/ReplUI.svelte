@@ -70,7 +70,14 @@
     fetchAndSetTextures,
     getReferencedTextureIDs,
   } from './materialLoading.svelte';
-  import { centerView, focusOnSubtree, snapView, orbit } from './cameraControls';
+  import {
+    centerView,
+    focusOnSubtree,
+    snapView,
+    orbit,
+    setProjection,
+    toggleProjection,
+  } from './cameraControls';
   import { buildLightHelpers, toggleAxisHelpers, toggleLightHelpers } from './gizmos';
   import { applyGeoscriptSceneEnvironment } from './sceneEnvironment';
   import { useRecording } from './recording';
@@ -848,6 +855,7 @@
 
   let materialEditorOpen = $state(false);
   let environmentSettingsOpen = $state(false);
+  let cameraProjection = $state<'perspective' | 'orthographic'>('perspective');
   let materialDefinitions = $state<MaterialDefinitions>(untrack(() => initialMatDefs));
   let preludeEjected = $state(untrack(() => initialPreludeEjected));
   let environment = $state<EnvironmentConfig | undefined>(untrack(() => initialEnvironment));
@@ -1356,16 +1364,34 @@
     if (view.target) {
       viz.orbitControls.target.set(...view.target);
     }
-    if ('fov' in viz.camera && view.fov !== undefined) {
+    // Position/target are set first so the ortho frustum is sized from the correct distance.
+    cameraProjection = view.projection ?? 'perspective';
+    setProjection(viz, cameraProjection);
+    if (viz.camera instanceof THREE.PerspectiveCamera && view.fov !== undefined) {
       viz.camera.fov = view.fov;
       viz.camera.updateProjectionMatrix();
     }
-    if ('zoom' in viz.camera && view.zoom !== undefined) {
+    if (viz.camera instanceof THREE.OrthographicCamera && view.zoom !== undefined) {
       viz.camera.zoom = view.zoom;
       viz.camera.updateProjectionMatrix();
     }
     viz.camera.lookAt(viz.orbitControls.target);
     viz.orbitControls.update();
+  };
+
+  const handleToggleProjection = () => {
+    cameraProjection = toggleProjection(viz);
+    isDirty = true;
+    saveState(
+      {
+        tree: treeState.serialize(),
+        materials: materialDefinitions,
+        view: getView(viz),
+        preludeEjected,
+        environment,
+      },
+      userData
+    );
   };
 
   const clearLocalChanges = () => {
@@ -1448,6 +1474,7 @@
       run,
       snapView: axis => snapView(viz, axis),
       orbit: (axis, angle) => orbit(viz, axis, angle),
+      toggleProjection: handleToggleProjection,
       toggleRecording,
       setGizmoMode: mode => {
         if (!resolveSelectedNode()) return;
@@ -1569,6 +1596,8 @@
       recordingState={$recordingState}
       toggleAxisHelpers={wrappedToggleAxesHelpers}
       toggleLightHelpers={wrappedToggleLightHelpers}
+      {cameraProjection}
+      toggleProjection={handleToggleProjection}
       {isDirty}
       {preludeEjected}
       {togglePreludeEjected}
@@ -1696,6 +1725,8 @@
             recordingState={$recordingState}
             toggleAxisHelpers={wrappedToggleAxesHelpers}
             toggleLightHelpers={wrappedToggleLightHelpers}
+            {cameraProjection}
+            toggleProjection={handleToggleProjection}
             {isDirty}
             {preludeEjected}
             {togglePreludeEjected}

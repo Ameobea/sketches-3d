@@ -22,7 +22,7 @@ export const processLoadedScene = async (
   const sampleHeight = (x: number, z: number) => Math.sin(x / 20) * Math.cos(z / 20) * 10;
 
   const terrain = new LODTerrain(
-    viz.camera,
+    viz.camera as THREE.PerspectiveCamera,
     {
       boundingBox: new THREE.Box2(new THREE.Vector2(-5000, -5000), new THREE.Vector2(5000, 5000)),
       maxPolygonWidth: 200,

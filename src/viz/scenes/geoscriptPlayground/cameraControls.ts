@@ -2,8 +2,11 @@ import type { RenderedObject } from 'src/geoscript/runner/types';
 import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
 import type { Viz } from 'src/viz';
 import * as THREE from 'three';
-import { DefaultCameraPos, DefaultCameraTarget } from './types';
+import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget } from './types';
 import { focusCamera } from 'src/viz/util/focusCamera';
+
+const ORTHO_NEAR = 0.07;
+const ORTHO_FAR = 3000;
 
 const computeCompositeBoundingBox = (objects: RenderedObject[]): THREE.Box3 => {
   const box = new THREE.Box3();
@@ -46,7 +49,7 @@ export const centerView = async (viz: Viz, renderedObjects: RenderedObject[]) =>
   }
 
   focusCamera({
-    camera: viz.camera as THREE.PerspectiveCamera,
+    camera: viz.camera,
     orbitControls: viz.orbitControls!,
     center,
     radius,
@@ -95,11 +98,52 @@ export const focusOnSubtree = (
   }
 
   focusCamera({
-    camera: viz.camera as THREE.PerspectiveCamera,
+    camera: viz.camera,
     orbitControls: viz.orbitControls,
     center,
     radius,
   });
+};
+
+const canvasAspect = (viz: Viz): number => {
+  const size = viz.renderer.getSize(new THREE.Vector2());
+  return size.y > 0 ? size.x / size.y : 1;
+};
+
+/** Switch the geotoy camera between perspective and orthographic, keeping framing stable. */
+export const setProjection = (viz: Viz, mode: 'perspective' | 'orthographic') => {
+  const current = viz.camera;
+  const isOrtho = current instanceof THREE.OrthographicCamera;
+  if ((mode === 'orthographic') === isOrtho) {
+    return;
+  }
+
+  const aspect = canvasAspect(viz);
+  if (mode === 'orthographic') {
+    const target = viz.orbitControls?.target ?? DefaultCameraTarget;
+    const distance = current.position.distanceTo(target) || 1;
+    const fov = current instanceof THREE.PerspectiveCamera ? current.fov : DefaultCameraFOV;
+    const halfH = distance * Math.tan((fov * Math.PI) / 360);
+    const ortho = new THREE.OrthographicCamera(
+      -halfH * aspect,
+      halfH * aspect,
+      halfH,
+      -halfH,
+      ORTHO_NEAR,
+      ORTHO_FAR
+    );
+    ortho.userData.prevFov = fov; // so toggling back restores the same perspective FOV
+    viz.setCamera(ortho);
+  } else {
+    const fov = (current.userData.prevFov as number | undefined) ?? DefaultCameraFOV;
+    viz.setCamera(new THREE.PerspectiveCamera(fov, aspect, ORTHO_NEAR, ORTHO_FAR));
+  }
+};
+
+export const toggleProjection = (viz: Viz): 'perspective' | 'orthographic' => {
+  const next = viz.camera instanceof THREE.OrthographicCamera ? 'perspective' : 'orthographic';
+  setProjection(viz, next);
+  return next;
 };
 
 const AXES = {

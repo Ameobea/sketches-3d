@@ -61,6 +61,41 @@ float noise(vec3 x) {
 	return mix(mix(mix(hash(n + dot(step, vec3(0, 0, 0))), hash(n + dot(step, vec3(1, 0, 0))), u.x), mix(hash(n + dot(step, vec3(0, 1, 0))), hash(n + dot(step, vec3(1, 1, 0))), u.x), u.y), mix(mix(hash(n + dot(step, vec3(0, 0, 1))), hash(n + dot(step, vec3(1, 0, 1))), u.x), mix(hash(n + dot(step, vec3(0, 1, 1))), hash(n + dot(step, vec3(1, 1, 1))), u.x), u.y), u.z);
 }
 
+// Value noise with analytic gradient: vec4(value, d/dx, d/dy, d/dz). Same 8-corner
+// hash as noise(vec3); the derivative is the exact gradient of the smoothstep-
+// interpolated field (iq's formulation), so procedural relief normals are
+// closed-form instead of finite-differenced.
+vec4 noised(vec3 x) {
+	const vec3 step = vec3(110, 241, 171);
+	vec3 i = floor(x);
+	vec3 f = fract(x);
+	float n = dot(i, step);
+	vec3 u = f * f * (3. - 2. * f);
+	vec3 du = 6. * f * (1. - f);
+
+	float a = hash(n + dot(step, vec3(0, 0, 0)));
+	float b = hash(n + dot(step, vec3(1, 0, 0)));
+	float c = hash(n + dot(step, vec3(0, 1, 0)));
+	float d = hash(n + dot(step, vec3(1, 1, 0)));
+	float e = hash(n + dot(step, vec3(0, 0, 1)));
+	float f1 = hash(n + dot(step, vec3(1, 0, 1)));
+	float g = hash(n + dot(step, vec3(0, 1, 1)));
+	float h = hash(n + dot(step, vec3(1, 1, 1)));
+
+	float k0 = a, k1 = b - a, k2 = c - a, k3 = e - a;
+	float k4 = a - b - c + d, k5 = a - c - e + g, k6 = a - b - e + f1;
+	float k7 = -a + b + c - d + e - f1 - g + h;
+
+	float val = k0 + k1 * u.x + k2 * u.y + k3 * u.z
+	          + k4 * u.x * u.y + k5 * u.y * u.z + k6 * u.z * u.x
+	          + k7 * u.x * u.y * u.z;
+	vec3 der = du * vec3(
+		k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z,
+		k2 + k4 * u.x + k5 * u.z + k7 * u.z * u.x,
+		k3 + k5 * u.y + k6 * u.x + k7 * u.x * u.y);
+	return vec4(val, der);
+}
+
 float fbm(float x) {
 	float v = 0.;
 	float a = 0.5;
@@ -97,6 +132,25 @@ float fbm(vec3 x) {
 		a *= 0.5;
 	}
 	return v;
+}
+
+// fbm with analytic gradient, matching fbm(vec3)'s octave schedule so a height
+// using fbm(vec3) and a normal using fbmd(vec3) share the same field.
+vec4 fbmd(vec3 x) {
+	float v = 0.;
+	vec3 d = vec3(0.);
+	float a = 0.5;
+	float fscale = 1.;
+	vec3 shift = vec3(100);
+	for (int i = 0; i < NUM_NOISE_OCTAVES; ++i) {
+		vec4 nd = noised(x);
+		v += a * nd.x;
+		d += a * fscale * nd.yzw;
+		x = x * 2. + shift;
+		fscale *= 2.;
+		a *= 0.5;
+	}
+	return vec4(v, d);
 }
 
 float fbm_1_octave(vec3 x) {

@@ -13,6 +13,7 @@ export interface ReplCtx {
   run: () => void;
   snapView: (axis: 'x' | 'y' | 'z') => void;
   orbit: (axis: 'vertical' | 'horizontal', angle: number) => void;
+  toggleProjection: () => void;
   toggleRecording: () => void;
   setGizmoMode: (mode: GizmoMode) => void;
   toggleGizmoSpace: () => void;

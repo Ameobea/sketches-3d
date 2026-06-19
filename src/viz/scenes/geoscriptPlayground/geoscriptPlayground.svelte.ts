@@ -156,8 +156,13 @@ export const processLoadedScene = async (
       viz.renderer.setSize(canvasWidth, canvasHeight, true);
     }
 
-    if (viz.camera.isPerspectiveCamera) {
+    if (viz.camera instanceof THREE.PerspectiveCamera) {
       viz.camera.aspect = canvasWidth / canvasHeight;
+    } else if (viz.camera instanceof THREE.OrthographicCamera) {
+      const halfH = (viz.camera.top - viz.camera.bottom) / 2;
+      const aspect = canvasHeight > 0 ? canvasWidth / canvasHeight : 1;
+      viz.camera.left = -halfH * aspect;
+      viz.camera.right = halfH * aspect;
     }
     viz.camera.updateProjectionMatrix();
   };

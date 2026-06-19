@@ -471,7 +471,7 @@ export const processLoadedScene = async (
   }
 
   // fog pass reads from input buffer and writes to output buffer, then swaps buffers
-  const fogPass = new FogPass(getDistanceBuffer, viz.camera);
+  const fogPass = new FogPass(getDistanceBuffer, viz.camera as THREE.PerspectiveCamera);
   effectComposer.addPass(fogPass);
 
   // fog pass swaps buffers and DoF needs depth buffer on the input side, so we copy it back
