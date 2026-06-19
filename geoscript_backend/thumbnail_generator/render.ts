@@ -7,11 +7,16 @@ import sharp from 'sharp';
 const app = express();
 const port = 5812;
 
+// macOS (dev) can't create a WebGL2 context under SwiftShader, so use ANGLE's
+// Metal backend (real GPU); Linux servers keep software SwiftShader.
+const GL_ARGS =
+  process.platform === 'darwin' ? ['--use-gl=angle', '--use-angle=metal'] : ['--use-gl=swiftshader'];
+
 const BROWSER_ARGS = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
   '--disable-dev-shm-usage',
-  '--use-gl=swiftshader',
+  ...GL_ARGS,
   '--enable-webgl',
   '--ignore-gpu-blacklist',
 ];
@@ -42,6 +47,8 @@ interface TransientRenderOptions {
   quality?: number;
   /** If true, navigate to the local dev frontend instead of the prod URL. */
   dev?: boolean;
+  /** Readiness timeout in ms before failing with captured diagnostics. */
+  timeoutMs?: number;
 }
 
 interface TransientRenderBody {
@@ -55,10 +62,36 @@ async function setupPage(
   url: string,
   abortController: AbortController,
   opts: { width?: number; height?: number; allowLocalhost?: boolean; timeoutMs?: number } = {}
-): Promise<{ promise: Promise<void> }> {
+): Promise<{ promise: Promise<void>; getDiagnostics: () => string[] }> {
   await page.setViewport({ width: opts.width ?? 600, height: opts.height ?? 600 });
   const allowLocalhost = !!opts.allowLocalhost;
   const timeoutMs = opts.timeoutMs ?? 30 * 60 * 1000;
+
+  // Capture in-page failures (console errors/warnings, uncaught exceptions, failed
+  // requests) so a hung or broken render can report *why* instead of a bare timeout.
+  const diagnostics: string[] = [];
+  const pushDiag = (line: string) => {
+    if (diagnostics.length < 100) diagnostics.push(line);
+  };
+  page.on('console', msg => {
+    const type = msg.type();
+    if (type === 'error' || type === 'warning') {
+      pushDiag(`[console.${type}] ${msg.text()}`);
+    }
+  });
+  page.on('pageerror', err => pushDiag(`[pageerror] ${err.stack || err.message || String(err)}`));
+  page.on('requestfailed', req => {
+    const failure = req.failure();
+    if (failure && failure.errorText !== 'net::ERR_ABORTED') {
+      pushDiag(`[requestfailed] ${req.url()} — ${failure.errorText}`);
+    }
+  });
+  await page.evaluateOnNewDocument(() => {
+    window.addEventListener('unhandledrejection', e => {
+      const reason = (e as PromiseRejectionEvent).reason;
+      console.error('[unhandledrejection]', reason && reason.stack ? reason.stack : String(reason));
+    });
+  });
 
   const renderReadyPromise = new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Render timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -130,7 +163,7 @@ async function setupPage(
     request.continue();
   });
 
-  return { promise: renderReadyPromise };
+  return { promise: renderReadyPromise, getDiagnostics: () => diagnostics };
 }
 
 interface RenderOpts {
@@ -143,6 +176,8 @@ interface RenderOpts {
   allowLocalhost?: boolean;
   /** Setup hook called before navigation (e.g. `evaluateOnNewDocument` for payload injection). */
   beforeNavigate?: (page: Page) => Promise<void>;
+  /** Readiness timeout in ms before the render fails (with captured diagnostics). */
+  timeoutMs?: number;
 }
 
 async function render(
@@ -155,31 +190,40 @@ async function render(
 
   try {
     const page = await browser.newPage();
-    const { promise: renderReadyPromise } = await setupPage(page, url, abortController, {
+    const { promise: renderReadyPromise, getDiagnostics } = await setupPage(page, url, abortController, {
       width: opts.width,
       height: opts.height,
       allowLocalhost: opts.allowLocalhost,
+      timeoutMs: opts.timeoutMs,
     });
 
     if (opts.beforeNavigate) {
       await opts.beforeNavigate(page);
     }
 
-    console.log(`Navigating to ${url}...`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    try {
+      console.log(`Navigating to ${url}...`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    console.log('Waiting for visualization to signal readiness...');
-    await renderReadyPromise;
+      console.log('Waiting for visualization to signal readiness...');
+      await renderReadyPromise;
 
-    console.log('Taking screenshot...');
-    const screenshotBuffer = await page.screenshot();
+      console.log('Taking screenshot...');
+      const screenshotBuffer = await page.screenshot();
 
-    const encode = opts.encode ?? (raw => sharp(raw).avif({ quality: 70, effort: 7 }).toBuffer());
-    const encoded = await encode(screenshotBuffer);
+      const encode = opts.encode ?? (raw => sharp(raw).avif({ quality: 70, effort: 7 }).toBuffer());
+      const encoded = await encode(screenshotBuffer);
 
-    console.log('Successfully captured + encoded screenshot.');
+      console.log('Successfully captured + encoded screenshot.');
 
-    return encoded;
+      return encoded;
+    } catch (err) {
+      const diags = getDiagnostics();
+      const base = err instanceof Error ? err.message : String(err);
+      const enriched = new Error(diags.length ? `${base}\n\nBrowser diagnostics:\n${diags.join('\n')}` : base);
+      (enriched as Error & { diagnostics?: string[] }).diagnostics = diags;
+      throw enriched;
+    }
   } finally {
     console.log('Closing browser...');
     await browser.close();
@@ -297,6 +341,10 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
   const height = options.height ?? 800;
   const quality = options.quality;
   const dev = !!options.dev;
+  const timeoutMs =
+    typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+      ? Math.min(options.timeoutMs, 10 * 60 * 1000)
+      : undefined;
 
   if (width < 16 || width > 4096 || height < 16 || height > 4096) {
     return res.status(400).send('width/height must be in [16, 4096]');
@@ -329,6 +377,7 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
       width,
       height,
       allowLocalhost: dev,
+      timeoutMs,
       beforeNavigate: async page => {
         await page.evaluateOnNewDocument((p: unknown) => {
           (window as any).__transientCompositionPayload = p;
@@ -339,7 +388,7 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
     res.send(image);
   } catch (error) {
     console.error('Transient render failed:', error);
-    res.status(500).send(error instanceof Error ? error.message : 'Render failed');
+    res.status(500).type('text/plain').send(error instanceof Error ? error.message : 'Render failed');
   }
 });
 

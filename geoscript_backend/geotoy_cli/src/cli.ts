@@ -47,6 +47,7 @@ interface RenderOptions {
   height?: number;
   quality?: number;
   dev?: boolean;
+  timeoutMs?: number;
 }
 
 interface TransientPayload {
@@ -82,6 +83,7 @@ Options:
   --format <fmt>       png (default) | avif | jpeg
   --quality <n>        Quality 0-100 for avif/jpeg
   --no-prelude         Skip the standard geoscript prelude (default: included)
+  --timeout <seconds>  Render timeout before failing with diagnostics (default 10)
   --stdout             Write image to stdout (suppresses progress)
   -h, --help           Show this message
 `;
@@ -265,6 +267,9 @@ const parseArgs = (argv: string[]) => {
       case '--no-prelude':
         flag('no-prelude');
         break;
+      case '--timeout':
+        i = val('timeout', i);
+        break;
       case '--stdout':
         flag('stdout');
         break;
@@ -297,10 +302,13 @@ const main = async () => {
   const quality = opts.quality ? parseInt(opts.quality as string, 10) : undefined;
   if (width !== undefined && (!Number.isFinite(width) || width < 16)) die(`Invalid --width ${width}`);
   if (height !== undefined && (!Number.isFinite(height) || height < 16)) die(`Invalid --height ${height}`);
+  const timeoutSec = opts.timeout ? parseFloat(opts.timeout as string) : 10;
+  if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) die(`Invalid --timeout ${opts.timeout}`);
+  const timeoutMs = Math.round(timeoutSec * 1000);
 
   const payload = buildPayload(input);
   if (opts['no-prelude']) payload.metadata.preludeEjected = true;
-  payload.options = { format, dev, width, height, quality };
+  payload.options = { format, dev, width, height, quality, timeoutMs };
 
   const toStdout = !!opts.stdout;
   const baseName = isDir(input)
@@ -313,15 +321,24 @@ const main = async () => {
     process.stderr.write(`Rendering via ${backend} (${format}, ${width ?? 800}x${height ?? 800})...\n`);
   }
 
+  // Backstop the server-side render timeout so a stuck backend can't hang the CLI.
+  const abort = new AbortController();
+  const fetchTimer = setTimeout(() => abort.abort(), timeoutMs + 15_000);
   let res: Response;
   try {
     res = await fetch(backend, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CLI-Token': token },
       body: JSON.stringify(payload),
+      signal: abort.signal,
     });
   } catch (err) {
+    if (abort.signal.aborted) {
+      die(`Request timed out after ${(timeoutMs + 15_000) / 1000}s with no response from ${backend}`);
+    }
     die(`Request failed: ${err instanceof Error ? err.message : err}`);
+  } finally {
+    clearTimeout(fetchTimer);
   }
 
   if (!res.ok) {

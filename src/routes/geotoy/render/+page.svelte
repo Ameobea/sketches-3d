@@ -41,13 +41,13 @@
     return null;
   };
 
-  let payloadError = $state<string | null>(null);
-
-  const buildUserData = (): GeoscriptPlaygroundUserData | null => {
+  const buildUserData = (): { userData: GeoscriptPlaygroundUserData | null; error: string | null } => {
     const payload = readPayload();
     if (!payload) {
-      payloadError = 'No transient composition payload found on window.__transientCompositionPayload';
-      return null;
+      return {
+        userData: null,
+        error: 'No transient composition payload found on window.__transientCompositionPayload',
+      };
     }
 
     const tree: TreeDef = payload.tree ?? buildEmptyTree();
@@ -86,22 +86,25 @@
     };
 
     return {
-      initialComposition: { comp, version },
-      renderMode: true,
-      transientAutoFrame: autoFrame,
-      me: null,
-      workerManager: browser ? new WorkerManager() : null,
+      userData: {
+        initialComposition: { comp, version },
+        renderMode: true,
+        transientAutoFrame: autoFrame,
+        me: null,
+        workerManager: browser ? new WorkerManager() : null,
+      },
+      error: null,
     };
   };
 
-  let userData = $derived(buildUserData());
+  const built = $derived(buildUserData());
 
   const { modulePath: _modulePath, ...geoscriptData } = SCENE_REGISTRY['geoscript'];
   const sceneDef = { ...geoscriptData, sceneLoader: () => processLoadedScene };
 </script>
 
-{#if payloadError}
-  <pre style="color:red;padding:1em;">{payloadError}</pre>
-{:else if userData}
-  <Viz sceneName="geoscript" {userData} {sceneDef} />
+{#if built.error}
+  <pre style="color:red;padding:1em;">{built.error}</pre>
+{:else if built.userData}
+  <Viz sceneName="geoscript" userData={built.userData} {sceneDef} />
 {/if}

@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#4f4b44",
+      "roughness": 0.9,
+      "metalness": 0
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "depth": 0.18,
+        "steps": 16,
+        "lodFadeStart": 16,
+        "lodFadeRange": 40,
+        "refinement": "binary",
+        "refinementSteps": 6,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "raisedTiles.common.glsl" },
+      "colorShader": { "file": "raisedTiles.color.glsl" },
+      "roughnessShader": { "file": "raisedTiles.roughness.glsl" },
+      "lightAttenuationShader": { "file": "raisedTiles.attenuation.glsl" },
+      "pomHeightShader": { "file": "raisedTiles.height.glsl" },
+      "pomNormalShader": { "file": "raisedTiles.normal.glsl" }
+    }
+  }
+}

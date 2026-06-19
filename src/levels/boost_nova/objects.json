@@ -104,6 +104,22 @@
           "scale": [1, 1, 1]
         },
         {
+          "id": "raised_tiles_test_pad",
+          "asset": "plat",
+          "material": "__ASSETS__/materials/procedural/raised_tiles",
+          "position": [83.25, -2.563, -16.9],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "pool_tiles_test_pad",
+          "asset": "plat",
+          "material": "__ASSETS__/materials/procedural/pool_tiles",
+          "position": [83.25, -2.563, 27.35],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
           "id": "plat_1",
           "asset": "csg_plat",
           "position": [-224.8278, 10.8588, 5.225],

@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#a8a385",
+      "roughness": 0.1,
+      "metalness": 0,
+      "clearcoat": 0.6,
+      "clearcoatRoughness": 0.08,
+      "envMapIntensity": 1.25
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "depth": 0.05,
+        "steps": 8,
+        "lodFadeStart": 10,
+        "lodFadeRange": 25,
+        "refinement": "binary",
+        "refinementSteps": 3,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "poolTiles.common.glsl" },
+      "colorShader": { "file": "poolTiles.color.glsl" },
+      "roughnessShader": { "file": "poolTiles.roughness.glsl" },
+      "lightAttenuationShader": { "file": "poolTiles.attenuation.glsl" },
+      "pomHeightShader": { "file": "poolTiles.height.glsl" },
+      "pomNormalShader": { "file": "poolTiles.normal.glsl" }
+    }
+  }
+}

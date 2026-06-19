@@ -17,9 +17,17 @@ export const LIBRARY_MATERIAL_PREFIX = '__ASSETS__/materials/';
 const isLibraryRef = (ref: string | undefined): ref is string =>
   typeof ref === 'string' && ref.startsWith(LIBRARY_MATERIAL_PREFIX);
 
+// `__ASSETS__/materials/<sub>/<name>` resolves to either the flat `<sub>/<name>.json`
+// or the directory form `<sub>/<name>/<name>.json` (co-locating a material's JSON with
+// its `.glsl` slot files). GLSL `{ file }` refs resolve relative to the JSON's dir.
 const resolveLibraryFilePath = (ref: string): string => {
   const rel = ref.slice('__ASSETS__/'.length);
-  return join(getAssetsDir(), `${rel}.json`);
+  const flat = join(getAssetsDir(), `${rel}.json`);
+  if (existsSync(flat)) {
+    return flat;
+  }
+  const base = rel.slice(rel.lastIndexOf('/') + 1);
+  return join(getAssetsDir(), rel, `${base}.json`);
 };
 
 const inlineGlsl = (mat: MaterialDefRaw, libFileDir: string): MaterialDefRaw => {
