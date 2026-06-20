@@ -19,6 +19,8 @@ import {
 } from 'src/viz/shaders/customShader';
 import { deriveDirectionalShadowNormalBias } from 'src/viz/helpers/lights';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
+import { EmissiveClearPass } from 'src/viz/passes/emissiveClearPass';
+import { InlineEmissivePass, INLINE_EMISSIVE_LAYER } from 'src/viz/passes/inlineEmissivePass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
@@ -38,6 +40,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   public depthPrePassMaterial: THREE.Material | null;
   public renderer: THREE.WebGLRenderer;
   public readonly emissiveBypassPass: EmissiveBypassPass | null;
+  public readonly inlineEmissivePass: InlineEmissivePass | null;
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
   private readonly finalPass: FinalPass | null;
   private readonly renderFrameCb: (timeDiffSeconds: number) => void;
@@ -51,13 +54,15 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     renderFrameCb: (timeDiffSeconds: number) => void,
     emissiveBypassPass: EmissiveBypassPass | null = null,
     emissiveBloomPass: EmissiveBloomPass | null = null,
-    finalPass: FinalPass | null = null
+    finalPass: FinalPass | null = null,
+    inlineEmissivePass: InlineEmissivePass | null = null
   ) {
     this.effectComposer = effectComposer;
     this.depthPass = depthPass;
     this.depthPrePassMaterial = depthPrePassMaterial;
     this.renderer = renderer;
     this.emissiveBypassPass = emissiveBypassPass;
+    this.inlineEmissivePass = inlineEmissivePass;
     this.emissiveBloomPass = emissiveBloomPass;
     this.finalPass = finalPass;
     this.renderFrameCb = renderFrameCb;
@@ -284,6 +289,8 @@ export const configureDefaultPostprocessingPipeline = ({
       // EmissiveBypassPass depth-tests bypass meshes without a per-frame depth blit.
       skyStack.pass.setEmissiveDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
       viz.scene.background = null;
+      // Zero emissiveRT before the sky (the first producer) composites into it.
+      effectComposer.addPass(new EmissiveClearPass(skyStack.emissiveRT));
       effectComposer.addPass(skyStack.pass);
     }
   } else {
@@ -299,6 +306,7 @@ export const configureDefaultPostprocessingPipeline = ({
   }
 
   let emissiveBypassPass: EmissiveBypassPass | null = null;
+  let inlineEmissivePass: InlineEmissivePass | null = null;
   let emissiveBlurPass: EmissiveBloomPass | null = null;
   if (emissiveBypass) {
     const { width, height } = viz.renderer.domElement;
@@ -321,7 +329,25 @@ export const configureDefaultPostprocessingPipeline = ({
     // No-op when SkyStack provided the external RT (it wired its own depth above).
     emissiveBypassPass.setStableDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
 
+    // Zero emissiveRT before the producers composite. With SkyStack the clear is
+    // added ahead of the sky pass (the first producer) instead.
+    if (!skyStack) {
+      effectComposer.addPass(new EmissiveClearPass(emissiveBypassPass.emissiveRT));
+    }
     effectComposer.addPass(emissiveBypassPass);
+
+    // Inline-emissive meshes render once into [sceneColor, emissiveRT]. After the
+    // bypass pass (which clears emissiveRT as first-writer) and before bloom so the
+    // inline emissive blooms too.
+    inlineEmissivePass = new InlineEmissivePass(
+      viz.scene,
+      viz.camera as THREE.PerspectiveCamera,
+      width,
+      height,
+      emissiveBypassPass.emissiveRT
+    );
+    inlineEmissivePass.setStableDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
+    effectComposer.addPass(inlineEmissivePass);
 
     if (emissiveBloom !== null) {
       const qualityLevels = {
@@ -362,6 +388,8 @@ export const configureDefaultPostprocessingPipeline = ({
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         if (mats.some(m => m?.userData?.emissiveBypass)) {
           emissiveBypassPass!.addBypassMesh(obj);
+        } else if (mats.some(m => m?.userData?.inlineEmissiveBypass)) {
+          inlineEmissivePass!.addMesh(obj);
         }
       });
     });
@@ -451,7 +479,16 @@ export const configureDefaultPostprocessingPipeline = ({
         obj.shadow.camera.updateProjectionMatrix();
         obj.shadow.needsUpdate = true;
       });
+      // Make inline-emissive meshes (off layer 0) visible to three's shadow-caster
+      // filter (which tests the main camera's layers) for this single baked frame, so
+      // they cast into the baked map; every subsequent color frame has it disabled.
+      if (inlineEmissivePass) {
+        viz.camera.layers.enable(INLINE_EMISSIVE_LAYER);
+      }
       composerRender(timeDiffSeconds);
+      if (inlineEmissivePass) {
+        viz.camera.layers.disable(INLINE_EMISSIVE_LAYER);
+      }
       viz.scene.traverse(obj => {
         if (!(obj instanceof THREE.DirectionalLight)) {
           return;
@@ -474,7 +511,8 @@ export const configureDefaultPostprocessingPipeline = ({
     renderFrame,
     emissiveBypassPass,
     emissiveBlurPass,
-    finalPass
+    finalPass,
+    inlineEmissivePass
   );
   if (pomRescanCb) {
     controller.setPomRescanCb(pomRescanCb);

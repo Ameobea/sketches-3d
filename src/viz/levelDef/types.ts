@@ -229,6 +229,30 @@ export const ReverseColorRampParamsSchema = z.object({
   colorSpace: z.enum(['srgb', 'linear']).optional(),
 });
 
+/**
+ * Serializable form of `CustomUniformDef` (see customShader.types). Texture (`sampler2D`)
+ * uniforms aren't expressible here — bind those from scene code via the material handle.
+ * Vector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`).
+ */
+export const CustomUniformJsonSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('float'), value: z.number(), vertex: z.boolean().optional() }),
+  z.object({ type: z.literal('int'), value: z.number().int(), vertex: z.boolean().optional() }),
+  z.object({ type: z.literal('vec2'), value: Vec2, vertex: z.boolean().optional() }),
+  z.object({ type: z.literal('vec3'), value: Vec3, vertex: z.boolean().optional() }),
+  z.object({
+    type: z.literal('vec4'),
+    value: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+    vertex: z.boolean().optional(),
+  }),
+  z.object({ type: z.literal('mat3'), value: z.array(z.number()).length(9), vertex: z.boolean().optional() }),
+  z.object({
+    type: z.literal('mat4'),
+    value: z.array(z.number()).length(16),
+    vertex: z.boolean().optional(),
+  }),
+]);
+export type CustomUniformJson = z.infer<typeof CustomUniformJsonSchema>;
+
 export const ShaderShadersJsonSchema = z.object({
   customVertexFragment: z.string().optional(),
   /** Shared GLSL emitted before all other user shader slots; see `CustomShaderShaders.commonShader`. */
@@ -247,6 +271,7 @@ export const ShaderShadersJsonSchema = z.object({
   includeNoiseShadersVertex: z.boolean().optional(),
   pomHeightShader: z.string().optional(),
   pomNormalShader: z.string().optional(),
+  customUniforms: z.record(z.string(), CustomUniformJsonSchema).optional(),
 });
 
 /** Texture-bearing slots on `CustomShaderMatDef.props`; values are texture-registry keys. */
@@ -393,6 +418,10 @@ export const CustomShaderMatDefSchema = z.object({
   options: ShaderOptionsJsonSchema.optional(),
   shaders: ShaderShadersJsonSchema.optional(),
   emissiveBypass: z.boolean().optional(),
+  /** Two-output material: lit/tone-mapped base + all emissive (uniform/map/`emissiveShader`)
+   *  routed to the bypass buffer. Requires a pipeline with `emissiveBypass: true`.
+   *  See `CustomShaderOptions.inlineEmissiveBypass`. */
+  inlineEmissiveBypass: z.boolean().optional(),
   /** If true, the camera will hard-snap rather than dither through this material, and the
    *  soft-occlusion shader effect is disabled for it. */
   nonPermeable: z.boolean().optional(),

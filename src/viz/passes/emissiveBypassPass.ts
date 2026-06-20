@@ -3,12 +3,11 @@ import * as THREE from 'three';
 
 export const EMISSIVE_BYPASS_LAYER = 31;
 
-const BLACK = new THREE.Color(0, 0, 0);
-
 /**
- * Renders registered bypass meshes into a dedicated RGBA HalfFloat render target
- * (`emissiveRT`). `FinalPass` composites this after tone mapping with only sRGB
- * encoding, preserving vivid saturated colors that AgX would desaturate.
+ * Composites registered bypass meshes onto a dedicated RGBA HalfFloat render target
+ * (`emissiveRT`), which `EmissiveClearPass` clears ahead of it each frame.
+ * `FinalPass` composites the result after tone mapping with only sRGB encoding,
+ * preserving vivid saturated colors that AgX would desaturate.
  *
  * Bypass meshes are excluded from the main render via layer mask (layer 0
  * disabled, layer 31 enabled) (the main camera renders only layer 0 by default).
@@ -22,8 +21,8 @@ export class EmissiveBypassPass extends Pass {
   readonly emissiveRT: THREE.WebGLRenderTarget;
   /**
    * When true, another subsystem (e.g. `SkyStackPass`) owns `emissiveRT` and is
-   * responsible for allocation, resize, depth blit, and per-frame clear. This
-   * pass then only renders bypass meshes on top of the existing contents.
+   * responsible for allocation, resize, and depth wiring. This pass only composites
+   * bypass meshes on top; clearing is `EmissiveClearPass`'s job either way.
    */
   private readonly rtIsExternal: boolean;
   private readonly _mainCamera: THREE.PerspectiveCamera;
@@ -33,7 +32,6 @@ export class EmissiveBypassPass extends Pass {
   private readonly _frustum = new THREE.Frustum();
   private readonly _projScreenMatrix = new THREE.Matrix4();
   private readonly _sphere = new THREE.Sphere();
-  private _emissiveRTHasContent = false;
 
   constructor(
     scene: THREE.Scene,
@@ -90,16 +88,6 @@ export class EmissiveBypassPass extends Pass {
     this.emissiveRT.depthBuffer = true;
   }
 
-  /**
-   * True iff the emissive RT contains meaningful pixels from the most recent frame
-   * (i.e. at least one registered bypass mesh was in the camera frustum and got rendered).
-   * Downstream passes that consume emissiveRT can short-circuit when false to avoid
-   * redundant work on frames where no bypass geometry is visible.
-   */
-  get hasContent(): boolean {
-    return this._emissiveRTHasContent;
-  }
-
   override setSize(width: number, height: number): void {
     if (!this.rtIsExternal) {
       this.emissiveRT.setSize(width, height);
@@ -113,7 +101,7 @@ export class EmissiveBypassPass extends Pass {
   ): void {
     if (this._registeredMeshes.size === 0) return;
 
-    // skip the entire pass if no bypass mesh is within the camera frustum
+    // skip the render if no bypass mesh is within the camera frustum
     this._projScreenMatrix.multiplyMatrices(
       this._mainCamera.projectionMatrix,
       this._mainCamera.matrixWorldInverse
@@ -130,33 +118,13 @@ export class EmissiveBypassPass extends Pass {
         break;
       }
     }
-    if (!anyVisible) {
-      // When an external owner (like `SkyStack`) manages the RT, it cleared this frame
-      // already; don't touch anything here.  Only the internal-ownership path
-      // needs the "stale pixels from last frame" cleanup.
-      if (this._emissiveRTHasContent && !this.rtIsExternal) {
-        renderer.setRenderTarget(this.emissiveRT);
-        renderer.setClearColor(BLACK, 0);
-        renderer.clear(true, false, false);
-        renderer.setRenderTarget(null);
-        this._emissiveRTHasContent = false;
-      }
-      return;
-    }
+    if (!anyVisible) return;
 
     renderer.setRenderTarget(this.emissiveRT);
-
-    if (!this.rtIsExternal) {
-      renderer.setClearColor(BLACK, 0);
-      renderer.clearColor();
-    }
-
     const savedBackground = this.scene.background;
     this.scene.background = null;
     renderer.render(this.scene, this.bypassCamera);
     this.scene.background = savedBackground;
-
-    this._emissiveRTHasContent = true;
   }
 
   override dispose(): void {

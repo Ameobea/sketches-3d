@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
 import { POM_BOUNDED_SILHOUETTE_FLAG } from 'src/viz/shaders/pom';
+import { INLINE_EMISSIVE_LAYER } from 'src/viz/passes/inlineEmissivePass';
 
 /**
  * Runtime support for the back-face-depth-bounded POM silhouette mode (the
@@ -385,6 +386,12 @@ export class PomExitBufferManager {
     const prevAutoClear = viz.renderer.autoClear;
     viz.renderer.setClearColor(0x000000, 0);
     viz.renderer.autoClear = false;
+    // A bounded mesh that also opts into `inlineEmissiveBypass` lives off layer 0,
+    // so it would be layer-culled from these single-mesh renders (the main camera
+    // tests only layer 0). Enable its layer for the exit pass; harmless for the
+    // common layer-0 bounded meshes.
+    const prevCamLayerMask = viz.camera.layers.mask;
+    viz.camera.layers.enable(INLINE_EMISSIVE_LAYER);
 
     // 4a. Dedicated meshes: each alone into its own pool RT.
     for (const mesh of dedicated) {
@@ -413,6 +420,7 @@ export class PomExitBufferManager {
       mesh.material = savedMat;
     }
 
+    viz.camera.layers.mask = prevCamLayerMask;
     viz.renderer.setRenderTarget(prevRT);
     viz.renderer.setClearColor(prevClear, prevClearAlpha);
     viz.renderer.autoClear = prevAutoClear;

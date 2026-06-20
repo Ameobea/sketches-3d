@@ -136,6 +136,27 @@ export interface CustomShaderProps {
   };
 }
 
+/**
+ * A user-provided shader uniform, declared into the generated GLSL and bound to its value.
+ * The declaration is emitted at material build time; the value can be mutated at any point
+ * afterward via `mat.uniforms[name].value` (e.g. from a `registerBeforeRenderCb`) with no
+ * recompile. Declared in the fragment shader by default; set `vertex: true` to also declare
+ * it in the vertex shader (for `customVertexFragment` / `displacementShader`).
+ *
+ * Names are injected verbatim into shader global scope alongside the engine's own uniforms
+ * (`diffuse`, `roughness`, `map`, `curTimeSeconds`, …) and the Three.js built-ins, with no
+ * collision checking — prefix your names (e.g. `u_`) to stay clear of those.
+ */
+export type CustomUniformDef = (
+  | { type: 'float' | 'int'; value: number }
+  | { type: 'vec2'; value: THREE.Vector2 }
+  | { type: 'vec3'; value: THREE.Vector3 | THREE.Color }
+  | { type: 'vec4'; value: THREE.Vector4 }
+  | { type: 'mat3'; value: THREE.Matrix3 }
+  | { type: 'mat4'; value: THREE.Matrix4 }
+  | { type: 'sampler2D'; value: THREE.Texture | null }
+) & { vertex?: boolean };
+
 export interface CustomShaderShaders {
   customVertexFragment?: string;
   /**
@@ -196,6 +217,11 @@ export interface CustomShaderShaders {
    */
   pomNormalShader?: string;
   includeNoiseShadersVertex?: boolean;
+  /**
+   * User-provided uniforms declared into the generated shaders and bound to their values.
+   * The slot's GLSL snippets reference them by name. See `CustomUniformDef`.
+   */
+  customUniforms?: Record<string, CustomUniformDef>;
 }
 
 export interface CustomShaderOptions {
@@ -215,6 +241,21 @@ export interface CustomShaderOptions {
   usePackedDiffuseNormalGBA?: boolean | { lut: Uint8Array<ArrayBuffer> };
   readRoughnessMapFromRChannel?: boolean;
   disableToneMapping?: boolean;
+  /**
+   * Renders this material as a two-output (MRT) material: output 0 is the normal,
+   * tone-mapped lit base with ALL emissive removed; output 1 is that emissive — the
+   * `emissive` uniform, the emissive map, and the `emissiveShader` slot, summed —
+   * routed into the dedicated emissive-bypass buffer (skips tone mapping, blooms).
+   * Composite coverage is the emissive luminance, so a dark base reads through and
+   * bright detail (e.g. glowing sigils) composites over it. Author emissive linear
+   * and un-fogged; HDR (>1) values bloom harder.
+   *
+   * Meshes are rendered by a dedicated `InlineEmissivePass` (not the main pass), so
+   * POM is marched once. Requires the pipeline to have `emissiveBypass: true`.
+   * Off by default; non-opted-in materials are entirely unaffected. Mutually
+   * exclusive with `disableToneMapping` (whole-mesh bypass).
+   */
+  inlineEmissiveBypass?: boolean;
   // TODO: This is a shocking hack and should be removed
   disabledDirectionalLightIndices?: number[];
   disabledSpotLightIndices?: number[];

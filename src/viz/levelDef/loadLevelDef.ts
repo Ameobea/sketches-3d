@@ -1251,6 +1251,31 @@ export const loadLevelDef = (
         );
       }
     }
+
+    const inlineMeshes: THREE.Mesh[] = [];
+    for (const levelObj of allLevelObjects) {
+      const matName = levelObj.def.material;
+      if (!matName) continue;
+      const matDef = levelDef.materials?.[matName];
+      if (matDef?.type !== 'customShader' || !matDef.inlineEmissiveBypass) continue;
+      levelObj.object.traverse(child => {
+        if (child instanceof THREE.Mesh) inlineMeshes.push(child);
+      });
+    }
+    if (inlineMeshes.length > 0) {
+      const inlinePass = viz.postprocessingController?.inlineEmissivePass;
+      if (inlinePass) {
+        for (const mesh of inlineMeshes) {
+          inlinePass.addMesh(mesh);
+        }
+      } else {
+        console.warn(
+          `[loadLevelDef] ${inlineMeshes.length} mesh(es) have inlineEmissiveBypass=true but no inline emissive pass is configured. ` +
+            `They will render normally without bypass treatment.`
+        );
+      }
+    }
+
     viz.postprocessingController?.rescanPomMeshes();
     return meshes;
   });

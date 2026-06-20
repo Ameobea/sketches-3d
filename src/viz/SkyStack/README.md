@@ -17,20 +17,24 @@ loop, it triggers `StableDepthEffectComposer`'s depth blit immediately before
 this pass — capturing depth from materials that opt out of the prepass (e.g.
 bounded-silhouette POM) so `discardIfOccluded()` doesn't paint sky over them.
 
-`SkyStackPass` (see `SkyStackPass.ts`) owns:
+`SkyStackPass` (see `SkyStackPass.ts`) extends `HijackedMRTPass`
+(`src/viz/passes/hijackedMRTPass.ts` — the shared attachment-hijack base, also
+used by `InlineEmissivePass`). It owns:
 
-- `skyMRT` — three.js-managed MRT whose two color attachments are rebound
-  each frame to the consumer RTs' underlying GL textures (see below).
+- the backing MRT (from the base) — a three.js-managed MRT whose two color
+  attachments are rebound each frame to the consumer RTs' GL textures (see below).
 - `emissiveRT` — single-attachment RT with depth, **shared with**
-  `EmissiveBypassPass` (which composites portal/bypass meshes on top without
-  clearing, and owns the blit that populates `emissiveRT.depth`).
+  `EmissiveBypassPass` (which composites portal/bypass meshes on top) and with the
+  blit that populates `emissiveRT.depth`. `EmissiveClearPass` runs ahead of this
+  pass and zeroes `emissiveRT` each frame, so all producers are pure compositors.
 
-Per frame: rebind `skyMRT`'s color attachments to `inputBuffer.texture` and
-`emissiveRT.texture`'s GL textures (cache-skipped when unchanged); clear
-attachment 1 only (attachment 0 holds the scene color `MainRenderPass` just
-wrote and must be preserved through the sky shader's discards); render the
-unified shader — its two fragment outputs land **directly** in `inputBuffer`
-and `emissiveRT` with zero intermediate blits.
+Per frame: `bindAttachments()` re-points the backing MRT's color attachments at
+`inputBuffer.texture` and `emissiveRT.texture`'s GL textures (cache-skipped when
+unchanged); render the unified shader — its two fragment outputs land **directly**
+in `inputBuffer` and `emissiveRT` (attachment 0 holds the scene color
+`MainRenderPass` just wrote and must be preserved through the sky shader's
+discards; attachment 1 was zeroed by `EmissiveClearPass`) with zero intermediate
+blits.
 
 The hijack-attachment trick is load-bearing for smooth frames on TBDR GPUs
 (Apple Silicon) alongside screen-space effects like n8ao: per-frame
@@ -188,7 +192,7 @@ The big perf wins from the recent optimization passes:
 
 - Above-horizon `paintGround` early-out (the SDF/paint cost was the largest
   per-fragment expense; ~40-50% of pixels are above horizon).
-- `skyMRT` no depth attachment (saves a per-frame depth blit).
+- backing MRT has no depth attachment (saves a per-frame depth blit).
 - Baked loop counts (driver unrolling).
 - Front-to-back saturation early-out (predictive cloud / silhouette skip).
 - Direct MRT writes into `inputBuffer` + `emissiveRT` via attachment hijack

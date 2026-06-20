@@ -1,7 +1,8 @@
 import * as THREE from 'three';
+import { N8AOPostPass } from 'n8ao';
 
 import type { Viz } from 'src/viz';
-import type { VizConfig } from 'src/viz/conf';
+import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
@@ -153,11 +154,49 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
 
   viz.levelLoadHandle?.setSceneRuntime(pkManager.runtime, 'jump_pad_speedup_test');
 
+  viz.levelLoadHandle?.complete.then(() => {
+    const mat = viz.levelLoadHandle?.builtMaterials.get('__ASSETS__/materials/procedural/raised_tiles');
+    if (mat instanceof THREE.ShaderMaterial && mat.uniforms.u_heightPhase) {
+      let heightPhase = 0;
+      viz.registerBeforeRenderCb((curTimeSeconds, tDiffSeconds) => {
+        const rate = THREE.MathUtils.smoothstep(Math.sin(curTimeSeconds * 4), 0.4, 1);
+        heightPhase += rate * 2 * tDiffSeconds;
+        mat.uniforms.u_heightPhase.value = heightPhase;
+      });
+    }
+  });
+
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
     // autoUpdateShadowMap: true,
     pomExitBuffers: true,
+    addMiddlePasses: (composer, viz, quality) => {
+      let n8aoPass: typeof N8AOPostPass | null = null;
+      if (quality > GraphicsQuality.Low) {
+        n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.configuration.intensity = 4.6;
+        n8aoPass.configuration.aoRadius = 3.5;
+        n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
+        n8aoPass.configuration.denoiseIterations = 1;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Performance',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'Medium',
+          }[quality]
+        );
+        composer.addPass(n8aoPass, 3);
+        n8aoPass.autoDetectTransparency = false;
+        n8aoPass.configuration.transparencyAware = false;
+      }
+    },
   });
 
   initWebSynth({ compositionIDToLoad: 184 }).then(async ctx => {

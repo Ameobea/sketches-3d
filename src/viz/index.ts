@@ -63,6 +63,7 @@ export interface PostprocessingController {
   setFogEnabled(enabled: boolean): void;
   readonly hasFinalPass: boolean;
   readonly emissiveBypassPass: { addBypassMesh(mesh: THREE.Mesh): void } | null;
+  readonly inlineEmissivePass: { addMesh(mesh: THREE.Mesh): void } | null;
   rescanPomMeshes(): void;
   /** Re-point every pass at a new scene camera (e.g. perspective↔orthographic swap). */
   setCamera?(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): void;

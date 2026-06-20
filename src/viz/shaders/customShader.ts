@@ -41,6 +41,7 @@ export type {
   CustomShaderProps,
   CustomShaderShaders,
   CustomShaderOptions,
+  CustomUniformDef,
 } from './customShader.types';
 
 // import noise2Shaders from './noise2.frag?raw';
@@ -706,6 +707,7 @@ export const buildCustomShaderArgs = (
     pomHeightShader,
     pomNormalShader,
     includeNoiseShadersVertex,
+    customUniforms,
   }: CustomShaderShaders = {},
   {
     antialiasColorShader,
@@ -716,6 +718,7 @@ export const buildCustomShaderArgs = (
     usePackedDiffuseNormalGBA,
     readRoughnessMapFromRChannel,
     disableToneMapping: _disableToneMapping,
+    inlineEmissiveBypass,
     disabledDirectionalLightIndices,
     disabledSpotLightIndices,
     randomizeUVOffset,
@@ -834,6 +837,14 @@ export const buildCustomShaderArgs = (
   uniforms.occlusionStart = { value: occlusionStart };
   uniforms.occlusionEnd = { value: occlusionEnd };
   uniforms.occlusionParams = { value: occlusionParams };
+
+  // Bound post-merge so live object references (e.g. a shared per-frame uniform object) survive
+  // `UniformsUtils.merge`'s deep clone.
+  if (customUniforms) {
+    for (const [name, def] of Object.entries(customUniforms)) {
+      uniforms[name] = { value: def.value };
+    }
+  }
 
   // TODO: enable physically correct lights, look into it at least
 
@@ -1239,6 +1250,16 @@ export const buildCustomShaderArgs = (
       }`;
   };
 
+  const buildCustomUniformDecls = (forVertex: boolean): string => {
+    if (!customUniforms) {
+      return '';
+    }
+    return Object.entries(customUniforms)
+      .filter(([, def]) => (forVertex ? def.vertex : true))
+      .map(([name, def]) => `uniform ${def.type} ${name};`)
+      .join('\n');
+  };
+
   return {
     fog: true,
     lights: true,
@@ -1272,6 +1293,8 @@ ${vertexLighting && vertexLightingShininess > 0 ? 'varying vec3 vVertexSpecular;
 ${includeNoiseShadersVertex ? noiseShaders : ''}
 
 ${useGeneratedUVs ? GeneratedUVsFragment : ''}
+
+${buildCustomUniformDecls(true)}
 
 ${displacementShader || ''}
 
@@ -1407,6 +1430,14 @@ void main() {
 }`,
     fragmentShader: /* glsl */ `
 layout(location = 0) out vec4 outFragColor;
+${
+  inlineEmissiveBypass
+    ? /* glsl */ `
+#ifdef INLINE_EMISSIVE_BYPASS
+layout(location = 1) out vec4 outEmissiveBypass;
+#endif`
+    : ''
+}
 
 #define STANDARD
 
@@ -1573,6 +1604,8 @@ ${pomGen ? GeneratedUVsFragment : ''}
 
 ${hasCustomShaderSnippet ? proceduralMaterialAACode : ''}
 
+${buildCustomUniformDecls(false)}
+
 ${commonShader ?? ''}
 
 ${colorShader ?? ''}
@@ -1712,7 +1745,7 @@ void main() {
   ${
     emissiveShader
       ? /* glsl */ `
-    totalEmissiveRadiance = getCustomEmissive(vWorldPos, totalEmissiveRadiance, curTimeSeconds, ctx);
+    totalEmissiveRadiance = getCustomEmissive(${pom ? '_pomHit' : 'vWorldPos'}, totalEmissiveRadiance, curTimeSeconds, ctx);
   `
       : ''
   }
@@ -1745,7 +1778,7 @@ void main() {
 
 	#include <transmission_fragment>
 
-	vec3 outgoingLight = totalDiffuse + totalSpecular + totalEmissiveRadiance;
+	vec3 outgoingLight = totalDiffuse + totalSpecular${inlineEmissiveBypass ? '' : ' + totalEmissiveRadiance'};
 
 	#ifdef USE_SHEEN
 
@@ -1778,6 +1811,20 @@ void main() {
   ${
     !noOcclusion
       ? /* glsl */ `if (hasBackfaceHit) outFragColor.rgb = mix(outFragColor.rgb, vec3(168. / 255., 190. / 255., 155. / 255.), 0.01);`
+      : ''
+  }
+
+  ${
+    inlineEmissiveBypass
+      ? /* glsl */ `
+  // Route all emissive (uniform + map + getCustomEmissive, already summed into
+  // totalEmissiveRadiance) to the second MRT output → emissiveRT, which skips tone
+  // mapping and blooms. Raw linear + un-fogged (FinalPass fogs the composite).
+  // Coverage = emissive luminance, so a dark base reads through 0-alpha and bright
+  // detail composites over it.
+#ifdef INLINE_EMISSIVE_BYPASS
+  outEmissiveBypass = vec4(totalEmissiveRadiance, clamp(dot(totalEmissiveRadiance, vec3(0.2126, 0.7152, 0.0722)), 0., 1.));
+#endif`
       : ''
   }
 
@@ -1990,6 +2037,15 @@ export const buildCustomShader = (
 
   if (opts?.disableToneMapping) {
     mat.userData.emissiveBypass = true;
+  }
+  if (opts?.inlineEmissiveBypass) {
+    if (opts.disableToneMapping) {
+      throw new Error(
+        'inlineEmissiveBypass and disableToneMapping are mutually exclusive (inline-MRT vs whole-mesh bypass).'
+      );
+    }
+    mat.defines.INLINE_EMISSIVE_BYPASS = '1';
+    mat.userData.inlineEmissiveBypass = true;
   }
   if (opts?.noOcclusion) {
     mat.userData.occlusionExclude = true;

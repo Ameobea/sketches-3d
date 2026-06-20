@@ -7,9 +7,16 @@ import type {
   CustomShaderOptions,
   CustomShaderProps,
   CustomShaderShaders,
+  CustomUniformDef,
   MaterialClassName,
 } from 'src/viz/shaders/customShader.types';
-import type { MaterialDef, ShaderPropsJson, ShaderOptionsJson, ShaderShadersJson } from './types';
+import type {
+  CustomUniformJson,
+  MaterialDef,
+  ShaderPropsJson,
+  ShaderOptionsJson,
+  ShaderShadersJson,
+} from './types';
 
 const SIDE_MAP: Record<NonNullable<ShaderPropsJson['side']>, THREE.Side> = {
   front: THREE.FrontSide,
@@ -108,6 +115,35 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
   return options;
 };
 
+const resolveCustomUniforms = (json: Record<string, CustomUniformJson>): Record<string, CustomUniformDef> => {
+  const out: Record<string, CustomUniformDef> = {};
+  for (const [name, def] of Object.entries(json)) {
+    const { vertex } = def;
+    switch (def.type) {
+      case 'float':
+      case 'int':
+        out[name] = { type: def.type, value: def.value, vertex };
+        break;
+      case 'vec2':
+        out[name] = { type: 'vec2', value: new THREE.Vector2().fromArray(def.value), vertex };
+        break;
+      case 'vec3':
+        out[name] = { type: 'vec3', value: new THREE.Vector3().fromArray(def.value), vertex };
+        break;
+      case 'vec4':
+        out[name] = { type: 'vec4', value: new THREE.Vector4().fromArray(def.value), vertex };
+        break;
+      case 'mat3':
+        out[name] = { type: 'mat3', value: new THREE.Matrix3().fromArray(def.value), vertex };
+        break;
+      case 'mat4':
+        out[name] = { type: 'mat4', value: new THREE.Matrix4().fromArray(def.value), vertex };
+        break;
+    }
+  }
+  return out;
+};
+
 const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShaders => {
   const shaders: CustomShaderShaders = {};
   if (shadersJson.customVertexFragment !== undefined)
@@ -133,6 +169,8 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
     shaders.includeNoiseShadersVertex = shadersJson.includeNoiseShadersVertex;
   if (shadersJson.pomHeightShader !== undefined) shaders.pomHeightShader = shadersJson.pomHeightShader;
   if (shadersJson.pomNormalShader !== undefined) shaders.pomNormalShader = shadersJson.pomNormalShader;
+  if (shadersJson.customUniforms !== undefined)
+    shaders.customUniforms = resolveCustomUniforms(shadersJson.customUniforms);
   return shaders;
 };
 
@@ -170,6 +208,9 @@ export const buildMaterial = (
     const options = matDef.options ? resolveShaderOptions(matDef.options) : {};
     if (matDef.nonPermeable) {
       options.noOcclusion = true;
+    }
+    if (matDef.inlineEmissiveBypass) {
+      options.inlineEmissiveBypass = true;
     }
     const mat = buildCustomShader(props, shaders, options);
     stampMaterialMetaUserData(matDef, mat);

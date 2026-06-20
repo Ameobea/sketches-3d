@@ -11,13 +11,14 @@
       "useTriplanarMapping": false,
       "useGeneratedUVs": false,
       "pom": {
-        "depth": 0.18,
+        "depth": 0.38,
         "steps": 16,
         "lodFadeStart": 16,
         "lodFadeRange": 40,
         "refinement": "binary",
-        "refinementSteps": 6,
-        "applyReliefNormal": true
+        "refinementSteps": 4,
+        "applyReliefNormal": true,
+        "boundedSilhouette": true
       }
     },
     "shaders": {
@@ -26,7 +27,10 @@
       "roughnessShader": { "file": "raisedTiles.roughness.glsl" },
       "lightAttenuationShader": { "file": "raisedTiles.attenuation.glsl" },
       "pomHeightShader": { "file": "raisedTiles.height.glsl" },
-      "pomNormalShader": { "file": "raisedTiles.normal.glsl" }
+      "pomNormalShader": { "file": "raisedTiles.normal.glsl" },
+      "customUniforms": {
+        "u_heightPhase": { "type": "float", "value": 0.0 }
+      }
     }
   }
 }

@@ -69,9 +69,22 @@ float rtCellField(vec2 uv, out vec2 cellId, out vec2 cl, out vec2 edgeDir) {
   return 0.5 * RT_CELL - max(abs(cl.x), abs(cl.y));
 }
 
+// `u_heightPhase`: CPU-accumulated monotonic time phase (gated rate) used as a
+// pseudo-3rd noise dimension — each tile value-noises between integer phase steps,
+// holding its tier between bursts and reshuffling during them.
+const vec2 RT_TIME_OFFSET = vec2(31.41, 27.18);
+
 // ===== creative knob: per-tile height in [0,1], 1 = tallest (flush) ==========
 float rtTileHeight01(vec2 cellId) {
-  return floor(hash(cellId + 0.5) * RT_LEVELS) / (RT_LEVELS - 1.0); // random, quantized to tiers (default)
+  vec2 seed = cellId + 0.5;
+  float zi = floor(u_heightPhase);
+  float h = mix(
+    hash(seed + RT_TIME_OFFSET * zi),
+    hash(seed + RT_TIME_OFFSET * (zi + 1.0)),
+    smoothstep(0.0, 1.0, u_heightPhase - zi)
+  );
+  // return floor(h * RT_LEVELS) / (RT_LEVELS - 1.0); // random, quantized to tiers (default)
+  return h;
   // return hash(cellId + 0.5);                    // continuous random
   // return cos(cellId.x * 0.6) * 0.5 + 0.5;       // horizontal ripple
   // return fract((cellId.x + cellId.y) * 0.2);    // diagonal terraces
